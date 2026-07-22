@@ -5,10 +5,64 @@ import { shortAddress } from "../walletFlow";
 import { CircleHelp, FileText, Info } from "lucide-preact";
 import { TELEGRAM_SUPPORT_URL, WHITEPAPER_URL } from "../supportLinks";
 import { TelegramIcon } from "./TelegramIcon";
+import { detailsCloseOutsideRef } from "./modalDismiss";
+import { SoundToggle } from "./SoundToggle";
 
 const formatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 const compactFormatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 1, notation: "compact" });
 const BPS = 10_000;
+
+// The shell layout sizes itself around the measured TopBar height via
+// --topbar-h. Module-level singleton observer; the TopBar is only ever
+// rendered once. Ref callback form keeps this component hook-free (tests
+// invoke it as a plain function).
+let topBarObserver: ResizeObserver | null = null;
+
+function topBarHeightSyncRef(element: HTMLElement | null) {
+  if (typeof ResizeObserver === "undefined") return;
+  topBarObserver?.disconnect();
+  topBarObserver = null;
+  if (!element) return;
+  const update = () => {
+    document.documentElement.style.setProperty("--topbar-h", `${element.offsetHeight}px`);
+  };
+  update();
+  topBarObserver = new ResizeObserver(update);
+  topBarObserver.observe(element);
+}
+
+// Imperative count-up tween + direction flash for resource values. Reads the
+// previous value from a data attribute so it works across renders without
+// hooks/state; refs never run when tests call components as plain functions.
+function tickValueRef(value: number, formatValue: (next: number) => string) {
+  return (element: HTMLElement | null) => {
+    if (!element) return;
+    const previous = Number(element.dataset.tickValue);
+    element.dataset.tickValue = String(value);
+    if (!Number.isFinite(previous) || previous === value) return;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+
+    const flashClass = value > previous ? "resource-flash-up" : "resource-flash-down";
+    element.classList.remove("resource-flash-up", "resource-flash-down");
+    void element.offsetWidth;
+    element.classList.add(flashClass);
+
+    const start = performance.now();
+    const duration = 500;
+    const delta = value - previous;
+    const step = (now: number) => {
+      const progress = Math.min(1, (now - start) / duration);
+      const eased = 1 - (1 - progress) ** 2;
+      element.textContent = formatValue(previous + delta * eased);
+      if (progress < 1 && element.isConnected) {
+        requestAnimationFrame(step);
+      } else {
+        element.textContent = formatValue(value);
+      }
+    };
+    requestAnimationFrame(step);
+  };
+}
 
 interface TopBarProps {
   resources?: Resources | undefined;
@@ -51,9 +105,9 @@ export function TopBar({
   const showResourceDetails = Boolean(resources);
 
   return (
-    <div className="sticky top-0 z-30 border-b border-white/10 bg-[#0a0f1a]/95 backdrop-blur">
+    <div className="sticky top-0 z-30 border-b border-white/10 bg-[#0a0f1a]/95 backdrop-blur" ref={topBarHeightSyncRef}>
       <div className="mx-auto flex min-h-10 max-w-[96rem] flex-wrap items-center justify-center gap-x-3 gap-y-1 px-2 py-1 sm:min-h-11 sm:justify-between sm:px-4 sm:py-1.5 lg:px-6">
-        <div className="grid w-full min-w-0 grid-cols-[repeat(3,minmax(0,1fr))_minmax(4.5rem,1.25fr)_repeat(3,1.75rem)] items-center gap-0.5 sm:flex sm:w-auto sm:flex-wrap sm:justify-start sm:gap-x-2.5 sm:gap-y-1.5">
+        <div className="grid w-full min-w-0 grid-cols-[repeat(3,minmax(0,1fr))_minmax(4.5rem,1.25fr)_repeat(4,2.5rem)] items-center gap-0.5 sm:flex sm:w-auto sm:flex-wrap sm:justify-start sm:gap-x-2.5 sm:gap-y-1.5">
           {!isWalletConnected ? (
             <span className="text-xs text-slate-400">Connect wallet for resources</span>
           ) : resourceStatus === "loading" && !resources ? (
@@ -101,7 +155,7 @@ export function TopBar({
           )}
           <a
             aria-label="Telegram support"
-            className="grid h-7 w-7 shrink-0 place-items-center rounded border border-signal/35 bg-signal/10 text-signal transition hover:bg-signal/20 sm:hidden"
+            className="grid h-10 w-10 shrink-0 place-items-center rounded border border-signal/35 bg-signal/10 text-signal transition hover:bg-signal/20 sm:hidden"
             href={TELEGRAM_SUPPORT_URL}
             rel="noopener noreferrer"
             target="_blank"
@@ -111,7 +165,7 @@ export function TopBar({
           </a>
           <a
             aria-label="Veydrift documentation"
-            className="grid h-7 w-7 shrink-0 place-items-center rounded border border-cyan-300/35 bg-cyan-300/10 text-cyan-100 transition hover:bg-cyan-300/20 sm:hidden"
+            className="grid h-10 w-10 shrink-0 place-items-center rounded border border-cyan-300/35 bg-cyan-300/10 text-cyan-100 transition hover:bg-cyan-300/20 sm:hidden"
             href="/docs"
             title="Veydrift documentation"
           >
@@ -119,7 +173,7 @@ export function TopBar({
           </a>
           <a
             aria-label="Veydrift whitepaper"
-            className="grid h-7 w-7 shrink-0 place-items-center rounded border border-amber-200/35 bg-amber-200/10 text-amber-100 transition hover:bg-amber-200/20 sm:hidden"
+            className="grid h-10 w-10 shrink-0 place-items-center rounded border border-amber-200/35 bg-amber-200/10 text-amber-100 transition hover:bg-amber-200/20 sm:hidden"
             href={WHITEPAPER_URL}
             rel="noopener noreferrer"
             target="_blank"
@@ -127,6 +181,7 @@ export function TopBar({
           >
             <FileText className="h-3.5 w-3.5" size={14} strokeWidth={2} />
           </a>
+          <SoundToggle className="grid h-10 w-10 shrink-0 place-items-center rounded border border-white/15 bg-white/[0.06] text-slate-200 transition hover:bg-white/10 sm:hidden" />
           {queue && (
             <span className="inline-flex h-6 max-w-40 items-center truncate rounded bg-white/10 px-2 text-xs leading-none text-slate-300">
               {queue.label}
@@ -170,6 +225,7 @@ export function TopBar({
             <FileText className="h-3.5 w-3.5" size={14} strokeWidth={2} />
             <span className="sr-only lg:not-sr-only">Whitepaper</span>
           </a>
+          <SoundToggle className="hidden h-7 w-7 shrink-0 items-center justify-center rounded border border-white/15 bg-white/[0.06] text-slate-300 transition hover:bg-white/10 sm:inline-flex" />
           {isWalletConnected && account && (
             <span className="inline-flex h-6 max-w-[7.25rem] items-center truncate font-mono text-xs leading-none text-slate-400">
               {shortAddress(account)}
@@ -199,25 +255,52 @@ function ResourcePip({
 }) {
   const pct = cap && cap > 0 ? Math.min(100, Math.round((value / cap) * 100)) : 0;
   return (
-    <div
-      className="flex h-7 min-w-0 items-center justify-center rounded border border-white/10 bg-white/[0.03] px-1 whitespace-nowrap sm:h-6 sm:flex-none sm:justify-start sm:rounded-none sm:border-0 sm:bg-transparent sm:px-0"
-      title={resourceTitle(label, value, rate, cap)}
+    <details
+      className="group relative flex h-10 min-w-0 items-center justify-center rounded border border-white/10 bg-white/[0.03] whitespace-nowrap sm:h-6 sm:flex-none sm:justify-start sm:rounded-none sm:border-0 sm:bg-transparent"
+      data-close-outside
+      ref={detailsCloseOutsideRef}
     >
-      <span className="inline-flex min-w-0 items-center gap-0.5 sm:gap-1.5">
-        <span className={`text-[10px] font-semibold leading-none sm:text-xs ${color}`}>
-          <span className="sm:hidden">{abbr}</span>
-          <span className="hidden sm:inline">{label}</span>
+      <summary
+        className="flex h-full w-full cursor-pointer list-none items-center justify-center px-1 focus:outline-none focus:ring-2 focus:ring-cyan-300/60 sm:justify-start sm:px-0 [&::-webkit-details-marker]:hidden"
+        title={resourceTitle(label, value, rate, cap)}
+      >
+        <span className="inline-flex min-w-0 items-center gap-0.5 sm:gap-1.5">
+          <span className={`text-[10px] font-semibold leading-none sm:text-xs ${color}`}>
+            <span className="sm:hidden">{abbr}</span>
+            <span className="hidden sm:inline">{label}</span>
+          </span>
+          <span className={`min-w-0 truncate text-[10px] leading-none sm:text-xs ${pct >= 90 ? "resource-cap-warning text-amber-100" : "text-white"}`}>
+            <span className="sm:hidden" ref={tickValueRef(value, formatCompact)}>{formatCompact(value)}</span>
+            <span className="hidden sm:inline" ref={tickValueRef(value, format)}>{format(value)}</span>
+          </span>
+          {rate !== undefined && <span className="hidden text-[10px] leading-none text-slate-500 sm:inline">+{format(rate)}/h</span>}
+          {pct >= 90 && (
+            <span className="resource-cap-warning hidden text-[10px] leading-none text-amber-400 sm:inline">{pct}%</span>
+          )}
         </span>
-        <span className={`min-w-0 truncate text-[10px] leading-none sm:text-xs ${pct >= 90 ? "text-amber-100" : "text-white"}`}>
-          <span className="sm:hidden">{formatCompact(value)}</span>
-          <span className="hidden sm:inline">{format(value)}</span>
-        </span>
-        {rate !== undefined && <span className="hidden text-[10px] leading-none text-slate-500 sm:inline">+{format(rate)}/h</span>}
-        {pct >= 90 && (
-          <span className="hidden text-[10px] leading-none text-amber-400 sm:inline">{pct}%</span>
-        )}
-      </span>
-    </div>
+      </summary>
+      <div className="fixed left-2 right-2 top-12 z-50 whitespace-normal rounded border border-cyan-300/25 bg-[#111827] p-3 text-left text-xs leading-5 text-slate-300 shadow-2xl shadow-black/50 sm:absolute sm:left-auto sm:right-0 sm:top-full sm:mt-2 sm:w-56">
+        <div className={`font-semibold ${color}`}>{label}</div>
+        <dl className="mt-1 grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] leading-4">
+          <dt className="text-slate-500">Stored</dt>
+          <dd className="text-right font-semibold text-slate-100">{format(value)}</dd>
+          {rate !== undefined && (
+            <>
+              <dt className="text-slate-500">Production</dt>
+              <dd className="text-right font-semibold text-slate-100">+{format(rate)}/h</dd>
+            </>
+          )}
+          {cap !== undefined && (
+            <>
+              <dt className="text-slate-500">Capacity</dt>
+              <dd className="text-right font-semibold text-slate-100">
+                {format(cap)}{pct > 0 ? ` (${pct}%)` : ""}
+              </dd>
+            </>
+          )}
+        </dl>
+      </div>
+    </details>
   );
 }
 
@@ -247,7 +330,7 @@ function EnergyPip({
 
   return (
     <div
-      className="flex h-7 min-w-0 items-center justify-center rounded border border-white/10 bg-white/[0.03] px-1 whitespace-nowrap sm:h-6 sm:flex-none sm:justify-start sm:rounded-none sm:border-0 sm:bg-transparent sm:px-0"
+      className="flex h-10 min-w-0 items-center justify-center rounded border border-white/10 bg-white/[0.03] px-1 whitespace-nowrap sm:h-6 sm:flex-none sm:justify-start sm:rounded-none sm:border-0 sm:bg-transparent sm:px-0"
       title={showShortageFactor
         ? `${format(produced)} produced / ${format(required)} required; production reduced to ${productionPercent}%`
         : `${format(produced)} produced / ${format(required)} required`}
@@ -258,8 +341,8 @@ function EnergyPip({
           <span className="hidden sm:inline">Energy</span>
         </span>
         <span className={`min-w-0 truncate text-[10px] leading-none sm:text-xs ${current < 0 ? "text-red-200" : "text-white"}`}>
-          <span className="sm:hidden">{formatCompact(current)}</span>
-          <span className="hidden sm:inline">{format(current)}</span>
+          <span className="sm:hidden" ref={tickValueRef(current, formatCompact)}>{formatCompact(current)}</span>
+          <span className="hidden sm:inline" ref={tickValueRef(current, format)}>{format(current)}</span>
         </span>
         {required > 0 && <span className="hidden text-[10px] leading-none text-slate-500 sm:inline">{format(produced)}/{format(required)}</span>}
         {showShortageFactor && (
@@ -268,10 +351,10 @@ function EnergyPip({
             <span className="hidden sm:inline">{productionPercent}% output</span>
           </span>
         )}
-        <details className="group relative ml-0.5 inline-flex shrink-0 sm:ml-1">
+        <details className="group relative ml-0.5 inline-flex shrink-0 sm:ml-1" data-close-outside ref={detailsCloseOutsideRef}>
           <summary
             aria-label={popupExplanation}
-            className="inline-grid h-5 w-5 cursor-pointer list-none place-items-center rounded border border-white/10 bg-white/[0.04] text-slate-400 transition hover:border-cyan-300/40 hover:bg-cyan-300/10 hover:text-cyan-100 focus:outline-none focus:ring-2 focus:ring-cyan-300/60 [&::-webkit-details-marker]:hidden"
+            className="inline-grid h-8 w-8 cursor-pointer list-none place-items-center rounded border border-white/10 bg-white/[0.04] text-slate-400 transition hover:border-cyan-300/40 hover:bg-cyan-300/10 hover:text-cyan-100 focus:outline-none focus:ring-2 focus:ring-cyan-300/60 sm:h-5 sm:w-5 [&::-webkit-details-marker]:hidden"
             title="Resources explanation"
           >
             <Info aria-hidden="true" size={12} strokeWidth={2.25} />

@@ -35,7 +35,7 @@ describe("navigation and planet selector UI source contracts", () => {
     expect(playableSource).toContain('aria-label="Select planet" className="block min-w-0 max-w-full overflow-x-auto overscroll-x-contain"');
     expect(playableSource).toContain('className="flex w-max min-w-full gap-2 pb-1"');
     expect(playableSource).toContain('className="playable-starfield relative isolate min-h-dvh w-full max-w-full overflow-hidden bg-[#05070f] text-slate-100"');
-    expect(playableSource).toContain('className="relative z-10 mx-auto flex w-full max-w-[96rem] flex-col overflow-hidden md:h-[calc(100dvh-2.75rem)] md:flex-row"');
+    expect(playableSource).toContain('className="relative z-10 mx-auto flex w-full max-w-[96rem] flex-col overflow-hidden md:h-[calc(100dvh-var(--topbar-h,2.75rem))] md:flex-row"');
     expect(playableSource).toContain('className="min-w-0 max-w-full flex-1 overflow-y-auto p-3 sm:p-4 lg:p-6"');
     expect(playableSource).not.toContain("flex min-w-max gap-2 pb-1");
   });
@@ -69,7 +69,7 @@ describe("navigation and planet selector UI source contracts", () => {
   });
 
   test("constrains mobile nav menu and tiles to the viewport width", () => {
-    expect(navSource).toContain('className="w-full max-w-full overflow-hidden border-b border-white/10 bg-[#0c111b]/95 backdrop-blur md:hidden"');
+    expect(navSource).toContain('className="sticky top-[var(--topbar-h,2.75rem)] z-20 w-full max-w-full overflow-hidden border-b border-white/10 bg-[#0c111b]/95 backdrop-blur md:hidden"');
     expect(navSource).toContain('className="grid min-w-0 max-w-full gap-3 overflow-hidden border-t border-white/10 bg-[#08101d]/98 p-3 shadow-2xl shadow-black/30"');
     expect(navSource).toContain('className="min-w-0 max-w-full overflow-hidden rounded border border-white/10 bg-white/[0.03] p-2"');
     expect(navSource).toContain('className="grid min-w-0 grid-cols-[repeat(3,minmax(0,1fr))] gap-1.5 sm:grid-cols-[repeat(4,minmax(0,1fr))]"');
@@ -178,9 +178,9 @@ describe("navigation and planet selector UI source contracts", () => {
   });
 
   test("keeps the desktop sidebar footer compact and sticky", () => {
-    expect(playableSource).toContain("md:h-[calc(100dvh-2.75rem)]");
-    expect(navSource).toContain("h-[calc(100dvh-2.75rem)]");
-    expect(navSource).toContain("md:sticky md:top-11");
+    expect(playableSource).toContain("md:h-[calc(100dvh-var(--topbar-h,2.75rem))]");
+    expect(navSource).toContain("h-[calc(100dvh-var(--topbar-h,2.75rem))]");
+    expect(navSource).toContain("md:sticky md:top-[var(--topbar-h,2.75rem)]");
     expect(navSource).toContain("flex w-full items-center");
     expect(navSource).toContain("min-h-0 flex-1 space-y-1 overflow-y-auto");
     expect(navSource).toContain('aria-label="Sidebar account summary"');
@@ -246,7 +246,7 @@ describe("navigation and planet selector UI source contracts", () => {
   });
 
   test("keeps the planet rename action as a compact pencil icon", () => {
-    expect(overviewSource).toContain('className="relative inline-grid h-5 w-5 translate-y-px place-items-center self-center');
+    expect(overviewSource).toContain('className="relative inline-grid h-10 w-10 translate-y-px place-items-center self-center');
     expect(overviewSource).toContain('className="m-0 min-w-0 break-words text-2xl font-semibold leading-none text-white drop-shadow sm:text-3xl"');
     expect(overviewSource).toContain("after:-inset-1.5");
     expect(overviewSource).toContain('<Pencil aria-hidden="true" size={11} strokeWidth={2} />');

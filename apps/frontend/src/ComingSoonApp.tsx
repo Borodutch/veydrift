@@ -1,3 +1,4 @@
+import type { ComponentChildren } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import {
   Activity,
@@ -6,23 +7,23 @@ import {
   ExternalLink,
   Factory,
   FileText,
-  Orbit,
   Radio,
   Rocket,
   Users,
 } from "lucide-preact";
-import { RetroCdBoxHero } from "./components/RetroCdBoxHero";
+import { RetroCdBoxHero, type CdView } from "./components/RetroCdBoxHero";
 import { TELEGRAM_SUPPORT_URL, WHITEPAPER_URL } from "./supportLinks";
 import { playableApiUrl } from "./runtimeConfig";
 
 const alphaUrl = "https://test.veydrift.com";
-const playUrl = "/play";
-const faucetUrl = "https://docs.base.org/base-chain/network-information/network-faucets";
+const claimUrl = "#claim";
 export const landingFeedRefreshMs = 60_000;
 export const landingAllianceRefreshMs = 300_000;
 
 const ships = {
   colonyShip: "/assets/game/style-pass/generated/ships/colony-ship.webp",
+  deathstar: "/assets/game/style-pass/generated/ships/deathstar.webp",
+  lightFighter: "/assets/game/style-pass/generated/ships/light-fighter.webp",
 };
 
 const planets = {
@@ -106,8 +107,6 @@ type LandingLaunchCta = {
   primaryLabel: string;
   secondaryHref: string;
   secondaryLabel: string;
-  supportCopy: string;
-  showFaucet: boolean;
 };
 
 type LandingMissionPlanet = {
@@ -131,12 +130,22 @@ type LandingFleetMission = {
   targetPlanetId: string;
 };
 
-export function ComingSoonApp() {
+export function ComingSoonApp({
+  hero,
+  heroSupport,
+  heroViewSignal,
+}: {
+  hero: ComponentChildren;
+  heroSupport?: ComponentChildren;
+  heroViewSignal?: CdView | undefined;
+}) {
   useLandingScrollParallax();
+  useLandingReveals();
+  useLandingCardTilt();
 
   return (
     <main className="landing-page min-h-dvh overflow-hidden bg-void text-white">
-      <HeroSection />
+      <HeroSection hero={hero} heroSupport={heroSupport} heroViewSignal={heroViewSignal} />
       <ScreenshotsSection />
       <HowItWorksSection />
       <RiftSection />
@@ -147,8 +156,83 @@ export function ComingSoonApp() {
   );
 }
 
+function useLandingReveals() {
+  useEffect(() => {
+    const items = Array.from(document.querySelectorAll(".landing-reveal"));
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+    if (!("IntersectionObserver" in window) || reducedMotion.matches) {
+      items.forEach((item) => item.classList.add("is-inview"));
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            entry.target.classList.add("is-inview");
+            observer.unobserve(entry.target);
+          }
+        }
+      },
+      { rootMargin: "0px 0px -10% 0px", threshold: 0.1 },
+    );
+    items.forEach((item) => observer.observe(item));
+    return () => observer.disconnect();
+  }, []);
+}
+
+function useLandingCardTilt() {
+  useEffect(() => {
+    const finePointer = window.matchMedia("(hover: hover) and (pointer: fine)");
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+    if (!finePointer.matches || reducedMotion.matches) return;
+
+    const cards = Array.from(document.querySelectorAll<HTMLElement>("[data-tilt]"));
+    const cleanups = cards.map((card) => {
+      let rafId = 0;
+
+      const apply = (px: number, py: number) => {
+        card.style.setProperty("--lt-x", `${(px * 3.2).toFixed(3)}deg`);
+        card.style.setProperty("--lt-y", `${(py * -3).toFixed(3)}deg`);
+        card.style.setProperty("--lt-gx", `${((px + 1) * 50).toFixed(1)}%`);
+        card.style.setProperty("--lt-gy", `${((py + 1) * 50).toFixed(1)}%`);
+      };
+
+      const onPointerMove = (event: PointerEvent) => {
+        const rect = card.getBoundingClientRect();
+        const px = Math.min(1, Math.max(-1, ((event.clientX - rect.left) / rect.width) * 2 - 1));
+        const py = Math.min(1, Math.max(-1, ((event.clientY - rect.top) / rect.height) * 2 - 1));
+        if (rafId !== 0) window.cancelAnimationFrame(rafId);
+        rafId = window.requestAnimationFrame(() => {
+          apply(px, py);
+          rafId = 0;
+        });
+      };
+
+      const onPointerLeave = () => {
+        if (rafId !== 0) window.cancelAnimationFrame(rafId);
+        rafId = 0;
+        apply(0, 0);
+      };
+
+      card.addEventListener("pointermove", onPointerMove, { passive: true });
+      card.addEventListener("pointerleave", onPointerLeave);
+      return () => {
+        card.removeEventListener("pointermove", onPointerMove);
+        card.removeEventListener("pointerleave", onPointerLeave);
+        if (rafId !== 0) window.cancelAnimationFrame(rafId);
+      };
+    });
+
+    return () => cleanups.forEach((cleanup) => cleanup());
+  }, []);
+}
+
 function useLandingScrollParallax() {
   useEffect(() => {
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+    if (reducedMotion.matches) return;
+
     let ticking = false;
     const update = () => {
       document.documentElement.style.setProperty("--landing-scroll", String(window.scrollY));
@@ -165,59 +249,47 @@ function useLandingScrollParallax() {
   }, []);
 }
 
-function HeroSection() {
+function HeroSection({
+  hero,
+  heroSupport,
+  heroViewSignal,
+}: {
+  hero: ComponentChildren;
+  heroSupport?: ComponentChildren;
+  heroViewSignal?: CdView | undefined;
+}) {
   const launch = landingLaunchCtaForLocation();
 
   return (
-    <RetroCdBoxHero ariaLabel="Veydrift landing" stage="section">
-      <div className="landing-cd-copy">
-        <p className="landing-cd-eyebrow">{launch.eyebrow}</p>
-        <h1>Veydrift</h1>
-        <p>
-          Take command in a vast onchain universe. Build the economy, marshal fleets,
-          coordinate with alliance members and turn the Rift into a weapon of conquest.
-        </p>
-        <div className="landing-cd-actions">
-          <a className="landing-cd-primary" href={launch.primaryHref}>
-            {launch.primaryLabel}
-            <ArrowRight className="h-4 w-4" />
-          </a>
-          <a className="landing-cd-secondary" href={launch.secondaryHref}>
-            {launch.secondaryLabel}
-            <Orbit className="h-4 w-4" />
-          </a>
-          <a
-            className="landing-cd-secondary"
-            href={WHITEPAPER_URL}
-            rel="noopener noreferrer"
-            target="_blank"
-          >
-            Whitepaper
-            <FileText className="h-4 w-4" />
-          </a>
-        </div>
-        <p className="landing-cd-support">{launch.supportCopy}</p>
-      </div>
+    <RetroCdBoxHero ariaLabel="Veydrift landing" id="claim" stage="section" support={heroSupport} viewSignal={heroViewSignal}>
+      <p className="landing-cd-eyebrow">{launch.eyebrow}</p>
+      {hero}
     </RetroCdBoxHero>
   );
 }
 
 function ScreenshotsSection() {
   return (
-    <section className="relative bg-[#05070d] px-5 py-16 sm:px-8 lg:px-10">
+    <section className="relative overflow-hidden bg-[#05070d] px-5 py-20 sm:px-8 sm:py-24 lg:px-10 lg:py-28">
+      <img
+        alt=""
+        className="landing-layer landing-layer-ship right-[-2rem] top-14 hidden w-52 opacity-40 md:block"
+        src={ships.lightFighter}
+      />
       <div className="relative z-10 mx-auto max-w-7xl">
         <div className="grid gap-5 lg:grid-cols-[0.78fr_1.22fr] lg:items-end">
-          <div>
+          <div className="landing-reveal">
             <h2 className="text-3xl font-semibold leading-tight text-white sm:text-5xl">
               Command planets, build fleets, scan galaxies and conquer with your alliance.
             </h2>
           </div>
         </div>
 
-        <div className="mt-9 grid gap-4 lg:grid-cols-3">
+        <div className="landing-reveal-group mt-12 grid gap-6 lg:grid-cols-3">
           {screenshots.map((shot, index) => (
             <article
-              className={`landing-screenshot-frame ${index === 1 ? "lg:mt-10" : index === 2 ? "lg:mt-20" : ""}`}
+              className={`landing-screenshot-frame landing-reveal ${index === 1 ? "lg:mt-10" : index === 2 ? "lg:mt-20" : ""}`}
+              data-tilt
               key={shot.title}
             >
               <img alt={`${shot.title} screenshot`} src={shot.src} />
@@ -235,24 +307,24 @@ function ScreenshotsSection() {
 
 function HowItWorksSection() {
   return (
-    <section id="how-it-works" className="relative overflow-hidden bg-[#08100e] px-5 py-18 sm:px-8 lg:px-10">
+    <section id="how-it-works" className="relative overflow-hidden bg-[#08100e] px-5 py-20 sm:px-8 sm:py-24 lg:px-10 lg:py-28">
       <img
         alt=""
         className="landing-layer landing-layer-research right-[-3rem] top-12 hidden w-72 opacity-35 md:block"
         src={assets.plasma}
       />
       <div className="mx-auto max-w-7xl">
-        <div className="max-w-3xl">
+        <div className="landing-reveal max-w-3xl">
           <p className="text-sm font-semibold text-signal">How the game works</p>
           <h2 className="mt-3 text-3xl font-semibold leading-tight text-white sm:text-5xl">
             Classic space empire pressure, rebuilt for commanders who want ownership.
           </h2>
         </div>
-        <div className="mt-9 grid gap-4 md:grid-cols-3">
+        <div className="landing-reveal-group mt-12 grid gap-6 md:grid-cols-3">
           {howItWorks.map((item) => {
             const Icon = item.icon;
             return (
-              <article className="landing-feature" key={item.title}>
+              <article className="landing-feature landing-reveal" data-tilt key={item.title}>
                 <Icon className="h-5 w-5 text-signal" />
                 <h3>{item.title}</h3>
                 <p>{item.body}</p>
@@ -269,7 +341,10 @@ function RiftSection() {
   return (
     <section className="relative overflow-hidden bg-[#0b0a08] px-5 py-24 sm:px-8 sm:py-28 lg:px-10">
       <div className="mx-auto grid max-w-7xl gap-14 lg:grid-cols-[1.02fr_0.98fr] lg:items-center lg:gap-16">
-        <div className="relative min-h-[30rem] overflow-hidden rounded-lg border border-ember/[0.08] bg-[#130f0a]">
+        <div
+          className="landing-reveal relative min-h-[30rem] overflow-hidden rounded-lg border border-ember/[0.08] bg-[#130f0a]"
+          data-tilt
+        >
           <img
             alt=""
             className="absolute inset-0 h-full w-full object-cover opacity-88"
@@ -285,11 +360,11 @@ function RiftSection() {
         </div>
 
         <div className="lg:py-8">
-          <p className="max-w-2xl text-lg leading-8 text-slate-300">
+          <p className="landing-reveal max-w-2xl text-lg leading-8 text-slate-300">
             Veydrift resources are ERC20 tokens: Metal, Crystal and Deuterium. The Rift is designed
             to become the bridge between in-game production and open markets.
           </p>
-          <div className="mt-10 grid gap-4">
+          <div className="landing-reveal-group mt-10 grid gap-5">
             <RiftPoint title="Extract" body="Move surplus production into tradeable resource tokens." />
             <RiftPoint title="Trade" body="Price resources in the open instead of locking value inside a closed game server." />
             <RiftPoint title="Import" body="Bring resources back onchain to rebuild fleets, rush strategy or recover after a battle." />
@@ -302,7 +377,10 @@ function RiftSection() {
 
 function RiftPoint({ title, body }: { title: string; body: string }) {
   return (
-    <div className="rounded-lg border border-ember/[0.07] bg-ember/[0.052] p-5">
+    <div
+      className="landing-reveal rounded-lg border border-ember/[0.07] bg-ember/[0.052] p-5"
+      data-tilt
+    >
       <h3 className="text-sm font-semibold text-ember">{title}</h3>
       <p className="mt-2 text-sm leading-6 text-slate-300">{body}</p>
     </div>
@@ -313,25 +391,28 @@ function FeedSection() {
   const feed = useLandingFeed();
 
   return (
-    <section className="relative overflow-hidden bg-[#05070d] px-5 py-18 sm:px-8 lg:px-10">
+    <section className="relative overflow-hidden bg-[#05070d] px-5 py-20 sm:px-8 sm:py-24 lg:px-10 lg:py-28">
       <img
         alt=""
         className="landing-layer landing-layer-ship left-[-1rem] top-12 w-44 rotate-[12deg] opacity-45 md:w-64"
         src={ships.colonyShip}
       />
       <div className="relative z-10 mx-auto max-w-4xl">
-        <div className="mx-auto max-w-2xl text-center">
+        <div className="landing-reveal mx-auto max-w-2xl text-center">
           <p className="text-sm font-semibold text-signal">Universe intelligence</p>
           <h2 className="mt-3 text-3xl font-semibold leading-tight text-white sm:text-5xl">
             The universe is always alive with movement, pressure and opportunity.
           </h2>
         </div>
 
-        <div className="mt-9 rounded-lg border border-white/[0.045] bg-[#0d1320] p-3 shadow-[0_20px_90px_rgba(0,0,0,0.38)]">
+        <div
+          className="landing-reveal mt-12 rounded-lg border border-white/[0.045] bg-[#0d1320] p-3 shadow-[0_20px_90px_rgba(0,0,0,0.38)]"
+          data-tilt
+        >
           <div className="flex items-center justify-between border-b border-white/[0.04] px-3 py-3">
             <div className="flex items-center gap-2">
               <Radio className="h-4 w-4 text-signal" />
-              <h3 className="text-sm font-semibold text-white">Live alpha feed</h3>
+              <h3 className="text-sm font-semibold text-white">Live beta feed</h3>
             </div>
             <LandingStatusPill status={feed.status} />
           </div>
@@ -364,9 +445,13 @@ function AlphaSection() {
         className="landing-layer landing-layer-planet left-[62%] top-8 w-72 opacity-38 md:w-96"
         src={planets.crystal}
       />
-      <div className="relative z-10 mx-auto max-w-7xl overflow-hidden rounded-lg border border-signal/[0.08] bg-[linear-gradient(135deg,rgba(128,241,255,0.13),rgba(246,179,92,0.08)_42%,rgba(9,14,24,0.94))] p-6 shadow-[0_28px_100px_rgba(0,0,0,0.42)] sm:p-9 lg:p-12">
+      <div className="relative z-10 mx-auto max-w-7xl">
+        <div
+          className="landing-reveal relative overflow-hidden rounded-lg border border-signal/[0.08] bg-[linear-gradient(135deg,rgba(128,241,255,0.13),rgba(246,179,92,0.08)_42%,rgba(9,14,24,0.94))] p-6 shadow-[0_28px_100px_rgba(0,0,0,0.42)] sm:p-9 lg:p-12"
+          data-tilt
+        >
         <div className="max-w-4xl">
-          <p className="text-sm font-semibold text-ember">Enter the alpha</p>
+          <p className="text-sm font-semibold text-ember">Enter the open beta</p>
           <h2 className="mt-3 text-4xl font-semibold leading-tight text-white sm:text-6xl">
             Claim your first planet.
           </h2>
@@ -388,23 +473,16 @@ function AlphaSection() {
             Telegram testers
             <ExternalLink className="h-4 w-4" />
           </a>
-          {launch.showFaucet ? (
-            <a
-              className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg border border-white/[0.07] bg-white/[0.07] px-5 py-3 text-sm font-semibold text-slate-100 transition hover:bg-white/[0.12]"
-              href={faucetUrl}
-            >
-              Base Sepolia faucet
-              <ExternalLink className="h-4 w-4" />
-            </a>
-          ) : (
-            <a
-              className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg border border-white/[0.07] bg-white/[0.07] px-5 py-3 text-sm font-semibold text-slate-100 transition hover:bg-white/[0.12]"
-              href={alphaUrl}
-            >
-              Testnet alpha
-              <ExternalLink className="h-4 w-4" />
-            </a>
-          )}
+          <a
+            className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg border border-white/[0.07] bg-white/[0.07] px-5 py-3 text-sm font-semibold text-slate-100 transition hover:bg-white/[0.12]"
+            href={WHITEPAPER_URL}
+            rel="noopener noreferrer"
+            target="_blank"
+          >
+            Whitepaper
+            <FileText className="h-4 w-4" />
+          </a>
+        </div>
         </div>
       </div>
     </section>
@@ -418,24 +496,20 @@ export function landingLaunchCtaForLocation(
 
   if (productionHost) {
     return {
-      eyebrow: "Mainnet live on Base",
-      primaryHref: playUrl,
+      eyebrow: "Open beta live on Base",
+      primaryHref: claimUrl,
       primaryLabel: "Play",
       secondaryHref: alphaUrl,
-      secondaryLabel: "Testnet alpha",
-      supportCopy: "The testnet alpha remains available while migration is prepared; mainnet play uses Base mainnet contracts on veydrift.com.",
-      showFaucet: false,
+      secondaryLabel: "Testnet",
     };
   }
 
   return {
-    eyebrow: "Alpha test live on Base Sepolia",
-    primaryHref: alphaUrl,
-    primaryLabel: "Join the alpha test",
+    eyebrow: "Open beta live on Base",
+    primaryHref: claimUrl,
+    primaryLabel: "Play the open beta",
     secondaryHref: "#how-it-works",
     secondaryLabel: "How it works",
-    supportCopy: "The current alpha runs on testnet. When mainnet launches, testnet resources and progress are planned to migrate over, so alpha testers keep what they earn.",
-    showFaucet: true,
   };
 }
 
@@ -443,9 +517,14 @@ function AlliancesSection() {
   const alliances = useTopAlliances();
 
   return (
-    <section className="relative overflow-hidden bg-[#080b12] px-5 py-24 sm:px-8 sm:py-32 lg:px-10">
+    <section className="relative overflow-hidden bg-[#080b12] px-5 py-20 sm:px-8 sm:py-24 lg:px-10 lg:py-28">
+      <img
+        alt=""
+        className="landing-layer landing-layer-ship-slow right-[4%] top-16 hidden w-44 opacity-32 md:block"
+        src={ships.deathstar}
+      />
       <div className="mx-auto grid max-w-7xl gap-12 lg:grid-cols-[0.9fr_1.1fr] lg:items-center lg:gap-16">
-        <div>
+        <div className="landing-reveal">
           <p className="text-sm font-semibold text-ember">Alliances</p>
           <h2 className="mt-3 text-3xl font-semibold leading-tight text-white sm:text-5xl">
             Conquer faster with a war room behind you.
@@ -455,7 +534,7 @@ function AlliancesSection() {
             share pressure across systems and turn resource control into political power.
           </p>
         </div>
-        <div className="landing-alliance-board">
+        <div className="landing-alliance-board landing-reveal" data-tilt>
           <div className="flex items-center justify-between border-b border-white/[0.04] px-4 py-3">
             <div className="flex items-center gap-2">
               <Users className="h-4 w-4 text-ember" />
@@ -466,7 +545,7 @@ function AlliancesSection() {
           <div className="grid gap-2 p-3">
             {alliances.items.length > 0
               ? alliances.items.map((alliance, index) => (
-                <div className="landing-alliance-row" key={`${alliance.tag}-${index}`}>
+                <div className="landing-alliance-row" key={`${alliance.tag}-${index}`} style={{ "--row-index": index } as Record<string, number>}>
                   <span className="landing-alliance-rank">{index + 1}</span>
                   <div className="min-w-0">
                     <p>{alliance.name}</p>
@@ -485,7 +564,7 @@ function AlliancesSection() {
 
 function LandingFeedRow({ item }: { item: LandingFeedItem }) {
   return (
-    <div className="landing-feed-row" data-tone={item.tone}>
+    <div className="landing-feed-row feed-row-flash" data-tone={item.tone}>
       <Activity className="h-4 w-4" />
       <div>
         <p>{item.label}</p>
@@ -780,13 +859,13 @@ function safeLandingBigInt(value: string | undefined): bigint {
 
 function landingFeedEmptyCopy(status: LandingLoadStatus): string {
   if (status === "loading") return "Reading the backend mission index for current fleet movement.";
-  if (status === "offline") return "The alpha API is not reachable from this page right now.";
+  if (status === "offline") return "The Veydrift API is not reachable from this page right now.";
   return "The backend mission index has no active universe-wide fleet rows right now.";
 }
 
 function landingAllianceEmptyCopy(status: LandingLoadStatus): string {
   if (status === "loading") return "Reading the backend highscore index for alliance membership.";
-  if (status === "offline") return "The alpha API is not reachable from this page right now.";
+  if (status === "offline") return "The Veydrift API is not reachable from this page right now.";
   return "The backend highscore index has no alliance-ranked commanders yet.";
 }
 

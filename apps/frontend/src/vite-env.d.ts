@@ -7,6 +7,7 @@ declare module "*.md?raw" {
 
 interface ImportMetaEnv {
   readonly VITE_VEYDRIFT_API_URL?: string;
+  readonly VITE_VEYDRIFT_CHAIN?: string;
   readonly VITE_VEYDRIFT_SETTLEMENT_ADDRESS?: string;
   readonly VITE_VEYDRIFT_SURFACE?: "playable" | "settlement" | "test";
 }

@@ -80,13 +80,13 @@ export function ShareDialog({
     <div
       aria-labelledby="share-dialog-title"
       aria-modal="true"
-      className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-3"
+      className="modal-backdrop-enter fixed inset-0 z-50 grid place-items-center bg-black/70 p-3"
       onClick={onClose}
       role="dialog"
     >
       {/* Stop clicks inside the panel from bubbling to the backdrop's close handler. */}
       <div
-        className="w-full max-w-md overflow-hidden rounded-lg border border-white/10 bg-[#0f1624] shadow-2xl shadow-black/40"
+        className="modal-panel-enter w-full max-w-md overflow-hidden rounded-lg border border-white/10 bg-[#0f1624] shadow-2xl shadow-black/40"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-3 border-b border-white/10 px-4 py-3">
@@ -100,7 +100,7 @@ export function ShareDialog({
           </div>
           <button
             aria-label="Close share dialog"
-            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded border border-white/10 bg-white/[0.04] text-slate-300 transition hover:border-white/20 hover:bg-white/10 hover:text-white"
+            className="inline-flex h-10 w-10 sm:h-8 sm:w-8 shrink-0 items-center justify-center rounded border border-white/10 bg-white/[0.04] text-slate-300 transition hover:border-white/20 hover:bg-white/10 hover:text-white"
             onClick={onClose}
             type="button"
           >

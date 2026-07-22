@@ -1,5 +1,6 @@
 import { ArrowLeft, RefreshCw, Share2, Swords } from "lucide-preact";
 
+import { ActionReasonNote } from "./ActionReasonNote";
 import { formatDurationUntil } from "../durationFormat";
 import { defenseAssetByKey, shipAssetByKey } from "../gameAssets";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
@@ -83,7 +84,7 @@ export function MissionDetailPage({
             <RefreshButton loading={loading} onRefresh={onRetry} title="Refresh mission" />
             <button
               aria-label="Share battle report"
-              className="inline-flex h-9 w-9 items-center justify-center rounded border border-cyan-300/30 bg-cyan-300/10 text-sm font-medium text-cyan-100 transition hover:bg-cyan-300/20"
+              className="inline-flex h-11 w-11 items-center justify-center rounded border border-cyan-300/30 bg-cyan-300/10 text-sm font-medium text-cyan-100 transition hover:bg-cyan-300/20 sm:h-9 sm:w-9"
               onClick={(event) => {
                 // A plain button never navigates, but stop the event before any ancestor handler can
                 // act on it — the QA symptom was the viewer dropping to the overview on share click.
@@ -602,9 +603,9 @@ function MissionBattleReport({
 }
 
 function ActionButton({ action, onClick }: { action: MissionLifecycleAction; onClick: () => void }) {
-  return (
+  const button = (
     <button
-      className={`inline-flex h-9 items-center justify-center gap-2 rounded border px-3 text-sm font-medium transition ${
+      className={`inline-flex h-11 items-center justify-center gap-2 rounded border px-3 text-sm font-medium transition sm:h-9 ${
         action.enabled
           ? "border-cyan-300/35 bg-cyan-300/10 text-cyan-100 hover:bg-cyan-300/20"
           : "cursor-not-allowed border-white/10 bg-white/[0.03] text-slate-500"
@@ -617,6 +618,17 @@ function ActionButton({ action, onClick }: { action: MissionLifecycleAction; onC
       <RefreshCw aria-hidden="true" size={14} />
       {action.label}
     </button>
+  );
+
+  if (action.enabled || !action.reason) {
+    return button;
+  }
+
+  return (
+    <span className="inline-flex flex-col gap-1">
+      {button}
+      <ActionReasonNote reason={action.reason} />
+    </span>
   );
 }
 
@@ -744,7 +756,7 @@ function Notice({ children, tone = "neutral" }: { children: preact.ComponentChil
         : tone === "info"
           ? "border-cyan-300/25 bg-cyan-300/10 text-cyan-100"
           : "border-white/10 bg-[#101624] text-slate-400";
-  return <div className={`rounded-lg border p-4 text-sm ${className}`}>{children}</div>;
+  return <div className={`notice-enter rounded-lg border p-4 text-sm ${className}`}>{children}</div>;
 }
 
 // The detail page must authorize orders (Recall / Resolve / Group defend)

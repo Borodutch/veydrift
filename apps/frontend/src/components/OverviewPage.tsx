@@ -392,7 +392,7 @@ export function OverviewPage({
                     aria-controls="overview-planet-effects"
                     aria-expanded={effectsPanelOpen}
                     aria-label="Show planet stats and effects"
-                    className="inline-grid h-6 w-6 shrink-0 place-items-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:border-cyan-300/40 hover:bg-cyan-300/10 hover:text-cyan-100 focus:outline-none focus:ring-2 focus:ring-cyan-300/50"
+                    className="inline-grid h-10 w-10 shrink-0 place-items-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:border-cyan-300/40 hover:bg-cyan-300/10 hover:text-cyan-100 focus:outline-none focus:ring-2 focus:ring-cyan-300/50 sm:h-6 sm:w-6"
                     onClick={() => setEffectsPanelOpen((open) => !open)}
                     title="Planet stats and effects"
                     type="button"
@@ -403,7 +403,7 @@ export function OverviewPage({
                     <button
                       aria-expanded={renamePanelOpen}
                       aria-label="Rename planet"
-                      className="relative inline-grid h-5 w-5 translate-y-px place-items-center self-center rounded text-slate-200/80 transition after:absolute after:-inset-1.5 after:content-[''] hover:bg-cyan-200/10 hover:text-cyan-100 focus:outline-none focus:ring-1 focus:ring-cyan-300/70 disabled:cursor-not-allowed disabled:text-slate-500"
+                      className="relative inline-grid h-10 w-10 translate-y-px place-items-center self-center rounded text-slate-200/80 transition after:absolute after:-inset-1.5 after:content-[''] hover:bg-cyan-200/10 hover:text-cyan-100 focus:outline-none focus:ring-1 focus:ring-cyan-300/70 disabled:cursor-not-allowed disabled:text-slate-500 sm:h-5 sm:w-5"
                       disabled={renameBusy}
                       onClick={() => {
                         setRenamePanelOpen((open) => !open);
@@ -419,7 +419,7 @@ export function OverviewPage({
                   {showAbandonAction && (
                     <button
                       aria-label="Abandon planet"
-                      className="inline-flex h-8 items-center gap-1 rounded border border-red-300/25 bg-red-300/10 px-2.5 text-xs font-semibold text-red-100 transition hover:bg-red-300/20 focus:outline-none focus:ring-2 focus:ring-red-300/50"
+                      className="inline-flex h-10 items-center gap-1 rounded border border-red-300/25 bg-red-300/10 px-2.5 text-xs font-semibold text-red-100 transition hover:bg-red-300/20 focus:outline-none focus:ring-2 focus:ring-red-300/50 sm:h-8"
                       onClick={() => onAbandonPlanet?.()}
                       title="Abandon planet"
                       type="button"
@@ -470,7 +470,7 @@ export function OverviewPage({
                 )}
                 <div className="flex flex-wrap justify-end gap-2">
                   <button
-                    className="inline-flex h-8 items-center gap-1 rounded border border-white/10 bg-white/5 px-2.5 text-xs font-semibold text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500"
+                    className="inline-flex h-10 items-center gap-1 rounded border border-white/10 bg-white/5 px-2.5 text-xs font-semibold text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500 sm:h-8"
                     disabled={renameBusy}
                     onClick={() => setRenamePanelOpen(false)}
                     type="button"
@@ -479,7 +479,7 @@ export function OverviewPage({
                     Cancel
                   </button>
                   <button
-                    className="inline-flex h-8 items-center gap-1 rounded border border-cyan-300/40 bg-cyan-300/10 px-2.5 text-xs font-semibold text-cyan-100 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
+                    className="inline-flex h-10 items-center gap-1 rounded border border-cyan-300/40 bg-cyan-300/10 px-2.5 text-xs font-semibold text-cyan-100 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500 sm:h-8"
                     disabled={!canRenamePlanet || renameBusy}
                     type="submit"
                   >
@@ -825,7 +825,7 @@ function MyPlanetActionButtons({
     <span className="flex flex-wrap justify-end gap-1.5">
       {enabledActions.map((action) => (
         <button
-          className="rounded border border-signal/30 bg-signal/10 px-2 py-1 text-xs font-medium text-signal transition hover:bg-signal/20"
+          className="rounded border border-signal/30 bg-signal/10 px-3 py-2 text-xs font-medium text-signal transition hover:bg-signal/20 sm:px-2 sm:py-1"
           key={action.kind}
           onClick={() => onAction(action)}
           title={action.label}
@@ -851,7 +851,7 @@ function OverviewMoonActionButtons({
     <span className="flex flex-wrap justify-end gap-1.5">
       {onInspect ? (
         <button
-          className="rounded border border-cyan-200/20 bg-cyan-200/10 px-2 py-1 text-xs font-medium text-cyan-100 transition hover:border-cyan-200/40 hover:bg-cyan-200/15"
+          className="rounded border border-cyan-200/20 bg-cyan-200/10 px-3 py-2 text-xs font-medium text-cyan-100 transition hover:border-cyan-200/40 hover:bg-cyan-200/15 sm:px-2 sm:py-1"
           onClick={onInspect}
           title="Inspect moon"
           type="button"
@@ -957,7 +957,7 @@ function WatchedPlanetsPanel({
         {totalPages > 1 ? (
           <div className="flex items-center gap-2">
             <button
-              className="h-8 rounded border border-white/15 bg-white/5 px-2 text-xs font-semibold text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-600"
+              className="h-10 rounded border border-white/15 bg-white/5 px-2 text-xs font-semibold text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-600 sm:h-8"
               disabled={page <= 1 || loading}
               onClick={() => onPageChange?.(Math.max(1, page - 1))}
               type="button"
@@ -968,7 +968,7 @@ function WatchedPlanetsPanel({
               {page} / {totalPages}
             </span>
             <button
-              className="h-8 rounded border border-white/15 bg-white/5 px-2 text-xs font-semibold text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-600"
+              className="h-10 rounded border border-white/15 bg-white/5 px-2 text-xs font-semibold text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-600 sm:h-8"
               disabled={page >= totalPages || loading}
               onClick={() => onPageChange?.(Math.min(totalPages, page + 1))}
               type="button"
@@ -984,7 +984,7 @@ function WatchedPlanetsPanel({
           <span>{error}</span>
           {onRefresh ? (
             <button
-              className="inline-flex h-8 items-center gap-1.5 rounded border border-amber-200/30 bg-amber-200/10 px-2 font-semibold text-amber-50 transition hover:bg-amber-200/20 disabled:cursor-not-allowed disabled:opacity-60"
+              className="inline-flex h-10 items-center gap-1.5 rounded border border-amber-200/30 bg-amber-200/10 px-2 font-semibold text-amber-50 transition hover:bg-amber-200/20 disabled:cursor-not-allowed disabled:opacity-60 sm:h-8"
               disabled={loading}
               onClick={onRefresh}
               type="button"
@@ -1325,7 +1325,7 @@ function PlanetEffectsPanel({
         </div>
         <button
           aria-label="Close planet effects"
-          className="inline-grid h-7 w-7 shrink-0 place-items-center rounded border border-white/10 bg-white/5 text-slate-300 transition hover:bg-white/10 hover:text-white focus:outline-none focus:ring-2 focus:ring-cyan-300/50"
+          className="inline-grid h-10 w-10 shrink-0 place-items-center rounded border border-white/10 bg-white/5 text-slate-300 transition hover:bg-white/10 hover:text-white focus:outline-none focus:ring-2 focus:ring-cyan-300/50 sm:h-7 sm:w-7"
           onClick={onClose}
           type="button"
         >

@@ -19,7 +19,7 @@ export function CombatStatsInfoButton({
     <details className="group relative inline-flex" onToggle={handlePanelToggle}>
       <summary
         aria-label={`Open ${label} combat stats`}
-        className="grid h-6 w-6 cursor-pointer list-none place-items-center rounded-full border border-sky-300/35 bg-sky-300/10 text-sky-200 transition hover:border-sky-200/60 hover:bg-sky-300/20 focus:outline-none focus:ring-2 focus:ring-sky-300/40 [&::-webkit-details-marker]:hidden"
+        className="grid h-8 w-8 cursor-pointer list-none place-items-center rounded-full border border-sky-300/35 bg-sky-300/10 text-sky-200 transition hover:border-sky-200/60 hover:bg-sky-300/20 focus:outline-none focus:ring-2 focus:ring-sky-300/40 sm:h-6 sm:w-6 [&::-webkit-details-marker]:hidden"
         onClick={handleSummaryInteraction}
         onFocus={handleSummaryInteraction}
         title="Combat stats"
@@ -65,9 +65,34 @@ export function formatCombatStatValue(value: number | string): string {
 }
 
 function handlePanelToggle(event: JSX.TargetedEvent<HTMLDetailsElement, Event>) {
-  if (event.currentTarget.open) {
-    schedulePanelPosition(event.currentTarget);
+  const details = event.currentTarget;
+  if (details.open) {
+    schedulePanelPosition(details);
+    watchOutsidePointerDown(details);
+  } else {
+    unwatchOutsidePointerDown(details);
   }
+}
+
+// While the panel is open, a pointerdown anywhere outside the details root closes it. Tracked
+// imperatively (not via hooks) so the component stays callable as a plain function.
+const outsidePointerDownWatchers = new WeakMap<HTMLDetailsElement, (event: PointerEvent) => void>();
+
+function watchOutsidePointerDown(details: HTMLDetailsElement) {
+  if (outsidePointerDownWatchers.has(details) || typeof document === "undefined") return;
+  const handlePointerDown = (event: PointerEvent) => {
+    if (event.target instanceof Node && details.contains(event.target)) return;
+    details.open = false;
+  };
+  outsidePointerDownWatchers.set(details, handlePointerDown);
+  document.addEventListener("pointerdown", handlePointerDown);
+}
+
+function unwatchOutsidePointerDown(details: HTMLDetailsElement) {
+  const handlePointerDown = outsidePointerDownWatchers.get(details);
+  if (!handlePointerDown) return;
+  outsidePointerDownWatchers.delete(details);
+  document.removeEventListener("pointerdown", handlePointerDown);
 }
 
 function handleSummaryInteraction(event: JSX.TargetedEvent<HTMLElement, Event>) {

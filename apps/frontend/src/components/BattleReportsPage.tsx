@@ -90,7 +90,7 @@ export function BattleReportsPage({
                   </p>
                 </div>
                 <button
-                  className="inline-flex items-center gap-1.5 rounded border border-cyan-300/35 bg-cyan-300/10 px-2 py-1 text-xs font-medium text-cyan-100 transition hover:bg-cyan-300/20"
+                  className="inline-flex items-center gap-1.5 rounded border border-cyan-300/35 bg-cyan-300/10 px-3 py-2 text-xs font-medium text-cyan-100 transition hover:bg-cyan-300/20 sm:px-2 sm:py-1"
                   onClick={() => onOpenBattleReport(report.missionId)}
                   type="button"
                 >

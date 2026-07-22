@@ -10,6 +10,7 @@ import { fetchWalletPlanets, shortAddress } from "../walletFlow";
 import { PageHeader, RefreshButton, refreshButtonState } from "./PageHeader";
 import { VeydriftLoader } from "./VeydriftLoader";
 import { AllianceSkeleton } from "./LoadingSkeletons";
+import { escapeCloseRef } from "./modalDismiss";
 import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailableNotice";
 
 export const allianceRosterPageSize = 10;
@@ -864,8 +865,16 @@ function WarDeclarationDialog({
   onConfirm: () => void;
 }) {
   return (
-    <div aria-modal="true" className="fixed inset-0 z-50 grid place-items-center bg-slate-950/80 p-4" role="dialog">
-      <div className="w-full max-w-md rounded border border-rose-300/30 bg-slate-950 p-4 shadow-2xl">
+    <div
+      aria-modal="true"
+      className="modal-backdrop-enter fixed inset-0 z-50 grid place-items-center bg-slate-950/80 p-4"
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onCancel();
+      }}
+      ref={escapeCloseRef(onCancel)}
+      role="dialog"
+    >
+      <div className="modal-panel-enter w-full max-w-md rounded border border-rose-300/30 bg-slate-950 p-4 shadow-2xl">
         <h3 className="text-lg font-semibold text-white">Declare war on {alliance.tag}</h3>
         <p className="mt-2 text-sm text-slate-300">
           This removes attack score protection and bashing limits between your alliances.
@@ -1691,7 +1700,7 @@ export function RosterBatchActions({
         </span>
         <div className="flex flex-wrap gap-2">
           <button
-            className="rounded border border-white/10 px-2 py-1 text-xs font-semibold text-slate-100 disabled:opacity-50"
+            className="rounded border border-white/10 px-3 py-2 sm:px-2 sm:py-1 text-xs font-semibold text-slate-100 disabled:opacity-50"
             disabled={disabled || pageSelectableCount === 0}
             onClick={onSelectPage}
             type="button"
@@ -1699,7 +1708,7 @@ export function RosterBatchActions({
             Select Page
           </button>
           <button
-            className="rounded border border-white/10 px-2 py-1 text-xs font-semibold text-slate-100 disabled:opacity-50"
+            className="rounded border border-white/10 px-3 py-2 sm:px-2 sm:py-1 text-xs font-semibold text-slate-100 disabled:opacity-50"
             disabled={disabled || totalSelectableCount === 0}
             onClick={onSelectAll}
             type="button"
@@ -1707,7 +1716,7 @@ export function RosterBatchActions({
             Select All
           </button>
           <button
-            className="rounded border border-white/10 px-2 py-1 text-xs font-semibold text-slate-100 disabled:opacity-50"
+            className="rounded border border-white/10 px-3 py-2 sm:px-2 sm:py-1 text-xs font-semibold text-slate-100 disabled:opacity-50"
             disabled={disabled || selectedCount === 0}
             onClick={onClear}
             type="button"
@@ -1718,7 +1727,7 @@ export function RosterBatchActions({
       </div>
       <div className="mt-2 flex flex-wrap gap-2 border-t border-white/10 pt-2">
         <button
-          className="rounded border border-white/10 px-2 py-1 text-xs font-semibold text-slate-100 disabled:opacity-50"
+          className="rounded border border-white/10 px-3 py-2 sm:px-2 sm:py-1 text-xs font-semibold text-slate-100 disabled:opacity-50"
           disabled={disabled || selectedPromotableCount === 0}
           onClick={() => onBatchSetRole(promotableAddresses, "officer")}
           type="button"
@@ -1726,7 +1735,7 @@ export function RosterBatchActions({
           Make Officer ({selectedPromotableCount})
         </button>
         <button
-          className="rounded border border-white/10 px-2 py-1 text-xs font-semibold text-slate-100 disabled:opacity-50"
+          className="rounded border border-white/10 px-3 py-2 sm:px-2 sm:py-1 text-xs font-semibold text-slate-100 disabled:opacity-50"
           disabled={disabled || selectedDemotableCount === 0}
           onClick={() => onBatchSetRole(demotableAddresses, "member")}
           type="button"
@@ -1736,7 +1745,7 @@ export function RosterBatchActions({
         {confirmingRemove ? (
           <>
             <button
-              className="rounded border border-red-300/40 px-2 py-1 text-xs font-semibold text-red-100 disabled:opacity-50"
+              className="rounded border border-red-300/40 px-3 py-2 sm:px-2 sm:py-1 text-xs font-semibold text-red-100 disabled:opacity-50"
               disabled={disabled || selectedRemovableCount === 0}
               onClick={() => {
                 setConfirmingRemove(false);
@@ -1747,7 +1756,7 @@ export function RosterBatchActions({
               Confirm Remove ({selectedRemovableCount})
             </button>
             <button
-              className="rounded border border-white/10 px-2 py-1 text-xs font-semibold text-slate-100"
+              className="rounded border border-white/10 px-3 py-2 sm:px-2 sm:py-1 text-xs font-semibold text-slate-100"
               onClick={() => setConfirmingRemove(false)}
               type="button"
             >
@@ -1756,7 +1765,7 @@ export function RosterBatchActions({
           </>
         ) : (
           <button
-            className="rounded border border-red-300/30 px-2 py-1 text-xs font-semibold text-red-100 disabled:opacity-50"
+            className="rounded border border-red-300/30 px-3 py-2 sm:px-2 sm:py-1 text-xs font-semibold text-red-100 disabled:opacity-50"
             disabled={disabled || selectedRemovableCount === 0}
             onClick={() => setConfirmingRemove(true)}
             type="button"
@@ -1790,7 +1799,7 @@ function RosterPagination({
       <span>{first}-{last} of {total}</span>
       <div className="flex items-center gap-2">
         <button
-          className="rounded border border-white/10 px-2 py-1 font-semibold text-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
+          className="rounded border border-white/10 px-3 py-2 sm:px-2 sm:py-1 font-semibold text-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
           disabled={page <= 1}
           onClick={onPrevious}
           type="button"
@@ -1799,7 +1808,7 @@ function RosterPagination({
         </button>
         <span>Page {page} of {pageCount}</span>
         <button
-          className="rounded border border-white/10 px-2 py-1 font-semibold text-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
+          className="rounded border border-white/10 px-3 py-2 sm:px-2 sm:py-1 font-semibold text-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
           disabled={page >= pageCount}
           onClick={onNext}
           type="button"
@@ -1890,14 +1899,16 @@ function MemberRow({
   return (
     <div className={`grid gap-2 rounded border px-2 py-2 md:grid-cols-[auto_minmax(0,1fr)_auto] md:items-center ${rowTone}`}>
       {canManageMembers ? (
-        <input
-          aria-label={`Select ${playerLabel(member.displayName, member.address)}`}
-          checked={selected}
-          className="mt-1 h-4 w-4 accent-cyan-300 md:mt-0"
-          disabled={disabled || !selectable}
-          onChange={() => onToggleSelected(member.address)}
-          type="checkbox"
-        />
+        <label className="mt-1 inline-flex cursor-pointer md:mt-0">
+          <input
+            aria-label={`Select ${playerLabel(member.displayName, member.address)}`}
+            checked={selected}
+            className="h-5 w-5 accent-cyan-300"
+            disabled={disabled || !selectable}
+            onChange={() => onToggleSelected(member.address)}
+            type="checkbox"
+          />
+        </label>
       ) : null}
       <PlayerRowInfo
         address={member.address}
@@ -1912,12 +1923,12 @@ function MemberRow({
       {canManageMembers ? (
         <div className="flex flex-wrap gap-2 md:justify-end">
           {ownerCanChangeRole && member.role === "member" ? (
-            <button className="rounded border border-white/10 px-2 py-1 text-xs font-semibold text-slate-100 disabled:opacity-50" disabled={disabled} onClick={() => onSetRole(member.address, "officer")} type="button">
+            <button className="rounded border border-white/10 px-3 py-2 sm:px-2 sm:py-1 text-xs font-semibold text-slate-100 disabled:opacity-50" disabled={disabled} onClick={() => onSetRole(member.address, "officer")} type="button">
               Make Officer
             </button>
           ) : null}
           {ownerCanChangeRole && member.role === "officer" ? (
-            <button className="rounded border border-white/10 px-2 py-1 text-xs font-semibold text-slate-100 disabled:opacity-50" disabled={disabled} onClick={() => onSetRole(member.address, "member")} type="button">
+            <button className="rounded border border-white/10 px-3 py-2 sm:px-2 sm:py-1 text-xs font-semibold text-slate-100 disabled:opacity-50" disabled={disabled} onClick={() => onSetRole(member.address, "member")} type="button">
               Make Member
             </button>
           ) : null}
@@ -1925,7 +1936,7 @@ function MemberRow({
             confirmingTransfer ? (
               <>
                 <button
-                  className="rounded border border-amber-300/40 px-2 py-1 text-xs font-semibold text-amber-100 disabled:opacity-50"
+                  className="rounded border border-amber-300/40 px-3 py-2 sm:px-2 sm:py-1 text-xs font-semibold text-amber-100 disabled:opacity-50"
                   disabled={disabled}
                   onClick={() => {
                     setConfirmingTransfer(false);
@@ -1936,7 +1947,7 @@ function MemberRow({
                   Confirm Transfer
                 </button>
                 <button
-                  className="rounded border border-white/10 px-2 py-1 text-xs font-semibold text-slate-100 hover:bg-white/10"
+                  className="rounded border border-white/10 px-3 py-2 sm:px-2 sm:py-1 text-xs font-semibold text-slate-100 hover:bg-white/10"
                   onClick={() => setConfirmingTransfer(false)}
                   type="button"
                 >
@@ -1945,7 +1956,7 @@ function MemberRow({
               </>
             ) : (
               <button
-                className="rounded border border-amber-300/30 px-2 py-1 text-xs font-semibold text-amber-100 disabled:opacity-50"
+                className="rounded border border-amber-300/30 px-3 py-2 sm:px-2 sm:py-1 text-xs font-semibold text-amber-100 disabled:opacity-50"
                 disabled={disabled}
                 onClick={() => setConfirmingTransfer(true)}
                 title="Hand the owner role to this officer"
@@ -1956,7 +1967,7 @@ function MemberRow({
             )
           ) : null}
           {(canKick || (isOwner && member.role === "officer")) && !isViewer ? (
-            <button className="rounded border border-red-300/30 px-2 py-1 text-xs font-semibold text-red-100 disabled:opacity-50" disabled={disabled} onClick={() => onKick(member.address)} type="button">
+            <button className="rounded border border-red-300/30 px-3 py-2 sm:px-2 sm:py-1 text-xs font-semibold text-red-100 disabled:opacity-50" disabled={disabled} onClick={() => onKick(member.address)} type="button">
               Remove
             </button>
           ) : null}
@@ -2102,7 +2113,7 @@ function TextArea({ label, onInput, placeholder, value }: {
 
 function Notice({ children, tone = "info" }: { children: ComponentChildren; tone?: "error" | "info" }) {
   return (
-    <div className={`rounded border px-3 py-2 text-sm ${tone === "error" ? "border-red-400/30 bg-red-400/10 text-red-100" : "border-cyan-300/20 bg-cyan-300/10 text-cyan-100"}`}>
+    <div className={`notice-enter rounded border px-3 py-2 text-sm ${tone === "error" ? "border-red-400/30 bg-red-400/10 text-red-100" : "border-cyan-300/20 bg-cyan-300/10 text-cyan-100"}`}>
       {children}
     </div>
   );

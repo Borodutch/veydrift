@@ -18,23 +18,21 @@ describe("landing backend data", () => {
     expect(landingSource).toContain("window.clearInterval(intervalId)");
   });
 
-  test("points production visitors at the mainnet play surface", () => {
+  test("points production visitors at the on-page settlement hero", () => {
     expect(landingLaunchCtaForLocation({ hostname: "veydrift.com" })).toMatchObject({
-      eyebrow: "Mainnet live on Base",
-      primaryHref: "/play",
+      eyebrow: "Open beta live on Base",
+      primaryHref: "#claim",
       primaryLabel: "Play",
       secondaryHref: "https://test.veydrift.com",
-      showFaucet: false,
     });
   });
 
-  test("keeps non-production visitors on the Base Sepolia alpha flow", () => {
+  test("points non-production visitors at the on-page settlement hero", () => {
     expect(landingLaunchCtaForLocation({ hostname: "test.veydrift.com" })).toMatchObject({
-      eyebrow: "Alpha test live on Base Sepolia",
-      primaryHref: "https://test.veydrift.com",
-      primaryLabel: "Join the alpha test",
+      eyebrow: "Open beta live on Base",
+      primaryHref: "#claim",
+      primaryLabel: "Play the open beta",
       secondaryHref: "#how-it-works",
-      showFaucet: true,
     });
   });
 

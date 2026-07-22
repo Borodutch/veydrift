@@ -77,10 +77,10 @@ export function WatchablePlanetRow({
     <div
       className={`group grid min-h-16 w-full items-start gap-3 rounded-md border px-3 py-2 text-left transition ${
         leadingSlot
-          ? "grid-cols-[3rem_minmax(0,1fr)_auto] sm:grid-cols-[4rem_minmax(0,1fr)_8rem_auto]"
+          ? "grid-cols-[3rem_minmax(0,1fr)] sm:grid-cols-[4rem_minmax(0,1fr)_8rem_auto]"
           : showIdentity
-            ? "grid-cols-[minmax(0,1fr)_auto] sm:grid-cols-[minmax(0,1fr)_8rem_auto]"
-            : "grid-cols-[minmax(0,1fr)_auto]"
+            ? "grid-cols-[minmax(0,1fr)] sm:grid-cols-[minmax(0,1fr)_8rem_auto]"
+            : "grid-cols-[minmax(0,1fr)] sm:grid-cols-[minmax(0,1fr)_auto]"
       } ${
         isHighlighted
           ? "border-emerald-300/40 bg-emerald-300/10 shadow-[0_0_18px_rgba(110,231,183,0.10)]"
@@ -170,16 +170,16 @@ export function WatchablePlanetRow({
         </div>
       ) : null}
 
-      <div className="flex flex-wrap justify-end gap-1.5 pt-2">
+      <div className="col-span-full flex flex-wrap justify-end gap-1.5 pt-2 sm:col-span-1">
         {canWatch ? (
           <button
             aria-pressed={watched}
             aria-label={watched ? "Unwatch planet" : "Watch planet"}
-            className={`inline-flex h-7 w-7 items-center justify-center rounded border transition ${
+            className={`inline-flex h-10 w-10 items-center justify-center rounded border transition ${
               watched
                 ? "border-cyan-300/35 bg-cyan-300/15 text-cyan-100 hover:bg-cyan-300/25"
                 : "border-white/15 bg-white/5 text-slate-400 hover:border-cyan-300/30 hover:text-cyan-100"
-            } disabled:cursor-wait disabled:opacity-60`}
+            } disabled:cursor-wait disabled:opacity-60 sm:h-7 sm:w-7`}
             disabled={watchBusy}
             onClick={onToggleWatch}
             title={watched ? "Unwatch planet" : "Watch planet"}
@@ -189,7 +189,7 @@ export function WatchablePlanetRow({
           </button>
         ) : null}
         <button
-          className="rounded border border-signal/25 px-2 py-1 text-xs font-medium text-signal hover:bg-signal/10"
+          className="rounded border border-signal/25 px-3 py-2 text-xs font-medium text-signal hover:bg-signal/10 sm:px-2 sm:py-1"
           onClick={() => onInspect(coords)}
           type="button"
         >
@@ -205,7 +205,7 @@ export function WatchablePlanetRow({
       ) : null}
 
       {showIdentity ? (
-        <div className={`${leadingSlot ? "col-span-2 col-start-2" : "col-span-2"} min-w-0 text-xs font-medium sm:hidden`}>
+        <div className={`${leadingSlot ? "col-start-2" : "col-span-full"} min-w-0 text-xs font-medium sm:hidden`}>
           <div className={isHighlighted ? "text-emerald-100" : "text-slate-500"}>
             <span className="break-words">{commanderLabel}</span>
           </div>

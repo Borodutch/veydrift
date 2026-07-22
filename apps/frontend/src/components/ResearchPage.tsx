@@ -1,6 +1,7 @@
 import { Info, X } from "lucide-preact";
 import { useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
+import { escapeCloseRef } from "./modalDismiss";
 import type { PlayableState, ResearchKey, ResearchRequirement, Resources } from "../playableMvp";
 import {
   buildingCatalog,
@@ -353,7 +354,7 @@ function Notice({
   } as const;
 
   return (
-    <div className={`rounded border p-3 text-sm ${classes[tone]}`}>
+    <div className={`notice-enter rounded border p-3 text-sm ${classes[tone]}`}>
       {children}
     </div>
   );
@@ -580,7 +581,7 @@ export function ResearchLevelInfoButton({
   return (
     <button
       aria-label="Research level details"
-      className="inline-flex h-7 w-7 items-center justify-center rounded border border-white/10 bg-white/[0.04] text-slate-300 transition hover:border-cyan-300/40 hover:bg-cyan-300/10 hover:text-cyan-200"
+      className="inline-flex h-10 w-10 items-center justify-center rounded border border-white/10 bg-white/[0.04] text-slate-300 transition hover:border-cyan-300/40 hover:bg-cyan-300/10 hover:text-cyan-200 sm:h-7 sm:w-7"
       onClick={onClick}
       title={`${researchLabel} level details`}
       type="button"
@@ -605,10 +606,14 @@ export function ResearchLevelInfoModal({
     <div
       aria-labelledby="research-level-info-title"
       aria-modal="true"
-      className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-3"
+      className="modal-backdrop-enter fixed inset-0 z-50 grid place-items-center bg-black/70 p-3"
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+      ref={escapeCloseRef(onClose)}
       role="dialog"
     >
-      <div className="max-h-[min(44rem,calc(100vh-1.5rem))] w-full max-w-4xl overflow-hidden rounded-lg border border-white/10 bg-[#0f1624] shadow-2xl shadow-black/40">
+      <div className="modal-panel-enter max-h-[min(44rem,calc(100dvh-1.5rem))] w-full max-w-4xl overflow-hidden rounded-lg border border-white/10 bg-[#0f1624] shadow-2xl shadow-black/40">
         <div className="flex min-w-0 items-start justify-between gap-3 border-b border-white/10 px-4 py-3">
           <div className="min-w-0">
             <h3 id="research-level-info-title" className="break-words text-base font-semibold text-white">
@@ -620,7 +625,7 @@ export function ResearchLevelInfoModal({
           </div>
           <button
             aria-label="Close level table"
-            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded border border-white/10 bg-white/[0.04] text-slate-300 transition hover:border-white/20 hover:bg-white/10 hover:text-white"
+            className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded border border-white/10 bg-white/[0.04] text-slate-300 transition hover:border-white/20 hover:bg-white/10 hover:text-white sm:h-8 sm:w-8"
             onClick={onClose}
             type="button"
           >
@@ -628,8 +633,8 @@ export function ResearchLevelInfoModal({
           </button>
         </div>
 
-        <div className="max-h-[calc(100vh-8rem)] overflow-auto">
-          <table className="min-w-full border-separate border-spacing-0 text-left text-sm">
+        <div className="max-h-[calc(100dvh-8rem)] overflow-auto">
+          <table className="level-info-table min-w-full border-separate border-spacing-0 text-left text-sm">
             <thead className="sticky top-0 z-10 bg-[#111827] text-xs uppercase tracking-normal text-slate-400">
               <tr>
                 <ResearchLevelInfoHeader className="min-w-24 whitespace-nowrap">Level</ResearchLevelInfoHeader>
@@ -652,10 +657,10 @@ export function ResearchLevelInfoModal({
                   }`}
                   key={row.level}
                 >
-                  <ResearchLevelInfoCell className="whitespace-nowrap">
+                  <ResearchLevelInfoCell className="whitespace-nowrap" dataLabel="Level">
                     <span className="font-semibold text-white">Level {row.level}</span>
                   </ResearchLevelInfoCell>
-                  <ResearchLevelInfoCell className="min-w-24">
+                  <ResearchLevelInfoCell className="min-w-24" dataLabel="Status">
                     <div className="flex flex-wrap gap-1">
                       {row.current ? <ResearchLevelPill tone="current">Current</ResearchLevelPill> : null}
                       {row.next ? <ResearchLevelPill tone="next">Next</ResearchLevelPill> : null}
@@ -664,12 +669,12 @@ export function ResearchLevelInfoModal({
                       ) : null}
                     </div>
                   </ResearchLevelInfoCell>
-                  <ResearchLevelInfoCell>{formatCost(row.cost)}</ResearchLevelInfoCell>
-                  <ResearchLevelInfoCell>
+                  <ResearchLevelInfoCell dataLabel="Research cost">{formatCost(row.cost)}</ResearchLevelInfoCell>
+                  <ResearchLevelInfoCell dataLabel="Research time">
                     {row.durationSeconds === undefined ? "Unavailable until prerequisites are met" : formatDuration(row.durationSeconds)}
                   </ResearchLevelInfoCell>
-                  <ResearchLevelInfoCell>{row.requirementStatus}</ResearchLevelInfoCell>
-                  <ResearchLevelInfoCell>{row.effect}</ResearchLevelInfoCell>
+                  <ResearchLevelInfoCell dataLabel="Requirements">{row.requirementStatus}</ResearchLevelInfoCell>
+                  <ResearchLevelInfoCell dataLabel="Effect">{row.effect}</ResearchLevelInfoCell>
                 </tr>
               ))}
             </tbody>
@@ -697,12 +702,14 @@ function ResearchLevelInfoHeader({
 function ResearchLevelInfoCell({
   children,
   className = "",
+  dataLabel,
 }: {
   children: ComponentChildren;
   className?: string | undefined;
+  dataLabel?: string | undefined;
 }) {
   return (
-    <td className={`border-b border-white/10 px-3 py-2 align-top text-slate-200 ${className}`}>
+    <td className={`border-b border-white/10 px-3 py-2 align-top text-slate-200 ${className}`} data-label={dataLabel}>
       {children}
     </td>
   );

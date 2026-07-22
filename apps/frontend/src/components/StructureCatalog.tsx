@@ -187,7 +187,7 @@ export function StructureQueueProgress({ completion, ...progress }: StructureQue
       <SingleItemQueueProgress {...progress} />
       {completion ? (
         <button
-          className="mt-2 h-8 rounded border border-amber-200/30 bg-amber-200/10 px-3 text-xs font-semibold text-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
+          className="mt-2 h-10 rounded border border-amber-200/30 bg-amber-200/10 px-3 text-xs font-semibold text-amber-100 disabled:cursor-not-allowed disabled:opacity-50 sm:h-8"
           disabled={completion.disabled}
           onClick={completion.onClick}
           title={completion.title}

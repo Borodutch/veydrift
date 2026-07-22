@@ -51,7 +51,7 @@ describe("settlement screen mode", () => {
     expect(shouldShowMiniAppWalletError(false, { kind: "error", message: "Farcaster Mini App wallet setup failed (FARCASTER_BASE_SEPOLIA_UNSUPPORTED)." })).toBe(false);
   });
 
-  test("routes /play through the retro CD box pre-play gate before playable state", async () => {
+  test("routes the landing through the retro CD box pre-play gate before playable state", async () => {
     const appSource = await Bun.file(new URL("../src/App.tsx", import.meta.url)).text();
     const landingSource = await Bun.file(new URL("../src/ComingSoonApp.tsx", import.meta.url)).text();
     const settlementSource = await Bun.file(new URL("../src/FirstPlanetSettlementApp.tsx", import.meta.url)).text();
@@ -61,10 +61,14 @@ describe("settlement screen mode", () => {
     expect(appSource).toContain('window.location.pathname.startsWith("/play")');
     expect(appSource).toContain("return <FirstPlanetSettlementApp />;");
     expect(appSource).not.toContain("return <PlayableMvpApp />;");
-    expect(settlementSource).toContain("<RetroCdBoxHero");
+    expect(appSource).not.toContain("return <ComingSoonApp />;");
+    expect(settlementSource).toContain("<ComingSoonApp");
+    expect(settlementSource).toContain("heroSupport={<SettlementSupportLinks />}");
     expect(settlementSource).not.toContain("<SettlementScanner");
-    expect(landingSource).toContain("<RetroCdBoxHero ariaLabel=\"Veydrift landing\" stage=\"section\">");
-    expect(landingSource).toContain("className=\"landing-cd-primary\"");
+    expect(landingSource).toContain("<RetroCdBoxHero");
+    expect(landingSource).toContain("ariaLabel=\"Veydrift landing\"");
+    expect(landingSource).toContain("stage=\"section\"");
+    expect(landingSource).toContain("id=\"claim\"");
     expect(heroSource).toContain("retro-cd-case");
     expect(heroSource).toContain("retro-cd-front");
     expect(heroSource).toContain("retro-cd-back");
@@ -389,30 +393,42 @@ describe("settlement screen mode", () => {
   });
 
   test("attempts Farcaster Base Sepolia setup once per observed wrong chain", () => {
-    expect(shouldAttemptFarcasterNetworkSetup({
-      chainId: "0x2105",
-      lastAttemptedChainId: undefined,
-      miniAppMode: true,
-      walletProviderSource: "farcaster",
-    })).toBe(true);
-    expect(shouldAttemptFarcasterNetworkSetup({
-      chainId: "0x2105",
-      lastAttemptedChainId: "0x2105",
-      miniAppMode: true,
-      walletProviderSource: "farcaster",
-    })).toBe(false);
-    expect(shouldAttemptFarcasterNetworkSetup({
-      chainId: "0x2105",
-      lastAttemptedChainId: undefined,
-      miniAppMode: true,
-      walletProviderSource: "injected",
-    })).toBe(false);
-    expect(shouldAttemptFarcasterNetworkSetup({
-      chainId: "0x14a34",
-      lastAttemptedChainId: undefined,
-      miniAppMode: true,
-      walletProviderSource: "farcaster",
-    })).toBe(false);
+    // The default required chain is hostname/env derived; a local .env with
+    // VITE_VEYDRIFT_CHAIN set must not leak into these Sepolia expectations.
+    const forcedChain = process.env.VITE_VEYDRIFT_CHAIN;
+    delete process.env.VITE_VEYDRIFT_CHAIN;
+    try {
+      expect(shouldAttemptFarcasterNetworkSetup({
+        chainId: "0x2105",
+        lastAttemptedChainId: undefined,
+        miniAppMode: true,
+        walletProviderSource: "farcaster",
+      })).toBe(true);
+      expect(shouldAttemptFarcasterNetworkSetup({
+        chainId: "0x2105",
+        lastAttemptedChainId: "0x2105",
+        miniAppMode: true,
+        walletProviderSource: "farcaster",
+      })).toBe(false);
+      expect(shouldAttemptFarcasterNetworkSetup({
+        chainId: "0x2105",
+        lastAttemptedChainId: undefined,
+        miniAppMode: true,
+        walletProviderSource: "injected",
+      })).toBe(false);
+      expect(shouldAttemptFarcasterNetworkSetup({
+        chainId: "0x14a34",
+        lastAttemptedChainId: undefined,
+        miniAppMode: true,
+        walletProviderSource: "farcaster",
+      })).toBe(false);
+    } finally {
+      if (forcedChain === undefined) {
+        delete process.env.VITE_VEYDRIFT_CHAIN;
+      } else {
+        process.env.VITE_VEYDRIFT_CHAIN = forcedChain;
+      }
+    }
   });
 
   test("retries Farcaster provider discovery only while Mini App wallet support may still be late", () => {
@@ -598,7 +614,7 @@ describe("settlement screen mode", () => {
     expect(source).toContain("FARCASTER_VEYDRIFT_CHAIN_RETRY_FAILED");
     expect(source).toContain("FARCASTER_WALLET_PROVIDER_UNAVAILABLE");
     expect(source).toContain("showFarcasterWalletProviderUnavailable");
-    expect(source).toContain("<RetroCdBoxHero");
+    expect(source).toContain("<ComingSoonApp");
   });
 
   test("formats reportable Farcaster Mini App wallet errors with host diagnostics", () => {

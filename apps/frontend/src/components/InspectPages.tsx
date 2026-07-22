@@ -525,7 +525,7 @@ function TransferOwnershipButton({ address, disabled, onTransferOwnership }: {
     return (
       <>
         <button
-          className="rounded border border-amber-300/40 px-2 py-1 text-xs font-semibold text-amber-100 disabled:opacity-50"
+          className="rounded border border-amber-300/40 px-3 py-2 text-xs font-semibold text-amber-100 disabled:opacity-50 sm:px-2 sm:py-1"
           disabled={disabled}
           onClick={() => { setConfirming(false); onTransferOwnership(address); }}
           type="button"
@@ -533,7 +533,7 @@ function TransferOwnershipButton({ address, disabled, onTransferOwnership }: {
           Confirm Transfer
         </button>
         <button
-          className="rounded border border-white/10 px-2 py-1 text-xs font-semibold text-slate-100 hover:bg-white/10"
+          className="rounded border border-white/10 px-3 py-2 text-xs font-semibold text-slate-100 hover:bg-white/10 sm:px-2 sm:py-1"
           onClick={() => setConfirming(false)}
           type="button"
         >
@@ -544,7 +544,7 @@ function TransferOwnershipButton({ address, disabled, onTransferOwnership }: {
   }
   return (
     <button
-      className="rounded border border-amber-300/30 px-2 py-1 text-xs font-semibold text-amber-100 disabled:opacity-50"
+      className="rounded border border-amber-300/30 px-3 py-2 text-xs font-semibold text-amber-100 disabled:opacity-50 sm:px-2 sm:py-1"
       disabled={disabled}
       onClick={() => setConfirming(true)}
       title="Hand the owner role to this officer"
@@ -698,10 +698,10 @@ function RosterGroup({
                 </button>
                 {canManageMembers ? (
                   <div className="flex flex-wrap gap-2 md:justify-end">
-                    {ownerCanChangeRole && member.role === "member" ? <button className="rounded border border-white/10 px-2 py-1 text-xs font-semibold text-slate-100 disabled:opacity-50" disabled={disabled} onClick={() => onSetRole(member.address, "officer")} type="button">Make Officer</button> : null}
-                    {ownerCanChangeRole && member.role === "officer" ? <button className="rounded border border-white/10 px-2 py-1 text-xs font-semibold text-slate-100 disabled:opacity-50" disabled={disabled} onClick={() => onSetRole(member.address, "member")} type="button">Make Member</button> : null}
+                    {ownerCanChangeRole && member.role === "member" ? <button className="rounded border border-white/10 px-3 py-2 text-xs font-semibold text-slate-100 disabled:opacity-50 sm:px-2 sm:py-1" disabled={disabled} onClick={() => onSetRole(member.address, "officer")} type="button">Make Officer</button> : null}
+                    {ownerCanChangeRole && member.role === "officer" ? <button className="rounded border border-white/10 px-3 py-2 text-xs font-semibold text-slate-100 disabled:opacity-50 sm:px-2 sm:py-1" disabled={disabled} onClick={() => onSetRole(member.address, "member")} type="button">Make Member</button> : null}
                     {canTransferAllianceOwnership(member, isOwner, isViewer) ? <TransferOwnershipButton address={member.address} disabled={disabled} onTransferOwnership={onTransferOwnership} /> : null}
-                    {(canKick || (isOwner && member.role === "officer")) && !isViewer ? <button className="rounded border border-red-300/30 px-2 py-1 text-xs font-semibold text-red-100 disabled:opacity-50" disabled={disabled} onClick={() => onKick(member.address)} type="button">Remove</button> : null}
+                    {(canKick || (isOwner && member.role === "officer")) && !isViewer ? <button className="rounded border border-red-300/30 px-3 py-2 text-xs font-semibold text-red-100 disabled:opacity-50 sm:px-2 sm:py-1" disabled={disabled} onClick={() => onKick(member.address)} type="button">Remove</button> : null}
                   </div>
                 ) : null}
               </div>
@@ -713,9 +713,9 @@ function RosterGroup({
                 {(clampedPage - 1) * allianceRosterPageSize + 1}-{Math.min(clampedPage * allianceRosterPageSize, members.length)} of {members.length}
               </span>
               <div className="flex items-center gap-2">
-                <button className="rounded border border-white/10 px-2 py-1 font-semibold text-slate-200 disabled:opacity-50" disabled={clampedPage <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))} type="button">Previous</button>
+                <button className="rounded border border-white/10 px-3 py-2 font-semibold text-slate-200 disabled:opacity-50 sm:px-2 sm:py-1" disabled={clampedPage <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))} type="button">Previous</button>
                 <span>Page {clampedPage} of {pageCount}</span>
-                <button className="rounded border border-white/10 px-2 py-1 font-semibold text-slate-200 disabled:opacity-50" disabled={clampedPage >= pageCount} onClick={() => setPage((current) => Math.min(pageCount, current + 1))} type="button">Next</button>
+                <button className="rounded border border-white/10 px-3 py-2 font-semibold text-slate-200 disabled:opacity-50 sm:px-2 sm:py-1" disabled={clampedPage >= pageCount} onClick={() => setPage((current) => Math.min(pageCount, current + 1))} type="button">Next</button>
               </div>
             </div>
           ) : null}
@@ -745,7 +745,7 @@ function CompactStat({ label, value }: { label: string; value: string }) {
 
 function Notice({ children, tone = "info" }: { children: ComponentChildren; tone?: "error" | "info" }) {
   return (
-    <div className={`rounded border px-3 py-2 text-sm ${tone === "error" ? "border-red-400/30 bg-red-400/10 text-red-100" : "border-cyan-300/20 bg-cyan-300/10 text-cyan-100"}`}>
+    <div className={`notice-enter rounded border px-3 py-2 text-sm ${tone === "error" ? "border-red-400/30 bg-red-400/10 text-red-100" : "border-cyan-300/20 bg-cyan-300/10 text-cyan-100"}`}>
       {children}
     </div>
   );

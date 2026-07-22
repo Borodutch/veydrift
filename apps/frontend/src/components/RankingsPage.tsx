@@ -356,7 +356,7 @@ export function RankingsPagination({
         ) : null}
         <button
           aria-label="Previous rankings page"
-          className="inline-flex h-8 w-8 items-center justify-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+          className="inline-flex h-10 w-10 sm:h-8 sm:w-8 items-center justify-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
           disabled={loading || !pagination.hasPreviousPage}
           onClick={onPrevious}
           title="Previous page"
@@ -366,7 +366,7 @@ export function RankingsPagination({
         </button>
         <button
           aria-label="Next rankings page"
-          className="inline-flex h-8 w-8 items-center justify-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+          className="inline-flex h-10 w-10 sm:h-8 sm:w-8 items-center justify-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
           disabled={loading || !pagination.hasNextPage}
           onClick={onNext}
           title="Next page"
@@ -542,7 +542,7 @@ function RankingRow({
           <span className="flex min-w-0 items-center gap-1.5">
             {alliance ? (
               <button
-                className={`shrink-0 rounded border px-1.5 py-0.5 font-mono text-[10px] font-semibold leading-none transition disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500 ${
+                className={`shrink-0 rounded border px-2 py-1.5 sm:px-1.5 sm:py-0.5 font-mono text-[10px] font-semibold leading-none transition disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500 ${
                   isSameAlliance
                     ? "border-sky-400/50 bg-sky-400/[0.22] text-sky-100 hover:border-sky-300/70 hover:bg-sky-400/30"
                     : "border-cyan-300/20 bg-cyan-300/10 text-cyan-100 hover:border-cyan-200/50 hover:bg-cyan-300/15"

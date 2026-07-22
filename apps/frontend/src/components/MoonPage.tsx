@@ -15,6 +15,7 @@ import {
   InspectInfoBlock,
 } from "./InspectProgressLayout";
 import { PageHeader, RefreshButton } from "./PageHeader";
+import { ActionReasonNote } from "./ActionReasonNote";
 import { InlineSyncIndicator } from "./VeydriftLoader";
 import { MoonSkeleton } from "./LoadingSkeletons";
 import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailableNotice";
@@ -210,7 +211,7 @@ function ChickenBurnPanel({
         <label className="grid gap-1 text-xs text-slate-300">
           <span>Chicken ID</span>
           <input
-            className="h-9 min-w-0 rounded border border-white/10 bg-black/20 px-3 text-sm text-slate-100 outline-none transition focus:border-amber-200/40"
+            className="h-11 min-w-0 rounded border border-white/10 bg-black/20 px-3 text-sm text-slate-100 outline-none transition focus:border-amber-200/40 sm:h-9"
             inputMode="numeric"
             name="chickenTokenId"
             placeholder="91528"
@@ -218,13 +219,14 @@ function ChickenBurnPanel({
           />
         </label>
         <button
-          className="h-9 self-end rounded border border-amber-200/20 bg-amber-200/10 px-4 text-xs font-semibold text-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
+          className="h-11 self-end rounded border border-amber-200/20 bg-amber-200/10 px-4 text-xs font-semibold text-amber-100 disabled:cursor-not-allowed disabled:opacity-50 sm:h-9"
           disabled={Boolean(disabledReason)}
           title={disabledReason}
           type="submit"
         >
           Burn for Moon
         </button>
+        <ActionReasonNote reason={disabledReason} />
       </form>
 
       {action?.status !== "idle" && action?.label ? (
@@ -430,7 +432,7 @@ function MoonSystemsPanel({
           <h3 className="text-base font-semibold text-white">Jump Gate</h3>
           <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_6rem_6rem_auto]">
             <select
-              className="h-9 rounded border border-white/10 bg-black/20 px-2 text-sm text-slate-100"
+              className="h-11 rounded border border-white/10 bg-black/20 px-2 text-sm text-slate-100 sm:h-9"
               onChange={(event) => setJumpDestination(event.currentTarget.value)}
               value={jumpDestination}
             >
@@ -441,10 +443,10 @@ function MoonSystemsPanel({
                 </option>
               ))}
             </select>
-            <input className="h-9 rounded border border-white/10 bg-black/20 px-2 text-sm text-slate-100" inputMode="numeric" onInput={(event) => setJumpSmallCargo(event.currentTarget.value)} placeholder="Small" value={jumpSmallCargo} />
-            <input className="h-9 rounded border border-white/10 bg-black/20 px-2 text-sm text-slate-100" inputMode="numeric" onInput={(event) => setJumpLargeCargo(event.currentTarget.value)} placeholder="Large" value={jumpLargeCargo} />
+            <input className="h-11 rounded border border-white/10 bg-black/20 px-2 text-sm text-slate-100 sm:h-9" inputMode="numeric" onInput={(event) => setJumpSmallCargo(event.currentTarget.value)} placeholder="Small" value={jumpSmallCargo} />
+            <input className="h-11 rounded border border-white/10 bg-black/20 px-2 text-sm text-slate-100 sm:h-9" inputMode="numeric" onInput={(event) => setJumpLargeCargo(event.currentTarget.value)} placeholder="Large" value={jumpLargeCargo} />
             <button
-              className="h-9 rounded border border-cyan-200/20 bg-cyan-200/10 px-3 text-xs font-semibold text-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
+              className="h-11 rounded border border-cyan-200/20 bg-cyan-200/10 px-3 text-xs font-semibold text-cyan-100 disabled:cursor-not-allowed disabled:opacity-50 sm:h-9"
               disabled={!canTransact || pending || !onJumpGate || !jumpDestinationReady || !jumpCargoValid}
               onClick={() => jumpCargoValid ? onJumpGate?.(jumpDestination.trim(), jumpShips) : undefined}
               title={!canTransact ? transactionUnavailableReason : undefined}
@@ -452,6 +454,7 @@ function MoonSystemsPanel({
             >
               Deploy
             </button>
+            {!canTransact ? <ActionReasonNote reason={transactionUnavailableReason} /> : null}
           </div>
         </div>
       </section>
@@ -463,25 +466,30 @@ function MoonSystemsPanel({
 export function MoonActionStrip({ actions }: { actions?: MoonOverviewAction[] | undefined }) {
   if (!actions?.length) return null;
 
+  const blockedReason = actions.find((action) => action.disabledReason)?.disabledReason;
+
   return (
-    <div aria-label="Moon actions" className="grid gap-2 sm:grid-cols-5">
-      {actions.map((action) => {
-        const Icon = moonActionIcon(action.kind);
-        const disabled = Boolean(action.disabledReason || !action.onClick);
-        return (
-          <button
-            className="inline-flex min-h-10 items-center justify-center gap-2 rounded border border-cyan-200/20 bg-cyan-200/10 px-3 py-2 text-xs font-semibold text-cyan-100 transition hover:border-cyan-200/40 hover:bg-cyan-200/15 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/[0.03] disabled:text-slate-500"
-            disabled={disabled}
-            key={action.kind}
-            onClick={action.onClick}
-            title={action.disabledReason}
-            type="button"
-          >
-            <Icon aria-hidden="true" size={15} strokeWidth={1.9} />
-            <span>{action.label}</span>
-          </button>
-        );
-      })}
+    <div className="grid gap-2">
+      <div aria-label="Moon actions" className="grid gap-2 sm:grid-cols-5">
+        {actions.map((action) => {
+          const Icon = moonActionIcon(action.kind);
+          const disabled = Boolean(action.disabledReason || !action.onClick);
+          return (
+            <button
+              className="inline-flex min-h-10 items-center justify-center gap-2 rounded border border-cyan-200/20 bg-cyan-200/10 px-3 py-2 text-xs font-semibold text-cyan-100 transition hover:border-cyan-200/40 hover:bg-cyan-200/15 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/[0.03] disabled:text-slate-500"
+              disabled={disabled}
+              key={action.kind}
+              onClick={action.onClick}
+              title={action.disabledReason}
+              type="button"
+            >
+              <Icon aria-hidden="true" size={15} strokeWidth={1.9} />
+              <span>{action.label}</span>
+            </button>
+          );
+        })}
+      </div>
+      <ActionReasonNote reason={blockedReason} />
     </div>
   );
 }

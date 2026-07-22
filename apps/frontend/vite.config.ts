@@ -14,6 +14,26 @@ import {
   type MiniAppSurface,
 } from "./miniAppMetadata";
 
+// Local-dev CORS bypass: the Veydrift APIs only allow the veydrift.com
+// origins, so localhost fetches go through the dev server instead. Point
+// VITE_VEYDRIFT_API_URL at /prod-api or /test-api (see .env.development)
+// and the dev server forwards the requests server-side, where CORS does
+// not apply. Production builds never use these paths.
+const devApiProxy = {
+  "/prod-api": {
+    target: "https://api.veydrift.com",
+    changeOrigin: true,
+    headers: { origin: "https://veydrift.com" },
+    rewrite: (path: string) => path.replace(/^\/prod-api/, ""),
+  },
+  "/test-api": {
+    target: "https://api-test.veydrift.com",
+    changeOrigin: true,
+    headers: { origin: "https://test.veydrift.com" },
+    rewrite: (path: string) => path.replace(/^\/test-api/, ""),
+  },
+};
+
 export default defineConfig(({ mode }) => {
   const isTestSurface = mode === "playable" || mode === "settlement";
   const htmlEnv = miniAppSurfaceForMode(mode);
@@ -22,6 +42,12 @@ export default defineConfig(({ mode }) => {
     : process.env.VITE_VEYDRIFT_SURFACE ?? "";
 
   return {
+    preview: {
+      proxy: devApiProxy,
+    },
+    server: {
+      proxy: devApiProxy,
+    },
     build: {
       rollupOptions: {
         output: {

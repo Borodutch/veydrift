@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 import type { Coordinates, Planet, PlanetType } from "./types";
+import { haptic } from "./haptics";
+import { playSfx } from "./sfx";
 import {
   GalaxyView,
   rememberGalaxySystemPayload,
@@ -97,7 +99,7 @@ import {
   type ShipKey,
 } from "./playableMvp";
 import { activeProductionQueue } from "./productionQueueFallback";
-import { allianceContractAddress, burningChickenConfig, gameContractAddress, moonContractAddress, runtimeConfigUrl, type RuntimeConfigState } from "./runtimeConfig";
+import { allianceContractAddress, apiBaseUrlForRuntimeConfig, burningChickenConfig, gameContractAddress, moonContractAddress, runtimeConfigUrl, type RuntimeConfigState } from "./runtimeConfig";
 import {
   activeBuildingQueueResponse,
   buildingQueueItemForDisplay,
@@ -1835,6 +1837,20 @@ function useActionNoticeAutoDismiss<State extends AutoDismissableActionState>(
   setAction: ActionStateSetter<State>,
 ) {
   useEffect(() => scheduleActionNoticeAutoDismiss({ action, setAction }), [action, setAction]);
+  const previousStatus = useRef<unknown>();
+  useEffect(() => {
+    const status = (action as { status?: unknown } | null | undefined)?.status;
+    if (status !== undefined && status !== previousStatus.current) {
+      if (status === "success") {
+        playSfx("notice-success");
+        haptic("success");
+      } else if (status === "error") {
+        playSfx("notice-error");
+        haptic("error");
+      }
+    }
+    previousStatus.current = status;
+  }, [action]);
 }
 
 const transactionBusyUnavailableReason =
@@ -3717,7 +3733,7 @@ export function PlayableMvpApp({
     ]
   );
   const apiBaseUrl = useMemo(() => {
-    return runtimeConfig.status === "ready" ? runtimeConfig.config.apiUrl : undefined;
+    return runtimeConfig.status === "ready" ? apiBaseUrlForRuntimeConfig(runtimeConfig.config) : undefined;
   }, [runtimeConfig]);
   const gameWalletChain = useMemo<VeydriftWalletChain>(() => {
     return runtimeConfig.status === "ready"
@@ -4272,6 +4288,14 @@ export function PlayableMvpApp({
       onStateChange: (state) => {
         setWriteTransactionState(state);
         setTransactionActionPending(state.phase !== "idle" && state.phase !== "success" && state.phase !== "error");
+        // Success/error feedback arrives through the action-notice hook below;
+        // the gate only voices wallet/chain progress so sounds never double up.
+        if (state.phase === "pending") {
+          playSfx("tx-pending");
+        } else if (state.phase === "confirming") {
+          playSfx("tx-confirm");
+          haptic("select");
+        }
         onStateChange?.(state);
       },
       send,
@@ -5690,6 +5714,36 @@ export function PlayableMvpApp({
     refreshOnChainState,
     refreshResearchState,
     refreshShipyardState,
+  ]);
+
+  // Chime when an active production queue reaches completion.
+  useEffect(() => {
+    if (!pageStateHydrationReady) {
+      return;
+    }
+
+    const nextEventMs = nextProductionQueueCompletionEventMs([
+      activeBuildingQueue,
+      activeDefenseProductionQueue,
+      activeShipyardProductionQueue,
+      effectiveResearchState?.queue,
+    ], Date.now());
+    if (nextEventMs === undefined) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      playSfx("queue-complete");
+      haptic("complete");
+    }, Math.max(0, nextEventMs - Date.now()));
+
+    return () => window.clearTimeout(timer);
+  }, [
+    activeBuildingQueue,
+    activeDefenseProductionQueue,
+    activeShipyardProductionQueue,
+    effectiveResearchState?.queue,
+    pageStateHydrationReady,
   ]);
 
   const attackerCombatTechLevels = useMemo(
@@ -7416,6 +7470,8 @@ export function PlayableMvpApp({
       setGalaxyAction({ status: "error", label: "Wallet, game contract, or origin planet is unavailable." });
       return;
     }
+    playSfx("mission-launch");
+    haptic("select");
     const driveLevels = driveLevelsFromTechnologyLevels(shipyardState?.technologyLevels);
     const pendingLaunchOptions = ({
       cargo,
@@ -7873,6 +7929,8 @@ export function PlayableMvpApp({
   }, [account, gameContract, onChainSettlement?.homePlanetId, pendingJoinAttack, provider, runGalaxyTransaction, selectedManagedPlanet, shipyardState?.technologyLevels]);
 
   const handleNavigate = useCallback((target: Page) => {
+    playSfx("tab");
+    haptic("tick");
     setPlanetBackRoute(null);
     setPendingGalaxyMission(null);
     setPendingJoinAttack(null);
@@ -8819,7 +8877,7 @@ export function PlayableMvpApp({
     <div className="playable-starfield relative isolate min-h-dvh w-full max-w-full overflow-hidden bg-[#05070f] text-slate-100">
       {topBar}
 
-      <div className="relative z-10 mx-auto flex w-full max-w-[96rem] flex-col overflow-hidden md:h-[calc(100dvh-2.75rem)] md:flex-row">
+      <div className="relative z-10 mx-auto flex w-full max-w-[96rem] flex-col overflow-hidden md:h-[calc(100dvh-var(--topbar-h,2.75rem))] md:flex-row">
         <NavBar
           account={account}
           active={page}
@@ -8835,7 +8893,9 @@ export function PlayableMvpApp({
 
         <main className="min-w-0 max-w-full flex-1 overflow-y-auto p-3 sm:p-4 lg:p-6">
           {compactPlanetSelector}
-          {content}
+          <div className="page-enter" key={page}>
+            {content}
+          </div>
         </main>
 
         {planetSidebar}

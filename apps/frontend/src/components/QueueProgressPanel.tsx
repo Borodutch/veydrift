@@ -99,7 +99,7 @@ export function QueueProgressPanel({
   const percent = Math.round(progressFill.progress * 100);
 
   return (
-    <section className={`grid gap-3 rounded-md border ${classes.border} ${classes.background} p-3 sm:grid-cols-[64px_minmax(0,1fr)_auto] sm:items-center`}>
+    <section className={`grid gap-3 rounded-md border ${classes.border} ${classes.background} p-3 sm:grid-cols-[64px_minmax(0,1fr)_auto] sm:items-center ${!progressBar.indeterminate && percent >= 100 ? "queue-ready-pulse" : ""}`}>
       {asset ? (
         <div className="h-14 w-14 overflow-hidden rounded-md border border-white/10 bg-black/20 p-1">
           <OptimizedImage
@@ -134,7 +134,7 @@ export function QueueProgressPanel({
             <div className={`h-full w-2/3 rounded-full ${classes.fill} animate-pulse`} />
           ) : (
             <div
-              className={`h-full rounded-full ${classes.fill} transition-[width]`}
+              className={`queue-fill h-full rounded-full ${classes.fill} transition-[width]`}
               style={{ width: `${percent}%` }}
             />
           )}
@@ -154,7 +154,7 @@ export function QueueProgressPanel({
 
       {action ? (
         <button
-          className={`h-9 rounded-md border px-3 text-xs font-semibold transition disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500 ${classes.button}`}
+          className={`h-11 rounded-md border px-3 text-xs font-semibold transition disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500 sm:h-9 ${classes.button}`}
           disabled={action.disabled}
           onClick={action.onClick}
           type="button"

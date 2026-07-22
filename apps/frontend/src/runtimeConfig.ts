@@ -63,6 +63,15 @@ export function runtimeConfigUrl(apiUrl = playableApiUrl): string {
   return `${apiUrl.replace(/\/+$/, "")}/runtime-config`;
 }
 
+// The backend reports its own absolute apiUrl in runtime-config. When the
+// build-time base is a relative dev-proxy path (/prod-api, /test-api — see
+// server.proxy in vite.config.ts), keep routing through it: localhost
+// origins are not in the API's CORS allowlist, only the dev server is able
+// to reach the absolute URL.
+export function apiBaseUrlForRuntimeConfig(config: RuntimeConfig, buildTimeApiUrl = playableApiUrl): string {
+  return buildTimeApiUrl.startsWith("/") ? buildTimeApiUrl : config.apiUrl;
+}
+
 export function gameContractAddress(config: RuntimeConfig): string | undefined {
   return config.gameContractAddress ?? config.contractAddress ?? undefined;
 }
