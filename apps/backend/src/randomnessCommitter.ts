@@ -14,9 +14,9 @@ import {
   FileRandomnessCommitmentStore,
   RandomnessCommitmentWorker,
   type RandomnessCommitmentChainClient,
+  type RandomnessCommitmentInventory,
   type RandomnessCommitmentStatus,
   type RandomnessCommitmentStore,
-  type RandomnessPendingCommitment,
   type RandomnessRequestEvent
 } from "./randomness";
 
@@ -35,17 +35,14 @@ const randomnessEngineAbi = [
   },
   {
     type: "function",
-    name: "pendingCommitment",
+    name: "randomnessCommitmentInventory",
     stateMutability: "view",
     inputs: [],
-    outputs: [{ type: "bytes32" }]
-  },
-  {
-    type: "function",
-    name: "pendingCommitmentBlock",
-    stateMutability: "view",
-    inputs: [],
-    outputs: [{ type: "uint64" }]
+    outputs: [
+      { type: "bytes32[]", name: "commitments" },
+      { type: "uint64[]", name: "committedAtBlocks" },
+      { type: "uint256", name: "readyCount" }
+    ]
   },
   {
     type: "function",
@@ -75,9 +72,9 @@ const randomnessEngineAbi = [
   },
   {
     type: "function",
-    name: "commitRandomness",
+    name: "commitRandomnessBatch",
     stateMutability: "nonpayable",
-    inputs: [{ type: "bytes32", name: "commitment" }],
+    inputs: [{ type: "bytes32[]", name: "commitments" }],
     outputs: []
   },
   {
@@ -128,21 +125,20 @@ export class ViemRandomnessCommitmentChainClient implements RandomnessCommitment
     return Number(await this.publicClient.getBlockNumber());
   }
 
-  async getPendingCommitment(): Promise<RandomnessPendingCommitment> {
-    const [commitment, committedAtBlock] = await Promise.all([
-      this.publicClient.readContract({
-        abi: randomnessEngineAbi,
-        address: this.engineAddress,
-        functionName: "pendingCommitment"
-      }) as Promise<Hex>,
-      this.publicClient.readContract({
-        abi: randomnessEngineAbi,
-        address: this.engineAddress,
-        functionName: "pendingCommitmentBlock"
-      }) as Promise<bigint>
-    ]);
+  async getCommitmentInventory(): Promise<RandomnessCommitmentInventory> {
+    const [commitments, committedAtBlocks, readyCount] = (await this.publicClient.readContract({
+      abi: randomnessEngineAbi,
+      address: this.engineAddress,
+      functionName: "randomnessCommitmentInventory"
+    })) as readonly [readonly Hex[], readonly bigint[], bigint];
 
-    return { commitment, committedAtBlock: Number(committedAtBlock) };
+    return {
+      commitments: commitments.map((commitment, index) => ({
+        commitment,
+        committedAtBlock: Number(committedAtBlocks[index] ?? 0n)
+      })),
+      readyCommitments: Number(readyCount)
+    };
   }
 
   /**
@@ -160,14 +156,14 @@ export class ViemRandomnessCommitmentChainClient implements RandomnessCommitment
     return commitment;
   }
 
-  async commitRandomness(commitment: string): Promise<string> {
+  async commitRandomnessBatch(commitments: string[]): Promise<string> {
     const hash = await this.walletClient.writeContract({
       abi: randomnessEngineAbi,
       account: this.account,
       address: this.engineAddress,
       chain: this.chain,
-      functionName: "commitRandomness",
-      args: [commitment as Hex]
+      functionName: "commitRandomnessBatch",
+      args: [commitments as Hex[]]
     });
     await this.confirm(hash);
     return hash;
@@ -269,13 +265,12 @@ const consoleLogger: RandomnessCommitterLogger = {
   error: (message, error) => console.error(message, error)
 };
 
-const defaultCommitIntervalMs = 15_000;
+const defaultCommitIntervalMs = 1_000;
 const fullRandomnessRequestRescanInterval = 20;
 
 /**
- * Long-running service that drives {@link RandomnessCommitmentWorker} on an interval so a pending
- * commitment is essentially always available on-chain (otherwise attacks/combat revert with
- * NoRandomnessCommitment). Mirrors the start/stop/snapshot shape of the other backend services.
+ * Long-running service that keeps a burst inventory ready on-chain. The one-second interval is a
+ * fallback/recovery cadence; normal attacks consume from the already-ready inventory.
  */
 export class RandomnessCommitterService {
   private readonly enabled: boolean;

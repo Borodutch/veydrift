@@ -90,3 +90,34 @@ for (const contractName of ["VeydriftMetal", "VeydriftCrystal", "VeydriftDeuteri
 }
 
 console.log("Resource token storage layouts have no custom storage entries");
+
+const randomnessArtifactPath = join("out", "RandomnessEngine.sol", "RandomnessEngine.json");
+const randomnessArtifact = JSON.parse(readFileSync(randomnessArtifactPath, "utf8"));
+const randomnessStorage = randomnessArtifact.storageLayout?.storage;
+if (!Array.isArray(randomnessStorage)) {
+  throw new Error(
+    `Missing storageLayout in ${randomnessArtifactPath}. Run forge build --extra-output storageLayout.`
+  );
+}
+
+// Slots 0-5 are the live v1 proxy layout. The FIFO inventory must remain strictly appended.
+const expectedRandomnessStorage = [
+  ["nextRequestId", "0", 0],
+  ["fulfiller", "1", 0],
+  ["precommitRequired", "1", 20],
+  ["pendingCommitment", "2", 0],
+  ["pendingCommitmentBlock", "3", 0],
+  ["authorizedRequesters", "4", 0],
+  ["_requests", "5", 0],
+  ["_queuedCommitments", "6", 0],
+  ["_queuedCommitmentBlocks", "7", 0],
+  ["_queuedCommitmentHead", "8", 0],
+  ["_queuedCommitmentTail", "9", 0],
+];
+const actualRandomnessStorage = randomnessStorage.map(({label, slot, offset}) => [label, slot, offset]);
+if (JSON.stringify(actualRandomnessStorage) !== JSON.stringify(expectedRandomnessStorage)) {
+  console.error("RandomnessEngine storage layout is not the reviewed v1-prefix + FIFO append layout");
+  process.exit(1);
+}
+
+console.log("RandomnessEngine storage layout preserves the live v1 prefix and appended FIFO inventory");
