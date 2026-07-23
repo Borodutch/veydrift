@@ -3,6 +3,7 @@ import type { BuildingKey, ResearchKey } from "../playableMvp";
 import { formatUserTimestamp } from "../timestampFormat";
 import type { ChainRiftState, PendingWithdrawal, RiftResourceKey, RiftResourceState } from "../walletFlow";
 import { PageHeader, RefreshButton } from "./PageHeader";
+import { ActionReasonNote } from "./ActionReasonNote";
 import { RequirementFlairs, type RequirementFlair, type RequirementTarget } from "./RequirementFlairs";
 import { RiftSkeleton } from "./LoadingSkeletons";
 import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailableNotice";
@@ -264,7 +265,7 @@ function WithdrawalQueue({
                 Unlocks {formatUnlockDate(withdrawal.unlocksAt)}. Resources remain locked until the finish transaction confirms.
               </p>
               <button
-                className="mt-4 inline-flex h-9 w-full items-center justify-center rounded border border-cyan-300/30 bg-cyan-300/10 px-3 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
+                className="mt-4 inline-flex h-11 sm:h-9 w-full items-center justify-center rounded border border-cyan-300/30 bg-cyan-300/10 px-3 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
                 disabled={!ready || !canTransact}
                 onClick={() => onFinish(withdrawal)}
                 title={!canTransact ? transactionUnavailableReason : undefined}
@@ -316,7 +317,7 @@ function AmountControl({
         />
         <div className="grid grid-cols-2 gap-2 sm:flex">
           <button
-            className="inline-flex h-9 items-center justify-center rounded border border-white/10 bg-white/5 px-3 text-sm font-medium text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500"
+            className="inline-flex h-11 sm:h-9 items-center justify-center rounded border border-white/10 bg-white/5 px-3 text-sm font-medium text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500"
             disabled={disabled}
             onClick={onAction}
             title={disabled ? disabledReason : undefined}
@@ -326,7 +327,7 @@ function AmountControl({
           </button>
           {secondaryAction && (
             <button
-              className="inline-flex h-9 items-center justify-center rounded border border-cyan-300/30 bg-cyan-300/10 px-3 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
+              className="inline-flex h-11 sm:h-9 items-center justify-center rounded border border-cyan-300/30 bg-cyan-300/10 px-3 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
               disabled={secondaryAction.disabled}
               onClick={secondaryAction.onClick}
               title={secondaryAction.disabled ? secondaryAction.disabledReason : undefined}
@@ -336,6 +337,10 @@ function AmountControl({
             </button>
           )}
         </div>
+        <ActionReasonNote reason={disabled ? disabledReason : undefined} />
+        {!disabled && secondaryAction?.disabled ? (
+          <ActionReasonNote reason={secondaryAction.disabledReason} />
+        ) : null}
       </div>
     </div>
   );
@@ -357,7 +362,7 @@ function Notice({ children, tone }: { children: string; tone: "danger" | "info" 
       ? "border-lime-300/20 bg-lime-300/10 text-lime-100"
       : "border-cyan-300/20 bg-cyan-300/10 text-cyan-100";
   return (
-    <div className={`rounded-lg border px-4 py-3 text-sm leading-6 ${toneClass}`}>
+    <div className={`notice-enter rounded-lg border px-4 py-3 text-sm leading-6 ${toneClass}`}>
       {children}
     </div>
   );

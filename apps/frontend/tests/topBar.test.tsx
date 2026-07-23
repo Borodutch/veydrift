@@ -8,15 +8,15 @@ describe("TopBar", () => {
     const resourceRow = elementNodes(topBar).find(
       (node) =>
         typeof node.props?.className === "string" &&
-        node.props.className.includes("grid-cols-[repeat(3,minmax(0,1fr))_minmax(4.5rem,1.25fr)_repeat(3,1.75rem)]")
+        node.props.className.includes("grid-cols-[repeat(3,minmax(0,1fr))_minmax(4.5rem,1.25fr)_repeat(4,2.5rem)]")
     );
     const supportLink = linkWithLabel(topBar, "Telegram support");
 
     expect(resourceRow?.props?.className).toContain("sm:flex-wrap");
     expect(resourceRow?.props?.className).toContain("gap-0.5");
-    expect(resourceRow?.props?.className).toContain("_repeat(3,1.75rem)]");
+    expect(resourceRow?.props?.className).toContain("_repeat(4,2.5rem)]");
     expect(buttonsWithText(topBar, "Collect")).toHaveLength(0);
-    expect(supportLink?.props?.className).toContain("h-7 w-7");
+    expect(supportLink?.props?.className).toContain("h-10 w-10");
     expect(supportLink?.props?.className).toContain("sm:hidden");
   });
 
@@ -55,7 +55,7 @@ describe("TopBar", () => {
         && typeof item.props?.["aria-label"] === "string"
         && item.props["aria-label"].includes("Energy powers mines")
     );
-    const energyDetails = elementNodes(topBar).find((item) => item.type === "details");
+    const energyDetails = energyDetailsNode(topBar);
     const panelText = visibleText(energyDetails);
 
     expect(energyInfo?.props?.title).toBe("Resources explanation");
@@ -91,7 +91,7 @@ describe("TopBar", () => {
         && typeof item.props?.["aria-label"] === "string"
         && item.props["aria-label"].includes("Crawler production details are syncing")
     );
-    const panelText = visibleText(elementNodes(topBar).find((item) => item.type === "details"));
+    const panelText = visibleText(energyDetailsNode(topBar));
 
     expect(energyInfo?.props?.["aria-label"]).toContain("Crawler production details are syncing from the backend production model.");
     expect(panelText).toContain("Crawler boost Syncing");
@@ -106,7 +106,7 @@ describe("TopBar", () => {
         && typeof item.props?.["aria-label"] === "string"
         && item.props["aria-label"].includes("Energy powers mines")
     );
-    const energyDetails = elementNodes(topBar).find((item) => item.type === "details");
+    const energyDetails = energyDetailsNode(topBar);
 
     expect(energyInfo?.props?.["aria-label"]).toContain("Context: Selected player planet.");
     expect(energyInfo?.props?.["aria-label"]).not.toContain("8:490:11");
@@ -143,7 +143,7 @@ describe("TopBar", () => {
         && typeof item.props?.["aria-label"] === "string"
         && item.props["aria-label"].includes("Crawler boost")
     );
-    const panelText = visibleText(elementNodes(topBar).find((item) => item.type === "details"));
+    const panelText = visibleText(energyDetailsNode(topBar));
 
     expect(energyInfo?.props?.["aria-label"]).toContain("Crawler boost +0%");
     expect(panelText).toContain("Crawler boost +0%");
@@ -162,7 +162,7 @@ describe("TopBar", () => {
         productionIncreasePerHour: { metal: 18, crystal: 7, deuterium: 3 },
       },
     });
-    const panelText = visibleText(elementNodes(topBar).find((item) => item.type === "details"));
+    const panelText = visibleText(energyDetailsNode(topBar));
 
     expect(panelText).toContain("Crawler boost +0.24%");
     expect(panelText).toContain("Crawlers 12 / 12 effective");
@@ -183,7 +183,7 @@ describe("TopBar", () => {
         productionIncreasePerHour: { metal: 8, crystal: 3, deuterium: 1 },
       },
     });
-    const panelText = visibleText(elementNodes(topBar).find((item) => item.type === "details"));
+    const panelText = visibleText(energyDetailsNode(topBar));
 
     expect(panelText).toContain("Crawler boost +0.48%");
     expect(panelText).toContain("Crawlers 24 / 100 effective");
@@ -208,7 +208,7 @@ describe("TopBar", () => {
       expect(row.props.className).not.toContain("items-baseline");
     }
 
-    const energyDetails = nodes.find((node) => node.type === "details");
+    const energyDetails = energyDetailsNode(topBar);
     expect(energyDetails?.props?.className).toContain("ml-0.5");
     expect(energyDetails?.props?.className).toContain("sm:ml-1");
   });
@@ -242,7 +242,7 @@ describe("TopBar", () => {
     const topBar = renderTopBar({
       energy: { produced: 160, required: 120, scaleBps: 10_000 },
     });
-    const energyDetails = elementNodes(topBar).find((item) => item.type === "details");
+    const energyDetails = energyDetailsNode(topBar);
     const panelText = visibleText(energyDetails);
 
     expect(panelText).toContain("Balance 40");
@@ -312,6 +312,14 @@ function linksWithLabel(node: ComponentChildren, label: string): VNode[] {
 
 function buttonsWithText(node: ComponentChildren, text: string): VNode[] {
   return elementNodes(node).filter((item) => item.type === "button" && visibleText(item).includes(text));
+}
+
+function energyDetailsNode(topBar: ComponentChildren): VNode | undefined {
+  return elementNodes(topBar).find(
+    (item) => item.type === "details"
+      && typeof item.props?.className === "string"
+      && item.props.className.includes("ml-0.5")
+  );
 }
 
 function elementNodes(node: ComponentChildren): VNode[] {

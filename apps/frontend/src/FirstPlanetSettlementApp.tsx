@@ -1,10 +1,10 @@
 import type { ComponentChildren } from "preact";
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { Copy, FileText, Link, Share2, TicketCheck } from "lucide-preact";
-import { RetroCdBoxHero } from "./components/RetroCdBoxHero";
+import { ComingSoonApp } from "./ComingSoonApp";
 import { TelegramIcon } from "./components/TelegramIcon";
 import { PlayableMvpApp } from "./PlayableMvpApp";
-import { gameContractAddress, playableApiUrl, runtimeConfigUrl, type RuntimeConfig } from "./runtimeConfig";
+import { apiBaseUrlForRuntimeConfig, gameContractAddress, playableApiUrl, runtimeConfigUrl, type RuntimeConfig } from "./runtimeConfig";
 import {
   readReferralStorage,
   referralCodeForLanding,
@@ -15,6 +15,8 @@ import {
 import { preSettlementMode, type PlanetState, type WalletState } from "./settlementScreen";
 import { TELEGRAM_SUPPORT_URL, WHITEPAPER_URL } from "./supportLinks";
 import { fetchReferralShareImage, shareReferralOnX } from "./referralShare";
+import { haptic } from "./haptics";
+import { playSfx } from "./sfx";
 import {
   detectFarcasterMiniApp,
   farcasterMiniAppWalletSupport,
@@ -369,6 +371,40 @@ export function FirstPlanetSettlementApp() {
   const hasOverview = planet.kind === "success" || planet.kind === "already-settled";
   const settlementConfig = settlementConfigState.config;
   const requiredChain = defaultVeydriftChainForLocation();
+  const [successHoldElapsed, setSuccessHoldElapsed] = useState(false);
+  const previousPlanetKind = useRef<PlanetState["kind"]>();
+  const previousWalletKind = useRef<WalletState["kind"]>();
+
+  useEffect(() => {
+    const previous = previousPlanetKind.current;
+    previousPlanetKind.current = planet.kind;
+    if (previous === undefined || previous === planet.kind) return;
+    if (planet.kind === "success") {
+      playSfx("settle-success");
+      haptic("success");
+    } else if (planet.kind === "error" || planet.kind === "rejected") {
+      playSfx("error");
+      haptic("error");
+    }
+  }, [planet.kind]);
+
+  useEffect(() => {
+    const previous = previousWalletKind.current;
+    previousWalletKind.current = wallet.kind;
+    if (previous !== undefined && previous !== wallet.kind && wallet.kind === "connected") {
+      playSfx("connect");
+      haptic("select");
+    }
+  }, [wallet.kind]);
+
+  useEffect(() => {
+    if (planet.kind !== "success") {
+      setSuccessHoldElapsed(false);
+      return;
+    }
+    const timer = setTimeout(() => setSuccessHoldElapsed(true), 2_600);
+    return () => clearTimeout(timer);
+  }, [planet.kind]);
 
   useEffect(() => {
     writeReferralStorage(REFERRAL_CODE_STORAGE_KEY, referralCodeInput.trim());
@@ -470,7 +506,7 @@ export function FirstPlanetSettlementApp() {
           : undefined;
         setSettlementConfigState({
           status: "ready",
-          apiUrl: runtimeConfig.apiUrl,
+          apiUrl: apiBaseUrlForRuntimeConfig(runtimeConfig),
           config: address ? {
             address,
             ...(legacyAddress ? { legacyAddress } : {}),
@@ -1193,6 +1229,8 @@ export function FirstPlanetSettlementApp() {
         return;
       }
 
+      playSfx("settle-launch");
+      haptic("select");
       setPlanet({
         kind: "pending",
         label: transactionAwaitingWalletLabel(label)
@@ -1206,6 +1244,7 @@ export function FirstPlanetSettlementApp() {
           settlementConfig,
           settlementTransactionOptions(funding, referral)
         );
+        playSfx("tx-confirm");
         setPlanet({
           kind: "pending",
           label: transactionConfirmingLabel(label, txHash),
@@ -1421,7 +1460,9 @@ export function FirstPlanetSettlementApp() {
     };
   }
 
-  if (hasOverview) {
+  const holdSuccessReveal = planet.kind === "success" && !successHoldElapsed;
+
+  if (hasOverview && !holdSuccessReveal) {
     return (
       <PlayableMvpApp
         provider={provider}
@@ -1445,29 +1486,35 @@ export function FirstPlanetSettlementApp() {
   const mode = preSettlementMode(wallet, planet);
 
   return (
-    <RetroCdBoxHero ariaLabel="First planet settlement" support={<SettlementSupportLinks />}>
-      <ReferralCodeField
-        disabled={planet.kind === "pending"}
-        onChange={setReferralCodeInput}
-        validation={referralValidation}
-        value={referralCodeInput}
-      />
-      <FlowBody
-        mode={mode}
-        referralCodeInput={referralCodeInput}
-        referralValidation={referralValidation}
-        onConnect={connectWallet}
-        onSettle={settlePlanet}
-        onSwitchNetwork={switchNetwork}
-        planet={planet}
-        settlementFunding={settlementFunding}
-        settlementReady={settlementContractConfigured(settlementConfig)}
-        wallet={wallet}
-        networkSwitchPending={networkSwitchPending}
-        miniAppMode={miniAppMode}
-        requiredChain={requiredChain}
-      />
-    </RetroCdBoxHero>
+    <ComingSoonApp
+      heroViewSignal={planet.kind === "success" ? "open" : undefined}
+      hero={(
+        <>
+          <ReferralCodeField
+            disabled={planet.kind === "pending"}
+            onChange={setReferralCodeInput}
+            validation={referralValidation}
+            value={referralCodeInput}
+          />
+          <FlowBody
+            mode={mode}
+            referralCodeInput={referralCodeInput}
+            referralValidation={referralValidation}
+            onConnect={connectWallet}
+            onSettle={settlePlanet}
+            onSwitchNetwork={switchNetwork}
+            planet={planet}
+            settlementFunding={settlementFunding}
+            settlementReady={settlementContractConfigured(settlementConfig)}
+            wallet={wallet}
+            networkSwitchPending={networkSwitchPending}
+            miniAppMode={miniAppMode}
+            requiredChain={requiredChain}
+          />
+        </>
+      )}
+      heroSupport={<SettlementSupportLinks />}
+    />
   );
 }
 
@@ -1644,7 +1691,11 @@ function ReferralProgramPanel({
               <div className="referral-copy-actions">
                 <button
                   className="referral-copy-button"
-                  onClick={() => void navigator.clipboard?.writeText(invite.code)}
+                  onClick={() => {
+                    playSfx("copy");
+                    haptic("tick");
+                    void navigator.clipboard?.writeText(invite.code);
+                  }}
                   type="button"
                 >
                   <Copy aria-hidden="true" size={14} />
@@ -1652,7 +1703,11 @@ function ReferralProgramPanel({
                 </button>
                 <button
                   className="referral-copy-button"
-                  onClick={() => void navigator.clipboard?.writeText(invite.link)}
+                  onClick={() => {
+                    playSfx("copy");
+                    haptic("tick");
+                    void navigator.clipboard?.writeText(invite.link);
+                  }}
                   type="button"
                 >
                   <Link aria-hidden="true" size={14} />
@@ -1885,7 +1940,7 @@ function FlowBody({
 }) {
   const networkName = requiredChain.chainName;
   if (mode === "resolving") {
-    return <StateMessage tone="scanning" title="Reading wallet link" body="Checking wallet signal and first-planet settlement state." />;
+    return <StateMessage tone="scanning" title="Reading wallet link" body="Checking wallet signal and first-planet settlement state." visual={<SettlementScanVisual label="SETTLEMENT SCAN" />} />;
   }
 
   if (mode === "no-wallet") {
@@ -1956,6 +2011,7 @@ function FlowBody({
         title="Colony drop in progress"
         body={planet.label ?? (planet.txHash ? `Transaction beacon: ${planet.txHash}` : "Confirm the settlement launch in your wallet.")}
         tone="scanning"
+        visual={<SettlementScanVisual label="COLONY DROP" />}
       />
     );
   }
@@ -1966,6 +2022,7 @@ function FlowBody({
         title="Planetfall confirmed"
         body="First-planet settlement is confirmed. Opening planetary overview."
         tone="ready"
+        action={<SettlementBurst />}
       />
     );
   }
@@ -2211,20 +2268,71 @@ function StateMessage({
   action,
   body,
   title,
-  tone = "ready"
+  tone = "ready",
+  visual
 }: {
   action?: ComponentChildren;
   body: string;
   title: string;
   tone?: "ready" | "scanning" | "warning";
+  visual?: ComponentChildren;
 }) {
   return (
-    <div className={`settlement-state settlement-state-${tone}`}>
+    <div className={`settlement-state settlement-state-${tone} ${tone === "warning" ? "state-shake" : "state-enter"}`}>
       <div className="settlement-state-copy">
         <h1>{title}</h1>
         <p>{body}</p>
       </div>
+      {visual}
       {action ? <div className="settlement-action">{action}</div> : null}
+    </div>
+  );
+}
+
+function SettlementScanVisual({ label }: { label: string }) {
+  return (
+    <div aria-hidden="true" className="settle-scanner">
+      <img alt="" className="settle-scanner-planet" src="/assets/game/style-pass/generated/planets/crystal-violet.webp" />
+      <span className="settle-scanner-orbit settle-scanner-orbit-a" />
+      <span className="settle-scanner-orbit settle-scanner-orbit-b" />
+      <span className="settle-scanner-reticle scanner-reticle-sweep" />
+      <span className="settle-scanner-site settle-scanner-site-a scanner-site-ping" />
+      <span className="settle-scanner-site settle-scanner-site-b scanner-site-ping" />
+      <span className="settle-scanner-site settle-scanner-site-c scanner-site-ping" />
+      <span className="settle-scanner-hud">{label}</span>
+    </div>
+  );
+}
+
+const SETTLE_BURST_COLORS = ["#80f1ff", "#f6b35c", "#8cffc8", "#c4b5fd"] as const;
+
+function SettlementBurst() {
+  const particles = useMemo(() => (
+    Array.from({ length: 16 }, (_, index) => ({
+      angle: (index / 16) * 360 + (index % 3) * 7,
+      color: SETTLE_BURST_COLORS[index % SETTLE_BURST_COLORS.length],
+      delay: (index % 4) * 45,
+      distance: 96 + (index % 5) * 28,
+      duration: 760 + (index % 4) * 140,
+      size: 5 + (index % 3) * 3,
+    }))
+  ), []);
+
+  return (
+    <div className="settle-burst" aria-hidden="true">
+      {particles.map((particle) => (
+        <span
+          key={particle.angle}
+          style={{
+            "--burst-angle": `${particle.angle}deg`,
+            "--burst-color": particle.color,
+            "--burst-delay": `${particle.delay}ms`,
+            "--burst-distance": `${particle.distance}px`,
+            "--burst-duration": `${particle.duration}ms`,
+            "--burst-size": `${particle.size}px`,
+          }}
+        />
+      ))}
     </div>
   );
 }

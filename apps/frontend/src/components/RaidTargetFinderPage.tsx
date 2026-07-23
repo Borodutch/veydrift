@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "preact/hooks";
 import { AlertTriangle, ArrowDown, ArrowUp, Crosshair, Recycle, ShieldAlert, Swords } from "lucide-preact";
+import { ActionReasonNote } from "./ActionReasonNote";
 import { planetImageForType } from "../data/mockUniverse";
 import { formatDurationUntil } from "../durationFormat";
 import { activeMissionsByPlanetId, planetMissionSubtext } from "../planetMissionSubtext";
@@ -342,7 +343,7 @@ function ModeButton({
   return (
     <button
       aria-pressed={active}
-      className={`h-9 rounded border px-3 text-xs font-semibold transition ${
+      className={`h-11 rounded border px-3 text-xs font-semibold transition sm:h-9 ${
         active
           ? "border-signal/60 bg-signal/10 text-signal"
           : "border-white/10 bg-white/5 text-slate-300 hover:bg-white/10"
@@ -492,7 +493,7 @@ function FilterToggle({
   return (
     <button
       aria-pressed={active}
-      className={`h-9 rounded border px-3 text-xs font-semibold transition ${
+      className={`h-11 rounded border px-3 text-xs font-semibold transition sm:h-9 ${
         active
           ? "border-cyan-300/60 bg-cyan-300/10 text-cyan-100"
           : "border-white/10 bg-white/5 text-slate-300 hover:bg-white/10"
@@ -520,7 +521,7 @@ function NumberFilter({
     <label className="flex h-9 items-center gap-2 rounded border border-white/15 bg-[#070913] px-2">
       <span className="text-[11px] font-medium uppercase text-slate-500">{label}</span>
       <input
-        className="h-7 w-24 rounded border border-white/10 bg-[#101624] px-2 text-sm font-semibold text-white outline-none [color-scheme:dark] focus:border-signal/50"
+        className="h-10 w-24 rounded border border-white/10 bg-[#101624] px-2 text-sm font-semibold text-white outline-none [color-scheme:dark] focus:border-signal/50 sm:h-7"
         inputMode="numeric"
         onInput={(event) => {
           const raw = (event.currentTarget as HTMLInputElement).value.replace(/[^0-9]/g, "");
@@ -534,6 +535,49 @@ function NumberFilter({
   );
 }
 
+function MobileSortControls<K extends string>({
+  columns,
+  id,
+  onSort,
+  sort,
+}: {
+  columns: ReadonlyArray<{ key: K; label: string }>;
+  id: string;
+  onSort: (key: K) => void;
+  sort: { direction: "asc" | "desc"; key: K };
+}) {
+  return (
+    <div className="flex items-center gap-2 border-b border-white/10 px-2 py-2 sm:hidden">
+      <label className="shrink-0 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500" htmlFor={id}>
+        Sort
+      </label>
+      <select
+        className="h-10 min-w-0 flex-1 rounded border border-white/10 bg-[#0d1422] px-2 text-xs font-semibold text-slate-200"
+        id={id}
+        onChange={(event) => {
+          const key = event.currentTarget.value as K;
+          if (key !== sort.key) onSort(key);
+        }}
+        value={sort.key}
+      >
+        {columns.map((column) => (
+          <option key={column.key} value={column.key}>{column.label}</option>
+        ))}
+      </select>
+      <button
+        aria-label={`Sort ${sort.direction === "asc" ? "descending" : "ascending"}`}
+        className="grid h-10 w-10 shrink-0 place-items-center rounded border border-white/10 bg-white/[0.04] text-slate-200 transition hover:bg-white/10"
+        onClick={() => onSort(sort.key)}
+        type="button"
+      >
+        {sort.direction === "asc"
+          ? <ArrowUp aria-hidden="true" size={13} />
+          : <ArrowDown aria-hidden="true" size={13} />}
+      </button>
+    </div>
+  );
+}
+
 function RaidTargetTableHeader({
   onSort,
   sort,
@@ -542,31 +586,34 @@ function RaidTargetTableHeader({
   sort: RaidTargetSort;
 }) {
   return (
-    <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 border-b border-white/10 px-2 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500 sm:grid-cols-[minmax(0,1fr)_64px_96px_88px_auto] sm:px-3">
-      <span>Target</span>
-      {sortColumns.map((column) => (
-        <button
-          aria-label={`Sort by ${column.label}`}
-          className={`hidden items-center justify-end gap-1 text-right uppercase tracking-[0.12em] transition hover:text-cyan-100 sm:flex ${
-            sort.key === column.key ? "text-cyan-100" : "text-slate-500"
-          }`}
-          key={column.key}
-          onClick={() => onSort(column.key)}
-          title={column.hint}
-          type="button"
-        >
-          {column.label}
-          {sort.key === column.key ? (
-            sort.direction === "asc" ? (
-              <ArrowUp aria-hidden="true" size={11} />
-            ) : (
-              <ArrowDown aria-hidden="true" size={11} />
-            )
-          ) : null}
-        </button>
-      ))}
-      <span className="text-right">Action</span>
-    </div>
+    <>
+      <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 border-b border-white/10 px-2 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500 sm:grid-cols-[minmax(0,1fr)_64px_96px_88px_auto] sm:px-3">
+        <span>Target</span>
+        {sortColumns.map((column) => (
+          <button
+            aria-label={`Sort by ${column.label}`}
+            className={`hidden items-center justify-end gap-1 text-right uppercase tracking-[0.12em] transition hover:text-cyan-100 sm:flex ${
+              sort.key === column.key ? "text-cyan-100" : "text-slate-500"
+            }`}
+            key={column.key}
+            onClick={() => onSort(column.key)}
+            title={column.hint}
+            type="button"
+          >
+            {column.label}
+            {sort.key === column.key ? (
+              sort.direction === "asc" ? (
+                <ArrowUp aria-hidden="true" size={11} />
+              ) : (
+                <ArrowDown aria-hidden="true" size={11} />
+              )
+            ) : null}
+          </button>
+        ))}
+        <span className="text-right">Action</span>
+      </div>
+      <MobileSortControls columns={sortColumns} id="raid-target-sort" onSort={onSort} sort={sort} />
+    </>
   );
 }
 
@@ -578,31 +625,34 @@ function DebrisTargetTableHeader({
   sort: DebrisTargetSort;
 }) {
   return (
-    <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 border-b border-white/10 px-2 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500 sm:grid-cols-[minmax(0,1fr)_64px_88px_88px_88px_72px_72px_auto] sm:px-3">
-      <span>Debris field</span>
-      {debrisSortColumns.map((column) => (
-        <button
-          aria-label={`Sort by ${column.label}`}
-          className={`hidden items-center justify-end gap-1 text-right uppercase tracking-[0.12em] transition hover:text-cyan-100 sm:flex ${
-            sort.key === column.key ? "text-cyan-100" : "text-slate-500"
-          }`}
-          key={column.key}
-          onClick={() => onSort(column.key)}
-          title={column.hint}
-          type="button"
-        >
-          {column.label}
-          {sort.key === column.key ? (
-            sort.direction === "asc" ? (
-              <ArrowUp aria-hidden="true" size={11} />
-            ) : (
-              <ArrowDown aria-hidden="true" size={11} />
-            )
-          ) : null}
-        </button>
-      ))}
-      <span className="text-right">Action</span>
-    </div>
+    <>
+      <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 border-b border-white/10 px-2 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500 sm:grid-cols-[minmax(0,1fr)_64px_88px_88px_88px_72px_72px_auto] sm:px-3">
+        <span>Debris field</span>
+        {debrisSortColumns.map((column) => (
+          <button
+            aria-label={`Sort by ${column.label}`}
+            className={`hidden items-center justify-end gap-1 text-right uppercase tracking-[0.12em] transition hover:text-cyan-100 sm:flex ${
+              sort.key === column.key ? "text-cyan-100" : "text-slate-500"
+            }`}
+            key={column.key}
+            onClick={() => onSort(column.key)}
+            title={column.hint}
+            type="button"
+          >
+            {column.label}
+            {sort.key === column.key ? (
+              sort.direction === "asc" ? (
+                <ArrowUp aria-hidden="true" size={11} />
+              ) : (
+                <ArrowDown aria-hidden="true" size={11} />
+              )
+            ) : null}
+          </button>
+        ))}
+        <span className="text-right">Action</span>
+      </div>
+      <MobileSortControls columns={debrisSortColumns} id="debris-target-sort" onSort={onSort} sort={sort} />
+    </>
   );
 }
 
@@ -694,7 +744,7 @@ export function DebrisTargetRow({
       <div className="flex shrink-0 flex-col items-end gap-1 self-start">
         {action ? (
           <button
-            className="inline-flex h-7 shrink-0 items-center gap-1 rounded border border-amber-300/25 px-2 text-xs font-semibold text-amber-100 transition hover:bg-amber-300/10 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/[0.03] disabled:text-slate-500"
+            className="inline-flex h-10 shrink-0 items-center gap-1 rounded border border-amber-300/25 px-2 text-xs font-semibold text-amber-100 transition hover:bg-amber-300/10 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/[0.03] disabled:text-slate-500 sm:h-7"
             disabled={Boolean(action.disabledReason) || !onHarvest}
             onClick={() => onHarvest?.(target)}
             title={action.disabledReason ?? "Harvest this debris field"}
@@ -703,8 +753,9 @@ export function DebrisTargetRow({
             <Recycle aria-hidden="true" size={12} /> {action.label}
           </button>
         ) : null}
+        <ActionReasonNote reason={action?.disabledReason} />
         <button
-          className="inline-flex h-7 shrink-0 items-center gap-1 rounded border border-signal/25 px-2 text-xs font-medium text-signal transition hover:bg-signal/10 disabled:cursor-default disabled:opacity-50"
+          className="inline-flex h-10 shrink-0 items-center gap-1 rounded border border-signal/25 px-2 text-xs font-medium text-signal transition hover:bg-signal/10 disabled:cursor-default disabled:opacity-50 sm:h-7"
           disabled={!onSelectPlanet}
           onClick={() => onSelectPlanet?.(target.coordinates)}
           type="button"
@@ -880,7 +931,7 @@ export function RaidTargetRow({
       <div className="row-span-2 flex shrink-0 flex-col items-end gap-1 self-start sm:row-span-1">
         {attackAction ? (
           <button
-            className="inline-flex h-7 shrink-0 items-center gap-1 rounded border border-rose-300/25 px-2 text-xs font-semibold text-rose-100 transition hover:bg-rose-300/10 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/[0.03] disabled:text-slate-500"
+            className="inline-flex h-10 shrink-0 items-center gap-1 rounded border border-rose-300/25 px-2 text-xs font-semibold text-rose-100 transition hover:bg-rose-300/10 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/[0.03] disabled:text-slate-500 sm:h-7"
             disabled={Boolean(attackAction.disabledReason) || !onAttackTarget}
             onClick={() => onAttackTarget?.(target)}
             title={attackAction.disabledReason ?? "Attack this planet"}
@@ -889,8 +940,9 @@ export function RaidTargetRow({
             <Swords aria-hidden="true" size={12} /> {attackAction.label}
           </button>
         ) : null}
+        <ActionReasonNote reason={attackAction?.disabledReason} />
         <button
-          className="inline-flex h-7 shrink-0 items-center gap-1 rounded border border-signal/25 px-2 text-xs font-medium text-signal transition hover:bg-signal/10 disabled:cursor-default disabled:opacity-50"
+          className="inline-flex h-10 shrink-0 items-center gap-1 rounded border border-signal/25 px-2 text-xs font-medium text-signal transition hover:bg-signal/10 disabled:cursor-default disabled:opacity-50 sm:h-7"
           disabled={!onSelectPlanet}
           onClick={() => onSelectPlanet?.(target.coordinates)}
           type="button"

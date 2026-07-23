@@ -1,6 +1,7 @@
 import type { ComponentChildren } from "preact";
 import { useMemo, useState } from "preact/hooks";
 import type { Coordinates, DebrisField, Planet, PublicStationedDefender } from "../types";
+import { ActionReasonNote } from "./ActionReasonNote";
 import {
   DEFAULT_MISSION_SPEED_PERCENT,
   MISSION_SPEED_OPTIONS,
@@ -457,7 +458,7 @@ export function MissionCreationPage({
       <PageHeader
         actions={(
           <button
-            className="rounded-md border border-white/15 bg-white/8 px-3 py-1.5 text-sm text-slate-300 transition-colors hover:bg-white/15 hover:text-white"
+            className="rounded-md border border-white/15 bg-white/8 px-4 py-2.5 text-sm text-slate-300 transition-colors hover:bg-white/15 hover:text-white sm:px-3 sm:py-1.5"
             onClick={onBack}
             type="button"
           >
@@ -598,7 +599,7 @@ export function MissionCreationPage({
                 {MISSION_SPEED_OPTIONS.map((speed) => (
                   <button
                     aria-pressed={speedPercent === speed}
-                    className={`h-8 rounded border px-2 text-xs font-semibold transition ${
+                    className={`h-10 rounded border px-2 text-xs font-semibold transition sm:h-8 ${
                       speedPercent === speed
                         ? "border-signal/45 bg-signal/15 text-signal"
                         : "border-white/10 bg-white/[0.03] text-slate-400 hover:border-white/20 hover:text-white"
@@ -628,7 +629,7 @@ export function MissionCreationPage({
                 {DEFENSE_HOLD_HOUR_OPTIONS.map((hours) => (
                   <button
                     aria-pressed={holdHours === hours}
-                    className={`h-8 rounded border px-2 text-xs font-semibold transition ${
+                    className={`h-10 rounded border px-2 text-xs font-semibold transition sm:h-8 ${
                       holdHours === hours
                         ? "border-violet-300/45 bg-violet-300/15 text-violet-200"
                         : "border-white/10 bg-white/[0.03] text-slate-400 hover:border-white/20 hover:text-white"
@@ -758,7 +759,7 @@ function BodySelectionRow({
     <div className="grid gap-2 sm:grid-cols-2">
       <button
         aria-pressed={!value}
-        className={`h-9 rounded border px-3 text-xs font-semibold transition ${
+        className={`h-11 rounded border px-3 text-xs font-semibold transition sm:h-9 ${
           !value
             ? "border-signal/45 bg-signal/15 text-signal"
             : "border-white/10 bg-white/[0.03] text-slate-400 hover:border-white/20 hover:text-white"
@@ -770,7 +771,7 @@ function BodySelectionRow({
       </button>
       <button
         aria-pressed={value}
-        className={`h-9 rounded border px-3 text-xs font-semibold transition ${
+        className={`h-11 rounded border px-3 text-xs font-semibold transition sm:h-9 ${
           value
             ? "border-signal/45 bg-signal/15 text-signal"
             : "border-white/10 bg-white/[0.03] text-slate-400 hover:border-white/20 hover:text-white disabled:cursor-not-allowed disabled:opacity-55"
@@ -782,6 +783,11 @@ function BodySelectionRow({
       >
         {moonLabel}
       </button>
+      {!moonAvailable ? (
+        <div className="sm:col-span-2">
+          <ActionReasonNote reason={`${moonLabel} unavailable for this route.`} />
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1367,10 +1373,10 @@ export function ShipQuantityRow({
           <span className="block text-xs text-slate-500">Fleet unit</span>
         </span>
       </span>
-      <span className="grid grid-cols-[2rem_minmax(0,1fr)_auto_2rem] items-center gap-1">
+      <span className="grid grid-cols-[2.75rem_minmax(0,1fr)_auto_2.75rem] items-center gap-1 sm:grid-cols-[2rem_minmax(0,1fr)_auto_2rem]">
         <button
           aria-label={`Decrease ${ship.label}`}
-          className="h-9 rounded border border-white/10 bg-white/[0.03] text-sm font-semibold text-slate-300 transition hover:border-white/20 hover:text-white disabled:cursor-not-allowed disabled:text-slate-600"
+          className="h-11 rounded border border-white/10 bg-white/[0.03] text-sm font-semibold text-slate-300 transition hover:border-white/20 hover:text-white disabled:cursor-not-allowed disabled:text-slate-600 sm:h-9"
           disabled={value <= 0}
           onClick={() => onChange(value - 1)}
           type="button"
@@ -1390,7 +1396,7 @@ export function ShipQuantityRow({
         <span className="whitespace-nowrap text-xs tabular-nums text-slate-500">/ {owned.toLocaleString()}</span>
         <button
           aria-label={`Increase ${ship.label}`}
-          className="h-9 rounded border border-white/10 bg-white/[0.03] text-sm font-semibold text-slate-300 transition hover:border-white/20 hover:text-white disabled:cursor-not-allowed disabled:text-slate-600"
+          className="h-11 rounded border border-white/10 bg-white/[0.03] text-sm font-semibold text-slate-300 transition hover:border-white/20 hover:text-white disabled:cursor-not-allowed disabled:text-slate-600 sm:h-9"
           disabled={value >= owned}
           onClick={() => onChange(value + 1)}
           type="button"
@@ -2010,15 +2016,15 @@ export function LootRatioControls({
     <div className="grid gap-2">
       <div className="flex items-center justify-between gap-2">
         <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">Loot ratio</span>
-        <span className="flex items-center gap-2 text-xs text-slate-400">
+        <label className="flex cursor-pointer items-center gap-2 text-xs text-slate-400">
           Greedy
           <input
             checked={greedyLootEnabled}
-            className="h-4 w-4 accent-signal [color-scheme:dark]"
+            className="h-5 w-5 accent-signal [color-scheme:dark]"
             onChange={(event) => onGreedyChange((event.currentTarget as HTMLInputElement).checked)}
             type="checkbox"
           />
-        </span>
+        </label>
       </div>
       {greedyLootEnabled ? (
         <p className="rounded border border-white/10 bg-black/15 px-3 py-2 text-xs text-slate-400">
@@ -2052,7 +2058,7 @@ export function LootRatioControls({
               Total {lootRatioTotal}% (must equal {LOOT_RATIO_TOTAL_PERCENT}%). Unfilled shares roll over metal, crystal, then deuterium.
             </span>
             <button
-              className="rounded border border-white/10 bg-white/[0.03] px-2 py-1 font-semibold text-slate-400 transition hover:border-white/20 hover:text-white"
+              className="rounded border border-white/10 bg-white/[0.03] px-3 py-2 font-semibold text-slate-400 transition hover:border-white/20 hover:text-white sm:px-2 sm:py-1"
               onClick={onResetEven}
               type="button"
             >

@@ -228,10 +228,10 @@ export function InspectInfoBlock({
   value?: string | undefined;
 }) {
   return (
-    <p className="min-w-0">
+    <div className="min-w-0">
       <span className="block text-xs uppercase tracking-normal text-slate-500">{label}</span>
       {children ?? <span className="mt-1 block break-words text-sm font-semibold text-slate-200">{value}</span>}
-    </p>
+    </div>
   );
 }
 

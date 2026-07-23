@@ -161,16 +161,47 @@ describe("walletFlow", () => {
   });
 
   test("selects Veydrift wallet chain from host and runtime chain id", () => {
-    expect(defaultVeydriftChainForLocation({ hostname: "veydrift.com" })).toBe(BASE_MAINNET);
-    expect(defaultVeydriftChainForLocation({ hostname: "www.veydrift.com" })).toBe(BASE_MAINNET);
-    expect(defaultVeydriftChainForLocation({ hostname: "test.veydrift.com" })).toBe(BASE_SEPOLIA);
-    expect(defaultVeydriftChainForLocation({ hostname: "localhost" })).toBe(BASE_SEPOLIA);
-    expect(veydriftChainForChainId(BASE_MAINNET.chainId)).toBe(BASE_MAINNET);
-    expect(veydriftChainForChainId(BASE_SEPOLIA.chainId)).toBe(BASE_SEPOLIA);
-    expect(farcasterChainFor(BASE_MAINNET)).toBe("eip155:8453");
-    expect(farcasterChainFor(BASE_SEPOLIA)).toBe("eip155:84532");
-    expect(isVeydriftChain(BASE_MAINNET.chainIdHex, BASE_MAINNET)).toBe(true);
-    expect(isVeydriftChain(BASE_SEPOLIA.chainIdHex, BASE_MAINNET)).toBe(false);
+    const forcedChain = process.env.VITE_VEYDRIFT_CHAIN;
+    delete process.env.VITE_VEYDRIFT_CHAIN;
+    try {
+      expect(defaultVeydriftChainForLocation({ hostname: "veydrift.com" })).toBe(BASE_MAINNET);
+      expect(defaultVeydriftChainForLocation({ hostname: "www.veydrift.com" })).toBe(BASE_MAINNET);
+      expect(defaultVeydriftChainForLocation({ hostname: "test.veydrift.com" })).toBe(BASE_SEPOLIA);
+      expect(defaultVeydriftChainForLocation({ hostname: "localhost" })).toBe(BASE_SEPOLIA);
+      expect(veydriftChainForChainId(BASE_MAINNET.chainId)).toBe(BASE_MAINNET);
+      expect(veydriftChainForChainId(BASE_SEPOLIA.chainId)).toBe(BASE_SEPOLIA);
+      expect(farcasterChainFor(BASE_MAINNET)).toBe("eip155:8453");
+      expect(farcasterChainFor(BASE_SEPOLIA)).toBe("eip155:84532");
+      expect(isVeydriftChain(BASE_MAINNET.chainIdHex, BASE_MAINNET)).toBe(true);
+      expect(isVeydriftChain(BASE_SEPOLIA.chainIdHex, BASE_MAINNET)).toBe(false);
+    } finally {
+      if (forcedChain === undefined) {
+        delete process.env.VITE_VEYDRIFT_CHAIN;
+      } else {
+        process.env.VITE_VEYDRIFT_CHAIN = forcedChain;
+      }
+    }
+  });
+
+  test("lets VITE_VEYDRIFT_CHAIN force the required wallet chain", () => {
+    const forcedChain = process.env.VITE_VEYDRIFT_CHAIN;
+    try {
+      process.env.VITE_VEYDRIFT_CHAIN = "mainnet";
+      expect(defaultVeydriftChainForLocation({ hostname: "localhost" })).toBe(BASE_MAINNET);
+      expect(defaultVeydriftChainForLocation({ hostname: "test.veydrift.com" })).toBe(BASE_MAINNET);
+      process.env.VITE_VEYDRIFT_CHAIN = "sepolia";
+      expect(defaultVeydriftChainForLocation({ hostname: "veydrift.com" })).toBe(BASE_SEPOLIA);
+      process.env.VITE_VEYDRIFT_CHAIN = "0x2105";
+      expect(defaultVeydriftChainForLocation({ hostname: "localhost" })).toBe(BASE_MAINNET);
+      process.env.VITE_VEYDRIFT_CHAIN = "garbage";
+      expect(defaultVeydriftChainForLocation({ hostname: "veydrift.com" })).toBe(BASE_MAINNET);
+    } finally {
+      if (forcedChain === undefined) {
+        delete process.env.VITE_VEYDRIFT_CHAIN;
+      } else {
+        process.env.VITE_VEYDRIFT_CHAIN = forcedChain;
+      }
+    }
   });
 
   test("encodes Burning Chicken moon burns with token id, planet id, and coordinates", () => {

@@ -1884,10 +1884,23 @@ export function veydriftChainForChainId(chainId: number | undefined): VeydriftWa
   return chainId === BASE_MAINNET.chainId ? BASE_MAINNET : BASE_SEPOLIA;
 }
 
+export function veydriftChainFromEnv(value: string | undefined): VeydriftWalletChain | undefined {
+  const normalized = value?.trim().toLowerCase();
+  if (!normalized) return undefined;
+  if (normalized === "mainnet" || normalized === "base" || normalized === "8453" || normalized === "0x2105") {
+    return BASE_MAINNET;
+  }
+  if (normalized === "sepolia" || normalized === "base-sepolia" || normalized === "84532" || normalized === "0x14a34") {
+    return BASE_SEPOLIA;
+  }
+  return undefined;
+}
+
 export function defaultVeydriftChainForLocation(location: Pick<Location, "hostname"> | undefined = typeof window === "undefined" ? undefined : window.location): VeydriftWalletChain {
-  return location?.hostname === "veydrift.com" || location?.hostname === "www.veydrift.com"
-    ? BASE_MAINNET
-    : BASE_SEPOLIA;
+  return veydriftChainFromEnv(import.meta.env.VITE_VEYDRIFT_CHAIN)
+    ?? (location?.hostname === "veydrift.com" || location?.hostname === "www.veydrift.com"
+      ? BASE_MAINNET
+      : BASE_SEPOLIA);
 }
 
 export function farcasterChainFor(chain: VeydriftWalletChain): string {

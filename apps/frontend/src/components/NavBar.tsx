@@ -305,7 +305,7 @@ export function NavBar({
 
   const playerEditorDialog = onUpdatePlayerProfile && playerPanelOpen ? (
     <div
-      className="fixed inset-0 z-50 grid place-items-end bg-black/60 p-3 backdrop-blur-sm sm:place-items-center sm:p-4"
+      className="modal-backdrop-enter fixed inset-0 z-50 grid place-items-end bg-black/60 p-3 backdrop-blur-sm sm:place-items-center sm:p-4"
       onClick={(event) => {
         if (event.target === event.currentTarget && !playerProfileBusy) setPlayerPanelOpen(false);
       }}
@@ -313,7 +313,7 @@ export function NavBar({
       <form
         aria-labelledby="commander-name-editor-title"
         aria-modal="true"
-        className="grid max-h-[calc(100dvh-1.5rem)] w-full max-w-sm gap-3 overflow-y-auto rounded-lg border border-white/10 bg-[#08101d] p-3 shadow-2xl shadow-black/45"
+        className="modal-panel-enter grid max-h-[calc(100dvh-1.5rem)] w-full max-w-sm gap-3 overflow-y-auto rounded-lg border border-white/10 bg-[#08101d] p-3 shadow-2xl shadow-black/45"
         id="commander-name-editor"
         onSubmit={handlePlayerSubmit}
         role="dialog"
@@ -405,7 +405,7 @@ export function NavBar({
   return (
     <>
       {/* Desktop sidebar */}
-      <nav className="hidden h-[calc(100dvh-2.75rem)] w-52 shrink-0 flex-col border-r border-white/10 bg-[#0a0f1a] md:sticky md:top-11 md:flex">
+      <nav className="hidden h-[calc(100dvh-var(--topbar-h,2.75rem))] w-52 shrink-0 flex-col border-r border-white/10 bg-[#0a0f1a] md:sticky md:top-[var(--topbar-h,2.75rem)] md:flex">
         <div className="flex min-h-0 flex-1 flex-col gap-3 bg-[linear-gradient(180deg,rgba(20,29,45,0.82),rgba(8,12,23,0.98))] p-3 shadow-[inset_-1px_0_rgba(255,255,255,0.04)]">
           <div className="border-b border-white/10 px-2 pb-3">
             <p className="text-sm font-semibold text-white">
@@ -430,7 +430,16 @@ export function NavBar({
       </nav>
 
       {/* Mobile navigation */}
-      <div className="w-full max-w-full overflow-hidden border-b border-white/10 bg-[#0c111b]/95 backdrop-blur md:hidden">
+      {mobileMenuOpen && (
+        <button
+          aria-hidden="true"
+          className="fixed inset-0 z-10 cursor-default bg-black/40 md:hidden"
+          onClick={() => setMobileMenuOpen(false)}
+          tabIndex={-1}
+          type="button"
+        />
+      )}
+      <div className="sticky top-[var(--topbar-h,2.75rem)] z-20 w-full max-w-full overflow-hidden border-b border-white/10 bg-[#0c111b]/95 backdrop-blur md:hidden">
         <div className="flex h-12 min-w-0 items-center justify-between gap-3 px-3">
           <div className="min-w-0">
             <p className="truncate text-sm font-semibold text-white">Veydrift</p>
@@ -442,7 +451,7 @@ export function NavBar({
             aria-controls="mobile-navigation-menu"
             aria-expanded={mobileMenuOpen}
             aria-label={mobileMenuOpen ? "Close navigation menu" : "Open navigation menu"}
-            className="grid h-9 w-9 shrink-0 place-items-center rounded border border-white/10 bg-white/[0.06] text-slate-100 transition hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-cyan-300/60"
+            className="grid h-11 w-11 shrink-0 place-items-center rounded border border-white/10 bg-white/[0.06] text-slate-100 transition hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-cyan-300/60"
             onClick={() => setMobileMenuOpen((open) => !open)}
             type="button"
           >

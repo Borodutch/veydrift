@@ -438,7 +438,7 @@ function SelectedProductionPanel<Key extends string>({
         <div className="flex flex-wrap items-center gap-2">
           <input
             aria-label={`${item.label} quantity`}
-            className="h-9 w-24 rounded border border-white/10 bg-black/20 px-2 text-sm text-white outline-none focus:border-signal/60"
+            className="h-11 w-24 rounded border border-white/10 bg-black/20 px-2 text-sm text-white outline-none focus:border-signal/60 sm:h-9"
             inputMode="numeric"
             min={1}
             onBlur={() => {
@@ -455,7 +455,7 @@ function SelectedProductionPanel<Key extends string>({
             value={quantityInput}
           />
           <button
-            className="h-9 rounded-md border border-signal/40 bg-signal/10 px-3 text-sm font-semibold text-signal transition hover:bg-signal/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
+            className="h-11 rounded-md border border-signal/40 bg-signal/10 px-3 text-sm font-semibold text-signal transition hover:bg-signal/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500 sm:h-9"
             disabled={item.disabled || quantityInvalid}
             onClick={() => onBuild(item)}
             type="button"
@@ -573,7 +573,7 @@ export function Notice({
   } as const;
 
   return (
-    <div className={`rounded border p-3 text-sm ${classes[tone]}`}>
+    <div className={`notice-enter rounded border p-3 text-sm ${classes[tone]}`}>
       {children}
     </div>
   );

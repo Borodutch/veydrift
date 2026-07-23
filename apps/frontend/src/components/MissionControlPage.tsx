@@ -1,5 +1,6 @@
 import { ChevronLeft, ChevronRight, Clipboard, ExternalLink, List } from "lucide-preact";
 
+import { ActionReasonNote } from "./ActionReasonNote";
 import { planetTypeFromTemperature } from "../data/mockUniverse";
 import { formatDuration, formatDurationUntil } from "../durationFormat";
 import { acsHoldingFuelRatePerHour, allianceDepotSustainSeconds } from "../fleetMissionRules";
@@ -382,7 +383,7 @@ export function StationedDefenseSection({
         <div className="flex items-center gap-3">
           {onDefendPlanet ? (
             <button
-              className="rounded border border-violet-300/40 bg-violet-300/10 px-2.5 py-1 text-[11px] font-semibold text-violet-100 transition-colors hover:bg-violet-300/20"
+              className="rounded border border-violet-300/40 bg-violet-300/10 px-3 py-2 text-[11px] font-semibold text-violet-100 transition-colors hover:bg-violet-300/20 sm:px-2.5 sm:py-1"
               onClick={onDefendPlanet}
               type="button"
             >
@@ -750,7 +751,7 @@ function ActiveMissionSection({
           {ACTIVE_MISSION_TABS.map((tab) => (
             <button
               aria-selected={tab.key === activeTab}
-              className="rounded border border-white/10 bg-white/5 px-3 py-1 text-xs font-medium text-slate-300 transition hover:bg-white/10 aria-selected:border-cyan-300/35 aria-selected:bg-cyan-300/10 aria-selected:text-cyan-100"
+              className="rounded border border-white/10 bg-white/5 px-3 py-2 text-xs font-medium text-slate-300 transition hover:bg-white/10 aria-selected:border-cyan-300/35 aria-selected:bg-cyan-300/10 aria-selected:text-cyan-100 sm:py-1"
               data-active-tab-button={tab.key}
               key={tab.key}
               onClick={(event) => showActiveMissionTab(event, tab.key)}
@@ -789,7 +790,7 @@ function MissionNumberSearchInput({
       <span className="whitespace-nowrap font-semibold uppercase tracking-[0.12em] text-slate-500">Mission #</span>
       <input
         aria-label="Search missions by number"
-        className="h-5 min-w-0 flex-1 bg-transparent font-mono text-sm text-white outline-none placeholder:text-slate-600"
+        className="h-8 min-w-0 flex-1 bg-transparent font-mono text-sm text-white outline-none placeholder:text-slate-600 sm:h-5"
         inputMode="numeric"
         onInput={(event) => onChange?.(event.currentTarget.value)}
         placeholder="1473"
@@ -1152,7 +1153,7 @@ export function missionStatusPill(mission: FleetMissionSummary, now: number): Mi
 }
 
 // Shared style for the "Open" and "Join" row actions (VEY-397#14).
-const rowActionButtonClass = "inline-flex h-8 items-center justify-center gap-2 rounded border border-white/10 bg-white/5 px-2 text-xs font-medium text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500";
+const rowActionButtonClass = "inline-flex h-10 items-center justify-center gap-2 rounded border border-white/10 bg-white/5 px-2 text-xs font-medium text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500 sm:h-8";
 
 // Compact absolute timestamp like "Jun 8, 9:55 AM" (VEY-399#4).
 function compactMissionTime(value: string, now: number): string {
@@ -1266,9 +1267,9 @@ function FleetIcons({ ships }: { ships: Record<string, string> }) {
 }
 
 function ActionButton({ action, onClick }: { action: MissionLifecycleAction; onClick: () => void }) {
-  return (
+  const button = (
     <button
-      className={`rounded border px-2 py-1 text-xs font-medium transition ${
+      className={`rounded border px-3 py-2 text-xs font-medium transition sm:px-2 sm:py-1 ${
         action.enabled
           ? "border-cyan-300/35 bg-cyan-300/10 text-cyan-100 hover:bg-cyan-300/20"
           : "cursor-not-allowed border-white/10 bg-white/[0.03] text-slate-500"
@@ -1280,6 +1281,17 @@ function ActionButton({ action, onClick }: { action: MissionLifecycleAction; onC
     >
       {action.label}
     </button>
+  );
+
+  if (action.enabled || !action.reason) {
+    return button;
+  }
+
+  return (
+    <span className="inline-flex flex-col gap-1">
+      {button}
+      <ActionReasonNote reason={action.reason} />
+    </span>
   );
 }
 
@@ -1699,7 +1711,7 @@ function PastMissionSection({
             return (
               <button
                 aria-selected={tab.key === pastTab}
-                className="rounded border border-white/10 bg-white/5 px-3 py-1 text-xs font-medium text-slate-300 transition hover:bg-white/10 aria-selected:border-cyan-300/35 aria-selected:bg-cyan-300/10 aria-selected:text-cyan-100"
+                className="rounded border border-white/10 bg-white/5 px-3 py-2 text-xs font-medium text-slate-300 transition hover:bg-white/10 aria-selected:border-cyan-300/35 aria-selected:bg-cyan-300/10 aria-selected:text-cyan-100 sm:py-1"
                 data-past-tab-button={tab.key}
                 key={tab.key}
                 onClick={(event) => showPastMissionTab(event, tab.key)}
@@ -2130,7 +2142,7 @@ function ClientPaginationControl({
       <div className="flex items-center gap-2">
         <button
           aria-label={prevLabel}
-          className="inline-flex h-8 w-8 items-center justify-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+          className="inline-flex h-10 w-10 items-center justify-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50 sm:h-8 sm:w-8"
           data-past-page-prev
           disabled={loading || !pagination.hasPreviousPage}
           onClick={(event) => onPageChange ? onPageChange(pagination.page - 1) : showPastMissionPage(event, "previous")}
@@ -2141,7 +2153,7 @@ function ClientPaginationControl({
         </button>
         <button
           aria-label={nextLabel}
-          className="inline-flex h-8 w-8 items-center justify-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+          className="inline-flex h-10 w-10 items-center justify-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50 sm:h-8 sm:w-8"
           data-past-page-next
           disabled={loading || !pagination.hasNextPage}
           onClick={(event) => onPageChange ? onPageChange(pagination.page + 1) : showPastMissionPage(event, "next")}
@@ -2185,7 +2197,7 @@ function Notice({ children, tone }: { children: preact.ComponentChildren; tone: 
     : tone === "success"
       ? "border-emerald-300/25 bg-emerald-300/10 text-emerald-100"
       : "border-cyan-300/20 bg-cyan-300/10 text-cyan-100";
-  return <div className={`rounded-lg border p-3 text-sm ${className}`}>{children}</div>;
+  return <div className={`notice-enter rounded-lg border p-3 text-sm ${className}`}>{children}</div>;
 }
 
 function isMissionDue(mission: FleetMissionSummary, now: number): boolean {

@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from "preact/hooks";
 import type { Planet, Coordinates } from "../types";
+import { ActionReasonNote } from "./ActionReasonNote";
 import {
   DEFAULT_MISSION_SPEED_PERCENT,
   type FleetDriveLevels,
@@ -351,7 +352,7 @@ export function GalaxyView({
         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-white/10 bg-[#101624] p-2 shadow-[0_0_0_1px_rgba(255,255,255,0.02)_inset]">
           <button
             onClick={handlePrevSystem}
-            className="h-9 rounded border border-white/15 bg-white/8 px-3 text-sm text-slate-300 transition-colors hover:bg-white/15 hover:text-white"
+            className="h-11 rounded border border-white/15 bg-white/8 px-3 text-sm text-slate-300 transition-colors hover:bg-white/15 hover:text-white sm:h-9"
           >
             ← Prev
           </button>
@@ -372,7 +373,7 @@ export function GalaxyView({
 
           <button
             onClick={handleNextSystem}
-            className="h-9 rounded border border-white/15 bg-white/8 px-3 text-sm text-slate-300 transition-colors hover:bg-white/15 hover:text-white"
+            className="h-11 rounded border border-white/15 bg-white/8 px-3 text-sm text-slate-300 transition-colors hover:bg-white/15 hover:text-white sm:h-9"
           >
             Next →
           </button>
@@ -415,7 +416,7 @@ export function GalaxyView({
           ) : null}
         </div>
         {actionState.status !== "idle" ? (
-          <div className={`rounded border px-3 py-2 text-xs ${
+          <div className={`notice-enter rounded border px-3 py-2 text-xs ${
             actionState.status === "error"
               ? "border-red-300/30 bg-red-500/10 text-red-100"
               : actionState.status === "success"
@@ -440,7 +441,7 @@ export function GalaxyView({
               <p className="font-semibold">Galaxy system could not be loaded.</p>
               <p className="mt-1 text-rose-100/80">{loadError}</p>
               <button
-                className="mt-3 h-9 rounded border border-rose-200/30 bg-rose-200/10 px-3 text-xs font-semibold text-rose-100 transition hover:bg-rose-200/20"
+                className="mt-3 h-11 rounded border border-rose-200/30 bg-rose-200/10 px-3 text-xs font-semibold text-rose-100 transition hover:bg-rose-200/20 sm:h-9"
                 onClick={() => setReloadNonce((value) => value + 1)}
                 type="button"
               >
@@ -553,7 +554,7 @@ function CoordinateInput({
         }}
         pattern="[0-9]*"
         value={draft}
-        className="h-7 w-12 rounded border border-white/10 bg-[#101624] px-2 text-center font-mono text-sm font-semibold text-white outline-none [color-scheme:dark] focus:border-signal/50"
+        className="h-10 w-12 rounded border border-white/10 bg-[#101624] px-2 text-center font-mono text-sm font-semibold text-white outline-none [color-scheme:dark] focus:border-signal/50 sm:h-7"
       />
     </label>
   );
@@ -947,7 +948,7 @@ function GalaxyMoonActionButtons({
     <div className="flex flex-wrap justify-end gap-1.5">
       {onInspect ? (
         <button
-          className="rounded border border-cyan-200/20 bg-cyan-200/10 px-2 py-1 text-xs font-medium text-cyan-100 transition hover:border-cyan-200/40 hover:bg-cyan-200/15"
+          className="rounded border border-cyan-200/20 bg-cyan-200/10 px-3 py-2 text-xs font-medium text-cyan-100 transition hover:border-cyan-200/40 hover:bg-cyan-200/15 sm:px-2 sm:py-1"
           onClick={onInspect}
           title="Inspect moon"
           type="button"
@@ -982,26 +983,31 @@ export function GalaxyActionButtons({
   onAction: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates) => void) | undefined;
   planet: Planet | undefined;
 }) {
+  const blockedReason = busy ? undefined : actions.find((action) => !action.enabled)?.reason;
+
   return (
-    <div className="flex flex-wrap justify-end gap-1.5">
-      {actions.map((action) => (
-        <button
-          className={`rounded border px-2 py-1 text-xs font-medium transition ${
-            action.enabled && !busy
-              ? "border-signal/30 bg-signal/10 text-signal hover:bg-signal/20"
-              : "cursor-not-allowed border-white/10 bg-white/[0.03] text-slate-500"
-          }`}
-          disabled={!action.enabled || busy || !onAction}
-          key={action.kind}
-          onClick={() => {
-            if (action.enabled) onAction?.(action, planet, coords);
-          }}
-          title={busyReason ?? (action.enabled ? action.label : action.reason)}
-          type="button"
-        >
-          {action.label}
-        </button>
-      ))}
+    <div className="grid justify-items-end gap-1">
+      <div className="flex flex-wrap justify-end gap-1.5">
+        {actions.map((action) => (
+          <button
+            className={`rounded border px-3 py-2 text-xs font-medium transition sm:px-2 sm:py-1 ${
+              action.enabled && !busy
+                ? "border-signal/30 bg-signal/10 text-signal hover:bg-signal/20"
+                : "cursor-not-allowed border-white/10 bg-white/[0.03] text-slate-500"
+            }`}
+            disabled={!action.enabled || busy || !onAction}
+            key={action.kind}
+            onClick={() => {
+              if (action.enabled) onAction?.(action, planet, coords);
+            }}
+            title={busyReason ?? (action.enabled ? action.label : action.reason)}
+            type="button"
+          >
+            {action.label}
+          </button>
+        ))}
+      </div>
+      <ActionReasonNote reason={blockedReason} />
     </div>
   );
 }
