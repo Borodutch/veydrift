@@ -1563,12 +1563,15 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
     function _raidResourcesForAttackGroup(uint256 attackMissionId, FleetMission storage mission)
         private
     {
-        uint256 totalCapacity = _remainingCargoCapacity(mission.ships, mission.cargo);
+        uint256 totalCapacity =
+            _remainingCargoCapacity(mission.ships, mission.cargo, mission.fuelCost);
         uint256[] storage linkedMissionIds = _fleetCounterplayMissions[attackMissionId];
         for (uint256 i = 0; i < linkedMissionIds.length;) {
             FleetMission storage joined = _fleetMissions[linkedMissionIds[i]];
             if (_isQualifiedJoinedAttack(attackMissionId, joined)) {
-                totalCapacity += _remainingCargoCapacity(joined.ships, joined.cargo);
+                totalCapacity += _remainingCargoCapacity(
+                    joined.ships, joined.cargo, joined.fuelCost
+                );
             }
             unchecked {
                 ++i;
@@ -1613,7 +1616,9 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         Resources memory remaining,
         uint256 remainingCapacity
     ) private returns (Resources memory, uint256) {
-        uint256 capacity = _remainingCargoCapacity(recipient.ships, recipient.cargo);
+        uint256 capacity = _remainingCargoCapacity(
+            recipient.ships, recipient.cargo, recipient.fuelCost
+        );
         if (capacity == 0 || remainingCapacity == 0) return (remaining, remainingCapacity);
 
         Resources memory share;
@@ -1636,13 +1641,13 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         return (remaining, remainingCapacity);
     }
 
-    function _remainingCargoCapacity(MissionShips memory ships, Resources memory cargo)
-        private
-        pure
-        returns (uint256)
-    {
+    function _remainingCargoCapacity(
+        MissionShips memory ships,
+        Resources memory cargo,
+        uint128 fuelCost
+    ) private pure returns (uint256) {
         uint256 capacity = _missionCargoCapacity(ships);
-        uint256 used = uint256(cargo.metal) + cargo.crystal + cargo.deuterium;
+        uint256 used = uint256(cargo.metal) + cargo.crystal + cargo.deuterium + fuelCost;
         return capacity > used ? capacity - used : 0;
     }
 
