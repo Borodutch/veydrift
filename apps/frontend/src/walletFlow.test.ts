@@ -46,6 +46,8 @@ import {
   getCurrentAccounts,
   getInjectedProvider,
   confirmTransactionReceipt,
+  confirmTransactionReceiptForProviderSource,
+  confirmTransactionReceiptFromBackend,
   defaultVeydriftChainForLocation,
   ensureVeydriftNetwork,
   farcasterChainFor,
@@ -444,6 +446,77 @@ describe("walletFlow", () => {
     await expect(confirmTransactionReceipt(provider, "0xok", { pollMs: 1, timeoutMs: 20 })).rejects.toThrow(
       "Transaction submitted, but the chain did not confirm it yet"
     );
+  });
+
+  test("confirms Farcaster submissions through the backend without reading from the wallet provider", async () => {
+    let walletRequests = 0;
+    const provider = mockProvider(async () => {
+      walletRequests += 1;
+      throw new Error("Farcaster host receipt reads must not be called.");
+    });
+    const backendRequests: string[] = [];
+    let polls = 0;
+
+    const receipt = await confirmTransactionReceiptForProviderSource(
+      provider,
+      "farcaster",
+      "https://api.example.test",
+      `0x${"ab".repeat(32)}`,
+      {
+        fetcher: async (input) => {
+          backendRequests.push(input);
+          polls += 1;
+          return Response.json({
+            receipt: polls === 1
+              ? null
+              : { status: "0x1", transactionHash: `0x${"ab".repeat(32)}` },
+          });
+        },
+        pollMs: 1,
+        timeoutMs: 100,
+      },
+    );
+
+    expect(receipt).toMatchObject({ status: "0x1" });
+    expect(walletRequests).toBe(0);
+    expect(backendRequests).toEqual([
+      `https://api.example.test/transaction-receipt/0x${"ab".repeat(32)}`,
+      `https://api.example.test/transaction-receipt/0x${"ab".repeat(32)}`,
+    ]);
+  });
+
+  test("keeps injected-wallet receipt confirmation on the wallet provider", async () => {
+    let walletRequests = 0;
+    const provider = mockProvider(async ({ method }) => {
+      walletRequests += 1;
+      expect(method).toBe("eth_getTransactionReceipt");
+      return { status: "0x1", transactionHash: "0xinjected" };
+    });
+
+    await expect(confirmTransactionReceiptForProviderSource(
+      provider,
+      "injected",
+      "https://api.example.test",
+      "0xinjected",
+      {
+        fetcher: async () => {
+          throw new Error("Browser-wallet confirmation must not call the backend receipt reader.");
+        },
+      },
+    )).resolves.toMatchObject({ transactionHash: "0xinjected" });
+    expect(walletRequests).toBe(1);
+  });
+
+  test("preserves revert handling for backend-confirmed Farcaster submissions", async () => {
+    await expect(confirmTransactionReceiptFromBackend(
+      "https://api.example.test",
+      `0x${"cd".repeat(32)}`,
+      {
+        fetcher: async () => Response.json({
+          receipt: { status: "0x0", transactionHash: `0x${"cd".repeat(32)}` },
+        }),
+      },
+    )).rejects.toThrow("Transaction reverted on-chain. No game state was changed.");
   });
 
   test("selects Rabby from a multi-provider injected wallet", () => {

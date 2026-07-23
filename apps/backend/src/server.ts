@@ -211,6 +211,7 @@ export type ServerDependencies = {
   config?: BackendConfig;
   configProblems?: ConfigProblem[];
   chainReader?: ChainReader;
+  transactionReceiptReader?: TransactionReceiptReader;
   missionResolution?: MissionResolutionService;
   randomnessCommitter?: RandomnessCommitterService;
   indexer?: SettlementIndexer;
@@ -233,6 +234,10 @@ export type ServerDependencies = {
   referralStore?: ReferralInviteStore;
 };
 
+export type TransactionReceiptReader = {
+  request: <T>(method: string, params: unknown[]) => Promise<T>;
+};
+
 const defaultUniverseSeed = "veydrift-mainnet-preview";
 
 export function createRequestHandler(dependencies: ServerDependencies = {}): (request: Request) => Promise<Response> {
@@ -248,6 +253,14 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     (loaded.problems.length === 0 ? new VeydriftGameReader(loaded.config, undefined, { hydrateQueueStartedAt: false }) : undefined);
   const cacheReader = rawChainReader && !dependencies.chainReader ? new CachedChainReader(rawChainReader) : undefined;
   const chainReader = cacheReader ?? rawChainReader;
+  const transactionReceiptReader =
+    dependencies.transactionReceiptReader ??
+    (loaded.problems.length === 0
+      ? new HttpJsonRpcTransport(rpcUrlsForConfig(loaded.config), {
+        cacheTtlMs: 0,
+        minRequestIntervalMs: 0
+      })
+      : undefined);
   const indexerChainReader =
     dependencies.chainReader
       ? chainReader
@@ -428,6 +441,27 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
     if (request.method === "GET" && url.pathname === "/runtime-config") {
       return runtimeConfigResponse(workerRole);
+    }
+
+    const transactionReceiptMatch = url.pathname.match(/^\/transaction-receipt\/(0x[a-fA-F0-9]{64})$/);
+    if (request.method === "GET" && transactionReceiptMatch) {
+      if (!transactionReceiptReader) {
+        return unavailableResponse(loaded.problems);
+      }
+      try {
+        const receipt = await transactionReceiptReader.request<unknown>(
+          "eth_getTransactionReceipt",
+          [transactionReceiptMatch[1]]
+        );
+        return Response.json({ receipt }, {
+          headers: {
+            ...corsHeaders,
+            "cache-control": "no-store"
+          }
+        });
+      } catch (error) {
+        return errorResponse(error, 503);
+      }
     }
 
     if (request.method === "GET" && url.pathname === "/raid-finder/debris") {
@@ -1784,6 +1818,7 @@ function isRateLimitedReadPath(pathname: string): boolean {
   return pathname === "/chain/events"
     || pathname === "/missions"
     || pathname === "/highscores"
+    || pathname.startsWith("/transaction-receipt/")
     || pathname.startsWith("/wallet/")
     || pathname.startsWith("/universe/")
     || pathname.startsWith("/raid-finder/");

@@ -4019,6 +4019,69 @@ export async function confirmTransactionReceipt(
   throw new Error(TRANSACTION_RECEIPT_TIMEOUT_MESSAGE);
 }
 
+type TransactionReceiptConfirmationOptions = {
+  fetcher?: (input: string, init?: RequestInit) => Promise<Response>;
+  pollMs?: number;
+  timeoutMs?: number;
+};
+
+export async function confirmTransactionReceiptFromBackend(
+  apiUrl: string,
+  transactionHash: string,
+  {
+    fetcher = fetch,
+    pollMs = TRANSACTION_RECEIPT_POLL_MS,
+    timeoutMs = TRANSACTION_RECEIPT_TIMEOUT_MS,
+  }: TransactionReceiptConfirmationOptions = {},
+): Promise<TransactionReceipt> {
+  if (!apiUrl.trim()) {
+    throw new Error("Game API is unavailable while confirming the transaction.");
+  }
+  const startedAt = Date.now();
+  const receiptUrl = `${apiUrl.replace(/\/+$/, "")}/transaction-receipt/${encodeURIComponent(transactionHash)}`;
+
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      const response = await fetcher(receiptUrl, {
+        headers: { accept: "application/json" },
+      });
+      if (!response.ok) {
+        throw new Error(`Transaction receipt API returned ${response.status}.`);
+      }
+      const body = await response.json() as { receipt?: TransactionReceipt | null };
+      if (body.receipt) {
+        if (isRevertedReceiptStatus(body.receipt.status)) {
+          throw new Error(TRANSACTION_REVERTED_MESSAGE);
+        }
+        return body.receipt;
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message === TRANSACTION_REVERTED_MESSAGE) {
+        throw error;
+      }
+      // The backend/app RPC reader may be temporarily unavailable while the
+      // submitted transaction is mining. Keep the same bounded retry semantics
+      // used by browser-wallet receipt confirmation.
+    }
+    await delay(pollMs);
+  }
+
+  throw new Error(TRANSACTION_RECEIPT_TIMEOUT_MESSAGE);
+}
+
+export async function confirmTransactionReceiptForProviderSource(
+  provider: Eip1193Provider,
+  providerSource: "injected" | "farcaster" | undefined,
+  apiUrl: string,
+  transactionHash: string,
+  options: TransactionReceiptConfirmationOptions = {},
+): Promise<TransactionReceipt> {
+  if (providerSource === "farcaster") {
+    return confirmTransactionReceiptFromBackend(apiUrl, transactionHash, options);
+  }
+  return confirmTransactionReceipt(provider, transactionHash, options);
+}
+
 export type FetchHighscoreOptions = {
   category?: HighscoreCategory;
   currentWallet?: string;

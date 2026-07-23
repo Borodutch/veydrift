@@ -201,7 +201,7 @@ import {
   walletRequestErrorMessage,
   walletRecoveryActionMessage,
   spendTransactionErrorMessage,
-  confirmTransactionReceipt,
+  confirmTransactionReceiptForProviderSource,
   fetchWalletQueues,
   fetchWalletSettlement,
   getAvailableWalletProviderDetails,
@@ -1770,6 +1770,7 @@ export async function researchStartUnavailableReasonAfterLiveRevalidation({
 
 interface PlayableMvpAppProps {
   provider?: Eip1193Provider | undefined;
+  walletProviderSource?: "injected" | "farcaster" | undefined;
   account?: string | undefined;
   miniAppMode?: boolean | undefined;
   onConnectWallet?: (() => void) | undefined;
@@ -3203,6 +3204,7 @@ function writeInspectRoute(route: InspectRoute): void {
 
 export function PlayableMvpApp({
   provider: providedProvider,
+  walletProviderSource: providedWalletProviderSource,
   account: providedAccount,
   miniAppMode: providedMiniAppMode = false,
   onConnectWallet,
@@ -3218,6 +3220,8 @@ export function PlayableMvpApp({
   ));
   const miniAppWalletConnectAttempted = useRef(false);
   const provider = providedProvider ?? miniAppProvider;
+  const walletProviderSource = providedWalletProviderSource
+    ?? (providedProvider ? "injected" : miniAppProvider ? "farcaster" : undefined);
   const account = providedAccount ?? miniAppAccount;
   const miniAppMode = providedMiniAppMode || detectedMiniAppMode;
   const isWalletConnected = Boolean(provider && account);
@@ -4256,8 +4260,13 @@ export function PlayableMvpApp({
     if (!provider) {
       throw new Error("Wallet provider is unavailable while confirming the transaction.");
     }
-    return confirmTransactionReceipt(provider, txHash);
-  }, [provider]);
+    return confirmTransactionReceiptForProviderSource(
+      provider,
+      walletProviderSource,
+      apiBaseUrl ?? "",
+      txHash,
+    );
+  }, [apiBaseUrl, provider, walletProviderSource]);
 
   const runCoordinatedWriteTransaction = useCallback(async <IndexedSnapshot,>({
     applyIndexedState,

@@ -1466,6 +1466,7 @@ export function FirstPlanetSettlementApp() {
     return (
       <PlayableMvpApp
         provider={provider}
+        walletProviderSource={walletProviderSource}
         account={account}
         miniAppMode={miniAppMode}
         planet={planet.kind === "success" || planet.kind === "already-settled" ? planet.planet : undefined}

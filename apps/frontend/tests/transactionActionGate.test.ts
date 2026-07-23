@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createTransactionActionGate, runWriteTransaction, type WriteTransactionPhase } from "../src/transactionActionGate";
+import { confirmTransactionReceiptForProviderSource, type Eip1193Provider } from "../src/walletFlow";
 
 describe("transaction action gate", () => {
   test("prevents rapid duplicate start actions while the wallet path is in flight", async () => {
@@ -151,6 +152,59 @@ describe("transaction action gate", () => {
 
     indexed.resolve();
     await expect(first).resolves.toBe(true);
+    expect(gate.isRunning()).toBe(false);
+  });
+
+  test("releases the global gate for a second mission after Farcaster backend confirmation and indexing", async () => {
+    const gate = createTransactionActionGate();
+    let walletReceiptReads = 0;
+    const farcasterProvider: Eip1193Provider = {
+      request: async () => {
+        walletReceiptReads += 1;
+        throw new Error("Farcaster receipt read rejected by host.");
+      },
+    };
+    const confirmedTransactions: string[] = [];
+    const confirm = (txHash: string) => confirmTransactionReceiptForProviderSource(
+      farcasterProvider,
+      "farcaster",
+      "https://api.example.test",
+      txHash,
+      {
+        fetcher: async () => Response.json({
+          receipt: { status: "0x1", transactionHash: txHash },
+        }),
+        pollMs: 1,
+        timeoutMs: 100,
+      },
+    );
+
+    const first = await runWriteTransaction(gate, {
+      key: "mission:transport:1",
+      label: "Transport mission",
+      send: async () => `0x${"11".repeat(32)}`,
+      confirm,
+      waitForIndexed: async (_receipt, txHash) => {
+        confirmedTransactions.push(txHash);
+      },
+    });
+    const second = await runWriteTransaction(gate, {
+      key: "mission:transport:2",
+      label: "Transport mission",
+      send: async () => `0x${"22".repeat(32)}`,
+      confirm,
+      waitForIndexed: async (_receipt, txHash) => {
+        confirmedTransactions.push(txHash);
+      },
+    });
+
+    expect(first).toBe(true);
+    expect(second).toBe(true);
+    expect(walletReceiptReads).toBe(0);
+    expect(confirmedTransactions).toEqual([
+      `0x${"11".repeat(32)}`,
+      `0x${"22".repeat(32)}`,
+    ]);
     expect(gate.isRunning()).toBe(false);
   });
 });
