@@ -1210,6 +1210,43 @@ contract VeydriftMoonSystemTest is Test {
         assertEq(parentAfter.resources.deuterium, parentBefore.resources.deuterium);
     }
 
+    function testPlanetToMoonAttackLootCapacityIncludesFuel() public {
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedMoonAttackPlanets();
+        _fundPlanet(originPlanetId, 200_000, 200_000, 200_000);
+        _fundMoon(targetPlanetId, 0, 100_000, 100_045);
+        _setShipCount(originPlanetId, Ship.LargeCargo, 4);
+
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.largeCargo = 4;
+
+        vm.prank(player);
+        uint256 missionId = game.launchBodyFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            100,
+            false,
+            true
+        );
+        (,,,,,,,, uint128 fuelCost,,) = game.fleetMission(missionId);
+        assertEq(fuelCost, 24);
+
+        (, uint64 arrivalAt,,) = _fleetMission(missionId);
+        vm.warp(arrivalAt);
+        _fulfillAttackBattleRandomness(missionId, 6524);
+        game.resolveFleetMission(missionId);
+
+        (,,, VeydriftGameStorage.Resources memory attackCargo) = _fleetMission(missionId);
+        assertEq(
+            attackCargo.metal + attackCargo.crystal + attackCargo.deuterium, 100_000 - fuelCost
+        );
+        assertEq(attackCargo.metal, 0);
+        assertEq(attackCargo.crystal, 50_000);
+        assertEq(attackCargo.deuterium, 50_000 - fuelCost);
+    }
+
     function testMoonAttackMutatesMoonDefensesNotPlanetDefenses() public {
         (uint256 originPlanetId, uint256 targetPlanetId, address defender) =
             _seedMoonAttackPlanets();

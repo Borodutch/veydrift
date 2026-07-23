@@ -3243,6 +3243,7 @@ contract VeydriftGameTest is Test {
             VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
             777
         );
+        (,,,,,,,, uint128 fuelCost,,) = game.fleetMission(missionId);
 
         (, uint64 arrivalAt,,) = _fleetMission(missionId);
         vm.warp(arrivalAt);
@@ -3250,10 +3251,10 @@ contract VeydriftGameTest is Test {
 
         vm.recordLogs();
         game.resolveFleetMission(missionId);
-        // The raid loots 5_000 metal (classic plunder), leaving the defender at 5_000/4_000/3_000.
+        // Classic plunder exposes 5_000 metal, while mission fuel continues to occupy cargo capacity.
         // The combat module is at the EIP-170 limit, so the defender's authoritative balance is
         // emitted from the linked VeydriftRaidStorage library — assert it reached the log.
-        assertEq(game.planet(targetPlanetId).resources.metal, 5_000);
+        assertEq(game.planet(targetPlanetId).resources.metal, 5_000 + fuelCost);
         _assertLastPlanetSettledMatchesPreview(targetPlanetId);
     }
 
@@ -5408,6 +5409,7 @@ contract VeydriftGameTest is Test {
         assertEq(uint8(reason), uint8(VeydriftGameStorage.AttackBlockReason.BashingLimit));
 
         (, uint64 arrivalAt,,) = _fleetMission(firstMissionId);
+        (,,,,,,,, uint128 fuelCost,,) = game.fleetMission(firstMissionId);
         vm.warp(arrivalAt);
         _fulfillAttackBattleRandomness(firstMissionId, 777);
         game.resolveFleetMission(firstMissionId);
@@ -5419,8 +5421,8 @@ contract VeydriftGameTest is Test {
             VeydriftGameStorage.Resources memory cargo
         ) = _fleetMission(firstMissionId);
         assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
-        assertEq(cargo.metal, 5_000);
-        assertEq(game.planet(targetPlanetId).resources.metal, 5_000);
+        assertEq(cargo.metal, 5_000 - fuelCost);
+        assertEq(game.planet(targetPlanetId).resources.metal, 5_000 + fuelCost);
         assertEq(game.planet(targetPlanetId).resources.crystal, 4_000);
         assertEq(game.planet(targetPlanetId).resources.deuterium, 3_000);
     }
@@ -6180,6 +6182,8 @@ contract VeydriftGameTest is Test {
             VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
             777
         );
+        (,,,,,,,, uint128 fuelCost,,) = game.fleetMission(missionId);
+        assertGt(fuelCost, 0);
 
         (VeydriftGameStorage.FleetMissionStatus status, uint64 arrivalAt,,) =
             _fleetMission(missionId);
@@ -6190,10 +6194,10 @@ contract VeydriftGameTest is Test {
         VeydriftGameStorage.Resources memory cargo;
         (status,,, cargo) = _fleetMission(missionId);
         assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
-        assertEq(cargo.metal, 5_000);
+        assertEq(cargo.metal, 5_000 - fuelCost);
         assertEq(cargo.crystal, 0);
         assertEq(cargo.deuterium, 0);
-        assertEq(game.planet(targetPlanetId).resources.metal, 5_000);
+        assertEq(game.planet(targetPlanetId).resources.metal, 5_000 + fuelCost);
         assertEq(game.planet(targetPlanetId).resources.crystal, 4_000);
         assertEq(game.planet(targetPlanetId).resources.deuterium, 3_000);
     }
@@ -6263,18 +6267,23 @@ contract VeydriftGameTest is Test {
 
         uint256 missionId =
             _launchAttackWithLootRatio(originPlanetId, targetPlanetId, 5_000, 3_000, 2_000, 811);
+        (,,,,,,,, uint128 fuelCost,,) = game.fleetMission(missionId);
+        uint256 availableCapacity = 5_000 - fuelCost;
+        uint256 expectedMetal = (availableCapacity * 5_000) / 10_000;
+        uint256 expectedCrystal = (availableCapacity * 3_000) / 10_000;
+        uint256 expectedDeuterium = availableCapacity - expectedMetal - expectedCrystal;
         (, uint64 arrivalAt,,) = _fleetMission(missionId);
         vm.warp(arrivalAt);
         _fulfillAttackBattleRandomness(missionId, 811);
         game.resolveFleetMission(missionId);
 
         (,,, VeydriftGameStorage.Resources memory cargo) = _fleetMission(missionId);
-        assertEq(cargo.metal, 2_500);
-        assertEq(cargo.crystal, 1_500);
-        assertEq(cargo.deuterium, 1_000);
-        assertEq(game.planet(targetPlanetId).resources.metal, 7_500);
-        assertEq(game.planet(targetPlanetId).resources.crystal, 8_500);
-        assertEq(game.planet(targetPlanetId).resources.deuterium, 9_000);
+        assertEq(cargo.metal, expectedMetal);
+        assertEq(cargo.crystal, expectedCrystal);
+        assertEq(cargo.deuterium, expectedDeuterium);
+        assertEq(game.planet(targetPlanetId).resources.metal, 10_000 - expectedMetal);
+        assertEq(game.planet(targetPlanetId).resources.crystal, 10_000 - expectedCrystal);
+        assertEq(game.planet(targetPlanetId).resources.deuterium, 10_000 - expectedDeuterium);
     }
 
     function testAttackLootRatioRollsUnfillableShareIntoNextResource() public {
@@ -6287,6 +6296,10 @@ contract VeydriftGameTest is Test {
 
         uint256 missionId =
             _launchAttackWithLootRatio(originPlanetId, targetPlanetId, 4_000, 4_000, 2_000, 812);
+        (,,,,,,,, uint128 fuelCost,,) = game.fleetMission(missionId);
+        uint256 availableCapacity = 5_000 - fuelCost;
+        uint256 expectedDeuterium = availableCapacity - 2 * ((availableCapacity * 4_000) / 10_000);
+        uint256 expectedCrystal = availableCapacity - expectedDeuterium;
         (, uint64 arrivalAt,,) = _fleetMission(missionId);
         vm.warp(arrivalAt);
         _fulfillAttackBattleRandomness(missionId, 812);
@@ -6294,10 +6307,10 @@ contract VeydriftGameTest is Test {
 
         (,,, VeydriftGameStorage.Resources memory cargo) = _fleetMission(missionId);
         assertEq(cargo.metal, 0);
-        assertEq(cargo.crystal, 4_000);
-        assertEq(cargo.deuterium, 1_000);
-        assertEq(game.planet(targetPlanetId).resources.crystal, 6_000);
-        assertEq(game.planet(targetPlanetId).resources.deuterium, 9_000);
+        assertEq(cargo.crystal, expectedCrystal);
+        assertEq(cargo.deuterium, expectedDeuterium);
+        assertEq(game.planet(targetPlanetId).resources.crystal, 10_000 - expectedCrystal);
+        assertEq(game.planet(targetPlanetId).resources.deuterium, 10_000 - expectedDeuterium);
     }
 
     function testAttackLootRatioRejectsScoreProtectedTargetAtLaunch() public {
@@ -6428,6 +6441,7 @@ contract VeydriftGameTest is Test {
             100,
             339
         );
+        (,,,,,,,, uint128 fuelCost,,) = game.fleetMission(missionId);
         (, uint64 arrivalAt,,) = _fleetMission(missionId);
         _setPlanetLastSettledAt(targetPlanetId, arrivalAt);
 
@@ -6436,8 +6450,8 @@ contract VeydriftGameTest is Test {
         game.resolveFleetMission(missionId);
 
         (,,, VeydriftGameStorage.Resources memory cargo) = _fleetMission(missionId);
-        assertEq(cargo.metal, 5_000);
-        assertEq(game.planet(targetPlanetId).resources.metal, 5_000);
+        assertEq(cargo.metal, 5_000 - fuelCost);
+        assertEq(game.planet(targetPlanetId).resources.metal, 5_000 + fuelCost);
         assertEq(game.planet(targetPlanetId).lastSettledAt, arrivalAt);
 
         vm.prank(game.planet(targetPlanetId).owner);
@@ -7203,6 +7217,11 @@ contract VeydriftGameTest is Test {
             _smallCargoManifest(),
             VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0})
         );
+        (,,,,,,,, uint128 attackFuelCost,,) = game.fleetMission(attackMissionId);
+        (,,,,,,,, uint128 joinedFuelCost,,) = game.fleetMission(joinedMissionId);
+        uint256 attackCapacity = 5_000 - attackFuelCost;
+        uint256 joinedCapacity = 5_000 - joinedFuelCost;
+        uint256 totalCapacity = attackCapacity + joinedCapacity;
 
         (, uint64 arrivalAt,,) = _fleetMission(attackMissionId);
         vm.warp(arrivalAt);
@@ -7221,23 +7240,24 @@ contract VeydriftGameTest is Test {
         ) = _fleetMission(joinedMissionId);
         assertEq(uint8(attackStatus), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
         assertEq(uint8(joinedStatus), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
-        // Flat 50% classic plunder of 10,000/4,000/3,000 fits both cargos and splits evenly.
-        assertEq(attackCargo.metal, 2_500);
-        assertEq(attackCargo.crystal, 1_000);
-        assertEq(attackCargo.deuterium, 750);
-        assertEq(joinedCargo.metal, 2_500);
-        assertEq(joinedCargo.crystal, 1_000);
-        assertEq(joinedCargo.deuterium, 750);
+        // Flat 50% classic plunder fits the group and is split by each participant's
+        // post-fuel cargo capacity.
+        assertEq(attackCargo.metal, (5_000 * attackCapacity) / totalCapacity);
+        assertEq(attackCargo.crystal, (2_000 * attackCapacity) / totalCapacity);
+        assertEq(attackCargo.deuterium, (1_500 * attackCapacity) / totalCapacity);
+        assertEq(joinedCargo.metal, 5_000 - attackCargo.metal);
+        assertEq(joinedCargo.crystal, 2_000 - attackCargo.crystal);
+        assertEq(joinedCargo.deuterium, 1_500 - attackCargo.deuterium);
 
         vm.warp(joinedReturnAt);
         game.completeFleetMissionReturn(joinedMissionId);
         assertEq(game.shipCount(allyPlanetId, Ship.SmallCargo), 1);
-        assertEq(game.planet(allyPlanetId).resources.metal, 12_500);
+        assertEq(game.planet(allyPlanetId).resources.metal, 10_000 + joinedCargo.metal);
 
         vm.warp(attackReturnAt);
         game.completeFleetMissionReturn(attackMissionId);
         assertEq(game.shipCount(originPlanetId, Ship.SmallCargo), 1);
-        assertEq(game.planet(originPlanetId).resources.metal, 12_500);
+        assertEq(game.planet(originPlanetId).resources.metal, 10_000 + attackCargo.metal);
     }
 
     function testAcsAttackMultipleParticipantsSplitLootOnceInMissionOrder() public {
@@ -7287,6 +7307,9 @@ contract VeydriftGameTest is Test {
             _smallCargoManifest(),
             VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0})
         );
+        (,,,,,,,, uint128 attackFuelCost,,) = game.fleetMission(attackMissionId);
+        (,,,,,,,, uint128 firstFuelCost,,) = game.fleetMission(firstJoinedMissionId);
+        (,,,,,,,, uint128 secondFuelCost,,) = game.fleetMission(secondJoinedMissionId);
 
         (, uint64 arrivalAt,,) = _fleetMission(attackMissionId);
         vm.warp(arrivalAt);
@@ -7297,10 +7320,13 @@ contract VeydriftGameTest is Test {
         (,,, VeydriftGameStorage.Resources memory firstCargo) = _fleetMission(firstJoinedMissionId);
         (,,, VeydriftGameStorage.Resources memory secondCargo) =
             _fleetMission(secondJoinedMissionId);
-        assertEq(attackCargo.metal, 5_000);
-        assertEq(firstCargo.metal, 5_000);
-        assertEq(secondCargo.metal, 5_000);
-        assertEq(game.planet(targetPlanetId).resources.metal, 15_000);
+        assertEq(attackCargo.metal, 5_000 - attackFuelCost);
+        assertEq(firstCargo.metal, 5_000 - firstFuelCost);
+        assertEq(secondCargo.metal, 5_000 - secondFuelCost);
+        assertEq(
+            game.planet(targetPlanetId).resources.metal,
+            15_000 + attackFuelCost + firstFuelCost + secondFuelCost
+        );
     }
 
     function testAcsAttackRejectsLateJoinMismatchedTargetAndDirectAbuse() public {
@@ -7926,6 +7952,7 @@ contract VeydriftGameTest is Test {
         );
 
         (, uint64 arrivalAt,,) = _fleetMission(missionId);
+        (,,,,,,,, uint128 fuelCost,,) = game.fleetMission(missionId);
         (,,,,,,,,,, uint256 actualRequestId) = game.fleetMission(missionId);
         assertEq(actualRequestId, 1);
         assertNotEq(actualRequestId, requestId);
@@ -7977,7 +8004,7 @@ contract VeydriftGameTest is Test {
             VeydriftGameStorage.BattleOutcome.AttackerWin,
             0,
             expectedSeed,
-            5_000,
+            5_000 - fuelCost,
             0,
             0
         );
