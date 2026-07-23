@@ -8874,10 +8874,13 @@ export function PlayableMvpApp({
   })();
 
   return (
-    <div className="playable-starfield relative isolate min-h-dvh w-full max-w-full overflow-hidden bg-[#05070f] text-slate-100">
+    <div className="playable-starfield relative isolate min-h-dvh w-full max-w-full overflow-x-clip bg-[#05070f] text-slate-100">
       {topBar}
 
-      <div className="relative z-10 mx-auto flex w-full max-w-[96rem] flex-col overflow-hidden md:h-[calc(100dvh-var(--topbar-h,2.75rem))] md:flex-row">
+      {/* overflow-x-clip (not overflow-hidden): a hidden overflow would make
+          this box the scrollport for the sticky mobile nav, permanently
+          displacing it by --topbar-h and detaching it from the viewport. */}
+      <div className="relative z-10 mx-auto flex w-full max-w-[96rem] flex-col overflow-x-clip md:h-[calc(100dvh-var(--topbar-h,2.75rem))] md:flex-row">
         <NavBar
           account={account}
           active={page}

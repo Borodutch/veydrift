@@ -34,8 +34,11 @@ describe("navigation and planet selector UI source contracts", () => {
   test("contains mobile planet picker horizontal overflow inside its own scroller", () => {
     expect(playableSource).toContain('aria-label="Select planet" className="block min-w-0 max-w-full overflow-x-auto overscroll-x-contain"');
     expect(playableSource).toContain('className="flex w-max min-w-full gap-2 pb-1"');
-    expect(playableSource).toContain('className="playable-starfield relative isolate min-h-dvh w-full max-w-full overflow-hidden bg-[#05070f] text-slate-100"');
-    expect(playableSource).toContain('className="relative z-10 mx-auto flex w-full max-w-[96rem] flex-col overflow-hidden md:h-[calc(100dvh-var(--topbar-h,2.75rem))] md:flex-row"');
+    // overflow-x-clip, not overflow-hidden: hidden would turn these shells
+    // into the sticky scrollport and detach the top bar / mobile nav from
+    // the viewport while still clipping horizontal overflow.
+    expect(playableSource).toContain('className="playable-starfield relative isolate min-h-dvh w-full max-w-full overflow-x-clip bg-[#05070f] text-slate-100"');
+    expect(playableSource).toContain('className="relative z-10 mx-auto flex w-full max-w-[96rem] flex-col overflow-x-clip md:h-[calc(100dvh-var(--topbar-h,2.75rem))] md:flex-row"');
     expect(playableSource).toContain('className="min-w-0 max-w-full flex-1 overflow-y-auto p-3 sm:p-4 lg:p-6"');
     expect(playableSource).not.toContain("flex min-w-max gap-2 pb-1");
   });
