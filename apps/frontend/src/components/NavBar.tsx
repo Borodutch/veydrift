@@ -430,6 +430,15 @@ export function NavBar({
       </nav>
 
       {/* Mobile navigation */}
+      {mobileMenuOpen && (
+        <button
+          aria-hidden="true"
+          className="fixed inset-0 z-10 cursor-default bg-black/40 md:hidden"
+          onClick={() => setMobileMenuOpen(false)}
+          tabIndex={-1}
+          type="button"
+        />
+      )}
       <div className="sticky top-[var(--topbar-h,2.75rem)] z-20 w-full max-w-full overflow-hidden border-b border-white/10 bg-[#0c111b]/95 backdrop-blur md:hidden">
         <div className="flex h-12 min-w-0 items-center justify-between gap-3 px-3">
           <div className="min-w-0">
@@ -451,18 +460,10 @@ export function NavBar({
         </div>
 
         {mobileMenuOpen && (
-          <>
-            <button
-              aria-hidden="true"
-              className="fixed inset-0 z-[-1] cursor-default bg-black/40"
-              onClick={() => setMobileMenuOpen(false)}
-              tabIndex={-1}
-              type="button"
-            />
-            <div
-              className="grid min-w-0 max-w-full gap-3 overflow-hidden border-t border-white/10 bg-[#08101d]/98 p-3 shadow-2xl shadow-black/30"
-              id="mobile-navigation-menu"
-            >
+          <div
+            className="grid min-w-0 max-w-full gap-3 overflow-hidden border-t border-white/10 bg-[#08101d]/98 p-3 shadow-2xl shadow-black/30"
+            id="mobile-navigation-menu"
+          >
             {accountSummary("rounded border border-white/10 bg-white/[0.03] p-2")}
             {planetPicker ? (
               <div
@@ -489,8 +490,7 @@ export function NavBar({
                 />
               ))}
             </nav>
-            </div>
-          </>
+          </div>
         )}
       </div>
       {playerEditorDialog}

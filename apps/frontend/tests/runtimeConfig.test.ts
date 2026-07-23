@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  apiBaseUrlForRuntimeConfig,
   burningChickenConfig,
   defaultPlayableApiUrl,
   gameContractAddress,
@@ -39,6 +40,18 @@ describe("runtime config URL", () => {
     );
     expect(resolvePlayableApiUrl("https://api.example.com///", { hostname: "veydrift.com" })).toBe(
       "https://api.example.com",
+    );
+  });
+
+  test("keeps local development requests on the configured API proxy", () => {
+    const config = {
+      apiUrl: "https://api-test.veydrift.com",
+    } as RuntimeConfig;
+
+    expect(apiBaseUrlForRuntimeConfig(config, "/test-api")).toBe("/test-api");
+    expect(apiBaseUrlForRuntimeConfig(config, "/prod-api/")).toBe("/prod-api/");
+    expect(apiBaseUrlForRuntimeConfig(config, "https://custom-api.veydrift.test")).toBe(
+      "https://api-test.veydrift.com",
     );
   });
 

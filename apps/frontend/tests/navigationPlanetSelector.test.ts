@@ -25,6 +25,15 @@ describe("navigation and planet selector UI source contracts", () => {
     expect(navSource).not.toContain("Mobile top tabs");
   });
 
+  test("keeps the mobile menu outside-tap backdrop outside its clipped sticky shell", () => {
+    const backdropIndex = navSource.indexOf('className="fixed inset-0 z-10 cursor-default bg-black/40 md:hidden"');
+    const stickyShellIndex = navSource.indexOf('className="sticky top-[var(--topbar-h,2.75rem)]');
+
+    expect(backdropIndex).toBeGreaterThan(0);
+    expect(backdropIndex).toBeLessThan(stickyShellIndex);
+    expect(navSource).not.toContain('className="fixed inset-0 z-[-1] cursor-default bg-black/40"');
+  });
+
   test("keeps mobile planet selection as an image row, not a select dropdown", () => {
     expect(playableSource).toContain('layout="mobile"');
     expect(playableSource).not.toContain("<select");
