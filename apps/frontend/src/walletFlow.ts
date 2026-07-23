@@ -4025,8 +4025,8 @@ type TransactionReceiptConfirmationOptions = {
   timeoutMs?: number;
 };
 
-export async function confirmTransactionReceiptFromBackend(
-  apiUrl: string,
+export async function confirmTransactionReceiptFromRpc(
+  rpcUrl: string,
   transactionHash: string,
   {
     fetcher = fetch,
@@ -4034,32 +4034,47 @@ export async function confirmTransactionReceiptFromBackend(
     timeoutMs = TRANSACTION_RECEIPT_TIMEOUT_MS,
   }: TransactionReceiptConfirmationOptions = {},
 ): Promise<TransactionReceipt> {
-  if (!apiUrl.trim()) {
-    throw new Error("Game API is unavailable while confirming the transaction.");
+  if (!rpcUrl.trim()) {
+    throw new Error("App RPC is unavailable while confirming the transaction.");
   }
   const startedAt = Date.now();
-  const receiptUrl = `${apiUrl.replace(/\/+$/, "")}/transaction-receipt/${encodeURIComponent(transactionHash)}`;
 
   while (Date.now() - startedAt < timeoutMs) {
     try {
-      const response = await fetcher(receiptUrl, {
-        headers: { accept: "application/json" },
+      const response = await fetcher(rpcUrl, {
+        body: JSON.stringify({
+          id: 1,
+          jsonrpc: "2.0",
+          method: "eth_getTransactionReceipt",
+          params: [transactionHash],
+        }),
+        headers: {
+          accept: "application/json",
+          "content-type": "application/json",
+        },
+        method: "POST",
       });
       if (!response.ok) {
-        throw new Error(`Transaction receipt API returned ${response.status}.`);
+        throw new Error(`Transaction receipt RPC returned ${response.status}.`);
       }
-      const body = await response.json() as { receipt?: TransactionReceipt | null };
-      if (body.receipt) {
-        if (isRevertedReceiptStatus(body.receipt.status)) {
+      const body = await response.json() as {
+        error?: { code?: number; message?: string };
+        result?: TransactionReceipt | null;
+      };
+      if (body.error) {
+        throw new Error(body.error.message ?? `Transaction receipt RPC error ${body.error.code ?? "unknown"}.`);
+      }
+      if (body.result) {
+        if (isRevertedReceiptStatus(body.result.status)) {
           throw new Error(TRANSACTION_REVERTED_MESSAGE);
         }
-        return body.receipt;
+        return body.result;
       }
     } catch (error) {
       if (error instanceof Error && error.message === TRANSACTION_REVERTED_MESSAGE) {
         throw error;
       }
-      // The backend/app RPC reader may be temporarily unavailable while the
+      // The app RPC reader may be temporarily unavailable while the
       // submitted transaction is mining. Keep the same bounded retry semantics
       // used by browser-wallet receipt confirmation.
     }
@@ -4072,12 +4087,12 @@ export async function confirmTransactionReceiptFromBackend(
 export async function confirmTransactionReceiptForProviderSource(
   provider: Eip1193Provider,
   providerSource: "injected" | "farcaster" | undefined,
-  apiUrl: string,
+  receiptRpcUrl: string,
   transactionHash: string,
   options: TransactionReceiptConfirmationOptions = {},
 ): Promise<TransactionReceipt> {
   if (providerSource === "farcaster") {
-    return confirmTransactionReceiptFromBackend(apiUrl, transactionHash, options);
+    return confirmTransactionReceiptFromRpc(receiptRpcUrl, transactionHash, options);
   }
   return confirmTransactionReceipt(provider, transactionHash, options);
 }

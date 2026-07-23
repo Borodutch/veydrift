@@ -155,7 +155,7 @@ describe("transaction action gate", () => {
     expect(gate.isRunning()).toBe(false);
   });
 
-  test("releases the global gate for a second mission after Farcaster backend confirmation and indexing", async () => {
+  test("releases the global gate for a second mission after Farcaster app-RPC confirmation and indexing", async () => {
     const gate = createTransactionActionGate();
     let walletReceiptReads = 0;
     const farcasterProvider: Eip1193Provider = {
@@ -168,11 +168,11 @@ describe("transaction action gate", () => {
     const confirm = (txHash: string) => confirmTransactionReceiptForProviderSource(
       farcasterProvider,
       "farcaster",
-      "https://api.example.test",
+      "https://base-rpc.example.test",
       txHash,
       {
         fetcher: async () => Response.json({
-          receipt: { status: "0x1", transactionHash: txHash },
+          result: { status: "0x1", transactionHash: txHash },
         }),
         pollMs: 1,
         timeoutMs: 100,

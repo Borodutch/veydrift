@@ -1395,58 +1395,6 @@ describe("Veydrift backend", () => {
     });
   });
 
-  test("reads transaction receipts through the backend RPC transport", async () => {
-    const transactionHash = `0x${"ab".repeat(32)}`;
-    const requests: Array<{ method: string; params: unknown[] }> = [];
-    const handler = createRequestHandler({
-      config: configuredTestConfig,
-      transactionReceiptReader: {
-        request: async <T,>(method: string, params: unknown[]) => {
-          requests.push({ method, params });
-          return {
-            blockNumber: "0x20",
-            status: "0x1",
-            transactionHash,
-          } as T;
-        },
-      },
-    });
-
-    const response = await handler(new Request(`http://localhost/transaction-receipt/${transactionHash}`));
-
-    expect(response.status).toBe(200);
-    expect(response.headers.get("cache-control")).toBe("no-store");
-    expect(await response.json()).toEqual({
-      receipt: {
-        blockNumber: "0x20",
-        status: "0x1",
-        transactionHash,
-      },
-    });
-    expect(requests).toEqual([{
-      method: "eth_getTransactionReceipt",
-      params: [transactionHash],
-    }]);
-  });
-
-  test("does not forward malformed transaction hashes to the backend RPC transport", async () => {
-    let requests = 0;
-    const handler = createRequestHandler({
-      config: configuredTestConfig,
-      transactionReceiptReader: {
-        request: async <T,>() => {
-          requests += 1;
-          return null as T;
-        },
-      },
-    });
-
-    const response = await handler(new Request("http://localhost/transaction-receipt/not-a-hash"));
-
-    expect(response.status).toBe(404);
-    expect(requests).toBe(0);
-  });
-
   test("prefers provider build SHA metadata over stale generic GIT_SHA", async () => {
     const previousGitSha = process.env.GIT_SHA;
     const previousSourceVersion = process.env.SOURCE_VERSION;

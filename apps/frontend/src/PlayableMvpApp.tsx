@@ -4224,6 +4224,11 @@ export function PlayableMvpApp({
   const chickenBurnConfig = useMemo(() => {
     return runtimeConfig.status === "ready" ? burningChickenConfig(runtimeConfig.config) : undefined;
   }, [runtimeConfig]);
+  const transactionReceiptRpcUrl = useMemo(() => {
+    return runtimeConfig.status === "ready"
+      ? veydriftChainForChainId(runtimeConfig.config.chainId).rpcUrls[0]
+      : "";
+  }, [runtimeConfig]);
   const gameActionInputsAvailable = gameActionsAvailableForBody(activeBodyKind, Boolean(provider && account && gameContract && (activePlanetId ?? onChainSettlement?.homePlanetId)));
   const missionActionInputsAvailable = Boolean(provider && account && gameContract && (activePlanetId ?? onChainSettlement?.homePlanetId));
   const allianceActionInputsAvailable = Boolean(provider && account && allianceContract);
@@ -4263,10 +4268,10 @@ export function PlayableMvpApp({
     return confirmTransactionReceiptForProviderSource(
       provider,
       walletProviderSource,
-      apiBaseUrl ?? "",
+      transactionReceiptRpcUrl,
       txHash,
     );
-  }, [apiBaseUrl, provider, walletProviderSource]);
+  }, [provider, transactionReceiptRpcUrl, walletProviderSource]);
 
   const runCoordinatedWriteTransaction = useCallback(async <IndexedSnapshot,>({
     applyIndexedState,
