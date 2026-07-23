@@ -4019,6 +4019,84 @@ export async function confirmTransactionReceipt(
   throw new Error(TRANSACTION_RECEIPT_TIMEOUT_MESSAGE);
 }
 
+type TransactionReceiptConfirmationOptions = {
+  fetcher?: (input: string, init?: RequestInit) => Promise<Response>;
+  pollMs?: number;
+  timeoutMs?: number;
+};
+
+export async function confirmTransactionReceiptFromRpc(
+  rpcUrl: string,
+  transactionHash: string,
+  {
+    fetcher = fetch,
+    pollMs = TRANSACTION_RECEIPT_POLL_MS,
+    timeoutMs = TRANSACTION_RECEIPT_TIMEOUT_MS,
+  }: TransactionReceiptConfirmationOptions = {},
+): Promise<TransactionReceipt> {
+  if (!rpcUrl.trim()) {
+    throw new Error("App RPC is unavailable while confirming the transaction.");
+  }
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      const response = await fetcher(rpcUrl, {
+        body: JSON.stringify({
+          id: 1,
+          jsonrpc: "2.0",
+          method: "eth_getTransactionReceipt",
+          params: [transactionHash],
+        }),
+        headers: {
+          accept: "application/json",
+          "content-type": "application/json",
+        },
+        method: "POST",
+      });
+      if (!response.ok) {
+        throw new Error(`Transaction receipt RPC returned ${response.status}.`);
+      }
+      const body = await response.json() as {
+        error?: { code?: number; message?: string };
+        result?: TransactionReceipt | null;
+      };
+      if (body.error) {
+        throw new Error(body.error.message ?? `Transaction receipt RPC error ${body.error.code ?? "unknown"}.`);
+      }
+      if (body.result) {
+        if (isRevertedReceiptStatus(body.result.status)) {
+          throw new Error(TRANSACTION_REVERTED_MESSAGE);
+        }
+        return body.result;
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message === TRANSACTION_REVERTED_MESSAGE) {
+        throw error;
+      }
+      // The app RPC reader may be temporarily unavailable while the
+      // submitted transaction is mining. Keep the same bounded retry semantics
+      // used by browser-wallet receipt confirmation.
+    }
+    await delay(pollMs);
+  }
+
+  throw new Error(TRANSACTION_RECEIPT_TIMEOUT_MESSAGE);
+}
+
+export async function confirmTransactionReceiptForProviderSource(
+  provider: Eip1193Provider,
+  providerSource: "injected" | "farcaster" | undefined,
+  receiptRpcUrl: string,
+  transactionHash: string,
+  options: TransactionReceiptConfirmationOptions = {},
+): Promise<TransactionReceipt> {
+  if (providerSource === "farcaster") {
+    return confirmTransactionReceiptFromRpc(receiptRpcUrl, transactionHash, options);
+  }
+  return confirmTransactionReceipt(provider, transactionHash, options);
+}
+
 export type FetchHighscoreOptions = {
   category?: HighscoreCategory;
   currentWallet?: string;
