@@ -1619,13 +1619,13 @@ function MissionCard({
           ) : null}
           {statusPill ? (
             statusPill.variant === "text" ? (
-              <span className={`whitespace-nowrap text-[11px] font-medium ${statusPill.tone}`}>{statusPill.label}</span>
+              <span className={`whitespace-nowrap text-[11px] font-medium ${statusPill.tone}`} data-mission-status={statusPill.label}>{statusPill.label}</span>
             ) : statusPill.variant === "muted" ? (
               // Expected terminal states: quiet text, desktop only — on mobile the time's inline
               // "Returned 9:23 AM" label already says it, so repeating the word is noise.
-              <span className="hidden text-[11px] text-slate-600 lg:inline">{statusPill.label}</span>
+              <span className="hidden text-[11px] text-slate-600 lg:inline" data-mission-status={statusPill.label}>{statusPill.label}</span>
             ) : (
-              <span className={`inline-flex max-w-full truncate rounded-full border px-1.5 py-0.5 text-[10px] font-medium ${statusPill.tone}`} title={statusPill.label}>
+              <span className={`inline-flex max-w-full truncate rounded-full border px-1.5 py-0.5 text-[10px] font-medium ${statusPill.tone}`} data-mission-status={statusPill.label} title={statusPill.label}>
                 {statusPill.label}
               </span>
             )
@@ -1725,13 +1725,23 @@ function missionOutcome(
   direction: MissionDirection,
 ): { label: string; tone: string } | null {
   if (!isOffensiveMissionType(mission.missionType)) return null;
-  return losses.outcome === "Draw"
+  return playerFacingBattleOutcome(losses.outcome, direction);
+}
+
+// The collapsed archive status always uses the viewer's side of the battle. Neutral/observer rows
+// deliberately keep the attacker's perspective, matching outgoing rows without claiming planet
+// ownership that is not present in the visible data.
+function playerFacingBattleOutcome(
+  outcome: BattleReport["outcome"],
+  direction: MissionDirection,
+): { label: string; tone: string } {
+  return outcome === "Draw"
     ? { label: "Draw", tone: "text-amber-300/80" }
     : direction === "incoming"
-      ? losses.outcome === "DefenderWin"
+      ? outcome === "DefenderWin"
         ? { label: "Defended", tone: "text-emerald-300/80" }
         : { label: "Raided", tone: "text-red-300/90" }
-      : losses.outcome === "AttackerWin"
+      : outcome === "AttackerWin"
         ? { label: "Won", tone: "text-emerald-300/80" }
         : { label: "Attack failed", tone: "text-red-300/90" };
 }
@@ -2353,6 +2363,8 @@ function PastMissionTable({
                     onOpenReport={onOpenReport}
                     planetLookup={planetLookup}
                     report={row.report}
+                    wallet={wallet}
+                    walletPlanetIds={walletPlanetIds}
                   />
                 ))}
               </div>
@@ -2449,11 +2461,19 @@ function PastBattleReportRow({
   onOpenReport,
   planetLookup,
   report,
+  wallet,
+  walletPlanetIds,
 }: {
   onOpenReport: (missionId: string) => void;
   planetLookup: ReadonlyMap<string, MissionPlanetIdentity>;
   report: BattleReport;
+  wallet?: string | undefined;
+  walletPlanetIds: ReadonlySet<string>;
 }) {
+  const outcome = playerFacingBattleOutcome(
+    report.outcome,
+    resolveBattleReportDirection(report, wallet, walletPlanetIds),
+  );
   const target = battleReportTargetEndpoint(report, planetLookup);
   const origin: MissionEndpoint = {
     archetype: null,
@@ -2513,10 +2533,20 @@ function PastBattleReportRow({
       }
       missionId={report.missionId}
       origin={origin}
-      statusPill={{ label: battleOutcomeLabel(report.outcome), tone: battleOutcomeTextTone(report.outcome), variant: "text" }}
+      statusPill={{ ...outcome, variant: "text" }}
       target={target}
     />
   );
+}
+
+function resolveBattleReportDirection(
+  report: BattleReport,
+  wallet: string | undefined,
+  walletPlanetIds: ReadonlySet<string>,
+): MissionDirection {
+  if (addressesMatch(report.attacker, wallet)) return "outgoing";
+  if (walletPlanetIds.has(report.targetPlanetId)) return "incoming";
+  return "neutral";
 }
 
 function battleReportTargetEndpoint(report: BattleReport, planetLookup: ReadonlyMap<string, MissionPlanetIdentity>): MissionEndpoint {

@@ -809,6 +809,64 @@ describe("MissionControlPage", () => {
     expect(text).not.toContain("Open report");
   });
 
+  test.each([
+    {
+      label: "outgoing attacker win",
+      report: { ...battleReport("201"), attacker: "0x1111111111111111111111111111111111111111", targetPlanetId: "9", outcome: "AttackerWin" as const },
+      walletPlanets: [],
+      expected: "Won",
+    },
+    {
+      label: "outgoing attacker loss",
+      report: { ...battleReport("202"), attacker: "0x1111111111111111111111111111111111111111", targetPlanetId: "9", outcome: "DefenderWin" as const },
+      walletPlanets: [],
+      expected: "Attack failed",
+    },
+    {
+      label: "incoming defender win",
+      report: { ...battleReport("203"), targetPlanetId: "7", outcome: "DefenderWin" as const },
+      walletPlanets: [managedPlanet()],
+      expected: "Defended",
+    },
+    {
+      label: "incoming defender loss",
+      report: { ...battleReport("204"), targetPlanetId: "7", outcome: "AttackerWin" as const },
+      walletPlanets: [managedPlanet()],
+      expected: "Raided",
+    },
+    {
+      label: "observer draw",
+      report: { ...battleReport("205"), targetPlanetId: "9", outcome: "Draw" as const },
+      walletPlanets: [],
+      expected: "Draw",
+    },
+    {
+      // Neutral/observer rows deliberately use the attacker's perspective vocabulary.
+      label: "observer attacker loss",
+      report: { ...battleReport("206"), targetPlanetId: "9", outcome: "DefenderWin" as const },
+      walletPlanets: [],
+      expected: "Attack failed",
+    },
+  ])("renders $label in a standalone report's collapsed status cell", ({ expected, report, walletPlanets }) => {
+    const page = missionControlPage({
+      fleetVisibility: {
+        wallet: "0x1111111111111111111111111111111111111111",
+        homePlanetId: "7",
+        incoming: [],
+        outgoing: [],
+        returning: [],
+        joinableAttacks: [],
+        completedMissions: [],
+        battleReports: [report],
+      },
+      walletPlanets,
+    });
+
+    expect(visibleAttributeValues(page, "data-mission-status")).toEqual([expected]);
+    // The expanded Battle group stays factual and preserves the raw combat result.
+    expect(visibleText(page)).toContain(`Outcome ${report.outcome === "AttackerWin" ? "Attacker win" : report.outcome === "DefenderWin" ? "Defender win" : "Draw"}`);
+  });
+
   test("renders standalone moon-target battle reports distinctly from parent-planet reports", () => {
     const page = missionControlPage({
       fleetVisibility: {
@@ -880,7 +938,7 @@ describe("MissionControlPage", () => {
             owner: "0x3333333333333333333333333333333333333333",
             originPlanetId: "5",
             targetPlanetId: "7",
-            status: "Returned",
+            status: "Resolved",
           }),
         ],
         battleReports: [],
@@ -901,6 +959,9 @@ describe("MissionControlPage", () => {
     // folding in the VEY-399 rework intent now that cards have no MISSION column.
     expect(text).toContain("Returned");
     expect(text).not.toContain("Returned · ");
+    // No usable battle report exists for either completed combat row, so the collapsed status cell
+    // must retain the muted terminal fallback instead of fabricating a player-facing outcome.
+    expect(visibleAttributeValues(page, "data-mission-status")).toEqual(["Returned", "Resolved"]);
   });
 
   test("shows outbound cargo and return-leg loot as separate lines on the mission card", () => {
@@ -1399,6 +1460,28 @@ function battleReport(missionId: string): BattleReport {
 
 function visibleText(node: ComponentChildren): string {
   return textParts(node).join(" ").replace(/\s+/g, " ").trim();
+}
+
+function visibleAttributeValues(node: ComponentChildren, attribute: string): string[] {
+  if (node === null || node === undefined || typeof node === "boolean" || typeof node === "string" || typeof node === "number") {
+    return [];
+  }
+  if (Array.isArray(node)) {
+    return node.flatMap((child) => visibleAttributeValues(child, attribute));
+  }
+  const vnode = node as VNode;
+  if (typeof vnode.type === "function") {
+    if ("size" in (vnode.props ?? {}) || "strokeWidth" in (vnode.props ?? {})) {
+      return [];
+    }
+    return visibleAttributeValues(vnode.type(vnode.props), attribute);
+  }
+  if ((vnode.props as { hidden?: boolean } | undefined)?.hidden) {
+    return [];
+  }
+  const value = (vnode.props as Record<string, unknown> | undefined)?.[attribute];
+  const current = typeof value === "string" ? [value] : [];
+  return [...current, ...visibleAttributeValues(vnode.props?.children as ComponentChildren, attribute)];
 }
 
 function textParts(node: ComponentChildren): string[] {
