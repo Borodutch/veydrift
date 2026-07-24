@@ -981,19 +981,19 @@ function MissionFilterPopover({
         <ChevronDown aria-hidden="true" className="text-slate-500 transition-transform group-open/filters:rotate-180" size={13} />
       </summary>
 
+      {/* Same visual system as the rest of the screen: the one uppercase-tracked label style for
+          the header, sentence-case muted field labels, compact 32px controls. */}
       <div
         aria-label="Mission filters"
-        className="absolute right-0 z-30 mt-2 grid w-[min(22rem,calc(100vw-1.5rem))] gap-3 rounded-lg border border-white/15 bg-[#0d1422] p-3 shadow-2xl shadow-black/50"
+        className="absolute right-0 z-30 mt-2 w-[min(19rem,calc(100vw-1.5rem))] rounded-lg border border-white/10 bg-[#0d1422] p-3 shadow-2xl shadow-black/50"
         id="mission-control-filter-popover"
         role="dialog"
+        title="Filters combine across ongoing and past missions"
       >
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <h2 className="text-sm font-semibold text-white">Filter missions</h2>
-            <p className="mt-0.5 text-[11px] text-slate-500">Filters combine across ongoing and past missions.</p>
-          </div>
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <h2 className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">Filter missions</h2>
           <button
-            className="shrink-0 rounded px-2 py-1 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-300/10 disabled:cursor-not-allowed disabled:text-slate-600"
+            className="shrink-0 rounded text-[11px] font-medium text-cyan-200 transition hover:text-cyan-100 disabled:cursor-not-allowed disabled:text-slate-600"
             disabled={!active}
             onClick={(event) => {
               onChange({ ...EMPTY_MISSION_CONTROL_FILTERS });
@@ -1007,12 +1007,12 @@ function MissionFilterPopover({
           </button>
         </div>
 
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <label className="grid gap-1 text-xs font-medium text-slate-300">
-            Mission number
+        <div className="grid grid-cols-2 gap-2">
+          <label className="grid gap-1 text-[11px] text-slate-500">
+            Mission #
             <input
               aria-label="Search missions by number"
-              className="h-10 min-w-0 rounded border border-white/10 bg-black/25 px-3 font-mono text-sm text-white outline-none transition placeholder:text-slate-600 focus:border-cyan-300/45 focus:ring-1 focus:ring-cyan-300/25"
+              className="h-8 min-w-0 rounded border border-white/10 bg-black/25 px-2 font-mono text-xs text-white outline-none transition placeholder:text-slate-600 focus:border-cyan-300/45 focus:ring-1 focus:ring-cyan-300/25"
               inputMode="numeric"
               onInput={(event) => update({ missionNumber: event.currentTarget.value })}
               placeholder="1473"
@@ -1021,11 +1021,11 @@ function MissionFilterPopover({
             />
           </label>
 
-          <label className="grid gap-1 text-xs font-medium text-slate-300">
+          <label className="grid gap-1 text-[11px] text-slate-500">
             Planet ID
             <input
               aria-label="Filter by origin or destination planet ID"
-              className="h-10 min-w-0 rounded border border-white/10 bg-black/25 px-3 font-mono text-sm text-white outline-none transition placeholder:text-slate-600 focus:border-cyan-300/45 focus:ring-1 focus:ring-cyan-300/25"
+              className="h-8 min-w-0 rounded border border-white/10 bg-black/25 px-2 font-mono text-xs text-white outline-none transition placeholder:text-slate-600 focus:border-cyan-300/45 focus:ring-1 focus:ring-cyan-300/25"
               inputMode="numeric"
               onInput={(event) => update({ planetId: event.currentTarget.value })}
               placeholder="7"
@@ -1034,30 +1034,30 @@ function MissionFilterPopover({
             />
           </label>
 
-          <label className="grid gap-1 text-xs font-medium text-slate-300">
-            Mission type
+          <label className="grid gap-1 text-[11px] text-slate-500">
+            Type
             <select
               aria-label="Filter by mission type"
-              className="h-10 min-w-0 rounded border border-white/10 bg-[#080d18] px-3 text-sm text-white outline-none transition focus:border-cyan-300/45 focus:ring-1 focus:ring-cyan-300/25"
+              className="h-8 min-w-0 rounded border border-white/10 bg-[#080d18] px-1.5 text-xs text-white outline-none transition focus:border-cyan-300/45 focus:ring-1 focus:ring-cyan-300/25"
               onChange={(event) => update({ missionType: event.currentTarget.value })}
               value={filters.missionType}
             >
-              <option value="">All mission types</option>
+              <option value="">All types</option>
               {MISSION_CONTROL_MISSION_TYPES.map((missionType) => (
                 <option key={missionType} value={missionType}>{missionTypeLabel(missionType)}</option>
               ))}
             </select>
           </label>
 
-          <label className="grid gap-1 text-xs font-medium text-slate-300">
-            Direction / state
+          <label className="grid gap-1 text-[11px] text-slate-500">
+            Flight state
             <select
               aria-label="Filter by mission direction or state"
-              className="h-10 min-w-0 rounded border border-white/10 bg-[#080d18] px-3 text-sm text-white outline-none transition focus:border-cyan-300/45 focus:ring-1 focus:ring-cyan-300/25"
+              className="h-8 min-w-0 rounded border border-white/10 bg-[#080d18] px-1.5 text-xs text-white outline-none transition focus:border-cyan-300/45 focus:ring-1 focus:ring-cyan-300/25"
               onChange={(event) => update({ direction: event.currentTarget.value as MissionControlDirectionFilter })}
               value={filters.direction}
             >
-              <option value="">Any flight state</option>
+              <option value="">Any</option>
               <option value="outbound">Outbound</option>
               <option value="returning">Returning</option>
             </select>
@@ -1315,8 +1315,13 @@ function activeMissionHeaderTiming(mission: FleetMissionSummary, now: number, no
   return { label: "ETA", value: missionEndpointTiming(mission.arrivalAt, now) };
 }
 
-// Expanded-panel timings: the full arrival/return picture the compact row deliberately omits.
+// Expanded-panel timings: the full arrival/return picture the compact row deliberately omits. A
+// recalled fleet never arrived, so its timeline shows only the (early) return instead of a bogus
+// "Arrived" moment that postdates the landing.
 function missionDetailTimings(mission: FleetMissionSummary, now: number): EndpointTiming[] {
+  if (fleetTurnedBackEarly(mission)) {
+    return [{ label: "Recalled — returned", value: compactMissionTime(mission.returnAt, now) }];
+  }
   const timings: EndpointTiming[] = [{ label: "Arrived", value: compactMissionTime(mission.arrivalAt, now) }];
   if (mission.missionType === "DefenseHold") {
     timings.push({ label: "Holds until", value: compactMissionTime(defenseHoldRecallUntil(mission), now) });
@@ -1514,7 +1519,11 @@ type MissionStatusPill = { label: string; tone: string; variant?: "muted" | "tex
 // second line empty — and the width saved (narrow mission column, merged time/status) goes to the
 // route. Below lg the rows fall back to a stacked flex-wrap layout (badge line, route line,
 // payload line) where per-item inline labels do the header's job.
-const MISSION_ROW_GRID = "lg:grid lg:grid-cols-[7rem_minmax(0,1fr)_minmax(0,8.5rem)_7rem_1rem] lg:items-center lg:gap-x-3";
+// Two width tiers: at lg (narrow desktop windows) the fixed columns slim down so the route — the
+// only column whose content truncates — keeps enough room for full planet names; xl restores the
+// roomier tracks. Without the tier split, payload/status hoarded fixed width they rarely fill
+// while names collapsed to "Neph…".
+const MISSION_ROW_GRID = "lg:grid lg:grid-cols-[6.5rem_minmax(0,1fr)_minmax(0,7rem)_5.5rem_1rem] lg:items-center lg:gap-x-2 xl:grid-cols-[7rem_minmax(0,1fr)_minmax(0,8.5rem)_7rem_1rem] xl:gap-x-3";
 
 // Column headers rendered once per list — the reason the rows themselves carry no ORIGIN /
 // DESTINATION / ARRIVED label chatter. Hidden below lg where rows are stacked and self-labelling.
@@ -2441,9 +2450,11 @@ function PastMissionSummaryRow({
 }
 
 // Past-archive status: a finished battle shows its OUTCOME (Won / Attack failed / Defended /
-// Raided / Draw) — "Returned"/"Resolved" says nothing about the fight the player scans for. Other
-// expected terminal states mute to plain text; unusual endings (Recalled, Awaiting randomness,
-// mid-settlement Resolving) keep their colored pill so they stand out.
+// Raided / Draw) — "Returned"/"Resolved" says nothing about the fight the player scans for. A
+// mission whose fleet turned back before its scheduled arrival was recalled mid-flight (the
+// backend's terminal status collapses that to a bare "Returned"), so it reads "Recalled" — the
+// honest reason an attack has no battle outcome. Other expected terminal states mute to plain
+// text; unusual endings keep their colored pill so they stand out.
 function pastMissionStatusPill(
   mission: FleetMissionSummary,
   now: number,
@@ -2452,9 +2463,22 @@ function pastMissionStatusPill(
 ): MissionStatusPill {
   const outcome = losses ? missionOutcome(losses, mission, direction) : null;
   if (outcome) return { label: outcome.label, tone: outcome.tone, variant: "text" };
+  if (fleetTurnedBackEarly(mission)) {
+    return { label: "Recalled", tone: "text-amber-300/80", variant: "text" };
+  }
   const pill = missionStatusPill(mission, now);
   if (pill.label === "Returned" || pill.label === "Resolved") return { ...pill, variant: "muted" };
-  return pill;
+  // Pills are live-flight chrome; a past row's unusual terminal state reads as amber text so the
+  // finished list keeps one visual voice (colored text = noteworthy, muted text = expected).
+  return { label: pill.label, tone: "text-amber-300/80", variant: "text" };
+}
+
+// A fleet that landed home before its scheduled arrival never reached the target — it was recalled
+// mid-flight. (Deploys/instant legs have returnAt >= arrivalAt, so they never match.)
+function fleetTurnedBackEarly(mission: FleetMissionSummary): boolean {
+  const arrivalAt = Number(mission.arrivalAt);
+  const returnAt = Number(mission.returnAt);
+  return Number.isFinite(arrivalAt) && Number.isFinite(returnAt) && returnAt < arrivalAt;
 }
 
 function PastBattleReportRow({

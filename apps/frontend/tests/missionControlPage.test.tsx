@@ -729,6 +729,47 @@ describe("MissionControlPage", () => {
     expect(text).not.toContain("Defender losses");
   });
 
+  // A fleet that landed home BEFORE its scheduled arrival was recalled mid-flight and never fought;
+  // the backend's terminal status collapses that to "Returned". The archive row must read "Recalled"
+  // (the honest reason an attack has no win/loss outcome) and skip the bogus "Arrived" timeline row.
+  test("labels an attack recalled mid-flight as Recalled, not a bare Returned", () => {
+    const page = missionControlPage({
+      fleetVisibility: {
+        wallet: "0x1111111111111111111111111111111111111111",
+        homePlanetId: "7",
+        incoming: [],
+        outgoing: [],
+        returning: [],
+        joinableAttacks: [],
+        completedMissions: [],
+        battleReports: [],
+      },
+      missionArchive: {
+        wallet: "0x1111111111111111111111111111111111111111",
+        homePlanetId: "7",
+        rows: [{
+          kind: "mission",
+          // returnAt precedes arrivalAt: the fleet turned back before reaching the target.
+          mission: mission({ missionId: "7663", missionType: "Attack", status: "Returned", arrivalAt: "1770000841", returnAt: "1770000695" }),
+        }],
+        pagination: {
+          page: 1,
+          pageSize: 25,
+          totalEntries: 1,
+          totalPages: 1,
+          hasPreviousPage: false,
+          hasNextPage: false,
+        },
+      },
+    });
+    const text = visibleText(page);
+
+    expect(text).toContain("Attack #7663");
+    expect(text).toContain("Recalled");
+    expect(text).not.toContain("Arrived");
+    expect(text).toContain("Recalled — returned");
+  });
+
   test("renders returned moon-target missions distinctly in the completed archive", () => {
     const page = missionControlPage({
       fleetVisibility: {
