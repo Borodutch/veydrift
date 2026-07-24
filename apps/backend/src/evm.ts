@@ -513,6 +513,10 @@ export type FleetMissionSummary = {
   returnAt: string;
   fuelCost: string;
   recallCost: string | null;
+  // Immutable event provenance. FleetMissionReturned collapses recalled fleets to the same terminal
+  // status as ordinary returns, and recallCost may be projected for outbound summaries, so neither
+  // field can distinguish a completed recall. Only the indexed FleetMissionRecalled event sets this.
+  recallProvenance?: "FleetMissionRecalled";
   attackGroupId: string | null;
   joinedAttackMissionIds: string[];
   // Exact append order in the contract's combined AcsAttack/AcsDefend link array.
@@ -4797,6 +4801,7 @@ export function decodeFleetMissionLogs(logs: RpcLog[]): Map<string, MutableFleet
       mission.status = "Recalled";
       mission.returnAt = decodeUintWord(wordAt(words, 0)).toString();
       mission.recallCost = decodeUintWord(wordAt(words, 1)).toString();
+      mission.recallProvenance = "FleetMissionRecalled";
     } else if (topic === fleetMissionResolvedTopic) {
       mission.returnAt = decodeUintWord(wordAt(splitWords(log.data), 0)).toString();
       if (mission.status !== "Returning" && mission.status !== "Recalled") {

@@ -3462,7 +3462,9 @@ describe("Veydrift backend", () => {
 
     const missionId = 1692n;
     const arrivalAt = 1_800_010_000n;
-    const recallReturnAt = arrivalAt - 600n;
+    // A recall after the outbound midpoint returns after the original target ETA. Timestamp ordering
+    // cannot identify this as a recall; the indexed event provenance must survive the terminal return.
+    const recallReturnAt = arrivalAt + 600n;
     for (const log of activeFleetMissionLogs({
       missionId,
       missionTypeId: 3n,
@@ -3497,7 +3499,8 @@ describe("Veydrift backend", () => {
         missionId: "1692",
         missionType: "Attack",
         status: "Returned",
-        recallCost: "695"
+        recallCost: "695",
+        recallProvenance: "FleetMissionRecalled"
       }
     });
     expect(body.detail).not.toContain("catches up");

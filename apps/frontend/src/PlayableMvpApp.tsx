@@ -915,8 +915,7 @@ export function shouldPollPendingMissionReport(
   if (!detail || detail.battleReport) return false;
   if (!["Attack", "AcsAttack", "Intercept", "MissileAttack"].includes(detail.mission.missionType)) return false;
   if (detail.battleReportMaterialization?.status === "ready") return false;
-  if (detail.mission.status === "Recalled") return false;
-  if (detail.mission.status === "Returned" && detail.mission.recallCost !== null && detail.mission.returnCargo === null) return false;
+  if (detail.mission.status === "Recalled" || detail.mission.recallProvenance === "FleetMissionRecalled") return false;
   if (detail.mission.status === "Outbound" && Number(detail.mission.arrivalAt) * 1_000 > now) return false;
   return true;
 }

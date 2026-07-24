@@ -53,6 +53,7 @@ const fleetMissionShipsTopic = "0xf581cbe97357884794500d80286cfbe823fed3b5d77446
 const fleetMissionBodiesTopic = "0xfa464e2180f08e3e4d8c4247566d0616a5e1ab845d1678c47fedae6d44e9c502";
 const defenseHoldStationedTopic = "0x1183ab32cc2efce96b8c0956b35dd1b46c594234a5717fd810d8cc569a193a47";
 const defenseHoldEndedTopic = "0xf72983c656a87e172935581e9c19f22826c62a2c4d552c6dd217c498a9d88586";
+const fleetMissionRecalledTopic = "0x2c9b31f1abc732f3b6d28e7724439ea4713ae516632088b8c4dc0211479dc6ca";
 const fleetMissionReturnExposedTopic = "0x27a083519451f4434cd1f93497fb93689a906d3b982a3f127cb236aa24356afa";
 const fleetMissionReturnedTopic = "0xbb4a50257c10524783e403a4e0db9c4c3e9378c2e398ec5de34281be1aa97b06";
 const fleetMissionResolvedTopic = "0xcb928b431ffcdbe55fddc2bf06967951efb3dfe87d14bc436d546fdbbee9cb2d";
@@ -6203,6 +6204,76 @@ describe("SettlementIndexer", () => {
       fuelCost: "4",
       recallCost: "1",
       transactionHash: "0xtransport1448"
+    });
+  });
+
+  test("startup event replay preserves recall provenance after terminal status collapses to Returned", async () => {
+    const database = new Database(":memory:");
+    const reader = {
+      async listCurrentPlanets() { return [planet]; },
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return [moonChance]; },
+      async listSettledPlanetEvents() { return [planet]; },
+      async listCanonicalFleetMissions() { return []; }
+    };
+    const writer = new SettlementIndexer(reader, 100n, { database });
+    await writer.rebuild();
+
+    const missionId = 755n;
+    const arrivalAt = 1_800_000_000n;
+    const lateRecallReturnAt = arrivalAt + 600n;
+    writer.applyLog({
+      blockNumber: "0x80",
+      transactionHash: "0xrecall755-launch",
+      logIndex: "0x0",
+      topics: [fleetMissionLaunchedTopic, topic(missionId), addressTopic(player), topic(3n)],
+      data: abiWords(BigInt(planet.planetId), 188n, arrivalAt, arrivalAt + 1_200n, 0n)
+    });
+    writer.applyLog({
+      blockNumber: "0x80",
+      transactionHash: "0xrecall755-launch",
+      logIndex: "0x1",
+      topics: [fleetMissionCargoTopic, topic(missionId)],
+      data: abiWords(0n, 0n, 0n, 200n)
+    });
+    writer.applyLog({
+      blockNumber: "0x80",
+      transactionHash: "0xrecall755-launch",
+      logIndex: "0x2",
+      topics: [fleetMissionShipsTopic, topic(missionId)],
+      data: abiWords(1n, ...Array.from({ length: 13 }, () => 0n))
+    });
+    writer.applyLog({
+      blockNumber: "0x81",
+      transactionHash: "0xrecall755",
+      logIndex: "0x0",
+      topics: [fleetMissionRecalledTopic, topic(missionId), addressTopic(player)],
+      data: abiWords(lateRecallReturnAt, 50n)
+    });
+    writer.applyLog({
+      blockNumber: "0x82",
+      transactionHash: "0xrecall755-returned",
+      logIndex: "0x0",
+      topics: [fleetMissionReturnedTopic, topic(missionId), addressTopic(player), topic(BigInt(planet.planetId))],
+      data: "0x"
+    });
+
+    expect(writer.fleetMission("755")).toMatchObject({
+      missionId: "755",
+      missionType: "Attack",
+      status: "Returned",
+      arrivalAt: arrivalAt.toString(),
+      returnAt: lateRecallReturnAt.toString(),
+      recallProvenance: "FleetMissionRecalled"
+    });
+
+    database.query("DELETE FROM contract_fleet_missions WHERE mission_id = ?").run("755");
+    const restart = new SettlementIndexer(reader, 100n, { database, runStartupBackfill: true });
+    expect(restart.fleetMission("755")).toMatchObject({
+      missionId: "755",
+      missionType: "Attack",
+      status: "Returned",
+      recallProvenance: "FleetMissionRecalled"
     });
   });
 

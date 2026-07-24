@@ -402,6 +402,9 @@ export type FleetMissionSummary = {
   returnAt: string;
   fuelCost: string;
   recallCost: string | null;
+  // Stable backend provenance from an indexed FleetMissionRecalled event. Terminal status collapses
+  // to Returned and recallCost can be projected, so consumers must use this field to identify recalls.
+  recallProvenance?: "FleetMissionRecalled";
   attackGroupId: string | null;
   joinedAttackMissionIds: string[];
   linkedMissionIds?: string[];
