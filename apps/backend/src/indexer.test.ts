@@ -56,6 +56,7 @@ const defenseHoldEndedTopic = "0xf72983c656a87e172935581e9c19f22826c62a2c4d552c6
 const fleetMissionReturnExposedTopic = "0x27a083519451f4434cd1f93497fb93689a906d3b982a3f127cb236aa24356afa";
 const fleetMissionReturnedTopic = "0xbb4a50257c10524783e403a4e0db9c4c3e9378c2e398ec5de34281be1aa97b06";
 const fleetMissionResolvedTopic = "0xcb928b431ffcdbe55fddc2bf06967951efb3dfe87d14bc436d546fdbbee9cb2d";
+const attackMissionJoinedTopic = "0xc584e0cc52df45c2a92cc5556e493377d69bfe3e3658d1adb13f27cfcc89b146";
 const attackBattleResolvedTopic = "0xc0d98d89682d12d3fe90cd0786b9320015ab3950de5f4ae3f54ca0fe9b660d1b";
 const combatRoundResolvedTopic = "0xad3481558e72184b0d73a624579c0f1fc7db867024ac190f038373dbde288ca9";
 const combatLossesTopic = "0xe31518e93e94d23864fa76375f560d4ef2b4288dca5a5f1204f71d1d363d3704";
@@ -5262,6 +5263,15 @@ describe("SettlementIndexer", () => {
     }, 100n);
     indexer.applyEvent(planet);
     indexer.applyEvent({ ...planet, planetId: "99", owner: attacker, name: "Spearhead", galaxy: 3, system: 12, position: 4 });
+    for (const [technologyId, level] of [[5n, 4n], [6n, 3n], [7n, 2n]] as const) {
+      indexer.applyLog({
+        blockNumber: "0x8f",
+        transactionHash: `0xcombat-tech-${technologyId}`,
+        logIndex: `0x${technologyId.toString(16)}`,
+        topics: [researchCompletedTopic, addressTopic(defender), topic(technologyId)],
+        data: abiWords(level)
+      });
+    }
     // Alliance Depot (building id 13) level 2 on the defended planet funds the holding-fuel upkeep.
     indexer.applyLog({
       blockNumber: "0x90",
@@ -5322,6 +5332,7 @@ describe("SettlementIndexer", () => {
       missionId: "61",
       defender,
       defenderDisplayName: null,
+      combatTechnology: { weapons: 4, shielding: 3, armor: 2 },
       holdUntil: "4000000000",
       allianceDepotLevel: 2
     });
@@ -5384,6 +5395,77 @@ describe("SettlementIndexer", () => {
     } finally {
       Date.now = originalDateNow;
     }
+  });
+
+  test("exposes exact active and fail-closed scheduled DefenseHold timing for solo attack previews", () => {
+    const ally = "0x4444444444444444444444444444444444444444" as Address;
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    indexer.applyEvent({ ...planet, planetId: "12", owner: ally, name: "Ally Base", galaxy: 3, system: 12, position: 4 });
+
+    const launchDefenseHold = (
+      missionId: bigint,
+      arrivalAt: bigint,
+      returnAt: bigint,
+      blockNumber: string
+    ) => {
+      indexer.applyLog({
+        blockNumber,
+        transactionHash: `0xdefense-hold-${missionId}`,
+        logIndex: "0x0",
+        topics: [fleetMissionLaunchedTopic, topic(missionId), addressTopic(ally), topic(9n)],
+        data: abiWords(12n, 7n, arrivalAt, returnAt, 0n)
+      });
+      indexer.applyLog({
+        blockNumber,
+        transactionHash: `0xdefense-hold-ships-${missionId}`,
+        logIndex: "0x1",
+        topics: [fleetMissionShipsTopic, topic(missionId)],
+        data: abiWords(0n, 5n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n)
+      });
+    };
+
+    launchDefenseHold(6116n, 3_999_999_900n, 4_000_007_200n, "0x94");
+    indexer.applyLog({
+      blockNumber: "0x95",
+      transactionHash: "0xstation-6116",
+      logIndex: "0x0",
+      topics: [defenseHoldStationedTopic, topic(6116n), addressTopic(ally), topic(7n)],
+      data: abiWords(12n, 3_999_999_900n, 4_000_003_600n, 4_000_007_200n)
+    });
+    // This future arrival has no DefenseHoldStationed event yet. Its returnAt is only a conservative
+    // upper bound for hold expiry, and its eventual stationed-storage lane is not knowable yet.
+    launchDefenseHold(6117n, 4_000_000_300n, 4_000_007_500n, "0x96");
+
+    expect(indexer.stationedDefendersForPlanet("7", 4_000_000_000)).toEqual([
+      expect.objectContaining({
+        missionId: "6116",
+        arrivalAt: "3999999900",
+        holdUntil: "4000003600",
+        battleWindowComplete: true,
+        laneGroup: 0
+      })
+    ]);
+    expect(indexer.stationedDefenderForecastTimelineForPlanet("7", 4_000_000_000)).toEqual([
+      expect.objectContaining({
+        missionId: "6116",
+        arrivalAt: "3999999900",
+        holdUntil: "4000003600",
+        battleWindowComplete: true,
+        laneGroup: 0
+      }),
+      expect.objectContaining({
+        missionId: "6117",
+        arrivalAt: "4000000300",
+        holdUntil: "4000007500",
+        battleWindowComplete: false,
+        laneGroup: null
+      })
+    ]);
   });
 
   // VEY-KANEO-471: the QA staging harness injects one fully-populated synthetic incoming attack so the
@@ -5482,6 +5564,146 @@ describe("SettlementIndexer", () => {
     });
     expect(visibility.incoming).toEqual([]);
     expect(visibility.joinableAttacks).toEqual([]);
+  });
+
+  test("serves joinable attack participants with owner tech and exact interleaved lane groups", () => {
+    const leadOwner = "0x3333333333333333333333333333333333333333" as Address;
+    const defenderOwner = "0x4444444444444444444444444444444444444444" as Address;
+    const joinedOwner = "0x5555555555555555555555555555555555555555" as Address;
+    const holdOwner = "0x6666666666666666666666666666666666666666" as Address;
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    const applyFleetLog = (
+      missionId: bigint,
+      owner: Address,
+      missionType: bigint,
+      originPlanetId: bigint,
+      targetPlanetId: bigint,
+      linkedAttackMissionId: bigint,
+      blockNumber: string
+    ) => {
+      indexer.applyLog({
+        blockNumber,
+        transactionHash: `0xlaunch${missionId}`,
+        logIndex: "0x0",
+        topics: [fleetMissionLaunchedTopic, topic(missionId), addressTopic(owner), topic(missionType)],
+        data: abiWords(originPlanetId, targetPlanetId, 1_900_000_000n, 1_900_000_600n, linkedAttackMissionId)
+      });
+    };
+    const applyShips = (missionId: bigint, owner: Address, counts: bigint[]) => {
+      indexer.applyLog({
+        blockNumber: "0x95",
+        transactionHash: `0xships${missionId}`,
+        logIndex: "0x1",
+        topics: [fleetMissionShipsTopic, topic(missionId), addressTopic(owner)],
+        data: abiWords(...counts)
+      });
+    };
+
+    applyFleetLog(70n, leadOwner, 3n, 10n, 99n, 700n, "0x90");
+    applyShips(70n, leadOwner, [0n, 0n, 0n, 0n, 0n, 0n, 0n, 3n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n]);
+    // Link index 0 belongs to a defender, so the first joined attack must use lane group 2.
+    applyFleetLog(71n, defenderOwner, 5n, 11n, 99n, 70n, "0x91");
+    applyShips(71n, defenderOwner, [0n, 5n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n]);
+    indexer.applyLog({
+      blockNumber: "0x92",
+      transactionHash: "0xjoin72",
+      logIndex: "0x0",
+      topics: [attackMissionJoinedTopic, topic(70n), topic(72n), addressTopic(joinedOwner)],
+      data: abiWords(12n, 99n)
+    });
+    applyFleetLog(72n, joinedOwner, 8n, 12n, 99n, 70n, "0x92");
+    applyShips(72n, joinedOwner, [0n, 0n, 0n, 0n, 0n, 0n, 12n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n]);
+    // Link index 2 belongs to another defender. Defender lanes are the exact zero-based link indices,
+    // while the joined attacker uses i + 1, so both legitimately expose lane group 2 in separate domains.
+    applyFleetLog(73n, defenderOwner, 5n, 13n, 99n, 70n, "0x93");
+    applyShips(73n, defenderOwner, [0n, 0n, 0n, 0n, 0n, 2n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n]);
+
+    const stationDefenseHold = (missionId: bigint, blockNumber: string, holdUntil: bigint) => {
+      applyFleetLog(missionId, holdOwner, 9n, missionId + 100n, 99n, 0n, blockNumber);
+      applyShips(missionId, holdOwner, [0n, 0n, 0n, 0n, 0n, 0n, 0n, 1n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n]);
+      indexer.applyLog({
+        blockNumber,
+        transactionHash: `0xstation${missionId}`,
+        logIndex: "0x2",
+        topics: [defenseHoldStationedTopic, topic(missionId), addressTopic(holdOwner), topic(99n)],
+        data: abiWords(missionId + 100n, 1_899_999_900n, holdUntil, holdUntil + 600n)
+      });
+    };
+    stationDefenseHold(80n, "0x94", 1_900_002_000n);
+    stationDefenseHold(81n, "0x95", 1_900_003_000n);
+    stationDefenseHold(82n, "0x96", 1_900_001_000n);
+    // Solidity removes 81 with swap-pop, producing storage order [80, 82]. The UI later sorts by
+    // holdUntil as [82, 80], but their simulation lanes must remain 5 and 4 respectively.
+    indexer.applyLog({
+      blockNumber: "0x97",
+      transactionHash: "0xend81",
+      logIndex: "0x0",
+      topics: [defenseHoldEndedTopic, topic(81n), topic(99n)],
+      data: abiWords(5n)
+    });
+
+    const joinable = indexer.fleetMissionVisibility(player).joinableAttacks
+      .find((mission) => mission.missionId === "70");
+    expect(joinable?.attackPreview).toMatchObject({
+      selectedAttackerLaneGroup: 4,
+      stationedDefenders: [
+        {
+          missionId: "71",
+          defender: defenderOwner,
+          laneGroup: 0,
+          combatTechnology: { weapons: 0, shielding: 0, armor: 0 }
+        },
+        {
+          missionId: "73",
+          defender: defenderOwner,
+          laneGroup: 2
+        },
+        {
+          missionId: "82",
+          defender: holdOwner,
+          laneGroup: 5
+        },
+        {
+          missionId: "80",
+          defender: holdOwner,
+          laneGroup: 4
+        }
+      ],
+      participants: [
+        {
+          missionId: "70",
+          laneGroup: 0,
+          owner: leadOwner,
+          ships: { battleship: "3" },
+          combatTechnology: { weapons: 0, shielding: 0, armor: 0 }
+        },
+        {
+          missionId: "72",
+          laneGroup: 2,
+          owner: joinedOwner,
+          ships: { cruiser: "12" },
+          combatTechnology: { weapons: 0, shielding: 0, armor: 0 }
+        }
+      ]
+    });
+
+    // A legacy/incomplete active hold without its immutable station event cannot be assigned a safe
+    // storage-order lane. The public preview must name the gap instead of renumbering the display list.
+    applyFleetLog(83n, holdOwner, 9n, 183n, 99n, 0n, "0x98");
+    applyShips(83n, holdOwner, [0n, 1n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n]);
+    const incomplete = indexer.fleetMissionVisibility(player).joinableAttacks
+      .find((mission) => mission.missionId === "70");
+    expect(incomplete?.attackPreview).toMatchObject({
+      selectedAttackerLaneGroup: null
+    });
+    expect(incomplete?.attackPreview?.unavailableReason).toContain(
+      "DefenseHold #83 is missing from exact stationed-defense storage-order indexing"
+    );
   });
 
   test("removed duplicate log marks reorg health instead of being ignored", () => {

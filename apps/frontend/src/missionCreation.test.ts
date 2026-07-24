@@ -18,6 +18,7 @@ import {
   missionShipOptions,
   missionTimingSummary,
   NonAttackMissionIntelPanel,
+  projectedMissionArrivalAtSeconds,
   publicTargetBattleForecast,
   rebalanceLootRatio,
   ShipQuantityRow,
@@ -28,7 +29,12 @@ import {
   TargetIntelCard,
   targetResourceIntel,
 } from "./components/MissionCreationPage";
-import { cargoForCargoMissionLaunch, missionMoonShipyardState, transportCargoForOrigin } from "./PlayableMvpApp";
+import {
+  cargoForCargoMissionLaunch,
+  joinAttackTargetFromSystemPayload,
+  missionMoonShipyardState,
+  transportCargoForOrigin,
+} from "./PlayableMvpApp";
 import type { GalaxyAction } from "./galaxyActions";
 import type { Planet } from "./types";
 
@@ -267,6 +273,40 @@ describe("mission creation", () => {
     expect(indicator?.props?.["aria-label"]).toBe("Moon present");
   });
 
+  test("resolves join-attack target combat intel from the mission system payload", () => {
+    const target = joinAttackTargetFromSystemPayload({
+      galaxy: 7,
+      system: 41,
+      planets: [{
+        key: "9",
+        galaxy: 7,
+        system: 41,
+        position: 6,
+        fields: 180,
+        temperature: 32,
+        metalMultiplierBps: 10_000,
+        crystalMultiplierBps: 10_000,
+        deuteriumMultiplierBps: 10_000,
+        occupiedBy: {
+          planetId: "9",
+          owner: "0xdefender",
+          ownerDisplayName: "Defender",
+          alliance: null,
+        },
+        publicState: {
+          fleet: [{ id: 7, count: 3 }],
+          defenses: [{ id: 0, count: 40 }],
+          stationedDefenders: [],
+          research: [{ id: 5, level: 2 }],
+        },
+      }],
+    }, "9", { galaxy: 7, system: 41, position: 6 });
+
+    expect(target?.id).toBe("9");
+    expect(target?.publicState?.fleet).toEqual([{ id: 7, count: 3 }]);
+    expect(target?.publicState?.research).toEqual([{ id: 5, level: 2 }]);
+  });
+
   test("supports moon body selection for attack missions without reusing parent planet intel", () => {
     expect(missionCreationSource).toContain("const bodyMissionSupported = action.mode === \"mission\" && (action.kind === \"attack\" || cargoSupported);");
     expect(playableMvpAppSource).toContain("pendingGalaxyMission.action.kind === \"attack\"");
@@ -277,6 +317,8 @@ describe("mission creation", () => {
       hasMoon: true,
       publicMoonState: {
         resources: { metal: "7386", crystal: "2472", deuterium: "1335" },
+        fleet: [{ id: 1, count: 2 }],
+        defenses: [{ id: 0, count: 1 }],
       },
       publicState: {
         resources: { metal: "100000", crystal: "80000", deuterium: "60000" },
@@ -284,7 +326,7 @@ describe("mission creation", () => {
         fleet: [{ id: 7, count: 25 }],
         defenses: [{ id: 0, count: 200 }],
         stationedDefenders: [],
-        research: null,
+        research: [],
         productionPerHour: null,
         storageCaps: null,
         queues: null,
@@ -304,8 +346,14 @@ describe("mission creation", () => {
     expect(moonResourceIntel.projectedArrival).toEqual({ metal: 7_386, crystal: 2_472, deuterium: 1_335 });
     expect(moonResourceIntel.projectedArrivalLootable).toEqual({ metal: 3_693, crystal: 1_236, deuterium: 667 });
     expect(moonResourceIntel.projectionDetail).toContain("current public moon resource snapshot");
-    expect(moonBattleForecast.defenderPower).toBeNull();
-    expect(moonBattleForecast.detail).toContain("Moon fleet and defense intel");
+    expect(moonBattleForecast.defenderPower).toBe(320);
+    expect(moonBattleForecast.kind).not.toBe("uncertain");
+    expect(moonBattleForecast.sampleReport?.defender.startingShips).toEqual([
+      expect.objectContaining({ id: 1, count: 2 }),
+    ]);
+    expect(moonBattleForecast.sampleReport?.defender.startingDefenses).toEqual([
+      expect.objectContaining({ id: 0, count: 1 }),
+    ]);
   });
 
   test("auto-filled body cargo reserves fuel for same-coordinate planet to moon deploy", () => {
@@ -631,6 +679,7 @@ describe("mission creation", () => {
         resources: { metal: "0", crystal: "0", deuterium: "0" },
         fleet: [],
         defenses: [],
+        stationedDefenders: [],
         buildings: [],
         research: [],
         queues: null,
@@ -642,6 +691,7 @@ describe("mission creation", () => {
         resources: { metal: "0", crystal: "0", deuterium: "0" },
         fleet: [],
         defenses: [{ id: 6, count: 3 }],
+        stationedDefenders: [],
         buildings: [],
         research: [],
         queues: null,
@@ -662,6 +712,7 @@ describe("mission creation", () => {
         // presented as a confident win.
         fleet: [{ id: 0, count: 3 }],
         defenses: [],
+        stationedDefenders: [],
         buildings: [],
         research: [],
         queues: null,
@@ -675,7 +726,11 @@ describe("mission creation", () => {
       defenderPower: 165,
     });
     expect(forecast.attackerLosses?.average).toEqual({ metal: 0, crystal: 0, deuterium: 0 });
-    expect(forecast.randomness).toBeNull();
+    expect(forecast.randomness).toMatchObject({
+      sampleCount: 128,
+      outcomeCounts: { win: 0, draw: 128, defeat: 0 },
+    });
+    expect(forecast.detail).toContain("not a guarantee");
   });
 
   test("does not label the mission-8262 shield stalemate as a probable win", () => {
@@ -690,6 +745,7 @@ describe("mission creation", () => {
         // missed that these small stacks cannot break shields/hull in six rounds.
         fleet: [{ id: 9, count: 4 }],
         defenses: [{ id: 0, count: 3 }],
+        stationedDefenders: [],
         buildings: [],
         research: [],
         queues: null,
@@ -704,8 +760,12 @@ describe("mission creation", () => {
         best: { metal: 0, crystal: 0, deuterium: 0 },
         worst: { metal: 0, crystal: 0, deuterium: 0 },
       },
-      randomness: null,
+      randomness: {
+        sampleCount: 128,
+        outcomeCounts: { win: 0, draw: 128, defeat: 0 },
+      },
     });
+    expect(forecast.detail).toContain("not a guarantee");
   });
 
   test("surfaces attacker loss ranges when combat randomness changes results", () => {
@@ -717,6 +777,7 @@ describe("mission creation", () => {
         resources: { metal: "0", crystal: "0", deuterium: "0" },
         fleet: [{ id: 0, count: 1 }],
         defenses: [],
+        stationedDefenders: [],
         buildings: [],
         research: [],
         queues: null,
@@ -730,6 +791,79 @@ describe("mission creation", () => {
     expect(forecast.randomness?.outcomeRange.length).toBeGreaterThan(1);
   });
 
+  test("renders deterministic outcome probabilities and an accessible, mobile-safe sample report", () => {
+    const forecast = publicTargetBattleForecast(
+      { ...attackAction.ships, lightFighter: 1 },
+      targetPlanet({
+        publicState: {
+          resources: { metal: "0", crystal: "0", deuterium: "0" },
+          fleet: [{ id: 0, count: 1 }],
+          defenses: [],
+          stationedDefenders: [],
+          buildings: [],
+          research: [],
+          queues: null,
+        },
+      }),
+      { weapons: 20, shielding: 0, armor: 0 },
+    );
+    const panel = AttackOutcomePanel({
+      battleForecast: forecast,
+      lootableAtArrival: { metal: 0, crystal: 0, deuterium: 0 },
+      maxLootForecast: { metal: 0, crystal: 0, deuterium: 0 },
+    });
+    const text = collectText(panel).join(" ");
+    const reportTrigger = findElements(panel, "summary").find(
+      (element) => element.props?.["aria-label"] === "Open simulated battle report",
+    );
+    const dialog = findElements(panel, "div").find((element) => element.props?.role === "dialog");
+    const closeButton = findElements(panel, "button").find(
+      (element) => element.props?.["aria-label"] === "Close simulated battle report",
+    );
+
+    expect(text).toMatch(/Win \d+ \(\d+(?:\.\d)?%\)/);
+    expect(text).toMatch(/Draw \d+ \(\d+(?:\.\d)?%\)/);
+    expect(text).toMatch(/Loss \d+ \(\d+(?:\.\d)?%\)/);
+    expect(text).toContain("Illustrative simulation");
+    expect(text).toContain("Sample possible battle");
+    expect(text).toContain("Random word");
+    expect(text).toContain("Combat rounds");
+    expect(text).toContain("Rapidfire");
+    expect(text).toContain("not the already-determined future on-chain result");
+    expect(reportTrigger?.props?.role).toBe("button");
+    expect(dialog?.props?.["aria-modal"]).toBe("true");
+    expect(dialog?.props?.className).toContain("overflow-y-auto");
+    expect(closeButton).toBeDefined();
+    expect(missionCreationSource).toContain("max-h-[calc(100dvh-1.5rem)]");
+  });
+
+  test("disables the report control when public defender technology is unavailable", () => {
+    const panel = AttackOutcomePanel({
+      battleForecast: publicTargetBattleForecast(
+        { ...attackAction.ships, lightFighter: 1 },
+        targetPlanet({
+          publicState: {
+            resources: { metal: "0", crystal: "0", deuterium: "0" },
+            fleet: [{ id: 0, count: 1 }],
+            defenses: [],
+            stationedDefenders: [],
+            buildings: [],
+            research: null,
+            queues: null,
+          },
+        }),
+      ),
+      lootableAtArrival: { metal: 0, crystal: 0, deuterium: 0 },
+      maxLootForecast: { metal: 0, crystal: 0, deuterium: 0 },
+    });
+    const reportButton = findElements(panel, "button").find(
+      (element) => element.props?.["aria-label"] === "Open simulated battle report",
+    );
+
+    expect(reportButton?.props?.disabled).toBe(true);
+    expect(findElements(panel, "div").some((element) => element.props?.role === "dialog")).toBe(false);
+  });
+
   test("applies combat tech levels to public battle forecast power and outcome", () => {
     const selectedShips = { ...attackAction.ships, lightFighter: 1 };
     const target = targetPlanet({
@@ -737,6 +871,7 @@ describe("mission creation", () => {
         resources: { metal: "0", crystal: "0", deuterium: "0" },
         fleet: [],
         defenses: [{ id: 0, count: 1 }],
+        stationedDefenders: [],
         buildings: [],
         research: [],
         queues: null,
@@ -812,6 +947,10 @@ describe("mission creation", () => {
           missionId: "held-1",
           defender: "0xdefender",
           defenderDisplayName: "Defender",
+          arrivalAt: "1700000000",
+          battleWindowComplete: true,
+          laneGroup: 0,
+          combatTechnology: { weapons: 4, shielding: 3, armor: 2 },
           ships: { lightFighter: "40", cruiser: "2" },
           holdUntil: "1700003600",
           allianceDepotLevel: 1,
@@ -823,8 +962,9 @@ describe("mission creation", () => {
     });
     const selectedShips = { ...attackAction.ships, lightFighter: 1 };
     const units = stationedDefenderCompositionUnits(target.publicState?.stationedDefenders);
+    const timing = { projectedAttackArrivalAt: 1700001800 };
 
-    expect(publicTargetBattleForecast(selectedShips, target)).toMatchObject({
+    expect(publicTargetBattleForecast(selectedShips, target, undefined, false, undefined, timing)).toMatchObject({
       kind: "defeat",
       label: "Probable defeat",
     });
@@ -832,6 +972,447 @@ describe("mission creation", () => {
       expect.objectContaining({ key: "lightFighter", label: "Light Fighter", count: 40 }),
       expect.objectContaining({ key: "cruiser", label: "Cruiser", count: 2 }),
     ]);
+    expect(
+      publicTargetBattleForecast(selectedShips, target, undefined, false, undefined, timing)
+        .sampleReport?.defender.counterplay[0]?.technology,
+    )
+      .toEqual({ weapons: 4, shielding: 3, armor: 2 });
+  });
+
+  test("qualifies solo DefenseHold fleets at projected arrival with inclusive contract boundaries", () => {
+    const defender = {
+      missionId: "window-defender",
+      defender: "0xdefender",
+      defenderDisplayName: "Window Defender",
+      arrivalAt: "1900000050",
+      battleWindowComplete: true,
+      laneGroup: 0,
+      combatTechnology: { weapons: 0, shielding: 0, armor: 0 },
+      ships: { lightFighter: "50" },
+      holdUntil: "1900000100",
+      allianceDepotLevel: 0,
+    };
+    const target = targetPlanet({
+      publicState: {
+        resources: { metal: "0", crystal: "0", deuterium: "0" },
+        fleet: [],
+        defenses: [],
+        stationedDefenders: [defender],
+        buildings: [],
+        research: [],
+        queues: null,
+      },
+    });
+    const selectedShips = { ...attackAction.ships, cruiser: 1 };
+    const forecastAt = (projectedAttackArrivalAt: number) => publicTargetBattleForecast(
+      selectedShips,
+      target,
+      undefined,
+      false,
+      undefined,
+      { projectedAttackArrivalAt },
+    );
+
+    const launchNowMs = 1_900_000_000_000;
+    const fastArrival = projectedMissionArrivalAtSeconds(100, launchNowMs)!;
+    const slowArrival = projectedMissionArrivalAtSeconds(101, launchNowMs)!;
+    const atArrivalBoundary = forecastAt(1900000050);
+    const atHoldBoundary = forecastAt(fastArrival);
+    const afterHold = forecastAt(slowArrival);
+
+    expect([fastArrival, slowArrival]).toEqual([1900000100, 1900000101]);
+    expect(atArrivalBoundary.sampleReport?.defender.counterplay.map((participant) => participant.id))
+      .toEqual(["stationed-window-defender"]);
+    expect(atHoldBoundary.sampleReport?.defender.counterplay.map((participant) => participant.id))
+      .toEqual(["stationed-window-defender"]);
+    expect(afterHold.sampleReport?.defender.counterplay).toEqual([]);
+    expect(afterHold.randomness?.outcomeCounts).not.toEqual(atHoldBoundary.randomness?.outcomeCounts);
+    expect(afterHold.sampleReport?.outcome).not.toBe(atHoldBoundary.sampleReport?.outcome);
+  });
+
+  test("fails closed when scheduled or legacy defender battle timing cannot be reconstructed", () => {
+    const forecast = publicTargetBattleForecast(
+      { ...attackAction.ships, cruiser: 1 },
+      targetPlanet({
+        publicState: {
+          resources: { metal: "0", crystal: "0", deuterium: "0" },
+          fleet: [],
+          defenses: [],
+          stationedDefenders: [{
+            missionId: "scheduled-window-unknown",
+            defender: "0xdefender",
+            defenderDisplayName: "Scheduled Defender",
+            arrivalAt: "1900000050",
+            battleWindowComplete: false,
+            laneGroup: null,
+            combatTechnology: { weapons: 0, shielding: 0, armor: 0 },
+            ships: { lightFighter: "50" },
+            // Scheduled missions without DefenseHoldStationed expose returnAt only as an upper bound.
+            holdUntil: "1900001000",
+            allianceDepotLevel: 0,
+          }],
+          buildings: [],
+          research: [],
+          queues: null,
+        },
+      }),
+      undefined,
+      false,
+      undefined,
+      { projectedAttackArrivalAt: 1900000100 },
+    );
+
+    expect(forecast).toMatchObject({ kind: "uncertain", defenderPower: null });
+    expect(forecast.detail).toContain("scheduled-window-unknown");
+    expect(forecast.detail).toContain("no exact indexed hold window");
+  });
+
+  test("fails closed when the public payload does not attest a complete defender timeline", () => {
+    const forecast = publicTargetBattleForecast(
+      { ...attackAction.ships, cruiser: 1 },
+      targetPlanet({
+        publicState: {
+          resources: { metal: "0", crystal: "0", deuterium: "0" },
+          fleet: [],
+          defenses: [],
+          stationedDefenders: [],
+          stationedDefenderTimelineComplete: false,
+          buildings: [],
+          research: [],
+          queues: null,
+        },
+      }),
+      undefined,
+      false,
+      undefined,
+      { projectedAttackArrivalAt: 1900000100 },
+    );
+
+    expect(forecast).toMatchObject({ kind: "uncertain", defenderPower: null });
+    expect(forecast.detail).toContain("timeline is incomplete");
+  });
+
+  test("join-attack forecast includes the lead, visible joiners, and selected joining fleet", () => {
+    const target = targetPlanet({
+      publicState: {
+        resources: { metal: "0", crystal: "0", deuterium: "0" },
+        fleet: [{ id: 7, count: 3 }],
+        defenses: [{ id: 0, count: 40 }],
+        stationedDefenders: [],
+        buildings: [],
+        research: [{ id: 5, level: 2 }, { id: 6, level: 2 }, { id: 7, level: 2 }],
+        queues: null,
+      },
+    });
+    const selectedShips = { ...attackAction.ships, lightFighter: 3 };
+    const selectedOnly = publicTargetBattleForecast(selectedShips, target, { weapons: 1, shielding: 1, armor: 1 });
+    const combined = publicTargetBattleForecast(
+      selectedShips,
+      target,
+      { weapons: 1, shielding: 1, armor: 1 },
+      false,
+      {
+        participants: [
+          {
+            missionId: "lead-77",
+            label: "Lead attack #77",
+            owner: "0xlead",
+            laneGroup: 0,
+            ships: { destroyer: "4" },
+            combatTechnology: { weapons: 8, shielding: 7, armor: 6 },
+          },
+          {
+            missionId: "joined-78",
+            label: "Joined fleet #78",
+            owner: "0xjoined",
+            laneGroup: 2,
+            ships: { cruiser: "12" },
+            combatTechnology: { weapons: 4, shielding: 3, armor: 2 },
+          },
+        ],
+        stationedDefenders: [{
+          missionId: "defend-79",
+          defender: "0xdefender",
+          defenderDisplayName: "Group Defender",
+          laneGroup: 2,
+          combatTechnology: { weapons: 3, shielding: 5, armor: 7 },
+          ships: { lightFighter: "5" },
+          holdUntil: "1900000000",
+          allianceDepotLevel: 2,
+        }],
+        selectedAttackerLaneGroup: 3,
+      },
+    );
+
+    expect(combined.kind).not.toBe("uncertain");
+    expect(combined.attackerPower).toBeGreaterThan(selectedOnly.attackerPower);
+    expect(combined.randomness?.outcomeCounts).not.toEqual(selectedOnly.randomness?.outcomeCounts);
+    expect(combined.sampleReport?.attackers).toHaveLength(3);
+    expect(combined.sampleReport?.attackers.map((participant) => participant.id)).toEqual([
+      "lead-77",
+      "joined-78",
+      "selected-attacker",
+    ]);
+    expect(combined.sampleReport?.attackers[0]?.technology).toEqual({ weapons: 8, shielding: 7, armor: 6 });
+    expect(combined.sampleReport?.attackers[1]?.technology).toEqual({ weapons: 4, shielding: 3, armor: 2 });
+    expect(combined.sampleReport?.defender.counterplay[0]?.technology).toEqual({ weapons: 3, shielding: 5, armor: 7 });
+    expect(combined.sampleReport?.defender.counterplay[0]?.laneGroup).toBe(2);
+
+    const joinPanel = AttackIntelPanel({
+      battleForecast: combined,
+      coords: { galaxy: 7, system: 41, position: 6 },
+      lootableAtArrival: { metal: 0, crystal: 0, deuterium: 0 },
+      maxLootForecast: { metal: 0, crystal: 0, deuterium: 0 },
+      resourceIntel: targetResourceIntel(target, 60),
+      showLoot: false,
+      stationedDefenderUnits: [],
+      target,
+      targetDefenseUnits: [],
+      targetFleetUnits: [],
+    });
+    const reportText = collectText(joinPanel).join(" ");
+    expect(reportText).toContain("Lead attack #77");
+    expect(reportText).toContain("Joined fleet #78");
+    expect(reportText).toContain("Selected joining fleet");
+    expect(reportText).toContain("Group Defender");
+    expect(reportText).toContain("Inherited from the lead attack group");
+    expect(findElements(joinPanel, "summary").some(
+      (element) => element.props?.["aria-label"] === "Open simulated battle report",
+    )).toBe(true);
+  });
+
+  test("stationed display sorting preserves immutable simulation lanes and distribution", () => {
+    const target = targetPlanet({
+      publicState: {
+        resources: { metal: "0", crystal: "0", deuterium: "0" },
+        fleet: [],
+        defenses: [],
+        stationedDefenders: [],
+        buildings: [],
+        research: [],
+        queues: null,
+      },
+    });
+    const defenders = [
+      {
+        missionId: "hold-later",
+        defender: "0xlater",
+        defenderDisplayName: "Later",
+        laneGroup: 4,
+        combatTechnology: { weapons: 0, shielding: 0, armor: 0 },
+        ships: { lightFighter: "10" },
+        holdUntil: "1900002000",
+        allianceDepotLevel: 0,
+      },
+      {
+        missionId: "hold-earlier",
+        defender: "0xearlier",
+        defenderDisplayName: "Earlier",
+        laneGroup: 5,
+        combatTechnology: { weapons: 0, shielding: 0, armor: 0 },
+        ships: { lightFighter: "7" },
+        holdUntil: "1900001000",
+        allianceDepotLevel: 0,
+      },
+    ];
+    const forecast = (stationedDefenders: typeof defenders) => publicTargetBattleForecast(
+      { ...attackAction.ships, cruiser: 1 },
+      target,
+      undefined,
+      false,
+      {
+        participants: [{
+          missionId: "lead",
+          label: "Lead",
+          owner: "0xlead",
+          laneGroup: 0,
+          ships: { cruiser: "1" },
+          combatTechnology: { weapons: 0, shielding: 0, armor: 0 },
+        }],
+        stationedDefenders,
+        selectedAttackerLaneGroup: 1,
+      },
+    );
+    const storageOrder = forecast(defenders);
+    const displayOrder = forecast([...defenders].reverse());
+    const counterplayById = (value: typeof storageOrder) => Object.fromEntries(
+      (value.sampleReport?.defender.counterplay ?? []).map((participant) => [
+        participant.id,
+        { laneGroup: participant.laneGroup, survivors: participant.survivingShips },
+      ]),
+    );
+
+    expect(displayOrder.randomness?.outcomeCounts).toEqual(storageOrder.randomness?.outcomeCounts);
+    expect(counterplayById(displayOrder)).toEqual(counterplayById(storageOrder));
+    expect(counterplayById(displayOrder)).toMatchObject({
+      "stationed-hold-later": { laneGroup: 4 },
+      "stationed-hold-earlier": { laneGroup: 5 },
+    });
+  });
+
+  test("join-attack forecast fails closed when participant tech or lane intel is missing", () => {
+    const target = targetPlanet({
+      publicState: {
+        resources: { metal: "0", crystal: "0", deuterium: "0" },
+        fleet: [],
+        defenses: [],
+        stationedDefenders: [],
+        buildings: [],
+        research: [],
+        queues: null,
+      },
+    });
+    const missingTech = publicTargetBattleForecast(
+      { ...attackAction.ships, lightFighter: 3 },
+      target,
+      undefined,
+      false,
+      {
+        participants: [{
+          missionId: "lead-77",
+          label: "Lead attack #77",
+          owner: "0xlead",
+          laneGroup: 0,
+          ships: { destroyer: "4" },
+        }],
+        stationedDefenders: [],
+        selectedAttackerLaneGroup: 1,
+      },
+    );
+    const missingLane = publicTargetBattleForecast(
+      { ...attackAction.ships, lightFighter: 3 },
+      target,
+      undefined,
+      false,
+      {
+        participants: [{
+          missionId: "lead-77",
+          label: "Lead attack #77",
+          owner: "0xlead",
+          laneGroup: 0,
+          ships: { destroyer: "4" },
+          combatTechnology: { weapons: 8, shielding: 7, armor: 6 },
+        }],
+        stationedDefenders: [],
+        selectedAttackerLaneGroup: null,
+      },
+    );
+
+    expect(missingTech).toMatchObject({ kind: "uncertain", defenderPower: null });
+    expect(missingTech.detail).toContain("Lead attack #77");
+    expect(missingTech.detail).toContain("combat technology");
+    expect(missingLane).toMatchObject({ kind: "uncertain", defenderPower: null });
+    expect(missingLane.detail).toContain("lane");
+  });
+
+  test("battle forecast fails closed when a stationed defender lane is missing", () => {
+    const forecast = publicTargetBattleForecast(
+      { ...attackAction.ships, lightFighter: 3 },
+      targetPlanet({
+        publicState: {
+          resources: { metal: "0", crystal: "0", deuterium: "0" },
+          fleet: [],
+          defenses: [],
+          stationedDefenders: [{
+            missionId: "legacy-hold",
+            defender: "0xdefender",
+            defenderDisplayName: "Legacy defender",
+            arrivalAt: "1900000000",
+            battleWindowComplete: true,
+            combatTechnology: { weapons: 1, shielding: 1, armor: 1 },
+            ships: { lightFighter: "1" },
+            holdUntil: "1900001000",
+            allianceDepotLevel: 0,
+          }],
+          buildings: [],
+          research: [],
+          queues: null,
+        },
+      }),
+      undefined,
+      false,
+      undefined,
+      { projectedAttackArrivalAt: 1900000500 },
+    );
+
+    expect(forecast).toMatchObject({ kind: "uncertain", defenderPower: null });
+    expect(forecast.detail).toContain("legacy-hold");
+    expect(forecast.detail).toContain("lane identity");
+  });
+
+  test("fails closed when a stationed defender's owner-specific combat technology is unavailable", () => {
+    const forecast = publicTargetBattleForecast(
+      { ...attackAction.ships, lightFighter: 20 },
+      targetPlanet({
+        publicState: {
+          resources: { metal: "0", crystal: "0", deuterium: "0" },
+          fleet: [],
+          defenses: [],
+          stationedDefenders: [{
+            missionId: "held-without-tech",
+            defender: "0xdefender",
+            defenderDisplayName: "Defender",
+            arrivalAt: "1700000000",
+            battleWindowComplete: true,
+            ships: { lightFighter: "1" },
+            holdUntil: "1700003600",
+            allianceDepotLevel: 1,
+          }],
+          buildings: [],
+          research: [],
+          queues: null,
+        },
+      }),
+      undefined,
+      false,
+      undefined,
+      { projectedAttackArrivalAt: 1700001800 },
+    );
+
+    expect(forecast).toMatchObject({
+      kind: "uncertain",
+      defenderPower: null,
+    });
+    expect(forecast.detail).toContain("combat technology is not indexed");
+  });
+
+  test("fails closed for partial planet or moon force-intel payloads", () => {
+    const planetForecast = publicTargetBattleForecast(
+      { ...attackAction.ships, lightFighter: 20 },
+      targetPlanet({
+        publicState: {
+          resources: { metal: "0", crystal: "0", deuterium: "0" },
+          fleet: [],
+          defenses: null,
+          stationedDefenders: [],
+          research: [],
+        },
+      }),
+    );
+    const moonForecast = publicTargetBattleForecast(
+      { ...attackAction.ships, lightFighter: 20 },
+      targetPlanet({
+        hasMoon: true,
+        publicMoonState: {
+          resources: { metal: "0", crystal: "0", deuterium: "0" },
+          fleet: null,
+          defenses: [],
+        },
+        publicState: {
+          fleet: [],
+          defenses: [],
+          stationedDefenders: [],
+          research: [],
+        },
+      }),
+      undefined,
+      true,
+    );
+
+    expect(planetForecast).toMatchObject({ kind: "uncertain", defenderPower: null });
+    expect(planetForecast.detail).toContain("absent fields are not treated as empty");
+    expect(moonForecast).toMatchObject({ kind: "uncertain", defenderPower: null });
+    expect(moonForecast.detail).toContain("Parent-planet forces are never substituted");
   });
 
   test("renders compact attack intel with target, outcome, destination units, and resources", () => {
@@ -1087,6 +1668,8 @@ describe("mission creation", () => {
 
   test("uses the compact Attack-style intel shell for non-attack mission setup", () => {
     expect(missionCreationSource).toContain("<NonAttackMissionIntelPanel");
+    expect(missionCreationSource).toContain("lootRatioSupported || joinAttackMode");
+    expect(missionCreationSource).toContain("joinAttackContext");
     expect(missionCreationSource).toContain("<TargetDecisionTable coords={coords} target={target} />");
     expect(missionCreationSource).toContain("<MissionPlanContent");
     expect(missionCreationSource).toContain("<ResourceIntelTable resourceIntel={resourceIntel} />");
@@ -1234,7 +1817,7 @@ describe("mission creation", () => {
     });
     const text = collectText([outcome, destination]).join(" ");
 
-    expect(text).toContain("Probable outcome");
+    expect(text).toContain("Outcome");
     expect(text).toContain("Destination intel");
     expect(text).toContain("Resources now");
   });
@@ -1665,11 +2248,13 @@ describe("mission creation", () => {
     expect(summary?.arrivalClock).toContain("1:05");
     expect(summary?.returnClock).toContain("2:10");
     expect(missionTimingSummary(0)).toBeNull();
+    expect(projectedMissionArrivalAtSeconds(3_900, Date.UTC(2026, 0, 1, 12, 0, 0) + 999))
+      .toBe(Math.floor(Date.UTC(2026, 0, 1, 12, 0, 0) / 1_000) + 3_900);
   });
 });
 
 function targetPlanet(overrides: Partial<Planet> = {}): Planet {
-  return {
+  const target: Planet = {
     id: "9",
     name: "New Zion",
     type: "hot-desert",
@@ -1699,6 +2284,18 @@ function targetPlanet(overrides: Partial<Planet> = {}): Planet {
     deuteriumMultiplierBps: 10_000,
     ...overrides,
   };
+  if (target.publicState) {
+    const publicState = target.publicState;
+    target.publicState = {
+      stationedDefenderTimelineComplete: true,
+      ...publicState,
+      ...(publicState.stationedDefenderForecastTimeline === undefined
+        && publicState.stationedDefenders !== undefined
+        ? { stationedDefenderForecastTimeline: publicState.stationedDefenders }
+        : {}),
+    };
+  }
+  return target;
 }
 
 function zeroBattleLosses() {

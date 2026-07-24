@@ -21,11 +21,9 @@ import { emptyMissionShips, type GalaxyAction, type MissionShipKey, type Mission
 import {
   buildingContractIds,
   defenseCatalog,
-  defenseCombatStats,
   productionPerHour,
   researchCatalog,
   shipCatalog,
-  shipCombatStats,
   storageCaps,
   type BuildingKey,
   type ShipKey,
@@ -35,6 +33,14 @@ import { formatDuration } from "../durationFormat";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import { PageHeader } from "./PageHeader";
 import { PlanetMoonIndicator } from "./PlanetMoonIndicator";
+import {
+  contractCombatPower,
+  forecastContractBattle,
+  type BattleOutcome,
+  type CombatResources,
+  type ContractBattleForecast,
+  type ContractBattleResult,
+} from "../battlePreview";
 
 export type CombatTechLevels = {
   weapons: number;
@@ -78,8 +84,6 @@ const DEFAULT_LOOT_RATIO: MissionLootRatioDraft = { metal: 34, crystal: 33, deut
 const GREEDY_LOOT_RATIO: MissionLootRatioDraft = { metal: 100, crystal: 0, deuterium: 0 };
 const RAID_PLUNDER_BPS = 5_000;
 const BPS = 10_000;
-const BATTLE_MAX_ROUNDS = 6;
-const BATTLE_FORECAST_SAMPLES = 33;
 const RESOURCE_KEYS = ["metal", "crystal", "deuterium"] as const;
 const ZERO_COMBAT_TECH_LEVELS: CombatTechLevels = { weapons: 0, shielding: 0, armor: 0 };
 
@@ -131,6 +135,7 @@ export type BattleForecastState =
       attackerTechLevels?: CombatTechLevels;
       defenderTechLevels?: CombatTechLevels;
       defenderTechKnown?: boolean;
+      sampleReport?: ContractBattleResult | null;
     })
   | ({
       kind: "win" | "defeat" | "draw";
@@ -143,6 +148,7 @@ export type BattleForecastState =
       attackerTechLevels?: CombatTechLevels;
       defenderTechLevels?: CombatTechLevels;
       defenderTechKnown?: boolean;
+      sampleReport?: ContractBattleResult;
     });
 
 export type BattleForecastLossRange = {
@@ -154,6 +160,36 @@ export type BattleForecastLossRange = {
 export type BattleForecastRandomness = {
   outcomeRange: Array<"win" | "defeat" | "draw">;
   sampleCount: number;
+  outcomeCounts: Record<"win" | "defeat" | "draw", number>;
+  attackerSurvivorRange: {
+    min: number;
+    max: number;
+  };
+};
+
+export type JoinAttackForecastParticipant = {
+  missionId: string;
+  label: string;
+  owner: string;
+  laneGroup: number | null;
+  ships?: Record<string, string>;
+  combatTechnology?: CombatTechLevels;
+};
+
+export type JoinAttackForecastContext = {
+  participants: readonly JoinAttackForecastParticipant[];
+  stationedDefenders?: readonly PublicStationedDefender[];
+  selectedAttackerLaneGroup: number | null;
+  unavailableReason?: string;
+};
+
+export type BattleForecastTiming = {
+  projectedAttackArrivalAt: number | null;
+};
+
+export type StationedDefenderQualification = {
+  defenders: readonly PublicStationedDefender[];
+  unavailableReason?: string;
 };
 
 export type TargetResourceIntel = {
@@ -248,6 +284,7 @@ export function MissionCreationPage({
   defenseHoldMode = false,
   attackerCombatTechLevels = ZERO_COMBAT_TECH_LEVELS,
   driveLevels = {},
+  joinAttackContext,
   joinAttackMode = false,
   nowMs = Date.now(),
   onBack,
@@ -275,6 +312,7 @@ export function MissionCreationPage({
   defenseHoldMode?: boolean | undefined;
   attackerCombatTechLevels?: CombatTechLevels | undefined;
   driveLevels?: FleetDriveLevels | undefined;
+  joinAttackContext?: JoinAttackForecastContext | undefined;
   // VEY-KANEO-431: render the picker for a join-attack — ship selection only,
   // with no loot ratio or speed controls (the join inherits the lead attack's
   // loot split and coordinated arrival).
@@ -346,9 +384,22 @@ export function MissionCreationPage({
   const displayedLootRatio = lootRatioActive ? lootRatio : GREEDY_LOOT_RATIO;
   const lootRatioTotal = displayedLootRatio.metal + displayedLootRatio.crystal + displayedLootRatio.deuterium;
   const timingSummary = missionTimingSummary(travelSeconds, nowMs);
-  const stationedDefenders = action.kind === "attack" && action.mode === "mission" && !effectiveTargetIsMoon
-    ? target?.publicState?.stationedDefenders ?? []
-    : [];
+  const projectedAttackArrivalAt = action.kind === "attack" && action.mode === "mission" && !joinAttackMode
+    ? projectedMissionArrivalAtSeconds(travelSeconds, nowMs)
+    : null;
+  const soloStationedDefenderQualification = action.kind === "attack"
+    && action.mode === "mission"
+    && !joinAttackMode
+    && !effectiveTargetIsMoon
+    ? stationedDefendersAtAttackArrival(
+        target?.publicState?.stationedDefenderForecastTimeline ?? [],
+        projectedAttackArrivalAt,
+        target?.publicState?.stationedDefenderTimelineComplete === true,
+      )
+    : { defenders: [] };
+  const stationedDefenders = joinAttackMode
+    ? joinAttackContext?.stationedDefenders ?? []
+    : soloStationedDefenderQualification.defenders;
   const stationedDefenderRows = stationedDefenderAttackWarningRows(stationedDefenders);
   const targetComposition = useMemo(
     () => missionTargetCompositionUnits(target, effectiveTargetIsMoon),
@@ -361,8 +412,30 @@ export function MissionCreationPage({
     [stationedDefenders],
   );
   const battleForecast = useMemo(
-    () => publicTargetBattleForecast(ships, target, attackerCombatTechLevels, effectiveTargetIsMoon),
-    [attackerCombatTechLevels, effectiveTargetIsMoon, ships, target],
+    () => publicTargetBattleForecast(
+      ships,
+      target,
+      attackerCombatTechLevels,
+      effectiveTargetIsMoon,
+      joinAttackMode
+        ? joinAttackContext ?? {
+            participants: [],
+            stationedDefenders: [],
+            selectedAttackerLaneGroup: null,
+            unavailableReason: "Lead and joined attacker participant intel is unavailable for this group attack.",
+          }
+        : undefined,
+      joinAttackMode ? undefined : { projectedAttackArrivalAt },
+    ),
+    [
+      attackerCombatTechLevels,
+      effectiveTargetIsMoon,
+      joinAttackContext,
+      joinAttackMode,
+      projectedAttackArrivalAt,
+      ships,
+      target,
+    ],
   );
   const resourceIntel = useMemo(
     () => targetResourceIntel(target, travelSeconds, effectiveTargetIsMoon),
@@ -499,7 +572,7 @@ export function MissionCreationPage({
             </MissionFormSection>
           ) : null}
 
-          {lootRatioSupported ? (
+          {lootRatioSupported || joinAttackMode ? (
             <AttackIntelPanel
               battleForecast={battleForecast}
               coords={coords}
@@ -510,6 +583,7 @@ export function MissionCreationPage({
               target={target}
               targetDefenseUnits={targetDefenseUnits}
               targetFleetUnits={targetFleetUnits}
+              showLoot={!joinAttackMode}
             />
           ) : (
             <NonAttackMissionIntelPanel
@@ -1131,6 +1205,74 @@ export function missionTimingSummary(travelSeconds: number, nowMs: number = Date
   };
 }
 
+export function projectedMissionArrivalAtSeconds(
+  travelSeconds: number,
+  nowMs: number = Date.now(),
+): number | null {
+  if (!Number.isFinite(travelSeconds) || travelSeconds <= 0 || !Number.isFinite(nowMs) || nowMs < 0) {
+    return null;
+  }
+  const departureAt = Math.floor(nowMs / 1_000);
+  const arrivalAt = departureAt + Math.ceil(travelSeconds);
+  return Number.isSafeInteger(arrivalAt) ? arrivalAt : null;
+}
+
+export function stationedDefendersAtAttackArrival(
+  defenders: readonly PublicStationedDefender[],
+  projectedAttackArrivalAt: number | null,
+  timelineComplete: boolean,
+): StationedDefenderQualification {
+  if (!timelineComplete) {
+    return {
+      defenders: [],
+      unavailableReason: "The indexed stationed-defender timeline is incomplete, so the battle-time defender roster is unknown.",
+    };
+  }
+  if (defenders.length === 0) return { defenders: [] };
+  if (
+    projectedAttackArrivalAt == null
+    || !Number.isSafeInteger(projectedAttackArrivalAt)
+    || projectedAttackArrivalAt < 0
+  ) {
+    return {
+      defenders: [],
+      unavailableReason: "The projected attack arrival is unavailable, so stationed defenders cannot be qualified at battle time.",
+    };
+  }
+
+  const qualified: PublicStationedDefender[] = [];
+  for (const defender of defenders) {
+    const arrivalAt = Number(defender.arrivalAt);
+    const holdUntil = Number(defender.holdUntil);
+    if (
+      !Number.isSafeInteger(arrivalAt)
+      || arrivalAt < 0
+      || !Number.isSafeInteger(holdUntil)
+      || holdUntil < 0
+    ) {
+      return {
+        defenders: [],
+        unavailableReason: `Stationed fleet #${defender.missionId} is missing an exact arrival or hold timestamp for battle-time qualification.`,
+      };
+    }
+
+    // For scheduled/legacy DefenseHolds the backend can expose `returnAt` only as a conservative upper
+    // bound. Outside that bound the fleet is definitely absent; inside it the contract hold window is
+    // unknown, so do not fabricate a participant.
+    if (defender.battleWindowComplete !== true) {
+      if (arrivalAt > projectedAttackArrivalAt || holdUntil < projectedAttackArrivalAt) continue;
+      return {
+        defenders: [],
+        unavailableReason: `Stationed fleet #${defender.missionId} has no exact indexed hold window at the projected battle arrival.`,
+      };
+    }
+    if (arrivalAt <= projectedAttackArrivalAt && holdUntil >= projectedAttackArrivalAt) {
+      qualified.push(defender);
+    }
+  }
+  return { defenders: qualified };
+}
+
 export function initialMissionShips(
   action: EnabledGalaxyAction,
   originShipyardState?: MissionShipInventorySnapshot | null,
@@ -1164,7 +1306,7 @@ function missionShipOptionsForAction(action: EnabledGalaxyAction, shipyardState:
 }
 
 export function stationedDefenderAttackWarningRows(
-  defenders: PublicStationedDefender[] | null | undefined
+  defenders: readonly PublicStationedDefender[] | null | undefined
 ): Array<{ missionId: string; label: string; value: string }> {
   return (defenders ?? [])
     .filter((defender) => stationedDefenderShipCount(defender.ships) > 0)
@@ -1317,6 +1459,8 @@ export function publicTargetBattleForecast(
   target: Planet | undefined,
   attackerTechLevels: CombatTechLevels = ZERO_COMBAT_TECH_LEVELS,
   targetIsMoon = false,
+  joinAttackContext?: JoinAttackForecastContext,
+  timing?: BattleForecastTiming,
 ): BattleForecastState {
   const normalizedAttackerTechLevels = normalizeCombatTechLevels(attackerTechLevels);
   const defenderTechLevels = targetCombatTechLevels(target);
@@ -1326,7 +1470,11 @@ export function publicTargetBattleForecast(
     defenderTechLevels,
     defenderTechKnown,
   };
-  const attackerPower = missionShipsCombatPower(ships, normalizedAttackerTechLevels);
+  const joinedAttackerPower = (joinAttackContext?.participants ?? []).reduce((total, participant) => {
+    if (!participant.ships || !participant.combatTechnology) return total;
+    return total + shipRecordCombatPower(participant.ships, participant.combatTechnology);
+  }, 0);
+  const attackerPower = missionShipsCombatPower(ships, normalizedAttackerTechLevels) + joinedAttackerPower;
   if (fleetMissionShipCount(ships) <= 0) {
     return {
       kind: "uncertain",
@@ -1337,17 +1485,61 @@ export function publicTargetBattleForecast(
       ...forecastTech,
     };
   }
-  if (targetIsMoon) {
+  if (joinAttackContext?.unavailableReason) {
     return {
       kind: "uncertain",
       label: "Uncertain",
-      detail: "Moon fleet and defense intel is unavailable, so parent planet defenses are not used for this preview.",
+      detail: joinAttackContext.unavailableReason,
       attackerPower,
       defenderPower: null,
       ...forecastTech,
     };
   }
-  if (!target?.publicState) {
+  if (joinAttackContext) {
+    for (const participant of joinAttackContext.participants) {
+      if (!participant.ships) {
+        return {
+          kind: "uncertain",
+          label: "Uncertain",
+          detail: `${participant.label} composition is missing from public intel, so the combined attack is not simulated as only the selected joining fleet.`,
+          attackerPower,
+          defenderPower: null,
+          ...forecastTech,
+        };
+      }
+      if (!participant.combatTechnology) {
+        return {
+          kind: "uncertain",
+          label: "Uncertain",
+          detail: `${participant.label} combat technology is missing from public intel, so owner-specific contract scaling cannot be simulated safely.`,
+          attackerPower,
+          defenderPower: null,
+          ...forecastTech,
+        };
+      }
+      if (participant.laneGroup == null || !Number.isFinite(participant.laneGroup)) {
+        return {
+          kind: "uncertain",
+          label: "Uncertain",
+          detail: `${participant.label} contract random-stream lane identity is missing from public intel.`,
+          attackerPower,
+          defenderPower: null,
+          ...forecastTech,
+        };
+      }
+    }
+    if (joinAttackContext.selectedAttackerLaneGroup == null || !Number.isFinite(joinAttackContext.selectedAttackerLaneGroup)) {
+      return {
+        kind: "uncertain",
+        label: "Uncertain",
+        detail: "The selected joining fleet's exact contract random-stream lane is missing from public intel.",
+        attackerPower,
+        defenderPower: null,
+        ...forecastTech,
+      };
+    }
+  }
+  if (!target) {
     return {
       kind: "uncertain",
       label: "Uncertain",
@@ -1357,34 +1549,159 @@ export function publicTargetBattleForecast(
       ...forecastTech,
     };
   }
-
-  const stationedPower = stationedDefendersCombatPower(target.publicState.stationedDefenders, defenderTechLevels);
-  const defenderPower = compositionCombatPower(target.publicState.fleet, "ship", defenderTechLevels)
-    + compositionCombatPower(target.publicState.defenses, "defense", defenderTechLevels)
-    + stationedPower;
-  const simulation = simulatePublicBattleForecast(ships, target, normalizedAttackerTechLevels, defenderTechLevels);
-  if (defenderPower <= 0) {
+  const bodyState = targetIsMoon ? target.publicMoonState : target.publicState;
+  if (!bodyState) {
     return {
-      kind: "win",
-      label: "Probable win",
-      detail: "No public stationed fleet or battlefield defenses are visible. Hidden state is not assumed.",
+      kind: "uncertain",
+      label: "Uncertain",
+      detail: targetIsMoon
+        ? "Moon fleet and defense intel is unavailable. Parent-planet forces are never substituted for a moon battle."
+        : "Destination fleet and defense data is unavailable, so exact defender strength is unknown.",
       attackerPower,
-      defenderPower,
-      attackerLosses: zeroLossRange(),
-      randomness: null,
+      defenderPower: null,
       ...forecastTech,
     };
   }
+  if (!Array.isArray(bodyState.fleet) || !Array.isArray(bodyState.defenses)) {
+    return {
+      kind: "uncertain",
+      label: "Uncertain",
+      detail: targetIsMoon
+        ? "Moon fleet or defense intel is incomplete. Parent-planet forces are never substituted for a moon battle."
+        : "Destination fleet or defense intel is incomplete, so absent fields are not treated as empty forces.",
+      attackerPower,
+      defenderPower: null,
+      ...forecastTech,
+    };
+  }
+  if (!defenderTechKnown) {
+    return {
+      kind: "uncertain",
+      label: "Uncertain",
+      detail: "The destination owner's combat technology is missing from public intel, so the preview will not assume zero levels.",
+      attackerPower,
+      defenderPower: null,
+      ...forecastTech,
+    };
+  }
+  const forecastStationedDefenders = targetIsMoon
+    ? []
+    : joinAttackContext?.stationedDefenders ?? target.publicState?.stationedDefenderForecastTimeline;
+  if (!targetIsMoon && !Array.isArray(forecastStationedDefenders)) {
+    return {
+      kind: "uncertain",
+      label: "Uncertain",
+      detail: joinAttackContext
+        ? "Attack-specific stationed/counterplay defender intel is unavailable, so defending fleets are not silently omitted."
+        : "Stationed-defender intel is unavailable, so allied defending fleets are not silently omitted.",
+      attackerPower,
+      defenderPower: null,
+      ...forecastTech,
+    };
+  }
+
+  let stationedDefenders = forecastStationedDefenders ?? [];
+  if (!targetIsMoon && !joinAttackContext) {
+    const qualification = stationedDefendersAtAttackArrival(
+      stationedDefenders,
+      timing?.projectedAttackArrivalAt ?? null,
+      target.publicState?.stationedDefenderTimelineComplete === true,
+    );
+    if (qualification.unavailableReason) {
+      return {
+        kind: "uncertain",
+        label: "Uncertain",
+        detail: qualification.unavailableReason,
+        attackerPower,
+        defenderPower: null,
+        ...forecastTech,
+      };
+    }
+    stationedDefenders = qualification.defenders;
+  }
+  const missingStationedTechnology = stationedDefenders.find((defender) => !defender.combatTechnology);
+  if (missingStationedTechnology) {
+    return {
+      kind: "uncertain",
+      label: "Uncertain",
+      detail: `${missingStationedTechnology.defenderDisplayName ?? missingStationedTechnology.defender}'s stationed fleet combat technology is not indexed, so its owner-specific contract scaling cannot be simulated safely.`,
+      attackerPower,
+      defenderPower: null,
+      ...forecastTech,
+    };
+  }
+  const missingStationedLane = stationedDefenders.find(
+    (defender) => defender.laneGroup == null || !Number.isFinite(defender.laneGroup),
+  );
+  if (missingStationedLane) {
+    return {
+      kind: "uncertain",
+      label: "Uncertain",
+      detail: `Stationed fleet #${missingStationedLane.missionId} is missing its exact contract random-stream lane identity.`,
+      attackerPower,
+      defenderPower: null,
+      ...forecastTech,
+    };
+  }
+
+  const stationedPower = stationedDefendersCombatPower(stationedDefenders);
+  const defenderPower = compositionCombatPower(bodyState.fleet, "ship", defenderTechLevels)
+    + compositionCombatPower(bodyState.defenses, "defense", defenderTechLevels)
+    + stationedPower;
+  const simulation = forecastContractBattle({
+    attackers: [
+      ...(joinAttackContext?.participants ?? []).map((participant) => ({
+        id: participant.missionId,
+        label: participant.label,
+        owner: participant.owner,
+        laneGroup: participant.laneGroup ?? 0,
+        ships: combatShipRecordCounts(participant.ships ?? {}),
+        technology: normalizeCombatTechLevels(participant.combatTechnology),
+      })),
+      {
+        id: "selected-attacker",
+        label: joinAttackContext ? "Selected joining fleet" : "Selected attacking fleet",
+        owner: "Connected commander",
+        laneGroup: joinAttackContext?.selectedAttackerLaneGroup ?? 0,
+        ships: missionShipCounts(ships),
+        technology: normalizedAttackerTechLevels,
+      },
+    ],
+    defender: {
+      id: targetIsMoon ? `moon-${target.id}` : `planet-${target.id}`,
+      label: targetIsMoon ? `${target.moonName ?? target.name} moon` : target.name,
+      owner: target.owner ?? target.occupiedBy?.owner ?? "Unknown owner",
+      ships: combatCompositionCounts(bodyState.fleet, 16),
+      defenses: combatCompositionCounts(bodyState.defenses, 8),
+      technology: defenderTechLevels,
+      counterplay: stationedDefenders.map((defender) => ({
+        id: `stationed-${defender.missionId}`,
+        label: defender.defenderDisplayName
+          ? `${defender.defenderDisplayName}'s stationed fleet`
+          : `Stationed fleet #${defender.missionId}`,
+        owner: defender.defender,
+        laneGroup: defender.laneGroup ?? 0,
+        ships: combatShipRecordCounts(defender.ships),
+        technology: normalizeCombatTechLevels(defender.combatTechnology),
+      })),
+    },
+  });
   const kind = simulation.probableOutcome;
   const label = kind === "win" ? "Probable win" : kind === "defeat" ? "Probable defeat" : "Probable draw";
   return {
     kind,
     label,
-    detail: battleForecastDetail(kind, simulation, stationedPower > 0),
+    detail: battleForecastDetail(kind, simulation, stationedPower > 0, targetIsMoon),
     attackerPower,
     defenderPower,
     attackerLosses: simulation.attackerLosses,
-    randomness: simulation.randomness,
+    randomness: {
+      outcomeRange: (["win", "draw", "defeat"] as const).filter((outcome) => simulation.outcomeCounts[outcome] > 0),
+      sampleCount: simulation.samples.length,
+      outcomeCounts: simulation.outcomeCounts,
+      attackerSurvivorRange: simulation.attackerSurvivorRange,
+    },
+    sampleReport: simulation.sampleReport,
     ...forecastTech,
   };
 }
@@ -1507,6 +1824,7 @@ export function AttackIntelPanel({
   lootableAtArrival,
   maxLootForecast,
   resourceIntel,
+  showLoot = true,
   stationedDefenderUnits,
   target,
   targetDefenseUnits,
@@ -1517,6 +1835,7 @@ export function AttackIntelPanel({
   lootableAtArrival: MissionResourceSnapshot | null;
   maxLootForecast: MissionResourceSnapshot;
   resourceIntel: TargetResourceIntel;
+  showLoot?: boolean | undefined;
   stationedDefenderUnits: UnitItem[];
   target: Planet | undefined;
   targetDefenseUnits: UnitItem[];
@@ -1531,6 +1850,7 @@ export function AttackIntelPanel({
           compact
           lootableAtArrival={lootableAtArrival}
           maxLootForecast={maxLootForecast}
+          showLoot={showLoot}
         />
       </div>
       <div className="grid divide-y divide-white/10 border-t border-white/10 xl:grid-cols-[minmax(0,1fr)_minmax(0,0.9fr)] xl:divide-x xl:divide-y-0">
@@ -1745,18 +2065,23 @@ function AttackOutcomeContent({
   compact = false,
   lootableAtArrival,
   maxLootForecast,
+  showLoot = true,
 }: {
   battleForecast: BattleForecastState;
   compact?: boolean | undefined;
   lootableAtArrival: MissionResourceSnapshot | null;
   maxLootForecast: MissionResourceSnapshot;
+  showLoot?: boolean | undefined;
 }) {
   if (compact) {
     return (
       <div className="grid content-start gap-2 bg-signal/[0.04] p-3">
         <div className="flex min-w-0 items-start justify-between gap-3">
           <div className="min-w-0">
-            <span className="text-[11px] font-semibold uppercase text-slate-500">Outcome</span>
+            <div className="flex items-center gap-1">
+              <span className="text-[11px] font-semibold uppercase text-slate-500">Outcome</span>
+              <SimulatedBattleReportControl report={battleForecast.sampleReport ?? null} />
+            </div>
             <p className={`truncate text-base font-semibold ${battleForecast.kind === "win" ? "text-emerald-200" : battleForecast.kind === "defeat" ? "text-red-200" : battleForecast.kind === "draw" ? "text-amber-200" : "text-slate-300"}`}>
               {battleForecast.label}
             </p>
@@ -1771,8 +2096,14 @@ function AttackOutcomeContent({
           {battleForecast.randomness ? (
             <CompactFactRow label="Randomness" value={formatRandomnessRange(battleForecast.randomness, battleForecast.attackerLosses)} />
           ) : null}
-          <CompactFactRow label="Max loot" value={formatCompactResources(maxLootForecast)} />
-          <CompactFactRow label="Lootable" value={formatCompactResources(lootableAtArrival)} />
+          {showLoot ? (
+            <>
+              <CompactFactRow label="Max loot" value={formatCompactResources(maxLootForecast)} />
+              <CompactFactRow label="Lootable" value={formatCompactResources(lootableAtArrival)} />
+            </>
+          ) : (
+            <CompactFactRow label="Loot" value="Inherited from the lead attack group" />
+          )}
           <CompactFactRow
             label="Tech"
             value={`${formatTechLevels(battleForecast.attackerTechLevels ?? ZERO_COMBAT_TECH_LEVELS)} / ${battleForecast.defenderTechKnown ? formatTechLevels(battleForecast.defenderTechLevels ?? ZERO_COMBAT_TECH_LEVELS) : "DEF unknown"}`}
@@ -1786,7 +2117,10 @@ function AttackOutcomeContent({
     <div className="grid gap-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="min-w-0">
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Probable outcome</h3>
+          <div className="flex items-center gap-1">
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Outcome</h3>
+            <SimulatedBattleReportControl report={battleForecast.sampleReport ?? null} />
+          </div>
           <p className={`mt-0.5 text-base font-semibold ${battleForecast.kind === "win" ? "text-emerald-200" : battleForecast.kind === "defeat" ? "text-red-200" : battleForecast.kind === "draw" ? "text-amber-200" : "text-slate-300"}`}>
             {battleForecast.label}
           </p>
@@ -1813,12 +2147,210 @@ function AttackOutcomeContent({
         defenderKnown={battleForecast.defenderTechKnown ?? false}
         defenderLevels={battleForecast.defenderTechLevels ?? ZERO_COMBAT_TECH_LEVELS}
       />
-      <div className="grid gap-2 sm:grid-cols-2">
-        <ResourceSummary title="Max loot at arrival" resources={maxLootForecast} />
-        <ResourceSummary title="Lootable at arrival" resources={lootableAtArrival} />
-      </div>
+      {showLoot ? (
+        <div className="grid gap-2 sm:grid-cols-2">
+          <ResourceSummary title="Max loot at arrival" resources={maxLootForecast} />
+          <ResourceSummary title="Lootable at arrival" resources={lootableAtArrival} />
+        </div>
+      ) : (
+        <p className="text-xs text-slate-500">Loot allocation is inherited from the lead attack group.</p>
+      )}
     </div>
   );
+}
+
+function SimulatedBattleReportControl({ report }: { report: ContractBattleResult | null }) {
+  if (!report) {
+    return (
+      <button
+        aria-label="Open simulated battle report"
+        className="grid h-5 w-5 shrink-0 place-items-center rounded-full border border-white/15 bg-white/[0.04] text-[11px] font-semibold normal-case text-slate-300 transition hover:border-signal/50 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+        disabled
+        title="A report is available when required public combat intel is known"
+        type="button"
+      >
+        i
+      </button>
+    );
+  }
+
+  return (
+    <details
+      className="group/report"
+      onKeyDown={(event) => {
+        if (event.key === "Escape") event.currentTarget.open = false;
+      }}
+    >
+      <summary
+        aria-label="Open simulated battle report"
+        className="grid h-5 w-5 cursor-pointer list-none place-items-center rounded-full border border-white/15 bg-white/[0.04] text-[11px] font-semibold normal-case text-slate-300 transition hover:border-signal/50 hover:text-white [&::-webkit-details-marker]:hidden"
+        role="button"
+        title="Open simulated battle report"
+      >
+        i
+      </summary>
+      <div className="hidden group-open/report:block">
+        <div
+          aria-label="Simulated battle report"
+          aria-modal="true"
+          className="fixed inset-0 z-[100] overflow-y-auto bg-black/75 p-3 backdrop-blur-sm sm:p-6"
+          role="dialog"
+        >
+          <div
+            className="mx-auto grid max-h-[calc(100dvh-1.5rem)] w-full max-w-3xl gap-4 overflow-y-auto rounded-lg border border-white/15 bg-[#0b101c] p-4 shadow-2xl shadow-black/60 sm:max-h-[calc(100dvh-3rem)] sm:p-5"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-signal">Illustrative simulation</p>
+                <h2 className="mt-1 text-lg font-semibold text-white">Sample possible battle</h2>
+                <p className="mt-1 text-xs text-slate-400">
+                  This report uses the exact preview engine for one deterministic 256-bit sample. It is not the already-determined future on-chain result.
+                </p>
+              </div>
+              <button
+                aria-label="Close simulated battle report"
+                className="h-9 shrink-0 rounded border border-white/15 px-3 text-sm font-medium text-slate-200 transition hover:border-white/30 hover:text-white"
+                onClick={(event) => {
+                  const details = event.currentTarget.closest("details");
+                  if (details) details.open = false;
+                }}
+                type="button"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="grid gap-1 rounded border border-white/10 bg-black/20 p-3 text-xs">
+              <CompactFactRow label="Sample" value={`#${report.sampleId}`} />
+              <div className="grid grid-cols-[7rem_minmax(0,1fr)] gap-3">
+                <span className="text-slate-500">Random word</span>
+                <code className="break-all text-right text-[11px] text-slate-300">{report.randomWord}</code>
+              </div>
+              <CompactFactRow label="Final outcome" value={battleOutcomeLabel(report.outcome)} />
+              <CompactFactRow label="Attacker losses" value={formatCompactResources(report.attackerLosses)} />
+              <CompactFactRow label="Defender losses" value={formatCompactResources(report.defenderLosses)} />
+              <CompactFactRow
+                label="Rapidfire"
+                value={`${report.rapidfireExtraShots.attacker.toLocaleString()} attacker / ${report.rapidfireExtraShots.defender.toLocaleString()} defender extra shots`}
+              />
+            </div>
+
+            <section className="grid gap-2">
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Inputs and technology owners</h3>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {report.attackers.map((participant) => (
+                  <BattleParticipantCard key={participant.id} participant={participant} />
+                ))}
+                <BattleParticipantCard participant={report.defender} />
+                {report.defender.counterplay.map((participant) => (
+                  <BattleParticipantCard key={participant.id} participant={participant} />
+                ))}
+              </div>
+              {report.defender.startingDefenses.length > 0 ? (
+                <p className="rounded border border-white/10 bg-white/[0.03] p-2 text-xs text-slate-300">
+                  <span className="font-medium text-slate-400">Starting defenses: </span>
+                  {formatBattleComposition(report.defender.startingDefenses)}
+                </p>
+              ) : null}
+            </section>
+
+            <section className="grid gap-2">
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Combat rounds</h3>
+              {report.rounds.length === 0 ? (
+                <p className="rounded border border-white/10 bg-white/[0.03] p-3 text-xs text-slate-400">
+                  Combat ended before round 1 because one side had no battlefield units.
+                </p>
+              ) : report.rounds.map((round) => (
+                <article className="grid gap-2 rounded border border-white/10 bg-white/[0.03] p-3" key={round.round}>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h4 className="text-sm font-semibold text-white">Round {round.round}</h4>
+                    <span className="text-xs tabular-nums text-slate-400">
+                      {round.attackerStartingUnits.toLocaleString()} attackers / {round.defenderStartingUnits.toLocaleString()} defenders at start
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-400">
+                    Rapidfire extra shots: {round.attackerRapidfireExtraShots.toLocaleString()} attacker / {round.defenderRapidfireExtraShots.toLocaleString()} defender
+                  </p>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <RoundSideReport title="Attackers" participants={round.attackers} />
+                    <RoundSideReport
+                      defenses={round.defender}
+                      participants={[round.defender, ...round.defender.counterplay]}
+                      title="Defenders"
+                    />
+                  </div>
+                </article>
+              ))}
+            </section>
+          </div>
+        </div>
+      </div>
+    </details>
+  );
+}
+
+function BattleParticipantCard({
+  participant,
+}: {
+  participant: ContractBattleResult["attackers"][number];
+}) {
+  return (
+    <article className="rounded border border-white/10 bg-white/[0.03] p-2 text-xs">
+      <p className="font-medium text-slate-200">{participant.label}</p>
+      <p className="mt-0.5 break-all text-[11px] text-slate-500">{participant.owner}</p>
+      {participant.laneGroup !== undefined ? (
+        <p className="mt-0.5 text-[11px] text-slate-500">Contract lane {participant.laneGroup}</p>
+      ) : null}
+      <p className="mt-1 text-slate-400">{formatTechLevels(participant.technology)}</p>
+      <p className="mt-1 text-slate-300">{formatBattleComposition(participant.startingShips)}</p>
+    </article>
+  );
+}
+
+function RoundSideReport({
+  defenses,
+  participants,
+  title,
+}: {
+  defenses?: ContractBattleResult["defender"] | undefined;
+  participants: ContractBattleResult["attackers"];
+  title: string;
+}) {
+  const shipLosses = participants.flatMap((participant) =>
+    participant.lostShips.map((row) => ({ ...row, label: `${participant.label}: ${row.label}` })),
+  );
+  return (
+    <div className="rounded border border-white/10 bg-black/15 p-2 text-xs">
+      <p className="font-medium text-slate-300">{title}</p>
+      <p className="mt-1 text-slate-500">Losses</p>
+      <p className="text-slate-300">
+        {formatBattleComposition([
+          ...shipLosses,
+          ...(defenses?.lostDefenses.map((row) => ({ ...row, label: `Defense: ${row.label}` })) ?? []),
+        ])}
+      </p>
+      <p className="mt-1 text-slate-500">Survivors</p>
+      <p className="text-slate-300">
+        {formatBattleComposition([
+          ...participants.flatMap((participant) =>
+            participant.survivingShips.map((row) => ({ ...row, label: `${participant.label}: ${row.label}` })),
+          ),
+          ...(defenses?.survivingDefenses.map((row) => ({ ...row, label: `Defense: ${row.label}` })) ?? []),
+        ])}
+      </p>
+    </div>
+  );
+}
+
+function formatBattleComposition(rows: Array<{ label: string; count: number }>): string {
+  return rows.length > 0
+    ? rows.map((row) => `${row.count.toLocaleString()} ${row.label}`).join(", ")
+    : "None";
+}
+
+function battleOutcomeLabel(outcome: BattleOutcome): string {
+  return outcome === "win" ? "Attacker win" : outcome === "defeat" ? "Defender win" : "Draw";
 }
 
 function TargetDecisionTable({ coords, target }: { coords: Coordinates; target: Planet | undefined }) {
@@ -2196,7 +2728,7 @@ export function missionTargetCompositionUnits(
 }
 
 export function stationedDefenderCompositionUnits(
-  defenders: PublicStationedDefender[] | null | undefined,
+  defenders: readonly PublicStationedDefender[] | null | undefined,
 ): UnitItem[] {
   const counts = new Map<string, number>();
   for (const defender of defenders ?? []) {
@@ -2378,8 +2910,16 @@ function plunderableResources(resources: MissionResourceSnapshot): MissionResour
 function missionShipsCombatPower(ships: MissionShips, techLevels: CombatTechLevels): number {
   return missionShipOptions.reduce((total, option) => {
     const count = Math.max(0, Math.trunc(ships[option.key] ?? 0));
-    const ship = shipCatalog.find((entry) => entry.key === option.key);
-    return total + count * (ship ? combatStatsPower(shipCombatStats(ship).rows, techLevels) : 0);
+    return total + count * contractCombatPower("ship", option.id, techLevels);
+  }, 0);
+}
+
+function shipRecordCombatPower(ships: Record<string, string>, techLevels: CombatTechLevels): number {
+  const normalizedTechnology = normalizeCombatTechLevels(techLevels);
+  return shipCatalog.reduce((total, ship) => {
+    if (ship.id === 9 || ship.id === 15) return total;
+    const count = safeResourceNumber(ships[ship.key]);
+    return total + count * contractCombatPower("ship", ship.id, normalizedTechnology);
   }, 0);
 }
 
@@ -2390,298 +2930,73 @@ function compositionCombatPower(
 ): number {
   return (rows ?? []).reduce((total, row) => {
     const count = Math.max(0, Math.trunc(row.count));
-    if (kind === "ship") {
-      const ship = shipCatalog.find((entry) => entry.id === row.id);
-      return total + count * (ship ? combatStatsPower(shipCombatStats(ship).rows, techLevels) : 0);
-    }
-    const defense = defenseCatalog.find((entry) => entry.id === row.id);
-    return total + count * (defense ? combatStatsPower(defenseCombatStats(defense).rows, techLevels) : 0);
+    if (kind === "ship" && (row.id < 0 || row.id >= 16 || row.id === 9 || row.id === 15)) return total;
+    if (kind === "defense" && (row.id < 0 || row.id >= 8)) return total;
+    return total + count * contractCombatPower(kind, row.id, techLevels);
   }, 0);
 }
 
 function stationedDefendersCombatPower(
-  defenders: PublicStationedDefender[] | null | undefined,
-  techLevels: CombatTechLevels,
+  defenders: readonly PublicStationedDefender[] | null | undefined,
 ): number {
   return (defenders ?? []).reduce((total, defender) => {
+    const techLevels = normalizeCombatTechLevels(defender.combatTechnology);
     return total + shipCatalog.reduce((shipTotal, ship) => {
+      if (ship.id === 9 || ship.id === 15) return shipTotal;
       const count = safeResourceNumber(defender.ships[ship.key]);
-      return shipTotal + count * combatStatsPower(shipCombatStats(ship).rows, techLevels);
+      return shipTotal + count * contractCombatPower("ship", ship.id, techLevels);
     }, 0);
   }, 0);
 }
 
-function combatStatsPower(rows: Array<{ label: string; value: number | string }>, techLevels: CombatTechLevels): number {
-  return rows.reduce((total, row) => {
-    if (typeof row.value !== "number") return total;
-    if (row.label === "Attack") return total + combatScaled(row.value, techLevels.weapons);
-    if (row.label === "Shield") return total + combatScaled(row.value, techLevels.shielding);
-    if (row.label === "Hull") return total + combatScaled(row.value, techLevels.armor) / 10;
-    return total;
-  }, 0);
-}
-
-function combatScaled(value: number, technologyLevel: number): number {
-  return Math.floor((value * (BPS + normalizeCombatTechLevel(technologyLevel) * 1_000)) / BPS);
-}
-
-type BattleForecastOutcome = "win" | "defeat" | "draw";
-type BattleForecastSimulation = {
-  probableOutcome: BattleForecastOutcome;
-  attackerLosses: BattleForecastLossRange;
-  randomness: BattleForecastRandomness | null;
-};
-type CombatResources = MissionResourceSnapshot;
-type CombatUnitStats = { attack: number; shield: number; hull: number; metal: number; crystal: number; deuterium: number };
-type CombatUnitStack = { id: number; count: number; stats: CombatUnitStats };
-
-const shipCombatTable: CombatUnitStats[] = [
-  { attack: 5, shield: 10, hull: 400, metal: 2_000, crystal: 2_000, deuterium: 0 },
-  { attack: 50, shield: 10, hull: 400, metal: 3_000, crystal: 1_000, deuterium: 0 },
-  { attack: 1, shield: 10, hull: 1_600, metal: 10_000, crystal: 6_000, deuterium: 2_000 },
-  { attack: 50, shield: 100, hull: 3_000, metal: 10_000, crystal: 20_000, deuterium: 10_000 },
-  { attack: 5, shield: 25, hull: 1_200, metal: 6_000, crystal: 6_000, deuterium: 0 },
-  { attack: 150, shield: 25, hull: 1_000, metal: 6_000, crystal: 4_000, deuterium: 0 },
-  { attack: 400, shield: 50, hull: 2_700, metal: 20_000, crystal: 7_000, deuterium: 2_000 },
-  { attack: 1_000, shield: 200, hull: 6_000, metal: 45_000, crystal: 15_000, deuterium: 0 },
-  { attack: 1_000, shield: 500, hull: 7_500, metal: 50_000, crystal: 25_000, deuterium: 15_000 },
-  { attack: 1, shield: 1, hull: 200, metal: 0, crystal: 2_000, deuterium: 500 },
-  { attack: 2_000, shield: 500, hull: 11_000, metal: 60_000, crystal: 50_000, deuterium: 15_000 },
-  { attack: 200_000, shield: 50_000, hull: 900_000, metal: 5_000_000, crystal: 4_000_000, deuterium: 1_000_000 },
-  { attack: 700, shield: 400, hull: 7_000, metal: 30_000, crystal: 40_000, deuterium: 15_000 },
-  { attack: 2_800, shield: 700, hull: 14_000, metal: 85_000, crystal: 55_000, deuterium: 20_000 },
-  { attack: 200, shield: 100, hull: 2_300, metal: 8_000, crystal: 15_000, deuterium: 8_000 },
-  { attack: 1, shield: 1, hull: 400, metal: 2_000, crystal: 2_000, deuterium: 1_000 },
-];
-
-const defenseCombatTable: CombatUnitStats[] = [
-  { attack: 80, shield: 20, hull: 200, metal: 2_000, crystal: 0, deuterium: 0 },
-  { attack: 100, shield: 25, hull: 200, metal: 1_500, crystal: 500, deuterium: 0 },
-  { attack: 250, shield: 100, hull: 800, metal: 6_000, crystal: 2_000, deuterium: 0 },
-  { attack: 1, shield: 2_000, hull: 2_000, metal: 10_000, crystal: 10_000, deuterium: 0 },
-  { attack: 1_100, shield: 200, hull: 3_500, metal: 20_000, crystal: 15_000, deuterium: 2_000 },
-  { attack: 150, shield: 500, hull: 800, metal: 2_000, crystal: 6_000, deuterium: 0 },
-  { attack: 3_000, shield: 300, hull: 10_000, metal: 50_000, crystal: 50_000, deuterium: 30_000 },
-  { attack: 1, shield: 10_000, hull: 10_000, metal: 50_000, crystal: 50_000, deuterium: 0 },
-];
-
-function simulatePublicBattleForecast(
-  ships: MissionShips,
-  target: Planet,
-  attackerTechLevels: CombatTechLevels,
-  defenderTechLevels: CombatTechLevels,
-): BattleForecastSimulation {
-  const samples = Array.from({ length: BATTLE_FORECAST_SAMPLES }, (_, index) =>
-    runBattleForecastSample(
-      missionShipStacks(ships, attackerTechLevels),
-      defenderShipStacks(target, defenderTechLevels),
-      defenderDefenseStacks(target, defenderTechLevels),
-      0x9e3779b9 + index * 0x45d9f3b
-    )
-  );
-  const outcomeCounts = new Map<BattleForecastOutcome, number>();
-  for (const sample of samples) outcomeCounts.set(sample.outcome, (outcomeCounts.get(sample.outcome) ?? 0) + 1);
-  const probableOutcome = [...outcomeCounts.entries()].sort((left, right) => right[1] - left[1])[0]?.[0] ?? "draw";
-  const attackerLosses = lossRange(samples.map((sample) => sample.attackerLosses));
-  const outcomeRange = (["win", "draw", "defeat"] as const).filter((outcome) => outcomeCounts.has(outcome));
-  const randomness = outcomeRange.length > 1 || !resourceSnapshotsEqual(attackerLosses.best, attackerLosses.worst)
-    ? { outcomeRange, sampleCount: samples.length }
-    : null;
-  return { probableOutcome, attackerLosses, randomness };
-}
-
-function runBattleForecastSample(
-  attackerInput: CombatUnitStack[],
-  defenderShipInput: CombatUnitStack[],
-  defenderDefenseInput: CombatUnitStack[],
-  seed: number,
-): { outcome: BattleForecastOutcome; attackerLosses: CombatResources } {
-  const attackers = copyCombatStacks(attackerInput);
-  const defenderShips = copyCombatStacks(defenderShipInput);
-  const defenderDefenses = copyCombatStacks(defenderDefenseInput);
-  const attackerLosses = zeroResources();
-
-  for (let round = 1; round <= BATTLE_MAX_ROUNDS; round += 1) {
-    if (unitTotal(attackers) <= 0 || unitTotal(defenderShips) + unitTotal(defenderDefenses) <= 0) break;
-    const attackersAtRoundStart = copyCombatStacks(attackers);
-    const defenderShipsAtRoundStart = copyCombatStacks(defenderShips);
-    const defenderDefensesAtRoundStart = copyCombatStacks(defenderDefenses);
-
-    for (const defender of defenderShipsAtRoundStart) {
-      fireAtStacks(defender, attackers, unitTotal(attackersAtRoundStart), attackerLosses, seed, round, 1);
-    }
-    for (const defender of defenderDefensesAtRoundStart) {
-      fireAtStacks(defender, attackers, unitTotal(attackersAtRoundStart), attackerLosses, seed, round, 2);
-    }
-    const defenderTargetTotal = unitTotal(defenderShipsAtRoundStart) + unitTotal(defenderDefensesAtRoundStart);
-    for (const attacker of attackersAtRoundStart) {
-      fireAtStacks(attacker, defenderShips, defenderTargetTotal, null, seed, round, 4);
-      fireAtStacks(attacker, defenderDefenses, defenderTargetTotal, null, seed, round, 5);
-    }
+function missionShipCounts(ships: MissionShips): number[] {
+  const counts = Array.from({ length: 16 }, () => 0);
+  for (const ship of shipCatalog) {
+    counts[ship.id] = safeResourceNumber(ships[ship.key as MissionShipKey]);
   }
-
-  const finalAttackers = unitTotal(attackers);
-  const finalDefenders = unitTotal(defenderShips) + unitTotal(defenderDefenses);
-  return {
-    outcome: finalAttackers > 0 && finalDefenders <= 0 ? "win" : finalAttackers <= 0 && finalDefenders > 0 ? "defeat" : "draw",
-    attackerLosses,
-  };
+  return counts;
 }
 
-function fireAtStacks(
-  firing: CombatUnitStack,
-  targets: CombatUnitStack[],
-  targetTotal: number,
-  losses: CombatResources | null,
-  seed: number,
-  round: number,
-  side: number,
-) {
-  if (firing.count <= 0 || targetTotal <= 0) return;
-  for (const target of targets) {
-    if (target.count <= 0) continue;
-    const shots = distributedTargetShots(firing.count, target.count, targetTotal, seed, round, side, firing.id, target.id);
-    const lost = lossCount(target, shots, firing.stats.attack, seed, round, side, target.id);
-    if (lost <= 0) continue;
-    target.count -= lost;
-    if (losses) {
-      losses.metal += target.stats.metal * lost;
-      losses.crystal += target.stats.crystal * lost;
-      losses.deuterium += target.stats.deuterium * lost;
-    }
+function combatCompositionCounts(
+  rows: Array<{ id: number; count: number }> | null | undefined,
+  length: number,
+): number[] {
+  const counts = Array.from({ length }, () => 0);
+  for (const row of rows ?? []) {
+    if (row.id < 0 || row.id >= length) continue;
+    counts[row.id] = (counts[row.id] ?? 0) + safeResourceNumber(row.count);
   }
+  return counts;
 }
 
-function lossCount(target: CombatUnitStack, shots: number, attack: number, seed: number, round: number, side: number, targetId: number): number {
-  if (target.count <= 0 || shots <= 0 || attack <= 0 || target.stats.hull <= 0) return 0;
-  const targeted = Math.min(shots, target.count);
-  const shotsPerTarget = Math.ceil(shots / targeted);
-  const damage = attack * shotsPerTarget;
-  if (attack <= target.stats.shield / 100 || damage <= target.stats.shield) return 0;
-  const hullDamage = damage - target.stats.shield;
-  if (hullDamage >= target.stats.hull) return targeted;
-  const damageBps = Math.floor((hullDamage * BPS) / target.stats.hull);
-  if (damageBps <= 3_000) return 0;
-  return Math.min(targeted, sampleChance(targeted, damageBps, seed, round, side, targetId, shots));
-}
-
-function distributedTargetShots(shots: number, targetCount: number, targetTotal: number, seed: number, round: number, side: number, firingId: number, targetId: number): number {
-  if (shots <= 0 || targetCount <= 0 || targetTotal <= 0) return 0;
-  const weightedShots = shots * targetCount;
-  const base = Math.floor(weightedShots / targetTotal);
-  return combatRand(seed, round, side, firingId, targetId, 0) % targetTotal < weightedShots % targetTotal ? base + 1 : base;
-}
-
-function sampleChance(trials: number, chanceBps: number, seed: number, round: number, side: number, targetId: number, lane: number): number {
-  if (trials <= 0 || chanceBps <= 0) return 0;
-  if (chanceBps >= BPS) return trials;
-  const scaled = trials * chanceBps;
-  const base = Math.floor(scaled / BPS);
-  return combatRand(seed, round, side, targetId, lane, 1) % BPS < scaled % BPS ? base + 1 : base;
-}
-
-function combatRand(seed: number, round: number, side: number, unit: number, target: number, stream: number): number {
-  let value = (seed ^ Math.imul(round + 0x7f4a7c15, 0x9e3779b1) ^ Math.imul(side + 0x85ebca6b, 0xc2b2ae35) ^ Math.imul(unit + 0x27d4eb2f, 0x165667b1) ^ Math.imul(target + 0xd3a2646c, 0x27d4eb2d) ^ stream) >>> 0;
-  value ^= value >>> 16;
-  value = Math.imul(value, 0x7feb352d) >>> 0;
-  value ^= value >>> 15;
-  value = Math.imul(value, 0x846ca68b) >>> 0;
-  return (value ^ (value >>> 16)) >>> 0;
-}
-
-function missionShipStacks(ships: MissionShips, techLevels: CombatTechLevels): CombatUnitStack[] {
-  return missionShipOptions.flatMap((option) => {
-    const count = Math.max(0, Math.trunc(ships[option.key] ?? 0));
-    const stats = shipCombatTable[option.id];
-    return count > 0 && stats ? [{ id: option.id, count, stats: scaledCombatStats(stats, techLevels) }] : [];
-  });
-}
-
-function defenderShipStacks(target: Planet, techLevels: CombatTechLevels): CombatUnitStack[] {
-  const counts = new Map<number, number>();
-  for (const row of target.publicState?.fleet ?? []) counts.set(row.id, (counts.get(row.id) ?? 0) + Math.max(0, Math.trunc(row.count)));
-  for (const defender of target.publicState?.stationedDefenders ?? []) {
-    for (const ship of shipCatalog) {
-      const count = safeResourceNumber(defender.ships[ship.key]);
-      if (count > 0) counts.set(ship.id, (counts.get(ship.id) ?? 0) + count);
-    }
+function combatShipRecordCounts(ships: Record<string, string>): number[] {
+  const counts = Array.from({ length: 16 }, () => 0);
+  for (const ship of shipCatalog) {
+    counts[ship.id] = safeResourceNumber(ships[ship.key]);
   }
-  return [...counts.entries()].flatMap(([id, count]) => {
-    const stats = shipCombatTable[id];
-    return count > 0 && stats ? [{ id, count, stats: scaledCombatStats(stats, techLevels) }] : [];
-  });
+  return counts;
 }
 
-function defenderDefenseStacks(target: Planet, techLevels: CombatTechLevels): CombatUnitStack[] {
-  return (target.publicState?.defenses ?? []).flatMap((row) => {
-    const count = Math.max(0, Math.trunc(row.count));
-    const stats = defenseCombatTable[row.id];
-    return count > 0 && stats ? [{ id: row.id, count, stats: scaledCombatStats(stats, techLevels) }] : [];
-  });
-}
-
-function scaledCombatStats(stats: CombatUnitStats, techLevels: CombatTechLevels): CombatUnitStats {
-  return {
-    ...stats,
-    attack: combatScaled(stats.attack, techLevels.weapons),
-    shield: combatScaled(stats.shield, techLevels.shielding),
-    hull: combatScaled(stats.hull, techLevels.armor),
-  };
-}
-
-function battleForecastDetail(kind: BattleForecastOutcome, simulation: BattleForecastSimulation, hasStationedDefenders: boolean): string {
-  const randomness = simulation.randomness ? " Sampled combat randomness can change the outcome or losses; review the range below." : "";
-  if (kind === "win") {
-    return `${hasStationedDefenders ? "The selected fleet defeats visible public defenders, including stationed defenders, in the sampled six-round combat preview." : "The selected fleet defeats visible public defenders in the sampled six-round combat preview."}${randomness}`;
+function battleForecastDetail(
+  kind: BattleOutcome,
+  simulation: ContractBattleForecast,
+  hasStationedDefenders: boolean,
+  targetIsMoon: boolean,
+): string {
+  const outcomeKinds = (["win", "draw", "defeat"] as const).filter((outcome) => simulation.outcomeCounts[outcome] > 0);
+  const varies = outcomeKinds.length > 1
+    || !resourceSnapshotsEqual(simulation.attackerLosses.best, simulation.attackerLosses.worst);
+  const targetLabel = targetIsMoon ? "moon" : "destination";
+  const defenders = hasStationedDefenders ? " and visible owner-specific stationed fleets" : "";
+  if (varies) {
+    return `Estimated from current public ${targetLabel} intel${defenders}. Contract-equivalent 256-bit samples produce different outcomes or losses; the future oracle word is not known yet.`;
   }
-  if (kind === "defeat") {
-    return `${hasStationedDefenders ? "Visible public defenders, including stationed defenders, defeat the selected fleet in the sampled six-round combat preview." : "Visible public defenders defeat the selected fleet in the sampled six-round combat preview."}${randomness}`;
-  }
-  return `${hasStationedDefenders ? "Neither side reliably clears the other within six rounds against visible public defenders, including stationed defenders." : "Neither side reliably clears the other within six rounds against visible public defenders."}${randomness}`;
-}
-
-function lossRange(losses: CombatResources[]): BattleForecastLossRange {
-  if (losses.length <= 0) return zeroLossRange();
-  const sum = losses.reduce((total, item) => addResources(total, item), zeroResources());
-  const first = losses[0] ?? zeroResources();
-  return {
-    average: {
-      metal: Math.round(sum.metal / losses.length),
-      crystal: Math.round(sum.crystal / losses.length),
-      deuterium: Math.round(sum.deuterium / losses.length),
-    },
-    best: losses.reduce((best, item) => resourceValue(item) < resourceValue(best) ? item : best, first),
-    worst: losses.reduce((worst, item) => resourceValue(item) > resourceValue(worst) ? item : worst, first),
-  };
-}
-
-function zeroLossRange(): BattleForecastLossRange {
-  const zero = zeroResources();
-  return { average: zero, best: zero, worst: zero };
-}
-
-function zeroResources(): CombatResources {
-  return { metal: 0, crystal: 0, deuterium: 0 };
-}
-
-function addResources(left: CombatResources, right: CombatResources): CombatResources {
-  return { metal: left.metal + right.metal, crystal: left.crystal + right.crystal, deuterium: left.deuterium + right.deuterium };
-}
-
-function resourceValue(resources: CombatResources): number {
-  return resources.metal + resources.crystal + resources.deuterium;
+  const result = kind === "win" ? "win" : kind === "defeat" ? "loss" : "draw";
+  return `Estimated from current public ${targetLabel} intel${defenders}. All ${simulation.samples.length} contract-equivalent samples produced the same ${result}, but this is not a guarantee because the future oracle word is unknown.`;
 }
 
 function resourceSnapshotsEqual(left: CombatResources, right: CombatResources): boolean {
   return left.metal === right.metal && left.crystal === right.crystal && left.deuterium === right.deuterium;
-}
-
-function copyCombatStacks(stacks: CombatUnitStack[]): CombatUnitStack[] {
-  return stacks.map((stack) => ({ ...stack }));
-}
-
-function unitTotal(stacks: CombatUnitStack[]): number {
-  return stacks.reduce((total, stack) => total + Math.max(0, stack.count), 0);
 }
 
 function commanderLabel(target: Planet | undefined): string {
@@ -2722,9 +3037,13 @@ function lossRangeSpread(losses: BattleForecastLossRange | undefined): MissionRe
 }
 
 function formatRandomnessRange(randomness: BattleForecastRandomness, losses: BattleForecastLossRange | undefined): string {
-  const outcomes = randomness.outcomeRange.map((outcome) => outcome === "win" ? "win" : outcome === "defeat" ? "defeat" : "draw").join("/");
-  if (!losses) return `${outcomes} across ${randomness.sampleCount} samples`;
-  return `${outcomes}; losses ${formatCompactResources(losses.best)} to ${formatCompactResources(losses.worst)}`;
+  const percentage = (count: number) => `${Math.round((count * 100) / randomness.sampleCount)}%`;
+  const distribution = `Win ${randomness.outcomeCounts.win} (${percentage(randomness.outcomeCounts.win)}) · Draw ${randomness.outcomeCounts.draw} (${percentage(randomness.outcomeCounts.draw)}) · Loss ${randomness.outcomeCounts.defeat} (${percentage(randomness.outcomeCounts.defeat)})`;
+  const survivors = randomness.attackerSurvivorRange.min === randomness.attackerSurvivorRange.max
+    ? `${randomness.attackerSurvivorRange.min.toLocaleString()} attacker survivors`
+    : `${randomness.attackerSurvivorRange.min.toLocaleString()}–${randomness.attackerSurvivorRange.max.toLocaleString()} attacker survivors`;
+  if (!losses) return `${distribution}; ${survivors}`;
+  return `${distribution}; ${survivors}; losses ${formatCompactResources(losses.best)} to ${formatCompactResources(losses.worst)}`;
 }
 
 function formatResourceAmount(value: number): string {

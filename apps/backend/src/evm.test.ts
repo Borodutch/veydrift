@@ -36,6 +36,7 @@ const fleetMissionReturnExposedTopic = "0x27a083519451f4434cd1f93497fb93689a906d
 const fleetMissionRecalledTopic = "0x2c9b31f1abc732f3b6d28e7724439ea4713ae516632088b8c4dc0211479dc6ca";
 const fleetMissionResolvedTopic = "0xcb928b431ffcdbe55fddc2bf06967951efb3dfe87d14bc436d546fdbbee9cb2d";
 const fleetMissionReturnedTopic = "0xbb4a50257c10524783e403a4e0db9c4c3e9378c2e398ec5de34281be1aa97b06";
+const attackMissionJoinedTopic = "0xc584e0cc52df45c2a92cc5556e493377d69bfe3e3658d1adb13f27cfcc89b146";
 const attackBattleResolvedTopic = "0xc0d98d89682d12d3fe90cd0786b9320015ab3950de5f4ae3f54ca0fe9b660d1b";
 const combatRoundResolvedTopic = "0xad3481558e72184b0d73a624579c0f1fc7db867024ac190f038373dbde288ca9";
 const combatLossesTopic = "0xe31518e93e94d23864fa76375f560d4ef2b4288dca5a5f1204f71d1d363d3704";
@@ -1787,6 +1788,7 @@ describe("ACS Defend stationed-defense indexing", () => {
   const hostileMissionId = 50n;
   const attackMissionType = topic(3n); // Attack
   const acsDefendMissionType = topic(5n); // AcsDefend
+  const acsAttackMissionType = topic(8n); // AcsAttack
 
   function launch(missionId: bigint, owner: Address, missionType: string, originPlanetId: bigint, targetPlanetId: bigint, randomnessRequestId: bigint): RpcLog {
     return makeLog({
@@ -1822,6 +1824,26 @@ describe("ACS Defend stationed-defense indexing", () => {
     expect(attack?.missionType).toBe("Attack");
     expect(attack?.counterplayDefenderMissionIds).toEqual(["51", "52"]);
     expect(attack?.defendsMissionId).toBeNull();
+  });
+
+  test("preserves the combined defender/joiner append order used by contract random lanes", () => {
+    const joinedAttacker = "0x00000000000000000000000000000000000000d4" as Address;
+    const missions = decodeFleetMissionLogs([
+      launch(hostileMissionId, attacker, attackMissionType, 1n, defendedPlanetId, 0n),
+      // Contract link index 0: an AcsDefend entry.
+      launch(51n, defender, acsDefendMissionType, 2n, defendedPlanetId, hostileMissionId),
+      // Contract link index 1: an AcsAttack entry. AttackMissionJoined is emitted before launch.
+      makeLog({
+        topics: [attackMissionJoinedTopic, topic(hostileMissionId), topic(52n), addressTopic(joinedAttacker)],
+        data: dataWords([word(3n), word(defendedPlanetId)])
+      }),
+      launch(52n, joinedAttacker, acsAttackMissionType, 3n, defendedPlanetId, hostileMissionId)
+    ]);
+
+    const attack = missions.get(hostileMissionId.toString());
+    expect(attack?.counterplayDefenderMissionIds).toEqual(["51"]);
+    expect(attack?.joinedAttackMissionIds).toEqual(["52"]);
+    expect(attack?.linkedMissionIds).toEqual(["51", "52"]);
   });
 
   test("records the defender link even when the hostile attack launch is outside the decoded range", () => {

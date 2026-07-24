@@ -64,6 +64,7 @@ contract VeydriftCombatReferenceParityTest is Test {
     address private player = address(0xB0B);
     address private defender = address(0xDEF);
     address private ally = address(0xA77A);
+    address private counterplayer = address(0xC017);
     address private fulfiller = address(0xF111);
     VeydriftGame private game;
     VeydriftAllianceSystem private allianceSystem;
@@ -88,6 +89,7 @@ contract VeydriftCombatReferenceParityTest is Test {
         uint256 originPlanetId;
         uint256 targetPlanetId;
         uint256 joinedOriginPlanetId;
+        uint256 counterplayOriginPlanetId;
         uint256 missionId;
         uint256 joinedMissionId;
         uint256 counterplayMissionId;
@@ -122,6 +124,7 @@ contract VeydriftCombatReferenceParityTest is Test {
         vm.deal(player, 1 ether);
         vm.deal(defender, 1 ether);
         vm.deal(ally, 1 ether);
+        vm.deal(counterplayer, 1 ether);
     }
 
     function testReferenceParityDefenderWinCargoAgainstRocketLaunchers() public {
@@ -260,6 +263,16 @@ contract VeydriftCombatReferenceParityTest is Test {
         _assertReferenceParity(fixture, 105);
     }
 
+    function testReferenceParityUsesCounterplayOwnersCombatTechnology() public {
+        VeydriftCombatReferenceSimulator.BattleInput memory fixture = _emptyFixture();
+        fixture.attackerShips[uint8(Ship.SmallCargo)] = 1;
+        fixture.counterplayShips[uint8(Ship.SmallCargo)] = 14;
+        fixture.counterplayTech =
+            VeydriftCombatReferenceSimulator.CombatTech({weapons: 10, shielding: 10, armor: 10});
+
+        _assertReferenceParity(fixture, 107);
+    }
+
     function testReferenceParityCoversInterceptCounterplay() public {
         VeydriftCombatReferenceSimulator.BattleInput memory fixture = _emptyFixture();
         fixture.attackerShips[uint8(Ship.SmallCargo)] = 1;
@@ -294,11 +307,14 @@ contract VeydriftCombatReferenceParityTest is Test {
                 launched.joinedOriginPlanetId, expected.joinedAttackerShips, "joined survivors"
             );
         }
-        _assertPlanetShipsEq(
-            launched.targetPlanetId,
-            _addShips(expected.defenderShips, expected.counterplayShips),
-            "defender ships"
-        );
+        _assertPlanetShipsEq(launched.targetPlanetId, expected.defenderShips, "defender ships");
+        if (launched.counterplayMissionId != 0) {
+            _assertPlanetShipsEq(
+                launched.counterplayOriginPlanetId,
+                expected.counterplayShips,
+                "counterplay survivors"
+            );
+        }
         _assertPlanetDefensesEq(
             launched.targetPlanetId, expected.defenderDefenses, "defender defenses"
         );
@@ -324,12 +340,26 @@ contract VeydriftCombatReferenceParityTest is Test {
             _setCombatTech(ally, fixture.joinedAttackerTech);
             _setResources(launched.joinedOriginPlanetId, 100_000_000, 100_000_000, 100_000_000);
         }
+        if (_shipTotal(fixture.counterplayShips) != 0) {
+            vm.prank(counterplayer);
+            launched.counterplayOriginPlanetId = game.startPlanet{value: 0.05 ether}();
+            _setCombatTech(counterplayer, fixture.counterplayTech);
+            _setResources(launched.counterplayOriginPlanetId, 100_000_000, 100_000_000, 100_000_000);
+        }
         if (hasJoinedAttack) {
             _setPlanetCoordinates(launched.originPlanetId, 1, 1, 15);
             _setPlanetCoordinates(launched.targetPlanetId, 1, 1, 1);
         } else {
             _setPlanetCoordinates(launched.originPlanetId, 1, 100, 8);
             _setPlanetCoordinates(launched.targetPlanetId, 1, 100, 9);
+        }
+        if (launched.counterplayOriginPlanetId != 0) {
+            _setPlanetCoordinates(
+                launched.counterplayOriginPlanetId,
+                game.planet(launched.targetPlanetId).galaxy,
+                game.planet(launched.targetPlanetId).system,
+                game.planet(launched.targetPlanetId).position
+            );
         }
         _setCombatTech(player, fixture.attackerTech);
         _setCombatTech(defender, fixture.defenderTech);
@@ -338,6 +368,9 @@ contract VeydriftCombatReferenceParityTest is Test {
         // not reactivate a defender and bounce the battle before its event can be asserted.
         _setTechnologyLevel(player, Technology.IntergalacticResearchNetwork, 3_000);
         _setTechnologyLevel(defender, Technology.IntergalacticResearchNetwork, 3_000);
+        if (launched.counterplayOriginPlanetId != 0) {
+            _setTechnologyLevel(counterplayer, Technology.IntergalacticResearchNetwork, 3_000);
+        }
         vm.warp(8 days);
         _setPlayerLastActiveAt(defender, 1);
         _setResources(launched.originPlanetId, 100_000_000, 100_000_000, 100_000_000);
@@ -352,9 +385,13 @@ contract VeydriftCombatReferenceParityTest is Test {
                     launched.joinedOriginPlanetId, Ship(i), fixture.joinedAttackerShips[i]
                 );
             }
-            uint32 defenderTotal = fixture.defenderShips[i] + fixture.counterplayShips[i];
-            if (defenderTotal != 0) {
-                _setShipCount(launched.targetPlanetId, Ship(i), defenderTotal);
+            if (fixture.defenderShips[i] != 0) {
+                _setShipCount(launched.targetPlanetId, Ship(i), fixture.defenderShips[i]);
+            }
+            if (fixture.counterplayShips[i] != 0) {
+                _setShipCount(
+                    launched.counterplayOriginPlanetId, Ship(i), fixture.counterplayShips[i]
+                );
             }
             unchecked {
                 ++i;
@@ -389,10 +426,10 @@ contract VeydriftCombatReferenceParityTest is Test {
             );
         }
         if (_shipTotal(fixture.counterplayShips) != 0) {
-            _createAlliance(defender);
-            vm.prank(defender);
+            _joinAlliance(defender, counterplayer);
+            vm.prank(counterplayer);
             launched.counterplayMissionId = game.launchFleetMission(
-                launched.targetPlanetId,
+                launched.counterplayOriginPlanetId,
                 launched.missionId,
                 fixture.counterplayIntercept
                     ? VeydriftGameStorage.FleetMissionType.Intercept
@@ -484,19 +521,6 @@ contract VeydriftCombatReferenceParityTest is Test {
         }
     }
 
-    function _addShips(uint32[16] memory left, uint32[16] memory right)
-        private
-        pure
-        returns (uint32[16] memory ships)
-    {
-        for (uint8 i = 0; i < 16;) {
-            ships[i] = left[i] + right[i];
-            unchecked {
-                ++i;
-            }
-        }
-    }
-
     function _emptyFixture()
         private
         pure
@@ -571,6 +595,14 @@ contract VeydriftCombatReferenceParityTest is Test {
     function _createAlliance(address leader) private returns (uint256 allianceId) {
         vm.prank(leader);
         allianceId = allianceSystem.createAlliance("DEF", "Defenders", "ipfs://defenders");
+    }
+
+    function _joinAlliance(address leader, address member) private returns (uint256 allianceId) {
+        allianceId = _createAlliance(leader);
+        vm.prank(leader);
+        allianceSystem.inviteMember(allianceId, member);
+        vm.prank(member);
+        allianceSystem.acceptInvite(allianceId);
     }
 
     function _fleetMission(uint256 missionId)

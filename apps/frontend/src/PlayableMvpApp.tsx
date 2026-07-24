@@ -36,7 +36,13 @@ import {
   normalizeMissionControlFilters,
   type MissionControlFilters,
 } from "./components/MissionControlPage";
-import { MissionCreationPage, type CombatTechLevels, type MissionCargoDraft, type MissionLaunchDraft } from "./components/MissionCreationPage";
+import {
+  MissionCreationPage,
+  type CombatTechLevels,
+  type JoinAttackForecastContext,
+  type MissionCargoDraft,
+  type MissionLaunchDraft,
+} from "./components/MissionCreationPage";
 import { BattleReportsPage } from "./components/BattleReportsPage";
 import { RankingsPage } from "./components/RankingsPage";
 import { RaidTargetFinderPage } from "./components/RaidTargetFinderPage";
@@ -82,6 +88,7 @@ import {
   planetImageForType,
   planetsFromSystemResponse,
   planetTypeFromTemperature,
+  type ApiSystemResponse,
 } from "./data/mockUniverse";
 import {
   buildingContractIds,
@@ -946,6 +953,40 @@ export function nextMissionResolutionEventMs(
     }
   }
   return soonest;
+}
+
+export function joinAttackTargetFromSystemPayload(
+  payload: unknown,
+  targetPlanetId: string,
+  coords: Coordinates,
+): Planet | undefined {
+  if (!payload || typeof payload !== "object" || !Array.isArray((payload as { planets?: unknown }).planets)) {
+    return undefined;
+  }
+  return planetsFromSystemResponse(payload as ApiSystemResponse).find((planet) =>
+    planet.id === targetPlanetId
+      || (
+        planet.galaxy === coords.galaxy
+        && planet.system === coords.system
+        && planet.position === coords.position
+      )
+  );
+}
+
+export function joinAttackForecastContextForMission(
+  mission: FleetMissionSummary,
+): JoinAttackForecastContext | undefined {
+  const preview = mission.attackPreview;
+  if (!preview) return undefined;
+  return {
+    participants: preview.participants,
+    stationedDefenders: preview.stationedDefenders.map((defender) => ({
+      ...defender,
+      defenderDisplayName: defender.defenderDisplayName ?? null,
+    })),
+    selectedAttackerLaneGroup: preview.selectedAttackerLaneGroup,
+    ...(preview.unavailableReason ? { unavailableReason: preview.unavailableReason } : {}),
+  };
 }
 
 export function nextProductionQueueCompletionEventMs(
@@ -3558,6 +3599,8 @@ export function PlayableMvpApp({
     attackMissionId: string;
     targetPlanetId: string;
     coords: Coordinates;
+    mission: FleetMissionSummary;
+    target: Planet | undefined;
   } | null>(null);
   // VEY-KANEO-440: an ACS Defend ("Group defend") counterplay awaiting fleet selection. When set, the
   // mission compose picker opens with a hold-duration / holding-fuel / Alliance Depot preview so the
@@ -7905,7 +7948,7 @@ export function PlayableMvpApp({
     setShareDialogUrl(url);
   }, []);
 
-  const handleJoinAttack = useCallback((attackMissionId: string, targetPlanetId: string, targetCoords: Coordinates | null) => {
+  const handleJoinAttack = useCallback((mission: FleetMissionSummary, targetCoords: Coordinates | null) => {
     if (!provider || !account || !gameContract || !onChainSettlement?.homePlanetId) {
       setGalaxyAction({ status: "error", label: "Wallet, game contract, or home planet is unavailable." });
       return;
@@ -7914,12 +7957,41 @@ export function PlayableMvpApp({
     // VEY-KANEO-431: open the Attack fleet picker so the player chooses the
     // fleet to commit, rather than sending a default counterplay fleet on click.
     setGalaxyAction({ status: "idle" });
+    const coords = targetCoords ?? { galaxy: 0, system: 0, position: 0 };
+    const systemKey = `${coords.galaxy}:${coords.system}`;
+    const cachedPayload = activePlanetSection.galaxySystemDataByKey?.[systemKey];
+    const cachedTarget = joinAttackTargetFromSystemPayload(cachedPayload, mission.targetPlanetId, coords);
     setPendingJoinAttack({
-      attackMissionId,
-      targetPlanetId,
-      coords: targetCoords ?? { galaxy: 0, system: 0, position: 0 },
+      attackMissionId: mission.missionId,
+      targetPlanetId: mission.targetPlanetId,
+      coords,
+      mission,
+      target: cachedTarget,
     });
-  }, [account, gameContract, onChainSettlement?.homePlanetId, provider]);
+
+    if (cachedTarget || !apiBaseUrl || coords.galaxy <= 0 || coords.system <= 0) return;
+    void fetch(`${apiBaseUrl.replace(/\/+$/, "")}/universe/galaxies/${coords.galaxy}/systems/${coords.system}`, {
+      headers: { accept: "application/json" },
+    })
+      .then((response) => {
+        if (!response.ok) throw new Error(`Universe request failed with ${response.status}`);
+        return response.json();
+      })
+      .then((payload) => {
+        const target = joinAttackTargetFromSystemPayload(payload, mission.targetPlanetId, coords);
+        setPendingJoinAttack((current) =>
+          current?.attackMissionId === mission.missionId ? { ...current, target } : current
+        );
+      })
+      .catch((error) => console.error(error));
+  }, [
+    account,
+    activePlanetSection.galaxySystemDataByKey,
+    apiBaseUrl,
+    gameContract,
+    onChainSettlement?.homePlanetId,
+    provider,
+  ]);
 
   const handleConfirmJoinAttack = useCallback((draft: MissionLaunchDraft) => {
     const pending = pendingJoinAttack;
@@ -8415,6 +8487,7 @@ export function PlayableMvpApp({
             : undefined}
           defenseHoldMode={pendingGalaxyMission.action.kind === "defenseHold"}
           driveLevels={driveLevelsFromTechnologyLevels(shipyardState?.technologyLevels)}
+          nowMs={now}
           onBack={() => setPendingGalaxyMission(null)}
           onConfirm={handleConfirmGalaxyMission}
           originCoords={pendingMissionOriginCoords}
@@ -8436,7 +8509,9 @@ export function PlayableMvpApp({
           attackerCombatTechLevels={attackerCombatTechLevels}
           coords={pendingJoinAttack.coords}
           driveLevels={driveLevelsFromTechnologyLevels(shipyardState?.technologyLevels)}
+          joinAttackContext={joinAttackForecastContextForMission(pendingJoinAttack.mission)}
           joinAttackMode
+          nowMs={now}
           onBack={() => setPendingJoinAttack(null)}
           onConfirm={handleConfirmJoinAttack}
           originCoords={activePlanetCoords}
@@ -8444,7 +8519,7 @@ export function PlayableMvpApp({
           resources={originMissionResources}
           shipyardState={shipyardState}
           submitBlocker={missionLaunchBlocker}
-          target={undefined}
+          target={pendingJoinAttack.target}
         />
       );
     }
@@ -8460,6 +8535,7 @@ export function PlayableMvpApp({
           attackerCombatTechLevels={attackerCombatTechLevels}
           coords={pendingAcsDefend.coords}
           driveLevels={driveLevelsFromTechnologyLevels(shipyardState?.technologyLevels)}
+          nowMs={now}
           onBack={() => setPendingAcsDefend(null)}
           onConfirm={handleConfirmAcsDefend}
           originCoords={activePlanetCoords}

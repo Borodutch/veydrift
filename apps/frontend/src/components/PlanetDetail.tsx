@@ -426,7 +426,7 @@ export function PlanetDetail({
         />
         <PublicStatePanel
           title="Stationed Defenders"
-          rows={publicStationedDefenderRows(planet.publicState?.stationedDefenders)}
+          rows={publicStationedDefenderRows(planet.publicState)}
         />
         <PublicStatePanel
           title="Research"
@@ -811,9 +811,9 @@ export function publicStateRows(
 }
 
 export function publicStationedDefenderRows(
-  defenders: PublicPlanetState["stationedDefenders"] | null | undefined
+  publicState: PublicPlanetState | null | undefined
 ): PlanetRecordRow[] {
-  return (defenders ?? [])
+  return (publicState?.stationedDefenders ?? [])
     .filter((defender) => stationedDefenderShipCount(defender.ships) > 0)
     .map((defender) => ({
       label: defender.defenderDisplayName ?? shortAddress(defender.defender),

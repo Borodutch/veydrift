@@ -1,0 +1,61 @@
+{
+  "ships": [
+    { "id": 0, "key": "smallCargo", "label": "Small Cargo", "attack": 5, "shield": 10, "hull": 400, "metal": 2000, "crystal": 2000, "deuterium": 0 },
+    { "id": 1, "key": "lightFighter", "label": "Light Fighter", "attack": 50, "shield": 10, "hull": 400, "metal": 3000, "crystal": 1000, "deuterium": 0 },
+    { "id": 2, "key": "recycler", "label": "Recycler", "attack": 1, "shield": 10, "hull": 1600, "metal": 10000, "crystal": 6000, "deuterium": 2000 },
+    { "id": 3, "key": "colonyShip", "label": "Colony Ship", "attack": 50, "shield": 100, "hull": 3000, "metal": 10000, "crystal": 20000, "deuterium": 10000 },
+    { "id": 4, "key": "largeCargo", "label": "Large Cargo", "attack": 5, "shield": 25, "hull": 1200, "metal": 6000, "crystal": 6000, "deuterium": 0 },
+    { "id": 5, "key": "heavyFighter", "label": "Heavy Fighter", "attack": 150, "shield": 25, "hull": 1000, "metal": 6000, "crystal": 4000, "deuterium": 0 },
+    { "id": 6, "key": "cruiser", "label": "Cruiser", "attack": 400, "shield": 50, "hull": 2700, "metal": 20000, "crystal": 7000, "deuterium": 2000 },
+    { "id": 7, "key": "battleship", "label": "Battleship", "attack": 1000, "shield": 200, "hull": 6000, "metal": 45000, "crystal": 15000, "deuterium": 0 },
+    { "id": 8, "key": "bomber", "label": "Bomber", "attack": 1000, "shield": 500, "hull": 7500, "metal": 50000, "crystal": 25000, "deuterium": 15000 },
+    { "id": 9, "key": "solarSatellite", "label": "Solar Satellite", "attack": 1, "shield": 1, "hull": 200, "metal": 0, "crystal": 2000, "deuterium": 500 },
+    { "id": 10, "key": "destroyer", "label": "Destroyer", "attack": 2000, "shield": 500, "hull": 11000, "metal": 60000, "crystal": 50000, "deuterium": 15000 },
+    { "id": 11, "key": "deathstar", "label": "Deathstar", "attack": 200000, "shield": 50000, "hull": 900000, "metal": 5000000, "crystal": 4000000, "deuterium": 1000000 },
+    { "id": 12, "key": "battlecruiser", "label": "Battlecruiser", "attack": 700, "shield": 400, "hull": 7000, "metal": 30000, "crystal": 40000, "deuterium": 15000 },
+    { "id": 13, "key": "reaper", "label": "Reaper", "attack": 2800, "shield": 700, "hull": 14000, "metal": 85000, "crystal": 55000, "deuterium": 20000 },
+    { "id": 14, "key": "pathfinder", "label": "Pathfinder", "attack": 200, "shield": 100, "hull": 2300, "metal": 8000, "crystal": 15000, "deuterium": 8000 },
+    { "id": 15, "key": "crawler", "label": "Crawler", "attack": 1, "shield": 1, "hull": 400, "metal": 2000, "crystal": 2000, "deuterium": 1000 }
+  ],
+  "defenses": [
+    { "id": 0, "key": "rocketLauncher", "label": "Rocket Launcher", "attack": 80, "shield": 20, "hull": 200, "metal": 2000, "crystal": 0, "deuterium": 0 },
+    { "id": 1, "key": "lightLaser", "label": "Light Laser", "attack": 100, "shield": 25, "hull": 200, "metal": 1500, "crystal": 500, "deuterium": 0 },
+    { "id": 2, "key": "heavyLaser", "label": "Heavy Laser", "attack": 250, "shield": 100, "hull": 800, "metal": 6000, "crystal": 2000, "deuterium": 0 },
+    { "id": 3, "key": "smallShieldDome", "label": "Small Shield Dome", "attack": 1, "shield": 2000, "hull": 2000, "metal": 10000, "crystal": 10000, "deuterium": 0 },
+    { "id": 4, "key": "gaussCannon", "label": "Gauss Cannon", "attack": 1100, "shield": 200, "hull": 3500, "metal": 20000, "crystal": 15000, "deuterium": 2000 },
+    { "id": 5, "key": "ionCannon", "label": "Ion Cannon", "attack": 150, "shield": 500, "hull": 800, "metal": 2000, "crystal": 6000, "deuterium": 0 },
+    { "id": 6, "key": "plasmaTurret", "label": "Plasma Turret", "attack": 3000, "shield": 300, "hull": 10000, "metal": 50000, "crystal": 50000, "deuterium": 30000 },
+    { "id": 7, "key": "largeShieldDome", "label": "Large Shield Dome", "attack": 1, "shield": 10000, "hull": 10000, "metal": 50000, "crystal": 50000, "deuterium": 0 }
+  ],
+  "shipRapidfire": [
+    { "attacker": 6, "defender": 1, "value": 6 },
+    { "attacker": 10, "defender": 0, "value": 3 },
+    { "attacker": 10, "defender": 4, "value": 3 },
+    { "attacker": 10, "defender": 12, "value": 2 },
+    { "attacker": 12, "defender": 0, "value": 3 },
+    { "attacker": 12, "defender": 4, "value": 4 },
+    { "attacker": 12, "defender": 5, "value": 4 },
+    { "attacker": 12, "defender": 6, "value": 4 },
+    { "attacker": 12, "defender": 7, "value": 7 },
+    { "attacker": 13, "defender": 10, "value": 2 },
+    { "attacker": 13, "defender": 11, "value": 10 },
+    { "attacker": 14, "defender": 2, "value": 3 }
+  ],
+  "defenseRapidfire": [
+    { "attacker": 6, "defender": 0, "value": 10 },
+    { "attacker": 8, "defender": 0, "value": 20 },
+    { "attacker": 8, "defender": 1, "value": 20 },
+    { "attacker": 8, "defender": 2, "value": 10 },
+    { "attacker": 8, "defender": 5, "value": 10 },
+    { "attacker": 10, "defender": 1, "value": 10 },
+    { "attacker": 11, "defender": 0, "value": 200 },
+    { "attacker": 11, "defender": 1, "value": 200 },
+    { "attacker": 11, "defender": 2, "value": 200 },
+    { "attacker": 11, "defender": 3, "value": 200 },
+    { "attacker": 11, "defender": 4, "value": 200 },
+    { "attacker": 11, "defender": 5, "value": 200 },
+    { "attacker": 11, "defender": 6, "value": 200 },
+    { "attacker": 11, "defender": 7, "value": 200 },
+    { "attacker": 13, "defender": 6, "value": 2 }
+  ]
+}

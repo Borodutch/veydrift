@@ -251,16 +251,31 @@ describe("tester universe display data", () => {
       label: "Solar Satellite",
       value: "5",
     });
-    expect(publicStationedDefenderRows([
-      {
-        missionId: "41",
-        defender: "0x4444444444444444444444444444444444444444",
-        defenderDisplayName: "Ally Shield",
-        ships: { lightFighter: "15" },
-        holdUntil: "1770003600",
-        allianceDepotLevel: 2,
-      },
-    ])).toEqual([
+    const currentDefender = {
+      missionId: "41",
+      defender: "0x4444444444444444444444444444444444444444",
+      defenderDisplayName: "Ally Shield",
+      ships: { lightFighter: "15" },
+      holdUntil: "1770003600",
+      allianceDepotLevel: 2,
+    };
+    expect(publicStationedDefenderRows({
+      stationedDefenders: [currentDefender],
+      stationedDefenderForecastTimeline: [
+        currentDefender,
+        {
+          ...currentDefender,
+          missionId: "42",
+          defenderDisplayName: "Scheduled Ally",
+          arrivalAt: "1770000300",
+          battleWindowComplete: false,
+          laneGroup: null,
+          ships: { lightFighter: "9" },
+          holdUntil: "1770007500",
+        },
+      ],
+      stationedDefenderTimelineComplete: true,
+    })).toEqual([
       expect.objectContaining({
         label: "Ally Shield",
         value: expect.stringContaining("15 ships until"),

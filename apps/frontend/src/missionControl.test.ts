@@ -605,11 +605,11 @@ describe("Mission Control battle reports", () => {
       ...mission("34", "Attack", "Outbound", "0x3333333333333333333333333333333333333333", "5", "6", now + 180_000),
       targetPlanet: planetReference("6", "0x3333333333333333333333333333333333333333", "Bastion", "4:5:6"),
     };
-    const joinCalls: Array<[string, string, { galaxy: number; system: number; position: number } | null]> = [];
+    const joinCalls: Array<[FleetMissionSummary, { galaxy: number; system: number; position: number } | null]> = [];
     const tree = MissionControlPage({
       ...missionControlProps(now, { joinableAttacks: [joinable] }),
-      onJoinAttack: (missionId, targetPlanetId, targetCoords) => {
-        joinCalls.push([missionId, targetPlanetId, targetCoords]);
+      onJoinAttack: (mission, targetCoords) => {
+        joinCalls.push([mission, targetCoords]);
       },
     });
 
@@ -620,9 +620,9 @@ describe("Mission Control battle reports", () => {
     (joinButton?.props?.onClick as (() => void) | undefined)?.();
 
     // The click no longer sends a default fleet immediately; it hands the mission
-    // id, target planet id, and resolved target coordinates up so the parent can
-    // open the same fleet picker the Attack action uses.
-    expect(joinCalls).toEqual([["34", "6", { galaxy: 4, system: 5, position: 6 }]]);
+    // full lead mission and resolved target coordinates up so the parent can
+    // open the same fleet picker with every indexed attack participant.
+    expect(joinCalls).toEqual([[joinable, { galaxy: 4, system: 5, position: 6 }]]);
   });
 
   test("allActiveMissionRows keeps the player's classification and renders other players as observers (VEY-KANEO-402)", () => {

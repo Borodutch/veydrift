@@ -6123,6 +6123,16 @@ describe("Veydrift backend", () => {
       data: abiWords(0n, 15n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n),
       logIndex: 423
     }));
+    indexer.applyLog(fleetMissionLog({
+      topics: [fleetMissionLaunchedTopic, topic(43n), addressTopic(defender), topic(9n)],
+      data: abiWords(12n, 7n, now + 600n, now + 7_800n, 0n),
+      logIndex: 424
+    }));
+    indexer.applyLog(fleetMissionLog({
+      topics: [fleetMissionShipsTopic, topic(43n)],
+      data: abiWords(0n, 9n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n),
+      logIndex: 425
+    }));
     indexer.applyLog({
       blockNumber: "0x90",
       transactionHash: "0xmoon-public-system",
@@ -6189,10 +6199,26 @@ describe("Veydrift backend", () => {
       expect.objectContaining({
         missionId: "42",
         defender,
+        arrivalAt: String(now - 60n),
+        battleWindowComplete: true,
         ships: expect.objectContaining({ lightFighter: "15" }),
         holdUntil: String(now + 3_600n)
       })
     ]);
+    expect(occupiedPlanet.publicState.stationedDefenderForecastTimeline).toEqual([
+      expect.objectContaining({
+        missionId: "42",
+        battleWindowComplete: true
+      }),
+      expect.objectContaining({
+        missionId: "43",
+        arrivalAt: String(now + 600n),
+        battleWindowComplete: false,
+        laneGroup: null,
+        holdUntil: String(now + 7_800n)
+      })
+    ]);
+    expect(occupiedPlanet.publicState.stationedDefenderTimelineComplete).toBe(true);
     expect(occupiedPlanet.publicState.research).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 0, level: 2 })
     ]));

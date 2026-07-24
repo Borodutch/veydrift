@@ -60,7 +60,14 @@ export interface PublicPlanetState {
   buildings?: Array<{ id: number; level: number }> | null;
   fleet?: Array<{ id: number; count: number }> | null;
   defenses?: Array<{ id: number; count: number }> | null;
+  // Literal current roster used by Planet Detail and other "stationed now" surfaces.
   stationedDefenders?: PublicStationedDefender[] | null;
+  // Every current or scheduled DefenseHold that could still overlap a future attack. This remains
+  // separate from the current roster so scheduled candidates are never presented as already stationed.
+  stationedDefenderForecastTimeline?: PublicStationedDefender[] | null;
+  // Older payloads omit this marker, so battle previews fail closed instead of assuming either list
+  // is a complete eventual battle roster.
+  stationedDefenderTimelineComplete?: boolean;
   research?: Array<{ id: number; level: number }> | null;
   productionPerHour?: {
     metal: string;
@@ -84,6 +91,14 @@ export interface PublicStationedDefender {
   missionId: string;
   defender: string;
   defenderDisplayName: string | null;
+  arrivalAt?: string;
+  battleWindowComplete?: boolean;
+  laneGroup?: number | null;
+  combatTechnology?: {
+    weapons: number;
+    shielding: number;
+    armor: number;
+  };
   ships: Record<string, string>;
   holdUntil: string;
   allianceDepotLevel: number;

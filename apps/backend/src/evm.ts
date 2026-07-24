@@ -455,6 +455,19 @@ export type StationedDefenderSummary = {
   missionId: string;
   defender: Address;
   defenderDisplayName: string | null;
+  // Exact mission arrival used by the contract's inclusive battle-time window check.
+  arrivalAt: string;
+  // True when `holdUntil` came from the on-chain DefenseHoldStationed window (or an attack-specific
+  // counterplay rule), rather than the conservative legacy `returnAt` upper bound.
+  battleWindowComplete: boolean;
+  // Exact counterplay lane used by Solidity's domain-separated random streams. Null/absent on
+  // non-battle display payloads whose contract lane cannot be reconstructed safely.
+  laneGroup?: number | null;
+  combatTechnology?: {
+    weapons: number;
+    shielding: number;
+    armor: number;
+  };
   // Immutable launch composition. Historical battle reports keep this even after the hold leaves
   // the active stationed roster or the canonical mission's surviving ships change.
   ships: Record<string, string>;
@@ -463,6 +476,26 @@ export type StationedDefenderSummary = {
   lifecycleOutcome?: "Active" | "Expired" | "Recalled";
   holdUntil: string;
   allianceDepotLevel: number;
+};
+
+export type AttackPreviewParticipantSummary = {
+  missionId: string;
+  label: string;
+  owner: Address;
+  laneGroup: number;
+  ships: Record<string, string>;
+  combatTechnology?: {
+    weapons: number;
+    shielding: number;
+    armor: number;
+  };
+};
+
+export type JoinAttackPreviewSummary = {
+  participants: AttackPreviewParticipantSummary[];
+  stationedDefenders: StationedDefenderSummary[];
+  selectedAttackerLaneGroup: number | null;
+  unavailableReason?: string;
 };
 
 export type FleetMissionSummary = {
@@ -482,6 +515,11 @@ export type FleetMissionSummary = {
   recallCost: string | null;
   attackGroupId: string | null;
   joinedAttackMissionIds: string[];
+  // Exact append order in the contract's combined AcsAttack/AcsDefend link array.
+  // Combat random lanes depend on this position, so the two filtered id arrays are not enough.
+  linkedMissionIds?: string[];
+  // Public participant projection for a player composing another join.
+  attackPreview?: JoinAttackPreviewSummary;
   // VEY-KANEO-442: ACS Defend stationed-defense links. For an AcsDefend mission, `defendsMissionId`
   // is the hostile attack mission it stations to defend against; that attack's target planet is this
   // mission's `targetPlanetId`. On the attack mission, `counterplayDefenderMissionIds` lists every
@@ -4576,6 +4614,7 @@ export function decodeFleetMissionLogs(logs: RpcLog[]): Map<string, MutableFleet
         recallCost: null,
         attackGroupId: attackMissionId,
         joinedAttackMissionIds: [],
+        linkedMissionIds: [],
         needsResolution: false,
         transactionHash: log.transactionHash,
         blockNumber: BigInt(log.blockNumber).toString(),
@@ -4584,6 +4623,9 @@ export function decodeFleetMissionLogs(logs: RpcLog[]): Map<string, MutableFleet
       attack.attackGroupId = attackMissionId;
       attack.joinedAttackMissionIds = [
         ...new Set([...(attack.joinedAttackMissionIds ?? []), joinedMissionId])
+      ];
+      attack.linkedMissionIds = [
+        ...new Set([...(attack.linkedMissionIds ?? []), joinedMissionId])
       ];
       missions.set(attackMissionId, attack);
 
@@ -4596,6 +4638,7 @@ export function decodeFleetMissionLogs(logs: RpcLog[]): Map<string, MutableFleet
         recallCost: null,
         attackGroupId: attackMissionId,
         joinedAttackMissionIds: [],
+        linkedMissionIds: [],
         needsResolution: false,
         transactionHash: log.transactionHash,
         blockNumber: BigInt(log.blockNumber).toString(),
@@ -4616,6 +4659,7 @@ export function decodeFleetMissionLogs(logs: RpcLog[]): Map<string, MutableFleet
       recallCost: null,
       attackGroupId: null,
       joinedAttackMissionIds: [],
+      linkedMissionIds: [],
       defendsMissionId: null,
       counterplayDefenderMissionIds: [],
       needsResolution: false,
@@ -4655,6 +4699,7 @@ export function decodeFleetMissionLogs(logs: RpcLog[]): Map<string, MutableFleet
           recallCost: null,
           attackGroupId: attackMissionId,
           joinedAttackMissionIds: [],
+          linkedMissionIds: [],
           defendsMissionId: null,
           counterplayDefenderMissionIds: [],
           needsResolution: false,
@@ -4665,6 +4710,9 @@ export function decodeFleetMissionLogs(logs: RpcLog[]): Map<string, MutableFleet
         attack.attackGroupId = attackMissionId;
         attack.joinedAttackMissionIds = [
           ...new Set([...(attack.joinedAttackMissionIds ?? []), missionId])
+        ];
+        attack.linkedMissionIds = [
+          ...new Set([...(attack.linkedMissionIds ?? []), missionId])
         ];
         missions.set(attackMissionId, attack);
       } else if (mission.missionType === "AcsDefend") {
@@ -4685,6 +4733,7 @@ export function decodeFleetMissionLogs(logs: RpcLog[]): Map<string, MutableFleet
           recallCost: null,
           attackGroupId: null,
           joinedAttackMissionIds: [],
+          linkedMissionIds: [],
           defendsMissionId: null,
           counterplayDefenderMissionIds: [],
           needsResolution: false,
@@ -4694,6 +4743,9 @@ export function decodeFleetMissionLogs(logs: RpcLog[]): Map<string, MutableFleet
         };
         attack.counterplayDefenderMissionIds = [
           ...new Set([...(attack.counterplayDefenderMissionIds ?? []), missionId])
+        ];
+        attack.linkedMissionIds = [
+          ...new Set([...(attack.linkedMissionIds ?? []), missionId])
         ];
         missions.set(hostileMissionId, attack);
       }
