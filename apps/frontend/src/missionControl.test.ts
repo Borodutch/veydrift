@@ -2032,8 +2032,11 @@ describe("Mission Control battle reports", () => {
     expect(summaryText).not.toContain("Arrived");
     expect(summaryText).not.toContain("Origin");
     expect(summaryText).not.toContain("Destination");
-    expect(summaryText).toMatch(/Cargo\s+10 M/);
-    expect(summaryText).toMatch(/Loot\s+1,200 M · 300 C/);
+    // Compact payload values bind number to unit with a non-breaking space (matched by \s) and
+    // compact from 1,000 up (1,200 -> 1.2K); the expanded panel keeps exact figures.
+    expect(summaryText).toMatch(/Cargo\s+10\sM/);
+    expect(summaryText).toMatch(/Loot\s+1\.2K\sM\s·\s300\sC/);
+    expect(summaryText).toMatch(/Losses\s+150\s\/\s1\.2K/);
     expect(summaryText).not.toContain("Attacker losses");
     expect(summaryText).not.toContain("Defender losses");
     expect(summaryText).not.toContain("Debris field");

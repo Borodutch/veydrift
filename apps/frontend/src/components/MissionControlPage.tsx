@@ -1514,7 +1514,7 @@ type MissionStatusPill = { label: string; tone: string; variant?: "muted" | "tex
 // second line empty — and the width saved (narrow mission column, merged time/status) goes to the
 // route. Below lg the rows fall back to a stacked flex-wrap layout (badge line, route line,
 // payload line) where per-item inline labels do the header's job.
-const MISSION_ROW_GRID = "lg:grid lg:grid-cols-[7rem_minmax(0,1fr)_minmax(0,10rem)_7rem_1rem] lg:items-center lg:gap-x-3";
+const MISSION_ROW_GRID = "lg:grid lg:grid-cols-[7rem_minmax(0,1fr)_minmax(0,8.5rem)_7rem_1rem] lg:items-center lg:gap-x-3";
 
 // Column headers rendered once per list — the reason the rows themselves carry no ORIGIN /
 // DESTINATION / ARRIVED label chatter. Hidden below lg where rows are stacked and self-labelling.
@@ -1736,9 +1736,17 @@ function missionOutcome(
         : { label: "Attack failed", tone: "text-red-300/90" };
 }
 
-// Per-side fleet losses as compact resource-value totals — "152K / 45K" (attacker / defender).
+// Per-side fleet losses as compact resource-value totals — "152K / 45K" (attacker / defender),
+// bound with non-breaking spaces so the pair never splits across lines.
 function lossesCompact(losses: MissionLossSummary): string {
-  return `${formatResourceCompact(String(resourceTotal(losses.attacker)))} / ${formatResourceCompact(String(resourceTotal(losses.defender)))}`;
+  return lossesPairCompact(losses.attacker, losses.defender);
+}
+
+function lossesPairCompact(
+  attacker: BattleReport["attackerLosses"],
+  defender: BattleReport["defenderLosses"],
+): string {
+  return `${formatResourceCompact(String(resourceTotal(attacker)))}\u00A0/\u00A0${formatResourceCompact(String(resourceTotal(defender)))}`;
 }
 
 function glanceStat(
@@ -2483,11 +2491,9 @@ function PastBattleReportRow({
         <>
           {resourceTotal(lootShown) > 0 ? glanceStat("Loot", lootShown) : null}
           {hasAnyCombatLosses(report.attackerLosses, report.defenderLosses)
-            ? glanceRow(
-                "Losses",
-                `${formatResourceCompact(String(resourceTotal(report.attackerLosses)))} / ${formatResourceCompact(String(resourceTotal(report.defenderLosses)))}`,
-                { title: "Fleet losses: attacker / defender (resource value)" },
-              )
+            ? glanceRow("Losses", lossesPairCompact(report.attackerLosses, report.defenderLosses), {
+                title: "Fleet losses: attacker / defender (resource value)",
+              })
             : null}
         </>
       }
@@ -3064,17 +3070,21 @@ function formatCargoNonZero(cargo: { metal: string; crystal: string; deuterium: 
 const compactResourceFormatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 1, notation: "compact" });
 
 // Glance-line cargo: only the non-zero resources, compact-notated ("1.9K M · 3.2K C"), so the
-// collapsed row spends no width on empty components. The expanded card keeps the exact figures.
+// collapsed row spends no width on empty components. A non-breaking space binds each value to its
+// unit letter — a wrap may only happen at the "·" separators, never inside "216 D". The expanded
+// card keeps the exact figures.
 function formatCargoCompact(cargo: { metal: string; crystal: string; deuterium: string }): string {
   const parts = ([["M", cargo.metal], ["C", cargo.crystal], ["D", cargo.deuterium]] as const)
     .filter(([, value]) => Number(value) > 0)
-    .map(([suffix, value]) => `${formatResourceCompact(value)} ${suffix}`);
+    .map(([suffix, value]) => `${formatResourceCompact(value)}\u00A0${suffix}`);
   return parts.length > 0 ? parts.join(" · ") : "Empty";
 }
 
+// Compact from 1,000 up ("1,845" -> "1.8K") — the glance column trades exactness for scan speed;
+// the expanded panel and detail page keep the full figures.
 function formatResourceCompact(value: string): string {
   const numeric = Number(value);
-  return Math.abs(numeric) < 10_000 ? numeric.toLocaleString("en-US") : compactResourceFormatter.format(numeric);
+  return Math.abs(numeric) < 1_000 ? numeric.toLocaleString("en-US") : compactResourceFormatter.format(numeric);
 }
 
 function harvestReturnCargoLabel(mission: FleetMissionSummary): string | null {
