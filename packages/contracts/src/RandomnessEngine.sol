@@ -304,6 +304,9 @@ contract RandomnessEngine is OwnableUpgradeable, PausableUpgradeable, UUPSUpgrad
         }
 
         uint256 recoverableAt = uint256(stored.createdAt) + STALE_REQUEST_RECOVERY_DELAY;
+        // This timestamp is intentionally a coarse 24-hour liveness delay; validator skew cannot
+        // bypass the expected-commitment, owner, unfulfilled, or one-block reveal guards.
+        // forge-lint: disable-next-line(block-timestamp)
         if (block.timestamp < recoverableAt) {
             revert RandomnessRequestNotStale(requestId, recoverableAt);
         }
