@@ -6207,7 +6207,7 @@ describe("SettlementIndexer", () => {
     });
   });
 
-  test("startup event replay preserves recall provenance after terminal status collapses to Returned", async () => {
+  test("archive reads recover recall provenance from stored logs when the canonical row predates provenance", async () => {
     const database = new Database(":memory:");
     const reader = {
       async listCurrentPlanets() { return [planet]; },
@@ -6267,7 +6267,30 @@ describe("SettlementIndexer", () => {
       recallProvenance: "FleetMissionRecalled"
     });
 
-    database.query("DELETE FROM contract_fleet_missions WHERE mission_id = ?").run("755");
+    const storedRow = database.query(`
+      SELECT event_json
+      FROM contract_fleet_missions
+      WHERE mission_id = ?
+    `).get("755") as { event_json: string };
+    const staleEvent = JSON.parse(storedRow.event_json) as {
+      mission?: { recallProvenance?: string };
+      recallProvenance?: string;
+      source?: string;
+    };
+    delete staleEvent.recallProvenance;
+    if (staleEvent.mission) delete staleEvent.mission.recallProvenance;
+    staleEvent.source = "contract_snapshot";
+    database.query(`
+      UPDATE contract_fleet_missions
+      SET event_json = ?
+      WHERE mission_id = ?
+    `).run(JSON.stringify(staleEvent), "755");
+    database.query(`
+      INSERT INTO indexer_metadata (key, value)
+      VALUES ('lastReconciledBlock', ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    `).run("1000");
+
     const restart = new SettlementIndexer(reader, 100n, { database, runStartupBackfill: true });
     expect(restart.fleetMission("755")).toMatchObject({
       missionId: "755",
@@ -6275,6 +6298,26 @@ describe("SettlementIndexer", () => {
       status: "Returned",
       recallProvenance: "FleetMissionRecalled"
     });
+    expect(restart.fleetMissionArchive(player).completedMissions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ missionId: "755", recallProvenance: "FleetMissionRecalled" })
+      ])
+    );
+    expect(restart.fleetMissionArchivePage(player, { page: 1, pageSize: 25 }).completedMissions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ missionId: "755", recallProvenance: "FleetMissionRecalled" })
+      ])
+    );
+    expect(restart.globalFleetMissionArchivePage({ page: 1, pageSize: 25 }).completedMissions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ missionId: "755", recallProvenance: "FleetMissionRecalled" })
+      ])
+    );
+    expect(restart.completedFleetMissionsFromCanonicalRows()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ missionId: "755", recallProvenance: "FleetMissionRecalled" })
+      ])
+    );
   });
 
   test("applies live fleet mission events incrementally without full mission-log replay", async () => {
