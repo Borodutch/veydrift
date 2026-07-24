@@ -220,7 +220,9 @@ describe("MissionControlPage", () => {
     // outbound arrival (…300) and the return landing (…600). Under lazy reconciliation both legs are
     // mid-settlement, so they read "Resolving" rather than the stale backend "Outbound"/"Returning".
     expect(text).toContain("Resolving");
-    expect(text).toContain("Arrives");
+    // One phase-relevant time per collapsed row (ETA outbound / Returns returning); the full
+    // Arrived/Returned pair renders in the expanded panel.
+    expect(text).toContain("ETA");
     expect(text).toContain("Returns");
     // Hostile inbound missions read "Incoming attack"; the player's own launches stay bare.
     expect(text).toContain("Incoming attack #8");
@@ -236,9 +238,9 @@ describe("MissionControlPage", () => {
     expect(text).toContain("Open");
     // Zero-total cargo is omitted rather than rendered as an empty placeholder.
     expect(text).not.toContain("Cargo Empty");
-    // Route commanders render as bare clickable addresses — never prefixed with "Commander".
-    expect(text).toContain("0x1111...1111");
-    expect(text).not.toContain("Commander 0x1111...1111");
+    // The connected wallet's own name never repeats under its own planets; other commanders
+    // render as bare clickable addresses — never prefixed with "Commander".
+    expect(text).not.toContain("0x1111...1111");
     expect(text).not.toContain("Commander 0x3333...3333");
     expect(text).not.toContain("Fleets 3/?");
     expect(text).not.toContain("Reload");

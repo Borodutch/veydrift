@@ -85,6 +85,7 @@ export function MissionRouteCell({
   onSelectPlayer,
   origin,
   progressPercent,
+  subdued = false,
   subtext,
   target,
 }: {
@@ -94,6 +95,9 @@ export function MissionRouteCell({
   direction: RouteLeg;
   origin: MissionEndpoint;
   progressPercent?: number | undefined;
+  // Past-mission rows show a settled journey: the arrow keeps its direction but drops the bright
+  // cyan progress treatment so a page of finished missions doesn't glow like live traffic.
+  subdued?: boolean | undefined;
   subtext?: string | undefined;
   target: MissionEndpoint;
 } & RouteNavigation) {
@@ -105,41 +109,10 @@ export function MissionRouteCell({
           capped (via the RouteEndpoint max-width) so the arrow always owns the central span. */}
       <div className={`grid grid-cols-[minmax(0,auto)_minmax(2.5rem,1fr)_minmax(0,auto)] items-center ${compact ? "gap-x-1.5 sm:gap-x-2" : "gap-x-2 sm:gap-x-3"}`}>
         <RouteEndpoint align="left" compact={compact} endpoint={origin} nav={nav} />
-        <RouteArrow compact={compact} direction={direction} progressPercent={progressPercent ?? 100} />
+        <RouteArrow compact={compact} direction={direction} progressPercent={progressPercent ?? 100} subdued={subdued} />
         <RouteEndpoint align="right" compact={compact} endpoint={target} nav={nav} />
       </div>
       {subtext ? <p className="mt-1.5 text-[11px] text-slate-500">{subtext}</p> : null}
-    </div>
-  );
-}
-
-// Mission Control's compact rows need endpoint identity, not a repeated flight-progress
-// visualization. Keep this deliberately separate from MissionRouteCell so Mission Detail can retain
-// its large directional route while list rows use calm, explicitly labelled endpoints.
-export function MissionEndpointPair({
-  origin,
-  target,
-}: {
-  origin: MissionEndpoint;
-  target: MissionEndpoint;
-}) {
-  const nav: RouteNavigation = {};
-  return (
-    <div
-      className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-x-2"
-      data-mission-endpoints
-    >
-      <div className="min-w-0">
-        <span className="mb-0.5 block text-[9px] font-semibold uppercase tracking-[0.12em] text-slate-600">Origin</span>
-        <RouteEndpoint align="left" compact endpoint={origin} nav={nav} />
-      </div>
-      <span aria-hidden="true" className="text-[10px] font-medium uppercase tracking-[0.12em] text-slate-600">
-        to
-      </span>
-      <div className="min-w-0 text-right">
-        <span className="mb-0.5 block text-[9px] font-semibold uppercase tracking-[0.12em] text-slate-600">Destination</span>
-        <RouteEndpoint align="right" compact endpoint={target} nav={nav} />
-      </div>
     </div>
   );
 }
@@ -170,6 +143,10 @@ function EndpointPlanetImage({ compact, endpoint, nav }: { compact: boolean; end
   const moonLabel = endpoint.coordinates ? `Open moon at ${endpoint.coordinates}` : "Open moon";
   const moonIndicator = endpoint.hasMoon && endpoint.coords ? (
     <PlanetMoonIndicator
+      // The indicator's default compact sizing is tuned for large planet cards; inside this small
+      // route art frame it would cover most of the planet and clip on the frame edge, so pin a tiny
+      // corner dot instead.
+      className={compact ? "!right-0 !top-0 !h-3 !w-3" : ""}
       compact
       href={nav.onSelectMoon ? undefined : buildInspectPath({ coords: endpoint.coords, kind: "moon" })}
       label={moonLabel}
@@ -194,7 +171,9 @@ function EndpointPlanetImage({ compact, endpoint, nav }: { compact: boolean; end
 }
 
 function EndpointName({ endpoint, nav }: { endpoint: MissionEndpoint; nav: RouteNavigation }) {
-  const linkClass = "block min-w-0 truncate rounded font-medium text-cyan-100 underline-offset-2 transition hover:underline focus-visible:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-300/50";
+  // Slate at rest, cyan only on hover/focus: twenty planet links per screen must not out-glow the
+  // status pills and hostile accents that actually need the color budget.
+  const linkClass = "block min-w-0 truncate rounded font-medium text-slate-100 underline-offset-2 transition hover:text-cyan-100 hover:underline focus-visible:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-300/50";
   const title = endpoint.coordinates
     ? endpoint.bodyKind === "moon"
       ? `Open moon at ${endpoint.coordinates}`
@@ -259,14 +238,18 @@ function EndpointCommander({ endpoint, nav }: { endpoint: MissionEndpoint; nav: 
 // cyan fill grows from the trailing end to the current position, ending in a matching arrowhead, so
 // the head sits at 100% on arrival/return. A muted destination chevron marks the leading end even at
 // 0% progress.
-function RouteArrow({ compact, direction, progressPercent }: { compact?: boolean | undefined; direction: RouteLeg; progressPercent: number }) {
+function RouteArrow({ compact, direction, progressPercent, subdued }: { compact?: boolean | undefined; direction: RouteLeg; progressPercent: number; subdued?: boolean | undefined }) {
   const progress = clamp(progressPercent, 0, 100);
   const returning = direction === "returning";
   const rounded = Math.round(progress);
   const chevronSize = compact ? 12 : 13;
-  const label = returning
-    ? `Returning home, ${rounded}% of the way back`
-    : `Outbound to target, ${rounded}% of the way there`;
+  const fillTone = subdued ? "bg-slate-500/40" : "bg-cyan-300";
+  const headTone = subdued ? "text-slate-500" : "text-cyan-200";
+  const label = subdued
+    ? "Completed journey to target"
+    : returning
+      ? `Returning home, ${rounded}% of the way back`
+      : `Outbound to target, ${rounded}% of the way there`;
   const Chevron = returning ? ChevronLeft : ChevronRight;
   // The track is inset by 0.5rem on each side to leave room for the destination chevron; the fill
   // and its leading chevron are positioned within that same inset span so the head reaches the tip
@@ -295,15 +278,16 @@ function RouteArrow({ compact, direction, progressPercent }: { compact?: boolean
       >
         <Chevron aria-hidden="true" size={chevronSize} />
       </span>
-      {/* Cyan progress fill growing from the trailing end toward the destination tip. */}
+      {/* Progress fill growing from the trailing end toward the destination tip (cyan while the
+          fleet flies, muted slate for settled past journeys). */}
       <span
-        className={`absolute top-1/2 rounded-full bg-cyan-300 ${compact ? "h-[2px]" : "h-[3px]"}`}
+        className={`absolute top-1/2 rounded-full ${fillTone} ${compact ? "h-[2px]" : "h-[3px]"}`}
         data-route-fill
         data-route-progress={String(rounded)}
         style={{ ...fillStyle, transform: "translateY(-50%)" }}
       />
-      {/* Cyan arrowhead riding the leading edge of the fill, marking the current position. */}
-      <span className="absolute top-1/2 text-cyan-200" data-route-head style={headStyle}>
+      {/* Arrowhead riding the leading edge of the fill, marking the current position. */}
+      <span className={`absolute top-1/2 ${headTone}`} data-route-head style={headStyle}>
         <Chevron aria-hidden="true" size={chevronSize} />
       </span>
     </div>

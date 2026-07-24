@@ -23,11 +23,14 @@ import {
   decodeColonizationTargetId,
 } from "../walletFlow";
 import {
-  MissionEndpointPair,
+  MissionRouteCell,
   type MissionEndpoint,
   type MissionPlanetIdentity,
+  type RouteLeg,
   endpointFromPlanetId,
   missionEndpoint,
+  missionProgressPercent,
+  missionRouteLeg,
   shortAddress,
 } from "./missionRoute";
 import { PageHeader, RefreshButton, refreshButtonState } from "./PageHeader";
@@ -240,7 +243,6 @@ export function MissionControlPage({
   const filteredIncomingAttackRows = filterPastMissionRows(incomingAttackRows, normalizedFilters);
   const filterEmptyLabel = missionFilterEmptyLabel(normalizedFilters);
   const incomingAttackPastCollapsedCount = rawIncomingAttackPastRows.length - incomingAttackRows.length;
-  const activeCount = activeMissionRows.length;
   const initialLoading = loading && !fleetVisibility;
   // VEY-412: restore the previously selected tabs + past page. The panel is DOM-driven (tabs/pages
   // toggle `hidden`), so without this the selection resets to defaults every time the component
@@ -310,11 +312,6 @@ export function MissionControlPage({
             />
           ) : null}
 
-          {activeCount === 0 ? (
-            <div className="rounded-lg border border-white/10 bg-[#101624] p-3 text-sm text-slate-400">
-              No active missions for this wallet. Use Galaxy to launch attacks, transport resources, deploy fleets, or harvest debris.
-            </div>
-          ) : null}
           <ActiveMissionSection
             activePage={view.activePage}
             activeTab={view.activeTab}
@@ -536,10 +533,12 @@ function StationedDefenseCard({
       }
       badgeLabel="Defending"
       badgeTone={missionTypeTone("AcsDefend")}
+      direction={missionRouteLeg(mission.status)}
       fleet={<MissionFleet cargo={mission.cargo} mission={mission} ships={mission.ships} />}
-      headerTimings={[{ label: "Holds", value: missionEndpointTiming(mission.arrivalAt, now) }]}
+      headerTiming={{ label: "Holds", value: missionEndpointTiming(mission.arrivalAt, now) }}
       missionId={mission.missionId}
       origin={missionEndpoint(mission, "origin", planetLookup)}
+      progressPercent={missionProgressPercent(mission, now)}
       statusPill={missionStatusPill(mission, now)}
       target={missionEndpoint(mission, "target", planetLookup)}
     />
@@ -593,9 +592,11 @@ function DefendedPlanetCard({
           </p>
         )
       }
-      headerTimings={[{ label: "Holds", value: missionEndpointTiming(attack.arrivalAt, now) }]}
+      direction={missionRouteLeg(attack.status)}
+      headerTiming={{ label: "Holds", value: missionEndpointTiming(attack.arrivalAt, now) }}
       missionId={attack.missionId}
       origin={missionEndpoint(attack, "origin", planetLookup)}
+      progressPercent={missionProgressPercent(attack, now)}
       statusPill={{ label: "Under attack", tone: "border-red-300/25 bg-red-400/10 text-red-100" }}
       target={missionEndpoint(attack, "target", planetLookup)}
     />
@@ -744,7 +745,9 @@ export type ActiveMissionRow = {
 type PastMissionRow = FleetMissionArchiveEntry;
 
 const ACTIVE_MISSION_TABS = [
-  { emptyLabel: "No active missions.", key: "mine", label: "My missions" },
+  // The one active-section empty state: the tab panel says it, so no separate page-level notice
+  // repeats it two lines above.
+  { emptyLabel: "No active missions for this wallet. Use Galaxy to launch attacks, transport resources, deploy fleets, or harvest debris.", key: "mine", label: "My missions" },
   { emptyLabel: "No joinable alliance attacks.", key: "alliance", label: "Alliance" },
   { emptyLabel: "No active missions in the universe yet.", key: "all", label: "All" },
 ] as const;
@@ -1120,6 +1123,7 @@ function ActiveMissionList({
       data-past-page-size={String(pageSize)}
       data-past-page-total={String(pagination.totalEntries)}
     >
+      <MissionListHeader />
       {pages.map((pageRows, pageIndex) => (
         <div
           className="divide-y divide-white/[0.06]"
@@ -1202,7 +1206,7 @@ function MissionRow({
   return (
     <MissionCard
       defaultOpen={hostileInbound}
-      glance={missionGlance({ harvested, loot, mission })}
+      glance={missionGlance({ direction: missionDirection, harvested, loot, losses, mission })}
       hostile={hostileInbound}
       actions={
         <>
@@ -1251,43 +1255,74 @@ function MissionRow({
       }
       badgeLabel={directionalMissionTypeLabel(mission.missionType, missionDirection)}
       badgeTone={missionTypeTone(mission.missionType)}
+      detailTimings={missionDetailTimings(mission, now)}
+      direction={missionRouteLeg(mission.status)}
       fleet={<MissionFleet cargo={mission.cargo} harvested={harvested} loot={loot} losses={losses} mission={mission} ships={mission.ships} />}
       groupId={mission.attackGroupId}
-      headerTimings={activeMissionHeaderTimings(mission, now, noFleetReturned)}
+      headerTiming={activeMissionHeaderTiming(mission, now, noFleetReturned)}
       missionId={mission.missionId}
-      origin={origin}
+      progressPercent={missionProgressPercent(mission, now)}
       routeSubtext={directionSubtext}
       statusPill={missionStatusPill(mission, now)}
-      target={target}
+      {...routeEndpointsForRow(origin, target, wallet)}
     />
   );
 }
 
-// Compact rows keep both journey milestones visible when they exist. The status pill still conveys
-// the live phase, while these labels answer "when did/will it arrive?" and "when did/will it return?"
-// without making the player expand the row.
-function activeMissionHeaderTimings(mission: FleetMissionSummary, now: number, noFleetReturned: boolean): EndpointTiming[] {
-  if (mission.missionType === "DefenseHold" && isDefenseHoldStationed(mission, now)) {
-    return [
-      { label: "Arrived", value: missionEndpointTiming(mission.arrivalAt, now) },
-      { label: "Holds", value: missionEndpointTiming(defenseHoldRecallUntil(mission), now) },
-    ];
-  }
-  const returning = mission.status === "Returning" || mission.status === "Recalled" || mission.status === "Returned";
-  return [
-    { label: returning ? "Arrived" : "Arrives", value: missionEndpointTiming(mission.arrivalAt, now) },
-    {
-      label: returning ? "Returns" : "Return",
-      value: noFleetReturned ? "No fleet returned" : missionEndpointTiming(mission.returnAt, now),
-    },
-  ];
+// On "My missions" nearly every endpoint belongs to the connected player; printing their own name
+// under both planets of every row is pure repetition. Other commanders (the interesting ones) keep
+// their name + profile link.
+function withoutOwnCommander(endpoint: MissionEndpoint, wallet: string | undefined): MissionEndpoint {
+  if (!wallet || !endpoint.commanderWallet) return endpoint;
+  if (endpoint.commanderWallet.toLowerCase() !== wallet.toLowerCase()) return endpoint;
+  return { ...endpoint, commanderName: null };
 }
 
-function pastMissionHeaderTimings(mission: FleetMissionSummary, now: number): EndpointTiming[] {
-  return [
-    { label: "Arrived", value: compactMissionTime(mission.arrivalAt, now) },
-    { label: "Returned", value: compactMissionTime(mission.returnAt, now) },
-  ];
+// A self-route (deploy / self-transport: both planets share an owner) names its commander once,
+// under the origin — "HamZzz -> HamZzz" on every row said nothing twice.
+function routeEndpointsForRow(
+  origin: MissionEndpoint,
+  target: MissionEndpoint,
+  wallet: string | undefined,
+): { origin: MissionEndpoint; target: MissionEndpoint } {
+  const selfRoute = Boolean(
+    origin.commanderWallet
+      && target.commanderWallet
+      && origin.commanderWallet.toLowerCase() === target.commanderWallet.toLowerCase()
+  );
+  return {
+    origin: withoutOwnCommander(origin, wallet),
+    target: withoutOwnCommander(selfRoute ? { ...target, commanderName: null } : target, wallet),
+  };
+}
+
+// The collapsed row shows exactly ONE time — the phase-relevant one (live ETA while outbound, the
+// return countdown while flying home, the hold expiry while stationed). Two timestamps per row was
+// the single biggest source of row noise; the full arrival/return pair lives in the expanded panel
+// via *DetailTimings below.
+function activeMissionHeaderTiming(mission: FleetMissionSummary, now: number, noFleetReturned: boolean): EndpointTiming {
+  if (mission.missionType === "DefenseHold" && isDefenseHoldStationed(mission, now)) {
+    return { label: "Holds", value: missionEndpointTiming(defenseHoldRecallUntil(mission), now) };
+  }
+  const returning = mission.status === "Returning" || mission.status === "Recalled" || mission.status === "Returned";
+  if (returning) {
+    return { label: "Returns", value: noFleetReturned ? "No fleet returned" : missionEndpointTiming(mission.returnAt, now) };
+  }
+  return { label: "ETA", value: missionEndpointTiming(mission.arrivalAt, now) };
+}
+
+// Expanded-panel timings: the full arrival/return picture the compact row deliberately omits.
+function missionDetailTimings(mission: FleetMissionSummary, now: number): EndpointTiming[] {
+  const timings: EndpointTiming[] = [{ label: "Arrived", value: compactMissionTime(mission.arrivalAt, now) }];
+  if (mission.missionType === "DefenseHold") {
+    timings.push({ label: "Holds until", value: compactMissionTime(defenseHoldRecallUntil(mission), now) });
+  }
+  timings.push({ label: "Returned", value: compactMissionTime(mission.returnAt, now) });
+  return timings;
+}
+
+function pastMissionHeaderTiming(mission: FleetMissionSummary, now: number): EndpointTiming {
+  return { label: "Returned", value: compactMissionTime(mission.returnAt, now) };
 }
 
 // Shared fleet/cargo summary for every card: ship icons with ×N counts above the cargo line
@@ -1438,11 +1473,16 @@ export function missionStatusPill(mission: FleetMissionSummary, now: number): Mi
 // Shared style for the "Open" and "Join" row actions (VEY-397#14).
 const rowActionButtonClass = "inline-flex h-10 items-center justify-center gap-2 rounded border border-white/10 bg-white/5 px-2 text-xs font-medium text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500 sm:h-8";
 
-// Compact absolute timestamp like "Jun 8, 9:55 AM" (VEY-399#4).
+// Compact absolute timestamp like "Jun 8, 9:55 AM" (VEY-399#4) — collapsing to time-only ("9:55 AM")
+// when the moment falls on the viewer's current calendar day, since repeating today's date on every
+// row says nothing.
 function compactMissionTime(value: string, now: number): string {
   const timestamp = timestampToMs(value);
   if (timestamp === undefined) return "Unknown";
-  return formatUserTimestamp(timestamp, { day: "numeric", hour: "numeric", minute: "2-digit", month: "short" });
+  const sameDay = new Date(timestamp).toDateString() === new Date(now).toDateString();
+  return sameDay
+    ? formatUserTimestamp(timestamp, { hour: "numeric", minute: "2-digit" })
+    : formatUserTimestamp(timestamp, { day: "numeric", hour: "numeric", minute: "2-digit", month: "short" });
 }
 
 // Active-row endpoint timing: a live countdown while the event is still pending, switching to the
@@ -1456,43 +1496,78 @@ function missionEndpointTiming(value: string, now: number): string {
 
 type EndpointTiming = { label: string; value: string };
 
-type MissionStatusPill = { label: string; tone: string };
+// `muted` renders the status as quiet grey text instead of a pill: a label that is true for nearly
+// every row of a list (Returned/Resolved in the past archive) distinguishes nothing and should not
+// wear pill chrome.
+type MissionStatusPill = { label: string; muted?: boolean; tone: string };
+
+// The one grid template shared by every mission row AND the column-header row above each list, so
+// the columns line up down the page like a real table: mission (badge stacked over #) | route |
+// payload | time-over-status | disclosure chevron. The route's planet + commander pair makes every
+// row two text lines tall, so each fixed column stacks two facts vertically instead of leaving its
+// second line empty — and the width saved (narrow mission column, merged time/status) goes to the
+// route. Below lg the rows fall back to a stacked flex-wrap layout (badge line, route line,
+// payload line) where per-item inline labels do the header's job.
+const MISSION_ROW_GRID = "lg:grid lg:grid-cols-[7rem_minmax(0,1fr)_minmax(0,10rem)_7rem_1rem] lg:items-center lg:gap-x-3";
+
+// Column headers rendered once per list — the reason the rows themselves carry no ORIGIN /
+// DESTINATION / ARRIVED label chatter. Hidden below lg where rows are stacked and self-labelling.
+function MissionListHeader() {
+  return (
+    <div className={`hidden border-b border-white/[0.06] px-2.5 py-1.5 text-[9px] font-semibold uppercase tracking-[0.14em] text-slate-600 sm:px-3 ${MISSION_ROW_GRID}`}>
+      <span>Mission</span>
+      <span>Route</span>
+      <span className="text-right">Payload</span>
+      <span className="text-right">Status</span>
+      <span aria-hidden="true" />
+    </div>
+  );
+}
 
 // The shared mission-card presentation used by every Mission Control panel (VEY-400). Active and
 // past missions both render through this one component so the two panels stay in sync. Each row is
 // a native <details>: the always-visible summary is the at-a-glance line (mission-type badge +
-// #number + route with inline progress + payload glance + status pill/countdown) and expanding it
-// reveals the fleet/cargo/loot breakdown plus the contextual action(s). Rows are hook-free —
-// expansion is browser-native, matching the DOM-driven tab/page pattern of the rest of the panel.
+// #number + route with directional progress arrow + payload glance + one phase-relevant time +
+// status) and expanding it reveals the fleet/cargo/loot breakdown, the full arrival/return
+// timestamps, and the contextual action(s). Rows are hook-free — expansion is browser-native,
+// matching the DOM-driven tab/page pattern of the rest of the panel.
 function MissionCard({
   actions,
   badgeLabel,
   badgeTone,
   defaultOpen,
+  detailTimings = [],
+  direction,
   fleet,
   glance,
   groupId,
-  headerTimings = [],
+  headerTiming,
   hostile,
   missionId,
   origin,
+  progressPercent,
   routeSubtext,
   statusPill,
+  subdued,
   target,
 }: {
   actions: preact.ComponentChildren;
   badgeLabel: string;
   badgeTone: string;
   defaultOpen?: boolean | undefined;
+  detailTimings?: EndpointTiming[] | undefined;
+  direction: RouteLeg;
   fleet: preact.ComponentChildren;
   glance?: preact.ComponentChildren;
   groupId?: string | null | undefined;
-  headerTimings?: EndpointTiming[] | undefined;
+  headerTiming?: EndpointTiming | undefined;
   hostile?: boolean | undefined;
   missionId?: string | undefined;
   origin: MissionEndpoint;
+  progressPercent?: number | undefined;
   routeSubtext?: string | undefined;
   statusPill?: MissionStatusPill | undefined;
+  subdued?: boolean | undefined;
   target: MissionEndpoint;
 }) {
   return (
@@ -1503,48 +1578,72 @@ function MissionCard({
       onToggle={(event) => syncMissionRowsDisclosureControl(event.currentTarget)}
       ref={(element) => initializeMissionRowDisclosure(element, Boolean(defaultOpen))}
     >
-      <summary className="flex cursor-pointer list-none flex-wrap items-center gap-x-2.5 gap-y-1.5 px-2.5 py-2 transition-colors hover:bg-white/[0.03] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-300/50 sm:px-3 [&::-webkit-details-marker]:hidden">
-        <span className={`inline-flex shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-semibold ${badgeTone}`}>{badgeLabel}</span>
-        {missionId ? <span className="shrink-0 text-[11px] font-semibold text-white">{missionIdLabel(missionId)}</span> : null}
-        {/* Endpoints wrap to their own full-width line on mobile and sit inline on desktop. Mission
-            Control intentionally has no route/progress arrow; Mission Detail retains that treatment. */}
+      {/* DOM order is column order (mission, route, payload, time, status, chevron); the mobile
+          stacked layout re-flows it purely with order utilities that lg resets. Empty cells still
+          render on lg so absent data never shifts a row's columns out of alignment. */}
+      <summary className={`flex cursor-pointer list-none flex-wrap items-center gap-x-2.5 gap-y-1.5 px-2.5 py-2 transition-colors hover:bg-white/[0.03] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-300/50 sm:px-3 [&::-webkit-details-marker]:hidden ${MISSION_ROW_GRID}`}>
+        {/* Mission cell: inline on mobile, badge stacked over a muted # on lg — the stack keeps the
+            column narrow and lines the numbers up under each other. */}
+        <span className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 lg:flex-col lg:items-start lg:justify-center">
+          <span className={`inline-flex max-w-full shrink-0 truncate rounded border px-1.5 py-0.5 text-[10px] font-semibold ${badgeTone}`} title={badgeLabel}>{badgeLabel}</span>
+          {missionId ? <span className="shrink-0 text-[11px] font-semibold text-white lg:font-medium lg:text-slate-400">{missionIdLabel(missionId)}</span> : null}
+        </span>
         <div
-          className="order-3 w-full min-w-0 sm:order-1 sm:w-auto sm:flex-1"
+          className="order-2 w-full min-w-0 lg:order-none lg:w-auto"
           onClick={(event) => {
             const clicked = event.target instanceof Element ? event.target : null;
             if (clicked?.closest("a,button")) event.stopPropagation();
           }}
         >
-          <MissionEndpointPair origin={origin} target={target} />
+          <MissionRouteCell compact direction={direction} origin={origin} progressPercent={progressPercent} subdued={subdued} target={target} />
         </div>
-        <span className="order-2 flex w-full min-w-0 flex-wrap items-center justify-end gap-x-2 gap-y-1 sm:ml-auto sm:w-auto sm:shrink-0">
-          {headerTimings.map((timing) => (
-            <span className="whitespace-nowrap text-[11px] tabular-nums text-slate-400" key={timing.label}>
-              <span className="font-semibold uppercase tracking-[0.1em] text-slate-600">{timing.label}</span> {timing.value}
-            </span>
-          ))}
-          {statusPill ? (
-            <span className={`inline-flex rounded-full border px-1.5 py-0.5 text-[10px] font-medium ${statusPill.tone}`}>
-              {statusPill.label}
+        {/* Payload cell: on lg each stat is a full-width right-aligned block so long values wrap
+            inside the column (never spilling into the route) and keep the column's right edge. */}
+        <span className={`${glance ? "order-3 flex w-full flex-wrap items-center gap-x-2 gap-y-1" : "hidden"} min-w-0 lg:order-none lg:block lg:w-auto lg:space-y-0.5 lg:text-right`}>
+          {glance}
+        </span>
+        {/* Time + status are the same fact told twice, so they share one cell: time on the first
+            line, the state underneath (quiet text for expected states, a pill for unusual ones). */}
+        <span className="order-1 ml-auto flex min-w-0 items-center gap-x-2 lg:order-none lg:ml-0 lg:flex-col lg:items-end lg:justify-center lg:gap-y-0.5">
+          {headerTiming ? (
+            <span className="whitespace-nowrap text-[11px] tabular-nums text-slate-400">
+              <span className="font-semibold uppercase tracking-[0.1em] text-slate-600 lg:hidden">{headerTiming.label} </span>
+              {headerTiming.value}
             </span>
           ) : null}
-          <ChevronDown aria-hidden="true" className="shrink-0 text-slate-500 transition-transform group-open/mission:rotate-180" size={14} />
+          {statusPill ? (
+            statusPill.muted ? (
+              // Expected terminal states: quiet text, desktop only — on mobile the time's inline
+              // "Returned 9:23 AM" label already says it, so repeating the word is noise.
+              <span className="hidden text-[11px] text-slate-600 lg:inline">{statusPill.label}</span>
+            ) : (
+              <span className={`inline-flex max-w-full truncate rounded-full border px-1.5 py-0.5 text-[10px] font-medium ${statusPill.tone}`} title={statusPill.label}>
+                {statusPill.label}
+              </span>
+            )
+          ) : null}
         </span>
-        {glance ? (
-          <span className="order-4 flex w-full flex-wrap items-center gap-x-2 gap-y-1 sm:order-2 sm:ml-auto sm:w-auto">
-            {glance}
-          </span>
-        ) : null}
+        <ChevronDown aria-hidden="true" className="order-1 shrink-0 text-slate-500 transition-transform group-open/mission:rotate-180 lg:order-none lg:justify-self-end" size={14} />
       </summary>
-      <div className="grid gap-2 border-t border-white/[0.06] px-2.5 pb-2.5 pt-2 sm:px-3">
-        {routeSubtext || groupId ? (
-          <p className="text-[11px] text-slate-500">
-            {[routeSubtext, groupId ? `Group ${groupId}` : null].filter(Boolean).join(" · ")}
-          </p>
-        ) : null}
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-          <div className="min-w-0">{fleet}</div>
-          <div className="flex flex-wrap gap-1.5 sm:justify-end">{actions}</div>
+      <div className="border-t border-white/[0.06] px-2.5 pb-2.5 pt-2 sm:px-3">
+        {/* Detail facts fill the left; actions sit beside them at the top-right instead of floating
+            alone at the bottom of a full-width band. */}
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+          <div className="grid min-w-0 gap-2">
+            {routeSubtext || groupId || detailTimings.length > 0 ? (
+              <p className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-slate-500">
+                {routeSubtext ? <span>{routeSubtext}</span> : null}
+                {groupId ? <span>{`Group ${groupId}`}</span> : null}
+                {detailTimings.map((timing) => (
+                  <span className="tabular-nums" key={timing.label}>
+                    <span className="font-semibold uppercase tracking-[0.1em] text-slate-600">{timing.label}</span> {timing.value}
+                  </span>
+                ))}
+              </p>
+            ) : null}
+            <div className="min-w-0">{fleet}</div>
+          </div>
+          <div className="flex shrink-0 flex-wrap gap-1.5 sm:justify-end">{actions}</div>
         </div>
       </div>
     </details>
@@ -1558,29 +1657,60 @@ export function initializeMissionRowDisclosure(element: HTMLDetailsElement | nul
 }
 
 // Compact payload facts shown on the collapsed row. Every semantically distinct non-zero value is
-// visible at a glance; zero totals render nothing at all.
+// visible at a glance; zero totals render nothing at all. Resolved combat leads with its outcome —
+// the one fact a player scans battle history for.
 function missionGlance({
+  direction,
   harvested,
   loot,
+  losses,
   mission,
 }: {
+  direction: MissionDirection;
   harvested?: FleetMissionSummary["returnCargo"] | undefined;
   loot?: BattleReport["loot"] | undefined;
+  losses?: MissionLossSummary | undefined;
   mission: FleetMissionSummary;
 }): preact.ComponentChildren {
   return (
     <>
-      {resourceTotal(mission.cargo) > 0 ? glanceStat("Cargo", mission.cargo) : null}
-      {loot && resourceTotal(loot) > 0 ? glanceStat("Loot grabbed", loot) : null}
-      {harvested && resourceTotal(harvested) > 0 ? glanceStat("Debris collected", harvested) : null}
+      {losses ? outcomeGlanceStat(losses, mission, direction) : null}
+      {/* The "Cargo" prefix is desktop-redundant (the PAYLOAD column header says it) but mobile
+          rows self-label. Loot/Debris keep their one-word prefix everywhere — that distinction is
+          real information. */}
+      {resourceTotal(mission.cargo) > 0 ? glanceStat("Cargo", mission.cargo, { labelOnDesktop: false }) : null}
+      {loot && resourceTotal(loot) > 0 ? glanceStat("Loot", loot) : null}
+      {harvested && resourceTotal(harvested) > 0 ? glanceStat("Debris", harvested) : null}
     </>
   );
 }
 
-function glanceStat(label: string, cargo: { metal: string; crystal: string; deuterium: string }): preact.ComponentChildren {
+// The battle outcome from the player's side of it: their own attack reads Won / Attack failed,
+// an attack on their planet reads Defended / Raided. Observer rows (the universe-wide tab, where
+// direction is neutral) keep the attacker's perspective wording.
+function outcomeGlanceStat(losses: MissionLossSummary, mission: FleetMissionSummary, direction: MissionDirection): preact.ComponentChildren {
+  if (!isOffensiveMissionType(mission.missionType)) return null;
+  const { label, tone } = losses.outcome === "Draw"
+    ? { label: "Draw", tone: "text-amber-300/80" }
+    : direction === "incoming"
+      ? losses.outcome === "DefenderWin"
+        ? { label: "Defended", tone: "text-emerald-300/80" }
+        : { label: "Raided", tone: "text-red-300/90" }
+      : losses.outcome === "AttackerWin"
+        ? { label: "Won", tone: "text-emerald-300/80" }
+        : { label: "Attack failed", tone: "text-red-300/90" };
+  return <span className={`text-[11px] font-medium ${tone} lg:block lg:w-full`}>{label}</span>;
+}
+
+function glanceStat(
+  label: string,
+  cargo: { metal: string; crystal: string; deuterium: string },
+  { labelOnDesktop = true }: { labelOnDesktop?: boolean } = {},
+): preact.ComponentChildren {
   return (
-    <span className="inline text-[11px] tabular-nums text-slate-400">
-      <span className="font-semibold uppercase tracking-[0.1em] text-slate-600">{label}</span> {formatCargoCompact(cargo)}
+    <span className="text-[11px] tabular-nums text-slate-400 lg:block lg:w-full">
+      <span className={`text-[9px] font-semibold uppercase tracking-[0.1em] text-slate-600 ${labelOnDesktop ? "" : "lg:hidden"}`}>{label}</span>{" "}
+      {formatCargoCompact(cargo)}
     </span>
   );
 }
@@ -1589,7 +1719,8 @@ function missionIdLabel(missionId: string): string {
   return missionId.startsWith("pending:") ? "Pending" : `#${missionId}`;
 }
 
-// Compact fleet column: small ship images with xN counts; hover shows the ship name + count.
+// Expanded-panel fleet chips: ship image, name, and xN count. The name is spelled out because the
+// expanded view has the room and hover-only titles don't exist on touch screens.
 function FleetIcons({ ships }: { ships: Record<string, string> }) {
   const entries = Object.entries(ships).filter(([, count]) => Number(count) > 0);
   if (entries.length === 0) return <span className="text-slate-500">None</span>;
@@ -1601,11 +1732,8 @@ function FleetIcons({ ships }: { ships: Record<string, string> }) {
         const label = `${name} x${formatResource(count)}`;
         return (
           <span className="inline-flex items-center gap-1 rounded border border-white/10 bg-black/20 px-1 py-0.5" key={key} title={label}>
-            {asset ? (
-              <img alt="" className="h-5 w-5 shrink-0 rounded object-contain" loading="lazy" src={asset} />
-            ) : (
-              <span className="text-[10px] text-slate-300">{name}</span>
-            )}
+            {asset ? <img alt="" className="h-5 w-5 shrink-0 rounded object-contain" loading="lazy" src={asset} /> : null}
+            <span className="text-[10px] text-slate-300">{name}</span>
             <span className="text-[11px] font-medium tabular-nums text-slate-200">{`x${formatResource(count)}`}</span>
           </span>
         );
@@ -2143,6 +2271,7 @@ function PastMissionTable({
       ) : (
         <>
           <div>
+            <MissionListHeader />
             {visiblePages.map((pageRows, pageIndex) => (
               <div
                 className="divide-y divide-white/[0.06]"
@@ -2227,20 +2356,30 @@ function PastMissionSummaryRow({
           Open
         </button>
       }
-      glance={missionGlance({ harvested, loot, mission })}
+      glance={missionGlance({ direction: missionDirection, harvested, loot, losses, mission })}
       badgeLabel={directionalMissionTypeLabel(mission.missionType, missionDirection)}
       badgeTone={missionTypeTone(mission.missionType)}
+      detailTimings={missionDetailTimings(mission, now)}
+      // A settled journey: keep the origin -> target direction but drop the live-traffic cyan.
+      direction="outbound"
       fleet={<MissionFleet cargo={mission.cargo} harvested={harvested} loot={loot} losses={losses} mission={mission} ships={mission.ships} />}
       groupId={mission.attackGroupId}
-      headerTimings={pastMissionHeaderTimings(mission, now)}
+      headerTiming={pastMissionHeaderTiming(mission, now)}
       missionId={mission.missionId}
-      origin={origin}
-      // VEY-400: the terminal status (e.g. "Returned") reads as the header pill, folding in the
-      // VEY-399 rework intent (status as a pill, no raw timestamp) now that cards have no columns.
-      statusPill={missionStatusPill(mission, now)}
-      target={target}
+      statusPill={pastMissionStatusPill(mission, now)}
+      subdued
+      {...routeEndpointsForRow(origin, target, wallet)}
     />
   );
+}
+
+// Past-archive status: the expected terminal states (Returned/Resolved) mute to plain text — on a
+// list where every row ended normally the pill said nothing. Unusual endings (Recalled, Awaiting
+// randomness, mid-settlement Resolving) keep their colored pill so they stand out.
+function pastMissionStatusPill(mission: FleetMissionSummary, now: number): MissionStatusPill {
+  const pill = missionStatusPill(mission, now);
+  if (pill.label === "Returned" || pill.label === "Resolved") return { ...pill, muted: true };
+  return pill;
 }
 
 function PastBattleReportRow({
@@ -2284,7 +2423,9 @@ function PastBattleReportRow({
       }
       badgeLabel="Battle report"
       badgeTone="border-red-300/25 bg-red-400/10 text-red-100"
-      glance={resourceTotal(lootShown) > 0 ? glanceStat("Loot grabbed", lootShown) : null}
+      direction="outbound"
+      glance={resourceTotal(lootShown) > 0 ? glanceStat("Loot", lootShown) : null}
+      subdued
       fleet={
         <div className="space-y-1">
           {resourceTotal(lootShown) > 0 ? (

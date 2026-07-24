@@ -218,13 +218,17 @@ describe("Mission Control battle reports", () => {
     // Section header labels are dropped; grouping is conveyed by the tables themselves.
     expect(text).not.toContain("Fleet movement");
     expect(text).toContain("Past missions");
-    // VEY-397#7: commander shown as clickable subtext under each endpoint (wallet fallback).
+    // VEY-397#7: commander shown as clickable subtext under each endpoint (wallet fallback) — but
+    // only for OTHER players; the connected wallet's own name under its own planets is suppressed.
     expect(text).toContain("0x2222...2222");
-    // Endpoint identity is now explicitly grouped without a directional progress arrow.
+    expect(text).not.toContain("0x1111...1111");
+    // Endpoints render bare (planet + commander); the single column-header row labels the route
+    // column once, so rows carry no per-row Origin/Destination captions.
     expect(text).toContain("Planet #8");
     expect(text).toContain("Planet #7");
-    expect(text).toContain("Origin");
-    expect(text).toContain("Destination");
+    expect(text).toContain("Route");
+    expect(text).not.toContain("Origin");
+    expect(text).not.toContain("Destination");
     expect(text).not.toContain("Target Planet #7");
     // VEY-397#9: fleet column shows ship icons with xN counts (ship name is in the hover title).
     expect(text).toContain("x3");
@@ -992,7 +996,7 @@ describe("Mission Control battle reports", () => {
     const text = collectText(MissionControlPage(missionControlProps(now, { joinableAttacks }))).join(" ");
 
     expect(text).toContain("Alliance (26)");
-    expect(text).toContain("No active missions.");
+    expect(text).toContain("No active missions for this wallet.");
     // Pagination range proves the 25-per-page split (26 rows -> first page shows 1-25).
     expect(text).toContain("1-25 of 26");
   });
@@ -1994,8 +1998,8 @@ describe("Mission Control battle reports", () => {
     expect(links.map((link) => link.props?.href)).not.toContain("/planet/5/407/4");
   });
 
-  // Mission Detail keeps the VEY-403 progress route, while VEY-KANEO-752 deliberately removes it
-  // from every repeated Mission Control row.
+  // Both Mission Control rows and the Mission Detail hero carry the directional progress arrow —
+  // Mission Control in its compact form (active rows live/cyan, past rows subdued).
   function routeArrows(tree: unknown): FoundElement[] {
     return findElements(tree, "div").filter((node) => node.props?.["data-route-direction"] !== undefined);
   }
@@ -2022,17 +2026,20 @@ describe("Mission Control battle reports", () => {
     expect(summaryText).toContain("Attack");
     expect(summaryText).toContain("#85");
     expect(summaryText).toContain("Returning");
-    expect(summaryText).toContain("Arrived");
+    // One phase-relevant time on the collapsed row (the return countdown); the full Arrived /
+    // Returned pair lives in the expanded panel.
     expect(summaryText).toContain("Returns");
-    expect(summaryText).toContain("Origin");
-    expect(summaryText).toContain("Destination");
+    expect(summaryText).not.toContain("Arrived");
+    expect(summaryText).not.toContain("Origin");
+    expect(summaryText).not.toContain("Destination");
     expect(summaryText).toMatch(/Cargo\s+10 M/);
-    expect(summaryText).toMatch(/Loot grabbed\s+1,200 M · 300 C/);
+    expect(summaryText).toMatch(/Loot\s+1,200 M · 300 C/);
     expect(summaryText).not.toContain("Attacker losses");
     expect(summaryText).not.toContain("Defender losses");
     expect(summaryText).not.toContain("Debris generated");
     expect(summaryText).not.toContain(" 0 ");
 
+    expect(rowText).toContain("Arrived");
     expect(rowText).toContain("Small Cargo");
     expect(rowText).toMatch(/Attacker losses\s+100 M \/ 50 C/);
     expect(rowText).toMatch(/Defender losses\s+900 M \/ 250 C/);
@@ -2063,7 +2070,7 @@ describe("Mission Control battle reports", () => {
     expect(element.open).toBe(false);
   });
 
-  test("outbound Mission Control rows use labelled endpoints with no route arrow and retain real planet art", () => {
+  test("outbound Mission Control rows carry a live progress arrow and retain real planet art", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
     const owner = "0x1111111111111111111111111111111111111111";
     const defender = "0x2222222222222222222222222222222222222222";
@@ -2076,11 +2083,14 @@ describe("Mission Control battle reports", () => {
     };
     const tree = MissionControlPage(missionControlProps(now, { outgoing: [outbound] }));
 
-    expect(routeArrows(tree)).toHaveLength(0);
-    expect(findElements(tree, "div").filter((node) => node.props?.["data-mission-endpoints"] !== undefined)).toHaveLength(1);
+    const arrows = routeArrows(tree);
+    expect(arrows).toHaveLength(1);
+    expect(arrows[0]!.props?.["data-route-direction"]).toBe("outbound");
+    expect(arrows[0]!.props?.["data-route-progress"]).toBe("50");
+    // Per-row Origin/Destination captions are gone; the single column-header row labels the route.
     const text = collectText(tree).join(" ");
-    expect(text).toContain("Origin");
-    expect(text).toContain("Destination");
+    expect(text).not.toContain("Origin");
+    expect(text).not.toContain("Destination");
 
     // Both endpoints render their real planet art (Galaxy thumbnail assets), keyed by archetype.
     const planetImages = findElements(tree, "img").filter((node) => node.props?.["data-planet-art"] !== undefined);
@@ -2126,7 +2136,7 @@ describe("Mission Control battle reports", () => {
     expect(sources).not.toContain(planetImageForType("metal-planetoid"));
   });
 
-  test("returning Mission Control rows keep the same calm endpoint order and expose both timings", () => {
+  test("returning Mission Control rows point the arrow home and keep the full timings expanded", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
     const owner = "0x1111111111111111111111111111111111111111";
     const defender = "0x2222222222222222222222222222222222222222";
@@ -2138,13 +2148,18 @@ describe("Mission Control battle reports", () => {
     };
     const tree = MissionControlPage(missionControlProps(now, { returning: [returning] }));
 
-    expect(routeArrows(tree)).toHaveLength(0);
+    const arrows = routeArrows(tree);
+    expect(arrows).toHaveLength(1);
+    expect(arrows[0]!.props?.["data-route-direction"]).toBe("returning");
+    expect(arrows[0]!.props?.["data-route-progress"]).toBe("50");
     const text = collectText(tree).join(" ");
-    expect(text.indexOf("Origin")).toBeLessThan(text.indexOf("New Zion"));
-    expect(text.indexOf("New Zion")).toBeLessThan(text.indexOf("Destination"));
-    expect(text.indexOf("Destination")).toBeLessThan(text.indexOf("Borealis"));
-    expect(text).toContain("Arrived");
+    // Endpoint order stays origin -> target; the arrow direction carries the "flying home" meaning.
+    expect(text.indexOf("New Zion")).toBeLessThan(text.indexOf("Borealis"));
+    // Collapsed row: return countdown only; the Arrived timestamp lives in the expanded panel.
     expect(text).toContain("Returns");
+    expect(text).toContain("Arrived");
+    const summary = findElements(tree, "summary")[0];
+    expect(collectText(summary).join(" ")).not.toContain("Arrived");
   });
 
   test("Mission Detail route treatment retains its progress arrow", () => {
@@ -2167,7 +2182,7 @@ describe("Mission Control battle reports", () => {
     expect(arrow.props?.["data-route-progress"]).toBe("100");
   });
 
-  test("card endpoints use a three-part responsive grid with a neutral separator", () => {
+  test("card endpoints use the shared route grid with the arrow owning the central span", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
     const owner = "0x1111111111111111111111111111111111111111";
     const defender = "0x2222222222222222222222222222222222222222";
@@ -2178,15 +2193,14 @@ describe("Mission Control battle reports", () => {
     };
     const tree = MissionControlPage(missionControlProps(now, { outgoing: [outbound] }));
 
-    // Both endpoint columns can shrink at narrow widths; the middle column is only a calm "to"
-    // separator, never a progress track.
-    const routeRow = findElements(tree, "div").find((node) => {
-      const className = String(node.props?.className ?? "");
-      return node.props?.["data-mission-endpoints"] !== undefined
-        && className.includes("grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]");
-    });
+    // Endpoint columns size to content (capped by RouteEndpoint max-widths) while the arrow track
+    // stretches across the central span; the same fr-based template on every row keeps the columns
+    // proportionally aligned down the list.
+    const routeRow = findElements(tree, "div").find((node) =>
+      String(node.props?.className ?? "").includes("grid-cols-[minmax(0,auto)_minmax(2.5rem,1fr)_minmax(0,auto)]")
+    );
     expect(routeRow).toBeDefined();
-    expect(routeArrows(tree)).toHaveLength(0);
+    expect(routeArrows(tree)).toHaveLength(1);
   });
 
   // VEY-412: Mission Control remembers the selected tabs + past page across the mission-detail
