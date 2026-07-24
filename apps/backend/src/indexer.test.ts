@@ -5397,6 +5397,68 @@ describe("SettlementIndexer", () => {
     }
   });
 
+  test("exposes exact active and fail-closed scheduled DefenseHold timing for solo attack previews", () => {
+    const ally = "0x4444444444444444444444444444444444444444" as Address;
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    indexer.applyEvent({ ...planet, planetId: "12", owner: ally, name: "Ally Base", galaxy: 3, system: 12, position: 4 });
+
+    const launchDefenseHold = (
+      missionId: bigint,
+      arrivalAt: bigint,
+      returnAt: bigint,
+      blockNumber: string
+    ) => {
+      indexer.applyLog({
+        blockNumber,
+        transactionHash: `0xdefense-hold-${missionId}`,
+        logIndex: "0x0",
+        topics: [fleetMissionLaunchedTopic, topic(missionId), addressTopic(ally), topic(9n)],
+        data: abiWords(12n, 7n, arrivalAt, returnAt, 0n)
+      });
+      indexer.applyLog({
+        blockNumber,
+        transactionHash: `0xdefense-hold-ships-${missionId}`,
+        logIndex: "0x1",
+        topics: [fleetMissionShipsTopic, topic(missionId)],
+        data: abiWords(0n, 5n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n)
+      });
+    };
+
+    launchDefenseHold(6116n, 3_999_999_900n, 4_000_007_200n, "0x94");
+    indexer.applyLog({
+      blockNumber: "0x95",
+      transactionHash: "0xstation-6116",
+      logIndex: "0x0",
+      topics: [defenseHoldStationedTopic, topic(6116n), addressTopic(ally), topic(7n)],
+      data: abiWords(12n, 3_999_999_900n, 4_000_003_600n, 4_000_007_200n)
+    });
+    // This future arrival has no DefenseHoldStationed event yet. Its returnAt is only a conservative
+    // upper bound for hold expiry, and its eventual stationed-storage lane is not knowable yet.
+    launchDefenseHold(6117n, 4_000_000_300n, 4_000_007_500n, "0x96");
+
+    expect(indexer.stationedDefendersForPlanet("7", 4_000_000_000)).toEqual([
+      expect.objectContaining({
+        missionId: "6116",
+        arrivalAt: "3999999900",
+        holdUntil: "4000003600",
+        battleWindowComplete: true,
+        laneGroup: 0
+      }),
+      expect.objectContaining({
+        missionId: "6117",
+        arrivalAt: "4000000300",
+        holdUntil: "4000007500",
+        battleWindowComplete: false,
+        laneGroup: null
+      })
+    ]);
+  });
+
   // VEY-KANEO-471: the QA staging harness injects one fully-populated synthetic incoming attack so the
   // Stationed defenses panel can be verified without a real multi-wallet on-chain ACS Defend scenario.
   // It must (a) be absent unless the flag is on, (b) when on, expose two stationed defenders with

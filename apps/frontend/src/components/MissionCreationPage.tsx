@@ -183,6 +183,15 @@ export type JoinAttackForecastContext = {
   unavailableReason?: string;
 };
 
+export type BattleForecastTiming = {
+  projectedAttackArrivalAt: number | null;
+};
+
+export type StationedDefenderQualification = {
+  defenders: readonly PublicStationedDefender[];
+  unavailableReason?: string;
+};
+
 export type TargetResourceIntel = {
   current: MissionResourceSnapshot | null;
   projectedArrival: MissionResourceSnapshot | null;
@@ -375,9 +384,22 @@ export function MissionCreationPage({
   const displayedLootRatio = lootRatioActive ? lootRatio : GREEDY_LOOT_RATIO;
   const lootRatioTotal = displayedLootRatio.metal + displayedLootRatio.crystal + displayedLootRatio.deuterium;
   const timingSummary = missionTimingSummary(travelSeconds, nowMs);
-  const stationedDefenders = action.kind === "attack" && action.mode === "mission" && !effectiveTargetIsMoon
-    ? target?.publicState?.stationedDefenders ?? []
-    : [];
+  const projectedAttackArrivalAt = action.kind === "attack" && action.mode === "mission" && !joinAttackMode
+    ? projectedMissionArrivalAtSeconds(travelSeconds, nowMs)
+    : null;
+  const soloStationedDefenderQualification = action.kind === "attack"
+    && action.mode === "mission"
+    && !joinAttackMode
+    && !effectiveTargetIsMoon
+    ? stationedDefendersAtAttackArrival(
+        target?.publicState?.stationedDefenders ?? [],
+        projectedAttackArrivalAt,
+        target?.publicState?.stationedDefenderTimelineComplete === true,
+      )
+    : { defenders: [] };
+  const stationedDefenders = joinAttackMode
+    ? joinAttackContext?.stationedDefenders ?? []
+    : soloStationedDefenderQualification.defenders;
   const stationedDefenderRows = stationedDefenderAttackWarningRows(stationedDefenders);
   const targetComposition = useMemo(
     () => missionTargetCompositionUnits(target, effectiveTargetIsMoon),
@@ -403,8 +425,17 @@ export function MissionCreationPage({
             unavailableReason: "Lead and joined attacker participant intel is unavailable for this group attack.",
           }
         : undefined,
+      joinAttackMode ? undefined : { projectedAttackArrivalAt },
     ),
-    [attackerCombatTechLevels, effectiveTargetIsMoon, joinAttackContext, joinAttackMode, ships, target],
+    [
+      attackerCombatTechLevels,
+      effectiveTargetIsMoon,
+      joinAttackContext,
+      joinAttackMode,
+      projectedAttackArrivalAt,
+      ships,
+      target,
+    ],
   );
   const resourceIntel = useMemo(
     () => targetResourceIntel(target, travelSeconds, effectiveTargetIsMoon),
@@ -1174,6 +1205,74 @@ export function missionTimingSummary(travelSeconds: number, nowMs: number = Date
   };
 }
 
+export function projectedMissionArrivalAtSeconds(
+  travelSeconds: number,
+  nowMs: number = Date.now(),
+): number | null {
+  if (!Number.isFinite(travelSeconds) || travelSeconds <= 0 || !Number.isFinite(nowMs) || nowMs < 0) {
+    return null;
+  }
+  const departureAt = Math.floor(nowMs / 1_000);
+  const arrivalAt = departureAt + Math.ceil(travelSeconds);
+  return Number.isSafeInteger(arrivalAt) ? arrivalAt : null;
+}
+
+export function stationedDefendersAtAttackArrival(
+  defenders: readonly PublicStationedDefender[],
+  projectedAttackArrivalAt: number | null,
+  timelineComplete: boolean,
+): StationedDefenderQualification {
+  if (!timelineComplete) {
+    return {
+      defenders: [],
+      unavailableReason: "The indexed stationed-defender timeline is incomplete, so the battle-time defender roster is unknown.",
+    };
+  }
+  if (defenders.length === 0) return { defenders: [] };
+  if (
+    projectedAttackArrivalAt == null
+    || !Number.isSafeInteger(projectedAttackArrivalAt)
+    || projectedAttackArrivalAt < 0
+  ) {
+    return {
+      defenders: [],
+      unavailableReason: "The projected attack arrival is unavailable, so stationed defenders cannot be qualified at battle time.",
+    };
+  }
+
+  const qualified: PublicStationedDefender[] = [];
+  for (const defender of defenders) {
+    const arrivalAt = Number(defender.arrivalAt);
+    const holdUntil = Number(defender.holdUntil);
+    if (
+      !Number.isSafeInteger(arrivalAt)
+      || arrivalAt < 0
+      || !Number.isSafeInteger(holdUntil)
+      || holdUntil < 0
+    ) {
+      return {
+        defenders: [],
+        unavailableReason: `Stationed fleet #${defender.missionId} is missing an exact arrival or hold timestamp for battle-time qualification.`,
+      };
+    }
+
+    // For scheduled/legacy DefenseHolds the backend can expose `returnAt` only as a conservative upper
+    // bound. Outside that bound the fleet is definitely absent; inside it the contract hold window is
+    // unknown, so do not fabricate a participant.
+    if (defender.battleWindowComplete !== true) {
+      if (arrivalAt > projectedAttackArrivalAt || holdUntil < projectedAttackArrivalAt) continue;
+      return {
+        defenders: [],
+        unavailableReason: `Stationed fleet #${defender.missionId} has no exact indexed hold window at the projected battle arrival.`,
+      };
+    }
+    if (arrivalAt <= projectedAttackArrivalAt && holdUntil >= projectedAttackArrivalAt) {
+      qualified.push(defender);
+    }
+  }
+  return { defenders: qualified };
+}
+
 export function initialMissionShips(
   action: EnabledGalaxyAction,
   originShipyardState?: MissionShipInventorySnapshot | null,
@@ -1207,7 +1306,7 @@ function missionShipOptionsForAction(action: EnabledGalaxyAction, shipyardState:
 }
 
 export function stationedDefenderAttackWarningRows(
-  defenders: PublicStationedDefender[] | null | undefined
+  defenders: readonly PublicStationedDefender[] | null | undefined
 ): Array<{ missionId: string; label: string; value: string }> {
   return (defenders ?? [])
     .filter((defender) => stationedDefenderShipCount(defender.ships) > 0)
@@ -1361,6 +1460,7 @@ export function publicTargetBattleForecast(
   attackerTechLevels: CombatTechLevels = ZERO_COMBAT_TECH_LEVELS,
   targetIsMoon = false,
   joinAttackContext?: JoinAttackForecastContext,
+  timing?: BattleForecastTiming,
 ): BattleForecastState {
   const normalizedAttackerTechLevels = normalizeCombatTechLevels(attackerTechLevels);
   const defenderTechLevels = targetCombatTechLevels(target);
@@ -1500,7 +1600,25 @@ export function publicTargetBattleForecast(
     };
   }
 
-  const stationedDefenders = forecastStationedDefenders ?? [];
+  let stationedDefenders = forecastStationedDefenders ?? [];
+  if (!targetIsMoon && !joinAttackContext) {
+    const qualification = stationedDefendersAtAttackArrival(
+      stationedDefenders,
+      timing?.projectedAttackArrivalAt ?? null,
+      target.publicState?.stationedDefenderTimelineComplete === true,
+    );
+    if (qualification.unavailableReason) {
+      return {
+        kind: "uncertain",
+        label: "Uncertain",
+        detail: qualification.unavailableReason,
+        attackerPower,
+        defenderPower: null,
+        ...forecastTech,
+      };
+    }
+    stationedDefenders = qualification.defenders;
+  }
   const missingStationedTechnology = stationedDefenders.find((defender) => !defender.combatTechnology);
   if (missingStationedTechnology) {
     return {
@@ -2610,7 +2728,7 @@ export function missionTargetCompositionUnits(
 }
 
 export function stationedDefenderCompositionUnits(
-  defenders: PublicStationedDefender[] | null | undefined,
+  defenders: readonly PublicStationedDefender[] | null | undefined,
 ): UnitItem[] {
   const counts = new Map<string, number>();
   for (const defender of defenders ?? []) {

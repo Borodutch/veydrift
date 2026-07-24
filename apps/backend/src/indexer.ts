@@ -1985,19 +1985,20 @@ export class SettlementIndexer {
   }
 
   stationedDefendersForPlanet(planetId: string, asOfSeconds = Math.floor(Date.now() / 1_000)): StationedDefenderSummary[] {
-    const active = this.activeFleetMissionsFromCanonicalRowsForTarget(
+    const candidates = this.activeFleetMissionsFromCanonicalRowsForTarget(
       planetId,
       { includeOverduePendingRandomness: true }
-    ).filter((mission) => this.isActiveDefenseHoldForPlanet(mission, planetId, asOfSeconds));
+    ).filter((mission) => this.isPotentialDefenseHoldForPlanet(mission, planetId, asOfSeconds));
     const storageOrder = this.defenseHoldStorageOrderForPlanet(planetId);
-    const activeById = new Map(active.map((mission) => [mission.missionId, mission]));
-    const orderedActiveIds = storageOrder.missionIds.filter((missionId) => activeById.has(missionId));
-    const orderComplete = !storageOrder.unavailableReason
-      && active.every((mission) => orderedActiveIds.includes(mission.missionId));
-    return active
+    const laneByMissionId = storageOrder.unavailableReason
+      ? new Map<string, number>()
+      : new Map(storageOrder.missionIds.map((missionId, index) => [missionId, index]));
+    return candidates
       .map((mission) => ({
         ...this.stationedDefenderSummary(mission, this.defenseHoldWindowEnd(mission)),
-        laneGroup: orderComplete ? orderedActiveIds.indexOf(mission.missionId) : null
+        // A scheduled DefenseHold is not appended to stationed storage until it resolves. Its future
+        // lane can therefore be unknown even while already-stationed defenders retain exact lanes.
+        laneGroup: laneByMissionId.get(mission.missionId) ?? null
       }))
       .sort((left, right) => Number(left.holdUntil) - Number(right.holdUntil));
   }
@@ -8849,6 +8850,8 @@ export class SettlementIndexer {
         missionId: defender.missionId,
         defender: defender.owner,
         defenderDisplayName: this.playerProfile(defender.owner).displayName,
+        arrivalAt: defender.arrivalAt,
+        battleWindowComplete: true,
         combatTechnology: combatTechnologyLevels(this.technologyLevels(defender.owner)),
         ships: defender.ships,
         holdUntil: defender.arrivalAt,
@@ -9106,6 +9109,8 @@ export class SettlementIndexer {
       missionId: defender.missionId,
       defender: defender.owner,
       defenderDisplayName: this.playerProfile(defender.owner).displayName,
+      arrivalAt: defender.arrivalAt,
+      battleWindowComplete: defender.missionType !== "DefenseHold" || defender.defenseHoldUntil !== undefined,
       combatTechnology: combatTechnologyLevels(this.technologyLevels(defender.owner)),
       ships: defender.ships,
       destroyedShips: composition?.destroyedShips ?? (lifecycleOutcome === "Active" ? {} : null),
@@ -9190,18 +9195,19 @@ export class SettlementIndexer {
     }));
   }
 
-  private isActiveDefenseHoldForPlanet(
+  private isPotentialDefenseHoldForPlanet(
     mission: FleetMissionSummary,
     planetId: string,
     asOfSeconds: number
   ): boolean {
-    const holdUntil = Number(this.defenseHoldWindowEnd(mission));
+    const arrivalAt = Number(mission.arrivalAt);
+    const holdUntilUpperBound = Number(this.defenseHoldWindowEnd(mission));
     return mission.missionType === "DefenseHold"
       && mission.status === "Outbound"
       && mission.targetPlanetId === planetId
-      && Number(mission.arrivalAt) <= asOfSeconds
-      && Number.isFinite(holdUntil)
-      && holdUntil > asOfSeconds
+      && Number.isFinite(arrivalAt)
+      && Number.isFinite(holdUntilUpperBound)
+      && holdUntilUpperBound >= asOfSeconds
       && hasAnyShips(mission.ships);
   }
 
@@ -9262,6 +9268,8 @@ export class SettlementIndexer {
         missionId: "qa-synthetic-defender-1",
         defender: "0x00000000000000000000000000000000000DEF01",
         defenderDisplayName: "QA Ally Alpha",
+        arrivalAt,
+        battleWindowComplete: true,
         ships: { lightFighter: "12", cruiser: "3", battleship: "1" },
         holdUntil: String(nowSeconds + 6 * 3_600),
         allianceDepotLevel
@@ -9270,6 +9278,8 @@ export class SettlementIndexer {
         missionId: "qa-synthetic-defender-2",
         defender: "0x00000000000000000000000000000000000DEF02",
         defenderDisplayName: "QA Ally Beta",
+        arrivalAt,
+        battleWindowComplete: true,
         ships: { smallCargo: "20", heavyFighter: "8", destroyer: "2" },
         holdUntil: String(nowSeconds + 18 * 3_600),
         allianceDepotLevel

@@ -61,6 +61,10 @@ export interface PublicPlanetState {
   fleet?: Array<{ id: number; count: number }> | null;
   defenses?: Array<{ id: number; count: number }> | null;
   stationedDefenders?: PublicStationedDefender[] | null;
+  // The payload includes every current or scheduled DefenseHold that could still overlap a future
+  // attack. Older payloads omit this marker, so battle previews fail closed instead of assuming the
+  // current display roster is the eventual battle roster.
+  stationedDefenderTimelineComplete?: boolean;
   research?: Array<{ id: number; level: number }> | null;
   productionPerHour?: {
     metal: string;
@@ -84,6 +88,8 @@ export interface PublicStationedDefender {
   missionId: string;
   defender: string;
   defenderDisplayName: string | null;
+  arrivalAt?: string;
+  battleWindowComplete?: boolean;
   laneGroup?: number | null;
   combatTechnology?: {
     weapons: number;

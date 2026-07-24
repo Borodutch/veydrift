@@ -455,6 +455,11 @@ export type StationedDefenderSummary = {
   missionId: string;
   defender: Address;
   defenderDisplayName: string | null;
+  // Exact mission arrival used by the contract's inclusive battle-time window check.
+  arrivalAt: string;
+  // True when `holdUntil` came from the on-chain DefenseHoldStationed window (or an attack-specific
+  // counterplay rule), rather than the conservative legacy `returnAt` upper bound.
+  battleWindowComplete: boolean;
   // Exact counterplay lane used by Solidity's domain-separated random streams. Null/absent on
   // non-battle display payloads whose contract lane cannot be reconstructed safely.
   laneGroup?: number | null;

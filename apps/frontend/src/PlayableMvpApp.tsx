@@ -8487,6 +8487,7 @@ export function PlayableMvpApp({
             : undefined}
           defenseHoldMode={pendingGalaxyMission.action.kind === "defenseHold"}
           driveLevels={driveLevelsFromTechnologyLevels(shipyardState?.technologyLevels)}
+          nowMs={now}
           onBack={() => setPendingGalaxyMission(null)}
           onConfirm={handleConfirmGalaxyMission}
           originCoords={pendingMissionOriginCoords}
@@ -8510,6 +8511,7 @@ export function PlayableMvpApp({
           driveLevels={driveLevelsFromTechnologyLevels(shipyardState?.technologyLevels)}
           joinAttackContext={joinAttackForecastContextForMission(pendingJoinAttack.mission)}
           joinAttackMode
+          nowMs={now}
           onBack={() => setPendingJoinAttack(null)}
           onConfirm={handleConfirmJoinAttack}
           originCoords={activePlanetCoords}
@@ -8533,6 +8535,7 @@ export function PlayableMvpApp({
           attackerCombatTechLevels={attackerCombatTechLevels}
           coords={pendingAcsDefend.coords}
           driveLevels={driveLevelsFromTechnologyLevels(shipyardState?.technologyLevels)}
+          nowMs={now}
           onBack={() => setPendingAcsDefend(null)}
           onConfirm={handleConfirmAcsDefend}
           originCoords={activePlanetCoords}

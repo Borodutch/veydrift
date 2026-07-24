@@ -6189,10 +6189,13 @@ describe("Veydrift backend", () => {
       expect.objectContaining({
         missionId: "42",
         defender,
+        arrivalAt: String(now - 60n),
+        battleWindowComplete: true,
         ships: expect.objectContaining({ lightFighter: "15" }),
         holdUntil: String(now + 3_600n)
       })
     ]);
+    expect(occupiedPlanet.publicState.stationedDefenderTimelineComplete).toBe(true);
     expect(occupiedPlanet.publicState.research).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 0, level: 2 })
     ]));
