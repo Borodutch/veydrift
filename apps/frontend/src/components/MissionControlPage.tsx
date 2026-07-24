@@ -92,6 +92,10 @@ interface MissionControlPageProps {
   globalMissionArchive?: GlobalMissionArchiveResponse | undefined;
   globalMissionArchiveError?: string | undefined;
   globalMissionArchiveLoading?: boolean | undefined;
+  // The Alliance active tab only ever holds joinable alliance attacks; for a player with no
+  // alliance it is a permanent "(0)", so it hides entirely. Defaults to visible so callers/tests
+  // that don't track membership keep the full tab set.
+  hasAlliance?: boolean | undefined;
   incomingAttackArchive?: FleetMissionArchiveResponse | undefined;
   incomingAttackArchiveError?: string | undefined;
   incomingAttackArchiveLoading?: boolean | undefined;
@@ -133,6 +137,7 @@ export function MissionControlPage({
   globalMissionArchive,
   globalMissionArchiveError,
   globalMissionArchiveLoading = false,
+  hasAlliance = true,
   incomingAttackArchive,
   incomingAttackArchiveError,
   incomingAttackArchiveLoading = false,
@@ -250,9 +255,14 @@ export function MissionControlPage({
   // The view comes from the URL hash first (shareable, survives reload + browser back), then the
   // sessionStorage fallback for the in-app back button which lands on a bare `#/mission-control`.
   const view = initialView ?? resolveMissionControlView();
-  const selectedActiveRows = view.activeTab === "all"
+  // Keep the Alliance tab visible for alliance members (even when currently empty) and for anyone
+  // actually looking at joinable alliance attacks; otherwise it is dead chrome and hides. A
+  // persisted "alliance" selection falls back to My missions when the tab is hidden.
+  const showAllianceTab = hasAlliance || filteredAllianceMissionRows.length > 0;
+  const activeTab = view.activeTab === "alliance" && !showAllianceTab ? "mine" : view.activeTab;
+  const selectedActiveRows = activeTab === "all"
     ? filteredAllActiveRows
-    : view.activeTab === "alliance"
+    : activeTab === "alliance"
       ? filteredAllianceMissionRows
       : filteredMyMissionRows;
   const selectedPastRows = view.pastTab === "all"
@@ -314,9 +324,10 @@ export function MissionControlPage({
 
           <ActiveMissionSection
             activePage={view.activePage}
-            activeTab={view.activeTab}
+            activeTab={activeTab}
             allRows={filteredAllActiveRows}
             allianceRows={filteredAllianceMissionRows}
+            showAllianceTab={showAllianceTab}
             canTransact={canTransact}
             lootByMissionId={lootByMissionId}
             lossesByMissionId={lossesByMissionId}
@@ -776,6 +787,7 @@ function ActiveMissionSection({
   onOpenReport,
   onRecall,
   planetLookup,
+  showAllianceTab = true,
   transactionUnavailableReason,
   wallet,
   walletPlanetIds,
@@ -795,11 +807,13 @@ function ActiveMissionSection({
   onOpenReport: (missionId: string) => void;
   onRecall: (missionId: string) => void;
   planetLookup: ReadonlyMap<string, MissionPlanetIdentity>;
+  showAllianceTab?: boolean | undefined;
   transactionUnavailableReason?: string | undefined;
   wallet?: string | undefined;
   walletPlanetIds: ReadonlySet<string>;
 }) {
   const rowsByTab: Record<ActiveMissionTabKey, ActiveMissionRow[]> = { all: allRows, alliance: allianceRows, mine: myRows };
+  const visibleTabs = ACTIVE_MISSION_TABS.filter((tab) => tab.key !== "alliance" || showAllianceTab);
   const sharedRowProps = {
     canTransact,
     lootByMissionId,
@@ -818,7 +832,7 @@ function ActiveMissionSection({
     <section className="min-w-0 overflow-hidden rounded-lg border border-white/10 bg-[#101624]" data-active-tab={activeTab}>
       <div className="flex flex-col gap-2 border-b border-white/10 bg-black/20 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
         <div aria-label="Active missions" className="flex flex-wrap gap-1.5" role="tablist">
-          {ACTIVE_MISSION_TABS.map((tab) => (
+          {visibleTabs.map((tab) => (
             <button
               aria-selected={tab.key === activeTab}
               className="rounded border border-white/10 bg-white/5 px-3 py-2 text-xs font-medium text-slate-300 transition hover:bg-white/10 aria-selected:border-cyan-300/35 aria-selected:bg-cyan-300/10 aria-selected:text-cyan-100 sm:py-1"
@@ -833,7 +847,7 @@ function ActiveMissionSection({
           ))}
         </div>
       </div>
-      {ACTIVE_MISSION_TABS.map((tab) => (
+      {visibleTabs.map((tab) => (
         <div data-active-tab-panel={tab.key} hidden={tab.key !== activeTab} key={tab.key} role="tabpanel">
           {/* Only the initially-visible tab restores its remembered page; the hidden tabs start at 0. */}
           <ActiveMissionList
@@ -968,16 +982,10 @@ function MissionFilterPopover({
         }`}
         title={triggerLabel}
       >
+        {/* No count badge: the trigger's cyan active styling already signals filters are applied
+            (the exact count lives in the aria-label + title). */}
         <Filter aria-hidden="true" size={14} />
         <span>Filters</span>
-        {active ? (
-          <span
-            aria-hidden="true"
-            className="inline-grid min-w-5 place-items-center rounded-full bg-cyan-200 px-1.5 py-0.5 text-[10px] font-bold leading-none text-slate-950"
-          >
-            {activeFilterCount}
-          </span>
-        ) : null}
         <ChevronDown aria-hidden="true" className="text-slate-500 transition-transform group-open/filters:rotate-180" size={13} />
       </summary>
 
@@ -1036,31 +1044,39 @@ function MissionFilterPopover({
 
           <label className="grid gap-1 text-[11px] text-slate-500">
             Type
-            <select
-              aria-label="Filter by mission type"
-              className="h-8 min-w-0 rounded border border-white/10 bg-[#080d18] px-1.5 text-xs text-white outline-none transition focus:border-cyan-300/45 focus:ring-1 focus:ring-cyan-300/25"
-              onChange={(event) => update({ missionType: event.currentTarget.value })}
-              value={filters.missionType}
-            >
-              <option value="">All types</option>
-              {MISSION_CONTROL_MISSION_TYPES.map((missionType) => (
-                <option key={missionType} value={missionType}>{missionTypeLabel(missionType)}</option>
-              ))}
-            </select>
+            {/* appearance-none + custom chevron: the native select arrow pins itself flush to the
+                control's right edge, which reads as broken next to the padded inputs. */}
+            <span className="relative">
+              <select
+                aria-label="Filter by mission type"
+                className="h-8 w-full min-w-0 appearance-none rounded border border-white/10 bg-[#080d18] px-2 pr-7 text-xs text-white outline-none transition focus:border-cyan-300/45 focus:ring-1 focus:ring-cyan-300/25"
+                onChange={(event) => update({ missionType: event.currentTarget.value })}
+                value={filters.missionType}
+              >
+                <option value="">All types</option>
+                {MISSION_CONTROL_MISSION_TYPES.map((missionType) => (
+                  <option key={missionType} value={missionType}>{missionTypeLabel(missionType)}</option>
+                ))}
+              </select>
+              <ChevronDown aria-hidden="true" className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-slate-500" size={12} />
+            </span>
           </label>
 
           <label className="grid gap-1 text-[11px] text-slate-500">
             Flight state
-            <select
-              aria-label="Filter by mission direction or state"
-              className="h-8 min-w-0 rounded border border-white/10 bg-[#080d18] px-1.5 text-xs text-white outline-none transition focus:border-cyan-300/45 focus:ring-1 focus:ring-cyan-300/25"
-              onChange={(event) => update({ direction: event.currentTarget.value as MissionControlDirectionFilter })}
-              value={filters.direction}
-            >
-              <option value="">Any</option>
-              <option value="outbound">Outbound</option>
-              <option value="returning">Returning</option>
-            </select>
+            <span className="relative">
+              <select
+                aria-label="Filter by mission direction or state"
+                className="h-8 w-full min-w-0 appearance-none rounded border border-white/10 bg-[#080d18] px-2 pr-7 text-xs text-white outline-none transition focus:border-cyan-300/45 focus:ring-1 focus:ring-cyan-300/25"
+                onChange={(event) => update({ direction: event.currentTarget.value as MissionControlDirectionFilter })}
+                value={filters.direction}
+              >
+                <option value="">Any</option>
+                <option value="outbound">Outbound</option>
+                <option value="returning">Returning</option>
+              </select>
+              <ChevronDown aria-hidden="true" className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-slate-500" size={12} />
+            </span>
           </label>
         </div>
       </div>

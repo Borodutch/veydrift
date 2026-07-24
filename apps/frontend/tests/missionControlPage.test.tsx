@@ -770,6 +770,29 @@ describe("MissionControlPage", () => {
     expect(text).toContain("Recalled — returned");
   });
 
+  // The Alliance active tab only ever holds joinable alliance attacks; a player with no alliance
+  // sees a permanent "(0)", so the tab hides entirely (and reappears the moment alliance rows or
+  // membership exist).
+  test("hides the Alliance active tab for players without an alliance", () => {
+    const base = {
+      fleetVisibility: {
+        wallet: "0x1111111111111111111111111111111111111111",
+        homePlanetId: "7",
+        incoming: [],
+        outgoing: [mission({ missionId: "9", missionType: "Transport" })],
+        returning: [],
+        joinableAttacks: [],
+        completedMissions: [],
+        battleReports: [],
+      },
+    };
+    const withoutAlliance = visibleText(missionControlPage({ ...base, hasAlliance: false }));
+    expect(withoutAlliance).not.toContain("Alliance (");
+
+    const withAlliance = visibleText(missionControlPage({ ...base, hasAlliance: true }));
+    expect(withAlliance).toContain("Alliance (0)");
+  });
+
   test("renders returned moon-target missions distinctly in the completed archive", () => {
     const page = missionControlPage({
       fleetVisibility: {
