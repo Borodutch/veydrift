@@ -101,6 +101,10 @@ interface OverviewPageProps {
   onSelectMoon?: ((coords: { galaxy: number; system: number; position: number }) => void) | undefined;
   onSelectPlanet?: ((coords: { galaxy: number; system: number; position: number }) => void) | undefined;
   onSelectPlayer?: ((wallet: string) => void) | undefined;
+  // Fast planet switching from the My planets list: tapping one of the player's own planets (or its
+  // moon) makes it the selected body — the mobile equivalent of the desktop planet rail — instead of
+  // navigating away to the inspect screen.
+  onSwitchPlanet?: ((planetId: string, bodyKind: "planet" | "moon") => void) | undefined;
   onToggleWatchPlanet?: ((planetId: string, watched: boolean) => void) | undefined;
   onRenamePlanet?: ((name: string) => void) | undefined;
   onChainError?: string | undefined;
@@ -151,6 +155,7 @@ export function OverviewPage({
   onSelectMoon,
   onSelectPlanet,
   onSelectPlayer,
+  onSwitchPlanet,
   onToggleWatchPlanet,
   onRenamePlanet,
   onChainError,
@@ -708,6 +713,7 @@ export function OverviewPage({
           onAction={onMyPlanetAction}
           onSelectMoon={onSelectMoon}
           onSelectPlanet={onSelectPlanet}
+          onSwitchPlanet={onSwitchPlanet}
           selectedPlanetId={selectedPlanetId ?? onChainSettlement?.homePlanetId ?? onChainSettlement?.planet?.planetId}
         />
       ) : null}
@@ -757,6 +763,7 @@ function MyPlanetsPanel({
   onAction,
   onSelectMoon,
   onSelectPlanet,
+  onSwitchPlanet,
   selectedPlanetId,
 }: {
   commanderLabel: string;
@@ -764,6 +771,7 @@ function MyPlanetsPanel({
   onAction: ((action: GalaxyAction, planet: ManagedPlanetResponse) => void) | undefined;
   onSelectMoon: ((coords: Coordinates) => void) | undefined;
   onSelectPlanet: ((coords: Coordinates) => void) | undefined;
+  onSwitchPlanet: ((planetId: string, bodyKind: "planet" | "moon") => void) | undefined;
   selectedPlanetId: string | undefined;
 }) {
   return (
@@ -785,8 +793,10 @@ function MyPlanetsPanel({
               isHome={planet.isHomePlanet}
               key={planet.planetId}
               meta={myPlanetMeta(planet)}
-              onInspect={onSelectPlanet ?? (() => undefined)}
-              onInspectMoon={onSelectMoon}
+              // Tapping one of the player's own planets switches the overview to it (the mobile
+              // planet rail); the inspect screen stays reachable from the hero and Galaxy.
+              onInspect={onSwitchPlanet ? () => onSwitchPlanet(planet.planetId, "planet") : onSelectPlanet ?? (() => undefined)}
+              onInspectMoon={onSwitchPlanet ? () => onSwitchPlanet(planet.planetId, "moon") : onSelectMoon}
               planet={rowPlanet}
               showIdentity={false}
               showMoonIndicator={false}
@@ -799,7 +809,6 @@ function MyPlanetsPanel({
               moonActionSlot={moonActions && moonActions.length > 0 ? (
                 <OverviewMoonActionButtons
                   actions={moonActions}
-                  onInspect={onSelectMoon ? () => onSelectMoon(coords) : undefined}
                   onAction={(action) => onAction?.(action, planet)}
                 />
               ) : undefined}
@@ -838,27 +847,16 @@ function MyPlanetActionButtons({
   );
 }
 
+// No standalone Inspect button: the moon subsection's name/art is the inspect control.
 function OverviewMoonActionButtons({
   actions,
   onAction,
-  onInspect,
 }: {
   actions: GalaxyAction[];
   onAction: (action: GalaxyAction) => void;
-  onInspect?: (() => void) | undefined;
 }) {
   return (
     <span className="flex flex-wrap justify-end gap-1.5">
-      {onInspect ? (
-        <button
-          className="rounded border border-cyan-200/20 bg-cyan-200/10 px-3 py-2 text-xs font-medium text-cyan-100 transition hover:border-cyan-200/40 hover:bg-cyan-200/15 sm:px-2 sm:py-1"
-          onClick={onInspect}
-          title="Inspect moon"
-          type="button"
-        >
-          Inspect
-        </button>
-      ) : null}
       <MyPlanetActionButtons actions={actions} onAction={onAction} />
     </span>
   );
@@ -1019,7 +1017,6 @@ function WatchedPlanetsPanel({
               moonActionSlot={moonActions.length > 0 ? (
                 <OverviewMoonActionButtons
                   actions={moonActions}
-                  onInspect={onSelectMoon ? () => onSelectMoon(coords) : undefined}
                   onAction={(action) => onMoonAction?.(action, planet)}
                 />
               ) : undefined}
