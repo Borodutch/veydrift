@@ -915,7 +915,21 @@ function MissionShipPicker({
   );
 }
 
-function MissionCargoPicker({
+export function missionCargoMaxForResource(
+  cargo: MissionCargoDraft,
+  cargoCapacity: number,
+  maxCargoResources: MissionResourceSnapshot,
+  resource: ResourceKey,
+): number {
+  const otherCargoTotal = RESOURCE_KEYS
+    .filter((key) => key !== resource)
+    .reduce((total, key) => total + resourceDraftNumber(cargo[key]), 0);
+  const remainingCapacity = Math.max(0, Math.trunc(cargoCapacity) - otherCargoTotal);
+  const availableResource = Math.max(0, Math.trunc(maxCargoResources[resource]));
+  return Math.min(availableResource, remainingCapacity);
+}
+
+export function MissionCargoPicker({
   cargo,
   cargoCapacity,
   maxCargoResources,
@@ -926,6 +940,12 @@ function MissionCargoPicker({
   maxCargoResources: MissionResourceSnapshot;
   onCargoChange: (updater: (current: MissionCargoDraft) => MissionCargoDraft) => void;
 }) {
+  const fields: Array<{ key: ResourceKey; label: string }> = [
+    { key: "metal", label: "Metal" },
+    { key: "crystal", label: "Crystal" },
+    { key: "deuterium", label: "Deuterium" },
+  ];
+
   return (
     <>
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -933,9 +953,25 @@ function MissionCargoPicker({
         <span className="text-xs text-slate-500">Capacity {cargoCapacity.toLocaleString()}</span>
       </div>
       <div className="grid gap-2 sm:grid-cols-3">
-        <ResourceField label="Metal" max={maxCargoResources.metal} onChange={(metal) => onCargoChange((current) => ({ ...current, metal }))} value={cargo.metal ?? ""} />
-        <ResourceField label="Crystal" max={maxCargoResources.crystal} onChange={(crystal) => onCargoChange((current) => ({ ...current, crystal }))} value={cargo.crystal ?? ""} />
-        <ResourceField label="Deuterium" max={maxCargoResources.deuterium} onChange={(deuterium) => onCargoChange((current) => ({ ...current, deuterium }))} value={cargo.deuterium ?? ""} />
+        {fields.map(({ key, label }) => {
+          const maxValue = missionCargoMaxForResource(cargo, cargoCapacity, maxCargoResources, key);
+          return (
+            <ResourceField
+              key={key}
+              label={label}
+              max={maxCargoResources[key]}
+              maxAction={{
+                value: maxValue,
+                onSelect: () => onCargoChange((current) => ({
+                  ...current,
+                  [key]: String(missionCargoMaxForResource(current, cargoCapacity, maxCargoResources, key)),
+                })),
+              }}
+              onChange={(value) => onCargoChange((current) => ({ ...current, [key]: value }))}
+              value={cargo[key] ?? ""}
+            />
+          );
+        })}
       </div>
     </>
   );
@@ -2703,19 +2739,39 @@ function safeResourceNumber(value: string | number | undefined): number {
 function ResourceField({
   label,
   max,
+  maxAction,
   onChange,
   value,
 }: {
   label: string;
   max: number;
+  maxAction?: {
+    onSelect: () => void;
+    value: number;
+  } | undefined;
   onChange: (value: string) => void;
   value: string;
 }) {
+  const inputId = `resource-${label.toLowerCase().replaceAll(/[^a-z0-9]+/g, "-")}`;
   return (
-    <label className="grid gap-1">
-      <span className="text-xs text-slate-500">{label}</span>
+    <div className="grid gap-1">
+      <div className="flex min-h-6 items-center justify-between gap-2">
+        <label className="text-xs text-slate-500" htmlFor={inputId}>{label}</label>
+        {maxAction ? (
+          <button
+            aria-label={`Set ${label.toLowerCase()} cargo to maximum (${maxAction.value.toLocaleString()})`}
+            className="rounded border border-signal/30 bg-signal/10 px-2 py-0.5 text-[11px] font-semibold text-signal transition hover:border-signal/50 hover:bg-signal/15 disabled:cursor-default disabled:opacity-45"
+            disabled={resourceDraftNumber(value) === maxAction.value}
+            onClick={maxAction.onSelect}
+            type="button"
+          >
+            Max
+          </button>
+        ) : null}
+      </div>
       <input
         className="h-9 rounded border border-white/10 bg-[#070913] px-2 text-right font-mono text-sm text-white outline-none [color-scheme:dark] focus:border-signal/50"
+        id={inputId}
         inputMode="numeric"
         max={max}
         min={0}
@@ -2724,7 +2780,7 @@ function ResourceField({
         type="number"
         value={value}
       />
-    </label>
+    </div>
   );
 }
 
