@@ -107,7 +107,11 @@ export function TopBar({
   return (
     <div className="sticky top-0 z-30 border-b border-white/10 bg-[#0a0f1a]/95 backdrop-blur" ref={topBarHeightSyncRef}>
       <div className="mx-auto flex min-h-10 max-w-[96rem] flex-wrap items-center justify-center gap-x-3 gap-y-1 px-2 py-1 sm:min-h-11 sm:justify-between sm:px-4 sm:py-1.5 lg:px-6">
-        <div className="grid w-full min-w-0 grid-cols-[repeat(3,minmax(0,1fr))_minmax(4.5rem,1.25fr)_repeat(4,2.5rem)] items-center gap-0.5 sm:flex sm:w-auto sm:flex-wrap sm:justify-start sm:gap-x-2.5 sm:gap-y-1.5">
+        <div className="flex w-full min-w-0 flex-col gap-1 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:justify-start sm:gap-x-2.5 sm:gap-y-1.5">
+          {/* Mobile: resources own a full-width row so values never truncate;
+              icons + wallet live on the row below. sm:contents flattens both
+              rows back into the single desktop flex line. */}
+          <div className="flex min-w-0 items-stretch gap-1 sm:contents">
           {!isWalletConnected ? (
             <span className="text-xs text-slate-400">Connect wallet for resources</span>
           ) : resourceStatus === "loading" && !resources ? (
@@ -153,9 +157,11 @@ export function TopBar({
               )}
             </>
           )}
+          </div>
+          <div className="flex min-w-0 items-center gap-1 sm:contents">
           <a
             aria-label="Telegram support"
-            className="grid h-10 w-10 shrink-0 place-items-center rounded border border-signal/35 bg-signal/10 text-signal transition hover:bg-signal/20 sm:hidden"
+            className="grid h-10 min-w-0 flex-1 place-items-center rounded border border-signal/35 bg-signal/10 text-signal transition hover:bg-signal/20 sm:hidden"
             href={TELEGRAM_SUPPORT_URL}
             rel="noopener noreferrer"
             target="_blank"
@@ -165,7 +171,7 @@ export function TopBar({
           </a>
           <a
             aria-label="Veydrift documentation"
-            className="grid h-10 w-10 shrink-0 place-items-center rounded border border-cyan-300/35 bg-cyan-300/10 text-cyan-100 transition hover:bg-cyan-300/20 sm:hidden"
+            className="grid h-10 min-w-0 flex-1 place-items-center rounded border border-cyan-300/35 bg-cyan-300/10 text-cyan-100 transition hover:bg-cyan-300/20 sm:hidden"
             href="/docs"
             title="Veydrift documentation"
           >
@@ -173,7 +179,7 @@ export function TopBar({
           </a>
           <a
             aria-label="Veydrift whitepaper"
-            className="grid h-10 w-10 shrink-0 place-items-center rounded border border-amber-200/35 bg-amber-200/10 text-amber-100 transition hover:bg-amber-200/20 sm:hidden"
+            className="grid h-10 min-w-0 flex-1 place-items-center rounded border border-amber-200/35 bg-amber-200/10 text-amber-100 transition hover:bg-amber-200/20 sm:hidden"
             href={WHITEPAPER_URL}
             rel="noopener noreferrer"
             target="_blank"
@@ -181,7 +187,13 @@ export function TopBar({
           >
             <FileText className="h-3.5 w-3.5" size={14} strokeWidth={2} />
           </a>
-          <SoundToggle className="grid h-10 w-10 shrink-0 place-items-center rounded border border-white/15 bg-white/[0.06] text-slate-200 transition hover:bg-white/10 sm:hidden" />
+          <SoundToggle className="grid h-10 min-w-0 flex-1 place-items-center rounded border border-white/15 bg-white/[0.06] text-slate-200 transition hover:bg-white/10 sm:hidden" />
+          {isWalletConnected && account && (
+            <span className="inline-flex h-10 max-w-[7.5rem] shrink-0 items-center truncate px-1 font-mono text-[11px] leading-none text-slate-400 sm:hidden">
+              {shortAddress(account)}
+            </span>
+          )}
+          </div>
           {queue && (
             <span className="inline-flex h-6 max-w-40 items-center truncate rounded bg-white/10 px-2 text-xs leading-none text-slate-300">
               {queue.label}
@@ -194,7 +206,7 @@ export function TopBar({
           )}
         </div>
 
-        <div className="flex min-w-0 max-w-full items-center justify-center gap-2 sm:justify-end sm:gap-3">
+        <div className="hidden min-w-0 max-w-full items-center gap-2 sm:flex sm:justify-end sm:gap-3">
           <a
             aria-label="Telegram support"
             className="hidden h-7 w-7 shrink-0 items-center justify-center rounded border border-signal/35 bg-signal/10 text-[11px] font-semibold leading-none text-signal transition hover:bg-signal/20 sm:inline-flex lg:w-auto lg:gap-1.5 lg:px-2"
@@ -256,7 +268,7 @@ function ResourcePip({
   const pct = cap && cap > 0 ? Math.min(100, Math.round((value / cap) * 100)) : 0;
   return (
     <details
-      className="group relative flex h-10 min-w-0 items-center justify-center rounded border border-white/10 bg-white/[0.03] whitespace-nowrap sm:h-6 sm:flex-none sm:justify-start sm:rounded-none sm:border-0 sm:bg-transparent"
+      className="group relative flex h-10 min-w-0 flex-1 items-center justify-center rounded border border-white/10 bg-white/[0.03] whitespace-nowrap sm:h-6 sm:flex-none sm:justify-start sm:rounded-none sm:border-0 sm:bg-transparent"
       data-close-outside
       ref={detailsCloseOutsideRef}
     >
@@ -265,11 +277,11 @@ function ResourcePip({
         title={resourceTitle(label, value, rate, cap)}
       >
         <span className="inline-flex min-w-0 items-center gap-0.5 sm:gap-1.5">
-          <span className={`text-[10px] font-semibold leading-none sm:text-xs ${color}`}>
+          <span className={`text-[11px] font-semibold leading-none sm:text-xs ${color}`}>
             <span className="sm:hidden">{abbr}</span>
             <span className="hidden sm:inline">{label}</span>
           </span>
-          <span className={`min-w-0 truncate text-[10px] leading-none sm:text-xs ${pct >= 90 ? "resource-cap-warning text-amber-100" : "text-white"}`}>
+          <span className={`min-w-0 truncate text-[11px] leading-none sm:text-xs ${pct >= 90 ? "resource-cap-warning text-amber-100" : "text-white"}`}>
             <span className="sm:hidden" ref={tickValueRef(value, formatCompact)}>{formatCompact(value)}</span>
             <span className="hidden sm:inline" ref={tickValueRef(value, format)}>{format(value)}</span>
           </span>
@@ -330,17 +342,17 @@ function EnergyPip({
 
   return (
     <div
-      className="flex h-10 min-w-0 items-center justify-center rounded border border-white/10 bg-white/[0.03] px-1 whitespace-nowrap sm:h-6 sm:flex-none sm:justify-start sm:rounded-none sm:border-0 sm:bg-transparent sm:px-0"
+      className="flex h-10 min-w-0 flex-[1.5] items-center justify-center rounded border border-white/10 bg-white/[0.03] px-1 whitespace-nowrap sm:h-6 sm:flex-none sm:justify-start sm:rounded-none sm:border-0 sm:bg-transparent sm:px-0"
       title={showShortageFactor
         ? `${format(produced)} produced / ${format(required)} required; production reduced to ${productionPercent}%`
         : `${format(produced)} produced / ${format(required)} required`}
     >
       <span className="inline-flex min-w-0 items-center gap-0.5 sm:gap-1.5">
-        <span className={`text-[10px] font-semibold leading-none sm:text-xs ${tone}`}>
+        <span className={`text-[11px] font-semibold leading-none sm:text-xs ${tone}`}>
           <span className="sm:hidden">E</span>
           <span className="hidden sm:inline">Energy</span>
         </span>
-        <span className={`min-w-0 truncate text-[10px] leading-none sm:text-xs ${current < 0 ? "text-red-200" : "text-white"}`}>
+        <span className={`min-w-0 truncate text-[11px] leading-none sm:text-xs ${current < 0 ? "text-red-200" : "text-white"}`}>
           <span className="sm:hidden" ref={tickValueRef(current, formatCompact)}>{formatCompact(current)}</span>
           <span className="hidden sm:inline" ref={tickValueRef(current, format)}>{format(current)}</span>
         </span>
