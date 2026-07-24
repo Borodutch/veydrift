@@ -217,7 +217,9 @@ export function defenseProductionItems({
   return adaptProductionItems(defenseCatalog, quantities, (defense, { quantity }) => {
     const chainDefense = defenseState?.defenses.find((item) => item.id === defense.id);
     const deployed = productionAvailable ? chainDefense?.count : undefined;
-    const baseCost = productionAvailable ? toResources(chainDefense?.cost) : undefined;
+    const baseCost = productionAvailable && chainDefense
+      ? resolveDefenseUnitCost(defense.baseCost, chainDefense.cost)
+      : undefined;
     const totalCost = baseCost ? multiply(baseCost, quantity) : undefined;
     // Backend-sourced per-unit build time scaled by the selected quantity (VEY-KANEO-472).
     const durationSeconds = chainDefense?.durationSeconds === undefined
@@ -423,6 +425,20 @@ function toResources(resources: ChainDefenseState["resources"] | ChainDefenseSta
     crystal: Number(resources.crystal),
     deuterium: Number(resources.deuterium),
   };
+}
+
+export function resolveDefenseUnitCost(
+  catalogCost: Resources,
+  reportedCost: ChainDefenseState["defenses"][number]["cost"] | null | undefined,
+): Resources | undefined {
+  const parsed = toResources(reportedCost);
+  if (!parsed) return undefined;
+  if (hasResourceCost(parsed) || !hasResourceCost(catalogCost)) return parsed;
+  return catalogCost;
+}
+
+function hasResourceCost(resources: Resources): boolean {
+  return resources.metal !== 0 || resources.crystal !== 0 || resources.deuterium !== 0;
 }
 
 function multiply(resources: Resources, quantity: number): Resources {
