@@ -14,6 +14,7 @@ import {
   fetchWalletPlanets,
   shortAddress,
   type ChainAllianceState,
+  type Eip1193Provider,
   type HighscoreEntry,
   type ManagedPlanetResponse,
   type OnChainResources,
@@ -42,6 +43,8 @@ import { OptimizedImage } from "./OptimizedImage";
 import { PageHeader, RefreshButton } from "./PageHeader";
 import { InspectPanelSkeleton } from "./LoadingSkeletons";
 import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailableNotice";
+import { EntityMediaPanel } from "./EntityMediaPanel";
+import { canEditEntityMedia } from "../entityMedia";
 
 type PlayerInspectState =
   | { status: "loading" }
@@ -58,6 +61,7 @@ export function PlayerInspectPage({
   onSelectMoon,
   onSelectPlanet,
   originCoords,
+  provider,
   wallet,
 }: {
   apiBaseUrl: string | undefined;
@@ -67,6 +71,7 @@ export function PlayerInspectPage({
   onSelectMoon: (coords: Coordinates) => void;
   onSelectPlanet: (coords: Coordinates) => void;
   originCoords?: Coordinates | undefined;
+  provider?: Eip1193Provider | undefined;
   wallet: string;
 }) {
   const [state, setState] = useState<PlayerInspectState>({ status: "loading" });
@@ -133,6 +138,19 @@ export function PlayerInspectPage({
       ) : null}
       {state.status === "loaded" ? (
         <div className="grid gap-4">
+          <EntityMediaPanel
+            account={currentWallet}
+            apiBaseUrl={apiBaseUrl}
+            canEdit={canEditEntityMedia({
+              entityKind: "player",
+              ownerWallet: wallet,
+              viewerWallet: currentWallet,
+            })}
+            entityId={wallet}
+            entityKind="player"
+            provider={provider}
+          />
+
           <div className="flex flex-wrap gap-2 rounded border border-white/10 bg-black/20 px-3 py-2">
             <CompactStat label="Rank" value={state.highscore ? `#${state.highscore.rank}` : "Unranked"} />
             <CompactStat label="Planets" value={String(state.planets?.planets.length ?? state.highscore?.planetCount ?? 0)} />
@@ -280,6 +298,7 @@ export function AllianceInspectPage({
   actionBusy,
   allianceId,
   allianceState,
+  apiBaseUrl,
   canTransact,
   disabled,
   onApproveJoinRequest,
@@ -294,11 +313,13 @@ export function AllianceInspectPage({
   onRefresh,
   onSetRole,
   onTransferOwnership,
+  provider,
   transactionUnavailableReason,
 }: {
   actionBusy: boolean;
   allianceId: string;
   allianceState: ChainAllianceState | null;
+  apiBaseUrl?: string | undefined;
   canTransact: boolean;
   disabled: boolean;
   transactionUnavailableReason?: string | undefined;
@@ -314,6 +335,7 @@ export function AllianceInspectPage({
   onRefresh: () => void;
   onSetRole: (playerAddress: string, role: "member" | "officer") => void;
   onTransferOwnership: (playerAddress: string) => void;
+  provider?: Eip1193Provider | undefined;
 }) {
   const [inviteAddress, setInviteAddress] = useState("");
   const [inviteFormOpen, setInviteFormOpen] = useState(false);
@@ -360,6 +382,19 @@ export function AllianceInspectPage({
       {!canTransact && transactionUnavailableReason ? <Notice>{transactionUnavailableReason}</Notice> : null}
       {alliance ? (
         <div className="grid gap-4">
+          <EntityMediaPanel
+            account={allianceState?.wallet}
+            apiBaseUrl={apiBaseUrl}
+            canEdit={canEditEntityMedia({
+              allianceRole: role,
+              entityKind: "alliance",
+              isCurrentAlliance,
+            })}
+            entityId={allianceId}
+            entityKind="alliance"
+            provider={provider}
+          />
+
           <Panel title={isCurrentAlliance ? "My Alliance" : "Alliance"}>
             {isCurrentAlliance ? (
               <AllianceSummary alliance={alliance} onOpenPlayer={onOpenPlayer} />
