@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { MissionDetailPage } from "./components/MissionDetailPage";
-import { EMPTY_MISSION_CONTROL_FILTERS, MissionControlPage, StationedDefenseSection, activeMissionRowMatchesFilters, allActiveMissionRows, buildMissionControlViewQuery, missionControlActiveFilterCount, missionIdMatchesMissionNumberSearch, missionPlanetCoordinateKey, missionReport, missionRowsDisclosureState, missionStatusPill, normalizeMissionControlFilters, normalizeMissionNumberSearch, parseMissionControlViewParams, persistMissionControlView, resolveMissionControlView, setMissionRowsExpanded, partitionActiveMissionRows, type ActiveMissionRow, type MissionControlFilters, type MissionControlView } from "./components/MissionControlPage";
+import { EMPTY_MISSION_CONTROL_FILTERS, MissionControlPage, StationedDefenseSection, activeMissionRowMatchesFilters, allActiveMissionRows, buildMissionControlViewQuery, initializeMissionRowDisclosure, missionControlActiveFilterCount, missionIdMatchesMissionNumberSearch, missionPlanetCoordinateKey, missionReport, missionRowsDisclosureState, missionStatusPill, normalizeMissionControlFilters, normalizeMissionNumberSearch, parseMissionControlViewParams, persistMissionControlView, resolveMissionControlView, setMissionRowsExpanded, partitionActiveMissionRows, type ActiveMissionRow, type MissionControlFilters, type MissionControlView } from "./components/MissionControlPage";
 import { MissionRouteCell, missionEndpoint, type MissionPlanetIdentity } from "./components/missionRoute";
 import { planetImageForType, planetTypeFromCoordinates } from "./data/mockUniverse";
 import { buildInspectHash, buildInspectPath, parseInspectPath, parseInspectRoute } from "./inspectRoutes";
@@ -220,10 +220,11 @@ describe("Mission Control battle reports", () => {
     expect(text).toContain("Past missions");
     // VEY-397#7: commander shown as clickable subtext under each endpoint (wallet fallback).
     expect(text).toContain("0x2222...2222");
-    // VEY-397#5/#6: endpoints show planet names (coords fallback), no "Origin/Target planet #" prefix.
+    // Endpoint identity is now explicitly grouped without a directional progress arrow.
     expect(text).toContain("Planet #8");
     expect(text).toContain("Planet #7");
-    expect(text).not.toContain("Origin Planet #8");
+    expect(text).toContain("Origin");
+    expect(text).toContain("Destination");
     expect(text).not.toContain("Target Planet #7");
     // VEY-397#9: fleet column shows ship icons with xN counts (ship name is in the hover title).
     expect(text).toContain("x3");
@@ -356,10 +357,11 @@ describe("Mission Control battle reports", () => {
 
     expect(allPanel?.props?.hidden).toBe(false);
     expect(text).toMatch(/Outcome\s+Attacker win/);
-    expect(text).toMatch(/Loot\s+900 M \/ 450 C \/ 75 D/);
-    expect(text).toMatch(/Losses\s+100 M \/ 50 C \/ 0 D\s+\/\s+1,200 M \/ 300 C \/ 0 D/);
+    expect(text).toMatch(/Loot grabbed\s+900 M \/ 450 C \/ 75 D/);
+    expect(text).toMatch(/Attacker losses\s+100 M \/ 50 C/);
+    expect(text).toMatch(/Defender losses\s+1,200 M \/ 300 C/);
     expect(text).toMatch(/Cargo\s+400 M \/ 120 C \/ 30 D/);
-    expect(text).toMatch(/Debris\s+390 M \/ 105 C/);
+    expect(text).toMatch(/Debris generated\s+390 M \/ 105 C/);
   });
 
   test("renders the Incoming attacks past mission filter as a restored tab (VEY-KANEO-564)", () => {
@@ -1992,13 +1994,76 @@ describe("Mission Control battle reports", () => {
     expect(links.map((link) => link.props?.href)).not.toContain("/planet/5/407/4");
   });
 
-  // VEY-403: the mission card route is a directional, progress-filled arrow plus real planet art for
-  // both endpoints. These cover the three behaviours the ticket calls out: direction, fill, assets.
+  // Mission Detail keeps the VEY-403 progress route, while VEY-KANEO-752 deliberately removes it
+  // from every repeated Mission Control row.
   function routeArrows(tree: unknown): FoundElement[] {
     return findElements(tree, "div").filter((node) => node.props?.["data-route-direction"] !== undefined);
   }
 
-  test("outbound mission renders a right-pointing route arrow filled to progress, with real planet art for both endpoints (VEY-403)", () => {
+  test("collapsed rows carry priority facts while exact combat detail stays expanded", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const returning = {
+      ...mission("85", "Attack", "Returning"),
+      cargo: { metal: "10", crystal: "0", deuterium: "0" },
+    };
+    const base = missionControlProps(now, { returning: [returning] });
+    const tree = MissionControlPage({
+      ...base,
+      fleetVisibility: {
+        ...base.fleetVisibility!,
+        battleReports: [battleReport("85")],
+      },
+    });
+    const row = findElements(tree, "details").find((node) => node.props?.["data-mission-row"] !== undefined);
+    const summary = findElements(row, "summary")[0];
+    const summaryText = collectText(summary).join(" ");
+    const rowText = collectText(row).join(" ");
+
+    expect(summaryText).toContain("Attack");
+    expect(summaryText).toContain("#85");
+    expect(summaryText).toContain("Returning");
+    expect(summaryText).toContain("Arrived");
+    expect(summaryText).toContain("Returns");
+    expect(summaryText).toContain("Origin");
+    expect(summaryText).toContain("Destination");
+    expect(summaryText).toMatch(/Cargo\s+10 M/);
+    expect(summaryText).toMatch(/Loot grabbed\s+1,200 M · 300 C/);
+    expect(summaryText).not.toContain("Attacker losses");
+    expect(summaryText).not.toContain("Defender losses");
+    expect(summaryText).not.toContain("Debris generated");
+    expect(summaryText).not.toContain(" 0 ");
+
+    expect(rowText).toContain("Small Cargo");
+    expect(rowText).toMatch(/Attacker losses\s+100 M \/ 50 C/);
+    expect(rowText).toMatch(/Defender losses\s+900 M \/ 250 C/);
+    expect(rowText).toMatch(/Debris generated\s+600 M \/ 150 C/);
+    expect(rowText).toContain("Open");
+  });
+
+  test("hostile inbound rows initialize open once and preserve later disclosure changes", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const hostile = mission(
+      "86",
+      "Attack",
+      "Outbound",
+      "0x2222222222222222222222222222222222222222",
+      "9",
+      "7",
+      now + 60_000,
+    );
+    const tree = MissionControlPage(missionControlProps(now, { incoming: [hostile] }));
+    const row = findElements(tree, "details").find((node) => node.props?.["data-mission-row"] !== undefined);
+    expect(row?.props?.["data-default-open"]).toBe("true");
+
+    const element = { dataset: {}, open: false } as unknown as HTMLDetailsElement;
+    initializeMissionRowDisclosure(element, true);
+    expect(element.open).toBe(true);
+    element.open = false;
+    initializeMissionRowDisclosure(element, true);
+    expect(element.open).toBe(false);
+  });
+
+  test("outbound Mission Control rows use labelled endpoints with no route arrow and retain real planet art", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
     const owner = "0x1111111111111111111111111111111111111111";
     const defender = "0x2222222222222222222222222222222222222222";
@@ -2011,18 +2076,11 @@ describe("Mission Control battle reports", () => {
     };
     const tree = MissionControlPage(missionControlProps(now, { outgoing: [outbound] }));
 
-    const arrows = routeArrows(tree);
-    expect(arrows.length).toBe(1);
-    const arrow = arrows[0]!;
-    // Direction follows the active leg: outbound points toward the target.
-    expect(arrow.props?.["data-route-direction"]).toBe("outbound");
-    expect(arrow.props?.["data-route-progress"]).toBe("50");
-
-    // The cyan fill is proportional to progress (half of the available track).
-    const fill = findElements(tree, "span").find((node) => node.props?.["data-route-fill"] !== undefined);
-    expect(fill).toBeDefined();
-    expect(fill?.props?.["data-route-progress"]).toBe("50");
-    expect(String((fill?.props?.style as { width?: string } | undefined)?.width ?? "")).toContain("* 0.5");
+    expect(routeArrows(tree)).toHaveLength(0);
+    expect(findElements(tree, "div").filter((node) => node.props?.["data-mission-endpoints"] !== undefined)).toHaveLength(1);
+    const text = collectText(tree).join(" ");
+    expect(text).toContain("Origin");
+    expect(text).toContain("Destination");
 
     // Both endpoints render their real planet art (Galaxy thumbnail assets), keyed by archetype.
     const planetImages = findElements(tree, "img").filter((node) => node.props?.["data-planet-art"] !== undefined);
@@ -2068,7 +2126,7 @@ describe("Mission Control battle reports", () => {
     expect(sources).not.toContain(planetImageForType("metal-planetoid"));
   });
 
-  test("returning mission points the route arrow back toward home and fills on the return leg (VEY-403)", () => {
+  test("returning Mission Control rows keep the same calm endpoint order and expose both timings", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
     const owner = "0x1111111111111111111111111111111111111111";
     const defender = "0x2222222222222222222222222222222222222222";
@@ -2080,17 +2138,16 @@ describe("Mission Control battle reports", () => {
     };
     const tree = MissionControlPage(missionControlProps(now, { returning: [returning] }));
 
-    const arrows = routeArrows(tree);
-    expect(arrows.length).toBe(1);
-    const arrow = arrows[0]!;
-    // Returning fleets fly target -> origin, so the arrow points back toward home (origin).
-    expect(arrow.props?.["data-route-direction"]).toBe("returning");
-    expect(arrow.props?.["data-route-progress"]).toBe("50");
-    // The accessible label describes the homeward direction.
-    expect(String(arrow.props?.["aria-label"] ?? "")).toContain("Returning home");
+    expect(routeArrows(tree)).toHaveLength(0);
+    const text = collectText(tree).join(" ");
+    expect(text.indexOf("Origin")).toBeLessThan(text.indexOf("New Zion"));
+    expect(text.indexOf("New Zion")).toBeLessThan(text.indexOf("Destination"));
+    expect(text.indexOf("Destination")).toBeLessThan(text.indexOf("Borealis"));
+    expect(text).toContain("Arrived");
+    expect(text).toContain("Returns");
   });
 
-  test("route arrow fill reaches 100% at arrival (VEY-403)", () => {
+  test("Mission Detail route treatment retains its progress arrow", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
     const owner = "0x1111111111111111111111111111111111111111";
     // arrival already passed: the outbound leg is fully elapsed -> fill at 100%.
@@ -2099,14 +2156,18 @@ describe("Mission Control battle reports", () => {
       originPlanet: planetReference("7", owner, "New Zion", "6:9:1", "warm-terracotta"),
       targetPlanet: planetReference("9", owner, "Outpost", "5:407:4", "cold-tundra"),
     };
-    const tree = MissionControlPage(missionControlProps(now, { outgoing: [arrived] }));
-
+    const tree = MissionRouteCell({
+      direction: "outbound",
+      origin: missionEndpoint(arrived, "origin", new Map()),
+      progressPercent: 100,
+      target: missionEndpoint(arrived, "target", new Map()),
+    });
     const arrow = routeArrows(tree)[0]!;
     expect(arrow.props?.["data-route-direction"]).toBe("outbound");
     expect(arrow.props?.["data-route-progress"]).toBe("100");
   });
 
-  test("card route pins origin left and target right with the arrow spanning the full gap (VEY-403 rework)", () => {
+  test("card endpoints use a three-part responsive grid with a neutral separator", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
     const owner = "0x1111111111111111111111111111111111111111";
     const defender = "0x2222222222222222222222222222222222222222";
@@ -2117,14 +2178,15 @@ describe("Mission Control battle reports", () => {
     };
     const tree = MissionControlPage(missionControlProps(now, { outgoing: [outbound] }));
 
-    // The route row uses an edge-pinned grid: auto-sized endpoint columns on the outer edges and a
-    // central 1fr column the arrow fills, so origin hugs the left and target hugs the right.
+    // Both endpoint columns can shrink at narrow widths; the middle column is only a calm "to"
+    // separator, never a progress track.
     const routeRow = findElements(tree, "div").find((node) => {
       const className = String(node.props?.className ?? "");
-      return className.includes("grid-cols-[minmax(0,auto)_minmax(2.5rem,1fr)_minmax(0,auto)]")
-        && findElements(node, "div").some((child) => child.props?.["data-route-direction"] !== undefined);
+      return node.props?.["data-mission-endpoints"] !== undefined
+        && className.includes("grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]");
     });
     expect(routeRow).toBeDefined();
+    expect(routeArrows(tree)).toHaveLength(0);
   });
 
   // VEY-412: Mission Control remembers the selected tabs + past page across the mission-detail

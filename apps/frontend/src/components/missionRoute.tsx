@@ -113,6 +113,37 @@ export function MissionRouteCell({
   );
 }
 
+// Mission Control's compact rows need endpoint identity, not a repeated flight-progress
+// visualization. Keep this deliberately separate from MissionRouteCell so Mission Detail can retain
+// its large directional route while list rows use calm, explicitly labelled endpoints.
+export function MissionEndpointPair({
+  origin,
+  target,
+}: {
+  origin: MissionEndpoint;
+  target: MissionEndpoint;
+}) {
+  const nav: RouteNavigation = {};
+  return (
+    <div
+      className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-x-2"
+      data-mission-endpoints
+    >
+      <div className="min-w-0">
+        <span className="mb-0.5 block text-[9px] font-semibold uppercase tracking-[0.12em] text-slate-600">Origin</span>
+        <RouteEndpoint align="left" compact endpoint={origin} nav={nav} />
+      </div>
+      <span aria-hidden="true" className="text-[10px] font-medium uppercase tracking-[0.12em] text-slate-600">
+        to
+      </span>
+      <div className="min-w-0 text-right">
+        <span className="mb-0.5 block text-[9px] font-semibold uppercase tracking-[0.12em] text-slate-600">Destination</span>
+        <RouteEndpoint align="right" compact endpoint={target} nav={nav} />
+      </div>
+    </div>
+  );
+}
+
 // One side of the route: the planet art asset pinned to the outer edge (origin on the left, target
 // on the right via the mirrored layout) with the clickable planet name + commander stacked
 // alongside it. Width is capped so long planet names truncate instead of squeezing the arrow.

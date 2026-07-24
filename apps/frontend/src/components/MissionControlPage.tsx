@@ -23,14 +23,11 @@ import {
   decodeColonizationTargetId,
 } from "../walletFlow";
 import {
-  MissionRouteCell,
+  MissionEndpointPair,
   type MissionEndpoint,
   type MissionPlanetIdentity,
-  type RouteLeg,
   endpointFromPlanetId,
   missionEndpoint,
-  missionProgressPercent,
-  missionRouteLeg,
   shortAddress,
 } from "./missionRoute";
 import { PageHeader, RefreshButton, refreshButtonState } from "./PageHeader";
@@ -539,12 +536,10 @@ function StationedDefenseCard({
       }
       badgeLabel="Defending"
       badgeTone={missionTypeTone("AcsDefend")}
-      direction={missionRouteLeg(mission.status)}
       fleet={<MissionFleet cargo={mission.cargo} mission={mission} ships={mission.ships} />}
-      headerTiming={{ label: "Holds", value: missionEndpointTiming(mission.arrivalAt, now) }}
+      headerTimings={[{ label: "Holds", value: missionEndpointTiming(mission.arrivalAt, now) }]}
       missionId={mission.missionId}
       origin={missionEndpoint(mission, "origin", planetLookup)}
-      progressPercent={missionProgressPercent(mission, now)}
       statusPill={missionStatusPill(mission, now)}
       target={missionEndpoint(mission, "target", planetLookup)}
     />
@@ -585,7 +580,6 @@ function DefendedPlanetCard({
       }
       badgeLabel="Defended"
       badgeTone={missionTypeTone("AcsDefend")}
-      direction={missionRouteLeg(attack.status)}
       fleet={
         defenders && defenders.length > 0 ? (
           <div className="grid gap-2">
@@ -599,10 +593,9 @@ function DefendedPlanetCard({
           </p>
         )
       }
-      headerTiming={{ label: "Holds", value: missionEndpointTiming(attack.arrivalAt, now) }}
+      headerTimings={[{ label: "Holds", value: missionEndpointTiming(attack.arrivalAt, now) }]}
       missionId={attack.missionId}
       origin={missionEndpoint(attack, "origin", planetLookup)}
-      progressPercent={missionProgressPercent(attack, now)}
       statusPill={{ label: "Under attack", tone: "border-red-300/25 bg-red-400/10 text-red-100" }}
       target={missionEndpoint(attack, "target", planetLookup)}
     />
@@ -1209,7 +1202,7 @@ function MissionRow({
   return (
     <MissionCard
       defaultOpen={hostileInbound}
-      glance={missionGlance({ harvested, loot, losses, mission })}
+      glance={missionGlance({ harvested, loot, mission })}
       hostile={hostileInbound}
       actions={
         <>
@@ -1258,13 +1251,11 @@ function MissionRow({
       }
       badgeLabel={directionalMissionTypeLabel(mission.missionType, missionDirection)}
       badgeTone={missionTypeTone(mission.missionType)}
-      direction={missionRouteLeg(mission.status)}
       fleet={<MissionFleet cargo={mission.cargo} harvested={harvested} loot={loot} losses={losses} mission={mission} ships={mission.ships} />}
       groupId={mission.attackGroupId}
-      headerTiming={activeMissionHeaderTiming(mission, now, noFleetReturned)}
+      headerTimings={activeMissionHeaderTimings(mission, now, noFleetReturned)}
       missionId={mission.missionId}
       origin={origin}
-      progressPercent={missionProgressPercent(mission, now)}
       routeSubtext={directionSubtext}
       statusPill={missionStatusPill(mission, now)}
       target={target}
@@ -1272,19 +1263,31 @@ function MissionRow({
   );
 }
 
-// Active cards surface the live ETA (outbound) or return countdown (returning/recalled) next to the
-// status pill — the single most relevant time for the mission's current phase (VEY-400). Outbound
-// fleets whose ships were all consumed on arrival have nothing to land, so the return reads
-// "No fleet returned" instead of a countdown.
-function activeMissionHeaderTiming(mission: FleetMissionSummary, now: number, noFleetReturned: boolean): EndpointTiming {
-  const returning = mission.status === "Returning" || mission.status === "Recalled" || mission.status === "Returned";
-  if (returning) {
-    return { label: "Returns", value: noFleetReturned ? "No fleet returned" : missionEndpointTiming(mission.returnAt, now) };
-  }
+// Compact rows keep both journey milestones visible when they exist. The status pill still conveys
+// the live phase, while these labels answer "when did/will it arrive?" and "when did/will it return?"
+// without making the player expand the row.
+function activeMissionHeaderTimings(mission: FleetMissionSummary, now: number, noFleetReturned: boolean): EndpointTiming[] {
   if (mission.missionType === "DefenseHold" && isDefenseHoldStationed(mission, now)) {
-    return { label: "Holds", value: missionEndpointTiming(defenseHoldRecallUntil(mission), now) };
+    return [
+      { label: "Arrived", value: missionEndpointTiming(mission.arrivalAt, now) },
+      { label: "Holds", value: missionEndpointTiming(defenseHoldRecallUntil(mission), now) },
+    ];
   }
-  return { label: "ETA", value: missionEndpointTiming(mission.arrivalAt, now) };
+  const returning = mission.status === "Returning" || mission.status === "Recalled" || mission.status === "Returned";
+  return [
+    { label: returning ? "Arrived" : "Arrives", value: missionEndpointTiming(mission.arrivalAt, now) },
+    {
+      label: returning ? "Returns" : "Return",
+      value: noFleetReturned ? "No fleet returned" : missionEndpointTiming(mission.returnAt, now),
+    },
+  ];
+}
+
+function pastMissionHeaderTimings(mission: FleetMissionSummary, now: number): EndpointTiming[] {
+  return [
+    { label: "Arrived", value: compactMissionTime(mission.arrivalAt, now) },
+    { label: "Returned", value: compactMissionTime(mission.returnAt, now) },
+  ];
 }
 
 // Shared fleet/cargo summary for every card: ship icons with ×N counts above the cargo line
@@ -1314,7 +1317,6 @@ function MissionFleet({
   // — per-ship loss counts are not in the served payload), and any debris created for follow-up harvest
   // (criterion 3). A winning no-loss raid shows the green outcome without a noisy empty Losses line.
   const attackFailed = losses && mission ? isFailedPlayerAttack(mission.missionType, losses.outcome) : false;
-  const hasLosses = losses ? hasAnyCombatLosses(losses.attacker, losses.defender) : false;
   const historicalDefenseHold = mission?.missionType === "DefenseHold"
     && (
       mission.defenseHoldOutcome !== undefined
@@ -1333,9 +1335,9 @@ function MissionFleet({
           <p className="text-[11px] text-slate-500">Surviving return fleet {historicalDefenseHold.survivingShips === undefined || historicalDefenseHold.survivingShips === null ? "Exact composition unavailable" : formatShips(historicalDefenseHold.survivingShips)}</p>
         </>
       ) : null}
-      {cargo ? <p className="text-[11px] text-slate-500">Cargo {formatCargo(cargo)}</p> : null}
-      {harvested ? <p className="text-[11px] text-slate-500">Debris collected {formatCargo(harvested)}</p> : null}
-      {loot ? <p className="text-[11px] text-slate-500">Loot {formatCargo(loot)}</p> : null}
+      {cargo && resourceTotal(cargo) > 0 ? <p className="text-[11px] text-slate-500">Cargo {formatCargoNonZero(cargo)}</p> : null}
+      {harvested && resourceTotal(harvested) > 0 ? <p className="text-[11px] text-slate-500">Debris collected {formatCargoNonZero(harvested)}</p> : null}
+      {loot && resourceTotal(loot) > 0 ? <p className="text-[11px] text-slate-500">Loot grabbed {formatCargoNonZero(loot)}</p> : null}
       {losses ? (
         <>
           {attackFailed ? (
@@ -1344,11 +1346,14 @@ function MissionFleet({
             </p>
           ) : null}
           <p className={`text-[11px] ${battleOutcomeTextTone(losses.outcome)}`}>Outcome {battleOutcomeLabel(losses.outcome)}</p>
-          {hasLosses ? (
-            <p className="text-[11px] text-slate-500">Losses {formatCargo(losses.attacker)} / {formatCargo(losses.defender)}</p>
+          {resourceTotal(losses.attacker) > 0 ? (
+            <p className="text-[11px] text-slate-500">Attacker losses {formatCargoNonZero(losses.attacker)}</p>
+          ) : null}
+          {resourceTotal(losses.defender) > 0 ? (
+            <p className="text-[11px] text-slate-500">Defender losses {formatCargoNonZero(losses.defender)}</p>
           ) : null}
           {debrisTotal(losses.debris) > 0 ? (
-            <p className="text-[11px] text-slate-500">Debris {formatDebris(losses.debris)}</p>
+            <p className="text-[11px] text-slate-500">Debris generated {formatDebrisNonZero(losses.debris)}</p>
           ) : null}
         </>
       ) : null}
@@ -1464,15 +1469,13 @@ function MissionCard({
   badgeLabel,
   badgeTone,
   defaultOpen,
-  direction,
   fleet,
   glance,
   groupId,
-  headerTiming,
+  headerTimings = [],
   hostile,
   missionId,
   origin,
-  progressPercent,
   routeSubtext,
   statusPill,
   target,
@@ -1481,15 +1484,13 @@ function MissionCard({
   badgeLabel: string;
   badgeTone: string;
   defaultOpen?: boolean | undefined;
-  direction: RouteLeg;
   fleet: preact.ComponentChildren;
   glance?: preact.ComponentChildren;
   groupId?: string | null | undefined;
-  headerTiming?: EndpointTiming | undefined;
+  headerTimings?: EndpointTiming[] | undefined;
   hostile?: boolean | undefined;
   missionId?: string | undefined;
   origin: MissionEndpoint;
-  progressPercent?: number | undefined;
   routeSubtext?: string | undefined;
   statusPill?: MissionStatusPill | undefined;
   target: MissionEndpoint;
@@ -1497,15 +1498,16 @@ function MissionCard({
   return (
     <details
       className={`group/mission text-xs text-slate-300 ${hostile ? "border-l-2 border-l-red-400/60 bg-red-400/[0.04]" : ""}`}
+      data-default-open={defaultOpen ? "true" : undefined}
       data-mission-row
       onToggle={(event) => syncMissionRowsDisclosureControl(event.currentTarget)}
-      open={defaultOpen || undefined}
+      ref={(element) => initializeMissionRowDisclosure(element, Boolean(defaultOpen))}
     >
       <summary className="flex cursor-pointer list-none flex-wrap items-center gap-x-2.5 gap-y-1.5 px-2.5 py-2 transition-colors hover:bg-white/[0.03] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-300/50 sm:px-3 [&::-webkit-details-marker]:hidden">
         <span className={`inline-flex shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-semibold ${badgeTone}`}>{badgeLabel}</span>
         {missionId ? <span className="shrink-0 text-[11px] font-semibold text-white">{missionIdLabel(missionId)}</span> : null}
-        {/* Route wraps to its own full-width line on mobile (order-3) and sits inline between the
-            badge and the status cluster on desktop. Clicks on its links must not toggle the row. */}
+        {/* Endpoints wrap to their own full-width line on mobile and sit inline on desktop. Mission
+            Control intentionally has no route/progress arrow; Mission Detail retains that treatment. */}
         <div
           className="order-3 w-full min-w-0 sm:order-1 sm:w-auto sm:flex-1"
           onClick={(event) => {
@@ -1513,15 +1515,14 @@ function MissionCard({
             if (clicked?.closest("a,button")) event.stopPropagation();
           }}
         >
-          <MissionRouteCell compact direction={direction} origin={origin} progressPercent={progressPercent} target={target} />
+          <MissionEndpointPair origin={origin} target={target} />
         </div>
-        <span className="order-2 ml-auto flex shrink-0 items-center gap-2">
-          {glance}
-          {headerTiming ? (
-            <span className="text-[11px] tabular-nums text-slate-400">
-              <span className="font-semibold uppercase tracking-[0.1em] text-slate-600">{headerTiming.label}</span> {headerTiming.value}
+        <span className="order-2 flex w-full min-w-0 flex-wrap items-center justify-end gap-x-2 gap-y-1 sm:ml-auto sm:w-auto sm:shrink-0">
+          {headerTimings.map((timing) => (
+            <span className="whitespace-nowrap text-[11px] tabular-nums text-slate-400" key={timing.label}>
+              <span className="font-semibold uppercase tracking-[0.1em] text-slate-600">{timing.label}</span> {timing.value}
             </span>
-          ) : null}
+          ))}
           {statusPill ? (
             <span className={`inline-flex rounded-full border px-1.5 py-0.5 text-[10px] font-medium ${statusPill.tone}`}>
               {statusPill.label}
@@ -1529,6 +1530,11 @@ function MissionCard({
           ) : null}
           <ChevronDown aria-hidden="true" className="shrink-0 text-slate-500 transition-transform group-open/mission:rotate-180" size={14} />
         </span>
+        {glance ? (
+          <span className="order-4 flex w-full flex-wrap items-center gap-x-2 gap-y-1 sm:order-2 sm:ml-auto sm:w-auto">
+            {glance}
+          </span>
+        ) : null}
       </summary>
       <div className="grid gap-2 border-t border-white/[0.06] px-2.5 pb-2.5 pt-2 sm:px-3">
         {routeSubtext || groupId ? (
@@ -1545,38 +1551,35 @@ function MissionCard({
   );
 }
 
-// Compact payload glance shown on the collapsed row: the single most informative payload fact for
-// the mission's current phase — battle outcome for resolved combat, then loot / harvested debris on
-// the way home, then the outbound cargo. Null when there is nothing worth surfacing (e.g. an empty
-// deploy), keeping quiet rows quiet.
+export function initializeMissionRowDisclosure(element: HTMLDetailsElement | null, defaultOpen: boolean): void {
+  if (!element || element.dataset.disclosureInitialized === "true") return;
+  element.dataset.disclosureInitialized = "true";
+  if (defaultOpen) element.open = true;
+}
+
+// Compact payload facts shown on the collapsed row. Every semantically distinct non-zero value is
+// visible at a glance; zero totals render nothing at all.
 function missionGlance({
   harvested,
   loot,
-  losses,
   mission,
 }: {
   harvested?: FleetMissionSummary["returnCargo"] | undefined;
   loot?: BattleReport["loot"] | undefined;
-  losses?: MissionLossSummary | undefined;
   mission: FleetMissionSummary;
 }): preact.ComponentChildren {
-  if (losses) {
-    const failed = isFailedPlayerAttack(mission.missionType, losses.outcome);
-    return (
-      <span className={`text-[11px] font-medium ${failed ? "text-red-300" : battleOutcomeTextTone(losses.outcome)}`}>
-        {failed ? "Attack failed" : battleOutcomeLabel(losses.outcome)}
-      </span>
-    );
-  }
-  if (loot) return glanceStat("Loot", loot);
-  if (harvested) return glanceStat("Debris", harvested);
-  if (resourceTotal(mission.cargo) > 0) return glanceStat("Cargo", mission.cargo);
-  return null;
+  return (
+    <>
+      {resourceTotal(mission.cargo) > 0 ? glanceStat("Cargo", mission.cargo) : null}
+      {loot && resourceTotal(loot) > 0 ? glanceStat("Loot grabbed", loot) : null}
+      {harvested && resourceTotal(harvested) > 0 ? glanceStat("Debris collected", harvested) : null}
+    </>
+  );
 }
 
 function glanceStat(label: string, cargo: { metal: string; crystal: string; deuterium: string }): preact.ComponentChildren {
   return (
-    <span className="hidden text-[11px] tabular-nums text-slate-400 min-[380px]:inline">
+    <span className="inline text-[11px] tabular-nums text-slate-400">
       <span className="font-semibold uppercase tracking-[0.1em] text-slate-600">{label}</span> {formatCargoCompact(cargo)}
     </span>
   );
@@ -2224,12 +2227,12 @@ function PastMissionSummaryRow({
           Open
         </button>
       }
-      glance={missionGlance({ harvested, loot, losses, mission })}
+      glance={missionGlance({ harvested, loot, mission })}
       badgeLabel={directionalMissionTypeLabel(mission.missionType, missionDirection)}
       badgeTone={missionTypeTone(mission.missionType)}
-      direction={missionRouteLeg(mission.status)}
       fleet={<MissionFleet cargo={mission.cargo} harvested={harvested} loot={loot} losses={losses} mission={mission} ships={mission.ships} />}
       groupId={mission.attackGroupId}
+      headerTimings={pastMissionHeaderTimings(mission, now)}
       missionId={mission.missionId}
       origin={origin}
       // VEY-400: the terminal status (e.g. "Returned") reads as the header pill, folding in the
@@ -2266,7 +2269,6 @@ function PastBattleReportRow({
   const isGroupedAttack = participants.length > 1;
   const lootShown = isGroupedAttack ? sumLoot(participants) : report.loot;
   const joinerCount = isGroupedAttack ? participants.length - 1 : 0;
-  const hasLosses = hasAnyCombatLosses(report.attackerLosses, report.defenderLosses);
   return (
     <MissionCard
       actions={
@@ -2282,22 +2284,22 @@ function PastBattleReportRow({
       }
       badgeLabel="Battle report"
       badgeTone="border-red-300/25 bg-red-400/10 text-red-100"
-      direction="outbound"
-      glance={
-        <span className={`text-[11px] font-medium ${battleOutcomeTextTone(report.outcome)}`}>
-          {battleOutcomeLabel(report.outcome)}
-        </span>
-      }
+      glance={resourceTotal(lootShown) > 0 ? glanceStat("Loot grabbed", lootShown) : null}
       fleet={
         <div className="space-y-1">
-          <p className="text-[11px] text-slate-500">
-            {isGroupedAttack ? "Group loot " : "Loot "}{formatCargo(lootShown)}
-          </p>
-          {hasLosses ? (
-            <p className="text-[11px] text-slate-500">Losses {formatCargo(report.attackerLosses)} / {formatCargo(report.defenderLosses)}</p>
+          {resourceTotal(lootShown) > 0 ? (
+            <p className="text-[11px] text-slate-500">
+              {isGroupedAttack ? "Group loot grabbed " : "Loot grabbed "}{formatCargoNonZero(lootShown)}
+            </p>
+          ) : null}
+          {resourceTotal(report.attackerLosses) > 0 ? (
+            <p className="text-[11px] text-slate-500">Attacker losses {formatCargoNonZero(report.attackerLosses)}</p>
+          ) : null}
+          {resourceTotal(report.defenderLosses) > 0 ? (
+            <p className="text-[11px] text-slate-500">Defender losses {formatCargoNonZero(report.defenderLosses)}</p>
           ) : null}
           {debrisTotal(report.debris) > 0 ? (
-            <p className="text-[11px] text-slate-500">Debris {formatDebris(report.debris)}</p>
+            <p className="text-[11px] text-slate-500">Debris generated {formatDebrisNonZero(report.debris)}</p>
           ) : null}
           {isGroupedAttack ? (
             <p className="text-[11px] text-cyan-300/80">ACS group · {joinerCount} {joinerCount === 1 ? "joiner" : "joiners"}</p>
@@ -2307,6 +2309,7 @@ function PastBattleReportRow({
       missionId={report.missionId}
       origin={origin}
       routeSubtext={`${battleOutcomeLabel(report.outcome)} · Block ${report.blockNumber || "unknown"} · ${report.rounds} rounds`}
+      statusPill={{ label: battleOutcomeLabel(report.outcome), tone: battleOutcomePillTone(report.outcome) }}
       target={target}
     />
   );
@@ -2853,6 +2856,13 @@ function formatCargo(cargo: FleetMissionSummary["cargo"]): string {
   return `${formatResource(cargo.metal)} M / ${formatResource(cargo.crystal)} C / ${formatResource(cargo.deuterium)} D`;
 }
 
+function formatCargoNonZero(cargo: { metal: string; crystal: string; deuterium: string }): string {
+  return ([["M", cargo.metal], ["C", cargo.crystal], ["D", cargo.deuterium]] as const)
+    .filter(([, value]) => Number(value) > 0)
+    .map(([suffix, value]) => `${formatResource(value)} ${suffix}`)
+    .join(" / ");
+}
+
 const compactResourceFormatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 1, notation: "compact" });
 
 // Glance-line cargo: only the non-zero resources, compact-notated ("1.9K M · 3.2K C"), so the
@@ -3212,11 +3222,10 @@ function battleOutcomeTextTone(outcome: BattleReport["outcome"]): string {
   return "text-amber-300/80";
 }
 
-function hasAnyCombatLosses(
-  attacker: BattleReport["attackerLosses"],
-  defender: BattleReport["defenderLosses"],
-): boolean {
-  return resourceTotal(attacker) > 0 || resourceTotal(defender) > 0;
+function battleOutcomePillTone(outcome: BattleReport["outcome"]): string {
+  if (outcome === "AttackerWin") return "border-emerald-300/25 bg-emerald-300/10 text-emerald-100";
+  if (outcome === "DefenderWin") return "border-red-300/25 bg-red-300/10 text-red-100";
+  return "border-amber-300/25 bg-amber-300/10 text-amber-100";
 }
 
 function resourceTotal(resources: { metal: string; crystal: string; deuterium: string }): number {
@@ -3227,10 +3236,13 @@ function debrisTotal(debris: BattleReport["debris"]): number {
   return Number(debris.metal) + Number(debris.crystal);
 }
 
-// Debris is metal/crystal only (no deuterium), so it has its own formatter rather than reusing
-// formatCargo, which expects a deuterium field.
-function formatDebris(debris: BattleReport["debris"]): string {
-  return `${formatResource(debris.metal)} M / ${formatResource(debris.crystal)} C`;
+// Debris is metal/crystal only. Zero components are omitted so an otherwise useful fact never
+// contains the empty-value noise that the compact-row rework explicitly removes.
+function formatDebrisNonZero(debris: BattleReport["debris"]): string {
+  return ([["M", debris.metal], ["C", debris.crystal]] as const)
+    .filter(([, value]) => Number(value) > 0)
+    .map(([suffix, value]) => `${formatResource(value)} ${suffix}`)
+    .join(" / ");
 }
 
 function shortHash(value: string): string {
