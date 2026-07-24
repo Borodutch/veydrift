@@ -8684,6 +8684,7 @@ export function PlayableMvpApp({
           allActiveMissions={displayAllActiveMissions}
           canTransact={canSubmitMissionTransaction}
           fleetVisibility={displayFleetVisibility}
+          hasAlliance={Boolean(allianceState?.membership.allianceId && allianceState.membership.allianceId !== "0")}
           globalMissionArchive={globalMissionArchive}
           globalMissionArchiveError={globalMissionArchiveSection.status.error ?? globalMissionArchiveError}
           globalMissionArchiveLoading={globalMissionArchiveLoading || globalMissionArchiveSection.status.loading}
