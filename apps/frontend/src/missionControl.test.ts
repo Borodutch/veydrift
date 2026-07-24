@@ -702,7 +702,7 @@ describe("Mission Control battle reports", () => {
       missionNumberSearch: "#123",
     })).join(" ");
 
-    expect(filtered).toContain("Mission number");
+    expect(filtered).toContain("Mission #");
     expect(filtered).toContain("#123");
     expect(filtered).toContain("#9123");
     expect(filtered).not.toContain("#45");
