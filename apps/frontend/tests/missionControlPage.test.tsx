@@ -220,7 +220,7 @@ describe("MissionControlPage", () => {
     // outbound arrival (…300) and the return landing (…600). Under lazy reconciliation both legs are
     // mid-settlement, so they read "Resolving" rather than the stale backend "Outbound"/"Returning".
     expect(text).toContain("Resolving");
-    expect(text).toContain("ETA");
+    expect(text).toContain("Arrives");
     expect(text).toContain("Returns");
     // Hostile inbound missions read "Incoming attack"; the player's own launches stay bare.
     expect(text).toContain("Incoming attack #8");
@@ -234,8 +234,8 @@ describe("MissionControlPage", () => {
     expect(text).not.toContain("Land fleet");
     // Every card exposes the single shared "Open" action into the mission detail screen.
     expect(text).toContain("Open");
-    // The fleet block shows the cargo line alongside the ship icons (VEY-400 card spec).
-    expect(text).toContain("Cargo");
+    // Zero-total cargo is omitted rather than rendered as an empty placeholder.
+    expect(text).not.toContain("Cargo Empty");
     // Route commanders render as bare clickable addresses — never prefixed with "Commander".
     expect(text).toContain("0x1111...1111");
     expect(text).not.toContain("Commander 0x1111...1111");
@@ -638,8 +638,9 @@ describe("MissionControlPage", () => {
 
     expect(text).toContain("Past missions");
     expect(text).toContain("Outcome Attacker win");
-    expect(text).toContain("Losses 100 M / 50 C / 0 D / 900 M / 250 C / 0 D");
-    expect(text).toContain("Debris 600 M / 150 C");
+    expect(text).toContain("Attacker losses 100 M / 50 C");
+    expect(text).toContain("Defender losses 900 M / 250 C");
+    expect(text).toContain("Debris generated 600 M / 150 C");
   });
 
   test("shows outcome and loot on a returned attack archive card when the report is embedded in the mission row", () => {
@@ -675,9 +676,10 @@ describe("MissionControlPage", () => {
     const text = visibleText(page);
 
     expect(text).toContain("Past missions");
-    expect(text).toContain("Loot 1,200 M / 300 C / 0 D");
+    expect(text).toContain("Loot grabbed 1,200 M / 300 C");
     expect(text).toContain("Outcome Attacker win");
-    expect(text).toContain("Losses 100 M / 50 C / 0 D / 900 M / 250 C / 0 D");
+    expect(text).toContain("Attacker losses 100 M / 50 C");
+    expect(text).toContain("Defender losses 900 M / 250 C");
   });
 
   test("shows returned attack outcome and loot without a losses line when no ships were lost", () => {
@@ -720,9 +722,9 @@ describe("MissionControlPage", () => {
     expect(text).toContain("Attack #177");
     expect(text).toContain("Returned");
     expect(text).toContain("Outcome Attacker win");
-    expect(text).toContain("Loot 1,200 M / 300 C / 0 D");
-    expect(text).not.toContain("Losses 0 M / 0 C / 0 D / 0 M / 0 C / 0 D");
-    expect(text).not.toContain("Losses");
+    expect(text).toContain("Loot grabbed 1,200 M / 300 C");
+    expect(text).not.toContain("Attacker losses");
+    expect(text).not.toContain("Defender losses");
   });
 
   test("renders returned moon-target missions distinctly in the completed archive", () => {
@@ -926,8 +928,8 @@ describe("MissionControlPage", () => {
     const text = visibleText(page);
 
     // Both the outbound cargo and the looted haul render, on their own labeled lines.
-    expect(text).toContain("Cargo 10 M / 0 C / 0 D");
-    expect(text).toContain("Loot 1,200 M / 300 C / 0 D");
+    expect(text).toContain("Cargo 10 M");
+    expect(text).toContain("Loot grabbed 1,200 M / 300 C");
   });
 
   test("shows harvested debris from return cargo on a returning harvest mission card", () => {
@@ -954,9 +956,9 @@ describe("MissionControlPage", () => {
     });
     const text = visibleText(page);
 
-    expect(text).toContain("Cargo Empty");
-    expect(text).toContain("Debris collected 1,200 M / 300 C / 0 D");
-    expect(text).not.toContain("Loot 1,200 M / 300 C / 0 D");
+    expect(text).not.toContain("Cargo Empty");
+    expect(text).toContain("Debris collected 1,200 M / 300 C");
+    expect(text).not.toContain("Loot grabbed 1,200 M / 300 C");
   });
 
   test("shows harvested debris on completed harvest mission cards", () => {
@@ -985,7 +987,7 @@ describe("MissionControlPage", () => {
 
     expect(text).toContain("Harvest");
     expect(text).toContain("Returned");
-    expect(text).toContain("Debris collected 400 M / 50 C / 0 D");
+    expect(text).toContain("Debris collected 400 M / 50 C");
     expect(text).not.toContain("Outcome");
     expect(text).not.toContain("Losses");
   });
@@ -1032,12 +1034,12 @@ describe("MissionControlPage", () => {
     });
     const text = visibleText(page);
 
-    expect(text).toContain("Cargo Empty");
-    expect(text).toContain("Loot 30 M / 5 C / 0 D");
-    expect(text).not.toContain("Loot 1,200 M / 300 C / 0 D");
+    expect(text).not.toContain("Cargo Empty");
+    expect(text).toContain("Loot grabbed 30 M / 5 C");
+    expect(text).not.toContain("Loot grabbed 1,200 M / 300 C");
   });
 
-  test("shows an intentional zero-loot state for a resolved returning attack", () => {
+  test("omits zero cargo and zero loot on a resolved returning attack", () => {
     const wallet = "0x1111111111111111111111111111111111111111";
     const page = missionControlPage({
       fleetVisibility: {
@@ -1062,8 +1064,9 @@ describe("MissionControlPage", () => {
     });
     const text = visibleText(page);
 
-    expect(text).toContain("Cargo Empty");
-    expect(text).toContain("Loot Empty");
+    expect(text).not.toContain("Cargo Empty");
+    expect(text).not.toContain("Loot Empty");
+    expect(text).not.toContain("Loot grabbed");
   });
 
   test("withholds loot from a mission card until the fleet leaves its outbound leg", () => {
@@ -1133,12 +1136,11 @@ describe("MissionControlPage", () => {
     });
     const text = visibleText(page);
 
-    // The report's outcome renders as an "Outcome" line and the attacker / defender losses as a
-    // "Losses" line, so the card states whether the attack succeeded and what it cost. A win shows
-    // no failed-attack flag, and the debris created surfaces for follow-up harvest.
+    // Each non-zero combat fact has its own exact label; zero resource components are quiet.
     expect(text).toContain("Outcome Attacker win");
-    expect(text).toContain("Losses 100 M / 50 C / 0 D / 900 M / 250 C / 0 D");
-    expect(text).toContain("Debris 600 M / 150 C");
+    expect(text).toContain("Attacker losses 100 M / 50 C");
+    expect(text).toContain("Defender losses 900 M / 250 C");
+    expect(text).toContain("Debris generated 600 M / 150 C");
     expect(text).not.toContain("Attack failed");
   });
 
@@ -1173,8 +1175,9 @@ describe("MissionControlPage", () => {
     // the battle is surfaced for follow-up harvest (criterion 3).
     expect(text).toContain("Attack failed — fleet lost");
     expect(text).toContain("Outcome Defender win");
-    expect(text).toContain("Losses 5,000 M / 3,000 C / 0 D / 200 M / 100 C / 0 D");
-    expect(text).toContain("Debris 600 M / 150 C");
+    expect(text).toContain("Attacker losses 5,000 M / 3,000 C");
+    expect(text).toContain("Defender losses 200 M / 100 C");
+    expect(text).toContain("Debris generated 600 M / 150 C");
   });
 
   test("does not flag a winning raid as a failed attack, and still shows debris", () => {
@@ -1202,7 +1205,7 @@ describe("MissionControlPage", () => {
 
     expect(text).toContain("Outcome Attacker win");
     expect(text).not.toContain("Attack failed");
-    expect(text).toContain("Debris 600 M / 150 C");
+    expect(text).toContain("Debris generated 600 M / 150 C");
   });
 
   test("withholds fleet losses from a mission card until the fleet leaves its outbound leg", () => {
