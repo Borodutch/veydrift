@@ -306,8 +306,8 @@ contract RandomnessEngineTest is Test {
 
         vm.warp(block.timestamp + engine.STALE_REQUEST_RECOVERY_DELAY());
 
-        vm.expectRevert();
         vm.prank(attacker);
+        vm.expectRevert();
         engine.recoverStaleRequestCommitment(requestId, originalCommitment, replacementCommitment);
 
         vm.expectRevert(
@@ -326,6 +326,7 @@ contract RandomnessEngineTest is Test {
         engine.recoverStaleRequestCommitment(requestId, originalCommitment, replacementCommitment);
         assertEq(engine.request(requestId).randomnessCommitment, replacementCommitment);
 
+        bytes32 secondReplacementCommitment = engine.randomnessCommitment(333);
         vm.expectRevert(
             abi.encodeWithSelector(
                 RandomnessEngine.RandomnessRecoveryAlreadyScheduled.selector, requestId
@@ -333,7 +334,7 @@ contract RandomnessEngineTest is Test {
         );
         vm.prank(owner);
         engine.recoverStaleRequestCommitment(
-            requestId, replacementCommitment, engine.randomnessCommitment(333)
+            requestId, replacementCommitment, secondReplacementCommitment
         );
 
         vm.expectRevert(
