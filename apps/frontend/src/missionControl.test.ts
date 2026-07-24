@@ -361,11 +361,11 @@ describe("Mission Control battle reports", () => {
 
     expect(allPanel?.props?.hidden).toBe(false);
     expect(text).toMatch(/Outcome\s+Attacker win/);
-    expect(text).toMatch(/Loot grabbed\s+900 M \/ 450 C \/ 75 D/);
+    expect(text).toMatch(/Loot\s+900 M \/ 450 C \/ 75 D/);
     expect(text).toMatch(/Attacker losses\s+100 M \/ 50 C/);
     expect(text).toMatch(/Defender losses\s+1,200 M \/ 300 C/);
     expect(text).toMatch(/Cargo\s+400 M \/ 120 C \/ 30 D/);
-    expect(text).toMatch(/Debris generated\s+390 M \/ 105 C/);
+    expect(text).toMatch(/Debris field\s+390 M \/ 105 C/);
   });
 
   test("renders the Incoming attacks past mission filter as a restored tab (VEY-KANEO-564)", () => {
@@ -1086,7 +1086,7 @@ describe("Mission Control battle reports", () => {
     expect(text).toContain("Cargo carried");
     // VEY-KANEO-396: loot is the attacker's "Loot grabbed"; the on-chain log does not expose loot
     // retained by the defender, so there is no fabricated "Loot left" row.
-    expect(text).toContain("Loot grabbed");
+    expect(text).toContain("Loot");
     expect(text).not.toContain("Loot left");
     expect(text).toContain("Battle-time defenders");
     expect(text).not.toContain("Current fleet / defenses");
@@ -1597,9 +1597,9 @@ describe("Mission Control battle reports", () => {
       },
     })).join(" ");
     expect(cardText).toContain("Recalled");
-    expect(cardText).toMatch(/Original stationed fleet\s+Light Fighter x2, Heavy Fighter x2/);
-    expect(cardText).toMatch(/Destroyed in combat\s+Light Fighter x2, Heavy Fighter x2/);
-    expect(cardText).toMatch(/Surviving return fleet\s+None/);
+    expect(cardText).toMatch(/Stationed\s+Light Fighter x2, Heavy Fighter x2/);
+    expect(cardText).toMatch(/Destroyed\s+Light Fighter x2, Heavy Fighter x2/);
+    expect(cardText).toMatch(/Survived\s+None/);
   });
 
   test("VEY-KANEO-407: renders unit art in the standalone Fleet And Cargo panel for non-combat missions", () => {
@@ -2032,18 +2032,21 @@ describe("Mission Control battle reports", () => {
     expect(summaryText).not.toContain("Arrived");
     expect(summaryText).not.toContain("Origin");
     expect(summaryText).not.toContain("Destination");
-    expect(summaryText).toMatch(/Cargo\s+10 M/);
-    expect(summaryText).toMatch(/Loot\s+1,200 M · 300 C/);
+    // Compact payload values bind number to unit with a non-breaking space (matched by \s) and
+    // compact from 1,000 up (1,200 -> 1.2K); the expanded panel keeps exact figures.
+    expect(summaryText).toMatch(/Cargo\s+10\sM/);
+    expect(summaryText).toMatch(/Loot\s+1\.2K\sM\s·\s300\sC/);
+    expect(summaryText).toMatch(/Losses\s+150\s\/\s1\.2K/);
     expect(summaryText).not.toContain("Attacker losses");
     expect(summaryText).not.toContain("Defender losses");
-    expect(summaryText).not.toContain("Debris generated");
+    expect(summaryText).not.toContain("Debris field");
     expect(summaryText).not.toContain(" 0 ");
 
     expect(rowText).toContain("Arrived");
     expect(rowText).toContain("Small Cargo");
     expect(rowText).toMatch(/Attacker losses\s+100 M \/ 50 C/);
     expect(rowText).toMatch(/Defender losses\s+900 M \/ 250 C/);
-    expect(rowText).toMatch(/Debris generated\s+600 M \/ 150 C/);
+    expect(rowText).toMatch(/Debris field\s+600 M \/ 150 C/);
     expect(rowText).toContain("Open");
   });
 
