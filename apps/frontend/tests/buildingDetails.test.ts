@@ -19,7 +19,7 @@ const infrastructurePageSource = await Bun.file(new URL("../src/components/Infra
 describe("building detail helpers", () => {
   test("keeps prerequisite copy in selected building details, not catalog tiles (VEY-KANEO-725)", () => {
     const catalogSource = infrastructurePageSource.slice(
-      infrastructurePageSource.indexOf("catalog={buildingCatalog.map"),
+      infrastructurePageSource.indexOf("items={buildingCatalog.map"),
       infrastructurePageSource.indexOf("detail={("),
     );
 
