@@ -3,20 +3,27 @@ import type { ComponentChildren, VNode } from "preact";
 import { TopBar } from "../src/components/TopBar";
 
 describe("TopBar", () => {
-  test("keeps mobile resources and support action in a compact row", () => {
+  test("gives mobile resources a full-width row separate from the icon row", () => {
     const topBar = renderTopBar();
-    const resourceRow = elementNodes(topBar).find(
-      (node) =>
-        typeof node.props?.className === "string" &&
-        node.props.className.includes("grid-cols-[repeat(3,minmax(0,1fr))_minmax(4.5rem,1.25fr)_repeat(4,2.5rem)]")
+    const nodes = elementNodes(topBar);
+    // Both mobile rows flatten into the single desktop flex line via sm:contents.
+    const mobileRows = nodes.filter(
+      (node) => typeof node.props?.className === "string" && node.props.className.includes("sm:contents")
+    );
+    const resourcePips = nodes.filter(
+      (node) => node.type === "details"
+        && typeof node.props?.className === "string"
+        && node.props.className.includes("sm:flex-none")
     );
     const supportLink = linkWithLabel(topBar, "Telegram support");
 
-    expect(resourceRow?.props?.className).toContain("sm:flex-wrap");
-    expect(resourceRow?.props?.className).toContain("gap-0.5");
-    expect(resourceRow?.props?.className).toContain("_repeat(4,2.5rem)]");
+    expect(mobileRows).toHaveLength(2);
     expect(buttonsWithText(topBar, "Collect")).toHaveLength(0);
-    expect(supportLink?.props?.className).toContain("h-10 w-10");
+    // Pips share the resources row evenly; no icon columns squeeze them anymore.
+    for (const pip of resourcePips) {
+      expect(pip.props.className).toContain("flex-1");
+    }
+    expect(supportLink?.props?.className).toContain("flex-1");
     expect(supportLink?.props?.className).toContain("sm:hidden");
   });
 

@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, Clipboard, ExternalLink, List } from "lucide-preact";
+import { ChevronDown, ChevronLeft, ChevronRight, Clipboard, ExternalLink, List } from "lucide-preact";
 
 import { ActionReasonNote } from "./ActionReasonNote";
 import { planetTypeFromTemperature } from "../data/mockUniverse";
@@ -210,7 +210,7 @@ export function MissionControlPage({
   const view = initialView ?? resolveMissionControlView();
 
   return (
-    <section className="grid gap-4">
+    <section className="grid gap-3">
       <PageHeader
         actions={(
           <>
@@ -244,7 +244,7 @@ export function MissionControlPage({
           ) : null}
 
           {activeCount === 0 ? (
-            <div className="rounded-lg border border-white/10 bg-[#101624] p-4 text-sm text-slate-400">
+            <div className="rounded-lg border border-white/10 bg-[#101624] p-3 text-sm text-slate-400">
               No active missions for this wallet. Use Galaxy to launch attacks, transport resources, deploy fleets, or harvest debris.
             </div>
           ) : null}
@@ -377,7 +377,7 @@ export function StationedDefenseSection({
   if (hideWhenEmpty && total === 0) return null;
 
   return (
-    <section className="grid gap-3 rounded-lg border border-violet-300/15 bg-violet-300/[0.03] p-4">
+    <section className="grid gap-2 rounded-lg border border-violet-300/15 bg-violet-300/[0.03] p-3">
       <div className="flex items-center justify-between gap-2">
         <h2 className="text-sm font-semibold text-violet-100">Stationed defenses</h2>
         <div className="flex items-center gap-3">
@@ -415,7 +415,7 @@ export function StationedDefenseSection({
           requires a second colony or an alliance member's planet to send the fleet to.
         </p>
       ) : (
-        <div className="grid gap-2">
+        <div className="divide-y divide-white/[0.06] overflow-hidden rounded-md border border-white/[0.08] bg-black/20">
           {myStationed.map((mission) => (
             <StationedDefenseCard
               key={mission.missionId}
@@ -839,7 +839,7 @@ function ActiveMissionList({
   walletPlanetIds: ReadonlySet<string>;
 }) {
   if (rows.length === 0) {
-    return <p className="px-3 py-4 text-xs text-slate-500">{emptyLabel}</p>;
+    return <p className="px-3 py-3 text-xs text-slate-500">{emptyLabel}</p>;
   }
 
   const pageSize = 25;
@@ -850,14 +850,13 @@ function ActiveMissionList({
 
   return (
     <div
-      className="p-3"
       data-past-page-current={String(currentPage)}
       data-past-page-size={String(pageSize)}
       data-past-page-total={String(pagination.totalEntries)}
     >
       {pages.map((pageRows, pageIndex) => (
         <div
-          className="grid gap-3"
+          className="divide-y divide-white/[0.06]"
           data-past-page={pageIndex}
           hidden={pageIndex !== currentPage}
           key={`active-mission-page:${pageIndex}`}
@@ -884,7 +883,7 @@ function ActiveMissionList({
           ))}
         </div>
       ))}
-      {pagination.totalPages > 1 ? <ClientPaginationControl className="pb-3" pagination={pagination} /> : null}
+      {pagination.totalPages > 1 ? <ClientPaginationControl className="px-2.5 pb-2 sm:px-3" pagination={pagination} /> : null}
     </div>
   );
 }
@@ -931,8 +930,14 @@ function MissionRow({
   const noFleetReturned = isNoFleetReturned(mission);
   const directionSubtext = direction && direction !== "Joinable attack" ? direction : undefined;
   const pendingMission = isPendingMissionLaunch(mission);
+  // A hostile attack heading for the player's planet is the one row that must not hide its
+  // counterplay behind a click: flag it red and start it expanded.
+  const hostileInbound = missionDirection === "incoming" && isOffensiveMissionType(mission.missionType);
   return (
     <MissionCard
+      defaultOpen={hostileInbound}
+      glance={missionGlance({ harvested, loot, losses, mission })}
+      hostile={hostileInbound}
       actions={
         <>
           {!pendingMission && actions.map((action) => action.kind === "counterplay" ? (
@@ -1176,18 +1181,22 @@ type EndpointTiming = { label: string; value: string };
 type MissionStatusPill = { label: string; tone: string };
 
 // The shared mission-card presentation used by every Mission Control panel (VEY-400). Active and
-// past missions both render through this one component so the two panels stay in sync: a header
-// line (mission-type badge + #number + status pill + optional live countdown), the shared route
-// block with the inline progress bar, and a footer holding the fleet/cargo summary and the
-// contextual action(s). Cards drop the old table headers and read top-to-bottom on mobile.
+// past missions both render through this one component so the two panels stay in sync. Each row is
+// a native <details>: the always-visible summary is the at-a-glance line (mission-type badge +
+// #number + route with inline progress + payload glance + status pill/countdown) and expanding it
+// reveals the fleet/cargo/loot breakdown plus the contextual action(s). Rows are hook-free —
+// expansion is browser-native, matching the DOM-driven tab/page pattern of the rest of the panel.
 function MissionCard({
   actions,
   badgeLabel,
   badgeTone,
+  defaultOpen,
   direction,
   fleet,
+  glance,
   groupId,
   headerTiming,
+  hostile,
   missionId,
   origin,
   progressPercent,
@@ -1198,10 +1207,13 @@ function MissionCard({
   actions: preact.ComponentChildren;
   badgeLabel: string;
   badgeTone: string;
+  defaultOpen?: boolean | undefined;
   direction: RouteLeg;
   fleet: preact.ComponentChildren;
+  glance?: preact.ComponentChildren;
   groupId?: string | null | undefined;
   headerTiming?: EndpointTiming | undefined;
+  hostile?: boolean | undefined;
   missionId?: string | undefined;
   origin: MissionEndpoint;
   progressPercent?: number | undefined;
@@ -1210,30 +1222,89 @@ function MissionCard({
   target: MissionEndpoint;
 }) {
   return (
-    <article className="rounded-lg border border-white/10 bg-black/20 p-3 text-xs text-slate-300 transition hover:border-white/20">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className={`inline-flex rounded border px-2 py-1 text-[11px] font-semibold ${badgeTone}`}>{badgeLabel}</span>
-        {missionId ? <span className="font-semibold text-white">{missionIdLabel(missionId)}</span> : null}
-        {statusPill ? (
-          <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-medium ${statusPill.tone}`}>
-            {statusPill.label}
-          </span>
+    <details
+      className={`group/mission text-xs text-slate-300 ${hostile ? "border-l-2 border-l-red-400/60 bg-red-400/[0.04]" : ""}`}
+      data-mission-row
+      open={defaultOpen || undefined}
+    >
+      <summary className="flex cursor-pointer list-none flex-wrap items-center gap-x-2.5 gap-y-1.5 px-2.5 py-2 transition-colors hover:bg-white/[0.03] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-300/50 sm:px-3 [&::-webkit-details-marker]:hidden">
+        <span className={`inline-flex shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-semibold ${badgeTone}`}>{badgeLabel}</span>
+        {missionId ? <span className="shrink-0 text-[11px] font-semibold text-white">{missionIdLabel(missionId)}</span> : null}
+        {/* Route wraps to its own full-width line on mobile (order-3) and sits inline between the
+            badge and the status cluster on desktop. Clicks on its links must not toggle the row. */}
+        <div
+          className="order-3 w-full min-w-0 sm:order-1 sm:w-auto sm:flex-1"
+          onClick={(event) => {
+            const clicked = event.target instanceof Element ? event.target : null;
+            if (clicked?.closest("a,button")) event.stopPropagation();
+          }}
+        >
+          <MissionRouteCell compact direction={direction} origin={origin} progressPercent={progressPercent} target={target} />
+        </div>
+        <span className="order-2 ml-auto flex shrink-0 items-center gap-2">
+          {glance}
+          {headerTiming ? (
+            <span className="text-[11px] tabular-nums text-slate-400">
+              <span className="font-semibold uppercase tracking-[0.1em] text-slate-600">{headerTiming.label}</span> {headerTiming.value}
+            </span>
+          ) : null}
+          {statusPill ? (
+            <span className={`inline-flex rounded-full border px-1.5 py-0.5 text-[10px] font-medium ${statusPill.tone}`}>
+              {statusPill.label}
+            </span>
+          ) : null}
+          <ChevronDown aria-hidden="true" className="shrink-0 text-slate-500 transition-transform group-open/mission:rotate-180" size={14} />
+        </span>
+      </summary>
+      <div className="grid gap-2 border-t border-white/[0.06] px-2.5 pb-2.5 pt-2 sm:px-3">
+        {routeSubtext || groupId ? (
+          <p className="text-[11px] text-slate-500">
+            {[routeSubtext, groupId ? `Group ${groupId}` : null].filter(Boolean).join(" · ")}
+          </p>
         ) : null}
-        {headerTiming ? (
-          <span className="text-[11px] tabular-nums text-slate-400">
-            <span className="font-semibold uppercase tracking-[0.1em] text-slate-600">{headerTiming.label}</span> {headerTiming.value}
-          </span>
-        ) : null}
-        {groupId ? <span className="text-[11px] text-cyan-100/70">Group {groupId}</span> : null}
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+          <div className="min-w-0">{fleet}</div>
+          <div className="flex flex-wrap gap-1.5 sm:justify-end">{actions}</div>
+        </div>
       </div>
-      <div className="mt-3">
-        <MissionRouteCell direction={direction} origin={origin} progressPercent={progressPercent} subtext={routeSubtext} target={target} />
-      </div>
-      <div className="mt-3 flex flex-col gap-2 border-t border-white/5 pt-3 sm:flex-row sm:items-end sm:justify-between">
-        <div className="min-w-0">{fleet}</div>
-        <div className="flex flex-wrap gap-1.5 sm:justify-end">{actions}</div>
-      </div>
-    </article>
+    </details>
+  );
+}
+
+// Compact payload glance shown on the collapsed row: the single most informative payload fact for
+// the mission's current phase — battle outcome for resolved combat, then loot / harvested debris on
+// the way home, then the outbound cargo. Null when there is nothing worth surfacing (e.g. an empty
+// deploy), keeping quiet rows quiet.
+function missionGlance({
+  harvested,
+  loot,
+  losses,
+  mission,
+}: {
+  harvested?: FleetMissionSummary["returnCargo"] | undefined;
+  loot?: BattleReport["loot"] | undefined;
+  losses?: MissionLossSummary | undefined;
+  mission: FleetMissionSummary;
+}): preact.ComponentChildren {
+  if (losses) {
+    const failed = isFailedPlayerAttack(mission.missionType, losses.outcome);
+    return (
+      <span className={`text-[11px] font-medium ${failed ? "text-red-300" : battleOutcomeTextTone(losses.outcome)}`}>
+        {failed ? "Attack failed" : battleOutcomeLabel(losses.outcome)}
+      </span>
+    );
+  }
+  if (loot) return glanceStat("Loot", loot);
+  if (harvested) return glanceStat("Debris", harvested);
+  if (resourceTotal(mission.cargo) > 0) return glanceStat("Cargo", mission.cargo);
+  return null;
+}
+
+function glanceStat(label: string, cargo: { metal: string; crystal: string; deuterium: string }): preact.ComponentChildren {
+  return (
+    <span className="hidden text-[11px] tabular-nums text-slate-400 min-[380px]:inline">
+      <span className="font-semibold uppercase tracking-[0.1em] text-slate-600">{label}</span> {formatCargoCompact(cargo)}
+    </span>
   );
 }
 
@@ -1783,13 +1854,13 @@ function PastMissionTable({
         </div>
       ) : null}
       {rows.length === 0 ? (
-        <p className="px-3 py-4 text-xs text-slate-500">{loading ? "Loading completed missions…" : emptyLabel}</p>
+        <p className="px-3 py-3 text-xs text-slate-500">{loading ? "Loading completed missions…" : emptyLabel}</p>
       ) : (
         <>
-          <div className="p-3">
+          <div>
             {visiblePages.map((pageRows, pageIndex) => (
               <div
-                className="grid gap-3"
+                className="divide-y divide-white/[0.06]"
                 data-past-page={pageIndex}
                 hidden={!pagination && pageIndex !== clientPage}
                 key={`past-mission-page:${pageIndex}`}
@@ -1819,7 +1890,7 @@ function PastMissionTable({
             ))}
             {hasPages ? (
               <ClientPaginationControl
-                className="pb-3"
+                className="px-2.5 pb-2 sm:px-3"
                 loading={loading}
                 nextLabel="Next mission archive page"
                 onPageChange={onPageChange}
@@ -1871,6 +1942,7 @@ function PastMissionSummaryRow({
           Open
         </button>
       }
+      glance={missionGlance({ harvested, loot, losses, mission })}
       badgeLabel={directionalMissionTypeLabel(mission.missionType, missionDirection)}
       badgeTone={missionTypeTone(mission.missionType)}
       direction={missionRouteLeg(mission.status)}
@@ -1929,6 +2001,11 @@ function PastBattleReportRow({
       badgeLabel="Battle report"
       badgeTone="border-red-300/25 bg-red-400/10 text-red-100"
       direction="outbound"
+      glance={
+        <span className={`text-[11px] font-medium ${battleOutcomeTextTone(report.outcome)}`}>
+          {battleOutcomeLabel(report.outcome)}
+        </span>
+      }
       fleet={
         <div className="space-y-1">
           <p className="text-[11px] text-slate-500">
@@ -2134,7 +2211,7 @@ function ClientPaginationControl({
   const firstEntry = pagination.totalEntries === 0 ? 0 : (pagination.page - 1) * pagination.pageSize + 1;
   const lastEntry = Math.min(pagination.page * pagination.pageSize, pagination.totalEntries);
   return (
-    <div className={`mt-3 flex flex-col gap-2 border-t border-white/10 pt-3 text-xs text-slate-400 sm:flex-row sm:items-center sm:justify-between ${className}`}>
+    <div className={`flex flex-col gap-2 border-t border-white/[0.06] pt-2 text-xs text-slate-400 sm:flex-row sm:items-center sm:justify-between ${className}`}>
       <span>
         <span data-past-page-label>Page {pagination.page} of {pagination.totalPages}</span>
         <span className="ml-2 text-slate-600" data-past-page-range>{`${firstEntry}-${lastEntry} of ${pagination.totalEntries}`}</span>
@@ -2432,6 +2509,22 @@ function formatCargo(cargo: FleetMissionSummary["cargo"]): string {
   const deuterium = Number(cargo.deuterium);
   if (metal + crystal + deuterium === 0) return "Empty";
   return `${formatResource(cargo.metal)} M / ${formatResource(cargo.crystal)} C / ${formatResource(cargo.deuterium)} D`;
+}
+
+const compactResourceFormatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 1, notation: "compact" });
+
+// Glance-line cargo: only the non-zero resources, compact-notated ("1.9K M · 3.2K C"), so the
+// collapsed row spends no width on empty components. The expanded card keeps the exact figures.
+function formatCargoCompact(cargo: { metal: string; crystal: string; deuterium: string }): string {
+  const parts = ([["M", cargo.metal], ["C", cargo.crystal], ["D", cargo.deuterium]] as const)
+    .filter(([, value]) => Number(value) > 0)
+    .map(([suffix, value]) => `${formatResourceCompact(value)} ${suffix}`);
+  return parts.length > 0 ? parts.join(" · ") : "Empty";
+}
+
+function formatResourceCompact(value: string): string {
+  const numeric = Number(value);
+  return Math.abs(numeric) < 10_000 ? numeric.toLocaleString("en-US") : compactResourceFormatter.format(numeric);
 }
 
 function harvestReturnCargoLabel(mission: FleetMissionSummary): string | null {

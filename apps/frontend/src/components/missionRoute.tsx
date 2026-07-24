@@ -78,6 +78,7 @@ type RouteNavigation = {
 // directional arrow points along the active leg (outbound -> target, returning -> home) and fills
 // with mission progress. An optional whole-route subtext (e.g. "Returned · <time>") sits below.
 export function MissionRouteCell({
+  compact = false,
   direction,
   onSelectCoordinates,
   onSelectMoon,
@@ -87,6 +88,9 @@ export function MissionRouteCell({
   subtext,
   target,
 }: {
+  // Compact rows (Mission Control's collapsed list rows) shrink the planet art, type, and arrow so a
+  // route fits inside a one-line summary; the Mission Detail hero keeps the default sizing.
+  compact?: boolean | undefined;
   direction: RouteLeg;
   origin: MissionEndpoint;
   progressPercent?: number | undefined;
@@ -99,10 +103,10 @@ export function MissionRouteCell({
       {/* Origin hugs the left edge, target hugs the right edge, and the directional arrow spans the
           full gap between them (VEY-403 rework). The endpoint columns size to their content but are
           capped (via the RouteEndpoint max-width) so the arrow always owns the central span. */}
-      <div className="grid grid-cols-[minmax(0,auto)_minmax(2.5rem,1fr)_minmax(0,auto)] items-center gap-x-2 sm:gap-x-3">
-        <RouteEndpoint align="left" endpoint={origin} nav={nav} />
-        <RouteArrow direction={direction} progressPercent={progressPercent ?? 100} />
-        <RouteEndpoint align="right" endpoint={target} nav={nav} />
+      <div className={`grid grid-cols-[minmax(0,auto)_minmax(2.5rem,1fr)_minmax(0,auto)] items-center ${compact ? "gap-x-1.5 sm:gap-x-2" : "gap-x-2 sm:gap-x-3"}`}>
+        <RouteEndpoint align="left" compact={compact} endpoint={origin} nav={nav} />
+        <RouteArrow compact={compact} direction={direction} progressPercent={progressPercent ?? 100} />
+        <RouteEndpoint align="right" compact={compact} endpoint={target} nav={nav} />
       </div>
       {subtext ? <p className="mt-1.5 text-[11px] text-slate-500">{subtext}</p> : null}
     </div>
@@ -112,10 +116,10 @@ export function MissionRouteCell({
 // One side of the route: the planet art asset pinned to the outer edge (origin on the left, target
 // on the right via the mirrored layout) with the clickable planet name + commander stacked
 // alongside it. Width is capped so long planet names truncate instead of squeezing the arrow.
-function RouteEndpoint({ align, endpoint, nav }: { align: "left" | "right"; endpoint: MissionEndpoint; nav: RouteNavigation }) {
+function RouteEndpoint({ align, compact, endpoint, nav }: { align: "left" | "right"; compact: boolean; endpoint: MissionEndpoint; nav: RouteNavigation }) {
   return (
-    <div className={`flex min-w-0 max-w-[7.5rem] items-center gap-2 sm:max-w-[11rem] ${align === "right" ? "flex-row-reverse text-right" : ""}`}>
-      <EndpointPlanetImage endpoint={endpoint} nav={nav} />
+    <div className={`flex min-w-0 max-w-[7.5rem] items-center sm:max-w-[11rem] ${compact ? "gap-1.5 text-[11px] leading-4" : "gap-2"} ${align === "right" ? "flex-row-reverse text-right" : ""}`}>
+      <EndpointPlanetImage compact={compact} endpoint={endpoint} nav={nav} />
       <div className="min-w-0">
         <EndpointName endpoint={endpoint} nav={nav} />
         <EndpointCommander endpoint={endpoint} nav={nav} />
@@ -127,8 +131,8 @@ function RouteEndpoint({ align, endpoint, nav }: { align: "left" | "right"; endp
 // Real planet art for an endpoint (the same asset set the Galaxy view uses for thumbnails — VEY-67).
 // Falls back to a subtle ringed placeholder only when no planet can be resolved (e.g. a
 // battle-report attacker without coordinates).
-function EndpointPlanetImage({ endpoint, nav }: { endpoint: MissionEndpoint; nav: RouteNavigation }) {
-  const frameClass = "relative h-8 w-8 shrink-0 overflow-hidden rounded-full border border-white/15 bg-black/30 sm:h-9 sm:w-9";
+function EndpointPlanetImage({ compact, endpoint, nav }: { compact: boolean; endpoint: MissionEndpoint; nav: RouteNavigation }) {
+  const frameClass = `relative shrink-0 overflow-hidden rounded-full border border-white/15 bg-black/30 ${compact ? "h-6 w-6 sm:h-7 sm:w-7" : "h-8 w-8 sm:h-9 sm:w-9"}`;
   if (!endpoint.archetype) {
     return <span aria-hidden="true" className={`${frameClass} flex items-center justify-center`}><span className="h-3 w-3 rounded-full border border-white/25" /></span>;
   }
@@ -224,10 +228,11 @@ function EndpointCommander({ endpoint, nav }: { endpoint: MissionEndpoint; nav: 
 // cyan fill grows from the trailing end to the current position, ending in a matching arrowhead, so
 // the head sits at 100% on arrival/return. A muted destination chevron marks the leading end even at
 // 0% progress.
-function RouteArrow({ direction, progressPercent }: { direction: RouteLeg; progressPercent: number }) {
+function RouteArrow({ compact, direction, progressPercent }: { compact?: boolean | undefined; direction: RouteLeg; progressPercent: number }) {
   const progress = clamp(progressPercent, 0, 100);
   const returning = direction === "returning";
   const rounded = Math.round(progress);
+  const chevronSize = compact ? 12 : 13;
   const label = returning
     ? `Returning home, ${rounded}% of the way back`
     : `Outbound to target, ${rounded}% of the way there`;
@@ -244,31 +249,31 @@ function RouteArrow({ direction, progressPercent }: { direction: RouteLeg; progr
   return (
     <div
       aria-label={label}
-      className="relative h-5 w-full"
+      className={`relative w-full ${compact ? "h-4" : "h-5"}`}
       data-route-arrow
       data-route-direction={direction}
       data-route-progress={String(rounded)}
       role="img"
     >
       {/* Muted full-length track. */}
-      <span className="absolute inset-x-2 top-1/2 h-[3px] rounded-full bg-white/12" style={{ transform: "translateY(-50%)" }} />
+      <span className={`absolute inset-x-2 top-1/2 rounded-full bg-white/12 ${compact ? "h-[2px]" : "h-[3px]"}`} style={{ transform: "translateY(-50%)" }} />
       {/* Muted destination chevron pinned at the leading end (visible even at 0% progress). */}
       <span
         className={`absolute top-1/2 text-white/25 ${returning ? "left-0" : "right-0"}`}
         style={{ transform: "translateY(-50%)" }}
       >
-        <Chevron aria-hidden="true" size={13} />
+        <Chevron aria-hidden="true" size={chevronSize} />
       </span>
       {/* Cyan progress fill growing from the trailing end toward the destination tip. */}
       <span
-        className="absolute top-1/2 h-[3px] rounded-full bg-cyan-300"
+        className={`absolute top-1/2 rounded-full bg-cyan-300 ${compact ? "h-[2px]" : "h-[3px]"}`}
         data-route-fill
         data-route-progress={String(rounded)}
         style={{ ...fillStyle, transform: "translateY(-50%)" }}
       />
       {/* Cyan arrowhead riding the leading edge of the fill, marking the current position. */}
       <span className="absolute top-1/2 text-cyan-200" data-route-head style={headStyle}>
-        <Chevron aria-hidden="true" size={13} />
+        <Chevron aria-hidden="true" size={chevronSize} />
       </span>
     </div>
   );
