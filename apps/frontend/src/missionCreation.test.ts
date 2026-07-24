@@ -7,7 +7,10 @@ import {
   forecastRaidLoot,
   initialMissionShips,
   LootRatioControls,
+  MissionCargoPicker,
+  type MissionCargoDraft,
   lootRatioFromUpToAmount,
+  missionCargoMaxForResource,
   missionBodySelectionVisibility,
   missionConfirmButtonLabel,
   missionDraftBlocker,
@@ -912,6 +915,75 @@ describe("mission creation", () => {
     expect(missionCreationSource).toContain("<MissionFormSection title={specificLoadout.title} eyebrow=\"Loadout\">");
     expect(missionCreationSource).not.toContain("<MissionFormSection title=\"Cargo\" eyebrow=\"Resources\">");
     expect(missionCreationSource).toContain("<MissionFormSection title=\"Fleet\" eyebrow=\"Ships\">");
+  });
+
+  test("Transport Max controls fill the inventory-limited amount and recompute for reduced capacity", () => {
+    let cargo: MissionCargoDraft = { metal: "0", crystal: "200", deuterium: "100" };
+    const maxCargoResources = { metal: 750, crystal: 1_200, deuterium: 900 };
+    const renderPicker = (cargoCapacity: number) => MissionCargoPicker({
+      cargo,
+      cargoCapacity,
+      maxCargoResources,
+      onCargoChange: (updater) => {
+        cargo = updater(cargo);
+      },
+    });
+
+    const inventoryLimited = renderPicker(2_000);
+    const buttons = findElements(inventoryLimited, "button");
+    expect(buttons.map((button) => button.props?.["aria-label"])).toEqual([
+      "Set metal cargo to maximum (750)",
+      "Set crystal cargo to maximum (1,200)",
+      "Set deuterium cargo to maximum (900)",
+    ]);
+    expect(buttons.every((button) => button.props?.type === "button")).toBe(true);
+
+    (buttons[0]?.props?.onClick as (() => void) | undefined)?.();
+    expect(cargo.metal).toBe("750");
+    expect(findElements(renderPicker(2_000), "button")[0]?.props?.disabled).toBe(true);
+
+    cargo = { metal: "750", crystal: "200", deuterium: "100" };
+    const capacityLimited = renderPicker(600);
+    const metalMax = findElements(capacityLimited, "button")[0];
+    expect(metalMax?.props?.["aria-label"]).toBe("Set metal cargo to maximum (300)");
+    expect(metalMax?.props?.disabled).toBe(false);
+    (metalMax?.props?.onClick as (() => void) | undefined)?.();
+    expect(cargo.metal).toBe("300");
+  });
+
+  test("Deploy Max controls respect other selections and recompute after inventory and selection changes", () => {
+    const maxCargoResources = { metal: 2_000, crystal: 1_000, deuterium: 450 };
+    let cargo: MissionCargoDraft = { metal: "500", crystal: "0", deuterium: "50" };
+
+    expect(missionCargoMaxForResource(cargo, 800, maxCargoResources, "crystal")).toBe(250);
+    expect(missionCargoMaxForResource(cargo, 800, maxCargoResources, "deuterium")).toBe(300);
+
+    let picker = MissionCargoPicker({
+      cargo,
+      cargoCapacity: 800,
+      maxCargoResources,
+      onCargoChange: (updater) => {
+        cargo = updater(cargo);
+      },
+    });
+    const crystalMax = findElements(picker, "button")[1];
+    expect(crystalMax?.props?.["aria-label"]).toBe("Set crystal cargo to maximum (250)");
+    (crystalMax?.props?.onClick as (() => void) | undefined)?.();
+    expect(cargo.crystal).toBe("250");
+
+    cargo = { metal: "100", crystal: "250", deuterium: "50" };
+    picker = MissionCargoPicker({
+      cargo,
+      cargoCapacity: 800,
+      maxCargoResources: { ...maxCargoResources, crystal: 180 },
+      onCargoChange: (updater) => {
+        cargo = updater(cargo);
+      },
+    });
+    const recomputedCrystalMax = findElements(picker, "button")[1];
+    expect(recomputedCrystalMax?.props?.["aria-label"]).toBe("Set crystal cargo to maximum (180)");
+    (recomputedCrystalMax?.props?.onClick as (() => void) | undefined)?.();
+    expect(cargo.crystal).toBe("180");
   });
 
   test("keeps Transport cargo and mixed Deploy fleets in confirmation payloads", () => {
