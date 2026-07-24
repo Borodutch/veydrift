@@ -3356,7 +3356,15 @@ describe("SettlementIndexer", () => {
         expect.objectContaining({ id: 1, count: 5 })
       ]),
       defenses: expect.arrayContaining([
-        expect.objectContaining({ id: 2, count: 7 })
+        expect.objectContaining({
+          id: 0,
+          cost: { metal: "2000", crystal: "0", deuterium: "0" }
+        }),
+        expect.objectContaining({
+          id: 2,
+          count: 7,
+          cost: { metal: "6000", crystal: "2000", deuterium: "0" }
+        })
       ]),
       moon: {
         exists: true,

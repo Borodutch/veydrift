@@ -795,6 +795,18 @@ describe("Moon page helpers", () => {
 
   test("shares production quantity adaptation across planet and Moon Shipyard/Defense bodies", () => {
     const moonState = loadedMoonState({
+      moon: {
+        exists: true,
+        planetId: "7",
+        owner: "0x1111111111111111111111111111111111111111",
+        fields: 4,
+        diameterKm: 8774,
+        createdAt: "1770000000",
+        jumpGateReadyAt: "0",
+      },
+      resources: { metal: "999999", crystal: "999999", deuterium: "999999" },
+      resourcesAsOfNow: { metal: "999999", crystal: "999999", deuterium: "999999" },
+      buildings: [{ id: 3, key: "shipyard", label: "Shipyard", level: 20, cost: { metal: "800", crystal: "400", deuterium: "200" } }],
       ships: [{ id: 0, count: 2, cost: { metal: "2000", crystal: "2000", deuterium: "0" }, durationSeconds: 10 }],
       defenses: [{ id: 0, count: 3, cost: { metal: "2000", crystal: "0", deuterium: "0" }, durationSeconds: 20 }],
     });
@@ -854,6 +866,43 @@ describe("Moon page helpers", () => {
       { quantity: 3, quantityValid: true, durationSeconds: 60 },
       { quantity: 3, quantityValid: true, durationSeconds: 60 },
     ]);
+    expect([moonDefense, planetDefense].map(({ cost, blockedReason, detailSections }) => ({ cost, blockedReason, detailSections }))).toEqual([
+      { cost: { metal: 6_000, crystal: 0, deuterium: 0 }, blockedReason: undefined, detailSections: undefined },
+      { cost: { metal: 6_000, crystal: 0, deuterium: 0 }, blockedReason: undefined, detailSections: undefined },
+    ]);
+  });
+
+  test("falls back from stale zero Moon costs and applies shared affordability", () => {
+    const moonState = loadedMoonState({
+      moon: {
+        exists: true,
+        planetId: "7",
+        owner: "0x1111111111111111111111111111111111111111",
+        fields: 4,
+        diameterKm: 8774,
+        createdAt: "1770000000",
+        jumpGateReadyAt: "0",
+      },
+      resources: { metal: "1000", crystal: "1000", deuterium: "1000" },
+      resourcesAsOfNow: { metal: "1000", crystal: "1000", deuterium: "1000" },
+      buildings: [{ id: 3, key: "shipyard", label: "Shipyard", level: 1, cost: { metal: "800", crystal: "400", deuterium: "200" } }],
+      defenses: [{ id: 0, count: 3, cost: { metal: "0", crystal: "0", deuterium: "0" } }],
+    });
+
+    expect(moonDefenseProductionItems({
+      actionPending: false,
+      canTransact: true,
+      moonState,
+      quantities: { rocketLauncher: 1 },
+    })[0]).toMatchObject({
+      blockedReason: "Requires 1,000 more Metal",
+      cost: { metal: 2_000, crystal: 0, deuterium: 0 },
+      countLabel: "On moon",
+      disabled: true,
+    });
+    expect(moonPageSource).toContain("defenseProductionItems({");
+    expect(moonPageSource).not.toContain("moonDefenseDetailSections");
+    expect(moonPageSource).toContain("onStartDefense?.(item.id, item.label, item.quantity)");
   });
 
   test("marks ready moon queues available for completion only after backend readiness", () => {
