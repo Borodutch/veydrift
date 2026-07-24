@@ -6,10 +6,12 @@ import { defenseCatalog, shipCatalog } from "../playableMvp";
 import { playableApiUrl } from "../runtimeConfig";
 import { formatAttackBlockReason, type AttackProtectionStatus, type GalaxyActionState } from "./GalaxyView";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
-import { shortAddress, type ChainDefenseState, type ChainShipyardState } from "../walletFlow";
+import { shortAddress, type ChainDefenseState, type ChainShipyardState, type Eip1193Provider } from "../walletFlow";
 import { MoonActionStrip, type MoonOverviewAction } from "./MoonPage";
 import { MoonImage } from "./PlanetMoonIndicator";
 import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
+import { EntityMediaPanel } from "./EntityMediaPanel";
+import { canEditEntityMedia } from "../entityMedia";
 
 type PublicMoonDetailProps = {
   account?: string | undefined;
@@ -21,6 +23,7 @@ type PublicMoonDetailProps = {
   homePlanetId?: string | null | undefined;
   onAction?: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates) => void) | undefined;
   onBack: () => void;
+  provider?: Eip1193Provider | undefined;
   shipyardState?: ChainShipyardState | null | undefined;
   transactionUnavailableReason?: string | undefined;
 };
@@ -35,6 +38,7 @@ export function PublicMoonDetail({
   homePlanetId,
   onAction,
   onBack,
+  provider,
   shipyardState = null,
   transactionUnavailableReason,
 }: PublicMoonDetailProps) {
@@ -200,6 +204,21 @@ export function PublicMoonDetail({
               </div>
             ) : null}
           </div>
+
+          {planet.occupiedBy?.planetId ? (
+            <EntityMediaPanel
+              account={account}
+              apiBaseUrl={apiBaseUrl}
+              canEdit={canEditEntityMedia({
+                entityKind: "moon",
+                ownerWallet: planet.occupiedBy.owner,
+                viewerWallet: account,
+              })}
+              entityId={planet.occupiedBy.planetId}
+              entityKind="moon"
+              provider={provider}
+            />
+          ) : null}
 
           <div className="grid gap-3 sm:grid-cols-2">
             <MoonRecordPanel title="Public Owner" rows={[

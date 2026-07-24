@@ -137,6 +137,7 @@ import { playerFallbackName, type PlayerProfile } from "./playerProfiles";
 import { planetArchetypeForTemperature } from "./universe";
 import { nowSeconds, settleQueueAsOfNow, withMissionAsOfNow } from "./asOfNow";
 import { emitObservabilityEvent } from "./observability";
+import type { EntityMedia, EntityMediaKind, YouTubeMedia } from "./entityMedia";
 
 export type IndexedDebrisFieldEvent = DebrisFieldEvent & Pick<SettledPlanetEvent, "galaxy" | "system" | "position">;
 export type IndexedDebrisTarget = IndexedDebrisFieldEvent & {
@@ -445,6 +446,14 @@ type PlayerProfileRow = {
   display_name: string | null;
   updated_at: string | null;
   wallet: string;
+};
+
+type EntityMediaRow = {
+  entity_id: string;
+  entity_kind: EntityMediaKind;
+  media_id: string;
+  media_type: YouTubeMedia["type"];
+  updated_at: string;
 };
 
 type WatchedPlanetRow = {
@@ -1217,6 +1226,85 @@ export class SettlementIndexer {
     `).run(wallet, displayName, description, updatedAt);
 
     return this.playerProfile(wallet);
+  }
+
+  entityMedia(entityKind: EntityMediaKind, entityId: string): EntityMedia | null {
+    const row = this.db.query(`
+      SELECT entity_kind, entity_id, media_type, media_id, updated_at
+      FROM entity_media
+      WHERE entity_kind = ? AND entity_id = ?
+    `).get(entityKind, entityId) as EntityMediaRow | null;
+    if (!row) return null;
+
+    return {
+      entityKind: row.entity_kind,
+      entityId: row.entity_id,
+      media: {
+        type: row.media_type,
+        id: row.media_id,
+        canonicalUrl: row.media_type === "video"
+          ? `https://www.youtube.com/watch?v=${row.media_id}`
+          : `https://www.youtube.com/playlist?list=${row.media_id}`
+      },
+      updatedAt: row.updated_at
+    };
+  }
+
+  entityMediaVersion(entityKind: EntityMediaKind, entityId: string): number {
+    const row = this.db.query(`
+      SELECT version
+      FROM entity_media_versions
+      WHERE entity_kind = ? AND entity_id = ?
+    `).get(entityKind, entityId) as { version: number } | null;
+    return row?.version ?? 0;
+  }
+
+  setEntityMediaIfCurrent(
+    entityKind: EntityMediaKind,
+    entityId: string,
+    expectedVersion: number,
+    media: YouTubeMedia | null
+  ): { media: EntityMedia | null; status: "updated"; version: number } | {
+    status: "stale";
+    version: number;
+  } {
+    return this.db.transaction(() => {
+      this.db.query(`
+        INSERT OR IGNORE INTO entity_media_versions (entity_kind, entity_id, version)
+        VALUES (?, ?, 0)
+      `).run(entityKind, entityId);
+      const advanced = this.db.query(`
+        UPDATE entity_media_versions
+        SET version = version + 1
+        WHERE entity_kind = ? AND entity_id = ? AND version = ?
+      `).run(entityKind, entityId, expectedVersion);
+      if (advanced.changes !== 1) {
+        return {
+          status: "stale" as const,
+          version: this.entityMediaVersion(entityKind, entityId)
+        };
+      }
+
+      if (!media) {
+        this.db.query("DELETE FROM entity_media WHERE entity_kind = ? AND entity_id = ?").run(entityKind, entityId);
+      } else {
+        const updatedAt = new Date().toISOString();
+        this.db.query(`
+          INSERT INTO entity_media (entity_kind, entity_id, media_type, media_id, updated_at)
+          VALUES (?, ?, ?, ?, ?)
+          ON CONFLICT(entity_kind, entity_id) DO UPDATE SET
+            media_type = excluded.media_type,
+            media_id = excluded.media_id,
+            updated_at = excluded.updated_at
+        `).run(entityKind, entityId, media.type, media.id, updatedAt);
+      }
+      this.touch();
+      return {
+        media: this.entityMedia(entityKind, entityId),
+        status: "updated" as const,
+        version: expectedVersion + 1
+      };
+    })();
   }
 
   private allianceMembership(wallet: Address): AllianceState["membership"] {
@@ -3551,6 +3639,20 @@ export class SettlementIndexer {
         display_name TEXT,
         description TEXT,
         updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS entity_media (
+        entity_kind TEXT NOT NULL CHECK(entity_kind IN ('planet', 'moon', 'player', 'alliance')),
+        entity_id TEXT NOT NULL,
+        media_type TEXT NOT NULL CHECK(media_type IN ('video', 'playlist')),
+        media_id TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (entity_kind, entity_id)
+      );
+      CREATE TABLE IF NOT EXISTS entity_media_versions (
+        entity_kind TEXT NOT NULL CHECK(entity_kind IN ('planet', 'moon', 'player', 'alliance')),
+        entity_id TEXT NOT NULL,
+        version INTEGER NOT NULL CHECK(version >= 0),
+        PRIMARY KEY (entity_kind, entity_id)
       );
       CREATE TABLE IF NOT EXISTS player_watched_planets (
         wallet TEXT NOT NULL,

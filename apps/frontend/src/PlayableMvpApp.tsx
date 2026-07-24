@@ -8492,6 +8492,7 @@ export function PlayableMvpApp({
           onAction={handleGalaxyAction}
           onBack={handlePlanetDetailBack}
           onSelectMoon={handleSelectMoon}
+          provider={provider}
           shipyardState={missionActionShipyardState}
           transactionUnavailableReason={missionTransactionUnavailableReason}
         />
@@ -8510,6 +8511,7 @@ export function PlayableMvpApp({
           homePlanetId={activePlanetId ?? onChainSettlement?.homePlanetId}
           onAction={handleGalaxyAction}
           onBack={handlePlanetDetailBack}
+          provider={provider}
           shipyardState={missionActionShipyardState}
           transactionUnavailableReason={missionTransactionUnavailableReason}
         />
@@ -8710,6 +8712,7 @@ export function PlayableMvpApp({
           actionBusy={allianceAction.status === "pending"}
           allianceId={inspectedAllianceId}
           allianceState={allianceState}
+          apiBaseUrl={apiBaseUrl}
           canTransact={canSubmitAllianceTransaction}
           disabled={allianceLoading}
           transactionUnavailableReason={allianceTransactionUnavailableReason}
@@ -8725,6 +8728,7 @@ export function PlayableMvpApp({
           onRefresh={refreshAllianceState}
           onSetRole={handleSetAllianceRole}
           onTransferOwnership={handleTransferAllianceOwnership}
+          provider={provider}
         />
       );
     }
@@ -8739,6 +8743,7 @@ export function PlayableMvpApp({
           onSelectMoon={handleSelectMoon}
           onSelectPlanet={handleSelectPlanet}
           originCoords={activePlanetCoords}
+          provider={provider}
           wallet={inspectedPlayerWallet}
         />
       );

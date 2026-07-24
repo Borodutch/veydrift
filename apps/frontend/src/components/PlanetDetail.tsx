@@ -3,7 +3,7 @@ import type { Planet, Coordinates, PublicPlanetState, PublicQueueState } from ".
 import { formatPlanetType, planetsFromSystemResponse } from "../data/mockUniverse";
 import { galaxyActionsForSlot, type GalaxyAction } from "../galaxyActions";
 import { playableApiUrl } from "../runtimeConfig";
-import { shortAddress, type ChainDefenseState, type ChainShipyardState } from "../walletFlow";
+import { shortAddress, type ChainDefenseState, type ChainShipyardState, type Eip1193Provider } from "../walletFlow";
 import { isImageReady } from "../imageLoadState";
 import { formatScore } from "../attackProtectionLabels";
 import { buildingCatalog, defenseCatalog, researchCatalog, shipCatalog, solarSatelliteEnergy } from "../playableMvp";
@@ -12,6 +12,8 @@ import { GalaxyActionButtons, type AttackProtectionStatus, type GalaxyActionStat
 import { OptimizedImage } from "./OptimizedImage";
 import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
 import { MoonImage, PlanetMoonIndicator } from "./PlanetMoonIndicator";
+import { EntityMediaPanel } from "./EntityMediaPanel";
+import { canEditEntityMedia } from "../entityMedia";
 
 interface Props {
   account?: string | undefined;
@@ -25,6 +27,7 @@ interface Props {
   onAction?: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates) => void) | undefined;
   onBack: () => void;
   onSelectMoon?: ((coords: Coordinates) => void) | undefined;
+  provider?: Eip1193Provider | undefined;
   shipyardState?: ChainShipyardState | null | undefined;
   transactionUnavailableReason?: string | undefined;
 }
@@ -73,6 +76,7 @@ export function PlanetDetail({
   onAction,
   onBack,
   onSelectMoon,
+  provider,
   shipyardState = null,
   transactionUnavailableReason,
 }: Props) {
@@ -359,6 +363,21 @@ export function PlanetDetail({
               </div>
             ) : null}
           </div>
+
+          {planet.occupiedBy?.planetId ? (
+            <EntityMediaPanel
+              account={account}
+              apiBaseUrl={apiBaseUrl}
+              canEdit={canEditEntityMedia({
+                entityKind: "planet",
+                ownerWallet: planet.occupiedBy.owner,
+                viewerWallet: account,
+              })}
+              entityId={planet.occupiedBy.planetId}
+              entityKind="planet"
+              provider={provider}
+            />
+          ) : null}
 
           <div className="grid gap-3 sm:grid-cols-2">
             <PlanetCommanderPanel planet={planet} isHome={isHome} />

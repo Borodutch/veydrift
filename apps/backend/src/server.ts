@@ -11,6 +11,7 @@ import {
   assertAddress,
   attackBlockReasonLabel,
   transportBlockReasonLabel,
+  type Address,
   type AllianceIdentity,
   type AllianceState,
   type AttackBlockReason,
@@ -83,6 +84,13 @@ import {
   WORKER_ROLE_ENV,
   type WorkerRole
 } from "./workerPool";
+import {
+  isEntityMediaKind,
+  normalizeEntityMediaId,
+  validateYouTubeMediaUrl,
+  verifyEntityMediaSignature,
+  type EntityMediaKind
+} from "./entityMedia";
 
 const jsonHeaders = {
   "content-type": "application/json; charset=utf-8"
@@ -447,6 +455,137 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           "content-type": "text/event-stream; charset=utf-8"
         }
       });
+    }
+
+    if (
+      request.method === "GET"
+      && url.pathname.match(/^\/entity-media\/(planet|moon|player|alliance)\/[^/]+\/challenge$/)
+    ) {
+      const parts = url.pathname.split("/");
+      const entityKindValue = parts[2] ?? "";
+      const rawEntityId = parts[3] ?? "";
+      try {
+        if (!isEntityMediaKind(entityKindValue)) throw new Error("Unsupported entity media kind.");
+        const entityId = normalizeEntityMediaId(entityKindValue, rawEntityId);
+        const wallet = url.searchParams.get("wallet");
+        if (!wallet) throw new Error("Wallet address is required.");
+        assertAddress(wallet);
+        if (!indexer) return entityMediaUnavailableResponse();
+        return Response.json({
+          entityKind: entityKindValue,
+          entityId,
+          version: indexer.entityMediaVersion(entityKindValue, entityId),
+          wallet: wallet.toLowerCase()
+        }, {
+          headers: {
+            ...corsHeaders,
+            "cache-control": "no-store"
+          }
+        });
+      } catch (error) {
+        return errorResponse(error, 400);
+      }
+    }
+
+    if (
+      (request.method === "GET" || request.method === "POST")
+      && url.pathname.match(/^\/entity-media\/(planet|moon|player|alliance)\/[^/]+$/)
+    ) {
+      const parts = url.pathname.split("/");
+      const entityKindValue = parts[2] ?? "";
+      const rawEntityId = parts[3] ?? "";
+      try {
+        if (!isEntityMediaKind(entityKindValue)) throw new Error("Unsupported entity media kind.");
+        const entityId = normalizeEntityMediaId(entityKindValue, rawEntityId);
+        if (!indexer) return entityMediaUnavailableResponse();
+
+        if (request.method === "GET") {
+          return Response.json({
+            entityKind: entityKindValue,
+            entityId,
+            media: indexer.entityMedia(entityKindValue, entityId)
+          }, { headers: corsHeaders });
+        }
+
+        const body = await readJsonBody(request);
+        const wallet = body?.wallet;
+        if (typeof wallet !== "string") throw new Error("Wallet address is required.");
+        assertAddress(wallet);
+        const validation = validateYouTubeMediaUrl(body?.mediaUrl);
+        if (!validation.ok) {
+          return Response.json({ error: "invalid_youtube_url", message: validation.error }, {
+            headers: corsHeaders,
+            status: 400
+          });
+        }
+        const requestedVersion = body?.version;
+        if (
+          typeof requestedVersion !== "number"
+          || !Number.isSafeInteger(requestedVersion)
+          || requestedVersion < 0
+        ) {
+          return Response.json({
+            error: "invalid_entity_media_version",
+            message: "Request a fresh entity-media authorization before saving."
+          }, {
+            headers: corsHeaders,
+            status: 400
+          });
+        }
+        const version = requestedVersion;
+        const verified = await verifyEntityMediaSignature({
+          entityId,
+          entityKind: entityKindValue,
+          media: validation.media,
+          signature: body?.signature,
+          version,
+          wallet
+        });
+        if (!verified) {
+          return Response.json({
+            error: "invalid_signature",
+            message: "Sign the Veydrift entity-media message with the connected wallet."
+          }, {
+            headers: corsHeaders,
+            status: 401
+          });
+        }
+        if (!canManageEntityMedia(indexer, entityKindValue, entityId, wallet)) {
+          return Response.json({
+            error: "entity_media_forbidden",
+            message: "This wallet is not authorized to manage media for that entity."
+          }, {
+            headers: corsHeaders,
+            status: 403
+          });
+        }
+
+        const update = indexer.setEntityMediaIfCurrent(
+          entityKindValue,
+          entityId,
+          version,
+          validation.media
+        );
+        if (update.status === "stale") {
+          return Response.json({
+            error: "entity_media_stale_authorization",
+            message: "This media authorization has expired or was already used. Try saving again.",
+            version: update.version
+          }, {
+            headers: corsHeaders,
+            status: 409
+          });
+        }
+
+        return Response.json({
+          entityKind: entityKindValue,
+          entityId,
+          media: update.media,
+          version: update.version
+        }, { headers: corsHeaders });
+      } catch (error) {
+        return errorResponse(error, 400);
+      }
     }
 
     if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/profile$/)) {
@@ -2170,6 +2309,34 @@ function playerProfilesUnavailableResponse(): Response {
       status: 503
     }
   );
+}
+
+function entityMediaUnavailableResponse(): Response {
+  return Response.json({
+    error: "entity_media_unavailable",
+    message: "Entity media is unavailable until the indexed backend database is configured."
+  }, {
+    headers: corsHeaders,
+    status: 503
+  });
+}
+
+function canManageEntityMedia(
+  indexer: SettlementIndexer,
+  entityKind: EntityMediaKind,
+  entityId: string,
+  wallet: Address
+): boolean {
+  const normalizedWallet = wallet.toLowerCase();
+  if (entityKind === "player") return entityId === normalizedWallet;
+  if (entityKind === "planet") return indexer.planet(entityId)?.owner.toLowerCase() === normalizedWallet;
+  if (entityKind === "moon") {
+    return indexer.hasMoon(entityId) && indexer.planet(entityId)?.owner.toLowerCase() === normalizedWallet;
+  }
+
+  const alliance = indexer.allianceState(wallet);
+  return alliance.membership.allianceId === entityId
+    && (alliance.membership.role === "owner" || alliance.membership.role === "officer");
 }
 
 function invalidReferralSignatureResponse(): Response {
