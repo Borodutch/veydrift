@@ -331,6 +331,68 @@ describe("Mission Control battle reports", () => {
     expect(text).toContain("Borealis");
   });
 
+  test("labels early and late recalled Attacks from indexed provenance and omits target arrival", () => {
+    const now = Date.parse("2026-06-08T23:00:00.000Z");
+    const owner = "0x1111111111111111111111111111111111111111";
+    const arrivalAt = now - 7_200_000;
+    const recalls = [
+      { missionId: "754", returnAt: arrivalAt - 1_800_000 },
+      // A valid recall after the outbound midpoint returns home after the original target ETA.
+      { missionId: "755", returnAt: arrivalAt + 1_800_000 },
+    ];
+
+    for (const recall of recalls) {
+      const recalledAttack = {
+        ...mission(recall.missionId, "Attack", "Returned", owner, "7", "9", arrivalAt),
+        recallProvenance: "FleetMissionRecalled" as const,
+        returnAt: Math.floor(recall.returnAt / 1_000).toString(),
+      };
+      const tree = MissionControlPage({
+        ...missionControlProps(now, {}),
+        missionArchive: {
+          wallet: owner,
+          homePlanetId: "7",
+          // Provenance remains authoritative even if a stale/colliding report row is present.
+          rows: [{ kind: "mission", mission: recalledAttack, report: battleReport(recall.missionId) }],
+          pagination: { page: 1, pageSize: 25, totalEntries: 1, totalPages: 1, hasPreviousPage: false, hasNextPage: false },
+        },
+      });
+      const text = collectText(tree).join(" ");
+
+      expect(text).toContain("Recalled");
+      expect(text).toContain("Recalled — returned");
+      expect(text).not.toContain("Arrived");
+    }
+  });
+
+  test("does not infer recall from timestamps or stored recall cost on normal terminal missions", () => {
+    const now = Date.parse("2026-06-08T23:00:00.000Z");
+    const owner = "0x1111111111111111111111111111111111111111";
+    const arrivalAt = now - 7_200_000;
+
+    for (const missionType of ["Attack", "Deploy", "Colonize", "DefenseHold"]) {
+      const completed = {
+        ...mission(`755-${missionType}`, missionType, "Returned", owner, "7", "9", arrivalAt),
+        // Projected recallCost may survive in older summaries; it is not event provenance.
+        recallCost: "50",
+      };
+      const tree = MissionControlPage({
+        ...missionControlProps(now, {}),
+        missionArchive: {
+          wallet: owner,
+          homePlanetId: "7",
+          rows: [{ kind: "mission", mission: completed }],
+          pagination: { page: 1, pageSize: 25, totalEntries: 1, totalPages: 1, hasPreviousPage: false, hasNextPage: false },
+        },
+      });
+      const text = collectText(tree).join(" ");
+
+      expect(text).not.toContain("Recalled");
+      expect(text).toContain("Returned");
+      expect(text).toContain("Arrived");
+    }
+  });
+
   test("Past Missions All rows show returned attack outcome, loot, losses, cargo, and debris (VEY-KANEO-668)", () => {
     const now = Date.parse("2026-06-29T22:00:00.000Z");
     const owner = "0x1111111111111111111111111111111111111111";
@@ -1702,6 +1764,7 @@ describe("Mission Control battle reports", () => {
       mission: {
         ...mission("1692", "Attack", "Returned", "0x1111111111111111111111111111111111111111", "7", "9", now + 600_000),
         recallCost: "695",
+        recallProvenance: "FleetMissionRecalled",
       },
       battleReport: null,
     }))).join(" ");
@@ -1715,7 +1778,8 @@ describe("Mission Control battle reports", () => {
     const text = collectText(MissionDetailPage(missionDetailProps(now, {
       mission: {
         ...mission("1693", "Attack", "Returned", "0x1111111111111111111111111111111111111111", "7", "9", now - 600_000),
-        recallCost: null,
+        // A stale projected cost is not evidence that FleetMissionRecalled happened.
+        recallCost: "695",
       },
       battleReport: null,
     }))).join(" ");

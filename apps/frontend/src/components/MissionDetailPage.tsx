@@ -7,7 +7,7 @@ import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import { defenseCatalog, shipCatalog, type ShipKey } from "../playableMvp";
 import type { Coordinates } from "../types";
 import { type BattleReport, type BattleReportParticipant, type DefenderPlanetState, type FleetMissionSummary, type FleetMissionVisibilityResponse, type MissionDetailResponse, type QueueStateResponse, type TargetCombatIntel } from "../walletFlow";
-import { isFleetRecallable, missionLifecycleActions, type MissionLifecycleAction } from "./MissionControlPage";
+import { isFleetRecallable, missionLifecycleActions, missionWasRecalled, type MissionLifecycleAction } from "./MissionControlPage";
 import {
   MissionRouteCell,
   type MissionPlanetIdentity,
@@ -837,15 +837,12 @@ function isCombatMission(mission: FleetMissionSummary): boolean {
   return ["Attack", "AcsAttack", "Intercept", "MissileAttack"].includes(mission.missionType);
 }
 
-// VEY-KANEO-425: a combat fleet has not fought yet while it is still outbound and en route (arrival
-// in the future), or when it was recalled before ever reaching its target. A fully-landed recalled
-// fleet decodes as Returned after FleetMissionReturned, but it keeps the emitted recallCost, so that
-// also means no battle ever happened. In those states the "No indexed battle report" notice is
-// misleading noise and is hidden. A due/arrived/returning/resolved mission falls through and keeps
-// the notice, since a report is genuinely expected (and merely missing/unindexed) at that point.
+// VEY-KANEO-425/755: a combat fleet has not fought yet while it is still outbound and en route, or
+// when indexed FleetMissionRecalled provenance proves it turned back before reaching the target.
+// FleetMissionReturned collapses the terminal status and recallCost may be projected, so neither is
+// sufficient by itself. In those states the "No indexed battle report" notice is misleading noise.
 function hasNotReachedCombat(mission: FleetMissionSummary, now: number): boolean {
-  if (mission.status === "Recalled") return true;
-  if (mission.status === "Returned" && mission.recallCost !== null) return true;
+  if (missionWasRecalled(mission)) return true;
   return mission.status === "Outbound" && !isMissionDue(mission, now);
 }
 

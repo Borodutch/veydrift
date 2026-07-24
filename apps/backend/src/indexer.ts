@@ -6150,7 +6150,7 @@ export class SettlementIndexer {
     // credits are authoritative PlanetShipCountChanged totals; replaying the launch vector from the
     // recall marker would restore destroyed ships when a zero-survivor return emits no count event.
     if (mission.missionType === "DefenseHold") return [];
-    if (usefulString(mission.recallCost) || legacyReturnCreditableMissionTypes.has(mission.missionType)) return launched;
+    if (mission.recallProvenance === "FleetMissionRecalled" || legacyReturnCreditableMissionTypes.has(mission.missionType)) return launched;
 
     if (mission.missionType !== "Attack" && mission.missionType !== "AcsAttack" && mission.missionType !== "Intercept") {
       return [];
@@ -8356,6 +8356,7 @@ export class SettlementIndexer {
         ...(canonicalEventMission.targetIsMoon !== undefined ? { targetIsMoon: canonicalEventMission.targetIsMoon } : {}),
         ...(canonicalEventMission.defenseHoldUntil ? { defenseHoldUntil: canonicalEventMission.defenseHoldUntil } : {}),
         ...(canonicalEventMission.defenseHoldOutcome ? { defenseHoldOutcome: canonicalEventMission.defenseHoldOutcome } : {}),
+        ...(canonicalEventMission.recallProvenance ? { recallProvenance: canonicalEventMission.recallProvenance } : {}),
         ...(canonicalEventMission.randomnessRequestId ? { randomnessRequestId: canonicalEventMission.randomnessRequestId } : {})
       }
       : base;
@@ -9115,7 +9116,7 @@ export class SettlementIndexer {
   ): StationedDefenderSummary {
     const targetPlanet = defender.targetPlanet ?? this.fleetMissionPlanetReference(defender.targetPlanetId);
     const lifecycleOutcome = defender.defenseHoldOutcome
-      ?? (defender.status === "Recalled" || (defender.status === "Returned" && defender.recallCost !== null) ? "Recalled" : undefined)
+      ?? (defender.status === "Recalled" || defender.recallProvenance === "FleetMissionRecalled" ? "Recalled" : undefined)
       ?? (defender.status === "Outbound" ? "Active" : "Expired");
     return {
       missionId: defender.missionId,

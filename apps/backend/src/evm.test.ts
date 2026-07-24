@@ -1759,6 +1759,7 @@ describe("projected fleet recall cost", () => {
     const mission = decodeFleetMissionLogs(logs).get("3");
     expect(mission?.status).toBe("Recalled");
     expect(mission?.recallCost).toBe("50");
+    expect(mission?.recallProvenance).toBe("FleetMissionRecalled");
   });
 
   test("leaves recall cost null for a returning fleet that can no longer be recalled", () => {

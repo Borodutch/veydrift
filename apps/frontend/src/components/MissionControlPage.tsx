@@ -1316,10 +1316,10 @@ function activeMissionHeaderTiming(mission: FleetMissionSummary, now: number, no
 }
 
 // Expanded-panel timings: the full arrival/return picture the compact row deliberately omits. A
-// recalled fleet never arrived, so its timeline shows only the (early) return instead of a bogus
-// "Arrived" moment that postdates the landing.
+// recalled fleet never arrived, so its timeline shows only the actual return-home timing instead of a
+// bogus target "Arrived" moment. A valid late recall can return after the original target ETA.
 function missionDetailTimings(mission: FleetMissionSummary, now: number): EndpointTiming[] {
-  if (fleetTurnedBackEarly(mission)) {
+  if (missionWasRecalled(mission)) {
     return [{ label: "Recalled — returned", value: compactMissionTime(mission.returnAt, now) }];
   }
   const timings: EndpointTiming[] = [{ label: "Arrived", value: compactMissionTime(mission.arrivalAt, now) }];
@@ -2451,9 +2451,8 @@ function PastMissionSummaryRow({
 
 // Past-archive status: a finished battle shows its OUTCOME (Won / Attack failed / Defended /
 // Raided / Draw) — "Returned"/"Resolved" says nothing about the fight the player scans for. A
-// mission whose fleet turned back before its scheduled arrival was recalled mid-flight (the
-// backend's terminal status collapses that to a bare "Returned"), so it reads "Recalled" — the
-// honest reason an attack has no battle outcome. Other expected terminal states mute to plain
+// terminal recalled Attack reads "Recalled" from immutable indexed event provenance (the backend's
+// terminal status collapses that to a bare "Returned"). Other expected terminal states mute to plain
 // text; unusual endings keep their colored pill so they stand out.
 function pastMissionStatusPill(
   mission: FleetMissionSummary,
@@ -2461,11 +2460,11 @@ function pastMissionStatusPill(
   losses: MissionLossSummary | undefined,
   direction: MissionDirection,
 ): MissionStatusPill {
-  const outcome = losses ? missionOutcome(losses, mission, direction) : null;
-  if (outcome) return { label: outcome.label, tone: outcome.tone, variant: "text" };
-  if (fleetTurnedBackEarly(mission)) {
+  if (mission.missionType === "Attack" && missionWasRecalled(mission)) {
     return { label: "Recalled", tone: "text-amber-300/80", variant: "text" };
   }
+  const outcome = losses ? missionOutcome(losses, mission, direction) : null;
+  if (outcome) return { label: outcome.label, tone: outcome.tone, variant: "text" };
   const pill = missionStatusPill(mission, now);
   if (pill.label === "Returned" || pill.label === "Resolved") return { ...pill, variant: "muted" };
   // Pills are live-flight chrome; a past row's unusual terminal state reads as amber text so the
@@ -2473,12 +2472,10 @@ function pastMissionStatusPill(
   return { label: pill.label, tone: "text-amber-300/80", variant: "text" };
 }
 
-// A fleet that landed home before its scheduled arrival never reached the target — it was recalled
-// mid-flight. (Deploys/instant legs have returnAt >= arrivalAt, so they never match.)
-function fleetTurnedBackEarly(mission: FleetMissionSummary): boolean {
-  const arrivalAt = Number(mission.arrivalAt);
-  const returnAt = Number(mission.returnAt);
-  return Number.isFinite(arrivalAt) && Number.isFinite(returnAt) && returnAt < arrivalAt;
+// FleetMissionReturned collapses recalled and ordinary fleets to Returned. recallCost is not a safe
+// substitute because outbound projected costs can survive in stored summaries.
+export function missionWasRecalled(mission: FleetMissionSummary): boolean {
+  return mission.status === "Recalled" || mission.recallProvenance === "FleetMissionRecalled";
 }
 
 function PastBattleReportRow({
