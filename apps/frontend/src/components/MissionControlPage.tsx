@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronLeft, ChevronRight, Clipboard, ExternalLink, List } from "lucide-preact";
+import { ChevronDown, ChevronLeft, ChevronRight, Clipboard, ExternalLink, Filter, List } from "lucide-preact";
 
 import { ActionReasonNote } from "./ActionReasonNote";
 import { planetTypeFromTemperature } from "../data/mockUniverse";
@@ -52,6 +52,34 @@ export type MissionLifecycleAction = {
   reason?: string | undefined;
 };
 
+export const MISSION_CONTROL_MISSION_TYPES = [
+  "Transport",
+  "Deploy",
+  "Colonize",
+  "Attack",
+  "Harvest",
+  "AcsDefend",
+  "MissileAttack",
+  "AcsAttack",
+  "DefenseHold",
+] as const;
+
+export type MissionControlDirectionFilter = "" | "outbound" | "returning";
+
+export type MissionControlFilters = {
+  direction: MissionControlDirectionFilter;
+  missionNumber: string;
+  missionType: string;
+  planetId: string;
+};
+
+export const EMPTY_MISSION_CONTROL_FILTERS: MissionControlFilters = {
+  direction: "",
+  missionNumber: "",
+  missionType: "",
+  planetId: "",
+};
+
 export function missionControlRefreshButtonState(loading: boolean): { disabled: boolean; label: "Refresh" | "Refreshing" } {
   return refreshButtonState(loading);
 }
@@ -74,6 +102,7 @@ interface MissionControlPageProps {
   missionArchive?: FleetMissionArchiveResponse | undefined;
   missionArchiveError?: string | undefined;
   missionArchiveLoading?: boolean | undefined;
+  missionFilters?: Partial<MissionControlFilters> | undefined;
   missionNumberSearch?: string | undefined;
   now: number;  onCounterplay: (mission: FleetMissionSummary, mode: "acsDefend") => void;
   // VEY-KANEO-440: opens the player's own planet detail, where the Defend control is always shown
@@ -85,6 +114,7 @@ interface MissionControlPageProps {
   onGlobalMissionArchivePageChange?: ((page: number) => void) | undefined;
   onIncomingAttackArchivePageChange?: ((page: number) => void) | undefined;
   onMissionArchivePageChange?: ((page: number) => void) | undefined;
+  onMissionFiltersChange?: ((filters: MissionControlFilters) => void) | undefined;
   onMissionNumberSearchChange?: ((value: string) => void) | undefined;
   onRecall: (missionId: string) => void;
   onRefresh: () => void;
@@ -111,6 +141,7 @@ export function MissionControlPage({
   missionArchive,
   missionArchiveError,
   missionArchiveLoading = false,
+  missionFilters,
   missionNumberSearch = "",
   now,  onCounterplay,
   onDefendPlanet,
@@ -120,6 +151,7 @@ export function MissionControlPage({
   onGlobalMissionArchivePageChange,
   onIncomingAttackArchivePageChange,
   onMissionArchivePageChange,
+  onMissionFiltersChange,
   onMissionNumberSearchChange,
   onRecall,
   onRefresh,
@@ -140,11 +172,12 @@ export function MissionControlPage({
   // Universe-wide active rows for the "All" tab: the player's own/alliance missions keep their exact
   // classification (direction + lifecycle actions); every other active mission renders read-only.
   const allActiveRows = allActiveMissionRows(allActiveMissions, activeMissionRows);
-  const missionNumberQuery = normalizeMissionNumberSearch(missionNumberSearch);
-  const missionNumberSearchActive = missionNumberQuery.length > 0;
-  const filteredMyMissionRows = filterActiveMissionRowsByMissionNumber(myMissionRows, missionNumberQuery);
-  const filteredAllianceMissionRows = filterActiveMissionRowsByMissionNumber(allianceMissionRows, missionNumberQuery);
-  const filteredAllActiveRows = filterActiveMissionRowsByMissionNumber(allActiveRows, missionNumberQuery);
+  const normalizedFilters = normalizeMissionControlFilters({
+    ...missionFilters,
+    missionNumber: missionFilters?.missionNumber ?? missionNumberSearch,
+  });
+  const activeFilterCount = missionControlActiveFilterCount(normalizedFilters);
+  const missionFiltersActive = activeFilterCount > 0;
   const allMissions = uniqueMissions([...incoming, ...outgoing, ...returning, ...joinableAttacks, ...completedMissions]);
   // While a mission is still active (Outbound / Returning / Recalled) it must appear ONLY in the
   // active section. Its battle report — which can already exist for a fleet that fought and is flying
@@ -196,9 +229,19 @@ export function MissionControlPage({
   const walletPlanetIds = walletPlanetIdSet(walletPlanets, planetLookup, walletAddress);
   const rawIncomingAttackPastRows = rawIncomingAttackArchiveRows ?? incomingAttackPastMissionRows(pastMissionRows, walletAddress, walletPlanetIds);
   const incomingAttackRows = dedupePastMissionRows(rawIncomingAttackPastRows, activeMissionIds);
-  const filteredPastMissionRows = filterPastMissionRowsByMissionNumber(pastMissionRows, missionNumberQuery);
-  const filteredGlobalPastMissionRows = filterPastMissionRowsByMissionNumber(globalPastMissionRows, missionNumberQuery);
-  const filteredIncomingAttackRows = filterPastMissionRowsByMissionNumber(incomingAttackRows, missionNumberQuery);
+  const filteredMyMissionRows = filterActiveMissionRows(myMissionRows, normalizedFilters);
+  const filteredAllianceMissionRows = filterActiveMissionRows(allianceMissionRows, normalizedFilters);
+  const filteredAllActiveRows = filterActiveMissionRows(allActiveRows, normalizedFilters);
+  const filteredStationedIncoming = incoming.filter((mission) =>
+    activeMissionRowMatchesFilters({ context: "incoming", direction: "Hostile inbound", mission }, normalizedFilters)
+  );
+  const filteredStationedOutgoing = outgoing.filter((mission) =>
+    activeMissionRowMatchesFilters({ context: "outgoing", direction: "Outbound", mission }, normalizedFilters)
+  );
+  const filteredPastMissionRows = filterPastMissionRows(pastMissionRows, normalizedFilters);
+  const filteredGlobalPastMissionRows = filterPastMissionRows(globalPastMissionRows, normalizedFilters);
+  const filteredIncomingAttackRows = filterPastMissionRows(incomingAttackRows, normalizedFilters);
+  const filterEmptyLabel = missionFilterEmptyLabel(normalizedFilters);
   const incomingAttackPastCollapsedCount = rawIncomingAttackPastRows.length - incomingAttackRows.length;
   const activeCount = activeMissionRows.length;
   const initialLoading = loading && !fleetVisibility;
@@ -214,9 +257,14 @@ export function MissionControlPage({
       <PageHeader
         actions={(
           <>
-            <MissionNumberSearchInput
-              onChange={onMissionNumberSearchChange}
-              value={missionNumberSearch}
+            <MissionFilterPopover
+              filters={normalizedFilters}
+              onChange={(filters) => {
+                onMissionFiltersChange?.(filters);
+                if (filters.missionNumber !== normalizedFilters.missionNumber) {
+                  onMissionNumberSearchChange?.(filters.missionNumber);
+                }
+              }}
             />
             <RefreshButton loading={loading || missionArchiveLoading} onRefresh={onRefresh} title="Refresh missions" />
           </>
@@ -256,8 +304,8 @@ export function MissionControlPage({
             canTransact={canTransact}
             lootByMissionId={lootByMissionId}
             lossesByMissionId={lossesByMissionId}
-            missionNumberSearchActive={missionNumberSearchActive}
-            missionNumberSearchLabel={missionNumberQuery}
+            missionFiltersActive={missionFiltersActive}
+            missionFilterEmptyLabel={filterEmptyLabel}
             myRows={filteredMyMissionRows}
             now={now}
             onCounterplay={onCounterplay}
@@ -272,11 +320,11 @@ export function MissionControlPage({
 
           <StationedDefenseSection
             hideWhenEmpty
-            incoming={incoming}
+            incoming={filteredStationedIncoming}
             now={now}
             onDefendPlanet={onDefendPlanet}
             onOpenReport={onOpenReport}
-            outgoing={outgoing}
+            outgoing={filteredStationedOutgoing}
             planetLookup={planetLookup}
           />
 
@@ -305,8 +353,9 @@ export function MissionControlPage({
             pastPage={view.pastPage}
             pastTab={view.pastTab}
             planetLookup={planetLookup}
-            missionNumberSearchActive={missionNumberSearchActive}
-            missionNumberSearchLabel={missionNumberQuery}
+            missionFiltersActive={missionFiltersActive}
+            missionFilterEmptyLabel={filterEmptyLabel}
+            missionStateFilterActive={Boolean(normalizedFilters.direction)}
             rows={filteredPastMissionRows}
             wallet={walletAddress}
             walletPlanetIds={walletPlanetIds}
@@ -697,8 +746,8 @@ function ActiveMissionSection({
   canTransact,
   lootByMissionId,
   lossesByMissionId,
-  missionNumberSearchActive,
-  missionNumberSearchLabel,
+  missionFilterEmptyLabel,
+  missionFiltersActive,
   myRows,
   now,  onCounterplay,
   onJoinAttack,
@@ -716,8 +765,8 @@ function ActiveMissionSection({
   canTransact: boolean;
   lootByMissionId: ReadonlyMap<string, BattleReport["loot"]>;
   lossesByMissionId: ReadonlyMap<string, MissionLossSummary>;
-  missionNumberSearchActive: boolean;
-  missionNumberSearchLabel: string;
+  missionFilterEmptyLabel: string;
+  missionFiltersActive: boolean;
   myRows: ActiveMissionRow[];
   now: number;  onCounterplay: (mission: FleetMissionSummary, mode: "acsDefend") => void;
   onJoinAttack: (missionId: string, targetPlanetId: string, targetCoords: { galaxy: number; system: number; position: number } | null) => void;
@@ -743,7 +792,6 @@ function ActiveMissionSection({
     wallet,
     walletPlanetIds,
   };
-  const searchEmptyLabel = missionSearchEmptyLabel(missionNumberSearchLabel);
   return (
     <section className="min-w-0 overflow-hidden rounded-lg border border-white/10 bg-[#101624]" data-active-tab={activeTab}>
       <div className="flex flex-col gap-2 border-b border-white/10 bg-black/20 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
@@ -767,7 +815,7 @@ function ActiveMissionSection({
         <div data-active-tab-panel={tab.key} hidden={tab.key !== activeTab} key={tab.key} role="tabpanel">
           {/* Only the initially-visible tab restores its remembered page; the hidden tabs start at 0. */}
           <ActiveMissionList
-            emptyLabel={missionNumberSearchActive ? searchEmptyLabel : tab.emptyLabel}
+            emptyLabel={missionFiltersActive ? missionFilterEmptyLabel : tab.emptyLabel}
             initialPage={tab.key === activeTab ? activePage : 0}
             rows={rowsByTab[tab.key]}
             {...sharedRowProps}
@@ -778,33 +826,156 @@ function ActiveMissionSection({
   );
 }
 
-function MissionNumberSearchInput({
+function MissionFilterPopover({
+  filters,
   onChange,
-  value,
 }: {
-  onChange?: ((value: string) => void) | undefined;
-  value: string;
+  filters: MissionControlFilters;
+  onChange: (filters: MissionControlFilters) => void;
 }) {
+  const activeFilterCount = missionControlActiveFilterCount(filters);
+  const active = activeFilterCount > 0;
+  const triggerLabel = active
+    ? `Mission filters, ${activeFilterCount} active`
+    : "Mission filters";
+
+  const update = (partial: Partial<MissionControlFilters>) => {
+    onChange(normalizeMissionControlFilters({ ...filters, ...partial }));
+  };
+
   return (
-    <label className="flex min-w-[13rem] max-w-full flex-1 items-center gap-2 rounded-md border border-white/10 bg-[#080d18]/95 px-3 py-2 text-xs text-slate-400 sm:flex-none">
-      <span className="whitespace-nowrap font-semibold uppercase tracking-[0.12em] text-slate-500">Mission #</span>
-      <input
-        aria-label="Search missions by number"
-        className="h-8 min-w-0 flex-1 bg-transparent font-mono text-sm text-white outline-none placeholder:text-slate-600 sm:h-5"
-        inputMode="numeric"
-        onInput={(event) => onChange?.(event.currentTarget.value)}
-        placeholder="1473"
-        type="search"
-        value={value}
-      />
-    </label>
+    <details
+      className="group/filters relative"
+      data-active-filter-count={activeFilterCount}
+      data-mission-filters
+      onKeyDown={(event) => {
+        if (event.key !== "Escape" || !event.currentTarget.open) return;
+        event.preventDefault();
+        event.currentTarget.open = false;
+        event.currentTarget.querySelector<HTMLElement>("summary")?.focus();
+      }}
+    >
+      <summary
+        aria-controls="mission-control-filter-popover"
+        aria-haspopup="dialog"
+        aria-label={triggerLabel}
+        className={`flex h-9 cursor-pointer list-none items-center gap-2 rounded-md border px-3 text-xs font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/50 [&::-webkit-details-marker]:hidden ${
+          active
+            ? "border-cyan-300/40 bg-cyan-300/10 text-cyan-100 hover:bg-cyan-300/15"
+            : "border-white/10 bg-white/5 text-slate-200 hover:bg-white/10"
+        }`}
+        title={triggerLabel}
+      >
+        <Filter aria-hidden="true" size={14} />
+        <span>Filters</span>
+        {active ? (
+          <span
+            aria-hidden="true"
+            className="inline-grid min-w-5 place-items-center rounded-full bg-cyan-200 px-1.5 py-0.5 text-[10px] font-bold leading-none text-slate-950"
+          >
+            {activeFilterCount}
+          </span>
+        ) : null}
+        <ChevronDown aria-hidden="true" className="text-slate-500 transition-transform group-open/filters:rotate-180" size={13} />
+      </summary>
+
+      <div
+        aria-label="Mission filters"
+        className="absolute right-0 z-30 mt-2 grid w-[min(22rem,calc(100vw-1.5rem))] gap-3 rounded-lg border border-white/15 bg-[#0d1422] p-3 shadow-2xl shadow-black/50"
+        id="mission-control-filter-popover"
+        role="dialog"
+      >
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold text-white">Filter missions</h2>
+            <p className="mt-0.5 text-[11px] text-slate-500">Filters combine across ongoing and past missions.</p>
+          </div>
+          <button
+            className="shrink-0 rounded px-2 py-1 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-300/10 disabled:cursor-not-allowed disabled:text-slate-600"
+            disabled={!active}
+            onClick={(event) => {
+              onChange({ ...EMPTY_MISSION_CONTROL_FILTERS });
+              const details = event.currentTarget.closest("details");
+              details?.removeAttribute("open");
+              details?.querySelector<HTMLElement>("summary")?.focus();
+            }}
+            type="button"
+          >
+            Clear all
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <label className="grid gap-1 text-xs font-medium text-slate-300">
+            Mission number
+            <input
+              aria-label="Search missions by number"
+              className="h-10 min-w-0 rounded border border-white/10 bg-black/25 px-3 font-mono text-sm text-white outline-none transition placeholder:text-slate-600 focus:border-cyan-300/45 focus:ring-1 focus:ring-cyan-300/25"
+              inputMode="numeric"
+              onInput={(event) => update({ missionNumber: event.currentTarget.value })}
+              placeholder="1473"
+              type="search"
+              value={filters.missionNumber}
+            />
+          </label>
+
+          <label className="grid gap-1 text-xs font-medium text-slate-300">
+            Planet ID
+            <input
+              aria-label="Filter by origin or destination planet ID"
+              className="h-10 min-w-0 rounded border border-white/10 bg-black/25 px-3 font-mono text-sm text-white outline-none transition placeholder:text-slate-600 focus:border-cyan-300/45 focus:ring-1 focus:ring-cyan-300/25"
+              inputMode="numeric"
+              onInput={(event) => update({ planetId: event.currentTarget.value })}
+              placeholder="7"
+              type="search"
+              value={filters.planetId}
+            />
+          </label>
+
+          <label className="grid gap-1 text-xs font-medium text-slate-300">
+            Mission type
+            <select
+              aria-label="Filter by mission type"
+              className="h-10 min-w-0 rounded border border-white/10 bg-[#080d18] px-3 text-sm text-white outline-none transition focus:border-cyan-300/45 focus:ring-1 focus:ring-cyan-300/25"
+              onChange={(event) => update({ missionType: event.currentTarget.value })}
+              value={filters.missionType}
+            >
+              <option value="">All mission types</option>
+              {MISSION_CONTROL_MISSION_TYPES.map((missionType) => (
+                <option key={missionType} value={missionType}>{missionTypeLabel(missionType)}</option>
+              ))}
+            </select>
+          </label>
+
+          <label className="grid gap-1 text-xs font-medium text-slate-300">
+            Direction / state
+            <select
+              aria-label="Filter by mission direction or state"
+              className="h-10 min-w-0 rounded border border-white/10 bg-[#080d18] px-3 text-sm text-white outline-none transition focus:border-cyan-300/45 focus:ring-1 focus:ring-cyan-300/25"
+              onChange={(event) => update({ direction: event.currentTarget.value as MissionControlDirectionFilter })}
+              value={filters.direction}
+            >
+              <option value="">Any flight state</option>
+              <option value="outbound">Outbound</option>
+              <option value="returning">Returning</option>
+            </select>
+          </label>
+        </div>
+      </div>
+    </details>
   );
 }
 
-function missionSearchEmptyLabel(missionNumberSearchLabel: string): string {
-  return missionNumberSearchLabel
-    ? `No missions match #${missionNumberSearchLabel}.`
-    : "No missions match this number.";
+function missionFilterEmptyLabel(filters: MissionControlFilters): string {
+  if (
+    filters.missionNumber
+    && !filters.missionType
+    && !filters.direction
+    && !filters.planetId
+  ) {
+    return `No missions match #${filters.missionNumber}.`;
+  }
+  return "No missions match the active filters.";
 }
 
 function ActiveMissionList({
@@ -1661,7 +1832,9 @@ function pastDisplayTotalEntries(
   rows: PastMissionRow[],
   pagination: FleetMissionArchiveResponse["pagination"] | undefined,
   collapsedCount: number,
+  clientFiltered = false,
 ): number {
+  if (clientFiltered) return rows.length;
   const currentPagination = pagination ?? paginationForRows(rows, 25);
   return pagination
     ? Math.max(rows.length, currentPagination.totalEntries - collapsedCount)
@@ -1669,6 +1842,7 @@ function pastDisplayTotalEntries(
 }
 
 type PastMissionTabData = {
+  clientFiltered: boolean;
   collapsedCount: number;
   emptyLabel: string;
   error?: string | undefined;
@@ -1694,8 +1868,9 @@ function PastMissionSection({
   loading,
   lootByMissionId,
   lossesByMissionId,
-  missionNumberSearchActive,
-  missionNumberSearchLabel,
+  missionFilterEmptyLabel,
+  missionFiltersActive,
+  missionStateFilterActive,
   now,
   onAllPageChange,
   onIncomingAttackPageChange,
@@ -1724,8 +1899,9 @@ function PastMissionSection({
   loading: boolean;
   lootByMissionId: ReadonlyMap<string, BattleReport["loot"]>;
   lossesByMissionId: ReadonlyMap<string, MissionLossSummary>;
-  missionNumberSearchActive: boolean;
-  missionNumberSearchLabel: string;
+  missionFilterEmptyLabel: string;
+  missionFiltersActive: boolean;
+  missionStateFilterActive: boolean;
   now: number;
   onAllPageChange?: ((page: number) => void) | undefined;
   onIncomingAttackPageChange?: ((page: number) => void) | undefined;
@@ -1739,11 +1915,11 @@ function PastMissionSection({
   wallet?: string | undefined;
   walletPlanetIds: ReadonlySet<string>;
 }) {
-  const searchEmptyLabel = missionSearchEmptyLabel(missionNumberSearchLabel);
   const dataByTab: Record<PastMissionTabKey, PastMissionTabData> = {
     all: {
+      clientFiltered: missionStateFilterActive,
       collapsedCount: allCollapsedCount,
-      emptyLabel: missionNumberSearchActive ? searchEmptyLabel : "No completed missions in the universe yet.",
+      emptyLabel: missionFiltersActive ? missionFilterEmptyLabel : "No completed missions in the universe yet.",
       error: allError,
       loading: allLoading,
       onPageChange: onAllPageChange,
@@ -1751,8 +1927,9 @@ function PastMissionSection({
       rows: allRows,
     },
     incomingAttacks: {
+      clientFiltered: missionStateFilterActive,
       collapsedCount: incomingAttackCollapsedCount,
-      emptyLabel: missionNumberSearchActive ? searchEmptyLabel : "No completed incoming attacks are visible for this wallet yet.",
+      emptyLabel: missionFiltersActive ? missionFilterEmptyLabel : "No completed incoming attacks are visible for this wallet yet.",
       error: incomingAttackError,
       loading: incomingAttackLoading,
       onPageChange: onIncomingAttackPageChange,
@@ -1760,8 +1937,9 @@ function PastMissionSection({
       rows: incomingAttackRows,
     },
     mine: {
+      clientFiltered: missionStateFilterActive,
       collapsedCount,
-      emptyLabel: missionNumberSearchActive ? searchEmptyLabel : "No completed missions are visible for this wallet yet.",
+      emptyLabel: missionFiltersActive ? missionFilterEmptyLabel : "No completed missions are visible for this wallet yet.",
       error,
       loading,
       onPageChange,
@@ -1778,7 +1956,7 @@ function PastMissionSection({
         <div aria-label="Past missions scope" className="flex flex-wrap gap-1.5" role="tablist">
           {PAST_MISSION_TABS.map((tab) => {
             const data = dataByTab[tab.key];
-            const count = pastDisplayTotalEntries(data.rows, data.pagination, data.collapsedCount);
+            const count = pastDisplayTotalEntries(data.rows, data.pagination, data.collapsedCount, missionStateFilterActive);
             return (
               <button
                 aria-selected={tab.key === pastTab}
@@ -1807,6 +1985,7 @@ function PastMissionSection({
 }
 
 function PastMissionTable({
+  clientFiltered,
   collapsedCount,
   emptyLabel,
   error,
@@ -1837,10 +2016,10 @@ function PastMissionTable({
   // Server-paginated tabs carry their page in the `pagination` prop (app state, survives navigation);
   // the client-paginated fallback restores the remembered page index here (VEY-412).
   const currentPagination = pagination ?? paginationForRowsAtPage(rows, pageSize, initialClientPage);
-  const hasPages = currentPagination.totalPages > 1;
+  const hasPages = !clientFiltered && currentPagination.totalPages > 1;
   const visiblePages = pagination ? [rows] : pages;
   const clientPage = pagination ? 0 : currentPagination.page - 1;
-  const displayTotalEntries = pastDisplayTotalEntries(rows, pagination, collapsedCount);
+  const displayTotalEntries = pastDisplayTotalEntries(rows, pagination, collapsedCount, clientFiltered);
 
   return (
     <div
@@ -2406,19 +2585,76 @@ export function normalizeMissionNumberSearch(value: string): string {
   return value.replace(/\D+/g, "");
 }
 
+export function normalizeMissionControlFilters(filters: Partial<MissionControlFilters>): MissionControlFilters {
+  const direction = filters.direction;
+  return {
+    direction: direction === "outbound" || direction === "returning" ? direction : "",
+    missionNumber: normalizeMissionNumberSearch(filters.missionNumber ?? ""),
+    missionType: (filters.missionType ?? "").trim(),
+    planetId: (filters.planetId ?? "").replace(/\D+/g, "").replace(/^0+(?=\d)/, ""),
+  };
+}
+
+export function missionControlActiveFilterCount(filters: Partial<MissionControlFilters>): number {
+  const normalized = normalizeMissionControlFilters(filters);
+  return [
+    normalized.direction,
+    normalized.missionNumber,
+    normalized.missionType,
+    normalized.planetId,
+  ].filter(Boolean).length;
+}
+
 export function missionIdMatchesMissionNumberSearch(missionId: string, missionNumberSearch: string): boolean {
   const normalized = normalizeMissionNumberSearch(missionNumberSearch);
   return normalized.length === 0 || missionId.includes(normalized);
 }
 
-function filterActiveMissionRowsByMissionNumber(rows: ActiveMissionRow[], missionNumberSearch: string): ActiveMissionRow[] {
-  if (!missionNumberSearch) return rows;
-  return rows.filter((row) => missionIdMatchesMissionNumberSearch(row.mission.missionId, missionNumberSearch));
+function missionMatchesBaseFilters(mission: FleetMissionSummary, filters: MissionControlFilters): boolean {
+  return missionIdMatchesMissionNumberSearch(mission.missionId, filters.missionNumber)
+    && (!filters.missionType || mission.missionType === filters.missionType)
+    && (!filters.planetId || mission.originPlanetId === filters.planetId || mission.targetPlanetId === filters.planetId);
 }
 
-function filterPastMissionRowsByMissionNumber(rows: PastMissionRow[], missionNumberSearch: string): PastMissionRow[] {
-  if (!missionNumberSearch) return rows;
-  return rows.filter((row) => missionIdMatchesMissionNumberSearch(pastRowMissionId(row), missionNumberSearch));
+export function activeMissionRowMatchesFilters(row: ActiveMissionRow, rawFilters: Partial<MissionControlFilters>): boolean {
+  const filters = normalizeMissionControlFilters(rawFilters);
+  if (!missionMatchesBaseFilters(row.mission, filters)) return false;
+  if (!filters.direction) return true;
+  if (filters.direction === "returning") {
+    return row.context === "returning" || row.mission.status === "Returning" || row.mission.status === "Recalled";
+  }
+  return row.mission.status === "Outbound" && row.context !== "returning";
+}
+
+function filterActiveMissionRows(rows: ActiveMissionRow[], filters: MissionControlFilters): ActiveMissionRow[] {
+  if (missionControlActiveFilterCount(filters) === 0) return rows;
+  return rows.filter((row) => activeMissionRowMatchesFilters(row, filters));
+}
+
+function battleReportMatchesBaseFilters(report: BattleReport, filters: MissionControlFilters): boolean {
+  return missionIdMatchesMissionNumberSearch(report.missionId, filters.missionNumber)
+    && (!filters.missionType || filters.missionType === "Attack")
+    && (!filters.planetId || report.targetPlanetId === filters.planetId);
+}
+
+function pastMissionRowMatchesFilters(
+  row: PastMissionRow,
+  filters: MissionControlFilters,
+): boolean {
+  if (row.kind === "battleReport") {
+    if (!battleReportMatchesBaseFilters(row.report, filters)) return false;
+    return !filters.direction;
+  }
+  if (!missionMatchesBaseFilters(row.mission, filters)) return false;
+  return !filters.direction;
+}
+
+function filterPastMissionRows(
+  rows: PastMissionRow[],
+  filters: MissionControlFilters,
+): PastMissionRow[] {
+  if (missionControlActiveFilterCount(filters) === 0) return rows;
+  return rows.filter((row) => pastMissionRowMatchesFilters(row, filters));
 }
 
 function dedupePastMissionRows(

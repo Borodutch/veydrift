@@ -3847,12 +3847,21 @@ export async function fetchFleetMissionVisibility(apiUrl: string, wallet: string
 export async function fetchFleetMissionArchive(
   apiUrl: string,
   wallet: string,
-  options: { filter?: "incomingAttacks"; missionNumber?: string; page?: number; pageSize?: number } = {}
+  options: {
+    filter?: "incomingAttacks";
+    missionNumber?: string;
+    missionType?: string;
+    page?: number;
+    pageSize?: number;
+    planetId?: string;
+  } = {}
 ): Promise<FleetMissionArchiveResponse> {
   const params = new URLSearchParams();
   params.set("status", "completed");
   if (options.filter) params.set("filter", options.filter);
   if (options.missionNumber) params.set("missionNumber", options.missionNumber);
+  if (options.missionType) params.set("missionType", options.missionType);
+  if (options.planetId) params.set("planetId", options.planetId);
   params.set("page", String(options.page ?? 1));
   params.set("pageSize", String(options.pageSize ?? 25));
   return fetchWalletJson<FleetMissionArchiveResponse>(apiUrl, wallet, `missions?${params.toString()}`, "Mission archive");
@@ -3867,11 +3876,13 @@ export async function fetchGlobalActiveMissions(apiUrl: string): Promise<GlobalA
 
 export async function fetchGlobalMissionArchive(
   apiUrl: string,
-  options: { missionNumber?: string; page?: number; pageSize?: number } = {}
+  options: { missionNumber?: string; missionType?: string; page?: number; pageSize?: number; planetId?: string } = {}
 ): Promise<GlobalMissionArchiveResponse> {
   const params = new URLSearchParams();
   params.set("status", "completed");
   if (options.missionNumber) params.set("missionNumber", options.missionNumber);
+  if (options.missionType) params.set("missionType", options.missionType);
+  if (options.planetId) params.set("planetId", options.planetId);
   params.set("page", String(options.page ?? 1));
   params.set("pageSize", String(options.pageSize ?? 25));
   return fetchGameApiJson<GlobalMissionArchiveResponse>(

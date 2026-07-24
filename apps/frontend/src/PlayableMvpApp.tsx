@@ -29,10 +29,12 @@ import { PublicMoonDetail } from "./components/PublicMoonDetail";
 import { MoonImage, PlanetMoonIndicator } from "./components/PlanetMoonIndicator";
 import { MissionDetailPage } from "./components/MissionDetailPage";
 import {
+  EMPTY_MISSION_CONTROL_FILTERS,
   MissionControlPage,
   missionPlanetCoordinateKey,
   missionSystemKeysMissingUniverseArchetypes,
-  normalizeMissionNumberSearch,
+  normalizeMissionControlFilters,
+  type MissionControlFilters,
 } from "./components/MissionControlPage";
 import { MissionCreationPage, type CombatTechLevels, type MissionCargoDraft, type MissionLaunchDraft } from "./components/MissionCreationPage";
 import { BattleReportsPage } from "./components/BattleReportsPage";
@@ -3431,8 +3433,8 @@ export function PlayableMvpApp({
   const [missionArchivePage, setMissionArchivePage] = useState(1);
   const [missionArchiveLoading, setMissionArchiveLoading] = useState(false);
   const [missionArchiveError, setMissionArchiveError] = useState<string | undefined>();
-  const [missionNumberSearch, setMissionNumberSearch] = useState("");
-  const missionNumberArchiveQuery = normalizeMissionNumberSearch(missionNumberSearch);
+  const [missionFilters, setMissionFilters] = useState<MissionControlFilters>({ ...EMPTY_MISSION_CONTROL_FILTERS });
+  const normalizedMissionFilters = normalizeMissionControlFilters(missionFilters);
   const [incomingAttackArchive, setIncomingAttackArchive] = useState<FleetMissionArchiveResponse | undefined>();
   const [incomingAttackArchivePage, setIncomingAttackArchivePage] = useState(1);
   const [incomingAttackArchiveLoading, setIncomingAttackArchiveLoading] = useState(false);
@@ -4735,7 +4737,13 @@ export function PlayableMvpApp({
       error: undefined,
     }));
     try {
-      const nextArchive = await fetchFleetMissionArchive(apiBaseUrl, account, { missionNumber: missionNumberArchiveQuery, page, pageSize: 25 });
+      const nextArchive = await fetchFleetMissionArchive(apiBaseUrl, account, {
+        missionNumber: normalizedMissionFilters.missionNumber,
+        missionType: normalizedMissionFilters.missionType,
+        page,
+        pageSize: 25,
+        planetId: normalizedMissionFilters.planetId,
+      });
       setMissionArchive(nextArchive);
       setMissionArchivePage(nextArchive.pagination.page);
     } catch (error) {
@@ -4749,7 +4757,7 @@ export function PlayableMvpApp({
     } finally {
       setMissionArchiveLoading(false);
     }
-  }, [account, activePlanetId, apiBaseUrl, missionNumberArchiveQuery, setMissionArchive]);
+  }, [account, activePlanetId, apiBaseUrl, normalizedMissionFilters.missionNumber, normalizedMissionFilters.missionType, normalizedMissionFilters.planetId, setMissionArchive]);
 
   const loadIncomingAttackArchive = useCallback(async (page: number) => {
     if (!apiBaseUrl || !account) {
@@ -4762,7 +4770,14 @@ export function PlayableMvpApp({
     setIncomingAttackArchiveLoading(true);
     setIncomingAttackArchiveError(undefined);
     try {
-      const nextArchive = await fetchFleetMissionArchive(apiBaseUrl, account, { filter: "incomingAttacks", missionNumber: missionNumberArchiveQuery, page, pageSize: 25 });
+      const nextArchive = await fetchFleetMissionArchive(apiBaseUrl, account, {
+        filter: "incomingAttacks",
+        missionNumber: normalizedMissionFilters.missionNumber,
+        missionType: normalizedMissionFilters.missionType,
+        page,
+        pageSize: 25,
+        planetId: normalizedMissionFilters.planetId,
+      });
       setIncomingAttackArchive(nextArchive);
       setIncomingAttackArchivePage(nextArchive.pagination.page);
     } catch (error) {
@@ -4771,7 +4786,7 @@ export function PlayableMvpApp({
     } finally {
       setIncomingAttackArchiveLoading(false);
     }
-  }, [account, apiBaseUrl, missionNumberArchiveQuery]);
+  }, [account, apiBaseUrl, normalizedMissionFilters.missionNumber, normalizedMissionFilters.missionType, normalizedMissionFilters.planetId]);
 
   const loadAllActiveMissions = useCallback(async () => {
     if (!apiBaseUrl) {
@@ -4833,7 +4848,13 @@ export function PlayableMvpApp({
       error: undefined,
     }));
     try {
-      const nextArchive = await fetchGlobalMissionArchive(apiBaseUrl, { missionNumber: missionNumberArchiveQuery, page, pageSize: 25 });
+      const nextArchive = await fetchGlobalMissionArchive(apiBaseUrl, {
+        missionNumber: normalizedMissionFilters.missionNumber,
+        missionType: normalizedMissionFilters.missionType,
+        page,
+        pageSize: 25,
+        planetId: normalizedMissionFilters.planetId,
+      });
       setGlobalMissionArchive(nextArchive);
       setGlobalMissionArchivePage(nextArchive.pagination.page);
     } catch (error) {
@@ -4847,7 +4868,7 @@ export function PlayableMvpApp({
     } finally {
       setGlobalMissionArchiveLoading(false);
     }
-  }, [activePlanetId, apiBaseUrl, missionNumberArchiveQuery, setGlobalMissionArchive]);
+  }, [activePlanetId, apiBaseUrl, normalizedMissionFilters.missionNumber, normalizedMissionFilters.missionType, normalizedMissionFilters.planetId, setGlobalMissionArchive]);
 
   useEffect(() => {
     if (page === "mission-control") {
@@ -8598,7 +8619,7 @@ export function PlayableMvpApp({
           missionArchive={missionArchive}
           missionArchiveError={missionArchiveSection.status.error ?? missionArchiveError}
           missionArchiveLoading={missionArchiveLoading || missionArchiveSection.status.loading}
-          missionNumberSearch={missionNumberSearch}
+          missionFilters={normalizedMissionFilters}
           now={now}
           onCounterplay={handleMissionCounterplay}
           onDefendPlanet={handleDefendPlanet}
@@ -8609,7 +8630,7 @@ export function PlayableMvpApp({
           onGlobalMissionArchivePageChange={(page) => void loadGlobalMissionArchive(page)}
           onIncomingAttackArchivePageChange={(page) => void loadIncomingAttackArchive(page)}
           onMissionArchivePageChange={(page) => void loadMissionArchive(page)}
-          onMissionNumberSearchChange={setMissionNumberSearch}
+          onMissionFiltersChange={setMissionFilters}
           onRefresh={() => void activePlanetSections.refresh("fleetVisibilityState")}
           planetArchetypesByCoordinate={missionPlanetArchetypesByCoordinate}
           reportMissionId={missionReportId ?? undefined}

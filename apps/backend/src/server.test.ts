@@ -2258,7 +2258,7 @@ describe("Veydrift backend", () => {
     });
   });
 
-  test("filters completed mission archives by mission number before pagination", async () => {
+  test("composes completed mission number, type, and planet filters before pagination", async () => {
     const chainReader = new class extends MockChainReader {
       override async getFleetMissionVisibility(): Promise<never> {
         throw new Error("mission archive search must not call chain reader");
@@ -2271,30 +2271,53 @@ describe("Veydrift backend", () => {
       transactionHash: "0xabc",
       blockNumber: "100"
     });
-    for (const missionId of [112n, 212n, 330n]) {
-      for (const log of completedFleetMissionLogs({ missionId, owner: player, originPlanetId: 7n, targetPlanetId: 8n })) {
+    for (const [missionId, missionTypeId, targetPlanetId] of [
+      [112n, 4n, 8n],
+      [212n, 4n, 9n],
+      [330n, 0n, 9n],
+    ] as const) {
+      for (const log of completedFleetMissionLogs({ missionId, missionTypeId, owner: player, originPlanetId: 7n, targetPlanetId })) {
         indexer.applyLog(log);
       }
     }
 
-    const response = await createRequestHandler({
+    const handler = createRequestHandler({
       config: configuredTestConfig,
       chainReader,
       indexer
-    })(new Request(`http://localhost/wallet/${player}/missions?status=completed&missionNumber=%2312&page=1&pageSize=1`));
+    });
+    const response = await handler(
+      new Request(`http://localhost/wallet/${player}/missions?status=completed&missionNumber=%2312&missionType=Harvest&planetId=9&page=1&pageSize=1`)
+    );
 
     const body = await response.json();
     expect(response.status).toBe(200);
     expect(body.pagination).toEqual({
       page: 1,
       pageSize: 1,
-      totalEntries: 2,
-      totalPages: 2,
+      totalEntries: 1,
+      totalPages: 1,
       hasPreviousPage: false,
-      hasNextPage: true
+      hasNextPage: false
     });
     expect(body.rows).toHaveLength(1);
-    expect(["112", "212"]).toContain(body.rows[0].mission.missionId);
+    expect(body.rows[0].mission).toMatchObject({
+      missionId: "212",
+      missionType: "Harvest",
+      targetPlanetId: "9"
+    });
+
+    const globalResponse = await handler(
+      new Request("http://localhost/missions?status=completed&missionNumber=12&missionType=Harvest&planetId=9&page=1&pageSize=25")
+    );
+    const globalBody = await globalResponse.json();
+    expect(globalResponse.status).toBe(200);
+    expect(globalBody.pagination.totalEntries).toBe(1);
+    expect(globalBody.rows[0].mission).toMatchObject({
+      missionId: "212",
+      missionType: "Harvest",
+      targetPlanetId: "9"
+    });
   });
 
   test("serves paginated incoming attack archive from the indexed read model", async () => {
@@ -2364,8 +2387,12 @@ describe("Veydrift backend", () => {
       transactionHash: "0xabc",
       blockNumber: "100"
     });
-    for (const missionId of [112n, 212n, 330n]) {
-      for (const log of completedFleetMissionLogs({ missionId, owner: player, originPlanetId: 7n, targetPlanetId: 8n })) {
+    for (const [missionId, missionTypeId, targetPlanetId] of [
+      [112n, 4n, 8n],
+      [212n, 0n, 8n],
+      [330n, 4n, 9n],
+    ] as const) {
+      for (const log of completedFleetMissionLogs({ missionId, missionTypeId, owner: player, originPlanetId: 7n, targetPlanetId })) {
         indexer.applyLog(log);
       }
     }
@@ -2384,6 +2411,8 @@ describe("Veydrift backend", () => {
     const unfilteredBody = await unfiltered.json();
     const searched = await handler(new Request(`http://localhost/wallet/${player}/missions?status=completed&missionNumber=12&page=1&pageSize=25`));
     const searchedBody = await searched.json();
+    const filtered = await handler(new Request(`http://localhost/wallet/${player}/missions?status=completed&missionType=Harvest&planetId=9&page=1&pageSize=25`));
+    const filteredBody = await filtered.json();
     const incoming = await handler(new Request(`http://localhost/wallet/${player}/missions?status=completed&filter=incomingAttacks&page=1&pageSize=25`));
     const incomingBody = await incoming.json();
 
@@ -2391,6 +2420,8 @@ describe("Veydrift backend", () => {
     expect(unfilteredBody.pagination.totalEntries).toBe(4);
     expect(searched.status).toBe(200);
     expect(searchedBody.rows.map((row: { mission: FleetMissionSummary }) => row.mission.missionId).sort()).toEqual(["112", "212"]);
+    expect(filtered.status).toBe(200);
+    expect(filteredBody.rows.map((row: { mission: FleetMissionSummary }) => row.mission.missionId)).toEqual(["330"]);
     expect(incoming.status).toBe(200);
     expect(incomingBody.rows).toEqual([
       expect.objectContaining({
