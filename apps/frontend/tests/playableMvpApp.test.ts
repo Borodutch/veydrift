@@ -1569,7 +1569,9 @@ describe("Playable MVP app display helpers", () => {
 
     expect(composition.defenses.reduce((sum, unit) => sum + unit.count, 0)).toBe(135);
     expect(composition.fleet).toEqual([expect.objectContaining({ label: "Heavy Fighter", count: 57 })]);
-    expect(forecast.defenderPower).toBeGreaterThan(0);
+    expect(forecast.kind).toBe("uncertain");
+    expect(forecast.defenderPower).toBeNull();
+    expect(forecast.detail).toContain("Stationed-defender intel is unavailable");
     expect(forecast.defenderTechLevels).toEqual({ weapons: 7, shielding: 6, armor: 6 });
     expect(renderedText).toContain("Heavy Fighter");
     expect(renderedText).toContain("Rocket Launcher");
