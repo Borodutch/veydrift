@@ -288,6 +288,71 @@ contract RandomnessEngineTest is Test {
         assertEq(consumer.resolvedWord(), 987);
     }
 
+    function testOwnerCanReprecommitAndRecoverAnIrrecoverablyStaleRequest() public {
+        bytes32 originalCommitment = _commitNextWord(111);
+        consumer.start(purpose);
+        uint256 requestId = consumer.requestId();
+        bytes32 replacementCommitment = engine.randomnessCommitment(222);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RandomnessEngine.RandomnessRequestNotStale.selector,
+                requestId,
+                block.timestamp + engine.STALE_REQUEST_RECOVERY_DELAY()
+            )
+        );
+        vm.prank(owner);
+        engine.recoverStaleRequestCommitment(requestId, originalCommitment, replacementCommitment);
+
+        vm.warp(block.timestamp + engine.STALE_REQUEST_RECOVERY_DELAY());
+
+        vm.expectRevert();
+        vm.prank(attacker);
+        engine.recoverStaleRequestCommitment(requestId, originalCommitment, replacementCommitment);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RandomnessEngine.UnexpectedRandomnessCommitment.selector,
+                bytes32(uint256(123)),
+                originalCommitment
+            )
+        );
+        vm.prank(owner);
+        engine.recoverStaleRequestCommitment(
+            requestId, bytes32(uint256(123)), replacementCommitment
+        );
+
+        vm.prank(owner);
+        engine.recoverStaleRequestCommitment(requestId, originalCommitment, replacementCommitment);
+        assertEq(engine.request(requestId).randomnessCommitment, replacementCommitment);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RandomnessEngine.RandomnessRecoveryAlreadyScheduled.selector, requestId
+            )
+        );
+        vm.prank(owner);
+        engine.recoverStaleRequestCommitment(
+            requestId, replacementCommitment, engine.randomnessCommitment(333)
+        );
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RandomnessEngine.RandomnessCommitmentNotActive.selector,
+                replacementCommitment,
+                uint64(block.number)
+            )
+        );
+        vm.prank(fulfiller);
+        engine.fulfillRandomness(requestId, 222);
+
+        vm.roll(block.number + 1);
+        vm.prank(fulfiller);
+        engine.fulfillRandomness(requestId, 222);
+        consumer.resolve(purpose);
+        assertEq(consumer.resolvedWord(), 222);
+    }
+
     function testProxyInitializationAndOwnerUpgradeGate() public {
         RandomnessEngine proxied = RandomnessEngine(
             address(

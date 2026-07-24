@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 export type Address = string;
 
@@ -71,7 +71,10 @@ export class RandomnessFulfillmentWorker {
     for (const request of pending) {
       try {
         const randomWord = this.randomWord();
-        const txHash = await this.chainClient.fulfillRandomness(BigInt(request.requestId), randomWord);
+        const txHash = await this.chainClient.fulfillRandomness(
+          BigInt(request.requestId),
+          randomWord
+        );
         this.fulfilled.push({
           ...request,
           fulfilledAt: this.now().toISOString(),
@@ -93,17 +96,26 @@ export class RandomnessFulfillmentWorker {
 
   status(pendingRequests: RandomnessRequestEvent[] = []): RandomnessOperationalStatus {
     const nowSeconds = Math.floor(this.now().getTime() / 1000);
-    const pendingAges = pendingRequests.map((request) => Math.max(nowSeconds - request.createdAt, 0));
+    const pendingAges = pendingRequests.map((request) =>
+      Math.max(nowSeconds - request.createdAt, 0)
+    );
     const oldestPendingAgeSeconds = pendingAges.length > 0 ? Math.max(...pendingAges) : null;
     const alerts: string[] = [];
     const maxPendingAgeSeconds = this.options.maxPendingAgeSeconds ?? defaultMaxPendingAgeSeconds;
 
     if (oldestPendingAgeSeconds !== null && oldestPendingAgeSeconds > maxPendingAgeSeconds) {
-      alerts.push("oldest randomness request has been pending for " + oldestPendingAgeSeconds + "s");
+      alerts.push(
+        "oldest randomness request has been pending for " + oldestPendingAgeSeconds + "s"
+      );
     }
     if (this.failures.length > 0) {
       const lastFailure = this.failures[this.failures.length - 1]!;
-      alerts.push("last randomness fulfillment failed for request " + lastFailure.requestId + ": " + lastFailure.error);
+      alerts.push(
+        "last randomness fulfillment failed for request " +
+          lastFailure.requestId +
+          ": " +
+          lastFailure.error
+      );
     }
 
     return {
@@ -160,6 +172,7 @@ export type RandomnessCommitmentRecord = {
 export interface RandomnessCommitmentStore {
   load(): RandomnessCommitmentRecord[] | Promise<RandomnessCommitmentRecord[]>;
   save(records: RandomnessCommitmentRecord[]): void | Promise<void>;
+  withExclusiveLock?<T>(operation: () => Promise<T>): Promise<T>;
 }
 
 export class InMemoryRandomnessCommitmentStore implements RandomnessCommitmentStore {
@@ -180,10 +193,15 @@ export class InMemoryRandomnessCommitmentStore implements RandomnessCommitmentSt
 
 /**
  * File-backed persistence for production. Writes atomically (temp file + rename) so a crash mid-write
- * cannot corrupt the secret store, and tolerates a missing file on first run.
+ * cannot corrupt the secret store, and tolerates a missing file on first run. A filesystem lock
+ * serializes the full read/chain-write/save cycle across start-first rolling replicas.
  */
 export class FileRandomnessCommitmentStore implements RandomnessCommitmentStore {
-  constructor(private readonly filePath: string) {}
+  private readonly lockPath: string;
+
+  constructor(private readonly filePath: string) {
+    this.lockPath = filePath + ".lock";
+  }
 
   load(): RandomnessCommitmentRecord[] {
     let raw: string;
@@ -204,6 +222,61 @@ export class FileRandomnessCommitmentStore implements RandomnessCommitmentStore 
     const tempPath = this.filePath + ".tmp";
     writeFileSync(tempPath, JSON.stringify(records, null, 2), "utf8");
     renameSync(tempPath, this.filePath);
+  }
+
+  async withExclusiveLock<T>(operation: () => Promise<T>): Promise<T> {
+    await this.acquireLock();
+    const heartbeatPath = join(this.lockPath, "heartbeat");
+    const writeHeartbeat = () => writeFileSync(heartbeatPath, Date.now().toString(), "utf8");
+    writeHeartbeat();
+    const heartbeat = setInterval(writeHeartbeat, 5_000);
+    try {
+      return await operation();
+    } finally {
+      clearInterval(heartbeat);
+      rmSync(this.lockPath, { recursive: true, force: true });
+    }
+  }
+
+  private async acquireLock(): Promise<void> {
+    const startedAt = Date.now();
+    const lockWaitTimeoutMs = 60_000;
+    const staleLockAgeMs = 30_000;
+
+    while (true) {
+      try {
+        mkdirSync(dirname(this.lockPath), { recursive: true });
+        mkdirSync(this.lockPath);
+        return;
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code !== "EEXIST") throw error;
+
+        try {
+          const heartbeatPath = join(this.lockPath, "heartbeat");
+          const ageMs = Date.now() - statSync(heartbeatPath).mtimeMs;
+          if (ageMs > staleLockAgeMs) {
+            rmSync(this.lockPath, { recursive: true, force: true });
+            continue;
+          }
+        } catch (statError) {
+          const statCode = (statError as NodeJS.ErrnoException).code;
+          if (statCode !== "ENOENT") throw statError;
+          const ageMs = Date.now() - statSync(this.lockPath).mtimeMs;
+          if (ageMs > staleLockAgeMs) {
+            rmSync(this.lockPath, { recursive: true, force: true });
+            continue;
+          }
+        }
+
+        if (Date.now() - startedAt >= lockWaitTimeoutMs) {
+          throw new Error(
+            "timed out waiting for exclusive randomness commitment store lock " + this.lockPath
+          );
+        }
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    }
   }
 }
 
@@ -266,7 +339,6 @@ function isZeroCommitment(commitment: string | undefined): boolean {
 export class RandomnessCommitmentWorker {
   private readonly failures: RandomnessFailureRecord[] = [];
   private readonly fulfilled: RandomnessFulfillmentRecord[] = [];
-  private records: RandomnessCommitmentRecord[] | null = null;
   private lastCommitError: string | null = null;
 
   constructor(
@@ -276,7 +348,15 @@ export class RandomnessCommitmentWorker {
   ) {}
 
   async tick(): Promise<RandomnessCommitmentStatus> {
-    const records = await this.ensureLoaded();
+    const run = () => this.tickWithFreshStore();
+    return this.store.withExclusiveLock ? this.store.withExclusiveLock(run) : run();
+  }
+
+  private async tickWithFreshStore(): Promise<RandomnessCommitmentStatus> {
+    // Never retain an in-memory snapshot across ticks. During a start-first rollout, the replica
+    // holding the lock may change; each lock holder must begin from the latest durable secrets.
+    const loaded = await this.store.load();
+    const records = loaded.map((record) => ({ ...record }));
     const blockNumber = await this.chainClient.getBlockNumber();
 
     const targetCommitments = Math.min(
@@ -305,9 +385,7 @@ export class RandomnessCommitmentWorker {
     return this.status({
       pendingRequests: stillPending,
       pendingCommitmentAvailable: inventory.commitments.length > 0,
-      pendingCommitmentAgeBlocks: front
-        ? Math.max(blockNumber - front.committedAtBlock, 0)
-        : null,
+      pendingCommitmentAgeBlocks: front ? Math.max(blockNumber - front.committedAtBlock, 0) : null,
       commitmentInventory: inventory.commitments.length,
       readyCommitments: inventory.readyCommitments,
       targetCommitments,
@@ -347,9 +425,7 @@ export class RandomnessCommitmentWorker {
   }
 
   private upsertFailure(failure: RandomnessFailureRecord): void {
-    const existingIndex = this.failures.findIndex(
-      (entry) => entry.requestId === failure.requestId
-    );
+    const existingIndex = this.failures.findIndex((entry) => entry.requestId === failure.requestId);
     if (existingIndex >= 0) {
       this.failures[existingIndex] = failure;
     } else {
@@ -390,7 +466,9 @@ export class RandomnessCommitmentWorker {
     quantity: number
   ): Promise<void> {
     try {
-      const staged = records.filter((record) => record.committedAtBlock === null).slice(0, quantity);
+      const staged = records
+        .filter((record) => record.committedAtBlock === null)
+        .slice(0, quantity);
       while (staged.length < quantity) {
         const word = this.randomWord();
         const commitment = normalizeCommitment(await this.chainClient.computeCommitment(word));
@@ -446,14 +524,6 @@ export class RandomnessCommitmentWorker {
     }
   }
 
-  private async ensureLoaded(): Promise<RandomnessCommitmentRecord[]> {
-    if (this.records === null) {
-      const loaded = await this.store.load();
-      this.records = loaded.map((record) => ({ ...record }));
-    }
-    return this.records;
-  }
-
   status(input: {
     pendingRequests: RandomnessRequestEvent[];
     pendingCommitmentAvailable: boolean;
@@ -478,10 +548,10 @@ export class RandomnessCommitmentWorker {
     }
     if (input.commitmentInventory < input.targetCommitments) {
       alerts.push(
-        "randomness commitment inventory below target: "
-          + input.commitmentInventory
-          + "/"
-          + input.targetCommitments
+        "randomness commitment inventory below target: " +
+          input.commitmentInventory +
+          "/" +
+          input.targetCommitments
       );
     }
     if (

@@ -18,6 +18,7 @@ contract RandomnessEngine is OwnableUpgradeable, PausableUpgradeable, UUPSUpgrad
     bytes32 private constant RANDOMNESS_COMMITMENT_DOMAIN =
         keccak256("veydrift.randomness-commitment.v1");
     uint256 public constant MAX_COMMITMENT_INVENTORY = 16;
+    uint256 public constant STALE_REQUEST_RECOVERY_DELAY = 1 days;
 
     struct Request {
         address requester;
@@ -43,6 +44,7 @@ contract RandomnessEngine is OwnableUpgradeable, PausableUpgradeable, UUPSUpgrad
     mapping(uint256 index => uint64 committedAtBlock) private _queuedCommitmentBlocks;
     uint256 private _queuedCommitmentHead;
     uint256 private _queuedCommitmentTail;
+    mapping(uint256 requestId => uint64 committedAtBlock) private _recoveryCommitmentBlocks;
 
     error UnauthorizedRequester(address requester);
     error UnauthorizedFulfiller(address account);
@@ -55,6 +57,9 @@ contract RandomnessEngine is OwnableUpgradeable, PausableUpgradeable, UUPSUpgrad
     error RandomnessCommitmentInventoryFull(uint256 maximum);
     error RandomnessCommitmentNotActive(bytes32 commitment, uint64 committedAtBlock);
     error RandomnessCommitmentMismatch(bytes32 expected, bytes32 actual);
+    error UnexpectedRandomnessCommitment(bytes32 expected, bytes32 actual);
+    error RandomnessRequestNotStale(uint256 requestId, uint256 recoverableAt);
+    error RandomnessRecoveryAlreadyScheduled(uint256 requestId);
     error ZeroAddress();
     error ZeroRandomnessCommitment();
     error ZeroPurpose();
@@ -78,6 +83,12 @@ contract RandomnessEngine is OwnableUpgradeable, PausableUpgradeable, UUPSUpgrad
         bytes32 indexed purposeHash,
         uint64 fulfilledAt,
         uint256 randomWord
+    );
+    event StaleRandomnessRequestRecovered(
+        uint256 indexed requestId,
+        bytes32 indexed oldCommitment,
+        bytes32 indexed replacementCommitment,
+        uint64 committedAtBlock
     );
 
     constructor(address initialOwner, address initialFulfiller) {
@@ -248,6 +259,12 @@ contract RandomnessEngine is OwnableUpgradeable, PausableUpgradeable, UUPSUpgrad
         Request storage stored = _requests[requestId];
         if (stored.requester == address(0)) revert UnknownRequest(requestId);
         if (stored.fulfilledAt != 0) revert AlreadyFulfilled(requestId);
+        uint64 recoveryCommitmentBlock = _recoveryCommitmentBlocks[requestId];
+        if (recoveryCommitmentBlock != 0 && block.number <= recoveryCommitmentBlock) {
+            revert RandomnessCommitmentNotActive(
+                stored.randomnessCommitment, recoveryCommitmentBlock
+            );
+        }
         if (stored.randomnessCommitment != bytes32(0)) {
             bytes32 actualCommitment = randomnessCommitment(randomWord);
             if (actualCommitment != stored.randomnessCommitment) {
@@ -257,9 +274,44 @@ contract RandomnessEngine is OwnableUpgradeable, PausableUpgradeable, UUPSUpgrad
 
         stored.fulfilledAt = uint64(block.timestamp);
         stored.randomWord = randomWord;
+        if (recoveryCommitmentBlock != 0) delete _recoveryCommitmentBlocks[requestId];
 
         emit RandomnessFulfilled(
             requestId, stored.requester, stored.purposeHash, uint64(block.timestamp), randomWord
+        );
+    }
+
+    /// @notice Re-precommit a reveal for an irrecoverably lost, stale request secret.
+    /// @dev This is deliberately owner-only, delayed, expected-value guarded, and requires the
+    ///      replacement to remain on-chain for at least one block before the fulfiller may reveal it.
+    function recoverStaleRequestCommitment(
+        uint256 requestId,
+        bytes32 expectedCommitment,
+        bytes32 replacementCommitment
+    ) external onlyOwner {
+        if (replacementCommitment == bytes32(0)) {
+            revert ZeroRandomnessCommitment();
+        }
+
+        Request storage stored = _requests[requestId];
+        if (stored.requester == address(0)) revert UnknownRequest(requestId);
+        if (stored.fulfilledAt != 0) revert AlreadyFulfilled(requestId);
+        if (_recoveryCommitmentBlocks[requestId] != 0) {
+            revert RandomnessRecoveryAlreadyScheduled(requestId);
+        }
+        if (stored.randomnessCommitment != expectedCommitment) {
+            revert UnexpectedRandomnessCommitment(expectedCommitment, stored.randomnessCommitment);
+        }
+
+        uint256 recoverableAt = uint256(stored.createdAt) + STALE_REQUEST_RECOVERY_DELAY;
+        if (block.timestamp < recoverableAt) {
+            revert RandomnessRequestNotStale(requestId, recoverableAt);
+        }
+
+        stored.randomnessCommitment = replacementCommitment;
+        _recoveryCommitmentBlocks[requestId] = uint64(block.number);
+        emit StaleRandomnessRequestRecovered(
+            requestId, expectedCommitment, replacementCommitment, uint64(block.number)
         );
     }
 
