@@ -1334,16 +1334,28 @@ function activeMissionHeaderTiming(mission: FleetMissionSummary, now: number, no
 // Expanded-panel timings: the full arrival/return picture the compact row deliberately omits. A
 // recalled fleet never arrived, so its timeline shows only the actual return-home timing instead of a
 // bogus target "Arrived" moment. A valid late recall can return after the original target ETA.
+// Labels are tense-aware: a moment still in the future reads "Arrives"/"Returns", a past one
+// "Arrived"/"Returned" — an en-route fleet's timeline must not claim it already landed.
 function missionDetailTimings(mission: FleetMissionSummary, now: number): EndpointTiming[] {
   if (missionWasRecalled(mission)) {
     return [{ label: "Recalled — returned", value: compactMissionTime(mission.returnAt, now) }];
   }
-  const timings: EndpointTiming[] = [{ label: "Arrived", value: compactMissionTime(mission.arrivalAt, now) }];
+  const timings: EndpointTiming[] = [
+    { label: isFutureMoment(mission.arrivalAt, now) ? "Arrives" : "Arrived", value: compactMissionTime(mission.arrivalAt, now) },
+  ];
   if (mission.missionType === "DefenseHold") {
     timings.push({ label: "Holds until", value: compactMissionTime(defenseHoldRecallUntil(mission), now) });
   }
-  timings.push({ label: "Returned", value: compactMissionTime(mission.returnAt, now) });
+  timings.push({
+    label: isFutureMoment(mission.returnAt, now) ? "Returns" : "Returned",
+    value: compactMissionTime(mission.returnAt, now),
+  });
   return timings;
+}
+
+function isFutureMoment(value: string, now: number): boolean {
+  const timestamp = timestampToMs(value);
+  return timestamp !== undefined && timestamp > now;
 }
 
 function pastMissionHeaderTiming(mission: FleetMissionSummary, now: number): EndpointTiming {

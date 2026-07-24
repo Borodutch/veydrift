@@ -749,8 +749,8 @@ describe("MissionControlPage", () => {
         homePlanetId: "7",
         rows: [{
           kind: "mission",
-          // returnAt precedes arrivalAt: the fleet turned back before reaching the target.
-          mission: mission({ missionId: "7663", missionType: "Attack", status: "Returned", arrivalAt: "1770000841", returnAt: "1770000695" }),
+          // VEY-755: recall is explicit indexed provenance (timestamps alone are not a safe signal).
+          mission: mission({ missionId: "7663", missionType: "Attack", status: "Returned", arrivalAt: "1770000841", returnAt: "1770000695", recallProvenance: "FleetMissionRecalled" }),
         }],
         pagination: {
           page: 1,
