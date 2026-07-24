@@ -100,7 +100,12 @@ class FakeRandomnessEngine implements RandomnessCommitmentChainClient {
   commits: string[] = [];
   private readonly requests = new Map<
     string,
-    { commitment: string; createdAt: number; fulfilled: boolean; revealedWord?: bigint }
+    {
+      commitment: string;
+      createdAt: number;
+      fulfilled: boolean;
+      revealedWord?: bigint;
+    }
   >();
 
   async getBlockNumber(): Promise<number> {
@@ -139,10 +144,12 @@ class FakeRandomnessEngine implements RandomnessCommitmentChainClient {
     if (this.failCommit) {
       throw new Error("oracle wallet has no gas");
     }
-    this.inventory.push(...commitments.map((commitment) => ({
-      commitment,
-      committedAtBlock: this.block
-    })));
+    this.inventory.push(
+      ...commitments.map((commitment) => ({
+        commitment,
+        committedAtBlock: this.block
+      }))
+    );
     this.commits.push(...commitments);
     return "0xcommit";
   }
@@ -163,7 +170,10 @@ class FakeRandomnessEngine implements RandomnessCommitmentChainClient {
     const request = this.requests.get(requestId.toString());
     if (!request) throw new Error("UnknownRequest");
     if (request.fulfilled) throw new Error("AlreadyFulfilled");
-    if (request.commitment !== zeroCommitment && fakeCommitment(randomWord) !== request.commitment) {
+    if (
+      request.commitment !== zeroCommitment &&
+      fakeCommitment(randomWord) !== request.commitment
+    ) {
       throw new Error("RandomnessCommitmentMismatch");
     }
     request.fulfilled = true;
@@ -180,7 +190,11 @@ class FakeRandomnessEngine implements RandomnessCommitmentChainClient {
       throw new Error("RandomnessCommitmentNotActive");
     }
     const consumed = this.inventory.shift()!;
-    this.requests.set(requestId, { commitment: consumed.commitment, createdAt, fulfilled: false });
+    this.requests.set(requestId, {
+      commitment: consumed.commitment,
+      createdAt,
+      fulfilled: false
+    });
   }
 
   requestFulfilledWith(requestId: string): bigint | undefined {
@@ -275,6 +289,32 @@ describe("Randomness commitment worker", () => {
     expect(status.alerts).toEqual([]);
   });
 
+  test("reloads durable secrets on every tick instead of overwriting a newer replica", async () => {
+    const engine = new FakeRandomnessEngine();
+    const store = new InMemoryRandomnessCommitmentStore();
+    const worker = new RandomnessCommitmentWorker(engine, store, {
+      now,
+      randomWord: () => 500n,
+      targetCommitments: 1
+    });
+
+    engine.block = 1;
+    await worker.tick();
+
+    const replicaRecord = {
+      commitment: fakeCommitment(700n),
+      word: "700",
+      committedAtBlock: 2,
+      createdAt: now().toISOString()
+    };
+    store.save([...store.load(), replicaRecord]);
+
+    engine.block = 3;
+    await worker.tick();
+
+    expect(store.load().map((record) => record.commitment)).toContain(replicaRecord.commitment);
+  });
+
   test("alerts when no commitment can be posted", async () => {
     const engine = new FakeRandomnessEngine();
     engine.failCommit = true;
@@ -293,9 +333,11 @@ describe("Randomness commitment worker", () => {
     expect(status.alerts).toContain(
       "no pending randomness commitment available; randomness-consuming actions will revert"
     );
-    expect(status.alerts.some((alert) => alert.includes("failed to refill randomness commitment inventory"))).toBe(
-      true
-    );
+    expect(
+      status.alerts.some((alert) =>
+        alert.includes("failed to refill randomness commitment inventory")
+      )
+    ).toBe(true);
   });
 
   test("flags a consumed request whose reveal word was lost", async () => {
@@ -331,26 +373,72 @@ describe("Randomness commitment worker", () => {
       const engine = new FakeRandomnessEngine();
 
       engine.block = 1;
-      const before = new RandomnessCommitmentWorker(engine, new FileRandomnessCommitmentStore(filePath), {
-        now,
-        randomWord: () => 4242n,
-        targetCommitments: 1
-      });
+      const before = new RandomnessCommitmentWorker(
+        engine,
+        new FileRandomnessCommitmentStore(filePath),
+        {
+          now,
+          randomWord: () => 4242n,
+          targetCommitments: 1
+        }
+      );
       await before.tick();
 
       engine.block = 2;
       engine.consume("8", 1_000);
 
       // New store instance reads the on-disk secret the previous worker wrote.
-      const after = new RandomnessCommitmentWorker(engine, new FileRandomnessCommitmentStore(filePath), {
-        now,
-        randomWord: () => 9999n,
-        targetCommitments: 1
-      });
+      const after = new RandomnessCommitmentWorker(
+        engine,
+        new FileRandomnessCommitmentStore(filePath),
+        {
+          now,
+          randomWord: () => 9999n,
+          targetCommitments: 1
+        }
+      );
       const status = await after.tick();
 
       expect(engine.requestFulfilledWith("8")).toBe(4242n);
       expect(status.alerts).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("serializes overlapping file-store owners during a rolling deployment", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "vey-randomness-lock-"));
+    const filePath = join(dir, "commitments.json");
+    const firstStore = new FileRandomnessCommitmentStore(filePath);
+    const secondStore = new FileRandomnessCommitmentStore(filePath);
+    const order: string[] = [];
+    let releaseFirst = () => {};
+    let firstEntered = () => {};
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const entered = new Promise<void>((resolve) => {
+      firstEntered = resolve;
+    });
+
+    try {
+      const first = firstStore.withExclusiveLock(async () => {
+        order.push("first-start");
+        firstEntered();
+        await firstGate;
+        order.push("first-end");
+      });
+      await entered;
+
+      const second = secondStore.withExclusiveLock(async () => {
+        order.push("second");
+      });
+      await Promise.resolve();
+      expect(order).toEqual(["first-start"]);
+
+      releaseFirst();
+      await Promise.all([first, second]);
+      expect(order).toEqual(["first-start", "first-end", "second"]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -367,7 +455,11 @@ describe("Randomness commitment worker", () => {
 
     engine.block = 1;
     // Pre-commit disabled on-chain: request carries the zero commitment.
-    engine["requests"].set("3", { commitment: zeroCommitment, createdAt: 1_000, fulfilled: false });
+    engine["requests"].set("3", {
+      commitment: zeroCommitment,
+      createdAt: 1_000,
+      fulfilled: false
+    });
 
     const status = await worker.tick();
 

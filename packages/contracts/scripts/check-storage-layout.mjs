@@ -100,7 +100,8 @@ if (!Array.isArray(randomnessStorage)) {
   );
 }
 
-// Slots 0-5 are the live v1 proxy layout. The FIFO inventory must remain strictly appended.
+// Slots 0-5 are the live v1 proxy layout. Later recovery state must remain strictly appended
+// after the already-deployed FIFO inventory.
 const expectedRandomnessStorage = [
   ["nextRequestId", "0", 0],
   ["fulfiller", "1", 0],
@@ -113,6 +114,7 @@ const expectedRandomnessStorage = [
   ["_queuedCommitmentBlocks", "7", 0],
   ["_queuedCommitmentHead", "8", 0],
   ["_queuedCommitmentTail", "9", 0],
+  ["_recoveryCommitmentBlocks", "10", 0],
 ];
 const actualRandomnessStorage = randomnessStorage.map(({label, slot, offset}) => [label, slot, offset]);
 if (JSON.stringify(actualRandomnessStorage) !== JSON.stringify(expectedRandomnessStorage)) {
@@ -120,4 +122,4 @@ if (JSON.stringify(actualRandomnessStorage) !== JSON.stringify(expectedRandomnes
   process.exit(1);
 }
 
-console.log("RandomnessEngine storage layout preserves the live v1 prefix and appended FIFO inventory");
+console.log("RandomnessEngine storage layout preserves the live v1 prefix and appended recovery state");
