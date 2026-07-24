@@ -1721,7 +1721,14 @@ export class SettlementIndexer {
 
   fleetMissionArchivePage(
     wallet: `0x${string}`,
-    options: { filter?: string | null; missionNumber?: string | null; page: number; pageSize: number }
+    options: {
+      filter?: string | null;
+      missionNumber?: string | null;
+      missionType?: string | null;
+      page: number;
+      pageSize: number;
+      planetId?: string | null;
+    }
   ): Pick<FleetMissionVisibility, "homePlanetId" | "wallet"> & {
     completedMissions: FleetMissionSummary[];
     ownedPlanetIds: Set<string>;
@@ -1754,15 +1761,29 @@ export class SettlementIndexer {
       params.push(walletLower, ...targetIds);
     }
     const missionNumber = (options.missionNumber ?? "").replace(/\D+/g, "");
-    const missionNumberSql = missionNumber ? "AND mission_id LIKE ?" : "";
+    const archiveFilterSql: string[] = [];
+    if (missionNumber) archiveFilterSql.push("mission_id LIKE ?");
     if (missionNumber) params.push(`%${missionNumber}%`);
+    const missionType = (options.missionType ?? "").trim();
+    const missionTypeId = missionType ? fleetMissionTypeId(missionType) : null;
+    if (missionType) {
+      archiveFilterSql.push(missionTypeId === null ? "0 = 1" : "mission_type_id = ?");
+      if (missionTypeId !== null) params.push(missionTypeId);
+    }
+    const rawPlanetId = (options.planetId ?? "").trim();
+    const planetId = rawPlanetId.replace(/\D+/g, "").replace(/^0+(?=\d)/, "");
+    if (rawPlanetId) {
+      archiveFilterSql.push(planetId ? "(origin_planet_id = ? OR target_planet_id = ?)" : "0 = 1");
+      if (planetId) params.push(planetId, planetId);
+    }
+    const archiveFilters = archiveFilterSql.map((filter) => `AND ${filter}`).join("\n        ");
 
     const countRow = this.db.query(`
       SELECT COUNT(*) AS count
       FROM contract_fleet_missions
       WHERE ${statusSql}
         AND (${visibilitySql})
-        ${missionNumberSql}
+        ${archiveFilters}
     `).get(...params) as CountRow | null;
     const totalEntries = Number(countRow?.count ?? 0);
     const pageSize = Math.max(1, Math.min(100, Math.trunc(options.pageSize) || 25));
@@ -1773,7 +1794,7 @@ export class SettlementIndexer {
       FROM contract_fleet_missions
       WHERE ${statusSql}
         AND (${visibilitySql})
-        ${missionNumberSql}
+        ${archiveFilters}
       ORDER BY
         CAST(CASE WHEN status_id IN (2, 4, 5) THEN return_at ELSE arrival_at END AS INTEGER) DESC,
         CAST(mission_id AS INTEGER) DESC
@@ -1800,7 +1821,13 @@ export class SettlementIndexer {
   }
 
   globalFleetMissionArchivePage(
-    options: { missionNumber?: string | null; page: number; pageSize: number }
+    options: {
+      missionNumber?: string | null;
+      missionType?: string | null;
+      page: number;
+      pageSize: number;
+      planetId?: string | null;
+    }
   ): {
     completedMissions: FleetMissionSummary[];
     page: number;
@@ -1808,13 +1835,30 @@ export class SettlementIndexer {
   } {
     this.currentMissionReadModelDbVersion();
     const missionNumber = (options.missionNumber ?? "").replace(/\D+/g, "");
-    const missionNumberSql = missionNumber ? "AND mission_id LIKE ?" : "";
-    const params: SQLQueryBindings[] = missionNumber ? [`%${missionNumber}%`] : [];
+    const archiveFilterSql: string[] = [];
+    const params: SQLQueryBindings[] = [];
+    if (missionNumber) {
+      archiveFilterSql.push("mission_id LIKE ?");
+      params.push(`%${missionNumber}%`);
+    }
+    const missionType = (options.missionType ?? "").trim();
+    const missionTypeId = missionType ? fleetMissionTypeId(missionType) : null;
+    if (missionType) {
+      archiveFilterSql.push(missionTypeId === null ? "0 = 1" : "mission_type_id = ?");
+      if (missionTypeId !== null) params.push(missionTypeId);
+    }
+    const rawPlanetId = (options.planetId ?? "").trim();
+    const planetId = rawPlanetId.replace(/\D+/g, "").replace(/^0+(?=\d)/, "");
+    if (rawPlanetId) {
+      archiveFilterSql.push(planetId ? "(origin_planet_id = ? OR target_planet_id = ?)" : "0 = 1");
+      if (planetId) params.push(planetId, planetId);
+    }
+    const archiveFilters = archiveFilterSql.map((filter) => `AND ${filter}`).join("\n        ");
     const countRow = this.db.query(`
       SELECT COUNT(*) AS count
       FROM contract_fleet_missions
       WHERE status_id IN (3, 4)
-        ${missionNumberSql}
+        ${archiveFilters}
     `).get(...params) as CountRow | null;
     const totalEntries = Number(countRow?.count ?? 0);
     const pageSize = Math.max(1, Math.min(100, Math.trunc(options.pageSize) || 25));
@@ -1824,7 +1868,7 @@ export class SettlementIndexer {
       SELECT *
       FROM contract_fleet_missions INDEXED BY contract_fleet_missions_completed_archive_idx
       WHERE status_id IN (3, 4)
-        ${missionNumberSql}
+        ${archiveFilters}
       ORDER BY
         CAST(CASE WHEN status_id = 4 THEN return_at ELSE arrival_at END AS INTEGER) DESC,
         CAST(COALESCE(

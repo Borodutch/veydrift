@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
 
 import { MissionDetailPage } from "./components/MissionDetailPage";
-import { MissionControlPage, StationedDefenseSection, allActiveMissionRows, buildMissionControlViewQuery, missionIdMatchesMissionNumberSearch, missionPlanetCoordinateKey, missionReport, missionStatusPill, normalizeMissionNumberSearch, parseMissionControlViewParams, persistMissionControlView, resolveMissionControlView, partitionActiveMissionRows, type ActiveMissionRow, type MissionControlView } from "./components/MissionControlPage";
+import { EMPTY_MISSION_CONTROL_FILTERS, MissionControlPage, StationedDefenseSection, activeMissionRowMatchesFilters, allActiveMissionRows, buildMissionControlViewQuery, missionControlActiveFilterCount, missionIdMatchesMissionNumberSearch, missionPlanetCoordinateKey, missionReport, missionRowsDisclosureState, missionStatusPill, normalizeMissionControlFilters, normalizeMissionNumberSearch, parseMissionControlViewParams, persistMissionControlView, resolveMissionControlView, setMissionRowsExpanded, partitionActiveMissionRows, type ActiveMissionRow, type MissionControlFilters, type MissionControlView } from "./components/MissionControlPage";
 import { MissionRouteCell, missionEndpoint, type MissionPlanetIdentity } from "./components/missionRoute";
 import { planetImageForType, planetTypeFromCoordinates } from "./data/mockUniverse";
 import { buildInspectHash, buildInspectPath, parseInspectPath, parseInspectRoute } from "./inspectRoutes";
 import type { Coordinates } from "./types";
-import { fetchBattleReports, fetchFleetMissionArchive, fetchMission, type BattleReport, type FleetMissionPlanetReference, type FleetMissionSummary, type FleetMissionVisibilityResponse } from "./walletFlow";
+import { fetchBattleReports, fetchFleetMissionArchive, fetchGlobalMissionArchive, fetchMission, type BattleReport, type FleetMissionPlanetReference, type FleetMissionSummary, type FleetMissionVisibilityResponse } from "./walletFlow";
 
 const missionRouteSource = await Bun.file(new URL("./components/missionRoute.tsx", import.meta.url)).text();
 
@@ -147,7 +147,7 @@ describe("Mission Control battle reports", () => {
     }
   });
 
-  test("fetches mission archives with mission-number search", async () => {
+  test("fetches wallet and global mission archives with composable server-side filters", async () => {
     const originalFetch = globalThis.fetch;
     const requestedUrls: string[] = [];
     const wallet = "0x1111111111111111111111111111111111111111";
@@ -173,9 +173,12 @@ describe("Mission Control battle reports", () => {
     }) as typeof fetch;
 
     try {
-      await fetchFleetMissionArchive("https://api.example.test/", wallet, { missionNumber: "147", page: 1, pageSize: 25 });
+      const filters = { missionNumber: "147", missionType: "Harvest", page: 1, pageSize: 25, planetId: "9" };
+      await fetchFleetMissionArchive("https://api.example.test/", wallet, filters);
+      await fetchGlobalMissionArchive("https://api.example.test/", filters);
       expect(requestedUrls).toEqual([
-        `https://api.example.test/wallet/${wallet}/missions?status=completed&missionNumber=147&page=1&pageSize=25`,
+        `https://api.example.test/wallet/${wallet}/missions?status=completed&missionNumber=147&missionType=Harvest&planetId=9&page=1&pageSize=25`,
+        "https://api.example.test/missions?status=completed&missionNumber=147&missionType=Harvest&planetId=9&page=1&pageSize=25",
       ]);
     } finally {
       globalThis.fetch = originalFetch;
@@ -693,7 +696,7 @@ describe("Mission Control battle reports", () => {
       missionNumberSearch: "#123",
     })).join(" ");
 
-    expect(filtered).toContain("Mission #");
+    expect(filtered).toContain("Mission number");
     expect(filtered).toContain("#123");
     expect(filtered).toContain("#9123");
     expect(filtered).not.toContain("#45");
@@ -740,6 +743,221 @@ describe("Mission Control battle reports", () => {
     expect(missionIdMatchesMissionNumberSearch("1473", "47")).toBe(true);
     expect(missionIdMatchesMissionNumberSearch("1473", "#999")).toBe(false);
     expect(missionIdMatchesMissionNumberSearch("1473", "")).toBe(true);
+  });
+
+  test("normalizes every filter and reports the active-filter count", () => {
+    expect(normalizeMissionControlFilters({
+      direction: "returning",
+      missionNumber: " #14-73 ",
+      missionType: " Harvest ",
+      planetId: "Planet #009",
+    })).toEqual({
+      direction: "returning",
+      missionNumber: "1473",
+      missionType: "Harvest",
+      planetId: "9",
+    });
+    expect(missionControlActiveFilterCount(EMPTY_MISSION_CONTROL_FILTERS)).toBe(0);
+    expect(missionControlActiveFilterCount({
+      direction: "returning",
+      missionNumber: "1473",
+      missionType: "Harvest",
+      planetId: "9",
+    })).toBe(4);
+  });
+
+  test("filters Harvest missions across active and past lists", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const owner = "0x1111111111111111111111111111111111111111";
+    const text = collectText(MissionControlPage({
+      ...missionControlProps(now, {
+        outgoing: [
+          mission("75301", "Harvest", "Outbound", owner, "7", "9", now + 60_000),
+          mission("75302", "Transport", "Outbound", owner, "7", "10", now + 120_000),
+          mission("75305", "DefenseHold", "Outbound", owner, "7", "9", now + 180_000),
+        ],
+      }),
+      missionArchive: {
+        wallet: owner,
+        homePlanetId: "7",
+        rows: [
+          { kind: "mission", mission: mission("75303", "Harvest", "Returned", owner, "9", "7") },
+          { kind: "mission", mission: mission("75304", "Attack", "Returned", owner, "8", "7") },
+        ],
+        pagination: { page: 1, pageSize: 25, totalEntries: 2, totalPages: 1, hasPreviousPage: false, hasNextPage: false },
+      },
+      missionFilters: { missionType: "Harvest" },
+    })).join(" ");
+
+    expect(text).toContain("#75301");
+    expect(text).toContain("#75303");
+    expect(text).not.toContain("#75302");
+    expect(text).not.toContain("#75304");
+    expect(text).not.toContain("#75305");
+    expect(text).not.toContain("Stationed defenses");
+  });
+
+  test("filters returning fleets and composes mission number, type, direction, and planet ID", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const owner = "0x1111111111111111111111111111111111111111";
+    const returningMatch = mission("75311", "Harvest", "Returning", owner, "7", "9", now - 60_000);
+    const wrongPlanet = mission("75312", "Harvest", "Returning", owner, "7", "10", now - 60_000);
+    const wrongType = mission("75313", "Attack", "Returning", owner, "7", "9", now - 60_000);
+    const outbound = mission("75314", "Harvest", "Outbound", owner, "7", "9", now + 60_000);
+    const filters: MissionControlFilters = {
+      direction: "returning",
+      missionNumber: "7531",
+      missionType: "Harvest",
+      planetId: "9",
+    };
+    const text = collectText(MissionControlPage({
+      ...missionControlProps(now, {
+        outgoing: [outbound],
+        returning: [returningMatch, wrongPlanet, wrongType],
+      }),
+      missionFilters: filters,
+    })).join(" ");
+
+    expect(text).toContain("#75311");
+    expect(text).not.toContain("#75312");
+    expect(text).not.toContain("#75313");
+    expect(text).not.toContain("#75314");
+    expect(activeMissionRowMatchesFilters({ context: "returning", direction: "Returning", mission: returningMatch }, filters)).toBe(true);
+    expect(activeMissionRowMatchesFilters({ context: "outgoing", direction: "Outbound", mission: outbound }, filters)).toBe(false);
+  });
+
+  test("renders a compact accessible popover with active trigger state and Clear all", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const changes: MissionControlFilters[] = [];
+    const tree = MissionControlPage({
+      ...missionControlProps(now, {}),
+      missionFilters: {
+        direction: "returning",
+        missionNumber: "753",
+        missionType: "Harvest",
+        planetId: "9",
+      },
+      onMissionFiltersChange: (filters) => changes.push(filters),
+    });
+    const filterDetails = findElements(tree, "details").find((node) => node.props?.["data-mission-filters"] === true);
+    const trigger = findElements(filterDetails, "summary")[0];
+    const dialog = findElements(filterDetails, "div").find((node) => node.props?.role === "dialog");
+    const clearButton = findElements(filterDetails, "button").find((node) => collectText(node).includes("Clear all"));
+    const inputs = findElements(filterDetails, "input");
+    const selects = findElements(filterDetails, "select");
+
+    expect(filterDetails?.props?.["data-active-filter-count"]).toBe(4);
+    expect(trigger?.props?.["aria-label"]).toBe("Mission filters, 4 active");
+    expect(trigger?.props?.["aria-haspopup"]).toBe("dialog");
+    expect(trigger?.props?.["aria-controls"]).toBe("mission-control-filter-popover");
+    expect(dialog?.props?.["aria-label"]).toBe("Mission filters");
+    expect(String(dialog?.props?.className)).toContain("calc(100vw-1.5rem)");
+    expect(inputs.map((input) => input.props?.["aria-label"])).toEqual([
+      "Search missions by number",
+      "Filter by origin or destination planet ID",
+    ]);
+    expect(selects.map((select) => select.props?.["aria-label"])).toEqual([
+      "Filter by mission type",
+      "Filter by mission direction or state",
+    ]);
+
+    let escapePrevented = false;
+    let triggerFocused = false;
+    const detailsElement = {
+      open: true,
+      querySelector: () => ({ focus: () => { triggerFocused = true; } }),
+    };
+    const onKeyDown = filterDetails?.props?.onKeyDown as ((event: {
+      currentTarget: typeof detailsElement;
+      key: string;
+      preventDefault: () => void;
+    }) => void) | undefined;
+    onKeyDown?.({
+      currentTarget: detailsElement,
+      key: "Escape",
+      preventDefault: () => { escapePrevented = true; },
+    });
+    expect(detailsElement.open).toBe(false);
+    expect(escapePrevented).toBe(true);
+    expect(triggerFocused).toBe(true);
+
+    const onClick = clearButton?.props?.onClick as ((event: { currentTarget: { closest: () => null } }) => void) | undefined;
+    onClick?.({ currentTarget: { closest: () => null } });
+    expect(changes).toEqual([{ ...EMPTY_MISSION_CONTROL_FILTERS }]);
+
+    const neutralTree = MissionControlPage({ ...missionControlProps(now, {}), missionFilters: EMPTY_MISSION_CONTROL_FILTERS });
+    const neutralDetails = findElements(neutralTree, "details").find((node) => node.props?.["data-mission-filters"] === true);
+    const neutralTrigger = findElements(neutralDetails, "summary")[0];
+    expect(neutralDetails?.props?.["data-active-filter-count"]).toBe(0);
+    expect(neutralTrigger?.props?.["aria-label"]).toBe("Mission filters");
+  });
+
+  test("switches Expand all to Collapse all and tracks individual row changes", () => {
+    const rows = [{ open: false }, { open: false }, { open: true }];
+    expect(missionRowsDisclosureState(rows)).toEqual({
+      allExpanded: false,
+      label: "Expand all",
+      nextOpen: true,
+    });
+
+    setMissionRowsExpanded(rows, true);
+    expect(rows.every((row) => row.open)).toBe(true);
+    expect(missionRowsDisclosureState(rows)).toEqual({
+      allExpanded: true,
+      label: "Collapse all",
+      nextOpen: false,
+    });
+
+    rows[1]!.open = false;
+    expect(missionRowsDisclosureState(rows).label).toBe("Expand all");
+    setMissionRowsExpanded(rows, true);
+    setMissionRowsExpanded(rows, missionRowsDisclosureState(rows).nextOpen);
+    expect(rows.every((row) => !row.open)).toBe(true);
+    expect(missionRowsDisclosureState([])).toEqual({
+      allExpanded: false,
+      label: "Expand all",
+      nextOpen: true,
+    });
+  });
+
+  test("shows Expand all only when the selected views contain filter-matching cards", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const owner = "0x1111111111111111111111111111111111111111";
+    const props = missionControlProps(now, {
+      outgoing: [
+        mission("75331", "Harvest", "Outbound", owner, "7", "9", now + 60_000),
+        mission("75332", "Transport", "Outbound", owner, "7", "10", now + 120_000),
+      ],
+    });
+    const matchingTree = MissionControlPage({
+      ...props,
+      missionFilters: { missionType: "Harvest" },
+    });
+    const matchingControl = findElements(matchingTree, "button")
+      .find((node) => node.props?.["data-mission-disclosure-toggle"] === true);
+    const matchingRows = findElements(matchingTree, "details")
+      .filter((node) => node.props?.["data-mission-row"] === true);
+    expect(matchingControl?.props?.hidden).toBe(false);
+    expect(matchingControl?.props?.["aria-label"]).toBe("Expand all visible mission cards");
+    expect(matchingRows.length).toBeGreaterThan(0);
+    expect(matchingRows.every((row) => typeof row.props?.onToggle === "function")).toBe(true);
+
+    const noMatchTree = MissionControlPage({
+      ...props,
+      missionFilters: { missionType: "Deploy" },
+    });
+    const noMatchControl = findElements(noMatchTree, "button")
+      .find((node) => node.props?.["data-mission-disclosure-toggle"] === true);
+    expect(noMatchControl?.props?.hidden).toBe(true);
+
+    const hiddenTabTree = MissionControlPage({
+      ...props,
+      initialView: { activePage: 0, activeTab: "alliance", pastPage: 0, pastTab: "mine" },
+      missionFilters: { missionType: "Harvest" },
+    });
+    const hiddenTabControl = findElements(hiddenTabTree, "button")
+      .find((node) => node.props?.["data-mission-disclosure-toggle"] === true);
+    expect(hiddenTabControl?.props?.hidden).toBe(true);
   });
 
   test("shows the Alliance empty state when there are no joinable attacks", () => {

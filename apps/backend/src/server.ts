@@ -114,11 +114,11 @@ const jsonBodyLimitBytes = 32 * 1024;
 const graphqlBodyLimitBytes = 128 * 1024;
 const acceptedCacheQueryParams = new Map<string, ReadonlySet<string>>([
   ["/highscores", new Set(["category", "currentWallet", "includeAttackProtection", "limit", "page", "pageSize"])],
-  ["/missions", new Set(["missionNumber", "owner", "page", "pageSize", "status"])],
+  ["/missions", new Set(["missionNumber", "missionType", "owner", "page", "pageSize", "planetId", "status"])],
   ["/raid-finder/debris", new Set(["limit", "minMetal", "minCrystal"])],
   ["/universe/systems", new Set(["center", "detail", "galaxy", "limit", "page", "radius"])],
   ["/wallet/*/fleet-visibility", new Set(["archive", "planetId"])],
-  ["/wallet/*/missions", new Set(["filter", "missionNumber", "page", "pageSize", "status"])],
+  ["/wallet/*/missions", new Set(["filter", "missionNumber", "missionType", "page", "pageSize", "planetId", "status"])],
   ["/wallet/*/overview", new Set(["planetId"])],
   ["/wallet/*/queues", new Set(["planetId"])],
   ["/wallet/*/infrastructure", new Set(["planetId"])],
@@ -2912,8 +2912,10 @@ function indexedMissionArchive(
   const archive = indexer.fleetMissionArchivePage(wallet, {
     filter: url.searchParams.get("filter"),
     missionNumber: url.searchParams.get("missionNumber"),
+    missionType: url.searchParams.get("missionType"),
     page: requested.page,
-    pageSize: requested.pageSize
+    pageSize: requested.pageSize,
+    planetId: url.searchParams.get("planetId")
   });
   const rows = chronologicalMissionArchiveRows(archive.completedMissions, []);
   const totalEntries = archive.totalEntries;
@@ -2941,8 +2943,10 @@ function globalMissionArchive(url: URL, indexer: SettlementIndexer): GlobalMissi
   // SQLite, then hydrate only the visible missions and their materialized report summaries.
   const archive = indexer.globalFleetMissionArchivePage({
     missionNumber: url.searchParams.get("missionNumber"),
+    missionType: url.searchParams.get("missionType"),
     page: requested.page,
-    pageSize: requested.pageSize
+    pageSize: requested.pageSize,
+    planetId: url.searchParams.get("planetId")
   });
   const rows = chronologicalMissionArchiveRows(archive.completedMissions, []);
   const totalEntries = archive.totalEntries;
