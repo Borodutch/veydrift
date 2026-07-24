@@ -105,7 +105,7 @@ interface MissionControlPageProps {
   // VEY-KANEO-440: opens the player's own planet detail, where the Defend control is always shown
   // (enabled+explained where eligible, or disabled+explained on the launch planet itself).
   onDefendPlanet?: (() => void) | undefined;
-  onJoinAttack: (missionId: string, targetPlanetId: string, targetCoords: { galaxy: number; system: number; position: number } | null) => void;
+  onJoinAttack: (mission: FleetMissionSummary, targetCoords: { galaxy: number; system: number; position: number } | null) => void;
   onOpenReport: (missionId: string) => void;
   onOpenReportList: () => void;
   onGlobalMissionArchivePageChange?: ((page: number) => void) | undefined;
@@ -784,7 +784,7 @@ function ActiveMissionSection({
   missionFiltersActive: boolean;
   myRows: ActiveMissionRow[];
   now: number;  onCounterplay: (mission: FleetMissionSummary, mode: "acsDefend") => void;
-  onJoinAttack: (missionId: string, targetPlanetId: string, targetCoords: { galaxy: number; system: number; position: number } | null) => void;
+  onJoinAttack: (mission: FleetMissionSummary, targetCoords: { galaxy: number; system: number; position: number } | null) => void;
   onOpenReport: (missionId: string) => void;
   onRecall: (missionId: string) => void;
   planetLookup: ReadonlyMap<string, MissionPlanetIdentity>;
@@ -1095,7 +1095,7 @@ function ActiveMissionList({
   lootByMissionId: ReadonlyMap<string, BattleReport["loot"]>;
   lossesByMissionId: ReadonlyMap<string, MissionLossSummary>;
   now: number;  onCounterplay: (mission: FleetMissionSummary, mode: "acsDefend") => void;
-  onJoinAttack: (missionId: string, targetPlanetId: string, targetCoords: { galaxy: number; system: number; position: number } | null) => void;
+  onJoinAttack: (mission: FleetMissionSummary, targetCoords: { galaxy: number; system: number; position: number } | null) => void;
   onOpenReport: (missionId: string) => void;
   onRecall: (missionId: string) => void;
   planetLookup: ReadonlyMap<string, MissionPlanetIdentity>;
@@ -1179,7 +1179,7 @@ function MissionRow({
   losses?: MissionLossSummary | undefined;
   mission: FleetMissionSummary;
   now: number;  onCounterplay: (mission: FleetMissionSummary, mode: "acsDefend") => void;
-  onJoinAttack: (missionId: string, targetPlanetId: string, targetCoords: { galaxy: number; system: number; position: number } | null) => void;
+  onJoinAttack: (mission: FleetMissionSummary, targetCoords: { galaxy: number; system: number; position: number } | null) => void;
   onOpenReport: (missionId: string) => void;
   onRecall: (missionId: string) => void;
   planetLookup: ReadonlyMap<string, MissionPlanetIdentity>;
@@ -1217,7 +1217,7 @@ function MissionRow({
             <button
               className={rowActionButtonClass}
               key={action.kind}
-              onClick={() => onJoinAttack(mission.missionId, mission.targetPlanetId, target.coords)}
+              onClick={() => onJoinAttack(mission, target.coords)}
               title="Join this alliance attack"
               type="button"
             >

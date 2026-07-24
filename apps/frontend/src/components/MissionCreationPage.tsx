@@ -167,6 +167,22 @@ export type BattleForecastRandomness = {
   };
 };
 
+export type JoinAttackForecastParticipant = {
+  missionId: string;
+  label: string;
+  owner: string;
+  laneGroup: number | null;
+  ships?: Record<string, string>;
+  combatTechnology?: CombatTechLevels;
+};
+
+export type JoinAttackForecastContext = {
+  participants: readonly JoinAttackForecastParticipant[];
+  stationedDefenders?: readonly PublicStationedDefender[];
+  selectedAttackerLaneGroup: number | null;
+  unavailableReason?: string;
+};
+
 export type TargetResourceIntel = {
   current: MissionResourceSnapshot | null;
   projectedArrival: MissionResourceSnapshot | null;
@@ -259,6 +275,7 @@ export function MissionCreationPage({
   defenseHoldMode = false,
   attackerCombatTechLevels = ZERO_COMBAT_TECH_LEVELS,
   driveLevels = {},
+  joinAttackContext,
   joinAttackMode = false,
   nowMs = Date.now(),
   onBack,
@@ -286,6 +303,7 @@ export function MissionCreationPage({
   defenseHoldMode?: boolean | undefined;
   attackerCombatTechLevels?: CombatTechLevels | undefined;
   driveLevels?: FleetDriveLevels | undefined;
+  joinAttackContext?: JoinAttackForecastContext | undefined;
   // VEY-KANEO-431: render the picker for a join-attack — ship selection only,
   // with no loot ratio or speed controls (the join inherits the lead attack's
   // loot split and coordinated arrival).
@@ -372,8 +390,21 @@ export function MissionCreationPage({
     [stationedDefenders],
   );
   const battleForecast = useMemo(
-    () => publicTargetBattleForecast(ships, target, attackerCombatTechLevels, effectiveTargetIsMoon),
-    [attackerCombatTechLevels, effectiveTargetIsMoon, ships, target],
+    () => publicTargetBattleForecast(
+      ships,
+      target,
+      attackerCombatTechLevels,
+      effectiveTargetIsMoon,
+      joinAttackMode
+        ? joinAttackContext ?? {
+            participants: [],
+            stationedDefenders: [],
+            selectedAttackerLaneGroup: null,
+            unavailableReason: "Lead and joined attacker participant intel is unavailable for this group attack.",
+          }
+        : undefined,
+    ),
+    [attackerCombatTechLevels, effectiveTargetIsMoon, joinAttackContext, joinAttackMode, ships, target],
   );
   const resourceIntel = useMemo(
     () => targetResourceIntel(target, travelSeconds, effectiveTargetIsMoon),
@@ -510,7 +541,7 @@ export function MissionCreationPage({
             </MissionFormSection>
           ) : null}
 
-          {lootRatioSupported ? (
+          {lootRatioSupported || joinAttackMode ? (
             <AttackIntelPanel
               battleForecast={battleForecast}
               coords={coords}
@@ -521,6 +552,7 @@ export function MissionCreationPage({
               target={target}
               targetDefenseUnits={targetDefenseUnits}
               targetFleetUnits={targetFleetUnits}
+              showLoot={!joinAttackMode}
             />
           ) : (
             <NonAttackMissionIntelPanel
@@ -1328,6 +1360,7 @@ export function publicTargetBattleForecast(
   target: Planet | undefined,
   attackerTechLevels: CombatTechLevels = ZERO_COMBAT_TECH_LEVELS,
   targetIsMoon = false,
+  joinAttackContext?: JoinAttackForecastContext,
 ): BattleForecastState {
   const normalizedAttackerTechLevels = normalizeCombatTechLevels(attackerTechLevels);
   const defenderTechLevels = targetCombatTechLevels(target);
@@ -1337,7 +1370,11 @@ export function publicTargetBattleForecast(
     defenderTechLevels,
     defenderTechKnown,
   };
-  const attackerPower = missionShipsCombatPower(ships, normalizedAttackerTechLevels);
+  const joinedAttackerPower = (joinAttackContext?.participants ?? []).reduce((total, participant) => {
+    if (!participant.ships || !participant.combatTechnology) return total;
+    return total + shipRecordCombatPower(participant.ships, participant.combatTechnology);
+  }, 0);
+  const attackerPower = missionShipsCombatPower(ships, normalizedAttackerTechLevels) + joinedAttackerPower;
   if (fleetMissionShipCount(ships) <= 0) {
     return {
       kind: "uncertain",
@@ -1347,6 +1384,60 @@ export function publicTargetBattleForecast(
       defenderPower: null,
       ...forecastTech,
     };
+  }
+  if (joinAttackContext?.unavailableReason) {
+    return {
+      kind: "uncertain",
+      label: "Uncertain",
+      detail: joinAttackContext.unavailableReason,
+      attackerPower,
+      defenderPower: null,
+      ...forecastTech,
+    };
+  }
+  if (joinAttackContext) {
+    for (const participant of joinAttackContext.participants) {
+      if (!participant.ships) {
+        return {
+          kind: "uncertain",
+          label: "Uncertain",
+          detail: `${participant.label} composition is missing from public intel, so the combined attack is not simulated as only the selected joining fleet.`,
+          attackerPower,
+          defenderPower: null,
+          ...forecastTech,
+        };
+      }
+      if (!participant.combatTechnology) {
+        return {
+          kind: "uncertain",
+          label: "Uncertain",
+          detail: `${participant.label} combat technology is missing from public intel, so owner-specific contract scaling cannot be simulated safely.`,
+          attackerPower,
+          defenderPower: null,
+          ...forecastTech,
+        };
+      }
+      if (participant.laneGroup == null || !Number.isFinite(participant.laneGroup)) {
+        return {
+          kind: "uncertain",
+          label: "Uncertain",
+          detail: `${participant.label} contract random-stream lane identity is missing from public intel.`,
+          attackerPower,
+          defenderPower: null,
+          ...forecastTech,
+        };
+      }
+    }
+    if (joinAttackContext.selectedAttackerLaneGroup == null || !Number.isFinite(joinAttackContext.selectedAttackerLaneGroup)) {
+      return {
+        kind: "uncertain",
+        label: "Uncertain",
+        detail: "The selected joining fleet's exact contract random-stream lane is missing from public intel.",
+        attackerPower,
+        defenderPower: null,
+        ...forecastTech,
+      };
+    }
   }
   if (!target) {
     return {
@@ -1393,18 +1484,23 @@ export function publicTargetBattleForecast(
       ...forecastTech,
     };
   }
-  if (!targetIsMoon && !Array.isArray(target.publicState?.stationedDefenders)) {
+  const forecastStationedDefenders = targetIsMoon
+    ? []
+    : joinAttackContext?.stationedDefenders ?? target.publicState?.stationedDefenders;
+  if (!targetIsMoon && !Array.isArray(forecastStationedDefenders)) {
     return {
       kind: "uncertain",
       label: "Uncertain",
-      detail: "Stationed-defender intel is unavailable, so allied defending fleets are not silently omitted.",
+      detail: joinAttackContext
+        ? "Attack-specific stationed/counterplay defender intel is unavailable, so defending fleets are not silently omitted."
+        : "Stationed-defender intel is unavailable, so allied defending fleets are not silently omitted.",
       attackerPower,
       defenderPower: null,
       ...forecastTech,
     };
   }
 
-  const stationedDefenders = targetIsMoon ? [] : target.publicState?.stationedDefenders ?? [];
+  const stationedDefenders = forecastStationedDefenders ?? [];
   const missingStationedTechnology = stationedDefenders.find((defender) => !defender.combatTechnology);
   if (missingStationedTechnology) {
     return {
@@ -1422,14 +1518,24 @@ export function publicTargetBattleForecast(
     + compositionCombatPower(bodyState.defenses, "defense", defenderTechLevels)
     + stationedPower;
   const simulation = forecastContractBattle({
-    attackers: [{
-      id: "selected-attacker",
-      label: "Selected attacking fleet",
-      owner: "Connected commander",
-      laneGroup: 0,
-      ships: missionShipCounts(ships),
-      technology: normalizedAttackerTechLevels,
-    }],
+    attackers: [
+      ...(joinAttackContext?.participants ?? []).map((participant) => ({
+        id: participant.missionId,
+        label: participant.label,
+        owner: participant.owner,
+        laneGroup: participant.laneGroup ?? 0,
+        ships: combatShipRecordCounts(participant.ships ?? {}),
+        technology: normalizeCombatTechLevels(participant.combatTechnology),
+      })),
+      {
+        id: "selected-attacker",
+        label: joinAttackContext ? "Selected joining fleet" : "Selected attacking fleet",
+        owner: "Connected commander",
+        laneGroup: joinAttackContext?.selectedAttackerLaneGroup ?? 0,
+        ships: missionShipCounts(ships),
+        technology: normalizedAttackerTechLevels,
+      },
+    ],
     defender: {
       id: targetIsMoon ? `moon-${target.id}` : `planet-${target.id}`,
       label: targetIsMoon ? `${target.moonName ?? target.name} moon` : target.name,
@@ -1587,6 +1693,7 @@ export function AttackIntelPanel({
   lootableAtArrival,
   maxLootForecast,
   resourceIntel,
+  showLoot = true,
   stationedDefenderUnits,
   target,
   targetDefenseUnits,
@@ -1597,6 +1704,7 @@ export function AttackIntelPanel({
   lootableAtArrival: MissionResourceSnapshot | null;
   maxLootForecast: MissionResourceSnapshot;
   resourceIntel: TargetResourceIntel;
+  showLoot?: boolean | undefined;
   stationedDefenderUnits: UnitItem[];
   target: Planet | undefined;
   targetDefenseUnits: UnitItem[];
@@ -1611,6 +1719,7 @@ export function AttackIntelPanel({
           compact
           lootableAtArrival={lootableAtArrival}
           maxLootForecast={maxLootForecast}
+          showLoot={showLoot}
         />
       </div>
       <div className="grid divide-y divide-white/10 border-t border-white/10 xl:grid-cols-[minmax(0,1fr)_minmax(0,0.9fr)] xl:divide-x xl:divide-y-0">
@@ -1825,11 +1934,13 @@ function AttackOutcomeContent({
   compact = false,
   lootableAtArrival,
   maxLootForecast,
+  showLoot = true,
 }: {
   battleForecast: BattleForecastState;
   compact?: boolean | undefined;
   lootableAtArrival: MissionResourceSnapshot | null;
   maxLootForecast: MissionResourceSnapshot;
+  showLoot?: boolean | undefined;
 }) {
   if (compact) {
     return (
@@ -1854,8 +1965,14 @@ function AttackOutcomeContent({
           {battleForecast.randomness ? (
             <CompactFactRow label="Randomness" value={formatRandomnessRange(battleForecast.randomness, battleForecast.attackerLosses)} />
           ) : null}
-          <CompactFactRow label="Max loot" value={formatCompactResources(maxLootForecast)} />
-          <CompactFactRow label="Lootable" value={formatCompactResources(lootableAtArrival)} />
+          {showLoot ? (
+            <>
+              <CompactFactRow label="Max loot" value={formatCompactResources(maxLootForecast)} />
+              <CompactFactRow label="Lootable" value={formatCompactResources(lootableAtArrival)} />
+            </>
+          ) : (
+            <CompactFactRow label="Loot" value="Inherited from the lead attack group" />
+          )}
           <CompactFactRow
             label="Tech"
             value={`${formatTechLevels(battleForecast.attackerTechLevels ?? ZERO_COMBAT_TECH_LEVELS)} / ${battleForecast.defenderTechKnown ? formatTechLevels(battleForecast.defenderTechLevels ?? ZERO_COMBAT_TECH_LEVELS) : "DEF unknown"}`}
@@ -1899,10 +2016,14 @@ function AttackOutcomeContent({
         defenderKnown={battleForecast.defenderTechKnown ?? false}
         defenderLevels={battleForecast.defenderTechLevels ?? ZERO_COMBAT_TECH_LEVELS}
       />
-      <div className="grid gap-2 sm:grid-cols-2">
-        <ResourceSummary title="Max loot at arrival" resources={maxLootForecast} />
-        <ResourceSummary title="Lootable at arrival" resources={lootableAtArrival} />
-      </div>
+      {showLoot ? (
+        <div className="grid gap-2 sm:grid-cols-2">
+          <ResourceSummary title="Max loot at arrival" resources={maxLootForecast} />
+          <ResourceSummary title="Lootable at arrival" resources={lootableAtArrival} />
+        </div>
+      ) : (
+        <p className="text-xs text-slate-500">Loot allocation is inherited from the lead attack group.</p>
+      )}
     </div>
   );
 }
@@ -2659,6 +2780,15 @@ function missionShipsCombatPower(ships: MissionShips, techLevels: CombatTechLeve
   }, 0);
 }
 
+function shipRecordCombatPower(ships: Record<string, string>, techLevels: CombatTechLevels): number {
+  const normalizedTechnology = normalizeCombatTechLevels(techLevels);
+  return shipCatalog.reduce((total, ship) => {
+    if (ship.id === 9 || ship.id === 15) return total;
+    const count = safeResourceNumber(ships[ship.key]);
+    return total + count * contractCombatPower("ship", ship.id, normalizedTechnology);
+  }, 0);
+}
+
 function compositionCombatPower(
   rows: Array<{ id: number; count: number }> | undefined | null,
   kind: "ship" | "defense",
@@ -2673,7 +2803,7 @@ function compositionCombatPower(
 }
 
 function stationedDefendersCombatPower(
-  defenders: PublicStationedDefender[] | null | undefined,
+  defenders: readonly PublicStationedDefender[] | null | undefined,
 ): number {
   return (defenders ?? []).reduce((total, defender) => {
     const techLevels = normalizeCombatTechLevels(defender.combatTechnology);

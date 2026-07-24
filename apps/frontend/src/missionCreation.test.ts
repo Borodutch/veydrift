@@ -28,7 +28,12 @@ import {
   TargetIntelCard,
   targetResourceIntel,
 } from "./components/MissionCreationPage";
-import { cargoForCargoMissionLaunch, missionMoonShipyardState, transportCargoForOrigin } from "./PlayableMvpApp";
+import {
+  cargoForCargoMissionLaunch,
+  joinAttackTargetFromSystemPayload,
+  missionMoonShipyardState,
+  transportCargoForOrigin,
+} from "./PlayableMvpApp";
 import type { GalaxyAction } from "./galaxyActions";
 import type { Planet } from "./types";
 
@@ -265,6 +270,40 @@ describe("mission creation", () => {
 
     const indicator = findElements(node, "span").find((item) => item.props?.["data-planet-moon-indicator"] === "true");
     expect(indicator?.props?.["aria-label"]).toBe("Moon present");
+  });
+
+  test("resolves join-attack target combat intel from the mission system payload", () => {
+    const target = joinAttackTargetFromSystemPayload({
+      galaxy: 7,
+      system: 41,
+      planets: [{
+        key: "9",
+        galaxy: 7,
+        system: 41,
+        position: 6,
+        fields: 180,
+        temperature: 32,
+        metalMultiplierBps: 10_000,
+        crystalMultiplierBps: 10_000,
+        deuteriumMultiplierBps: 10_000,
+        occupiedBy: {
+          planetId: "9",
+          owner: "0xdefender",
+          ownerDisplayName: "Defender",
+          alliance: null,
+        },
+        publicState: {
+          fleet: [{ id: 7, count: 3 }],
+          defenses: [{ id: 0, count: 40 }],
+          stationedDefenders: [],
+          research: [{ id: 5, level: 2 }],
+        },
+      }],
+    }, "9", { galaxy: 7, system: 41, position: 6 });
+
+    expect(target?.id).toBe("9");
+    expect(target?.publicState?.fleet).toEqual([{ id: 7, count: 3 }]);
+    expect(target?.publicState?.research).toEqual([{ id: 5, level: 2 }]);
   });
 
   test("supports moon body selection for attack missions without reusing parent planet intel", () => {
@@ -932,6 +971,148 @@ describe("mission creation", () => {
       .toEqual({ weapons: 4, shielding: 3, armor: 2 });
   });
 
+  test("join-attack forecast includes the lead, visible joiners, and selected joining fleet", () => {
+    const target = targetPlanet({
+      publicState: {
+        resources: { metal: "0", crystal: "0", deuterium: "0" },
+        fleet: [{ id: 7, count: 3 }],
+        defenses: [{ id: 0, count: 40 }],
+        stationedDefenders: [],
+        buildings: [],
+        research: [{ id: 5, level: 2 }, { id: 6, level: 2 }, { id: 7, level: 2 }],
+        queues: null,
+      },
+    });
+    const selectedShips = { ...attackAction.ships, lightFighter: 3 };
+    const selectedOnly = publicTargetBattleForecast(selectedShips, target, { weapons: 1, shielding: 1, armor: 1 });
+    const combined = publicTargetBattleForecast(
+      selectedShips,
+      target,
+      { weapons: 1, shielding: 1, armor: 1 },
+      false,
+      {
+        participants: [
+          {
+            missionId: "lead-77",
+            label: "Lead attack #77",
+            owner: "0xlead",
+            laneGroup: 0,
+            ships: { destroyer: "4" },
+            combatTechnology: { weapons: 8, shielding: 7, armor: 6 },
+          },
+          {
+            missionId: "joined-78",
+            label: "Joined fleet #78",
+            owner: "0xjoined",
+            laneGroup: 2,
+            ships: { cruiser: "12" },
+            combatTechnology: { weapons: 4, shielding: 3, armor: 2 },
+          },
+        ],
+        stationedDefenders: [{
+          missionId: "defend-79",
+          defender: "0xdefender",
+          defenderDisplayName: "Group Defender",
+          combatTechnology: { weapons: 3, shielding: 5, armor: 7 },
+          ships: { lightFighter: "5" },
+          holdUntil: "1900000000",
+          allianceDepotLevel: 2,
+        }],
+        selectedAttackerLaneGroup: 3,
+      },
+    );
+
+    expect(combined.kind).not.toBe("uncertain");
+    expect(combined.attackerPower).toBeGreaterThan(selectedOnly.attackerPower);
+    expect(combined.randomness?.outcomeCounts).not.toEqual(selectedOnly.randomness?.outcomeCounts);
+    expect(combined.sampleReport?.attackers).toHaveLength(3);
+    expect(combined.sampleReport?.attackers.map((participant) => participant.id)).toEqual([
+      "lead-77",
+      "joined-78",
+      "selected-attacker",
+    ]);
+    expect(combined.sampleReport?.attackers[0]?.technology).toEqual({ weapons: 8, shielding: 7, armor: 6 });
+    expect(combined.sampleReport?.attackers[1]?.technology).toEqual({ weapons: 4, shielding: 3, armor: 2 });
+    expect(combined.sampleReport?.defender.counterplay[0]?.technology).toEqual({ weapons: 3, shielding: 5, armor: 7 });
+
+    const joinPanel = AttackIntelPanel({
+      battleForecast: combined,
+      coords: { galaxy: 7, system: 41, position: 6 },
+      lootableAtArrival: { metal: 0, crystal: 0, deuterium: 0 },
+      maxLootForecast: { metal: 0, crystal: 0, deuterium: 0 },
+      resourceIntel: targetResourceIntel(target, 60),
+      showLoot: false,
+      stationedDefenderUnits: [],
+      target,
+      targetDefenseUnits: [],
+      targetFleetUnits: [],
+    });
+    const reportText = collectText(joinPanel).join(" ");
+    expect(reportText).toContain("Lead attack #77");
+    expect(reportText).toContain("Joined fleet #78");
+    expect(reportText).toContain("Selected joining fleet");
+    expect(reportText).toContain("Group Defender");
+    expect(reportText).toContain("Inherited from the lead attack group");
+    expect(findElements(joinPanel, "summary").some(
+      (element) => element.props?.["aria-label"] === "Open simulated battle report",
+    )).toBe(true);
+  });
+
+  test("join-attack forecast fails closed when participant tech or lane intel is missing", () => {
+    const target = targetPlanet({
+      publicState: {
+        resources: { metal: "0", crystal: "0", deuterium: "0" },
+        fleet: [],
+        defenses: [],
+        stationedDefenders: [],
+        buildings: [],
+        research: [],
+        queues: null,
+      },
+    });
+    const missingTech = publicTargetBattleForecast(
+      { ...attackAction.ships, lightFighter: 3 },
+      target,
+      undefined,
+      false,
+      {
+        participants: [{
+          missionId: "lead-77",
+          label: "Lead attack #77",
+          owner: "0xlead",
+          laneGroup: 0,
+          ships: { destroyer: "4" },
+        }],
+        stationedDefenders: [],
+        selectedAttackerLaneGroup: 1,
+      },
+    );
+    const missingLane = publicTargetBattleForecast(
+      { ...attackAction.ships, lightFighter: 3 },
+      target,
+      undefined,
+      false,
+      {
+        participants: [{
+          missionId: "lead-77",
+          label: "Lead attack #77",
+          owner: "0xlead",
+          laneGroup: 0,
+          ships: { destroyer: "4" },
+          combatTechnology: { weapons: 8, shielding: 7, armor: 6 },
+        }],
+        stationedDefenders: [],
+        selectedAttackerLaneGroup: null,
+      },
+    );
+
+    expect(missingTech).toMatchObject({ kind: "uncertain", defenderPower: null });
+    expect(missingTech.detail).toContain("Lead attack #77");
+    expect(missingTech.detail).toContain("combat technology");
+    expect(missingLane).toMatchObject({ kind: "uncertain", defenderPower: null });
+    expect(missingLane.detail).toContain("lane");
+  });
+
   test("fails closed when a stationed defender's owner-specific combat technology is unavailable", () => {
     const forecast = publicTargetBattleForecast(
       { ...attackAction.ships, lightFighter: 20 },
@@ -1254,6 +1435,8 @@ describe("mission creation", () => {
 
   test("uses the compact Attack-style intel shell for non-attack mission setup", () => {
     expect(missionCreationSource).toContain("<NonAttackMissionIntelPanel");
+    expect(missionCreationSource).toContain("lootRatioSupported || joinAttackMode");
+    expect(missionCreationSource).toContain("joinAttackContext");
     expect(missionCreationSource).toContain("<TargetDecisionTable coords={coords} target={target} />");
     expect(missionCreationSource).toContain("<MissionPlanContent");
     expect(missionCreationSource).toContain("<ResourceIntelTable resourceIntel={resourceIntel} />");

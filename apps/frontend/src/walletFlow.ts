@@ -367,6 +367,26 @@ export type PlayerQueuesResponse = {
   research: QueueStateResponse | null;
 };
 
+export type AttackPreviewParticipantSummary = {
+  missionId: string;
+  label: string;
+  owner: string;
+  laneGroup: number;
+  ships: Record<string, string>;
+  combatTechnology?: {
+    weapons: number;
+    shielding: number;
+    armor: number;
+  };
+};
+
+export type JoinAttackPreviewSummary = {
+  participants: AttackPreviewParticipantSummary[];
+  stationedDefenders: StationedDefenderSummary[];
+  selectedAttackerLaneGroup: number | null;
+  unavailableReason?: string;
+};
+
 export type FleetMissionSummary = {
   missionId: string;
   status: string;
@@ -384,6 +404,8 @@ export type FleetMissionSummary = {
   recallCost: string | null;
   attackGroupId: string | null;
   joinedAttackMissionIds: string[];
+  linkedMissionIds?: string[];
+  attackPreview?: JoinAttackPreviewSummary;
   // VEY-KANEO-442 stationed-defense links. For an AcsDefend mission, `defendsMissionId` is the hostile
   // Attack mission it is stationed to defend (its fleet holds at the defended planet until that attack
   // lands). On an Attack mission, `counterplayDefenderMissionIds` lists every AcsDefend mission stationed

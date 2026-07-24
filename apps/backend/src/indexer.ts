@@ -1626,6 +1626,22 @@ export class SettlementIndexer {
     // for the Stationed defenses panel. `nowSeconds` drives the lazy as-of-now reconciliation that hides
     // holds which have already elapsed — derived on read from indexed state, no chain read, no poller.
     const summariesById = new Map(summaries.map((mission) => [mission.missionId, mission]));
+    const linkedSummaries = this.fleetMissionSummariesFromCanonicalRowsByIds(
+      summaries.flatMap((mission) => [
+        ...(mission.joinedAttackMissionIds ?? []),
+        ...(mission.counterplayDefenderMissionIds ?? [])
+      ])
+    );
+    for (const mission of linkedSummaries) summariesById.set(mission.missionId, mission);
+    const defenseHoldTypeId = fleetMissionTypeId("DefenseHold");
+    const activeDefenseHolds = defenseHoldTypeId === null
+      ? []
+      : this.activeFleetMissionsFromCanonicalRowsWhere(
+        "join-preview-defense-holds",
+        "status_id = ? AND mission_type_id = ?",
+        [1, defenseHoldTypeId],
+        { includeOverduePendingRandomness: true }
+      );
     const nowSeconds = Math.floor(Date.now() / 1_000);
 
     const incoming = summaries
@@ -1659,13 +1675,18 @@ export class SettlementIndexer {
       && mission.owner.toLowerCase() === walletLower
       && (mission.status === "Returning" || mission.status === "Recalled")
     );
-    const joinableAttacks = summaries.filter((mission) =>
-      isVisibleActiveFleetMission(mission)
-      && mission.owner.toLowerCase() !== walletLower
-      && !ownedPlanetIds.has(mission.targetPlanetId)
-      && mission.missionType === "Attack"
-      && mission.status === "Outbound"
-    );
+    const joinableAttacks = summaries
+      .filter((mission) =>
+        isVisibleActiveFleetMission(mission)
+        && mission.owner.toLowerCase() !== walletLower
+        && !ownedPlanetIds.has(mission.targetPlanetId)
+        && mission.missionType === "Attack"
+        && mission.status === "Outbound"
+      )
+      .map((attack) => ({
+        ...attack,
+        attackPreview: this.joinAttackPreviewSummary(attack, summariesById, activeDefenseHolds)
+      }));
 
     if (!includeArchive) {
       const activeMissions = [
@@ -8270,6 +8291,7 @@ export class SettlementIndexer {
       recallCost: null,
       attackGroupId: null,
       joinedAttackMissionIds: [],
+      linkedMissionIds: [],
       defendsMissionId: null,
       counterplayDefenderMissionIds: [],
       returnCargo: null,
@@ -8285,6 +8307,9 @@ export class SettlementIndexer {
         recallCost: canonicalEventMission.recallCost ?? base.recallCost,
         attackGroupId: canonicalEventMission.attackGroupId,
         joinedAttackMissionIds: canonicalEventMission.joinedAttackMissionIds,
+        ...(canonicalEventMission.linkedMissionIds
+          ? { linkedMissionIds: canonicalEventMission.linkedMissionIds }
+          : {}),
         defendsMissionId: canonicalEventMission.defendsMissionId,
         counterplayDefenderMissionIds: canonicalEventMission.counterplayDefenderMissionIds,
         returnCargo: canonicalEventMission.returnCargo,
@@ -8808,6 +8833,127 @@ export class SettlementIndexer {
         holdUntil: defender.arrivalAt,
         allianceDepotLevel
       }))
+      .sort((left, right) => Number(left.holdUntil) - Number(right.holdUntil));
+  }
+
+  private joinAttackPreviewSummary(
+    attack: FleetMissionSummary,
+    summariesById: ReadonlyMap<string, FleetMissionSummary>,
+    activeDefenseHolds: readonly FleetMissionSummary[]
+  ): NonNullable<FleetMissionSummary["attackPreview"]> {
+    const leadDisplayName = this.playerProfile(attack.owner).displayName;
+    const stationedDefenders = this.stationedDefendersForAttackPreview(
+      attack,
+      summariesById,
+      activeDefenseHolds
+    );
+    const participants: NonNullable<FleetMissionSummary["attackPreview"]>["participants"] = [{
+      missionId: attack.missionId,
+      label: leadDisplayName
+        ? `${leadDisplayName}'s lead attack #${attack.missionId}`
+        : `Lead attack #${attack.missionId}`,
+      owner: attack.owner,
+      laneGroup: 0,
+      ships: attack.ships,
+      combatTechnology: combatTechnologyLevels(this.technologyLevels(attack.owner))
+    }];
+    const separateLinkedIds = [
+      ...(attack.joinedAttackMissionIds ?? []),
+      ...(attack.counterplayDefenderMissionIds ?? [])
+    ];
+    const indexedLinkedMissionIds = attack.linkedMissionIds;
+    const linkedMissionIds = indexedLinkedMissionIds
+      && separateLinkedIds.every((missionId) => indexedLinkedMissionIds.includes(missionId))
+      ? indexedLinkedMissionIds
+      : separateLinkedIds.length === 0
+        ? []
+        : null;
+    if (!linkedMissionIds) {
+      return {
+        participants,
+        stationedDefenders,
+        selectedAttackerLaneGroup: null,
+        unavailableReason: `Attack #${attack.missionId} predates exact combined link-order indexing, so joined attacker random lanes cannot be reconstructed safely.`
+      };
+    }
+
+    const joinedMissionIds = [...(attack.joinedAttackMissionIds ?? [])]
+      .sort((left, right) => linkedMissionIds.indexOf(left) - linkedMissionIds.indexOf(right));
+    for (const joinedMissionId of joinedMissionIds) {
+      const joined = summariesById.get(joinedMissionId);
+      if (!joined) {
+        return {
+          participants,
+          stationedDefenders,
+          selectedAttackerLaneGroup: null,
+          unavailableReason: `Joined attack #${joinedMissionId} composition is missing from indexed public intel.`
+        };
+      }
+      if (
+        joined.status !== "Outbound"
+        || joined.missionType !== "AcsAttack"
+        || joined.attackGroupId !== attack.missionId
+        || joined.targetPlanetId !== attack.targetPlanetId
+        || Number(joined.arrivalAt) > Number(attack.arrivalAt)
+      ) {
+        continue;
+      }
+      const linkedIndex = linkedMissionIds.indexOf(joinedMissionId);
+      if (linkedIndex < 0) {
+        return {
+          participants,
+          stationedDefenders,
+          selectedAttackerLaneGroup: null,
+          unavailableReason: `Joined attack #${joinedMissionId} is missing its exact contract lane identity.`
+        };
+      }
+      const joinedDisplayName = this.playerProfile(joined.owner).displayName;
+      participants.push({
+        missionId: joined.missionId,
+        label: joinedDisplayName
+          ? `${joinedDisplayName}'s joined fleet #${joined.missionId}`
+          : `Joined fleet #${joined.missionId}`,
+        owner: joined.owner,
+        laneGroup: linkedIndex + 1,
+        ships: joined.ships,
+        combatTechnology: combatTechnologyLevels(this.technologyLevels(joined.owner))
+      });
+    }
+
+    return {
+      participants,
+      stationedDefenders,
+      // The new join is appended to `_fleetCounterplayMissions`; Solidity stores `i + 1`.
+      selectedAttackerLaneGroup: linkedMissionIds.length + 1
+    };
+  }
+
+  private stationedDefendersForAttackPreview(
+    attack: FleetMissionSummary,
+    summariesById: ReadonlyMap<string, FleetMissionSummary>,
+    activeDefenseHolds: readonly FleetMissionSummary[]
+  ): StationedDefenderSummary[] {
+    const attackArrival = Number(attack.arrivalAt);
+    if (!Number.isFinite(attackArrival)) return [];
+    const defenders = new Map<string, FleetMissionSummary>();
+    for (const missionId of attack.counterplayDefenderMissionIds ?? []) {
+      const defender = summariesById.get(missionId);
+      if (defender && this.isBattleTimeCounterplay(defender, attack, attackArrival)) {
+        defenders.set(defender.missionId, defender);
+      }
+    }
+    for (const defender of activeDefenseHolds) {
+      if (this.isBattleTimeDefenseHoldForPlanet(defender, attack.targetPlanetId, attackArrival)) {
+        defenders.set(defender.missionId, defender);
+      }
+    }
+    return [...defenders.values()]
+      .map((defender) => this.stationedDefenderSummary(
+        defender,
+        defender.missionType === "DefenseHold"
+          ? this.defenseHoldWindowEnd(defender)
+          : this.counterplayHoldUntil(defender)
+      ))
       .sort((left, right) => Number(left.holdUntil) - Number(right.holdUntil));
   }
 
@@ -9595,6 +9741,7 @@ function mergeFleetMissionSummary(
     recallCost: partial.recallCost ?? existing?.recallCost ?? null,
     attackGroupId: partial.attackGroupId ?? existing?.attackGroupId ?? null,
     joinedAttackMissionIds: mergeStringSets(existing?.joinedAttackMissionIds, partial.joinedAttackMissionIds),
+    linkedMissionIds: mergeStringSets(existing?.linkedMissionIds, partial.linkedMissionIds),
     defendsMissionId: partial.defendsMissionId ?? existing?.defendsMissionId ?? null,
     counterplayDefenderMissionIds: mergeStringSets(existing?.counterplayDefenderMissionIds, partial.counterplayDefenderMissionIds),
     defenseHoldUntil: partial.defenseHoldUntil ?? existing?.defenseHoldUntil,
