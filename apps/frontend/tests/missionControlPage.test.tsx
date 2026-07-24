@@ -642,7 +642,7 @@ describe("MissionControlPage", () => {
     expect(text).toContain("Outcome Attacker win");
     expect(text).toContain("Attacker losses 100 M / 50 C");
     expect(text).toContain("Defender losses 900 M / 250 C");
-    expect(text).toContain("Debris generated 600 M / 150 C");
+    expect(text).toContain("Debris field 600 M / 150 C");
   });
 
   test("shows outcome and loot on a returned attack archive card when the report is embedded in the mission row", () => {
@@ -678,7 +678,7 @@ describe("MissionControlPage", () => {
     const text = visibleText(page);
 
     expect(text).toContain("Past missions");
-    expect(text).toContain("Loot grabbed 1,200 M / 300 C");
+    expect(text).toContain("Loot 1,200 M / 300 C");
     expect(text).toContain("Outcome Attacker win");
     expect(text).toContain("Attacker losses 100 M / 50 C");
     expect(text).toContain("Defender losses 900 M / 250 C");
@@ -724,7 +724,7 @@ describe("MissionControlPage", () => {
     expect(text).toContain("Attack #177");
     expect(text).toContain("Returned");
     expect(text).toContain("Outcome Attacker win");
-    expect(text).toContain("Loot grabbed 1,200 M / 300 C");
+    expect(text).toContain("Loot 1,200 M / 300 C");
     expect(text).not.toContain("Attacker losses");
     expect(text).not.toContain("Defender losses");
   });
@@ -931,7 +931,7 @@ describe("MissionControlPage", () => {
 
     // Both the outbound cargo and the looted haul render, on their own labeled lines.
     expect(text).toContain("Cargo 10 M");
-    expect(text).toContain("Loot grabbed 1,200 M / 300 C");
+    expect(text).toContain("Loot 1,200 M / 300 C");
   });
 
   test("shows harvested debris from return cargo on a returning harvest mission card", () => {
@@ -960,7 +960,7 @@ describe("MissionControlPage", () => {
 
     expect(text).not.toContain("Cargo Empty");
     expect(text).toContain("Debris collected 1,200 M / 300 C");
-    expect(text).not.toContain("Loot grabbed 1,200 M / 300 C");
+    expect(text).not.toContain("Loot 1,200 M / 300 C");
   });
 
   test("shows harvested debris on completed harvest mission cards", () => {
@@ -1037,8 +1037,8 @@ describe("MissionControlPage", () => {
     const text = visibleText(page);
 
     expect(text).not.toContain("Cargo Empty");
-    expect(text).toContain("Loot grabbed 30 M / 5 C");
-    expect(text).not.toContain("Loot grabbed 1,200 M / 300 C");
+    expect(text).toContain("Loot 30 M / 5 C");
+    expect(text).not.toContain("Loot 1,200 M / 300 C");
   });
 
   test("omits zero cargo and zero loot on a resolved returning attack", () => {
@@ -1068,7 +1068,7 @@ describe("MissionControlPage", () => {
 
     expect(text).not.toContain("Cargo Empty");
     expect(text).not.toContain("Loot Empty");
-    expect(text).not.toContain("Loot grabbed");
+    expect(text).not.toContain("Loot 1,200");
   });
 
   test("withholds loot from a mission card until the fleet leaves its outbound leg", () => {
@@ -1142,7 +1142,7 @@ describe("MissionControlPage", () => {
     expect(text).toContain("Outcome Attacker win");
     expect(text).toContain("Attacker losses 100 M / 50 C");
     expect(text).toContain("Defender losses 900 M / 250 C");
-    expect(text).toContain("Debris generated 600 M / 150 C");
+    expect(text).toContain("Debris field 600 M / 150 C");
     expect(text).not.toContain("Attack failed");
   });
 
@@ -1172,14 +1172,14 @@ describe("MissionControlPage", () => {
     const text = visibleText(page);
 
     // The defender-win outcome is stated explicitly so a wiped-out attack reads as a failure, not
-    // just heavy losses next to the launch fleet. A failed offensive mission also gets a distinct
-    // red "Attack failed — fleet lost" flag (VEY-KANEO-495 criterion 2), and the debris created by
-    // the battle is surfaced for follow-up harvest (criterion 3).
-    expect(text).toContain("Attack failed — fleet lost");
+    // just heavy losses next to the launch fleet: the row's status cell reads "Attack failed"
+    // (VEY-KANEO-495 criterion 2), and the debris created by the battle is surfaced for follow-up
+    // harvest (criterion 3).
+    expect(text).toContain("Attack failed");
     expect(text).toContain("Outcome Defender win");
     expect(text).toContain("Attacker losses 5,000 M / 3,000 C");
     expect(text).toContain("Defender losses 200 M / 100 C");
-    expect(text).toContain("Debris generated 600 M / 150 C");
+    expect(text).toContain("Debris field 600 M / 150 C");
   });
 
   test("does not flag a winning raid as a failed attack, and still shows debris", () => {
@@ -1207,7 +1207,7 @@ describe("MissionControlPage", () => {
 
     expect(text).toContain("Outcome Attacker win");
     expect(text).not.toContain("Attack failed");
-    expect(text).toContain("Debris generated 600 M / 150 C");
+    expect(text).toContain("Debris field 600 M / 150 C");
   });
 
   test("withholds fleet losses from a mission card until the fleet leaves its outbound leg", () => {
