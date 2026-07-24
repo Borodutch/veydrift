@@ -2654,8 +2654,7 @@ export class SettlementIndexer {
       technologyLevels: this.technologyLevels(wallet),
       defenses: moonDefenseRows.map((defense) => ({
         ...defense,
-        count: planetId ? this.moonDefenseCountAsOfNow(planetId, defense.id) : 0,
-        cost: zeroResources()
+        count: planetId ? this.moonDefenseCountAsOfNow(planetId, defense.id) : 0
       })),
       defenseQueue: planetId ? this.moonDefenseQueue(planetId) : null,
       jumpGateDestinations
@@ -9902,7 +9901,10 @@ function compareFleetMissionsActiveSoonestFirst(left: FleetMissionSummary, right
   return leftMission > rightMission ? 1 : -1;
 }
 
-const moonDefenseRows = Array.from({ length: 8 }, (_, id) => ({ id }));
+// The Moon contract supports the eight non-missile defenses. Derive those rows from
+// the same catalog helper as planet Defenses so counts stay moon-scoped while costs
+// cannot drift into a separate Moon-only representation.
+const moonDefenseRows = deriveDefenseRows(() => 0).slice(0, 8);
 const riftResourceRows = [
   { key: "metal" as const, label: "Metal", resourceId: 0 },
   { key: "crystal" as const, label: "Crystal", resourceId: 1 },

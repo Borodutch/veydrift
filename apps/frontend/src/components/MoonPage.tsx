@@ -26,9 +26,9 @@ import {
   type ProductionCatalogItem,
   type ProductionDetailSection,
   type ProductionQuantityInput,
-  type ProductionRequirementState,
   productionQueueViewModel,
 } from "./ProductionCatalog";
+import { defenseProductionItems } from "./DefensePage";
 import { RequirementFlairs, type RequirementFlair, type RequirementTarget } from "./RequirementFlairs";
 import { LevelInfoModal, type LevelInfoColumn } from "./LevelInfoModal";
 import { StructureCatalog, StructureDetail, type StructureLevelInfo } from "./StructureCatalog";
@@ -882,48 +882,48 @@ export function moonDefenseProductionItems({
   transactionUnavailableReason?: string | undefined;
 }): ProductionCatalogItem<DefenseKey>[] {
   const queueBlocked = Boolean(moonState?.defenseQueue?.active && !queueReady(moonState.defenseQueue));
+  const resources = toResources(moonState?.resourcesAsOfNow ?? moonState?.resources);
+  const sharedItems = defenseProductionItems({
+    actionPending,
+    canTransact,
+    defenseState: moonState ? {
+      wallet: moonState.wallet,
+      homePlanetId: moonState.moon?.exists ? moonState.homePlanetId : null,
+      productionAvailable: moonState.moonAvailable !== false,
+      resources: moonState.resources ?? null,
+      shipyardLevel: moonBuildingLevels(moonState).shipyard,
+      naniteLevel: 0,
+      missileSiloLevel: 0,
+      technologyLevels: moonState.technologyLevels ?? {},
+      defenses: moonState.defenses,
+      queue: moonState.defenseQueue ?? null,
+    } : null,
+    productionAvailable: moonState?.moonAvailable !== false,
+    quantities,
+    queue: moonState?.defenseQueue ?? undefined,
+    resources,
+    transactionUnavailableReason,
+  });
 
-  return adaptProductionItems(defenseCatalog, quantities, (defense, { quantity }) => {
-    const moonDefense = moonState?.defenses.find((item) => item.id === defense.id);
-    const baseCost = toResources(moonDefense?.cost);
-    const totalCost = baseCost ? multiplyResources(baseCost, quantity) : undefined;
-    const durationSeconds = moonDefense?.durationSeconds === undefined
-      ? undefined
-      : moonDefense.durationSeconds * quantity;
-    const requirements = moonDefenseRequirementStates(defense, moonState);
-    const missing = requirements.filter((requirement) => !requirement.met).map((requirement) => requirement.label);
-    const blockedReason = moonDefenseBlockedReason({
-      canTransact,
-      missing,
-      moonDefenseAvailable: Boolean(moonDefense),
-      moonState,
-      queueBlocked,
-      transactionUnavailableReason,
-    });
-    const queued = queuedMoonDefenseCount(defense.id, moonState?.defenseQueue);
+  return sharedItems.map((item) => {
+    const available = moonState?.defenses.some((defense) => defense.id === item.id) ?? false;
+    const moonBlocker = !canTransact
+      ? transactionUnavailableReason ?? "Wallet or moon contract unavailable"
+      : moonState && !moonState.moon?.exists
+        ? "No selected moon"
+        : moonState && !available
+          ? "Defense unavailable on current moon deployment"
+          : queueBlocked
+            ? "Moon defense queue is active"
+            : undefined;
+    const blockedReason = moonBlocker ?? item.blockedReason;
 
     return {
-      actionLabel: queued > 0 ? "Add" : "Build",
+      ...item,
       blockedReason,
-      cost: totalCost,
-      ...(durationSeconds === undefined ? {} : { durationSeconds }),
       countLabel: "On moon",
-      countValue: moonDefense?.count ?? 0,
-      detailSections: moonDefenseDetailSections({
-        cost: totalCost,
-        defense,
-        durationSeconds,
-        deployed: moonDefense?.count ?? 0,
-      }),
-      detailNote: defense.group === "missile" ? "Moon missile support" : "Moon defensive emplacement",
       disabled: Boolean(blockedReason) || actionPending,
-      groupLabel: moonDefenseGroupLabel(defense.group),
-      labelTone: blockedReason ? "muted" : "normal",
-      missing,
-      queued,
-      requirements,
-      status: queued > 0 ? "queued" : missing.length === 0 && moonDefense ? "ready" : "locked",
-      statusLabel: queued > 0 ? "Queued" : undefined,
+      labelTone: blockedReason ? "muted" : item.labelTone,
     };
   });
 }
@@ -950,101 +950,10 @@ function moonShipDetailSections({
   }];
 }
 
-function moonDefenseDetailSections({
-  cost,
-  defense,
-  deployed,
-  durationSeconds,
-}: {
-  cost: Resources | undefined;
-  defense: (typeof defenseCatalog)[number];
-  deployed: number;
-  durationSeconds: number | undefined;
-}): ProductionDetailSection[] {
-  return [{
-    title: "Build",
-    stats: [
-      { label: "On moon", value: deployed.toLocaleString("en-US") },
-      { label: "Class", value: moonDefenseGroupLabel(defense.group) },
-      { label: "Price", value: cost ? formatCost(cost) : "-", wide: true },
-      ...(durationSeconds === undefined ? [] : [{ label: "Build time", value: formatDuration(durationSeconds), wide: true }]),
-    ],
-  }];
-}
-
-function moonDefenseRequirementStates(
-  defense: (typeof defenseCatalog)[number],
-  moonState?: ChainMoonState | null | undefined,
-): ProductionRequirementState[] {
-  const moonShipyardLevel = moonBuildingLevels(moonState).shipyard;
-  const technologyLevels = moonTechnologyLevelsByKey(moonState?.technologyLevels);
-
-  return uniqueMoonRequirements(defense.requirements).map((requirement) => {
-    const actual = requirement.kind === "building"
-      ? requirement.key === "shipyard" ? moonShipyardLevel : 0
-      : technologyLevels[requirement.key as string] ?? 0;
-
-    return {
-      label: `${requirement.label} ${requirement.level}`,
-      met: actual >= requirement.level,
-    };
-  });
-}
-
-function uniqueMoonRequirements(requirements: (typeof defenseCatalog)[number]["requirements"]) {
-  const seen = new Set<string>();
-  return requirements.filter((requirement) => {
-    const key = `${requirement.kind}:${requirement.key ?? requirement.label}:${requirement.level}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-}
-
-function moonDefenseBlockedReason({
-  canTransact,
-  missing,
-  moonDefenseAvailable,
-  moonState,
-  queueBlocked,
-  transactionUnavailableReason,
-}: {
-  canTransact: boolean;
-  missing: string[];
-  moonDefenseAvailable: boolean;
-  moonState?: ChainMoonState | null | undefined;
-  queueBlocked: boolean;
-  transactionUnavailableReason?: string | undefined;
-}): string | undefined {
-  if (!canTransact) return transactionUnavailableReason ?? "Wallet or moon contract unavailable";
-  if (!moonState?.moon?.exists) return "No selected moon";
-  if (!moonDefenseAvailable) return "Defense unavailable on current moon deployment";
-  if (queueBlocked) return "Moon defense queue is active";
-  if (missing.length > 0) return missing[0];
-  return undefined;
-}
-
-function queuedMoonDefenseCount(defenseId: number, queue?: ChainMoonState["defenseQueue"] | undefined): number {
-  let quantity = queue?.active && queue.itemId === defenseId ? queue.quantity ?? 0 : 0;
-  for (const backlog of queue?.backlog ?? []) {
-    if (backlog.active && backlog.itemId === defenseId) {
-      quantity += backlog.quantity ?? 0;
-    }
-  }
-  return quantity;
-}
-
 function moonShipGroupLabel(group: (typeof shipCatalog)[number]["group"]): string {
   if (group === "civil") return "Civil and economy";
   if (group === "combat") return "Combat ships";
   return "Satellites and specials";
-}
-
-function moonDefenseGroupLabel(group: (typeof defenseCatalog)[number]["group"]): string {
-  if (group === "kinetic") return "Kinetic batteries";
-  if (group === "energy") return "Energy weapons";
-  if (group === "shield") return "Shield domes";
-  return "Missiles";
 }
 
 function toResources(resources: ChainMoonState["resources"] | ChainMoonState["defenses"][number]["cost"] | null | undefined): Resources | undefined {
@@ -1062,33 +971,6 @@ function multiplyResources(resources: Resources, quantity: number): Resources {
     crystal: resources.crystal * quantity,
     deuterium: resources.deuterium * quantity,
   };
-}
-
-function moonTechnologyLevelsByKey(levels: Record<string, number> | undefined): Record<string, number> {
-  const technologyIdByKey: Partial<Record<string, number>> = {
-    energy: 0,
-    laser: 1,
-    ion: 2,
-    combustionDrive: 3,
-    computer: 4,
-    weapons: 5,
-    shielding: 6,
-    armor: 7,
-    hyperspace: 8,
-    impulseDrive: 9,
-    hyperspaceDrive: 10,
-    plasma: 11,
-    astrophysics: 12,
-    intergalacticResearchNetwork: 13,
-    graviton: 14,
-  };
-
-  return Object.fromEntries(
-    Object.entries(technologyIdByKey).map(([key, id]) => [
-      key,
-      id === undefined ? 0 : levels?.[id.toString()] ?? 0,
-    ]),
-  );
 }
 
 export function moonBuildingAsset(key: ChainMoonState["buildings"][number]["key"]): string {

@@ -8,6 +8,7 @@ import {
   defenseRefreshButtonState,
   getDefenseRequirementStates,
   getQueueBlocker,
+  resolveDefenseUnitCost,
   shouldShowDefenseInitialLoader,
   StatusPanel,
 } from "../src/components/DefensePage";
@@ -109,6 +110,20 @@ describe("Defense page display helpers", () => {
 
   test("formats defense prices like building cost rows", () => {
     expect(formatProductionPrice({ metal: 2_000, crystal: 6_000, deuterium: 0 })).toBe("Metal 2,000, Crystal 6,000");
+  });
+
+  test("uses the canonical catalog cost when an indexed defense row incorrectly reports zero", () => {
+    expect(resolveDefenseUnitCost(
+      { metal: 2_000, crystal: 0, deuterium: 0 },
+      { metal: "0", crystal: "0", deuterium: "0" },
+    )).toEqual({ metal: 2_000, crystal: 0, deuterium: 0 });
+  });
+
+  test("preserves a legitimate all-zero catalog cost fallback", () => {
+    expect(resolveDefenseUnitCost(
+      { metal: 0, crystal: 0, deuterium: 0 },
+      { metal: "0", crystal: "0", deuterium: "0" },
+    )).toEqual({ metal: 0, crystal: 0, deuterium: 0 });
   });
 
   test("keeps loaded defenses visible during background refreshes", () => {
