@@ -251,9 +251,30 @@ export function MissionControlPage({
   // The view comes from the URL hash first (shareable, survives reload + browser back), then the
   // sessionStorage fallback for the in-app back button which lands on a bare `#/mission-control`.
   const view = initialView ?? resolveMissionControlView();
+  const selectedActiveRows = view.activeTab === "all"
+    ? filteredAllActiveRows
+    : view.activeTab === "alliance"
+      ? filteredAllianceMissionRows
+      : filteredMyMissionRows;
+  const selectedPastRows = view.pastTab === "all"
+    ? filteredGlobalPastMissionRows
+    : view.pastTab === "incomingAttacks"
+      ? filteredIncomingAttackRows
+      : filteredPastMissionRows;
+  const hasFilteredStationedRows = filteredStationedOutgoing.some((mission) =>
+    (mission.missionType === "AcsDefend" || mission.missionType === "DefenseHold")
+      && mission.status === "Outbound"
+  ) || filteredStationedIncoming.some((mission) =>
+    mission.stationedDefenders
+      ? mission.stationedDefenders.length > 0
+      : (mission.counterplayDefenderMissionIds?.length ?? 0) > 0
+  );
+  const hasVisibleExpandableRows = selectedActiveRows.length > 0
+    || selectedPastRows.length > 0
+    || hasFilteredStationedRows;
 
   return (
-    <section className="grid gap-3">
+    <section className="grid gap-3" data-mission-control-page ref={scheduleMissionRowsDisclosureSync}>
       <PageHeader
         actions={(
           <>
@@ -266,6 +287,7 @@ export function MissionControlPage({
                 }
               }}
             />
+            <MissionRowsDisclosureControl hidden={!hasVisibleExpandableRows} />
             <RefreshButton loading={loading || missionArchiveLoading} onRefresh={onRefresh} title="Refresh missions" />
           </>
         )}
@@ -824,6 +846,86 @@ function ActiveMissionSection({
       ))}
     </section>
   );
+}
+
+export type MissionRowsDisclosureState = {
+  allExpanded: boolean;
+  label: "Collapse all" | "Expand all";
+  nextOpen: boolean;
+};
+
+export function missionRowsDisclosureState(rows: ReadonlyArray<{ open: boolean }>): MissionRowsDisclosureState {
+  const allExpanded = rows.length > 0 && rows.every((row) => row.open);
+  return {
+    allExpanded,
+    label: allExpanded ? "Collapse all" : "Expand all",
+    nextOpen: !allExpanded,
+  };
+}
+
+export function setMissionRowsExpanded(rows: Array<{ open: boolean }>, open: boolean): void {
+  rows.forEach((row) => {
+    row.open = open;
+  });
+}
+
+function MissionRowsDisclosureControl({ hidden }: { hidden: boolean }) {
+  return (
+    <button
+      aria-label="Expand all visible mission cards"
+      className="h-9 rounded-md border border-white/10 bg-white/5 px-3 text-xs font-semibold text-slate-200 transition hover:bg-white/10"
+      data-mission-disclosure-toggle
+      hidden={hidden}
+      onClick={(event) => {
+        const root = event.currentTarget.closest<HTMLElement>("[data-mission-control-page]");
+        if (!root) return;
+        const rows = visibleMissionRows(root);
+        setMissionRowsExpanded(rows, missionRowsDisclosureState(rows).nextOpen);
+        syncMissionRowsDisclosureControl(root);
+      }}
+      title="Expand all visible mission cards"
+      type="button"
+    >
+      Expand all
+    </button>
+  );
+}
+
+function visibleMissionRows(root: HTMLElement): HTMLDetailsElement[] {
+  return Array.from(root.querySelectorAll<HTMLDetailsElement>("details[data-mission-row]"))
+    .filter((row) => !hiddenByAncestor(row, root));
+}
+
+function hiddenByAncestor(element: HTMLElement, boundary: HTMLElement): boolean {
+  let current: HTMLElement | null = element;
+  while (current && current !== boundary) {
+    if (current.hidden) return true;
+    current = current.parentElement;
+  }
+  return false;
+}
+
+function syncMissionRowsDisclosureControl(source: Element): void {
+  const root = source.matches("[data-mission-control-page]")
+    ? source as HTMLElement
+    : source.closest<HTMLElement>("[data-mission-control-page]");
+  if (!root) return;
+  const button = root.querySelector<HTMLButtonElement>("[data-mission-disclosure-toggle]");
+  if (!button) return;
+  const rows = visibleMissionRows(root);
+  const state = missionRowsDisclosureState(rows);
+  button.hidden = rows.length === 0;
+  button.textContent = state.label;
+  const accessibleLabel = `${state.label} visible mission cards`;
+  button.setAttribute("aria-label", accessibleLabel);
+  button.title = accessibleLabel;
+}
+
+function scheduleMissionRowsDisclosureSync(root: HTMLElement | null): void {
+  if (!root) return;
+  queueMicrotask(() => {
+    if (root.isConnected) syncMissionRowsDisclosureControl(root);
+  });
 }
 
 function MissionFilterPopover({
@@ -1396,6 +1498,7 @@ function MissionCard({
     <details
       className={`group/mission text-xs text-slate-300 ${hostile ? "border-l-2 border-l-red-400/60 bg-red-400/[0.04]" : ""}`}
       data-mission-row
+      onToggle={(event) => syncMissionRowsDisclosureControl(event.currentTarget)}
       open={defaultOpen || undefined}
     >
       <summary className="flex cursor-pointer list-none flex-wrap items-center gap-x-2.5 gap-y-1.5 px-2.5 py-2 transition-colors hover:bg-white/[0.03] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-300/50 sm:px-3 [&::-webkit-details-marker]:hidden">
@@ -2315,6 +2418,7 @@ function showPastMissionPage(event: Event, target: number | "next" | "previous")
   const next = section.querySelector<HTMLButtonElement>("[data-past-page-next]");
   if (next) next.disabled = clamped === pages.length - 1;
 
+  syncMissionRowsDisclosureControl(section);
 }
 
 export function partitionActiveMissionRows(rows: ActiveMissionRow[]): { alliance: ActiveMissionRow[]; mine: ActiveMissionRow[] } {
@@ -2347,6 +2451,7 @@ function showActiveMissionTab(event: Event, key: string) {
   // VEY-412: remember the tab and the page of the now-visible panel so both restore on return.
   const visiblePanel = section.querySelector<HTMLElement>(`[data-active-tab-panel="${key}"]`);
   persistMissionControlView({ activePage: visibleClientPageIndex(visiblePanel), activeTab: key as ActiveMissionTabKey });
+  syncMissionRowsDisclosureControl(section);
 }
 
 function showPastMissionTab(event: Event, key: string) {
@@ -2367,6 +2472,7 @@ function showPastMissionTab(event: Event, key: string) {
   // VEY-412: remember the past-missions tab and the page of the now-visible panel.
   const visiblePanel = section.querySelector<HTMLElement>(`[data-past-tab-panel="${key}"]`);
   persistMissionControlView({ pastPage: visibleClientPageIndex(visiblePanel), pastTab: key as PastMissionTabKey });
+  syncMissionRowsDisclosureControl(section);
 }
 
 // Shared prev/next pagination control. With `onPageChange` it drives server-side pagination

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { MissionDetailPage } from "./components/MissionDetailPage";
-import { EMPTY_MISSION_CONTROL_FILTERS, MissionControlPage, StationedDefenseSection, activeMissionRowMatchesFilters, allActiveMissionRows, buildMissionControlViewQuery, missionControlActiveFilterCount, missionIdMatchesMissionNumberSearch, missionPlanetCoordinateKey, missionReport, missionStatusPill, normalizeMissionControlFilters, normalizeMissionNumberSearch, parseMissionControlViewParams, persistMissionControlView, resolveMissionControlView, partitionActiveMissionRows, type ActiveMissionRow, type MissionControlFilters, type MissionControlView } from "./components/MissionControlPage";
+import { EMPTY_MISSION_CONTROL_FILTERS, MissionControlPage, StationedDefenseSection, activeMissionRowMatchesFilters, allActiveMissionRows, buildMissionControlViewQuery, missionControlActiveFilterCount, missionIdMatchesMissionNumberSearch, missionPlanetCoordinateKey, missionReport, missionRowsDisclosureState, missionStatusPill, normalizeMissionControlFilters, normalizeMissionNumberSearch, parseMissionControlViewParams, persistMissionControlView, resolveMissionControlView, setMissionRowsExpanded, partitionActiveMissionRows, type ActiveMissionRow, type MissionControlFilters, type MissionControlView } from "./components/MissionControlPage";
 import { MissionRouteCell, missionEndpoint, type MissionPlanetIdentity } from "./components/missionRoute";
 import { planetImageForType, planetTypeFromCoordinates } from "./data/mockUniverse";
 import { buildInspectHash, buildInspectPath, parseInspectPath, parseInspectRoute } from "./inspectRoutes";
@@ -890,6 +890,74 @@ describe("Mission Control battle reports", () => {
     const neutralTrigger = findElements(neutralDetails, "summary")[0];
     expect(neutralDetails?.props?.["data-active-filter-count"]).toBe(0);
     expect(neutralTrigger?.props?.["aria-label"]).toBe("Mission filters");
+  });
+
+  test("switches Expand all to Collapse all and tracks individual row changes", () => {
+    const rows = [{ open: false }, { open: false }, { open: true }];
+    expect(missionRowsDisclosureState(rows)).toEqual({
+      allExpanded: false,
+      label: "Expand all",
+      nextOpen: true,
+    });
+
+    setMissionRowsExpanded(rows, true);
+    expect(rows.every((row) => row.open)).toBe(true);
+    expect(missionRowsDisclosureState(rows)).toEqual({
+      allExpanded: true,
+      label: "Collapse all",
+      nextOpen: false,
+    });
+
+    rows[1]!.open = false;
+    expect(missionRowsDisclosureState(rows).label).toBe("Expand all");
+    setMissionRowsExpanded(rows, true);
+    setMissionRowsExpanded(rows, missionRowsDisclosureState(rows).nextOpen);
+    expect(rows.every((row) => !row.open)).toBe(true);
+    expect(missionRowsDisclosureState([])).toEqual({
+      allExpanded: false,
+      label: "Expand all",
+      nextOpen: true,
+    });
+  });
+
+  test("shows Expand all only when the selected views contain filter-matching cards", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const owner = "0x1111111111111111111111111111111111111111";
+    const props = missionControlProps(now, {
+      outgoing: [
+        mission("75331", "Harvest", "Outbound", owner, "7", "9", now + 60_000),
+        mission("75332", "Transport", "Outbound", owner, "7", "10", now + 120_000),
+      ],
+    });
+    const matchingTree = MissionControlPage({
+      ...props,
+      missionFilters: { missionType: "Harvest" },
+    });
+    const matchingControl = findElements(matchingTree, "button")
+      .find((node) => node.props?.["data-mission-disclosure-toggle"] === true);
+    const matchingRows = findElements(matchingTree, "details")
+      .filter((node) => node.props?.["data-mission-row"] === true);
+    expect(matchingControl?.props?.hidden).toBe(false);
+    expect(matchingControl?.props?.["aria-label"]).toBe("Expand all visible mission cards");
+    expect(matchingRows.length).toBeGreaterThan(0);
+    expect(matchingRows.every((row) => typeof row.props?.onToggle === "function")).toBe(true);
+
+    const noMatchTree = MissionControlPage({
+      ...props,
+      missionFilters: { missionType: "Deploy" },
+    });
+    const noMatchControl = findElements(noMatchTree, "button")
+      .find((node) => node.props?.["data-mission-disclosure-toggle"] === true);
+    expect(noMatchControl?.props?.hidden).toBe(true);
+
+    const hiddenTabTree = MissionControlPage({
+      ...props,
+      initialView: { activePage: 0, activeTab: "alliance", pastPage: 0, pastTab: "mine" },
+      missionFilters: { missionType: "Harvest" },
+    });
+    const hiddenTabControl = findElements(hiddenTabTree, "button")
+      .find((node) => node.props?.["data-mission-disclosure-toggle"] === true);
+    expect(hiddenTabControl?.props?.hidden).toBe(true);
   });
 
   test("shows the Alliance empty state when there are no joinable attacks", () => {
