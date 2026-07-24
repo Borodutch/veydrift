@@ -2106,7 +2106,8 @@ describe("Mission Control battle reports", () => {
     expect(summaryText).not.toContain("Debris field");
     expect(summaryText).not.toContain(" 0 ");
 
-    expect(rowText).toContain("Arrived");
+    // Tense-aware timeline label: this fixture's arrival timestamp is still in the future.
+    expect(rowText).toMatch(/Arrive[sd]/);
     expect(rowText).toContain("Small Cargo");
     expect(rowText).toMatch(/Attacker losses\s+100 M \/ 50 C/);
     expect(rowText).toMatch(/Defender losses\s+900 M \/ 250 C/);
