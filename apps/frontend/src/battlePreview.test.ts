@@ -125,6 +125,27 @@ describe("contract battle preview parity", () => {
     });
   });
 
+  test("matches the Forge counterplay-lane-sensitive fixture", () => {
+    const inputForLane = (laneGroup: number) =>
+      battle(ships([6, 1]), ships(), defenses(), {}, [], [
+        fleet("counter", laneGroup, ships([1, 10]), ZERO_TECH),
+      ]);
+    const laneZero = runContractBattle(inputForLane(0), seed(46));
+    const laneTwo = runContractBattle(inputForLane(2), seed(46));
+
+    expect(laneZero).toMatchObject({
+      outcome: "win",
+      defenderSurvivors: 0,
+      defenderLosses: { metal: 30_000, crystal: 10_000, deuterium: 0 },
+    });
+    expect(laneTwo).toMatchObject({
+      outcome: "draw",
+      defenderSurvivors: 1,
+      defenderLosses: { metal: 27_000, crystal: 9_000, deuterium: 0 },
+    });
+    expect(laneTwo.defender.counterplay[0]?.laneGroup).toBe(2);
+  });
+
   test("uses reproducible 256-bit samples and reports probability/loss ranges", () => {
     const input = battle(ships([0, 1]), ships([0, 27]), defenses());
     const first = forecastContractBattle(input);

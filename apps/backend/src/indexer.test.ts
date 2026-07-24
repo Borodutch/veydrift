@@ -5499,6 +5499,7 @@ describe("SettlementIndexer", () => {
     const leadOwner = "0x3333333333333333333333333333333333333333" as Address;
     const defenderOwner = "0x4444444444444444444444444444444444444444" as Address;
     const joinedOwner = "0x5555555555555555555555555555555555555555" as Address;
+    const holdOwner = "0x6666666666666666666666666666666666666666" as Address;
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
       async listMoonChanceReportEvents() { return []; },
@@ -5546,16 +5547,60 @@ describe("SettlementIndexer", () => {
     });
     applyFleetLog(72n, joinedOwner, 8n, 12n, 99n, 70n, "0x92");
     applyShips(72n, joinedOwner, [0n, 0n, 0n, 0n, 0n, 0n, 12n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n]);
+    // Link index 2 belongs to another defender. Defender lanes are the exact zero-based link indices,
+    // while the joined attacker uses i + 1, so both legitimately expose lane group 2 in separate domains.
+    applyFleetLog(73n, defenderOwner, 5n, 13n, 99n, 70n, "0x93");
+    applyShips(73n, defenderOwner, [0n, 0n, 0n, 0n, 0n, 2n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n]);
+
+    const stationDefenseHold = (missionId: bigint, blockNumber: string, holdUntil: bigint) => {
+      applyFleetLog(missionId, holdOwner, 9n, missionId + 100n, 99n, 0n, blockNumber);
+      applyShips(missionId, holdOwner, [0n, 0n, 0n, 0n, 0n, 0n, 0n, 1n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n]);
+      indexer.applyLog({
+        blockNumber,
+        transactionHash: `0xstation${missionId}`,
+        logIndex: "0x2",
+        topics: [defenseHoldStationedTopic, topic(missionId), addressTopic(holdOwner), topic(99n)],
+        data: abiWords(missionId + 100n, 1_899_999_900n, holdUntil, holdUntil + 600n)
+      });
+    };
+    stationDefenseHold(80n, "0x94", 1_900_002_000n);
+    stationDefenseHold(81n, "0x95", 1_900_003_000n);
+    stationDefenseHold(82n, "0x96", 1_900_001_000n);
+    // Solidity removes 81 with swap-pop, producing storage order [80, 82]. The UI later sorts by
+    // holdUntil as [82, 80], but their simulation lanes must remain 5 and 4 respectively.
+    indexer.applyLog({
+      blockNumber: "0x97",
+      transactionHash: "0xend81",
+      logIndex: "0x0",
+      topics: [defenseHoldEndedTopic, topic(81n), topic(99n)],
+      data: abiWords(5n)
+    });
 
     const joinable = indexer.fleetMissionVisibility(player).joinableAttacks
       .find((mission) => mission.missionId === "70");
     expect(joinable?.attackPreview).toMatchObject({
-      selectedAttackerLaneGroup: 3,
+      selectedAttackerLaneGroup: 4,
       stationedDefenders: [
         {
           missionId: "71",
           defender: defenderOwner,
+          laneGroup: 0,
           combatTechnology: { weapons: 0, shielding: 0, armor: 0 }
+        },
+        {
+          missionId: "73",
+          defender: defenderOwner,
+          laneGroup: 2
+        },
+        {
+          missionId: "82",
+          defender: holdOwner,
+          laneGroup: 5
+        },
+        {
+          missionId: "80",
+          defender: holdOwner,
+          laneGroup: 4
         }
       ],
       participants: [
@@ -5575,6 +5620,19 @@ describe("SettlementIndexer", () => {
         }
       ]
     });
+
+    // A legacy/incomplete active hold without its immutable station event cannot be assigned a safe
+    // storage-order lane. The public preview must name the gap instead of renumbering the display list.
+    applyFleetLog(83n, holdOwner, 9n, 183n, 99n, 0n, "0x98");
+    applyShips(83n, holdOwner, [0n, 1n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n]);
+    const incomplete = indexer.fleetMissionVisibility(player).joinableAttacks
+      .find((mission) => mission.missionId === "70");
+    expect(incomplete?.attackPreview).toMatchObject({
+      selectedAttackerLaneGroup: null
+    });
+    expect(incomplete?.attackPreview?.unavailableReason).toContain(
+      "DefenseHold #83 is missing from exact stationed-defense storage-order indexing"
+    );
   });
 
   test("removed duplicate log marks reorg health instead of being ignored", () => {

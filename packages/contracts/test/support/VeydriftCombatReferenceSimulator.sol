@@ -35,6 +35,7 @@ library VeydriftCombatReferenceSimulator {
         uint32[16] counterplayShips;
         uint32[8] defenderDefenses;
         bool counterplayIntercept;
+        uint256 counterplayLaneGroup;
         CombatTech attackerTech;
         CombatTech joinedAttackerTech;
         CombatTech defenderTech;
@@ -79,6 +80,7 @@ library VeydriftCombatReferenceSimulator {
                 input.attackerTech,
                 input.defenderTech,
                 input.counterplayTech,
+                input.counterplayLaneGroup,
                 input.seed,
                 round
             );
@@ -90,6 +92,7 @@ library VeydriftCombatReferenceSimulator {
                     input.joinedAttackerTech,
                     input.defenderTech,
                     input.counterplayTech,
+                    input.counterplayLaneGroup,
                     input.seed,
                     round
                 )
@@ -351,6 +354,7 @@ library VeydriftCombatReferenceSimulator {
         CombatTech memory attackerTech,
         CombatTech memory defenderTech,
         CombatTech memory counterplayTech,
+        uint256 counterplayLaneGroup,
         uint256 seed,
         uint8 round
     ) private pure returns (VeydriftGameStorage.Resources memory losses) {
@@ -366,6 +370,7 @@ library VeydriftCombatReferenceSimulator {
                         attackerTech,
                         defenderTech,
                         counterplayTech,
+                        counterplayLaneGroup,
                         seed,
                         round,
                         4,
@@ -386,6 +391,7 @@ library VeydriftCombatReferenceSimulator {
         CombatTech memory firingTech,
         CombatTech memory defenderTech,
         CombatTech memory counterplayTech,
+        uint256 counterplayLaneGroup,
         uint256 seed,
         uint8 round,
         uint8 side,
@@ -396,13 +402,15 @@ library VeydriftCombatReferenceSimulator {
 
         uint256 attack =
             _combatScaled(VeydriftCatalog.shipBattleAttack(firingShip), firingTech.weapons);
-        uint256 extraShots =
-            _defenderExtraShots(result, firingShip, firingCount, seed, round, side, unit);
+        uint256 extraShots = _defenderExtraShots(
+            result, firingShip, firingCount, counterplayLaneGroup, seed, round, side, unit
+        );
         losses = _add(
             losses,
             _fireAtDefenderShips(
                 result.defenderShips,
                 TARGET_LANE_PLANET_SHIP,
+                0,
                 firingCount,
                 extraShots,
                 targetTotal,
@@ -431,6 +439,7 @@ library VeydriftCombatReferenceSimulator {
             _fireAtDefenderShips(
                 result.counterplayShips,
                 TARGET_LANE_COUNTERPLAY_SHIP,
+                counterplayLaneGroup,
                 firingCount,
                 extraShots,
                 targetTotal,
@@ -447,6 +456,7 @@ library VeydriftCombatReferenceSimulator {
     function _fireAtDefenderShips(
         uint32[16] memory targets,
         uint256 laneBase,
+        uint256 laneGroup,
         uint32 firingCount,
         uint256 extraShots,
         uint256 targetTotal,
@@ -466,7 +476,7 @@ library VeydriftCombatReferenceSimulator {
             }
             uint32 count = targets[i];
             if (count != 0) {
-                uint256 targetLane = _targetLane(laneBase, 0, i);
+                uint256 targetLane = _targetLane(laneBase, laneGroup, i);
                 uint256 shots = _distributedTargetShots(
                     firingCount, count, targetTotal, seed, round, side, unit, targetLane
                 )
@@ -653,6 +663,7 @@ library VeydriftCombatReferenceSimulator {
         BattleResult memory result,
         Ship firingShip,
         uint256 shots,
+        uint256 counterplayLaneGroup,
         uint256 seed,
         uint8 round,
         uint8 side,
@@ -694,7 +705,7 @@ library VeydriftCombatReferenceSimulator {
             generated += _shipExtraShots(
                 result.counterplayShips,
                 TARGET_LANE_COUNTERPLAY_SHIP,
-                0,
+                counterplayLaneGroup,
                 firingShip,
                 incoming,
                 targetTotal,

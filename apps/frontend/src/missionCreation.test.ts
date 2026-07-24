@@ -946,6 +946,7 @@ describe("mission creation", () => {
           missionId: "held-1",
           defender: "0xdefender",
           defenderDisplayName: "Defender",
+          laneGroup: 0,
           combatTechnology: { weapons: 4, shielding: 3, armor: 2 },
           ships: { lightFighter: "40", cruiser: "2" },
           holdUntil: "1700003600",
@@ -1013,6 +1014,7 @@ describe("mission creation", () => {
           missionId: "defend-79",
           defender: "0xdefender",
           defenderDisplayName: "Group Defender",
+          laneGroup: 2,
           combatTechnology: { weapons: 3, shielding: 5, armor: 7 },
           ships: { lightFighter: "5" },
           holdUntil: "1900000000",
@@ -1034,6 +1036,7 @@ describe("mission creation", () => {
     expect(combined.sampleReport?.attackers[0]?.technology).toEqual({ weapons: 8, shielding: 7, armor: 6 });
     expect(combined.sampleReport?.attackers[1]?.technology).toEqual({ weapons: 4, shielding: 3, armor: 2 });
     expect(combined.sampleReport?.defender.counterplay[0]?.technology).toEqual({ weapons: 3, shielding: 5, armor: 7 });
+    expect(combined.sampleReport?.defender.counterplay[0]?.laneGroup).toBe(2);
 
     const joinPanel = AttackIntelPanel({
       battleForecast: combined,
@@ -1056,6 +1059,75 @@ describe("mission creation", () => {
     expect(findElements(joinPanel, "summary").some(
       (element) => element.props?.["aria-label"] === "Open simulated battle report",
     )).toBe(true);
+  });
+
+  test("stationed display sorting preserves immutable simulation lanes and distribution", () => {
+    const target = targetPlanet({
+      publicState: {
+        resources: { metal: "0", crystal: "0", deuterium: "0" },
+        fleet: [],
+        defenses: [],
+        stationedDefenders: [],
+        buildings: [],
+        research: [],
+        queues: null,
+      },
+    });
+    const defenders = [
+      {
+        missionId: "hold-later",
+        defender: "0xlater",
+        defenderDisplayName: "Later",
+        laneGroup: 4,
+        combatTechnology: { weapons: 0, shielding: 0, armor: 0 },
+        ships: { lightFighter: "10" },
+        holdUntil: "1900002000",
+        allianceDepotLevel: 0,
+      },
+      {
+        missionId: "hold-earlier",
+        defender: "0xearlier",
+        defenderDisplayName: "Earlier",
+        laneGroup: 5,
+        combatTechnology: { weapons: 0, shielding: 0, armor: 0 },
+        ships: { lightFighter: "7" },
+        holdUntil: "1900001000",
+        allianceDepotLevel: 0,
+      },
+    ];
+    const forecast = (stationedDefenders: typeof defenders) => publicTargetBattleForecast(
+      { ...attackAction.ships, cruiser: 1 },
+      target,
+      undefined,
+      false,
+      {
+        participants: [{
+          missionId: "lead",
+          label: "Lead",
+          owner: "0xlead",
+          laneGroup: 0,
+          ships: { cruiser: "1" },
+          combatTechnology: { weapons: 0, shielding: 0, armor: 0 },
+        }],
+        stationedDefenders,
+        selectedAttackerLaneGroup: 1,
+      },
+    );
+    const storageOrder = forecast(defenders);
+    const displayOrder = forecast([...defenders].reverse());
+    const counterplayById = (value: typeof storageOrder) => Object.fromEntries(
+      (value.sampleReport?.defender.counterplay ?? []).map((participant) => [
+        participant.id,
+        { laneGroup: participant.laneGroup, survivors: participant.survivingShips },
+      ]),
+    );
+
+    expect(displayOrder.randomness?.outcomeCounts).toEqual(storageOrder.randomness?.outcomeCounts);
+    expect(counterplayById(displayOrder)).toEqual(counterplayById(storageOrder));
+    expect(counterplayById(displayOrder)).toMatchObject({
+      "stationed-hold-later": { laneGroup: 4 },
+      "stationed-hold-earlier": { laneGroup: 5 },
+    });
   });
 
   test("join-attack forecast fails closed when participant tech or lane intel is missing", () => {
@@ -1111,6 +1183,35 @@ describe("mission creation", () => {
     expect(missingTech.detail).toContain("combat technology");
     expect(missingLane).toMatchObject({ kind: "uncertain", defenderPower: null });
     expect(missingLane.detail).toContain("lane");
+  });
+
+  test("battle forecast fails closed when a stationed defender lane is missing", () => {
+    const forecast = publicTargetBattleForecast(
+      { ...attackAction.ships, lightFighter: 3 },
+      targetPlanet({
+        publicState: {
+          resources: { metal: "0", crystal: "0", deuterium: "0" },
+          fleet: [],
+          defenses: [],
+          stationedDefenders: [{
+            missionId: "legacy-hold",
+            defender: "0xdefender",
+            defenderDisplayName: "Legacy defender",
+            combatTechnology: { weapons: 1, shielding: 1, armor: 1 },
+            ships: { lightFighter: "1" },
+            holdUntil: "1900001000",
+            allianceDepotLevel: 0,
+          }],
+          buildings: [],
+          research: [],
+          queues: null,
+        },
+      }),
+    );
+
+    expect(forecast).toMatchObject({ kind: "uncertain", defenderPower: null });
+    expect(forecast.detail).toContain("legacy-hold");
+    expect(forecast.detail).toContain("lane identity");
   });
 
   test("fails closed when a stationed defender's owner-specific combat technology is unavailable", () => {

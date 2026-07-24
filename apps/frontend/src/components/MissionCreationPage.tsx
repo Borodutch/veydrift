@@ -1512,6 +1512,19 @@ export function publicTargetBattleForecast(
       ...forecastTech,
     };
   }
+  const missingStationedLane = stationedDefenders.find(
+    (defender) => defender.laneGroup == null || !Number.isFinite(defender.laneGroup),
+  );
+  if (missingStationedLane) {
+    return {
+      kind: "uncertain",
+      label: "Uncertain",
+      detail: `Stationed fleet #${missingStationedLane.missionId} is missing its exact contract random-stream lane identity.`,
+      attackerPower,
+      defenderPower: null,
+      ...forecastTech,
+    };
+  }
 
   const stationedPower = stationedDefendersCombatPower(stationedDefenders);
   const defenderPower = compositionCombatPower(bodyState.fleet, "ship", defenderTechLevels)
@@ -1543,13 +1556,13 @@ export function publicTargetBattleForecast(
       ships: combatCompositionCounts(bodyState.fleet, 16),
       defenses: combatCompositionCounts(bodyState.defenses, 8),
       technology: defenderTechLevels,
-      counterplay: stationedDefenders.map((defender, index) => ({
+      counterplay: stationedDefenders.map((defender) => ({
         id: `stationed-${defender.missionId}`,
         label: defender.defenderDisplayName
           ? `${defender.defenderDisplayName}'s stationed fleet`
           : `Stationed fleet #${defender.missionId}`,
         owner: defender.defender,
-        laneGroup: index,
+        laneGroup: defender.laneGroup ?? 0,
         ships: combatShipRecordCounts(defender.ships),
         technology: normalizeCombatTechLevels(defender.combatTechnology),
       })),
@@ -2168,6 +2181,9 @@ function BattleParticipantCard({
     <article className="rounded border border-white/10 bg-white/[0.03] p-2 text-xs">
       <p className="font-medium text-slate-200">{participant.label}</p>
       <p className="mt-0.5 break-all text-[11px] text-slate-500">{participant.owner}</p>
+      {participant.laneGroup !== undefined ? (
+        <p className="mt-0.5 text-[11px] text-slate-500">Contract lane {participant.laneGroup}</p>
+      ) : null}
       <p className="mt-1 text-slate-400">{formatTechLevels(participant.technology)}</p>
       <p className="mt-1 text-slate-300">{formatBattleComposition(participant.startingShips)}</p>
     </article>

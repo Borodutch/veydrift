@@ -522,6 +522,7 @@ export type ApplyLogResult = {
 // (VEY-KANEO-461). 25 keeps the reconcile completing without making it serial-slow.
 const CANONICAL_READ_PLANET_CHUNK = 25;
 const fleetMissionReturnedTopic = "0xbb4a50257c10524783e403a4e0db9c4c3e9378c2e398ec5de34281be1aa97b06";
+const defenseHoldStationedTopic = "0x1183ab32cc2efce96b8c0956b35dd1b46c594234a5717fd810d8cc569a193a47";
 const defenseHoldEndedTopic = "0xf72983c656a87e172935581e9c19f22826c62a2c4d552c6dd217c498a9d88586";
 // DefenseHold returns are intentionally excluded: the contract emits absolute PlanetShipCountChanged
 // credits for survivors. A zero-survivor hold emits no credit event, so replaying its launch vector as
@@ -1675,17 +1676,26 @@ export class SettlementIndexer {
       && mission.owner.toLowerCase() === walletLower
       && (mission.status === "Returning" || mission.status === "Recalled")
     );
-    const joinableAttacks = summaries
-      .filter((mission) =>
+    const joinableAttackRows = summaries.filter((mission) =>
         isVisibleActiveFleetMission(mission)
         && mission.owner.toLowerCase() !== walletLower
         && !ownedPlanetIds.has(mission.targetPlanetId)
         && mission.missionType === "Attack"
         && mission.status === "Outbound"
-      )
+      );
+    const defenseHoldStorageOrders = new Map(
+      [...new Set(joinableAttackRows.map((attack) => attack.targetPlanetId))]
+        .map((planetId) => [planetId, this.defenseHoldStorageOrderForPlanet(planetId)])
+    );
+    const joinableAttacks = joinableAttackRows
       .map((attack) => ({
         ...attack,
-        attackPreview: this.joinAttackPreviewSummary(attack, summariesById, activeDefenseHolds)
+        attackPreview: this.joinAttackPreviewSummary(
+          attack,
+          summariesById,
+          activeDefenseHolds,
+          defenseHoldStorageOrders
+        )
       }));
 
     if (!includeArchive) {
@@ -1975,9 +1985,20 @@ export class SettlementIndexer {
   }
 
   stationedDefendersForPlanet(planetId: string, asOfSeconds = Math.floor(Date.now() / 1_000)): StationedDefenderSummary[] {
-    return this.activeFleetMissionsFromCanonicalRowsForTarget(planetId, { includeOverduePendingRandomness: true })
-      .filter((mission) => this.isActiveDefenseHoldForPlanet(mission, planetId, asOfSeconds))
-      .map((mission) => this.stationedDefenderSummary(mission, this.defenseHoldWindowEnd(mission)))
+    const active = this.activeFleetMissionsFromCanonicalRowsForTarget(
+      planetId,
+      { includeOverduePendingRandomness: true }
+    ).filter((mission) => this.isActiveDefenseHoldForPlanet(mission, planetId, asOfSeconds));
+    const storageOrder = this.defenseHoldStorageOrderForPlanet(planetId);
+    const activeById = new Map(active.map((mission) => [mission.missionId, mission]));
+    const orderedActiveIds = storageOrder.missionIds.filter((missionId) => activeById.has(missionId));
+    const orderComplete = !storageOrder.unavailableReason
+      && active.every((mission) => orderedActiveIds.includes(mission.missionId));
+    return active
+      .map((mission) => ({
+        ...this.stationedDefenderSummary(mission, this.defenseHoldWindowEnd(mission)),
+        laneGroup: orderComplete ? orderedActiveIds.indexOf(mission.missionId) : null
+      }))
       .sort((left, right) => Number(left.holdUntil) - Number(right.holdUntil));
   }
 
@@ -8839,14 +8860,13 @@ export class SettlementIndexer {
   private joinAttackPreviewSummary(
     attack: FleetMissionSummary,
     summariesById: ReadonlyMap<string, FleetMissionSummary>,
-    activeDefenseHolds: readonly FleetMissionSummary[]
+    activeDefenseHolds: readonly FleetMissionSummary[],
+    defenseHoldStorageOrders: ReadonlyMap<
+      string,
+      { missionIds: string[]; unavailableReason?: string }
+    >
   ): NonNullable<FleetMissionSummary["attackPreview"]> {
     const leadDisplayName = this.playerProfile(attack.owner).displayName;
-    const stationedDefenders = this.stationedDefendersForAttackPreview(
-      attack,
-      summariesById,
-      activeDefenseHolds
-    );
     const participants: NonNullable<FleetMissionSummary["attackPreview"]>["participants"] = [{
       missionId: attack.missionId,
       label: leadDisplayName
@@ -8871,9 +8891,25 @@ export class SettlementIndexer {
     if (!linkedMissionIds) {
       return {
         participants,
-        stationedDefenders,
+        stationedDefenders: [],
         selectedAttackerLaneGroup: null,
         unavailableReason: `Attack #${attack.missionId} predates exact combined link-order indexing, so joined attacker random lanes cannot be reconstructed safely.`
+      };
+    }
+    const defenderPreview = this.stationedDefendersForAttackPreview(
+      attack,
+      summariesById,
+      activeDefenseHolds,
+      linkedMissionIds,
+      defenseHoldStorageOrders.get(attack.targetPlanetId) ?? { missionIds: [] }
+    );
+    const stationedDefenders = defenderPreview.defenders;
+    if (defenderPreview.unavailableReason) {
+      return {
+        participants,
+        stationedDefenders,
+        selectedAttackerLaneGroup: null,
+        unavailableReason: defenderPreview.unavailableReason
       };
     }
 
@@ -8931,30 +8967,130 @@ export class SettlementIndexer {
   private stationedDefendersForAttackPreview(
     attack: FleetMissionSummary,
     summariesById: ReadonlyMap<string, FleetMissionSummary>,
-    activeDefenseHolds: readonly FleetMissionSummary[]
-  ): StationedDefenderSummary[] {
+    activeDefenseHolds: readonly FleetMissionSummary[],
+    linkedMissionIds: readonly string[],
+    storageOrder: { missionIds: string[]; unavailableReason?: string }
+  ): { defenders: StationedDefenderSummary[]; unavailableReason?: string } {
     const attackArrival = Number(attack.arrivalAt);
-    if (!Number.isFinite(attackArrival)) return [];
-    const defenders = new Map<string, FleetMissionSummary>();
+    if (!Number.isFinite(attackArrival)) {
+      return {
+        defenders: [],
+        unavailableReason: `Attack #${attack.missionId} has no valid arrival time for defender qualification.`
+      };
+    }
+    const defenders: StationedDefenderSummary[] = [];
     for (const missionId of attack.counterplayDefenderMissionIds ?? []) {
       const defender = summariesById.get(missionId);
-      if (defender && this.isBattleTimeCounterplay(defender, attack, attackArrival)) {
-        defenders.set(defender.missionId, defender);
+      if (!defender) {
+        return {
+          defenders,
+          unavailableReason: `Counterplay defender #${missionId} composition is missing from indexed public intel.`
+        };
+      }
+      if (this.isBattleTimeCounterplay(defender, attack, attackArrival)) {
+        const linkedIndex = linkedMissionIds.indexOf(missionId);
+        if (linkedIndex < 0) {
+          return {
+            defenders,
+            unavailableReason: `Counterplay defender #${missionId} is missing its exact shared contract lane identity.`
+          };
+        }
+        defenders.push({
+          ...this.stationedDefenderSummary(defender, this.counterplayHoldUntil(defender)),
+          laneGroup: linkedIndex
+        });
       }
     }
-    for (const defender of activeDefenseHolds) {
-      if (this.isBattleTimeDefenseHoldForPlanet(defender, attack.targetPlanetId, attackArrival)) {
-        defenders.set(defender.missionId, defender);
+
+    const qualifiedDefenseHolds = activeDefenseHolds.filter((defender) =>
+      this.isBattleTimeDefenseHoldForPlanet(defender, attack.targetPlanetId, attackArrival)
+    );
+    if (qualifiedDefenseHolds.length > 0) {
+      if (storageOrder.unavailableReason) {
+        return { defenders, unavailableReason: storageOrder.unavailableReason };
+      }
+      const qualifiedById = new Map(qualifiedDefenseHolds.map((defender) => [defender.missionId, defender]));
+      const orderedQualified = storageOrder.missionIds
+        .map((missionId) => qualifiedById.get(missionId))
+        .filter((mission): mission is FleetMissionSummary => Boolean(mission));
+      const missing = qualifiedDefenseHolds.find((mission) =>
+        !storageOrder.missionIds.includes(mission.missionId)
+      );
+      if (missing) {
+        return {
+          defenders,
+          unavailableReason: `DefenseHold #${missing.missionId} is missing from exact stationed-defense storage-order indexing.`
+        };
+      }
+      for (const [index, defender] of orderedQualified.entries()) {
+        defenders.push({
+          ...this.stationedDefenderSummary(defender, this.defenseHoldWindowEnd(defender)),
+          // The selected join is appended before resolution; qualified DefenseHolds append after it.
+          laneGroup: linkedMissionIds.length + 1 + index
+        });
       }
     }
-    return [...defenders.values()]
-      .map((defender) => this.stationedDefenderSummary(
-        defender,
-        defender.missionType === "DefenseHold"
-          ? this.defenseHoldWindowEnd(defender)
-          : this.counterplayHoldUntil(defender)
-      ))
-      .sort((left, right) => Number(left.holdUntil) - Number(right.holdUntil));
+    return {
+      defenders: defenders.sort((left, right) => Number(left.holdUntil) - Number(right.holdUntil))
+    };
+  }
+
+  private defenseHoldStorageOrderForPlanet(
+    targetPlanetId: string
+  ): { missionIds: string[]; unavailableReason?: string } {
+    const targetTopic = fleetMissionIdTopic(targetPlanetId);
+    const rows = this.db.query(`
+      SELECT event_json
+      FROM indexed_mission_event_logs
+      WHERE event_kind = 'fleet'
+        AND (
+          (
+            lower(json_extract(event_json, '$.topics[0]')) = lower(?)
+            AND json_extract(event_json, '$.topics[3]') = ?
+          )
+          OR (
+            lower(json_extract(event_json, '$.topics[0]')) = lower(?)
+            AND json_extract(event_json, '$.topics[2]') = ?
+          )
+        )
+      ORDER BY CAST(block_number AS INTEGER) ASC
+    `).all(
+      defenseHoldStationedTopic,
+      targetTopic,
+      defenseHoldEndedTopic,
+      targetTopic
+    ) as EventRow[];
+    const missionIds: string[] = [];
+    const indexByMission = new Map<string, number>();
+    for (const log of sortedEventRows(rows)) {
+      const missionId = missionIdFromTopic(log.topics[1]);
+      if (!missionId) {
+        return {
+          missionIds,
+          unavailableReason: `Stationed-defense storage order for planet #${targetPlanetId} contains an invalid mission identity.`
+        };
+      }
+      if (log.topics[0]?.toLowerCase() === defenseHoldStationedTopic) {
+        if (!indexByMission.has(missionId)) {
+          indexByMission.set(missionId, missionIds.length);
+          missionIds.push(missionId);
+        }
+        continue;
+      }
+      const index = indexByMission.get(missionId);
+      if (index === undefined) {
+        return {
+          missionIds,
+          unavailableReason: `DefenseHold #${missionId} ended without its earlier station event, so planet #${targetPlanetId} storage order is incomplete.`
+        };
+      }
+      const lastMissionId = missionIds[missionIds.length - 1]!;
+      missionIds[index] = lastMissionId;
+      missionIds.pop();
+      indexByMission.delete(missionId);
+      if (lastMissionId !== missionId) indexByMission.set(lastMissionId, index);
+    }
+    return { missionIds };
   }
 
   private stationedDefenderSummary(

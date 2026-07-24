@@ -455,6 +455,9 @@ export type StationedDefenderSummary = {
   missionId: string;
   defender: Address;
   defenderDisplayName: string | null;
+  // Exact counterplay lane used by Solidity's domain-separated random streams. Null/absent on
+  // non-battle display payloads whose contract lane cannot be reconstructed safely.
+  laneGroup?: number | null;
   combatTechnology?: {
     weapons: number;
     shielding: number;

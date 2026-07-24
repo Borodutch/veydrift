@@ -84,6 +84,7 @@ export interface PublicStationedDefender {
   missionId: string;
   defender: string;
   defenderDisplayName: string | null;
+  laneGroup?: number | null;
   combatTechnology?: {
     weapons: number;
     shielding: number;

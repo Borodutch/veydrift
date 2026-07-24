@@ -450,6 +450,7 @@ export type StationedDefenderSummary = {
   missionId: string;
   defender: string;
   defenderDisplayName?: string | null;
+  laneGroup?: number | null;
   combatTechnology?: {
     weapons: number;
     shielding: number;

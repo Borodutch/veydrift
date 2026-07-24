@@ -62,6 +62,7 @@ export type BattleParticipantReport = {
   id: string;
   label: string;
   owner: string;
+  laneGroup?: number;
   technology: CombatTechnology;
   startingShips: BattleCompositionRow[];
   lostShips: BattleCompositionRow[];
@@ -889,6 +890,7 @@ function participantReport(start: MutableFleet, after: MutableFleet, losses: rea
     id: start.id,
     label: start.label,
     owner: start.owner,
+    laneGroup: start.laneGroup,
     technology: { ...start.technology },
     startingShips: shipRows(start.ships),
     lostShips: shipRows(losses),
