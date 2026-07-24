@@ -17,6 +17,13 @@ export type EntityMedia = {
   updatedAt: string;
 };
 
+export type EntityMediaChallenge = {
+  entityKind: EntityMediaKind;
+  entityId: string;
+  version: number;
+  wallet: Address;
+};
+
 export type YouTubeMediaValidation =
   | { ok: true; media: YouTubeMedia | null }
   | { ok: false; error: string };
@@ -117,17 +124,20 @@ export function entityMediaMessage({
   entityId,
   entityKind,
   media,
+  version,
   wallet
 }: {
   entityId: string;
   entityKind: EntityMediaKind;
   media: YouTubeMedia | null;
+  version: number;
   wallet: Address;
 }): string {
   return [
     "Veydrift entity media",
     `Wallet: ${wallet.toLowerCase()}`,
     `Entity: ${entityKind}:${entityId}`,
+    `Version: ${version}`,
     `YouTube media: ${media ? `${media.type}:${media.id}` : "none"}`,
     "Only sign this message if you want to update this public media in Veydrift."
   ].join("\n");
@@ -138,12 +148,14 @@ export async function verifyEntityMediaSignature({
   entityKind,
   media,
   signature,
+  version,
   wallet
 }: {
   entityId: string;
   entityKind: EntityMediaKind;
   media: YouTubeMedia | null;
   signature: unknown;
+  version: number;
   wallet: Address;
 }): Promise<boolean> {
   if (typeof signature !== "string" || !/^0x[a-fA-F0-9]+$/.test(signature)) return false;
@@ -151,7 +163,7 @@ export async function verifyEntityMediaSignature({
   try {
     return await verifyMessage({
       address: getAddress(wallet) as ViemAddress,
-      message: entityMediaMessage({ entityId, entityKind, media, wallet }),
+      message: entityMediaMessage({ entityId, entityKind, media, version, wallet }),
       signature: signature as `0x${string}`
     });
   } catch {

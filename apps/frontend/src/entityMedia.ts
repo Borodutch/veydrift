@@ -16,6 +16,13 @@ export type EntityMediaResponse = {
   entityKind: EntityMediaKind;
   entityId: string;
   media: EntityMediaRecord | null;
+  version?: number;
+};
+export type EntityMediaChallenge = {
+  entityKind: EntityMediaKind;
+  entityId: string;
+  version: number;
+  wallet: string;
 };
 
 export type EntityMediaPlaybackState = {
@@ -54,17 +61,20 @@ export function entityMediaMessage({
   entityId,
   entityKind,
   media,
+  version,
   wallet,
 }: {
   entityId: string;
   entityKind: EntityMediaKind;
   media: Pick<YouTubeMedia, "type" | "id"> | null;
+  version: number;
   wallet: string;
 }): string {
   return [
     "Veydrift entity media",
     `Wallet: ${wallet.toLowerCase()}`,
     `Entity: ${entityKind}:${normalizeEntityMediaId(entityKind, entityId)}`,
+    `Version: ${version}`,
     `YouTube media: ${media ? `${media.type}:${media.id}` : "none"}`,
     "Only sign this message if you want to update this public media in Veydrift."
   ].join("\n");
@@ -120,6 +130,12 @@ export async function updateEntityMedia(
   const normalizedEntityId = normalizeEntityMediaId(entityKind, entityId);
   const preview = parseYouTubeMediaUrl(mediaUrl);
   if (!preview.ok) throw new Error(preview.error);
+  const challenge = await fetchEntityMediaChallenge(
+    apiUrl,
+    wallet,
+    entityKind,
+    normalizedEntityId
+  );
   const signature = await provider.request<string>({
     method: "personal_sign",
     params: [
@@ -127,13 +143,14 @@ export async function updateEntityMedia(
         entityId: normalizedEntityId,
         entityKind,
         media: preview.media,
+        version: challenge.version,
         wallet,
       }),
       wallet,
     ],
   });
   const response = await fetch(entityMediaEndpoint(apiUrl, entityKind, normalizedEntityId), {
-    body: JSON.stringify({ mediaUrl, signature, wallet }),
+    body: JSON.stringify({ mediaUrl, signature, version: challenge.version, wallet }),
     headers: {
       accept: "application/json",
       "content-type": "application/json",
@@ -142,6 +159,22 @@ export async function updateEntityMedia(
   });
   if (!response.ok) throw new Error(await entityMediaApiError(response, "Media could not be saved."));
   return response.json() as Promise<EntityMediaResponse>;
+}
+
+export async function fetchEntityMediaChallenge(
+  apiUrl: string,
+  wallet: string,
+  entityKind: EntityMediaKind,
+  entityId: string
+): Promise<EntityMediaChallenge> {
+  const endpoint = `${entityMediaEndpoint(apiUrl, entityKind, entityId)}/challenge`;
+  const response = await fetch(`${endpoint}?wallet=${encodeURIComponent(wallet)}`, {
+    headers: { accept: "application/json" },
+  });
+  if (!response.ok) {
+    throw new Error(await entityMediaApiError(response, "Media authorization could not be prepared."));
+  }
+  return response.json() as Promise<EntityMediaChallenge>;
 }
 
 export type ParsedYouTubeMedia =

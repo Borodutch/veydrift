@@ -83,6 +83,8 @@ describe("entity media", () => {
   test("authorizes owner-managed planet, moon, player, and alliance media and returns only structured data", async () => {
     const { handler } = testServer();
     const video = validatedMedia("https://youtu.be/dQw4w9WgXcQ");
+    const playlistUrl = "https://www.youtube.com/playlist?list=PL1234567890abcdef";
+    const playlist = validatedMedia(playlistUrl);
     const targets: Array<{ kind: EntityMediaKind; id: string }> = [
       { kind: "planet", id: "7" },
       { kind: "moon", id: "7" },
@@ -113,6 +115,23 @@ describe("entity media", () => {
       expect(body).toMatchObject({ entityKind: target.kind, entityId: target.id });
       expect(JSON.stringify(body)).not.toContain("<iframe");
       expect(JSON.stringify(body)).not.toContain("youtu.be");
+
+      const replacement = await saveMedia(
+        handler,
+        owner,
+        target.kind,
+        target.id,
+        playlist,
+        playlistUrl
+      );
+      expect(replacement.status).toBe(200);
+      expect(await replacement.json()).toMatchObject({
+        media: { media: { id: "PL1234567890abcdef", type: "playlist" } },
+      });
+
+      const removal = await saveMedia(handler, owner, target.kind, target.id, null, "");
+      expect(removal.status).toBe(200);
+      expect(await removal.json()).toMatchObject({ media: null });
     }
   });
 
@@ -158,6 +177,74 @@ describe("entity media", () => {
 
     const read = await handler(new Request("https://api.test/entity-media/planet/7"));
     expect(await read.json()).toMatchObject({ media: null });
+  });
+
+  test("rejects replaying the exact same signed mutation", async () => {
+    const { handler } = testServer();
+    const videoUrl = "https://www.youtube.com/watch?v=dQw4w9WgXcQ";
+    const video = validatedMedia(videoUrl);
+    const version = await currentMediaVersion(handler, owner.address, "planet", "7");
+    const mutation = await signedMediaMutation(owner, "planet", "7", video, videoUrl, version);
+
+    expect((await postMediaMutation(handler, "planet", "7", mutation)).status).toBe(200);
+    const replay = await postMediaMutation(handler, "planet", "7", mutation);
+    expect(replay.status).toBe(409);
+    expect(await replay.json()).toMatchObject({ error: "entity_media_stale_authorization" });
+  });
+
+  test("rejects stale signed content after a later replacement or removal", async () => {
+    const { handler } = testServer();
+    const firstUrl = "https://www.youtube.com/watch?v=dQw4w9WgXcQ";
+    const replacementUrl = "https://www.youtube.com/watch?v=9bZkp7q19f0";
+    const first = validatedMedia(firstUrl);
+    const replacement = validatedMedia(replacementUrl);
+    const initialVersion = await currentMediaVersion(handler, owner.address, "planet", "7");
+    const staleInitial = await signedMediaMutation(
+      owner,
+      "planet",
+      "7",
+      first,
+      firstUrl,
+      initialVersion
+    );
+
+    expect((await saveMedia(handler, owner, "planet", "7", replacement, replacementUrl)).status).toBe(200);
+    expect((await postMediaMutation(handler, "planet", "7", staleInitial)).status).toBe(409);
+    let read = await handler(new Request("https://api.test/entity-media/planet/7"));
+    expect(await read.json()).toMatchObject({ media: { media: { id: "9bZkp7q19f0" } } });
+
+    const beforeRemoval = await currentMediaVersion(handler, owner.address, "planet", "7");
+    const staleReplacement = await signedMediaMutation(
+      owner,
+      "planet",
+      "7",
+      first,
+      firstUrl,
+      beforeRemoval
+    );
+    expect((await saveMedia(handler, owner, "planet", "7", null, "")).status).toBe(200);
+    expect((await postMediaMutation(handler, "planet", "7", staleReplacement)).status).toBe(409);
+    read = await handler(new Request("https://api.test/entity-media/planet/7"));
+    expect(await read.json()).toMatchObject({ media: null });
+  });
+
+  test("binds each authorization to its entity and wallet", async () => {
+    const { handler } = testServer();
+    const videoUrl = "https://www.youtube.com/watch?v=dQw4w9WgXcQ";
+    const video = validatedMedia(videoUrl);
+    const version = await currentMediaVersion(handler, owner.address, "planet", "7");
+    const planetMutation = await signedMediaMutation(owner, "planet", "7", video, videoUrl, version);
+
+    const entityMismatch = await postMediaMutation(handler, "moon", "7", planetMutation);
+    expect(entityMismatch.status).toBe(401);
+    expect(await entityMismatch.json()).toMatchObject({ error: "invalid_signature" });
+
+    const walletMismatch = await postMediaMutation(handler, "planet", "7", {
+      ...planetMutation,
+      wallet: outsider.address,
+    });
+    expect(walletMismatch.status).toBe(401);
+    expect(await walletMismatch.json()).toMatchObject({ error: "invalid_signature" });
   });
 });
 
@@ -209,16 +296,60 @@ async function saveMedia(
   media: YouTubeMedia | null,
   mediaUrl: string
 ): Promise<Response> {
+  const version = await currentMediaVersion(handler, signer.address, entityKind, entityId);
+  const mutation = await signedMediaMutation(
+    signer,
+    entityKind,
+    entityId,
+    media,
+    mediaUrl,
+    version
+  );
+  return postMediaMutation(handler, entityKind, entityId, mutation);
+}
+
+async function currentMediaVersion(
+  handler: (request: Request) => Promise<Response>,
+  wallet: string,
+  entityKind: EntityMediaKind,
+  entityId: string
+): Promise<number> {
+  const response = await handler(new Request(
+    `https://api.test/entity-media/${entityKind}/${encodeURIComponent(entityId)}/challenge?wallet=${encodeURIComponent(wallet)}`
+  ));
+  expect(response.status).toBe(200);
+  const body = await response.json() as { version: number };
+  return body.version;
+}
+
+async function signedMediaMutation(
+  signer: typeof owner,
+  entityKind: EntityMediaKind,
+  entityId: string,
+  media: YouTubeMedia | null,
+  mediaUrl: string,
+  version: number
+): Promise<{ mediaUrl: string; signature: string; version: number; wallet: string }> {
   const signature = await signer.signMessage({
     message: entityMediaMessage({
       entityId,
       entityKind,
       media,
+      version,
       wallet: signer.address,
     }),
   });
+  return { mediaUrl, signature, version, wallet: signer.address };
+}
+
+function postMediaMutation(
+  handler: (request: Request) => Promise<Response>,
+  entityKind: EntityMediaKind,
+  entityId: string,
+  mutation: { mediaUrl: string; signature: string; version: number; wallet: string }
+): Promise<Response> {
   return handler(new Request(`https://api.test/entity-media/${entityKind}/${encodeURIComponent(entityId)}`, {
-    body: JSON.stringify({ mediaUrl, signature, wallet: signer.address }),
+    body: JSON.stringify(mutation),
     headers: { "content-type": "application/json" },
     method: "POST",
   }));
