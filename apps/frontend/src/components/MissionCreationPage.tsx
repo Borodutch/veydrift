@@ -392,7 +392,7 @@ export function MissionCreationPage({
     && !joinAttackMode
     && !effectiveTargetIsMoon
     ? stationedDefendersAtAttackArrival(
-        target?.publicState?.stationedDefenders ?? [],
+        target?.publicState?.stationedDefenderForecastTimeline ?? [],
         projectedAttackArrivalAt,
         target?.publicState?.stationedDefenderTimelineComplete === true,
       )
@@ -1586,7 +1586,7 @@ export function publicTargetBattleForecast(
   }
   const forecastStationedDefenders = targetIsMoon
     ? []
-    : joinAttackContext?.stationedDefenders ?? target.publicState?.stationedDefenders;
+    : joinAttackContext?.stationedDefenders ?? target.publicState?.stationedDefenderForecastTimeline;
   if (!targetIsMoon && !Array.isArray(forecastStationedDefenders)) {
     return {
       kind: "uncertain",

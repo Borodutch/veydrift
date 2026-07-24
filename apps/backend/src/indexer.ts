@@ -1985,6 +1985,18 @@ export class SettlementIndexer {
   }
 
   stationedDefendersForPlanet(planetId: string, asOfSeconds = Math.floor(Date.now() / 1_000)): StationedDefenderSummary[] {
+    return this.stationedDefenderForecastTimelineForPlanet(planetId, asOfSeconds)
+      .filter((defender) =>
+        defender.battleWindowComplete
+        && Number(defender.arrivalAt) <= asOfSeconds
+        && Number(defender.holdUntil) > asOfSeconds
+      );
+  }
+
+  stationedDefenderForecastTimelineForPlanet(
+    planetId: string,
+    asOfSeconds = Math.floor(Date.now() / 1_000)
+  ): StationedDefenderSummary[] {
     const candidates = this.activeFleetMissionsFromCanonicalRowsForTarget(
       planetId,
       { includeOverduePendingRandomness: true }

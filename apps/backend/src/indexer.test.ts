@@ -5448,6 +5448,15 @@ describe("SettlementIndexer", () => {
         holdUntil: "4000003600",
         battleWindowComplete: true,
         laneGroup: 0
+      })
+    ]);
+    expect(indexer.stationedDefenderForecastTimelineForPlanet("7", 4_000_000_000)).toEqual([
+      expect.objectContaining({
+        missionId: "6116",
+        arrivalAt: "3999999900",
+        holdUntil: "4000003600",
+        battleWindowComplete: true,
+        laneGroup: 0
       }),
       expect.objectContaining({
         missionId: "6117",

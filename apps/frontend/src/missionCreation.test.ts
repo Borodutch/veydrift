@@ -2285,9 +2285,14 @@ function targetPlanet(overrides: Partial<Planet> = {}): Planet {
     ...overrides,
   };
   if (target.publicState) {
+    const publicState = target.publicState;
     target.publicState = {
       stationedDefenderTimelineComplete: true,
-      ...target.publicState,
+      ...publicState,
+      ...(publicState.stationedDefenderForecastTimeline === undefined
+        && publicState.stationedDefenders !== undefined
+        ? { stationedDefenderForecastTimeline: publicState.stationedDefenders }
+        : {}),
     };
   }
   return target;

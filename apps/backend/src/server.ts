@@ -3564,6 +3564,7 @@ function publicPlanetStateRef(
   fleet: Array<{ id: number; count: number }>;
   defenses: Array<{ id: number; count: number }>;
   stationedDefenders: StationedDefenderSummary[];
+  stationedDefenderForecastTimeline: StationedDefenderSummary[];
   stationedDefenderTimelineComplete: true;
   research: Array<{ id: number; level: number }>;
   productionPerHour: Resources | null;
@@ -3590,6 +3591,7 @@ function publicPlanetStateRef(
     fleet: ships.map(({ id, count }) => ({ id, count })),
     defenses: indexer.defenseRows(planet.planetId).map(({ id, count }) => ({ id, count })),
     stationedDefenders: indexer.stationedDefendersForPlanet(planet.planetId),
+    stationedDefenderForecastTimeline: indexer.stationedDefenderForecastTimelineForPlanet(planet.planetId),
     stationedDefenderTimelineComplete: true,
     research: indexer.technologyRows(planet.owner).map(({ id, level }) => ({ id, level })),
     productionPerHour: derived?.productionPerHour ?? null,
