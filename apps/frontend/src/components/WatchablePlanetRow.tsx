@@ -188,13 +188,7 @@ export function WatchablePlanetRow({
             {watched ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
           </button>
         ) : null}
-        <button
-          className="rounded border border-signal/25 px-3 py-2 text-xs font-medium text-signal hover:bg-signal/10 sm:px-2 sm:py-1"
-          onClick={() => onInspect(coords)}
-          type="button"
-        >
-          Inspect
-        </button>
+        {/* No standalone Inspect button: the planet art + name block above is the inspect control. */}
         {actionSlot}
       </div>
 

@@ -8966,6 +8966,7 @@ export function PlayableMvpApp({
         onSelectAlliance={handleSelectAlliance}
         onSelectMoon={handleSelectMoon}
         onSelectPlanet={handleSelectPlanet}
+        onSwitchPlanet={handleSelectManagedPlanet}
         onSelectPlayer={handleSelectPlayer}
         onToggleWatchPlanet={handleToggleWatchPlanet}
         planetManagementAction={planetManagementAction}
