@@ -1832,8 +1832,8 @@ export class SettlementIndexer {
       LIMIT ? OFFSET ?
     `).all(...params, pageSize, (page - 1) * pageSize) as ContractFleetMissionRow[];
     const stateVersion = this.indexedStateCacheVersion();
-    const completedMissions = rows.map((row) => {
-      const mission = this.withFleetMissionPlanetReferences(this.canonicalFleetMissionSummary(row), stateVersion);
+    const completedMissions = this.canonicalFleetMissionSummaries(rows).map((summary) => {
+      const mission = this.withFleetMissionPlanetReferences(summary, stateVersion);
       const returned = (
         (mission.status === "Returning" || mission.status === "Recalled")
         && Number(mission.returnAt) <= asOfSeconds
@@ -1911,8 +1911,8 @@ export class SettlementIndexer {
       LIMIT ? OFFSET ?
     `).all(...params, pageSize, (page - 1) * pageSize) as ContractFleetMissionRow[];
     const stateVersion = this.indexedStateCacheVersion();
-    const completedMissions = rows
-      .map((row) => this.withFleetMissionPlanetReferences(this.canonicalFleetMissionSummary(row), stateVersion))
+    const completedMissions = this.canonicalFleetMissionSummaries(rows)
+      .map((mission) => this.withFleetMissionPlanetReferences(mission, stateVersion))
       .map((mission) => this.withDefenseHoldCombatOutcome(mission));
 
     return { completedMissions, page, totalEntries };
@@ -8154,8 +8154,8 @@ export class SettlementIndexer {
       ORDER BY CAST(return_at AS INTEGER) DESC, CAST(arrival_at AS INTEGER) DESC, CAST(mission_id AS INTEGER) DESC
     `).all() as ContractFleetMissionRow[];
 
-    const missions = rows
-      .map((row) => this.withFleetMissionPlanetReferences(this.canonicalFleetMissionSummary(row), stateVersion))
+    const missions = this.canonicalFleetMissionSummaries(rows)
+      .map((mission) => this.withFleetMissionPlanetReferences(mission, stateVersion))
       .map((mission) => this.withDefenseHoldCombatOutcome(mission))
       .sort(compareFleetMissionsNewestFirst);
     this.canonicalCompletedMissionCache = {
@@ -8190,8 +8190,8 @@ export class SettlementIndexer {
       ORDER BY CAST(return_at AS INTEGER) DESC, CAST(arrival_at AS INTEGER) DESC, CAST(mission_id AS INTEGER) DESC
     `).all(...params) as ContractFleetMissionRow[];
 
-    return rows
-      .map((row) => this.withFleetMissionPlanetReferences(this.canonicalFleetMissionSummary(row), stateVersion))
+    return this.canonicalFleetMissionSummaries(rows)
+      .map((mission) => this.withFleetMissionPlanetReferences(mission, stateVersion))
       .map((mission) => (
         (mission.status === "Returning" || mission.status === "Recalled")
           && Number(mission.returnAt) <= asOfSeconds
@@ -8376,6 +8376,28 @@ export class SettlementIndexer {
       recallCost: row.status_id === 1 && mergedBase.recallCost === null ? projectedFleetRecallCost(fuelCost) : mergedBase.recallCost,
       ...(row.randomness_request_id ? { randomnessRequestId: row.randomness_request_id } : {})
     };
+  }
+
+  private canonicalFleetMissionSummaries(rows: readonly ContractFleetMissionRow[]): FleetMissionSummary[] {
+    // Snapshot rows can predate recall provenance even though their immutable event logs remain
+    // indexed. Read only the selected missions' logs in bounded batches, and overlay only that
+    // provenance so the canonical row stays authoritative for every mutable/status field.
+    const recalledMissionIds = new Set<string>();
+    for (let offset = 0; offset < rows.length; offset += 250) {
+      const missionIds = rows.slice(offset, offset + 250).map((row) => row.mission_id);
+      const eventMissions = decodeFleetMissionLogs(this.fleetMissionEventLogsForMissionIds(missionIds));
+      for (const mission of eventMissions.values()) {
+        if (mission.recallProvenance === "FleetMissionRecalled") {
+          recalledMissionIds.add(mission.missionId);
+        }
+      }
+    }
+    return rows.map((row) => {
+      const mission = this.canonicalFleetMissionSummary(row);
+      return recalledMissionIds.has(row.mission_id)
+        ? { ...mission, recallProvenance: "FleetMissionRecalled" }
+        : mission;
+    });
   }
 
   // VEY-KANEO-479: request ids the RandomnessEngine has fulfilled, read from the ingested
@@ -8632,8 +8654,8 @@ export class SettlementIndexer {
         WHERE mission_id IN (${chunk.map(() => "?").join(",")})
         ORDER BY CAST(mission_id AS INTEGER) ASC
       `).all(...chunk) as ContractFleetMissionRow[];
-      for (const row of rows) {
-        summaries.push(this.withFleetMissionPlanetReferences(this.canonicalFleetMissionSummary(row), stateVersion));
+      for (const mission of this.canonicalFleetMissionSummaries(rows)) {
+        summaries.push(this.withFleetMissionPlanetReferences(mission, stateVersion));
       }
     }
     return summaries;
