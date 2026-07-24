@@ -277,6 +277,8 @@ describe("mission creation", () => {
       hasMoon: true,
       publicMoonState: {
         resources: { metal: "7386", crystal: "2472", deuterium: "1335" },
+        fleet: [{ id: 1, count: 2 }],
+        defenses: [{ id: 0, count: 1 }],
       },
       publicState: {
         resources: { metal: "100000", crystal: "80000", deuterium: "60000" },
@@ -284,7 +286,7 @@ describe("mission creation", () => {
         fleet: [{ id: 7, count: 25 }],
         defenses: [{ id: 0, count: 200 }],
         stationedDefenders: [],
-        research: null,
+        research: [],
         productionPerHour: null,
         storageCaps: null,
         queues: null,
@@ -304,8 +306,14 @@ describe("mission creation", () => {
     expect(moonResourceIntel.projectedArrival).toEqual({ metal: 7_386, crystal: 2_472, deuterium: 1_335 });
     expect(moonResourceIntel.projectedArrivalLootable).toEqual({ metal: 3_693, crystal: 1_236, deuterium: 667 });
     expect(moonResourceIntel.projectionDetail).toContain("current public moon resource snapshot");
-    expect(moonBattleForecast.defenderPower).toBeNull();
-    expect(moonBattleForecast.detail).toContain("Moon fleet and defense intel");
+    expect(moonBattleForecast.defenderPower).toBe(320);
+    expect(moonBattleForecast.kind).not.toBe("uncertain");
+    expect(moonBattleForecast.sampleReport?.defender.startingShips).toEqual([
+      expect.objectContaining({ id: 1, count: 2 }),
+    ]);
+    expect(moonBattleForecast.sampleReport?.defender.startingDefenses).toEqual([
+      expect.objectContaining({ id: 0, count: 1 }),
+    ]);
   });
 
   test("auto-filled body cargo reserves fuel for same-coordinate planet to moon deploy", () => {
@@ -631,6 +639,7 @@ describe("mission creation", () => {
         resources: { metal: "0", crystal: "0", deuterium: "0" },
         fleet: [],
         defenses: [],
+        stationedDefenders: [],
         buildings: [],
         research: [],
         queues: null,
@@ -642,6 +651,7 @@ describe("mission creation", () => {
         resources: { metal: "0", crystal: "0", deuterium: "0" },
         fleet: [],
         defenses: [{ id: 6, count: 3 }],
+        stationedDefenders: [],
         buildings: [],
         research: [],
         queues: null,
@@ -662,6 +672,7 @@ describe("mission creation", () => {
         // presented as a confident win.
         fleet: [{ id: 0, count: 3 }],
         defenses: [],
+        stationedDefenders: [],
         buildings: [],
         research: [],
         queues: null,
@@ -675,7 +686,11 @@ describe("mission creation", () => {
       defenderPower: 165,
     });
     expect(forecast.attackerLosses?.average).toEqual({ metal: 0, crystal: 0, deuterium: 0 });
-    expect(forecast.randomness).toBeNull();
+    expect(forecast.randomness).toMatchObject({
+      sampleCount: 128,
+      outcomeCounts: { win: 0, draw: 128, defeat: 0 },
+    });
+    expect(forecast.detail).toContain("not a guarantee");
   });
 
   test("does not label the mission-8262 shield stalemate as a probable win", () => {
@@ -690,6 +705,7 @@ describe("mission creation", () => {
         // missed that these small stacks cannot break shields/hull in six rounds.
         fleet: [{ id: 9, count: 4 }],
         defenses: [{ id: 0, count: 3 }],
+        stationedDefenders: [],
         buildings: [],
         research: [],
         queues: null,
@@ -704,8 +720,12 @@ describe("mission creation", () => {
         best: { metal: 0, crystal: 0, deuterium: 0 },
         worst: { metal: 0, crystal: 0, deuterium: 0 },
       },
-      randomness: null,
+      randomness: {
+        sampleCount: 128,
+        outcomeCounts: { win: 0, draw: 128, defeat: 0 },
+      },
     });
+    expect(forecast.detail).toContain("not a guarantee");
   });
 
   test("surfaces attacker loss ranges when combat randomness changes results", () => {
@@ -717,6 +737,7 @@ describe("mission creation", () => {
         resources: { metal: "0", crystal: "0", deuterium: "0" },
         fleet: [{ id: 0, count: 1 }],
         defenses: [],
+        stationedDefenders: [],
         buildings: [],
         research: [],
         queues: null,
@@ -730,6 +751,79 @@ describe("mission creation", () => {
     expect(forecast.randomness?.outcomeRange.length).toBeGreaterThan(1);
   });
 
+  test("renders deterministic outcome probabilities and an accessible, mobile-safe sample report", () => {
+    const forecast = publicTargetBattleForecast(
+      { ...attackAction.ships, lightFighter: 1 },
+      targetPlanet({
+        publicState: {
+          resources: { metal: "0", crystal: "0", deuterium: "0" },
+          fleet: [{ id: 0, count: 1 }],
+          defenses: [],
+          stationedDefenders: [],
+          buildings: [],
+          research: [],
+          queues: null,
+        },
+      }),
+      { weapons: 20, shielding: 0, armor: 0 },
+    );
+    const panel = AttackOutcomePanel({
+      battleForecast: forecast,
+      lootableAtArrival: { metal: 0, crystal: 0, deuterium: 0 },
+      maxLootForecast: { metal: 0, crystal: 0, deuterium: 0 },
+    });
+    const text = collectText(panel).join(" ");
+    const reportTrigger = findElements(panel, "summary").find(
+      (element) => element.props?.["aria-label"] === "Open simulated battle report",
+    );
+    const dialog = findElements(panel, "div").find((element) => element.props?.role === "dialog");
+    const closeButton = findElements(panel, "button").find(
+      (element) => element.props?.["aria-label"] === "Close simulated battle report",
+    );
+
+    expect(text).toMatch(/Win \d+ \(\d+(?:\.\d)?%\)/);
+    expect(text).toMatch(/Draw \d+ \(\d+(?:\.\d)?%\)/);
+    expect(text).toMatch(/Loss \d+ \(\d+(?:\.\d)?%\)/);
+    expect(text).toContain("Illustrative simulation");
+    expect(text).toContain("Sample possible battle");
+    expect(text).toContain("Random word");
+    expect(text).toContain("Combat rounds");
+    expect(text).toContain("Rapidfire");
+    expect(text).toContain("not the already-determined future on-chain result");
+    expect(reportTrigger?.props?.role).toBe("button");
+    expect(dialog?.props?.["aria-modal"]).toBe("true");
+    expect(dialog?.props?.className).toContain("overflow-y-auto");
+    expect(closeButton).toBeDefined();
+    expect(missionCreationSource).toContain("max-h-[calc(100dvh-1.5rem)]");
+  });
+
+  test("disables the report control when public defender technology is unavailable", () => {
+    const panel = AttackOutcomePanel({
+      battleForecast: publicTargetBattleForecast(
+        { ...attackAction.ships, lightFighter: 1 },
+        targetPlanet({
+          publicState: {
+            resources: { metal: "0", crystal: "0", deuterium: "0" },
+            fleet: [{ id: 0, count: 1 }],
+            defenses: [],
+            stationedDefenders: [],
+            buildings: [],
+            research: null,
+            queues: null,
+          },
+        }),
+      ),
+      lootableAtArrival: { metal: 0, crystal: 0, deuterium: 0 },
+      maxLootForecast: { metal: 0, crystal: 0, deuterium: 0 },
+    });
+    const reportButton = findElements(panel, "button").find(
+      (element) => element.props?.["aria-label"] === "Open simulated battle report",
+    );
+
+    expect(reportButton?.props?.disabled).toBe(true);
+    expect(findElements(panel, "div").some((element) => element.props?.role === "dialog")).toBe(false);
+  });
+
   test("applies combat tech levels to public battle forecast power and outcome", () => {
     const selectedShips = { ...attackAction.ships, lightFighter: 1 };
     const target = targetPlanet({
@@ -737,6 +831,7 @@ describe("mission creation", () => {
         resources: { metal: "0", crystal: "0", deuterium: "0" },
         fleet: [],
         defenses: [{ id: 0, count: 1 }],
+        stationedDefenders: [],
         buildings: [],
         research: [],
         queues: null,
@@ -812,6 +907,7 @@ describe("mission creation", () => {
           missionId: "held-1",
           defender: "0xdefender",
           defenderDisplayName: "Defender",
+          combatTechnology: { weapons: 4, shielding: 3, armor: 2 },
           ships: { lightFighter: "40", cruiser: "2" },
           holdUntil: "1700003600",
           allianceDepotLevel: 1,
@@ -832,6 +928,77 @@ describe("mission creation", () => {
       expect.objectContaining({ key: "lightFighter", label: "Light Fighter", count: 40 }),
       expect.objectContaining({ key: "cruiser", label: "Cruiser", count: 2 }),
     ]);
+    expect(publicTargetBattleForecast(selectedShips, target).sampleReport?.defender.counterplay[0]?.technology)
+      .toEqual({ weapons: 4, shielding: 3, armor: 2 });
+  });
+
+  test("fails closed when a stationed defender's owner-specific combat technology is unavailable", () => {
+    const forecast = publicTargetBattleForecast(
+      { ...attackAction.ships, lightFighter: 20 },
+      targetPlanet({
+        publicState: {
+          resources: { metal: "0", crystal: "0", deuterium: "0" },
+          fleet: [],
+          defenses: [],
+          stationedDefenders: [{
+            missionId: "held-without-tech",
+            defender: "0xdefender",
+            defenderDisplayName: "Defender",
+            ships: { lightFighter: "1" },
+            holdUntil: "1700003600",
+            allianceDepotLevel: 1,
+          }],
+          buildings: [],
+          research: [],
+          queues: null,
+        },
+      }),
+    );
+
+    expect(forecast).toMatchObject({
+      kind: "uncertain",
+      defenderPower: null,
+    });
+    expect(forecast.detail).toContain("combat technology is not indexed");
+  });
+
+  test("fails closed for partial planet or moon force-intel payloads", () => {
+    const planetForecast = publicTargetBattleForecast(
+      { ...attackAction.ships, lightFighter: 20 },
+      targetPlanet({
+        publicState: {
+          resources: { metal: "0", crystal: "0", deuterium: "0" },
+          fleet: [],
+          defenses: null,
+          stationedDefenders: [],
+          research: [],
+        },
+      }),
+    );
+    const moonForecast = publicTargetBattleForecast(
+      { ...attackAction.ships, lightFighter: 20 },
+      targetPlanet({
+        hasMoon: true,
+        publicMoonState: {
+          resources: { metal: "0", crystal: "0", deuterium: "0" },
+          fleet: null,
+          defenses: [],
+        },
+        publicState: {
+          fleet: [],
+          defenses: [],
+          stationedDefenders: [],
+          research: [],
+        },
+      }),
+      undefined,
+      true,
+    );
+
+    expect(planetForecast).toMatchObject({ kind: "uncertain", defenderPower: null });
+    expect(planetForecast.detail).toContain("absent fields are not treated as empty");
+    expect(moonForecast).toMatchObject({ kind: "uncertain", defenderPower: null });
+    expect(moonForecast.detail).toContain("Parent-planet forces are never substituted");
   });
 
   test("renders compact attack intel with target, outcome, destination units, and resources", () => {
@@ -1234,7 +1401,7 @@ describe("mission creation", () => {
     });
     const text = collectText([outcome, destination]).join(" ");
 
-    expect(text).toContain("Probable outcome");
+    expect(text).toContain("Outcome");
     expect(text).toContain("Destination intel");
     expect(text).toContain("Resources now");
   });

@@ -8803,6 +8803,7 @@ export class SettlementIndexer {
         missionId: defender.missionId,
         defender: defender.owner,
         defenderDisplayName: this.playerProfile(defender.owner).displayName,
+        combatTechnology: combatTechnologyLevels(this.technologyLevels(defender.owner)),
         ships: defender.ships,
         holdUntil: defender.arrivalAt,
         allianceDepotLevel
@@ -8823,6 +8824,7 @@ export class SettlementIndexer {
       missionId: defender.missionId,
       defender: defender.owner,
       defenderDisplayName: this.playerProfile(defender.owner).displayName,
+      combatTechnology: combatTechnologyLevels(this.technologyLevels(defender.owner)),
       ships: defender.ships,
       destroyedShips: composition?.destroyedShips ?? (lifecycleOutcome === "Active" ? {} : null),
       survivingShips: composition?.survivingShips ?? (lifecycleOutcome === "Active" ? positiveShipCounts(defender.ships) : null),
@@ -10397,6 +10399,18 @@ function hasAnyShips(ships: Record<string, string>): boolean {
       return Number(count) > 0;
     }
   });
+}
+
+function combatTechnologyLevels(technologyLevels: Record<string, number>): {
+  weapons: number;
+  shielding: number;
+  armor: number;
+} {
+  return {
+    weapons: Math.max(0, Math.trunc(technologyLevels["5"] ?? 0)),
+    shielding: Math.max(0, Math.trunc(technologyLevels["6"] ?? 0)),
+    armor: Math.max(0, Math.trunc(technologyLevels["7"] ?? 0))
+  };
 }
 
 // Parse a stored block-height string to bigint, treating null/garbage as block 0 so callers can

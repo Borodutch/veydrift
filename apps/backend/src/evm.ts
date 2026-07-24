@@ -455,6 +455,11 @@ export type StationedDefenderSummary = {
   missionId: string;
   defender: Address;
   defenderDisplayName: string | null;
+  combatTechnology?: {
+    weapons: number;
+    shielding: number;
+    armor: number;
+  };
   // Immutable launch composition. Historical battle reports keep this even after the hold leaves
   // the active stationed roster or the canonical mission's surviving ships change.
   ships: Record<string, string>;

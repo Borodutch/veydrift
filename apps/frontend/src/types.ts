@@ -84,6 +84,11 @@ export interface PublicStationedDefender {
   missionId: string;
   defender: string;
   defenderDisplayName: string | null;
+  combatTechnology?: {
+    weapons: number;
+    shielding: number;
+    armor: number;
+  };
   ships: Record<string, string>;
   holdUntil: string;
   allianceDepotLevel: number;

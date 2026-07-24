@@ -78,6 +78,7 @@ library VeydriftCombatReferenceSimulator {
                 attackerRoundShips,
                 input.attackerTech,
                 input.defenderTech,
+                input.counterplayTech,
                 input.seed,
                 round
             );
@@ -88,6 +89,7 @@ library VeydriftCombatReferenceSimulator {
                     joinedAttackerRoundShips,
                     input.joinedAttackerTech,
                     input.defenderTech,
+                    input.counterplayTech,
                     input.seed,
                     round
                 )
@@ -187,7 +189,7 @@ library VeydriftCombatReferenceSimulator {
                         Ship(i),
                         count,
                         _attackerExtraShots(result, Ship(i), count, targetTotal, seed, round, 1, i),
-                        counterplayTech,
+                        firingTech,
                         targetTech,
                         seed,
                         round,
@@ -242,7 +244,7 @@ library VeydriftCombatReferenceSimulator {
                         Ship(i),
                         count,
                         _attackerExtraShots(result, Ship(i), count, targetTotal, seed, round, 3, i),
-                        firingTech,
+                        counterplayTech,
                         targetTech,
                         seed,
                         round,
@@ -348,6 +350,7 @@ library VeydriftCombatReferenceSimulator {
         uint32[16] memory attackerRoundShips,
         CombatTech memory attackerTech,
         CombatTech memory defenderTech,
+        CombatTech memory counterplayTech,
         uint256 seed,
         uint8 round
     ) private pure returns (VeydriftGameStorage.Resources memory losses) {
@@ -357,7 +360,16 @@ library VeydriftCombatReferenceSimulator {
                 losses = _add(
                     losses,
                     _fireShipAtDefenders(
-                        result, Ship(i), firingCount, attackerTech, defenderTech, seed, round, 4, i
+                        result,
+                        Ship(i),
+                        firingCount,
+                        attackerTech,
+                        defenderTech,
+                        counterplayTech,
+                        seed,
+                        round,
+                        4,
+                        i
                     )
                 );
             }
@@ -372,7 +384,8 @@ library VeydriftCombatReferenceSimulator {
         Ship firingShip,
         uint32 firingCount,
         CombatTech memory firingTech,
-        CombatTech memory targetTech,
+        CombatTech memory defenderTech,
+        CombatTech memory counterplayTech,
         uint256 seed,
         uint8 round,
         uint8 side,
@@ -394,7 +407,7 @@ library VeydriftCombatReferenceSimulator {
                 extraShots,
                 targetTotal,
                 attack,
-                targetTech,
+                defenderTech,
                 seed,
                 round,
                 side,
@@ -407,7 +420,7 @@ library VeydriftCombatReferenceSimulator {
             extraShots,
             targetTotal,
             attack,
-            targetTech,
+            defenderTech,
             seed,
             round,
             side,
@@ -422,7 +435,7 @@ library VeydriftCombatReferenceSimulator {
                 extraShots,
                 targetTotal,
                 attack,
-                targetTech,
+                counterplayTech,
                 seed,
                 round,
                 side,

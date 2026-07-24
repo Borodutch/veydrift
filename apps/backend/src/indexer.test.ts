@@ -5262,6 +5262,15 @@ describe("SettlementIndexer", () => {
     }, 100n);
     indexer.applyEvent(planet);
     indexer.applyEvent({ ...planet, planetId: "99", owner: attacker, name: "Spearhead", galaxy: 3, system: 12, position: 4 });
+    for (const [technologyId, level] of [[5n, 4n], [6n, 3n], [7n, 2n]] as const) {
+      indexer.applyLog({
+        blockNumber: "0x8f",
+        transactionHash: `0xcombat-tech-${technologyId}`,
+        logIndex: `0x${technologyId.toString(16)}`,
+        topics: [researchCompletedTopic, addressTopic(defender), topic(technologyId)],
+        data: abiWords(level)
+      });
+    }
     // Alliance Depot (building id 13) level 2 on the defended planet funds the holding-fuel upkeep.
     indexer.applyLog({
       blockNumber: "0x90",
@@ -5322,6 +5331,7 @@ describe("SettlementIndexer", () => {
       missionId: "61",
       defender,
       defenderDisplayName: null,
+      combatTechnology: { weapons: 4, shielding: 3, armor: 2 },
       holdUntil: "4000000000",
       allianceDepotLevel: 2
     });

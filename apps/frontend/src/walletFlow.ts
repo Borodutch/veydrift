@@ -428,6 +428,11 @@ export type StationedDefenderSummary = {
   missionId: string;
   defender: string;
   defenderDisplayName?: string | null;
+  combatTechnology?: {
+    weapons: number;
+    shielding: number;
+    armor: number;
+  };
   ships: Record<string, string>;
   destroyedShips?: Record<string, string> | null;
   survivingShips?: Record<string, string> | null;
