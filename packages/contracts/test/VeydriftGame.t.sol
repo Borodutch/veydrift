@@ -9,6 +9,7 @@ import {RandomnessEngine} from "../src/RandomnessEngine.sol";
 import {VeydriftAttackProtectionModule} from "../src/VeydriftAttackProtectionModule.sol";
 import {VeydriftCombatModule, VeydriftCombatRapidfire} from "../src/VeydriftCombatModule.sol";
 import {VeydriftColonizationModule} from "../src/VeydriftColonizationModule.sol";
+import {VeydriftShipProductionModule} from "../src/VeydriftShipProductionModule.sol";
 import {VeydriftDefenseHoldModule} from "../src/VeydriftDefenseHoldModule.sol";
 import {
     IVeydriftEffectiveStateGame,
@@ -520,6 +521,24 @@ contract VeydriftGameTest is Test {
         assertTrue(shipQueue.active);
         assertEq(uint8(shipQueue.ship), uint8(Ship.LightFighter));
         assertEq(shipQueue.quantity, 7);
+        VeydriftGameStorage.ProductionQueueTiming memory legacyTiming =
+            _productionQueueTiming(42, shipQueue.readyAt, false);
+        assertEq(legacyTiming.startedAt, 0);
+        assertEq(legacyTiming.originalQuantity, 0);
+
+        vm.warp(shipQueue.readyAt - 1);
+        vm.prank(player);
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftGameStorage.QueueNotReady.selector, shipQueue.readyAt)
+        );
+        game.finishShipProduction(42);
+        assertEq(game.shipCount(42, Ship.LightFighter), 0);
+
+        vm.warp(shipQueue.readyAt);
+        vm.prank(player);
+        game.finishShipProduction(42);
+        assertEq(game.shipCount(42, Ship.LightFighter), 7);
+        assertFalse(game.shipQueue(42).active);
 
         (, bool claimed,,,,,) = migration.migrationReservation(player);
         assertTrue(claimed);
@@ -3570,7 +3589,7 @@ contract VeydriftGameTest is Test {
         game.startDefenseProduction(planetId, Defense.AntiBallisticMissile, 1);
     }
 
-    function testDefenseProductionAppendsMatchingActiveQueue() public {
+    function testDefenseProductionQueuesMatchingTypeWithoutChangingActivePromise() public {
         vm.prank(player);
         uint256 planetId = game.startPlanet{value: 0.05 ether}();
         _seedDefensePrerequisites(planetId);
@@ -3588,14 +3607,79 @@ contract VeydriftGameTest is Test {
         vm.prank(player);
         game.startDefenseProduction(planetId, Defense.RocketLauncher, 3);
 
-        VeydriftGameStorage.DefenseQueue memory appendedQueue = game.defenseQueue(planetId);
-        assertTrue(appendedQueue.active);
-        assertEq(uint8(appendedQueue.defense), uint8(Defense.RocketLauncher));
-        assertEq(appendedQueue.quantity, 5);
-        assertEq(appendedQueue.readyAt, firstQueue.readyAt + appendedDuration);
-        assertEq(appendedQueue.cost.metal, metalCost * 5);
-        assertEq(appendedQueue.cost.crystal, crystalCost * 5);
-        assertEq(appendedQueue.cost.deuterium, deuteriumCost * 5);
+        VeydriftGameStorage.DefenseQueue memory stillActive = game.defenseQueue(planetId);
+        assertEq(uint8(stillActive.defense), uint8(Defense.RocketLauncher));
+        assertEq(stillActive.quantity, 2);
+        assertEq(stillActive.readyAt, firstQueue.readyAt);
+
+        VeydriftGameStorage.DefenseQueue[] memory backlog = game.defenseQueueBacklog(planetId);
+        assertEq(backlog.length, 1);
+        assertEq(uint8(backlog[0].defense), uint8(Defense.RocketLauncher));
+        assertEq(backlog[0].quantity, 3);
+        assertEq(backlog[0].readyAt, firstQueue.readyAt + appendedDuration);
+        assertEq(backlog[0].cost.metal, metalCost * 3);
+        assertEq(backlog[0].cost.crystal, crystalCost * 3);
+        assertEq(backlog[0].cost.deuterium, deuteriumCost * 3);
+    }
+
+    function testDefenseProductionSettlesEveryUnitSharingOneSecondBoundary() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+        _seedDefensePrerequisites(planetId);
+        _setBuildingLevel(planetId, Building.Shipyard, 50);
+        _setBuildingLevel(planetId, Building.NaniteFactory, 20);
+        _setResources(planetId, 5_000_000, 5_000_000, 5_000_000);
+
+        vm.prank(player);
+        game.startDefenseProduction(planetId, Defense.RocketLauncher, 5);
+
+        VeydriftGameStorage.DefenseQueue memory queue = game.defenseQueue(planetId);
+        VeydriftGameStorage.ProductionQueueTiming memory timing =
+            _productionQueueTiming(planetId, queue.readyAt, true);
+        assertEq(queue.readyAt, timing.startedAt + 1);
+        assertEq(timing.originalQuantity, 5);
+
+        vm.prank(player);
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftGameStorage.QueueNotReady.selector, queue.readyAt)
+        );
+        game.finishDefenseProduction(planetId);
+
+        vm.warp(queue.readyAt);
+        vm.prank(player);
+        game.finishDefenseProduction(planetId);
+        assertEq(game.defenseCount(planetId, Defense.RocketLauncher), 5);
+        assertFalse(game.defenseQueue(planetId).active);
+    }
+
+    function testDefenseProductionLazySettlesOneUnitAndReducesRemainingBatchExactly() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+        _seedDefensePrerequisites(planetId);
+        _setResources(planetId, 5_000_000, 5_000_000, 5_000_000);
+
+        vm.prank(player);
+        game.startDefenseProduction(planetId, Defense.RocketLauncher, 3);
+        VeydriftGameStorage.DefenseQueue memory original = game.defenseQueue(planetId);
+        VeydriftGameStorage.ProductionQueueTiming memory timing =
+            _productionQueueTiming(planetId, original.readyAt, true);
+        (uint128 metalCost, uint128 crystalCost, uint128 deuteriumCost) =
+            VeydriftCatalog.defenseCost(Defense.RocketLauncher);
+        uint256 firstUnitDuration =
+            VeydriftFormulas.unitDuration(8, 0, metalCost, crystalCost, deuteriumCost, 1, 1, 1);
+
+        vm.warp(timing.startedAt + firstUnitDuration);
+        vm.prank(player);
+        game.finishDefenseProduction(planetId);
+
+        assertEq(game.defenseCount(planetId, Defense.RocketLauncher), 1);
+        VeydriftGameStorage.DefenseQueue memory remaining = game.defenseQueue(planetId);
+        assertEq(uint8(remaining.defense), uint8(Defense.RocketLauncher));
+        assertEq(remaining.quantity, 2);
+        assertEq(remaining.readyAt, original.readyAt);
+        assertEq(remaining.cost.metal, metalCost * 2);
+        assertEq(remaining.cost.crystal, crystalCost * 2);
+        assertEq(remaining.cost.deuterium, deuteriumCost * 2);
     }
 
     function testDefenseProductionQueuesDifferentDefenseBehindActiveQueue() public {
@@ -4303,7 +4387,7 @@ contract VeydriftGameTest is Test {
         assertFalse(game.researchQueue(defender).active);
     }
 
-    function testShipProductionAppendsMatchingActiveQueue() public {
+    function testShipProductionQueuesMatchingTypeWithoutChangingActivePromise() public {
         vm.prank(player);
         uint256 planetId = game.startPlanet{value: 0.05 ether}();
         _setBuildingLevel(planetId, Building.Shipyard, 2);
@@ -4322,14 +4406,86 @@ contract VeydriftGameTest is Test {
         vm.prank(player);
         game.startShipProduction(planetId, Ship.SmallCargo, 3);
 
-        VeydriftGameStorage.ShipQueue memory appendedQueue = game.shipQueue(planetId);
-        assertTrue(appendedQueue.active);
-        assertEq(uint8(appendedQueue.ship), uint8(Ship.SmallCargo));
-        assertEq(appendedQueue.quantity, 5);
-        assertEq(appendedQueue.readyAt, firstQueue.readyAt + appendedDuration);
-        assertEq(appendedQueue.cost.metal, metalCost * 5);
-        assertEq(appendedQueue.cost.crystal, crystalCost * 5);
-        assertEq(appendedQueue.cost.deuterium, deuteriumCost * 5);
+        VeydriftGameStorage.ShipQueue memory stillActive = game.shipQueue(planetId);
+        assertEq(uint8(stillActive.ship), uint8(Ship.SmallCargo));
+        assertEq(stillActive.quantity, 2);
+        assertEq(stillActive.readyAt, firstQueue.readyAt);
+
+        VeydriftGameStorage.ShipQueue[] memory backlog = game.shipQueueBacklog(planetId);
+        assertEq(backlog.length, 1);
+        assertEq(uint8(backlog[0].ship), uint8(Ship.SmallCargo));
+        assertEq(backlog[0].quantity, 3);
+        assertEq(backlog[0].readyAt, firstQueue.readyAt + appendedDuration);
+        assertEq(backlog[0].cost.metal, metalCost * 3);
+        assertEq(backlog[0].cost.crystal, crystalCost * 3);
+        assertEq(backlog[0].cost.deuterium, deuteriumCost * 3);
+    }
+
+    function testShipProductionSettlesEveryUnitSharingOneSecondBoundary() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+        _setBuildingLevel(planetId, Building.Shipyard, 50);
+        _setBuildingLevel(planetId, Building.NaniteFactory, 20);
+        _setTechnologyLevel(player, Technology.CombustionDrive, 2);
+        _setResources(planetId, 100_000, 100_000, 100_000);
+
+        vm.prank(player);
+        game.startShipProduction(planetId, Ship.SmallCargo, 5);
+
+        VeydriftGameStorage.ShipQueue memory queue = game.shipQueue(planetId);
+        VeydriftGameStorage.ProductionQueueTiming memory timing =
+            _productionQueueTiming(planetId, queue.readyAt, false);
+        assertEq(queue.readyAt, timing.startedAt + 1);
+        assertEq(timing.originalQuantity, 5);
+
+        vm.prank(player);
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftGameStorage.QueueNotReady.selector, queue.readyAt)
+        );
+        game.finishShipProduction(planetId);
+
+        vm.warp(queue.readyAt);
+        vm.prank(player);
+        game.finishShipProduction(planetId);
+        assertEq(game.shipCount(planetId, Ship.SmallCargo), 5);
+        assertFalse(game.shipQueue(planetId).active);
+    }
+
+    function testShipProductionLazySettlesOneUnitAndReducesRemainingBatchExactly() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+        _setBuildingLevel(planetId, Building.Shipyard, 2);
+        _setTechnologyLevel(player, Technology.CombustionDrive, 2);
+        _setResources(planetId, 100_000, 100_000, 100_000);
+
+        vm.prank(player);
+        game.startShipProduction(planetId, Ship.SmallCargo, 3);
+        VeydriftGameStorage.ShipQueue memory original = game.shipQueue(planetId);
+        VeydriftGameStorage.ProductionQueueTiming memory timing =
+            _productionQueueTiming(planetId, original.readyAt, false);
+        (uint128 metalCost, uint128 crystalCost, uint128 deuteriumCost) =
+            VeydriftCatalog.shipCost(Ship.SmallCargo);
+        uint256 firstUnitDuration =
+            VeydriftFormulas.unitDuration(2, 0, metalCost, crystalCost, deuteriumCost, 1, 1, 1);
+
+        vm.warp(timing.startedAt + firstUnitDuration);
+        vm.prank(player);
+        game.startShipProduction(planetId, Ship.LightFighter, 1);
+
+        assertEq(game.shipCount(planetId, Ship.SmallCargo), 1);
+        VeydriftGameStorage.ShipQueue memory remaining = game.shipQueue(planetId);
+        assertEq(uint8(remaining.ship), uint8(Ship.SmallCargo));
+        assertEq(remaining.quantity, 2);
+        assertEq(remaining.readyAt, original.readyAt);
+        assertEq(remaining.cost.metal, metalCost * 2);
+        assertEq(remaining.cost.crystal, crystalCost * 2);
+        assertEq(remaining.cost.deuterium, deuteriumCost * 2);
+
+        VeydriftGameStorage.ShipQueue[] memory backlog = game.shipQueueBacklog(planetId);
+        assertEq(backlog.length, 1);
+        assertEq(uint8(backlog[0].ship), uint8(Ship.LightFighter));
+        assertEq(backlog[0].quantity, 1);
+        assertGt(backlog[0].readyAt, original.readyAt);
     }
 
     function testShipProductionQueuesDifferentShipBehindActiveQueue() public {
@@ -10020,13 +10176,29 @@ contract VeydriftGameTest is Test {
         return string(normalized);
     }
 
+    function _productionQueueTiming(uint256 planetId, uint64 readyAt, bool defense)
+        internal
+        view
+        returns (VeydriftGameStorage.ProductionQueueTiming memory timing)
+    {
+        uint256 mappingSlot = defense ? 54 : 53;
+        bytes32 outerSlot = keccak256(abi.encode(planetId, mappingSlot));
+        bytes32 timingSlot = keccak256(abi.encode(readyAt, outerSlot));
+        uint256 packed = uint256(vm.load(address(game), timingSlot));
+        timing.startedAt = uint64(packed);
+        timing.originalQuantity = uint32(packed >> 64);
+        timing.unitWorkSeconds = uint256(vm.load(address(game), bytes32(uint256(timingSlot) + 1)));
+        timing.rate = uint256(vm.load(address(game), bytes32(uint256(timingSlot) + 2)));
+    }
+
     function _newGame(address owner) internal returns (VeydriftGame) {
         VeydriftCombatModule combatModule =
             new VeydriftCombatModule(address(new VeydriftCombatRapidfire()));
         VeydriftGameplayModule gameplayModule = new VeydriftGameplayModule(address(combatModule));
         VeydriftPlanetManagementModule planetManagementModule = new VeydriftPlanetManagementModule();
         VeydriftAttackProtectionModule attackProtectionModule = new VeydriftAttackProtectionModule();
-        VeydriftColonizationModule colonizationModule = new VeydriftColonizationModule();
+        VeydriftColonizationModule colonizationModule =
+            new VeydriftColonizationModule(address(new VeydriftShipProductionModule()));
         VeydriftDefenseHoldModule defenseHoldModule = new VeydriftDefenseHoldModule();
         VeydriftReferralSystem deployedReferralSystem = new VeydriftReferralSystem(owner);
         VeydriftStateMigrationModule stateMigrationModule =

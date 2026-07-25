@@ -343,6 +343,11 @@ export type WalletPlanetsResponse = {
 export type QueueAsOfNowResponse = {
   secondsRemaining: number;
   complete: boolean;
+  completedQuantity?: number;
+  remainingQuantity?: number;
+  currentUnitSecondsRemaining?: number;
+  currentUnitProgressBps?: number;
+  overallProgressBps?: number;
 };
 
 export type QueueStateResponse = {
@@ -355,6 +360,12 @@ export type QueueStateResponse = {
   startedAt?: string | null;
   cost: OnChainResources;
   backlog?: QueueStateResponse[];
+  productionTiming?: {
+    startedAt: string;
+    originalQuantity: number;
+    unitWorkSeconds: string;
+    rate: string;
+  };
   asOfNow?: QueueAsOfNowResponse;
 };
 

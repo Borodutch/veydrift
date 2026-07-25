@@ -5679,6 +5679,9 @@ describe("Veydrift backend", () => {
         if (method === "eth_getBlockByNumber") {
           return { timestamp: `0x${startedAt.toString(16)}` } as T;
         }
+        if (method === "eth_getStorageAt") {
+          return abiWords(0n) as T;
+        }
 
         const [call] = params as [{ data: string; to: string }];
         if (call.to === configuredTestConfig.gameContractAddress && call.data.startsWith("0x0ff79fa5")) {
@@ -5768,6 +5771,9 @@ describe("Veydrift backend", () => {
 
         if (method === "eth_getBlockByNumber") {
           return { timestamp: `0x${startedAt.toString(16)}` } as T;
+        }
+        if (method === "eth_getStorageAt") {
+          return abiWords(0n) as T;
         }
 
         const [call] = params as [{ data: string; to: string }];

@@ -112,6 +112,17 @@ abstract contract VeydriftGameStorage is Initializable {
         Resources cost;
     }
 
+    /// @dev Immutable timing inputs for one ship/defense production batch. Stored separately from
+    ///      the legacy queue structs so the deployed proxy layout and every pre-upgrade queue remain
+    ///      intact. A zero `startedAt` marks a legacy queue: it keeps the original all-at-readyAt
+    ///      settlement behavior instead of inventing a per-unit anchor.
+    struct ProductionQueueTiming {
+        uint64 startedAt;
+        uint32 originalQuantity;
+        uint256 unitWorkSeconds;
+        uint256 rate;
+    }
+
     struct ResearchQueue {
         bool active;
         Technology technology;
@@ -316,6 +327,12 @@ abstract contract VeydriftGameStorage is Initializable {
     mapping(uint256 missionId => uint64 holdUntil) internal _defenseHoldUntil;
     address internal _migrationSettlement;
     uint256 internal _gamePaused;
+    // VEY-KANEO-758: append-only production timing metadata. Keying by immutable batch `readyAt`
+    // keeps active/backlog promotion cheap and preserves same-second multi-unit boundaries.
+    mapping(uint256 planetId => mapping(uint64 readyAt => ProductionQueueTiming timing)) internal
+        _shipQueueTimings;
+    mapping(uint256 planetId => mapping(uint64 readyAt => ProductionQueueTiming timing)) internal
+        _defenseQueueTimings;
 
     error AlreadyStarted();
     error BadStartPayment();
@@ -461,6 +478,24 @@ abstract contract VeydriftGameStorage is Initializable {
         uint128 deuterium
     );
     event ShipCompleted(uint256 indexed planetId, Ship indexed ship, uint32 quantity, uint32 total);
+    event ShipQueueTimingSet(
+        uint256 indexed planetId,
+        Ship indexed ship,
+        uint64 indexed readyAt,
+        uint64 startedAt,
+        uint32 originalQuantity,
+        uint256 unitWorkSeconds,
+        uint256 rate
+    );
+    event DefenseQueueTimingSet(
+        uint256 indexed planetId,
+        Defense indexed defense,
+        uint64 indexed readyAt,
+        uint64 startedAt,
+        uint32 originalQuantity,
+        uint256 unitWorkSeconds,
+        uint256 rate
+    );
     event ResearchQueued(
         address indexed player,
         Technology indexed technology,

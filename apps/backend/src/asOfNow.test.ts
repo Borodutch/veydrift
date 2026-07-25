@@ -85,6 +85,129 @@ describe("withQueueAsOfNow", () => {
     expect(result.completed.map((entry) => entry.itemId)).toEqual([1, 2]);
     expect(result.queue).toBeNull();
   });
+
+  test("projects newly completed production units without mutating canonical queue state", () => {
+    const productionQueue: QueueState = {
+      active: true,
+      kind: "ship",
+      itemId: 1,
+      quantity: 10,
+      readyAt: String(NOW + 100),
+      startedAt: String(NOW - 100),
+      productionTiming: {
+        startedAt: String(NOW - 100),
+        originalQuantity: 10,
+        unitWorkSeconds: "100",
+        rate: "5"
+      },
+      cost: { metal: "1000", crystal: "500", deuterium: "0" }
+    };
+
+    const result = settleQueueAsOfNow(productionQueue, NOW);
+
+    expect(result.completed).toHaveLength(1);
+    expect(result.completed[0]).toMatchObject({
+      itemId: 1,
+      quantity: 5,
+      cost: { metal: "500", crystal: "250", deuterium: "0" }
+    });
+    expect(result.queue).toMatchObject({
+      itemId: 1,
+      quantity: 5,
+      cost: { metal: "500", crystal: "250", deuterium: "0" },
+      asOfNow: {
+        secondsRemaining: 100,
+        complete: false,
+        completedQuantity: 5,
+        remainingQuantity: 5,
+        currentUnitSecondsRemaining: 20,
+        currentUnitProgressBps: 0,
+        overallProgressBps: 5000
+      }
+    });
+    expect(productionQueue.quantity).toBe(10);
+    expect(productionQueue.cost.metal).toBe("1000");
+  });
+
+  test("only projects units not already settled in the canonical remaining quantity", () => {
+    const result = settleQueueAsOfNow({
+      active: true,
+      kind: "defense",
+      itemId: 2,
+      quantity: 7,
+      readyAt: String(NOW + 40),
+      startedAt: String(NOW - 160),
+      productionTiming: {
+        startedAt: String(NOW - 160),
+        originalQuantity: 10,
+        unitWorkSeconds: "100",
+        rate: "5"
+      },
+      cost: { metal: "700", crystal: "0", deuterium: "0" }
+    }, NOW);
+
+    expect(result.completed[0]?.quantity).toBe(5);
+    expect(result.queue).toMatchObject({
+      quantity: 2,
+      cost: { metal: "200" },
+      asOfNow: {
+        completedQuantity: 8,
+        remainingQuantity: 2,
+        currentUnitSecondsRemaining: 20,
+        overallProgressBps: 8000
+      }
+    });
+  });
+
+  test("fully projects a timed batch then promotes its FIFO backlog", () => {
+    const result = settleQueueAsOfNow({
+      active: true,
+      kind: "ship",
+      itemId: 1,
+      quantity: 2,
+      readyAt: String(NOW - 1),
+      startedAt: String(NOW - 41),
+      productionTiming: {
+        startedAt: String(NOW - 41),
+        originalQuantity: 2,
+        unitWorkSeconds: "20",
+        rate: "1"
+      },
+      cost: { metal: "200", crystal: "0", deuterium: "0" },
+      backlog: [{
+        active: true,
+        kind: "ship",
+        itemId: 2,
+        quantity: 1,
+        readyAt: String(NOW + 60),
+        cost: { metal: "50", crystal: "0", deuterium: "0" }
+      }]
+    }, NOW);
+
+    expect(result.completed).toHaveLength(1);
+    expect(result.completed[0]?.quantity).toBe(2);
+    expect(result.queue).toMatchObject({
+      itemId: 2,
+      quantity: 1,
+      asOfNow: { secondsRemaining: 60, complete: false }
+    });
+  });
+
+  test("preserves legacy all-at-readyAt behavior when no production timing exists", () => {
+    const result = settleQueueAsOfNow({
+      active: true,
+      kind: "ship",
+      itemId: 1,
+      quantity: 10,
+      readyAt: String(NOW + 1),
+      startedAt: String(NOW - 100),
+      cost: { metal: "1000", crystal: "0", deuterium: "0" }
+    }, NOW);
+
+    expect(result.completed).toEqual([]);
+    expect(result.queue?.quantity).toBe(10);
+    expect(result.queue?.asOfNow).toEqual({ secondsRemaining: 1, complete: false });
+  });
 });
 
 function mission(overrides: Partial<FleetMissionSummary>): FleetMissionSummary {

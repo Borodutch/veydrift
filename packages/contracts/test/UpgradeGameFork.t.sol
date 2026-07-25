@@ -9,6 +9,7 @@ import {
 import {VeydriftAttackProtectionModule} from "../src/VeydriftAttackProtectionModule.sol";
 import {VeydriftCombatModule, VeydriftCombatRapidfire} from "../src/VeydriftCombatModule.sol";
 import {VeydriftColonizationModule} from "../src/VeydriftColonizationModule.sol";
+import {VeydriftShipProductionModule} from "../src/VeydriftShipProductionModule.sol";
 import {VeydriftDefenseHoldModule} from "../src/VeydriftDefenseHoldModule.sol";
 import {VeydriftFirstPlanetSettlementModule} from "../src/VeydriftFirstPlanetSettlementModule.sol";
 import {VeydriftGame} from "../src/VeydriftGame.sol";
@@ -67,7 +68,8 @@ contract UpgradeGameForkTest is Test {
         VeydriftGameplayModule gameplayModule = new VeydriftGameplayModule(address(combatModule));
         VeydriftPlanetManagementModule planetManagementModule = new VeydriftPlanetManagementModule();
         VeydriftAttackProtectionModule attackProtectionModule = new VeydriftAttackProtectionModule();
-        VeydriftColonizationModule colonizationModule = new VeydriftColonizationModule();
+        VeydriftColonizationModule colonizationModule =
+            new VeydriftColonizationModule(address(new VeydriftShipProductionModule()));
         VeydriftDefenseHoldModule defenseHoldModule = new VeydriftDefenseHoldModule();
         VeydriftStateMigrationModule stateMigrationModule =
             new VeydriftStateMigrationModule(address(0xBEEF));

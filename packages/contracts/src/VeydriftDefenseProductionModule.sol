@@ -151,22 +151,21 @@ contract VeydriftDefenseProductionModule is VeydriftResourceReserves {
 
         uint256 currentTime = _currentTimestamp();
         DefenseQueue[] storage backlog = _defenseQueueBacklogs[planetId];
-        if (activeQueue.active && (activeQueue.defense != defense || backlog.length != 0)) {
+        if (activeQueue.active) {
             uint256 baseReadyAt =
                 backlog.length == 0 ? activeQueue.readyAt : backlog[backlog.length - 1].readyAt;
             if (baseReadyAt < currentTime) baseReadyAt = currentTime;
 
             uint64 readyAt =
                 (baseReadyAt + _defenseDuration(planetId, unitCost, quantity)).toUint64();
-            backlog.push(
-                DefenseQueue({
-                    active: true,
-                    defense: defense,
-                    quantity: quantity,
-                    readyAt: readyAt,
-                    cost: totalCost
-                })
-            );
+            DefenseQueue memory queued = DefenseQueue({
+                active: true,
+                defense: defense,
+                quantity: quantity,
+                readyAt: readyAt,
+                cost: totalCost
+            });
+            backlog.push(queued);
             emit DefenseQueued(
                 planetId,
                 defense,
@@ -176,32 +175,30 @@ contract VeydriftDefenseProductionModule is VeydriftResourceReserves {
                 totalCost.crystal,
                 totalCost.deuterium
             );
+            _recordDefenseQueueTiming(planetId, queued, baseReadyAt.toUint64(), unitCost);
         } else {
-            uint256 baseReadyAt = activeQueue.active && activeQueue.readyAt > currentTime
-                ? activeQueue.readyAt
-                : currentTime;
+            uint256 baseReadyAt = currentTime;
             uint64 readyAt =
                 (baseReadyAt + _defenseDuration(planetId, unitCost, quantity)).toUint64();
-            uint32 queuedQuantity = activeQueue.active ? activeQueue.quantity + quantity : quantity;
-            Resources memory queuedCost =
-                activeQueue.active ? _add(activeQueue.cost, totalCost) : totalCost;
-            defenseQueues[planetId] = DefenseQueue({
+            DefenseQueue memory queued = DefenseQueue({
                 active: true,
                 defense: defense,
-                quantity: queuedQuantity,
+                quantity: quantity,
                 readyAt: readyAt,
-                cost: queuedCost
+                cost: totalCost
             });
+            defenseQueues[planetId] = queued;
 
             emit DefenseQueued(
                 planetId,
                 defense,
-                queuedQuantity,
+                quantity,
                 readyAt,
-                queuedCost.metal,
-                queuedCost.crystal,
-                queuedCost.deuterium
+                totalCost.metal,
+                totalCost.crystal,
+                totalCost.deuterium
             );
+            _recordDefenseQueueTiming(planetId, queued, baseReadyAt.toUint64(), unitCost);
         }
     }
 
@@ -211,21 +208,26 @@ contract VeydriftDefenseProductionModule is VeydriftResourceReserves {
         _requireNoPendingMissionResolutionForPlanet(planetId);
         DefenseQueue memory queue = defenseQueues[planetId];
         if (!queue.active) revert QueueInactive();
-        if (_currentTimestamp() < queue.readyAt) revert QueueNotReady(queue.readyAt);
-
-        _completeReadyDefenseProduction(planetId, queue);
+        uint64 nowAt = _currentTimestamp();
+        if (_settleDefenseProductionUntil(planetId, nowAt) == 0) {
+            ProductionQueueTiming memory timing = _defenseQueueTimings[planetId][queue.readyAt];
+            uint32 settledQuantity = timing.startedAt == 0
+                || timing.originalQuantity < queue.quantity
+                ? 0
+                : timing.originalQuantity - queue.quantity;
+            revert QueueNotReady(_nextProductionUnitAt(queue.readyAt, timing, settledQuantity));
+        }
     }
 
     function completeAttackTargetSnapshotQueues(uint256 planetId, uint64 cutoffAt) external {
-        while (defenseQueues[planetId].active && defenseQueues[planetId].readyAt <= cutoffAt) {
-            _completeReadyDefenseProduction(planetId, defenseQueues[planetId]);
-        }
+        _settleDefenseProductionUntil(planetId, cutoffAt);
     }
 
     function _completeReadyDefenseProduction(uint256 planetId, DefenseQueue memory queue) private {
         uint32 total = _defenseCounts[planetId][queue.defense] + queue.quantity;
         _defenseCounts[planetId][queue.defense] = total;
         emit DefenseCompleted(planetId, queue.defense, queue.quantity, total);
+        delete _defenseQueueTimings[planetId][queue.readyAt];
 
         DefenseQueue[] storage backlog = _defenseQueueBacklogs[planetId];
         if (backlog.length == 0) {
@@ -251,6 +253,62 @@ contract VeydriftDefenseProductionModule is VeydriftResourceReserves {
             promoted.cost.crystal,
             promoted.cost.deuterium
         );
+        _emitDefenseQueueTiming(planetId, promoted);
+    }
+
+    function _settleDefenseProductionUntil(uint256 planetId, uint64 cutoffAt)
+        private
+        returns (uint32 settledUnits)
+    {
+        while (defenseQueues[planetId].active) {
+            DefenseQueue memory queue = defenseQueues[planetId];
+            ProductionQueueTiming memory timing = _defenseQueueTimings[planetId][queue.readyAt];
+            uint32 newlyCompleted;
+
+            if (timing.startedAt == 0) {
+                if (cutoffAt < queue.readyAt) break;
+                newlyCompleted = queue.quantity;
+            } else {
+                uint32 previouslyCompleted = timing.originalQuantity >= queue.quantity
+                    ? timing.originalQuantity - queue.quantity
+                    : 0;
+                uint32 completedAsOf = _completedProductionQuantity(queue.readyAt, timing, cutoffAt);
+                if (completedAsOf <= previouslyCompleted) break;
+                newlyCompleted = completedAsOf - previouslyCompleted;
+                if (newlyCompleted > queue.quantity) newlyCompleted = queue.quantity;
+            }
+
+            settledUnits += newlyCompleted;
+            if (newlyCompleted == queue.quantity) {
+                _completeReadyDefenseProduction(planetId, queue);
+                continue;
+            }
+
+            DefenseQueue storage active = defenseQueues[planetId];
+            Resources memory completedCost =
+                _productionCostPortion(active.cost, active.quantity, newlyCompleted);
+            active.quantity -= newlyCompleted;
+            active.cost.metal -= completedCost.metal;
+            active.cost.crystal -= completedCost.crystal;
+            active.cost.deuterium -= completedCost.deuterium;
+
+            uint32 total = _defenseCounts[planetId][queue.defense] + newlyCompleted;
+            _defenseCounts[planetId][queue.defense] = total;
+            emit DefenseCompleted(planetId, queue.defense, newlyCompleted, total);
+            break;
+        }
+    }
+
+    function _productionCostPortion(
+        Resources memory remainingCost,
+        uint32 remainingQuantity,
+        uint32 quantity
+    ) private pure returns (Resources memory) {
+        return Resources({
+            metal: uint128((uint256(remainingCost.metal) * quantity) / remainingQuantity),
+            crystal: uint128((uint256(remainingCost.crystal) * quantity) / remainingQuantity),
+            deuterium: uint128((uint256(remainingCost.deuterium) * quantity) / remainingQuantity)
+        });
     }
 
     function _defenseCost(Defense defense) private pure returns (Resources memory) {

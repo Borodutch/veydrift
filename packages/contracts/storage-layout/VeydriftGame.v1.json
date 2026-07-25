@@ -305,6 +305,18 @@
       "offset": 0,
       "slot": "52",
       "type": "uint256"
+    },
+    {
+      "label": "_shipQueueTimings",
+      "offset": 0,
+      "slot": "53",
+      "type": "mapping(uint256 => mapping(uint64 => struct ProductionQueueTiming))"
+    },
+    {
+      "label": "_defenseQueueTimings",
+      "offset": 0,
+      "slot": "54",
+      "type": "mapping(uint256 => mapping(uint64 => struct ProductionQueueTiming))"
     }
   ],
   "structs": {
@@ -738,6 +750,32 @@
         "offset": 0,
         "slot": "2",
         "type": "Resources"
+      }
+    ],
+    "ProductionQueueTiming": [
+      {
+        "label": "startedAt",
+        "offset": 0,
+        "slot": "0",
+        "type": "uint64"
+      },
+      {
+        "label": "originalQuantity",
+        "offset": 8,
+        "slot": "0",
+        "type": "uint32"
+      },
+      {
+        "label": "unitWorkSeconds",
+        "offset": 0,
+        "slot": "1",
+        "type": "uint256"
+      },
+      {
+        "label": "rate",
+        "offset": 0,
+        "slot": "2",
+        "type": "uint256"
       }
     ],
     "ResearchQueue": [

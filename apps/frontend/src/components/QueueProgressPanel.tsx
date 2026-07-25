@@ -1,5 +1,5 @@
 import type { ComponentChildren } from "preact";
-import { formatDurationUntil } from "../durationFormat";
+import { formatDuration, formatDurationUntil } from "../durationFormat";
 import { queueProgressBarState, queueProgressFillState } from "../overviewData";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import { OptimizedImage } from "./OptimizedImage";
@@ -17,12 +17,16 @@ export interface QueueProgressPanelProps {
   action?: QueueProgressPanelAction | undefined;
   asset?: string | undefined;
   children?: ComponentChildren;
+  completedQuantity?: number | undefined;
+  currentUnitProgressBps?: number | undefined;
+  currentUnitSecondsRemaining?: number | undefined;
   label: string;
   indeterminate?: boolean | undefined;
   now?: number | undefined;
   progress?: number | undefined;
   quantity?: number | undefined;
   readyAt: QueueTimestamp;
+  remainingQuantity?: number | undefined;
   startedAt?: QueueTimestamp;
   title: string;
   tone?: QueueProgressTone | undefined;
@@ -67,12 +71,16 @@ export function QueueProgressPanel({
   action,
   asset,
   children,
+  completedQuantity,
+  currentUnitProgressBps,
+  currentUnitSecondsRemaining,
   indeterminate,
   label,
   now = Date.now(),
   progress,
   quantity,
   readyAt,
+  remainingQuantity,
   startedAt,
   title,
   tone = "amber",
@@ -97,6 +105,9 @@ export function QueueProgressPanel({
     startedAt: hasCanonicalTimeline ? startedAtMs : undefined,
   });
   const percent = Math.round(progressFill.progress * 100);
+  const totalQuantity = completedQuantity === undefined
+    ? undefined
+    : completedQuantity + (remainingQuantity ?? quantity ?? 0);
 
   return (
     <section className={`grid gap-3 rounded-md border ${classes.border} ${classes.background} p-3 sm:grid-cols-[64px_minmax(0,1fr)_auto] sm:items-center ${!progressBar.indeterminate && percent >= 100 ? "queue-ready-pulse" : ""}`}>
@@ -150,6 +161,24 @@ export function QueueProgressPanel({
             <span className="mt-1 block font-semibold">{formatQueueReadyAt(readyAtMs)}</span>
           </p>
         </div>
+        {completedQuantity !== undefined && totalQuantity !== undefined ? (
+          <div className="mt-2 grid gap-2 border-t border-white/10 pt-2 text-xs text-white/90 sm:grid-cols-2">
+            <p className="min-w-0">
+              <span className={`block uppercase tracking-normal ${classes.muted}`}>Units complete</span>
+              <span className="mt-1 block font-semibold">
+                {formatQuantity(completedQuantity)} / {formatQuantity(totalQuantity)}
+              </span>
+            </p>
+            <p className="min-w-0">
+              <span className={`block uppercase tracking-normal ${classes.muted}`}>Current unit</span>
+              <span className="mt-1 block font-semibold">
+                {currentUnitProgressBps === undefined
+                  ? "Timing unavailable"
+                  : `${Math.round(currentUnitProgressBps / 100)}% · ${formatCurrentUnitRemaining(currentUnitSecondsRemaining)}`}
+              </span>
+            </p>
+          </div>
+        ) : null}
       </div>
 
       {action ? (
@@ -176,4 +205,9 @@ function formatQueueReadyAt(readyAtMs: number | undefined): string {
 
 function formatQuantity(quantity: number): string {
   return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(Math.floor(quantity));
+}
+
+function formatCurrentUnitRemaining(seconds: number | undefined): string {
+  if (seconds === undefined) return "time unavailable";
+  return seconds <= 0 ? "ready" : `${formatDuration(seconds)} left`;
 }
