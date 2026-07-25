@@ -1,7 +1,7 @@
 import type { ComponentChildren } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { LucideIcon } from "lucide-preact";
-import { ArrowLeftRight, Check, Crosshair, Factory, FlaskConical, Mail, Menu, Moon, Orbit, Pencil, Radar, Rocket, SatelliteDish, Shield, Trophy, Users, X } from "lucide-preact";
+import { ArrowLeftRight, Check, ChevronDown, ChevronUp, Crosshair, Factory, FlaskConical, Mail, Menu, Moon, Orbit, Pencil, Radar, Rocket, SatelliteDish, Shield, Trophy, Users, X } from "lucide-preact";
 
 import {
   playerDisplayLabel,
@@ -57,8 +57,17 @@ export const commanderJoinCta = {
   label: "Join Veydrift",
 } as const;
 
+export const commanderSummaryInitiallyExpanded = false;
+
 export function shouldShowCommanderJoinCta(account?: string | undefined, onConnectWallet?: (() => void) | undefined): boolean {
   return !account && Boolean(onConnectWallet);
+}
+
+export function commanderIdentityLabel(
+  playerProfile?: PlayerProfile | undefined,
+  account?: string | undefined,
+): string {
+  return playerDisplayLabel(playerProfile, account);
 }
 
 const pages: Array<{ key: Page; label: string; mobileLabel: string; icon: LucideIcon }> = [
@@ -93,10 +102,11 @@ export function NavBar({
   const [playerDraft, setPlayerDraft] = useState(playerProfile?.displayName ?? "");
   const [playerDescriptionDraft, setPlayerDescriptionDraft] = useState(playerProfile?.description ?? "");
   const [playerPanelOpen, setPlayerPanelOpen] = useState(false);
+  const [commanderSummaryExpanded, setCommanderSummaryExpanded] = useState(commanderSummaryInitiallyExpanded);
   const [playerValidation, setPlayerValidation] = useState<string | undefined>(undefined);
   const [copiedField, setCopiedField] = useState<{ key: string; nonce: number } | undefined>(undefined);
   const copiedResetTimer = useRef<number | undefined>(undefined);
-  const playerLabel = playerDisplayLabel(playerProfile, account);
+  const playerLabel = commanderIdentityLabel(playerProfile, account);
   const playerCopyValue = playerProfile?.displayName?.trim()
     || account
     || playerProfile?.fallbackName?.trim()
@@ -194,7 +204,7 @@ export function NavBar({
     });
   };
 
-  const accountSummary = (className: string) => {
+  const accountSummary = (className: string, detailsId: string) => {
     if (shouldShowCommanderJoinCta(account, onConnectWallet)) {
       return (
         <aside className={className} aria-label="Sidebar account summary">
@@ -219,87 +229,32 @@ export function NavBar({
     }
 
     return (
-      <aside className={className} aria-label="Sidebar account summary">
-        <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            <p className="text-[10px] font-semibold uppercase text-slate-500">
-              Commander
-            </p>
-            <CopyableCommanderValue
-              className="mt-1 w-full justify-start break-words text-left text-xs font-semibold leading-4 text-slate-100"
-              copyKey="commander"
-              copyValue={playerCopyValue}
-              copiedField={copiedField}
-              label="commander"
-              onCopy={handleCopyCommanderValue}
-              value={playerLabel}
-            />
-            {playerProfile?.displayName ? (
-              <CopyableCommanderValue
-                className="mt-0.5 w-full justify-start truncate text-left text-[10px] text-slate-500"
-                copyKey="commander-fallback"
-                copyValue={account ?? playerProfile.fallbackName}
-                copiedField={copiedField}
-                label="commander wallet"
-                onCopy={handleCopyCommanderValue}
-                value={playerProfile.fallbackName}
-              />
-            ) : null}
-            {playerStatusLabel && !playerPanelOpen ? (
-              <p className={`mt-1 break-words text-[10px] leading-4 ${playerStatusTone}`}>{playerStatusLabel}</p>
-            ) : null}
-          </div>
-          {onUpdatePlayerProfile ? (
-            <button
-              aria-controls="commander-name-editor"
-              aria-expanded={playerPanelOpen}
-              aria-haspopup="dialog"
-              aria-label="Edit player profile"
-              className="inline-grid h-7 w-7 shrink-0 place-items-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500"
-              disabled={playerProfileBusy}
-              onClick={() => {
-                setMobileMenuOpen(false);
-                setPlayerPanelOpen(true);
-                setPlayerDraft(playerProfile?.displayName ?? "");
-                setPlayerDescriptionDraft(playerProfile?.description ?? "");
-                setPlayerValidation(undefined);
-              }}
-              title="Edit player profile"
-              type="button"
-            >
-              <Pencil aria-hidden="true" size={12} strokeWidth={2} />
-            </button>
-          ) : null}
-        </div>
-        <div className="mt-2 flex items-center justify-between gap-2 border-t border-white/10 pt-2">
-          <span className="text-[10px] font-semibold uppercase text-slate-500">
-            Home
-          </span>
-          <CopyableCommanderValue
-            className="max-w-[7.25rem] justify-end truncate text-right font-mono text-xs text-slate-100"
-            copyKey="home"
-            copyValue={coordinates}
-            copiedField={copiedField}
-            label="home coordinates"
-            onCopy={handleCopyCommanderValue}
-            value={coordinates ?? "--:--:--"}
-          />
-        </div>
-        <div className="mt-1.5 flex items-center justify-between gap-2 border-t border-white/10 pt-1.5">
-          <span className="text-[10px] font-semibold uppercase text-slate-500">
-            Wallet
-          </span>
-          <CopyableCommanderValue
-            className="max-w-[7.25rem] justify-end truncate text-right font-mono text-xs text-slate-300"
-            copyKey="wallet"
-            copyValue={account}
-            copiedField={copiedField}
-            label="wallet"
-            onCopy={handleCopyCommanderValue}
-            value={account ? shortAddress(account) : "Disconnected"}
-          />
-        </div>
-      </aside>
+      <CommanderAccountSummary
+        account={account}
+        className={className}
+        coordinates={coordinates}
+        copiedField={copiedField}
+        detailsId={detailsId}
+        expanded={commanderSummaryExpanded}
+        onCopy={handleCopyCommanderValue}
+        onEdit={onUpdatePlayerProfile
+          ? () => {
+            setMobileMenuOpen(false);
+            setPlayerPanelOpen(true);
+            setPlayerDraft(playerProfile?.displayName ?? "");
+            setPlayerDescriptionDraft(playerProfile?.description ?? "");
+            setPlayerValidation(undefined);
+          }
+          : undefined}
+        onToggle={() => setCommanderSummaryExpanded((expanded) => !expanded)}
+        playerCopyValue={playerCopyValue}
+        playerLabel={playerLabel}
+        playerPanelOpen={playerPanelOpen}
+        playerProfile={playerProfile}
+        playerProfileBusy={playerProfileBusy}
+        playerStatusLabel={playerStatusLabel}
+        playerStatusTone={playerStatusTone}
+      />
     );
   };
 
@@ -425,7 +380,10 @@ export function NavBar({
             ))}
           </div>
 
-          {accountSummary("sticky bottom-3 shrink-0 rounded-md border border-white/10 bg-[#07101d]/95 p-2 shadow-2xl shadow-black/30 backdrop-blur")}
+          {accountSummary(
+            "sticky bottom-3 shrink-0 rounded-md border border-white/10 bg-[#07101d]/95 p-2 shadow-2xl shadow-black/30 backdrop-blur",
+            "desktop-commander-account-details",
+          )}
         </div>
       </nav>
 
@@ -464,7 +422,10 @@ export function NavBar({
             className="grid min-w-0 max-w-full gap-3 overflow-hidden border-t border-white/10 bg-[#08101d]/98 p-3 shadow-2xl shadow-black/30"
             id="mobile-navigation-menu"
           >
-            {accountSummary("rounded border border-white/10 bg-white/[0.03] p-2")}
+            {accountSummary(
+              "rounded border border-white/10 bg-white/[0.03] p-2",
+              "mobile-commander-account-details",
+            )}
             {planetPicker ? (
               <div
                 className="min-w-0 max-w-full overflow-hidden rounded border border-white/10 bg-white/[0.03] p-2"
@@ -495,6 +456,141 @@ export function NavBar({
       </div>
       {playerEditorDialog}
     </>
+  );
+}
+
+export function CommanderAccountSummary({
+  account,
+  className,
+  coordinates,
+  copiedField,
+  detailsId,
+  expanded,
+  onCopy,
+  onEdit,
+  onToggle,
+  playerCopyValue,
+  playerLabel,
+  playerPanelOpen,
+  playerProfile,
+  playerProfileBusy,
+  playerStatusLabel,
+  playerStatusTone,
+}: {
+  account?: string | undefined;
+  className: string;
+  coordinates?: string | undefined;
+  copiedField: { key: string; nonce: number } | undefined;
+  detailsId: string;
+  expanded: boolean;
+  onCopy: (key: string, value: string) => void;
+  onEdit?: (() => void) | undefined;
+  onToggle: () => void;
+  playerCopyValue?: string | undefined;
+  playerLabel: string;
+  playerPanelOpen: boolean;
+  playerProfile?: PlayerProfile | undefined;
+  playerProfileBusy: boolean;
+  playerStatusLabel?: string | undefined;
+  playerStatusTone: string;
+}) {
+  return (
+    <aside className={className} aria-label="Sidebar account summary">
+      <div className="flex min-w-0 items-start justify-between gap-2">
+        <div className="min-w-0 flex-1">
+          {expanded ? (
+            <p className="text-[10px] font-semibold uppercase text-slate-500">
+              Commander
+            </p>
+          ) : null}
+          <CopyableCommanderValue
+            className={`${expanded ? "mt-1 break-words" : "truncate"} w-full justify-start text-left text-xs font-semibold leading-4 text-slate-100`}
+            copyKey="commander"
+            copyValue={playerCopyValue}
+            copiedField={copiedField}
+            label="commander"
+            onCopy={onCopy}
+            value={playerLabel}
+          />
+          {expanded && playerProfile?.displayName ? (
+            <CopyableCommanderValue
+              className="mt-0.5 w-full justify-start truncate text-left text-[10px] text-slate-500"
+              copyKey="commander-fallback"
+              copyValue={account ?? playerProfile.fallbackName}
+              copiedField={copiedField}
+              label="commander wallet"
+              onCopy={onCopy}
+              value={playerProfile.fallbackName}
+            />
+          ) : null}
+          {expanded && playerStatusLabel && !playerPanelOpen ? (
+            <p className={`mt-1 break-words text-[10px] leading-4 ${playerStatusTone}`}>{playerStatusLabel}</p>
+          ) : null}
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          {expanded && onEdit ? (
+            <button
+              aria-controls="commander-name-editor"
+              aria-expanded={playerPanelOpen}
+              aria-haspopup="dialog"
+              aria-label="Edit player profile"
+              className="inline-grid h-7 w-7 shrink-0 place-items-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500"
+              disabled={playerProfileBusy}
+              onClick={onEdit}
+              title="Edit player profile"
+              type="button"
+            >
+              <Pencil aria-hidden="true" size={12} strokeWidth={2} />
+            </button>
+          ) : null}
+          <button
+            aria-controls={detailsId}
+            aria-expanded={expanded}
+            aria-label={expanded ? "Collapse Commander profile" : "Expand Commander profile"}
+            className="inline-grid h-7 w-7 shrink-0 place-items-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/60"
+            onClick={onToggle}
+            title={expanded ? "Collapse Commander profile" : "Expand Commander profile"}
+            type="button"
+          >
+            {expanded
+              ? <ChevronDown aria-hidden="true" size={13} strokeWidth={2} />
+              : <ChevronUp aria-hidden="true" size={13} strokeWidth={2} />}
+          </button>
+        </div>
+      </div>
+      {expanded ? (
+        <div id={detailsId}>
+          <div className="mt-2 flex items-center justify-between gap-2 border-t border-white/10 pt-2">
+            <span className="text-[10px] font-semibold uppercase text-slate-500">
+              Home
+            </span>
+            <CopyableCommanderValue
+              className="max-w-[7.25rem] justify-end truncate text-right font-mono text-xs text-slate-100"
+              copyKey="home"
+              copyValue={coordinates}
+              copiedField={copiedField}
+              label="home coordinates"
+              onCopy={onCopy}
+              value={coordinates ?? "--:--:--"}
+            />
+          </div>
+          <div className="mt-1.5 flex items-center justify-between gap-2 border-t border-white/10 pt-1.5">
+            <span className="text-[10px] font-semibold uppercase text-slate-500">
+              Wallet
+            </span>
+            <CopyableCommanderValue
+              className="max-w-[7.25rem] justify-end truncate text-right font-mono text-xs text-slate-300"
+              copyKey="wallet"
+              copyValue={account}
+              copiedField={copiedField}
+              label="wallet"
+              onCopy={onCopy}
+              value={account ? shortAddress(account) : "Disconnected"}
+            />
+          </div>
+        </div>
+      ) : null}
+    </aside>
   );
 }
 
