@@ -80,6 +80,34 @@ describe("production queue fallback", () => {
 
     expect(activeProductionQueue(detailedQueue, overviewQueue, "defense")).toEqual(detailedQueue);
   });
+
+  test("does not borrow per-unit progress from an older same-type queue timeline", () => {
+    const detailedQueue = queueState("ship", 1, 2, { readyAt: "1700000900" });
+    const overviewQueue = queueState("ship", 1, 1, {
+      readyAt: "1700000600",
+      startedAt: "1700000000",
+      productionTiming: {
+        startedAt: "1700000000",
+        originalQuantity: 1,
+        unitWorkSeconds: "15000000",
+        rate: "25000",
+      },
+      asOfNow: {
+        secondsRemaining: 100,
+        complete: false,
+        completedQuantity: 0,
+        remainingQuantity: 1,
+        currentUnitSecondsRemaining: 100,
+        currentUnitProgressBps: 8333,
+        overallProgressBps: 8333,
+      },
+    });
+
+    expect(activeProductionQueue(detailedQueue, overviewQueue, "ship")).toEqual({
+      ...detailedQueue,
+      startedAt: "1700000000",
+    });
+  });
 });
 
 function queueState(
