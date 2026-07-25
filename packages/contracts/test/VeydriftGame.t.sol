@@ -10185,7 +10185,11 @@ contract VeydriftGameTest is Test {
         bytes32 outerSlot = keccak256(abi.encode(planetId, mappingSlot));
         bytes32 timingSlot = keccak256(abi.encode(readyAt, outerSlot));
         uint256 packed = uint256(vm.load(address(game), timingSlot));
+        // The storage-layout guard fixes startedAt to the low 64 bits.
+        // forge-lint: disable-next-line(unsafe-typecast)
         timing.startedAt = uint64(packed);
+        // The storage-layout guard fixes originalQuantity to the next 32 bits.
+        // forge-lint: disable-next-line(unsafe-typecast)
         timing.originalQuantity = uint32(packed >> 64);
         timing.unitWorkSeconds = uint256(vm.load(address(game), bytes32(uint256(timingSlot) + 1)));
         timing.rate = uint256(vm.load(address(game), bytes32(uint256(timingSlot) + 2)));
