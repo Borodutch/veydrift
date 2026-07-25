@@ -19,9 +19,18 @@ function mergeProductionQueue(
   fallbackQueue: QueueStateResponse,
 ): QueueStateResponse {
   const startedAt = primaryQueue.startedAt ?? fallbackQueue.startedAt;
+  const sameTimeline = primaryQueue.readyAt === null
+    || primaryQueue.readyAt === undefined
+    || primaryQueue.readyAt === fallbackQueue.readyAt;
+  const productionTiming = primaryQueue.productionTiming
+    ?? (sameTimeline ? fallbackQueue.productionTiming : undefined);
+  const asOfNow = primaryQueue.asOfNow
+    ?? (sameTimeline ? fallbackQueue.asOfNow : undefined);
   const queue = {
     ...primaryQueue,
     readyAt: primaryQueue.readyAt ?? fallbackQueue.readyAt,
+    ...(productionTiming ? { productionTiming } : {}),
+    ...(asOfNow ? { asOfNow } : {}),
   };
 
   return startedAt === undefined ? queue : { ...queue, startedAt };

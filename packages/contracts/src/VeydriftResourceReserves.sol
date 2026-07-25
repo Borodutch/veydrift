@@ -3,7 +3,7 @@ pragma solidity ^0.8.28;
 
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {VeydriftGameStorage, IERC20ReserveToken} from "./VeydriftGameStorage.sol";
-import {Resource, Technology} from "./libraries/VeydriftTypes.sol";
+import {Building, Resource, Technology} from "./libraries/VeydriftTypes.sol";
 
 /// @dev Self-call surface used by the lazy reconcile to drain a planet's ready ship/defense
 ///      production queues. The facade exposes `completeAttackTargetSnapshotQueues` (self-only) and
@@ -88,6 +88,124 @@ abstract contract VeydriftResourceReserves is VeydriftGameStorage {
     function _settleActionPlanet(uint256 planetId) internal {
         IVeydriftUnitQueueSettler(address(this))
             .completeAttackTargetSnapshotQueues(planetId, type(uint64).max);
+    }
+
+    function _recordShipQueueTiming(
+        uint256 planetId,
+        ShipQueue memory queue,
+        uint64 startedAt,
+        Resources memory unitCost
+    ) internal {
+        ProductionQueueTiming memory timing = _newProductionQueueTiming(
+            planetId, startedAt, queue.quantity, unitCost
+        );
+        _shipQueueTimings[planetId][queue.readyAt] = timing;
+        _emitShipQueueTiming(planetId, queue, timing);
+    }
+
+    function _recordDefenseQueueTiming(
+        uint256 planetId,
+        DefenseQueue memory queue,
+        uint64 startedAt,
+        Resources memory unitCost
+    ) internal {
+        ProductionQueueTiming memory timing = _newProductionQueueTiming(
+            planetId, startedAt, queue.quantity, unitCost
+        );
+        _defenseQueueTimings[planetId][queue.readyAt] = timing;
+        _emitDefenseQueueTiming(planetId, queue, timing);
+    }
+
+    function _emitShipQueueTiming(uint256 planetId, ShipQueue memory queue) internal {
+        _emitShipQueueTiming(planetId, queue, _shipQueueTimings[planetId][queue.readyAt]);
+    }
+
+    function _emitDefenseQueueTiming(uint256 planetId, DefenseQueue memory queue) internal {
+        _emitDefenseQueueTiming(planetId, queue, _defenseQueueTimings[planetId][queue.readyAt]);
+    }
+
+    function _completedProductionQuantity(
+        uint64 readyAt,
+        ProductionQueueTiming memory timing,
+        uint64 cutoffAt
+    ) internal pure returns (uint32) {
+        if (timing.startedAt == 0) {
+            return cutoffAt >= readyAt ? timing.originalQuantity : 0;
+        }
+        if (cutoffAt < timing.startedAt) return 0;
+        if (cutoffAt >= readyAt || timing.unitWorkSeconds == 0) {
+            return timing.originalQuantity;
+        }
+
+        uint256 elapsed = uint256(cutoffAt) - timing.startedAt;
+        if (elapsed == 0) return 0;
+        uint256 completed = (elapsed * timing.rate) / timing.unitWorkSeconds;
+        return completed >= timing.originalQuantity ? timing.originalQuantity : completed.toUint32();
+    }
+
+    function _nextProductionUnitAt(
+        uint64 readyAt,
+        ProductionQueueTiming memory timing,
+        uint32 settledQuantity
+    ) internal pure returns (uint64) {
+        if (timing.startedAt == 0 || settledQuantity >= timing.originalQuantity) return readyAt;
+        if (timing.unitWorkSeconds == 0) return timing.startedAt + MIN_QUEUE_SECONDS;
+
+        uint256 numerator = timing.unitWorkSeconds * (uint256(settledQuantity) + 1);
+        uint256 elapsed = (numerator + timing.rate - 1) / timing.rate;
+        if (elapsed < MIN_QUEUE_SECONDS) elapsed = MIN_QUEUE_SECONDS;
+        uint256 boundary = uint256(timing.startedAt) + elapsed;
+        return boundary >= readyAt ? readyAt : boundary.toUint64();
+    }
+
+    function _newProductionQueueTiming(
+        uint256 planetId,
+        uint64 startedAt,
+        uint32 quantity,
+        Resources memory unitCost
+    ) private view returns (ProductionQueueTiming memory) {
+        uint256 rate = 2500 * (uint256(_buildingLevels[planetId][Building.Shipyard]) + 1)
+            * (2 ** _buildingLevels[planetId][Building.NaniteFactory]) * QUEUE_UNIVERSE_SPEED;
+        return ProductionQueueTiming({
+            startedAt: startedAt,
+            originalQuantity: quantity,
+            unitWorkSeconds: (uint256(unitCost.metal) + uint256(unitCost.crystal)) * 1 hours,
+            rate: rate
+        });
+    }
+
+    function _emitShipQueueTiming(
+        uint256 planetId,
+        ShipQueue memory queue,
+        ProductionQueueTiming memory timing
+    ) private {
+        if (timing.startedAt == 0) return;
+        emit ShipQueueTimingSet(
+            planetId,
+            queue.ship,
+            queue.readyAt,
+            timing.startedAt,
+            timing.originalQuantity,
+            timing.unitWorkSeconds,
+            timing.rate
+        );
+    }
+
+    function _emitDefenseQueueTiming(
+        uint256 planetId,
+        DefenseQueue memory queue,
+        ProductionQueueTiming memory timing
+    ) private {
+        if (timing.startedAt == 0) return;
+        emit DefenseQueueTimingSet(
+            planetId,
+            queue.defense,
+            queue.readyAt,
+            timing.startedAt,
+            timing.originalQuantity,
+            timing.unitWorkSeconds,
+            timing.rate
+        );
     }
 
     /// @dev Applies a player's research level once a settle observes its queue elapsed by `cutoffAt`.

@@ -9,6 +9,7 @@ import {
 import {VeydriftAttackProtectionModule} from "../src/VeydriftAttackProtectionModule.sol";
 import {VeydriftCombatModule, VeydriftCombatRapidfire} from "../src/VeydriftCombatModule.sol";
 import {VeydriftColonizationModule} from "../src/VeydriftColonizationModule.sol";
+import {VeydriftShipProductionModule} from "../src/VeydriftShipProductionModule.sol";
 import {VeydriftDefenseHoldModule} from "../src/VeydriftDefenseHoldModule.sol";
 import {VeydriftFirstPlanetSettlementModule} from "../src/VeydriftFirstPlanetSettlementModule.sol";
 import {VeydriftGame} from "../src/VeydriftGame.sol";
@@ -67,7 +68,7 @@ contract VeydriftLaunchMainnetForkTest is Test {
             address(new VeydriftGameplayModule(address(combatModule))),
             address(new VeydriftPlanetManagementModule()),
             address(new VeydriftAttackProtectionModule()),
-            address(new VeydriftColonizationModule()),
+            address(new VeydriftColonizationModule(address(new VeydriftShipProductionModule()))),
             address(new VeydriftDefenseHoldModule()),
             address(new VeydriftStateMigrationModule(address(0xBEEF)))
         );

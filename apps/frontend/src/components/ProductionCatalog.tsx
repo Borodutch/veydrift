@@ -67,6 +67,11 @@ export type ProductionQueue = {
   quantity?: number | undefined;
   readyAt: string | null;
   startedAt?: string | null | undefined;
+  completedQuantity?: number | undefined;
+  remainingQuantity?: number | undefined;
+  currentUnitSecondsRemaining?: number | undefined;
+  currentUnitProgressBps?: number | undefined;
+  overallProgressBps?: number | undefined;
   backlog?: ProductionQueue[] | undefined;
 };
 
@@ -131,6 +136,11 @@ export function productionQueueViewModel(
     quantity: queue.quantity,
     readyAt: queue.readyAt,
     startedAt: queue.startedAt,
+    completedQuantity: queue.asOfNow?.completedQuantity,
+    remainingQuantity: queue.asOfNow?.remainingQuantity,
+    currentUnitSecondsRemaining: queue.asOfNow?.currentUnitSecondsRemaining,
+    currentUnitProgressBps: queue.asOfNow?.currentUnitProgressBps,
+    overallProgressBps: queue.asOfNow?.overallProgressBps,
     backlog: queue.backlog?.filter((entry) => entry.active).map((entry) => {
       const backlogItem = catalog.find((candidate) => candidate.id === entry.itemId);
       return {
@@ -273,8 +283,13 @@ function ProductionQueuePanel({
       asset={queue.asset}
       label={queue.label}
       now={now}
+      completedQuantity={queue.completedQuantity}
+      currentUnitProgressBps={queue.currentUnitProgressBps}
+      currentUnitSecondsRemaining={queue.currentUnitSecondsRemaining}
+      progress={queue.overallProgressBps === undefined ? undefined : queue.overallProgressBps / 10_000}
       quantity={queue.quantity}
       readyAt={queue.readyAt}
+      remainingQuantity={queue.remainingQuantity}
       startedAt={queue.startedAt}
       title="Active queue"
       tone="cyan"

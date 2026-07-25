@@ -1171,6 +1171,98 @@ describe("canonical fleet mission details", () => {
 describe("player queue startedAt", () => {
   const shipQueuedTopic = "0x2751e0f30801101b5ffa9787644ace0da334023e4c4376f1133f5608ec9e1118";
 
+  test("hydrates per-unit timing for every ship backlog entry", async () => {
+    const wallet = "0x0000000000000000000000000000000000000def" as Address;
+    const abiWords = (...values: bigint[]) => dataWords(values.map(word));
+    const activeReadyAt = 1_700_000_600n;
+    const backlogReadyAt = 1_700_001_200n;
+    const activeStartedAt = 1_700_000_000n;
+    const backlogStartedAt = activeReadyAt;
+    let timingStorageRead = 0;
+    const timingStorageSlots: string[] = [];
+
+    const reader = new VeydriftGameReader(readerConfig, {
+      async request<T>(method: string, params: unknown[]): Promise<T> {
+        if (method === "eth_getStorageAt") {
+          timingStorageSlots.push((params as [Address, string, string])[1]);
+          const timingWords = [
+            activeStartedAt | (2n << 64n),
+            28_800_000n,
+            5_000n,
+            backlogStartedAt | (3n << 64n),
+            14_400_000n,
+            5_000n
+          ];
+          return topic(timingWords[timingStorageRead++] ?? 0n) as T;
+        }
+        if (method !== "eth_call") throw new Error(`Unexpected method ${method}`);
+        const selector = (params[0] as { data: string }).data.slice(0, 10);
+        if (selector === "0xb8e835ab") return abiWords(0n, 0n, 0n, 0n, 0n, 0n, 0n) as T;
+        if (selector === "0x5758361d") return abiWords(0n, 0n, 0n, 0n, 0n, 0n, 0n) as T;
+        if (selector === "0x4f5ed437") return abiWords(0n, 0n) as T;
+        if (selector === "0xb6f4b7b7") {
+          return abiWords(1n, 0n, 2n, activeReadyAt, 4_000n, 4_000n, 0n) as T;
+        }
+        if (selector === "0x52b55205") {
+          return abiWords(
+            32n,
+            1n,
+            1n,
+            1n,
+            3n,
+            backlogReadyAt,
+            9_000n,
+            3_000n,
+            0n
+          ) as T;
+        }
+        if (selector === "0xd0b044c5") return abiWords(0n, 0n, 0n, 0n, 0n, 0n, 0n) as T;
+        throw new Error(`Unexpected eth_call selector ${selector}`);
+      }
+    });
+    (reader as unknown as {
+      getGameSettlement: (wallet: Address) => Promise<unknown>;
+    }).getGameSettlement = async () => ({
+      wallet,
+      hasFirstPlanet: true,
+      homePlanetId: "7",
+      planet: null,
+      contractKind: "game"
+    });
+
+    const queues = await reader.getPlayerQueues(wallet);
+
+    const activeTimingSlot = productionQueueTimingStorageBaseSlotForTest(7n, activeReadyAt, false);
+    const backlogTimingSlot = productionQueueTimingStorageBaseSlotForTest(7n, backlogReadyAt, false);
+    expect(timingStorageSlots).toEqual([
+      activeTimingSlot,
+      activeTimingSlot + 1n,
+      activeTimingSlot + 2n,
+      backlogTimingSlot,
+      backlogTimingSlot + 1n,
+      backlogTimingSlot + 2n
+    ].map(toQuantity));
+    expect(queues.ship?.productionTiming).toEqual({
+      startedAt: activeStartedAt.toString(),
+      originalQuantity: 2,
+      unitWorkSeconds: "28800000",
+      rate: "5000"
+    });
+    expect(queues.ship?.backlog?.[0]).toMatchObject({
+      active: true,
+      itemId: 1,
+      quantity: 3,
+      readyAt: backlogReadyAt.toString(),
+      startedAt: backlogStartedAt.toString(),
+      productionTiming: {
+        startedAt: backlogStartedAt.toString(),
+        originalQuantity: 3,
+        unitWorkSeconds: "14400000",
+        rate: "5000"
+      }
+    });
+  });
+
   test("populates an active ship queue startedAt from the ShipQueued log block timestamp", async () => {
     const wallet = "0x0000000000000000000000000000000000000def" as Address;
     const abiWords = (...values: bigint[]) => dataWords(values.map(word));
@@ -1200,6 +1292,9 @@ describe("player queue startedAt", () => {
           if (selector === "0x52b55205") return abiWords(0n, 0n) as T;
           if (selector === "0xd0b044c5") return abiWords(0n, 0n, 0n, 0n, 0n, 0n, 0n) as T;
           throw new Error(`Unexpected eth_call selector ${selector}`);
+        }
+        if (method === "eth_getStorageAt") {
+          return topic(0n) as T;
         }
         if (method === "eth_blockNumber") {
           return "0x200" as T;
@@ -2155,6 +2250,27 @@ function fleetMissionStorageBaseSlot(missionId: bigint): bigint {
       { type: "uint256" }
     ],
     [missionId, 24n]
+  )));
+}
+
+function productionQueueTimingStorageBaseSlotForTest(
+  planetId: bigint,
+  readyAt: bigint,
+  defense: boolean
+): bigint {
+  const outerSlot = BigInt(keccak256(encodeAbiParameters(
+    [
+      { type: "uint256" },
+      { type: "uint256" }
+    ],
+    [planetId, defense ? 54n : 53n]
+  )));
+  return BigInt(keccak256(encodeAbiParameters(
+    [
+      { type: "uint256" },
+      { type: "uint256" }
+    ],
+    [readyAt, outerSlot]
   )));
 }
 

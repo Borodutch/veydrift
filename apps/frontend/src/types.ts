@@ -112,6 +112,21 @@ export interface PublicQueueState {
   quantity?: number;
   readyAt: string | null;
   startedAt?: string | null;
+  productionTiming?: {
+    startedAt: string;
+    originalQuantity: number;
+    unitWorkSeconds: string;
+    rate: string;
+  };
+  asOfNow?: {
+    secondsRemaining: number;
+    complete: boolean;
+    completedQuantity?: number;
+    remainingQuantity?: number;
+    currentUnitSecondsRemaining?: number;
+    currentUnitProgressBps?: number;
+    overallProgressBps?: number;
+  };
 }
 
 export interface AllianceIdentity {

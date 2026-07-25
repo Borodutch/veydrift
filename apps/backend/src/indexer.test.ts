@@ -23,6 +23,8 @@ const defenseQueuedTopic = "0xc3dcdf6abcac9fc4831745727e78f808922f43da079b984420
 const defenseCompletedTopic = "0xcc99fccb631bf08aef4833c0cbd43ed8d19a40eacce0fe225beff1693a903aa6";
 const shipQueuedTopic = "0x2751e0f30801101b5ffa9787644ace0da334023e4c4376f1133f5608ec9e1118";
 const shipCompletedTopic = "0xd261dd8008086de5ef74708b23f5f21be1962fee33795961e03a5750c4897785";
+const shipQueueTimingSetTopic = "0x241c6a6ecff5bf5d31df2871e9d836b18f8380508d2c5514ae9532687886d6ef";
+const defenseQueueTimingSetTopic = "0xcdf898af8ba3659ffa369d372a1cacd237f74927074397a0ae531a4b60ed078e";
 const planetShipCountChangedTopic = "0x6a0fc6b08970eb9f7e15767e6902471ca8731c57dbe4577c76021e1f9d6762cf";
 const planetDefenseCountChangedTopic = "0xe861e6f62777a3f6ea372d2892ead2d43e27d726e0ae4a2e39e5c3b682a7bbd3";
 const moonShipCountChangedTopic = "0xbd55c2b529f64f3a888d38432d6c54b03515f3de3f0114255cb36620f5df1257";
@@ -4045,6 +4047,13 @@ describe("SettlementIndexer", () => {
       data: abiWords(2n, 1770001000n, 100n, 50n, 0n)
     });
     indexer.applyLog({
+      blockNumber: "0xa0",
+      transactionHash: "0xqueue-light-laser",
+      logIndex: "0x1",
+      topics: [defenseQueueTimingSetTopic, topic(7n), topic(1n), topic(1770001000n)],
+      data: abiWords(1770000000n, 2n, 540_000n, 2500n)
+    });
+    indexer.applyLog({
       blockNumber: "0xa1",
       transactionHash: "0xqueue-rocket-backlog",
       logIndex: "0x0",
@@ -4057,6 +4066,13 @@ describe("SettlementIndexer", () => {
       itemId: 1,
       quantity: 2,
       readyAt: "1770001000",
+      startedAt: "1770000000",
+      productionTiming: {
+        startedAt: "1770000000",
+        originalQuantity: 2,
+        unitWorkSeconds: "540000",
+        rate: "2500"
+      },
       cost: { metal: "100", crystal: "50", deuterium: "0" },
       backlog: [
         {
@@ -4169,7 +4185,7 @@ describe("SettlementIndexer", () => {
     ]);
   });
 
-  test("appends different ship queue events to the indexed backlog", () => {
+  test("indexes active and FIFO backlog production timings for different and same ship types", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
       async listMoonChanceReportEvents() { return []; },
@@ -4185,6 +4201,13 @@ describe("SettlementIndexer", () => {
       data: abiWords(2n, 1770001000n, 4000n, 4000n, 0n)
     });
     indexer.applyLog({
+      blockNumber: "0xa0",
+      transactionHash: "0xqueue-small-cargo",
+      logIndex: "0x1",
+      topics: [shipQueueTimingSetTopic, topic(7n), topic(0n), topic(1770001000n)],
+      data: abiWords(1770000000n, 2n, 28_800_000n, 2500n)
+    });
+    indexer.applyLog({
       blockNumber: "0xa1",
       transactionHash: "0xqueue-light-fighter-backlog",
       logIndex: "0x0",
@@ -4192,29 +4215,95 @@ describe("SettlementIndexer", () => {
       data: abiWords(3n, 1770002600n, 9000n, 3000n, 0n)
     });
     indexer.applyLog({
+      blockNumber: "0xa1",
+      transactionHash: "0xqueue-light-fighter-backlog",
+      logIndex: "0x1",
+      topics: [shipQueueTimingSetTopic, topic(7n), topic(1n), topic(1770002600n)],
+      data: abiWords(1770001000n, 3n, 14_400_000n, 2500n)
+    });
+    indexer.applyLog({
       blockNumber: "0xa2",
       transactionHash: "0xqueue-small-cargo-more",
       logIndex: "0x0",
       topics: [shipQueuedTopic, topic(7n), topic(0n)],
-      data: abiWords(4n, 1770002000n, 0n, 0n, 0n)
+      data: abiWords(4n, 1770003200n, 0n, 0n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0xa2",
+      transactionHash: "0xqueue-small-cargo-more",
+      logIndex: "0x1",
+      topics: [shipQueueTimingSetTopic, topic(7n), topic(0n), topic(1770003200n)],
+      data: abiWords(1770002600n, 4n, 28_800_000n, 2500n)
     });
 
     expect(indexer.playerQueues(player, planet.planetId).ship).toMatchObject({
       kind: "ship",
       itemId: 0,
-      quantity: 4,
-      readyAt: "1770002000",
-      cost: { metal: "0", crystal: "0", deuterium: "0" },
+      quantity: 2,
+      readyAt: "1770001000",
+      startedAt: "1770000000",
+      productionTiming: {
+        startedAt: "1770000000",
+        originalQuantity: 2,
+        unitWorkSeconds: "28800000",
+        rate: "2500"
+      },
       backlog: [
         {
           kind: "ship",
           itemId: 1,
           quantity: 3,
           readyAt: "1770002600",
+          startedAt: "1770001000",
+          productionTiming: {
+            startedAt: "1770001000",
+            originalQuantity: 3,
+            unitWorkSeconds: "14400000",
+            rate: "2500"
+          },
           cost: { metal: "9000", crystal: "3000", deuterium: "0" }
+        },
+        {
+          kind: "ship",
+          itemId: 0,
+          quantity: 4,
+          readyAt: "1770003200",
+          startedAt: "1770002600",
+          productionTiming: {
+            startedAt: "1770002600",
+            originalQuantity: 4,
+            unitWorkSeconds: "28800000",
+            rate: "2500"
+          }
         }
       ]
     });
+
+    indexer.applyLog({
+      blockNumber: "0xa3",
+      transactionHash: "0xcomplete-one-small-cargo",
+      logIndex: "0x0",
+      topics: [shipCompletedTopic, topic(7n), topic(0n)],
+      data: abiWords(1n, 1n)
+    });
+
+    expect(indexer.playerQueues(player, planet.planetId).ship).toMatchObject({
+      itemId: 0,
+      quantity: 1,
+      readyAt: "1770001000",
+      cost: { metal: "2000", crystal: "2000", deuterium: "0" },
+      productionTiming: {
+        startedAt: "1770000000",
+        originalQuantity: 2,
+        unitWorkSeconds: "28800000",
+        rate: "2500"
+      },
+      backlog: [
+        { itemId: 1, quantity: 3, readyAt: "1770002600" },
+        { itemId: 0, quantity: 4, readyAt: "1770003200" }
+      ]
+    });
+    expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 0)?.count).toBe(1);
     expect(indexer.walletSettlement(player).planet?.resources).toEqual({
       metal: "0",
       crystal: "0",

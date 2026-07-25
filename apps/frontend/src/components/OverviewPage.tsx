@@ -34,7 +34,7 @@ import {
   type WalletSettlementResponse
 } from "../walletFlow";
 import type { GalaxyAction } from "../galaxyActions";
-import { formatDurationUntil } from "../durationFormat";
+import { formatDuration, formatDurationUntil } from "../durationFormat";
 import { timestampToMs, type TimestampInput } from "../timestampFormat";
 import {
   actionNoticeForBuilding,
@@ -225,12 +225,16 @@ export function OverviewPage({
     .map((queue) => defenseQueuePreview(queue)) ?? [];
   const defenseReadyAt = queueTimestampMs(onChainQueues?.defense?.readyAt);
   const defenseStartedAt = queueTimestampMs(onChainQueues?.defense?.startedAt);
+  const defenseProgress = queueProductionProgress(onChainQueues?.defense);
+  const defenseUnitSummary = queueProductionUnitSummary(onChainQueues?.defense);
   const onChainShipQueue = shipQueuePreview(onChainQueues?.ship);
   const onChainShipBacklog = onChainQueues?.ship?.backlog
     ?.filter((queue) => queue.active)
     .map((queue) => shipQueuePreview(queue)) ?? [];
   const shipReadyAt = queueTimestampMs(onChainQueues?.ship?.readyAt);
   const shipStartedAt = queueTimestampMs(onChainQueues?.ship?.startedAt);
+  const shipBackendProgress = queueProductionProgress(onChainQueues?.ship);
+  const shipUnitSummary = queueProductionUnitSummary(onChainQueues?.ship);
   const shipHasCanonicalTimeline =
     shipReadyAt !== undefined && shipStartedAt !== undefined && shipStartedAt < shipReadyAt;
   const buildingNoticeKey = buildingQueue?.key ?? buildingKeyForContractId(onChainQueues?.building?.itemId);
@@ -584,6 +588,8 @@ export function OverviewPage({
               <QueueItemDisplay
                 label={onChainDefenseQueue.label}
                 remaining={queueRemaining(onChainQueues.defense.readyAt, now)}
+                detail={defenseUnitSummary}
+                progress={defenseProgress}
                 readyAt={defenseReadyAt}
                 startedAt={defenseStartedAt}
                 thumbnailSrc={onChainDefenseQueue.asset}
@@ -670,7 +676,8 @@ export function OverviewPage({
               <QueueItemDisplay
                 label={onChainShipQueue.label}
                 remaining={queueRemaining(onChainQueues.ship.readyAt, now)}
-                progress={shipHasCanonicalTimeline ? 0 : undefined}
+                detail={shipUnitSummary}
+                progress={shipBackendProgress ?? (shipHasCanonicalTimeline ? 0 : undefined)}
                 readyAt={shipReadyAt}
                 startedAt={shipHasCanonicalTimeline ? shipStartedAt : undefined}
                 thumbnailSrc={onChainShipQueue.asset}
@@ -1384,6 +1391,7 @@ function QueuePanelContent({ children }: { children: preact.ComponentChildren })
 }
 
 function QueueItemDisplay({
+  detail,
   label,
   remaining,
   progress,
@@ -1394,6 +1402,7 @@ function QueueItemDisplay({
   now,
   startedAt,
 }: {
+  detail?: string | undefined;
   label: string;
   remaining: string;
   progress?: number | undefined;
@@ -1439,6 +1448,7 @@ function QueueItemDisplay({
         <div className="grid min-w-0 gap-1">
           <p className={overviewQueueItemLabelClassName}>{label}</p>
           <p className={overviewQueueItemRemainingClassName}>{remaining}</p>
+          {detail ? <p className="truncate text-[11px] text-slate-400">{detail}</p> : null}
         </div>
         <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10">
           {progressBar.indeterminate ? (
@@ -1453,6 +1463,27 @@ function QueueItemDisplay({
       </div>
     </div>
   );
+}
+
+function queueProductionProgress(queue: QueueStateResponse | null | undefined): number | undefined {
+  const bps = queue?.asOfNow?.overallProgressBps;
+  return bps === undefined ? undefined : Math.max(0, Math.min(1, bps / 10_000));
+}
+
+function queueProductionUnitSummary(queue: QueueStateResponse | null | undefined): string | undefined {
+  const asOfNow = queue?.asOfNow;
+  if (!asOfNow) return undefined;
+  const completed = asOfNow?.completedQuantity;
+  const remaining = asOfNow?.remainingQuantity;
+  if (completed === undefined || remaining === undefined) return undefined;
+
+  const currentUnitSeconds = asOfNow.currentUnitSecondsRemaining;
+  const currentUnit = currentUnitSeconds === undefined
+    ? ""
+    : currentUnitSeconds <= 0
+      ? " · current unit ready"
+      : ` · current unit ${formatDuration(currentUnitSeconds)}`;
+  return `${completed} / ${completed + remaining} complete${currentUnit}`;
 }
 
 function queueTimestampMs(timestamp: string | null | undefined): number | undefined {

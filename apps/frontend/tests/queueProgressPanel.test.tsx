@@ -54,6 +54,28 @@ describe("QueueProgressPanel", () => {
     expect(hasClass(panel, "animate-pulse")).toBe(false);
   });
 
+  test("renders backend-sourced completed units and current-unit timing", () => {
+    const panel = QueueProgressPanel({
+      completedQuantity: 2,
+      currentUnitProgressBps: 3750,
+      currentUnitSecondsRemaining: 75,
+      label: "Small Cargo",
+      now: 1_700_000_300_000,
+      progress: 0.4,
+      quantity: 3,
+      readyAt: "1700000900",
+      remainingQuantity: 3,
+      startedAt: "1700000000",
+      title: "Active queue",
+      tone: "cyan",
+    });
+    const text = visibleText(panel);
+
+    expect(text).toContain("33%");
+    expect(text).toContain("Units complete 2 / 5");
+    expect(text).toContain("Current unit 38% · 1m 15s left");
+  });
+
   test("keeps pending queues without a canonical timeline indeterminate", () => {
     const panel = QueueProgressPanel({
       label: "Light Laser",

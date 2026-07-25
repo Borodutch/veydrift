@@ -6,7 +6,6 @@ import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
 import {VeydriftDefenseProductionModule} from "./VeydriftDefenseProductionModule.sol";
 import {VeydriftAntiRaidPrimitives} from "./libraries/VeydriftAntiRaidPrimitives.sol";
 import {VeydriftCatalog} from "./libraries/VeydriftCatalog.sol";
-import {VeydriftDependencies} from "./libraries/VeydriftDependencies.sol";
 import {VeydriftFormulas} from "./libraries/VeydriftFormulas.sol";
 import {VeydriftPlanetGeneration} from "./libraries/VeydriftPlanetGeneration.sol";
 import {VeydriftUniverseRules} from "./VeydriftUniverseRules.sol";
@@ -37,6 +36,7 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
     using SafeCast for uint256;
 
     address private immutable _defenseProductionModule;
+    address private immutable _shipProductionModule;
     address private immutable _universeRules;
 
     uint256 private constant COLONIZATION_COORDINATE_FLAG = 1 << 255;
@@ -45,8 +45,9 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
     uint256 private constant COLONIZATION_COORDINATE_MASK = 0xffff;
     uint256 private constant COLONIZATION_POSITION_MASK = 0xff;
 
-    constructor() VeydriftResourceReserves(address(0)) {
+    constructor(address shipProductionModuleAddress) VeydriftResourceReserves(address(0)) {
         _defenseProductionModule = address(new VeydriftDefenseProductionModule());
+        _shipProductionModule = shipProductionModuleAddress;
         _universeRules = address(new VeydriftUniverseRules());
     }
 
@@ -78,80 +79,16 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
         _delegateToDefenseProductionModule();
     }
 
-    function startShipProduction(uint256 planetId, Ship ship, uint32 quantity) external {
-        _requirePlanetOwner(planetId);
-        _settleDueColonizeArrivals(msg.sender);
-        _settleDueCombatArrivals(msg.sender);
-        _requireNoPendingMissionResolutionForPlanet(planetId);
-        _settleResources(planetId);
-        _validateShipProduction(planetId, ship, quantity);
-        ShipQueue memory activeQueue = shipQueues[planetId];
-
-        Resources memory unitCost = _shipCost(ship);
-        Resources memory totalCost = _multiply(unitCost, quantity);
-        _spend(planetId, totalCost);
-
-        uint256 currentTime = _currentTimestamp();
-        if (activeQueue.active && activeQueue.ship != ship) {
-            ShipQueue[] storage backlog = _shipQueueBacklogs[planetId];
-            uint256 baseReadyAt =
-                backlog.length == 0 ? activeQueue.readyAt : backlog[backlog.length - 1].readyAt;
-            if (baseReadyAt < currentTime) baseReadyAt = currentTime;
-
-            uint64 readyAt = (baseReadyAt + _shipDuration(planetId, unitCost, quantity)).toUint64();
-            backlog.push(
-                ShipQueue({
-                    active: true, ship: ship, quantity: quantity, readyAt: readyAt, cost: totalCost
-                })
-            );
-            emit ShipQueued(
-                planetId,
-                ship,
-                quantity,
-                readyAt,
-                totalCost.metal,
-                totalCost.crystal,
-                totalCost.deuterium
-            );
-        } else {
-            uint256 baseReadyAt = activeQueue.active && activeQueue.readyAt > currentTime
-                ? activeQueue.readyAt
-                : currentTime;
-            uint64 readyAt = (baseReadyAt + _shipDuration(planetId, unitCost, quantity)).toUint64();
-            uint32 queuedQuantity = activeQueue.active ? activeQueue.quantity + quantity : quantity;
-            Resources memory queuedCost =
-                activeQueue.active ? _add(activeQueue.cost, totalCost) : totalCost;
-            shipQueues[planetId] = ShipQueue({
-                active: true,
-                ship: ship,
-                quantity: queuedQuantity,
-                readyAt: readyAt,
-                cost: queuedCost
-            });
-            emit ShipQueued(
-                planetId,
-                ship,
-                queuedQuantity,
-                readyAt,
-                queuedCost.metal,
-                queuedCost.crystal,
-                queuedCost.deuterium
-            );
-        }
+    function startShipProduction(uint256, Ship, uint32) external {
+        _delegateToShipProductionModule();
     }
 
     function startDefenseProduction(uint256, Defense, uint32) external {
         _delegateToDefenseProductionModule();
     }
 
-    function finishShipProduction(uint256 planetId) external {
-        _requirePlanetOwner(planetId);
-        _requireNoPendingMissionResolutionForPlanet(planetId);
-        ShipQueue memory queue = shipQueues[planetId];
-        if (!queue.active) revert QueueInactive();
-        if (_currentTimestamp() < queue.readyAt) revert QueueNotReady(queue.readyAt);
-
-        _completeReadyShipProduction(planetId, queue);
+    function finishShipProduction(uint256) external {
+        _delegateToShipProductionModule();
     }
 
     function completeAttackTargetSnapshotQueues(uint256 planetId, uint64 cutoffAt) external {
@@ -160,9 +97,7 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
         // For an attack snapshot `cutoffAt` is impact time (settling the defender's by-impact state);
         // for an ordinary lazy settle it is `block.timestamp`.
         _settleResearchDue(_planets[planetId].owner, cutoffAt);
-        while (shipQueues[planetId].active && shipQueues[planetId].readyAt <= cutoffAt) {
-            _completeReadyShipProduction(planetId, shipQueues[planetId]);
-        }
+        _delegateToShipProductionModule();
         _delegateToDefenseProductionModule();
     }
 
@@ -192,37 +127,6 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
                 ++index;
             }
         }
-    }
-
-    function _completeReadyShipProduction(uint256 planetId, ShipQueue memory queue) private {
-        uint32 total = _shipCounts[planetId][queue.ship] + queue.quantity;
-        _shipCounts[planetId][queue.ship] = total;
-        emit ShipCompleted(planetId, queue.ship, queue.quantity, total);
-
-        ShipQueue[] storage backlog = _shipQueueBacklogs[planetId];
-        if (backlog.length == 0) {
-            delete shipQueues[planetId];
-            return;
-        }
-
-        ShipQueue memory promoted = backlog[0];
-        shipQueues[planetId] = promoted;
-        for (uint256 i = 1; i < backlog.length;) {
-            backlog[i - 1] = backlog[i];
-            unchecked {
-                ++i;
-            }
-        }
-        backlog.pop();
-        emit ShipQueued(
-            planetId,
-            promoted.ship,
-            promoted.quantity,
-            promoted.readyAt,
-            promoted.cost.metal,
-            promoted.cost.crystal,
-            promoted.cost.deuterium
-        );
     }
 
     function finishDefenseProduction(uint256) external {
@@ -604,60 +508,6 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
         if (available < quantity) revert InsufficientShips(ship, available, quantity);
     }
 
-    function _validateShipProduction(uint256 planetId, Ship ship, uint32 quantity) private view {
-        if (quantity == 0) revert InvalidQuantity();
-        address player = _planets[planetId].owner;
-        VeydriftDependencies.requireShip(
-            ship,
-            _buildingLevels[planetId][Building.Shipyard],
-            _technologyLevels[player][Technology.CombustionDrive],
-            _technologyLevels[player][Technology.ImpulseDrive],
-            _technologyLevels[player][Technology.HyperspaceDrive],
-            _technologyLevels[player][Technology.Hyperspace],
-            _technologyLevels[player][Technology.Graviton],
-            _technologyLevels[player][Technology.Energy],
-            _technologyLevels[player][Technology.Laser],
-            _technologyLevels[player][Technology.Ion],
-            _technologyLevels[player][Technology.Shielding],
-            _technologyLevels[player][Technology.Armor],
-            _technologyLevels[player][Technology.Plasma]
-        );
-    }
-
-    function _shipDuration(uint256 planetId, Resources memory unitCost, uint32 quantity)
-        private
-        view
-        returns (uint256)
-    {
-        return VeydriftFormulas.unitDuration(
-            _buildingLevels[planetId][Building.Shipyard],
-            _buildingLevels[planetId][Building.NaniteFactory],
-            unitCost.metal,
-            unitCost.crystal,
-            unitCost.deuterium,
-            quantity,
-            QUEUE_UNIVERSE_SPEED,
-            MIN_QUEUE_SECONDS
-        );
-    }
-
-    function _shipCost(Ship ship) private pure returns (Resources memory) {
-        (uint128 metal, uint128 crystal, uint128 deuterium) = VeydriftCatalog.shipCost(ship);
-        return Resources(metal, crystal, deuterium);
-    }
-
-    function _multiply(Resources memory resources, uint32 quantity)
-        private
-        pure
-        returns (Resources memory)
-    {
-        return Resources({
-            metal: _toUint128(uint256(resources.metal) * quantity),
-            crystal: _toUint128(uint256(resources.crystal) * quantity),
-            deuterium: _toUint128(uint256(resources.deuterium) * quantity)
-        });
-    }
-
     function _settleResources(uint256 planetId) private {
         _settleActionPlanet(planetId);
     }
@@ -750,6 +600,15 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
         }
         assembly ("memory-safe") {
             return(add(result, 32), mload(result))
+        }
+    }
+
+    function _delegateToShipProductionModule() private {
+        (bool ok, bytes memory result) = _shipProductionModule.delegatecall(msg.data);
+        if (!ok) {
+            assembly ("memory-safe") {
+                revert(add(result, 32), mload(result))
+            }
         }
     }
 

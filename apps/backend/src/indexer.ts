@@ -19,6 +19,7 @@ import {
   decodeDebrisFieldLog,
   decodeIndexedQueueCompletedLog,
   decodeIndexedQueueStartedLog,
+  decodeProductionQueueTimingLog,
   decodeInterplanetaryMissileAttackLog,
   decodeMoonDefenseCountChangedLog,
   decodeMoonCreatedLog,
@@ -47,6 +48,7 @@ import {
   isFleetMissionLog,
   isIndexedQueueCompletedLog,
   isIndexedQueueStartedLog,
+  isProductionQueueTimingLog,
   isInterplanetaryMissileAttackLog,
   isAllianceLog,
   isMoonCreatedLog,
@@ -87,6 +89,7 @@ import {
   type StationedDefenderSummary,
   type IndexedQueueCompletedEvent,
   type IndexedQueueStartedEvent,
+  type IndexedProductionQueueTimingEvent,
   type IndexedReferralClaimEvent,
   type IndexedReferralRedemptionEvent,
   type IndexedReferralRewardClaimEvent,
@@ -353,11 +356,14 @@ type QueueRow = {
   deuterium_cost: string;
   item_id: number;
   metal_cost: string;
+  original_quantity?: number | null;
+  production_rate?: string | null;
   queue_kind: string;
   quantity: number | null;
   ready_at: string;
   started_at: string | null;
   target_level: number | null;
+  unit_work_seconds?: string | null;
 };
 
 type LegacyQueueRow = {
@@ -538,6 +544,7 @@ function cloneQueueState(queue: QueueState | null): QueueState | null {
   return {
     ...queue,
     cost: { ...queue.cost },
+    ...(queue.productionTiming ? { productionTiming: { ...queue.productionTiming } } : {}),
     ...(queue.backlog ? { backlog: queue.backlog.map((entry) => cloneQueueState(entry)!) } : {})
   };
 }
@@ -2710,7 +2717,9 @@ export class SettlementIndexer {
 
   private productionQueueProjectionCacheVersion(nowSec = nowSeconds()): string {
     const rows = this.db.query(`
-      SELECT queue_kind, item_id, target_level, quantity, ready_at, started_at, metal_cost, crystal_cost, deuterium_cost, backlog_json
+      SELECT queue_kind, item_id, target_level, quantity, ready_at, started_at,
+        original_quantity, unit_work_seconds, production_rate,
+        metal_cost, crystal_cost, deuterium_cost, backlog_json
       FROM contract_production_queues
       WHERE queue_kind IN ('ship', 'defense')
     `).all() as QueueRow[];
@@ -3081,6 +3090,10 @@ export class SettlementIndexer {
       this.applyQueueStartedEvent(decodeIndexedQueueStartedLog(log), {
         settledAt: blockTimestampSeconds(log) ?? Math.floor(Date.now() / 1_000).toString()
       });
+      return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
+    }
+    if (isProductionQueueTimingLog(log)) {
+      this.applyProductionQueueTimingEvent(decodeProductionQueueTimingLog(log));
       return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
     }
     if (isIndexedQueueCompletedLog(log)) {
@@ -3994,6 +4007,9 @@ export class SettlementIndexer {
         quantity INTEGER,
         ready_at TEXT NOT NULL,
         started_at TEXT,
+        original_quantity INTEGER,
+        unit_work_seconds TEXT,
+        production_rate TEXT,
         metal_cost TEXT NOT NULL,
         crystal_cost TEXT NOT NULL,
         deuterium_cost TEXT NOT NULL,
@@ -4221,6 +4237,9 @@ export class SettlementIndexer {
     `);
     this.ensureColumn("player_profiles", "description", "TEXT");
     this.ensureColumn("contract_production_queues", "backlog_json", "TEXT");
+    this.ensureColumn("contract_production_queues", "original_quantity", "INTEGER");
+    this.ensureColumn("contract_production_queues", "unit_work_seconds", "TEXT");
+    this.ensureColumn("contract_production_queues", "production_rate", "TEXT");
     this.ensureColumn("contract_moon_building_queues", "started_at", "TEXT");
     this.db.query(`
       UPDATE contract_moon_building_queues
@@ -4594,6 +4613,8 @@ export class SettlementIndexer {
         if (!this.queueStartProvenCompleted(event)) {
           this.applyQueueStartedEvent(event, { settleResources: false });
         }
+      } else if (isProductionQueueTimingLog(log)) {
+        this.applyProductionQueueTimingEvent(decodeProductionQueueTimingLog(log));
       } else if (isIndexedQueueCompletedLog(log)) {
         this.applyQueueCompletedEvent(decodeIndexedQueueCompletedLog(log));
       } else if (isShipCountChangedLog(log)) {
@@ -4688,6 +4709,8 @@ export class SettlementIndexer {
       this.applyQueueStartedEvent(decodeIndexedQueueStartedLog(log), {
         settledAt: blockTimestampSeconds(log) ?? Math.floor(Date.now() / 1_000).toString()
       });
+    } else if (isProductionQueueTimingLog(log)) {
+      this.applyProductionQueueTimingEvent(decodeProductionQueueTimingLog(log));
     } else if (isIndexedQueueCompletedLog(log)) {
       this.applyQueueCompletedEvent(decodeIndexedQueueCompletedLog(log));
     } else if (isMoonCreatedLog(log)) {
@@ -4734,6 +4757,8 @@ export class SettlementIndexer {
           ...(settledAt ? { settledAt } : {})
         });
         activeEventQueues.add(queueKey(event));
+      } else if (isProductionQueueTimingLog(log)) {
+        this.applyProductionQueueTimingEvent(decodeProductionQueueTimingLog(log));
       } else if (isIndexedQueueCompletedLog(log)) {
         const event = decodeIndexedQueueCompletedLog(log);
         const key = queueKey(event);
@@ -5537,6 +5562,7 @@ export class SettlementIndexer {
       ...(queue.quantity !== undefined ? { quantity: queue.quantity } : {}),
       readyAt: queue.readyAt ?? "0",
       ...(queue.startedAt ? { startedAt: queue.startedAt } : {}),
+      ...(queue.productionTiming ? { productionTiming: queue.productionTiming } : {}),
       cost: queue.cost,
       ...(queue.backlog?.length ? { backlog: queue.backlog } : {}),
       canonicalSnapshot: true,
@@ -5998,6 +6024,61 @@ export class SettlementIndexer {
     this.touch();
   }
 
+  private applyProductionQueueTimingEvent(event: IndexedProductionQueueTimingEvent): void {
+    const key = queueKey(event);
+    const row = this.db.query(`
+      SELECT queue_kind, item_id, target_level, quantity, ready_at, started_at,
+        original_quantity, unit_work_seconds, production_rate,
+        metal_cost, crystal_cost, deuterium_cost, backlog_json
+      FROM contract_production_queues
+      WHERE queue_key = ?
+    `).get(key) as QueueRow | null;
+    if (!row) return;
+
+    if (row.ready_at === event.readyAt) {
+      this.db.query(`
+        UPDATE contract_production_queues
+        SET started_at = ?, original_quantity = ?, unit_work_seconds = ?, production_rate = ?
+        WHERE queue_key = ? AND ready_at = ?
+      `).run(
+        event.startedAt,
+        event.originalQuantity,
+        event.unitWorkSeconds,
+        event.rate,
+        key,
+        event.readyAt
+      );
+      this.db.query(`
+        UPDATE indexed_planet_queues
+        SET started_at = ?
+        WHERE queue_key = ? AND ready_at = ?
+      `).run(event.startedAt, key, event.readyAt);
+      this.touch();
+      return;
+    }
+
+    const backlog = row.backlog_json ? parseEvent<QueueState[]>(row.backlog_json) : [];
+    if (!Array.isArray(backlog)) return;
+    const entry = backlog.find((candidate) =>
+      candidate.readyAt === event.readyAt && candidate.itemId === event.itemId
+    );
+    if (!entry) return;
+
+    entry.startedAt = event.startedAt;
+    entry.productionTiming = {
+      startedAt: event.startedAt,
+      originalQuantity: event.originalQuantity,
+      unitWorkSeconds: event.unitWorkSeconds,
+      rate: event.rate
+    };
+    this.db.query(`
+      UPDATE contract_production_queues
+      SET backlog_json = ?
+      WHERE queue_key = ?
+    `).run(JSON.stringify(backlog), key);
+    this.touch();
+  }
+
   private applyShipCountChangedEvent(event: IndexedShipCountChangedEvent): void {
     if (event.eventName === "MoonShipCountChanged") {
       this.upsertIndexedLevel(
@@ -6377,7 +6458,37 @@ export class SettlementIndexer {
     if (event.queueKind === "building" && event.planetId && matchesActiveQueue) {
       this.settlePlanetResourcesUntil(event.planetId, queue?.readyAt ?? undefined);
     }
-    if (matchesActiveQueue) {
+    const completedQuantity = event.quantity ?? 0;
+    const remainingQuantity = queue?.quantity ?? 0;
+    const partialProductionCompletion =
+      matchesActiveQueue
+      && (event.queueKind === "ship" || event.queueKind === "defense")
+      && completedQuantity > 0
+      && completedQuantity < remainingQuantity;
+    if (partialProductionCompletion && queue) {
+      const nextQuantity = remainingQuantity - completedQuantity;
+      const nextCost = {
+        metal: remainingQueueResourceCost(queue.cost.metal, completedQuantity, remainingQuantity),
+        crystal: remainingQueueResourceCost(queue.cost.crystal, completedQuantity, remainingQuantity),
+        deuterium: remainingQueueResourceCost(queue.cost.deuterium, completedQuantity, remainingQuantity)
+      };
+      this.db.query(`
+        UPDATE indexed_planet_queues
+        SET quantity = ?, cost_json = ?
+        WHERE queue_key = ?
+      `).run(nextQuantity, JSON.stringify(nextCost), queueKey(event));
+      this.db.query(`
+        UPDATE contract_production_queues
+        SET quantity = ?, metal_cost = ?, crystal_cost = ?, deuterium_cost = ?
+        WHERE queue_key = ?
+      `).run(
+        nextQuantity,
+        nextCost.metal,
+        nextCost.crystal,
+        nextCost.deuterium,
+        queueKey(event)
+      );
+    } else if (matchesActiveQueue) {
       this.db.query("DELETE FROM indexed_planet_queues WHERE queue_key = ?").run(queueKey(event));
       this.db.query("DELETE FROM contract_production_queues WHERE queue_key = ?").run(queueKey(event));
     }
@@ -6471,7 +6582,11 @@ export class SettlementIndexer {
         target_level = excluded.target_level,
         quantity = excluded.quantity,
         ready_at = excluded.ready_at,
-        started_at = excluded.started_at,
+        started_at = CASE
+          WHEN indexed_planet_queues.ready_at = excluded.ready_at
+            THEN COALESCE(excluded.started_at, indexed_planet_queues.started_at)
+          ELSE excluded.started_at
+        END,
         cost_json = excluded.cost_json,
         event_json = excluded.event_json
     `).run(
@@ -6490,9 +6605,10 @@ export class SettlementIndexer {
     this.db.query(`
       INSERT INTO contract_production_queues (
         queue_key, queue_kind, planet_id, owner, item_id, target_level, quantity,
-        ready_at, started_at, metal_cost, crystal_cost, deuterium_cost, backlog_json, event_json
+        ready_at, started_at, original_quantity, unit_work_seconds, production_rate,
+        metal_cost, crystal_cost, deuterium_cost, backlog_json, event_json
       )
-      VALUES (?, ?, ?, lower(?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, lower(?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(queue_key) DO UPDATE SET
         queue_kind = excluded.queue_kind,
         planet_id = excluded.planet_id,
@@ -6502,6 +6618,21 @@ export class SettlementIndexer {
         quantity = excluded.quantity,
         ready_at = excluded.ready_at,
         started_at = excluded.started_at,
+        original_quantity = CASE
+          WHEN contract_production_queues.ready_at = excluded.ready_at
+            THEN COALESCE(excluded.original_quantity, contract_production_queues.original_quantity)
+          ELSE excluded.original_quantity
+        END,
+        unit_work_seconds = CASE
+          WHEN contract_production_queues.ready_at = excluded.ready_at
+            THEN COALESCE(excluded.unit_work_seconds, contract_production_queues.unit_work_seconds)
+          ELSE excluded.unit_work_seconds
+        END,
+        production_rate = CASE
+          WHEN contract_production_queues.ready_at = excluded.ready_at
+            THEN COALESCE(excluded.production_rate, contract_production_queues.production_rate)
+          ELSE excluded.production_rate
+        END,
         metal_cost = excluded.metal_cost,
         crystal_cost = excluded.crystal_cost,
         deuterium_cost = excluded.deuterium_cost,
@@ -6517,6 +6648,9 @@ export class SettlementIndexer {
       event.quantity ?? null,
       event.readyAt,
       event.startedAt ?? null,
+      event.productionTiming?.originalQuantity ?? null,
+      event.productionTiming?.unitWorkSeconds ?? null,
+      event.productionTiming?.rate ?? null,
       event.cost.metal,
       event.cost.crystal,
       event.cost.deuterium,
@@ -6563,21 +6697,41 @@ export class SettlementIndexer {
     }
 
     const row = this.db.query(`
-      SELECT queue_kind, item_id, target_level, quantity, ready_at, started_at, metal_cost, crystal_cost, deuterium_cost, backlog_json
+      SELECT queue_kind, item_id, target_level, quantity, ready_at, started_at,
+        original_quantity, unit_work_seconds, production_rate,
+        metal_cost, crystal_cost, deuterium_cost, backlog_json
       FROM contract_production_queues
       WHERE queue_key = ?
     `).get(queueKey(event)) as QueueRow | null;
+    if (!row) return false;
+    const hasPerUnitTiming =
+      row.original_quantity !== null
+      && row.original_quantity !== undefined
+      && row.unit_work_seconds !== null
+      && row.unit_work_seconds !== undefined
+      && row.production_rate !== null
+      && row.production_rate !== undefined;
     if (
-      !row
-      || (row.item_id === event.itemId && (event.queueKind !== "defense" || !row.backlog_json))
+      !hasPerUnitTiming
+      && row.item_id === event.itemId
+      && (event.queueKind !== "defense" || !row.backlog_json)
     ) {
       return false;
     }
+    const activeReadyAt = queueReadyAt(this.productionQueueFromRow(row));
+    const eventReadyAt = queueReadyAt(queueStateFromEvent(event));
+    if (activeReadyAt === null || eventReadyAt === null) return false;
+    if (eventReadyAt < activeReadyAt) return true;
+    if (eventReadyAt === activeReadyAt) return false;
 
     const backlog = row.backlog_json ? parseEvent<QueueState[]>(row.backlog_json) : [];
     const activeQueue = this.productionQueueFromRow(row);
     const nextBacklog = this.sanitizedProductionBacklog(row.queue_kind, activeQueue, Array.isArray(backlog) ? backlog : []);
-    if (row.item_id === event.itemId && (event.queueKind !== "defense" || nextBacklog.length === 0)) {
+    if (
+      !hasPerUnitTiming
+      && row.item_id === event.itemId
+      && (event.queueKind !== "defense" || nextBacklog.length === 0)
+    ) {
       return false;
     }
     const nextEntry = queueStateFromEvent(event);
@@ -6621,7 +6775,9 @@ export class SettlementIndexer {
     }
 
     const row = this.db.query(`
-      SELECT queue_kind, item_id, target_level, quantity, ready_at, started_at, metal_cost, crystal_cost, deuterium_cost, backlog_json
+      SELECT queue_kind, item_id, target_level, quantity, ready_at, started_at,
+        original_quantity, unit_work_seconds, production_rate,
+        metal_cost, crystal_cost, deuterium_cost, backlog_json
       FROM contract_production_queues
       WHERE queue_key = ?
     `).get(queueKey(event)) as QueueRow | null;
@@ -6722,7 +6878,9 @@ export class SettlementIndexer {
     }
 
     const row = this.db.query(`
-      SELECT queue_kind, item_id, target_level, quantity, ready_at, started_at, metal_cost, crystal_cost, deuterium_cost, backlog_json
+      SELECT queue_kind, item_id, target_level, quantity, ready_at, started_at,
+        original_quantity, unit_work_seconds, production_rate,
+        metal_cost, crystal_cost, deuterium_cost, backlog_json
       FROM contract_production_queues
       WHERE queue_key = ?
     `).get(queueKeyValue) as QueueRow | null;
@@ -6761,6 +6919,20 @@ export class SettlementIndexer {
     }
     if (row.quantity !== null) {
       queue.quantity = row.quantity;
+    }
+    if (
+      row.started_at
+      && row.original_quantity !== null
+      && row.original_quantity !== undefined
+      && row.unit_work_seconds
+      && row.production_rate
+    ) {
+      queue.productionTiming = {
+        startedAt: row.started_at,
+        originalQuantity: row.original_quantity,
+        unitWorkSeconds: row.unit_work_seconds,
+        rate: row.production_rate
+      };
     }
     return queue;
   }
@@ -9746,7 +9918,12 @@ function queueMatchesCompletion(event: IndexedQueueCompletedEvent, queue: QueueS
   if ((event.queueKind === "building" || event.queueKind === "moon-building" || event.queueKind === "research") && event.level !== undefined) {
     return queue.targetLevel === event.level;
   }
-  if ((event.queueKind === "defense" || event.queueKind === "ship" || event.queueKind === "moon-defense") && event.quantity !== undefined) {
+  if ((event.queueKind === "defense" || event.queueKind === "ship") && event.quantity !== undefined) {
+    return queue.productionTiming
+      ? event.quantity > 0 && event.quantity <= (queue.quantity ?? 0)
+      : queue.quantity === event.quantity;
+  }
+  if (event.queueKind === "moon-defense" && event.quantity !== undefined) {
     return queue.quantity === event.quantity;
   }
   return true;
@@ -10201,6 +10378,17 @@ function isNonBlockingPendingReason(reason: string | null): boolean {
   return isPlanetHydrationPendingReason(reason) || isTransientWebsocketReason(reason);
 }
 
+function remainingQueueResourceCost(
+  cost: string,
+  completedQuantity: number,
+  remainingQuantity: number
+): string {
+  if (completedQuantity <= 0 || remainingQuantity <= 0) return cost;
+  const value = BigInt(cost);
+  const completedCost = (value * BigInt(completedQuantity)) / BigInt(remainingQuantity);
+  return (value - completedCost).toString();
+}
+
 function subtractResources(left: QueueState["cost"], right: QueueState["cost"]): QueueState["cost"] {
   return {
     metal: subtractResource(left.metal, right.metal),
@@ -10251,6 +10439,7 @@ function queueStateFromEvent(event: QueueUpsertEvent): QueueState {
   if (event.targetLevel !== undefined) queue.targetLevel = event.targetLevel;
   if (event.quantity !== undefined) queue.quantity = event.quantity;
   if (event.startedAt !== undefined) queue.startedAt = event.startedAt;
+  if (event.productionTiming) queue.productionTiming = { ...event.productionTiming };
   if (event.backlog?.length) queue.backlog = event.backlog;
   return queue;
 }

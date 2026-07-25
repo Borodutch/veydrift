@@ -147,6 +147,11 @@ export type QueueAsOfNow = {
   secondsRemaining: number;
   // Whether the active item is due as of now (its `readyAt` has passed).
   complete: boolean;
+  completedQuantity?: number;
+  remainingQuantity?: number;
+  currentUnitSecondsRemaining?: number;
+  currentUnitProgressBps?: number;
+  overallProgressBps?: number;
 };
 
 export type MissionAsOfNow = {
@@ -171,6 +176,12 @@ export type QueueState = {
   startedAt?: string | null;
   cost: Resources;
   backlog?: QueueState[];
+  productionTiming?: {
+    startedAt: string;
+    originalQuantity: number;
+    unitWorkSeconds: string;
+    rate: string;
+  };
   // Derived as-of-now state (VEY-KANEO-464): seconds left / whether the active
   // item is due, computed server-side at request time from `readyAt`. Optional so
   // persisted/event-derived queue rows stay valid; the read-model getters always
@@ -199,6 +210,7 @@ export type IndexedQueueStartedEvent = {
   quantity?: number;
   readyAt: string;
   startedAt?: string;
+  productionTiming?: QueueState["productionTiming"];
   cost: Resources;
 };
 
@@ -213,6 +225,20 @@ export type IndexedQueueCompletedEvent = {
   level?: number;
   quantity?: number;
   total?: number;
+};
+
+export type IndexedProductionQueueTimingEvent = {
+  eventName: "DefenseQueueTimingSet" | "ShipQueueTimingSet";
+  transactionHash: string;
+  blockNumber: string;
+  queueKind: "defense" | "ship";
+  planetId: string;
+  itemId: number;
+  readyAt: string;
+  startedAt: string;
+  originalQuantity: number;
+  unitWorkSeconds: string;
+  rate: string;
 };
 
 export type IndexedMoonCreatedEvent = {
@@ -3288,6 +3314,44 @@ export class VeydriftGameReader implements ChainReader {
         args: [encodeUint(planetId)]
       }))
     );
+
+    const decodedDefenseQueues = planetIds.map((_, planetIndex) => {
+      const queue = this.decodePlanetQueueResult(
+        defenseQueueResults[planetIndex] ?? "0x",
+        "defense"
+      );
+      const backlog = this.decodeProductionQueueBacklogResult(
+        defenseBacklogResults[planetIndex] ?? "0x",
+        "defense"
+      );
+      if (backlog.length > 0) queue.backlog = backlog;
+      return queue;
+    });
+    const decodedShipQueues = planetIds.map((_, planetIndex) => {
+      const queue = this.decodePlanetQueueResult(
+        shipQueueResults[planetIndex] ?? "0x",
+        "ship"
+      );
+      const backlog = this.decodeProductionQueueBacklogResult(
+        shipBacklogResults[planetIndex] ?? "0x",
+        "ship"
+      );
+      if (backlog.length > 0) queue.backlog = backlog;
+      return queue;
+    });
+
+    progress("defense queue timings");
+    await this.batchHydrateProductionQueueTimings(
+      planetIds,
+      decodedDefenseQueues,
+      true
+    );
+    progress("ship queue timings");
+    await this.batchHydrateProductionQueueTimings(
+      planetIds,
+      decodedShipQueues,
+      false
+    );
     progress("decoded chain responses");
 
     return planetIds.map((planetId, planetIndex) => {
@@ -3295,12 +3359,8 @@ export class VeydriftGameReader implements ChainReader {
       const defenseOffset = planetIndex * defenseCount * 2;
       const shipOffset = planetIndex * supportedShipIds.length * 2;
       const buildingQueue = this.decodePlanetQueueResult(buildingQueueResults[planetIndex] ?? "0x", "building");
-      const defenseQueue = this.decodePlanetQueueResult(defenseQueueResults[planetIndex] ?? "0x", "defense");
-      const defenseBacklog = this.decodeProductionQueueBacklogResult(defenseBacklogResults[planetIndex] ?? "0x", "defense");
-      if (defenseBacklog.length > 0) defenseQueue.backlog = defenseBacklog;
-      const shipQueue = this.decodePlanetQueueResult(shipQueueResults[planetIndex] ?? "0x", "ship");
-      const shipBacklog = this.decodeProductionQueueBacklogResult(shipBacklogResults[planetIndex] ?? "0x", "ship");
-      if (shipBacklog.length > 0) shipQueue.backlog = shipBacklog;
+      const defenseQueue = decodedDefenseQueues[planetIndex]!;
+      const shipQueue = decodedShipQueues[planetIndex]!;
 
       return {
         planetId: planetId.toString(),
@@ -3471,7 +3531,17 @@ export class VeydriftGameReader implements ChainReader {
   private async readPlanetQueue(selector: string, planetId: bigint, kind: "building" | "defense" | "ship"): Promise<QueueState> {
     const queue = this.decodePlanetQueueResult(await this.call(selector, [encodeUint(planetId)]), kind);
 
-    if (!this.hydrateQueueStartedAt || !queue.active) {
+    if (!queue.active) {
+      return queue;
+    }
+
+    if (this.hydrateQueueStartedAt && kind === "defense") {
+      await this.readAndApplyProductionQueueTiming(queue, planetId, true);
+    } else if (this.hydrateQueueStartedAt && kind === "ship") {
+      await this.readAndApplyProductionQueueTiming(queue, planetId, false);
+    }
+
+    if (queue.productionTiming || !this.hydrateQueueStartedAt) {
       return queue;
     }
 
@@ -3484,6 +3554,103 @@ export class VeydriftGameReader implements ChainReader {
     }
 
     return queue;
+  }
+
+  private async readAndApplyProductionQueueTiming(
+    queue: QueueState,
+    planetId: bigint,
+    defense: boolean
+  ): Promise<void> {
+    if (!queue.active || queue.readyAt === null) return;
+    const baseSlot = productionQueueTimingStorageBaseSlot(
+      planetId,
+      BigInt(queue.readyAt),
+      defense
+    );
+    const words = await this.batchStorageAt([baseSlot, baseSlot + 1n, baseSlot + 2n]);
+    this.applyProductionQueueTimingStorage(queue, words, 0);
+  }
+
+  private async batchHydrateProductionQueueTimings(
+    planetIds: bigint[],
+    queues: QueueState[],
+    defense: boolean
+  ): Promise<void> {
+    const entries = planetIds.flatMap((planetId, planetIndex) => {
+      const activeQueue = queues[planetIndex];
+      return [
+        ...(activeQueue ? [activeQueue] : []),
+        ...(activeQueue?.backlog ?? [])
+      ].flatMap((queue) => {
+        if (!queue.active || queue.readyAt === null) return [];
+        return [{ planetId, queue }];
+      });
+    });
+    if (entries.length === 0) return;
+
+    const slots = entries.flatMap(({ planetId, queue }) => {
+      const baseSlot = productionQueueTimingStorageBaseSlot(
+        planetId,
+        BigInt(queue.readyAt!),
+        defense
+      );
+      return [baseSlot, baseSlot + 1n, baseSlot + 2n];
+    });
+    const words = await this.batchStorageAt(slots);
+    entries.forEach(({ queue }, index) => {
+      this.applyProductionQueueTimingStorage(queue, words, index * 3);
+    });
+  }
+
+  private applyProductionQueueTimingStorage(
+    queue: QueueState,
+    words: string[],
+    offset: number
+  ): void {
+    if (!queue.active) return;
+    const packed = decodeStorageWord(words[offset]);
+    const startedAt = packed & ((1n << 64n) - 1n);
+    const originalQuantity = Number((packed >> 64n) & ((1n << 32n) - 1n));
+    const unitWorkSeconds = decodeStorageWord(words[offset + 1]);
+    const rate = decodeStorageWord(words[offset + 2]);
+    if (
+      startedAt === 0n
+      || !Number.isSafeInteger(originalQuantity)
+      || originalQuantity <= 0
+      || rate === 0n
+    ) {
+      return;
+    }
+    queue.startedAt = startedAt.toString();
+    queue.productionTiming = {
+      startedAt: startedAt.toString(),
+      originalQuantity,
+      unitWorkSeconds: unitWorkSeconds.toString(),
+      rate: rate.toString()
+    };
+  }
+
+  private async hydrateProductionQueueBacklogTimings(
+    backlog: QueueState[],
+    planetId: bigint,
+    defense: boolean
+  ): Promise<void> {
+    const entries = backlog.filter(
+      (queue): queue is QueueState & { readyAt: string } =>
+        queue.active && queue.readyAt !== null
+    );
+    const slots = entries.flatMap((queue) => {
+      const baseSlot = productionQueueTimingStorageBaseSlot(
+        planetId,
+        BigInt(queue.readyAt),
+        defense
+      );
+      return [baseSlot, baseSlot + 1n, baseSlot + 2n];
+    });
+    const words = await this.batchStorageAt(slots);
+    entries.forEach((queue, index) => {
+      this.applyProductionQueueTimingStorage(queue, words, index * 3);
+    });
   }
 
   private decodePlanetQueueResult(result: string, kind: "building" | "defense" | "ship"): QueueState {
@@ -3505,6 +3672,13 @@ export class VeydriftGameReader implements ChainReader {
     const queue = await this.readPlanetQueue("0x5758361d", planetId, "defense");
     const backlog = await this.readProductionQueueBacklog("0x4f5ed437", planetId, "defense");
     if (backlog.length > 0) {
+      if (this.hydrateQueueStartedAt) {
+        await this.hydrateProductionQueueBacklogTimings(
+          backlog,
+          planetId,
+          true
+        );
+      }
       queue.backlog = backlog;
     }
     return queue;
@@ -3514,6 +3688,13 @@ export class VeydriftGameReader implements ChainReader {
     const queue = await this.readPlanetQueue("0xb6f4b7b7", planetId, "ship");
     const backlog = await this.readProductionQueueBacklog("0x52b55205", planetId, "ship");
     if (backlog.length > 0) {
+      if (this.hydrateQueueStartedAt) {
+        await this.hydrateProductionQueueBacklogTimings(
+          backlog,
+          planetId,
+          false
+        );
+      }
       queue.backlog = backlog;
     }
     return queue;
@@ -5176,6 +5357,8 @@ const defenseQueuedTopic = "0xc3dcdf6abcac9fc4831745727e78f808922f43da079b984420
 const defenseCompletedTopic = "0xcc99fccb631bf08aef4833c0cbd43ed8d19a40eacce0fe225beff1693a903aa6";
 const shipQueuedTopic = "0x2751e0f30801101b5ffa9787644ace0da334023e4c4376f1133f5608ec9e1118";
 const shipCompletedTopic = "0xd261dd8008086de5ef74708b23f5f21be1962fee33795961e03a5750c4897785";
+const shipQueueTimingSetTopic = "0x241c6a6ecff5bf5d31df2871e9d836b18f8380508d2c5514ae9532687886d6ef";
+const defenseQueueTimingSetTopic = "0xcdf898af8ba3659ffa369d372a1cacd237f74927074397a0ae531a4b60ed078e";
 const researchQueuedTopic = "0x2c3d4c823cd097fa6cbea60fb91c561d6a497270c397a8c8258170458fe69e73";
 const researchCompletedTopic = "0x93dffeb1ed0a05133592cf6d82b9a200c2ac72b521497b81cef83ac57cb84b4f";
 const debrisFieldUpdatedTopic = "0x49f79a15c2a0409be62598b886efd90e25154bb9156b4bd64df41fd515aa4909";
@@ -5253,6 +5436,8 @@ const eventNamesByTopic = new Map<string, string>([
   [defenseCompletedTopic, "DefenseCompleted"],
   [shipQueuedTopic, "ShipQueued"],
   [shipCompletedTopic, "ShipCompleted"],
+  [shipQueueTimingSetTopic, "ShipQueueTimingSet"],
+  [defenseQueueTimingSetTopic, "DefenseQueueTimingSet"],
   [researchQueuedTopic, "ResearchQueued"],
   [researchCompletedTopic, "ResearchCompleted"],
   [debrisFieldUpdatedTopic, "DebrisFieldUpdated"],
@@ -5494,6 +5679,11 @@ export function isIndexedQueueCompletedLog(log: RpcLog): boolean {
     || topic === researchCompletedTopic
     || topic === moonBuildingCompletedTopic
     || topic === moonDefenseCompletedTopic;
+}
+
+export function isProductionQueueTimingLog(log: RpcLog): boolean {
+  const topic = topicAt(log.topics, 0);
+  return topic === shipQueueTimingSetTopic || topic === defenseQueueTimingSetTopic;
 }
 
 export function isMoonCreatedLog(log: RpcLog): boolean {
@@ -5907,6 +6097,26 @@ export function decodeIndexedQueueStartedLog(log: RpcLog): IndexedQueueStartedEv
     planetId,
     itemId,
     quantity: Number(decodeUintWord(wordAt(words, 0)))
+  };
+}
+
+export function decodeProductionQueueTimingLog(log: RpcLog): IndexedProductionQueueTimingEvent {
+  const topic = topicAt(log.topics, 0);
+  const words = splitWords(log.data);
+  const queueKind = topic === defenseQueueTimingSetTopic ? "defense" : "ship";
+
+  return {
+    eventName: queueKind === "defense" ? "DefenseQueueTimingSet" : "ShipQueueTimingSet",
+    transactionHash: log.transactionHash,
+    blockNumber: BigInt(log.blockNumber).toString(),
+    queueKind,
+    planetId: decodeUint(topicAt(log.topics, 1)).toString(),
+    itemId: Number(decodeUint(topicAt(log.topics, 2))),
+    readyAt: decodeUint(topicAt(log.topics, 3)).toString(),
+    startedAt: decodeUintWord(wordAt(words, 0)).toString(),
+    originalQuantity: Number(decodeUintWord(wordAt(words, 1))),
+    unitWorkSeconds: decodeUintWord(wordAt(words, 2)).toString(),
+    rate: decodeUintWord(wordAt(words, 3)).toString()
   };
 }
 
@@ -6338,6 +6548,29 @@ function toQuantity(value: bigint): string {
 
 // VeydriftGameStorage layout: `_fleetMissions` follows `_fleets` at slot 24.
 const fleetMissionsStorageSlot = 24n;
+const shipQueueTimingsStorageSlot = 53n;
+const defenseQueueTimingsStorageSlot = 54n;
+
+function productionQueueTimingStorageBaseSlot(
+  planetId: bigint,
+  readyAt: bigint,
+  defense: boolean
+): bigint {
+  const outerSlot = BigInt(keccak256(encodeAbiParameters(
+    [
+      { type: "uint256" },
+      { type: "uint256" }
+    ],
+    [planetId, defense ? defenseQueueTimingsStorageSlot : shipQueueTimingsStorageSlot]
+  )));
+  return BigInt(keccak256(encodeAbiParameters(
+    [
+      { type: "uint256" },
+      { type: "uint256" }
+    ],
+    [readyAt, outerSlot]
+  )));
+}
 
 function fleetMissionStorageBaseSlot(missionId: bigint): bigint {
   return BigInt(keccak256(encodeAbiParameters(
@@ -6425,6 +6658,10 @@ function topicAt(topics: string[], index: number): string {
 
 function decodeUint(hex: string): bigint {
   return BigInt(hex);
+}
+
+function decodeStorageWord(hex: string | undefined): bigint {
+  return !hex || hex === "0x" ? 0n : BigInt(hex);
 }
 
 function decodeUintWord(word: string): bigint {
