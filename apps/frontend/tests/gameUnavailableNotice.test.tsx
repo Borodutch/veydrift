@@ -7,8 +7,19 @@ import {
   isGameUnavailableMessage,
 } from "../src/components/GameUnavailableNotice";
 import { serverUnavailableRetryMessage } from "../src/gameUnavailable";
+import { InlineStateNotice } from "../src/components/InlineStateNotice";
 
 describe("shared game unavailable notice", () => {
+  test("uses a quiet inline treatment for ordinary state and an alert role only for blocking errors", () => {
+    const quiet = InlineStateNotice({ children: "Showing cached data", title: "Refresh delayed" });
+    const blocking = InlineStateNotice({ blocking: true, children: "Retry", title: "Unavailable", tone: "error" });
+
+    expect(quiet.props?.role).toBe("status");
+    expect(quiet.props?.className).toContain("border-l-2");
+    expect(quiet.props?.className).not.toMatch(/\brounded\b|\bbg-/);
+    expect(blocking.props?.role).toBe("alert");
+  });
+
   test("renders player-facing outage copy without diagnostics", () => {
     const notice = GameUnavailableNotice({});
     const text = visibleText(notice);

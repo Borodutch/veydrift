@@ -83,9 +83,7 @@ describe("MissionControlPage", () => {
     }]);
   });
 
-  // VEY-KANEO-424: recall is only valid more than the 60s contract cutoff before arrival. Inside that
-  // window the fleet is still Outbound and not yet due, so the Recall button is offered but disabled.
-  test("disables Recall once an outbound fleet is within the 60s recall cutoff", () => {
+  test("hides Recall once an outbound fleet is within the 60s recall cutoff", () => {
     const now = 1_770_000_100_000;
 
     // 200s before arrival: comfortably outside the cutoff, so recall is enabled.
@@ -96,15 +94,37 @@ describe("MissionControlPage", () => {
       now,
     }).find((action) => action.kind === "recall")?.enabled).toBe(true);
 
-    // 30s before arrival: inside the 60s cutoff. The button is still present (not yet due) but disabled.
+    // 30s before arrival: inside the 60s cutoff, so the dead-end action and cutoff warning are absent.
     const recall = missionLifecycleActions({
       canTransact: true,
       context: "outgoing",
       mission: mission({ arrivalAt: "1770000130", missionId: "2", status: "Outbound" }),
       now,
     }).find((action) => action.kind === "recall");
-    expect(recall?.enabled).toBe(false);
-    expect(recall?.reason).toContain("recall cutoff");
+    expect(recall).toBeUndefined();
+  });
+
+  test("renders an expired-recall mission card without the dead-end action or cutoff warning", () => {
+    const now = 1_770_000_100_000;
+    const page = missionControlPage({
+      fleetVisibility: {
+        wallet: "0x1111111111111111111111111111111111111111",
+        homePlanetId: "7",
+        incoming: [],
+        outgoing: [mission({ arrivalAt: "1770000130", missionId: "759", status: "Outbound" })],
+        returning: [],
+        joinableAttacks: [],
+        completedMissions: [],
+        battleReports: [],
+      },
+      now,
+    });
+    const text = visibleText(page);
+
+    expect(text).toContain("Attack #759");
+    expect(text).toContain("Open");
+    expect(text).not.toContain("Recall fleet");
+    expect(text).not.toContain("recall cutoff");
   });
 
   // VEY-KANEO-456: the Stationed defenses panel must show, per stationed allied defender, which player
@@ -438,6 +458,7 @@ describe("MissionControlPage", () => {
         homePlanetId: "7",
         incoming: [],
         outgoing: [mission({
+          arrivalAt: "1770001000",
           missionId: "77",
           owner: "0x1111111111111111111111111111111111111111",
           originPlanetId: "7",

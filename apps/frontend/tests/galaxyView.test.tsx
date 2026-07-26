@@ -1,10 +1,25 @@
 import { describe, expect, test } from "bun:test";
 import { galaxyActionsForSlot } from "../src/galaxyActions";
-import { galaxyMoonActionsForSlot } from "../src/components/GalaxyView";
+import { galaxyLoadErrorPresentation, galaxyMoonActionsForSlot } from "../src/components/GalaxyView";
 import type { Planet } from "../src/types";
 import type { ChainShipyardState } from "../src/walletFlow";
 
 describe("GalaxyView moon actions", () => {
+  test("distinguishes calm stale data from a blocking initial load without exposing raw errors", () => {
+    const rawError = "RPC HTTP 503 from internal-provider.example";
+
+    expect(galaxyLoadErrorPresentation({ hasCurrentSystemData: true, loadError: rawError })).toEqual({
+      blocking: false,
+      message: "Showing the last loaded system rows. Refresh to try again.",
+      title: "Galaxy refresh delayed",
+    });
+    expect(galaxyLoadErrorPresentation({ hasCurrentSystemData: false, loadError: rawError })).toEqual({
+      blocking: true,
+      message: "Retry to load this system.",
+      title: "Galaxy system unavailable",
+    });
+  });
+
   test("builds concise moon-targeted action rows for galaxy moons", () => {
     const wallet = "0x2222222222222222222222222222222222222222";
     const enemy = "0x3333333333333333333333333333333333333333";
