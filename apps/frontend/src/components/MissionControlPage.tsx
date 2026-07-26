@@ -702,20 +702,15 @@ export function missionLifecycleActions({
   // former manual "Resolve" order is removed; arrived rows are read-only until settled.
 
   if (context === "outgoing" && mission.status === "Outbound") {
-    // Recall is only valid more than the 60s cutoff before arrival; inside that window the contract
-    // reverts, so the button is shown but disabled with a clear reason rather than offering a tx that
-    // would fail (VEY-KANEO-424).
+    // Recall is only useful while the contract still accepts it. Once the cutoff closes, omit the
+    // dead-end control entirely; the mission card's remaining lifecycle state is enough explanation.
     const recallable = isFleetRecallable(mission, now);
-    if (!(mission.missionType === "Deploy" && mission.targetIsMoon === true && due)) {
+    if (recallable && !(mission.missionType === "Deploy" && mission.targetIsMoon === true && due)) {
       actions.push({
-        enabled: canTransact && recallable,
+        enabled: canTransact,
         kind: "recall",
         label: "Recall fleet",
-        reason: recallable
-          ? walletReason(canTransact, transactionUnavailableReason)
-          : mission.missionType === "DefenseHold"
-            ? "The stationed defense hold has ended."
-            : "The recall cutoff has passed (within 60s of arrival).",
+        reason: walletReason(canTransact, transactionUnavailableReason),
       });
     }
   }

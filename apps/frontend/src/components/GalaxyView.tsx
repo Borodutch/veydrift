@@ -38,6 +38,7 @@ import {
 import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
 import { InlineSyncIndicator } from "./VeydriftLoader";
 import { GalaxyRowsSkeleton } from "./LoadingSkeletons";
+import { InlineStateNotice } from "./InlineStateNotice";
 import { WatchablePlanetRow, type PlanetMetaItem } from "./WatchablePlanetRow";
 
 const SMALL_CARGO_SHIP_ID = 0;
@@ -338,6 +339,7 @@ export function GalaxyView({
   const showInitialGalaxyLoader = shouldShowGalaxyInitialLoader({ hasCurrentSystemData, loading });
   const showGalaxyRows = shouldShowGalaxyRows({ hasCurrentSystemData });
   const showInitialLoadError = Boolean(loadError && !hasCurrentSystemData && !loading);
+  const loadErrorPresentation = galaxyLoadErrorPresentation({ hasCurrentSystemData, loadError });
 
   return (
     <div className="grid gap-4">
@@ -416,20 +418,18 @@ export function GalaxyView({
           ) : null}
         </div>
         {actionState.status !== "idle" ? (
-          <div className={`notice-enter rounded border px-3 py-2 text-xs ${
-            actionState.status === "error"
-              ? "border-red-300/30 bg-red-500/10 text-red-100"
-              : actionState.status === "success"
-                ? "border-emerald-300/30 bg-emerald-400/10 text-emerald-100"
-                : "border-signal/25 bg-signal/10 text-signal"
-          }`}>
+          <InlineStateNotice
+            blocking={actionState.status === "error"}
+            className="notice-enter text-xs"
+            tone={actionState.status === "error" ? "error" : actionState.status === "success" ? "success" : "info"}
+          >
             {actionState.label}
-          </div>
+          </InlineStateNotice>
         ) : null}
         {transactionUnavailableReason ? (
-          <div className="rounded border border-amber-300/20 bg-amber-300/10 px-3 py-2 text-xs text-amber-100">
+          <InlineStateNotice className="text-xs" title="Actions temporarily paused">
             {transactionUnavailableReason}
-          </div>
+          </InlineStateNotice>
         ) : null}
 
         <div className="grid gap-1.5">
@@ -437,26 +437,26 @@ export function GalaxyView({
           {loading && hasCurrentSystemData ? <InlineSyncIndicator label="Refreshing galaxy" /> : null}
 
           {showInitialLoadError ? (
-            <div className="rounded border border-rose-300/20 bg-rose-300/5 px-3 py-4 text-sm text-rose-100">
-              <p className="font-semibold">Galaxy system could not be loaded.</p>
-              <p className="mt-1 text-rose-100/80">{loadError}</p>
+            <InlineStateNotice
+              blocking={loadErrorPresentation?.blocking}
+              title={loadErrorPresentation?.title}
+              tone="error"
+            >
+              <p>{loadErrorPresentation?.message}</p>
               <button
-                className="mt-3 h-11 rounded border border-rose-200/30 bg-rose-200/10 px-3 text-xs font-semibold text-rose-100 transition hover:bg-rose-200/20 sm:h-9"
+                className="mt-2 h-9 rounded border border-white/15 px-3 text-xs font-semibold text-slate-200 transition hover:border-white/25 hover:text-white"
                 onClick={() => setReloadNonce((value) => value + 1)}
                 type="button"
               >
                 Retry system load
               </button>
-            </div>
+            </InlineStateNotice>
           ) : null}
 
           {loadError && hasCurrentSystemData ? (
-            <div className="rounded border border-amber-300/20 bg-amber-300/10 px-3 py-2 text-sm text-amber-100">
-              <p className="font-semibold">Galaxy refresh failed.</p>
-              <p className="mt-1 text-amber-100/80">
-                Showing the last loaded system rows. {loadError}
-              </p>
-            </div>
+            <InlineStateNotice title={loadErrorPresentation?.title}>
+              {loadErrorPresentation?.message}
+            </InlineStateNotice>
           ) : null}
 
           {showGalaxyRows &&
@@ -641,6 +641,27 @@ export function shouldShowGalaxyRows({
   hasCurrentSystemData: boolean;
 }): boolean {
   return hasCurrentSystemData;
+}
+
+export function galaxyLoadErrorPresentation({
+  hasCurrentSystemData,
+  loadError,
+}: {
+  hasCurrentSystemData: boolean;
+  loadError: string | undefined;
+}): { blocking: boolean; message: string; title: string } | null {
+  if (!loadError) return null;
+  return hasCurrentSystemData
+    ? {
+        blocking: false,
+        message: "Showing the last loaded system rows. Refresh to try again.",
+        title: "Galaxy refresh delayed",
+      }
+    : {
+        blocking: true,
+        message: "Retry to load this system.",
+        title: "Galaxy system unavailable",
+      };
 }
 
 export function systemLoadErrorLabel(error: unknown): string {

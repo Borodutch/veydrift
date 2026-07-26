@@ -6,6 +6,7 @@ import {
   primaryRankingEntries,
   rankingsColumnLabels,
   rankingsCurrentPlayerRowSelector,
+  rankingsErrorPresentation,
   rankingsPageSize,
   rankingsPaginationLabel,
   rankingsRefreshButtonState,
@@ -22,6 +23,25 @@ import { activeMissionsByPlanetId } from "../src/planetMissionSubtext";
 import type { FleetMissionSummary, HighscoreEntry, HighscoreResponse } from "../src/walletFlow";
 
 describe("RankingsPage", () => {
+  test("uses calm stale-state copy and actionable blocking copy without raw errors", () => {
+    expect(rankingsErrorPresentation({
+      error: "RPC HTTP 429 from internal-provider.example",
+      hasLoadedData: true,
+    })).toEqual({
+      blocking: false,
+      message: "Showing the latest loaded rankings. Refresh to try again.",
+      title: "Rankings refresh delayed",
+    });
+    expect(rankingsErrorPresentation({
+      error: "RPC HTTP 429 from internal-provider.example",
+      hasLoadedData: false,
+    })).toEqual({
+      blocking: true,
+      message: "Refresh to try again. If the problem continues, check back shortly.",
+      title: "Rankings unavailable",
+    });
+  });
+
   test("uses one ranking table with the active category score and total context", () => {
     expect([...rankingsColumnLabels]).toEqual(["Rank", "Commander", "Score"]);
   });

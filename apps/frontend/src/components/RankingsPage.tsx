@@ -13,6 +13,7 @@ import { PlanetMissionLines } from "./PlanetMissionLines";
 import { RankingsRowsSkeleton } from "./LoadingSkeletons";
 import { AfkFlair } from "./AfkFlair";
 import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailableNotice";
+import { InlineStateNotice } from "./InlineStateNotice";
 import { rankingsProtectionPresentation } from "../rankingsAttackProtection";
 
 type RankingsPageProps = {
@@ -76,6 +77,28 @@ export function rankingsCurrentPlayerRowSelector(currentWallet: string): string 
   return `[data-ranking-wallet="${currentWallet.toLowerCase()}"]`;
 }
 
+export function rankingsErrorPresentation({
+  error,
+  hasLoadedData,
+}: {
+  error: string | undefined;
+  hasLoadedData: boolean;
+}): { blocking: boolean; message: string; title: string } | null {
+  if (!error) return null;
+  if (hasLoadedData) {
+    return {
+      blocking: false,
+      message: "Showing the latest loaded rankings. Refresh to try again.",
+      title: "Rankings refresh delayed",
+    };
+  }
+  return {
+    blocking: true,
+    message: "Refresh to try again. If the problem continues, check back shortly.",
+    title: "Rankings unavailable",
+  };
+}
+
 export function scrollRankingsCurrentPlayerRow(
   container: { querySelector: (selectors: string) => { focus?: (options?: FocusOptions) => void; scrollIntoView?: (options?: ScrollIntoViewOptions) => void } | null } | null | undefined,
   currentWallet: string | undefined,
@@ -128,6 +151,7 @@ export function RankingsPage({ activeMissions, apiBaseUrl, currentAllianceId, cu
 
   const missionsByPlanetId = useMemo(() => activeMissionsByPlanetId(activeMissions ?? []), [activeMissions]);
   const nowMs = now ?? Date.now();
+  const errorPresentation = rankingsErrorPresentation({ error, hasLoadedData: Boolean(data) });
   const entries = data?.rankings[active] ?? [];
   const pagination = data?.pagination ?? null;
   const currentPlayerPage = data?.currentPlayer?.rankings[active] ?? null;
@@ -173,13 +197,17 @@ export function RankingsPage({ activeMissions, apiBaseUrl, currentAllianceId, cu
         onCurrentPlayer={handleCurrentPlayerJump}
       />
 
-      {error ? (
-        isGameUnavailableMessage(error) ? (
+      {errorPresentation ? (
+        errorPresentation.blocking && isGameUnavailableMessage(error) ? (
           <GameUnavailableNotice />
         ) : (
-          <div className="rounded border border-amber-300/20 bg-amber-300/10 p-3 text-sm text-amber-100">
-            {error}
-          </div>
+          <InlineStateNotice
+            blocking={errorPresentation.blocking}
+            title={errorPresentation.title}
+            tone={errorPresentation.blocking ? "error" : "neutral"}
+          >
+            {errorPresentation.message}
+          </InlineStateNotice>
         )
       ) : null}
 
