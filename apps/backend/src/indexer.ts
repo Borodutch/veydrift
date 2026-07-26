@@ -9033,12 +9033,18 @@ export class SettlementIndexer {
         logIndex += 1;
       }
 
-      const snapshot = currentByPlanet.get(unitCountSnapshotKey(report.targetPlanetId, report.targetIsMoon === true));
-      if (!snapshot) continue;
       const transactionLogs = logs.filter((log) => (
         sameRpcTransaction(log, report)
         && compareRpcLogPosition(log, report) < 0
       ));
+      const historicalSnapshot = currentByPlanet.get(
+        unitCountSnapshotKey(report.targetPlanetId, report.targetIsMoon === true)
+      );
+      const snapshot = historicalSnapshot
+        ?? (battleReportProvesEmptyDefender(report, transactionLogs)
+          ? { fleet: new Map<number, number>(), defenses: new Map<number, number>() }
+          : null);
+      if (!snapshot) continue;
       states.set(
         report.missionId,
         materializeBattleTimeDefenderState(snapshot, transactionLogs, report)
@@ -10314,6 +10320,22 @@ function materializeBattleReportDefenderSnapshot(snapshot: UnitCountSnapshot | u
     fleet: unitCountRows(snapshot.fleet),
     defenses: unitCountRows(snapshot.defenses)
   };
+}
+
+function battleReportProvesEmptyDefender(
+  report: BattleReport,
+  transactionLogs: readonly IndexedRpcLog[]
+): boolean {
+  // _runBattle exits before round one when either side has no combat units. An AttackerWin
+  // disambiguates that zero-round outcome: the attacker was non-empty and the defender snapshot
+  // was empty. Target count changes in the resolution transaction still make the historical
+  // composition unknown (for example, cleanup of Crawler/Solar Satellite support ships), so only
+  // synthesize an empty snapshot when the transaction contains no such evidence.
+  return report.outcome === "AttackerWin"
+    && report.rounds === 0
+    && report.roundReports.length === 0
+    && isZeroResources(report.defenderLosses)
+    && !transactionLogs.some((log) => battleUnitCountChange(log, report) !== null);
 }
 
 function materializeBattleTimeDefenderState(
