@@ -485,6 +485,37 @@ function MissionBattleReport({
   const battleTimeDefenseUnits = compositionUnits(report.defenderSnapshot?.defenses, defenseCatalog, defenseAssetByKey);
   const stationedDefenders = report.stationedDefenders ?? defenderState?.stationedDefenders ?? [];
   const battleTimeDefenderUnits = report.roundReports[0]?.defenderUnits ?? null;
+  const defenderLosses = report.defenderLossBreakdown;
+  const planetFleetDestroyedUnits = lossCompositionUnits(
+    defenderLosses?.planetFleet.units,
+    "destroyed",
+    shipCatalog,
+    shipAssetByKey
+  );
+  const staticDefenseDestroyedUnits = lossCompositionUnits(
+    defenderLosses?.staticDefenses.units,
+    "destroyed",
+    defenseCatalog,
+    defenseAssetByKey
+  );
+  const staticDefenseRestoredUnits = lossCompositionUnits(
+    defenderLosses?.staticDefenses.units,
+    "restored",
+    defenseCatalog,
+    defenseAssetByKey
+  );
+  const staticDefenseNetLostUnits = lossCompositionUnits(
+    defenderLosses?.staticDefenses.units,
+    "netLost",
+    defenseCatalog,
+    defenseAssetByKey
+  );
+  const staticDefenseRemainingUnits = lossCompositionUnits(
+    defenderLosses?.staticDefenses.units,
+    "remaining",
+    defenseCatalog,
+    defenseAssetByKey
+  );
 
   return (
     <section className="rounded-lg border border-white/10 bg-[#101624] p-4">
@@ -516,7 +547,26 @@ function MissionBattleReport({
           <Row label={isGroupedAttack ? "Loot grabbed (total)" : "Loot grabbed"} value={formatResources(totalLoot)} />
         </Panel>
         <Panel title="Defender">
-          <Row label="Fleet losses" value={formatResources(report.defenderLosses)} />
+          <Row label="Fleet losses (total)" value={formatResources(report.defenderLosses)} />
+          {defenderLosses ? (
+            <>
+              <Row label="Planet fleet destroyed" value={<UnitIcons units={planetFleetDestroyedUnits} />} />
+              <Row label="Planet fleet loss value" value={formatResources(defenderLosses.planetFleet.destroyedResources)} />
+              <Row
+                label="Stationed fleet loss value"
+                value={defenderLosses.stationedFleet.destroyedResources
+                  ? formatResources(defenderLosses.stationedFleet.destroyedResources)
+                  : "Could not be reconciled from the historical fleet-loss event."}
+              />
+              <Row label="Static defenses destroyed" value={<UnitIcons units={staticDefenseDestroyedUnits} />} />
+              <Row label="Static defense destroyed value" value={formatResources(defenderLosses.staticDefenses.destroyedResources)} />
+              <Row label="Static defenses restored" value={<UnitIcons units={staticDefenseRestoredUnits} />} />
+              <Row label="Static defense restored value" value={formatResources(defenderLosses.staticDefenses.restoredResources)} />
+              <Row label="Static defenses net lost" value={<UnitIcons units={staticDefenseNetLostUnits} />} />
+              <Row label="Static defense net loss value" value={formatResources(defenderLosses.staticDefenses.netLostResources)} />
+              <Row label="Static defenses remaining" value={<UnitIcons units={staticDefenseRemainingUnits} />} />
+            </>
+          ) : null}
           {report.defenderSnapshot ? (
             <>
               <Row label="Battle-time fleet" value={<UnitIcons units={battleTimeFleetUnits} />} />
@@ -571,7 +621,7 @@ function MissionBattleReport({
         <Panel title="Debris Field">
           <Row label="Debris created" value={`${formatResource(report.debris.metal)} metal / ${formatResource(report.debris.crystal)} crystal`} />
           <Row
-            label="Defender loss basis"
+            label="Defender fleet debris basis"
             value={`${formatResource(report.defenderLosses.metal)} metal / ${formatResource(report.defenderLosses.crystal)} crystal fleet loss → ${formatResource(report.debris.metal)} metal / ${formatResource(report.debris.crystal)} crystal debris (30%)`}
           />
           <Row label="Recyclers needed" value={recyclersNeeded > 0 ? `~${formatResource(String(recyclersNeeded))} (20,000 cargo each)` : "None"} />
@@ -994,6 +1044,19 @@ function compositionUnits(
         asset: item ? assetByKey[item.key] : undefined,
       };
     });
+}
+
+function lossCompositionUnits(
+  rows: Array<{ id: number; destroyed: number; restored: number; netLost: number; remaining: number }> | undefined,
+  countKey: "destroyed" | "restored" | "netLost" | "remaining",
+  catalog: readonly { id: number; key: string; label: string }[],
+  assetByKey: Record<string, string>
+): UnitItem[] {
+  return compositionUnits(
+    rows?.map((row) => ({ id: row.id, count: row[countKey] })),
+    catalog,
+    assetByKey
+  );
 }
 
 function TacticalUnitIcons({

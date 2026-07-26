@@ -326,6 +326,42 @@ describe("SettlementIndexer", () => {
     `).get(eventId)).toEqual({ event_kind: "fleet", block_number: "112" });
   });
 
+  test("queues only canonical legacy battle reports for defender-loss backfill on reader startup", () => {
+    const database = new Database(":memory:");
+    const reader = {
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    };
+    new SettlementIndexer(reader, 100n, { database, runStartupBackfill: false });
+    const reportJson = JSON.stringify({
+      missionId: "42",
+      defenderLosses: { metal: "0", crystal: "0", deuterium: "0" }
+    });
+    const insert = database.query(`
+      INSERT INTO indexed_battle_report_read_models (
+        mission_id, status, report_json, error, attempts, duration_ms, block_number, updated_at
+      )
+      VALUES (?, 'ready', ?, NULL, 1, 1, '100', ?)
+    `);
+    const now = new Date().toISOString();
+    insert.run("42", reportJson, now);
+    insert.run("43", reportJson, now);
+    database.query("DELETE FROM indexer_metadata WHERE key = 'defenderLossBreakdownBackfillV1'").run();
+
+    new SettlementIndexer(reader, 100n, { database, runStartupBackfill: false });
+
+    expect(database.query(`
+      SELECT mission_id, status
+      FROM indexed_battle_report_read_models
+      ORDER BY mission_id
+    `).all()).toEqual([
+      { mission_id: "42", status: "pending" },
+      { mission_id: "43", status: "ready" }
+    ]);
+    database.close();
+  });
+
   test("indexes canonical referral claim, payout, credit, and reward-claim events", () => {
     const invitee = "0x3333333333333333333333333333333333333333" as Address;
     const code = "custom_code";
@@ -6651,9 +6687,260 @@ describe("SettlementIndexer", () => {
     });
 
     indexer.materializeBattleReportReadModelsForWorker(["5678"], "ingest");
-    expect(indexer.battleReport("5678")?.defenderSnapshot).toEqual({
+    expect(indexer.battleReport("5678")).toMatchObject({
+      defenderSnapshot: {
+        fleet: [],
+        defenses: []
+      },
+      defenderLossBreakdown: {
+        planetFleet: {
+          units: [],
+          destroyedResources: { metal: "0", crystal: "0", deuterium: "0" }
+        },
+        stationedFleet: {
+          destroyedResources: { metal: "0", crystal: "0", deuterium: "0" }
+        },
+        staticDefenses: {
+          units: [],
+          destroyedResources: { metal: "0", crystal: "0", deuterium: "0" },
+          restoredResources: { metal: "0", crystal: "0", deuterium: "0" },
+          netLostResources: { metal: "0", crystal: "0", deuterium: "0" }
+        },
+        fleetLossesReconciled: true
+      }
+    });
+  });
+
+  test("materializes destroyed, restored, and net static-defense losses from the battle transaction", async () => {
+    const chainReader = {
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return [planet]; }
+    };
+    const indexer = new SettlementIndexer(chainReader, 100n);
+    await indexer.rebuild();
+    indexer.applyLog({
+      blockNumber: "0x70",
+      transactionHash: "0xlaunch5682",
+      logIndex: "0x0",
+      topics: [fleetMissionLaunchedTopic, topic(5682n), addressTopic(player), topic(3n)],
+      data: abiWords(7n, 8n, 1770001200n, 1770002400n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x70",
+      transactionHash: "0xlaunch5682",
+      logIndex: "0x1",
+      topics: [fleetMissionCargoTopic, topic(5682n)],
+      data: abiWords(0n, 0n, 0n, 4n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x70",
+      transactionHash: "0xlaunch5682",
+      logIndex: "0x2",
+      topics: [fleetMissionShipsTopic, topic(5682n)],
+      data: abiWords(3n, ...Array.from({ length: 13 }, () => 0n))
+    });
+    indexer.applyLog({
+      blockNumber: "0x7f",
+      transactionHash: "0xdefenses-before-5682",
+      logIndex: "0x0",
+      topics: [planetDefenseCountChangedTopic, topic(8n), topic(0n)],
+      data: abiWords(4n)
+    });
+    for (const [logIndex, total] of [2n, 1n, 0n, 2n].entries()) {
+      indexer.applyLog({
+        blockNumber: "0x80",
+        transactionHash: "0xresolve5682",
+        logIndex: `0x${logIndex.toString(16)}`,
+        topics: [planetDefenseCountChangedTopic, topic(8n), topic(0n)],
+        data: abiWords(total)
+      });
+    }
+    indexer.applyLog({
+      blockNumber: "0x80",
+      transactionHash: "0xresolve5682",
+      logIndex: "0x4",
+      topics: [attackBattleResolvedTopic, topic(5682n), addressTopic(player), topic(8n)],
+      data: abiWords(1n, 3n, 12345n, 2430n, 1364n, 375n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x80",
+      transactionHash: "0xresolve5682",
+      logIndex: "0x5",
+      topics: [combatLossesTopic, topic(5682n)],
+      data: abiWords(0n, 0n, 0n, 0n, 0n, 0n)
+    });
+
+    indexer.materializeBattleReportReadModelsForWorker(["5682"], "ingest");
+    expect(indexer.battleReport("5682")).toMatchObject({
+      defenderSnapshot: {
+        fleet: [],
+        defenses: [{ id: 0, count: 4 }]
+      },
+      defenderLosses: { metal: "0", crystal: "0", deuterium: "0" },
+      defenderLossBreakdown: {
+        planetFleet: {
+          units: [],
+          destroyedResources: { metal: "0", crystal: "0", deuterium: "0" }
+        },
+        stationedFleet: {
+          destroyedResources: { metal: "0", crystal: "0", deuterium: "0" }
+        },
+        staticDefenses: {
+          units: [{
+            id: 0,
+            destroyed: 4,
+            restored: 2,
+            netLost: 2,
+            remaining: 2
+          }],
+          destroyedResources: { metal: "8000", crystal: "0", deuterium: "0" },
+          restoredResources: { metal: "4000", crystal: "0", deuterium: "0" },
+          netLostResources: { metal: "4000", crystal: "0", deuterium: "0" }
+        },
+        fleetLossesReconciled: true
+      }
+    });
+  });
+
+  test("battle reports keep defender snapshots when all defenders die in the battle transaction", async () => {
+    const chainReader = {
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return [planet]; }
+    };
+    const indexer = new SettlementIndexer(chainReader, 100n);
+    await indexer.rebuild();
+    indexer.applyLog({
+      blockNumber: "0x70",
+      transactionHash: "0xlaunch5680",
+      logIndex: "0x0",
+      topics: [fleetMissionLaunchedTopic, topic(5680n), addressTopic(player), topic(3n)],
+      data: abiWords(7n, 8n, 1770001200n, 1770002400n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x70",
+      transactionHash: "0xlaunch5680",
+      logIndex: "0x1",
+      topics: [fleetMissionCargoTopic, topic(5680n)],
+      data: abiWords(0n, 0n, 0n, 4n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x70",
+      transactionHash: "0xlaunch5680",
+      logIndex: "0x2",
+      topics: [fleetMissionShipsTopic, topic(5680n)],
+      data: abiWords(3n, ...Array.from({ length: 13 }, () => 0n))
+    });
+    indexer.applyLog({
+      blockNumber: "0x7f",
+      transactionHash: "0xdefender-before-battle",
+      logIndex: "0x0",
+      topics: [planetDefenseCountChangedTopic, topic(8n), topic(0n)],
+      data: abiWords(37n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x80",
+      transactionHash: "0xresolve5680",
+      logIndex: "0x0",
+      topics: [planetDefenseCountChangedTopic, topic(8n), topic(0n)],
+      data: abiWords(0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x80",
+      transactionHash: "0xresolve5680",
+      logIndex: "0x1",
+      topics: [attackBattleResolvedTopic, topic(5680n), addressTopic(player), topic(8n)],
+      data: abiWords(1n, 37n, 12345n, 2430n, 1364n, 375n)
+    });
+
+    indexer.materializeBattleReportReadModelsForWorker(["5680"], "ingest");
+    expect(indexer.battleReport("5680")).toMatchObject({
+      defenderSnapshot: {
+        fleet: [],
+        defenses: [{ id: 0, count: 37 }]
+      },
+      defenderLossBreakdown: {
+        staticDefenses: {
+          units: [{
+            id: 0,
+            destroyed: 37,
+            restored: 0,
+            netLost: 37,
+            remaining: 0
+          }],
+          destroyedResources: { metal: "74000", crystal: "0", deuterium: "0" },
+          restoredResources: { metal: "0", crystal: "0", deuterium: "0" },
+          netLostResources: { metal: "74000", crystal: "0", deuterium: "0" }
+        }
+      }
+    });
+  });
+
+  test("mission report reads reuse persisted defender snapshots instead of rebuilding them", async () => {
+    const chainReader = {
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return [planet]; }
+    };
+    const indexer = new SettlementIndexer(chainReader, 100n);
+    await indexer.rebuild();
+    indexer.applyLog({
+      blockNumber: "0x70",
+      transactionHash: "0xlaunch5681",
+      logIndex: "0x0",
+      topics: [fleetMissionLaunchedTopic, topic(5681n), addressTopic(player), topic(3n)],
+      data: abiWords(7n, 8n, 1770001200n, 1770002400n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x70",
+      transactionHash: "0xlaunch5681",
+      logIndex: "0x1",
+      topics: [fleetMissionCargoTopic, topic(5681n)],
+      data: abiWords(0n, 0n, 0n, 4n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x70",
+      transactionHash: "0xlaunch5681",
+      logIndex: "0x2",
+      topics: [fleetMissionShipsTopic, topic(5681n)],
+      data: abiWords(3n, ...Array.from({ length: 13 }, () => 0n))
+    });
+    indexer.applyLog({
+      blockNumber: "0x7f",
+      transactionHash: "0xpersisted-defender-before-battle",
+      logIndex: "0x0",
+      topics: [planetDefenseCountChangedTopic, topic(8n), topic(0n)],
+      data: abiWords(11n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x80",
+      transactionHash: "0xresolve5681",
+      logIndex: "0x0",
+      topics: [planetDefenseCountChangedTopic, topic(8n), topic(0n)],
+      data: abiWords(0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x80",
+      transactionHash: "0xresolve5681",
+      logIndex: "0x1",
+      topics: [attackBattleResolvedTopic, topic(5681n), addressTopic(player), topic(8n)],
+      data: abiWords(1n, 11n, 12345n, 2430n, 1364n, 375n)
+    });
+    (indexer as unknown as { indexedFleetMissionReferenceIndex: () => never }).indexedFleetMissionReferenceIndex = () => {
+      throw new Error("single-mission report reads must not build the full mission reference index");
+    };
+
+    expect(indexer.fleetMission("5681")).toMatchObject({ missionId: "5681" });
+    indexer.materializeBattleReportReadModelsForWorker(["5681"], "ingest");
+
+    (indexer as unknown as { battleTimeDefenderStates: () => never }).battleTimeDefenderStates = () => {
+      throw new Error("mission detail must not rebuild defender snapshots after materialization");
+    };
+
+    expect(indexer.battleReport("5681")?.defenderSnapshot).toEqual({
       fleet: [],
-      defenses: []
+      defenses: [{ id: 0, count: 11 }]
     });
   });
 
@@ -6832,131 +7119,6 @@ describe("SettlementIndexer", () => {
       status: "ready",
       attempts: 1,
       error: null
-    });
-  });
-
-  test("battle reports keep defender snapshots when all defenders die in the battle transaction", async () => {
-    const chainReader = {
-      async listDebrisFieldEvents() { return []; },
-      async listMoonChanceReportEvents() { return []; },
-      async listSettledPlanetEvents() { return [planet]; }
-    };
-    const indexer = new SettlementIndexer(chainReader, 100n);
-    await indexer.rebuild();
-    indexer.applyLog({
-      blockNumber: "0x70",
-      transactionHash: "0xlaunch5680",
-      logIndex: "0x0",
-      topics: [fleetMissionLaunchedTopic, topic(5680n), addressTopic(player), topic(3n)],
-      data: abiWords(7n, 8n, 1770001200n, 1770002400n, 0n)
-    });
-    indexer.applyLog({
-      blockNumber: "0x70",
-      transactionHash: "0xlaunch5680",
-      logIndex: "0x1",
-      topics: [fleetMissionCargoTopic, topic(5680n)],
-      data: abiWords(0n, 0n, 0n, 4n)
-    });
-    indexer.applyLog({
-      blockNumber: "0x70",
-      transactionHash: "0xlaunch5680",
-      logIndex: "0x2",
-      topics: [fleetMissionShipsTopic, topic(5680n)],
-      data: abiWords(3n, ...Array.from({ length: 13 }, () => 0n))
-    });
-    indexer.applyLog({
-      blockNumber: "0x7f",
-      transactionHash: "0xdefender-before-battle",
-      logIndex: "0x0",
-      topics: [planetDefenseCountChangedTopic, topic(8n), topic(0n)],
-      data: abiWords(37n)
-    });
-    indexer.applyLog({
-      blockNumber: "0x80",
-      transactionHash: "0xresolve5680",
-      logIndex: "0x0",
-      topics: [planetDefenseCountChangedTopic, topic(8n), topic(0n)],
-      data: abiWords(0n)
-    });
-    indexer.applyLog({
-      blockNumber: "0x80",
-      transactionHash: "0xresolve5680",
-      logIndex: "0x1",
-      topics: [attackBattleResolvedTopic, topic(5680n), addressTopic(player), topic(8n)],
-      data: abiWords(1n, 37n, 12345n, 2430n, 1364n, 375n)
-    });
-
-    indexer.materializeBattleReportReadModelsForWorker(["5680"], "ingest");
-    expect(indexer.battleReport("5680")?.defenderSnapshot).toEqual({
-      fleet: [],
-      defenses: [{ id: 0, count: 37 }]
-    });
-  });
-
-  test("mission report reads reuse persisted defender snapshots instead of rebuilding them", async () => {
-    const chainReader = {
-      async listDebrisFieldEvents() { return []; },
-      async listMoonChanceReportEvents() { return []; },
-      async listSettledPlanetEvents() { return [planet]; }
-    };
-    const indexer = new SettlementIndexer(chainReader, 100n);
-    await indexer.rebuild();
-    indexer.applyLog({
-      blockNumber: "0x70",
-      transactionHash: "0xlaunch5681",
-      logIndex: "0x0",
-      topics: [fleetMissionLaunchedTopic, topic(5681n), addressTopic(player), topic(3n)],
-      data: abiWords(7n, 8n, 1770001200n, 1770002400n, 0n)
-    });
-    indexer.applyLog({
-      blockNumber: "0x70",
-      transactionHash: "0xlaunch5681",
-      logIndex: "0x1",
-      topics: [fleetMissionCargoTopic, topic(5681n)],
-      data: abiWords(0n, 0n, 0n, 4n)
-    });
-    indexer.applyLog({
-      blockNumber: "0x70",
-      transactionHash: "0xlaunch5681",
-      logIndex: "0x2",
-      topics: [fleetMissionShipsTopic, topic(5681n)],
-      data: abiWords(3n, ...Array.from({ length: 13 }, () => 0n))
-    });
-    indexer.applyLog({
-      blockNumber: "0x7f",
-      transactionHash: "0xpersisted-defender-before-battle",
-      logIndex: "0x0",
-      topics: [planetDefenseCountChangedTopic, topic(8n), topic(0n)],
-      data: abiWords(11n)
-    });
-    indexer.applyLog({
-      blockNumber: "0x80",
-      transactionHash: "0xresolve5681",
-      logIndex: "0x0",
-      topics: [planetDefenseCountChangedTopic, topic(8n), topic(0n)],
-      data: abiWords(0n)
-    });
-    indexer.applyLog({
-      blockNumber: "0x80",
-      transactionHash: "0xresolve5681",
-      logIndex: "0x1",
-      topics: [attackBattleResolvedTopic, topic(5681n), addressTopic(player), topic(8n)],
-      data: abiWords(1n, 11n, 12345n, 2430n, 1364n, 375n)
-    });
-    (indexer as unknown as { indexedFleetMissionReferenceIndex: () => never }).indexedFleetMissionReferenceIndex = () => {
-      throw new Error("single-mission report reads must not build the full mission reference index");
-    };
-
-    expect(indexer.fleetMission("5681")).toMatchObject({ missionId: "5681" });
-    indexer.materializeBattleReportReadModelsForWorker(["5681"], "ingest");
-
-    (indexer as unknown as { battleTimeDefenderSnapshots: () => never }).battleTimeDefenderSnapshots = () => {
-      throw new Error("mission detail must not rebuild defender snapshots after materialization");
-    };
-
-    expect(indexer.battleReport("5681")?.defenderSnapshot).toEqual({
-      fleet: [],
-      defenses: [{ id: 0, count: 11 }]
     });
   });
 

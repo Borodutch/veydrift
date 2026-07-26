@@ -1120,10 +1120,9 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
             battleReport,
             battleReportMaterialization: reportedBattleReportMaterialization,
             targetCombatIntel: targetCombatIntelForMission(indexer, mission),
-            // The defender's surviving fleet/defenses are not in the on-chain combat log, but the
-            // indexer tracks the target planet's ship/defense composition (ShipCountChanged + defense
-            // events), so the battle report can show real composition instead of a blanket caveat.
-            // Null when the target planet is not charted in the indexed read model.
+            // Current target state remains useful alongside the persisted battle-time snapshot and
+            // loss breakdown. Historical loss rendering never infers destroyed/restored counts from
+            // this mutable projection.
             defenderPlanetState: defenderPlanetStateForReport(
               indexer,
               battleReport,

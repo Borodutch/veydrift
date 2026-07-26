@@ -195,6 +195,50 @@ describe("MissionDetailPage defender Fleet / Defenses block", () => {
     expect(text).not.toContain(OLD_PLACEHOLDER);
   });
 
+  test("shows planet fleet and static-defense destroyed, restored, and net loss counts separately", () => {
+    const report = battleReport({
+      defenderLosses: { metal: "6000", crystal: "2000", deuterium: "0" },
+      defenderSnapshot: {
+        fleet: [{ id: 1, count: 2 }],
+        defenses: [{ id: 4, count: 3 }],
+      },
+      defenderLossBreakdown: {
+        planetFleet: {
+          units: [{ id: 1, destroyed: 2, restored: 0, netLost: 2, remaining: 0 }],
+          destroyedResources: { metal: "6000", crystal: "2000", deuterium: "0" },
+          restoredResources: { metal: "0", crystal: "0", deuterium: "0" },
+          netLostResources: { metal: "6000", crystal: "2000", deuterium: "0" },
+        },
+        stationedFleet: {
+          destroyedResources: { metal: "0", crystal: "0", deuterium: "0" },
+        },
+        staticDefenses: {
+          units: [{ id: 4, destroyed: 3, restored: 2, netLost: 1, remaining: 2 }],
+          destroyedResources: { metal: "60000", crystal: "45000", deuterium: "6000" },
+          restoredResources: { metal: "40000", crystal: "30000", deuterium: "4000" },
+          netLostResources: { metal: "20000", crystal: "15000", deuterium: "2000" },
+        },
+        fleetLossesReconciled: true,
+      },
+    });
+    const detail = { mission: combatMission(), battleReport: report, defenderPlanetState: null };
+    const text = renderDetailText(detail);
+    const unitTitles = renderDetailUnitTitles(detail);
+
+    expect(text).toContain("Planet fleet destroyed");
+    expect(text).toContain("Static defenses destroyed");
+    expect(text).toContain("Static defenses restored");
+    expect(text).toContain("Static defenses net lost");
+    expect(text).toContain("Static defenses remaining");
+    expect(text).toContain("60,000 metal / 45,000 crystal / 6,000 deuterium");
+    expect(text).toContain("40,000 metal / 30,000 crystal / 4,000 deuterium");
+    expect(text).toContain("20,000 metal / 15,000 crystal / 2,000 deuterium");
+    expect(unitTitles).toContain("Light Fighter ×2");
+    expect(unitTitles).toContain("Gauss Cannon ×3");
+    expect(unitTitles).toContain("Gauss Cannon ×2");
+    expect(unitTitles).toContain("Gauss Cannon ×1");
+  });
+
   test("shows None when the battle-time defender snapshot had no fleet or defenses", () => {
     const text = renderDetailText({
       mission: combatMission(),
@@ -202,10 +246,33 @@ describe("MissionDetailPage defender Fleet / Defenses block", () => {
         rounds: 0,
         defenderLosses: { metal: "0", crystal: "0", deuterium: "0" },
         defenderSnapshot: { fleet: [], defenses: [] },
+        defenderLossBreakdown: {
+          planetFleet: {
+            units: [],
+            destroyedResources: { metal: "0", crystal: "0", deuterium: "0" },
+            restoredResources: { metal: "0", crystal: "0", deuterium: "0" },
+            netLostResources: { metal: "0", crystal: "0", deuterium: "0" },
+          },
+          stationedFleet: {
+            destroyedResources: { metal: "0", crystal: "0", deuterium: "0" },
+          },
+          staticDefenses: {
+            units: [],
+            destroyedResources: { metal: "0", crystal: "0", deuterium: "0" },
+            restoredResources: { metal: "0", crystal: "0", deuterium: "0" },
+            netLostResources: { metal: "0", crystal: "0", deuterium: "0" },
+          },
+          fleetLossesReconciled: true,
+        },
       }),
       defenderPlanetState: null,
     });
 
+    expect(text).toContain("Planet fleet destroyed None");
+    expect(text).toContain("Static defenses destroyed None");
+    expect(text).toContain("Static defenses restored None");
+    expect(text).toContain("Static defenses net lost None");
+    expect(text).toContain("Static defenses remaining None");
     expect(text).toContain("Battle-time fleet None");
     expect(text).toContain("Battle-time defenses None");
     expect(text).not.toContain(OLD_PLACEHOLDER);
@@ -226,13 +293,47 @@ describe("MissionDetailPage defender Fleet / Defenses block", () => {
         },
       ],
     };
-    const detail = { mission: combatMission(), battleReport: battleReport({ outcome: "DefenderWin" }), defenderPlanetState };
+    const detail = {
+      mission: combatMission(),
+      battleReport: battleReport({
+        outcome: "DefenderWin",
+        defenderLosses: { metal: "9000", crystal: "5000", deuterium: "0" },
+        defenderLossBreakdown: {
+          planetFleet: {
+            units: [],
+            destroyedResources: { metal: "0", crystal: "0", deuterium: "0" },
+            restoredResources: { metal: "0", crystal: "0", deuterium: "0" },
+            netLostResources: { metal: "0", crystal: "0", deuterium: "0" },
+          },
+          stationedFleet: {
+            destroyedResources: { metal: "9000", crystal: "5000", deuterium: "0" },
+          },
+          staticDefenses: {
+            units: [],
+            destroyedResources: { metal: "0", crystal: "0", deuterium: "0" },
+            restoredResources: { metal: "0", crystal: "0", deuterium: "0" },
+            netLostResources: { metal: "0", crystal: "0", deuterium: "0" },
+          },
+          fleetLossesReconciled: true,
+        },
+        stationedDefenders: [{
+          ...defenderPlanetState.stationedDefenders![0]!,
+          destroyedShips: { heavyFighter: "1" },
+          survivingShips: { lightFighter: "15" },
+          lifecycleOutcome: "Active",
+        }],
+      }),
+      defenderPlanetState,
+    };
     const text = renderDetailText(detail);
     const unitTitles = renderDetailUnitTitles(detail);
 
     expect(text).toContain("Stationed defenders");
+    expect(text).toContain("Stationed fleet loss value");
+    expect(text).toContain("9,000 metal / 5,000 crystal / 0 deuterium");
     expect(text).toContain("Ally Shield");
     expect(unitTitles).toContain("Light Fighter ×15");
+    expect(unitTitles).toContain("Heavy Fighter ×1");
     expect(text).not.toContain("Fleet / defenses None");
   });
 
