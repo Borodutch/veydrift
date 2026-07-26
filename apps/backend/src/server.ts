@@ -113,8 +113,8 @@ const corsHeaders = {
 const jsonBodyLimitBytes = 32 * 1024;
 const graphqlBodyLimitBytes = 128 * 1024;
 const acceptedCacheQueryParams = new Map<string, ReadonlySet<string>>([
-  ["/highscores", new Set(["category", "currentWallet", "includeAttackProtection", "limit", "page", "pageSize"])],
-  ["/missions", new Set(["missionNumber", "missionType", "owner", "page", "pageSize", "planetId", "status"])],
+  ["/highscores", new Set(["category", "currentWallet", "includeAttackProtection", "limit", "live", "page", "pageSize"])],
+  ["/missions", new Set(["live", "missionNumber", "missionType", "owner", "page", "pageSize", "planetId", "status"])],
   ["/raid-finder/debris", new Set(["limit", "minMetal", "minCrystal"])],
   ["/universe/systems", new Set(["center", "detail", "galaxy", "limit", "page", "radius"])],
   ["/wallet/*/fleet-visibility", new Set(["archive", "planetId"])],
@@ -2047,12 +2047,12 @@ function cacheableJsonRequestTtlMs(request: Request, url: URL): number {
   if (request.method !== "GET") return 0;
   if (url.pathname === "/chain/events") return 0;
   if (url.pathname === "/health") return 10_000;
-  if (url.pathname === "/highscores") return 300_000;
+  if (url.pathname === "/highscores") return livePublicDataRequest(url) ? 1_000 : 300_000;
   if (url.pathname === "/raid-finder/debris") return 30_000;
   // Mission-control reads are backed by the mission read-model version in responseCacheVersion(), so
   // they stay fresh across indexed mission events while still coalescing repeated UI refreshes.
   if (url.pathname.match(/^\/wallet\/[^/]+\/missions$/)) return 30_000;
-  if (url.pathname === "/missions") return 300_000;
+  if (url.pathname === "/missions") return livePublicDataRequest(url) ? 1_000 : 300_000;
   if (url.pathname.match(/^\/mission\/[^/]+$/)) return 30_000;
   // Moon payloads include an as-of-now launchable ship projection for arrived Deploy missions. Like
   // fleet slots, that projection changes when time crosses arrivalAt even without a new indexed log,
@@ -2079,16 +2079,16 @@ function cacheableJsonRequestKey(request: Request, url: URL, indexer: Settlement
 }
 
 function cacheableJsonRequestStaleKey(request: Request, url: URL, cacheKey: string): string {
-  if (cacheableWalletSnapshotPath(url.pathname)) return cacheKey;
+  if (cacheableWalletSnapshotPath(url.pathname) || livePublicDataRequest(url)) return cacheKey;
   return `${request.method} ${url.pathname}${normalizedCacheSearch(url)} indexer=stale`;
 }
 
 function cacheableJsonRequestVersion(url: URL, indexer: SettlementIndexer): string {
   if (url.pathname === "/health") return "ttl";
-  if (url.pathname === "/highscores") return "ttl";
+  if (url.pathname === "/highscores") return livePublicDataRequest(url) ? indexer.indexedStateCacheVersion() : "ttl";
   if (url.pathname === "/raid-finder/debris") return "ttl";
   if (url.pathname.match(/^\/wallet\/[^/]+\/missions$/)) return indexer.missionResponseCacheVersion();
-  if (url.pathname === "/missions") return "ttl";
+  if (url.pathname === "/missions") return livePublicDataRequest(url) ? indexer.missionResponseCacheVersion() : "ttl";
   if (url.pathname.match(/^\/mission\/[^/]+$/)) return indexer.missionResponseCacheVersion();
   if (cacheableWalletSnapshotPath(url.pathname)) return indexer.responseCacheVersion();
   if (url.pathname.match(/^\/universe\/galaxies\/[0-9]+\/systems\/[0-9]+$/)) {
@@ -2108,9 +2108,15 @@ function clientCacheControlHeader(url: URL, ttlMs: number): string {
   if (personalizedHighscoreRequest(url)) {
     return "private, no-store";
   }
+  if (livePublicDataRequest(url)) return "public, no-store";
   const seconds = Math.max(1, Math.floor(ttlMs / 1_000));
   const scope = url.pathname.startsWith("/wallet/") ? "private" : "public";
   return `${scope}, max-age=${seconds}, stale-while-revalidate=${seconds}`;
+}
+
+function livePublicDataRequest(url: URL): boolean {
+  return (url.pathname === "/highscores" || url.pathname === "/missions")
+    && url.searchParams.get("live") === "1";
 }
 
 function personalizedHighscoreRequest(url: URL): boolean {

@@ -19,6 +19,7 @@ const alphaUrl = "https://test.veydrift.com";
 const claimUrl = "#claim";
 export const landingFeedRefreshMs = 60_000;
 export const landingAllianceRefreshMs = 300_000;
+export const landingChainEventRefreshDebounceMs = 500;
 
 const ships = {
   colonyShip: "/assets/game/style-pass/generated/ships/colony-ship.webp",
@@ -142,6 +143,7 @@ export function ComingSoonApp({
   useLandingScrollParallax();
   useLandingReveals();
   useLandingCardTilt();
+  const chainRefreshToken = useLandingChainRefreshToken();
 
   return (
     <main className="landing-page min-h-dvh overflow-hidden bg-void text-white">
@@ -149,8 +151,8 @@ export function ComingSoonApp({
       <ScreenshotsSection />
       <HowItWorksSection />
       <RiftSection />
-      <FeedSection />
-      <AlliancesSection />
+      <FeedSection refreshToken={chainRefreshToken} />
+      <AlliancesSection refreshToken={chainRefreshToken} />
       <AlphaSection />
     </main>
   );
@@ -387,8 +389,8 @@ function RiftPoint({ title, body }: { title: string; body: string }) {
   );
 }
 
-function FeedSection() {
-  const feed = useLandingFeed();
+function FeedSection({ refreshToken }: { refreshToken: number }) {
+  const feed = useLandingFeed(refreshToken);
 
   return (
     <section className="relative overflow-hidden bg-[#05070d] px-5 py-20 sm:px-8 sm:py-24 lg:px-10 lg:py-28">
@@ -513,8 +515,8 @@ export function landingLaunchCtaForLocation(
   };
 }
 
-function AlliancesSection() {
-  const alliances = useTopAlliances();
+function AlliancesSection({ refreshToken }: { refreshToken: number }) {
+  const alliances = useTopAlliances(refreshToken);
 
   return (
     <section className="relative overflow-hidden bg-[#080b12] px-5 py-20 sm:px-8 sm:py-24 lg:px-10 lg:py-28">
@@ -602,7 +604,37 @@ function LandingStatusPill({ status }: { status: LandingLoadStatus }) {
   );
 }
 
-function useLandingFeed(): { items: LandingFeedItem[]; status: LandingLoadStatus } {
+function useLandingChainRefreshToken(): number {
+  const [refreshToken, setRefreshToken] = useState(0);
+
+  useEffect(() => {
+    if (typeof window.EventSource === "undefined") return;
+
+    const eventsUrl = `${playableApiUrl.replace(/\/+$/, "")}/chain/events`;
+    const eventSource = new window.EventSource(eventsUrl);
+    let refreshTimeoutId: number | null = null;
+
+    const refreshFromChainEvent = () => {
+      if (refreshTimeoutId !== null) window.clearTimeout(refreshTimeoutId);
+      refreshTimeoutId = window.setTimeout(() => {
+        refreshTimeoutId = null;
+        setRefreshToken((current) => current + 1);
+      }, landingChainEventRefreshDebounceMs);
+    };
+
+    eventSource.addEventListener("chain-event", refreshFromChainEvent);
+
+    return () => {
+      if (refreshTimeoutId !== null) window.clearTimeout(refreshTimeoutId);
+      eventSource.removeEventListener("chain-event", refreshFromChainEvent);
+      eventSource.close();
+    };
+  }, []);
+
+  return refreshToken;
+}
+
+function useLandingFeed(refreshToken: number): { items: LandingFeedItem[]; status: LandingLoadStatus } {
   const [feed, setFeed] = useState<{ items: LandingFeedItem[]; status: LandingLoadStatus }>({
     items: [],
     status: "loading",
@@ -637,12 +669,12 @@ function useLandingFeed(): { items: LandingFeedItem[]; status: LandingLoadStatus
       window.clearInterval(intervalId);
       activeController?.abort();
     };
-  }, []);
+  }, [refreshToken]);
 
   return feed;
 }
 
-function useTopAlliances(): { items: LandingAlliance[]; status: LandingLoadStatus } {
+function useTopAlliances(refreshToken: number): { items: LandingAlliance[]; status: LandingLoadStatus } {
   const [alliances, setAlliances] = useState<{ items: LandingAlliance[]; status: LandingLoadStatus }>({
     items: [],
     status: "loading",
@@ -677,13 +709,14 @@ function useTopAlliances(): { items: LandingAlliance[]; status: LandingLoadStatu
       window.clearInterval(intervalId);
       activeController?.abort();
     };
-  }, []);
+  }, [refreshToken]);
 
   return alliances;
 }
 
 async function fetchLandingActiveMissions(signal?: AbortSignal): Promise<LandingFleetMission[]> {
-  const response = await fetch(`${playableApiUrl}/missions?status=active`, {
+  const response = await fetch(`${playableApiUrl}/missions?status=active&live=1`, {
+    cache: "no-store",
     headers: { accept: "application/json" },
     ...(signal ? { signal } : {}),
   });
@@ -695,10 +728,12 @@ async function fetchLandingActiveMissions(signal?: AbortSignal): Promise<Landing
 async function fetchLandingHighscores(signal?: AbortSignal): Promise<LandingHighscoreEntry[]> {
   const params = new URLSearchParams({
     category: "total",
+    live: "1",
     page: "1",
     pageSize: "250",
   });
   const response = await fetch(`${playableApiUrl}/highscores?${params.toString()}`, {
+    cache: "no-store",
     headers: { accept: "application/json" },
     ...(signal ? { signal } : {}),
   });
