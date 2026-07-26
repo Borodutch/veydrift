@@ -694,6 +694,34 @@ export type BattleReportDefenderSnapshot = {
   defenses: Array<{ id: number; count: number }>;
 };
 
+export type BattleReportUnitLoss = {
+  id: number;
+  destroyed: number;
+  restored: number;
+  netLost: number;
+  remaining: number;
+};
+
+export type BattleReportLossSection = {
+  units: BattleReportUnitLoss[];
+  destroyedResources: Resources;
+  restoredResources: Resources;
+  netLostResources: Resources;
+};
+
+export type BattleReportDefenderLossBreakdown = {
+  // PlanetShipCountChanged/MoonShipCountChanged are exact historical count events. Static defenses
+  // are deliberately separate because CombatLosses only prices destroyed ships.
+  planetFleet: BattleReportLossSection;
+  stationedFleet: {
+    // Exact aggregate residual after subtracting the event-proven planet fleet losses from
+    // CombatLosses. Per-stationed-fleet unit counts remain on stationedDefenders.
+    destroyedResources: Resources | null;
+  };
+  staticDefenses: BattleReportLossSection;
+  fleetLossesReconciled: boolean;
+};
+
 export type BattleReport = {
   missionId: string;
   attacker: Address;
@@ -715,6 +743,7 @@ export type BattleReport = {
   blockNumber: string;
   logIndex: string;
   defenderSnapshot: BattleReportDefenderSnapshot | null;
+  defenderLossBreakdown?: BattleReportDefenderLossBreakdown | null;
   // Battle-time DefenseHold participants reconstructed from immutable mission history. Optional for
   // persisted reports created before VEY-KANEO-713; readers rebuild it from indexed logs as fallback.
   stationedDefenders?: StationedDefenderSummary[];

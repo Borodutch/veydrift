@@ -937,7 +937,6 @@ describe("Veydrift backend", () => {
 
     const response = await handler(new Request("http://localhost/health"));
     const body = await response.json();
-
     expect(response.status).toBe(200);
     expect(body.ok).toBe(true);
     expect(body.readiness).toMatchObject({
@@ -3370,8 +3369,8 @@ describe("Veydrift backend", () => {
       transactionHash: "0xbattle-1240",
       logIndex: "0x0",
       removed: false,
-      topics: [attackBattleResolvedTopic, topic(1240n), addressTopic(attacker), topic(92n)],
-      data: abiWords(2n, 4n, 12345n, 0n, 0n, 0n)
+      topics: [planetDefenseCountChangedTopic, topic(92n), topic(0n)],
+      data: abiWords(4n)
     });
     indexer.applyLog({
       blockNumber: "0x70",
@@ -3386,8 +3385,8 @@ describe("Veydrift backend", () => {
       transactionHash: "0xbattle-1240",
       logIndex: "0x2",
       removed: false,
-      topics: [planetDefenseCountChangedTopic, topic(92n), topic(0n)],
-      data: abiWords(4n)
+      topics: [attackBattleResolvedTopic, topic(1240n), addressTopic(attacker), topic(92n)],
+      data: abiWords(2n, 4n, 12345n, 0n, 0n, 0n)
     });
     indexer.materializeBattleReportReadModelsForWorker(["1240"], "ingest");
 
@@ -3402,6 +3401,24 @@ describe("Veydrift backend", () => {
     expect(body.battleReport.defenderSnapshot).toEqual({
       fleet: [],
       defenses: [{ id: 0, count: 37 }]
+    });
+    expect(body.battleReport.defenderLossBreakdown).toEqual({
+      planetFleet: {
+        units: [],
+        destroyedResources: { metal: "0", crystal: "0", deuterium: "0" },
+        restoredResources: { metal: "0", crystal: "0", deuterium: "0" },
+        netLostResources: { metal: "0", crystal: "0", deuterium: "0" }
+      },
+      stationedFleet: {
+        destroyedResources: { metal: "0", crystal: "0", deuterium: "0" }
+      },
+      staticDefenses: {
+        units: [{ id: 0, destroyed: 33, restored: 0, netLost: 33, remaining: 4 }],
+        destroyedResources: { metal: "66000", crystal: "0", deuterium: "0" },
+        restoredResources: { metal: "0", crystal: "0", deuterium: "0" },
+        netLostResources: { metal: "66000", crystal: "0", deuterium: "0" }
+      },
+      fleetLossesReconciled: true
     });
     expect(body.battleReport.roundReports[0].defenderUnits).toBe("37");
     expect(body.defenderPlanetState).toEqual({
@@ -3857,13 +3874,21 @@ describe("Veydrift backend", () => {
       transactionHash: "0xfad34fc2d54913a27c32e06fca51dca674a5a0a4ef07f51da14ca139d2d284a6",
       logIndex: "0x0",
       removed: false,
+      topics: [planetShipCountChangedTopic, topic(236n), topic(5n)],
+      data: abiWords(0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x70",
+      transactionHash: "0xfad34fc2d54913a27c32e06fca51dca674a5a0a4ef07f51da14ca139d2d284a6",
+      logIndex: "0x1",
+      removed: false,
       topics: [attackBattleResolvedTopic, topic(2840n), addressTopic(attacker), topic(236n)],
       data: abiWords(2n, 1n, 12345n, 0n, 0n, 0n)
     });
     indexer.applyLog({
       blockNumber: "0x70",
       transactionHash: "0xfad34fc2d54913a27c32e06fca51dca674a5a0a4ef07f51da14ca139d2d284a6",
-      logIndex: "0x1",
+      logIndex: "0x2",
       removed: false,
       topics: [combatLossesTopic, topic(2840n)],
       data: abiWords(0n, 0n, 0n, 45_000n, 27_000n, 0n)
@@ -3871,7 +3896,7 @@ describe("Veydrift backend", () => {
     indexer.applyLog({
       blockNumber: "0x70",
       transactionHash: "0xfad34fc2d54913a27c32e06fca51dca674a5a0a4ef07f51da14ca139d2d284a6",
-      logIndex: "0x2",
+      logIndex: "0x3",
       removed: false,
       topics: [combatDebrisSignaledTopic, topic(2840n), topic(236n)],
       data: abiWords(13_500n, 8_100n)
@@ -3914,6 +3939,20 @@ describe("Veydrift backend", () => {
     expect(response.status).toBe(200);
     expect(body.battleReport).toMatchObject({
       defenderLosses: { metal: "45000", crystal: "27000", deuterium: "0" },
+      defenderLossBreakdown: {
+        planetFleet: {
+          units: [{ id: 5, destroyed: 2, restored: 0, netLost: 2, remaining: 0 }],
+          destroyedResources: { metal: "12000", crystal: "8000", deuterium: "0" }
+        },
+        stationedFleet: {
+          destroyedResources: { metal: "33000", crystal: "19000", deuterium: "0" }
+        },
+        staticDefenses: {
+          units: [],
+          destroyedResources: { metal: "0", crystal: "0", deuterium: "0" }
+        },
+        fleetLossesReconciled: true
+      },
       debris: { metal: "13500", crystal: "8100" }
     });
     const expectedStationedDefenders = [

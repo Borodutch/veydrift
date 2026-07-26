@@ -640,6 +640,30 @@ export type BattleReportDefenderSnapshot = {
   defenses: Array<{ id: number; count: number }>;
 };
 
+export type BattleReportUnitLoss = {
+  id: number;
+  destroyed: number;
+  restored: number;
+  netLost: number;
+  remaining: number;
+};
+
+export type BattleReportLossSection = {
+  units: BattleReportUnitLoss[];
+  destroyedResources: OnChainResources;
+  restoredResources: OnChainResources;
+  netLostResources: OnChainResources;
+};
+
+export type BattleReportDefenderLossBreakdown = {
+  planetFleet: BattleReportLossSection;
+  stationedFleet: {
+    destroyedResources: OnChainResources | null;
+  };
+  staticDefenses: BattleReportLossSection;
+  fleetLossesReconciled: boolean;
+};
+
 export type BattleReport = {
   missionId: string;
   attacker: string;
@@ -661,6 +685,7 @@ export type BattleReport = {
   blockNumber: string;
   logIndex?: string;
   defenderSnapshot?: BattleReportDefenderSnapshot | null;
+  defenderLossBreakdown?: BattleReportDefenderLossBreakdown | null;
   stationedDefenders?: StationedDefenderSummary[];
   // ACS attack group: the main attack mission id for a grouped attack (null for a solo attack), and
   // every participant (main attacker + joiners) with their individual loot share. Older feeds that

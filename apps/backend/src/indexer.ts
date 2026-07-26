@@ -78,6 +78,7 @@ import {
   type CanonicalPlanetChainState,
   type CanonicalFleetMissionSnapshot,
   type BattleReport,
+  type BattleReportDefenderLossBreakdown,
   type BattleReportDefenderSnapshot,
   type DebrisFieldEvent,
   type DefenseState,
@@ -348,6 +349,11 @@ type LegacyUnitMutation = {
 type UnitCountSnapshot = {
   fleet: Map<number, number>;
   defenses: Map<number, number>;
+};
+
+type BattleTimeDefenderState = {
+  snapshot: BattleReportDefenderSnapshot;
+  lossBreakdown: BattleReportDefenderLossBreakdown;
 };
 
 type QueueRow = {
@@ -4261,6 +4267,7 @@ export class SettlementIndexer {
       this.backfillCanonicalTables();
       this.replayFleetMissionRowsFromEventLogs();
     }
+    this.queueDefenderLossBreakdownBackfill();
   }
 
   private backfillStartPriceProjection(): void {
@@ -4553,13 +4560,13 @@ export class SettlementIndexer {
   }
 
   private backfillUnitCountEventLogs(): void {
-    const existing = this.count("indexed_unit_count_event_logs");
-    if (existing > 0) return;
-
     const rows = this.db.query(`
-      SELECT event_id, event_json
+      SELECT indexed_event_logs.event_id, indexed_event_logs.event_json
       FROM indexed_event_logs
-      WHERE removed = 0
+      LEFT JOIN indexed_unit_count_event_logs
+        ON indexed_unit_count_event_logs.event_id = indexed_event_logs.event_id
+      WHERE indexed_event_logs.removed = 0
+        AND indexed_unit_count_event_logs.event_id IS NULL
     `).all() as Array<EventRow & { event_id: string }>;
     if (rows.length === 0) return;
 
@@ -4576,6 +4583,24 @@ export class SettlementIndexer {
     })();
   }
 
+  private queueDefenderLossBreakdownBackfill(): void {
+    const migrationKey = "defenderLossBreakdownBackfillV1";
+    if (this.metadata(migrationKey) !== null) return;
+    this.db.transaction(() => {
+      this.db.query(`
+        UPDATE indexed_battle_report_read_models
+        SET status = 'pending',
+          error = NULL,
+          updated_at = ?
+        WHERE status = 'ready'
+          AND report_json IS NOT NULL
+          AND mission_id = CAST(json_extract(report_json, '$.missionId') AS TEXT)
+          AND json_type(report_json, '$.defenderLossBreakdown') IS NULL
+      `).run(new Date().toISOString());
+      this.setMetadata(migrationKey, new Date().toISOString());
+    })();
+  }
+
   private missionEventKind(log: IndexedRpcLog): "fleet" | "battle" | "randomness" | null {
     if (isFleetMissionLog(log)) return "fleet";
     if (isBattleReportLog(log)) return "battle";
@@ -4584,7 +4609,12 @@ export class SettlementIndexer {
   }
 
   private isUnitCountSnapshotLog(log: IndexedRpcLog): boolean {
-    if (isShipCountChangedLog(log) || isDefenseCountChangedLog(log)) return true;
+    if (
+      isShipCountChangedLog(log)
+      || isDefenseCountChangedLog(log)
+      || isMoonShipCountChangedLog(log)
+      || isMoonDefenseCountChangedLog(log)
+    ) return true;
     if (!isIndexedQueueCompletedLog(log)) return false;
     const event = decodeIndexedQueueCompletedLog(log);
     return Boolean(
@@ -8755,10 +8785,13 @@ export class SettlementIndexer {
     }
 
     const reportsNeedingSnapshots = reportsWithParticipants.filter((report) => report.defenderSnapshot === null);
-    const defenderSnapshots = this.battleTimeDefenderSnapshots(reportsNeedingSnapshots);
+    const defenderStates = this.battleTimeDefenderStates(reportsNeedingSnapshots);
     return reportsWithParticipants.map((report) => ({
       ...report,
-      defenderSnapshot: report.defenderSnapshot ?? defenderSnapshots.get(report.missionId) ?? null
+      defenderSnapshot: report.defenderSnapshot ?? defenderStates.get(report.missionId)?.snapshot ?? null,
+      defenderLossBreakdown: report.defenderLossBreakdown
+        ?? defenderStates.get(report.missionId)?.lossBreakdown
+        ?? null
     }));
   }
 
@@ -8781,10 +8814,12 @@ export class SettlementIndexer {
     }
     const summaries = this.fleetMissionSummariesFromCanonicalRowsByIds(reportMissionIds);
     const withParticipants = attachAttackGroupParticipants([report], summaries);
-    const defenderSnapshots = this.battleTimeDefenderSnapshots(withParticipants);
+    const defenderStates = this.battleTimeDefenderStates(withParticipants);
+    const defenderState = defenderStates.get(report.missionId);
     const materialized = {
       ...withParticipants[0]!,
-      defenderSnapshot: defenderSnapshots.get(report.missionId) ?? null
+      defenderSnapshot: defenderState?.snapshot ?? null,
+      defenderLossBreakdown: defenderState?.lossBreakdown ?? null
     };
     const attack = summaries.find((summary) => summary.missionId === report.missionId)
       ?? this.eventDerivedFleetMissionForMissionId(report.missionId);
@@ -8961,7 +8996,7 @@ export class SettlementIndexer {
     return reportsByMissionId;
   }
 
-  private battleTimeDefenderSnapshots(reports: BattleReport[]): Map<string, BattleReportDefenderSnapshot> {
+  private battleTimeDefenderStates(reports: BattleReport[]): Map<string, BattleTimeDefenderState> {
     if (reports.length === 0) return new Map();
 
     const reportsByPosition = [...reports].sort(compareRpcLogPosition);
@@ -8986,7 +9021,7 @@ export class SettlementIndexer {
       `).all(...chunk, maxBlockNumber) as EventRow[]);
     }
     const logs = sortedEventRows(rows);
-    const snapshots = new Map<string, BattleReportDefenderSnapshot>();
+    const states = new Map<string, BattleTimeDefenderState>();
     const currentByPlanet = new Map<string, UnitCountSnapshot>();
     let logIndex = 0;
 
@@ -8998,25 +9033,52 @@ export class SettlementIndexer {
         logIndex += 1;
       }
 
-      const snapshot = currentByPlanet.get(report.targetPlanetId);
-      const materialized = materializeBattleReportDefenderSnapshot(snapshot);
-      if (materialized) snapshots.set(report.missionId, materialized);
+      const transactionLogs = logs.filter((log) => (
+        sameRpcTransaction(log, report)
+        && compareRpcLogPosition(log, report) < 0
+      ));
+      const historicalSnapshot = currentByPlanet.get(
+        unitCountSnapshotKey(report.targetPlanetId, report.targetIsMoon === true)
+      );
+      const snapshot = historicalSnapshot
+        ?? (battleReportProvesEmptyDefender(report, transactionLogs)
+          ? { fleet: new Map<number, number>(), defenses: new Map<number, number>() }
+          : null);
+      if (!snapshot) continue;
+      states.set(
+        report.missionId,
+        materializeBattleTimeDefenderState(snapshot, transactionLogs, report)
+      );
     }
 
-    return snapshots;
+    return states;
   }
 
   private applyUnitCountSnapshotLog(snapshots: Map<string, UnitCountSnapshot>, log: IndexedRpcLog): void {
     if (isShipCountChangedLog(log)) {
       const event = decodeShipCountChangedLog(log);
-      const snapshot = unitCountSnapshotForPlanet(snapshots, event.planetId);
+      const snapshot = unitCountSnapshotForBody(snapshots, event.planetId, false);
       if (event.total > 0) snapshot.fleet.set(event.shipId, event.total);
       else snapshot.fleet.delete(event.shipId);
       return;
     }
     if (isDefenseCountChangedLog(log)) {
       const event = decodeDefenseCountChangedLog(log);
-      const snapshot = unitCountSnapshotForPlanet(snapshots, event.planetId);
+      const snapshot = unitCountSnapshotForBody(snapshots, event.planetId, false);
+      if (event.total > 0) snapshot.defenses.set(event.defenseId, event.total);
+      else snapshot.defenses.delete(event.defenseId);
+      return;
+    }
+    if (isMoonShipCountChangedLog(log)) {
+      const event = decodeMoonShipCountChangedLog(log);
+      const snapshot = unitCountSnapshotForBody(snapshots, event.planetId, true);
+      if (event.total > 0) snapshot.fleet.set(event.shipId, event.total);
+      else snapshot.fleet.delete(event.shipId);
+      return;
+    }
+    if (isMoonDefenseCountChangedLog(log)) {
+      const event = decodeMoonDefenseCountChangedLog(log);
+      const snapshot = unitCountSnapshotForBody(snapshots, event.planetId, true);
       if (event.total > 0) snapshot.defenses.set(event.defenseId, event.total);
       else snapshot.defenses.delete(event.defenseId);
       return;
@@ -9024,7 +9086,7 @@ export class SettlementIndexer {
     if (!isIndexedQueueCompletedLog(log)) return;
     const event = decodeIndexedQueueCompletedLog(log);
     if (event.total === undefined || !event.planetId) return;
-    const snapshot = unitCountSnapshotForPlanet(snapshots, event.planetId);
+    const snapshot = unitCountSnapshotForBody(snapshots, event.planetId, false);
     if (event.eventName === "ShipCompleted") {
       if (event.total > 0) snapshot.fleet.set(event.itemId, event.total);
       else snapshot.fleet.delete(event.itemId);
@@ -9339,9 +9401,12 @@ export class SettlementIndexer {
     if (!report?.defenderSnapshot) return unknown();
 
     const candidates: BattleLossCandidate[] = [];
-    for (const unit of report.defenderSnapshot.fleet) {
-      const cost = shipCostForLegacyLoss(unit.id);
-      if (cost && unit.count > 0) candidates.push({ kind: "ship", planetId: "planet", itemId: unit.id, max: unit.count, cost });
+    const stationedLossResources = report.defenderLossBreakdown?.stationedFleet.destroyedResources;
+    if (stationedLossResources === undefined || stationedLossResources === null) {
+      for (const unit of report.defenderSnapshot.fleet) {
+        const cost = shipCostForLegacyLoss(unit.id);
+        if (cost && unit.count > 0) candidates.push({ kind: "ship", planetId: "planet", itemId: unit.id, max: unit.count, cost });
+      }
     }
     for (const defender of defenders) {
       for (const [key, value] of Object.entries(defender.ships)) {
@@ -9359,10 +9424,11 @@ export class SettlementIndexer {
       crystal: total.crystal + BigInt(candidate.cost.crystal) * BigInt(candidate.max),
       deuterium: total.deuterium + BigInt(candidate.cost.deuterium) * BigInt(candidate.max)
     }), { metal: 0n, crystal: 0n, deuterium: 0n });
+    const reportedResources = stationedLossResources ?? report.defenderLosses;
     const reportedLossValue = {
-      metal: BigInt(report.defenderLosses.metal),
-      crystal: BigInt(report.defenderLosses.crystal),
-      deuterium: BigInt(report.defenderLosses.deuterium)
+      metal: BigInt(reportedResources.metal),
+      crystal: BigInt(reportedResources.crystal),
+      deuterium: BigInt(reportedResources.deuterium)
     };
     let solution: BattleLossPick[] | null;
     if (
@@ -9371,13 +9437,13 @@ export class SettlementIndexer {
       && reportedLossValue.deuterium === totalLossValue.deuterium
     ) {
       solution = candidates.map((candidate) => ({ candidate, destroyed: candidate.max }));
-    } else if (isZeroResources(report.defenderLosses)) {
+    } else if (isZeroResources(reportedResources)) {
       solution = [];
     } else {
       // Exact per-fleet counts are not emitted. For bounded battles, expose a composition only when
       // the aggregate on-chain loss value has one unique allocation; otherwise leave it unknown.
       const candidateUnits = candidates.reduce((sum, candidate) => sum + candidate.max, 0);
-      solution = candidateUnits <= 500 ? uniqueLossSolution(candidates, report.defenderLosses) : null;
+      solution = candidateUnits <= 500 ? uniqueLossSolution(candidates, reportedResources) : null;
     }
     if (!solution) return unknown();
 
@@ -10230,11 +10296,20 @@ function sortedEventRows(rows: readonly EventRow[]): IndexedRpcLog[] {
   return sortRpcLogs(rows.map((row) => parseEvent<IndexedRpcLog>(row.event_json))) as IndexedRpcLog[];
 }
 
-function unitCountSnapshotForPlanet(snapshots: Map<string, UnitCountSnapshot>, planetId: string): UnitCountSnapshot {
-  let snapshot = snapshots.get(planetId);
+function unitCountSnapshotKey(planetId: string, isMoon: boolean): string {
+  return `${isMoon ? "moon" : "planet"}:${planetId}`;
+}
+
+function unitCountSnapshotForBody(
+  snapshots: Map<string, UnitCountSnapshot>,
+  planetId: string,
+  isMoon: boolean
+): UnitCountSnapshot {
+  const key = unitCountSnapshotKey(planetId, isMoon);
+  let snapshot = snapshots.get(key);
   if (!snapshot) {
     snapshot = { fleet: new Map(), defenses: new Map() };
-    snapshots.set(planetId, snapshot);
+    snapshots.set(key, snapshot);
   }
   return snapshot;
 }
@@ -10244,6 +10319,199 @@ function materializeBattleReportDefenderSnapshot(snapshot: UnitCountSnapshot | u
   return {
     fleet: unitCountRows(snapshot.fleet),
     defenses: unitCountRows(snapshot.defenses)
+  };
+}
+
+function battleReportProvesEmptyDefender(
+  report: BattleReport,
+  transactionLogs: readonly IndexedRpcLog[]
+): boolean {
+  // _runBattle exits before round one when either side has no combat units. An AttackerWin
+  // disambiguates that zero-round outcome: the attacker was non-empty and the defender snapshot
+  // was empty. Target count changes in the resolution transaction still make the historical
+  // composition unknown (for example, cleanup of Crawler/Solar Satellite support ships), so only
+  // synthesize an empty snapshot when the transaction contains no such evidence.
+  return report.outcome === "AttackerWin"
+    && report.rounds === 0
+    && report.roundReports.length === 0
+    && isZeroResources(report.defenderLosses)
+    && !transactionLogs.some((log) => battleUnitCountChange(log, report) !== null);
+}
+
+function materializeBattleTimeDefenderState(
+  beforeTransaction: UnitCountSnapshot,
+  transactionLogs: readonly IndexedRpcLog[],
+  report: BattleReport
+): BattleTimeDefenderState {
+  const working: UnitCountSnapshot = {
+    fleet: new Map(beforeTransaction.fleet),
+    defenses: new Map(beforeTransaction.defenses)
+  };
+  const losses = {
+    fleet: new Map<number, { destroyed: number; restored: number }>(),
+    defenses: new Map<number, { destroyed: number; restored: number }>()
+  };
+  let combatStarted = false;
+
+  for (const log of transactionLogs) {
+    const change = battleUnitCountChange(log, report);
+    if (!change) continue;
+    const counts = change.kind === "fleet" ? working.fleet : working.defenses;
+    const previous = counts.get(change.id) ?? 0;
+
+    // Resolution can lazily settle a completed production queue before combat. Increases before the
+    // first observed decrease belong to the battle-time starting snapshot, not the repair tally.
+    if (!combatStarted && change.total >= previous) {
+      if (change.total > 0) counts.set(change.id, change.total);
+      else counts.delete(change.id);
+      continue;
+    }
+
+    if (change.total < previous) combatStarted = true;
+    const byId = change.kind === "fleet" ? losses.fleet : losses.defenses;
+    const current = byId.get(change.id) ?? { destroyed: 0, restored: 0 };
+    if (change.total < previous) current.destroyed += previous - change.total;
+    else if (change.total > previous) current.restored += change.total - previous;
+    byId.set(change.id, current);
+
+    if (change.total > 0) counts.set(change.id, change.total);
+    else counts.delete(change.id);
+  }
+
+  const planetFleet = battleReportLossSection(losses.fleet, working.fleet, shipCostForLegacyLoss);
+  const staticDefenses = battleReportLossSection(
+    losses.defenses,
+    working.defenses,
+    defenseCostForLegacyLoss
+  );
+  const stationedFleetResources = subtractResourcesIfNonNegative(
+    report.defenderLosses,
+    planetFleet.destroyedResources
+  );
+  return {
+    snapshot: {
+      fleet: battleTimeStartingRows(working.fleet, planetFleet.units),
+      defenses: battleTimeStartingRows(working.defenses, staticDefenses.units)
+    },
+    lossBreakdown: {
+      planetFleet,
+      stationedFleet: { destroyedResources: stationedFleetResources },
+      staticDefenses,
+      fleetLossesReconciled: stationedFleetResources !== null
+    }
+  };
+}
+
+function battleUnitCountChange(
+  log: IndexedRpcLog,
+  report: BattleReport
+): { kind: "fleet" | "defenses"; id: number; total: number } | null {
+  if (report.targetIsMoon === true) {
+    if (isMoonShipCountChangedLog(log)) {
+      const event = decodeMoonShipCountChangedLog(log);
+      return event.planetId === report.targetPlanetId
+        ? { kind: "fleet", id: event.shipId, total: event.total }
+        : null;
+    }
+    if (isMoonDefenseCountChangedLog(log)) {
+      const event = decodeMoonDefenseCountChangedLog(log);
+      return event.planetId === report.targetPlanetId
+        ? { kind: "defenses", id: event.defenseId, total: event.total }
+        : null;
+    }
+    return null;
+  }
+  if (isShipCountChangedLog(log)) {
+    const event = decodeShipCountChangedLog(log);
+    return event.planetId === report.targetPlanetId
+      ? { kind: "fleet", id: event.shipId, total: event.total }
+      : null;
+  }
+  if (isDefenseCountChangedLog(log)) {
+    const event = decodeDefenseCountChangedLog(log);
+    return event.planetId === report.targetPlanetId
+      ? { kind: "defenses", id: event.defenseId, total: event.total }
+      : null;
+  }
+  if (isIndexedQueueCompletedLog(log)) {
+    const event = decodeIndexedQueueCompletedLog(log);
+    if (event.planetId !== report.targetPlanetId || event.total === undefined) return null;
+    if (event.eventName === "ShipCompleted") {
+      return { kind: "fleet", id: event.itemId, total: event.total };
+    }
+    if (event.eventName === "DefenseCompleted") {
+      return { kind: "defenses", id: event.itemId, total: event.total };
+    }
+  }
+  return null;
+}
+
+function battleReportLossSection(
+  changes: Map<number, { destroyed: number; restored: number }>,
+  remaining: Map<number, number>,
+  costForId: (id: number) => Resources | null
+): BattleReportDefenderLossBreakdown["planetFleet"] {
+  const units = [...changes.entries()]
+    .filter(([, change]) => change.destroyed > 0 || change.restored > 0)
+    .map(([id, change]) => ({
+      id,
+      destroyed: change.destroyed,
+      restored: change.restored,
+      netLost: Math.max(0, change.destroyed - change.restored),
+      remaining: remaining.get(id) ?? 0
+    }))
+    .sort((left, right) => left.id - right.id);
+  return {
+    units,
+    destroyedResources: resourceValueForBattleUnits(units, costForId, "destroyed"),
+    restoredResources: resourceValueForBattleUnits(units, costForId, "restored"),
+    netLostResources: resourceValueForBattleUnits(units, costForId, "netLost")
+  };
+}
+
+function resourceValueForBattleUnits(
+  units: readonly BattleReportDefenderLossBreakdown["planetFleet"]["units"][number][],
+  costForId: (id: number) => Resources | null,
+  countKey: "destroyed" | "restored" | "netLost"
+): Resources {
+  const total = { metal: 0n, crystal: 0n, deuterium: 0n };
+  for (const unit of units) {
+    const cost = costForId(unit.id);
+    if (!cost) continue;
+    const count = BigInt(unit[countKey]);
+    total.metal += BigInt(cost.metal) * count;
+    total.crystal += BigInt(cost.crystal) * count;
+    total.deuterium += BigInt(cost.deuterium) * count;
+  }
+  return {
+    metal: total.metal.toString(),
+    crystal: total.crystal.toString(),
+    deuterium: total.deuterium.toString()
+  };
+}
+
+function battleTimeStartingRows(
+  beforeTransaction: Map<number, number>,
+  unitLosses: readonly BattleReportDefenderLossBreakdown["planetFleet"]["units"][number][]
+): Array<{ id: number; count: number }> {
+  const counts = new Map(beforeTransaction);
+  for (const unit of unitLosses) {
+    counts.set(unit.id, unit.remaining + unit.netLost);
+  }
+  return unitCountRows(counts);
+}
+
+function subtractResourcesIfNonNegative(left: Resources, right: Resources): Resources | null {
+  const values = {
+    metal: BigInt(left.metal) - BigInt(right.metal),
+    crystal: BigInt(left.crystal) - BigInt(right.crystal),
+    deuterium: BigInt(left.deuterium) - BigInt(right.deuterium)
+  };
+  if (values.metal < 0n || values.crystal < 0n || values.deuterium < 0n) return null;
+  return {
+    metal: values.metal.toString(),
+    crystal: values.crystal.toString(),
+    deuterium: values.deuterium.toString()
   };
 }
 
