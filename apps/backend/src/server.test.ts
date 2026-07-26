@@ -8884,6 +8884,68 @@ describe("Veydrift backend", () => {
     expect(response.headers.get("cache-control")).toBe("public, max-age=300, stale-while-revalidate=300");
   });
 
+  test("keeps live landing reads uncached and versioned by indexed changes", async () => {
+    const chainReader = new MockChainReader();
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      enableResponseCache: true,
+      indexer,
+      prewarmResponseCache: false
+    });
+    const highscoresRequest = new Request("http://localhost/highscores?category=total&live=1&page=1&pageSize=10");
+    const missionsRequest = new Request("http://localhost/missions?live=1&status=active");
+
+    const initialHighscores = await handler(highscoresRequest.clone());
+    const initialHighscoresBody = await initialHighscores.json();
+    const initialMissions = await handler(missionsRequest.clone());
+    const initialMissionsBody = await initialMissions.json();
+
+    expect(initialHighscores.status).toBe(200);
+    expect(initialHighscores.headers.get("cache-control")).toBe("public, no-store");
+    expect(initialHighscoresBody.rankings.total[0].alliance).toBeNull();
+    expect(initialMissions.status).toBe(200);
+    expect(initialMissions.headers.get("cache-control")).toBe("public, no-store");
+    expect(initialMissionsBody.missions).toEqual([]);
+
+    indexer.applyLog({
+      blockNumber: "0x90",
+      blockTimestamp: "0x69801c80",
+      transactionHash: "0xlive-alliance-create",
+      logIndex: "0x0",
+      topics: [allianceCreatedTopic, topic(1n), addressTopic(player)],
+      data: abiStrings("VEY", "Veydrift Command")
+    });
+    indexer.applyLog({
+      blockNumber: "0x91",
+      blockTimestamp: "0x69801c81",
+      transactionHash: "0xlive-alliance-join",
+      logIndex: "0x0",
+      topics: [allianceJoinedTopic, topic(1n), addressTopic(player)],
+      data: abiWords(3n)
+    });
+    for (const log of activeFleetMissionLogs({
+      missionId: 77n,
+      owner: player,
+      originPlanetId: 7n,
+      targetPlanetId: 8n
+    })) {
+      indexer.applyLog(log);
+    }
+
+    const refreshedHighscoresBody = await (await handler(highscoresRequest.clone())).json();
+    const refreshedMissionsBody = await (await handler(missionsRequest.clone())).json();
+
+    expect(refreshedHighscoresBody.rankings.total[0].alliance).toMatchObject({
+      allianceId: "1",
+      name: "Veydrift Command",
+      tag: "VEY"
+    });
+    expect(refreshedMissionsBody.missions.map((mission: { missionId: string }) => mission.missionId)).toContain("77");
+  });
+
   test("does not serve current-player highscore fields from anonymous response cache", async () => {
     const owners = [
       "0x4444444444444444444444444444444444444444",

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   landingAllianceRefreshMs,
+  landingChainEventRefreshDebounceMs,
   landingFeedRefreshMs,
   landingFeedFromMissions,
   landingLaunchCtaForLocation,
@@ -16,6 +17,17 @@ describe("landing backend data", () => {
     expect(landingSource).toContain("window.setInterval(loadLandingFeed, landingFeedRefreshMs)");
     expect(landingSource).toContain("window.setInterval(loadLandingAlliances, landingAllianceRefreshMs)");
     expect(landingSource).toContain("window.clearInterval(intervalId)");
+  });
+
+  test("refreshes landing panels from indexed chain events without browser caching", () => {
+    expect(landingChainEventRefreshDebounceMs).toBe(500);
+    expect(landingSource).toContain("new window.EventSource(eventsUrl)");
+    expect(landingSource).toContain('addEventListener("chain-event", refreshFromChainEvent)');
+    expect(landingSource).toContain("removeEventListener(\"chain-event\", refreshFromChainEvent)");
+    expect(landingSource).toContain("setRefreshToken((current) => current + 1)");
+    expect(landingSource).toContain("/missions?status=active&live=1");
+    expect(landingSource).toContain('live: "1"');
+    expect(landingSource.match(/cache: "no-store"/g)).toHaveLength(2);
   });
 
   test("points production visitors at the on-page settlement hero", () => {
