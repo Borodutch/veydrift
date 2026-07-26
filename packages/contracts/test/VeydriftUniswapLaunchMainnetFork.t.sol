@@ -164,14 +164,14 @@ contract VeydriftUniswapLaunchMainnetForkTest is Test {
                 tokensRecipient: makeAddr("fork-unsold-recipient"),
                 recoveryRecipient: makeAddr("fork-recovery-recipient"),
                 startBlock: startBlock,
-                endBlock: startBlock + 1_800,
-                claimBlock: startBlock + 1_800,
-                migrationBlock: startBlock + 1_810,
+                endBlock: startBlock + 86_400,
+                claimBlock: startBlock + 86_400,
+                migrationBlock: startBlock + 86_410,
                 auctionTickSpacingQ96: 2,
                 floorPriceQ96: (1 << 32) + 2,
                 requiredWethRaised: 1 ether,
                 auctionStepsData: abi.encodePacked(
-                    uint24(5_555), uint40(1_799), uint24(6_555), uint40(1)
+                    uint24(115), uint40(22_400), uint24(116), uint40(64_000)
                 ),
                 v4Fee: 3_000,
                 v4TickSpacing: 60,
@@ -204,7 +204,8 @@ contract VeydriftUniswapLaunchMainnetForkTest is Test {
         assertEq(registered.fundsRecipient(), VeydriftUniswapDeployments.LBP_STRATEGY);
         assertEq(registered.tokensRecipient(), config.tokensRecipient);
         assertEq(registered.startBlock(), config.startBlock);
-        assertEq(registered.endBlock() - registered.startBlock(), 1_800);
+        assertEq(launcher.BASE_48_HOUR_BLOCKS(), 86_400);
+        assertEq(registered.endBlock() - registered.startBlock(), 86_400);
         assertEq(registered.validationHook(), address(0));
 
         address bidder = makeAddr("fork-weth-bidder");
@@ -561,7 +562,7 @@ contract VeydriftUniswapLaunchMainnetForkTest is Test {
             "auctionDurationBlocks",
             context.auction.endBlock() - context.auction.startBlock()
         );
-        vm.serializeUint(object, "auctionDurationMinutesTarget", 60);
+        vm.serializeUint(object, "auctionDurationHoursTarget", 48);
         vm.serializeAddress(object, "auctionValidationHook", context.auction.validationHook());
         _serializeUintString(object, "auctionTickSpacingQ96", context.auction.tickSpacing());
         _serializeUintString(object, "auctionFloorPriceQ96", context.auction.floorPrice());

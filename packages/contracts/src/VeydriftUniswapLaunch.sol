@@ -209,7 +209,7 @@ contract VeydriftUniswapCCALauncher {
     uint256 public constant LAUNCH_BOOTSTRAP_ALLOCATION = 500_000_000 ether;
     uint128 public constant CCA_ALLOCATION = 250_000_000 ether;
     uint128 public constant V4_MAIN_LIQUIDITY_ALLOCATION = 250_000_000 ether;
-    uint64 public constant BASE_60_MINUTE_BLOCKS = 1_800;
+    uint64 public constant BASE_48_HOUR_BLOCKS = 86_400;
     uint24 public constant MPS = 10_000_000;
     uint256 public constant MIN_CCA_FLOOR_PRICE_X96 = (1 << 32) + 1;
 
@@ -320,12 +320,12 @@ contract VeydriftUniswapCCALauncher {
         ) revert InvalidRecipient(address(0));
         if (
             config.startBlock <= block.number || config.endBlock <= config.startBlock
-                || config.endBlock - config.startBlock != BASE_60_MINUTE_BLOCKS
+                || config.endBlock - config.startBlock != BASE_48_HOUR_BLOCKS
                 || config.claimBlock < config.endBlock || config.migrationBlock <= config.endBlock
         ) revert InvalidAuctionTiming();
         (uint256 durationBlocks, uint256 cumulativeMps) =
             _validateAuctionSteps(config.auctionStepsData);
-        if (durationBlocks != BASE_60_MINUTE_BLOCKS || cumulativeMps != MPS) {
+        if (durationBlocks != BASE_48_HOUR_BLOCKS || cumulativeMps != MPS) {
             revert InvalidAuctionSteps(durationBlocks, cumulativeMps);
         }
         if (
