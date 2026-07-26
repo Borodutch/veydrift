@@ -15,7 +15,7 @@ max-wallet, pause, or owner surface. The complete allocation is:
 
 | Purpose | VEYDRIFT | Percent |
 | --- | ---: | ---: |
-| 60-minute Uniswap CCA | 250,000,000 | 25% |
+| 48-hour Uniswap CCA | 250,000,000 | 25% |
 | Automatically migrated Uniswap v4 VEYDRIFT/WETH position | 250,000,000 | 25% |
 | Three resource positions, 50M each | 150,000,000 | 15% |
 | Development vesting | 150,000,000 | 15% |
@@ -93,8 +93,9 @@ CCA v2.1.0 stores the required-currency threshold immutably but does not expose 
 configuration hash, simulation trace, and approved manifest are therefore the verification evidence
 for that input. Do not fabricate a getter or omit this limitation from the signed manifest.
 
-The 60-minute window is exactly 1,800 Base block-numberish units. The packed issuance steps must also
-sum to 1,800 blocks and 10,000,000 millionths. The floor price must be at least `(1 << 32) + 1` and
+The 48-hour window is exactly 86,400 Base block-numberish units at the 2-second cadence. The packed
+issuance steps must also sum to 86,400 blocks and 10,000,000 millionths. The floor price must be at
+least `(1 << 32) + 1` and
 exactly divisible by the CCA tick spacing. `claimBlock` cannot precede `endBlock`; `migrationBlock`
 must be later than `endBlock`.
 

@@ -362,7 +362,8 @@ contract VeydriftUniswapLaunchTest is Test {
         assertEq(UniswapLaunchMockAuction(AUCTION).currency(), WETH);
         assertEq(UniswapLaunchMockAuction(AUCTION).fundsRecipient(), STRATEGY);
         assertEq(UniswapLaunchMockAuction(AUCTION).tokensRecipient(), buyerTokens);
-        assertEq(UniswapLaunchMockAuction(AUCTION).endBlock() - config.startBlock, 1_800);
+        assertEq(launcher.BASE_48_HOUR_BLOCKS(), 86_400);
+        assertEq(UniswapLaunchMockAuction(AUCTION).endBlock() - config.startBlock, 86_400);
         assertEq(UniswapLaunchMockStrategy(STRATEGY).reservedForLP(), 250_000_000 ether);
 
         vm.roll(config.migrationBlock);
@@ -570,7 +571,7 @@ contract VeydriftUniswapLaunchTest is Test {
         assertEq(token.balanceOf(authority), 1_000_000_000 ether);
     }
 
-    function testExactAllowanceAndSixtyMinuteScheduleAreMandatory() public {
+    function testExactAllowanceAndFortyEightHourScheduleAreMandatory() public {
         vm.startPrank(authority);
         token.approve(address(launcher), type(uint256).max);
         vm.expectRevert(
@@ -587,8 +588,18 @@ contract VeydriftUniswapLaunchTest is Test {
         vm.stopPrank();
 
         VeydriftUniswapCCALauncher.LaunchConfig memory config = _config();
-        config.endBlock++;
+        config.endBlock--;
         vm.expectRevert(VeydriftUniswapCCALauncher.InvalidAuctionTiming.selector);
+        launcher.preflight(address(token), config, bytes32(0));
+
+        config = _config();
+        config.auctionStepsData =
+            abi.encodePacked(uint24(115), uint40(22_399), uint24(116), uint40(64_000));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftUniswapCCALauncher.InvalidAuctionSteps.selector, 86_399, 9_999_885
+            )
+        );
         launcher.preflight(address(token), config, bytes32(0));
     }
 
@@ -635,14 +646,14 @@ contract VeydriftUniswapLaunchTest is Test {
             tokensRecipient: buyerTokens,
             recoveryRecipient: recovery,
             startBlock: startBlock,
-            endBlock: startBlock + 1_800,
-            claimBlock: startBlock + 1_800,
-            migrationBlock: startBlock + 1_810,
+            endBlock: startBlock + 86_400,
+            claimBlock: startBlock + 86_400,
+            migrationBlock: startBlock + 86_410,
             auctionTickSpacingQ96: 2,
             floorPriceQ96: (1 << 32) + 2,
             requiredWethRaised: 1 ether,
             auctionStepsData: abi.encodePacked(
-                uint24(5_555), uint40(1_799), uint24(6_555), uint40(1)
+                uint24(115), uint40(22_400), uint24(116), uint40(64_000)
             ),
             v4Fee: 3_000,
             v4TickSpacing: 60,

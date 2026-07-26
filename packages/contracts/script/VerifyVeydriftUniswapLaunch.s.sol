@@ -63,7 +63,10 @@ contract VerifyVeydriftUniswapLaunch is Script {
         require(auction.token() == token, "AUCTION_TOKEN");
         require(auction.currency() == VeydriftUniswapDeployments.WETH, "AUCTION_CURRENCY");
         require(auction.totalSupply() == 250_000_000 ether, "AUCTION_SUPPLY");
-        require(auction.endBlock() - auction.startBlock() == 1_800, "AUCTION_DURATION");
+        require(
+            auction.endBlock() - auction.startBlock() == main.BASE_48_HOUR_BLOCKS(),
+            "AUCTION_DURATION"
+        );
         require(
             auction.fundsRecipient() == VeydriftUniswapDeployments.LBP_STRATEGY, "FUNDS_RECIPIENT"
         );
