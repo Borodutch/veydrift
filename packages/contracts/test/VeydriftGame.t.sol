@@ -5803,9 +5803,8 @@ contract VeydriftGameTest is Test {
         _setBuildingLevel(colonyPlanetId, Building.InterdimensionalRiftStabilizer, 1);
         _setResources(colonyPlanetId, 100, 0, 0);
         vm.prank(player);
-        IRiftLifecycleEntrypoints(address(game)).startRiftExtraction(
-            colonyPlanetId, Resource.Metal, 100
-        );
+        IRiftLifecycleEntrypoints(address(game))
+            .startRiftExtraction(colonyPlanetId, Resource.Metal, 100);
         assertEq(game.planet(colonyPlanetId).resources.metal, 0);
 
         vm.prank(player);
