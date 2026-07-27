@@ -414,6 +414,12 @@ contract VeydriftGameTest is Test {
         vm.expectRevert(abi.encodeWithSelector(VeydriftGameStorage.Unauthorized.selector, player));
         game.startPlanet{value: 0.05 ether}();
 
+        // Resolution is permissionless, but it still mutates the game. The emergency pause must
+        // stop it too, rather than permitting in-flight combat or Rift settlement to continue.
+        vm.prank(player);
+        vm.expectRevert(abi.encodeWithSelector(VeydriftGameStorage.Unauthorized.selector, player));
+        game.resolveFleetMission(0);
+
         vm.prank(admin);
         game.setGamePaused(false);
 
@@ -5439,6 +5445,53 @@ contract VeydriftGameTest is Test {
         assertEq(cargo.deuterium, 0);
         assertEq(game.shipCount(originPlanetId, Ship.SmallCargo), 49);
         assertEq(game.shipCount(targetPlanetId, Ship.SmallCargo), defenderShipsBefore);
+    }
+
+    function testRiftLockDoesNotBypassScoreProtectionAtAttackResolution() public {
+        vm.warp(8 days);
+        (uint256 originPlanetId, uint256 targetPlanetId, address defender) = _seedAttackPlanets();
+        _setTechnologyLevel(player, Technology.Computer, 2);
+        _setShipCount(originPlanetId, Ship.SmallCargo, 50);
+        _setShipCount(targetPlanetId, Ship.SmallCargo, 50);
+        _setResources(originPlanetId, 1_000_000, 1_000_000, 1_000_000);
+        _setResources(targetPlanetId, 500_000, 500_000, 500_000);
+        _setBuildingLevel(targetPlanetId, Building.InterdimensionalRiftStabilizer, 1);
+
+        vm.prank(defender);
+        IRiftLifecycleEntrypoints(address(game))
+            .startRiftExtraction(targetPlanetId, Resource.Metal, 1);
+
+        (VeydriftGameStorage.AttackBlockReason launchReason,,) =
+            _attackProtectionStatus(player, targetPlanetId);
+        assertEq(uint8(launchReason), uint8(VeydriftGameStorage.AttackBlockReason.None));
+
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.smallCargo = 1;
+        vm.prank(player);
+        uint256 missionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            123
+        );
+        (, uint64 arrivalAt,,) = _fleetMission(missionId);
+
+        _setShipCount(originPlanetId, Ship.Battleship, 1_000_000);
+        (VeydriftGameStorage.AttackBlockReason impactReason,,) =
+            _attackProtectionStatus(player, targetPlanetId);
+        assertEq(uint8(impactReason), uint8(VeydriftGameStorage.AttackBlockReason.ScoreProtection));
+
+        vm.warp(arrivalAt);
+        _fulfillAttackBattleRandomness(missionId, 1);
+        game.resolveFleetMission(missionId);
+
+        (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(missionId);
+        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
+        (bool active, uint128 amount,,) = game.riftExtractions(targetPlanetId, Resource.Metal);
+        assertTrue(active);
+        assertEq(amount, 1);
     }
 
     function testAttackResolutionBouncesWhenTargetJoinsAttackerAllianceMidFlight() public {

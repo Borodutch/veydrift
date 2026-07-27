@@ -235,6 +235,7 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
     }
 
     function resolveFleetMission(uint256 missionId) external {
+        _requireGameNotPaused();
         FleetMission storage mission = _fleetMissions[missionId];
         if (mission.status != FleetMissionStatus.Outbound) return;
         if (

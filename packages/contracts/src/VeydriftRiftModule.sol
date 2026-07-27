@@ -62,8 +62,8 @@ contract VeydriftRiftModule is VeydriftResourceReserves {
         return _riftLockedResources[planetId];
     }
 
-    /// @dev Rift value remains attackable through score and bashing protection, but never through
-    ///      same-alliance protection. This is invoked by the gameplay launch module via staticcall.
+    /// @dev Rift value may be looted at 100% only by an otherwise legal attack. A Rift lock must
+    ///      never weaken score, bashing, self-attack, or alliance combat protections.
     function enforceRiftAttackProtection(address attacker, uint256 planetId) external view {
         if (_planets[planetId].owner == attacker) revert SelfAttack();
         (bool ok, bytes memory data) =
@@ -72,14 +72,8 @@ contract VeydriftRiftModule is VeydriftResourceReserves {
         if (data.length < 32) return;
         (AttackBlockReason reason,,) = abi.decode(data, (AttackBlockReason, uint8, uint16));
         if (reason == AttackBlockReason.SameAlliance) revert SameAllianceAttack();
-        if (reason == AttackBlockReason.BashingLimit || reason == AttackBlockReason.ScoreProtection)
-        {
-            Resources storage locked = _riftLockedResources[planetId];
-            if (locked.metal == 0 && locked.crystal == 0 && locked.deuterium == 0) {
-                if (reason == AttackBlockReason.BashingLimit) revert AttackBashingLimitReached();
-                revert AttackScoreProtection();
-            }
-        }
+        if (reason == AttackBlockReason.BashingLimit) revert AttackBashingLimitReached();
+        if (reason == AttackBlockReason.ScoreProtection) revert AttackScoreProtection();
     }
 
     function raidRiftExtraction(

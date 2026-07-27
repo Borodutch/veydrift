@@ -454,8 +454,7 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
             _attackProtectionPreview(mission.owner, mission.targetPlanetId);
         if (
             protectionReason == AttackBlockReason.SameAlliance
-                || (protectionReason == AttackBlockReason.ScoreProtection
-                    && !_hasRiftLockedResources(mission.targetPlanetId))
+                || protectionReason == AttackBlockReason.ScoreProtection
         ) {
             _returnLinkedMissions(missionId, mission);
             mission.status = FleetMissionStatus.Returning;
@@ -1567,11 +1566,6 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         (bool ok, bytes memory data) =
             address(this).call(abi.encodeWithSelector(0x41dfa622, missionId));
         if (!ok) assembly ("memory-safe") { revert(add(data, 32), mload(data)) }
-    }
-
-    function _hasRiftLockedResources(uint256 planetId) private view returns (bool) {
-        Resources storage locked = _riftLockedResources[planetId];
-        return locked.metal != 0 || locked.crystal != 0 || locked.deuterium != 0;
     }
 
     function _battleSeed(uint256 missionId, FleetMission storage mission)
