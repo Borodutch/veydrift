@@ -4406,7 +4406,7 @@ describe("SettlementIndexer", () => {
         expect.objectContaining({
           amount: "250",
           resource: "metal",
-          unlocksAt: "1770500000"
+          unlocksAt: "2026-02-07T21:33:20.000Z"
         })
       ]
     });
@@ -4473,6 +4473,26 @@ describe("SettlementIndexer", () => {
         resources: { metal: "750", crystal: "400", deuterium: "0" }
       })
     ]);
+    expect(indexer.riftState(player, planet.planetId)).toMatchObject({
+      pendingWithdrawals: expect.arrayContaining([
+        expect.objectContaining({
+          id: "extraction:7:0",
+          amount: "750",
+          resource: "metal",
+          requestedAt: "2026-02-02T02:40:00.000Z",
+          unlocksAt: "2026-03-02T02:40:00.000Z"
+        }),
+        expect.objectContaining({
+          id: "extraction:7:1",
+          amount: "400",
+          resource: "crystal"
+        })
+      ]),
+      resources: expect.arrayContaining([
+        expect.objectContaining({ key: "metal", lockedBalance: "750" }),
+        expect.objectContaining({ key: "crystal", lockedBalance: "400" })
+      ])
+    });
 
     indexer.applyLog({
       blockNumber: "0x93",

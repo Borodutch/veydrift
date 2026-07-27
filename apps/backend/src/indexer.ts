@@ -2963,6 +2963,20 @@ export class SettlementIndexer {
     const balances = this.riftBalances(wallet, planetId);
     const balanceById = new Map(balances.map((row) => [row.resource_id, row]));
     const pending = this.pendingWithdrawals(wallet, planetId);
+    const extractions = this.riftExtractions(wallet, planetId);
+    const lockedByResource = new Map<number, bigint>();
+    for (const withdrawal of pending) {
+      lockedByResource.set(
+        withdrawal.resource_id,
+        (lockedByResource.get(withdrawal.resource_id) ?? 0n) + BigInt(withdrawal.amount)
+      );
+    }
+    for (const extraction of extractions) {
+      lockedByResource.set(
+        extraction.resource_id,
+        (lockedByResource.get(extraction.resource_id) ?? 0n) + BigInt(extraction.amount)
+      );
+    }
     return {
       wallet,
       homePlanetId: planetId,
@@ -2988,17 +3002,25 @@ export class SettlementIndexer {
           walletBalance: null,
           allowance: null,
           inGameBalance: balance?.in_game_balance ?? "0",
-          lockedBalance: balance?.locked_balance ?? "0"
+          lockedBalance: lockedByResource.get(resource.resourceId)?.toString() ?? balance?.locked_balance ?? "0"
         };
       }),
-      pendingWithdrawals: pending.map((row) => ({
-        id: row.withdrawal_key,
-        resource: riftResourceRows.find((resource) => resource.resourceId === row.resource_id)?.key ?? "metal",
-        amount: row.amount,
-        requestedAt: "0",
-        unlocksAt: row.unlocks_at,
-        ready: BigInt(row.unlocks_at) <= BigInt(Math.floor(Date.now() / 1000))
-      }))
+      pendingWithdrawals: [
+        ...pending.map((row) => riftPendingWithdrawal(
+          row.withdrawal_key,
+          row.resource_id,
+          row.amount,
+          "0",
+          row.unlocks_at
+        )),
+        ...extractions.map((extraction) => riftPendingWithdrawal(
+          `extraction:${extraction.planet_id}:${extraction.resource_id}`,
+          extraction.resource_id,
+          extraction.amount,
+          extraction.started_at,
+          extraction.unlocks_at
+        ))
+      ]
     };
   }
 
@@ -8184,6 +8206,16 @@ export class SettlementIndexer {
     `).all(wallet, planetId) as PendingWithdrawalRow[];
   }
 
+  private riftExtractions(wallet: `0x${string}`, planetId: string | null): RiftExtractionRow[] {
+    if (!planetId) return [];
+    return this.db.query(`
+      SELECT owner, planet_id, resource_id, amount, started_at, unlocks_at
+      FROM indexed_rift_extractions
+      WHERE owner = lower(?) AND planet_id = ? AND CAST(amount AS INTEGER) > 0
+      ORDER BY CAST(unlocks_at AS INTEGER) ASC
+    `).all(wallet, planetId) as RiftExtractionRow[];
+  }
+
   private indexedFleetMissionSummaries(): FleetMissionSummary[] {
     this.currentMissionReadModelDbVersion();
     // Fleet mission summaries are derived by decoding historical mission logs. Cache them in a short
@@ -11292,6 +11324,25 @@ function delay(milliseconds: number): Promise<void> {
 
 function riftWithdrawalKey(event: IndexedRiftResourceEvent): string {
   return `${event.transactionHash.toLowerCase()}:${event.planetId}:${event.resourceId}:${event.amount}`;
+}
+
+function riftPendingWithdrawal(
+  id: string,
+  resourceId: number,
+  amount: string,
+  requestedAt: string,
+  unlocksAt: string
+) {
+    const toIso = (timestamp: string): string => new Date(Number(BigInt(timestamp) * 1_000n)).toISOString();
+  const unlocksAtSeconds = BigInt(unlocksAt);
+  return {
+    id,
+    resource: riftResourceRows.find((resource) => resource.resourceId === resourceId)?.key ?? "metal",
+    amount,
+    requestedAt: toIso(requestedAt),
+    unlocksAt: toIso(unlocksAt),
+    ready: unlocksAtSeconds <= BigInt(Math.floor(Date.now() / 1000))
+  };
 }
 
 function hasAnyShips(ships: Record<string, string>): boolean {
