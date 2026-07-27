@@ -40,13 +40,20 @@ contract VeydriftRiftModule is VeydriftResourceReserves {
         _requireNoPendingMissionResolutionForPlanet(planetId);
         RiftExtraction memory extraction = riftExtractions[planetId][resource];
         if (!extraction.active) revert RiftExtractionInactive(planetId, resource);
-        if (_currentTimestamp() < extraction.unlocksAt) revert WithdrawalNotReady(extraction.unlocksAt);
+        if (_currentTimestamp() < extraction.unlocksAt) {
+            revert WithdrawalNotReady(extraction.unlocksAt);
+        }
         delete riftExtractions[planetId][resource];
         Resources memory resourceAmount = _resourceAmount(resource, extraction.amount);
         _lockedWithdrawalResources = _subtract(_lockedWithdrawalResources, resourceAmount);
         _riftLockedResources[planetId] = _subtract(_riftLockedResources[planetId], resourceAmount);
-        if (extraction.amount != 0 && !_requireReserveResource(resource).transfer(msg.sender, extraction.amount)) {
-            revert ResourceTransferFailed(resource, address(_resourceTokens[resource]), extraction.amount);
+        if (
+            extraction.amount != 0
+                && !_requireReserveResource(resource).transfer(msg.sender, extraction.amount)
+        ) {
+            revert ResourceTransferFailed(
+                resource, address(_resourceTokens[resource]), extraction.amount
+            );
         }
         emit RiftExtractionFinalized(msg.sender, planetId, resource, extraction.amount);
     }
@@ -59,14 +66,14 @@ contract VeydriftRiftModule is VeydriftResourceReserves {
     ///      same-alliance protection. This is invoked by the gameplay launch module via staticcall.
     function enforceRiftAttackProtection(address attacker, uint256 planetId) external view {
         if (_planets[planetId].owner == attacker) revert SelfAttack();
-        (bool ok, bytes memory data) = address(this).staticcall(
-            abi.encodeWithSelector(0x8a6b2246, attacker, planetId)
-        );
+        (bool ok, bytes memory data) =
+            address(this).staticcall(abi.encodeWithSelector(0x8a6b2246, attacker, planetId));
         if (!ok) assembly ("memory-safe") { revert(add(data, 32), mload(data)) }
         if (data.length < 32) return;
         (AttackBlockReason reason,,) = abi.decode(data, (AttackBlockReason, uint8, uint16));
         if (reason == AttackBlockReason.SameAlliance) revert SameAllianceAttack();
-        if (reason == AttackBlockReason.BashingLimit || reason == AttackBlockReason.ScoreProtection) {
+        if (reason == AttackBlockReason.BashingLimit || reason == AttackBlockReason.ScoreProtection)
+        {
             Resources storage locked = _riftLockedResources[planetId];
             if (locked.metal == 0 && locked.crystal == 0 && locked.deuterium == 0) {
                 if (reason == AttackBlockReason.BashingLimit) revert AttackBashingLimitReached();
@@ -83,16 +90,19 @@ contract VeydriftRiftModule is VeydriftResourceReserves {
         uint16 crystalBps,
         uint16 deuteriumBps
     ) external returns (Resources memory raided) {
-        (raided.metal, raided.crystal, raided.deuterium) = VeydriftRaidStorage.raidRift(
-            _riftLockedResources[planetId], capacity, metalBps, crystalBps, deuteriumBps
-        );
+        (raided.metal, raided.crystal, raided.deuterium) =
+            VeydriftRaidStorage.raidRift(
+                _riftLockedResources[planetId], capacity, metalBps, crystalBps, deuteriumBps
+            );
         if (raided.metal == 0 && raided.crystal == 0 && raided.deuterium == 0) return raided;
         _lockedWithdrawalResources = _subtract(_lockedWithdrawalResources, raided);
         _increaseInternalResources(raided);
         _riftExtractionSubtract(planetId, Resource.Metal, raided.metal);
         _riftExtractionSubtract(planetId, Resource.Crystal, raided.crystal);
         _riftExtractionSubtract(planetId, Resource.Deuterium, raided.deuterium);
-        emit RiftExtractionLooted(attacker, planetId, raided.metal, raided.crystal, raided.deuterium);
+        emit RiftExtractionLooted(
+            attacker, planetId, raided.metal, raided.crystal, raided.deuterium
+        );
     }
 
     function _riftExtractionSubtract(uint256 planetId, Resource resource, uint128 amount) private {
@@ -114,7 +124,10 @@ contract VeydriftRiftModule is VeydriftResourceReserves {
     function _spend(uint256 planetId, Resources memory cost) private {
         _settleActionPlanet(planetId);
         Resources storage available = _planets[planetId].resources;
-        if (available.metal < cost.metal || available.crystal < cost.crystal || available.deuterium < cost.deuterium) {
+        if (
+            available.metal < cost.metal || available.crystal < cost.crystal
+                || available.deuterium < cost.deuterium
+        ) {
             revert InsufficientResources(available.metal, available.crystal, available.deuterium);
         }
         available.metal -= cost.metal;
@@ -124,7 +137,11 @@ contract VeydriftRiftModule is VeydriftResourceReserves {
         _emitPlanetSettled(planetId);
     }
 
-    function _resourceAmount(Resource resource, uint128 amount) private pure returns (Resources memory) {
+    function _resourceAmount(Resource resource, uint128 amount)
+        private
+        pure
+        returns (Resources memory)
+    {
         if (resource == Resource.Metal) return Resources(amount, 0, 0);
         if (resource == Resource.Crystal) return Resources(0, amount, 0);
         if (resource == Resource.Deuterium) return Resources(0, 0, amount);
@@ -135,7 +152,11 @@ contract VeydriftRiftModule is VeydriftResourceReserves {
         return uint64(block.timestamp);
     }
 
-    function _subtract(Resources memory left, Resources memory right) private pure returns (Resources memory) {
+    function _subtract(Resources memory left, Resources memory right)
+        private
+        pure
+        returns (Resources memory)
+    {
         return Resources({
             metal: left.metal - right.metal,
             crystal: left.crystal - right.crystal,

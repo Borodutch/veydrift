@@ -8974,9 +8974,8 @@ contract VeydriftGameTest is Test {
         _setResources(planetId, 1_000, 1_000, 1_000);
 
         vm.prank(player);
-        (bool started,) = address(game).call(
-            abi.encodeWithSelector(0x0870c082, planetId, Resource.Metal, uint128(200))
-        );
+        (bool started,) = address(game)
+            .call(abi.encodeWithSelector(0x0870c082, planetId, Resource.Metal, uint128(200)));
         assertTrue(started);
         assertEq(game.planet(planetId).resources.metal, 800);
 
@@ -8987,16 +8986,14 @@ contract VeydriftGameTest is Test {
         assertEq(unlocksAt - startedAt, 28 days);
 
         vm.prank(player);
-        (bool early,) = address(game).call(
-            abi.encodeWithSelector(0xe2f2de34, planetId, Resource.Metal)
-        );
+        (bool early,) =
+            address(game).call(abi.encodeWithSelector(0xe2f2de34, planetId, Resource.Metal));
         assertFalse(early);
 
         vm.warp(unlocksAt);
         vm.prank(player);
-        (bool finalized,) = address(game).call(
-            abi.encodeWithSelector(0xe2f2de34, planetId, Resource.Metal)
-        );
+        (bool finalized,) =
+            address(game).call(abi.encodeWithSelector(0xe2f2de34, planetId, Resource.Metal));
         assertTrue(finalized);
         (active, amount,,) = game.riftExtractions(planetId, Resource.Metal);
         assertFalse(active);
@@ -9044,9 +9041,8 @@ contract VeydriftGameTest is Test {
         _setBuildingLevel(targetPlanetId, Building.InterdimensionalRiftStabilizer, 1);
         _setResources(targetPlanetId, 1_000, 0, 0);
         vm.prank(defender);
-        (bool started,) = address(game).call(
-            abi.encodeWithSelector(0x0870c082, targetPlanetId, Resource.Metal, uint128(400))
-        );
+        (bool started,) = address(game)
+            .call(abi.encodeWithSelector(0x0870c082, targetPlanetId, Resource.Metal, uint128(400)));
         assertTrue(started);
 
         _setShipCount(originPlanetId, Ship.LargeCargo, 1);

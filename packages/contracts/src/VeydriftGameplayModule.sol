@@ -302,8 +302,8 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
     }
 
     function _enforceAttackProtection(address attacker, uint256 targetPlanetId) private view {
-        (bool ok, bytes memory data) = address(this)
-            .staticcall(abi.encodeWithSelector(0x946213e2, attacker, targetPlanetId));
+        (bool ok, bytes memory data) =
+            address(this).staticcall(abi.encodeWithSelector(0x946213e2, attacker, targetPlanetId));
         if (!ok) {
             assembly ("memory-safe") {
                 revert(add(data, 32), mload(data))

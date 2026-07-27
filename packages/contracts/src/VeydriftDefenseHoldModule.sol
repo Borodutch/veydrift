@@ -26,7 +26,10 @@ interface IVeydriftDefenseHoldRandomnessEngine {
 }
 
 interface IVeydriftMoonPresence {
-    function existsForOwner(address moonSystem, uint256 planetId, address owner_) external view returns (bool);
+    function existsForOwner(address moonSystem, uint256 planetId, address owner_)
+        external
+        view
+        returns (bool);
 }
 
 /// @notice Delegatecall target implementing OGame-style ACS Defend (DefenseHold): station a fleet at
