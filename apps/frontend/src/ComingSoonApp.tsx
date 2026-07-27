@@ -3,7 +3,10 @@ import { useEffect, useState } from "preact/hooks";
 import {
   Activity,
   ArrowRight,
+  Bot,
+  Check,
   Coins,
+  Copy,
   ExternalLink,
   Factory,
   FileText,
@@ -17,6 +20,7 @@ import { playableApiUrl } from "./runtimeConfig";
 
 const alphaUrl = "https://test.veydrift.com";
 const claimUrl = "#claim";
+export const landingAgentPrompt = "Use https://veydrift.com/docs to play Veydrift for me. Grow my empire, prioritize Metal, Crystal and Deuterium production, and prepare surplus resources for the Rift. Ask before signing transactions or taking irreversible actions.";
 export const landingFeedRefreshMs = 60_000;
 export const landingAllianceRefreshMs = 300_000;
 export const landingChainEventRefreshDebounceMs = 500;
@@ -150,6 +154,7 @@ export function ComingSoonApp({
       <HeroSection hero={hero} heroSupport={heroSupport} heroViewSignal={heroViewSignal} />
       <ScreenshotsSection />
       <HowItWorksSection />
+      <AgentSection />
       <RiftSection />
       <FeedSection refreshToken={chainRefreshToken} />
       <AlliancesSection refreshToken={chainRefreshToken} />
@@ -336,6 +341,95 @@ function HowItWorksSection() {
         </div>
       </div>
     </section>
+  );
+}
+
+function AgentSection() {
+  const [copied, setCopied] = useState(false);
+
+  const copyPrompt = async () => {
+    if (typeof navigator === "undefined" || !navigator.clipboard) return;
+    await navigator.clipboard.writeText(landingAgentPrompt);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 2_000);
+  };
+
+  return (
+    <section className="landing-agent-section relative overflow-hidden px-5 py-24 sm:px-8 sm:py-28 lg:px-10">
+      <div className="landing-agent-glow landing-agent-glow-cyan" />
+      <div className="landing-agent-glow landing-agent-glow-amber" />
+      <div className="relative z-10 mx-auto grid max-w-7xl gap-12 lg:grid-cols-[0.9fr_1.1fr] lg:items-center lg:gap-16">
+        <div className="landing-reveal">
+          <div className="inline-flex items-center gap-2 rounded-full bg-signal/[0.08] px-3 py-1.5 text-sm font-semibold text-signal">
+            <Bot className="h-4 w-4" />
+            Agent-ready universe
+          </div>
+          <h2 className="mt-5 max-w-3xl text-4xl font-semibold leading-[1.06] text-white sm:text-6xl">
+            Let an AI commander grow your empire.
+          </h2>
+          <p className="mt-6 max-w-2xl text-lg leading-8 text-slate-300">
+            Point an agent at the public Veydrift manual. It can plan production, manage timers,
+            build fleets and turn persistent attention into Metal, Crystal and Deuterium.
+          </p>
+
+          <div className="mt-8 grid gap-3 sm:grid-cols-3">
+            <AgentStep index="01" title="Read" body="Learn the game from live public docs." />
+            <AgentStep index="02" title="Produce" body="Grow an empire while you do something else." />
+            <AgentStep index="03" title="Enter the Rift" body="Move surplus resources into the wider economy." />
+          </div>
+        </div>
+
+        <div className="landing-agent-console landing-reveal" data-tilt>
+          <div className="landing-agent-console-bar">
+            <div className="flex items-center gap-2">
+              <span className="landing-agent-status-dot" />
+              <span>Agent mission brief</span>
+            </div>
+            <span className="text-slate-500">veydrift.com/docs</span>
+          </div>
+
+          <div className="p-5 sm:p-7">
+            <p className="text-xs font-bold uppercase tracking-[0.16em] text-signal/80">Suggested prompt</p>
+            <blockquote className="mt-4 text-lg leading-8 text-slate-100">
+              “{landingAgentPrompt}”
+            </blockquote>
+
+            <div className="mt-7 flex flex-col gap-3 sm:flex-row">
+              <button
+                aria-live="polite"
+                className="inline-flex min-h-12 flex-1 items-center justify-center gap-2 rounded-lg bg-signal px-5 py-3 text-sm font-bold text-[#031014] transition hover:bg-cyan-100"
+                onClick={copyPrompt}
+                type="button"
+              >
+                {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                {copied ? "Prompt copied" : "Copy agent prompt"}
+              </button>
+              <a
+                className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg bg-white/[0.06] px-5 py-3 text-sm font-semibold text-slate-100 transition hover:bg-white/[0.1]"
+                href="/docs"
+              >
+                Read the docs
+                <ArrowRight className="h-4 w-4" />
+              </a>
+            </div>
+
+            <p className="mt-5 text-xs leading-5 text-slate-500">
+              You keep control of wallet approvals and irreversible actions.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function AgentStep({ index, title, body }: { index: string; title: string; body: string }) {
+  return (
+    <div className="landing-agent-step">
+      <span>{index}</span>
+      <strong>{title}</strong>
+      <p>{body}</p>
+    </div>
   );
 }
 
