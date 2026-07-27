@@ -7098,7 +7098,8 @@ export function PlayableMvpApp({
       return;
     }
 
-    if (!riftState?.homePlanetId) {
+    const riftPlanetId = riftState?.homePlanetId;
+    if (!riftPlanetId) {
       setRiftAction({ status: "error", label: "Select a Rift-enabled planet before finalizing extraction." });
       return;
     }
@@ -7106,7 +7107,7 @@ export function PlayableMvpApp({
       provider,
       account,
       gameContract,
-      riftState.homePlanetId,
+      riftPlanetId,
       resource.resourceId,
     ));
   }, [account, gameContract, provider, riftState?.homePlanetId, riftState?.resources, runRiftTransaction]);

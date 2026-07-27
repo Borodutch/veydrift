@@ -116,6 +116,7 @@ const acceptedCacheQueryParams = new Map<string, ReadonlySet<string>>([
   ["/highscores", new Set(["category", "currentWallet", "includeAttackProtection", "limit", "live", "page", "pageSize"])],
   ["/missions", new Set(["live", "missionNumber", "missionType", "owner", "page", "pageSize", "planetId", "status"])],
   ["/raid-finder/debris", new Set(["limit", "minMetal", "minCrystal"])],
+  ["/raid-finder/rifters", new Set(["limit"])],
   ["/universe/systems", new Set(["center", "detail", "galaxy", "limit", "page", "radius"])],
   ["/wallet/*/fleet-visibility", new Set(["archive", "planetId"])],
   ["/wallet/*/missions", new Set(["filter", "missionNumber", "missionType", "page", "pageSize", "planetId", "status"])],
@@ -440,6 +441,9 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
     if (request.method === "GET" && url.pathname === "/raid-finder/debris") {
       return indexedDebrisTargetsResponse(indexer, url);
+    }
+    if (request.method === "GET" && url.pathname === "/raid-finder/rifters") {
+      return indexedRiftTargetsResponse(indexer, url);
     }
 
     if (request.method === "GET" && url.pathname === "/chain/events") {
@@ -2058,6 +2062,7 @@ function cacheableJsonRequestTtlMs(request: Request, url: URL): number {
   if (url.pathname === "/health") return 10_000;
   if (url.pathname === "/highscores") return livePublicDataRequest(url) ? 1_000 : 300_000;
   if (url.pathname === "/raid-finder/debris") return 30_000;
+  if (url.pathname === "/raid-finder/rifters") return 30_000;
   // Mission-control reads are backed by the mission read-model version in responseCacheVersion(), so
   // they stay fresh across indexed mission events while still coalescing repeated UI refreshes.
   if (url.pathname.match(/^\/wallet\/[^/]+\/missions$/)) return 30_000;
@@ -2096,6 +2101,7 @@ function cacheableJsonRequestVersion(url: URL, indexer: SettlementIndexer): stri
   if (url.pathname === "/health") return "ttl";
   if (url.pathname === "/highscores") return livePublicDataRequest(url) ? indexer.indexedStateCacheVersion() : "ttl";
   if (url.pathname === "/raid-finder/debris") return "ttl";
+  if (url.pathname === "/raid-finder/rifters") return "ttl";
   if (url.pathname.match(/^\/wallet\/[^/]+\/missions$/)) return indexer.missionResponseCacheVersion();
   if (url.pathname === "/missions") return livePublicDataRequest(url) ? indexer.missionResponseCacheVersion() : "ttl";
   if (url.pathname.match(/^\/mission\/[^/]+$/)) return indexer.missionResponseCacheVersion();
@@ -4934,6 +4940,39 @@ function indexedDebrisTargetsResponse(indexer: SettlementIndexer | undefined, ur
         pageSize: limit
       },
       detail: indexedWarmDetail("Raid Finder debris targets"),
+      stale: !snapshot.safeToServeIndexedState,
+      source: indexedSource
+    },
+    snapshot
+  );
+}
+
+function indexedRiftTargetsResponse(indexer: SettlementIndexer | undefined, url: URL): Response {
+  if (!hasWarmPlanetIndex(indexer)) {
+    return indexedReadNotReadyResponse("Rifters", indexer);
+  }
+
+  const limit = positiveIntegerQuery(url, "limit", 250, 500);
+  const snapshot = indexer.snapshot();
+  return indexedJsonResponse(
+    {
+      targets: indexer.riftTargets(limit).map((target) => ({
+        planetId: target.planet.planetId,
+        name: target.planet.name,
+        owner: target.planet.owner,
+        coordinates: {
+          galaxy: target.planet.galaxy,
+          system: target.planet.system,
+          position: target.planet.position
+        },
+        archetype: planetArchetypeForTemperature(target.planet.temperature),
+        hasMoon: indexer.hasMoon(target.planet.planetId),
+        startedAt: target.startedAt,
+        unlocksAt: target.unlocksAt,
+        resources: target.resources
+      })),
+      pagination: { page: 1, pageSize: limit },
+      detail: indexedWarmDetail("Raid Finder Rifters"),
       stale: !snapshot.safeToServeIndexedState,
       source: indexedSource
     },

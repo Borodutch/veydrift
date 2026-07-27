@@ -5,7 +5,7 @@ import { planetImageForType } from "../data/mockUniverse";
 import { formatDurationUntil } from "../durationFormat";
 import { activeMissionsByPlanetId, planetMissionSubtext } from "../planetMissionSubtext";
 import type { Coordinates } from "../types";
-import { fetchHighscores, fetchRaidFinderDebrisTargets, shortAddress, type ChainShipyardState, type DebrisTargetResponse, type FleetMissionSummary, type HighscoreEntry } from "../walletFlow";
+import { fetchHighscores, fetchRaidFinderDebrisTargets, fetchRaidFinderRifters, shortAddress, type ChainShipyardState, type DebrisTargetResponse, type FleetMissionSummary, type HighscoreEntry, type RiftFinderTargetResponse } from "../walletFlow";
 import type { FleetMissionVisibilityResponse } from "../walletFlow";
 import {
   DEFAULT_DEBRIS_TARGET_SORT,
@@ -84,7 +84,7 @@ const debrisSortColumns: Array<{ key: DebrisTargetSortKey; label: string; hint: 
   { key: "eta", label: "ETA", hint: "Estimated one-way recycler flight time" },
   { key: "fuel", label: "Fuel", hint: "Estimated deuterium fuel at full speed" },
 ];
-type RaidFinderMode = "raids" | "debris";
+type RaidFinderMode = "raids" | "debris" | "rifters";
 
 export function RaidTargetFinderPage({
   activeMissions,
@@ -106,9 +106,11 @@ export function RaidTargetFinderPage({
 }: RaidTargetFinderPageProps) {
   const [entries, setEntries] = useState<HighscoreEntry[]>([]);
   const [debrisEntries, setDebrisEntries] = useState<DebrisTargetResponse[]>([]);
+  const [rifterEntries, setRifterEntries] = useState<RiftFinderTargetResponse[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [debrisError, setDebrisError] = useState<string | undefined>();
+  const [rifterError, setRifterError] = useState<string | undefined>();
   const [hasLoaded, setHasLoaded] = useState(false);
   const [mode, setMode] = useState<RaidFinderMode>("raids");
   const [persistedSettings] = useState(() => readPersistedRaidTargetSettings());
@@ -135,6 +137,7 @@ export function RaidTargetFinderPage({
     setLoading(true);
     setError(undefined);
     setDebrisError(undefined);
+    setRifterError(undefined);
     const highscoresRequest = fetchHighscores(apiBaseUrl, {
       category: "total",
       ...(currentWallet ? { currentWallet } : {}),
@@ -142,6 +145,7 @@ export function RaidTargetFinderPage({
       pageSize: raidTargetFinderPageSize,
     });
     const debrisRequest = fetchRaidFinderDebrisTargets(apiBaseUrl, { limit: raidTargetFinderPageSize });
+    const riftersRequest = fetchRaidFinderRifters(apiBaseUrl, { limit: raidTargetFinderPageSize });
 
     highscoresRequest
       .then((response) => {
@@ -159,7 +163,14 @@ export function RaidTargetFinderPage({
         setDebrisEntries([]);
         setDebrisError(nextError instanceof Error ? nextError.message : "Debris targets could not be loaded.");
       });
-    void Promise.allSettled([highscoresRequest, debrisRequest]).finally(() => setLoading(false));
+    riftersRequest
+      .then((response) => setRifterEntries(response.targets ?? []))
+      .catch((nextError) => {
+        console.error(nextError);
+        setRifterEntries([]);
+        setRifterError(nextError instanceof Error ? nextError.message : "Rift targets could not be loaded.");
+      });
+    void Promise.allSettled([highscoresRequest, debrisRequest, riftersRequest]).finally(() => setLoading(false));
   };
 
   useEffect(() => {
@@ -228,7 +239,11 @@ export function RaidTargetFinderPage({
         : { key, direction: key === "distance" || key === "eta" || key === "fuel" ? "asc" : "desc" },
     );
   };
-  const displayedError = mode === "debris" && debrisError ? debrisError : error;
+  const displayedError = mode === "debris"
+    ? (debrisError ?? error)
+    : mode === "rifters"
+      ? (rifterError ?? error)
+      : error;
 
   return (
     <section className="space-y-4">
@@ -248,6 +263,7 @@ export function RaidTargetFinderPage({
 
       <div className="flex flex-wrap items-center gap-2">
         <ModeButton active={mode === "raids"} label="Raid targets" onClick={() => setMode("raids")} />
+        <ModeButton active={mode === "rifters"} label="Rifters" onClick={() => setMode("rifters")} />
         <ModeButton active={mode === "debris"} label="Debris" onClick={() => setMode("debris")} />
         {mode === "debris" ? (
           <span className="ml-auto text-xs text-slate-400">
@@ -278,7 +294,7 @@ export function RaidTargetFinderPage({
       ) : null}
 
       <div className="min-w-0 max-w-full overflow-hidden rounded-md border border-white/10 bg-[#0d1422]/90">
-        {mode === "raids" ? <RaidTargetTableHeader onSort={toggleSort} sort={sort} /> : <DebrisTargetTableHeader onSort={toggleDebrisSort} sort={debrisSort} />}
+        {mode === "raids" ? <RaidTargetTableHeader onSort={toggleSort} sort={sort} /> : mode === "debris" ? <DebrisTargetTableHeader onSort={toggleDebrisSort} sort={debrisSort} /> : null}
         {loading && !hasLoaded ? (
           <RaidTargetsSkeleton />
         ) : mode === "raids" && visibleTargets.length === 0 ? (
@@ -292,6 +308,10 @@ export function RaidTargetFinderPage({
         ) : mode === "debris" && debrisTargets.length === 0 ? (
           <div className="px-3 py-8 text-center text-sm text-slate-500">
             {hasLoaded ? "No debris fields indexed yet." : "No debris targets loaded yet."}
+          </div>
+        ) : mode === "rifters" && rifterEntries.length === 0 ? (
+          <div className="px-3 py-8 text-center text-sm text-slate-500">
+            {hasLoaded ? "No active Rift extractions indexed yet." : "No Rift targets loaded yet."}
           </div>
         ) : mode === "raids" ? (
           visibleTargets.map((target) => (
@@ -310,7 +330,7 @@ export function RaidTargetFinderPage({
               target={target}
             />
           ))
-        ) : (
+        ) : mode === "debris" ? (
           debrisTargets.map((target) => (
             <DebrisTargetRow
               action={harvestActionForDebrisTarget
@@ -320,6 +340,16 @@ export function RaidTargetFinderPage({
               now={now}
               onHarvest={onHarvestDebrisTarget}
               onSelectMoon={onSelectMoon}
+              onSelectPlanet={onSelectPlanet}
+              onSelectPlayer={onSelectPlayer}
+              target={target}
+            />
+          ))
+        ) : (
+          rifterEntries.map((target) => (
+            <RifterTargetRow
+              key={target.planetId}
+              now={now}
               onSelectPlanet={onSelectPlanet}
               onSelectPlayer={onSelectPlayer}
               target={target}
@@ -353,6 +383,65 @@ function ModeButton({
     >
       {label}
     </button>
+  );
+}
+
+function RifterTargetRow({
+  now,
+  onSelectPlanet,
+  onSelectPlayer,
+  target,
+}: {
+  now: number;
+  onSelectPlanet?: ((coords: Coordinates) => void) | undefined;
+  onSelectPlayer?: ((wallet: string) => void) | undefined;
+  target: RiftFinderTargetResponse;
+}) {
+  const coords = coordinateLabel(target.coordinates);
+  const unlocksAtMs = Number(target.unlocksAt) * 1_000;
+  const resourceSummary = [
+    ["M", target.resources.metal, "text-slate-200"],
+    ["C", target.resources.crystal, "text-cyan-100"],
+    ["D", target.resources.deuterium, "text-emerald-100"],
+  ] as const;
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-fuchsia-300/10 px-3 py-3 text-sm last:border-b-0">
+      <span className="relative h-8 w-8 shrink-0 overflow-hidden rounded border border-fuchsia-300/25 bg-fuchsia-300/10">
+        <OptimizedImage alt="" className="h-full w-full object-cover" loading="lazy" sizes="icon" src={planetImageForType(target.archetype)} />
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+          <button
+            className="min-w-0 truncate font-mono font-semibold text-fuchsia-100 hover:text-white disabled:cursor-default disabled:hover:text-fuchsia-100"
+            disabled={!onSelectPlanet}
+            onClick={() => onSelectPlanet?.(target.coordinates)}
+            type="button"
+          >
+            {target.name?.trim() || coords}
+          </button>
+          <span className="font-mono text-[10px] text-slate-500">{coords}</span>
+          <span className="rounded border border-fuchsia-300/30 bg-fuchsia-300/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-fuchsia-100">Rifting</span>
+        </div>
+        <button
+          className="mt-0.5 block font-mono text-xs text-slate-500 hover:text-cyan-100 disabled:cursor-default disabled:hover:text-slate-500"
+          disabled={!onSelectPlayer}
+          onClick={() => onSelectPlayer?.(target.owner)}
+          type="button"
+        >
+          {shortAddress(target.owner)}
+        </button>
+      </div>
+      <div className="flex flex-wrap gap-x-2 gap-y-1 font-mono text-xs">
+        {resourceSummary.map(([label, amount, className]) => (
+          <span className={className} key={label} title={`${label} Rift resources — 100% raidable`}>
+            <span className="text-slate-600">{label} </span>{fullNumber(amount)}
+          </span>
+        ))}
+      </div>
+      <span className="ml-auto whitespace-nowrap font-mono text-xs text-fuchsia-100" title="Extraction unlock time">
+        {Number.isFinite(unlocksAtMs) ? `Unlocks ${formatDurationUntil(unlocksAtMs, now)}` : "Unlock time unavailable"}
+      </span>
+    </div>
   );
 }
 

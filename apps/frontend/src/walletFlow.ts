@@ -1201,6 +1201,36 @@ export type RaidFinderDebrisResponse = {
   source?: string;
 };
 
+export type RiftFinderTargetResponse = {
+  planetId: string;
+  name: string | null;
+  owner: string;
+  coordinates: {
+    galaxy: number;
+    system: number;
+    position: number;
+  };
+  archetype: PlanetType;
+  hasMoon?: boolean | undefined;
+  startedAt: string;
+  unlocksAt: string;
+  resources: {
+    metal: string;
+    crystal: string;
+    deuterium: string;
+  };
+};
+
+export type RaidFinderRiftersResponse = {
+  targets: RiftFinderTargetResponse[];
+  pagination?: {
+    page: number;
+    pageSize: number;
+  };
+  stale?: boolean;
+  source?: string;
+};
+
 export const BASE_SEPOLIA = {
   chainId: 84532,
   chainIdHex: "0x14a34",
@@ -4262,6 +4292,27 @@ export async function fetchRaidFinderDebrisTargets(
       headers: {
         accept: "application/json"
       }
+    });
+  } catch (error) {
+    throw new Error(highscoreNetworkFailureMessage(error));
+  }
+
+  if (!response.ok) throw new Error(await highscoreHttpFailureMessage(response));
+  return response.json();
+}
+
+export async function fetchRaidFinderRifters(
+  apiUrl: string,
+  options: { limit?: number } = {},
+): Promise<RaidFinderRiftersResponse> {
+  const params = new URLSearchParams();
+  if (options.limit) params.set("limit", String(options.limit));
+  const query = params.toString();
+  let response: Response;
+
+  try {
+    response = await fetch(`${apiUrl.replace(/\/+$/, "")}/raid-finder/rifters${query ? `?${query}` : ""}`, {
+      headers: { accept: "application/json" }
     });
   } catch (error) {
     throw new Error(highscoreNetworkFailureMessage(error));

@@ -41,6 +41,9 @@ const jumpGateJumpedTopic = "0xf255456c5522e3e1e2a8063b9e1e2f5cd7243315601b1e8ae
 const marketResourceDepositedTopic = "0xb241f95d5e925b76c75fd1e811b497abfdc0984105f5b3feb7bee1a75f0a2643";
 const marketResourceWithdrawalRequestedTopic = "0xc4694dfe978480c576eacc57b2b09e69c8b8f50c49739ca4c4515295be589eab";
 const marketResourceWithdrawalFinishedTopic = "0x2b254e656a481b3978a707e6846146a1d7a3144e414cb803bbc7adc97d7587ee";
+const riftExtractionStartedTopic = "0xe5c09fec813f00f51c26dceaa5c361061a323d98bd0b1cac790167587a3dc512";
+const riftExtractionLootedTopic = "0x3f079e80fdea64b4c1bc83bafe580eda55ab7724bb9344b1e13a4c2c780784fb";
+const riftExtractionFinalizedTopic = "0x31186e4a61fef32b3f8d7dcad582f862fbf906a37888ae53b7131ba2d60207a2";
 const allianceCreatedTopic = "0x4a2634d9b86143d681c41580ee71aad7571fc28bc42c855fcd354bfee4485372";
 const allianceProfileUpdatedTopic = "0x6cd70a2e9b3cebb75f35ae8c618b15036c7b0c425e5b688ec918c2f58df7360e";
 const allianceInviteCreatedTopic = "0x2ebeddd3f0119f5464f0f6acb95cbc1477a11e19b059f3234bbb0a671cf2b4bd";
@@ -4431,6 +4434,63 @@ describe("SettlementIndexer", () => {
       ]),
       pendingWithdrawals: []
     });
+  });
+
+  test("indexes active Rift extractions and reduces their public 100%-raidable balances", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xrift-start-metal",
+      logIndex: "0x0",
+      topics: [riftExtractionStartedTopic, addressTopic(player), topic(7n), topic(0n)],
+      data: abiWords(1_000n, 1_770_000_000n, 1_772_419_200n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x91",
+      transactionHash: "0xrift-start-crystal",
+      logIndex: "0x0",
+      topics: [riftExtractionStartedTopic, addressTopic(player), topic(7n), topic(1n)],
+      data: abiWords(500n, 1_770_000_000n, 1_772_419_200n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x92",
+      transactionHash: "0xrift-loot",
+      logIndex: "0x0",
+      topics: [riftExtractionLootedTopic, addressTopic("0x3333333333333333333333333333333333333333" as Address), topic(7n)],
+      data: abiWords(250n, 100n, 0n)
+    });
+
+    expect(indexer.riftTargets()).toEqual([
+      expect.objectContaining({
+        planet: expect.objectContaining({ planetId: "7", owner: player }),
+        startedAt: "1770000000",
+        unlocksAt: "1772419200",
+        resources: { metal: "750", crystal: "400", deuterium: "0" }
+      })
+    ]);
+
+    indexer.applyLog({
+      blockNumber: "0x93",
+      transactionHash: "0xrift-finalize-metal",
+      logIndex: "0x0",
+      topics: [riftExtractionFinalizedTopic, addressTopic(player), topic(7n), topic(0n)],
+      data: abiWords(750n)
+    });
+    expect(indexer.riftTargets()[0]?.resources).toEqual({ metal: "0", crystal: "400", deuterium: "0" });
+
+    indexer.applyLog({
+      blockNumber: "0x94",
+      transactionHash: "0xrift-finalize-crystal",
+      logIndex: "0x0",
+      topics: [riftExtractionFinalizedTopic, addressTopic(player), topic(7n), topic(1n)],
+      data: abiWords(400n)
+    });
+    expect(indexer.riftTargets()).toEqual([]);
   });
 
   test("indexes alliance membership, profile, invites, and join requests from event logs", () => {

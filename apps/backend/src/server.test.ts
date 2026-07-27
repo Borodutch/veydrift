@@ -90,6 +90,7 @@ const combatDebrisSignaledTopic = "0xd0fbe8b5c73fec6dcfc5fef85459b695d1c9fedb4f9
 const defenseHoldStationedTopic = "0x1183ab32cc2efce96b8c0956b35dd1b46c594234a5717fd810d8cc569a193a47";
 const defenseHoldEndedTopic = "0xf72983c656a87e172935581e9c19f22826c62a2c4d552c6dd217c498a9d88586";
 const marketResourceDepositedTopic = "0xb241f95d5e925b76c75fd1e811b497abfdc0984105f5b3feb7bee1a75f0a2643";
+const riftExtractionStartedTopic = "0xe5c09fec813f00f51c26dceaa5c361061a323d98bd0b1cac790167587a3dc512";
 const allianceCreatedTopic = "0x4a2634d9b86143d681c41580ee71aad7571fc28bc42c855fcd354bfee4485372";
 const allianceProfileUpdatedTopic = "0x6cd70a2e9b3cebb75f35ae8c618b15036c7b0c425e5b688ec918c2f58df7360e";
 const allianceJoinRequestedTopic = "0x57dc0d6d966259dfce732817e0ad98a199174482159ce86fec64334a407ed2b5";
@@ -6334,6 +6335,36 @@ describe("Veydrift backend", () => {
         updatedAtBlock: "126",
         transactionHash: "0xrich",
       }),
+    ]);
+    expect(body.source).toBe("contract-state-indexer");
+  });
+
+  test("serves active Rift extractions through the public Rifters finder", async () => {
+    const chainReader = new MockChainReader();
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    indexer.applyEvent({ ...planet, eventName: "PlanetStarted", transactionHash: "0xabc", blockNumber: "123" });
+    indexer.applyLog({
+      blockNumber: "0x200",
+      transactionHash: "0xrift-start",
+      logIndex: "0x0",
+      topics: [riftExtractionStartedTopic, addressTopic(player), topic(7n), topic(0n)],
+      data: abiWords(1_000n, 1_770_000_000n, 1_772_419_200n)
+    });
+    const handler = createRequestHandler({ config: configuredTestConfig, chainReader, indexer });
+
+    const response = await handler(new Request("http://localhost/raid-finder/rifters?limit=1"));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.targets).toEqual([
+      expect.objectContaining({
+        planetId: planet.planetId,
+        owner: player,
+        coordinates: { galaxy: planet.galaxy, system: planet.system, position: planet.position },
+        startedAt: "1770000000",
+        unlocksAt: "1772419200",
+        resources: { metal: "1000", crystal: "0", deuterium: "0" }
+      })
     ]);
     expect(body.source).toBe("contract-state-indexer");
   });
