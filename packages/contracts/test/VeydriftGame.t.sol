@@ -5793,6 +5793,31 @@ contract VeydriftGameTest is Test {
         assertTrue(game.isCoordinateAvailable(colony.galaxy, colony.system, colony.position));
     }
 
+    function testAbandonColonyCannotOrphanLiveRiftExtraction() public {
+        vm.prank(player);
+        uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
+        _setTechnologyLevel(player, Technology.Astrophysics, 1);
+        _setShipCount(originPlanetId, Ship.ColonyShip, 1);
+        uint256 colonyPlanetId = _createResolvedColony(player, originPlanetId, 13);
+
+        _setBuildingLevel(colonyPlanetId, Building.InterdimensionalRiftStabilizer, 1);
+        _setResources(colonyPlanetId, 100, 0, 0);
+        vm.prank(player);
+        IRiftLifecycleEntrypoints(address(game)).startRiftExtraction(
+            colonyPlanetId, Resource.Metal, 100
+        );
+        assertEq(game.planet(colonyPlanetId).resources.metal, 0);
+
+        vm.prank(player);
+        vm.expectRevert(VeydriftGameStorage.PlanetHasResources.selector);
+        game.abandonPlanet(colonyPlanetId);
+
+        (bool active, uint128 amount,,) = game.riftExtractions(colonyPlanetId, Resource.Metal);
+        assertTrue(active);
+        assertEq(amount, 100);
+        assertEq(game.planet(colonyPlanetId).owner, player);
+    }
+
     function testAbandonColonyRejectsActiveQueuesAndFleetMissions() public {
         vm.prank(player);
         uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
