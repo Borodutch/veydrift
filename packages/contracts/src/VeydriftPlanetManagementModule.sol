@@ -264,6 +264,7 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
         return _unprotectedResources(_planets[planetId].resources, protected);
     }
 
+
     function maxRaidLoot(uint256 planetId, uint256 cargoCapacity)
         external
         view
@@ -419,6 +420,7 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
         if (resource == Resource.Deuterium) return Resources(0, 0, amount);
         revert InvalidResource(resource);
     }
+
 
     function _researchCost(address player, Technology technology)
         private

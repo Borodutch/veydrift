@@ -142,11 +142,11 @@ export function RiftPage({
                       }}
                     />
                     <AmountControl
-                      actionLabel="Request withdrawal"
+                      actionLabel="Start 28-day extraction"
                       amount={withdrawAmount}
                       disabled={!canTransact || !withdrawAmount}
                       disabledReason={!canTransact ? transactionUnavailableReason : undefined}
-                      inputLabel={`Withdraw ${resource.label}`}
+                      inputLabel={`Extract ${resource.label}`}
                       onAction={() => onRequestWithdrawal(resource, withdrawAmount)}
                       onChange={(value) => updateAmount(resource.key, "withdraw", value)}
                       placeholder="0.00"
@@ -236,9 +236,9 @@ function WithdrawalQueue({
   if (pendingWithdrawals.length === 0) {
     return (
       <div className="rounded-lg border border-white/10 bg-[#101624] p-4">
-        <h3 className="text-base font-semibold text-white">Pending Withdrawals</h3>
+        <h3 className="text-base font-semibold text-white">Active Rift extractions</h3>
         <p className="mt-1 text-sm leading-6 text-slate-400">
-          Requested withdrawals will appear here with their 30-day unlock countdown and finish action.
+          Extractions remain fully raidable for 28 days before they can be finalized.
         </p>
       </div>
     );
@@ -246,7 +246,7 @@ function WithdrawalQueue({
 
   return (
     <div className="grid gap-3">
-      <h3 className="text-base font-semibold text-white">Pending Withdrawals</h3>
+      <h3 className="text-base font-semibold text-white">Active Rift extractions</h3>
       <div className="grid gap-3 md:grid-cols-2">
         {pendingWithdrawals.map((withdrawal) => {
           const ready = isWithdrawalReady(withdrawal, now);
@@ -271,7 +271,7 @@ function WithdrawalQueue({
                 title={!canTransact ? transactionUnavailableReason : undefined}
                 type="button"
               >
-                Finish withdrawal
+                Finalize extraction
               </button>
             </article>
           );

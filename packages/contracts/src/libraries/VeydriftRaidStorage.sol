@@ -92,6 +92,19 @@ library VeydriftRaidStorage {
         );
     }
 
+    /// @notice Loot a planet's active Rift extraction at the full 100% rate.
+    /// @dev Rift balances are a separate, public raid pool.  They are deliberately not subject to
+    ///      the normal planet-storage protection or the ordinary 50% raid ceiling.
+    function raidRift(
+        VeydriftGameStorage.Resources storage balance,
+        uint256 capacity,
+        uint16 metalBps,
+        uint16 crystalBps,
+        uint16 deuteriumBps
+    ) public returns (uint128 metal, uint128 crystal, uint128 deuterium) {
+        return _raidBalance(balance, capacity, BPS, metalBps, crystalBps, deuteriumBps);
+    }
+
     function _raidBalance(
         VeydriftGameStorage.Resources storage balance,
         uint256 capacity,

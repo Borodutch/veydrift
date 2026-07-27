@@ -219,7 +219,7 @@ import {
   unwatchPlanet,
   watchPlanet,
   sendApproveResourceTokenTransaction,
-  sendFinishResourceWithdrawalTransaction,
+  sendFinalizeRiftExtractionTransaction,
   sendAbandonPlanetTransaction,
   sendCreateColonyTransaction,
   sendLaunchInterplanetaryMissileAttackTransaction,
@@ -233,7 +233,7 @@ import {
   sendRecallFleetMissionTransaction,
   sendDepositResourceTransaction,
   sendRenamePlanetTransaction,
-  sendRequestResourceWithdrawalTransaction,
+  sendStartRiftExtractionTransaction,
   sendStartBuildingUpgradeTransaction,
   sendStartMoonBuildingUpgradeTransaction,
   sendStartMoonDefenseProductionTransaction,
@@ -7081,7 +7081,7 @@ export function PlayableMvpApp({
       return;
     }
 
-    void runRiftTransaction(`${resource.label} withdrawal request`, () => sendRequestResourceWithdrawalTransaction(
+    void runRiftTransaction(`${resource.label} extraction start`, () => sendStartRiftExtractionTransaction(
       provider,
       account,
       gameContract,
@@ -7098,13 +7098,18 @@ export function PlayableMvpApp({
       return;
     }
 
-    void runRiftTransaction(`${resource.label} withdrawal finish`, () => sendFinishResourceWithdrawalTransaction(
+    if (!riftState?.homePlanetId) {
+      setRiftAction({ status: "error", label: "Select a Rift-enabled planet before finalizing extraction." });
+      return;
+    }
+    void runRiftTransaction(`${resource.label} extraction finalization`, () => sendFinalizeRiftExtractionTransaction(
       provider,
       account,
       gameContract,
+      riftState.homePlanetId,
       resource.resourceId,
     ));
-  }, [account, gameContract, provider, riftState?.resources, runRiftTransaction]);
+  }, [account, gameContract, provider, riftState?.homePlanetId, riftState?.resources, runRiftTransaction]);
 
   const handleSelectManagedPlanet = useCallback((planetId: string, bodyKind: OrbitBodyKind = "planet") => {
     const nextPlanet = walletPlanets.find((planet) => planet.planetId === planetId);

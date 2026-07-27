@@ -471,6 +471,10 @@ contract VeydriftGame is VeydriftResourceReserves {
         _delegateToPlanetManagementModule();
     }
 
+    fallback() external {
+        _delegateToStateMigrationModule();
+    }
+
     function planet(uint256 planetId) external view returns (Planet memory) {
         return _planets[planetId];
     }

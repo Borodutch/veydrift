@@ -1291,7 +1291,16 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
     if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/rift$/)) {
       try {
-        return indexedWalletStateResponse(url, indexer, "rift", indexedRiftState);
+        return indexedWalletStateResponse(url, indexer, "rift", (
+          wallet, settlement, planet, unavailableReason, currentIndexer
+        ) => indexedRiftState(
+          wallet,
+          settlement,
+          planet,
+          unavailableReason,
+          currentIndexer,
+          loaded.config.resourceTokenAddresses
+        ));
       } catch (error) {
         return errorResponse(error, 400);
       }
@@ -3218,9 +3227,24 @@ function indexedRiftState(
   settlement: ReturnType<SettlementIndexer["walletSettlement"]>,
   planet: SettledPlanetEvent | null,
   _unavailableReason: string,
-  indexer: SettlementIndexer
+  indexer: SettlementIndexer,
+  resourceTokenAddresses: {
+    metal?: `0x${string}`;
+    crystal?: `0x${string}`;
+    deuterium?: `0x${string}`;
+  }
 ): RiftState {
-  return indexer.riftState(wallet, planet?.planetId ?? settlement.homePlanetId);
+  const state = indexer.riftState(wallet, planet?.planetId ?? settlement.homePlanetId);
+  return {
+    ...state,
+    resources: state.resources.map((resource) => ({
+      ...resource,
+      tokenAddress: resourceTokenAddresses[resource.key] ?? null,
+      // Planet resources are the spendable in-game balance. Rift bridge event deltas were only a
+      // historical ledger and must not be shown as a player's current mine balance.
+      inGameBalance: planet?.resources?.[resource.key] ?? "0"
+    }))
+  };
 }
 
 type GalaxySystemDetail = "summary" | "full";
