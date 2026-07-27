@@ -68,6 +68,19 @@ function disclosureButton(node: ComponentChildren): VNode | undefined {
   );
 }
 
+function commanderHeaderRow(node: ComponentChildren): VNode | undefined {
+  return elementNodes(node).find((item) =>
+    item.type === "div"
+      && typeof item.props?.className === "string"
+      && item.props.className.includes("justify-between")
+      && item.props.className.includes("min-h-7")
+  );
+}
+
+function commanderValue(node: ComponentChildren): VNode | undefined {
+  return elementNodes(node).find((item) => item.props?.copyKey === "commander");
+}
+
 function copyValue(node: ComponentChildren, key: string): string | undefined {
   return elementNodes(node).find((item) => item.props?.copyKey === key)?.props?.value;
 }
@@ -93,9 +106,14 @@ describe("NavBar public commander panel", () => {
       playerProfile: profile,
     });
     const disclosure = disclosureButton(summary);
+    const header = commanderHeaderRow(summary);
+    const identity = commanderValue(summary);
 
     expect(commanderSummaryInitiallyExpanded).toBe(false);
     expect(copyValue(summary, "commander")).toBe("Nova");
+    expect(header?.props?.className).toContain("items-center");
+    expect(identity?.props?.className).toContain("h-7");
+    expect(identity?.props?.className).toContain("items-center");
     expect(copyValue(summary, "home")).toBeUndefined();
     expect(copyValue(summary, "wallet")).toBeUndefined();
     expect(visibleText(summary)).not.toContain("Home");
@@ -113,10 +131,15 @@ describe("NavBar public commander panel", () => {
       playerLabel: label,
       playerProfile: profile,
     });
+    const header = commanderHeaderRow(summary);
+    const identity = commanderValue(summary);
 
     expect(label).toBe(shortAddress(wallet));
     expect(copyValue(summary, "commander")).toBe(shortAddress(wallet));
     expect(copyValue(summary, "commander")).not.toBe("Unnamed player");
+    expect(header?.props?.className).toContain("items-center");
+    expect(identity?.props?.className).toContain("h-7");
+    expect(identity?.props?.className).toContain("items-center");
   });
 
   test("reveals the complete existing profile content and exposes the collapse state", () => {
@@ -131,6 +154,8 @@ describe("NavBar public commander panel", () => {
       playerProfile: profile,
     });
     const disclosure = disclosureButton(summary);
+    const header = commanderHeaderRow(summary);
+    const identity = commanderValue(summary);
     const edit = elementNodes(summary).find((item) => item.props?.["aria-label"] === "Edit player profile");
     const text = visibleText(summary);
 
@@ -142,6 +167,8 @@ describe("NavBar public commander panel", () => {
     expect(copyValue(summary, "home")).toBe("8:490:11");
     expect(copyValue(summary, "wallet")).toBe(shortAddress(wallet));
     expect(edit).toBeDefined();
+    expect(header?.props?.className).toContain("items-start");
+    expect(identity?.props?.className).not.toContain("h-7");
     expect(disclosure?.props?.["aria-expanded"]).toBe(true);
     expect(disclosure?.props?.["aria-label"]).toBe("Collapse Commander profile");
     expect((disclosure?.props?.children as VNode)?.type).toBe(ChevronDown);
