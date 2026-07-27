@@ -7963,7 +7963,10 @@ describe("Veydrift backend", () => {
       resources: expect.arrayContaining([
         expect.objectContaining({
           key: "metal",
-          inGameBalance: "1000"
+          // Rift bridge events are not a player's spendable mine balance. The
+          // selected planet's indexed resources are the canonical amount shown
+          // to the extractor.
+          inGameBalance: "2200"
         })
       ])
     });
