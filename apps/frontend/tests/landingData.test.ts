@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   landingAllianceRefreshMs,
+  landingAgentPrompt,
   landingChainEventRefreshDebounceMs,
   landingFeedRefreshMs,
   landingFeedFromMissions,
@@ -11,6 +12,16 @@ import {
 const landingSource = await Bun.file(new URL("../src/ComingSoonApp.tsx", import.meta.url)).text();
 
 describe("landing backend data", () => {
+  test("offers a copyable agent prompt that connects docs, production, and safe approvals", () => {
+    expect(landingAgentPrompt).toContain("https://veydrift.com/docs");
+    expect(landingAgentPrompt).toContain("Metal, Crystal and Deuterium");
+    expect(landingAgentPrompt).toContain("prepare surplus resources for the Rift");
+    expect(landingAgentPrompt).toContain("Ask before signing transactions");
+    expect(landingSource).toContain("<AgentSection />");
+    expect(landingSource).toContain("Copy agent prompt");
+    expect(landingSource).toContain('href="/docs"');
+  });
+
   test("polls landing backend panels while the page remains open", () => {
     expect(landingFeedRefreshMs).toBe(60_000);
     expect(landingAllianceRefreshMs).toBe(300_000);

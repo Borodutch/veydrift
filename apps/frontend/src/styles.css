@@ -386,6 +386,96 @@ body {
   margin-top: 1.25rem;
 }
 
+.landing-agent-section {
+  background:
+    radial-gradient(circle at 18% 18%, rgba(128, 241, 255, 0.065), transparent 26rem),
+    linear-gradient(135deg, #071019 0%, #080b12 52%, #100d08 100%);
+}
+
+.landing-agent-glow {
+  position: absolute;
+  border-radius: 9999px;
+  pointer-events: none;
+  filter: blur(80px);
+  opacity: 0.18;
+}
+
+.landing-agent-glow-cyan {
+  width: 20rem;
+  height: 20rem;
+  top: -10rem;
+  right: 8%;
+  background: rgb(128 241 255);
+}
+
+.landing-agent-glow-amber {
+  width: 18rem;
+  height: 18rem;
+  bottom: -11rem;
+  left: 42%;
+  background: rgb(246 179 92);
+  opacity: 0.1;
+}
+
+.landing-agent-step {
+  min-height: 8.75rem;
+  padding: 1rem;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.landing-agent-step > span {
+  display: block;
+  color: rgb(128 241 255 / 0.58);
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+}
+
+.landing-agent-step strong {
+  display: block;
+  margin-top: 0.9rem;
+  color: white;
+  font-size: 0.9rem;
+}
+
+.landing-agent-step p {
+  margin: 0.35rem 0 0;
+  color: rgb(148 163 184);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.landing-agent-console {
+  overflow: hidden;
+  border: 1px solid rgba(128, 241, 255, 0.09);
+  border-radius: 10px;
+  background:
+    linear-gradient(145deg, rgba(128, 241, 255, 0.06), transparent 42%),
+    rgba(8, 14, 23, 0.92);
+  box-shadow: 0 32px 110px rgba(0, 0, 0, 0.44), 0 0 70px rgba(128, 241, 255, 0.035);
+}
+
+.landing-agent-console-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.8rem 1rem;
+  background: rgba(255, 255, 255, 0.025);
+  color: rgb(203 213 225);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.landing-agent-status-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 9999px;
+  background: rgb(110 231 183);
+  box-shadow: 0 0 14px rgba(110, 231, 183, 0.52);
+}
+
 .landing-feed-row {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
@@ -642,6 +732,10 @@ body {
   }
 
   .landing-screenshot-frame div {
+    min-height: auto;
+  }
+
+  .landing-agent-step {
     min-height: auto;
   }
 
