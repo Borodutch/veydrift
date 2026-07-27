@@ -90,10 +90,13 @@ contract VeydriftRiftModule is VeydriftResourceReserves {
         uint16 crystalBps,
         uint16 deuteriumBps
     ) external returns (Resources memory raided) {
-        (raided.metal, raided.crystal, raided.deuterium) =
-            VeydriftRaidStorage.raidRift(
-                _riftLockedResources[planetId], capacity, metalBps, crystalBps, deuteriumBps
-            );
+        // This is an internal combat-settlement endpoint reached by the combat module's
+        // `address(this).call(...)`. It must never be a public proxy entrypoint: otherwise a
+        // caller can choose arbitrary capacity/ratios and erase another planet's live Rift lock.
+        if (msg.sender != address(this)) revert Unauthorized(msg.sender);
+        (raided.metal, raided.crystal, raided.deuterium) = VeydriftRaidStorage.raidRift(
+            _riftLockedResources[planetId], capacity, metalBps, crystalBps, deuteriumBps
+        );
         if (raided.metal == 0 && raided.crystal == 0 && raided.deuterium == 0) return raided;
         _lockedWithdrawalResources = _subtract(_lockedWithdrawalResources, raided);
         _increaseInternalResources(raided);

@@ -43,6 +43,19 @@ import {
     Technology
 } from "../src/libraries/VeydriftTypes.sol";
 
+interface IRiftSettlementEntrypoints {
+    function raidRiftExtraction(
+        address attacker,
+        uint256 planetId,
+        uint256 capacity,
+        uint16 metalBps,
+        uint16 crystalBps,
+        uint16 deuteriumBps
+    ) external returns (VeydriftGameStorage.Resources memory);
+
+    function settleAttackGroupRaid(uint256 attackMissionId) external;
+}
+
 contract MockResourceToken {
     mapping(address account => uint256 balance) public balanceOf;
     mapping(address owner => mapping(address spender => uint256 amount)) public allowance;
@@ -8999,6 +9012,18 @@ contract VeydriftGameTest is Test {
         assertFalse(active);
         assertEq(amount, 0);
         assertEq(metalToken.balanceOf(player), 200);
+    }
+
+    function testRiftSettlementEntrypointsRejectPublicProxyCalls() public {
+        IRiftSettlementEntrypoints settlement = IRiftSettlementEntrypoints(address(game));
+
+        vm.prank(player);
+        vm.expectRevert(abi.encodeWithSelector(VeydriftGameStorage.Unauthorized.selector, player));
+        settlement.raidRiftExtraction(player, 1, type(uint256).max, 0, 0, 0);
+
+        vm.prank(player);
+        vm.expectRevert(abi.encodeWithSelector(VeydriftGameStorage.Unauthorized.selector, player));
+        settlement.settleAttackGroupRaid(0);
     }
 
     function testRiftBridgeIsBinaryPerPlanet() public {

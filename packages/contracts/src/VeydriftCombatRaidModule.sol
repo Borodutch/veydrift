@@ -11,6 +11,10 @@ contract VeydriftCombatRaidModule is VeydriftResourceReserves {
     constructor() VeydriftResourceReserves(address(0)) {}
 
     function settleAttackGroupRaid(uint256 attackMissionId) external {
+        // The combat module calls this through `address(this).call(...)` only after resolving an
+        // arrived battle. Leaving it public through the proxy fallback lets anyone settle an
+        // outbound attack early and credit its cargo without combat.
+        if (msg.sender != address(this)) revert Unauthorized(msg.sender);
         FleetMission storage mission = _fleetMissions[attackMissionId];
         uint256 totalCapacity =
             _remainingCargoCapacity(mission.ships, mission.cargo, mission.fuelCost);
