@@ -59,7 +59,7 @@ export const commanderJoinCta = {
 
 export const commanderSummaryInitiallyExpanded = false;
 
-export const commanderCollapsedIdentityGeometry = {
+const commanderCollapsedIdentityGeometry = {
   lineHeightPx: 16,
   opticalOffsetYPx: 2,
   rowHeightPx: 28,
@@ -500,9 +500,27 @@ export function CommanderAccountSummary({
   playerStatusLabel?: string | undefined;
   playerStatusTone: string;
 }) {
+  const headerStyle = {
+    minHeight: `${commanderCollapsedIdentityGeometry.rowHeightPx}px`,
+  };
+  const identityStyle = {
+    height: expanded ? undefined : `${commanderCollapsedIdentityGeometry.rowHeightPx}px`,
+    lineHeight: `${commanderCollapsedIdentityGeometry.lineHeightPx}px`,
+  };
+  const identityContentStyle = expanded
+    ? undefined
+    : { transform: `translateY(${commanderCollapsedIdentityGeometry.opticalOffsetYPx}px)` };
+  const disclosureStyle = {
+    height: `${commanderCollapsedIdentityGeometry.rowHeightPx}px`,
+    width: `${commanderCollapsedIdentityGeometry.rowHeightPx}px`,
+  };
+
   return (
     <aside className={className} aria-label="Sidebar account summary">
-      <div className={`flex min-h-7 min-w-0 justify-between gap-2 ${expanded ? "items-start" : "items-center"}`}>
+      <div
+        className={`flex min-w-0 justify-between gap-2 ${expanded ? "items-start" : "items-center"}`}
+        style={headerStyle}
+      >
         <div className="min-w-0 flex-1">
           {expanded ? (
             <p className="text-[10px] font-semibold uppercase text-slate-500">
@@ -510,15 +528,14 @@ export function CommanderAccountSummary({
             </p>
           ) : null}
           <CopyableCommanderValue
-            className={`${expanded ? "mt-1 break-words" : "h-7 items-center truncate"} w-full justify-start text-left text-xs font-semibold leading-4 text-slate-100`}
-            contentStyle={expanded
-              ? undefined
-              : { transform: `translateY(${commanderCollapsedIdentityGeometry.opticalOffsetYPx}px)` }}
+            className={`${expanded ? "mt-1 break-words" : "items-center truncate"} w-full justify-start text-left text-xs font-semibold text-slate-100`}
+            contentStyle={identityContentStyle}
             copyKey="commander"
             copyValue={playerCopyValue}
             copiedField={copiedField}
             label="commander"
             onCopy={onCopy}
+            style={identityStyle}
             value={playerLabel}
           />
           {expanded && playerProfile?.displayName ? (
@@ -556,8 +573,9 @@ export function CommanderAccountSummary({
             aria-controls={detailsId}
             aria-expanded={expanded}
             aria-label={expanded ? "Collapse Commander profile" : "Expand Commander profile"}
-            className="inline-grid h-7 w-7 shrink-0 place-items-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/60"
+            className="inline-grid shrink-0 place-items-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/60"
             onClick={onToggle}
+            style={disclosureStyle}
             title={expanded ? "Collapse Commander profile" : "Expand Commander profile"}
             type="button"
           >
@@ -611,6 +629,7 @@ function CopyableCommanderValue({
   copyValue,
   label,
   onCopy,
+  style,
   value,
 }: {
   className: string;
@@ -620,6 +639,7 @@ function CopyableCommanderValue({
   copyValue?: string | undefined;
   label: string;
   onCopy: (key: string, value: string) => void;
+  style?: JSX.CSSProperties | undefined;
   value: string;
 }) {
   const isCopied = copiedField?.key === copyKey;
@@ -642,7 +662,7 @@ function CopyableCommanderValue({
   );
 
   if (!copyValue) {
-    return <span className={`inline-flex min-w-0 ${className}`}>{content}</span>;
+    return <span className={`inline-flex min-w-0 ${className}`} style={style}>{content}</span>;
   }
 
   return (
@@ -651,6 +671,7 @@ function CopyableCommanderValue({
       className={`group inline-flex min-w-0 cursor-copy rounded-sm transition hover:text-cyan-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/55 ${className}`}
       data-copy-value={copyValue}
       onClick={() => onCopy(copyKey, copyValue)}
+      style={style}
       title={`Copy ${label}`}
       type="button"
     >
