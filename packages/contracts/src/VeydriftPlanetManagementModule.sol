@@ -171,12 +171,20 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
         if (activeFleetMissionCount[msg.sender] != 0) revert PlanetHasActiveFleetMissions();
 
         Planet memory planetRef = _planets[planetId];
-        if (
-            planetRef.resources.metal != 0 || planetRef.resources.crystal != 0
-                || planetRef.resources.deuterium != 0
-        ) {
-            revert PlanetHasResources();
+        // The ordinary balance and any live Rift lock are both reserve-backed claims tied to this
+        // planet. Neither may be orphaned. Keep the four packed resource slots compact because
+        // this module is EIP-170 constrained.
+        bool hasResources;
+        assembly ("memory-safe") {
+            mstore(0x00, planetId)
+            mstore(0x20, _planets.slot)
+            let planetSlot := keccak256(0x00, 0x40)
+            let ordinaryResources := or(sload(add(planetSlot, 2)), sload(add(planetSlot, 3)))
+            mstore(0x20, _riftLockedResources.slot)
+            let riftSlot := keccak256(0x00, 0x40)
+            hasResources := or(ordinaryResources, or(sload(riftSlot), sload(add(riftSlot, 1))))
         }
+        if (hasResources) revert PlanetHasResources();
 
         delete _planets[planetId];
         delete planetNames[planetId];

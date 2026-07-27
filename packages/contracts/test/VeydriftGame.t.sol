@@ -43,6 +43,25 @@ import {
     Technology
 } from "../src/libraries/VeydriftTypes.sol";
 
+interface IRiftSettlementEntrypoints {
+    function raidRiftExtraction(
+        address attacker,
+        uint256 planetId,
+        uint256 capacity,
+        uint16 metalBps,
+        uint16 crystalBps,
+        uint16 deuteriumBps
+    ) external returns (VeydriftGameStorage.Resources memory);
+
+    function settleAttackGroupRaid(uint256 attackMissionId) external;
+}
+
+interface IRiftLifecycleEntrypoints {
+    function startRiftExtraction(uint256 planetId, Resource resource, uint128 amount) external;
+
+    function finalizeRiftExtraction(uint256 planetId, Resource resource) external;
+}
+
 contract MockResourceToken {
     mapping(address account => uint256 balance) public balanceOf;
     mapping(address owner => mapping(address spender => uint256 amount)) public allowance;
@@ -394,6 +413,12 @@ contract VeydriftGameTest is Test {
         vm.prank(player);
         vm.expectRevert(abi.encodeWithSelector(VeydriftGameStorage.Unauthorized.selector, player));
         game.startPlanet{value: 0.05 ether}();
+
+        // Resolution is permissionless, but it still mutates the game. The emergency pause must
+        // stop it too, rather than permitting in-flight combat or Rift settlement to continue.
+        vm.prank(player);
+        vm.expectRevert(abi.encodeWithSelector(VeydriftGameStorage.Unauthorized.selector, player));
+        game.resolveFleetMission(0);
 
         vm.prank(admin);
         game.setGamePaused(false);
@@ -5422,6 +5447,53 @@ contract VeydriftGameTest is Test {
         assertEq(game.shipCount(targetPlanetId, Ship.SmallCargo), defenderShipsBefore);
     }
 
+    function testRiftLockDoesNotBypassScoreProtectionAtAttackResolution() public {
+        vm.warp(8 days);
+        (uint256 originPlanetId, uint256 targetPlanetId, address defender) = _seedAttackPlanets();
+        _setTechnologyLevel(player, Technology.Computer, 2);
+        _setShipCount(originPlanetId, Ship.SmallCargo, 50);
+        _setShipCount(targetPlanetId, Ship.SmallCargo, 50);
+        _setResources(originPlanetId, 1_000_000, 1_000_000, 1_000_000);
+        _setResources(targetPlanetId, 500_000, 500_000, 500_000);
+        _setBuildingLevel(targetPlanetId, Building.InterdimensionalRiftStabilizer, 1);
+
+        vm.prank(defender);
+        IRiftLifecycleEntrypoints(address(game))
+            .startRiftExtraction(targetPlanetId, Resource.Metal, 1);
+
+        (VeydriftGameStorage.AttackBlockReason launchReason,,) =
+            _attackProtectionStatus(player, targetPlanetId);
+        assertEq(uint8(launchReason), uint8(VeydriftGameStorage.AttackBlockReason.None));
+
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.smallCargo = 1;
+        vm.prank(player);
+        uint256 missionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            123
+        );
+        (, uint64 arrivalAt,,) = _fleetMission(missionId);
+
+        _setShipCount(originPlanetId, Ship.Battleship, 1_000_000);
+        (VeydriftGameStorage.AttackBlockReason impactReason,,) =
+            _attackProtectionStatus(player, targetPlanetId);
+        assertEq(uint8(impactReason), uint8(VeydriftGameStorage.AttackBlockReason.ScoreProtection));
+
+        vm.warp(arrivalAt);
+        _fulfillAttackBattleRandomness(missionId, 1);
+        game.resolveFleetMission(missionId);
+
+        (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(missionId);
+        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
+        (bool active, uint128 amount,,) = game.riftExtractions(targetPlanetId, Resource.Metal);
+        assertTrue(active);
+        assertEq(amount, 1);
+    }
+
     function testAttackResolutionBouncesWhenTargetJoinsAttackerAllianceMidFlight() public {
         vm.warp(8 days);
         (uint256 originPlanetId, uint256 targetPlanetId, address defender) = _seedAttackPlanets();
@@ -5772,6 +5844,30 @@ contract VeydriftGameTest is Test {
         assertEq(game.planetCountOf(player), 1);
         assertEq(game.planet(colonyPlanetId).owner, address(0));
         assertTrue(game.isCoordinateAvailable(colony.galaxy, colony.system, colony.position));
+    }
+
+    function testAbandonColonyCannotOrphanLiveRiftExtraction() public {
+        vm.prank(player);
+        uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
+        _setTechnologyLevel(player, Technology.Astrophysics, 1);
+        _setShipCount(originPlanetId, Ship.ColonyShip, 1);
+        uint256 colonyPlanetId = _createResolvedColony(player, originPlanetId, 13);
+
+        _setBuildingLevel(colonyPlanetId, Building.InterdimensionalRiftStabilizer, 1);
+        _setResources(colonyPlanetId, 100, 0, 0);
+        vm.prank(player);
+        IRiftLifecycleEntrypoints(address(game))
+            .startRiftExtraction(colonyPlanetId, Resource.Metal, 100);
+        assertEq(game.planet(colonyPlanetId).resources.metal, 0);
+
+        vm.prank(player);
+        vm.expectRevert(VeydriftGameStorage.PlanetHasResources.selector);
+        game.abandonPlanet(colonyPlanetId);
+
+        (bool active, uint128 amount,,) = game.riftExtractions(colonyPlanetId, Resource.Metal);
+        assertTrue(active);
+        assertEq(amount, 100);
+        assertEq(game.planet(colonyPlanetId).owner, player);
     }
 
     function testAbandonColonyRejectsActiveQueuesAndFleetMissions() public {
@@ -8999,6 +9095,92 @@ contract VeydriftGameTest is Test {
         assertFalse(active);
         assertEq(amount, 0);
         assertEq(metalToken.balanceOf(player), 200);
+    }
+
+    function testRiftLifecycleCannotBeStartedOrFinalizedByAnotherPlayer() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+        _setBuildingLevel(planetId, Building.InterdimensionalRiftStabilizer, 1);
+        _setResources(planetId, 1_000, 0, 0);
+
+        IRiftLifecycleEntrypoints rift = IRiftLifecycleEntrypoints(address(game));
+        address attacker = address(0xBADC0DE);
+        vm.prank(attacker);
+        vm.expectRevert(VeydriftGameStorage.NotPlanetOwner.selector);
+        rift.startRiftExtraction(planetId, Resource.Metal, 100);
+
+        vm.prank(player);
+        rift.startRiftExtraction(planetId, Resource.Metal, 100);
+        (bool active, uint128 amount,, uint64 unlocksAt) =
+            game.riftExtractions(planetId, Resource.Metal);
+        assertTrue(active);
+        assertEq(amount, 100);
+
+        vm.warp(unlocksAt);
+        vm.prank(attacker);
+        vm.expectRevert(VeydriftGameStorage.NotPlanetOwner.selector);
+        rift.finalizeRiftExtraction(planetId, Resource.Metal);
+
+        (active, amount,,) = game.riftExtractions(planetId, Resource.Metal);
+        assertTrue(active);
+        assertEq(amount, 100);
+    }
+
+    function testRiftSettlementEntrypointsRejectPublicProxyCalls() public {
+        IRiftSettlementEntrypoints settlement = IRiftSettlementEntrypoints(address(game));
+
+        vm.prank(player);
+        vm.expectRevert(abi.encodeWithSelector(VeydriftGameStorage.Unauthorized.selector, player));
+        settlement.raidRiftExtraction(player, 1, type(uint256).max, 0, 0, 0);
+
+        vm.prank(player);
+        vm.expectRevert(abi.encodeWithSelector(VeydriftGameStorage.Unauthorized.selector, player));
+        settlement.settleAttackGroupRaid(0);
+    }
+
+    function testPublicSettlementCannotDrainLiveRiftOrPreSettleOutboundAttack() public {
+        (uint256 originPlanetId, uint256 targetPlanetId, address defender) =
+            _seedAttackPlanetsWithoutScoreProtection();
+        _setBuildingLevel(targetPlanetId, Building.InterdimensionalRiftStabilizer, 1);
+        _setResources(targetPlanetId, 1_000, 0, 0);
+        vm.prank(defender);
+        (bool started,) = address(game)
+            .call(abi.encodeWithSelector(0x0870c082, targetPlanetId, Resource.Metal, uint128(400)));
+        assertTrue(started);
+
+        IRiftSettlementEntrypoints settlement = IRiftSettlementEntrypoints(address(game));
+        vm.prank(player);
+        vm.expectRevert(abi.encodeWithSelector(VeydriftGameStorage.Unauthorized.selector, player));
+        settlement.raidRiftExtraction(player, targetPlanetId, type(uint256).max, 0, 0, 0);
+
+        (bool active, uint128 amount,,) = game.riftExtractions(targetPlanetId, Resource.Metal);
+        assertTrue(active);
+        assertEq(amount, 400);
+
+        _setShipCount(originPlanetId, Ship.LargeCargo, 1);
+        _setResources(originPlanetId, 10_000, 10_000, 10_000);
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.largeCargo = 1;
+        vm.prank(player);
+        uint256 missionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            911
+        );
+
+        vm.prank(player);
+        vm.expectRevert(abi.encodeWithSelector(VeydriftGameStorage.Unauthorized.selector, player));
+        settlement.settleAttackGroupRaid(missionId);
+
+        (,,, VeydriftGameStorage.Resources memory cargo) = _fleetMission(missionId);
+        assertEq(cargo.metal, 0);
+        assertEq(game.planet(targetPlanetId).resources.metal, 600);
+        (active, amount,,) = game.riftExtractions(targetPlanetId, Resource.Metal);
+        assertTrue(active);
+        assertEq(amount, 400);
     }
 
     function testRiftBridgeIsBinaryPerPlanet() public {

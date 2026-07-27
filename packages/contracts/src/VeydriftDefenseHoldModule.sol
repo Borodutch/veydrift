@@ -375,6 +375,7 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
     /// @notice Send a stationed DefenseHold fleet home once its hold window has elapsed. The facade
     ///         routes only DefenseHold missions here; surviving ships fly back with their cargo.
     function resolveFleetMission(uint256 missionId) external {
+        _requireGameNotPaused();
         FleetMission storage mission = _fleetMissions[missionId];
         if (mission.status != FleetMissionStatus.Outbound) return;
         if (_currentTimestamp() < mission.arrivalAt) revert FleetNotArrived(mission.arrivalAt);

@@ -496,6 +496,9 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
     }
 
     function resolveFleetMission(uint256 missionId) external {
+        // Resolution mutates balances, fleets, and (for attacks) Rift-locked claims. It must obey
+        // the emergency pause just like every player-triggered state transition.
+        _requireGameNotPaused();
         FleetMission storage mission = _fleetMissions[missionId];
         if (mission.status != FleetMissionStatus.Outbound) return;
         if (_currentTimestamp() < mission.arrivalAt) revert FleetNotArrived(mission.arrivalAt);
