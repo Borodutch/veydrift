@@ -3,6 +3,7 @@ import { ChevronDown, ChevronUp } from "lucide-preact";
 import type { ComponentChildren, VNode } from "preact";
 import {
   CommanderAccountSummary,
+  commanderCollapsedIdentityGeometry,
   commanderIdentityLabel,
   commanderJoinCta,
   commanderSummaryInitiallyExpanded,
@@ -111,9 +112,18 @@ describe("NavBar public commander panel", () => {
 
     expect(commanderSummaryInitiallyExpanded).toBe(false);
     expect(copyValue(summary, "commander")).toBe("Nova");
+    expect(commanderCollapsedIdentityGeometry).toEqual({
+      lineHeightPx: 16,
+      opticalOffsetYPx: 2,
+      rowHeightPx: 28,
+    });
     expect(header?.props?.className).toContain("items-center");
+    expect(header?.props?.className).toContain("min-h-7");
     expect(identity?.props?.className).toContain("h-7");
     expect(identity?.props?.className).toContain("items-center");
+    expect(identity?.props?.className).toContain("leading-4");
+    expect(identity?.props?.contentStyle).toEqual({ transform: "translateY(2px)" });
+    expect(disclosure?.props?.className).toContain("h-7");
     expect(copyValue(summary, "home")).toBeUndefined();
     expect(copyValue(summary, "wallet")).toBeUndefined();
     expect(visibleText(summary)).not.toContain("Home");
@@ -140,6 +150,7 @@ describe("NavBar public commander panel", () => {
     expect(header?.props?.className).toContain("items-center");
     expect(identity?.props?.className).toContain("h-7");
     expect(identity?.props?.className).toContain("items-center");
+    expect(identity?.props?.contentStyle).toEqual({ transform: "translateY(2px)" });
   });
 
   test("reveals the complete existing profile content and exposes the collapse state", () => {
@@ -169,6 +180,7 @@ describe("NavBar public commander panel", () => {
     expect(edit).toBeDefined();
     expect(header?.props?.className).toContain("items-start");
     expect(identity?.props?.className).not.toContain("h-7");
+    expect(identity?.props?.contentStyle).toBeUndefined();
     expect(disclosure?.props?.["aria-expanded"]).toBe(true);
     expect(disclosure?.props?.["aria-label"]).toBe("Collapse Commander profile");
     expect((disclosure?.props?.children as VNode)?.type).toBe(ChevronDown);

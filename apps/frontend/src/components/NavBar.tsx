@@ -1,4 +1,4 @@
-import type { ComponentChildren } from "preact";
+import type { ComponentChildren, JSX } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { LucideIcon } from "lucide-preact";
 import { ArrowLeftRight, Check, ChevronDown, ChevronUp, Crosshair, Factory, FlaskConical, Mail, Menu, Moon, Orbit, Pencil, Radar, Rocket, SatelliteDish, Shield, Trophy, Users, X } from "lucide-preact";
@@ -58,6 +58,12 @@ export const commanderJoinCta = {
 } as const;
 
 export const commanderSummaryInitiallyExpanded = false;
+
+export const commanderCollapsedIdentityGeometry = {
+  lineHeightPx: 16,
+  opticalOffsetYPx: 2,
+  rowHeightPx: 28,
+} as const;
 
 export function shouldShowCommanderJoinCta(account?: string | undefined, onConnectWallet?: (() => void) | undefined): boolean {
   return !account && Boolean(onConnectWallet);
@@ -505,6 +511,9 @@ export function CommanderAccountSummary({
           ) : null}
           <CopyableCommanderValue
             className={`${expanded ? "mt-1 break-words" : "h-7 items-center truncate"} w-full justify-start text-left text-xs font-semibold leading-4 text-slate-100`}
+            contentStyle={expanded
+              ? undefined
+              : { transform: `translateY(${commanderCollapsedIdentityGeometry.opticalOffsetYPx}px)` }}
             copyKey="commander"
             copyValue={playerCopyValue}
             copiedField={copiedField}
@@ -596,6 +605,7 @@ export function CommanderAccountSummary({
 
 function CopyableCommanderValue({
   className,
+  contentStyle,
   copiedField,
   copyKey,
   copyValue,
@@ -604,6 +614,7 @@ function CopyableCommanderValue({
   value,
 }: {
   className: string;
+  contentStyle?: JSX.CSSProperties | undefined;
   copiedField: { key: string; nonce: number } | undefined;
   copyKey: string;
   copyValue?: string | undefined;
@@ -616,7 +627,7 @@ function CopyableCommanderValue({
     ? "inline-block max-w-full min-w-0 truncate"
     : "inline-block max-w-full min-w-0";
   const content = (
-    <span className="relative inline-block max-w-full min-w-0 align-bottom">
+    <span className="relative inline-block max-w-full min-w-0 align-bottom" style={contentStyle}>
       <span className={valueClassName}>{value}</span>
       {isCopied ? (
         <span
