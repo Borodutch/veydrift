@@ -496,7 +496,7 @@ export function CommanderAccountSummary({
 }) {
   return (
     <aside className={className} aria-label="Sidebar account summary">
-      <div className="flex min-w-0 items-start justify-between gap-2">
+      <div className={`flex min-h-7 min-w-0 justify-between gap-2 ${expanded ? "items-start" : "items-center"}`}>
         <div className="min-w-0 flex-1">
           {expanded ? (
             <p className="text-[10px] font-semibold uppercase text-slate-500">
@@ -504,7 +504,7 @@ export function CommanderAccountSummary({
             </p>
           ) : null}
           <CopyableCommanderValue
-            className={`${expanded ? "mt-1 break-words" : "truncate"} w-full justify-start text-left text-xs font-semibold leading-4 text-slate-100`}
+            className={`${expanded ? "mt-1 break-words" : "h-7 items-center truncate"} w-full justify-start text-left text-xs font-semibold leading-4 text-slate-100`}
             copyKey="commander"
             copyValue={playerCopyValue}
             copiedField={copiedField}
