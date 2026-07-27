@@ -56,6 +56,12 @@ interface IRiftSettlementEntrypoints {
     function settleAttackGroupRaid(uint256 attackMissionId) external;
 }
 
+interface IRiftLifecycleEntrypoints {
+    function startRiftExtraction(uint256 planetId, Resource resource, uint128 amount) external;
+
+    function finalizeRiftExtraction(uint256 planetId, Resource resource) external;
+}
+
 contract MockResourceToken {
     mapping(address account => uint256 balance) public balanceOf;
     mapping(address owner => mapping(address spender => uint256 amount)) public allowance;
@@ -9014,6 +9020,35 @@ contract VeydriftGameTest is Test {
         assertEq(metalToken.balanceOf(player), 200);
     }
 
+    function testRiftLifecycleCannotBeStartedOrFinalizedByAnotherPlayer() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+        _setBuildingLevel(planetId, Building.InterdimensionalRiftStabilizer, 1);
+        _setResources(planetId, 1_000, 0, 0);
+
+        IRiftLifecycleEntrypoints rift = IRiftLifecycleEntrypoints(address(game));
+        address attacker = address(0xBADC0DE);
+        vm.prank(attacker);
+        vm.expectRevert(VeydriftGameStorage.NotPlanetOwner.selector);
+        rift.startRiftExtraction(planetId, Resource.Metal, 100);
+
+        vm.prank(player);
+        rift.startRiftExtraction(planetId, Resource.Metal, 100);
+        (bool active, uint128 amount,, uint64 unlocksAt) =
+            game.riftExtractions(planetId, Resource.Metal);
+        assertTrue(active);
+        assertEq(amount, 100);
+
+        vm.warp(unlocksAt);
+        vm.prank(attacker);
+        vm.expectRevert(VeydriftGameStorage.NotPlanetOwner.selector);
+        rift.finalizeRiftExtraction(planetId, Resource.Metal);
+
+        (active, amount,,) = game.riftExtractions(planetId, Resource.Metal);
+        assertTrue(active);
+        assertEq(amount, 100);
+    }
+
     function testRiftSettlementEntrypointsRejectPublicProxyCalls() public {
         IRiftSettlementEntrypoints settlement = IRiftSettlementEntrypoints(address(game));
 
@@ -9024,6 +9059,51 @@ contract VeydriftGameTest is Test {
         vm.prank(player);
         vm.expectRevert(abi.encodeWithSelector(VeydriftGameStorage.Unauthorized.selector, player));
         settlement.settleAttackGroupRaid(0);
+    }
+
+    function testPublicSettlementCannotDrainLiveRiftOrPreSettleOutboundAttack() public {
+        (uint256 originPlanetId, uint256 targetPlanetId, address defender) =
+            _seedAttackPlanetsWithoutScoreProtection();
+        _setBuildingLevel(targetPlanetId, Building.InterdimensionalRiftStabilizer, 1);
+        _setResources(targetPlanetId, 1_000, 0, 0);
+        vm.prank(defender);
+        (bool started,) = address(game)
+            .call(abi.encodeWithSelector(0x0870c082, targetPlanetId, Resource.Metal, uint128(400)));
+        assertTrue(started);
+
+        IRiftSettlementEntrypoints settlement = IRiftSettlementEntrypoints(address(game));
+        vm.prank(player);
+        vm.expectRevert(abi.encodeWithSelector(VeydriftGameStorage.Unauthorized.selector, player));
+        settlement.raidRiftExtraction(player, targetPlanetId, type(uint256).max, 0, 0, 0);
+
+        (bool active, uint128 amount,,) = game.riftExtractions(targetPlanetId, Resource.Metal);
+        assertTrue(active);
+        assertEq(amount, 400);
+
+        _setShipCount(originPlanetId, Ship.LargeCargo, 1);
+        _setResources(originPlanetId, 10_000, 10_000, 10_000);
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.largeCargo = 1;
+        vm.prank(player);
+        uint256 missionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            911
+        );
+
+        vm.prank(player);
+        vm.expectRevert(abi.encodeWithSelector(VeydriftGameStorage.Unauthorized.selector, player));
+        settlement.settleAttackGroupRaid(missionId);
+
+        (,,, VeydriftGameStorage.Resources memory cargo) = _fleetMission(missionId);
+        assertEq(cargo.metal, 0);
+        assertEq(game.planet(targetPlanetId).resources.metal, 600);
+        (active, amount,,) = game.riftExtractions(targetPlanetId, Resource.Metal);
+        assertTrue(active);
+        assertEq(amount, 400);
     }
 
     function testRiftBridgeIsBinaryPerPlanet() public {
