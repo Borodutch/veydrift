@@ -5,6 +5,8 @@ import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
 import {VeydriftFormulas} from "./libraries/VeydriftFormulas.sol";
 import {VeydriftPlanetGeneration} from "./libraries/VeydriftPlanetGeneration.sol";
 import {VeydriftReserveRelease} from "./libraries/VeydriftReserveRelease.sol";
+import {VeydriftRiftModule} from "./VeydriftRiftModule.sol";
+import {VeydriftCombatRaidModule} from "./VeydriftCombatRaidModule.sol";
 import {Building, Defense, MoonBuilding, Ship, Technology} from "./libraries/VeydriftTypes.sol";
 
 interface IVeydriftStateMigrationMoonSystem {
@@ -40,6 +42,8 @@ contract VeydriftStateMigrationModule is VeydriftResourceReserves {
     uint128 private constant REFERRAL_STARTING_CRYSTAL_BONUS = 500;
 
     address private immutable _referralSystem;
+    address private immutable _riftModule;
+    address private immutable _combatRaidModule;
 
     struct MigrationPlanetState {
         uint256 planetId;
@@ -104,6 +108,19 @@ contract VeydriftStateMigrationModule is VeydriftResourceReserves {
 
     constructor(address referralSystemAddress) VeydriftResourceReserves(address(0)) {
         _referralSystem = referralSystemAddress;
+        _riftModule = address(new VeydriftRiftModule());
+        _combatRaidModule = address(new VeydriftCombatRaidModule());
+    }
+
+    /// @dev The VeydriftGame facade routes the size-sensitive Rift selectors here. This module
+    ///      dispatches them again under the original proxy storage context.
+    fallback() external {
+        address module = msg.sig == 0x41dfa622 ? _combatRaidModule : _riftModule;
+        (bool ok, bytes memory result) = module.delegatecall(msg.data);
+        if (!ok) {
+            assembly ("memory-safe") { revert(add(result, 32), mload(result)) }
+        }
+        assembly ("memory-safe") { return(add(result, 32), mload(result)) }
     }
 
     /// @notice Releases provably excess resource reserves to the configured launch treasury.

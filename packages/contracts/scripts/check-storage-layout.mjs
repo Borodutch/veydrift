@@ -64,13 +64,49 @@ const stableStringify = (value) => JSON.stringify(sortValue(value), null, 2);
 const currentJson = stableStringify(current);
 const expectedJson = stableStringify(expected);
 
-if (currentJson !== expectedJson) {
+const riftStorageAppend = [
+  {
+    label: "riftExtractions",
+    slot: "55",
+    offset: 0,
+    type: "mapping(uint256 => mapping(enum Resource => struct RiftExtraction))",
+  },
+  {
+    label: "_riftLockedResources",
+    slot: "56",
+    offset: 0,
+    type: "mapping(uint256 => struct Resources)",
+  },
+];
+const riftExtractionStruct = [
+  {label: "active", slot: "0", offset: 0, type: "bool"},
+  {label: "amount", slot: "0", offset: 1, type: "uint128"},
+  {label: "startedAt", slot: "0", offset: 17, type: "uint64"},
+  {label: "unlocksAt", slot: "1", offset: 0, type: "uint64"},
+];
+const currentV1Prefix = {
+  storage: current.storage.slice(0, expected.storage.length),
+  structs: Object.fromEntries(
+    Object.keys(expected.structs).map((name) => [name, current.structs[name]])
+  ),
+};
+const hasReviewedRiftAppend = (
+  stableStringify(currentV1Prefix) === expectedJson
+  && stableStringify(current.storage.slice(expected.storage.length)) === stableStringify(riftStorageAppend)
+  && stableStringify(current.structs.RiftExtraction) === stableStringify(riftExtractionStruct)
+);
+
+if (currentJson !== expectedJson && !hasReviewedRiftAppend) {
   console.error("VeydriftGame storage layout differs from storage-layout/VeydriftGame.v1.json");
-  console.error("Regenerate only after reviewing UUPS upgrade compatibility.");
+  console.error("It must preserve the v1 layout or exactly match the reviewed Rift append.");
   process.exit(1);
 }
 
-console.log("VeydriftGame storage layout matches storage-layout/VeydriftGame.v1.json");
+console.log(
+  currentJson === expectedJson
+    ? "VeydriftGame storage layout matches storage-layout/VeydriftGame.v1.json"
+    : "VeydriftGame storage layout preserves v1 and exactly matches the reviewed Rift append"
+);
 
 for (const contractName of ["VeydriftMetal", "VeydriftCrystal", "VeydriftDeuterium"]) {
   const tokenArtifactPath = join("out", "VeydriftResourceToken.sol", `${contractName}.json`);

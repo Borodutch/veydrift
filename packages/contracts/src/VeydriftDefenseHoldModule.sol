@@ -9,6 +9,7 @@ import {VeydriftFormulas} from "./libraries/VeydriftFormulas.sol";
 import {VeydriftAntiRaidPrimitives} from "./libraries/VeydriftAntiRaidPrimitives.sol";
 import {VeydriftDefenseHoldStorage} from "./libraries/VeydriftDefenseHoldStorage.sol";
 import {VeydriftFleetFuel} from "./libraries/VeydriftFleetFuel.sol";
+import {VeydriftMoonPresence} from "./VeydriftMoonPresence.sol";
 import {Building, Ship, Technology} from "./libraries/VeydriftTypes.sol";
 
 interface IVeydriftDefenseHoldAllianceSystem {
@@ -24,6 +25,13 @@ interface IVeydriftDefenseHoldRandomnessEngine {
     function requestRandomness(bytes32 purposeHash) external returns (uint256 requestId);
 }
 
+interface IVeydriftMoonPresence {
+    function existsForOwner(address moonSystem, uint256 planetId, address owner_)
+        external
+        view
+        returns (bool);
+}
+
 /// @notice Delegatecall target implementing OGame-style ACS Defend (DefenseHold): station a fleet at
 ///         a planet for a chosen hold window so it automatically defends any attack that lands while
 ///         it is holding, then flies home. Kept in its own module so the size-constrained gameplay
@@ -31,7 +39,11 @@ interface IVeydriftDefenseHoldRandomnessEngine {
 contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
     using SafeCast for uint256;
 
-    constructor() VeydriftResourceReserves(address(0)) {}
+    address private immutable _moonPresence;
+
+    constructor() VeydriftResourceReserves(address(0)) {
+        _moonPresence = address(new VeydriftMoonPresence());
+    }
 
     /// @notice Launch a DefenseHold mission. The fleet flies to `targetPlanetId` (owned by the sender
     ///         or a same-alliance member), holds for `holdSeconds` after arrival, and defends any
@@ -186,15 +198,16 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
         bool originIsMoon,
         bool targetIsMoon
     ) external returns (uint256 missionId) {
-        if (
-            missionType != FleetMissionType.Transport && missionType != FleetMissionType.Deploy
-                && missionType != FleetMissionType.Attack
-        ) {
+        // Transport (0), Deploy (1), and Attack (3) are the only body-mission
+        // kinds this compatibility entrypoint accepts; Colonize (2) is routed
+        // through the dedicated colonization module.
+        if (missionType == FleetMissionType.Colonize || uint8(missionType) > 3) {
             revert InvalidMissionType(missionType);
         }
+        bool isAttack = missionType == FleetMissionType.Attack;
         if (originPlanetId == targetPlanetId && originIsMoon == targetIsMoon) revert SamePlanet();
         _requireOwnedBody(originPlanetId, originIsMoon);
-        if (missionType == FleetMissionType.Attack) {
+        if (isAttack) {
             _requireAttackTargetBody(targetPlanetId, targetIsMoon);
             _enforceAttackProtection(msg.sender, targetPlanetId);
         } else {
@@ -248,7 +261,7 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
         uint64 returnAt = (uint256(arrivalAt) + travelSeconds).toUint64();
         missionId = nextFleetId++;
         uint256 randomnessRequestId;
-        if (missionType == FleetMissionType.Attack) {
+        if (isAttack) {
             randomnessRequestId = _requestAttackBattleRandomness(missionId);
         }
         activeFleetMissionCount[msg.sender] += 1;
@@ -270,7 +283,7 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
             targetIsMoon: targetIsMoon
         });
         _trackMissionResolution(missionId, _fleetMissions[missionId]);
-        if (missionType == FleetMissionType.Attack) {
+        if (isAttack) {
             _recordAttack(msg.sender, targetPlanetId);
         }
 
@@ -429,14 +442,7 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
     }
 
     function _moonExistsForOwner(uint256 planetId, address owner_) private view returns (bool) {
-        address moonSystem = _moonSystem;
-        if (moonSystem == address(0)) return false;
-        (bool ok, bytes memory data) =
-            moonSystem.staticcall(abi.encodeWithSignature("moon(uint256)", planetId));
-        if (!ok || data.length < 96) return false;
-        (bool exists,, address moonOwner,,,,) =
-            abi.decode(data, (bool, uint256, address, uint16, uint16, uint64, uint64));
-        return exists && moonOwner == owner_;
+        return IVeydriftMoonPresence(_moonPresence).existsForOwner(_moonSystem, planetId, owner_);
     }
 
     function _requireShips(uint256 planetId, Ship ship, uint32 quantity) private view {

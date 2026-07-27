@@ -27,7 +27,6 @@ interface IVeydriftAttackTargetQueueSettler {
 
 /// @notice Delegatecall target for stateful gameplay paths that would push VeydriftGame over EIP-170.
 contract VeydriftGameplayModule is VeydriftResourceReserves {
-    bytes4 private constant ATTACK_PROTECTION_STATUS_SELECTOR = 0x8a6b2246;
     bytes4 private constant LAUNCH_FLEET_MISSION_SELECTOR = bytes4(
         keccak256(
             "launchFleetMission(uint256,uint256,uint8,(uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32),(uint128,uint128,uint128),uint16,uint256)"
@@ -303,29 +302,13 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
     }
 
     function _enforceAttackProtection(address attacker, uint256 targetPlanetId) private view {
-        if (_planets[targetPlanetId].owner == attacker) revert SelfAttack();
-        AttackBlockReason reason = _attackBlockReason(attacker, targetPlanetId);
-        if (reason == AttackBlockReason.BashingLimit) revert AttackBashingLimitReached();
-        if (reason == AttackBlockReason.ScoreProtection) revert AttackScoreProtection();
-        if (reason == AttackBlockReason.SameAlliance) revert SameAllianceAttack();
-    }
-
-    function _attackBlockReason(address attacker, uint256 targetPlanetId)
-        private
-        view
-        returns (AttackBlockReason reason)
-    {
-        (bool ok, bytes memory data) = address(this)
-            .staticcall(
-                abi.encodeWithSelector(ATTACK_PROTECTION_STATUS_SELECTOR, attacker, targetPlanetId)
-            );
+        (bool ok, bytes memory data) =
+            address(this).staticcall(abi.encodeWithSelector(0x946213e2, attacker, targetPlanetId));
         if (!ok) {
             assembly ("memory-safe") {
                 revert(add(data, 32), mload(data))
             }
         }
-        if (data.length < 32) return AttackBlockReason.None;
-        (reason,,) = abi.decode(data, (AttackBlockReason, uint8, uint16));
     }
 
     function _joinAttackMission(

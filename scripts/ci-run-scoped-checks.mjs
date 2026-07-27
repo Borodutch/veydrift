@@ -73,16 +73,23 @@ function runLogged(label, command, args) {
     stdio: ["ignore", "pipe", "pipe"],
   });
   const output = `${result.stdout || ""}${result.stderr || ""}`;
-  process.stdout.write(output);
 
   if (result.status !== 0) {
+    process.stdout.write(output);
     process.exit(result.status || 1);
   }
 
   if (outputContainsFlaggedOutput(output)) {
+    process.stdout.write(output);
     console.error(`::error::${label} output contains flagged output.`);
     process.exit(1);
   }
+
+  // Bun's backend suite deliberately exercises many negative read paths and emits
+  // structured diagnostics for them. Keeping that entire successful stream in the
+  // GitHub Actions log can throttle the runner before later contract checks begin;
+  // retain it on any failure, but record a concise success marker otherwise.
+  console.log(`${label} passed.`);
 }
 
 function main() {

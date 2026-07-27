@@ -5,7 +5,6 @@ import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
 import {VeydriftGameStorage} from "./VeydriftGameStorage.sol";
 import {VeydriftCatalog} from "./libraries/VeydriftCatalog.sol";
 import {VeydriftFormulas} from "./libraries/VeydriftFormulas.sol";
-import {VeydriftRaidStorage} from "./libraries/VeydriftRaidStorage.sol";
 import {Building, Defense, Ship, Technology} from "./libraries/VeydriftTypes.sol";
 
 struct FleetBattleGroup {
@@ -453,7 +452,11 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         // selects exactly the "must not be raided" reasons.
         (AttackBlockReason protectionReason,) =
             _attackProtectionPreview(mission.owner, mission.targetPlanetId);
-        if (uint8(protectionReason) >= uint8(AttackBlockReason.ScoreProtection)) {
+        if (
+            protectionReason == AttackBlockReason.SameAlliance
+                || (protectionReason == AttackBlockReason.ScoreProtection
+                    && !_hasRiftLockedResources(mission.targetPlanetId))
+        ) {
             _returnLinkedMissions(missionId, mission);
             mission.status = FleetMissionStatus.Returning;
             return;
@@ -484,7 +487,7 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
                 _setPlanetShipCount(targetPlanetId, Ship.SolarSatellite, 0);
                 _setPlanetShipCount(targetPlanetId, Ship.Crawler, 0);
             }
-            _raidResourcesForAttackGroup(missionId, mission);
+            _settleAttackGroupRaid(missionId);
         }
         _returnLinkedMissions(missionId, mission);
 
@@ -1560,132 +1563,15 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         }
     }
 
-    function _raidResourcesForAttackGroup(uint256 attackMissionId, FleetMission storage mission)
-        private
-    {
-        uint256 totalCapacity =
-            _remainingCargoCapacity(mission.ships, mission.cargo, mission.fuelCost);
-        uint256[] storage linkedMissionIds = _fleetCounterplayMissions[attackMissionId];
-        for (uint256 i = 0; i < linkedMissionIds.length;) {
-            FleetMission storage joined = _fleetMissions[linkedMissionIds[i]];
-            if (_isQualifiedJoinedAttack(attackMissionId, joined)) {
-                totalCapacity += _remainingCargoCapacity(
-                    joined.ships, joined.cargo, joined.fuelCost
-                );
-            }
-            unchecked {
-                ++i;
-            }
-        }
-        if (totalCapacity == 0) return;
-
-        (, uint16 plunderBps) = _attackProtectionPreview(mission.owner, mission.targetPlanetId);
-        Resources memory loot = mission.targetIsMoon
-            ? _raidMoonResources(
-                mission.targetPlanetId, totalCapacity, plunderBps, mission.lootRatio
-            )
-            : _raidResources(mission.targetPlanetId, totalCapacity, plunderBps, mission.lootRatio);
-        _distributeAttackGroupLoot(attackMissionId, mission, loot, totalCapacity);
+    function _settleAttackGroupRaid(uint256 missionId) private {
+        (bool ok, bytes memory data) =
+            address(this).call(abi.encodeWithSelector(0x41dfa622, missionId));
+        if (!ok) assembly ("memory-safe") { revert(add(data, 32), mload(data)) }
     }
 
-    function _distributeAttackGroupLoot(
-        uint256 attackMissionId,
-        FleetMission storage mission,
-        Resources memory loot,
-        uint256 totalCapacity
-    ) private {
-        Resources memory remaining = loot;
-        uint256 remainingCapacity = totalCapacity;
-        (remaining, remainingCapacity) = _assignLootShare(mission, remaining, remainingCapacity);
-
-        uint256[] storage linkedMissionIds = _fleetCounterplayMissions[attackMissionId];
-        for (uint256 i = 0; i < linkedMissionIds.length;) {
-            FleetMission storage joined = _fleetMissions[linkedMissionIds[i]];
-            if (_isQualifiedJoinedAttack(attackMissionId, joined)) {
-                (remaining, remainingCapacity) =
-                    _assignLootShare(joined, remaining, remainingCapacity);
-            }
-            unchecked {
-                ++i;
-            }
-        }
-    }
-
-    function _assignLootShare(
-        FleetMission storage recipient,
-        Resources memory remaining,
-        uint256 remainingCapacity
-    ) private returns (Resources memory, uint256) {
-        uint256 capacity = _remainingCargoCapacity(
-            recipient.ships, recipient.cargo, recipient.fuelCost
-        );
-        if (capacity == 0 || remainingCapacity == 0) return (remaining, remainingCapacity);
-
-        Resources memory share;
-        if (capacity >= remainingCapacity) {
-            share = remaining;
-            remaining = Resources({metal: 0, crystal: 0, deuterium: 0});
-        } else {
-            share = Resources({
-                metal: _toUint128((uint256(remaining.metal) * capacity) / remainingCapacity),
-                crystal: _toUint128((uint256(remaining.crystal) * capacity) / remainingCapacity),
-                deuterium: _toUint128((uint256(remaining.deuterium) * capacity) / remainingCapacity)
-            });
-            remaining.metal -= share.metal;
-            remaining.crystal -= share.crystal;
-            remaining.deuterium -= share.deuterium;
-        }
-
-        recipient.cargo = _add(recipient.cargo, share);
-        remainingCapacity = capacity >= remainingCapacity ? 0 : remainingCapacity - capacity;
-        return (remaining, remainingCapacity);
-    }
-
-    function _remainingCargoCapacity(
-        MissionShips memory ships,
-        Resources memory cargo,
-        uint128 fuelCost
-    ) private pure returns (uint256) {
-        uint256 capacity = _missionCargoCapacity(ships);
-        uint256 used = uint256(cargo.metal) + cargo.crystal + cargo.deuterium + fuelCost;
-        return capacity > used ? capacity - used : 0;
-    }
-
-    function _raidResources(
-        uint256 targetPlanetId,
-        uint256 capacity,
-        uint16 plunderBps,
-        LootRatio memory lootRatio
-    ) private returns (Resources memory raided) {
-        // The capacity split + rollover arithmetic and the storage decrement live in the deployed
-        // VeydriftRaidStorage library to keep this size-constrained module within EIP-170.
-        (raided.metal, raided.crystal, raided.deuterium) = VeydriftRaidStorage.raid(
-            _planets[targetPlanetId],
-            targetPlanetId,
-            capacity,
-            plunderBps,
-            lootRatio.metalBps,
-            lootRatio.crystalBps,
-            lootRatio.deuteriumBps
-        );
-    }
-
-    function _raidMoonResources(
-        uint256 targetPlanetId,
-        uint256 capacity,
-        uint16 plunderBps,
-        LootRatio memory lootRatio
-    ) private returns (Resources memory raided) {
-        (raided.metal, raided.crystal, raided.deuterium) =
-            VeydriftRaidStorage.raidMoon(
-                _moonResources[targetPlanetId],
-                targetPlanetId,
-                capacity,
-                plunderBps,
-                lootRatio.metalBps,
-                lootRatio.crystalBps,
-                lootRatio.deuteriumBps
-            );
+    function _hasRiftLockedResources(uint256 planetId) private view returns (bool) {
+        Resources storage locked = _riftLockedResources[planetId];
+        return locked.metal != 0 || locked.crystal != 0 || locked.deuterium != 0;
     }
 
     function _battleSeed(uint256 missionId, FleetMission storage mission)

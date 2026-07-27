@@ -277,6 +277,40 @@ export type IndexedRiftResourceEvent = {
   unlocksAt?: string;
 };
 
+// Rift V2 locks mined planet resources for a public 28-day extraction window.
+// These are intentionally distinct from the legacy ERC-20 bridge events above:
+// the public Raid Finder needs the *surviving, raidable* on-chain extraction
+// amount, not a wallet's historical bridge ledger.
+export type IndexedRiftExtractionEvent =
+  | {
+    eventName: "RiftExtractionStarted";
+    transactionHash: string;
+    blockNumber: string;
+    owner: Address;
+    planetId: string;
+    resourceId: number;
+    amount: string;
+    startedAt: string;
+    unlocksAt: string;
+  }
+  | {
+    eventName: "RiftExtractionLooted";
+    transactionHash: string;
+    blockNumber: string;
+    attacker: Address;
+    planetId: string;
+    resources: Resources;
+  }
+  | {
+    eventName: "RiftExtractionFinalized";
+    transactionHash: string;
+    blockNumber: string;
+    owner: Address;
+    planetId: string;
+    resourceId: number;
+    amount: string;
+  };
+
 export type IndexedShipCountChangedEvent = {
   eventName: "PlanetShipCountChanged" | "MoonShipCountChanged";
   transactionHash: string;
@@ -5452,6 +5486,9 @@ const allianceDiplomacyUpdatedTopic = "0x3df4b2aa5708b43ef1805908826beae5c9a30fb
 const marketResourceDepositedTopic = "0xb241f95d5e925b76c75fd1e811b497abfdc0984105f5b3feb7bee1a75f0a2643";
 const marketResourceWithdrawalRequestedTopic = "0xc4694dfe978480c576eacc57b2b09e69c8b8f50c49739ca4c4515295be589eab";
 const marketResourceWithdrawalFinishedTopic = "0x2b254e656a481b3978a707e6846146a1d7a3144e414cb803bbc7adc97d7587ee";
+const riftExtractionStartedTopic = "0xe5c09fec813f00f51c26dceaa5c361061a323d98bd0b1cac790167587a3dc512";
+const riftExtractionLootedTopic = "0x3f079e80fdea64b4c1bc83bafe580eda55ab7724bb9344b1e13a4c2c780784fb";
+const riftExtractionFinalizedTopic = "0x31186e4a61fef32b3f8d7dcad582f862fbf906a37888ae53b7131ba2d60207a2";
 
 const eventNamesByTopic = new Map<string, string>([
   [planetStartedTopic, "PlanetStarted"],
@@ -5522,7 +5559,10 @@ const eventNamesByTopic = new Map<string, string>([
   [allianceDiplomacyUpdatedTopic, "AllianceDiplomacyUpdated"],
   [marketResourceDepositedTopic, "MarketResourceDeposited"],
   [marketResourceWithdrawalRequestedTopic, "MarketResourceWithdrawalRequested"],
-  [marketResourceWithdrawalFinishedTopic, "MarketResourceWithdrawalFinished"]
+  [marketResourceWithdrawalFinishedTopic, "MarketResourceWithdrawalFinished"],
+  [riftExtractionStartedTopic, "RiftExtractionStarted"],
+  [riftExtractionLootedTopic, "RiftExtractionLooted"],
+  [riftExtractionFinalizedTopic, "RiftExtractionFinalized"]
 ]);
 
 export function eventNameForTopic(topic: string | null | undefined): string | null {
@@ -5728,6 +5768,13 @@ export function isRiftResourceLog(log: RpcLog): boolean {
   return topic === marketResourceDepositedTopic
     || topic === marketResourceWithdrawalRequestedTopic
     || topic === marketResourceWithdrawalFinishedTopic;
+}
+
+export function isRiftExtractionLog(log: RpcLog): boolean {
+  const topic = topicAt(log.topics, 0);
+  return topic === riftExtractionStartedTopic
+    || topic === riftExtractionLootedTopic
+    || topic === riftExtractionFinalizedTopic;
 }
 
 export function isAllianceLog(log: RpcLog): boolean {
@@ -6283,6 +6330,47 @@ export function decodeRiftResourceLog(log: RpcLog): IndexedRiftResourceEvent {
       ? "MarketResourceDeposited"
       : "MarketResourceWithdrawalFinished"
   };
+}
+
+export function decodeRiftExtractionLog(log: RpcLog): IndexedRiftExtractionEvent {
+  const topic = topicAt(log.topics, 0);
+  const words = splitWords(log.data);
+  const transactionHash = log.transactionHash;
+  const blockNumber = BigInt(log.blockNumber).toString();
+  const planetId = decodeUint(topicAt(log.topics, 2)).toString();
+
+  if (topic === riftExtractionLootedTopic) {
+    return {
+      eventName: "RiftExtractionLooted",
+      transactionHash,
+      blockNumber,
+      attacker: decodeAddressWord(topicAt(log.topics, 1)),
+      planetId,
+      resources: {
+        metal: decodeUintWord(wordAt(words, 0)).toString(),
+        crystal: decodeUintWord(wordAt(words, 1)).toString(),
+        deuterium: decodeUintWord(wordAt(words, 2)).toString()
+      }
+    };
+  }
+
+  const base = {
+    transactionHash,
+    blockNumber,
+    owner: decodeAddressWord(topicAt(log.topics, 1)),
+    planetId,
+    resourceId: Number(decodeUint(topicAt(log.topics, 3))),
+    amount: decodeUintWord(wordAt(words, 0)).toString()
+  };
+  if (topic === riftExtractionStartedTopic) {
+    return {
+      ...base,
+      eventName: "RiftExtractionStarted",
+      startedAt: decodeUintWord(wordAt(words, 1)).toString(),
+      unlocksAt: decodeUintWord(wordAt(words, 2)).toString()
+    };
+  }
+  return { ...base, eventName: "RiftExtractionFinalized" };
 }
 
 export function decodeAllianceLog(log: RpcLog): IndexedAllianceEvent {

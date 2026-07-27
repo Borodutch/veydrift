@@ -1201,6 +1201,36 @@ export type RaidFinderDebrisResponse = {
   source?: string;
 };
 
+export type RiftFinderTargetResponse = {
+  planetId: string;
+  name: string | null;
+  owner: string;
+  coordinates: {
+    galaxy: number;
+    system: number;
+    position: number;
+  };
+  archetype: PlanetType;
+  hasMoon?: boolean | undefined;
+  startedAt: string;
+  unlocksAt: string;
+  resources: {
+    metal: string;
+    crystal: string;
+    deuterium: string;
+  };
+};
+
+export type RaidFinderRiftersResponse = {
+  targets: RiftFinderTargetResponse[];
+  pagination?: {
+    page: number;
+    pageSize: number;
+  };
+  stale?: boolean;
+  source?: string;
+};
+
 export const BASE_SEPOLIA = {
   chainId: 84532,
   chainIdHex: "0x14a34",
@@ -1251,6 +1281,7 @@ const GAME_SELECTORS = {
   completeFleetMissionReturn: "0xc2472852",
   createColony: "0x71358ab8",
   depositResource: "0x25819e15",
+  finalizeRiftExtraction: "0xe2f2de34",
   finishDefenseProduction: "0xa5a0d597",
   finishBuildingUpgrade: "0x6ab2f9d4",
   finishResourceWithdrawal: "0xde0f208c",
@@ -1268,6 +1299,7 @@ const GAME_SELECTORS = {
   finishResearch: "0xba2fbdc8",
   renamePlanet: "0xa74c0906",
   requestResourceWithdrawal: "0x62a10a46",
+  startRiftExtraction: "0x0870c082",
   recallFleetMission: "0x1cbc460c",
   startDefenseProduction: "0xfec06283",
   startResearch: "0x7f314b93",
@@ -2935,6 +2967,35 @@ export async function sendFinishResourceWithdrawalTransaction(
   });
 }
 
+export async function sendStartRiftExtractionTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  planetId: string,
+  resourceId: number,
+  amount: bigint | number | string
+): Promise<string> {
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodeGameCall(GAME_SELECTORS.startRiftExtraction, [planetId, resourceId, amount])
+  });
+}
+
+export async function sendFinalizeRiftExtractionTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  planetId: string,
+  resourceId: number
+): Promise<string> {
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodeGameCall(GAME_SELECTORS.finalizeRiftExtraction, [planetId, resourceId])
+  });
+}
+
 export async function sendStartDefenseProductionTransaction(
   provider: Eip1193Provider,
   account: string,
@@ -4231,6 +4292,27 @@ export async function fetchRaidFinderDebrisTargets(
       headers: {
         accept: "application/json"
       }
+    });
+  } catch (error) {
+    throw new Error(highscoreNetworkFailureMessage(error));
+  }
+
+  if (!response.ok) throw new Error(await highscoreHttpFailureMessage(response));
+  return response.json();
+}
+
+export async function fetchRaidFinderRifters(
+  apiUrl: string,
+  options: { limit?: number } = {},
+): Promise<RaidFinderRiftersResponse> {
+  const params = new URLSearchParams();
+  if (options.limit) params.set("limit", String(options.limit));
+  const query = params.toString();
+  let response: Response;
+
+  try {
+    response = await fetch(`${apiUrl.replace(/\/+$/, "")}/raid-finder/rifters${query ? `?${query}` : ""}`, {
+      headers: { accept: "application/json" }
     });
   } catch (error) {
     throw new Error(highscoreNetworkFailureMessage(error));

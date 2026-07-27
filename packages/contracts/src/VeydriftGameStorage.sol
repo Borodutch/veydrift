@@ -45,6 +45,7 @@ abstract contract VeydriftGameStorage is Initializable {
     uint32 public constant FLEET_RECALL_CUTOFF_SECONDS = 60;
     uint16 public constant FLEET_RECALL_COST_BPS = 2_500;
     uint64 public constant MARKET_WITHDRAWAL_DELAY = 30 days;
+    uint64 public constant RIFT_EXTRACTION_DELAY = 28 days;
     uint16 public constant MAX_GALAXY = 9;
     uint16 public constant MAX_SYSTEM = 499;
     uint8 public constant MAX_POSITION = 15;
@@ -266,6 +267,16 @@ abstract contract VeydriftGameStorage is Initializable {
         uint64 unlocksAt;
     }
 
+    /// @notice A planet-scoped Rift extraction claim. The amount stays inside the
+    /// game for the full extraction period, is not spendable by its owner, and is
+    /// deliberately exposed to raids until the owner finalizes the surviving claim.
+    struct RiftExtraction {
+        bool active;
+        uint128 amount;
+        uint64 startedAt;
+        uint64 unlocksAt;
+    }
+
     uint256 public startPrice;
     uint256 public nextPlanetId;
     address internal _owner;
@@ -333,6 +344,12 @@ abstract contract VeydriftGameStorage is Initializable {
         _shipQueueTimings;
     mapping(uint256 planetId => mapping(uint64 readyAt => ProductionQueueTiming timing)) internal
         _defenseQueueTimings;
+    // Rift V2 is planet-scoped: a player may extract each resource independently
+    // from multiple stabilized planets. This is append-only to preserve the live
+    // proxy layout and leaves the legacy single-withdrawal mapping readable.
+    mapping(uint256 planetId => mapping(Resource resource => RiftExtraction extraction)) public
+        riftExtractions;
+    mapping(uint256 planetId => Resources resources) internal _riftLockedResources;
 
     error AlreadyStarted();
     error BadStartPayment();
@@ -372,6 +389,8 @@ abstract contract VeydriftGameStorage is Initializable {
     error FleetMissionNotResolved(uint64 returnAt);
     error DebrisFieldEmpty();
     error RiftStabilizerRequired(uint256 planetId);
+    error RiftExtractionActive(uint256 planetId, Resource resource);
+    error RiftExtractionInactive(uint256 planetId, Resource resource);
     error ResourceTokenNotConfigured(Resource resource);
     error WithdrawalActive(Resource resource);
     error WithdrawalInactive(Resource resource);
@@ -722,6 +741,24 @@ abstract contract VeydriftGameStorage is Initializable {
         uint64 unlocksAt
     );
     event MarketResourceWithdrawalFinished(
+        address indexed player, uint256 indexed planetId, Resource indexed resource, uint128 amount
+    );
+    event RiftExtractionStarted(
+        address indexed player,
+        uint256 indexed planetId,
+        Resource indexed resource,
+        uint128 amount,
+        uint64 startedAt,
+        uint64 unlocksAt
+    );
+    event RiftExtractionLooted(
+        address indexed attacker,
+        uint256 indexed planetId,
+        uint128 metal,
+        uint128 crystal,
+        uint128 deuterium
+    );
+    event RiftExtractionFinalized(
         address indexed player, uint256 indexed planetId, Resource indexed resource, uint128 amount
     );
     event PlanetRenamed(address indexed player, uint256 indexed planetId, string name);

@@ -36,6 +36,7 @@ import {
   decodeReferralRedemptionLog,
   decodeReferralRewardClaimLog,
   decodeStartPriceUpdatedLog,
+  decodeRiftExtractionLog,
   decodeRiftResourceLog,
   decodeSettledPlanetLog,
   decodeShipCountChangedLog,
@@ -64,6 +65,7 @@ import {
   isReferralRedemptionLog,
   isReferralRewardClaimLog,
   isStartPriceUpdatedLog,
+  isRiftExtractionLog,
   isRiftResourceLog,
   isSettledPlanetLog,
   isShipCountChangedLog,
@@ -102,6 +104,7 @@ import {
   type IndexedMoonShipCountChangedEvent,
   type IndexedMoonResourcesChangedEvent,
   type IndexedRiftResourceEvent,
+  type IndexedRiftExtractionEvent,
   type IndexedShipCountChangedEvent,
   type IndexedDefenseCountChangedEvent,
   type InterplanetaryMissileAttackEvent,
@@ -148,6 +151,12 @@ export type IndexedDebrisTarget = IndexedDebrisFieldEvent & {
   planet: Pick<SettledPlanetEvent, "name" | "owner" | "planetId" | "galaxy" | "system" | "position" | "temperature">;
 };
 export type IndexedMoonChanceReportEvent = MoonChanceReportEvent & Pick<SettledPlanetEvent, "galaxy" | "system" | "position">;
+export type IndexedRiftTarget = {
+  planet: Pick<SettledPlanetEvent, "name" | "owner" | "planetId" | "galaxy" | "system" | "position" | "temperature">;
+  startedAt: string;
+  unlocksAt: string;
+  resources: Resources;
+};
 
 type SettledPlanetIndexCache = {
   stateVersion: string;
@@ -426,6 +435,16 @@ type PendingWithdrawalRow = {
   resource_id: number;
   unlocks_at: string;
   withdrawal_key: string;
+};
+
+type RiftExtractionRow = {
+  owner: string;
+  planet_id: string;
+  resource_id: number;
+  amount: string;
+  started_at: string;
+  unlocks_at: string;
+  planet_json: string;
 };
 
 type MoonBuildingQueueRow = {
@@ -947,6 +966,48 @@ export class SettlementIndexer {
         }
       };
     });
+  }
+
+  // Live public Rift claims. Claims with a zero surviving balance stay visible
+  // until finalization because they are still in the 28-day extraction state.
+  riftTargets(limit = 250): IndexedRiftTarget[] {
+    const boundedLimit = Math.max(1, Math.min(500, Math.trunc(limit)));
+    const rows = this.db.query(`
+      SELECT extraction.owner, extraction.planet_id, extraction.resource_id,
+             extraction.amount, extraction.started_at, extraction.unlocks_at,
+             planet.event_json AS planet_json
+      FROM indexed_rift_extractions extraction
+      INNER JOIN contract_planets planet ON planet.planet_id = extraction.planet_id
+      ORDER BY CAST(extraction.unlocks_at AS INTEGER) ASC, planet.galaxy ASC,
+               planet.system_number ASC, planet.position ASC, extraction.resource_id ASC
+    `).all() as RiftExtractionRow[];
+    const targets = new Map<string, IndexedRiftTarget>();
+    for (const row of rows) {
+      let target = targets.get(row.planet_id);
+      if (!target) {
+        if (targets.size >= boundedLimit) continue;
+        const planet = parseEvent<SettledPlanetEvent>(row.planet_json);
+        target = {
+          planet: {
+            planetId: planet.planetId,
+            name: planet.name,
+            owner: planet.owner,
+            galaxy: planet.galaxy,
+            system: planet.system,
+            position: planet.position,
+            temperature: planet.temperature
+          },
+          startedAt: row.started_at,
+          unlocksAt: row.unlocks_at,
+          resources: { metal: "0", crystal: "0", deuterium: "0" }
+        };
+        targets.set(row.planet_id, target);
+      }
+      if (row.resource_id === 0) target.resources.metal = row.amount;
+      else if (row.resource_id === 1) target.resources.crystal = row.amount;
+      else if (row.resource_id === 2) target.resources.deuterium = row.amount;
+    }
+    return [...targets.values()];
   }
 
   moonChanceReportsInSystem(galaxy: number, system: number): IndexedMoonChanceReportEvent[] {
@@ -2902,6 +2963,20 @@ export class SettlementIndexer {
     const balances = this.riftBalances(wallet, planetId);
     const balanceById = new Map(balances.map((row) => [row.resource_id, row]));
     const pending = this.pendingWithdrawals(wallet, planetId);
+    const extractions = this.riftExtractions(wallet, planetId);
+    const lockedByResource = new Map<number, bigint>();
+    for (const withdrawal of pending) {
+      lockedByResource.set(
+        withdrawal.resource_id,
+        (lockedByResource.get(withdrawal.resource_id) ?? 0n) + BigInt(withdrawal.amount)
+      );
+    }
+    for (const extraction of extractions) {
+      lockedByResource.set(
+        extraction.resource_id,
+        (lockedByResource.get(extraction.resource_id) ?? 0n) + BigInt(extraction.amount)
+      );
+    }
     return {
       wallet,
       homePlanetId: planetId,
@@ -2927,17 +3002,25 @@ export class SettlementIndexer {
           walletBalance: null,
           allowance: null,
           inGameBalance: balance?.in_game_balance ?? "0",
-          lockedBalance: balance?.locked_balance ?? "0"
+          lockedBalance: lockedByResource.get(resource.resourceId)?.toString() ?? balance?.locked_balance ?? "0"
         };
       }),
-      pendingWithdrawals: pending.map((row) => ({
-        id: row.withdrawal_key,
-        resource: riftResourceRows.find((resource) => resource.resourceId === row.resource_id)?.key ?? "metal",
-        amount: row.amount,
-        requestedAt: "0",
-        unlocksAt: row.unlocks_at,
-        ready: BigInt(row.unlocks_at) <= BigInt(Math.floor(Date.now() / 1000))
-      }))
+      pendingWithdrawals: [
+        ...pending.map((row) => riftPendingWithdrawal(
+          row.withdrawal_key,
+          row.resource_id,
+          row.amount,
+          "0",
+          row.unlocks_at
+        )),
+        ...extractions.map((extraction) => riftPendingWithdrawal(
+          `extraction:${extraction.planet_id}:${extraction.resource_id}`,
+          extraction.resource_id,
+          extraction.amount,
+          extraction.started_at,
+          extraction.unlocks_at
+        ))
+      ]
     };
   }
 
@@ -3116,6 +3199,10 @@ export class SettlementIndexer {
     }
     if (isRiftResourceLog(log)) {
       this.applyRiftResourceEvent(decodeRiftResourceLog(log));
+      return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
+    }
+    if (isRiftExtractionLog(log)) {
+      this.applyRiftExtractionEvent(decodeRiftExtractionLog(log));
       return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
     }
     if (isAllianceLog(log)) {
@@ -4003,6 +4090,18 @@ export class SettlementIndexer {
         unlocks_at TEXT NOT NULL,
         event_json TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS indexed_rift_extractions (
+        owner TEXT NOT NULL,
+        planet_id TEXT NOT NULL,
+        resource_id INTEGER NOT NULL,
+        amount TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        unlocks_at TEXT NOT NULL,
+        event_json TEXT NOT NULL,
+        PRIMARY KEY (planet_id, resource_id)
+      );
+      CREATE INDEX IF NOT EXISTS indexed_rift_extractions_unlock_idx
+        ON indexed_rift_extractions (unlocks_at, planet_id);
       CREATE TABLE IF NOT EXISTS contract_production_queues (
         queue_key TEXT PRIMARY KEY,
         queue_kind TEXT NOT NULL,
@@ -4692,6 +4791,7 @@ export class SettlementIndexer {
     this.db.query("DELETE FROM indexed_moon_building_levels").run();
     this.db.query("DELETE FROM indexed_rift_balances").run();
     this.db.query("DELETE FROM indexed_rift_withdrawals").run();
+    this.db.query("DELETE FROM indexed_rift_extractions").run();
     this.db.query("DELETE FROM contract_planet_resources").run();
     this.db.query("DELETE FROM contract_debris_fields").run();
     this.db.query("DELETE FROM contract_moon_chance_reports").run();
@@ -4749,6 +4849,8 @@ export class SettlementIndexer {
       this.applyMoonJumpGateEvent(decodeMoonJumpGateLog(log));
     } else if (isRiftResourceLog(log)) {
       this.applyRiftResourceEvent(decodeRiftResourceLog(log));
+    } else if (isRiftExtractionLog(log)) {
+      this.applyRiftExtractionEvent(decodeRiftExtractionLog(log));
     } else if (isAllianceLog(log)) {
       this.applyAllianceEvent(decodeAllianceLog(log));
     } else if (isFleetMissionLog(log) || isBattleReportLog(log) || isMoonChanceReportLog(log) || isRandomnessFulfilledLog(log)) {
@@ -7305,6 +7407,44 @@ export class SettlementIndexer {
     this.touch();
   }
 
+  private applyRiftExtractionEvent(event: IndexedRiftExtractionEvent): void {
+    if (event.eventName === "RiftExtractionStarted") {
+      this.db.query(`
+        INSERT INTO indexed_rift_extractions (
+          owner, planet_id, resource_id, amount, started_at, unlocks_at, event_json
+        ) VALUES (lower(?), ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(planet_id, resource_id) DO UPDATE SET
+          owner = excluded.owner,
+          amount = excluded.amount,
+          started_at = excluded.started_at,
+          unlocks_at = excluded.unlocks_at,
+          event_json = excluded.event_json
+      `).run(event.owner, event.planetId, event.resourceId, event.amount, event.startedAt, event.unlocksAt, JSON.stringify(event));
+    } else if (event.eventName === "RiftExtractionFinalized") {
+      this.db.query(`
+        DELETE FROM indexed_rift_extractions
+        WHERE planet_id = ? AND resource_id = ? AND owner = lower(?)
+      `).run(event.planetId, event.resourceId, event.owner);
+    } else {
+      const rows = this.db.query(`
+        SELECT resource_id, amount
+        FROM indexed_rift_extractions
+        WHERE planet_id = ?
+      `).all(event.planetId) as Array<Pick<RiftExtractionRow, "resource_id" | "amount">>;
+      const looted = [event.resources.metal, event.resources.crystal, event.resources.deuterium];
+      for (const row of rows) {
+        const amount = BigInt(row.amount);
+        const taken = BigInt(looted[row.resource_id] ?? "0");
+        const remaining = amount > taken ? amount - taken : 0n;
+        this.db.query(`
+          UPDATE indexed_rift_extractions SET amount = ?
+          WHERE planet_id = ? AND resource_id = ?
+        `).run(remaining.toString(), event.planetId, row.resource_id);
+      }
+    }
+    this.touch();
+  }
+
   private applyAllianceEvent(event: IndexedAllianceEvent): void {
     if (event.eventName === "AllianceCreated") {
       this.db.query(`
@@ -8064,6 +8204,16 @@ export class SettlementIndexer {
       WHERE owner = lower(?) AND planet_id = ?
       ORDER BY CAST(unlocks_at AS INTEGER) ASC
     `).all(wallet, planetId) as PendingWithdrawalRow[];
+  }
+
+  private riftExtractions(wallet: `0x${string}`, planetId: string | null): RiftExtractionRow[] {
+    if (!planetId) return [];
+    return this.db.query(`
+      SELECT owner, planet_id, resource_id, amount, started_at, unlocks_at
+      FROM indexed_rift_extractions
+      WHERE owner = lower(?) AND planet_id = ? AND CAST(amount AS INTEGER) > 0
+      ORDER BY CAST(unlocks_at AS INTEGER) ASC
+    `).all(wallet, planetId) as RiftExtractionRow[];
   }
 
   private indexedFleetMissionSummaries(): FleetMissionSummary[] {
@@ -11174,6 +11324,25 @@ function delay(milliseconds: number): Promise<void> {
 
 function riftWithdrawalKey(event: IndexedRiftResourceEvent): string {
   return `${event.transactionHash.toLowerCase()}:${event.planetId}:${event.resourceId}:${event.amount}`;
+}
+
+function riftPendingWithdrawal(
+  id: string,
+  resourceId: number,
+  amount: string,
+  requestedAt: string,
+  unlocksAt: string
+) {
+    const toIso = (timestamp: string): string => new Date(Number(BigInt(timestamp) * 1_000n)).toISOString();
+  const unlocksAtSeconds = BigInt(unlocksAt);
+  return {
+    id,
+    resource: riftResourceRows.find((resource) => resource.resourceId === resourceId)?.key ?? "metal",
+    amount,
+    requestedAt: toIso(requestedAt),
+    unlocksAt: toIso(unlocksAt),
+    ready: unlocksAtSeconds <= BigInt(Math.floor(Date.now() / 1000))
+  };
 }
 
 function hasAnyShips(ships: Record<string, string>): boolean {

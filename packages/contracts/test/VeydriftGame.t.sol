@@ -8967,6 +8967,40 @@ contract VeydriftGameTest is Test {
         assertEq(metalToken.balanceOf(player), 950);
     }
 
+    function testRiftExtractionLocksFor28DaysAndFinalizesSurvivingResource() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+        _setBuildingLevel(planetId, Building.InterdimensionalRiftStabilizer, 1);
+        _setResources(planetId, 1_000, 1_000, 1_000);
+
+        vm.prank(player);
+        (bool started,) = address(game)
+            .call(abi.encodeWithSelector(0x0870c082, planetId, Resource.Metal, uint128(200)));
+        assertTrue(started);
+        assertEq(game.planet(planetId).resources.metal, 800);
+
+        (bool active, uint128 amount, uint64 startedAt, uint64 unlocksAt) =
+            game.riftExtractions(planetId, Resource.Metal);
+        assertTrue(active);
+        assertEq(amount, 200);
+        assertEq(unlocksAt - startedAt, 28 days);
+
+        vm.prank(player);
+        (bool early,) =
+            address(game).call(abi.encodeWithSelector(0xe2f2de34, planetId, Resource.Metal));
+        assertFalse(early);
+
+        vm.warp(unlocksAt);
+        vm.prank(player);
+        (bool finalized,) =
+            address(game).call(abi.encodeWithSelector(0xe2f2de34, planetId, Resource.Metal));
+        assertTrue(finalized);
+        (active, amount,,) = game.riftExtractions(planetId, Resource.Metal);
+        assertFalse(active);
+        assertEq(amount, 0);
+        assertEq(metalToken.balanceOf(player), 200);
+    }
+
     function testRiftBridgeIsBinaryPerPlanet() public {
         vm.prank(player);
         uint256 homePlanetId = game.startPlanet{value: 0.05 ether}();
@@ -8999,6 +9033,43 @@ contract VeydriftGameTest is Test {
         vm.prank(player);
         game.depositMarketResource(colonyPlanetId, Resource.Metal, 100);
         assertEq(game.planet(colonyPlanetId).resources.metal, 1_100);
+    }
+
+    function testAttackLootsOrdinaryResourcesFirstThenRiftAtFullRate() public {
+        (uint256 originPlanetId, uint256 targetPlanetId, address defender) =
+            _seedAttackPlanetsWithoutScoreProtection();
+        _setBuildingLevel(targetPlanetId, Building.InterdimensionalRiftStabilizer, 1);
+        _setResources(targetPlanetId, 1_000, 0, 0);
+        vm.prank(defender);
+        (bool started,) = address(game)
+            .call(abi.encodeWithSelector(0x0870c082, targetPlanetId, Resource.Metal, uint128(400)));
+        assertTrue(started);
+
+        _setShipCount(originPlanetId, Ship.LargeCargo, 1);
+        _setResources(originPlanetId, 10_000, 10_000, 10_000);
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.largeCargo = 1;
+        vm.prank(player);
+        uint256 missionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            911
+        );
+        (, uint64 arrivalAt,,) = _fleetMission(missionId);
+        vm.warp(arrivalAt);
+        _fulfillAttackBattleRandomness(missionId, 911);
+        game.resolveFleetMission(missionId);
+
+        (,,, VeydriftGameStorage.Resources memory cargo) = _fleetMission(missionId);
+        // 50% of the 600 ordinary metal is taken before the entire 400-metal Rift lock.
+        assertEq(cargo.metal, 700);
+        assertEq(game.planet(targetPlanetId).resources.metal, 300);
+        (bool active, uint128 remaining,,) = game.riftExtractions(targetPlanetId, Resource.Metal);
+        assertTrue(active);
+        assertEq(remaining, 0);
     }
 
     function testRiftBridgeCannotBeUpgradedPastBuilt() public {
