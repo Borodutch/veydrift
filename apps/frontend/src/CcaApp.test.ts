@@ -23,7 +23,7 @@ const submittedBid = (bidId: string, owner: string): CcaSubmittedBid => ({
 });
 
 describe("CCA connected-wallet bids", () => {
-  test("filters the existing official recent-bid feed by owner without case sensitivity", () => {
+  test("filters the complete official bid history by owner without case sensitivity", () => {
     const connected = "0xAAbbCcDDeeFF0011223344556677889900AAbbCc";
     const recentBids = [
       submittedBid("1", connected.toLowerCase()),
@@ -33,6 +33,19 @@ describe("CCA connected-wallet bids", () => {
 
     expect(ccaBidsForAccount(recentBids, connected).map(({ bidId }) => bidId)).toEqual(["1", "3"]);
     expect(recentBids).toHaveLength(3);
+  });
+
+  test("keeps an older wallet bid visible after it leaves the recent 12-bid list", () => {
+    const connected = "0xAAbbCcDDeeFF0011223344556677889900AAbbCc";
+    const confirmedBids = Array.from({ length: 13 }, (_, index) =>
+      submittedBid(
+        String(13 - index),
+        index === 12 ? connected : "0x1111111111111111111111111111111111111111",
+      )
+    );
+
+    expect(ccaBidsForAccount(confirmedBids.slice(0, 12), connected)).toEqual([]);
+    expect(ccaBidsForAccount(confirmedBids, connected).map(({ bidId }) => bidId)).toEqual(["1"]);
   });
 
   test("returns no personal bids when no wallet is connected", () => {
@@ -179,6 +192,7 @@ describe("CCA bid transaction ordering", () => {
     expect(source).toContain("Connect a wallet to see its confirmed CCA bids.");
     expect(source).toContain('fetch(`${playableApiUrl}/cca`, {');
     expect(source).not.toContain('fetch(`${playableApiUrl}/cca?');
+    expect(source).toContain("ccaBidsForAccount(auction.confirmedBids, account)");
     expect(source).toContain('window.setInterval(() => void refresh(), 12_000)');
     expect(source).toContain("await refresh(provider, account)");
     expect(source).toContain('walletProvider.on?.("accountsChanged"');

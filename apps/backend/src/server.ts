@@ -166,6 +166,14 @@ export type CcaSubmittedBid = {
   transactionHash: string;
 };
 
+export function ccaBidCollections(confirmedBids: readonly CcaSubmittedBid[]) {
+  return {
+    confirmedBids: [...confirmedBids],
+    recentBids: confirmedBids.slice(0, ccaRecentBidLimit),
+    totalBids: confirmedBids.length
+  };
+}
+
 /** Decode Uniswap's BidSubmitted(uint256,address,uint256,uint128) event. */
 export function decodeCcaSubmittedBid(log: RpcLog): CcaSubmittedBid | null {
   const [topic, bidIdTopic, ownerTopic] = log.topics;
@@ -1910,7 +1918,7 @@ async function ccaStateResponse(rpc: HttpJsonRpcTransport): Promise<Response> {
       if (blockOrder !== 0n) return blockOrder > 0n ? 1 : -1;
       return right.bidId.localeCompare(left.bidId, undefined, { numeric: true });
     }), () => []);
-  const recentBids = confirmedBids.slice(0, ccaRecentBidLimit);
+  const bidCollections = ccaBidCollections(confirmedBids);
 
   return Response.json({
     auction: ccaAuctionAddress,
@@ -1921,9 +1929,8 @@ async function ccaStateResponse(rpc: HttpJsonRpcTransport): Promise<Response> {
     ethUsdReference: await ccaEthUsdReference(),
     floorPriceQ96: BigInt(floorPrice!).toString(),
     graduated: BigInt(graduated!) !== 0n,
-    recentBids,
+    ...bidCollections,
     startBlock: BigInt(startBlock!).toString(),
-    totalBids: confirmedBids.length,
     weth: ccaWethAddress,
     updatedAt: new Date().toISOString()
   }, {

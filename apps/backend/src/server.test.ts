@@ -35,7 +35,7 @@ import { SettlementIndexer, type IndexedRpcLog } from "./indexer";
 import { MissionResolutionService } from "./missionResolution";
 import { watchedPlanetMessage } from "./playerProfiles";
 import { deriveInfrastructureFields } from "./readModels";
-import { backendBuildMetadata, createRequestHandler, decodeCcaSubmittedBid, deriveLogBackfiller, readerBootstrapHealthResponse, runtimeConfigResponse, shouldRecoverFailedReconciliation } from "./server";
+import { backendBuildMetadata, ccaBidCollections, createRequestHandler, decodeCcaSubmittedBid, deriveLogBackfiller, readerBootstrapHealthResponse, runtimeConfigResponse, shouldRecoverFailedReconciliation } from "./server";
 import { DEFAULT_MAX_WORKER_COUNT } from "./workerPool";
 
 setSystemTime(new Date(1_770_007_680_000));
@@ -105,6 +105,25 @@ test("decodes confirmed Uniswap CCA BidSubmitted logs", () => {
     owner: player,
     transactionHash: `0x${"a".repeat(64)}`
   });
+});
+
+test("keeps complete CCA bid history separate from the 12 most recent bids", () => {
+  const confirmedBids = Array.from({ length: 13 }, (_, index) => ({
+    amountWei: "100000000000000000",
+    bidId: String(13 - index),
+    blockNumber: String(49_240_013 - index),
+    maxPriceQ96: "8556641551540548460103",
+    owner: player,
+    transactionHash: `0x${index.toString(16).padStart(64, "0")}`
+  }));
+
+  const collections = ccaBidCollections(confirmedBids);
+
+  expect(collections.confirmedBids).toHaveLength(13);
+  expect(collections.recentBids).toHaveLength(12);
+  expect(collections.recentBids.map(({ bidId }) => bidId)).not.toContain("1");
+  expect(collections.confirmedBids.map(({ bidId }) => bidId)).toContain("1");
+  expect(collections.totalBids).toBe(13);
 });
 const fleetMissionReturnedTopic = "0xbb4a50257c10524783e403a4e0db9c4c3e9378c2e398ec5de34281be1aa97b06";
 const attackBattleResolvedTopic = "0xc0d98d89682d12d3fe90cd0786b9320015ab3950de5f4ae3f54ca0fe9b660d1b";

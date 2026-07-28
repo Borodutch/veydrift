@@ -93,6 +93,7 @@ type FundingCurrency = "eth" | "weth";
 type AuctionState = {
   bidVolume: bigint;
   clearingPriceQ96: bigint;
+  confirmedBids: CcaSubmittedBid[];
   currentBlock: bigint;
   endBlock: bigint;
   ethUsdReference: number;
@@ -115,6 +116,7 @@ export type CcaSubmittedBid = {
 type CcaApiPayload = {
   bidVolumeWei: string;
   clearingPriceQ96: string;
+  confirmedBids?: CcaSubmittedBid[];
   currentBlock: string;
   endBlock: string;
   ethUsdReference?: number;
@@ -130,6 +132,7 @@ type EthereumWindow = Window & { ethereum?: Eip1193Provider };
 const launchSnapshot: AuctionState = {
   bidVolume: 0n,
   clearingPriceQ96: DEFAULT_FLOOR_PRICE_Q96,
+  confirmedBids: [],
   currentBlock: AUCTION_START_BLOCK,
   endBlock: AUCTION_END_BLOCK,
   ethUsdReference: DEFAULT_ETH_USD,
@@ -213,6 +216,7 @@ async function fetchAuctionState() {
   return {
     bidVolume: BigInt(state.bidVolumeWei),
     clearingPriceQ96: BigInt(state.clearingPriceQ96),
+    confirmedBids: state.confirmedBids ?? state.recentBids ?? [],
     currentBlock: BigInt(state.currentBlock),
     endBlock: BigInt(state.endBlock),
     ethUsdReference: Number.isFinite(state.ethUsdReference) ? Number(state.ethUsdReference) : DEFAULT_ETH_USD,
@@ -390,8 +394,8 @@ export function CcaApp() {
         : "Live";
   const currentFdv = clearingFdv;
   const walletBids = useMemo(
-    () => ccaBidsForAccount(auction.recentBids, account),
-    [account, auction.recentBids],
+    () => ccaBidsForAccount(auction.confirmedBids, account),
+    [account, auction.confirmedBids],
   );
 
   const setBalanceFraction = useCallback((percent: number) => {
@@ -598,7 +602,7 @@ export function CcaApp() {
         {!account ? <div className="cca-wallet-bids-prompt">
           <p>Connect a wallet to see its confirmed CCA bids.</p>
           <button type="button" onClick={() => void connect()}>Connect wallet</button>
-        </div> : walletBids.length === 0 ? <p className="cca-live-bids-empty">No confirmed bids from {shortAddress(account)} appear in the current auction feed.</p> : <ol className="cca-live-bids-list">
+        </div> : walletBids.length === 0 ? <p className="cca-live-bids-empty">No confirmed bids from {shortAddress(account)} appear in the current auction history.</p> : <ol className="cca-live-bids-list">
           {walletBids.map((bid) => <li key={`${bid.transactionHash}-${bid.bidId}`}>
             <div><strong>{formatCompactWeth(BigInt(bid.amountWei))} WETH</strong><span>max {formatCompactWeth(BigInt(Math.round(fdvFromQ96(BigInt(bid.maxPriceQ96)))) * E18)} WETH FDV</span></div>
             <div><span>block {BigInt(bid.blockNumber).toLocaleString()}</span><a href={`https://basescan.org/tx/${bid.transactionHash}`} target="_blank" rel="noreferrer">View tx ↗</a></div>
