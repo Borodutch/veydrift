@@ -27,10 +27,15 @@ contract DeployVeydriftToken is Script {
         uint256 privateKey = vm.envUint("PRIVATE_KEY");
         address launchBootstrapRecipient = vm.envAddress("VEYDRIFT_LAUNCH_AUTHORITY");
         require(launchBootstrapRecipient == APPROVED_LAUNCH_EOA, "UNAPPROVED_LAUNCH_AUTHORITY");
+        require(vm.addr(privateKey) == launchBootstrapRecipient, "LAUNCH_KEY_MISMATCH");
         address resourceLiquidityTreasury = vm.envAddress("VEYDRIFT_RESOURCE_LIQUIDITY_TREASURY");
         address developmentBeneficiary = vm.envAddress("VEYDRIFT_DEVELOPMENT_BENEFICIARY");
         address contributorBeneficiary = vm.envAddress("VEYDRIFT_CONTRIBUTOR_BENEFICIARY");
         address ecosystemBeneficiary = vm.envAddress("VEYDRIFT_ECOSYSTEM_BENEFICIARY");
+        require(resourceLiquidityTreasury == APPROVED_LAUNCH_EOA, "RESOURCE_TREASURY_MISMATCH");
+        require(developmentBeneficiary == APPROVED_LAUNCH_EOA, "DEVELOPMENT_BENEFICIARY_MISMATCH");
+        require(contributorBeneficiary == APPROVED_LAUNCH_EOA, "CONTRIBUTOR_BENEFICIARY_MISMATCH");
+        require(ecosystemBeneficiary == APPROVED_LAUNCH_EOA, "ECOSYSTEM_BENEFICIARY_MISMATCH");
         uint64 startTimestamp =
             _validatedVestingStart(vm.envUint("VEYDRIFT_VESTING_START_TIMESTAMP"));
 

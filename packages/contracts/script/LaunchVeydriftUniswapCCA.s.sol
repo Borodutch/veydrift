@@ -24,6 +24,8 @@ contract LaunchVeydriftUniswapCCA is Script {
         require(launcher.launchAuthority() == APPROVED_LAUNCH_EOA, "AUTHORITY_MISMATCH");
 
         VeydriftUniswapCCALauncher.LaunchConfig memory config = _config();
+        require(config.tokensRecipient == APPROVED_LAUNCH_EOA, "UNSOLD_RECIPIENT_MISMATCH");
+        require(config.recoveryRecipient == APPROVED_LAUNCH_EOA, "RECOVERY_RECIPIENT_MISMATCH");
         bytes32 salt = vm.envBytes32("VEYDRIFT_CCA_SALT");
         (address predicted, bytes32 configHash, bytes32 poolId) =
             launcher.preflight(vm.envAddress("VEYDRIFT_TOKEN_ADDRESS"), config, salt);
