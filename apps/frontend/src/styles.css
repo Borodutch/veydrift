@@ -195,7 +195,6 @@ body {
 }
 
 .cca-live-bids { width: min(1120px, calc(100% - 40px)); margin: 18px auto 0; padding: 1.4rem 1.6rem; border: 1px solid rgba(255,255,255,0.095); border-radius: 24px; background: rgba(18, 17, 25, 0.7); box-shadow: 0 18px 70px rgba(0,0,0,0.18); }
-.cca-wallet-bids { width: min(1120px, calc(100% - 40px)); margin: 18px auto 0; padding: 1.4rem 1.6rem; border: 1px solid rgba(169,150,255,0.18); border-radius: 24px; background: rgba(24, 20, 37, 0.68); box-shadow: 0 18px 70px rgba(0,0,0,0.18); }
 .cca-live-bids-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 1rem; }
 .cca-live-bids-heading .cca-eyebrow { margin-bottom: 0.45rem; }
 .cca-live-bids-heading h2 { margin: 0; font-size: 1.25rem; letter-spacing: -0.04em; }
@@ -208,6 +207,12 @@ body {
 .cca-live-bids-list strong { font-size: 0.85rem; }
 .cca-live-bids-list span { color: rgba(246,247,251,0.48); font-size: 0.7rem; }
 .cca-live-bids-list a { color: #f4a4d8; font-size: 0.7rem; font-weight: 750; text-decoration: none; }
+.cca-wallet-bids { border-color: rgba(169,150,255,0.2); background: linear-gradient(145deg, rgba(29,25,45,0.82), rgba(17,16,22,0.9)); }
+.cca-wallet-bids-prompt { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-top: 1.1rem; padding-top: 1rem; border-top: 1px solid rgba(255,255,255,0.075); }
+.cca-wallet-bids-prompt p { margin: 0; color: rgba(246,247,251,0.58); font-size: 0.78rem; }
+.cca-wallet-bids-prompt button { flex: 0 0 auto; border: 0; border-radius: 10px; padding: 0.55rem 0.72rem; color: #16121d; background: linear-gradient(120deg, #fa62c7, #a996ff); font-size: 0.72rem; font-weight: 850; cursor: pointer; }
+.cca-wallet-bids-source { margin: 1rem 0 0; color: rgba(246,247,251,0.4); font-size: 0.67rem; line-height: 1.5; }
+.cca-wallet-bids-source code { color: #cfc8ff; font: inherit; }
 
 .cca-topbar {
   display: flex;
