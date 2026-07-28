@@ -5870,6 +5870,31 @@ contract VeydriftGameTest is Test {
         assertEq(game.planet(colonyPlanetId).owner, player);
     }
 
+    function testAbandonColonyCannotOrphanGrandfatheredLegacyWithdrawal() public {
+        vm.prank(player);
+        uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
+        _setTechnologyLevel(player, Technology.Astrophysics, 1);
+        _setShipCount(originPlanetId, Ship.ColonyShip, 1);
+        uint256 colonyPlanetId = _createResolvedColony(player, originPlanetId, 14);
+
+        // Existing production claims are retained solely so their owners can finish them.
+        // Seed the pre-upgrade mapping directly and prove the planet cannot be abandoned
+        // while that reserve-backed value still references it.
+        bytes32 playerSlot = keccak256(abi.encode(player, uint256(18)));
+        bytes32 withdrawalSlot = keccak256(abi.encode(uint256(Resource.Metal), playerSlot));
+        vm.store(address(game), withdrawalSlot, bytes32(uint256(1)));
+        vm.store(address(game), bytes32(uint256(withdrawalSlot) + 1), bytes32(colonyPlanetId));
+
+        (bool active, uint256 withdrawalPlanetId,,,) =
+            game.resourceWithdrawals(player, Resource.Metal);
+        assertTrue(active);
+        assertEq(withdrawalPlanetId, colonyPlanetId);
+
+        vm.prank(player);
+        vm.expectRevert(VeydriftGameStorage.PlanetHasResources.selector);
+        game.abandonPlanet(colonyPlanetId);
+    }
+
     function testAbandonColonyRejectsActiveQueuesAndFleetMissions() public {
         vm.prank(player);
         uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
@@ -9027,7 +9052,7 @@ contract VeydriftGameTest is Test {
         assertEq(game.activeFleetMissionCount(player), 0);
     }
 
-    function testRiftDepositWithdrawalMovesTokenAndInGameBalances() public {
+    function testRiftDepositAndLegacyWithdrawalIsDisabled() public {
         vm.prank(player);
         uint256 planetId = game.startPlanet{value: 0.05 ether}();
         _setBuildingLevel(planetId, Building.InterdimensionalRiftStabilizer, 1);
@@ -9043,24 +9068,32 @@ contract VeydriftGameTest is Test {
         assertEq(metalToken.balanceOf(player), 900);
 
         vm.prank(player);
+        vm.expectRevert(VeydriftGameStorage.LegacyWithdrawalDisabled.selector);
         game.requestMarketResourceWithdrawal(planetId, Resource.Metal, 50);
-        (bool active,,,, uint64 unlocksAt) = game.resourceWithdrawals(player, Resource.Metal);
-        assertTrue(active);
-        assertEq(game.planet(planetId).resources.metal, 1_050);
+        (bool active,,,,) = game.resourceWithdrawals(player, Resource.Metal);
+        assertFalse(active);
+        assertEq(game.planet(planetId).resources.metal, 1_100);
+    }
+
+    function testGrandfatheredLegacyWithdrawalRemainsFinishable() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+        uint128 amount = 50;
+
+        bytes32 playerSlot = keccak256(abi.encode(player, uint256(18)));
+        bytes32 withdrawalSlot = keccak256(abi.encode(uint256(Resource.Metal), playerSlot));
+        vm.store(address(game), withdrawalSlot, bytes32(uint256(1)));
+        vm.store(address(game), bytes32(uint256(withdrawalSlot) + 1), bytes32(planetId));
+        vm.store(address(game), bytes32(uint256(withdrawalSlot) + 2), bytes32(uint256(amount) << 8));
+        vm.store(address(game), bytes32(uint256(16)), bytes32(uint256(amount)));
+        metalToken.mint(address(game), amount);
 
         vm.prank(player);
-        vm.expectRevert(
-            abi.encodeWithSelector(VeydriftGameStorage.WithdrawalNotReady.selector, unlocksAt)
-        );
         game.finishMarketResourceWithdrawal(Resource.Metal);
 
-        vm.warp(unlocksAt);
-        vm.prank(player);
-        game.finishMarketResourceWithdrawal(Resource.Metal);
-
-        (bool finished,,,,) = game.resourceWithdrawals(player, Resource.Metal);
-        assertFalse(finished);
-        assertEq(metalToken.balanceOf(player), 950);
+        (bool active,,,,) = game.resourceWithdrawals(player, Resource.Metal);
+        assertFalse(active);
+        assertEq(metalToken.balanceOf(player), amount);
     }
 
     function testRiftExtractionLocksFor28DaysAndFinalizesSurvivingResource() public {

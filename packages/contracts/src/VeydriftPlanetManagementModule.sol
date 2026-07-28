@@ -185,6 +185,18 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
             hasResources := or(ordinaryResources, or(sload(riftSlot), sload(add(riftSlot, 1))))
         }
         if (hasResources) revert PlanetHasResources();
+        // Legacy withdrawals predate the planet-scoped, raidable Rift extraction.
+        // New ones are disabled, but a grandfathered claim must remain tied to its
+        // planet until the owner finishes it; otherwise abandoning would make the
+        // locked reserve claim unraidable.
+        for (uint8 resource; resource < 3;) {
+            ResourceWithdrawal storage withdrawal =
+                resourceWithdrawals[msg.sender][Resource(resource)];
+            if (withdrawal.active && withdrawal.planetId == planetId) revert PlanetHasResources();
+            unchecked {
+                ++resource;
+            }
+        }
 
         delete _planets[planetId];
         delete planetNames[planetId];
@@ -212,29 +224,12 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
 
     function requestMarketResourceWithdrawal(uint256 planetId, Resource resource, uint128 amount)
         external
+        pure
     {
-        _requirePlanetOwner(planetId);
-        _settleDueCombatArrivals(msg.sender);
-        _requireNoPendingMissionResolutionForPlanet(planetId);
-        _requireRiftUnlocked(planetId);
-        if (amount == 0) revert InvalidQuantity();
-        _requireReserveResource(resource);
-        if (resourceWithdrawals[msg.sender][resource].active) revert WithdrawalActive(resource);
-
-        _settleResources(planetId);
-        Resources memory resourceAmount = _resourceAmount(resource, amount);
-        _spend(planetId, resourceAmount);
-        _lockedWithdrawalResources = _add(_lockedWithdrawalResources, resourceAmount);
-
-        uint64 unlocksAt = uint64(_currentTimestamp() + MARKET_WITHDRAWAL_DELAY);
-        resourceWithdrawals[msg.sender][resource] = ResourceWithdrawal({
-            active: true,
-            planetId: planetId,
-            resource: resource,
-            amount: amount,
-            unlocksAt: unlocksAt
-        });
-        emit MarketResourceWithdrawalRequested(msg.sender, planetId, resource, amount, unlocksAt);
+        planetId;
+        resource;
+        amount;
+        revert LegacyWithdrawalDisabled();
     }
 
     function finishMarketResourceWithdrawal(Resource resource) external {

@@ -219,6 +219,7 @@ import {
   unwatchPlanet,
   watchPlanet,
   sendApproveResourceTokenTransaction,
+  sendFinishResourceWithdrawalTransaction,
   sendFinalizeRiftExtractionTransaction,
   sendAbandonPlanetTransaction,
   sendCreateColonyTransaction,
@@ -7098,7 +7099,17 @@ export function PlayableMvpApp({
       return;
     }
 
-    const riftPlanetId = riftState?.homePlanetId;
+    if (withdrawal.kind === "legacyMarketWithdrawal") {
+      void runRiftTransaction(`${resource.label} legacy withdrawal finalization`, () => sendFinishResourceWithdrawalTransaction(
+        provider,
+        account,
+        gameContract,
+        resource.resourceId,
+      ));
+      return;
+    }
+
+    const riftPlanetId = withdrawal.planetId ?? riftState?.homePlanetId;
     if (!riftPlanetId) {
       setRiftAction({ status: "error", label: "Select a Rift-enabled planet before finalizing extraction." });
       return;
