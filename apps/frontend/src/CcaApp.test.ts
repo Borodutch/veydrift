@@ -135,6 +135,13 @@ describe("CCA bid transaction ordering", () => {
     expect(source).toContain("Reverted wallet transactions are never shown here.");
   });
 
+  test("keeps the strict price guard out of the bidder-facing copy", async () => {
+    const source = await Bun.file(new URL("./CcaApp.tsx", import.meta.url)).text();
+
+    expect(source).not.toContain("Live strict minimum");
+    expect(source).toContain("minimumFdvWeiAboveClearingPriceQ96");
+  });
+
   test("requests and refreshes the connected wallet's complete confirmed bid list", async () => {
     const source = await Bun.file(new URL("./CcaApp.tsx", import.meta.url)).text();
 
