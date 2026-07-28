@@ -167,6 +167,26 @@ export type CcaSubmittedBid = {
   transactionHash: string;
 };
 
+export function summarizeCcaSubmittedBids(logs: RpcLog[]): {
+  confirmedBidCount: number;
+  recentBids: CcaSubmittedBid[];
+} {
+  const confirmedBids = logs
+    .filter((log) => !log.removed)
+    .map(decodeCcaSubmittedBid)
+    .filter((bid): bid is CcaSubmittedBid => bid !== null)
+    .sort((left, right) => {
+      const blockOrder = BigInt(right.blockNumber) - BigInt(left.blockNumber);
+      if (blockOrder !== 0n) return blockOrder > 0n ? 1 : -1;
+      return right.bidId.localeCompare(left.bidId, undefined, { numeric: true });
+    });
+
+  return {
+    confirmedBidCount: confirmedBids.length,
+    recentBids: confirmedBids.slice(0, ccaRecentBidLimit)
+  };
+}
+
 /** Decode Uniswap's BidSubmitted(uint256,address,uint256,uint128) event. */
 export function decodeCcaSubmittedBid(log: RpcLog): CcaSubmittedBid | null {
   const [topic, bidIdTopic, ownerTopic] = log.topics;
@@ -1906,20 +1926,15 @@ async function ccaStateResponse(rpc: HttpJsonRpcTransport, owner: ViemAddress | 
     throw new Error("CCA RPC response was incomplete.");
   }
 
-  const recentBids = await rpc.request<RpcLog[]>("eth_getLogs", [{
+  const bidSummary = await rpc.request<RpcLog[]>("eth_getLogs", [{
     address: ccaAuctionAddress,
     fromBlock: toQuantity(BigInt(startBlock!)),
     toBlock: currentBlock!,
     topics: [ccaBidSubmittedTopic]
-  }]).then((logs) => logs
-    .map(decodeCcaSubmittedBid)
-    .filter((bid): bid is CcaSubmittedBid => bid !== null)
-    .sort((left, right) => {
-      const blockOrder = BigInt(right.blockNumber) - BigInt(left.blockNumber);
-      if (blockOrder !== 0n) return blockOrder > 0n ? 1 : -1;
-      return right.bidId.localeCompare(left.bidId, undefined, { numeric: true });
-    })
-    .slice(0, ccaRecentBidLimit), () => []);
+  }]).then(summarizeCcaSubmittedBids, () => ({
+    confirmedBidCount: 0,
+    recentBids: []
+  }));
   const walletBids = owner ? await rpc.request<RpcLog[]>("eth_getLogs", [{
     address: ccaAuctionAddress,
     fromBlock: toQuantity(BigInt(startBlock!)),
@@ -1938,12 +1953,13 @@ async function ccaStateResponse(rpc: HttpJsonRpcTransport, owner: ViemAddress | 
     auction: ccaAuctionAddress,
     bidVolumeWei: BigInt(bidVolume!).toString(),
     clearingPriceQ96: BigInt(clearingPrice!).toString(),
+    confirmedBidCount: bidSummary.confirmedBidCount,
     currentBlock: BigInt(currentBlock!).toString(),
     endBlock: BigInt(endBlock!).toString(),
     ethUsdReference: await ccaEthUsdReference(),
     floorPriceQ96: BigInt(floorPrice!).toString(),
     graduated: BigInt(graduated!) !== 0n,
-    recentBids,
+    recentBids: bidSummary.recentBids,
     startBlock: BigInt(startBlock!).toString(),
     walletBids,
     weth: ccaWethAddress,

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { formatUnits } from "viem";
 
 import { executeCcaBidSequence, readCcaAuctionBoundary } from "./ccaBidFlow";
+import { ccaLiveBidCountLabel } from "./ccaBidCount";
 import {
   ccaBidPriceError,
   fdvToPriceQ96,
@@ -31,6 +32,13 @@ describe("CCA bid price validation", () => {
 
     expect(convertedPriceQ96).toBeGreaterThan(clearingPriceQ96);
     expect(isBidPriceAboveClearingPrice(convertedPriceQ96, clearingPriceQ96)).toBe(true);
+  });
+});
+
+describe("CCA confirmed bid count", () => {
+  test("shows both the visible recent count and the complete confirmed total", () => {
+    expect(ccaLiveBidCountLabel(12, 27)).toBe("12 recent · 27 total confirmed");
+    expect(ccaLiveBidCountLabel(0, 0)).toBe("0 recent · 0 total confirmed");
   });
 });
 
@@ -132,6 +140,7 @@ describe("CCA bid transaction ordering", () => {
     expect(source).toContain("maxFdvIsAutomatic.current");
     expect(source).toContain("setMaxFdv(String(minimumBidFdv))");
     expect(source).toContain("CONFIRMED ON BASE");
+    expect(source).toContain("ccaLiveBidCountLabel(auction.recentBids.length, auction.confirmedBidCount)");
     expect(source).toContain("Reverted wallet transactions are never shown here.");
   });
 

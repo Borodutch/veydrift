@@ -24,6 +24,7 @@ import type {
   PlayerQueues,
   ResearchState,
   RiftState,
+  RpcLog,
   SettledPlanetEvent,
   ShipyardState,
   WalletSettlement,
@@ -35,7 +36,7 @@ import { SettlementIndexer, type IndexedRpcLog } from "./indexer";
 import { MissionResolutionService } from "./missionResolution";
 import { watchedPlanetMessage } from "./playerProfiles";
 import { deriveInfrastructureFields } from "./readModels";
-import { backendBuildMetadata, ccaBidOwnerTopic, createRequestHandler, decodeCcaSubmittedBid, deriveLogBackfiller, readerBootstrapHealthResponse, runtimeConfigResponse, shouldRecoverFailedReconciliation } from "./server";
+import { backendBuildMetadata, ccaBidOwnerTopic, createRequestHandler, decodeCcaSubmittedBid, deriveLogBackfiller, readerBootstrapHealthResponse, runtimeConfigResponse, shouldRecoverFailedReconciliation, summarizeCcaSubmittedBids } from "./server";
 import { DEFAULT_MAX_WORKER_COUNT } from "./workerPool";
 
 setSystemTime(new Date(1_770_007_680_000));
@@ -109,6 +110,33 @@ test("decodes confirmed Uniswap CCA BidSubmitted logs", () => {
 
 test("uses the indexed bid owner topic when reading a connected wallet's CCA bids", () => {
   expect(ccaBidOwnerTopic(player)).toBe(`0x${"0".repeat(24)}${player.slice(2)}`);
+});
+
+test("counts every confirmed official CCA bid while keeping only the 12 most recent visible", () => {
+  const word = (value: bigint) => value.toString(16).padStart(64, "0");
+  const log = (bidId: bigint, removed = false): RpcLog => ({
+    blockNumber: `0x${(100n + bidId).toString(16)}`,
+    data: `0x${word(8_556_641_551_540_548_460_103n)}${word(100_000_000_000_000_000n)}`,
+    removed,
+    topics: [
+      "0x650baad5cd8ca09b8f580be220fa04ce2ba905a041f764b6a3fe2c848eb70540",
+      `0x${word(bidId)}`,
+      `0x${"0".repeat(24)}${player.slice(2)}`
+    ],
+    transactionHash: `0x${bidId.toString(16).padStart(64, "0")}`
+  });
+
+  const summary = summarizeCcaSubmittedBids([
+    ...Array.from({ length: 14 }, (_, index) => log(BigInt(index + 1))),
+    log(15n, true),
+    { ...log(16n), data: "0xfabricated" }
+  ]);
+
+  expect(summary.confirmedBidCount).toBe(14);
+  expect(summary.recentBids).toHaveLength(12);
+  expect(summary.recentBids.map(({ bidId }) => bidId)).toEqual([
+    "14", "13", "12", "11", "10", "9", "8", "7", "6", "5", "4", "3"
+  ]);
 });
 const fleetMissionReturnedTopic = "0xbb4a50257c10524783e403a4e0db9c4c3e9378c2e398ec5de34281be1aa97b06";
 const attackBattleResolvedTopic = "0xc0d98d89682d12d3fe90cd0786b9320015ab3950de5f4ae3f54ca0fe9b660d1b";

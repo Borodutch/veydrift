@@ -15,6 +15,7 @@ import {
 } from "./walletFlow";
 import { playableApiUrl } from "./runtimeConfig";
 import { executeCcaBidSequence, readCcaAuctionBoundary } from "./ccaBidFlow";
+import { ccaLiveBidCountLabel } from "./ccaBidCount";
 import {
   ccaBidPriceError,
   fdvToPriceQ96,
@@ -94,6 +95,7 @@ type FundingCurrency = "eth" | "weth";
 type AuctionState = {
   bidVolume: bigint;
   clearingPriceQ96: bigint;
+  confirmedBidCount: number;
   currentBlock: bigint;
   endBlock: bigint;
   ethUsdReference: number;
@@ -116,6 +118,7 @@ type CcaSubmittedBid = {
 type CcaApiPayload = {
   bidVolumeWei: string;
   clearingPriceQ96: string;
+  confirmedBidCount?: number;
   currentBlock: string;
   endBlock: string;
   ethUsdReference?: number;
@@ -131,6 +134,7 @@ type EthereumWindow = Window & { ethereum?: Eip1193Provider };
 const launchSnapshot: AuctionState = {
   bidVolume: 0n,
   clearingPriceQ96: DEFAULT_FLOOR_PRICE_Q96,
+  confirmedBidCount: 0,
   currentBlock: AUCTION_START_BLOCK,
   endBlock: AUCTION_END_BLOCK,
   ethUsdReference: DEFAULT_ETH_USD,
@@ -202,15 +206,19 @@ async function fetchAuctionState(owner?: Address | null) {
   });
   if (!response.ok) throw new Error(`Auction API returned ${response.status}.`);
   const state = await response.json() as CcaApiPayload;
+  const recentBids = state.recentBids ?? [];
   return {
     bidVolume: BigInt(state.bidVolumeWei),
     clearingPriceQ96: BigInt(state.clearingPriceQ96),
+    confirmedBidCount: Number.isSafeInteger(state.confirmedBidCount)
+      ? Number(state.confirmedBidCount)
+      : recentBids.length,
     currentBlock: BigInt(state.currentBlock),
     endBlock: BigInt(state.endBlock),
     ethUsdReference: Number.isFinite(state.ethUsdReference) ? Number(state.ethUsdReference) : DEFAULT_ETH_USD,
     floorPriceQ96: BigInt(state.floorPriceQ96),
     graduated: state.graduated,
-    recentBids: state.recentBids ?? [],
+    recentBids,
     startBlock: BigInt(state.startBlock),
     walletBids: state.walletBids ?? [],
   } satisfies AuctionState;
@@ -553,7 +561,7 @@ export function CcaApp() {
       </section>
 
       <section className="cca-live-bids" aria-labelledby="cca-live-bids-heading">
-        <div className="cca-live-bids-heading"><div><p className="cca-eyebrow">CONFIRMED ON BASE</p><h2 id="cca-live-bids-heading">Live bids</h2></div><span>{auction.recentBids.length ? `${auction.recentBids.length} recent` : "Waiting for bids"}</span></div>
+        <div className="cca-live-bids-heading"><div><p className="cca-eyebrow">CONFIRMED ON BASE</p><h2 id="cca-live-bids-heading">Live bids</h2></div><span>{ccaLiveBidCountLabel(auction.recentBids.length, auction.confirmedBidCount)}</span></div>
         {auction.recentBids.length === 0 ? <p className="cca-live-bids-empty">No confirmed bids yet. Reverted wallet transactions are never shown here.</p> : <ol className="cca-live-bids-list">
           {auction.recentBids.map((bid) => <li key={`${bid.transactionHash}-${bid.bidId}`}>
             <div><strong>{formatCompactWeth(BigInt(bid.amountWei))} WETH</strong><span>max {formatCompactWeth(BigInt(Math.round(fdvFromQ96(BigInt(bid.maxPriceQ96)))) * E18)} WETH FDV</span></div>
