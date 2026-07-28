@@ -27,6 +27,9 @@ contract DeployVeydriftUniswapLaunchTest is Test {
     }
 
     function testUnlockTimestampAcceptsFutureValue() public view {
-        assertEq(deployer.validateUnlockTimestamp(block.timestamp + 365 days), uint64(block.timestamp + 365 days));
+        assertEq(
+            deployer.validateUnlockTimestamp(block.timestamp + 365 days),
+            uint64(block.timestamp + 365 days)
+        );
     }
 }
