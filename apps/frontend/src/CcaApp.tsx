@@ -4,7 +4,6 @@ import {
   formatEther,
   formatUnits,
   parseEther,
-  parseUnits,
   type Address,
 } from "viem";
 import {
@@ -15,7 +14,13 @@ import {
   type Eip1193Provider,
 } from "./walletFlow";
 import { playableApiUrl } from "./runtimeConfig";
-import { isBidPriceAboveClearingPrice } from "./ccaBidPrice";
+import { executeCcaBidSequence, readCcaAuctionBoundary } from "./ccaBidFlow";
+import {
+  ccaBidPriceError,
+  fdvToPriceQ96,
+  minimumFdvAboveClearingPriceQ96,
+  minimumFdvWeiAboveClearingPriceQ96,
+} from "./ccaBidPrice";
 import { signalFarcasterReadyOnce } from "./farcasterReady";
 
 const AUCTION = "0x7Ce8e4cC7563a9711A3D52d48439F6dfA4C1B67F" as Address;
@@ -82,23 +87,6 @@ const auctionAbi = [
       { name: "hookData", type: "bytes" },
     ],
     outputs: [{ name: "bidId", type: "uint256" }],
-  },
-] as const;
-
-const auctionReadAbi = [
-  {
-    type: "function",
-    name: "clearingPrice",
-    stateMutability: "view",
-    inputs: [],
-    outputs: [{ name: "", type: "uint256" }],
-  },
-  {
-    type: "function",
-    name: "endBlock",
-    stateMutability: "view",
-    inputs: [],
-    outputs: [{ name: "", type: "uint64" }],
   },
 ] as const;
 
@@ -185,10 +173,6 @@ function priceFromQ96(value: bigint) {
 function fdvFromQ96(value: bigint) {
   const fdv = (Number(value) / Number(Q96)) * Number(VEY_SUPPLY);
   return Number.isFinite(fdv) ? fdv : 0;
-}
-
-function fdvToPriceQ96(value: string) {
-  return (parseUnits(value, 18) * Q96) / (VEY_SUPPLY * E18);
 }
 
 function formatVey(value: bigint) {
@@ -320,7 +304,17 @@ export function CcaApp() {
 
   const floorFdv = useMemo(() => fdvFromQ96(auction.floorPriceQ96), [auction.floorPriceQ96]);
   const clearingFdv = useMemo(() => fdvFromQ96(auction.clearingPriceQ96 || auction.floorPriceQ96), [auction.clearingPriceQ96, auction.floorPriceQ96]);
-  const minimumBidFdv = useMemo(() => Math.max(Math.ceil(floorFdv), Math.floor(clearingFdv) + 1), [clearingFdv, floorFdv]);
+  const strictMinimumFdv = useMemo(
+    () => minimumFdvAboveClearingPriceQ96(auction.clearingPriceQ96),
+    [auction.clearingPriceQ96],
+  );
+  const minimumBidFdv = useMemo(
+    () => Math.max(
+      Math.ceil(floorFdv),
+      Number((minimumFdvWeiAboveClearingPriceQ96(auction.clearingPriceQ96) + E18 - 1n) / E18),
+    ),
+    [auction.clearingPriceQ96, floorFdv],
+  );
   useEffect(() => {
     if (maxFdvIsAutomatic.current) setMaxFdv(String(minimumBidFdv));
   }, [minimumBidFdv]);
@@ -339,9 +333,7 @@ export function CcaApp() {
       return 0n;
     }
   }, [amount]);
-  const priceError = !isBidPriceAboveClearingPrice(maxPriceQ96, auction.clearingPriceQ96)
-    ? `Your maximum FDV must be strictly above the current ${formatCompactWeth(BigInt(Math.ceil(clearingFdv)) * E18)} WETH clearing FDV.`
-    : null;
+  const priceError = ccaBidPriceError(maxPriceQ96, auction.clearingPriceQ96);
   const maxPrice = priceFromQ96(maxPriceQ96 || auction.floorPriceQ96);
   const estimatedReceive = maxPriceQ96 > 0n ? (amountWei * Q96) / maxPriceQ96 : 0n;
   const activeBalance = fundingCurrency === "eth" ? ethBalance : wethBalance;
@@ -404,20 +396,24 @@ export function CcaApp() {
     setSubmitting(true);
     try {
       await ensureBaseMainnetNetwork(provider);
-      // The clearing price can change after review. Re-read it on-chain before
-      // the first wallet transaction so an equal-price bid never reaches the auction.
-      const [latestClearingPrice, latestEndBlock, latestBlock] = await Promise.all([
-        readCall(provider, AUCTION, encodeFunctionData({ abi: auctionReadAbi, functionName: "clearingPrice" })),
-        readCall(provider, AUCTION, encodeFunctionData({ abi: auctionReadAbi, functionName: "endBlock" })),
-        provider.request<string>({ method: "eth_blockNumber" }),
-      ]);
-      const latestClearingPriceQ96 = BigInt(latestClearingPrice);
-      if (!isBidPriceAboveClearingPrice(maxPriceQ96, latestClearingPriceQ96)) {
-        throw new Error(`Your maximum FDV must be strictly above the current ${formatCompactWeth(BigInt(Math.ceil(fdvFromQ96(latestClearingPriceQ96))) * E18)} WETH clearing FDV. No wallet transaction was sent.`);
-      }
-      if (BigInt(latestBlock) >= BigInt(latestEndBlock)) {
-        throw new Error("The auction has ended. No wallet transaction was sent.");
-      }
+      const revalidateAuction = async (notSentCopy: string) => {
+        await ensureBaseMainnetNetwork(provider);
+        const liveBoundary = await readCcaAuctionBoundary(provider, AUCTION);
+        setAuction((current) => ({
+          ...current,
+          clearingPriceQ96: liveBoundary.clearingPriceQ96,
+          currentBlock: liveBoundary.currentBlock,
+          endBlock: liveBoundary.endBlock,
+        }));
+        const livePriceError = ccaBidPriceError(maxPriceQ96, liveBoundary.clearingPriceQ96);
+        if (livePriceError) throw new Error(`${livePriceError} ${notSentCopy}`);
+        if (liveBoundary.currentBlock >= liveBoundary.endBlock) {
+          throw new Error(`The auction has ended. ${notSentCopy}`);
+        }
+      };
+
+      // Keep the early check for fast feedback before any wallet confirmation.
+      await revalidateAuction("No wallet transaction was sent.");
       const [latestNativeBalance, latestWethBalance] = await Promise.all([
         provider.request<string>({ method: "eth_getBalance", params: [account, "latest"] }),
         readCall(provider, WETH, encodeFunctionData({ abi: erc20Abi, functionName: "balanceOf", args: [account] })),
@@ -431,28 +427,40 @@ export function CcaApp() {
           ? `Insufficient ETH after reserving gas. Lower the budget by at least ${formatCompactWeth(shortfall)} ETH.`
           : `Insufficient WETH. Wrap at least ${formatCompactWeth(shortfall)} ETH first, or lower your WETH budget.`);
       }
-      if (fundingCurrency === "eth") {
-        setMessage("Step 1 of 4: wrap ETH to WETH in your wallet.");
-        await sendTransaction(provider, account, WETH, encodeFunctionData({ abi: wethAbi, functionName: "deposit" }), amountWei);
-      }
-      setMessage(`Step ${fundingCurrency === "eth" ? "2" : "1"} of ${fundingCurrency === "eth" ? "4" : "3"}: approve Permit2 for this exact WETH amount.`);
-      await sendTransaction(provider, account, WETH, encodeFunctionData({
-        abi: erc20Abi,
-        functionName: "approve",
-        args: [PERMIT2, amountWei],
-      }));
-      setMessage(`Step ${fundingCurrency === "eth" ? "3" : "2"} of ${fundingCurrency === "eth" ? "4" : "3"}: allow Permit2 to pay the official auction.`);
-      await sendTransaction(provider, account, PERMIT2, encodeFunctionData({
-        abi: permit2Abi,
-        functionName: "approve",
-        args: [WETH, AUCTION, amountWei, Math.floor(Date.now() / 1_000) + 60 * 60 * 24 * 30],
-      }));
-      setMessage(`Step ${fundingCurrency === "eth" ? "4" : "3"} of ${fundingCurrency === "eth" ? "4" : "3"}: submit your WETH bid to the official CCA contract.`);
-      const hash = await sendTransaction(provider, account, AUCTION, encodeFunctionData({
-        abi: auctionAbi,
-        functionName: "submitBid",
-        args: [maxPriceQ96, amountWei, account, "0x"],
-      }));
+      const hash = await executeCcaBidSequence({
+        fundingCurrency,
+        wrapEth: async () => {
+          setMessage("Step 1 of 4: wrap ETH to WETH in your wallet.");
+          await sendTransaction(provider, account, WETH, encodeFunctionData({ abi: wethAbi, functionName: "deposit" }), amountWei);
+        },
+        approveWeth: async () => {
+          setMessage(`Step ${fundingCurrency === "eth" ? "2" : "1"} of ${fundingCurrency === "eth" ? "4" : "3"}: approve Permit2 for this exact WETH amount.`);
+          await sendTransaction(provider, account, WETH, encodeFunctionData({
+            abi: erc20Abi,
+            functionName: "approve",
+            args: [PERMIT2, amountWei],
+          }));
+        },
+        approvePermit2: async () => {
+          setMessage(`Step ${fundingCurrency === "eth" ? "3" : "2"} of ${fundingCurrency === "eth" ? "4" : "3"}: allow Permit2 to pay the official auction.`);
+          await sendTransaction(provider, account, PERMIT2, encodeFunctionData({
+            abi: permit2Abi,
+            functionName: "approve",
+            args: [WETH, AUCTION, amountWei, Math.floor(Date.now() / 1_000) + 60 * 60 * 24 * 30],
+          }));
+        },
+        revalidateAuction: async () => {
+          await revalidateAuction("The final bid transaction was not sent.");
+        },
+        submitBid: async () => {
+          setMessage(`Step ${fundingCurrency === "eth" ? "4" : "3"} of ${fundingCurrency === "eth" ? "4" : "3"}: submit your WETH bid to the official CCA contract.`);
+          return sendTransaction(provider, account, AUCTION, encodeFunctionData({
+            abi: auctionAbi,
+            functionName: "submitBid",
+            args: [maxPriceQ96, amountWei, account, "0x"],
+          }));
+        },
+      });
       setReviewing(false);
       setMessage(`Bid confirmed: ${shortAddress(hash)}. It remains subject to the auction clearing price and finalization rules.`);
       await refresh(provider, account);
@@ -516,11 +524,11 @@ export function CcaApp() {
           <div className="cca-fdv-heading"><label className="cca-input-label" htmlFor="cca-max-fdv">Max FDV</label><span>{formatUsd(Number(maxFdv || "0") * auction.ethUsdReference)}</span></div>
           <div className="cca-input-wrap"><input id="cca-max-fdv" inputMode="decimal" value={maxFdv} onInput={(event) => { maxFdvIsAutomatic.current = false; setMaxFdv((event.currentTarget as HTMLInputElement).value); }} /><strong>WETH</strong></div>
           <input className="cca-slider" type="range" min={minimumBidFdv} max={sliderMaxFdv} step="1" value={Math.min(Math.max(Number(maxFdv) || minimumBidFdv, minimumBidFdv), sliderMaxFdv)} onInput={(event) => { maxFdvIsAutomatic.current = false; setMaxFdv((event.currentTarget as HTMLInputElement).value); }} aria-label="Maximum fully diluted value" />
-          <div className="cca-slider-labels"><span>Minimum {formatCompactWeth(BigInt(minimumBidFdv) * E18)} WETH</span><span>{formatCompactWeth(BigInt(sliderMaxFdv) * E18)} WETH</span></div>
+          <div className="cca-slider-labels"><span>Live strict minimum {strictMinimumFdv} WETH</span><span>{formatCompactWeth(BigInt(sliderMaxFdv) * E18)} WETH</span></div>
           {priceError ? <p className="cca-error">{priceError}</p> : <p className="cca-balance">Max price: {maxPrice} WETH / VEY · USD is indicative only.</p>}
 
           <div className="cca-receive"><span>Estimated receive at your max price</span><strong>{formatVey(estimatedReceive)} VEY</strong></div>
-          <button className="cca-submit" type="button" disabled={submitting || stateLabel === "Ended" || Boolean(account && fundingError)} onClick={() => void openReview()}>{submitting ? "Confirm in wallet…" : account && fundingError ? fundingCurrency === "weth" ? "Wrap ETH or lower budget" : "Lower ETH budget" : account ? "Review bid" : "Connect wallet to bid"}</button>
+          <button className="cca-submit" type="button" disabled={submitting || stateLabel === "Ended" || Boolean(account && (fundingError || priceError))} onClick={() => void openReview()}>{submitting ? "Confirm in wallet…" : account && priceError ? "Raise max FDV" : account && fundingError ? fundingCurrency === "weth" ? "Wrap ETH or lower budget" : "Lower ETH budget" : account ? "Review bid" : "Connect wallet to bid"}</button>
           <p className="cca-notice">{fundingCurrency === "eth" ? "ETH is wrapped into WETH before the bid (four wallet confirmations)." : "WETH bidding requires three wallet confirmations."} This page never receives custody.</p>
           <p className="cca-message" role="status">{message}</p>
 
@@ -528,7 +536,7 @@ export function CcaApp() {
             <strong>Review bid</strong>
             <p>Submit up to <b>{amount || "0"} {fundingCurrency.toUpperCase()}</b> at a maximum <b>{maxFdv || "0"} WETH FDV</b> ({maxPrice} WETH / VEY).</p>
             <p>{fundingCurrency === "eth" ? "ETH will be wrapped to WETH, then approved through Permit2." : "WETH will be approved through Permit2."} The final transaction calls Uniswap’s official auction contract.</p>
-            <div><button type="button" onClick={() => setReviewing(false)}>Back</button><button type="button" disabled={submitting} onClick={() => void bid()}>Confirm bid</button></div>
+            <div><button type="button" onClick={() => setReviewing(false)}>Back</button><button type="button" disabled={submitting || Boolean(priceError)} onClick={() => void bid()}>Confirm bid</button></div>
           </div>}
         </article>
       </section>
