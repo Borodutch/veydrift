@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { formatUnits } from "viem";
 
-import { ccaBidsForAccount, type CcaSubmittedBid } from "./CcaApp";
 import { executeCcaBidSequence, readCcaAuctionBoundary } from "./ccaBidFlow";
 import {
   ccaBidPriceError,
@@ -12,35 +11,6 @@ import {
 import type { Eip1193Provider } from "./walletFlow";
 
 const clearingPriceQ96 = 8_556_641_551_540_548_460_102n;
-
-const submittedBid = (bidId: string, owner: string): CcaSubmittedBid => ({
-  amountWei: "1000000000000000000",
-  bidId,
-  blockNumber: "49240000",
-  maxPriceQ96: clearingPriceQ96.toString(),
-  owner,
-  transactionHash: `0x${bidId.padStart(64, "0")}`,
-});
-
-describe("CCA connected-wallet bids", () => {
-  test("filters the existing official recent-bid feed by owner without case sensitivity", () => {
-    const connected = "0xAAbbCcDDeeFF0011223344556677889900AAbbCc";
-    const recentBids = [
-      submittedBid("1", connected.toLowerCase()),
-      submittedBid("2", "0x1111111111111111111111111111111111111111"),
-      submittedBid("3", connected.toUpperCase()),
-    ];
-
-    expect(ccaBidsForAccount(recentBids, connected).map(({ bidId }) => bidId)).toEqual(["1", "3"]);
-    expect(recentBids).toHaveLength(3);
-  });
-
-  test("returns no personal bids when no wallet is connected", () => {
-    expect(ccaBidsForAccount([
-      submittedBid("1", "0x1111111111111111111111111111111111111111"),
-    ], null)).toEqual([]);
-  });
-});
 
 describe("CCA bid price validation", () => {
   test("rejects equality through the production FDV-to-Q96 conversion", () => {
@@ -172,18 +142,28 @@ describe("CCA bid transaction ordering", () => {
     expect(source).toContain("minimumFdvWeiAboveClearingPriceQ96");
   });
 
-  test("refreshes connected-wallet bids on the live cadence, after confirmation, and on account changes", async () => {
+  test("refreshes complete connected-wallet bids on the live cadence, after confirmation, and on account changes", async () => {
     const source = await Bun.file(new URL("./CcaApp.tsx", import.meta.url)).text();
 
     expect(source).toContain("Your confirmed bids");
     expect(source).toContain("Connect a wallet to see its confirmed CCA bids.");
-    expect(source).toContain('fetch(`${playableApiUrl}/cca`, {');
-    expect(source).not.toContain('fetch(`${playableApiUrl}/cca?');
+    expect(source).toContain('const query = owner ? `?owner=${encodeURIComponent(owner)}` : ""');
+    expect(source).toContain('fetch(`${playableApiUrl}/cca${query}`, {');
     expect(source).toContain('window.setInterval(() => void refresh(), 12_000)');
     expect(source).toContain("await refresh(provider, account)");
     expect(source).toContain('walletProvider.on?.("accountsChanged"');
     expect(source).toContain('walletProvider.removeListener?.("accountsChanged"');
-    expect(source).toContain("Sourced from confirmed");
+    expect(source).toContain("Sourced from every confirmed");
+    expect(source).toContain("walletBids: state.walletBids ?? []");
+  });
+
+  test("scrolls the bidder from Review bid to confirmation and only offers eligible contract exits", async () => {
+    const source = await Bun.file(new URL("./CcaApp.tsx", import.meta.url)).text();
+
+    expect(source).toContain("Review ready below — scroll down to confirm your bid.");
+    expect(source).toContain('reviewRef.current?.scrollIntoView({ behavior: "smooth", block: "center" })');
+    expect(source).toContain('name: "exitBid"');
+    expect(source).toContain("A live winning bid cannot be cancelled.");
   });
 
   test("explains budget, FDV, partial fills, and the official CCA AI reference", async () => {
