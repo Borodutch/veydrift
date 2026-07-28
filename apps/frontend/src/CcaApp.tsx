@@ -18,7 +18,6 @@ import { executeCcaBidSequence, readCcaAuctionBoundary } from "./ccaBidFlow";
 import {
   ccaBidPriceError,
   fdvToPriceQ96,
-  minimumFdvAboveClearingPriceQ96,
   minimumFdvWeiAboveClearingPriceQ96,
 } from "./ccaBidPrice";
 import { signalFarcasterReadyOnce } from "./farcasterReady";
@@ -314,10 +313,6 @@ export function CcaApp() {
 
   const floorFdv = useMemo(() => fdvFromQ96(auction.floorPriceQ96), [auction.floorPriceQ96]);
   const clearingFdv = useMemo(() => fdvFromQ96(auction.clearingPriceQ96 || auction.floorPriceQ96), [auction.clearingPriceQ96, auction.floorPriceQ96]);
-  const strictMinimumFdv = useMemo(
-    () => minimumFdvAboveClearingPriceQ96(auction.clearingPriceQ96),
-    [auction.clearingPriceQ96],
-  );
   const minimumBidFdv = useMemo(
     () => Math.max(
       Math.ceil(floorFdv),
@@ -534,7 +529,7 @@ export function CcaApp() {
           <div className="cca-fdv-heading"><label className="cca-input-label" htmlFor="cca-max-fdv">Max FDV</label><span>{formatUsd(Number(maxFdv || "0") * auction.ethUsdReference)}</span></div>
           <div className="cca-input-wrap"><input id="cca-max-fdv" inputMode="decimal" value={maxFdv} onInput={(event) => { maxFdvIsAutomatic.current = false; setMaxFdv((event.currentTarget as HTMLInputElement).value); }} /><strong>WETH</strong></div>
           <input className="cca-slider" type="range" min={minimumBidFdv} max={sliderMaxFdv} step="1" value={Math.min(Math.max(Number(maxFdv) || minimumBidFdv, minimumBidFdv), sliderMaxFdv)} onInput={(event) => { maxFdvIsAutomatic.current = false; setMaxFdv((event.currentTarget as HTMLInputElement).value); }} aria-label="Maximum fully diluted value" />
-          <div className="cca-slider-labels"><span>Live strict minimum {strictMinimumFdv} WETH</span><span>{formatCompactWeth(BigInt(sliderMaxFdv) * E18)} WETH</span></div>
+          <div className="cca-slider-labels"><span>{formatCompactWeth(BigInt(sliderMaxFdv) * E18)} WETH</span></div>
           {priceError ? <p className="cca-error">{priceError}</p> : <p className="cca-balance">Max price: {maxPrice} WETH / VEY · USD is indicative only.</p>}
 
           <div className="cca-receive"><span>Estimated receive at your max price</span><strong>{formatVey(estimatedReceive)} VEY</strong></div>

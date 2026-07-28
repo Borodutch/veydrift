@@ -125,11 +125,13 @@ describe("CCA bid transaction ordering", () => {
     expect(source).toContain("walletProvider ?? providerFromWindow()");
   });
 
-  test("defaults the maximum FDV strictly above the live clearing price and renders confirmed bids", async () => {
+  test("hides technical minimum copy while preserving the safe FDV default and confirmed bids", async () => {
     const source = await Bun.file(new URL("./CcaApp.tsx", import.meta.url)).text();
 
+    expect(source).not.toContain("Live strict minimum");
     expect(source).toContain('useState("109")');
     expect(source).toContain("maxFdvIsAutomatic.current");
+    expect(source).toContain("minimumFdvWeiAboveClearingPriceQ96");
     expect(source).toContain("setMaxFdv(String(minimumBidFdv))");
     expect(source).toContain("CONFIRMED ON BASE");
     expect(source).toContain("Reverted wallet transactions are never shown here.");

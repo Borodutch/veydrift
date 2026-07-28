@@ -296,7 +296,7 @@ body {
 .cca-fdv-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; }
 .cca-fdv-heading span { color: rgba(246,247,251,0.52); font-size: 0.7rem; font-weight: 700; }
 .cca-slider { width: 100%; height: 1.25rem; margin: 0.9rem 0 0; accent-color: #f05ab7; cursor: pointer; }
-.cca-slider-labels { display: flex; justify-content: space-between; gap: 1rem; margin-top: 0.1rem; color: rgba(246,247,251,0.4); font-size: 0.62rem; }
+.cca-slider-labels { display: flex; justify-content: flex-end; gap: 1rem; margin-top: 0.1rem; color: rgba(246,247,251,0.4); font-size: 0.62rem; }
 .cca-receive { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-top: 1rem; padding: 0.78rem 0; border-top: 1px solid rgba(255,255,255,0.08); color: rgba(246,247,251,0.58); font-size: 0.72rem; }
 .cca-receive strong { color: #fff; font-size: 0.86rem; }
 .cca-bid-guidance { margin-top: 0.1rem; padding: 0.85rem; border: 1px solid rgba(169,150,255,0.17); border-radius: 13px; background: rgba(169,150,255,0.055); }
