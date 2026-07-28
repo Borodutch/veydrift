@@ -211,6 +211,9 @@ describe("CCA exit eligibility and exact checkpoint hints", () => {
       functionName: "exitPartiallyFilledBid",
       args: [7n, 110n, 150n],
     });
+    expect(encodeCcaBidExit(state.action!)).toBe(
+      "0x36dec5f20000000000000000000000000000000000000000000000000000000000000007000000000000000000000000000000000000000000000000000000000000006e0000000000000000000000000000000000000000000000000000000000000096",
+    );
   });
 
   test("does not expose an outbid exit when the exact call preflight reverts", async () => {
