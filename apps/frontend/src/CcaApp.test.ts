@@ -154,4 +154,11 @@ describe("CCA bid transaction ordering", () => {
     expect(source).toContain('href="https://cca.uniswap.org/"');
     expect(source).toContain("cannot predict the final clearing price");
   });
+
+  test("shows recent and total confirmed bids from the live auction response", async () => {
+    const source = await Bun.file(new URL("./CcaApp.tsx", import.meta.url)).text();
+
+    expect(source).toContain("totalBids: typeof totalBids === \"number\" && Number.isSafeInteger(totalBids)");
+    expect(source).toContain("${auction.recentBids.length} recent · ${auction.totalBids} total");
+  });
 });
