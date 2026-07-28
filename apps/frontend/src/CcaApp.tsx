@@ -165,6 +165,13 @@ function formatVey(value: bigint) {
   return numeric.toLocaleString(undefined, { maximumFractionDigits: 0 });
 }
 
+function availableEthForBid(balance: bigint) {
+  // Keep a small native-ETH reserve for the wrap, Permit2 approval, and CCA
+  // transactions. Users must never strand themselves at the last submit step.
+  const gasReserve = balance / 100n;
+  return balance > gasReserve ? balance - gasReserve : 0n;
+}
+
 async function readCall(provider: Eip1193Provider, to: Address, data: string) {
   return provider.request<string>({ method: "eth_call", params: [{ to, data }, "latest"] });
 }
@@ -285,6 +292,20 @@ export function CcaApp() {
   const maxPrice = priceFromQ96(maxPriceQ96 || auction.floorPriceQ96);
   const estimatedReceive = maxPriceQ96 > 0n ? (amountWei * Q96) / maxPriceQ96 : 0n;
   const activeBalance = fundingCurrency === "eth" ? ethBalance : wethBalance;
+  const spendableBalance = useMemo(() => {
+    if (activeBalance === null) return null;
+    return fundingCurrency === "eth" ? availableEthForBid(activeBalance) : activeBalance;
+  }, [activeBalance, fundingCurrency]);
+  const fundingError = useMemo(() => {
+    if (!account || amountWei === 0n) return null;
+    if (spendableBalance === null) return "Checking your wallet balance before a bid can be submitted.";
+    if (amountWei <= spendableBalance) return null;
+    const shortfall = amountWei - spendableBalance;
+    if (fundingCurrency === "weth") {
+      return `Insufficient WETH. Wrap at least ${formatCompactWeth(shortfall)} ETH first, or lower your WETH budget.`;
+    }
+    return `Insufficient ETH after reserving gas. Lower the budget by at least ${formatCompactWeth(shortfall)} ETH.`;
+  }, [account, amountWei, fundingCurrency, spendableBalance]);
   const stateLabel = auction.currentBlock < auction.startBlock
     ? "Scheduled"
     : auction.currentBlock >= auction.endBlock
@@ -306,8 +327,8 @@ export function CcaApp() {
       await connect();
       return;
     }
-    if (amountWei === 0n || maxPriceQ96 === 0n || priceError) {
-      setMessage(priceError ?? "Enter a valid budget and maximum FDV before reviewing your bid.");
+    if (amountWei === 0n || maxPriceQ96 === 0n || priceError || fundingError) {
+      setMessage(priceError ?? fundingError ?? "Enter a valid budget and maximum FDV before reviewing your bid.");
       return;
     }
     if (auction.currentBlock >= auction.endBlock) {
@@ -315,7 +336,7 @@ export function CcaApp() {
       return;
     }
     setReviewing(true);
-  }, [account, amountWei, auction.currentBlock, auction.endBlock, connect, maxPriceQ96, priceError]);
+  }, [account, amountWei, auction.currentBlock, auction.endBlock, connect, fundingError, maxPriceQ96, priceError]);
 
   const bid = useCallback(async () => {
     const provider = providerFromWindow();
@@ -330,6 +351,19 @@ export function CcaApp() {
     setSubmitting(true);
     try {
       await ensureBaseMainnetNetwork(provider);
+      const [latestNativeBalance, latestWethBalance] = await Promise.all([
+        provider.request<string>({ method: "eth_getBalance", params: [account, "latest"] }),
+        readCall(provider, WETH, encodeFunctionData({ abi: erc20Abi, functionName: "balanceOf", args: [account] })),
+      ]);
+      const walletBalance = fundingCurrency === "eth"
+        ? availableEthForBid(BigInt(latestNativeBalance))
+        : BigInt(latestWethBalance);
+      if (amountWei > walletBalance) {
+        const shortfall = amountWei - walletBalance;
+        throw new Error(fundingCurrency === "eth"
+          ? `Insufficient ETH after reserving gas. Lower the budget by at least ${formatCompactWeth(shortfall)} ETH.`
+          : `Insufficient WETH. Wrap at least ${formatCompactWeth(shortfall)} ETH first, or lower your WETH budget.`);
+      }
       if (fundingCurrency === "eth") {
         setMessage("Step 1 of 4: wrap ETH to WETH in your wallet.");
         await sendTransaction(provider, account, WETH, encodeFunctionData({ abi: wethAbi, functionName: "deposit" }), amountWei);
@@ -410,6 +444,7 @@ export function CcaApp() {
             {[25, 50, 75, 100].map((percent) => <button key={percent} type="button" disabled={activeBalance === null} onClick={() => setBalanceFraction(percent)}>{percent === 100 ? "MAX" : `${percent}%`}</button>)}
           </div>
           {account && <p className="cca-balance">Available {fundingCurrency.toUpperCase()}: {activeBalance === null ? "…" : formatCompactWeth(activeBalance)}{fundingCurrency === "eth" ? " (1% reserved for gas)" : ""}</p>}
+          {fundingError && <p className="cca-error" role="alert">{fundingError}</p>}
 
           <div className="cca-fdv-heading"><label className="cca-input-label" htmlFor="cca-max-fdv">Max FDV</label><span>{formatUsd(Number(maxFdv || "0") * auction.ethUsdReference)}</span></div>
           <div className="cca-input-wrap"><input id="cca-max-fdv" inputMode="decimal" value={maxFdv} onInput={(event) => setMaxFdv((event.currentTarget as HTMLInputElement).value)} /><strong>WETH</strong></div>
@@ -418,7 +453,7 @@ export function CcaApp() {
           {priceError ? <p className="cca-error">{priceError}</p> : <p className="cca-balance">Max price: {maxPrice} WETH / VEY · USD is indicative only.</p>}
 
           <div className="cca-receive"><span>Estimated receive at your max price</span><strong>{formatVey(estimatedReceive)} VEY</strong></div>
-          <button className="cca-submit" type="button" disabled={submitting || stateLabel === "Ended"} onClick={() => void openReview()}>{submitting ? "Confirm in wallet…" : account ? "Review bid" : "Connect wallet to bid"}</button>
+          <button className="cca-submit" type="button" disabled={submitting || stateLabel === "Ended" || Boolean(account && fundingError)} onClick={() => void openReview()}>{submitting ? "Confirm in wallet…" : account && fundingError ? fundingCurrency === "weth" ? "Wrap ETH or lower budget" : "Lower ETH budget" : account ? "Review bid" : "Connect wallet to bid"}</button>
           <p className="cca-notice">{fundingCurrency === "eth" ? "ETH is wrapped into WETH before the bid (four wallet confirmations)." : "WETH bidding requires three wallet confirmations."} This page never receives custody.</p>
           <p className="cca-message" role="status">{message}</p>
 
