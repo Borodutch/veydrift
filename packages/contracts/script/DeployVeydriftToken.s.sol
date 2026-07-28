@@ -66,15 +66,8 @@ contract DeployVeydriftToken is Script {
                 == deployedToken.LAUNCH_BOOTSTRAP_ALLOCATION(),
             "BAD_LAUNCH_BOOTSTRAP_SPLIT"
         );
-        require(
-            deployedToken.balanceOf(launchBootstrapRecipient)
-                == deployedToken.LAUNCH_BOOTSTRAP_ALLOCATION(),
-            "BAD_LAUNCH_BOOTSTRAP_ALLOCATION"
-        );
-        require(
-            deployedToken.balanceOf(resourceLiquidityTreasury)
-                == deployedToken.RESOURCE_LIQUIDITY_ALLOCATION(),
-            "BAD_RESOURCE_ALLOCATION"
+        _assertLaunchAndResourceBalances(
+            deployedToken, launchBootstrapRecipient, resourceLiquidityTreasury
         );
         require(
             deployedToken.balanceOf(developmentWallet) == deployedToken.DEVELOPMENT_ALLOCATION(),
@@ -103,6 +96,28 @@ contract DeployVeydriftToken is Script {
         console2.log("Development vesting:", developmentWallet);
         console2.log("Contributor vesting:", contributorWallet);
         console2.log("Ecosystem vesting:  ", ecosystemWallet);
+    }
+
+    function _assertLaunchAndResourceBalances(
+        VeydriftToken deployedToken,
+        address launchBootstrapRecipient,
+        address resourceLiquidityTreasury
+    ) internal view {
+        uint256 expectedLaunchBalance = deployedToken.LAUNCH_BOOTSTRAP_ALLOCATION();
+        if (resourceLiquidityTreasury == launchBootstrapRecipient) {
+            expectedLaunchBalance += deployedToken.RESOURCE_LIQUIDITY_ALLOCATION();
+        }
+        require(
+            deployedToken.balanceOf(launchBootstrapRecipient) == expectedLaunchBalance,
+            "BAD_LAUNCH_BOOTSTRAP_ALLOCATION"
+        );
+        if (resourceLiquidityTreasury != launchBootstrapRecipient) {
+            require(
+                deployedToken.balanceOf(resourceLiquidityTreasury)
+                    == deployedToken.RESOURCE_LIQUIDITY_ALLOCATION(),
+                "BAD_RESOURCE_ALLOCATION"
+            );
+        }
     }
 
     /// @dev Genesis vesting must not be backdated or left effectively unconfigured. The bounded
