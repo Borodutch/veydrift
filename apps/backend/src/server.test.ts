@@ -35,7 +35,7 @@ import { SettlementIndexer, type IndexedRpcLog } from "./indexer";
 import { MissionResolutionService } from "./missionResolution";
 import { watchedPlanetMessage } from "./playerProfiles";
 import { deriveInfrastructureFields } from "./readModels";
-import { backendBuildMetadata, createRequestHandler, deriveLogBackfiller, readerBootstrapHealthResponse, runtimeConfigResponse, shouldRecoverFailedReconciliation } from "./server";
+import { backendBuildMetadata, createRequestHandler, decodeCcaSubmittedBid, deriveLogBackfiller, readerBootstrapHealthResponse, runtimeConfigResponse, shouldRecoverFailedReconciliation } from "./server";
 import { DEFAULT_MAX_WORKER_COUNT } from "./workerPool";
 
 setSystemTime(new Date(1_770_007_680_000));
@@ -83,6 +83,29 @@ const fleetMissionCargoTopic = "0x3daa6311ecdadad6781f70e5d285e7150f9dc165db88d2
 const fleetMissionShipsTopic = "0xf581cbe97357884794500d80286cfbe823fed3b5d77446e477aa694ce89fc82d";
 const fleetMissionRecalledTopic = "0x2c9b31f1abc732f3b6d28e7724439ea4713ae516632088b8c4dc0211479dc6ca";
 const fleetMissionReturnExposedTopic = "0x27a083519451f4434cd1f93497fb93689a906d3b982a3f127cb236aa24356afa";
+
+test("decodes confirmed Uniswap CCA BidSubmitted logs", () => {
+  const word = (value: bigint) => value.toString(16).padStart(64, "0");
+  const bid = decodeCcaSubmittedBid({
+    blockNumber: "0x2ef6e92",
+    data: `0x${word(8_556_641_551_540_548_460_103n)}${word(100_000_000_000_000_000n)}`,
+    topics: [
+      "0x650baad5cd8ca09b8f580be220fa04ce2ba905a041f764b6a3fe2c848eb70540",
+      `0x${word(7n)}`,
+      `0x${"0".repeat(24)}${player.slice(2)}`
+    ],
+    transactionHash: `0x${"a".repeat(64)}`
+  });
+
+  expect(bid).toEqual({
+    amountWei: "100000000000000000",
+    bidId: "7",
+    blockNumber: String(0x2ef6e92),
+    maxPriceQ96: "8556641551540548460103",
+    owner: player,
+    transactionHash: `0x${"a".repeat(64)}`
+  });
+});
 const fleetMissionReturnedTopic = "0xbb4a50257c10524783e403a4e0db9c4c3e9378c2e398ec5de34281be1aa97b06";
 const attackBattleResolvedTopic = "0xc0d98d89682d12d3fe90cd0786b9320015ab3950de5f4ae3f54ca0fe9b660d1b";
 const combatLossesTopic = "0xe31518e93e94d23864fa76375f560d4ef2b4288dca5a5f1204f71d1d363d3704";
