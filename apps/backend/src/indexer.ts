@@ -221,6 +221,9 @@ export type IndexerSnapshot = {
   lastCurrentStateHealPlanetsScanned: number | null;
   lastCurrentStateHealRunId: string | null;
   lastCurrentStateHealShipMismatches: number | null;
+  lastCanonicalResourceHealAt: string | null;
+  lastCanonicalResourceHealPlanetsScanned: number | null;
+  lastCanonicalResourceHealRunId: string | null;
   lastCanonicalFleetMissionSyncAt: string | null;
   lastCanonicalFleetMissionSyncDurationMs: number | null;
   lastCanonicalFleetMissionSyncError: string | null;
@@ -810,6 +813,9 @@ export class SettlementIndexer {
       lastCurrentStateHealPlanetsScanned: metadataNumber(this.metadata("lastCurrentStateHealPlanetsScanned")),
       lastCurrentStateHealRunId: this.metadata("lastCurrentStateHealRunId"),
       lastCurrentStateHealShipMismatches: metadataNumber(this.metadata("lastCurrentStateHealShipMismatches")),
+      lastCanonicalResourceHealAt: this.metadata("lastCanonicalResourceHealAt"),
+      lastCanonicalResourceHealPlanetsScanned: metadataNumber(this.metadata("lastCanonicalResourceHealPlanetsScanned")),
+      lastCanonicalResourceHealRunId: this.metadata("lastCanonicalResourceHealRunId"),
       lastCanonicalFleetMissionSyncAt: this.metadata("lastCanonicalFleetMissionSyncAt"),
       lastCanonicalFleetMissionSyncDurationMs: metadataNumber(this.metadata("lastCanonicalFleetMissionSyncDurationMs")),
       lastCanonicalFleetMissionSyncError: this.metadata("lastCanonicalFleetMissionSyncError"),
@@ -3506,6 +3512,73 @@ export class SettlementIndexer {
     });
   }
 
+  startCanonicalResourceHealOnce(runId: string): Promise<IndexerSnapshot> {
+    const normalizedRunId = runId.trim().slice(0, 128);
+    if (!normalizedRunId) return Promise.resolve(this.snapshot());
+    if (this.metadata("lastCanonicalResourceHealRunId") === normalizedRunId) {
+      return Promise.resolve(this.snapshot());
+    }
+    if (this.currentStateHealPromise) {
+      return this.currentStateHealPromise;
+    }
+
+    this.currentStateHealRunId = normalizedRunId;
+    this.currentStateHealPromise = this.seedCanonicalPlanetResources(normalizedRunId)
+      .catch((error) => {
+        this.recordReconciliationError(error);
+        throw error;
+      })
+      .finally(() => {
+        this.currentStateHealPromise = null;
+        this.currentStateHealRunId = null;
+      });
+    return this.currentStateHealPromise;
+  }
+
+  private async seedCanonicalPlanetResources(runId: string): Promise<IndexerSnapshot> {
+    if (!this.chainReader.listCurrentPlanets) {
+      throw new Error("canonical resource heal is unavailable: chain reader cannot enumerate current planets");
+    }
+
+    // Stamp the snapshot with the head observed before the batched raw planet()
+    // reads. Any later PlanetSettled event has a greater block and wins normally;
+    // the heal therefore cannot clobber concurrent writer progress.
+    const snapshotBlock = this.chainReader.getBlockNumber
+      ? (await this.chainReader.getBlockNumber()).toString()
+      : this.metadata("latestIndexedBlock") ?? "0";
+    const planets = await this.chainReader.listCurrentPlanets();
+
+    for (const planetChunk of chunks(planets, CANONICAL_READ_PLANET_CHUNK)) {
+      await this.runHealWrite(`canonical resources ${planetChunk[0]?.planetId ?? "empty"}..${planetChunk.at(-1)?.planetId ?? "empty"}`, () => {
+        for (const planet of planetChunk) {
+          // listCurrentPlanets decodes the raw planet() storage tuple, including
+          // its exact lastSettledAt. Do not write previewResources() with an old
+          // settlement timestamp: that would accrue the same production twice.
+          this.upsertPlanetResourceSnapshot(
+            planet.planetId,
+            planet.resources,
+            planet.lastSettledAt,
+            "0x",
+            snapshotBlock,
+            "0xffffffffffffffff"
+          );
+        }
+        this.touch();
+      });
+    }
+
+    await this.runHealWrite("canonical resource heal metadata", () => {
+      const completedAt = new Date().toISOString();
+      this.setMetadata("lastCanonicalResourceHealRunId", runId);
+      this.setMetadata("lastCanonicalResourceHealAt", completedAt);
+      this.setMetadata("lastCanonicalResourceHealPlanetsScanned", planets.length.toString());
+      this.db.query("DELETE FROM indexer_metadata WHERE key = 'lastReconciliationError'").run();
+      this.clearPlanetResourcePendingIfResolved();
+      this.touch();
+    });
+    return this.snapshot();
+  }
+
   private async seedCurrentFleetMissionState(runId: string): Promise<IndexerSnapshot> {
     const startedAt = Date.now();
     this.setMetadata("lastCurrentStateHealRunId", runId);
@@ -5684,12 +5757,7 @@ export class SettlementIndexer {
   }
 
   private hasCanonicalResourcesForQueue(event: IndexedQueueStartedEvent, state?: CanonicalReconciliationState): boolean {
-    if (!state) return false;
-    if (event.planetId) return state.resources.has(event.planetId);
-    if (event.queueKind !== "research" || !event.owner) return false;
-
-    const settlement = this.walletSettlement(event.owner);
-    return Boolean(settlement.homePlanetId && state.resources.has(settlement.homePlanetId));
+    return Boolean(state && event.planetId && state.resources.has(event.planetId));
   }
 
   private upsertCanonicalQueue(
@@ -6145,28 +6213,30 @@ export class SettlementIndexer {
     event: IndexedQueueStartedEvent,
     options: { settleResources?: boolean; settledAt?: string } = {}
   ): void {
-    // Pin the queue's start time to the same instant the spend is settled against
-    // the planet. The decoded log carries it when the RPC node returns block
-    // timestamps; when it does not (the live-ingestion fallback synthesises a
-    // settle time) reuse that settle time so `startedAt` and the planet's
-    // `lastSettledAt` agree. A snapshot at/after that time is then recognised as
-    // already reflecting the cost, preventing the displayed balance from being
-    // double-reduced while the build is queued (VEY-318).
+    // Research queue events are queue truth only. Legacy ResearchQueued has no
+    // planetId, and guessing the payer from the player's home planet corrupts
+    // colony research. ResearchQueuedV2 supplies attribution, while PlanetSettled
+    // remains the sole resource mutation for research. Planet-scoped production
+    // queues retain their bounded legacy arithmetic fallback for historical logs
+    // that predate authoritative resource events.
     const startedAt = event.startedAt ?? options.settledAt;
     const startedEvent = startedAt ? { ...event, startedAt } : event;
     if (this.shouldIgnoreStaleCanonicalProductionQueueEvent(startedEvent)) {
       return;
     }
     this.upsertQueue(startedEvent);
-    if (options.settleResources !== false) {
-      if (event.planetId) {
-        this.subtractPlanetResources(event.planetId, event.cost, event.transactionHash, event.blockNumber, options.settledAt);
-      } else if (event.queueKind === "research" && event.owner) {
-        const settlement = this.walletSettlement(event.owner);
-        if (settlement.homePlanetId) {
-          this.subtractPlanetResources(settlement.homePlanetId, event.cost, event.transactionHash, event.blockNumber, options.settledAt);
-        }
-      }
+    if (
+      options.settleResources !== false
+      && event.queueKind !== "research"
+      && event.planetId
+    ) {
+      this.subtractPlanetResources(
+        event.planetId,
+        event.cost,
+        event.transactionHash,
+        event.blockNumber,
+        options.settledAt
+      );
     }
     this.touch();
   }
@@ -6945,21 +7015,15 @@ export class SettlementIndexer {
     if (!planet) return;
 
     const snapshot = this.planetResourceSnapshot(planetId);
-
     if (isZeroResourcePlaceholder(planet) && !snapshot) {
       this.markStale(pendingPlanetResourcesReason(planetId));
       return;
     }
 
-    // Double-subtract guard (VEY-318 / PROBLEM B): a build/research/ship cost must be debited from the
-    // planet's balance EXACTLY ONCE. The contract debits resources atomically when an item is queued and
-    // emits a PlanetSettled carrying the resulting post-spend balance in the SAME transaction as the
-    // PlanetQueueStarted. PlanetSettled is authoritative — `updatePlanetResources` writes the snapshot
-    // with that event's transactionHash — so if the stored snapshot was written by a PlanetSettled in
-    // this same tx, it already reflects the spend and subtracting again drives the displayed balance low.
-    // Skip the subtraction in that case. Pre-migration spends (no same-tx PlanetSettled; the snapshot tx
-    // differs, or is the seed marker "0x") fall through and still subtract.
-    if (transactionHash && snapshot && snapshot.transaction_hash === transactionHash) {
+    // Modern queue transactions emit an authoritative PlanetSettled first. The
+    // same-transaction guard makes this a compatibility path only for older
+    // planet-scoped production events.
+    if (transactionHash && snapshot?.transaction_hash === transactionHash) {
       return;
     }
 

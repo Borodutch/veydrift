@@ -353,6 +353,16 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
         emit ResearchQueued(
             msg.sender, technology, targetLevel, readyAt, cost.metal, cost.crystal, cost.deuterium
         );
+        emit ResearchQueuedV2(
+            msg.sender,
+            planetId,
+            technology,
+            targetLevel,
+            readyAt,
+            cost.metal,
+            cost.crystal,
+            cost.deuterium
+        );
     }
 
     function finishResearch() external {

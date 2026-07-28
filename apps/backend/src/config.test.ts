@@ -87,6 +87,17 @@ describe("backend config", () => {
     expect(result.config.indexDbPath).toBe("/tmp/veydrift-contract-state.sqlite");
   });
 
+  test("normalizes the explicit in-writer resource-heal run id", () => {
+    const result = loadBackendConfig({
+      VEYDRIFT_GAME_CONTRACT_ADDRESS: "0x3333333333333333333333333333333333333333",
+      VEYDRIFT_RESOURCE_STATE_HEAL_RUN_ID: "  research-resource-heal-20260728  ",
+      VEYDRIFT_RPC_URL: "https://example.invalid/rpc"
+    });
+
+    expect(result.problems).toEqual([]);
+    expect(result.config.resourceStateHealRunId).toBe("research-resource-heal-20260728");
+  });
+
   test("uses a referral-specific history boundary and defaults it to the shared index boundary", () => {
     const defaults = loadBackendConfig({
       VEYDRIFT_GAME_CONTRACT_ADDRESS: "0x3333333333333333333333333333333333333333",

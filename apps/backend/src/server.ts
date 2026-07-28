@@ -356,6 +356,16 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         console.error("Veydrift current-state heal failed", error);
       });
   }
+  if (isWriter && loaded.config.resourceStateHealRunId && indexer && loaded.problems.length === 0) {
+    // Explicit, idempotent operator repair for indexed planet resources. It executes
+    // inside the active writer so an external SQLite process cannot be overwritten by
+    // the writer's in-memory/event state.
+    void indexer
+      .startCanonicalResourceHealOnce(loaded.config.resourceStateHealRunId)
+      .catch((error) => {
+        console.error("Veydrift canonical resource-state heal failed", error);
+      });
+  }
   if (isWriter && indexer && typeof indexer.checkpointWal === "function" && loaded.problems.length === 0) {
     const checkpointWal = () => {
       try {
