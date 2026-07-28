@@ -62,18 +62,40 @@ contract VeydriftRiftModule is VeydriftResourceReserves {
         return _riftLockedResources[planetId];
     }
 
-    /// @dev Rift value may be looted at 100% only by an otherwise legal attack. A Rift lock must
-    ///      never weaken score, bashing, self-attack, or alliance combat protections.
+    /// @dev A live Rift lock is 100% contestable: it bypasses score/newbie and bashing protection,
+    ///      while self-attack and same-alliance protection remain non-negotiable.
     function enforceRiftAttackProtection(address attacker, uint256 planetId) external view {
+        _enforceBodyAttackProtection(attacker, planetId, false);
+    }
+
+    /// @dev Moon attacks cannot inherit their parent planet's Rift exception because they cannot
+    ///      loot a planet-bound Rift lock.
+    function enforceBodyAttackProtection(address attacker, uint256 planetId, bool targetIsMoon)
+        external
+        view
+    {
+        _enforceBodyAttackProtection(attacker, planetId, targetIsMoon);
+    }
+
+    function _enforceBodyAttackProtection(address attacker, uint256 planetId, bool targetIsMoon)
+        private
+        view
+    {
         if (_planets[planetId].owner == attacker) revert SelfAttack();
         (bool ok, bytes memory data) =
             address(this).staticcall(abi.encodeWithSelector(0x8a6b2246, attacker, planetId));
         if (!ok) assembly ("memory-safe") { revert(add(data, 32), mload(data)) }
         if (data.length < 32) return;
         (AttackBlockReason reason,,) = abi.decode(data, (AttackBlockReason, uint8, uint16));
+        Resources storage locked = _riftLockedResources[planetId];
+        bool hasLiveRift = locked.metal != 0 || locked.crystal != 0 || locked.deuterium != 0;
         if (reason == AttackBlockReason.SameAlliance) revert SameAllianceAttack();
-        if (reason == AttackBlockReason.BashingLimit) revert AttackBashingLimitReached();
-        if (reason == AttackBlockReason.ScoreProtection) revert AttackScoreProtection();
+        if ((targetIsMoon || !hasLiveRift) && reason == AttackBlockReason.BashingLimit) {
+            revert AttackBashingLimitReached();
+        }
+        if ((targetIsMoon || !hasLiveRift) && reason == AttackBlockReason.ScoreProtection) {
+            revert AttackScoreProtection();
+        }
     }
 
     function raidRiftExtraction(

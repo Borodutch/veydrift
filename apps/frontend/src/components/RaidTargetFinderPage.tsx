@@ -420,7 +420,7 @@ function RifterTargetRow({
             {target.name?.trim() || coords}
           </button>
           <span className="font-mono text-[10px] text-slate-500">{coords}</span>
-          <span className="rounded border border-fuchsia-300/30 bg-fuchsia-300/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-fuchsia-100">Rifting</span>
+          <span className="rounded border border-fuchsia-300/30 bg-fuchsia-300/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-fuchsia-100">Rifting · no newbie/bashing protection</span>
         </div>
         <button
           className="mt-0.5 block font-mono text-xs text-slate-500 hover:text-cyan-100 disabled:cursor-default disabled:hover:text-slate-500"

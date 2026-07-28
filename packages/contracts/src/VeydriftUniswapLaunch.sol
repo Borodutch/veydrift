@@ -229,6 +229,10 @@ contract VeydriftUniswapCCALauncher {
     bytes32 public migrationParametersHash;
     bytes32 public reconciliationEvidenceHash;
     uint256 public mainPositionTokenId;
+    /// @notice Validated canonical v4 pool for the migrated VEYDRIFT/WETH liquidity.
+    /// @dev This is hookless normally. If the pinned Uniswap LBP strategy uses its documented
+    ///      strategy-hook fallback after a hookless-pool squat, this is the strategy-hook pool.
+    bytes32 public canonicalMainPoolId;
 
     struct LaunchConfig {
         address tokensRecipient;
@@ -519,17 +523,22 @@ contract VeydriftUniswapCCALauncher {
         returns (bool)
     {
         _assertConsumedMigrationLifecycle();
-        (bool hooklessInitialized, bool strategyHookInitialized, bytes32 initializedPoolId) =
+        (bool hooklessInitialized, bool strategyHookInitialized, bytes32 canonicalPoolId) =
             _mainPoolTopology();
-        if (hooklessInitialized == strategyHookInitialized) {
+        // Normal migration initializes the hookless pool. If it was initialized after CCA
+        // registration, Uniswap's pinned LBP strategy deliberately creates its strategy-hook
+        // fallback instead, leaving both pools initialized. A hook-only topology is never an
+        // official fallback and remains invalid.
+        if (!hooklessInitialized) {
             revert InvalidMainPoolTopology(hooklessInitialized, strategyHookInitialized);
         }
-        if (!_isExpectedMainPosition(positionTokenId, initializedPoolId)) {
+        if (!_isExpectedMainPosition(positionTokenId, canonicalPoolId)) {
             revert InvalidMainPosition(positionTokenId);
         }
         migrationAttempted = true;
         migrationSucceeded = true;
         mainPositionTokenId = positionTokenId;
+        canonicalMainPoolId = canonicalPoolId;
         if (reconciled) {
             emit MigrationReconciled(auction, true, positionTokenId, 1, reconciliationEvidenceHash);
         } else {
@@ -562,7 +571,9 @@ contract VeydriftUniswapCCALauncher {
             IUniswapV4StateView(_stateView()).getSlot0(strategyHookPoolId);
         hooklessInitialized = hooklessPrice != 0;
         strategyHookInitialized = strategyHookPrice != 0;
-        initializedPoolId = hooklessInitialized ? hooklessPoolId : strategyHookPoolId;
+        // A strategy-hook pool is canonical only when it coexists with the squatted hookless
+        // key. `_recordSuccessfulMigration` rejects a strategy-hook-only topology.
+        initializedPoolId = strategyHookInitialized ? strategyHookPoolId : hooklessPoolId;
     }
 
     function _isExpectedMainPosition(uint256 tokenId, bytes32 initializedPoolId)

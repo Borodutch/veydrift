@@ -1011,6 +1011,16 @@ export class SettlementIndexer {
     return [...targets.values()];
   }
 
+  hasLiveRiftExtraction(planetId: string): boolean {
+    const row = this.db.query(`
+      SELECT 1 AS present
+      FROM indexed_rift_extractions
+      WHERE planet_id = ? AND CAST(amount AS INTEGER) > 0
+      LIMIT 1
+    `).get(planetId) as { present: number } | null;
+    return row !== null;
+  }
+
   moonChanceReportsInSystem(galaxy: number, system: number): IndexedMoonChanceReportEvent[] {
     const rows = this.db.query(`
       SELECT report.event_json

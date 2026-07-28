@@ -442,19 +442,18 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
             return;
         }
 
-        // VEY-KANEO-492: attack protection is enforced at RESOLUTION as well as at launch. A target
-        // that entered score/newbie protection or joined the attacker's alliance while the fleet was
-        // in flight must not be raided through the launch->impact "attack gap". Bounce the whole
-        // attack group home with no combat, losses, debris, or plunder. BashingLimit is deliberately
-        // not re-checked here: its window count is incremented at launch, so re-checking it would
-        // bounce every legitimately launched attack once the window filled. ScoreProtection and
-        // SameAlliance are the two highest AttackBlockReason values, so a single >= comparison
-        // selects exactly the "must not be raided" reasons.
+        // Attack protection is rechecked at resolution to close the launch->impact gap. A live,
+        // planet-bound Rift lock is the deliberate exception: whitepaper semantics make that lock
+        // contestable despite score/newbie protection. Same-alliance attacks always bounce, and a
+        // score-protected target returns to normal protection once its Rift balance is depleted.
         (AttackBlockReason protectionReason,) =
             _attackProtectionPreview(mission.owner, mission.targetPlanetId);
+        Resources storage locked = _riftLockedResources[mission.targetPlanetId];
+        bool hasLiveRift = !mission.targetIsMoon
+            && (locked.metal != 0 || locked.crystal != 0 || locked.deuterium != 0);
         if (
             protectionReason == AttackBlockReason.SameAlliance
-                || protectionReason == AttackBlockReason.ScoreProtection
+                || (protectionReason == AttackBlockReason.ScoreProtection && !hasLiveRift)
         ) {
             _returnLinkedMissions(missionId, mission);
             mission.status = FleetMissionStatus.Returning;

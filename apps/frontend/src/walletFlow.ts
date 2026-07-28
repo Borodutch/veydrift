@@ -1089,6 +1089,7 @@ export type AttackProtectionStatus = {
   defenderHonorStatus?: "neutral" | "honorable" | "bandit";
   plunderBps?: number;
   defenderInactive?: boolean;
+  riftProtectionBypass?: boolean;
   scoreComparison?: AttackProtectionScoreComparison;
   transportAllowed?: boolean;
   transportBlockReason?: "none" | "own_planet" | "same_alliance" | "not_allied";

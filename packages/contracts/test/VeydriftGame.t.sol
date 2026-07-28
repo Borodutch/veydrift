@@ -5447,7 +5447,7 @@ contract VeydriftGameTest is Test {
         assertEq(game.shipCount(targetPlanetId, Ship.SmallCargo), defenderShipsBefore);
     }
 
-    function testRiftLockDoesNotBypassScoreProtectionAtAttackResolution() public {
+    function testRiftLockBypassesScoreProtectionAtAttackResolution() public {
         vm.warp(8 days);
         (uint256 originPlanetId, uint256 targetPlanetId, address defender) = _seedAttackPlanets();
         _setTechnologyLevel(player, Technology.Computer, 2);
@@ -5466,7 +5466,7 @@ contract VeydriftGameTest is Test {
         assertEq(uint8(launchReason), uint8(VeydriftGameStorage.AttackBlockReason.None));
 
         VeydriftGameStorage.MissionShips memory ships;
-        ships.smallCargo = 1;
+        ships.smallCargo = 10;
         vm.prank(player);
         uint256 missionId = game.launchFleetMission(
             originPlanetId,
@@ -5479,6 +5479,10 @@ contract VeydriftGameTest is Test {
         (, uint64 arrivalAt,,) = _fleetMission(missionId);
 
         _setShipCount(originPlanetId, Ship.Battleship, 1_000_000);
+        // The departing attack carries the cargo; remove the original target fleet so the battle
+        // settles deterministically and can demonstrate score-protected ordinary loot is skipped
+        // while the Rift lock remains fully contestable.
+        _setShipCount(targetPlanetId, Ship.SmallCargo, 0);
         (VeydriftGameStorage.AttackBlockReason impactReason,,) =
             _attackProtectionStatus(player, targetPlanetId);
         assertEq(uint8(impactReason), uint8(VeydriftGameStorage.AttackBlockReason.ScoreProtection));
@@ -5487,11 +5491,17 @@ contract VeydriftGameTest is Test {
         _fulfillAttackBattleRandomness(missionId, 1);
         game.resolveFleetMission(missionId);
 
-        (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(missionId);
+        (
+            VeydriftGameStorage.FleetMissionStatus status,,,
+            VeydriftGameStorage.Resources memory cargo
+        ) = _fleetMission(missionId);
         assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
         (bool active, uint128 amount,,) = game.riftExtractions(targetPlanetId, Resource.Metal);
         assertTrue(active);
-        assertEq(amount, 1);
+        assertEq(amount, 0);
+        // Score protection still suppresses ordinary 50% planet loot; only the live Rift balance
+        // is credited to the attacker under the whitepaper's 100% contestability rule.
+        assertEq(cargo.metal, 1);
     }
 
     function testAttackResolutionBouncesWhenTargetJoinsAttackerAllianceMidFlight() public {
@@ -5600,6 +5610,82 @@ contract VeydriftGameTest is Test {
         assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Outbound));
     }
 
+    function testLiveRiftLockBypassesBashingLimitAtAttackLaunch() public {
+        vm.warp(8 days);
+        (uint256 originPlanetId, uint256 targetPlanetId, address defender) =
+            _seedAttackPlanetsWithoutScoreProtection();
+        _setTechnologyLevel(player, Technology.Computer, 10);
+        _setShipCount(originPlanetId, Ship.SmallCargo, 8);
+        _setResources(originPlanetId, 1_000_000, 1_000_000, 1_000_000);
+        _setResources(targetPlanetId, 1_000_000, 1_000_000, 1_000_000);
+        _setBuildingLevel(targetPlanetId, Building.InterdimensionalRiftStabilizer, 1);
+
+        vm.prank(defender);
+        IRiftLifecycleEntrypoints(address(game))
+            .startRiftExtraction(targetPlanetId, Resource.Metal, 1);
+
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.smallCargo = 1;
+        for (uint256 i = 0; i < VeydriftAntiRaidPrimitives.MAX_ATTACKS_PER_BASHING_WINDOW; i++) {
+            vm.prank(player);
+            game.launchFleetMission(
+                originPlanetId,
+                targetPlanetId,
+                VeydriftGameStorage.FleetMissionType.Attack,
+                ships,
+                VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+                i
+            );
+        }
+
+        (VeydriftGameStorage.AttackBlockReason reason,,) =
+            _attackProtectionStatus(player, targetPlanetId);
+        assertEq(uint8(reason), uint8(VeydriftGameStorage.AttackBlockReason.BashingLimit));
+
+        vm.prank(player);
+        uint256 seventhMissionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            77
+        );
+        (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(seventhMissionId);
+        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Outbound));
+    }
+
+    function testLiveRiftLockBypassesScoreProtectionAtAttackLaunch() public {
+        vm.warp(8 days);
+        (uint256 originPlanetId, uint256 targetPlanetId, address defender) = _seedAttackPlanets();
+        _setTechnologyLevel(player, Technology.Computer, 1);
+        _setShipCount(originPlanetId, Ship.SmallCargo, 1);
+        _setResources(originPlanetId, 1_000_000, 1_000_000, 1_000_000);
+        _setResources(targetPlanetId, 1_000_000, 1_000_000, 1_000_000);
+        _setBuildingLevel(targetPlanetId, Building.InterdimensionalRiftStabilizer, 1);
+
+        vm.prank(defender);
+        IRiftLifecycleEntrypoints(address(game))
+            .startRiftExtraction(targetPlanetId, Resource.Metal, 1);
+
+        _setShipCount(originPlanetId, Ship.Battleship, 1_000_000);
+        (VeydriftGameStorage.AttackBlockReason reason,,) =
+            _attackProtectionStatus(player, targetPlanetId);
+        assertEq(uint8(reason), uint8(VeydriftGameStorage.AttackBlockReason.ScoreProtection));
+
+        vm.prank(player);
+        uint256 missionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            _smallCargoManifest(),
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            77
+        );
+        (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(missionId);
+        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Outbound));
+    }
+
     function testBashingLimitedAttackStillLootsAtResolutionSinceCapIsEnforcedAtLaunch() public {
         // The bashing window count is incremented at LAUNCH (_recordAttack), so the 6/24h cap is
         // enforced when fleets depart and the 7th attack cannot launch. A within-cap raid therefore
@@ -5681,6 +5767,35 @@ contract VeydriftGameTest is Test {
         (VeydriftGameStorage.AttackBlockReason reason,,) =
             _attackProtectionStatus(player, targetPlanetId);
         assertEq(uint8(reason), uint8(VeydriftGameStorage.AttackBlockReason.SameAlliance));
+    }
+
+    function testLiveRiftLockStillRejectsSameAllianceTargetPlanet() public {
+        (uint256 originPlanetId, uint256 targetPlanetId, address defender) = _seedAttackPlanets();
+        uint256 allianceId = _createAlliance(player);
+        vm.prank(player);
+        allianceSystem.inviteMember(allianceId, defender);
+        vm.prank(defender);
+        allianceSystem.acceptInvite(allianceId);
+
+        _setBuildingLevel(targetPlanetId, Building.InterdimensionalRiftStabilizer, 1);
+        vm.prank(defender);
+        IRiftLifecycleEntrypoints(address(game))
+            .startRiftExtraction(targetPlanetId, Resource.Metal, 1);
+
+        _setTechnologyLevel(player, Technology.Computer, 1);
+        _setShipCount(originPlanetId, Ship.SmallCargo, 1);
+        _setResources(originPlanetId, 10_000, 10_000, 10_000);
+
+        vm.prank(player);
+        vm.expectRevert(VeydriftGameStorage.SameAllianceAttack.selector);
+        game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            _smallCargoManifest(),
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            0
+        );
     }
 
     function testWarDiplomacyBypassesAttackBashingLimit() public {

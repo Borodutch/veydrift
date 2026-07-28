@@ -32,6 +32,12 @@ interface IVeydriftMoonPresence {
         returns (bool);
 }
 
+interface IVeydriftRiftAttackProtection {
+    function enforceBodyAttackProtection(address attacker, uint256 planetId, bool targetIsMoon)
+        external
+        view;
+}
+
 /// @notice Delegatecall target implementing OGame-style ACS Defend (DefenseHold): station a fleet at
 ///         a planet for a chosen hold window so it automatically defends any attack that lands while
 ///         it is holding, then flies home. Kept in its own module so the size-constrained gameplay
@@ -209,7 +215,8 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
         _requireOwnedBody(originPlanetId, originIsMoon);
         if (isAttack) {
             _requireAttackTargetBody(targetPlanetId, targetIsMoon);
-            _enforceAttackProtection(msg.sender, targetPlanetId);
+            IVeydriftRiftAttackProtection(address(this))
+                .enforceBodyAttackProtection(msg.sender, targetPlanetId, targetIsMoon);
         } else {
             _requireOwnedBody(targetPlanetId, targetIsMoon);
         }
@@ -579,22 +586,6 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
         if (ship == Ship.Reaper) return ships.reaper;
         if (ship == Ship.Pathfinder) return ships.pathfinder;
         return 0;
-    }
-
-    function _enforceAttackProtection(address attacker, uint256 targetPlanetId) private view {
-        if (_planets[targetPlanetId].owner == attacker) revert SelfAttack();
-        (bool ok, bytes memory data) =
-            address(this).staticcall(abi.encodeWithSelector(0x8a6b2246, attacker, targetPlanetId));
-        if (!ok) {
-            assembly ("memory-safe") {
-                revert(add(data, 32), mload(data))
-            }
-        }
-        if (data.length < 32) return;
-        (AttackBlockReason reason,,) = abi.decode(data, (AttackBlockReason, uint8, uint16));
-        if (reason == AttackBlockReason.BashingLimit) revert AttackBashingLimitReached();
-        if (reason == AttackBlockReason.ScoreProtection) revert AttackScoreProtection();
-        if (reason == AttackBlockReason.SameAlliance) revert SameAllianceAttack();
     }
 
     function _requestAttackBattleRandomness(uint256 missionId) private returns (uint256 requestId) {

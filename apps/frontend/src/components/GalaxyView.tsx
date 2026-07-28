@@ -111,6 +111,7 @@ export type AttackProtectionStatus = {
   defenderHonorStatus?: "neutral" | "honorable" | "bandit";
   plunderBps?: number;
   defenderInactive?: boolean;
+  riftProtectionBypass?: boolean;
   scoreComparison?: {
     attackerScore: string;
     defenderScore: string;
@@ -1057,6 +1058,7 @@ export function formatAttackRuleLabels(status: AttackProtectionStatus | undefine
   if (status.defenderHonorStatus === "honorable") labels.push("Honor target");
   if (status.defenderHonorStatus === "bandit") labels.push("Bandit target");
   if (status.atWar) labels.push("War target");
+  if (status.riftProtectionBypass) labels.push("Rift: no newbie/bashing protection");
   if (status.plunderBps && status.plunderBps !== 5000) {
     labels.push(`Loot: ${Math.floor(status.plunderBps / 100)}%`);
   }

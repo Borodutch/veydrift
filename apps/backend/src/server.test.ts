@@ -4916,6 +4916,40 @@ describe("Veydrift backend", () => {
     });
   });
 
+  test("indexed attack protection permits a live Rift lock through score protection", async () => {
+    const attacker = "0xbf74483db914192bb0a9577f3d8fb29a6d4c08ee" as Address;
+    const indexer = await twoPlanetIndexer(attacker);
+    indexer.applyLog(researchCompletedLog({
+      owner: attacker,
+      technologyId: 14n,
+      level: 34n,
+      logIndex: 1
+    }));
+    indexer.applyLog(defenseCompletedLog({ planetId: 7n, defenseId: 0n, total: 335n, logIndex: 2 }));
+    indexer.applyLog({
+      blockNumber: "0x200",
+      transactionHash: "0xrift-score-bypass",
+      logIndex: "0x0",
+      topics: [riftExtractionStartedTopic, addressTopic(player), topic(7n), topic(0n)],
+      data: abiWords(1_000n, 1_770_000_000n, 1_772_419_200n)
+    });
+    const handler = createRequestHandler({ config: configuredTestConfig, chainReader: new MockChainReader(), indexer });
+
+    const response = await handler(new Request(`http://localhost/wallet/${attacker}/attack-protection?targetPlanetId=7`));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      allowed: true,
+      blockedReason: "none",
+      riftProtectionBypass: true,
+      // Ordinary resources remain score-protected; this legal attack can loot only the Rift
+      // balance until ordinary score protection no longer applies.
+      plunderBps: 0,
+      scoreComparison: { protected: true }
+    });
+  });
+
   test("indexed Rankings and submit protection block a target in the 50k–499,999 10x band (VEY-KANEO-704)", async () => {
     const attacker = "0x9999999999999999999999999999999999999999" as Address;
     const indexer = await twoPlanetIndexer(attacker);

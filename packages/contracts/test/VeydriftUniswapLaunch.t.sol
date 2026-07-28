@@ -250,6 +250,13 @@ contract UniswapLaunchMockStrategy {
             tickSpacing: params.tickSpacing,
             hooks: params.hook
         });
+        // Mirror the pinned official LBP strategy: if its registered hookless pool was
+        // initialized after distribution registration, migration uses the strategy-hook fallback.
+        (uint160 existingPrice,,,) =
+            UniswapLaunchMockStateView(stateView).getSlot0(keccak256(abi.encode(key)));
+        if (params.hook == address(0) && existingPrice != 0) {
+            key.hooks = address(this);
+        }
         UniswapLaunchMockStateView(stateView).setPool(keccak256(abi.encode(key)), 1 << 96);
         // Mirrors the official Uniswap v4 TickMath usable-boundary formula.
         // forge-lint: disable-next-line(divide-before-multiply)
@@ -453,7 +460,7 @@ contract VeydriftUniswapLaunchTest is Test {
         launcher.reconcileMigration(1, keccak256("candidate-only-evidence"));
     }
 
-    function testReconciliationRejectsMixedMainPoolTopology() public {
+    function testReconciliationRejectsMixedTopologyWithHooklessPosition() public {
         VeydriftUniswapCCALauncher.LaunchConfig memory config = _config();
         vm.startPrank(authority);
         token.approve(address(launcher), 500_000_000 ether);
@@ -465,12 +472,48 @@ contract VeydriftUniswapLaunchTest is Test {
         (, bytes32 strategyHookPoolId) = launcher.mainPoolIds();
         UniswapLaunchMockStateView(STATE_VIEW).setPool(strategyHookPoolId, 1 << 96);
         vm.expectRevert(
-            abi.encodeWithSelector(
-                VeydriftUniswapCCALauncher.InvalidMainPoolTopology.selector, true, true
-            )
+            abi.encodeWithSelector(VeydriftUniswapCCALauncher.InvalidMainPosition.selector, 1)
         );
         vm.prank(authority);
         launcher.reconcileMigration(1, keccak256("mixed-topology-evidence"));
+    }
+
+    function testFinalizationAcceptsOfficialStrategyHookFallbackAfterHooklessSquat() public {
+        VeydriftUniswapCCALauncher.LaunchConfig memory config = _config();
+        vm.startPrank(authority);
+        token.approve(address(launcher), 500_000_000 ether);
+        launcher.launch(address(token), config, keccak256("VEY-741-fallback"));
+        vm.stopPrank();
+
+        // An attacker can initialize the public hookless pool after registration. The official
+        // LBP strategy then migrates to its own strategy-hook pool instead.
+        (bytes32 hooklessPoolId, bytes32 strategyHookPoolId) = launcher.mainPoolIds();
+        UniswapLaunchMockStateView(STATE_VIEW).setPool(hooklessPoolId, 1 << 96);
+        vm.roll(config.migrationBlock);
+
+        assertTrue(launcher.finalizeAndMigrate());
+        assertTrue(launcher.migrationSucceeded());
+        assertEq(launcher.canonicalMainPoolId(), strategyHookPoolId);
+        assertEq(UniswapLaunchMockPositionManager(POSITION_MANAGER).ownerOf(1), address(lock));
+    }
+
+    function testReconcilesPermissionlessOfficialStrategyHookFallback() public {
+        VeydriftUniswapCCALauncher.LaunchConfig memory config = _config();
+        vm.startPrank(authority);
+        token.approve(address(launcher), 500_000_000 ether);
+        launcher.launch(address(token), config, keccak256("VEY-741-fallback-reconcile"));
+        vm.stopPrank();
+
+        (bytes32 hooklessPoolId, bytes32 strategyHookPoolId) = launcher.mainPoolIds();
+        UniswapLaunchMockStateView(STATE_VIEW).setPool(hooklessPoolId, 1 << 96);
+        vm.roll(config.migrationBlock);
+        vm.prank(makeAddr("permissionless-fallback-migrator"));
+        UniswapLaunchMockStrategy(STRATEGY).migrate(AUCTION);
+
+        vm.prank(authority);
+        assertTrue(launcher.reconcileMigration(1, keccak256("fallback-migration-evidence")));
+        assertTrue(launcher.migrationSucceeded());
+        assertEq(launcher.canonicalMainPoolId(), strategyHookPoolId);
     }
 
     function testDirectWrapperRecordsTerminalMigrationFailure() public {
