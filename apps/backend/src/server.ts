@@ -113,6 +113,7 @@ const corsHeaders = {
 const jsonBodyLimitBytes = 32 * 1024;
 const graphqlBodyLimitBytes = 128 * 1024;
 const acceptedCacheQueryParams = new Map<string, ReadonlySet<string>>([
+  ["/cca", new Set(["owner"])],
   ["/highscores", new Set(["category", "currentWallet", "includeAttackProtection", "limit", "live", "page", "pageSize"])],
   ["/missions", new Set(["live", "missionNumber", "missionType", "owner", "page", "pageSize", "planetId", "status"])],
   ["/raid-finder/debris", new Set(["limit", "minMetal", "minCrystal"])],
@@ -191,6 +192,14 @@ export function decodeCcaSubmittedBid(log: RpcLog): CcaSubmittedBid | null {
   } catch {
     return null;
   }
+}
+
+export function ccaBidOwnerTopic(owner: ViemAddress): `0x${string}` {
+  return `0x${owner.slice(2).toLowerCase().padStart(64, "0")}`;
+}
+
+function ccaBidOwnerFromQuery(value: string | null): ViemAddress | null {
+  return value && /^0x[0-9a-fA-F]{40}$/.test(value) ? value as ViemAddress : null;
 }
 
 type GraphQLPayload = {
@@ -522,7 +531,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
     if (request.method === "GET" && url.pathname === "/cca") {
       if (!ccaRpc) return unavailableResponse(loaded.problems);
-      return ccaStateResponse(ccaRpc);
+      return ccaStateResponse(ccaRpc, ccaBidOwnerFromQuery(url.searchParams.get("owner")));
     }
 
     if (request.method === "GET" && url.pathname === "/raid-finder/debris") {
@@ -1879,7 +1888,7 @@ function rpcUrlsForConfig(config: BackendConfig): string[] {
   ].filter((url): url is string => Boolean(url && url.trim().length > 0));
 }
 
-async function ccaStateResponse(rpc: HttpJsonRpcTransport): Promise<Response> {
+async function ccaStateResponse(rpc: HttpJsonRpcTransport, owner: ViemAddress | null = null): Promise<Response> {
   const call = (to: ViemAddress, data: `0x${string}`) => ({
     method: "eth_call",
     params: [{ to, data }, "latest"]
@@ -1911,6 +1920,19 @@ async function ccaStateResponse(rpc: HttpJsonRpcTransport): Promise<Response> {
       return right.bidId.localeCompare(left.bidId, undefined, { numeric: true });
     })
     .slice(0, ccaRecentBidLimit), () => []);
+  const walletBids = owner ? await rpc.request<RpcLog[]>("eth_getLogs", [{
+    address: ccaAuctionAddress,
+    fromBlock: toQuantity(BigInt(startBlock!)),
+    toBlock: currentBlock!,
+    topics: [ccaBidSubmittedTopic, null, ccaBidOwnerTopic(owner)]
+  }]).then((logs) => logs
+    .map(decodeCcaSubmittedBid)
+    .filter((bid): bid is CcaSubmittedBid => bid !== null)
+    .sort((left, right) => {
+      const blockOrder = BigInt(right.blockNumber) - BigInt(left.blockNumber);
+      if (blockOrder !== 0n) return blockOrder > 0n ? 1 : -1;
+      return right.bidId.localeCompare(left.bidId, undefined, { numeric: true });
+    }), () => []) : [];
 
   return Response.json({
     auction: ccaAuctionAddress,
@@ -1923,6 +1945,7 @@ async function ccaStateResponse(rpc: HttpJsonRpcTransport): Promise<Response> {
     graduated: BigInt(graduated!) !== 0n,
     recentBids,
     startBlock: BigInt(startBlock!).toString(),
+    walletBids,
     weth: ccaWethAddress,
     updatedAt: new Date().toISOString()
   }, {

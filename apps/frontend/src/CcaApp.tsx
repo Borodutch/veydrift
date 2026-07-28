@@ -101,6 +101,7 @@ type AuctionState = {
   graduated: boolean;
   recentBids: CcaSubmittedBid[];
   startBlock: bigint;
+  walletBids: CcaSubmittedBid[];
 };
 
 type CcaSubmittedBid = {
@@ -122,6 +123,7 @@ type CcaApiPayload = {
   graduated: boolean;
   recentBids?: CcaSubmittedBid[];
   startBlock: string;
+  walletBids?: CcaSubmittedBid[];
 };
 
 type EthereumWindow = Window & { ethereum?: Eip1193Provider };
@@ -136,6 +138,7 @@ const launchSnapshot: AuctionState = {
   graduated: false,
   recentBids: [],
   startBlock: AUCTION_START_BLOCK,
+  walletBids: [],
 };
 
 function shortAddress(address: string) {
@@ -192,8 +195,9 @@ async function readCall(provider: Eip1193Provider, to: Address, data: string) {
   return provider.request<string>({ method: "eth_call", params: [{ to, data }, "latest"] });
 }
 
-async function fetchAuctionState() {
-  const response = await fetch(`${playableApiUrl}/cca`, {
+async function fetchAuctionState(owner?: Address | null) {
+  const query = owner ? `?owner=${encodeURIComponent(owner)}` : "";
+  const response = await fetch(`${playableApiUrl}/cca${query}`, {
     headers: { accept: "application/json" },
   });
   if (!response.ok) throw new Error(`Auction API returned ${response.status}.`);
@@ -208,6 +212,7 @@ async function fetchAuctionState() {
     graduated: state.graduated,
     recentBids: state.recentBids ?? [],
     startBlock: BigInt(state.startBlock),
+    walletBids: state.walletBids ?? [],
   } satisfies AuctionState;
 }
 
@@ -256,7 +261,7 @@ export function CcaApp() {
 
   const refresh = useCallback(async (activeProvider = walletProvider ?? providerFromWindow(), activeAccount = account) => {
     try {
-      setAuction(await fetchAuctionState());
+      setAuction(await fetchAuctionState(activeAccount));
       if (activeProvider && activeAccount) {
         const [nativeBalance, wrappedBalance] = await Promise.all([
           activeProvider.request<string>({ method: "eth_getBalance", params: [activeAccount, "latest"] }),
@@ -547,6 +552,16 @@ export function CcaApp() {
           {auction.recentBids.map((bid) => <li key={`${bid.transactionHash}-${bid.bidId}`}>
             <div><strong>{formatCompactWeth(BigInt(bid.amountWei))} WETH</strong><span>max {formatCompactWeth(BigInt(Math.round(fdvFromQ96(BigInt(bid.maxPriceQ96)))) * E18)} WETH FDV</span></div>
             <div><span>{shortAddress(bid.owner)} · block {BigInt(bid.blockNumber).toLocaleString()}</span><a href={`https://basescan.org/tx/${bid.transactionHash}`} target="_blank" rel="noreferrer">View tx ↗</a></div>
+          </li>)}
+        </ol>}
+      </section>
+
+      <section className="cca-wallet-bids" aria-labelledby="cca-wallet-bids-heading">
+        <div className="cca-live-bids-heading"><div><p className="cca-eyebrow">YOUR CONFIRMED BIDS</p><h2 id="cca-wallet-bids-heading">Your bids</h2></div><span>Updates automatically</span></div>
+        {!account ? <p className="cca-live-bids-empty">Connect your wallet to see every confirmed bid it submitted.</p> : auction.walletBids.length === 0 ? <p className="cca-live-bids-empty">No confirmed bids from {shortAddress(account)} yet. Reverted transactions are not included.</p> : <ol className="cca-live-bids-list">
+          {auction.walletBids.map((bid) => <li key={`${bid.transactionHash}-${bid.bidId}`}>
+            <div><strong>{formatCompactWeth(BigInt(bid.amountWei))} WETH</strong><span>max {formatCompactWeth(BigInt(Math.round(fdvFromQ96(BigInt(bid.maxPriceQ96)))) * E18)} WETH FDV</span></div>
+            <div><span>block {BigInt(bid.blockNumber).toLocaleString()}</span><a href={`https://basescan.org/tx/${bid.transactionHash}`} target="_blank" rel="noreferrer">View tx ↗</a></div>
           </li>)}
         </ol>}
       </section>

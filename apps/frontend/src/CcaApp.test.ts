@@ -134,4 +134,14 @@ describe("CCA bid transaction ordering", () => {
     expect(source).toContain("CONFIRMED ON BASE");
     expect(source).toContain("Reverted wallet transactions are never shown here.");
   });
+
+  test("requests and refreshes the connected wallet's complete confirmed bid list", async () => {
+    const source = await Bun.file(new URL("./CcaApp.tsx", import.meta.url)).text();
+
+    expect(source).toContain("fetchAuctionState(activeAccount)");
+    expect(source).toContain("?owner=${encodeURIComponent(owner)}");
+    expect(source).toContain("YOUR CONFIRMED BIDS");
+    expect(source).toContain("Updates automatically");
+    expect(source).toContain("auction.walletBids.map");
+  });
 });
