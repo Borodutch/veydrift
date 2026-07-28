@@ -143,7 +143,19 @@ const ccaAuctionReadAbi = [
   { type: "function", name: "floorPrice", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "uint256" }] },
   { type: "function", name: "startBlock", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "uint64" }] },
   { type: "function", name: "endBlock", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "uint64" }] },
-  { type: "function", name: "isGraduated", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "bool" }] }
+  { type: "function", name: "isGraduated", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "bool" }] },
+  {
+    type: "function", name: "checkpoints", stateMutability: "view", inputs: [{ name: "blockNumber", type: "uint64" }], outputs: [{
+      name: "", type: "tuple", components: [
+        { name: "clearingPrice", type: "uint256" },
+        { name: "currencyRaisedAtClearingPriceQ96X7", type: "uint256" },
+        { name: "cumulativeMpsPerPrice", type: "uint256" },
+        { name: "cumulativeMps", type: "uint24" },
+        { name: "prev", type: "uint64" },
+        { name: "next", type: "uint64" }
+      ]
+    }]
+  }
 ] as const;
 
 const erc20BalanceReadAbi = [
@@ -1906,6 +1918,12 @@ async function ccaStateResponse(rpc: HttpJsonRpcTransport, owner: ViemAddress | 
   if ([clearingPrice, floorPrice, startBlock, endBlock, graduated, bidVolume, currentBlock].some((value) => value === undefined)) {
     throw new Error("CCA RPC response was incomplete.");
   }
+  const finalized = BigInt(currentBlock!) >= BigInt(endBlock!)
+    ? await rpc.request<string>("eth_call", [
+      { to: ccaAuctionAddress, data: encodeFunctionData({ abi: ccaAuctionReadAbi, functionName: "checkpoints", args: [BigInt(endBlock!)] }) },
+      "latest"
+    ]).then((result) => BigInt(result.slice(0, 66)) !== 0n, () => false)
+    : false;
 
   const confirmedBids = await rpc.request<RpcLog[]>("eth_getLogs", [{
     address: ccaAuctionAddress,
@@ -1942,6 +1960,7 @@ async function ccaStateResponse(rpc: HttpJsonRpcTransport, owner: ViemAddress | 
     currentBlock: BigInt(currentBlock!).toString(),
     endBlock: BigInt(endBlock!).toString(),
     ethUsdReference: await ccaEthUsdReference(),
+    finalized,
     floorPriceQ96: BigInt(floorPrice!).toString(),
     graduated: BigInt(graduated!) !== 0n,
     recentBids,

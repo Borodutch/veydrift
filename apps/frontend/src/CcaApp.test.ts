@@ -163,7 +163,18 @@ describe("CCA bid transaction ordering", () => {
     expect(source).toContain("Review ready below — scroll down to confirm your bid.");
     expect(source).toContain('reviewRef.current?.scrollIntoView({ behavior: "smooth", block: "center" })');
     expect(source).toContain('name: "exitBid"');
-    expect(source).toContain("A live winning bid cannot be cancelled.");
+    expect(source).toContain("The auction is still finalizing on Base.");
+  });
+
+  test("keeps completion information and WETH/VEY settlement actions hidden until the auction ends", async () => {
+    const source = await Bun.file(new URL("./CcaApp.tsx", import.meta.url)).text();
+
+    expect(source).toContain("const auctionComplete = auction.currentBlock >= auction.endBlock");
+    expect(source).toContain("AUCTION COMPLETE");
+    expect(source).toContain('name: "exitPartiallyFilledBid"');
+    expect(source).toContain('name: "claimTokens"');
+    expect(source).toContain("Claim VEY");
+    expect(source).toContain("Settlement actions stay hidden until the auction ends.");
   });
 
   test("explains budget, FDV, partial fills, and the official CCA AI reference", async () => {
