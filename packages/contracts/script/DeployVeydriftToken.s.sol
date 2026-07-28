@@ -106,7 +106,11 @@ contract DeployVeydriftToken is Script {
     function _validatedVestingStart(uint256 start) internal view returns (uint64 startTimestamp) {
         require(start != 0, "VESTING_START_ZERO");
         require(start <= type(uint64).max, "VESTING_START_OVERFLOW");
+        // This deployment-time configuration guard deliberately compares against the
+        // current chain timestamp; it is not a consensus-sensitive game outcome.
+        // forge-lint: disable-next-line(block-timestamp)
         require(start > block.timestamp, "VESTING_START_NOT_FUTURE");
+        // forge-lint: disable-next-line(block-timestamp)
         require(start <= block.timestamp + MAX_VESTING_START_LEAD, "VESTING_START_TOO_FAR");
         // The preceding bound check makes this timestamp cast lossless.
         // forge-lint: disable-next-line(unsafe-typecast)
