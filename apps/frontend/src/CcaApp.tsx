@@ -14,6 +14,7 @@ import {
   type Eip1193Provider,
 } from "./walletFlow";
 import { playableApiUrl } from "./runtimeConfig";
+import { isBidPriceAboveClearingPrice } from "./ccaBidPrice";
 
 const AUCTION = "0x7Ce8e4cC7563a9711A3D52d48439F6dfA4C1B67F" as Address;
 const WETH = "0x4200000000000000000000000000000000000006" as Address;
@@ -79,6 +80,23 @@ const auctionAbi = [
       { name: "hookData", type: "bytes" },
     ],
     outputs: [{ name: "bidId", type: "uint256" }],
+  },
+] as const;
+
+const auctionReadAbi = [
+  {
+    type: "function",
+    name: "clearingPrice",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "endBlock",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint64" }],
   },
 ] as const;
 
@@ -176,6 +194,24 @@ async function readCall(provider: Eip1193Provider, to: Address, data: string) {
   return provider.request<string>({ method: "eth_call", params: [{ to, data }, "latest"] });
 }
 
+async function fetchAuctionState() {
+  const response = await fetch(`${playableApiUrl}/cca`, {
+    headers: { accept: "application/json" },
+  });
+  if (!response.ok) throw new Error(`Auction API returned ${response.status}.`);
+  const state = await response.json() as CcaApiPayload;
+  return {
+    bidVolume: BigInt(state.bidVolumeWei),
+    clearingPriceQ96: BigInt(state.clearingPriceQ96),
+    currentBlock: BigInt(state.currentBlock),
+    endBlock: BigInt(state.endBlock),
+    ethUsdReference: Number.isFinite(state.ethUsdReference) ? Number(state.ethUsdReference) : DEFAULT_ETH_USD,
+    floorPriceQ96: BigInt(state.floorPriceQ96),
+    graduated: state.graduated,
+    startBlock: BigInt(state.startBlock),
+  } satisfies AuctionState;
+}
+
 async function waitForReceipt(provider: Eip1193Provider, hash: string) {
   for (let attempt = 0; attempt < 80; attempt += 1) {
     const receipt = await provider.request<{ status?: string | null } | null>({
@@ -219,19 +255,7 @@ export function CcaApp() {
 
   const refresh = useCallback(async (activeProvider = providerFromWindow(), activeAccount = account) => {
     try {
-      const response = await fetch(`${playableApiUrl}/cca`, { headers: { accept: "application/json" } });
-      if (!response.ok) throw new Error(`Auction API returned ${response.status}.`);
-      const state = await response.json() as CcaApiPayload;
-      setAuction({
-        bidVolume: BigInt(state.bidVolumeWei),
-        clearingPriceQ96: BigInt(state.clearingPriceQ96),
-        currentBlock: BigInt(state.currentBlock),
-        endBlock: BigInt(state.endBlock),
-        ethUsdReference: Number.isFinite(state.ethUsdReference) ? Number(state.ethUsdReference) : DEFAULT_ETH_USD,
-        floorPriceQ96: BigInt(state.floorPriceQ96),
-        graduated: state.graduated,
-        startBlock: BigInt(state.startBlock),
-      });
+      setAuction(await fetchAuctionState());
       if (activeProvider && activeAccount) {
         const [nativeBalance, wrappedBalance] = await Promise.all([
           activeProvider.request<string>({ method: "eth_getBalance", params: [activeAccount, "latest"] }),
@@ -271,7 +295,9 @@ export function CcaApp() {
   }, [refresh]);
 
   const floorFdv = useMemo(() => fdvFromQ96(auction.floorPriceQ96), [auction.floorPriceQ96]);
-  const sliderMaxFdv = useMemo(() => Math.max(Math.ceil(floorFdv * 25), 2_700), [floorFdv]);
+  const clearingFdv = useMemo(() => fdvFromQ96(auction.clearingPriceQ96 || auction.floorPriceQ96), [auction.clearingPriceQ96, auction.floorPriceQ96]);
+  const minimumBidFdv = useMemo(() => Math.max(Math.ceil(floorFdv), Math.floor(clearingFdv) + 1), [clearingFdv, floorFdv]);
+  const sliderMaxFdv = useMemo(() => Math.max(minimumBidFdv, Math.ceil(floorFdv * 25), 2_700), [floorFdv, minimumBidFdv]);
   const maxPriceQ96 = useMemo(() => {
     try {
       return fdvToPriceQ96(maxFdv || "0");
@@ -286,8 +312,8 @@ export function CcaApp() {
       return 0n;
     }
   }, [amount]);
-  const priceError = maxPriceQ96 < auction.floorPriceQ96
-    ? `Your maximum FDV must be at least ${formatCompactWeth(BigInt(Math.ceil(floorFdv)) * E18)} WETH.`
+  const priceError = !isBidPriceAboveClearingPrice(maxPriceQ96, auction.clearingPriceQ96)
+    ? `Your maximum FDV must be strictly above the current ${formatCompactWeth(BigInt(Math.ceil(clearingFdv)) * E18)} WETH clearing FDV.`
     : null;
   const maxPrice = priceFromQ96(maxPriceQ96 || auction.floorPriceQ96);
   const estimatedReceive = maxPriceQ96 > 0n ? (amountWei * Q96) / maxPriceQ96 : 0n;
@@ -313,7 +339,7 @@ export function CcaApp() {
       : auction.graduated
         ? "Graduated"
         : "Live";
-  const currentFdv = fdvFromQ96(auction.clearingPriceQ96 || auction.floorPriceQ96);
+  const currentFdv = clearingFdv;
 
   const setBalanceFraction = useCallback((percent: number) => {
     if (activeBalance === null) return;
@@ -351,6 +377,20 @@ export function CcaApp() {
     setSubmitting(true);
     try {
       await ensureBaseMainnetNetwork(provider);
+      // The clearing price can change after review. Re-read it on-chain before
+      // the first wallet transaction so an equal-price bid never reaches the auction.
+      const [latestClearingPrice, latestEndBlock, latestBlock] = await Promise.all([
+        readCall(provider, AUCTION, encodeFunctionData({ abi: auctionReadAbi, functionName: "clearingPrice" })),
+        readCall(provider, AUCTION, encodeFunctionData({ abi: auctionReadAbi, functionName: "endBlock" })),
+        provider.request<string>({ method: "eth_blockNumber" }),
+      ]);
+      const latestClearingPriceQ96 = BigInt(latestClearingPrice);
+      if (!isBidPriceAboveClearingPrice(maxPriceQ96, latestClearingPriceQ96)) {
+        throw new Error(`Your maximum FDV must be strictly above the current ${formatCompactWeth(BigInt(Math.ceil(fdvFromQ96(latestClearingPriceQ96))) * E18)} WETH clearing FDV. No wallet transaction was sent.`);
+      }
+      if (BigInt(latestBlock) >= BigInt(latestEndBlock)) {
+        throw new Error("The auction has ended. No wallet transaction was sent.");
+      }
       const [latestNativeBalance, latestWethBalance] = await Promise.all([
         provider.request<string>({ method: "eth_getBalance", params: [account, "latest"] }),
         readCall(provider, WETH, encodeFunctionData({ abi: erc20Abi, functionName: "balanceOf", args: [account] })),
@@ -448,8 +488,8 @@ export function CcaApp() {
 
           <div className="cca-fdv-heading"><label className="cca-input-label" htmlFor="cca-max-fdv">Max FDV</label><span>{formatUsd(Number(maxFdv || "0") * auction.ethUsdReference)}</span></div>
           <div className="cca-input-wrap"><input id="cca-max-fdv" inputMode="decimal" value={maxFdv} onInput={(event) => setMaxFdv((event.currentTarget as HTMLInputElement).value)} /><strong>WETH</strong></div>
-          <input className="cca-slider" type="range" min={Math.ceil(floorFdv)} max={sliderMaxFdv} step="1" value={Math.min(Math.max(Number(maxFdv) || Math.ceil(floorFdv), Math.ceil(floorFdv)), sliderMaxFdv)} onInput={(event) => setMaxFdv((event.currentTarget as HTMLInputElement).value)} aria-label="Maximum fully diluted value" />
-          <div className="cca-slider-labels"><span>Floor {formatCompactWeth(BigInt(Math.ceil(floorFdv)) * E18)} WETH</span><span>{formatCompactWeth(BigInt(sliderMaxFdv) * E18)} WETH</span></div>
+          <input className="cca-slider" type="range" min={minimumBidFdv} max={sliderMaxFdv} step="1" value={Math.min(Math.max(Number(maxFdv) || minimumBidFdv, minimumBidFdv), sliderMaxFdv)} onInput={(event) => setMaxFdv((event.currentTarget as HTMLInputElement).value)} aria-label="Maximum fully diluted value" />
+          <div className="cca-slider-labels"><span>Minimum {formatCompactWeth(BigInt(minimumBidFdv) * E18)} WETH</span><span>{formatCompactWeth(BigInt(sliderMaxFdv) * E18)} WETH</span></div>
           {priceError ? <p className="cca-error">{priceError}</p> : <p className="cca-balance">Max price: {maxPrice} WETH / VEY · USD is indicative only.</p>}
 
           <div className="cca-receive"><span>Estimated receive at your max price</span><strong>{formatVey(estimatedReceive)} VEY</strong></div>
