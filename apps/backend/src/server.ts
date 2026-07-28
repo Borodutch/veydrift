@@ -1906,7 +1906,7 @@ async function ccaStateResponse(rpc: HttpJsonRpcTransport, owner: ViemAddress | 
     throw new Error("CCA RPC response was incomplete.");
   }
 
-  const recentBids = await rpc.request<RpcLog[]>("eth_getLogs", [{
+  const confirmedBids = await rpc.request<RpcLog[]>("eth_getLogs", [{
     address: ccaAuctionAddress,
     fromBlock: toQuantity(BigInt(startBlock!)),
     toBlock: currentBlock!,
@@ -1918,8 +1918,8 @@ async function ccaStateResponse(rpc: HttpJsonRpcTransport, owner: ViemAddress | 
       const blockOrder = BigInt(right.blockNumber) - BigInt(left.blockNumber);
       if (blockOrder !== 0n) return blockOrder > 0n ? 1 : -1;
       return right.bidId.localeCompare(left.bidId, undefined, { numeric: true });
-    })
-    .slice(0, ccaRecentBidLimit), () => []);
+    }), () => []);
+  const recentBids = confirmedBids.slice(0, ccaRecentBidLimit);
   const walletBids = owner ? await rpc.request<RpcLog[]>("eth_getLogs", [{
     address: ccaAuctionAddress,
     fromBlock: toQuantity(BigInt(startBlock!)),
@@ -1945,6 +1945,7 @@ async function ccaStateResponse(rpc: HttpJsonRpcTransport, owner: ViemAddress | 
     graduated: BigInt(graduated!) !== 0n,
     recentBids,
     startBlock: BigInt(startBlock!).toString(),
+    totalBids: confirmedBids.length,
     walletBids,
     weth: ccaWethAddress,
     updatedAt: new Date().toISOString()

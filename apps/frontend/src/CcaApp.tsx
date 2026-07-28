@@ -101,6 +101,7 @@ type AuctionState = {
   graduated: boolean;
   recentBids: CcaSubmittedBid[];
   startBlock: bigint;
+  totalBids: number;
   walletBids: CcaSubmittedBid[];
 };
 
@@ -123,6 +124,7 @@ type CcaApiPayload = {
   graduated: boolean;
   recentBids?: CcaSubmittedBid[];
   startBlock: string;
+  totalBids?: number;
   walletBids?: CcaSubmittedBid[];
 };
 
@@ -138,6 +140,7 @@ const launchSnapshot: AuctionState = {
   graduated: false,
   recentBids: [],
   startBlock: AUCTION_START_BLOCK,
+  totalBids: 0,
   walletBids: [],
 };
 
@@ -202,6 +205,7 @@ async function fetchAuctionState(owner?: Address | null) {
   });
   if (!response.ok) throw new Error(`Auction API returned ${response.status}.`);
   const state = await response.json() as CcaApiPayload;
+  const totalBids = state.totalBids;
   return {
     bidVolume: BigInt(state.bidVolumeWei),
     clearingPriceQ96: BigInt(state.clearingPriceQ96),
@@ -212,6 +216,7 @@ async function fetchAuctionState(owner?: Address | null) {
     graduated: state.graduated,
     recentBids: state.recentBids ?? [],
     startBlock: BigInt(state.startBlock),
+    totalBids: typeof totalBids === "number" && Number.isSafeInteger(totalBids) && totalBids >= 0 ? totalBids : state.recentBids?.length ?? 0,
     walletBids: state.walletBids ?? [],
   } satisfies AuctionState;
 }
@@ -553,7 +558,7 @@ export function CcaApp() {
       </section>
 
       <section className="cca-live-bids" aria-labelledby="cca-live-bids-heading">
-        <div className="cca-live-bids-heading"><div><p className="cca-eyebrow">CONFIRMED ON BASE</p><h2 id="cca-live-bids-heading">Live bids</h2></div><span>{auction.recentBids.length ? `${auction.recentBids.length} recent` : "Waiting for bids"}</span></div>
+        <div className="cca-live-bids-heading"><div><p className="cca-eyebrow">CONFIRMED ON BASE</p><h2 id="cca-live-bids-heading">Live bids</h2></div><span>{auction.recentBids.length ? `${auction.recentBids.length} recent · ${auction.totalBids} total` : "0 total"}</span></div>
         {auction.recentBids.length === 0 ? <p className="cca-live-bids-empty">No confirmed bids yet. Reverted wallet transactions are never shown here.</p> : <ol className="cca-live-bids-list">
           {auction.recentBids.map((bid) => <li key={`${bid.transactionHash}-${bid.bidId}`}>
             <div><strong>{formatCompactWeth(BigInt(bid.amountWei))} WETH</strong><span>max {formatCompactWeth(BigInt(Math.round(fdvFromQ96(BigInt(bid.maxPriceQ96)))) * E18)} WETH FDV</span></div>
