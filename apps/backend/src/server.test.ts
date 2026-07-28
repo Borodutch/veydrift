@@ -7386,6 +7386,13 @@ describe("Veydrift backend", () => {
       blockNumber: "0x94",
       transactionHash: "0xqueued-research",
       logIndex: "0x0",
+      topics: [planetSettledTopic, topic(7n)],
+      data: abiWords(3652n, 4141n, 4740n, BigInt(Math.floor(Date.now() / 1_000)))
+    });
+    indexer.applyLog({
+      blockNumber: "0x94",
+      transactionHash: "0xqueued-research",
+      logIndex: "0x1",
       topics: [researchQueuedTopic, addressTopic(player), topic(9n)],
       data: abiWords(1n, 1770002300n, 200n, 400n, 60n)
     });
@@ -7930,6 +7937,13 @@ describe("Veydrift backend", () => {
       blockNumber: "0x84",
       transactionHash: "0xresearch",
       logIndex: "0x0",
+      topics: [planetSettledTopic, topic(7n)],
+      data: abiWords(2200n, 3500n, 4600n, 1770000000n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x84",
+      transactionHash: "0xresearch",
+      logIndex: "0x1",
       topics: [
         researchQueuedTopic,
         addressTopic(player),

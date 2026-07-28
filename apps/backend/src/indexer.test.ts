@@ -30,6 +30,7 @@ const planetDefenseCountChangedTopic = "0xe861e6f62777a3f6ea372d2892ead2d43e27d7
 const moonShipCountChangedTopic = "0xbd55c2b529f64f3a888d38432d6c54b03515f3de3f0114255cb36620f5df1257";
 const moonDefenseCountChangedTopic = "0x0bf9a31209477c6f81619cdd411e232ee9a5b64ec763c598ce43d938cc6194a2";
 const researchQueuedTopic = "0x2c3d4c823cd097fa6cbea60fb91c561d6a497270c397a8c8258170458fe69e73";
+const researchQueuedV2Topic = "0xc656964d8e68d0b6942679e773cfa1067a21bfab5837879972bcf64c948deaa6";
 const researchCompletedTopic = "0x93dffeb1ed0a05133592cf6d82b9a200c2ac72b521497b81cef83ac57cb84b4f";
 const moonCreatedTopic = "0x395ddd11cfc613034fc4941029df5968212af4a52ba611d84d3257824c81f4a4";
 const moonResourcesChangedTopic = "0xd1823653b6a3910ee502390b5bf01f05a3b571dc81899a6ac3af3f01fae05c26";
@@ -809,6 +810,110 @@ describe("SettlementIndexer", () => {
     const served = indexer.walletSettlement(player).planet;
     expect(served?.lastSettledAt).toBe(String(now));
     expect(served?.resources).toEqual({ metal: "1234", crystal: "567", deuterium: "89" });
+  });
+
+  test("research queue events never debit the home planet and V2 preserves payer attribution", () => {
+    const database = new Database(":memory:");
+    const home = {
+      ...planet,
+      planetId: "74",
+      resources: { metal: "95943", crystal: "48618", deuterium: "19956" }
+    };
+    const colony = {
+      ...planet,
+      planetId: "380",
+      position: 10,
+      resources: { metal: "104236", crystal: "51710", deuterium: "12066" }
+    };
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n, { database });
+    indexer.applyEvent(home);
+    indexer.applyEvent(colony);
+
+    const transactionHash = "0x31b598712302453db135fa350e4cde562e58fe49197907ef892ad181e9589a8e";
+    indexer.applyLog({
+      blockNumber: "0x100",
+      transactionHash,
+      logIndex: "0x0",
+      topics: [planetSettledTopic, topic(380n)],
+      data: abiWords(1836n, 510n, 12066n, 1770003600n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x100",
+      transactionHash,
+      logIndex: "0x1",
+      topics: [researchQueuedTopic, topic(BigInt(player)), topic(0n)],
+      data: abiWords(10n, 1770007200n, 102400n, 51200n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x100",
+      transactionHash,
+      logIndex: "0x2",
+      topics: [researchQueuedV2Topic, topic(BigInt(player)), topic(380n), topic(0n)],
+      data: abiWords(10n, 1770007200n, 102400n, 51200n, 0n)
+    });
+
+    expect(indexer.planet("74")?.resources).toEqual(home.resources);
+    expect(indexer.planet("380")?.resources).toEqual({
+      metal: "1836",
+      crystal: "510",
+      deuterium: "12066"
+    });
+    expect(indexer.researchQueue(player)).toMatchObject({
+      active: true,
+      itemId: 0,
+      targetLevel: 10
+    });
+    expect(database.query(`
+      SELECT planet_id
+      FROM contract_production_queues
+      WHERE queue_key = ?
+    `).get(`research:${player}`)).toEqual({ planet_id: "380" });
+  });
+
+  test("canonical in-writer resource heal restores raw resources and is idempotent", async () => {
+    const database = new Database(":memory:");
+    const home = {
+      ...planet,
+      planetId: "74",
+      lastSettledAt: "1770003600",
+      resources: { metal: "95943", crystal: "48618", deuterium: "19956" }
+    };
+    let reads = 0;
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; },
+      async getBlockNumber() { return 200n; },
+      async listCurrentPlanets() {
+        reads += 1;
+        return [home];
+      }
+    }, 100n, { database });
+    indexer.applyEvent(home);
+    database.query(`
+      UPDATE contract_planet_resources
+      SET metal = '0', crystal = '0', deuterium = '19956',
+          transaction_hash = '0xcorrupted', block_number = '150'
+      WHERE planet_id = '74'
+    `).run();
+
+    await indexer.startCanonicalResourceHealOnce("research-resource-heal-20260728");
+
+    expect(indexer.planet("74")).toMatchObject({
+      lastSettledAt: "1770003600",
+      resources: home.resources
+    });
+    expect(indexer.snapshot()).toMatchObject({
+      lastCanonicalResourceHealRunId: "research-resource-heal-20260728",
+      lastCanonicalResourceHealPlanetsScanned: 1
+    });
+
+    await indexer.startCanonicalResourceHealOnce("research-resource-heal-20260728");
+    expect(reads).toBe(1);
   });
 
   test("settles resources at the old production rate up to readyAt when a building upgrade completes (VEY-KANEO-429)", () => {
@@ -3136,6 +3241,13 @@ describe("SettlementIndexer", () => {
       blockNumber: "0x84",
       transactionHash: "0xresearch",
       logIndex: "0x0",
+      topics: [planetSettledTopic, topic(7n)],
+      data: abiWords(2200n, 3500n, 4600n, 1770000000n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x84",
+      transactionHash: "0xresearch",
+      logIndex: "0x1",
       topics: [
         researchQueuedTopic,
         addressTopic(player),
@@ -9078,7 +9190,7 @@ describe("SettlementIndexer", () => {
     });
   }
 
-  test("rebuild preserves newer uncompleted event-derived production queues and subtracts queued spend costs", async () => {
+  test("rebuild preserves newer queues but never infers a research spend from its player-scoped event", async () => {
     const currentPlanet: SettledPlanetEvent = {
       ...planet,
       resources: {
@@ -9135,9 +9247,9 @@ describe("SettlementIndexer", () => {
     await indexer.rebuild();
 
     expect(indexer.walletSettlement(player).planet?.resources).toEqual({
-      metal: "9620",
-      crystal: "8660",
-      deuterium: "7680"
+      metal: "9700",
+      crystal: "8700",
+      deuterium: "7700"
     });
     expect(indexer.playerQueues(player, planet.planetId)).toMatchObject({
       building: { kind: "building", itemId: 6, targetLevel: 2, readyAt: "1770002000" },

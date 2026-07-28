@@ -9,6 +9,7 @@ export type BackendConfig = {
   indexDbPath: string;
   indexFromBlock: bigint;
   currentStateHealRunId?: string;
+  resourceStateHealRunId?: string;
   currentStateHealConcurrency?: number;
   // Deprecated safety valve. Runtime canonical fleet-mission sync is disabled by default and must not be
   // scheduled by the backend; missions are mutated from indexed event logs after the one-time heal.
@@ -174,6 +175,7 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
     parseNonNegativeInteger(env.VEYDRIFT_FLEET_MISSION_SYNC_INTERVAL_MS, "VEYDRIFT_FLEET_MISSION_SYNC_INTERVAL_MS", problems)
       ?? defaultFleetMissionSyncIntervalMs;
   const currentStateHealRunId = normalizeRunId(env.VEYDRIFT_CURRENT_STATE_HEAL_RUN_ID);
+  const resourceStateHealRunId = normalizeRunId(env.VEYDRIFT_RESOURCE_STATE_HEAL_RUN_ID);
   const { rpcUrl, rpcFallbackUrls, rpcSource } = resolveRpcUrl(env);
   const { wsRpcUrl, wsRpcSource } = resolveWsRpcUrl(env);
   const gameContractAddress = parseAddress(
@@ -299,6 +301,7 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
       indexDbPath: env.VEYDRIFT_INDEX_DB_PATH ?? defaultIndexDbPath,
       indexFromBlock,
       ...(currentStateHealRunId ? { currentStateHealRunId } : {}),
+      ...(resourceStateHealRunId ? { resourceStateHealRunId } : {}),
       currentStateHealConcurrency,
       fleetMissionSyncIntervalMs,
       logChunkSpan,

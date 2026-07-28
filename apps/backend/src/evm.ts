@@ -199,7 +199,7 @@ export type PlayerQueues = {
 };
 
 export type IndexedQueueStartedEvent = {
-  eventName: "BuildingStarted" | "DefenseQueued" | "ShipQueued" | "ResearchQueued" | "MoonBuildingStarted" | "MoonDefenseQueued";
+  eventName: "BuildingStarted" | "DefenseQueued" | "ShipQueued" | "ResearchQueued" | "ResearchQueuedV2" | "MoonBuildingStarted" | "MoonDefenseQueued";
   transactionHash: string;
   blockNumber: string;
   queueKind: "building" | "defense" | "ship" | "research" | "moon-building" | "moon-defense";
@@ -5475,6 +5475,7 @@ const shipCompletedTopic = "0xd261dd8008086de5ef74708b23f5f21be1962fee33795961e0
 const shipQueueTimingSetTopic = "0x241c6a6ecff5bf5d31df2871e9d836b18f8380508d2c5514ae9532687886d6ef";
 const defenseQueueTimingSetTopic = "0xcdf898af8ba3659ffa369d372a1cacd237f74927074397a0ae531a4b60ed078e";
 const researchQueuedTopic = "0x2c3d4c823cd097fa6cbea60fb91c561d6a497270c397a8c8258170458fe69e73";
+const researchQueuedV2Topic = "0xc656964d8e68d0b6942679e773cfa1067a21bfab5837879972bcf64c948deaa6";
 const researchCompletedTopic = "0x93dffeb1ed0a05133592cf6d82b9a200c2ac72b521497b81cef83ac57cb84b4f";
 const debrisFieldUpdatedTopic = "0x49f79a15c2a0409be62598b886efd90e25154bb9156b4bd64df41fd515aa4909";
 const planetShipCountChangedTopic = "0x6a0fc6b08970eb9f7e15767e6902471ca8731c57dbe4577c76021e1f9d6762cf";
@@ -5557,6 +5558,7 @@ const eventNamesByTopic = new Map<string, string>([
   [shipQueueTimingSetTopic, "ShipQueueTimingSet"],
   [defenseQueueTimingSetTopic, "DefenseQueueTimingSet"],
   [researchQueuedTopic, "ResearchQueued"],
+  [researchQueuedV2Topic, "ResearchQueuedV2"],
   [researchCompletedTopic, "ResearchCompleted"],
   [debrisFieldUpdatedTopic, "DebrisFieldUpdated"],
   [planetShipCountChangedTopic, "PlanetShipCountChanged"],
@@ -5788,6 +5790,7 @@ export function isIndexedQueueStartedLog(log: RpcLog): boolean {
     || topic === defenseQueuedTopic
     || topic === shipQueuedTopic
     || topic === researchQueuedTopic
+    || topic === researchQueuedV2Topic
     || topic === moonBuildingStartedTopic
     || topic === moonDefenseQueuedTopic;
 }
@@ -6168,6 +6171,18 @@ export function decodeIndexedQueueStartedLog(log: RpcLog): IndexedQueueStartedEv
       queueKind: "research",
       owner: decodeAddressWord(topicAt(log.topics, 1)),
       itemId: Number(decodeUint(topicAt(log.topics, 2))),
+      targetLevel: Number(decodeUintWord(wordAt(words, 0)))
+    };
+  }
+
+  if (topic === researchQueuedV2Topic) {
+    return {
+      ...base,
+      eventName: "ResearchQueuedV2",
+      queueKind: "research",
+      owner: decodeAddressWord(topicAt(log.topics, 1)),
+      planetId: decodeUint(topicAt(log.topics, 2)).toString(),
+      itemId: Number(decodeUint(topicAt(log.topics, 3))),
       targetLevel: Number(decodeUintWord(wordAt(words, 0)))
     };
   }

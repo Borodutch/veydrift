@@ -525,6 +525,18 @@ abstract contract VeydriftGameStorage is Initializable {
         uint128 crystal,
         uint128 deuterium
     );
+    /// @dev Versioned research-start event with the planet that paid the research cost.
+    /// The legacy ResearchQueued event remains emitted for backwards compatibility.
+    event ResearchQueuedV2(
+        address indexed player,
+        uint256 indexed planetId,
+        Technology indexed technology,
+        uint16 targetLevel,
+        uint64 readyAt,
+        uint128 metal,
+        uint128 crystal,
+        uint128 deuterium
+    );
     event ResearchCompleted(address indexed player, Technology indexed technology, uint16 level);
     event ColonyCreated(
         address indexed player,

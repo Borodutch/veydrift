@@ -1985,6 +1985,38 @@ contract VeydriftGameTest is Test {
         assertFalse(game.researchQueue(player).active);
     }
 
+    function testResearchQueuedV2AttributesThePlanetThatPaid() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+        _setBuildingLevel(planetId, Building.ResearchLab, 1);
+        _setTechnologyLevel(player, Technology.Energy, 2);
+
+        vm.recordLogs();
+        vm.prank(player);
+        game.startResearch(planetId, Technology.Laser);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+
+        bytes32 signature = keccak256(
+            "ResearchQueuedV2(address,uint256,uint8,uint16,uint64,uint128,uint128,uint128)"
+        );
+        bool found;
+        for (uint256 i = 0; i < logs.length; ++i) {
+            if (logs[i].topics.length != 4 || logs[i].topics[0] != signature) continue;
+            found = true;
+            assertEq(address(uint160(uint256(logs[i].topics[1]))), player);
+            assertEq(uint256(logs[i].topics[2]), planetId);
+            assertEq(uint8(uint256(logs[i].topics[3])), uint8(Technology.Laser));
+
+            (uint16 targetLevel,, uint128 metal, uint128 crystal, uint128 deuterium) =
+                abi.decode(logs[i].data, (uint16, uint64, uint128, uint128, uint128));
+            assertEq(targetLevel, 1);
+            assertEq(metal, 200);
+            assertEq(crystal, 100);
+            assertEq(deuterium, 0);
+        }
+        assertTrue(found);
+    }
+
     function testShieldingLevelOneRequiresResearchLabSixAndEnergyThree() public {
         vm.prank(player);
         uint256 planetId = game.startPlanet{value: 0.05 ether}();
