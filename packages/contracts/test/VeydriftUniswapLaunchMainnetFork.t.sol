@@ -80,6 +80,14 @@ contract VeydriftUniswapForkMainLaunch is IVeydriftMainLaunch {
 /// @dev This test deliberately creates only fork-local contracts and never broadcasts.
 contract VeydriftUniswapLaunchMainnetForkTest is Test {
     uint256 internal constant FORK_BLOCK = 48_937_745;
+    address internal constant LAUNCH_AUTHORITY = 0xca6C67515aa9aa21DA37e07C7469Fd2C5880e2F4;
+    address internal constant LP_FEE_BENEFICIARY = 0xbf74483DB914192bb0a9577f3d8Fb29a6d4c08eE;
+    uint64 internal constant LP_UNLOCK_AT = 1_816_801_200; // 2027-07-28 19:00 UTC
+    uint128 internal constant REQUIRED_WETH_RAISED = 27 ether;
+    uint128 internal constant FORK_BID_WETH = 54 ether;
+    // 27 WETH / 250M VEYDRIFT, represented as WETH-per-VEYDRIFT Q96. This is the
+    // approved $0.00020 reference floor at the approval-time ETH reference price.
+    uint256 internal constant FLOOR_PRICE_Q96 = 8_556_641_551_540_548_460_102;
     bytes32 internal constant FORK_BLOCK_HASH =
         0x2c24db6fbd731f5bf6690544e6d77aabfefc8e9fbf76b166f3668b0bc0246051;
     bytes32 internal constant COMPILER_SETTINGS_HASH =
@@ -142,7 +150,7 @@ contract VeydriftUniswapLaunchMainnetForkTest is Test {
         vm.createSelectFork(rpcUrl, FORK_BLOCK);
         assertEq(block.chainid, VeydriftUniswapDeployments.BASE_CHAIN_ID);
 
-        address authority = makeAddr("fork-launch-authority");
+        address authority = LAUNCH_AUTHORITY;
         address tokenDonor = makeAddr("fork-token-donor");
         VeydriftToken token = new VeydriftToken(
             authority,
@@ -152,24 +160,22 @@ contract VeydriftUniswapLaunchMainnetForkTest is Test {
             makeAddr("fork-ecosystem-vesting")
         );
         VeydriftV4PositionLock lock = new VeydriftV4PositionLock(
-            VeydriftUniswapDeployments.POSITION_MANAGER,
-            makeAddr("fork-lock-beneficiary"),
-            uint64(block.timestamp + 365 days)
+            VeydriftUniswapDeployments.POSITION_MANAGER, LP_FEE_BENEFICIARY, LP_UNLOCK_AT
         );
         VeydriftUniswapCCALauncher launcher = new VeydriftUniswapCCALauncher(authority, lock);
 
         uint64 startBlock = uint64(block.number + 20);
         VeydriftUniswapCCALauncher.LaunchConfig memory config =
             VeydriftUniswapCCALauncher.LaunchConfig({
-                tokensRecipient: makeAddr("fork-unsold-recipient"),
-                recoveryRecipient: makeAddr("fork-recovery-recipient"),
+                tokensRecipient: authority,
+                recoveryRecipient: authority,
                 startBlock: startBlock,
                 endBlock: startBlock + 86_400,
                 claimBlock: startBlock + 86_400,
                 migrationBlock: startBlock + 86_410,
                 auctionTickSpacingQ96: 2,
-                floorPriceQ96: (1 << 32) + 2,
-                requiredWethRaised: 1 ether,
+                floorPriceQ96: FLOOR_PRICE_Q96,
+                requiredWethRaised: REQUIRED_WETH_RAISED,
                 auctionStepsData: abi.encodePacked(
                     uint24(115), uint40(22_400), uint24(116), uint40(64_000)
                 ),
@@ -209,14 +215,14 @@ contract VeydriftUniswapLaunchMainnetForkTest is Test {
         assertEq(registered.validationHook(), address(0));
 
         address bidder = makeAddr("fork-weth-bidder");
-        deal(VeydriftUniswapDeployments.WETH, bidder, 10 ether);
+        deal(VeydriftUniswapDeployments.WETH, bidder, FORK_BID_WETH);
         vm.roll(config.startBlock);
         vm.startPrank(bidder);
         IERC20(VeydriftUniswapDeployments.WETH)
-            .approve(VeydriftUniswapDeployments.PERMIT2, 10 ether);
+            .approve(VeydriftUniswapDeployments.PERMIT2, FORK_BID_WETH);
         IUniswapPermit2Fork(VeydriftUniswapDeployments.PERMIT2)
-            .approve(VeydriftUniswapDeployments.WETH, auction, 10 ether, type(uint48).max);
-        IUniswapCCAForkBidder(auction).submitBid(1 << 96, 10 ether, bidder, bytes(""));
+            .approve(VeydriftUniswapDeployments.WETH, auction, FORK_BID_WETH, type(uint48).max);
+        IUniswapCCAForkBidder(auction).submitBid(1 << 96, FORK_BID_WETH, bidder, bytes(""));
         vm.stopPrank();
 
         vm.roll(config.endBlock);
@@ -341,7 +347,24 @@ contract VeydriftUniswapLaunchMainnetForkTest is Test {
         assertEq(metal.balanceOf(VeydriftUniswapDeployments.POSITION_MANAGER), donatedMetal);
         assertEq(crystal.balanceOf(VeydriftUniswapDeployments.POSITION_MANAGER), donatedCrystal);
         assertEq(deuterium.balanceOf(VeydriftUniswapDeployments.POSITION_MANAGER), donatedDeuterium);
-        assertEq(token.balanceOf(authority), 0);
+        uint256 expectedResourceVeydriftDust;
+        for (uint256 i = 0; i < 3; i++) {
+            address resourceToken =
+                i == 0 ? address(metal) : i == 1 ? address(crystal) : address(deuterium);
+            bool veydriftIsCurrency0 = address(token) < resourceToken;
+            uint256 maximum =
+                veydriftIsCurrency0 ? resourceConfigs[i].amount0Max : resourceConfigs[i].amount1Max;
+            uint256 used = veydriftIsCurrency0
+                ? resourceLauncher.amount0Used(i)
+                : resourceLauncher.amount1Used(i);
+            expectedResourceVeydriftDust += maximum - used;
+        }
+        uint256 expectedMainRecoveryVeydrift =
+            mainMigrationEvidence.afterBalances.veydriftRecoveryRecipient
+                - mainMigrationEvidence.beforeBalances.veydriftRecoveryRecipient;
+        assertEq(
+            token.balanceOf(authority), expectedMainRecoveryVeydrift + expectedResourceVeydriftDust
+        );
         assertGe(
             reserveEvidence.balanceAfter.metal,
             uint256(reserveEvidence.requirement.metal) + reserveEvidence.margin.metal
@@ -408,7 +431,7 @@ contract VeydriftUniswapLaunchMainnetForkTest is Test {
             + afterBalances.wethStrategy - beforeBalances.wethStrategy;
         assertEq(veydriftOutflow, 250_000_000 ether);
         assertEq(veydriftOutflow, veydriftDestinations);
-        assertEq(wethOutflow, 10 ether);
+        assertEq(wethOutflow, FORK_BID_WETH);
         assertEq(wethOutflow, wethDestinations);
         assertGt(afterBalances.veydriftPoolManager - beforeBalances.veydriftPoolManager, 0);
         assertGt(afterBalances.wethPoolManager - beforeBalances.wethPoolManager, 0);
@@ -578,7 +601,7 @@ contract VeydriftUniswapLaunchMainnetForkTest is Test {
         _serializeUintString(object, "auctionTickSpacingQ96", context.auction.tickSpacing());
         _serializeUintString(object, "auctionFloorPriceQ96", context.auction.floorPrice());
         _serializeUintString(object, "auctionRequiredWethWei", context.config.requiredWethRaised);
-        _serializeUintString(object, "auctionTestBidWethWei", 10 ether);
+        _serializeUintString(object, "auctionTestBidWethWei", FORK_BID_WETH);
         _serializeUintString(object, "auctionClearingPriceQ96", context.auction.clearingPrice());
         vm.serializeBool(object, "auctionGraduated", context.auction.isGraduated());
         vm.serializeBool(object, "migrationAttempted", context.launcher.migrationAttempted());

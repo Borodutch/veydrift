@@ -150,8 +150,8 @@ if (number("auctionClaimBlock") < number("auctionEndBlock")) fail("claim block p
 if (number("auctionMigrationBlock") <= number("auctionEndBlock")) fail("migration block must follow auction end");
 eq(address("auctionValidationHook"), zero, "auctionValidationHook");
 eq(uint("auctionSupplyWei"), 250_000_000n * 10n ** 18n, "auctionSupplyWei");
-eq(uint("auctionRequiredWethWei"), 1n * 10n ** 18n, "auctionRequiredWethWei");
-eq(uint("auctionTestBidWethWei"), 10n * 10n ** 18n, "auctionTestBidWethWei");
+eq(uint("auctionRequiredWethWei"), 27n * 10n ** 18n, "auctionRequiredWethWei");
+eq(uint("auctionTestBidWethWei"), 54n * 10n ** 18n, "auctionTestBidWethWei");
 if (uint("auctionClearingPriceQ96") <= uint("auctionFloorPriceQ96")) fail("clearing price did not exceed floor");
 eq(manifest.auctionGraduated, true, "auctionGraduated");
 eq(manifest.migrationAttempted, true, "migrationAttempted");
