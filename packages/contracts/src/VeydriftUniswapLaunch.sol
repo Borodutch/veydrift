@@ -167,6 +167,9 @@ interface IUniswapV4StateView {
 /// @dev There is no owner, rescue, or early-unlock path. Once the timestamp passes, anyone may grant
 ///      the immutable beneficiary operator rights; only that beneficiary can then move the NFTs.
 contract VeydriftV4PositionLock {
+    uint8 private constant ACTION_DECREASE_LIQUIDITY = 0x01;
+    uint8 private constant ACTION_TAKE_PAIR = 0x11;
+
     address public immutable positionManager;
     address public immutable beneficiary;
     uint64 public immutable unlockAt;
@@ -175,8 +178,10 @@ contract VeydriftV4PositionLock {
     error InvalidBeneficiary();
     error InvalidUnlockTime();
     error PositionLockActive(uint64 unlockAt);
+    error PositionNotLocked(uint256 tokenId, address actualOwner);
 
     event BeneficiaryApproved(address indexed beneficiary, uint64 indexed unlockAt);
+    event FeesCollected(uint256 indexed tokenId, address indexed beneficiary);
 
     constructor(address positionManager_, address beneficiary_, uint64 unlockAt_) {
         if (positionManager_.code.length == 0) revert InvalidPositionManager();
@@ -195,6 +200,28 @@ contract VeydriftV4PositionLock {
         if (block.timestamp < unlockAt) revert PositionLockActive(unlockAt);
         IUniswapV4PositionManager(positionManager).setApprovalForAll(beneficiary, true);
         emit BeneficiaryApproved(beneficiary, unlockAt);
+    }
+
+    /// @notice Collects only accrued fees for a position held by this lock.
+    /// @dev A zero-liquidity decrease realizes fees without reducing principal liquidity. The
+    ///      resulting pair delta is sent directly to the immutable beneficiary; this contract has
+    ///      no generic PositionManager execution, transfer, burn, or liquidity-withdrawal path.
+    ///      Anyone may trigger collection because the recipient is fixed and cannot be redirected.
+    function collectFees(uint256 tokenId) external {
+        IUniswapV4PositionManager manager = IUniswapV4PositionManager(positionManager);
+        address actualOwner = manager.ownerOf(tokenId);
+        if (actualOwner != address(this)) revert PositionNotLocked(tokenId, actualOwner);
+
+        (VeydriftV4PoolKey memory key,) = manager.getPoolAndPositionInfo(tokenId);
+        bytes memory actions = abi.encodePacked(ACTION_DECREASE_LIQUIDITY, ACTION_TAKE_PAIR);
+        bytes[] memory params = new bytes[](2);
+        params[0] = abi.encode(tokenId, uint256(0), uint128(0), uint128(0), bytes(""));
+        params[1] = abi.encode(key.currency0, key.currency1, beneficiary);
+
+        // The timestamp is evaluated by the PositionManager in this same transaction.
+        // forge-lint: disable-next-line(block-timestamp)
+        manager.modifyLiquidities(abi.encode(actions, params), block.timestamp);
+        emit FeesCollected(tokenId, beneficiary);
     }
 }
 

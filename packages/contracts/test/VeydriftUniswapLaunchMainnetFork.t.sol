@@ -321,6 +321,17 @@ contract VeydriftUniswapLaunchMainnetForkTest is Test {
                 address(lock)
             );
         }
+
+        // The lock may realize and forward accrued fees during the lock, but a fee collection
+        // must not reduce principal liquidity or transfer the position NFT.
+        IUniswapV4PositionManager manager =
+            IUniswapV4PositionManager(VeydriftUniswapDeployments.POSITION_MANAGER);
+        uint256 mainLiquidityBefore = manager.getPositionLiquidity(expectedPositionId);
+        vm.prank(makeAddr("fork-permissionless-fee-collector"));
+        lock.collectFees(expectedPositionId);
+        assertEq(manager.getPositionLiquidity(expectedPositionId), mainLiquidityBefore);
+        assertEq(manager.ownerOf(expectedPositionId), address(lock));
+
         assertEq(token.allowance(authority, address(resourceLauncher)), 0);
         assertEq(metal.allowance(authority, address(resourceLauncher)), 0);
         assertEq(crystal.allowance(authority, address(resourceLauncher)), 0);

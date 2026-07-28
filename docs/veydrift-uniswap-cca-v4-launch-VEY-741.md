@@ -125,9 +125,14 @@ is left.
 ### `VeydriftV4PositionLock`
 
 All four ERC-721 positions mint directly to one immutable lock. It has no owner, rescue method, or
-early release. After the immutable Unix timestamp, anyone may call `approveBeneficiary`; that grants
-only the immutable beneficiary operator approval in the official PositionManager. The beneficiary and
-term must be approved before deployment because neither can be changed.
+early release. During the lock, anyone may call `collectFees(tokenId)` for a position owned by the
+lock. It uses the official PositionManager's zero-liquidity decrease action, which realizes only
+accrued fees, and forwards the resulting pair directly to the immutable beneficiary. It cannot
+reduce liquidity, transfer, burn, or grant NFT approval.
+
+After the immutable Unix timestamp, anyone may call `approveBeneficiary`; that grants only the
+immutable beneficiary operator approval in the official PositionManager. The beneficiary and term
+must be approved before deployment because neither can be changed.
 
 The legacy `VeydriftLiquidityLauncher` is fallback-only. It is not deployed or called by any Uniswap
 script and must not appear in the signed launch bundle.

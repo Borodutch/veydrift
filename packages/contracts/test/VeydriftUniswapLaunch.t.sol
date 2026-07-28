@@ -96,6 +96,9 @@ contract UniswapLaunchMockPositionManager {
     mapping(uint256 => VeydriftV4PoolKey) internal poolKeys;
     mapping(uint256 => uint256) internal positionInfos;
     mapping(uint256 => uint128) internal liquidities;
+    bytes32 public lastModifyLiquiditiesHash;
+    uint256 public lastModifyDeadline;
+    address public lastModifyCaller;
 
     function initialize() external {
         nextTokenId = 1;
@@ -136,8 +139,10 @@ contract UniswapLaunchMockPositionManager {
         isApprovedForAll[msg.sender][operator] = approved;
     }
 
-    function modifyLiquidities(bytes calldata, uint256) external pure {
-        revert("NOT_USED");
+    function modifyLiquidities(bytes calldata unlockData, uint256 deadline) external {
+        lastModifyLiquiditiesHash = keccak256(unlockData);
+        lastModifyDeadline = deadline;
+        lastModifyCaller = msg.sender;
     }
 }
 
@@ -677,6 +682,55 @@ contract VeydriftUniswapLaunchTest is Test {
             UniswapLaunchMockPositionManager(POSITION_MANAGER)
                 .isApprovedForAll(address(lock), lockBeneficiary)
         );
+    }
+
+    function testAnyoneCanCollectLockedPositionFeesOnlyToImmutableBeneficiary() public {
+        VeydriftV4PoolKey memory key = VeydriftV4PoolKey({
+            currency0: WETH < address(token) ? WETH : address(token),
+            currency1: WETH < address(token) ? address(token) : WETH,
+            fee: 500,
+            tickSpacing: 10,
+            hooks: address(0)
+        });
+        uint256 tokenId = UniswapLaunchMockPositionManager(POSITION_MANAGER)
+            .mint(address(lock), key, -887_270, 887_270, 123);
+
+        bytes[] memory params = new bytes[](2);
+        params[0] = abi.encode(tokenId, uint256(0), uint128(0), uint128(0), bytes(""));
+        params[1] = abi.encode(key.currency0, key.currency1, lockBeneficiary);
+        bytes32 expectedCall =
+            keccak256(abi.encode(abi.encodePacked(uint8(0x01), uint8(0x11)), params));
+
+        vm.prank(makeAddr("fee-collection-caller"));
+        lock.collectFees(tokenId);
+
+        UniswapLaunchMockPositionManager manager =
+            UniswapLaunchMockPositionManager(POSITION_MANAGER);
+        assertEq(manager.lastModifyCaller(), address(lock));
+        assertEq(manager.lastModifyDeadline(), block.timestamp);
+        assertEq(manager.lastModifyLiquiditiesHash(), expectedCall);
+        assertEq(manager.getPositionLiquidity(tokenId), 123);
+        assertFalse(manager.isApprovedForAll(address(lock), lockBeneficiary));
+    }
+
+    function testFeeCollectionRejectsPositionNotOwnedByLock() public {
+        VeydriftV4PoolKey memory key = VeydriftV4PoolKey({
+            currency0: WETH < address(token) ? WETH : address(token),
+            currency1: WETH < address(token) ? address(token) : WETH,
+            fee: 500,
+            tickSpacing: 10,
+            hooks: address(0)
+        });
+        address otherOwner = makeAddr("not-the-lock");
+        uint256 tokenId = UniswapLaunchMockPositionManager(POSITION_MANAGER)
+            .mint(otherOwner, key, -887_270, 887_270, 123);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftV4PositionLock.PositionNotLocked.selector, tokenId, otherOwner
+            )
+        );
+        lock.collectFees(tokenId);
     }
 
     function _config()
