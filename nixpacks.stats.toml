@@ -1,0 +1,14 @@
+[phases.setup]
+nixPkgs = ["nodejs_22", "bun"]
+
+[phases.install]
+cmds = ["NODE_ENV=development bun install --frozen-lockfile"]
+
+[phases.build]
+cmds = ["cd apps/stats && bun run build && rm -rf /root/.bun/install/cache /tmp/*"]
+
+[start]
+cmd = "cd apps/stats && bun run start"
+
+[variables]
+NODE_ENV = "production"

@@ -10,6 +10,11 @@ import {
 } from "./contractStateSchema";
 import type { FleetDefenseUnitCount } from "./fleetDefenseParity";
 import {
+  buildPublicStatsSnapshot,
+  type PublicStatsSnapshot,
+  type StatsContractDescriptor
+} from "./stats";
+import {
   attachAttackGroupParticipants,
   decodeAllianceLog,
   decodeAttackMissionLaunch,
@@ -2797,6 +2802,13 @@ export class SettlementIndexer {
 
   indexedStateCacheVersion(): string {
     return this.metadata(indexedStateVersionMetadataKey) ?? this.stateGeneration.toString();
+  }
+
+  publicStatsSnapshot(
+    descriptors: readonly StatsContractDescriptor[],
+    nowSeconds?: number
+  ): PublicStatsSnapshot {
+    return buildPublicStatsSnapshot(this.db, descriptors, nowSeconds);
   }
 
   private productionQueueProjectionCacheVersion(nowSec = nowSeconds()): string {

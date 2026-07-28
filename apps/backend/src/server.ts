@@ -99,7 +99,8 @@ const jsonHeaders = {
 const defaultCorsOrigin = "https://test.veydrift.com";
 const canonicalCorsOrigins = [
   defaultCorsOrigin,
-  "https://veydrift.com"
+  "https://veydrift.com",
+  "https://stats.veydrift.com"
 ] as const;
 
 const corsHeaders = {
@@ -540,6 +541,13 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
     if (request.method === "GET" && url.pathname === "/runtime-config") {
       return runtimeConfigResponse(workerRole);
+    }
+
+    if (request.method === "GET" && url.pathname === "/stats") {
+      if (!indexer) return unavailableResponse(loaded.problems);
+      return Response.json(indexer.publicStatsSnapshot(statsContractDescriptors(loaded.config)), {
+        headers: corsHeaders
+      });
     }
 
     if (request.method === "GET" && url.pathname === "/cca") {
@@ -2051,6 +2059,29 @@ function allowedCorsOrigins(): Set<string> {
   ]);
 }
 
+function statsContractDescriptors(config: BackendConfig): Array<{ address: string; label: string }> {
+  const candidates: Array<[string | undefined, string]> = [
+    [config.gameContractAddress, "Game"],
+    [config.settlementContractAddress, "Settlement"],
+    [config.randomnessEngineAddress, "Randomness"],
+    [config.allianceContractAddress, "Alliances"],
+    [config.moonContractAddress, "Moons"],
+    [config.migrationContractAddress, "Migration"],
+    [config.referralSystemAddress, "Referrals"],
+    [config.resourceTokenAddresses.metal, "vMETAL"],
+    [config.resourceTokenAddresses.crystal, "vCRYSTAL"],
+    [config.resourceTokenAddresses.deuterium, "vDEUTERIUM"]
+  ];
+  const labels = new Map<string, string>();
+  for (const [address, label] of candidates) {
+    if (!address) continue;
+    const normalized = address.toLowerCase();
+    const previous = labels.get(normalized);
+    labels.set(normalized, previous ? `${previous} / ${label}` : label);
+  }
+  return [...labels].map(([address, label]) => ({ address, label }));
+}
+
 function parseCorsOrigins(value: string | undefined): string[] {
   return (value ?? "")
     .split(",")
@@ -2267,6 +2298,7 @@ function cacheableJsonRequestTtlMs(request: Request, url: URL): number {
   if (url.pathname === "/chain/events") return 0;
   if (url.pathname === "/cca") return 4_000;
   if (url.pathname === "/health") return 10_000;
+  if (url.pathname === "/stats") return 30_000;
   if (url.pathname === "/highscores") return livePublicDataRequest(url) ? 1_000 : 300_000;
   if (url.pathname === "/raid-finder/debris") return 30_000;
   if (url.pathname === "/raid-finder/rifters") return 30_000;
@@ -2306,6 +2338,7 @@ function cacheableJsonRequestStaleKey(request: Request, url: URL, cacheKey: stri
 
 function cacheableJsonRequestVersion(url: URL, indexer: SettlementIndexer): string {
   if (url.pathname === "/health") return "ttl";
+  if (url.pathname === "/stats") return "ttl";
   if (url.pathname === "/highscores") return livePublicDataRequest(url) ? indexer.indexedStateCacheVersion() : "ttl";
   if (url.pathname === "/raid-finder/debris") return "ttl";
   if (url.pathname === "/raid-finder/rifters") return "ttl";

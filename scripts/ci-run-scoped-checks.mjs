@@ -110,6 +110,7 @@ function main() {
   if (scope.frontend) {
     runLogged("frontend-precheck", "bash", ["-lc", "cd apps/frontend && bun scripts/generate-image-variants.mjs"]);
     runLogged("frontend-typecheck", "bash", ["-lc", "cd apps/frontend && ../../node_modules/.bin/tsc --project tsconfig.json"]);
+    runLogged("stats-check", "bun", ["run", "check:stats"]);
   }
 
   if (scope.circuits) {
