@@ -10,11 +10,13 @@ import {
 import {
   BASE_MAINNET,
   ensureBaseMainnetNetwork,
+  getAvailableWalletProviderDetails,
   requestAccounts,
   type Eip1193Provider,
 } from "./walletFlow";
 import { playableApiUrl } from "./runtimeConfig";
 import { isBidPriceAboveClearingPrice } from "./ccaBidPrice";
+import { signalFarcasterReadyOnce } from "./farcasterReady";
 
 const AUCTION = "0x7Ce8e4cC7563a9711A3D52d48439F6dfA4C1B67F" as Address;
 const WETH = "0x4200000000000000000000000000000000000006" as Address;
@@ -251,9 +253,10 @@ export function CcaApp() {
   const [message, setMessage] = useState("Loading live Base auction data.");
   const [reviewing, setReviewing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [walletProvider, setWalletProvider] = useState<Eip1193Provider>();
   const [wethBalance, setWethBalance] = useState<bigint | null>(null);
 
-  const refresh = useCallback(async (activeProvider = providerFromWindow(), activeAccount = account) => {
+  const refresh = useCallback(async (activeProvider = walletProvider ?? providerFromWindow(), activeAccount = account) => {
     try {
       setAuction(await fetchAuctionState());
       if (activeProvider && activeAccount) {
@@ -268,7 +271,7 @@ export function CcaApp() {
     } catch {
       setMessage("Live auction data is temporarily unavailable. Wallet actions remain disabled until it reconnects.");
     }
-  }, [account]);
+  }, [account, walletProvider]);
 
   useEffect(() => {
     document.title = "$VEYDRIFT CCA | Bid on Base";
@@ -278,15 +281,22 @@ export function CcaApp() {
   }, [refresh]);
 
   const connect = useCallback(async () => {
-    const provider = providerFromWindow();
+    await signalFarcasterReadyOnce();
+    const available = await getAvailableWalletProviderDetails(
+      window as typeof window & { ethereum?: Eip1193Provider },
+      undefined,
+      { preferFarcasterProvider: true },
+    );
+    const provider = available?.provider;
     if (!provider) {
-      setMessage("No injected wallet found. Open this page in a wallet browser or install a Base-compatible wallet.");
+      setMessage("No Base wallet found. Open this page in a wallet browser or a Farcaster Mini App host with wallet support.");
       return;
     }
     try {
       await ensureBaseMainnetNetwork(provider);
       const [connected] = await requestAccounts(provider);
       const normalized = connected as Address;
+      setWalletProvider(provider);
       setAccount(normalized);
       await refresh(provider, normalized);
     } catch (error) {
@@ -365,7 +375,7 @@ export function CcaApp() {
   }, [account, amountWei, auction.currentBlock, auction.endBlock, connect, fundingError, maxPriceQ96, priceError]);
 
   const bid = useCallback(async () => {
-    const provider = providerFromWindow();
+    const provider = walletProvider ?? providerFromWindow();
     if (!provider || !account) {
       setMessage("Connect a Base wallet before placing a bid.");
       return;
@@ -434,7 +444,7 @@ export function CcaApp() {
     } finally {
       setSubmitting(false);
     }
-  }, [account, amountWei, fundingCurrency, maxPriceQ96, priceError, refresh]);
+  }, [account, amountWei, fundingCurrency, maxPriceQ96, priceError, refresh, walletProvider]);
 
   return (
     <main className="cca-shell">
