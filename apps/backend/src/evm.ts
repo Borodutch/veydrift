@@ -1147,6 +1147,7 @@ export type AttackProtectionStatus = {
   defenderHonorStatus: HonorStatus;
   plunderBps: number;
   defenderInactive: boolean;
+  riftProtectionBypass?: boolean;
   transportAllowed?: boolean;
   transportBlockReason?: TransportBlockReason;
   transportBlockReasonLabel?: string | null;

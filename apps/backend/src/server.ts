@@ -5062,6 +5062,10 @@ function indexedAttackProtectionResponse(
   const scoreProtected = !defenderInactive
     && !atWar
     && isIndexedScoreProtected(attackerProtectionScore, defenderProtectionScore);
+  // A nonzero planet-scoped Rift lock is fully contestable: it bypasses score/newbie and
+  // bashing gates, but never same-alliance protection.
+  const riftProtectionBypass = !sameAlliance
+    && indexer.hasLiveRiftExtraction(targetPlanetId.toString());
   const scoreComparison = attackProtectionScoreComparison(attacker, defender, scoreProtected);
   // VEY-KANEO-489: also replay the per-(attacker, planet) bashing window the contract enforces. Self
   // attacks are rejected upstream by the contract and carry no window; a self-target read just returns
@@ -5079,9 +5083,9 @@ function indexedAttackProtectionResponse(
     );
   const blockedReason: AttackBlockReason = sameAlliance
     ? "same_alliance"
-    : scoreProtected
+    : scoreProtected && !riftProtectionBypass
       ? "score_protection"
-      : bashingLimited
+      : bashingLimited && !riftProtectionBypass
         ? "bashing_limit"
         : "none";
   const transportBlockReason = attackerKey === defenderKey
@@ -5109,6 +5113,7 @@ function indexedAttackProtectionResponse(
     transportBlockReason,
     transportBlockReasonLabel: transportBlockReasonLabel(transportBlockReason),
     scoreComparison,
+    ...(riftProtectionBypass ? { riftProtectionBypass: true } : {}),
     ...(atWar ? { atWar: true } : {}),
     ...(defenderAlliance ? { targetAlliance: defenderAlliance } : {}),
     source: indexedSource
