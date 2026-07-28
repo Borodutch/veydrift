@@ -128,7 +128,7 @@ export function computeScope(options = {}) {
     scope.contracts = true;
     scope.circuits = true;
   } else {
-    scope.frontend = anyMatch(files, /^(apps\/frontend|packages\/universe)\//);
+    scope.frontend = anyMatch(files, /^(apps\/(frontend|stats)|packages\/universe)\//);
     scope.backend = filesRequireBackendChecks(files);
     scope.universe = anyMatch(files, /^packages\/universe\//);
     scope.contracts = anyMatch(files, /^packages\/contracts\//);
