@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "preact/hooks";
+import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import {
   encodeFunctionData,
   formatEther,
@@ -111,7 +111,17 @@ type AuctionState = {
   ethUsdReference: number;
   floorPriceQ96: bigint;
   graduated: boolean;
+  recentBids: CcaSubmittedBid[];
   startBlock: bigint;
+};
+
+type CcaSubmittedBid = {
+  amountWei: string;
+  bidId: string;
+  blockNumber: string;
+  maxPriceQ96: string;
+  owner: string;
+  transactionHash: string;
 };
 
 type CcaApiPayload = {
@@ -122,6 +132,7 @@ type CcaApiPayload = {
   ethUsdReference?: number;
   floorPriceQ96: string;
   graduated: boolean;
+  recentBids?: CcaSubmittedBid[];
   startBlock: string;
 };
 
@@ -135,6 +146,7 @@ const launchSnapshot: AuctionState = {
   ethUsdReference: DEFAULT_ETH_USD,
   floorPriceQ96: DEFAULT_FLOOR_PRICE_Q96,
   graduated: false,
+  recentBids: [],
   startBlock: AUCTION_START_BLOCK,
 };
 
@@ -210,6 +222,7 @@ async function fetchAuctionState() {
     ethUsdReference: Number.isFinite(state.ethUsdReference) ? Number(state.ethUsdReference) : DEFAULT_ETH_USD,
     floorPriceQ96: BigInt(state.floorPriceQ96),
     graduated: state.graduated,
+    recentBids: state.recentBids ?? [],
     startBlock: BigInt(state.startBlock),
   } satisfies AuctionState;
 }
@@ -249,7 +262,8 @@ export function CcaApp() {
   const [auction, setAuction] = useState<AuctionState>(launchSnapshot);
   const [ethBalance, setEthBalance] = useState<bigint | null>(null);
   const [fundingCurrency, setFundingCurrency] = useState<FundingCurrency>("eth");
-  const [maxFdv, setMaxFdv] = useState("108");
+  const [maxFdv, setMaxFdv] = useState("109");
+  const maxFdvIsAutomatic = useRef(true);
   const [message, setMessage] = useState("Loading live Base auction data.");
   const [reviewing, setReviewing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -307,6 +321,9 @@ export function CcaApp() {
   const floorFdv = useMemo(() => fdvFromQ96(auction.floorPriceQ96), [auction.floorPriceQ96]);
   const clearingFdv = useMemo(() => fdvFromQ96(auction.clearingPriceQ96 || auction.floorPriceQ96), [auction.clearingPriceQ96, auction.floorPriceQ96]);
   const minimumBidFdv = useMemo(() => Math.max(Math.ceil(floorFdv), Math.floor(clearingFdv) + 1), [clearingFdv, floorFdv]);
+  useEffect(() => {
+    if (maxFdvIsAutomatic.current) setMaxFdv(String(minimumBidFdv));
+  }, [minimumBidFdv]);
   const sliderMaxFdv = useMemo(() => Math.max(minimumBidFdv, Math.ceil(floorFdv * 25), 2_700), [floorFdv, minimumBidFdv]);
   const maxPriceQ96 = useMemo(() => {
     try {
@@ -497,8 +514,8 @@ export function CcaApp() {
           {fundingError && <p className="cca-error" role="alert">{fundingError}</p>}
 
           <div className="cca-fdv-heading"><label className="cca-input-label" htmlFor="cca-max-fdv">Max FDV</label><span>{formatUsd(Number(maxFdv || "0") * auction.ethUsdReference)}</span></div>
-          <div className="cca-input-wrap"><input id="cca-max-fdv" inputMode="decimal" value={maxFdv} onInput={(event) => setMaxFdv((event.currentTarget as HTMLInputElement).value)} /><strong>WETH</strong></div>
-          <input className="cca-slider" type="range" min={minimumBidFdv} max={sliderMaxFdv} step="1" value={Math.min(Math.max(Number(maxFdv) || minimumBidFdv, minimumBidFdv), sliderMaxFdv)} onInput={(event) => setMaxFdv((event.currentTarget as HTMLInputElement).value)} aria-label="Maximum fully diluted value" />
+          <div className="cca-input-wrap"><input id="cca-max-fdv" inputMode="decimal" value={maxFdv} onInput={(event) => { maxFdvIsAutomatic.current = false; setMaxFdv((event.currentTarget as HTMLInputElement).value); }} /><strong>WETH</strong></div>
+          <input className="cca-slider" type="range" min={minimumBidFdv} max={sliderMaxFdv} step="1" value={Math.min(Math.max(Number(maxFdv) || minimumBidFdv, minimumBidFdv), sliderMaxFdv)} onInput={(event) => { maxFdvIsAutomatic.current = false; setMaxFdv((event.currentTarget as HTMLInputElement).value); }} aria-label="Maximum fully diluted value" />
           <div className="cca-slider-labels"><span>Minimum {formatCompactWeth(BigInt(minimumBidFdv) * E18)} WETH</span><span>{formatCompactWeth(BigInt(sliderMaxFdv) * E18)} WETH</span></div>
           {priceError ? <p className="cca-error">{priceError}</p> : <p className="cca-balance">Max price: {maxPrice} WETH / VEY · USD is indicative only.</p>}
 
@@ -514,6 +531,16 @@ export function CcaApp() {
             <div><button type="button" onClick={() => setReviewing(false)}>Back</button><button type="button" disabled={submitting} onClick={() => void bid()}>Confirm bid</button></div>
           </div>}
         </article>
+      </section>
+
+      <section className="cca-live-bids" aria-labelledby="cca-live-bids-heading">
+        <div className="cca-live-bids-heading"><div><p className="cca-eyebrow">CONFIRMED ON BASE</p><h2 id="cca-live-bids-heading">Live bids</h2></div><span>{auction.recentBids.length ? `${auction.recentBids.length} recent` : "Waiting for bids"}</span></div>
+        {auction.recentBids.length === 0 ? <p className="cca-live-bids-empty">No confirmed bids yet. Reverted wallet transactions are never shown here.</p> : <ol className="cca-live-bids-list">
+          {auction.recentBids.map((bid) => <li key={`${bid.transactionHash}-${bid.bidId}`}>
+            <div><strong>{formatCompactWeth(BigInt(bid.amountWei))} WETH</strong><span>max {formatCompactWeth(BigInt(Math.round(fdvFromQ96(BigInt(bid.maxPriceQ96)))) * E18)} WETH FDV</span></div>
+            <div><span>{shortAddress(bid.owner)} · block {BigInt(bid.blockNumber).toLocaleString()}</span><a href={`https://basescan.org/tx/${bid.transactionHash}`} target="_blank" rel="noreferrer">View tx ↗</a></div>
+          </li>)}
+        </ol>}
       </section>
 
       <section className="cca-how" id="how-it-works">

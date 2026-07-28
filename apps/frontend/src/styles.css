@@ -194,6 +194,20 @@ body {
   margin-inline: auto;
 }
 
+.cca-live-bids { width: min(1120px, calc(100% - 40px)); margin: 18px auto 0; padding: 1.4rem 1.6rem; border: 1px solid rgba(255,255,255,0.095); border-radius: 24px; background: rgba(18, 17, 25, 0.7); box-shadow: 0 18px 70px rgba(0,0,0,0.18); }
+.cca-live-bids-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 1rem; }
+.cca-live-bids-heading .cca-eyebrow { margin-bottom: 0.45rem; }
+.cca-live-bids-heading h2 { margin: 0; font-size: 1.25rem; letter-spacing: -0.04em; }
+.cca-live-bids-heading > span { color: #cfc8ff; font-size: 0.7rem; font-weight: 750; }
+.cca-live-bids-empty { margin: 1.25rem 0 0; color: rgba(246,247,251,0.48); font-size: 0.78rem; }
+.cca-live-bids-list { display: grid; gap: 0; margin: 1.1rem 0 0; padding: 0; list-style: none; }
+.cca-live-bids-list li { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 0.8rem 0; border-top: 1px solid rgba(255,255,255,0.075); }
+.cca-live-bids-list li > div { display: grid; gap: 0.22rem; }
+.cca-live-bids-list li > div:last-child { justify-items: end; }
+.cca-live-bids-list strong { font-size: 0.85rem; }
+.cca-live-bids-list span { color: rgba(246,247,251,0.48); font-size: 0.7rem; }
+.cca-live-bids-list a { color: #f4a4d8; font-size: 0.7rem; font-weight: 750; text-decoration: none; }
+
 .cca-topbar {
   display: flex;
   align-items: center;
@@ -315,6 +329,8 @@ body {
   .cca-hero { align-items: flex-start; flex-direction: column; padding: 3.7rem 0 2.5rem; }
   .cca-grid { grid-template-columns: 1fr; }
   .cca-price { margin-top: 2.8rem; }
+  .cca-live-bids-list li { align-items: flex-start; flex-direction: column; }
+  .cca-live-bids-list li > div:last-child { justify-items: start; }
   .cca-how { grid-template-columns: auto 1fr; }
 }
 

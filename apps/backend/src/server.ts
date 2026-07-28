@@ -134,6 +134,8 @@ const burningChickenCoordinateBurnSelector = "0x6364233d";
 const ccaAuctionAddress = "0x7Ce8e4cC7563a9711A3D52d48439F6dfA4C1B67F" as ViemAddress;
 const ccaWethAddress = "0x4200000000000000000000000000000000000006" as ViemAddress;
 const ccaEthUsdFallback = 1_917.467;
+const ccaBidSubmittedTopic = "0x650baad5cd8ca09b8f580be220fa04ce2ba905a041f764b6a3fe2c848eb70540";
+const ccaRecentBidLimit = 12;
 
 const ccaAuctionReadAbi = [
   { type: "function", name: "clearingPrice", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "uint256" }] },
@@ -154,6 +156,42 @@ const erc20BalanceReadAbi = [
 ] as const;
 
 let ccaEthUsdCache: { expiresAt: number; value: number } | null = null;
+
+export type CcaSubmittedBid = {
+  amountWei: string;
+  bidId: string;
+  blockNumber: string;
+  maxPriceQ96: string;
+  owner: string;
+  transactionHash: string;
+};
+
+/** Decode Uniswap's BidSubmitted(uint256,address,uint256,uint128) event. */
+export function decodeCcaSubmittedBid(log: RpcLog): CcaSubmittedBid | null {
+  const [topic, bidIdTopic, ownerTopic] = log.topics;
+  const data = log.data.startsWith("0x") ? log.data.slice(2) : "";
+  if (
+    topic?.toLowerCase() !== ccaBidSubmittedTopic
+    || !bidIdTopic?.startsWith("0x")
+    || !ownerTopic?.startsWith("0x")
+    || ownerTopic.length !== 66
+    || data.length !== 128
+    || !/^[0-9a-fA-F]+$/.test(data)
+  ) return null;
+
+  try {
+    return {
+      amountWei: BigInt(`0x${data.slice(64, 128)}`).toString(),
+      bidId: BigInt(bidIdTopic).toString(),
+      blockNumber: BigInt(log.blockNumber).toString(),
+      maxPriceQ96: BigInt(`0x${data.slice(0, 64)}`).toString(),
+      owner: `0x${ownerTopic.slice(-40)}`.toLowerCase(),
+      transactionHash: log.transactionHash
+    };
+  } catch {
+    return null;
+  }
+}
 
 type GraphQLPayload = {
   query?: string;
@@ -1859,6 +1897,21 @@ async function ccaStateResponse(rpc: HttpJsonRpcTransport): Promise<Response> {
     throw new Error("CCA RPC response was incomplete.");
   }
 
+  const recentBids = await rpc.request<RpcLog[]>("eth_getLogs", [{
+    address: ccaAuctionAddress,
+    fromBlock: toQuantity(BigInt(startBlock!)),
+    toBlock: currentBlock!,
+    topics: [ccaBidSubmittedTopic]
+  }]).then((logs) => logs
+    .map(decodeCcaSubmittedBid)
+    .filter((bid): bid is CcaSubmittedBid => bid !== null)
+    .sort((left, right) => {
+      const blockOrder = BigInt(right.blockNumber) - BigInt(left.blockNumber);
+      if (blockOrder !== 0n) return blockOrder > 0n ? 1 : -1;
+      return right.bidId.localeCompare(left.bidId, undefined, { numeric: true });
+    })
+    .slice(0, ccaRecentBidLimit), () => []);
+
   return Response.json({
     auction: ccaAuctionAddress,
     bidVolumeWei: BigInt(bidVolume!).toString(),
@@ -1868,6 +1921,7 @@ async function ccaStateResponse(rpc: HttpJsonRpcTransport): Promise<Response> {
     ethUsdReference: await ccaEthUsdReference(),
     floorPriceQ96: BigInt(floorPrice!).toString(),
     graduated: BigInt(graduated!) !== 0n,
+    recentBids,
     startBlock: BigInt(startBlock!).toString(),
     weth: ccaWethAddress,
     updatedAt: new Date().toISOString()
