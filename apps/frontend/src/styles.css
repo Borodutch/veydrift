@@ -340,7 +340,8 @@ body:has(.playable-starfield) .cca-launch-banner:not(.cca-launch-banner--game) {
 .cca-submit:disabled { cursor: not-allowed; opacity: 0.58; }
 .cca-notice { color: rgba(246,247,251,0.48); }
 .cca-message { min-height: 2rem; color: #c7d0ff; }
-.cca-review { margin-top: 1rem; padding: 1rem; border: 1px solid rgba(250,98,199,0.32); border-radius: 14px; background: rgba(15,12,20,0.92); box-shadow: 0 14px 32px rgba(0,0,0,0.3); }
+.cca-review { margin-top: 1rem; padding: 1rem; scroll-margin-block: 1rem; border: 1px solid rgba(250,98,199,0.32); border-radius: 14px; outline: 0; background: rgba(15,12,20,0.92); box-shadow: 0 14px 32px rgba(0,0,0,0.3); }
+.cca-review:focus-visible { border-color: rgba(250,98,199,0.72); box-shadow: 0 0 0 3px rgba(238,119,198,0.14), 0 14px 32px rgba(0,0,0,0.3); }
 .cca-review > strong { color: #fff; font-size: 0.87rem; }
 .cca-review p { margin: 0.62rem 0; color: rgba(246,247,251,0.6); font-size: 0.73rem; line-height: 1.55; }
 .cca-review p b { color: #fff; }
