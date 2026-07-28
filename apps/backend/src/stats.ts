@@ -93,7 +93,12 @@ export function buildPublicStatsSnapshot(
     SELECT
       CAST(MIN(CAST(block_number AS INTEGER)) AS INTEGER) AS from_block,
       CAST(MAX(CAST(block_number AS INTEGER)) AS INTEGER) AS through_block,
-      CAST(MIN(CAST(json_extract(event_json, '$.blockTimestamp') AS INTEGER)) AS INTEGER) AS from_timestamp,
+      CAST(MIN(
+        CASE
+          WHEN CAST(json_extract(event_json, '$.blockTimestamp') AS INTEGER) > 0
+          THEN CAST(json_extract(event_json, '$.blockTimestamp') AS INTEGER)
+        END
+      ) AS INTEGER) AS from_timestamp,
       CAST(MAX(CAST(json_extract(event_json, '$.blockTimestamp') AS INTEGER)) AS INTEGER) AS through_timestamp
     FROM indexed_event_logs
     WHERE removed = 0
@@ -204,12 +209,12 @@ export function buildPublicStatsSnapshot(
       newPlayers7d,
       activePlayers24h: numberValue(
         db,
-        "SELECT COUNT(*) AS value FROM indexed_player_activity WHERE unixepoch(last_active_at) >= ?",
+        "SELECT COUNT(*) AS value FROM indexed_player_activity WHERE CAST(last_active_at AS INTEGER) >= ?",
         nowSeconds - 86_400
       ),
       activePlayers7d: numberValue(
         db,
-        "SELECT COUNT(*) AS value FROM indexed_player_activity WHERE unixepoch(last_active_at) >= ?",
+        "SELECT COUNT(*) AS value FROM indexed_player_activity WHERE CAST(last_active_at AS INTEGER) >= ?",
         nowSeconds - 7 * 86_400
       ),
       planets,

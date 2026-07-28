@@ -56,7 +56,7 @@ describe("public stats snapshot", () => {
       INSERT INTO contract_planets VALUES ('2');
       INSERT INTO contract_fleet_missions VALUES ('7');
       INSERT INTO contract_alliances VALUES ('9', 1);
-      INSERT INTO indexed_player_activity VALUES ('${player}', '${new Date((now - 10) * 1_000).toISOString()}', 'c');
+      INSERT INTO indexed_player_activity VALUES ('${player}', '${now - 10}', 'c');
     `);
 
     const stats = buildPublicStatsSnapshot(db, [{ address: game, label: "Game" }], now);
