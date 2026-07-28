@@ -144,4 +144,14 @@ describe("CCA bid transaction ordering", () => {
     expect(source).toContain("Updates automatically");
     expect(source).toContain("auction.walletBids.map");
   });
+
+  test("explains budget, FDV, partial fills, and the official CCA AI reference", async () => {
+    const source = await Bun.file(new URL("./CcaApp.tsx", import.meta.url)).text();
+
+    expect(source).toContain("Your budget is the most WETH this order can use.");
+    expect(source).toContain("partial fill");
+    expect(source).toContain("that order slice does not execute");
+    expect(source).toContain('href="https://cca.uniswap.org/"');
+    expect(source).toContain("cannot predict the final clearing price");
+  });
 });

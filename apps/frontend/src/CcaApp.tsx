@@ -513,7 +513,7 @@ export function CcaApp() {
 
         <article className="cca-bid-card">
           <div className="cca-card-heading"><span>Place a bid</span><span className="cca-status">{stateLabel}</span></div>
-          <p className="cca-explainer">Your maximum FDV determines the most you will pay. It is a limit, not an instant market purchase.</p>
+          <p className="cca-explainer">Your budget is the most WETH this order can use. Your maximum FDV is the highest valuation you accept; it is a price ceiling, not an instant market purchase.</p>
           <div className="cca-tabs" role="tablist" aria-label="Bid funding currency">
             <button className={fundingCurrency === "eth" ? "active" : ""} type="button" onClick={() => setFundingCurrency("eth")}>Use ETH</button>
             <button className={fundingCurrency === "weth" ? "active" : ""} type="button" onClick={() => setFundingCurrency("weth")}>Use WETH</button>
@@ -533,6 +533,12 @@ export function CcaApp() {
           {priceError ? <p className="cca-error">{priceError}</p> : <p className="cca-balance">Max price: {maxPrice} WETH / VEY · USD is indicative only.</p>}
 
           <div className="cca-receive"><span>Estimated receive at your max price</span><strong>{formatVey(estimatedReceive)} VEY</strong></div>
+          <div className="cca-bid-guidance">
+            <strong>How this estimate can change</strong>
+            <p>Your order is split across auction blocks. This estimate assumes your whole budget fills at your selected maximum FDV. If a block clears below your ceiling, each executed WETH buys more VEY.</p>
+            <p>You can receive fewer VEY than this estimate when only part of your budget fills (a partial fill), or when a block clears above your maximum FDV and that order slice does not execute.</p>
+            <p className="cca-ai-note">Choosing an FDV? Give an AI agent <a href="https://cca.uniswap.org/" target="_blank" rel="noreferrer">Uniswap’s CCA reference ↗</a> with your budget and risk tolerance. It cannot predict the final clearing price and is not investment advice.</p>
+          </div>
           <button className="cca-submit" type="button" disabled={submitting || stateLabel === "Ended" || Boolean(account && (fundingError || priceError))} onClick={() => void openReview()}>{submitting ? "Confirm in wallet…" : account && priceError ? "Raise max FDV" : account && fundingError ? fundingCurrency === "weth" ? "Wrap ETH or lower budget" : "Lower ETH budget" : account ? "Review bid" : "Connect wallet to bid"}</button>
           <p className="cca-notice">{fundingCurrency === "eth" ? "ETH is wrapped into WETH before the bid (four wallet confirmations)." : "WETH bidding requires three wallet confirmations."} This page never receives custody.</p>
           <p className="cca-message" role="status">{message}</p>
