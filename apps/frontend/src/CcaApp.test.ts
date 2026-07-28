@@ -1,14 +1,119 @@
 import { describe, expect, test } from "bun:test";
+import { formatUnits } from "viem";
 
-import { isBidPriceAboveClearingPrice } from "./ccaBidPrice";
+import { executeCcaBidSequence, readCcaAuctionBoundary } from "./ccaBidFlow";
+import {
+  ccaBidPriceError,
+  fdvToPriceQ96,
+  isBidPriceAboveClearingPrice,
+  minimumFdvWeiAboveClearingPriceQ96,
+} from "./ccaBidPrice";
+import type { Eip1193Provider } from "./walletFlow";
+
+const clearingPriceQ96 = 8_556_641_551_540_548_460_102n;
 
 describe("CCA bid price validation", () => {
-  test("rejects a bid whose maximum price equals the clearing price", () => {
-    expect(isBidPriceAboveClearingPrice(8_556_641_551_540_548_460_102n, 8_556_641_551_540_548_460_102n)).toBe(false);
+  test("rejects equality through the production FDV-to-Q96 conversion", () => {
+    const firstAcceptedFdvWei = minimumFdvWeiAboveClearingPriceQ96(clearingPriceQ96);
+    const equalFdv = formatUnits(firstAcceptedFdvWei - 1n, 18);
+    const equalPriceQ96 = fdvToPriceQ96(equalFdv);
+
+    expect(equalPriceQ96).toBe(clearingPriceQ96);
+    expect(isBidPriceAboveClearingPrice(equalPriceQ96, clearingPriceQ96)).toBe(false);
+    expect(ccaBidPriceError(equalPriceQ96, clearingPriceQ96)).toContain(
+      `Smallest accepted max FDV: ${formatUnits(firstAcceptedFdvWei, 18)} WETH.`,
+    );
   });
 
-  test("accepts the smallest Q96 value above the clearing price", () => {
-    expect(isBidPriceAboveClearingPrice(8_556_641_551_540_548_460_103n, 8_556_641_551_540_548_460_102n)).toBe(true);
+  test("accepts the minimally representable FDV above clearing", () => {
+    const firstAcceptedFdv = formatUnits(minimumFdvWeiAboveClearingPriceQ96(clearingPriceQ96), 18);
+    const convertedPriceQ96 = fdvToPriceQ96(firstAcceptedFdv);
+
+    expect(convertedPriceQ96).toBeGreaterThan(clearingPriceQ96);
+    expect(isBidPriceAboveClearingPrice(convertedPriceQ96, clearingPriceQ96)).toBe(true);
+  });
+});
+
+describe("CCA bid transaction ordering", () => {
+  test("reads the official clearing price, end block, and latest block from the connected provider", async () => {
+    const auction = "0x7Ce8e4cC7563a9711A3D52d48439F6dfA4C1B67F" as const;
+    const requests: Array<{ method: string; params?: unknown[] }> = [];
+    let auctionRead = 0;
+    const provider: Eip1193Provider = {
+      request: async <T>(args: { method: string; params?: unknown[] }) => {
+        requests.push(args);
+        if (args.method === "eth_blockNumber") return "0x64" as T;
+        if (args.method === "eth_call") {
+          const value = auctionRead === 0 ? clearingPriceQ96 : 101n;
+          auctionRead += 1;
+          return `0x${value.toString(16)}` as T;
+        }
+        throw new Error(`Unexpected provider request: ${args.method}`);
+      },
+    };
+
+    await expect(readCcaAuctionBoundary(provider, auction)).resolves.toEqual({
+      clearingPriceQ96,
+      currentBlock: 100n,
+      endBlock: 101n,
+    });
+    expect(requests.map(({ method }) => method)).toEqual([
+      "eth_call",
+      "eth_call",
+      "eth_blockNumber",
+    ]);
+    expect(requests.slice(0, 2).every(({ params }) =>
+      (params?.[0] as { to?: string } | undefined)?.to === auction
+    )).toBe(true);
+  });
+
+  test("revalidates after ETH wrap and approvals, immediately before submit", async () => {
+    const calls: string[] = [];
+
+    await executeCcaBidSequence({
+      fundingCurrency: "eth",
+      wrapEth: async () => { calls.push("wrap"); },
+      approveWeth: async () => { calls.push("weth approval"); },
+      approvePermit2: async () => { calls.push("permit2 approval"); },
+      revalidateAuction: async () => { calls.push("final revalidation"); },
+      submitBid: async () => {
+        calls.push("submit bid");
+        return "0xbid";
+      },
+    });
+
+    expect(calls).toEqual([
+      "wrap",
+      "weth approval",
+      "permit2 approval",
+      "final revalidation",
+      "submit bid",
+    ]);
+  });
+
+  test("does not submit when the final revalidation rejects stale equality", async () => {
+    const calls: string[] = [];
+
+    await expect(executeCcaBidSequence({
+      fundingCurrency: "weth",
+      wrapEth: async () => { calls.push("wrap"); },
+      approveWeth: async () => { calls.push("weth approval"); },
+      approvePermit2: async () => { calls.push("permit2 approval"); },
+      revalidateAuction: async () => {
+        calls.push("final revalidation");
+        throw new Error(ccaBidPriceError(clearingPriceQ96, clearingPriceQ96) ?? "unexpected");
+      },
+      submitBid: async () => {
+        calls.push("submit bid");
+        return "0xbid";
+      },
+    })).rejects.toThrow("strictly above the live clearing price");
+
+    expect(calls).toEqual([
+      "weth approval",
+      "permit2 approval",
+      "final revalidation",
+    ]);
   });
 
   test("uses the Farcaster Mini App wallet provider for CCA connections", async () => {
