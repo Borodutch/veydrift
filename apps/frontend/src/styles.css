@@ -222,6 +222,15 @@ body:has(.playable-starfield) .cca-launch-banner:not(.cca-launch-banner--game) {
 .cca-wallet-bids-prompt { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-top: 1.1rem; padding-top: 1rem; border-top: 1px solid rgba(255,255,255,0.075); }
 .cca-wallet-bids-prompt p { margin: 0; color: rgba(246,247,251,0.58); font-size: 0.78rem; }
 .cca-wallet-bids-prompt button { flex: 0 0 auto; border: 0; border-radius: 10px; padding: 0.55rem 0.72rem; color: #16121d; background: linear-gradient(120deg, #fa62c7, #a996ff); font-size: 0.72rem; font-weight: 850; cursor: pointer; }
+.cca-wallet-bid-row > div:last-child { min-width: 15rem; }
+.cca-bid-exit-status { color: rgba(246,247,251,0.68) !important; font-weight: 700; }
+.cca-bid-exit-eligible { color: #9ff3c8 !important; }
+.cca-bid-exit-exited { color: #aeb4c4 !important; }
+.cca-bid-exit-outbid-waiting,
+.cca-bid-exit-unavailable { color: #f2c784 !important; }
+.cca-wallet-bid-actions { display: flex; align-items: center; justify-content: flex-end; gap: 0.65rem; }
+.cca-wallet-bid-actions button { border: 0; border-radius: 9px; padding: 0.48rem 0.62rem; color: #17121d; background: linear-gradient(120deg, #fa62c7, #a996ff); font-size: 0.68rem; font-weight: 850; cursor: pointer; }
+.cca-wallet-bid-actions button:disabled { cursor: wait; opacity: 0.55; }
 .cca-wallet-bids-source { margin: 1rem 0 0; color: rgba(246,247,251,0.4); font-size: 0.67rem; line-height: 1.5; }
 .cca-wallet-bids-source code { color: #cfc8ff; font: inherit; }
 .cca-settlement-action { border: 0; border-radius: 8px; padding: 0.45rem 0.62rem; color: #16121d; background: linear-gradient(120deg, #fa62c7, #a996ff); font: inherit; font-size: 0.68rem; font-weight: 850; cursor: pointer; }
@@ -364,6 +373,8 @@ body:has(.playable-starfield) .cca-launch-banner:not(.cca-launch-banner--game) {
   .cca-price { margin-top: 2.8rem; }
   .cca-live-bids-list li { align-items: flex-start; flex-direction: column; }
   .cca-live-bids-list li > div:last-child { justify-items: start; }
+  .cca-wallet-bid-row > div:last-child { min-width: 0; }
+  .cca-wallet-bid-actions { justify-content: flex-start; }
   .cca-how { grid-template-columns: auto 1fr; }
 }
 

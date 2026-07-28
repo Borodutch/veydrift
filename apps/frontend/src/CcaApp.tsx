@@ -16,6 +16,14 @@ import {
 import { playableApiUrl } from "./runtimeConfig";
 import { executeCcaBidSequence, readCcaAuctionBoundary } from "./ccaBidFlow";
 import {
+  encodeCcaBidExit,
+  readCcaBidExitState,
+  readCcaBidStates,
+  type CcaBidExitState,
+  type CcaBidSettlement,
+  type CcaSubmittedBid,
+} from "./ccaExitFlow";
+import {
   ccaBidPriceError,
   fdvToPriceQ96,
   minimumFdvWeiAboveClearingPriceQ96,
@@ -28,7 +36,6 @@ const PERMIT2 = "0x000000000022D473030F116dDEE9F6B43aC78BA3" as Address;
 const UNISWAP_AUCTION_URL = `https://app.uniswap.org/explore/auctions/base/${AUCTION}`;
 const Q96 = 1n << 96n;
 const E18 = 10n ** 18n;
-const NO_CHECKPOINT = (1n << 64n) - 1n;
 const VEY_SUPPLY = 1_000_000_000n;
 const DEFAULT_ETH_USD = 1_917.467;
 const DEFAULT_FLOOR_PRICE_Q96 = 8_556_641_551_540_548_460_102n;
@@ -90,65 +97,10 @@ const auctionAbi = [
   },
   {
     type: "function",
-    name: "exitBid",
-    stateMutability: "nonpayable",
-    inputs: [{ name: "bidId", type: "uint256" }],
-    outputs: [],
-  },
-  {
-    type: "function",
-    name: "exitPartiallyFilledBid",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "bidId", type: "uint256" },
-      { name: "lastFullyFilledCheckpointBlock", type: "uint64" },
-      { name: "outbidBlock", type: "uint64" },
-    ],
-    outputs: [],
-  },
-  {
-    type: "function",
     name: "claimTokens",
     stateMutability: "nonpayable",
     inputs: [{ name: "bidId", type: "uint256" }],
     outputs: [],
-  },
-  {
-    type: "function",
-    name: "bids",
-    stateMutability: "view",
-    inputs: [{ name: "bidId", type: "uint256" }],
-    outputs: [{
-      name: "",
-      type: "tuple",
-      components: [
-        { name: "startBlock", type: "uint64" },
-        { name: "startCumulativeMps", type: "uint24" },
-        { name: "exitedBlock", type: "uint64" },
-        { name: "maxPrice", type: "uint256" },
-        { name: "owner", type: "address" },
-        { name: "amountQ96", type: "uint256" },
-        { name: "tokensFilled", type: "uint256" },
-      ],
-    }],
-  },
-  {
-    type: "function",
-    name: "checkpoints",
-    stateMutability: "view",
-    inputs: [{ name: "blockNumber", type: "uint64" }],
-    outputs: [{
-      name: "",
-      type: "tuple",
-      components: [
-        { name: "clearingPrice", type: "uint256" },
-        { name: "currencyRaisedAtClearingPriceQ96X7", type: "uint256" },
-        { name: "cumulativeMpsPerPrice", type: "uint256" },
-        { name: "cumulativeMps", type: "uint24" },
-        { name: "prev", type: "uint64" },
-        { name: "next", type: "uint64" },
-      ],
-    }],
   },
 ] as const;
 
@@ -168,19 +120,11 @@ type AuctionState = {
   walletBids: CcaSubmittedBid[];
 };
 
-export type CcaSubmittedBid = {
-  amountWei: string;
-  bidId: string;
-  blockNumber: string;
-  maxPriceQ96: string;
-  owner: string;
-  transactionHash: string;
-};
+export type { CcaSubmittedBid } from "./ccaExitFlow";
 
-type CcaBidSettlement = {
-  exited: boolean;
-  startBlock: bigint;
-  tokensFilled: bigint;
+type CcaWalletBid = CcaSubmittedBid & {
+  exitState: CcaBidExitState;
+  settlement: CcaBidSettlement | null;
 };
 
 type CcaApiPayload = {
@@ -272,80 +216,8 @@ function availableEthForBid(balance: bigint) {
   return balance > gasReserve ? balance - gasReserve : 0n;
 }
 
-function canFullyExitBid(auction: AuctionState, bid: CcaSubmittedBid) {
-  return auction.finalized
-    && (!auction.graduated || BigInt(bid.maxPriceQ96) > auction.clearingPriceQ96);
-}
-
 async function readCall(provider: Eip1193Provider, to: Address, data: string) {
   return provider.request<string>({ method: "eth_call", params: [{ to, data }, "latest"] });
-}
-
-function resultWord(result: string, index: number) {
-  const start = 2 + index * 64;
-  const word = result.slice(start, start + 64);
-  if (word.length !== 64 || !/^[0-9a-fA-F]{64}$/.test(word)) {
-    throw new Error("The auction returned incomplete settlement data.");
-  }
-  return BigInt(`0x${word}`);
-}
-
-async function readBidSettlement(provider: Eip1193Provider, bidId: string): Promise<CcaBidSettlement> {
-  const result = await readCall(provider, AUCTION, encodeFunctionData({
-    abi: auctionAbi,
-    functionName: "bids",
-    args: [BigInt(bidId)],
-  }));
-  return {
-    startBlock: resultWord(result, 0),
-    exited: resultWord(result, 2) !== 0n,
-    tokensFilled: resultWord(result, 6),
-  };
-}
-
-async function partialExitHints(provider: Eip1193Provider, bid: CcaSubmittedBid, startBlock: bigint) {
-  const maxPrice = BigInt(bid.maxPriceQ96);
-  let blockNumber = startBlock;
-  for (let steps = 0; steps < 512; steps += 1) {
-    const checkpointResult = await readCall(provider, AUCTION, encodeFunctionData({
-      abi: auctionAbi,
-      functionName: "checkpoints",
-      args: [blockNumber],
-    }));
-    const clearingPrice = resultWord(checkpointResult, 0);
-    const nextBlock = resultWord(checkpointResult, 5);
-    if (clearingPrice >= maxPrice || nextBlock === NO_CHECKPOINT) break;
-    const nextResult = await readCall(provider, AUCTION, encodeFunctionData({
-      abi: auctionAbi,
-      functionName: "checkpoints",
-      args: [nextBlock],
-    }));
-    const nextPrice = resultWord(nextResult, 0);
-    if (nextPrice >= maxPrice) {
-      if (nextPrice > maxPrice) return { lastFullyFilledCheckpointBlock: blockNumber, outbidBlock: nextBlock };
-      let outbidBlock = nextBlock;
-      for (let equalSteps = steps; equalSteps < 512; equalSteps += 1) {
-        const equalResult = await readCall(provider, AUCTION, encodeFunctionData({
-          abi: auctionAbi,
-          functionName: "checkpoints",
-          args: [outbidBlock],
-        }));
-        const followingBlock = resultWord(equalResult, 5);
-        if (followingBlock === NO_CHECKPOINT) return { lastFullyFilledCheckpointBlock: blockNumber, outbidBlock: 0n };
-        const followingResult = await readCall(provider, AUCTION, encodeFunctionData({
-          abi: auctionAbi,
-          functionName: "checkpoints",
-          args: [followingBlock],
-        }));
-        if (resultWord(followingResult, 0) > maxPrice) {
-          return { lastFullyFilledCheckpointBlock: blockNumber, outbidBlock: followingBlock };
-        }
-        outbidBlock = followingBlock;
-      }
-    }
-    blockNumber = nextBlock;
-  }
-  throw new Error("The final checkpoint is not ready for this partial bid yet. No transaction was sent.");
 }
 
 async function fetchAuctionState(owner?: Address | null) {
@@ -415,33 +287,67 @@ export function CcaApp() {
   const [submitting, setSubmitting] = useState(false);
   const [exitingBidId, setExitingBidId] = useState<string | null>(null);
   const [claimingBidId, setClaimingBidId] = useState<string | null>(null);
-  const [bidSettlements, setBidSettlements] = useState<Record<string, CcaBidSettlement>>({});
   const [walletProvider, setWalletProvider] = useState<Eip1193Provider>();
+  const [walletBids, setWalletBids] = useState<CcaWalletBid[]>([]);
   const [wethBalance, setWethBalance] = useState<bigint | null>(null);
 
-  const refresh = useCallback(async (activeProvider = walletProvider ?? providerFromWindow(), activeAccount = account) => {
+  const refresh = useCallback(async (
+    activeProvider = walletProvider ?? providerFromWindow(),
+    activeAccount = account,
+    refreshedMessage?: string,
+  ) => {
     try {
       const nextAuction = await fetchAuctionState(activeAccount);
       setAuction(nextAuction);
       if (activeProvider && activeAccount) {
-        const [nativeBalance, wrappedBalance] = await Promise.all([
-          activeProvider.request<string>({ method: "eth_getBalance", params: [activeAccount, "latest"] }),
-          readCall(activeProvider, WETH, encodeFunctionData({ abi: erc20Abi, functionName: "balanceOf", args: [activeAccount] })),
+        const [nativeBalance, wrappedBalance, bidStates] = await Promise.all([
+          activeProvider.request<string>({
+            method: "eth_getBalance",
+            params: [activeAccount, "latest"],
+          }).catch(() => null),
+          readCall(
+            activeProvider,
+            WETH,
+            encodeFunctionData({ abi: erc20Abi, functionName: "balanceOf", args: [activeAccount] }),
+          ).catch(() => null),
+          readCcaBidStates(
+            activeProvider,
+            AUCTION,
+            activeAccount,
+            nextAuction.walletBids.map(({ bidId }) => BigInt(bidId)),
+          ).catch(() => nextAuction.walletBids.map(() => ({
+            exitState: {
+              kind: "unavailable" as const,
+              label: "Eligibility check unavailable · retrying",
+            },
+            settlement: null,
+          }))),
         ]);
-        setEthBalance(BigInt(nativeBalance));
-        setWethBalance(BigInt(wrappedBalance));
-        if (nextAuction.currentBlock >= nextAuction.endBlock) {
-          const settlements = await Promise.all(nextAuction.walletBids.map(async (bid) => [
-            bid.bidId,
-            await readBidSettlement(activeProvider, bid.bidId),
-          ] as const));
-          setBidSettlements(Object.fromEntries(settlements));
-        } else {
-          setBidSettlements({});
-        }
+        setEthBalance(nativeBalance === null ? null : BigInt(nativeBalance));
+        setWethBalance(wrappedBalance === null ? null : BigInt(wrappedBalance));
+        setWalletBids(nextAuction.walletBids.map((confirmedBid, index) => ({
+          ...confirmedBid,
+          ...(bidStates[index] ?? {
+            exitState: {
+              kind: "unavailable",
+              label: "Eligibility check unavailable · retrying",
+            },
+            settlement: null,
+          }),
+        })));
+      } else {
+        setWalletBids([]);
       }
-      setMessage(activeAccount ? "Live Base auction data." : "Live Base auction data. Connect a wallet to bid.");
+      setMessage(refreshedMessage ?? (activeAccount ? "Live Base auction data." : "Live Base auction data. Connect a wallet to bid."));
     } catch {
+      setWalletBids((current) => current.map((bid) => ({
+        ...bid,
+        exitState: {
+          kind: "unavailable",
+          label: "Eligibility check unavailable · retrying",
+        },
+        settlement: null,
+      })));
       setMessage("Live auction data is temporarily unavailable. Wallet actions remain disabled until it reconnects.");
     }
   }, [account, walletProvider]);
@@ -460,6 +366,7 @@ export function CcaApp() {
       setReviewing(false);
       setEthBalance(null);
       setWethBalance(null);
+      setWalletBids([]);
       if (!nextAccount) {
         setAccount(null);
         setMessage("Wallet disconnected. Connect a wallet to see your confirmed bids and place a new one.");
@@ -555,7 +462,6 @@ export function CcaApp() {
         ? "Graduated"
         : "Live";
   const currentFdv = clearingFdv;
-  const walletBids = auction.walletBids;
   const auctionComplete = auction.currentBlock >= auction.endBlock;
   const auctionFinalized = auctionComplete && auction.finalized;
 
@@ -583,51 +489,13 @@ export function CcaApp() {
     setMessage("Review ready below — scroll down to confirm your bid.");
   }, [account, amountWei, auction.currentBlock, auction.endBlock, connect, fundingError, maxPriceQ96, priceError]);
 
-  const exitBid = useCallback(async (bid: CcaSubmittedBid) => {
-    const provider = walletProvider ?? providerFromWindow();
-    if (!provider || !account) {
-      setMessage("Connect the wallet that owns this bid before requesting a refund.");
-      return;
-    }
-    if (!auction.finalized) {
-      setMessage("The auction is still finalizing on Base. No settlement transaction was sent.");
-      return;
-    }
-    setExitingBidId(bid.bidId);
-    try {
-      await ensureBaseMainnetNetwork(provider);
-      setMessage(`Requesting Uniswap exit/refund for bid #${bid.bidId} in your wallet.`);
-      const settlement = bidSettlements[bid.bidId] ?? await readBidSettlement(provider, bid.bidId);
-      const hash = canFullyExitBid(auction, bid)
-        ? await sendTransaction(provider, account, AUCTION, encodeFunctionData({
-          abi: auctionAbi,
-          functionName: "exitBid",
-          args: [BigInt(bid.bidId)],
-        }))
-        : await (async () => {
-          const hints = await partialExitHints(provider, bid, settlement.startBlock);
-          return sendTransaction(provider, account, AUCTION, encodeFunctionData({
-            abi: auctionAbi,
-            functionName: "exitPartiallyFilledBid",
-            args: [BigInt(bid.bidId), hints.lastFullyFilledCheckpointBlock, hints.outbidBlock],
-          }));
-        })();
-      setMessage(`Exit/refund confirmed: ${shortAddress(hash)}.`);
-      await refresh(provider, account);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "The Uniswap exit/refund was not completed.");
-    } finally {
-      setExitingBidId(null);
-    }
-  }, [account, auction, bidSettlements, refresh, walletProvider]);
-
-  const claimBid = useCallback(async (bid: CcaSubmittedBid) => {
+  const claimBid = useCallback(async (bid: CcaWalletBid) => {
     const provider = walletProvider ?? providerFromWindow();
     if (!provider || !account) {
       setMessage("Connect the wallet that owns this bid before claiming VEY.");
       return;
     }
-    const settlement = bidSettlements[bid.bidId];
+    const { settlement } = bid;
     if (!auction.finalized || !auction.graduated || !settlement?.exited || settlement.tokensFilled === 0n) {
       setMessage("This bid is not ready to claim VEY yet. Exit/refund it first once the final auction result is available.");
       return;
@@ -648,7 +516,7 @@ export function CcaApp() {
     } finally {
       setClaimingBidId(null);
     }
-  }, [account, auction.finalized, auction.graduated, bidSettlements, refresh, walletProvider]);
+  }, [account, auction.finalized, auction.graduated, refresh, walletProvider]);
 
   const bid = useCallback(async () => {
     const provider = walletProvider ?? providerFromWindow();
@@ -729,14 +597,59 @@ export function CcaApp() {
         },
       });
       setReviewing(false);
-      setMessage(`Bid confirmed: ${shortAddress(hash)}. It remains subject to the auction clearing price and finalization rules.`);
-      await refresh(provider, account);
+      await refresh(
+        provider,
+        account,
+        `Bid confirmed: ${shortAddress(hash)}. It remains subject to the auction clearing price and finalization rules.`,
+      );
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Bid was not completed. No later transaction was sent.");
     } finally {
       setSubmitting(false);
     }
   }, [account, amountWei, fundingCurrency, maxPriceQ96, priceError, refresh, walletProvider]);
+
+  const exitWalletBid = useCallback(async (bidId: string) => {
+    const provider = walletProvider ?? providerFromWindow();
+    if (!provider || !account) {
+      setMessage("Connect the bid owner wallet before exiting a CCA bid.");
+      return;
+    }
+    setExitingBidId(bidId);
+    try {
+      await ensureBaseMainnetNetwork(provider);
+      const liveExitState = await readCcaBidExitState(
+        provider,
+        AUCTION,
+        account,
+        BigInt(bidId),
+      );
+      if (!liveExitState.action) {
+        await refresh(
+          provider,
+          account,
+          `${liveExitState.label}. No wallet transaction was sent.`,
+        );
+        return;
+      }
+      setMessage(`Confirm Exit / refund for bid #${bidId} in your wallet.`);
+      const hash = await sendTransaction(
+        provider,
+        account,
+        AUCTION,
+        encodeCcaBidExit(liveExitState.action),
+      );
+      await refresh(
+        provider,
+        account,
+        `Exit / refund confirmed: ${shortAddress(hash)}. Bid status and wallet balances were refreshed.`,
+      );
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "The bid exit/refund was not completed.");
+    } finally {
+      setExitingBidId(null);
+    }
+  }, [account, refresh, walletProvider]);
 
   return (
     <main className="cca-shell">
@@ -800,7 +713,7 @@ export function CcaApp() {
             <p>You can receive fewer VEY than this estimate when only part of your budget fills (a partial fill), or when a block clears above your maximum FDV and that order slice does not execute.</p>
             <p className="cca-ai-note">Choosing an FDV? Give an AI agent <a href="https://cca.uniswap.org/" target="_blank" rel="noreferrer">Uniswap’s CCA reference ↗</a> with your budget and risk tolerance. It cannot predict the final clearing price and is not investment advice.</p>
           </div>
-          <button className="cca-submit" type="button" disabled={submitting || stateLabel === "Ended" || Boolean(account && (fundingError || priceError))} onClick={() => void openReview()}>{submitting ? "Confirm in wallet…" : account && priceError ? "Raise max FDV" : account && fundingError ? fundingCurrency === "weth" ? "Wrap ETH or lower budget" : "Lower ETH budget" : account ? "Review bid" : "Connect wallet to bid"}</button>
+          <button className="cca-submit" type="button" disabled={submitting || exitingBidId !== null || stateLabel === "Ended" || Boolean(account && (fundingError || priceError))} onClick={() => void openReview()}>{submitting ? "Confirm in wallet…" : account && priceError ? "Raise max FDV" : account && fundingError ? fundingCurrency === "weth" ? "Wrap ETH or lower budget" : "Lower ETH budget" : account ? "Review bid" : "Connect wallet to bid"}</button>
           <p className="cca-notice">{fundingCurrency === "eth" ? "ETH is wrapped into WETH before the bid (four wallet confirmations)." : "WETH bidding requires three wallet confirmations."} This page never receives custody.</p>
           <p className="cca-message" role="status">{message}</p>
 
@@ -848,17 +761,41 @@ export function CcaApp() {
         {!account ? <div className="cca-wallet-bids-prompt">
           <p>Connect a wallet to see its confirmed CCA bids.</p>
           <button type="button" onClick={() => void connect()}>Connect wallet</button>
-        </div> : walletBids.length === 0 ? <p className="cca-live-bids-empty">No confirmed bids from {shortAddress(account)} yet. Reverted transactions are not included.</p> : <ol className="cca-live-bids-list">
+        </div> : walletBids.length === 0 ? <p className="cca-live-bids-empty">No confirmed bids from {shortAddress(account)} appear in the official auction history.</p> : <ol className="cca-live-bids-list">
           {walletBids.map((bid) => {
-            const settlement = bidSettlements[bid.bidId];
-            const needsClaim = auctionFinalized && auction.graduated && settlement?.exited && settlement.tokensFilled > 0n;
-            return <li key={`${bid.transactionHash}-${bid.bidId}`}>
+            const needsClaim = auctionFinalized
+              && auction.graduated
+              && bid.settlement?.exited
+              && bid.settlement.tokensFilled > 0n;
+            const settlementLabel = bid.settlement?.exited
+              ? auction.graduated
+                ? needsClaim ? "Exited · VEY ready to claim" : "VEY claimed or no VEY filled"
+                : "WETH refunded"
+              : bid.exitState.label;
+            return <li className="cca-wallet-bid-row" key={`${bid.transactionHash}-${bid.bidId}`}>
               <div><strong>{formatCompactWeth(BigInt(bid.amountWei))} WETH</strong><span>max {formatCompactWeth(BigInt(Math.round(fdvFromQ96(BigInt(bid.maxPriceQ96)))) * E18)} WETH FDV</span></div>
-              <div><span>block {BigInt(bid.blockNumber).toLocaleString()}</span><a href={`https://basescan.org/tx/${bid.transactionHash}`} target="_blank" rel="noreferrer">View tx ↗</a>{auctionFinalized && !settlement?.exited ? <button className="cca-settlement-action" type="button" disabled={exitingBidId === bid.bidId} onClick={() => void exitBid(bid)}>{exitingBidId === bid.bidId ? "Confirm in wallet…" : auction.graduated && !canFullyExitBid(auction, bid) ? "Settle partial bid" : "Exit & refund"}</button> : needsClaim ? <button className="cca-settlement-action" type="button" disabled={claimingBidId === bid.bidId} onClick={() => void claimBid(bid)}>{claimingBidId === bid.bidId ? "Confirm in wallet…" : "Claim VEY"}</button> : auctionFinalized && settlement?.exited ? <span>{auction.graduated ? "VEY claimed or no VEY filled" : "WETH refunded"}</span> : null}</div>
+              <div>
+                <span>block {BigInt(bid.blockNumber).toLocaleString()}</span>
+                <span className={`cca-bid-exit-status cca-bid-exit-${bid.exitState.kind}`}>{settlementLabel}</span>
+                <div className="cca-wallet-bid-actions">
+                  <a href={`https://basescan.org/tx/${bid.transactionHash}`} target="_blank" rel="noreferrer">View tx ↗</a>
+                  {needsClaim ? <button
+                    className="cca-settlement-action"
+                    type="button"
+                    disabled={exitingBidId !== null || claimingBidId !== null}
+                    onClick={() => void claimBid(bid)}
+                  >{claimingBidId === bid.bidId ? "Confirm in wallet…" : "Claim VEY"}</button> : bid.exitState.action ? <button
+                    className="cca-settlement-action"
+                    type="button"
+                    disabled={submitting || exitingBidId !== null || claimingBidId !== null}
+                    onClick={() => void exitWalletBid(bid.bidId)}
+                  >{exitingBidId === bid.bidId ? "Confirming…" : "Exit / refund"}</button> : null}
+                </div>
+              </div>
             </li>;
           })}
         </ol>}
-        <p className="cca-wallet-bids-source">Sourced from every confirmed <code>BidSubmitted</code> event for this wallet; updates automatically. Reverted wallet transactions are excluded. Settlement actions stay hidden until the auction ends.</p>
+        <p className="cca-wallet-bids-source">Sourced from every confirmed <code>BidSubmitted</code> event for this wallet plus current bid/checkpoint state on the official Uniswap CCA contract. Reverted transactions are excluded. Exit / refund appears only after the exact transaction passes a wallet-provider preflight.</p>
       </section>
 
       <section className="cca-how" id="how-it-works">

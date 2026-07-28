@@ -170,8 +170,9 @@ describe("CCA bid transaction ordering", () => {
     expect(source).toContain("Connect a wallet to see its confirmed CCA bids.");
     expect(source).toContain('const query = owner ? `?owner=${encodeURIComponent(owner)}` : ""');
     expect(source).toContain('fetch(`${playableApiUrl}/cca${query}`, {');
+    expect(source).toContain("readCcaBidStates(");
     expect(source).toContain('window.setInterval(() => void refresh(), 12_000)');
-    expect(source).toContain("await refresh(provider, account)");
+    expect(source.match(/await refresh\(/g)?.length).toBeGreaterThanOrEqual(3);
     expect(source).toContain('walletProvider.on?.("accountsChanged"');
     expect(source).toContain('walletProvider.removeListener?.("accountsChanged"');
     expect(source).toContain("Sourced from every confirmed");
@@ -183,19 +184,30 @@ describe("CCA bid transaction ordering", () => {
 
     expect(source).toContain("Review ready below — scroll down to confirm your bid.");
     expect(source).toContain("if (reviewing) revealCcaBidReview(reviewRef.current)");
-    expect(source).toContain('name: "exitBid"');
-    expect(source).toContain("The auction is still finalizing on Base.");
+    expect(source).toContain("readCcaBidExitState(");
   });
 
-  test("keeps completion information and WETH/VEY settlement actions hidden until the auction ends", async () => {
+  test("keeps completion information plus WETH refund and VEY claim settlement behavior", async () => {
     const source = await Bun.file(new URL("./CcaApp.tsx", import.meta.url)).text();
 
     expect(source).toContain("const auctionComplete = auction.currentBlock >= auction.endBlock");
     expect(source).toContain("AUCTION COMPLETE");
-    expect(source).toContain('name: "exitPartiallyFilledBid"');
     expect(source).toContain('name: "claimTokens"');
     expect(source).toContain("Claim VEY");
-    expect(source).toContain("Settlement actions stay hidden until the auction ends.");
+    expect(source).toContain("WETH refunded");
+    expect(source).toContain("bid.settlement?.exited");
+  });
+
+  test("only renders Exit / refund for a preflighted eligible bid and refreshes after confirmation", async () => {
+    const source = await Bun.file(new URL("./CcaApp.tsx", import.meta.url)).text();
+
+    expect(source).toContain("bid.exitState.action ?");
+    expect(source).toContain("Exit / refund");
+    expect(source).toContain("const liveExitState = await readCcaBidExitState(");
+    expect(source).toContain("if (!liveExitState.action)");
+    expect(source).toContain("encodeCcaBidExit(liveExitState.action)");
+    expect(source).toContain("Bid status and wallet balances were refreshed.");
+    expect(source).toContain("Exit / refund confirmed:");
   });
 
   test("explains budget, FDV, partial fills, and the official CCA AI reference", async () => {
