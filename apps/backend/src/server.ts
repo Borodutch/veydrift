@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { gzipSync } from "node:zlib";
 import { generateSystem } from "@veydrift/universe";
-import { createPublicClient, webSocket, type Log as ViemLog } from "viem";
+import { createPublicClient, encodeFunctionData, webSocket, type Address as ViemAddress, type Log as ViemLog } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { CachedChainReader } from "./cachedReader";
 import { ChainSyncService } from "./chainSync";
@@ -131,6 +131,29 @@ const acceptedCacheQueryParams = new Map<string, ReadonlySet<string>>([
 
 const indexedSource = "contract-state-indexer" as const;
 const burningChickenCoordinateBurnSelector = "0x6364233d";
+const ccaAuctionAddress = "0x7Ce8e4cC7563a9711A3D52d48439F6dfA4C1B67F" as ViemAddress;
+const ccaWethAddress = "0x4200000000000000000000000000000000000006" as ViemAddress;
+const ccaEthUsdFallback = 1_917.467;
+
+const ccaAuctionReadAbi = [
+  { type: "function", name: "clearingPrice", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "uint256" }] },
+  { type: "function", name: "floorPrice", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "uint256" }] },
+  { type: "function", name: "startBlock", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "uint64" }] },
+  { type: "function", name: "endBlock", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "uint64" }] },
+  { type: "function", name: "isGraduated", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "bool" }] }
+] as const;
+
+const erc20BalanceReadAbi = [
+  {
+    type: "function",
+    name: "balanceOf",
+    stateMutability: "view",
+    inputs: [{ name: "account", type: "address" }],
+    outputs: [{ name: "", type: "uint256" }]
+  }
+] as const;
+
+let ccaEthUsdCache: { expiresAt: number; value: number } | null = null;
 
 type GraphQLPayload = {
   query?: string;
@@ -257,6 +280,16 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     (loaded.problems.length === 0 ? new VeydriftGameReader(loaded.config, undefined, { hydrateQueueStartedAt: false }) : undefined);
   const cacheReader = rawChainReader && !dependencies.chainReader ? new CachedChainReader(rawChainReader) : undefined;
   const chainReader = cacheReader ?? rawChainReader;
+  // Public CCA state is intentionally served from the backend's configured Base
+  // RPC. Browsers should not need a public RPC endpoint merely to render the
+  // auction, and the transport already retries/fails over between configured
+  // nodes.
+  const ccaRpc = loaded.problems.length === 0 && rpcUrlsForConfig(loaded.config).length > 0
+    ? new HttpJsonRpcTransport(rpcUrlsForConfig(loaded.config), {
+      cacheTtlMs: 4_000,
+      minRequestIntervalMs: 0
+    })
+    : undefined;
   const indexerChainReader =
     dependencies.chainReader
       ? chainReader
@@ -447,6 +480,11 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
     if (request.method === "GET" && url.pathname === "/runtime-config") {
       return runtimeConfigResponse(workerRole);
+    }
+
+    if (request.method === "GET" && url.pathname === "/cca") {
+      if (!ccaRpc) return unavailableResponse(loaded.problems);
+      return ccaStateResponse(ccaRpc);
     }
 
     if (request.method === "GET" && url.pathname === "/raid-finder/debris") {
@@ -1803,6 +1841,65 @@ function rpcUrlsForConfig(config: BackendConfig): string[] {
   ].filter((url): url is string => Boolean(url && url.trim().length > 0));
 }
 
+async function ccaStateResponse(rpc: HttpJsonRpcTransport): Promise<Response> {
+  const call = (to: ViemAddress, data: `0x${string}`) => ({
+    method: "eth_call",
+    params: [{ to, data }, "latest"]
+  });
+  const [clearingPrice, floorPrice, startBlock, endBlock, graduated, bidVolume, currentBlock] = await rpc.requestBatch<string>([
+    call(ccaAuctionAddress, encodeFunctionData({ abi: ccaAuctionReadAbi, functionName: "clearingPrice" })),
+    call(ccaAuctionAddress, encodeFunctionData({ abi: ccaAuctionReadAbi, functionName: "floorPrice" })),
+    call(ccaAuctionAddress, encodeFunctionData({ abi: ccaAuctionReadAbi, functionName: "startBlock" })),
+    call(ccaAuctionAddress, encodeFunctionData({ abi: ccaAuctionReadAbi, functionName: "endBlock" })),
+    call(ccaAuctionAddress, encodeFunctionData({ abi: ccaAuctionReadAbi, functionName: "isGraduated" })),
+    call(ccaWethAddress, encodeFunctionData({ abi: erc20BalanceReadAbi, functionName: "balanceOf", args: [ccaAuctionAddress] })),
+    { method: "eth_blockNumber", params: [] }
+  ]);
+  if ([clearingPrice, floorPrice, startBlock, endBlock, graduated, bidVolume, currentBlock].some((value) => value === undefined)) {
+    throw new Error("CCA RPC response was incomplete.");
+  }
+
+  return Response.json({
+    auction: ccaAuctionAddress,
+    bidVolumeWei: BigInt(bidVolume!).toString(),
+    clearingPriceQ96: BigInt(clearingPrice!).toString(),
+    currentBlock: BigInt(currentBlock!).toString(),
+    endBlock: BigInt(endBlock!).toString(),
+    ethUsdReference: await ccaEthUsdReference(),
+    floorPriceQ96: BigInt(floorPrice!).toString(),
+    graduated: BigInt(graduated!) !== 0n,
+    startBlock: BigInt(startBlock!).toString(),
+    weth: ccaWethAddress,
+    updatedAt: new Date().toISOString()
+  }, {
+    headers: {
+      ...corsHeaders,
+      "cache-control": "public, max-age=4, stale-while-revalidate=20"
+    }
+  });
+}
+
+async function ccaEthUsdReference(): Promise<number> {
+  const now = Date.now();
+  if (ccaEthUsdCache && ccaEthUsdCache.expiresAt > now) return ccaEthUsdCache.value;
+
+  let value = ccaEthUsdFallback;
+  try {
+    const response = await fetch("https://api.coinbase.com/v2/exchange-rates?currency=ETH", {
+      headers: { accept: "application/json" },
+      signal: AbortSignal.timeout(2_000)
+    });
+    const body = response.ok ? await response.json() as { data?: { rates?: { USD?: string } } } : null;
+    const parsed = Number(body?.data?.rates?.USD);
+    if (Number.isFinite(parsed) && parsed > 0) value = parsed;
+  } catch {
+    // The USD figure is informational only. The auction always uses exact WETH
+    // amounts and Q96 prices, so a market-data outage must never block bidding.
+  }
+  ccaEthUsdCache = { expiresAt: now + 30_000, value };
+  return value;
+}
+
 function withRequestCors(request: Request, response: Response): Response {
   const headers = new Headers(response.headers);
   headers.set("access-control-allow-origin", allowedCorsOrigin(request));
@@ -1942,7 +2039,8 @@ function limitedReadResponse(
 }
 
 function isRateLimitedReadPath(pathname: string): boolean {
-  return pathname === "/chain/events"
+  return pathname === "/cca"
+    || pathname === "/chain/events"
     || pathname === "/missions"
     || pathname === "/highscores"
     || pathname.startsWith("/wallet/")
@@ -2069,6 +2167,7 @@ async function refreshCachedJsonResponse(
 function cacheableJsonRequestTtlMs(request: Request, url: URL): number {
   if (request.method !== "GET") return 0;
   if (url.pathname === "/chain/events") return 0;
+  if (url.pathname === "/cca") return 4_000;
   if (url.pathname === "/health") return 10_000;
   if (url.pathname === "/highscores") return livePublicDataRequest(url) ? 1_000 : 300_000;
   if (url.pathname === "/raid-finder/debris") return 30_000;
