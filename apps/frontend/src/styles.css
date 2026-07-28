@@ -195,6 +195,7 @@ body {
 }
 
 .cca-live-bids { width: min(1120px, calc(100% - 40px)); margin: 18px auto 0; padding: 1.4rem 1.6rem; border: 1px solid rgba(255,255,255,0.095); border-radius: 24px; background: rgba(18, 17, 25, 0.7); box-shadow: 0 18px 70px rgba(0,0,0,0.18); }
+.cca-wallet-bids { width: min(1120px, calc(100% - 40px)); margin: 18px auto 0; padding: 1.4rem 1.6rem; border: 1px solid rgba(169,150,255,0.18); border-radius: 24px; background: rgba(24, 20, 37, 0.68); box-shadow: 0 18px 70px rgba(0,0,0,0.18); }
 .cca-live-bids-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 1rem; }
 .cca-live-bids-heading .cca-eyebrow { margin-bottom: 0.45rem; }
 .cca-live-bids-heading h2 { margin: 0; font-size: 1.25rem; letter-spacing: -0.04em; }
