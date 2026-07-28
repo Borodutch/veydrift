@@ -250,11 +250,14 @@ function WithdrawalQueue({
       <div className="grid gap-3 md:grid-cols-2">
         {pendingWithdrawals.map((withdrawal) => {
           const ready = isWithdrawalReady(withdrawal, now);
+          const legacy = withdrawal.kind === "legacyMarketWithdrawal";
           return (
             <article className="rounded-lg border border-white/10 bg-[#101624] p-4" key={withdrawal.id}>
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <p className="text-sm font-semibold text-white">{resourceLabel(withdrawal.resource)}</p>
+                  <p className="text-sm font-semibold text-white">
+                    {legacy ? "Grandfathered legacy withdrawal" : resourceLabel(withdrawal.resource)}
+                  </p>
                   <p className="mt-1 text-xl font-semibold text-cyan-100">{formatToken(withdrawal.amount)}</p>
                 </div>
                 <span className={`rounded px-2 py-1 text-xs font-semibold ${ready ? "bg-lime-300/10 text-lime-200" : "bg-amber-200/10 text-amber-100"}`}>
@@ -262,7 +265,9 @@ function WithdrawalQueue({
                 </span>
               </div>
               <p className="mt-3 text-xs leading-5 text-slate-400">
-                Unlocks {formatUnlockDate(withdrawal.unlocksAt)}. Resources remain locked until the finish transaction confirms.
+                {legacy
+                  ? `Unlocks ${formatUnlockDate(withdrawal.unlocksAt)}. This retired withdrawal is shown only so its owner can recover it.`
+                  : `Unlocks ${formatUnlockDate(withdrawal.unlocksAt)}. Resources remain 100% raidable until the finish transaction confirms.`}
               </p>
               <button
                 className="mt-4 inline-flex h-11 sm:h-9 w-full items-center justify-center rounded border border-cyan-300/30 bg-cyan-300/10 px-3 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
@@ -271,7 +276,7 @@ function WithdrawalQueue({
                 title={!canTransact ? transactionUnavailableReason : undefined}
                 type="button"
               >
-                Finalize extraction
+                {legacy ? "Finish legacy withdrawal" : "Finalize extraction"}
               </button>
             </article>
           );

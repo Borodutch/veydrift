@@ -432,6 +432,7 @@ type RiftBalanceRow = {
 
 type PendingWithdrawalRow = {
   amount: string;
+  planet_id: string;
   resource_id: number;
   unlocks_at: string;
   withdrawal_key: string;
@@ -2987,7 +2988,7 @@ export class SettlementIndexer {
           ? "Settle a home planet before using the Rift."
           : "Build the Rift Stabilizer before using the Rift."
       }),
-      withdrawalDelaySeconds: "2592000",
+      withdrawalDelaySeconds: "2419200",
       requirements: riftRequirements(
         riftBuilt,
         buildings.find((building) => building.id === 4)?.level ?? 0,
@@ -3008,6 +3009,8 @@ export class SettlementIndexer {
       pendingWithdrawals: [
         ...pending.map((row) => riftPendingWithdrawal(
           row.withdrawal_key,
+          "legacyMarketWithdrawal",
+          row.planet_id,
           row.resource_id,
           row.amount,
           "0",
@@ -3015,6 +3018,8 @@ export class SettlementIndexer {
         )),
         ...extractions.map((extraction) => riftPendingWithdrawal(
           `extraction:${extraction.planet_id}:${extraction.resource_id}`,
+          "riftExtraction",
+          extraction.planet_id,
           extraction.resource_id,
           extraction.amount,
           extraction.started_at,
@@ -8199,7 +8204,7 @@ export class SettlementIndexer {
   private pendingWithdrawals(wallet: `0x${string}`, planetId: string | null): PendingWithdrawalRow[] {
     if (!planetId) return [];
     return this.db.query(`
-      SELECT withdrawal_key, resource_id, amount, unlocks_at
+      SELECT withdrawal_key, planet_id, resource_id, amount, unlocks_at
       FROM indexed_rift_withdrawals
       WHERE owner = lower(?) AND planet_id = ?
       ORDER BY CAST(unlocks_at AS INTEGER) ASC
@@ -8211,7 +8216,7 @@ export class SettlementIndexer {
     return this.db.query(`
       SELECT owner, planet_id, resource_id, amount, started_at, unlocks_at
       FROM indexed_rift_extractions
-      WHERE owner = lower(?) AND planet_id = ? AND CAST(amount AS INTEGER) > 0
+      WHERE owner = lower(?) AND planet_id = ?
       ORDER BY CAST(unlocks_at AS INTEGER) ASC
     `).all(wallet, planetId) as RiftExtractionRow[];
   }
@@ -11328,6 +11333,8 @@ function riftWithdrawalKey(event: IndexedRiftResourceEvent): string {
 
 function riftPendingWithdrawal(
   id: string,
+  kind: "riftExtraction" | "legacyMarketWithdrawal",
+  planetId: string,
   resourceId: number,
   amount: string,
   requestedAt: string,
@@ -11337,6 +11344,8 @@ function riftPendingWithdrawal(
   const unlocksAtSeconds = BigInt(unlocksAt);
   return {
     id,
+    kind,
+    planetId,
     resource: riftResourceRows.find((resource) => resource.resourceId === resourceId)?.key ?? "metal",
     amount,
     requestedAt: toIso(requestedAt),

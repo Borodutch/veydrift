@@ -990,6 +990,8 @@ export type RiftResourceState = {
 
 export type PendingWithdrawal = {
   id: string;
+  kind?: "riftExtraction" | "legacyMarketWithdrawal";
+  planetId?: string;
   resource: RiftResourceKey;
   amount: string;
   requestedAt: string;
@@ -2628,7 +2630,11 @@ export class VeydriftGameReader implements ChainReader {
     );
     const unlocked = bridgeBuilt === true;
     const tokenAddressesConfigured = riftResourceCatalog.every((resource) => this.resourceTokenAddresses[resource.key]);
-    const pendingWithdrawals = await this.readRiftWithdrawals(wallet);
+    const [legacyWithdrawals, extractions] = await Promise.all([
+      this.readLegacyRiftWithdrawals(wallet, planetId),
+      this.readRiftExtractions(planetId)
+    ]);
+    const pendingWithdrawals = [...legacyWithdrawals, ...extractions];
     const resources = await this.readRiftResources(wallet, settlement.planet.resources, pendingWithdrawals);
     const unavailableReason = riftLevel === null
       ? "This deployment does not expose the Rift Stabilizer building yet."
@@ -2644,7 +2650,7 @@ export class VeydriftGameReader implements ChainReader {
       riftAvailable: unlocked && tokenAddressesConfigured,
       unlocked,
       ...(unavailableReason ? { unavailableReason } : {}),
-      withdrawalDelaySeconds: riftWithdrawalDelaySeconds.toString(),
+      withdrawalDelaySeconds: riftExtractionDelaySeconds.toString(),
       requirements,
       resources,
       pendingWithdrawals
@@ -4319,7 +4325,10 @@ export class VeydriftGameReader implements ChainReader {
     return Promise.all(
       riftResourceCatalog.map(async (resource) => {
         const tokenAddress = this.resourceTokenAddresses[resource.key] ?? null;
-        const lockedBalance = pendingWithdrawals.find((withdrawal) => withdrawal.resource === resource.key)?.amount ?? "0";
+        const lockedBalance = pendingWithdrawals
+          .filter((withdrawal) => withdrawal.resource === resource.key)
+          .reduce((total, withdrawal) => total + BigInt(withdrawal.amount), 0n)
+          .toString();
         if (!tokenAddress) {
           return {
             ...resource,
@@ -4348,7 +4357,10 @@ export class VeydriftGameReader implements ChainReader {
     );
   }
 
-  private async readRiftWithdrawals(wallet: Address): Promise<PendingWithdrawal[]> {
+  private async readLegacyRiftWithdrawals(
+    wallet: Address,
+    planetId: bigint
+  ): Promise<PendingWithdrawal[]> {
     const nowSeconds = BigInt(Math.floor(Date.now() / 1000));
     const withdrawals = await Promise.all(
       riftResourceCatalog.map(async (resource) => {
@@ -4358,14 +4370,20 @@ export class VeydriftGameReader implements ChainReader {
           return null;
         }
 
+        const withdrawalPlanetId = decodeUintWord(wordAt(words, 1));
+        if (withdrawalPlanetId !== planetId) {
+          return null;
+        }
         const amount = decodeUintWord(wordAt(words, 3));
         const unlocksAt = decodeUintWord(wordAt(words, 4));
-        const requestedAt = unlocksAt > BigInt(riftWithdrawalDelaySeconds)
-          ? unlocksAt - BigInt(riftWithdrawalDelaySeconds)
+        const requestedAt = unlocksAt > BigInt(legacyMarketWithdrawalDelaySeconds)
+          ? unlocksAt - BigInt(legacyMarketWithdrawalDelaySeconds)
           : 0n;
 
         const withdrawal: PendingWithdrawal = {
-          id: resource.key,
+          id: `legacy:${withdrawalPlanetId}:${resource.key}`,
+          kind: "legacyMarketWithdrawal",
+          planetId: withdrawalPlanetId.toString(),
           resource: resource.key,
           amount: amount.toString(),
           requestedAt: new Date(Number(requestedAt) * 1000).toISOString(),
@@ -4378,6 +4396,38 @@ export class VeydriftGameReader implements ChainReader {
     );
 
     return withdrawals.filter((withdrawal): withdrawal is PendingWithdrawal => withdrawal !== null);
+  }
+
+  private async readRiftExtractions(planetId: bigint): Promise<PendingWithdrawal[]> {
+    const nowSeconds = BigInt(Math.floor(Date.now() / 1000));
+    const extractions: Array<PendingWithdrawal | null> = await Promise.all(
+      riftResourceCatalog.map(async (resource) => {
+        const words = splitWords(await this.call("0x5a1bb2fd", [
+          encodeUint(planetId),
+          encodeUint(BigInt(resource.resourceId))
+        ]));
+        const active = decodeBoolWord(wordAt(words, 0));
+        if (!active) {
+          return null;
+        }
+
+        const amount = decodeUintWord(wordAt(words, 1));
+        const startedAt = decodeUintWord(wordAt(words, 2));
+        const unlocksAt = decodeUintWord(wordAt(words, 3));
+        return {
+          id: `extraction:${planetId}:${resource.key}`,
+          kind: "riftExtraction" as const,
+          planetId: planetId.toString(),
+          resource: resource.key,
+          amount: amount.toString(),
+          requestedAt: new Date(Number(startedAt) * 1000).toISOString(),
+          unlocksAt: new Date(Number(unlocksAt) * 1000).toISOString(),
+          ready: nowSeconds >= unlocksAt
+        };
+      })
+    );
+
+    return extractions.filter((extraction): extraction is PendingWithdrawal => extraction !== null);
   }
 
   private async readManagedPlanet(planet: PlanetState, homePlanetId: string | null): Promise<ManagedPlanet> {
@@ -5397,7 +5447,8 @@ const missionShipKeys = [
 ] as const;
 const supportedTechnologyIds = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14];
 const riftBuildingId = 15;
-const riftWithdrawalDelaySeconds = 30 * 24 * 60 * 60;
+const riftExtractionDelaySeconds = 28 * 24 * 60 * 60;
+const legacyMarketWithdrawalDelaySeconds = 30 * 24 * 60 * 60;
 const riftResourceCatalog: Array<Pick<RiftResourceState, "key" | "label" | "resourceId">> = [
   { key: "metal", label: "Metal", resourceId: 0 },
   { key: "crystal", label: "Crystal", resourceId: 1 },
@@ -5582,7 +5633,7 @@ function emptyRiftState(wallet: Address, homePlanetId: string | null, unavailabl
     riftAvailable: false,
     unlocked: false,
     unavailableReason,
-    withdrawalDelaySeconds: riftWithdrawalDelaySeconds.toString(),
+    withdrawalDelaySeconds: riftExtractionDelaySeconds.toString(),
     requirements: riftRequirements(null, 0, 0, {}),
     resources: riftResourceCatalog.map((resource) => ({
       ...resource,

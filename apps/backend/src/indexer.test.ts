@@ -4404,6 +4404,8 @@ describe("SettlementIndexer", () => {
       ]),
       pendingWithdrawals: [
         expect.objectContaining({
+          kind: "legacyMarketWithdrawal",
+          planetId: "7",
           amount: "250",
           resource: "metal",
           unlocksAt: "2026-02-07T21:33:20.000Z"
@@ -4477,6 +4479,8 @@ describe("SettlementIndexer", () => {
       pendingWithdrawals: expect.arrayContaining([
         expect.objectContaining({
           id: "extraction:7:0",
+          kind: "riftExtraction",
+          planetId: "7",
           amount: "750",
           resource: "metal",
           requestedAt: "2026-02-02T02:40:00.000Z",
@@ -4495,13 +4499,29 @@ describe("SettlementIndexer", () => {
     });
 
     indexer.applyLog({
+      blockNumber: "0x92a",
+      transactionHash: "0xrift-loot-survivor-zero",
+      logIndex: "0x0",
+      topics: [riftExtractionLootedTopic, addressTopic("0x3333333333333333333333333333333333333333" as Address), topic(7n)],
+      data: abiWords(750n, 400n, 0n)
+    });
+    // A completely raided extraction remains active until its owner explicitly
+    // finalizes it, so it must remain visible even when its survivor balance is zero.
+    expect(indexer.riftState(player, planet.planetId)).toMatchObject({
+      pendingWithdrawals: expect.arrayContaining([
+        expect.objectContaining({ id: "extraction:7:0", amount: "0", kind: "riftExtraction" }),
+        expect.objectContaining({ id: "extraction:7:1", amount: "0", kind: "riftExtraction" })
+      ])
+    });
+
+    indexer.applyLog({
       blockNumber: "0x93",
       transactionHash: "0xrift-finalize-metal",
       logIndex: "0x0",
       topics: [riftExtractionFinalizedTopic, addressTopic(player), topic(7n), topic(0n)],
       data: abiWords(750n)
     });
-    expect(indexer.riftTargets()[0]?.resources).toEqual({ metal: "0", crystal: "400", deuterium: "0" });
+    expect(indexer.riftTargets()[0]?.resources).toEqual({ metal: "0", crystal: "0", deuterium: "0" });
 
     indexer.applyLog({
       blockNumber: "0x94",
