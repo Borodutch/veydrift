@@ -2021,7 +2021,7 @@ async function ccaEthUsdReference(): Promise<number> {
   return value;
 }
 
-function withRequestCors(request: Request, response: Response): Response {
+export function withRequestCors(request: Request, response: Response): Response {
   const headers = new Headers(response.headers);
   headers.set("access-control-allow-origin", allowedCorsOrigin(request));
   appendVaryHeader(headers, "Origin");

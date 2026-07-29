@@ -1,5 +1,5 @@
 import { installCrashDiagnostics } from "./crashDiagnostics";
-import { createRequestHandler, readerBootstrapHealthResponse, runtimeConfigResponse } from "./server";
+import { createRequestHandler, readerBootstrapHealthResponse, runtimeConfigResponse, withRequestCors } from "./server";
 import {
   createForwardingFetch,
   createRequestLoggingFetch,
@@ -53,8 +53,8 @@ function serveWorker(role: WorkerRole, index: number, writerInternalPort?: numbe
     const localBootstrapHandler = (request: Request): Response | undefined => {
       const url = new URL(request.url);
       if (request.method !== "GET") return undefined;
-      if (url.pathname === "/runtime-config") return runtimeConfigResponse(role);
-      if (url.pathname === "/health") return readerBootstrapHealthResponse(role);
+      if (url.pathname === "/runtime-config") return withRequestCors(request, runtimeConfigResponse(role));
+      if (url.pathname === "/health") return withRequestCors(request, readerBootstrapHealthResponse(role));
       return undefined;
     };
 
