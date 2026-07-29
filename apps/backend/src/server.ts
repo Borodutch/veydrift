@@ -493,10 +493,12 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       ? sharedResponseCacheForIndex(loaded.config.indexDbPath)
       : null;
   const referralStore = dependencies.referralStore ?? createReferralStore(loaded.config);
-  // Prewarming walks broad indexed read surfaces. Keep it on the private writer by default so public
-  // readers do not block their event loops while building broad route caches.
+  // A whole-universe prewarm performs every wallet/planet projection back-to-back. On a busy live
+  // index that competes with public reads for SQLite and creates the very latency it is intended to
+  // avoid. Keep it opt-in for controlled maintenance windows; active routes warm their shared cache
+  // on demand and can serve a prior fleet payload while they refresh.
   const prewarmResponseCache = dependencies.prewarmResponseCache ?? (
-    usesProductionDependencies && isWriter && enableResponseCache
+    process.env.VEYDRIFT_PREWARM_RESPONSE_CACHE === "true" && isWriter && enableResponseCache
   );
 
   const routeRequest = async (request: Request): Promise<Response> => {
