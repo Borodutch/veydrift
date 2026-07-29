@@ -2348,6 +2348,13 @@ function cacheableJsonRequestKey(request: Request, url: URL, indexer: Settlement
 }
 
 function cacheableJsonRequestStaleKey(request: Request, url: URL, cacheKey: string): string {
+  // Mission checkpoints can advance while active fleet data remains displayable. Keep one shared
+  // stale fleet response across checkpoint versions so a reader serves the last complete payload
+  // immediately and refreshes it in the background, rather than making every connected wallet pay
+  // the full visibility rebuild at the same time.
+  if (url.pathname.match(/^\/wallet\/[^/]+\/fleet-visibility$/)) {
+    return `${request.method} ${url.pathname}${normalizedCacheSearch(url)} indexer=stale`;
+  }
   if (cacheableWalletSnapshotPath(url.pathname) || livePublicDataRequest(url)) return cacheKey;
   return `${request.method} ${url.pathname}${normalizedCacheSearch(url)} indexer=stale`;
 }
