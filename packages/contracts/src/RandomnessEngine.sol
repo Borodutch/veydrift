@@ -18,7 +18,10 @@ contract RandomnessEngine is OwnableUpgradeable, PausableUpgradeable, UUPSUpgrad
     bytes32 private constant RANDOMNESS_COMMITMENT_DOMAIN =
         keccak256("veydrift.randomness-commitment.v1");
     uint256 public constant MAX_COMMITMENT_INVENTORY = 16;
-    uint256 public constant STALE_REQUEST_RECOVERY_DELAY = 1 days;
+    /// @notice Maximum time a lost precommit can block the game before owner recovery is allowed.
+    /// @dev Recovery remains expected-value guarded, owner-only, and subject to a one-block reveal
+    ///      delay; the shorter window limits player-facing mission lockups.
+    uint256 public constant STALE_REQUEST_RECOVERY_DELAY = 1 hours;
 
     struct Request {
         address requester;
@@ -304,7 +307,7 @@ contract RandomnessEngine is OwnableUpgradeable, PausableUpgradeable, UUPSUpgrad
         }
 
         uint256 recoverableAt = uint256(stored.createdAt) + STALE_REQUEST_RECOVERY_DELAY;
-        // This timestamp is intentionally a coarse 24-hour liveness delay; validator skew cannot
+        // This timestamp is intentionally a one-hour liveness delay; validator skew cannot
         // bypass the expected-commitment, owner, unfulfilled, or one-block reveal guards.
         // forge-lint: disable-next-line(block-timestamp)
         if (block.timestamp < recoverableAt) {
