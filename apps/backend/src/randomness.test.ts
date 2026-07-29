@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   FileRandomnessCommitmentStore,
   InMemoryRandomnessCommitmentStore,
+  SqliteRandomnessCommitmentStore,
   RandomnessCommitmentWorker,
   RandomnessFulfillmentWorker,
   secureRandomUint256,
@@ -436,6 +437,47 @@ describe("Randomness commitment worker", () => {
       await Promise.resolve();
       expect(order).toEqual(["first-start"]);
 
+      releaseFirst();
+      await Promise.all([first, second]);
+      expect(order).toEqual(["first-start", "first-end", "second"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("migrates legacy secrets into a 0600 transactional store and serializes rolling owners", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "vey-randomness-sqlite-"));
+    const legacyPath = join(dir, "legacy.json");
+    const databasePath = join(dir, "commitments.sqlite");
+    const legacy = [{
+      commitment: fakeCommitment(4242n),
+      word: "4242",
+      committedAtBlock: 7,
+      createdAt: "2026-07-29T00:00:00.000Z"
+    }];
+    writeFileSync(legacyPath, JSON.stringify(legacy), "utf8");
+    const firstStore = new SqliteRandomnessCommitmentStore(databasePath, legacyPath);
+    const secondStore = new SqliteRandomnessCommitmentStore(databasePath, legacyPath);
+    const order: string[] = [];
+    let releaseFirst = () => {};
+    let firstEntered = () => {};
+    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    const entered = new Promise<void>((resolve) => { firstEntered = resolve; });
+
+    try {
+      expect(firstStore.load()).toEqual(legacy);
+      expect(statSync(databasePath).mode & 0o777).toBe(0o600);
+
+      const first = firstStore.withExclusiveLock(async () => {
+        order.push("first-start");
+        firstEntered();
+        await firstGate;
+        order.push("first-end");
+      });
+      await entered;
+      const second = secondStore.withExclusiveLock(async () => { order.push("second"); });
+      await Promise.resolve();
+      expect(order).toEqual(["first-start"]);
       releaseFirst();
       await Promise.all([first, second]);
       expect(order).toEqual(["first-start", "first-end", "second"]);

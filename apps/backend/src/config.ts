@@ -41,6 +41,7 @@ export type BackendConfig = {
   randomnessEngineAddress?: `0x${string}`;
   randomnessFulfillerPrivateKey?: `0x${string}`;
   randomnessCommitmentStorePath: string;
+  randomnessCommitmentLegacyStorePath?: string;
   // Referral contracts can be replaced after the database-wide index cursor has advanced. This
   // independent boundary lets startup reconcile the configured referral contract's canonical event
   // history without replaying or wiping unrelated game/alliance state.
@@ -229,6 +230,7 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
   );
   const randomnessCommitmentStorePath =
     env.VEYDRIFT_RANDOMNESS_COMMITMENT_STORE_PATH ?? defaultRandomnessCommitmentStorePath;
+  const randomnessCommitmentLegacyStorePath = env.VEYDRIFT_RANDOMNESS_COMMITMENT_LEGACY_STORE_PATH;
   const referralSignerPrivateKey = parsePrivateKey(
     env.VEYDRIFT_REFERRAL_SIGNER_PRIVATE_KEY,
     "VEYDRIFT_REFERRAL_SIGNER_PRIVATE_KEY",
@@ -316,6 +318,7 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
       ...(randomnessEngineAddress ? { randomnessEngineAddress } : {}),
       ...(randomnessFulfillerPrivateKey ? { randomnessFulfillerPrivateKey } : {}),
       randomnessCommitmentStorePath,
+      ...(randomnessCommitmentLegacyStorePath ? { randomnessCommitmentLegacyStorePath } : {}),
       referralIndexFromBlock,
       ...(referralSystemAddress ? { referralSystemAddress } : {}),
       ...(referralSignerPrivateKey ? { referralSignerPrivateKey } : {}),
