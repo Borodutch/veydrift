@@ -585,6 +585,14 @@ function cloneQueueState(queue: QueueState | null): QueueState | null {
 
 export class SettlementIndexer {
   private readonly db: Database;
+  // Reader workers share the writer's SQLite WAL but do not receive its in-memory mutation
+  // notifications. Keep diagnostic row counts local to the worker instead of making every API
+  // response re-scan the largest indexed tables. The counts are observability fields only; the
+  // authoritative freshness and readiness fields below still come from shared metadata.
+  private readonly readOnly: boolean;
+  private indexedTableCounts:
+    | Pick<IndexerSnapshot, "indexedDebrisFields" | "indexedEventLogs" | "indexedMoonChanceReports" | "indexedMoons" | "indexedPlanets" | "indexedRiftBalances">
+    | null = null;
   private planetRebuildPromise: Promise<IndexerSnapshot> | null = null;
   private rebuildPromise: Promise<IndexerSnapshot> | null = null;
   private currentStateHealPromise: Promise<IndexerSnapshot> | null = null;
@@ -740,9 +748,10 @@ export class SettlementIndexer {
     options: SettlementIndexerOptions = {}
   ) {
     const databasePath = options.databasePath ?? ":memory:";
+    this.readOnly = options.readOnly ?? false;
     this.db = options.database ?? openIndexerDatabase(
       databasePath,
-      options.readOnly ?? false,
+      this.readOnly,
       options.assumeSchemaReady ?? false
     );
     this.qaSyntheticStationedDefenders = options.qaSyntheticStationedDefenders ?? false;
@@ -752,6 +761,9 @@ export class SettlementIndexer {
       this.migrate(options.runStartupBackfill ?? true);
       this.seedStartPriceBootstrap(options.settlementStartPriceWei ?? null);
     }
+    // Do the one diagnostic count pass before a read worker accepts traffic. This keeps wallet,
+    // fleet, and CCA responses off the full-table COUNT(*) path under load.
+    if (this.readOnly) this.indexedCounts();
   }
 
   // VEY-KANEO-471: see SettlementIndexerOptions. Read once in fleetMissionVisibility.
@@ -777,7 +789,8 @@ export class SettlementIndexer {
 
     const currentStateHealInProgress = this.currentStateHealPromise !== null;
     const reconciliationInProgress = this.rebuildPromise !== null || this.planetRebuildPromise !== null || currentStateHealInProgress;
-    const indexedPlanets = this.count("indexed_planets");
+    const counts = this.indexedCounts();
+    const indexedPlanets = counts.indexedPlanets;
     const lastReconciledAt = this.metadata("lastReconciledAt");
     const allianceReconciledAt = this.metadata("allianceReconciledAt") ?? lastReconciledAt;
     const lastReconciledBlock = this.metadata("lastReconciledBlock");
@@ -804,13 +817,13 @@ export class SettlementIndexer {
     const snapshot: IndexerSnapshot = {
       allianceReconciledAt,
       allianceStaleReason,
-      indexedDebrisFields: this.count("indexed_debris_fields"),
-      indexedEventLogs: this.count("indexed_event_logs"),
-      indexedMoonChanceReports: this.count("indexed_moon_chance_reports"),
-      indexedMoons: this.count("indexed_moons"),
+      indexedDebrisFields: counts.indexedDebrisFields,
+      indexedEventLogs: counts.indexedEventLogs,
+      indexedMoonChanceReports: counts.indexedMoonChanceReports,
+      indexedMoons: counts.indexedMoons,
       indexedPlanets,
       indexedState: safeToServeIndexedState ? "healthy" : reconciliationInProgress ? "reconciling" : "stale",
-      indexedRiftBalances: this.count("indexed_rift_balances"),
+      indexedRiftBalances: counts.indexedRiftBalances,
       fromBlock: this.fromBlock.toString(),
       lastRebuiltAt: this.metadata("lastRebuiltAt"),
       lastCurrentStateHealAt: this.metadata("lastCurrentStateHealAt"),
@@ -9900,6 +9913,24 @@ export class SettlementIndexer {
   ): number {
     const row = this.db.query(`SELECT COUNT(*) AS count FROM ${table}`).get() as CountRow;
     return row.count;
+  }
+
+  private indexedCounts(): NonNullable<SettlementIndexer["indexedTableCounts"]> {
+    // The writer may call snapshot while a mutation transaction is still being assembled, so its
+    // diagnostics remain exact and uncached. Read-only API workers are the only processes that
+    // retain this warm snapshot; that prevents every public response from re-counting the full
+    // event ledger.
+    if (this.readOnly && this.indexedTableCounts) return this.indexedTableCounts;
+    const counts = {
+      indexedDebrisFields: this.count("indexed_debris_fields"),
+      indexedEventLogs: this.count("indexed_event_logs"),
+      indexedMoonChanceReports: this.count("indexed_moon_chance_reports"),
+      indexedMoons: this.count("indexed_moons"),
+      indexedPlanets: this.count("indexed_planets"),
+      indexedRiftBalances: this.count("indexed_rift_balances")
+    };
+    if (this.readOnly) this.indexedTableCounts = counts;
+    return counts;
   }
 
   private metadata(key: string): string | null {
