@@ -1,7 +1,6 @@
 import { render } from "preact";
 import { useEffect, useMemo, useState } from "preact/hooks";
 import {
-  Activity,
   ArrowUpRight,
   Blocks,
   Bot,
@@ -43,48 +42,86 @@ interface Stats {
 
 const number = new Intl.NumberFormat("en-US");
 const compact = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 });
+type ActivityMetric = "transactions" | "events";
+type ActivityRange = 7 | 14 | 30;
 
 function shortAddress(address: string): string {
   return `${address.slice(0, 6)}…${address.slice(-4)}`;
 }
 
 function niceEventName(value: string): string {
+  if (value === "PlanetSettled") return "Planet Resources Updated";
   return value.replace(/([a-z0-9])([A-Z])/g, "$1 $2");
 }
 
-function ActivityChart({ daily }: { daily: Stats["daily"] }) {
+function ActivityChart({ daily, metric }: { daily: Stats["daily"]; metric: ActivityMetric }) {
+  const [activeIndex, setActiveIndex] = useState<number | null>(null);
   const width = 920;
   const height = 270;
   const inset = 18;
-  const max = Math.max(...daily.map((item) => item.transactions), 1);
+  const max = Math.max(...daily.map((item) => item[metric]), 1);
   const points = daily.map((item, index) => ({
     ...item,
     x: inset + index * ((width - inset * 2) / Math.max(daily.length - 1, 1)),
-    y: height - inset - (item.transactions / max) * (height - inset * 2)
+    y: height - inset - (item[metric] / max) * (height - inset * 2)
   }));
   const line = points.map((point) => `${point.x},${point.y}`).join(" ");
   const area = `${inset},${height - inset} ${line} ${width - inset},${height - inset}`;
+  const activePoint = activeIndex === null ? null : points[activeIndex] ?? null;
+
+  const selectFromPointer = (event: PointerEvent) => {
+    const bounds = (event.currentTarget as SVGSVGElement).getBoundingClientRect();
+    const relativeX = Math.min(Math.max(event.clientX - bounds.left, 0), bounds.width);
+    const index = Math.round((relativeX / bounds.width) * Math.max(points.length - 1, 0));
+    setActiveIndex(index);
+  };
 
   return (
     <div class="chart-shell">
-      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Daily onchain transactions">
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        role="img"
+        aria-label={`Daily onchain ${metric}`}
+        tabIndex={0}
+        onPointerMove={selectFromPointer}
+        onPointerDown={selectFromPointer}
+        onPointerLeave={(event) => {
+          if (event.pointerType === "mouse") setActiveIndex(null);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "ArrowLeft") {
+            event.preventDefault();
+            setActiveIndex((current) => Math.max(0, (current ?? points.length - 1) - 1));
+          }
+          if (event.key === "ArrowRight") {
+            event.preventDefault();
+            setActiveIndex((current) => Math.min(points.length - 1, (current ?? -1) + 1));
+          }
+        }}
+      >
         <defs>
           <linearGradient id="activity-fill" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stop-color="#57f2dd" stop-opacity=".32" />
-            <stop offset="100%" stop-color="#57f2dd" stop-opacity="0" />
+            <stop offset="0%" stop-color={metric === "transactions" ? "#57f2dd" : "#f6bb62"} stop-opacity=".32" />
+            <stop offset="100%" stop-color={metric === "transactions" ? "#57f2dd" : "#f6bb62"} stop-opacity="0" />
           </linearGradient>
           <linearGradient id="activity-line" x1="0" x2="1">
-            <stop stop-color="#57f2dd" />
-            <stop offset="1" stop-color="#a795ff" />
+            <stop stop-color={metric === "transactions" ? "#57f2dd" : "#f6bb62"} />
+            <stop offset="1" stop-color={metric === "transactions" ? "#a795ff" : "#ff776d"} />
           </linearGradient>
         </defs>
         {[0.25, 0.5, 0.75].map((ratio) => (
-          <line x1={inset} x2={width - inset} y1={height * ratio} y2={height * ratio} class="grid-line" />
+          <line key={ratio} x1={inset} x2={width - inset} y1={height * ratio} y2={height * ratio} class="grid-line" />
         ))}
         <polygon points={area} fill="url(#activity-fill)" />
         <polyline points={line} fill="none" stroke="url(#activity-line)" stroke-width="4" stroke-linejoin="round" stroke-linecap="round" />
+        {activePoint && (
+          <>
+            <line x1={activePoint.x} x2={activePoint.x} y1={inset} y2={height - inset} class="chart-crosshair" />
+            <circle cx={activePoint.x} cy={activePoint.y} r="7" class="active-dot" />
+          </>
+        )}
         {points.map((point) => point.newPlayers > 0 && (
-          <circle cx={point.x} cy={point.y} r={5 + Math.min(point.newPlayers, 4)} class="join-dot">
+          <circle key={point.date} cx={point.x} cy={point.y} r={5 + Math.min(point.newPlayers, 4)} class="join-dot">
             <title>{`${point.date}: ${number.format(point.transactions)} tx · ${point.newPlayers} new commander${point.newPlayers === 1 ? "" : "s"}`}</title>
           </circle>
         ))}
@@ -94,6 +131,40 @@ function ActivityChart({ daily }: { daily: Stats["daily"] }) {
         <span>{daily[Math.floor(daily.length / 2)]?.date.slice(5)}</span>
         <span>{daily.at(-1)?.date.slice(5)}</span>
       </div>
+      {activePoint && (
+        <div
+          class={`chart-tooltip ${activePoint.x > width * .64 ? "align-right" : ""}`}
+          style={{ left: `${activePoint.x / width * 100}%`, top: `${Math.max(4, activePoint.y / height * 100 - 7)}%` }}
+        >
+          <time>{new Date(`${activePoint.date}T00:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" })}</time>
+          <strong>{number.format(activePoint[metric])} {metric}</strong>
+          <span>{number.format(activePoint.transactions)} tx · {number.format(activePoint.events)} events</span>
+          <span>+{activePoint.newPlayers} new commander{activePoint.newPlayers === 1 ? "" : "s"}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ToggleGroup<T extends string | number>({ value, values, onChange, label }: {
+  value: T;
+  values: ReadonlyArray<{ value: T; label: string }>;
+  onChange: (value: T) => void;
+  label: string;
+}) {
+  return (
+    <div class="toggle-group" role="group" aria-label={label}>
+      {values.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          class={value === option.value ? "active" : ""}
+          aria-pressed={value === option.value}
+          onClick={() => onChange(option.value)}
+        >
+          {option.label}
+        </button>
+      ))}
     </div>
   );
 }
@@ -118,6 +189,9 @@ function StatCard({ label, value, note, icon: Icon, accent = "cyan" }: {
 function App() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [activityMetric, setActivityMetric] = useState<ActivityMetric>("transactions");
+  const [activityRange, setActivityRange] = useState<ActivityRange>(30);
+  const [contractMetric, setContractMetric] = useState<ActivityMetric>("transactions");
 
   useEffect(() => {
     let active = true;
@@ -142,10 +216,19 @@ function App() {
     };
   }, []);
 
-  const peak = useMemo(
-    () => stats ? Math.max(...stats.contracts.map((contract) => contract.transactions), 1) : 1,
-    [stats]
+  const activityDays = useMemo(
+    () => stats?.daily.slice(-activityRange) ?? [],
+    [activityRange, stats]
   );
+  const contracts = useMemo(
+    () => stats
+      ? [...stats.contracts]
+        .sort((left, right) => right[contractMetric] - left[contractMetric])
+        .slice(0, 8)
+      : [],
+    [contractMetric, stats]
+  );
+  const peak = Math.max(...contracts.map((contract) => contract[contractMetric]), 1);
 
   return (
     <main>
@@ -205,9 +288,23 @@ function App() {
                 <span class="section-kicker">NETWORK PULSE</span>
                 <h2>Onchain activity</h2>
               </div>
-              <div class="legend"><i class="line-key" /> Transactions <i class="dot-key" /> New commanders</div>
+              <div class="chart-controls">
+                <ToggleGroup
+                  value={activityMetric}
+                  values={[{ value: "transactions", label: "Transactions" }, { value: "events", label: "Events" }]}
+                  onChange={setActivityMetric}
+                  label="Activity metric"
+                />
+                <ToggleGroup
+                  value={activityRange}
+                  values={[{ value: 7, label: "7D" }, { value: 14, label: "14D" }, { value: 30, label: "30D" }]}
+                  onChange={setActivityRange}
+                  label="Activity range"
+                />
+              </div>
             </header>
-            <ActivityChart daily={stats.daily} />
+            <div class="legend"><i class="line-key" /> {activityMetric} <i class="dot-key" /> New commanders</div>
+            <ActivityChart daily={activityDays} metric={activityMetric} />
             <div class="mini-stats">
               <div><span>Active commanders · 24h</span><strong>{stats.summary.activePlayers24h}</strong></div>
               <div><span>Active commanders · 7d</span><strong>{stats.summary.activePlayers7d}</strong></div>
@@ -220,15 +317,27 @@ function App() {
             <section class="panel">
               <header class="panel-header">
                 <div><span class="section-kicker">CONTRACT MATRIX</span><h2>Transaction gravity</h2></div>
-                <Activity size={21} />
+                <ToggleGroup
+                  value={contractMetric}
+                  values={[{ value: "transactions", label: "TXS" }, { value: "events", label: "Events" }]}
+                  onChange={setContractMetric}
+                  label="Contract ranking metric"
+                />
               </header>
               <div class="contract-list">
-                {stats.contracts.slice(0, 8).map((contract, index) => (
-                  <a class="contract-row" href={`https://basescan.org/address/${contract.address}`} target="_blank" rel="noreferrer">
+                {contracts.map((contract, index) => (
+                  <a
+                    key={contract.address}
+                    class="contract-row"
+                    href={`https://basescan.org/address/${contract.address}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    title={`${number.format(contract.transactions)} transactions · ${number.format(contract.events)} events`}
+                  >
                     <span class="rank">{String(index + 1).padStart(2, "0")}</span>
                     <span class="contract-info"><strong>{contract.label}</strong><small>{shortAddress(contract.address)}</small></span>
-                    <span class="bar"><i style={{ width: `${Math.max(2, contract.transactions / peak * 100)}%` }} /></span>
-                    <span class="contract-total">{compact.format(contract.transactions)}<small>TXS</small></span>
+                    <span class="bar"><i style={{ width: `${Math.max(2, contract[contractMetric] / peak * 100)}%` }} /></span>
+                    <span class="contract-total">{compact.format(contract[contractMetric])}<small>{contractMetric === "transactions" ? "TXS" : "EVENTS"}</small></span>
                     <ExternalLink size={13} />
                   </a>
                 ))}
@@ -242,7 +351,7 @@ function App() {
               </header>
               <div class="event-list">
                 {stats.topEvents.slice(0, 8).map((event, index) => (
-                  <div class="event-row">
+                  <div class="event-row" key={event.name}>
                     <span class={`event-symbol symbol-${index % 4}`}>
                       {index % 4 === 0 ? <Globe2 /> : index % 4 === 1 ? <Rocket /> : index % 4 === 2 ? <Shield /> : <Bot />}
                     </span>
