@@ -122,7 +122,9 @@ const acceptedCacheQueryParams = new Map<string, ReadonlySet<string>>([
   ["/raid-finder/debris", new Set(["limit", "minMetal", "minCrystal"])],
   ["/raid-finder/rifters", new Set(["limit"])],
   ["/universe/systems", new Set(["center", "detail", "galaxy", "limit", "page", "radius"])],
-  ["/wallet/*/fleet-visibility", new Set(["archive", "planetId"])],
+  // The endpoint is wallet-scoped; `planetId` is currently ignored by its handler and must not
+  // fragment the shared cache for every planet picker selection.
+  ["/wallet/*/fleet-visibility", new Set(["archive"])],
   ["/wallet/*/missions", new Set(["filter", "missionNumber", "missionType", "page", "pageSize", "planetId", "status"])],
   ["/wallet/*/overview", new Set(["planetId"])],
   ["/wallet/*/queues", new Set(["planetId"])],
@@ -2322,6 +2324,7 @@ function cacheableJsonRequestTtlMs(request: Request, url: URL): number {
   if (url.pathname === "/raid-finder/rifters") return 30_000;
   // Mission-control reads are backed by the mission read-model version in responseCacheVersion(), so
   // they stay fresh across indexed mission events while still coalescing repeated UI refreshes.
+  if (url.pathname.match(/^\/wallet\/[^/]+\/fleet-visibility$/)) return 60_000;
   if (url.pathname.match(/^\/wallet\/[^/]+\/missions$/)) return 30_000;
   if (url.pathname === "/missions") return livePublicDataRequest(url) ? 1_000 : 300_000;
   if (url.pathname.match(/^\/mission\/[^/]+$/)) return 30_000;
