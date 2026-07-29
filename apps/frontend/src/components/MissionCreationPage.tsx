@@ -1,5 +1,5 @@
 import type { ComponentChildren } from "preact";
-import { useMemo, useState } from "preact/hooks";
+import { useEffect, useMemo, useState } from "preact/hooks";
 import type { Coordinates, DebrisField, Planet, PublicStationedDefender } from "../types";
 import { ActionReasonNote } from "./ActionReasonNote";
 import {
@@ -36,11 +36,18 @@ import { PlanetMoonIndicator } from "./PlanetMoonIndicator";
 import {
   contractCombatPower,
   forecastContractBattle,
+  summarizeContractBattleForecast,
   type BattleOutcome,
   type CombatResources,
-  type ContractBattleForecast,
+  type ContractBattleForecastSummary,
+  type ContractBattleInput,
   type ContractBattleResult,
 } from "../battlePreview";
+import {
+  BattlePreviewScheduler,
+  battlePreviewInputKey,
+  type BattlePreviewWorker,
+} from "../battlePreviewScheduler";
 
 export type CombatTechLevels = {
   weapons: number;
@@ -186,6 +193,26 @@ export type JoinAttackForecastContext = {
 export type BattleForecastTiming = {
   projectedAttackArrivalAt: number | null;
 };
+
+export type PreparedPublicTargetBattleForecast =
+  | {
+      status: "complete";
+      forecast: BattleForecastState;
+    }
+  | {
+      status: "simulate";
+      input: ContractBattleInput;
+      pending: BattleForecastState;
+      context: {
+        attackerPower: number;
+        defenderPower: number;
+        stationedDefendersPresent: boolean;
+        targetIsMoon: boolean;
+        attackerTechLevels: CombatTechLevels;
+        defenderTechLevels: CombatTechLevels;
+        defenderTechKnown: boolean;
+      };
+    };
 
 export type StationedDefenderQualification = {
   defenders: readonly PublicStationedDefender[];
@@ -411,8 +438,8 @@ export function MissionCreationPage({
     () => stationedDefenderCompositionUnits(stationedDefenders),
     [stationedDefenders],
   );
-  const battleForecast = useMemo(
-    () => publicTargetBattleForecast(
+  const preparedBattleForecast = useMemo(
+    () => preparePublicTargetBattleForecast(
       ships,
       target,
       attackerCombatTechLevels,
@@ -437,6 +464,7 @@ export function MissionCreationPage({
       target,
     ],
   );
+  const battleForecast = useDeferredPublicTargetBattleForecast(preparedBattleForecast);
   const resourceIntel = useMemo(
     () => targetResourceIntel(target, travelSeconds, effectiveTargetIsMoon),
     [effectiveTargetIsMoon, target, travelSeconds],
@@ -814,6 +842,52 @@ export function MissionCreationPage({
       </div>
     </section>
   );
+}
+
+function useDeferredPublicTargetBattleForecast(
+  prepared: PreparedPublicTargetBattleForecast,
+): BattleForecastState {
+  const [scheduler] = useState(() => new BattlePreviewScheduler({
+    createWorker: () => new Worker(
+      new URL("../battlePreview.worker.ts", import.meta.url),
+      { type: "module" },
+    ) as unknown as BattlePreviewWorker,
+  }));
+  const [resolved, setResolved] = useState<{ key: string; forecast: BattleForecastState } | null>(null);
+  const previewKey = prepared.status === "simulate" ? battlePreviewInputKey(prepared.input) : null;
+
+  useEffect(() => {
+    if (prepared.status === "complete" || previewKey === null) {
+      scheduler.reset();
+      return;
+    }
+
+    scheduler.schedule(
+      previewKey,
+      prepared.input,
+      (simulation) => {
+        setResolved({
+          key: previewKey,
+          forecast: resolvePreparedPublicTargetBattleForecast(prepared, simulation),
+        });
+      },
+      (error) => {
+        setResolved({
+          key: previewKey,
+          forecast: {
+            ...prepared.pending,
+            detail: `Outcome preview unavailable: ${error}`,
+          },
+        });
+      },
+    );
+  }, [previewKey, scheduler]);
+
+  useEffect(() => () => scheduler.dispose(), [scheduler]);
+
+  if (prepared.status === "complete") return prepared.forecast;
+  if (resolved?.key === previewKey) return resolved.forecast;
+  return prepared.pending;
 }
 
 function BodySelectionRow({
@@ -1454,14 +1528,18 @@ export function targetResourceIntel(target: Planet | undefined, travelSeconds: n
   };
 }
 
-export function publicTargetBattleForecast(
+export function preparePublicTargetBattleForecast(
   ships: MissionShips,
   target: Planet | undefined,
   attackerTechLevels: CombatTechLevels = ZERO_COMBAT_TECH_LEVELS,
   targetIsMoon = false,
   joinAttackContext?: JoinAttackForecastContext,
   timing?: BattleForecastTiming,
-): BattleForecastState {
+): PreparedPublicTargetBattleForecast {
+  const complete = (forecast: BattleForecastState): PreparedPublicTargetBattleForecast => ({
+    status: "complete",
+    forecast,
+  });
   const normalizedAttackerTechLevels = normalizeCombatTechLevels(attackerTechLevels);
   const defenderTechLevels = targetCombatTechLevels(target);
   const defenderTechKnown = Boolean(target?.publicState?.research);
@@ -1476,82 +1554,82 @@ export function publicTargetBattleForecast(
   }, 0);
   const attackerPower = missionShipsCombatPower(ships, normalizedAttackerTechLevels) + joinedAttackerPower;
   if (fleetMissionShipCount(ships) <= 0) {
-    return {
+    return complete({
       kind: "uncertain",
       label: "Uncertain",
       detail: "Select ships to preview the attack against public destination intel.",
       attackerPower,
       defenderPower: null,
       ...forecastTech,
-    };
+    });
   }
   if (joinAttackContext?.unavailableReason) {
-    return {
+    return complete({
       kind: "uncertain",
       label: "Uncertain",
       detail: joinAttackContext.unavailableReason,
       attackerPower,
       defenderPower: null,
       ...forecastTech,
-    };
+    });
   }
   if (joinAttackContext) {
     for (const participant of joinAttackContext.participants) {
       if (!participant.ships) {
-        return {
+        return complete({
           kind: "uncertain",
           label: "Uncertain",
           detail: `${participant.label} composition is missing from public intel, so the combined attack is not simulated as only the selected joining fleet.`,
           attackerPower,
           defenderPower: null,
           ...forecastTech,
-        };
+        });
       }
       if (!participant.combatTechnology) {
-        return {
+        return complete({
           kind: "uncertain",
           label: "Uncertain",
           detail: `${participant.label} combat technology is missing from public intel, so owner-specific contract scaling cannot be simulated safely.`,
           attackerPower,
           defenderPower: null,
           ...forecastTech,
-        };
+        });
       }
       if (participant.laneGroup == null || !Number.isFinite(participant.laneGroup)) {
-        return {
+        return complete({
           kind: "uncertain",
           label: "Uncertain",
           detail: `${participant.label} contract random-stream lane identity is missing from public intel.`,
           attackerPower,
           defenderPower: null,
           ...forecastTech,
-        };
+        });
       }
     }
     if (joinAttackContext.selectedAttackerLaneGroup == null || !Number.isFinite(joinAttackContext.selectedAttackerLaneGroup)) {
-      return {
+      return complete({
         kind: "uncertain",
         label: "Uncertain",
         detail: "The selected joining fleet's exact contract random-stream lane is missing from public intel.",
         attackerPower,
         defenderPower: null,
         ...forecastTech,
-      };
+      });
     }
   }
   if (!target) {
-    return {
+    return complete({
       kind: "uncertain",
       label: "Uncertain",
       detail: "Destination fleet and defense data is unavailable, so exact defender strength is unknown.",
       attackerPower,
       defenderPower: null,
       ...forecastTech,
-    };
+    });
   }
   const bodyState = targetIsMoon ? target.publicMoonState : target.publicState;
   if (!bodyState) {
-    return {
+    return complete({
       kind: "uncertain",
       label: "Uncertain",
       detail: targetIsMoon
@@ -1560,10 +1638,10 @@ export function publicTargetBattleForecast(
       attackerPower,
       defenderPower: null,
       ...forecastTech,
-    };
+    });
   }
   if (!Array.isArray(bodyState.fleet) || !Array.isArray(bodyState.defenses)) {
-    return {
+    return complete({
       kind: "uncertain",
       label: "Uncertain",
       detail: targetIsMoon
@@ -1572,23 +1650,23 @@ export function publicTargetBattleForecast(
       attackerPower,
       defenderPower: null,
       ...forecastTech,
-    };
+    });
   }
   if (!defenderTechKnown) {
-    return {
+    return complete({
       kind: "uncertain",
       label: "Uncertain",
       detail: "The destination owner's combat technology is missing from public intel, so the preview will not assume zero levels.",
       attackerPower,
       defenderPower: null,
       ...forecastTech,
-    };
+    });
   }
   const forecastStationedDefenders = targetIsMoon
     ? []
     : joinAttackContext?.stationedDefenders ?? target.publicState?.stationedDefenderForecastTimeline;
   if (!targetIsMoon && !Array.isArray(forecastStationedDefenders)) {
-    return {
+    return complete({
       kind: "uncertain",
       label: "Uncertain",
       detail: joinAttackContext
@@ -1597,7 +1675,7 @@ export function publicTargetBattleForecast(
       attackerPower,
       defenderPower: null,
       ...forecastTech,
-    };
+    });
   }
 
   let stationedDefenders = forecastStationedDefenders ?? [];
@@ -1608,47 +1686,47 @@ export function publicTargetBattleForecast(
       target.publicState?.stationedDefenderTimelineComplete === true,
     );
     if (qualification.unavailableReason) {
-      return {
+      return complete({
         kind: "uncertain",
         label: "Uncertain",
         detail: qualification.unavailableReason,
         attackerPower,
         defenderPower: null,
         ...forecastTech,
-      };
+      });
     }
     stationedDefenders = qualification.defenders;
   }
   const missingStationedTechnology = stationedDefenders.find((defender) => !defender.combatTechnology);
   if (missingStationedTechnology) {
-    return {
+    return complete({
       kind: "uncertain",
       label: "Uncertain",
       detail: `${missingStationedTechnology.defenderDisplayName ?? missingStationedTechnology.defender}'s stationed fleet combat technology is not indexed, so its owner-specific contract scaling cannot be simulated safely.`,
       attackerPower,
       defenderPower: null,
       ...forecastTech,
-    };
+    });
   }
   const missingStationedLane = stationedDefenders.find(
     (defender) => defender.laneGroup == null || !Number.isFinite(defender.laneGroup),
   );
   if (missingStationedLane) {
-    return {
+    return complete({
       kind: "uncertain",
       label: "Uncertain",
       detail: `Stationed fleet #${missingStationedLane.missionId} is missing its exact contract random-stream lane identity.`,
       attackerPower,
       defenderPower: null,
       ...forecastTech,
-    };
+    });
   }
 
   const stationedPower = stationedDefendersCombatPower(stationedDefenders);
   const defenderPower = compositionCombatPower(bodyState.fleet, "ship", defenderTechLevels)
     + compositionCombatPower(bodyState.defenses, "defense", defenderTechLevels)
     + stationedPower;
-  const simulation = forecastContractBattle({
+  const input: ContractBattleInput = {
     attackers: [
       ...(joinAttackContext?.participants ?? []).map((participant) => ({
         id: participant.missionId,
@@ -1685,25 +1763,80 @@ export function publicTargetBattleForecast(
         technology: normalizeCombatTechLevels(defender.combatTechnology),
       })),
     },
-  });
+  };
+  return {
+    status: "simulate",
+    input,
+    pending: {
+      kind: "uncertain",
+      label: "Uncertain",
+      detail: "Calculating the latest outcome preview…",
+      attackerPower,
+      defenderPower,
+      ...forecastTech,
+    },
+    context: {
+      attackerPower,
+      defenderPower,
+      stationedDefendersPresent: stationedPower > 0,
+      targetIsMoon,
+      ...forecastTech,
+    },
+  };
+}
+
+export function resolvePreparedPublicTargetBattleForecast(
+  prepared: Extract<PreparedPublicTargetBattleForecast, { status: "simulate" }>,
+  simulation: ContractBattleForecastSummary,
+): BattleForecastState {
   const kind = simulation.probableOutcome;
   const label = kind === "win" ? "Probable win" : kind === "defeat" ? "Probable defeat" : "Probable draw";
   return {
     kind,
     label,
-    detail: battleForecastDetail(kind, simulation, stationedPower > 0, targetIsMoon),
-    attackerPower,
-    defenderPower,
+    detail: battleForecastDetail(
+      kind,
+      simulation,
+      prepared.context.stationedDefendersPresent,
+      prepared.context.targetIsMoon,
+    ),
+    attackerPower: prepared.context.attackerPower,
+    defenderPower: prepared.context.defenderPower,
     attackerLosses: simulation.attackerLosses,
     randomness: {
       outcomeRange: (["win", "draw", "defeat"] as const).filter((outcome) => simulation.outcomeCounts[outcome] > 0),
-      sampleCount: simulation.samples.length,
+      sampleCount: simulation.sampleCount,
       outcomeCounts: simulation.outcomeCounts,
       attackerSurvivorRange: simulation.attackerSurvivorRange,
     },
     sampleReport: simulation.sampleReport,
-    ...forecastTech,
+    attackerTechLevels: prepared.context.attackerTechLevels,
+    defenderTechLevels: prepared.context.defenderTechLevels,
+    defenderTechKnown: prepared.context.defenderTechKnown,
   };
+}
+
+export function publicTargetBattleForecast(
+  ships: MissionShips,
+  target: Planet | undefined,
+  attackerTechLevels: CombatTechLevels = ZERO_COMBAT_TECH_LEVELS,
+  targetIsMoon = false,
+  joinAttackContext?: JoinAttackForecastContext,
+  timing?: BattleForecastTiming,
+): BattleForecastState {
+  const prepared = preparePublicTargetBattleForecast(
+    ships,
+    target,
+    attackerTechLevels,
+    targetIsMoon,
+    joinAttackContext,
+    timing,
+  );
+  if (prepared.status === "complete") return prepared.forecast;
+  return resolvePreparedPublicTargetBattleForecast(
+    prepared,
+    summarizeContractBattleForecast(forecastContractBattle(prepared.input)),
+  );
 }
 
 export function ShipQuantityRow({
@@ -2979,7 +3112,7 @@ function combatShipRecordCounts(ships: Record<string, string>): number[] {
 
 function battleForecastDetail(
   kind: BattleOutcome,
-  simulation: ContractBattleForecast,
+  simulation: ContractBattleForecastSummary,
   hasStationedDefenders: boolean,
   targetIsMoon: boolean,
 ): string {
@@ -2992,7 +3125,7 @@ function battleForecastDetail(
     return `Estimated from current public ${targetLabel} intel${defenders}. Contract-equivalent 256-bit samples produce different outcomes or losses; the future oracle word is not known yet.`;
   }
   const result = kind === "win" ? "win" : kind === "defeat" ? "loss" : "draw";
-  return `Estimated from current public ${targetLabel} intel${defenders}. All ${simulation.samples.length} contract-equivalent samples produced the same ${result}, but this is not a guarantee because the future oracle word is unknown.`;
+  return `Estimated from current public ${targetLabel} intel${defenders}. All ${simulation.sampleCount} contract-equivalent samples produced the same ${result}, but this is not a guarantee because the future oracle word is unknown.`;
 }
 
 function resourceSnapshotsEqual(left: CombatResources, right: CombatResources): boolean {
