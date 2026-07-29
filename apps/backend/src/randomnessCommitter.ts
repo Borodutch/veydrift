@@ -12,6 +12,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import type { BackendConfig } from "./config";
 import {
   FileRandomnessCommitmentStore,
+  saveRandomnessReadinessSnapshot,
   SqliteRandomnessCommitmentStore,
   RandomnessCommitmentWorker,
   type RandomnessCommitmentChainClient,
@@ -281,12 +282,15 @@ export class RandomnessCommitterService {
   private readonly intervalMs: number;
   private readonly fulfillerAddress: string | null;
   private readonly logger: RandomnessCommitterLogger;
+  private readonly readinessSnapshotEnabled: boolean;
   private timer: ReturnType<typeof setInterval> | undefined;
   private inFlight = false;
   private lastRunAt: string | null = null;
   private lastError: string | null = null;
   private lastStatus: RandomnessCommitmentStatus | null = null;
   private activeAlerts = new Set<string>();
+  private lastReadinessFingerprint: string | null = null;
+  private lastReadinessWrittenAt = 0;
 
   constructor(
     private readonly config: BackendConfig,
@@ -314,6 +318,9 @@ export class RandomnessCommitterService {
         )
         : new FileRandomnessCommitmentStore(config.randomnessCommitmentStorePath)
     );
+    // Unit/integration callers often inject an in-memory store and run in parallel. Only the
+    // production-selected durable store is allowed to publish the cross-process readiness file.
+    this.readinessSnapshotEnabled = options.store === undefined;
     this.worker = chainClient
       ? new RandomnessCommitmentWorker(
           chainClient,
@@ -366,6 +373,7 @@ export class RandomnessCommitterService {
     try {
       const status = await this.worker.tick();
       this.lastStatus = status;
+      if (this.readinessSnapshotEnabled) this.persistReadiness(status);
       const nextAlerts = new Set(status.alerts);
       for (const alert of status.alerts) {
         if (!this.activeAlerts.has(alert)) {
@@ -376,10 +384,37 @@ export class RandomnessCommitterService {
       this.lastError = null;
     } catch (error) {
       this.lastError = error instanceof Error ? error.message : String(error);
+      if (this.readinessSnapshotEnabled) this.persistReadiness(null, this.lastError);
       this.logger.error("[randomness-committer] tick failed", error);
     } finally {
       this.inFlight = false;
     }
+  }
+
+  private persistReadiness(status: RandomnessCommitmentStatus | null, tickError?: string): void {
+    const reasons = tickError
+      ? ["The randomness safety check is unavailable. New attacks are temporarily paused."]
+      : (status?.alerts ?? [])
+          .filter((alert) =>
+            alert.includes("no tracked random word")
+            || alert.includes("on-chain randomness commitments have no tracked reveal words")
+            || alert.includes("no pending randomness commitment available")
+          )
+          .map(() => "A required randomness reveal mapping is unavailable. New attacks are temporarily paused.");
+    const uniqueReasons = [...new Set(reasons)];
+    const ready = uniqueReasons.length === 0;
+    const fingerprint = JSON.stringify({ ready, reasons: uniqueReasons });
+    const now = Date.now();
+    // Readers fail closed if this snapshot becomes stale, so refresh it periodically without adding
+    // a write on every one-second committer tick.
+    if (fingerprint === this.lastReadinessFingerprint && now - this.lastReadinessWrittenAt < 15_000) return;
+    saveRandomnessReadinessSnapshot(this.config.randomnessCommitmentStorePath, {
+      ready,
+      reasons: uniqueReasons,
+      updatedAt: new Date(now).toISOString()
+    });
+    this.lastReadinessFingerprint = fingerprint;
+    this.lastReadinessWrittenAt = now;
   }
 }
 

@@ -51,6 +51,7 @@ import {
   type IndexerSnapshot
 } from "./indexer";
 import { RandomnessCommitterService } from "./randomnessCommitter";
+import { loadRandomnessReadinessSnapshot, type RandomnessReadinessSnapshot } from "./randomness";
 import { MissionResolutionService } from "./missionResolution";
 import { logApiRequestEvent } from "./observability";
 import {
@@ -523,9 +524,14 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         indexerSnapshot,
         missionResolutionSnapshot
       );
+      const randomnessReadiness = currentRandomnessReadiness(
+        loaded.config.randomnessCommitmentStorePath,
+        Boolean(loaded.config.randomnessEngineAddress && loaded.config.randomnessFulfillerPrivateKey)
+      );
+      const healthy = readiness.ready && randomnessReadiness.ready;
       return Response.json(
         {
-          ok: readiness.ready,
+          ok: healthy,
           service: "veydrift-backend",
           configured: loaded.problems.length === 0,
           backend: backendDeploymentMetadata(workerRole),
@@ -536,13 +542,28 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           randomnessCommitter: randomnessCommitter?.snapshot() ?? null,
           indexer: indexerSnapshot,
           rpc: chainReader?.rpcMetrics?.() ?? null,
-          chainSyncRpc: logBackfiller?.rpcMetrics?.() ?? null
+          chainSyncRpc: logBackfiller?.rpcMetrics?.() ?? null,
+          randomnessReadiness
         } satisfies HealthPayload & Record<string, unknown>,
         {
           headers: corsHeaders,
-          status: readiness.ready ? 200 : 503
+          status: healthy ? 200 : 503
         }
       );
+    }
+
+    if (request.method === "GET" && url.pathname === "/randomness-readiness") {
+      const readiness = currentRandomnessReadiness(
+        loaded.config.randomnessCommitmentStorePath,
+        Boolean(loaded.config.randomnessEngineAddress && loaded.config.randomnessFulfillerPrivateKey)
+      );
+      return Response.json(readiness, {
+        headers: {
+          ...corsHeaders,
+          "cache-control": "no-store"
+        },
+        status: readiness.ready ? 200 : 503
+      });
     }
 
     if (request.method === "GET" && url.pathname === "/runtime-config") {
@@ -4127,6 +4148,27 @@ function moonChanceStatus(report: MoonChanceReportEvent): string {
   return report.moonCreated ? "created" : "not_created";
 }
 
+const maxRandomnessReadinessAgeMs = 30_000;
+
+function currentRandomnessReadiness(
+  commitmentStorePath: string,
+  required: boolean
+): RandomnessReadinessSnapshot {
+  if (!required) {
+    return { ready: true, reasons: [], updatedAt: new Date(0).toISOString() };
+  }
+  const snapshot = loadRandomnessReadinessSnapshot(commitmentStorePath);
+  const updatedAtMs = snapshot ? Date.parse(snapshot.updatedAt) : Number.NaN;
+  if (!snapshot || !Number.isFinite(updatedAtMs) || Date.now() - updatedAtMs > maxRandomnessReadinessAgeMs) {
+    return {
+      ready: false,
+      reasons: ["The randomness safety check is unavailable. New attacks are temporarily paused."],
+      updatedAt: snapshot?.updatedAt ?? new Date(0).toISOString()
+    };
+  }
+  return snapshot;
+}
+
 export function runtimeConfigResponse(workerRole: WorkerRole = envWorkerRole()): Response {
   return Response.json(getRuntimeConfig(workerRole), {
     headers: corsHeaders
@@ -4136,9 +4178,14 @@ export function runtimeConfigResponse(workerRole: WorkerRole = envWorkerRole()):
 export function readerBootstrapHealthResponse(workerRole: WorkerRole = envWorkerRole()): Response {
   const loaded = loadBackendConfig();
   const readiness = backendReadiness(loaded.problems, null, null, null);
+  const randomnessReadiness = currentRandomnessReadiness(
+    loaded.config.randomnessCommitmentStorePath,
+    Boolean(loaded.config.randomnessEngineAddress && loaded.config.randomnessFulfillerPrivateKey)
+  );
+  const healthy = readiness.ready && randomnessReadiness.ready;
   return Response.json(
     {
-      ok: readiness.ready,
+      ok: healthy,
       service: "veydrift-backend",
       configured: loaded.problems.length === 0,
       backend: backendDeploymentMetadata(workerRole),
@@ -4148,11 +4195,12 @@ export function readerBootstrapHealthResponse(workerRole: WorkerRole = envWorker
       missionResolution: null,
       randomnessCommitter: null,
       indexer: null,
-      rpc: null
+      rpc: null,
+      randomnessReadiness
     } satisfies HealthPayload & Record<string, unknown>,
     {
       headers: corsHeaders,
-      status: readiness.ready ? 200 : 503
+      status: healthy ? 200 : 503
     }
   );
 }

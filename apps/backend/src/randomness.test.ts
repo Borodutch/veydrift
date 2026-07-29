@@ -5,6 +5,9 @@ import { join } from "node:path";
 import {
   FileRandomnessCommitmentStore,
   InMemoryRandomnessCommitmentStore,
+  loadRandomnessReadinessSnapshot,
+  randomnessReadinessPath,
+  saveRandomnessReadinessSnapshot,
   SqliteRandomnessCommitmentStore,
   RandomnessCommitmentWorker,
   RandomnessFulfillmentWorker,
@@ -80,6 +83,28 @@ describe("Randomness fulfillment worker", () => {
     const word = secureRandomUint256();
     expect(word).toBeGreaterThan(0n);
     expect(word).toBeLessThan(1n << 256n);
+  });
+});
+
+describe("Randomness readiness snapshot", () => {
+  test("writes a non-secret fail-closed readiness snapshot with owner-only permissions", () => {
+    const dir = mkdtempSync(join(tmpdir(), "veydrift-randomness-readiness-"));
+    const storePath = join(dir, "commitments.sqlite");
+    try {
+      saveRandomnessReadinessSnapshot(storePath, {
+        ready: false,
+        reasons: ["A required randomness reveal mapping is unavailable. New attacks are temporarily paused."],
+        updatedAt: "2026-07-29T16:00:00.000Z"
+      });
+      expect(loadRandomnessReadinessSnapshot(storePath)).toEqual({
+        ready: false,
+        reasons: ["A required randomness reveal mapping is unavailable. New attacks are temporarily paused."],
+        updatedAt: "2026-07-29T16:00:00.000Z"
+      });
+      expect(statSync(randomnessReadinessPath(storePath)).mode & 0o777).toBe(0o600);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

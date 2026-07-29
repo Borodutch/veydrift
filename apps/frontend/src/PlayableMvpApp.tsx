@@ -7556,7 +7556,7 @@ export function PlayableMvpApp({
     if (action) handleGalaxyAction(action, debrisTargetPlanetForMission(target), target.coordinates);
   }, [handleGalaxyAction, raidFinderHarvestAction]);
 
-  const handleConfirmGalaxyMission = useCallback((draft: MissionLaunchDraft) => {
+  const handleConfirmGalaxyMission = useCallback(async (draft: MissionLaunchDraft) => {
     const pending = pendingGalaxyMission;
     if (!pending) return;
     const { action, target, coords } = pending;
@@ -7565,6 +7565,28 @@ export function PlayableMvpApp({
     if (!provider || !account || !gameContract || !originPlanetId) {
       setGalaxyAction({ status: "error", label: "Wallet, game contract, or origin planet is unavailable." });
       return;
+    }
+    if (action.kind === "attack") {
+      if (!apiBaseUrl) {
+        setGalaxyAction({ status: "error", label: "Randomness safety status is unavailable. New attacks are temporarily paused." });
+        return;
+      }
+      try {
+        const response = await fetch(`${apiBaseUrl.replace(/\/+$/, "")}/randomness-readiness`, {
+          headers: { accept: "application/json" }
+        });
+        const readiness = await response.json() as { ready?: unknown; reasons?: unknown };
+        if (!response.ok || readiness.ready !== true) {
+          const reason = Array.isArray(readiness.reasons) && typeof readiness.reasons[0] === "string"
+            ? readiness.reasons[0]
+            : "Randomness safety is not ready. New attacks are temporarily paused.";
+          setGalaxyAction({ status: "error", label: reason });
+          return;
+        }
+      } catch {
+        setGalaxyAction({ status: "error", label: "Randomness safety status is unavailable. New attacks are temporarily paused." });
+        return;
+      }
     }
     playSfx("mission-launch");
     haptic("select");
@@ -7780,6 +7802,7 @@ export function PlayableMvpApp({
   }, [
     account,
     activePlanetId,
+    apiBaseUrl,
     effectiveResearchState?.technologyLevels,
     gameContract,
     onChainSettlement?.homePlanetId,

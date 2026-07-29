@@ -889,6 +889,11 @@ describe("Veydrift backend", () => {
       indexer: null,
       missionResolution: null,
       randomnessCommitter: null,
+      randomnessReadiness: {
+        ready: true,
+        reasons: [],
+        updatedAt: "1970-01-01T00:00:00.000Z"
+      },
       rpc: null,
       chainSyncRpc: null,
       ok: false,
