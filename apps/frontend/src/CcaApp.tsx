@@ -219,6 +219,13 @@ function shortAddress(address: string) {
   return `${address.slice(0, 6)}…${address.slice(-4)}`;
 }
 
+export function revealCcaBidReview(
+  review: Pick<HTMLElement, "focus" | "scrollIntoView"> | null,
+) {
+  if (!review) return;
+  review.focus({ preventScroll: true });
+  review.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
 function providerFromWindow() {
   return (window as EthereumWindow).ethereum;
 }
@@ -403,6 +410,7 @@ export function CcaApp() {
   const [maxFdv, setMaxFdv] = useState("109");
   const maxFdvIsAutomatic = useRef(true);
   const [message, setMessage] = useState("Loading live Base auction data.");
+  const reviewRef = useRef<HTMLDivElement>(null);
   const [reviewing, setReviewing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [exitingBidId, setExitingBidId] = useState<string | null>(null);
@@ -410,7 +418,6 @@ export function CcaApp() {
   const [bidSettlements, setBidSettlements] = useState<Record<string, CcaBidSettlement>>({});
   const [walletProvider, setWalletProvider] = useState<Eip1193Provider>();
   const [wethBalance, setWethBalance] = useState<bigint | null>(null);
-  const reviewRef = useRef<HTMLDivElement>(null);
 
   const refresh = useCallback(async (activeProvider = walletProvider ?? providerFromWindow(), activeAccount = account) => {
     try {
@@ -466,6 +473,10 @@ export function CcaApp() {
     walletProvider.on?.("accountsChanged", handleAccountsChanged);
     return () => walletProvider.removeListener?.("accountsChanged", handleAccountsChanged);
   }, [refresh, walletProvider]);
+
+  useEffect(() => {
+    if (reviewing) revealCcaBidReview(reviewRef.current);
+  }, [reviewing]);
 
   const connect = useCallback(async () => {
     await signalFarcasterReadyOnce();
@@ -570,7 +581,6 @@ export function CcaApp() {
     }
     setReviewing(true);
     setMessage("Review ready below — scroll down to confirm your bid.");
-    requestAnimationFrame(() => reviewRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }));
   }, [account, amountWei, auction.currentBlock, auction.endBlock, connect, fundingError, maxPriceQ96, priceError]);
 
   const exitBid = useCallback(async (bid: CcaSubmittedBid) => {
@@ -794,8 +804,8 @@ export function CcaApp() {
           <p className="cca-notice">{fundingCurrency === "eth" ? "ETH is wrapped into WETH before the bid (four wallet confirmations)." : "WETH bidding requires three wallet confirmations."} This page never receives custody.</p>
           <p className="cca-message" role="status">{message}</p>
 
-          {reviewing && <div className="cca-review" ref={reviewRef} role="dialog" aria-label="Review your bid">
-            <strong>Review bid</strong>
+          {reviewing && <div ref={reviewRef} className="cca-review" role="dialog" aria-labelledby="cca-review-title" tabIndex={-1}>
+            <strong id="cca-review-title">Review bid</strong>
             <p>Submit up to <b>{amount || "0"} {fundingCurrency.toUpperCase()}</b> at a maximum <b>{maxFdv || "0"} WETH FDV</b> ({maxPrice} WETH / VEY).</p>
             <p>{fundingCurrency === "eth" ? "ETH will be wrapped to WETH, then approved through Permit2." : "WETH will be approved through Permit2."} The final transaction calls Uniswap’s official auction contract.</p>
             <div><button type="button" onClick={() => setReviewing(false)}>Back</button><button type="button" disabled={submitting || Boolean(priceError)} onClick={() => void bid()}>Confirm bid</button></div>

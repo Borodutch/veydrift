@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { formatUnits } from "viem";
 
+import { revealCcaBidReview } from "./CcaApp";
 import { executeCcaBidSequence, readCcaAuctionBoundary } from "./ccaBidFlow";
 import {
   ccaBidPriceError,
@@ -12,6 +13,26 @@ import type { Eip1193Provider } from "./walletFlow";
 
 const clearingPriceQ96 = 8_556_641_551_540_548_460_102n;
 
+describe("CCA bid review guidance", () => {
+  test("focuses the review dialog without an extra jump and smoothly reveals its controls", () => {
+    const calls: Array<["focus" | "scroll", FocusOptions | ScrollIntoViewOptions | undefined]> = [];
+    const review = {
+      focus: (options?: FocusOptions) => calls.push(["focus", options]),
+      scrollIntoView: (options?: ScrollIntoViewOptions) => calls.push(["scroll", options]),
+    };
+
+    revealCcaBidReview(review);
+
+    expect(calls).toEqual([
+      ["focus", { preventScroll: true }],
+      ["scroll", { behavior: "smooth", block: "nearest" }],
+    ]);
+  });
+
+  test("leaves the page unchanged when the review dialog is not mounted", () => {
+    expect(revealCcaBidReview(null)).toBeUndefined();
+  });
+});
 describe("CCA bid price validation", () => {
   test("rejects equality through the production FDV-to-Q96 conversion", () => {
     const firstAcceptedFdvWei = minimumFdvWeiAboveClearingPriceQ96(clearingPriceQ96);
@@ -157,11 +178,11 @@ describe("CCA bid transaction ordering", () => {
     expect(source).toContain("walletBids: state.walletBids ?? []");
   });
 
-  test("scrolls the bidder from Review bid to confirmation and only offers eligible contract exits", async () => {
+  test("focuses and reveals the Review bid confirmation while retaining eligible contract exits", async () => {
     const source = await Bun.file(new URL("./CcaApp.tsx", import.meta.url)).text();
 
     expect(source).toContain("Review ready below — scroll down to confirm your bid.");
-    expect(source).toContain('reviewRef.current?.scrollIntoView({ behavior: "smooth", block: "center" })');
+    expect(source).toContain("if (reviewing) revealCcaBidReview(reviewRef.current)");
     expect(source).toContain('name: "exitBid"');
     expect(source).toContain("The auction is still finalizing on Base.");
   });
