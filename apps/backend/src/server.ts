@@ -76,6 +76,7 @@ import {
 import { deriveInfrastructureFields, isCombatShipId, zeroResources } from "./readModels";
 import { planetArchetypeForTemperature, planetMetadata, planetMultipliers, systemSnapshot, type PlanetMetadata, type SystemSnapshot } from "./universe";
 import { responseCachePath, SharedResponseCache } from "./sharedResponseCache";
+import { normalizeStatsUtcOffsetMinutes } from "./stats";
 import {
   DEFAULT_MAX_WORKER_COUNT,
   resolveWorkerCount,
@@ -117,6 +118,7 @@ const acceptedCacheQueryParams = new Map<string, ReadonlySet<string>>([
   ["/cca", new Set(["owner"])],
   ["/highscores", new Set(["category", "currentWallet", "includeAttackProtection", "limit", "live", "page", "pageSize"])],
   ["/missions", new Set(["live", "missionNumber", "missionType", "owner", "page", "pageSize", "planetId", "status"])],
+  ["/stats", new Set(["utcOffsetMinutes"])],
   ["/raid-finder/debris", new Set(["limit", "minMetal", "minCrystal"])],
   ["/raid-finder/rifters", new Set(["limit"])],
   ["/universe/systems", new Set(["center", "detail", "galaxy", "limit", "page", "radius"])],
@@ -545,9 +547,14 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
     if (request.method === "GET" && url.pathname === "/stats") {
       if (!indexer) return unavailableResponse(loaded.problems);
-      return Response.json(indexer.publicStatsSnapshot(statsContractDescriptors(loaded.config)), {
-        headers: corsHeaders
-      });
+      return Response.json(
+        indexer.publicStatsSnapshot(
+          statsContractDescriptors(loaded.config),
+          undefined,
+          statsUtcOffsetMinutesFromQuery(url.searchParams.get("utcOffsetMinutes"))
+        ),
+        { headers: corsHeaders }
+      );
     }
 
     if (request.method === "GET" && url.pathname === "/cca") {
@@ -2204,6 +2211,11 @@ function normalizedCacheSearch(url: URL): string {
   }
   const search = normalized.toString();
   return search ? `?${search}` : "";
+}
+
+function statsUtcOffsetMinutesFromQuery(value: string | null): number {
+  if (!value || !/^-?\d+$/.test(value)) return 0;
+  return normalizeStatsUtcOffsetMinutes(Number(value));
 }
 
 function acceptedCacheParams(pathname: string): ReadonlySet<string> | undefined {

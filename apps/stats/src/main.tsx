@@ -20,6 +20,7 @@ const apiUrl = (import.meta.env.VITE_VEYDRIFT_API_URL as string | undefined) ?? 
 
 interface Stats {
   generatedAt: string;
+  utcOffsetMinutes: number;
   coverage: { fromBlock: number; throughBlock: number; fromTimestamp: number; throughTimestamp: number };
   summary: {
     players: number;
@@ -195,9 +196,10 @@ function App() {
 
   useEffect(() => {
     let active = true;
+    const utcOffsetMinutes = -new Date().getTimezoneOffset();
     const load = async () => {
       try {
-        const response = await fetch(`${apiUrl}/stats`);
+        const response = await fetch(`${apiUrl}/stats?utcOffsetMinutes=${utcOffsetMinutes}`);
         if (!response.ok) throw new Error(`Telemetry unavailable (${response.status})`);
         const next = await response.json() as Stats;
         if (active) {
