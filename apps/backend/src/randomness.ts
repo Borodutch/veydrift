@@ -1,5 +1,6 @@
-import { randomBytes } from "node:crypto";
-import { mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { Database } from "bun:sqlite";
+import { randomBytes, randomUUID } from "node:crypto";
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 export type Address = string;
@@ -218,10 +219,12 @@ export class FileRandomnessCommitmentStore implements RandomnessCommitmentStore 
   }
 
   save(records: RandomnessCommitmentRecord[]): void {
-    mkdirSync(dirname(this.filePath), { recursive: true });
+    mkdirSync(dirname(this.filePath), { recursive: true, mode: 0o700 });
     const tempPath = this.filePath + ".tmp";
-    writeFileSync(tempPath, JSON.stringify(records, null, 2), "utf8");
+    writeFileSync(tempPath, JSON.stringify(records, null, 2), { encoding: "utf8", mode: 0o600 });
+    chmodSync(tempPath, 0o600);
     renameSync(tempPath, this.filePath);
+    chmodSync(this.filePath, 0o600);
   }
 
   async withExclusiveLock<T>(operation: () => Promise<T>): Promise<T> {
@@ -276,6 +279,152 @@ export class FileRandomnessCommitmentStore implements RandomnessCommitmentStore 
         }
         await new Promise((resolve) => setTimeout(resolve, 50));
       }
+    }
+  }
+}
+
+/**
+ * Transactional production store for unrevealed words. The worker holds a renewable SQLite lease
+ * for its complete read/chain-write/save cycle, so a rolling replica cannot overwrite another
+ * replica's committed secrets. The audit contains commitments and state transitions only—never words.
+ */
+export class SqliteRandomnessCommitmentStore implements RandomnessCommitmentStore {
+  private readonly database: Database;
+
+  constructor(
+    private readonly databasePath: string,
+    legacyFilePath?: string
+  ) {
+    mkdirSync(dirname(databasePath), { recursive: true, mode: 0o700 });
+    this.database = new Database(databasePath);
+    chmodSync(databasePath, 0o600);
+    this.database.exec("PRAGMA journal_mode = WAL;");
+    this.database.exec("PRAGMA synchronous = FULL;");
+    this.database.exec("PRAGMA busy_timeout = 5000;");
+    this.database.exec(`
+      CREATE TABLE IF NOT EXISTS randomness_commitments (
+        commitment TEXT PRIMARY KEY,
+        word TEXT NOT NULL,
+        committed_at_block INTEGER,
+        created_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS randomness_committer_lease (
+        lease_id INTEGER PRIMARY KEY CHECK (lease_id = 1),
+        holder TEXT NOT NULL,
+        expires_at_ms INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS randomness_commitment_audit (
+        sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+        action TEXT NOT NULL,
+        commitment TEXT,
+        created_at TEXT NOT NULL
+      );
+    `);
+    this.migrateLegacyFile(legacyFilePath);
+  }
+
+  load(): RandomnessCommitmentRecord[] {
+    return this.database.query(`
+      SELECT commitment, word, committed_at_block AS committedAtBlock, created_at AS createdAt
+      FROM randomness_commitments
+      ORDER BY created_at ASC, commitment ASC
+    `).all() as RandomnessCommitmentRecord[];
+  }
+
+  save(records: RandomnessCommitmentRecord[]): void {
+    this.database.exec("BEGIN IMMEDIATE;");
+    try {
+      const existing = this.database.query(`
+        SELECT commitment, committed_at_block AS committedAtBlock
+        FROM randomness_commitments
+      `).all() as Array<Pick<RandomnessCommitmentRecord, "commitment" | "committedAtBlock">>;
+      const existingByCommitment = new Map(existing.map((record) => [record.commitment, record]));
+      const nextByCommitment = new Map(records.map((record) => [record.commitment, record]));
+      this.database.query("DELETE FROM randomness_commitments").run();
+      const insert = this.database.query(`
+        INSERT INTO randomness_commitments (commitment, word, committed_at_block, created_at)
+        VALUES (?, ?, ?, ?)
+      `);
+      for (const record of records) {
+        insert.run(record.commitment, record.word, record.committedAtBlock, record.createdAt);
+      }
+      const audit = this.database.query(`
+        INSERT INTO randomness_commitment_audit (action, commitment, created_at)
+        VALUES (?, ?, ?)
+      `);
+      const now = new Date().toISOString();
+      for (const record of records) {
+        const previous = existingByCommitment.get(record.commitment);
+        if (!previous) {
+          audit.run("record_added", record.commitment, now);
+        } else if (previous.committedAtBlock !== record.committedAtBlock) {
+          audit.run("commitment_state_changed", record.commitment, now);
+        }
+      }
+      for (const record of existing) {
+        if (!nextByCommitment.has(record.commitment)) {
+          audit.run("record_removed", record.commitment, now);
+        }
+      }
+      this.database.exec("COMMIT;");
+    } catch (error) {
+      this.database.exec("ROLLBACK;");
+      throw error;
+    }
+  }
+
+  async withExclusiveLock<T>(operation: () => Promise<T>): Promise<T> {
+    const holder = randomUUID();
+    await this.acquireLease(holder);
+    const renew = setInterval(() => this.renewLease(holder), 15_000);
+    try {
+      return await operation();
+    } finally {
+      clearInterval(renew);
+      this.database.query("DELETE FROM randomness_committer_lease WHERE lease_id = 1 AND holder = ?").run(holder);
+    }
+  }
+
+  private migrateLegacyFile(legacyFilePath: string | undefined): void {
+    const existing = this.database.query("SELECT COUNT(*) AS count FROM randomness_commitments").get() as { count: number };
+    if (existing.count > 0 || !legacyFilePath || !existsSync(legacyFilePath)) return;
+    const parsed = JSON.parse(readFileSync(legacyFilePath, "utf8"));
+    if (!Array.isArray(parsed)) throw new Error("legacy randomness commitment store is not an array");
+    this.save(parsed as RandomnessCommitmentRecord[]);
+    this.database.query(`
+      INSERT INTO randomness_commitment_audit (action, commitment, created_at)
+      VALUES (?, NULL, ?)
+    `).run("legacy_json_migrated", new Date().toISOString());
+  }
+
+  private async acquireLease(holder: string): Promise<void> {
+    const deadline = Date.now() + 60_000;
+    while (true) {
+      const now = Date.now();
+      const result = this.database.query(`
+        INSERT INTO randomness_committer_lease (lease_id, holder, expires_at_ms)
+        VALUES (1, ?, ?)
+        ON CONFLICT(lease_id) DO UPDATE SET
+          holder = excluded.holder,
+          expires_at_ms = excluded.expires_at_ms
+        WHERE randomness_committer_lease.expires_at_ms <= ?
+      `).run(holder, now + 90_000, now) as { changes: number };
+      if (result.changes > 0) return;
+      if (now >= deadline) {
+        throw new Error(`timed out waiting for transactional randomness committer lease ${this.databasePath}`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  }
+
+  private renewLease(holder: string): void {
+    const result = this.database.query(`
+      UPDATE randomness_committer_lease
+      SET expires_at_ms = ?
+      WHERE lease_id = 1 AND holder = ?
+    `).run(Date.now() + 90_000, holder) as { changes: number };
+    if (result.changes !== 1) {
+      throw new Error("randomness committer lease was lost before the current cycle completed");
     }
   }
 }

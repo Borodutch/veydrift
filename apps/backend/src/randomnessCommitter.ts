@@ -12,6 +12,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import type { BackendConfig } from "./config";
 import {
   FileRandomnessCommitmentStore,
+  SqliteRandomnessCommitmentStore,
   RandomnessCommitmentWorker,
   type RandomnessCommitmentChainClient,
   type RandomnessCommitmentInventory,
@@ -305,8 +306,14 @@ export class RandomnessCommitterService {
     }
     this.fulfillerAddress = fulfillerAddress;
 
-    const store =
-      options.store ?? new FileRandomnessCommitmentStore(config.randomnessCommitmentStorePath);
+    const store = options.store ?? (
+      config.randomnessCommitmentStorePath.endsWith(".sqlite")
+        ? new SqliteRandomnessCommitmentStore(
+          config.randomnessCommitmentStorePath,
+          config.randomnessCommitmentLegacyStorePath
+        )
+        : new FileRandomnessCommitmentStore(config.randomnessCommitmentStorePath)
+    );
     this.worker = chainClient
       ? new RandomnessCommitmentWorker(
           chainClient,
