@@ -201,6 +201,30 @@ describe("RandomnessCommitterService", () => {
     expect(service.snapshot().status?.alerts).toEqual([]);
   });
 
+  test("does not re-alert every tick when only a pending request age changes", async () => {
+    const engine = new FakeEngineChainClient();
+    engine.requests = [{
+      requestId: "3168",
+      requester: "0x1111111111111111111111111111111111111111",
+      purposeHash: "0x" + "aa".repeat(32),
+      createdAt: 1,
+      randomnessCommitment: "0x" + "ff".repeat(32)
+    }];
+    const warnings: string[] = [];
+    const service = new RandomnessCommitterService(baseConfig, {
+      logger: { warn: (message) => warnings.push(message), error: () => {} },
+      chainClient: engine,
+      store: new InMemoryRandomnessCommitmentStore()
+    });
+
+    await service.tick();
+    const firstWarningCount = warnings.length;
+    expect(firstWarningCount).toBeGreaterThan(0);
+
+    await service.tick();
+    expect(warnings).toHaveLength(firstWarningCount);
+  });
+
   test("fails closed for new attacks when a consumed commitment has no durable reveal word", async () => {
     const dir = mkdtempSync(join(tmpdir(), "veydrift-randomness-committer-"));
     const config = { ...baseConfig, randomnessCommitmentStorePath: join(dir, "commitments.sqlite") };
