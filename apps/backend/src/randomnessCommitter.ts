@@ -374,9 +374,9 @@ export class RandomnessCommitterService {
       const status = await this.worker.tick();
       this.lastStatus = status;
       if (this.readinessSnapshotEnabled) this.persistReadiness(status);
-      const nextAlerts = new Set(status.alerts);
+      const nextAlerts = new Set(status.alerts.map(randomnessAlertKey));
       for (const alert of status.alerts) {
-        if (!this.activeAlerts.has(alert)) {
+        if (!this.activeAlerts.has(randomnessAlertKey(alert))) {
           this.logger.warn(`[randomness-committer] ${alert}`);
         }
       }
@@ -416,6 +416,12 @@ export class RandomnessCommitterService {
     this.lastReadinessFingerprint = fingerprint;
     this.lastReadinessWrittenAt = now;
   }
+}
+
+function randomnessAlertKey(alert: string): string {
+  // Age is intentionally dynamic, but must not turn one persistent missing-mapping condition into
+  // a fresh alert every committer tick. Preserve all semantically meaningful alert changes.
+  return alert.replace(/oldest randomness request has been pending for \d+s/, "oldest randomness request pending");
 }
 
 function buildViemChainClient(
