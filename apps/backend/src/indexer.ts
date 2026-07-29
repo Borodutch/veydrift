@@ -2806,9 +2806,10 @@ export class SettlementIndexer {
 
   publicStatsSnapshot(
     descriptors: readonly StatsContractDescriptor[],
-    nowSeconds?: number
+    nowSeconds?: number,
+    utcOffsetMinutes?: number
   ): PublicStatsSnapshot {
-    return buildPublicStatsSnapshot(this.db, descriptors, nowSeconds);
+    return buildPublicStatsSnapshot(this.db, descriptors, nowSeconds, utcOffsetMinutes);
   }
 
   private productionQueueProjectionCacheVersion(nowSec = nowSeconds()): string {

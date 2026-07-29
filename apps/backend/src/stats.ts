@@ -11,6 +11,7 @@ export interface StatsContractDescriptor {
 
 export interface PublicStatsSnapshot {
   generatedAt: string;
+  utcOffsetMinutes: number;
   coverage: {
     fromBlock: number;
     throughBlock: number;
@@ -84,11 +85,23 @@ function numberValue(db: Database, sql: string, ...bindings: Array<string | numb
   return Number((db.query(sql).get(...bindings) as NumberRow | null)?.value ?? 0);
 }
 
+export function normalizeStatsUtcOffsetMinutes(value: number | undefined): number {
+  return Number.isInteger(value) && value !== undefined && value >= -840 && value <= 840
+    ? value
+    : 0;
+}
+
 export function buildPublicStatsSnapshot(
   db: Database,
   descriptors: readonly StatsContractDescriptor[],
-  nowSeconds = Math.floor(Date.now() / 1_000)
+  nowSeconds = Math.floor(Date.now() / 1_000),
+  utcOffsetMinutesInput = 0
 ): PublicStatsSnapshot {
+  const utcOffsetMinutes = normalizeStatsUtcOffsetMinutes(utcOffsetMinutesInput);
+  const utcOffsetSeconds = utcOffsetMinutes * 60;
+  const localDayNumber = Math.floor((nowSeconds + utcOffsetSeconds) / 86_400);
+  const rangeStartSeconds = (localDayNumber - 29) * 86_400 - utcOffsetSeconds;
+  const sqliteUtcOffset = `${utcOffsetMinutes >= 0 ? "+" : ""}${utcOffsetMinutes} minutes`;
   const coverage = db.query(`
     SELECT
       CAST(MIN(CAST(block_number AS INTEGER)) AS INTEGER) AS from_block,
@@ -133,23 +146,23 @@ export function buildPublicStatsSnapshot(
 
   const daily = db.query(`
     WITH RECURSIVE days(date) AS (
-      SELECT date(?, 'unixepoch', '-29 days')
+      SELECT date(?, 'unixepoch', ?)
       UNION ALL
-      SELECT date(date, '+1 day') FROM days WHERE date < date(?, 'unixepoch')
+      SELECT date(date, '+1 day') FROM days WHERE date < date(?, 'unixepoch', ?)
     ),
     activity AS (
-      SELECT date(CAST(json_extract(event_json, '$.blockTimestamp') AS INTEGER), 'unixepoch') AS date,
+      SELECT date(CAST(json_extract(event_json, '$.blockTimestamp') AS INTEGER), 'unixepoch', ?) AS date,
         COUNT(DISTINCT lower(transaction_hash)) AS transactions,
         COUNT(*) AS events
       FROM indexed_event_logs
       WHERE removed = 0
-        AND CAST(json_extract(event_json, '$.blockTimestamp') AS INTEGER) >= ? - (29 * 86400)
+        AND CAST(json_extract(event_json, '$.blockTimestamp') AS INTEGER) >= ?
       GROUP BY date
     ),
     joins AS (
-      SELECT date(joined_at, 'unixepoch') AS date, COUNT(*) AS new_players
+      SELECT date(joined_at, 'unixepoch', ?) AS date, COUNT(*) AS new_players
       FROM (${firstPlayerSql})
-      WHERE joined_at >= ? - (29 * 86400)
+      WHERE joined_at >= ?
       GROUP BY date
     )
     SELECT days.date,
@@ -160,7 +173,17 @@ export function buildPublicStatsSnapshot(
     LEFT JOIN activity USING (date)
     LEFT JOIN joins USING (date)
     ORDER BY days.date
-  `).all(nowSeconds, nowSeconds, nowSeconds, firstPlanetSettledTopic, nowSeconds) as DailyRow[];
+  `).all(
+    rangeStartSeconds,
+    sqliteUtcOffset,
+    nowSeconds,
+    sqliteUtcOffset,
+    sqliteUtcOffset,
+    rangeStartSeconds,
+    sqliteUtcOffset,
+    firstPlanetSettledTopic,
+    rangeStartSeconds
+  ) as DailyRow[];
 
   const descriptorLabels = new Map(
     descriptors.map(({ address, label }) => [address.toLowerCase(), label])
@@ -197,6 +220,7 @@ export function buildPublicStatsSnapshot(
 
   return {
     generatedAt: new Date(nowSeconds * 1_000).toISOString(),
+    utcOffsetMinutes,
     coverage: {
       fromBlock: Number(coverage?.from_block ?? 0),
       throughBlock: Number(coverage?.through_block ?? 0),
