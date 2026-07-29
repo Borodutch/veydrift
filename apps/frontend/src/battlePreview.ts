@@ -119,6 +119,10 @@ export type ContractBattleForecast = {
   };
 };
 
+export type ContractBattleForecastSummary = Omit<ContractBattleForecast, "samples"> & {
+  sampleCount: number;
+};
+
 type CatalogUnit = (typeof combatCatalogArtifact.ships)[number];
 type MutableFleet = Omit<BattleFleetParticipant, "ships" | "technology"> & {
   ships: number[];
@@ -216,6 +220,16 @@ export function forecastContractBattle(
       min: Math.min(...survivorCounts),
       max: Math.max(...survivorCounts),
     },
+  };
+}
+
+export function summarizeContractBattleForecast(
+  forecast: ContractBattleForecast,
+): ContractBattleForecastSummary {
+  const { samples: _samples, ...summary } = forecast;
+  return {
+    ...summary,
+    sampleCount: forecast.samples.length,
   };
 }
 
