@@ -178,6 +178,14 @@ export function TopBar({
             <CircleHelp className="h-3.5 w-3.5" size={14} strokeWidth={2} />
           </a>
           <a
+            aria-label="$VEYDRIFT auction"
+            className="grid h-10 min-w-0 flex-1 place-items-center rounded border border-pink-300/35 bg-pink-300/10 px-2 text-[11px] font-semibold text-pink-100 transition hover:bg-pink-300/20 sm:hidden"
+            href="/cca"
+            title="$VEYDRIFT auction"
+          >
+            Auction
+          </a>
+          <a
             aria-label="Veydrift whitepaper"
             className="grid h-10 min-w-0 flex-1 place-items-center rounded border border-amber-200/35 bg-amber-200/10 text-amber-100 transition hover:bg-amber-200/20 sm:hidden"
             href={WHITEPAPER_URL}
@@ -236,6 +244,14 @@ export function TopBar({
           >
             <FileText className="h-3.5 w-3.5" size={14} strokeWidth={2} />
             <span className="sr-only lg:not-sr-only">Whitepaper</span>
+          </a>
+          <a
+            aria-label="$VEYDRIFT auction"
+            className="hidden h-7 shrink-0 items-center justify-center rounded border border-pink-300/35 bg-pink-300/10 px-2 text-[11px] font-semibold leading-none text-pink-100 transition hover:bg-pink-300/20 sm:inline-flex"
+            href="/cca"
+            title="$VEYDRIFT auction"
+          >
+            $VEY auction
           </a>
           <SoundToggle className="hidden h-7 w-7 shrink-0 items-center justify-center rounded border border-white/15 bg-white/[0.06] text-slate-300 transition hover:bg-white/10 sm:inline-flex" />
           {isWalletConnected && account && (
