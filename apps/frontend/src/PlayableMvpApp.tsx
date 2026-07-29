@@ -1815,6 +1815,7 @@ interface PlayableMvpAppProps {
   provider?: Eip1193Provider | undefined;
   walletProviderSource?: "injected" | "farcaster" | undefined;
   account?: string | undefined;
+  auctionBanner?: ComponentChildren | undefined;
   miniAppMode?: boolean | undefined;
   onConnectWallet?: (() => void) | undefined;
   planet?: PlanetSummary | undefined;
@@ -3249,6 +3250,7 @@ export function PlayableMvpApp({
   provider: providedProvider,
   walletProviderSource: providedWalletProviderSource,
   account: providedAccount,
+  auctionBanner,
   miniAppMode: providedMiniAppMode = false,
   onConnectWallet,
   planet,
@@ -8276,6 +8278,7 @@ export function PlayableMvpApp({
 
   const topBar = (
     <TopBar
+      auctionBanner={auctionBanner}
       caps={caps}
       crawlerProduction={infrastructureChainState?.crawlerProduction}
       energy={topBarEnergy}

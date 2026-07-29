@@ -1,3 +1,4 @@
+import type { ComponentChildren } from "preact";
 import type { EnergyBalance, Resources, QueueItem } from "../playableMvp";
 import { shouldShowTopBarEnergy, type ChainLoadStatus } from "../overviewData";
 import { energyExplanationTitle } from "../topBarEnergyInfo";
@@ -65,6 +66,7 @@ function tickValueRef(value: number, formatValue: (next: number) => string) {
 }
 
 interface TopBarProps {
+  auctionBanner?: ComponentChildren | undefined;
   resources?: Resources | undefined;
   rates: Resources;
   caps: Resources;
@@ -91,6 +93,7 @@ type CrawlerProductionInfo = {
 };
 
 export function TopBar({
+  auctionBanner,
   resources,
   rates,
   caps,
@@ -105,8 +108,10 @@ export function TopBar({
   const showResourceDetails = Boolean(resources);
 
   return (
-    <div className="sticky top-0 z-30 border-b border-white/10 bg-[#0a0f1a]/95 backdrop-blur" ref={topBarHeightSyncRef}>
-      <div className="mx-auto flex min-h-10 max-w-[96rem] flex-wrap items-center justify-center gap-x-3 gap-y-1 px-2 py-1 sm:min-h-11 sm:justify-between sm:px-4 sm:py-1.5 lg:px-6">
+    <div className="sticky top-0 z-30" ref={topBarHeightSyncRef}>
+      {auctionBanner}
+      <div className="border-b border-white/10 bg-[#0a0f1a]/95 backdrop-blur">
+        <div className="mx-auto flex min-h-10 max-w-[96rem] flex-wrap items-center justify-center gap-x-3 gap-y-1 px-2 py-1 sm:min-h-11 sm:justify-between sm:px-4 sm:py-1.5 lg:px-6">
         <div className="flex w-full min-w-0 flex-col gap-1 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:justify-start sm:gap-x-2.5 sm:gap-y-1.5">
           {/* Mobile: resources own a full-width row so values never truncate;
               icons + wallet live on the row below. sm:contents flattens both
@@ -245,6 +250,7 @@ export function TopBar({
           )}
         </div>
 
+        </div>
       </div>
     </div>
   );
