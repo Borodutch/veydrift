@@ -289,6 +289,7 @@ contract RandomnessEngineTest is Test {
     }
 
     function testOwnerCanReprecommitAndRecoverAnIrrecoverablyStaleRequest() public {
+        assertEq(engine.STALE_REQUEST_RECOVERY_DELAY(), 1 hours);
         bytes32 originalCommitment = _commitNextWord(111);
         consumer.start(purpose);
         uint256 requestId = consumer.requestId();
