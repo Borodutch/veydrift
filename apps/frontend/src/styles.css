@@ -132,13 +132,15 @@ body {
 }
 
 .cca-launch-banner {
-  position: sticky;
-  top: 0;
-  z-index: 1000;
   border-bottom: 1px solid rgba(255, 98, 191, 0.38);
   background: linear-gradient(90deg, #1f1033 0%, #46133d 48%, #201436 100%);
-  box-shadow: 0 8px 24px rgba(6, 5, 13, 0.34);
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+/* The playable game already owns a sticky resource bar. Keep one sticky
+   header there and surface the auction from that bar instead. */
+body:has(.playable-starfield) .cca-launch-banner {
+  display: none;
 }
 
 .cca-launch-banner a {
