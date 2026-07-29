@@ -169,6 +169,56 @@ export type RandomnessCommitmentRecord = {
   createdAt: string;
 };
 
+/**
+ * Public, non-secret health snapshot produced by the single committer. Reader processes and the
+ * frontend use it to fail closed before creating a randomness-consuming attack while a commitment
+ * mapping is unsafe. The reveal words never leave the transactional store.
+ */
+export type RandomnessReadinessSnapshot = {
+  ready: boolean;
+  reasons: string[];
+  updatedAt: string;
+};
+
+export function randomnessReadinessPath(commitmentStorePath: string): string {
+  return commitmentStorePath + ".readiness.json";
+}
+
+export function loadRandomnessReadinessSnapshot(
+  commitmentStorePath: string
+): RandomnessReadinessSnapshot | null {
+  try {
+    const parsed = JSON.parse(readFileSync(randomnessReadinessPath(commitmentStorePath), "utf8")) as unknown;
+    if (!parsed || typeof parsed !== "object") return null;
+    const value = parsed as Partial<RandomnessReadinessSnapshot>;
+    if (typeof value.ready !== "boolean" || typeof value.updatedAt !== "string" || !Array.isArray(value.reasons)) {
+      return null;
+    }
+    if (!value.reasons.every((reason) => typeof reason === "string")) return null;
+    return {
+      ready: value.ready,
+      reasons: value.reasons,
+      updatedAt: value.updatedAt
+    };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    return null;
+  }
+}
+
+export function saveRandomnessReadinessSnapshot(
+  commitmentStorePath: string,
+  snapshot: RandomnessReadinessSnapshot
+): void {
+  const path = randomnessReadinessPath(commitmentStorePath);
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  const tempPath = path + ".tmp";
+  writeFileSync(tempPath, JSON.stringify(snapshot), { encoding: "utf8", mode: 0o600 });
+  chmodSync(tempPath, 0o600);
+  renameSync(tempPath, path);
+  chmodSync(path, 0o600);
+}
+
 /** Persistence boundary for unrevealed commitment secrets. Injectable so it can be file- or db-backed. */
 export interface RandomnessCommitmentStore {
   load(): RandomnessCommitmentRecord[] | Promise<RandomnessCommitmentRecord[]>;

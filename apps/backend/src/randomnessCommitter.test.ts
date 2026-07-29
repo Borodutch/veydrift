@@ -1,8 +1,12 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { loadBackendConfig, type BackendConfig } from "./config";
 import {
   InMemoryRandomnessCommitmentStore,
+  loadRandomnessReadinessSnapshot,
   type RandomnessCommitmentChainClient,
   type RandomnessCommitmentInventory,
   type RandomnessRequestEvent
@@ -195,5 +199,31 @@ describe("RandomnessCommitterService", () => {
     };
     await service.tick();
     expect(service.snapshot().status?.alerts).toEqual([]);
+  });
+
+  test("fails closed for new attacks when a consumed commitment has no durable reveal word", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "veydrift-randomness-committer-"));
+    const config = { ...baseConfig, randomnessCommitmentStorePath: join(dir, "commitments.sqlite") };
+    const engine = new FakeEngineChainClient();
+    engine.requests = [{
+      requestId: "3168",
+      requester: "0x1111111111111111111111111111111111111111",
+      purposeHash: "0x" + "aa".repeat(32),
+      createdAt: 1000,
+      randomnessCommitment: "0x" + "ff".repeat(32)
+    }];
+    try {
+      const service = new RandomnessCommitterService(config, {
+        logger: silentLogger,
+        chainClient: engine
+      });
+      await service.tick();
+      expect(loadRandomnessReadinessSnapshot(config.randomnessCommitmentStorePath)).toMatchObject({
+        ready: false,
+        reasons: ["A required randomness reveal mapping is unavailable. New attacks are temporarily paused."]
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
