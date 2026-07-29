@@ -2358,6 +2358,10 @@ function cacheableJsonRequestVersion(url: URL, indexer: SettlementIndexer): stri
   if (url.pathname === "/highscores") return livePublicDataRequest(url) ? indexer.indexedStateCacheVersion() : "ttl";
   if (url.pathname === "/raid-finder/debris") return "ttl";
   if (url.pathname === "/raid-finder/rifters") return "ttl";
+  // Fleet visibility is derived exclusively from the mission read model. Keying it to the broad
+  // response version also included every ship/defense production queue in the universe, so an
+  // unrelated queue completion invalidated every wallet's fleet cache and rebuilt this hot route.
+  if (url.pathname.match(/^\/wallet\/[^/]+\/fleet-visibility$/)) return indexer.missionResponseCacheVersion();
   if (url.pathname.match(/^\/wallet\/[^/]+\/missions$/)) return indexer.missionResponseCacheVersion();
   if (url.pathname === "/missions") return livePublicDataRequest(url) ? indexer.missionResponseCacheVersion() : "ttl";
   if (url.pathname.match(/^\/mission\/[^/]+$/)) return indexer.missionResponseCacheVersion();
