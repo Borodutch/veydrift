@@ -546,15 +546,19 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     }
 
     if (request.method === "GET" && url.pathname === "/stats") {
-      if (!indexer) return unavailableResponse(loaded.problems);
-      return Response.json(
-        indexer.publicStatsSnapshot(
-          statsContractDescriptors(loaded.config),
-          undefined,
-          statsUtcOffsetMinutesFromQuery(url.searchParams.get("utcOffsetMinutes"))
-        ),
-        { headers: corsHeaders }
-      );
+      // Stats used synchronous whole-index SQLite aggregations here. Even with a
+      // response cache, a cold request blocked this single Bun process for
+      // seconds and delayed gameplay/wallet/CCA reads. It now runs in the
+      // isolated stats service, which precomputes its own snapshot.
+      return Response.json({
+        error: "Stats moved to https://stats.veydrift.com/api/stats"
+      }, {
+        headers: {
+          ...corsHeaders,
+          "cache-control": "no-store"
+        },
+        status: 410
+      });
     }
 
     if (request.method === "GET" && url.pathname === "/cca") {

@@ -16,7 +16,9 @@ import {
 } from "lucide-preact";
 import "./styles.css";
 
-const apiUrl = (import.meta.env.VITE_VEYDRIFT_API_URL as string | undefined) ?? "https://api.veydrift.com";
+// Stats are served by this isolated service. Keeping the read same-origin
+// prevents the live game API from receiving analytics traffic.
+const apiUrl = (import.meta.env.VITE_VEYDRIFT_STATS_API_URL as string | undefined) ?? "";
 
 interface Stats {
   generatedAt: string;
@@ -196,10 +198,9 @@ function App() {
 
   useEffect(() => {
     let active = true;
-    const utcOffsetMinutes = -new Date().getTimezoneOffset();
     const load = async () => {
       try {
-        const response = await fetch(`${apiUrl}/stats?utcOffsetMinutes=${utcOffsetMinutes}`);
+        const response = await fetch(`${apiUrl}/api/stats`);
         if (!response.ok) throw new Error(`Telemetry unavailable (${response.status})`);
         const next = await response.json() as Stats;
         if (active) {
