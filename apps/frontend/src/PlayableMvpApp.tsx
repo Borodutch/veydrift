@@ -3719,6 +3719,10 @@ export function PlayableMvpApp({
   const shipyardRefreshGate = useRef(0);
   const researchRefreshGate = useRef(0);
   const riftRefreshGate = useRef(0);
+  const missionArchiveRefreshGate = useRef(0);
+  const incomingAttackArchiveRefreshGate = useRef(0);
+  const allActiveMissionsRefreshGate = useRef(0);
+  const globalMissionArchiveRefreshGate = useRef(0);
   const planetSwitchGate = useRef(0);
   const latestOnChainResourceSnapshot = useRef<ResourceSnapshotFreshness>({ planetId: null, lastSettledAt: null });
   const latestInfrastructureResourceSnapshot = useRef<ResourceSnapshotFreshness>({ planetId: null, lastSettledAt: null });
@@ -4830,6 +4834,7 @@ export function PlayableMvpApp({
   }, [account, activePlanetId, apiBaseUrl, applyOnChainSettlementSnapshot, hydratedWalletSnapshotKey, isWalletConnected, onChainQueues, onChainSettlementState, onChainSettlementState?.homePlanetId, selectedPlanetId, walletPlanets]);
 
   const loadMissionArchive = useCallback(async (page: number) => {
+    const requestId = beginRefreshRequest(missionArchiveRefreshGate);
     if (!apiBaseUrl || !account) {
       setMissionArchive(undefined);
       setMissionArchiveError(undefined);
@@ -4855,9 +4860,11 @@ export function PlayableMvpApp({
         pageSize: 25,
         planetId: normalizedMissionFilters.planetId,
       });
+      if (!canApplyRefreshRequest(missionArchiveRefreshGate, requestId)) return;
       setMissionArchive(nextArchive);
       setMissionArchivePage(nextArchive.pagination.page);
     } catch (error) {
+      if (!canApplyRefreshRequest(missionArchiveRefreshGate, requestId)) return;
       console.error(error);
       const message = error instanceof Error ? error.message : "Mission archive could not be loaded.";
       setMissionArchiveError(message);
@@ -4866,11 +4873,14 @@ export function PlayableMvpApp({
         error: message,
       }));
     } finally {
-      setMissionArchiveLoading(false);
+      if (canApplyRefreshRequest(missionArchiveRefreshGate, requestId)) {
+        setMissionArchiveLoading(false);
+      }
     }
   }, [account, activePlanetId, apiBaseUrl, normalizedMissionFilters.missionNumber, normalizedMissionFilters.missionType, normalizedMissionFilters.planetId, setMissionArchive]);
 
   const loadIncomingAttackArchive = useCallback(async (page: number) => {
+    const requestId = beginRefreshRequest(incomingAttackArchiveRefreshGate);
     if (!apiBaseUrl || !account) {
       setIncomingAttackArchive(undefined);
       setIncomingAttackArchiveError(undefined);
@@ -4889,17 +4899,22 @@ export function PlayableMvpApp({
         pageSize: 25,
         planetId: normalizedMissionFilters.planetId,
       });
+      if (!canApplyRefreshRequest(incomingAttackArchiveRefreshGate, requestId)) return;
       setIncomingAttackArchive(nextArchive);
       setIncomingAttackArchivePage(nextArchive.pagination.page);
     } catch (error) {
+      if (!canApplyRefreshRequest(incomingAttackArchiveRefreshGate, requestId)) return;
       console.error(error);
       setIncomingAttackArchiveError(error instanceof Error ? error.message : "Incoming attack archive could not be loaded.");
     } finally {
-      setIncomingAttackArchiveLoading(false);
+      if (canApplyRefreshRequest(incomingAttackArchiveRefreshGate, requestId)) {
+        setIncomingAttackArchiveLoading(false);
+      }
     }
   }, [account, apiBaseUrl, normalizedMissionFilters.missionNumber, normalizedMissionFilters.missionType, normalizedMissionFilters.planetId]);
 
   const loadAllActiveMissions = useCallback(async () => {
+    const requestId = beginRefreshRequest(allActiveMissionsRefreshGate);
     if (!apiBaseUrl) {
       setAllActiveMissions(undefined);
       setPlanetSectionStore((current) => setPlanetSectionStatus(current, activePlanetId, "allActiveMissionsState", {
@@ -4914,8 +4929,10 @@ export function PlayableMvpApp({
     }));
     try {
       const response = await fetchGlobalActiveMissions(apiBaseUrl);
+      if (!canApplyRefreshRequest(allActiveMissionsRefreshGate, requestId)) return;
       setAllActiveMissions(response.missions);
     } catch (error) {
+      if (!canApplyRefreshRequest(allActiveMissionsRefreshGate, requestId)) return;
       console.error(error);
       // The "All" active tab is supplementary; failing to load it must not break My missions/Alliance.
       setAllActiveMissions([]);
@@ -4941,6 +4958,7 @@ export function PlayableMvpApp({
   }, [account, apiBaseUrl]);
 
   const loadGlobalMissionArchive = useCallback(async (page: number) => {
+    const requestId = beginRefreshRequest(globalMissionArchiveRefreshGate);
     if (!apiBaseUrl) {
       setGlobalMissionArchive(undefined);
       setGlobalMissionArchiveError(undefined);
@@ -4966,9 +4984,11 @@ export function PlayableMvpApp({
         pageSize: 25,
         planetId: normalizedMissionFilters.planetId,
       });
+      if (!canApplyRefreshRequest(globalMissionArchiveRefreshGate, requestId)) return;
       setGlobalMissionArchive(nextArchive);
       setGlobalMissionArchivePage(nextArchive.pagination.page);
     } catch (error) {
+      if (!canApplyRefreshRequest(globalMissionArchiveRefreshGate, requestId)) return;
       console.error(error);
       const message = error instanceof Error ? error.message : "Universe mission archive could not be loaded.";
       setGlobalMissionArchiveError(message);
@@ -4977,7 +4997,9 @@ export function PlayableMvpApp({
         error: message,
       }));
     } finally {
-      setGlobalMissionArchiveLoading(false);
+      if (canApplyRefreshRequest(globalMissionArchiveRefreshGate, requestId)) {
+        setGlobalMissionArchiveLoading(false);
+      }
     }
   }, [activePlanetId, apiBaseUrl, normalizedMissionFilters.missionNumber, normalizedMissionFilters.missionType, normalizedMissionFilters.planetId, setGlobalMissionArchive]);
 

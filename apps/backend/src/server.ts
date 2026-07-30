@@ -2374,12 +2374,14 @@ function cacheableJsonRequestKey(request: Request, url: URL, indexer: Settlement
 }
 
 function cacheableJsonRequestStaleKey(request: Request, url: URL, cacheKey: string): string {
-  // Mission checkpoints can advance while active fleet data remains displayable. Keep one shared
-  // stale fleet response across checkpoint versions so a reader serves the last complete payload
-  // immediately and refreshes it in the background, rather than making every connected wallet pay
-  // the full visibility rebuild at the same time.
-  if (url.pathname.match(/^\/wallet\/[^/]+\/fleet-visibility$/)) {
-    return `${request.method} ${url.pathname}${normalizedCacheSearch(url)} indexer=stale`;
+  // Mission Control transitions must not cross read-model versions through the versionless stale
+  // cache. In particular, an Outbound payload cannot mask a newly materialized Returning attack and
+  // battle report for up to 60 seconds. Same-version stale-while-revalidate remains available.
+  if (
+    url.pathname.match(/^\/wallet\/[^/]+\/fleet-visibility$/)
+    || url.pathname.match(/^\/wallet\/[^/]+\/missions$/)
+  ) {
+    return cacheKey;
   }
   if (cacheableWalletSnapshotPath(url.pathname) || livePublicDataRequest(url)) return cacheKey;
   return `${request.method} ${url.pathname}${normalizedCacheSearch(url)} indexer=stale`;

@@ -5582,7 +5582,15 @@ describe("SettlementIndexer", () => {
 
     const attackerVisibility = indexer.fleetMissionVisibility(attacker);
     expect(attackerVisibility.outgoing.map((mission) => mission.missionId)).toEqual(["44"]);
-    expect(attackerVisibility.incoming).toEqual([]);
+    expect(attackerVisibility.incoming).toEqual([
+      expect.objectContaining({
+        missionId: "45",
+        missionType: "Attack",
+        owner: player,
+        status: "Returning",
+        targetPlanetId: "99"
+      })
+    ]);
     expect(attackerVisibility.returning).toEqual([]);
   });
 
