@@ -15,7 +15,8 @@
     "preview": "vite preview --host 0.0.0.0",
     "serve": "bun scripts/serve.mjs",
     "start": "bun run serve",
-    "test": "bun test tests src/*.test.ts"
+    "test": "bun test tests src/*.test.ts",
+    "test:touch-browser": "node --test tests/planetPickerTouchBrowser.browser.mjs"
   },
   "dependencies": {
     "@farcaster/miniapp-sdk": "^0.3.0",

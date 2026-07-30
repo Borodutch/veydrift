@@ -1,60 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { PlanetPickerReorderHandle } from "../src/PlayableMvpApp";
 import {
   createPlanetPickerInteractionController,
+  installPlanetPickerTouchMoveGuard,
+  PLANET_PICKER_LONG_PRESS_MS,
   planetPickerDropPosition,
   readPlanetPickerOrder,
   writePlanetPickerOrder,
 } from "../src/planetPickerOrder";
-
-type InvokableHandleProps = {
-  onClick: (event: InteractionEvent) => void;
-  onKeyDown: (event: InteractionEvent) => void;
-  onPointerCancel: (event: InteractionEvent) => void;
-  onPointerDown: (event: InteractionEvent) => void;
-  onPointerMove: (event: InteractionEvent) => void;
-  onPointerUp: (event: InteractionEvent) => void;
-};
-
-type InteractionEvent = {
-  preventDefault(): void;
-  stopPropagation(): void;
-};
-
-function interactionEvent() {
-  let defaultPrevented = false;
-  let propagationStopped = false;
-  return {
-    event: {
-      preventDefault() {
-        defaultPrevented = true;
-      },
-      stopPropagation() {
-        propagationStopped = true;
-      },
-    },
-    get defaultPrevented() {
-      return defaultPrevented;
-    },
-    get propagationStopped() {
-      return propagationStopped;
-    },
-  };
-}
-
-function handleProps(callbacks: Partial<Record<keyof InvokableHandleProps, () => void>> = {}) {
-  const vnode = PlanetPickerReorderHandle({
-    dragging: false,
-    label: "New Zion",
-    onKeyDown: () => callbacks.onKeyDown?.(),
-    onPointerCancel: () => callbacks.onPointerCancel?.(),
-    onPointerDown: () => callbacks.onPointerDown?.(),
-    onPointerMove: () => callbacks.onPointerMove?.(),
-    onPointerUp: () => callbacks.onPointerUp?.(),
-    planetId: "1",
-  }) as unknown as { props: InvokableHandleProps };
-  return vnode.props;
-}
 
 function memoryStorage() {
   const values = new Map<string, string>();
@@ -68,39 +20,39 @@ function memoryStorage() {
   };
 }
 
-describe("planet picker interaction controller", () => {
-  test("isolates handle tap/click from planet selection and the mobile picker container", () => {
-    let pointerDownCalls = 0;
-    let planetSelections = 0;
-    let mobilePickerCloses = 0;
-    const props = handleProps({
-      onPointerDown: () => {
-        pointerDownCalls += 1;
-      },
-    });
+function timedController() {
+  let currentTime = 0;
+  return {
+    controller: createPlanetPickerInteractionController({ now: () => currentTime }),
+    setTime(value: number) {
+      currentTime = value;
+    },
+  };
+}
 
-    const pointerDown = interactionEvent();
-    props.onPointerDown(pointerDown.event);
-    if (!pointerDown.propagationStopped) mobilePickerCloses += 1;
+describe("planet picker long-press interaction controller", () => {
+  test("installs the touch guard before activation and only cancels moves while active", () => {
+    const target = new EventTarget();
+    const guard = installPlanetPickerTouchMoveGuard(target);
 
-    const click = interactionEvent();
-    props.onClick(click.event);
-    if (!click.propagationStopped) {
-      planetSelections += 1;
-      mobilePickerCloses += 1;
-    }
+    const pendingMove = new Event("touchmove", { cancelable: true });
+    expect(target.dispatchEvent(pendingMove)).toBe(true);
+    expect(pendingMove.defaultPrevented).toBe(false);
 
-    expect(pointerDownCalls).toBe(1);
-    expect(pointerDown.propagationStopped).toBe(true);
-    expect(click.propagationStopped).toBe(true);
-    expect(click.defaultPrevented).toBe(true);
-    expect(planetSelections).toBe(0);
-    expect(mobilePickerCloses).toBe(0);
+    guard.setActive(true);
+    const activeMove = new Event("touchmove", { cancelable: true });
+    expect(target.dispatchEvent(activeMove)).toBe(false);
+    expect(activeMove.defaultPrevented).toBe(true);
+
+    guard.dispose();
+    const moveAfterDispose = new Event("touchmove", { cancelable: true });
+    expect(target.dispatchEvent(moveAfterDispose)).toBe(true);
+    expect(moveAfterDispose.defaultPrevented).toBe(false);
   });
 
-  test("keeps a below-threshold pointer gesture as a no-op and cleans it up on pointer up", () => {
-    const controller = createPlanetPickerInteractionController();
-    expect(controller.beginPointer({
+  test("requires the full deliberate delay before activating reorder mode", () => {
+    const interaction = timedController();
+    expect(interaction.controller.beginPointer({
       button: 0,
       clientX: 20,
       clientY: 20,
@@ -110,90 +62,114 @@ describe("planet picker interaction controller", () => {
       pointerType: "mouse",
     })).toBe(true);
 
-    expect(controller.movePointer({
+    interaction.setTime(PLANET_PICKER_LONG_PRESS_MS - 1);
+    expect(interaction.controller.activatePointer(7)).toEqual({ activated: false });
+    expect(interaction.controller.movePointer({
       clientX: 23,
       clientY: 24,
       pointerId: 7,
       pointerType: "mouse",
     })).toEqual({ status: "pending", planetId: "1" });
-    expect(controller.reorderPointerTarget("3", "after")).toBeUndefined();
-    expect(controller.finishPointer(7)).toEqual({ finished: true, wasDragging: false });
-    expect(controller.movePointer({
-      clientX: 40,
-      clientY: 40,
+
+    interaction.setTime(PLANET_PICKER_LONG_PRESS_MS);
+    expect(interaction.controller.activatePointer(7)).toEqual({ activated: true, planetId: "1" });
+    expect(interaction.controller.movePointer({
+      clientX: 24,
+      clientY: 24,
       pointerId: 7,
       pointerType: "mouse",
-    })).toEqual({ status: "ignored" });
+    })).toEqual({ status: "dragging", dragStarted: true, planetId: "1" });
   });
 
-  test("forwards pointer move, up, and cancel without bubbling out of the handle", () => {
-    const calls = { cancel: 0, move: 0, up: 0 };
-    const props = handleProps({
-      onPointerCancel: () => {
-        calls.cancel += 1;
-      },
-      onPointerMove: () => {
-        calls.move += 1;
-      },
-      onPointerUp: () => {
-        calls.up += 1;
-      },
+  test("finishes a short tap without starting reorder so normal selection can continue", () => {
+    const interaction = timedController();
+    interaction.controller.beginPointer({
+      button: 0,
+      clientX: 20,
+      clientY: 20,
+      orderIds: ["1", "2", "3"],
+      planetId: "2",
+      pointerId: 8,
+      pointerType: "touch",
     });
+    interaction.setTime(120);
 
-    for (const [handler, key] of [
-      [props.onPointerMove, "move"],
-      [props.onPointerUp, "up"],
-      [props.onPointerCancel, "cancel"],
-    ] as const) {
-      const interaction = interactionEvent();
-      handler(interaction.event);
-      expect(interaction.propagationStopped).toBe(true);
-      expect(calls[key]).toBe(1);
-    }
+    expect(interaction.controller.finishPointer(8)).toEqual({
+      finished: true,
+      planetId: "2",
+      wasDragging: false,
+    });
+    expect(interaction.controller.activatePointer(8)).toEqual({ activated: false });
+    expect(interaction.controller.reorderPointerTarget("3", "after")).toBeUndefined();
   });
 
-  test("reorders after deliberate mouse movement", () => {
-    const controller = createPlanetPickerInteractionController();
-    controller.beginPointer({
+  test("cancels long press when movement exceeds tolerance before activation", () => {
+    const interaction = timedController();
+    interaction.controller.beginPointer({
       button: 0,
       clientX: 10,
       clientY: 10,
       orderIds: ["1", "2", "3"],
       planetId: "1",
-      pointerId: 8,
-      pointerType: "mouse",
+      pointerId: 9,
+      pointerType: "touch",
     });
 
-    expect(controller.movePointer({
+    expect(interaction.controller.movePointer({
       clientX: 17,
       clientY: 10,
-      pointerId: 8,
-      pointerType: "mouse",
-    })).toEqual({ status: "dragging", dragStarted: true, planetId: "1" });
-    expect(controller.reorderPointerTarget("3", "after")).toEqual({
-      movedPlanetId: "1",
-      nextPlanetIds: ["2", "3", "1"],
-    });
-    expect(controller.finishPointer(8)).toEqual({ finished: true, wasDragging: true });
+      pointerId: 9,
+      pointerType: "touch",
+    })).toEqual({ status: "cancelled", planetId: "1" });
+    interaction.setTime(PLANET_PICKER_LONG_PRESS_MS + 100);
+    expect(interaction.controller.activatePointer(9)).toEqual({ activated: false });
+    expect(interaction.controller.reorderPointerTarget("3", "after")).toBeUndefined();
+    expect(interaction.controller.finishPointer(9)).toEqual({ finished: false, wasDragging: false });
   });
 
-  test("uses the same touch pointer path, mobile drop axis, and wallet-scoped persistence", () => {
-    const controller = createPlanetPickerInteractionController();
+  test("keeps mobile scrolling safe in either axis before the long-press threshold", () => {
+    for (const [pointerId, clientX, clientY] of [
+      [10, 18, 10],
+      [11, 10, 18],
+    ]) {
+      const interaction = timedController();
+      interaction.controller.beginPointer({
+        button: 0,
+        clientX: 10,
+        clientY: 10,
+        orderIds: ["1", "2"],
+        planetId: "1",
+        pointerId,
+        pointerType: "touch",
+      });
+      expect(interaction.controller.movePointer({
+        clientX,
+        clientY,
+        pointerId,
+        pointerType: "touch",
+      })).toEqual({ status: "cancelled", planetId: "1" });
+    }
+  });
+
+  test("reorders the parent planet group after touch long press and persists per wallet", () => {
+    const interaction = timedController();
     const storage = memoryStorage();
-    controller.beginPointer({
+    interaction.controller.beginPointer({
       button: 0,
       clientX: 12,
       clientY: 12,
       orderIds: ["1", "2", "3"],
       planetId: "3",
-      pointerId: 11,
+      pointerId: 12,
       pointerType: "touch",
     });
+    interaction.setTime(PLANET_PICKER_LONG_PRESS_MS);
+    expect(interaction.controller.activatePointer(12)).toEqual({ activated: true, planetId: "3" });
 
-    expect(controller.movePointer({
+    expect(interaction.controller.movePointer({
       clientX: 2,
       clientY: 12,
-      pointerId: 11,
+      pointerId: 12,
       pointerType: "touch",
     })).toEqual({ status: "dragging", dragStarted: true, planetId: "3" });
     const position = planetPickerDropPosition(
@@ -202,20 +178,27 @@ describe("planet picker interaction controller", () => {
       900,
       { height: 80, left: 100, top: 20, width: 100 },
     );
-    const reordered = controller.reorderPointerTarget("1", position);
+    const reordered = interaction.controller.reorderPointerTarget("1", position);
     expect(position).toBe("before");
     expect(reordered?.nextPlanetIds).toEqual(["3", "1", "2"]);
 
     writePlanetPickerOrder(storage, "0xAAA", reordered?.nextPlanetIds ?? []);
     expect(readPlanetPickerOrder(storage, "0xaaa")).toEqual(["3", "1", "2"]);
     expect(readPlanetPickerOrder(storage, "0xbbb")).toBeUndefined();
-    expect(controller.finishPointer(11)).toEqual({ finished: true, wasDragging: true });
+    expect(interaction.controller.finishPointer(12)).toEqual({
+      finished: true,
+      planetId: "3",
+      wasDragging: true,
+    });
   });
 
-  test("pointer cancel and pointer up both terminate drag state", () => {
-    for (const pointerId of [21, 22]) {
-      const controller = createPlanetPickerInteractionController();
-      controller.beginPointer({
+  test("pointer release, cancel, capture loss, and Escape-style cancellation clear active state", () => {
+    for (const [pointerId, finish] of [
+      [21, "finish"],
+      [22, "cancel"],
+    ] as const) {
+      const interaction = timedController();
+      interaction.controller.beginPointer({
         button: 0,
         clientX: 0,
         clientY: 0,
@@ -224,17 +207,19 @@ describe("planet picker interaction controller", () => {
         pointerId,
         pointerType: "touch",
       });
-      controller.movePointer({
-        clientX: 10,
-        clientY: 0,
-        pointerId,
-        pointerType: "touch",
-      });
+      interaction.setTime(PLANET_PICKER_LONG_PRESS_MS);
+      interaction.controller.activatePointer(pointerId);
 
-      expect(controller.finishPointer(pointerId + 100)).toEqual({ finished: false, wasDragging: false });
-      expect(controller.finishPointer(pointerId)).toEqual({ finished: true, wasDragging: true });
-      expect(controller.reorderPointerTarget("2", "after")).toBeUndefined();
-      expect(controller.movePointer({
+      expect(interaction.controller.finishPointer(pointerId + 100)).toEqual({
+        finished: false,
+        wasDragging: false,
+      });
+      const result = finish === "finish"
+        ? interaction.controller.finishPointer(pointerId)
+        : interaction.controller.cancelPointer(pointerId);
+      expect(result).toEqual({ finished: true, planetId: "1", wasDragging: true });
+      expect(interaction.controller.reorderPointerTarget("2", "after")).toBeUndefined();
+      expect(interaction.controller.movePointer({
         clientX: 20,
         clientY: 0,
         pointerId,
@@ -243,7 +228,7 @@ describe("planet picker interaction controller", () => {
     }
   });
 
-  test("Arrow, Home, and End keyboard commands move the intended planet and can persist", () => {
+  test("Arrow, Home, and End keyboard commands move the group and can persist", () => {
     const controller = createPlanetPickerInteractionController();
     const storage = memoryStorage();
 
