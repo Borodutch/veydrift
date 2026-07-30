@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Planet picker touch gesture proof</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+      }
+
+      #scroller {
+        height: 220px;
+        margin: 20px;
+        overflow: auto;
+        touch-action: pan-x pan-y;
+        width: 260px;
+      }
+
+      #planet {
+        display: block;
+        height: 180px;
+        touch-action: pan-x pan-y;
+        width: 100%;
+      }
+
+      #spacer {
+        height: 700px;
+        width: 700px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="scroller">
+      <button id="planet" type="button">Hold planet to reorder</button>
+      <div id="spacer"></div>
+    </div>
+    <script type="module">
+      import {
+        installPlanetPickerTouchMoveGuard,
+        PLANET_PICKER_LONG_PRESS_MS,
+      } from "/src/planetPickerOrder.ts";
+
+      const planet = document.querySelector("#planet");
+      const scroller = document.querySelector("#scroller");
+      const guard = installPlanetPickerTouchMoveGuard(planet);
+      let activationTimer;
+
+      window.touchProof = {
+        activations: 0,
+        pointerCancels: 0,
+        pointerMovesAfterActivation: 0,
+        preventedTouchMoves: 0,
+        touchMoves: 0,
+        reset() {
+          clearTimeout(activationTimer);
+          guard.setActive(false);
+          scroller.scrollLeft = 0;
+          scroller.scrollTop = 0;
+          this.activations = 0;
+          this.pointerCancels = 0;
+          this.pointerMovesAfterActivation = 0;
+          this.preventedTouchMoves = 0;
+          this.touchMoves = 0;
+        },
+      };
+
+      planet.addEventListener("pointerdown", () => {
+        clearTimeout(activationTimer);
+        activationTimer = setTimeout(() => {
+          window.touchProof.activations += 1;
+          guard.setActive(true);
+        }, PLANET_PICKER_LONG_PRESS_MS);
+      });
+      planet.addEventListener("pointermove", () => {
+        if (window.touchProof.activations > 0) {
+          window.touchProof.pointerMovesAfterActivation += 1;
+        }
+      });
+      planet.addEventListener("pointercancel", () => {
+        clearTimeout(activationTimer);
+        guard.setActive(false);
+        window.touchProof.pointerCancels += 1;
+      });
+      planet.addEventListener("pointerup", () => {
+        clearTimeout(activationTimer);
+        guard.setActive(false);
+      });
+      planet.addEventListener("touchmove", (event) => {
+        window.touchProof.touchMoves += 1;
+        if (event.defaultPrevented) {
+          window.touchProof.preventedTouchMoves += 1;
+        }
+      });
+
+      window.touchProofReady = true;
+    </script>
+  </body>
+</html>

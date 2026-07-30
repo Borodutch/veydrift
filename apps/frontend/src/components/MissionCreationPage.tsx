@@ -56,10 +56,14 @@ export type CombatTechLevels = {
 };
 
 export type MissionCargoDraft = {
-  metal?: string | undefined;
-  crystal?: string | undefined;
-  deuterium?: string | undefined;
+  metal: string;
+  crystal: string;
+  deuterium: string;
 };
+
+export function emptyMissionCargoDraft(): MissionCargoDraft {
+  return { metal: "0", crystal: "0", deuterium: "0" };
+}
 
 export type MissionLootRatioDraft = {
   metal: number;
@@ -362,7 +366,7 @@ export function MissionCreationPage({
     : undefined;
   const [speedPercent, setSpeedPercent] = useState(DEFAULT_MISSION_SPEED_PERCENT);
   const [ships, setShips] = useState<MissionShips>(() => initialMissionShips(action, initialOriginShipyardState));
-  const [cargo, setCargo] = useState<MissionCargoDraft>({});
+  const [cargo, setCargo] = useState<MissionCargoDraft>(emptyMissionCargoDraft);
   const [greedyLootEnabled, setGreedyLootEnabled] = useState(false);
   const [lootRatio, setLootRatio] = useState<MissionLootRatioDraft>(DEFAULT_LOOT_RATIO);
   const [primaryTargetId, setPrimaryTargetId] = useState(action.mode === "missile" ? action.primaryTargetId : 0);
@@ -404,7 +408,7 @@ export function MissionCreationPage({
   const availableShips = useMemo(() => missionShipOptionsForAction(action, effectiveShipyardState), [action, effectiveShipyardState]);
   const destinationIntelVisible = shouldShowDestinationIntel(action);
   const cargoTotal = resourceDraftNumber(cargo.metal) + resourceDraftNumber(cargo.crystal) + resourceDraftNumber(cargo.deuterium);
-  const normalizedCargo = cargoSupported ? normalizeCargoDraft(cargo) : undefined;
+  const normalizedCargo = cargoSupported ? normalizeMissionCargoDraft(cargo) : undefined;
   const bodyAttackSelected = action.mode === "mission" && action.kind === "attack" && (effectiveOriginIsMoon || effectiveTargetIsMoon);
   const lootRatioSupported = !bodyAttackSelected && !joinAttackMode && !acsDefendMode && action.mode === "mission" && action.kind === "attack";
   const lootRatioActive = lootRatioSupported && !greedyLootEnabled;
@@ -541,10 +545,23 @@ export function MissionCreationPage({
     crystal: Math.max(0, Math.trunc(effectiveResources?.crystal ?? 0)),
     deuterium: Math.max(0, Math.trunc((effectiveResources?.deuterium ?? 0) - fuelCost)),
   };
-  const setShipQuantity = (key: MissionShipKey, value: number, owned: number) => setShips((current) => ({
-    ...current,
-    [key]: clampInteger(value, 0, owned),
-  }));
+  const setShipQuantity = (key: MissionShipKey, value: number, owned: number) => {
+    setShips((current) => ({
+      ...current,
+      [key]: clampInteger(value, 0, owned),
+    }));
+    // A fleet change can reduce capacity, but must not silently rewrite cargo. Keep the exact
+    // rendered values and let missionDraftBlocker require an explicit user correction if needed.
+    setCargo(reconcileMissionCargoAfterFleetChange);
+  };
+  const changeOriginBody = (value: boolean) => {
+    setCargo((current) => missionCargoAfterBodyChange(current, effectiveOriginIsMoon, value));
+    setOriginIsMoon(value);
+  };
+  const changeTargetBody = (value: boolean) => {
+    setCargo((current) => missionCargoAfterBodyChange(current, effectiveTargetIsMoon, value));
+    setTargetIsMoon(value);
+  };
   const updateLootPercent = (key: ResourceKey, value: number) => {
     setGreedyLootEnabled(false);
     setLootRatio((current) => rebalanceLootRatio(current, key, value));
@@ -583,7 +600,7 @@ export function MissionCreationPage({
                 <BodySelectionRow
                   moonAvailable
                   moonLabel="Origin moon"
-                  onChange={setOriginIsMoon}
+                  onChange={changeOriginBody}
                   planetLabel="Origin planet"
                   value={effectiveOriginIsMoon}
                 />
@@ -592,7 +609,7 @@ export function MissionCreationPage({
                 <BodySelectionRow
                   moonAvailable
                   moonLabel="Destination moon"
-                  onChange={setTargetIsMoon}
+                  onChange={changeTargetBody}
                   planetLabel="Destination planet"
                   value={effectiveTargetIsMoon}
                 />
@@ -1007,7 +1024,7 @@ export function buildMissionLaunchDraft({
   return {
     speedPercent,
     ships,
-    cargo: cargoSupported ? normalizeCargoDraft(cargo) : undefined,
+    cargo: cargoSupported ? normalizeMissionCargoDraft(cargo) : undefined,
     lootRatio: lootRatioActive ? { ...lootRatio } : undefined,
     primaryTargetId,
     quantity,
@@ -1390,15 +1407,28 @@ function allowedShipKeysForAction(action: EnabledGalaxyAction): Set<MissionShipK
   return new Set(missionShipOptions.map((ship) => ship.key).filter((key) => key !== "colonyShip"));
 }
 
-function normalizeCargoDraft(cargo: MissionCargoDraft): MissionCargoDraft | undefined {
-  const normalized = {
-    metal: String(resourceDraftNumber(cargo.metal)),
-    crystal: String(resourceDraftNumber(cargo.crystal)),
-    deuterium: String(resourceDraftNumber(cargo.deuterium)),
+export function normalizeMissionCargoDraft(
+  cargo: Partial<MissionCargoDraft> | undefined,
+): MissionCargoDraft {
+  return {
+    metal: String(resourceDraftNumber(cargo?.metal)),
+    crystal: String(resourceDraftNumber(cargo?.crystal)),
+    deuterium: String(resourceDraftNumber(cargo?.deuterium)),
   };
-  return normalized.metal === "0" && normalized.crystal === "0" && normalized.deuterium === "0"
-    ? undefined
-    : normalized;
+}
+
+export function reconcileMissionCargoAfterFleetChange(cargo: MissionCargoDraft): MissionCargoDraft {
+  return normalizeMissionCargoDraft(cargo);
+}
+
+export function missionCargoAfterBodyChange(
+  cargo: MissionCargoDraft,
+  currentIsMoon: boolean,
+  nextIsMoon: boolean,
+): MissionCargoDraft {
+  return currentIsMoon === nextIsMoon
+    ? normalizeMissionCargoDraft(cargo)
+    : emptyMissionCargoDraft();
 }
 
 export function rebalanceLootRatio(
