@@ -12,6 +12,11 @@ type PlanetPickerOrderStorage = Pick<Storage, "getItem" | "setItem">;
 export type PlanetPickerDropPosition = "after" | "before";
 export type PlanetPickerLayout = "mobile" | "sidebar";
 
+export type PlanetPickerTouchMoveGuard = {
+  dispose(): void;
+  setActive(active: boolean): void;
+};
+
 export type PlanetPickerPointerMoveResult =
   | { status: "dragging"; dragStarted: boolean; planetId: string }
   | { status: "cancelled"; planetId: string }
@@ -64,6 +69,37 @@ type PlanetPickerInteractionOptions = {
   moveTolerancePx?: number;
   now?: () => number;
 };
+
+export function installPlanetPickerTouchMoveGuard(
+  target: EventTarget,
+  isActive?: () => boolean,
+): PlanetPickerTouchMoveGuard {
+  let active = false;
+  const handleTouchStart: EventListener = () => {
+    // The non-passive listener marks this target as main-thread touch-handled
+    // before Chromium decides whether subsequent moves may scroll.
+  };
+  const handleTouchMove: EventListener = (event) => {
+    if ((isActive?.() ?? active) && event.cancelable) event.preventDefault();
+  };
+
+  // These listeners must exist before the touch starts. The browser decides
+  // whether a gesture may pan at gesture start, so adding touch-action:none or
+  // a touch listener only after the long press is too late for that gesture.
+  target.addEventListener("touchstart", handleTouchStart, { passive: false });
+  target.addEventListener("touchmove", handleTouchMove, { passive: false });
+
+  return {
+    dispose() {
+      active = false;
+      target.removeEventListener("touchstart", handleTouchStart);
+      target.removeEventListener("touchmove", handleTouchMove);
+    },
+    setActive(nextActive) {
+      active = nextActive;
+    },
+  };
+}
 
 export function planetPickerWalletKey(wallet: string | null | undefined): string {
   return wallet?.trim().toLowerCase() ?? "";

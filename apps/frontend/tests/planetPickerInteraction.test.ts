@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   createPlanetPickerInteractionController,
+  installPlanetPickerTouchMoveGuard,
   PLANET_PICKER_LONG_PRESS_MS,
   planetPickerDropPosition,
   readPlanetPickerOrder,
@@ -30,6 +31,25 @@ function timedController() {
 }
 
 describe("planet picker long-press interaction controller", () => {
+  test("installs the touch guard before activation and only cancels moves while active", () => {
+    const target = new EventTarget();
+    const guard = installPlanetPickerTouchMoveGuard(target);
+
+    const pendingMove = new Event("touchmove", { cancelable: true });
+    expect(target.dispatchEvent(pendingMove)).toBe(true);
+    expect(pendingMove.defaultPrevented).toBe(false);
+
+    guard.setActive(true);
+    const activeMove = new Event("touchmove", { cancelable: true });
+    expect(target.dispatchEvent(activeMove)).toBe(false);
+    expect(activeMove.defaultPrevented).toBe(true);
+
+    guard.dispose();
+    const moveAfterDispose = new Event("touchmove", { cancelable: true });
+    expect(target.dispatchEvent(moveAfterDispose)).toBe(true);
+    expect(moveAfterDispose.defaultPrevented).toBe(false);
+  });
+
   test("requires the full deliberate delay before activating reorder mode", () => {
     const interaction = timedController();
     expect(interaction.controller.beginPointer({

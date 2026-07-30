@@ -171,6 +171,10 @@ describe("navigation and planet selector UI source contracts", () => {
     expect(playableSource).not.toContain("data-planet-selector-drag-handle");
     expect(playableSource).toContain('data-planet-selector-long-press={bodyKind === "planet" ? planet.planetId : undefined}');
     expect(playableSource).toContain("interaction.current.activatePointer(pointerId)");
+    expect(playableSource).toContain("touchReorderingPlanetId.current = activation.planetId");
+    expect(playableSource).toContain("installPlanetPickerTouchMoveGuard(buttonRef.current, shouldPreventTouchMove)");
+    expect(playableSource).toContain('style={{ touchAction: "pan-x pan-y" }}');
+    expect(playableSource).not.toContain('reordering ? "cursor-grabbing touch-none"');
     expect(playableSource).toContain("onPointerDown={(event) => onPlanetPointerDown(planet.planetId, event)}");
     expect(playableSource).toContain("onPointerMove={onPlanetPointerMove}");
     expect(playableSource).toContain("onKeyDown={(event) => onPlanetKeyDown(planet.planetId, event)}");

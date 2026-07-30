@@ -64,6 +64,7 @@ import { hasPlanetSelectorChoice } from "./planetSelectorChoice";
 import {
   browserPlanetPickerOrderStorage,
   createPlanetPickerInteractionController,
+  installPlanetPickerTouchMoveGuard,
   PLANET_PICKER_LONG_PRESS_MS,
   planetPickerDropPosition,
   planetPickerWalletKey,
@@ -9100,6 +9101,7 @@ function PlanetSelector({
   }>();
   const longPressTimer = useRef<ReturnType<typeof setTimeout>>();
   const suppressedClickPlanetId = useRef<string>();
+  const touchReorderingPlanetId = useRef<string>();
   const planetIds = planets.map((planet) => planet.planetId);
   const selectedPlanet = planets.find((planet) => planet.planetId === selectedPlanetId) ?? planets[0];
 
@@ -9122,6 +9124,7 @@ function PlanetSelector({
     clearLongPressTimer();
     interaction.current.cancelPointer();
     capturedPointer.current = undefined;
+    touchReorderingPlanetId.current = undefined;
   }, [clearLongPressTimer]);
 
   const commitOrder = useCallback((nextPlanetIds: string[], movedPlanetId: string) => {
@@ -9149,6 +9152,7 @@ function PlanetSelector({
     if (!accepted) return;
     const pointerId = event.pointerId;
     suppressedClickPlanetId.current = undefined;
+    touchReorderingPlanetId.current = undefined;
     event.currentTarget.setPointerCapture(pointerId);
     capturedPointer.current = {
       planetId,
@@ -9160,6 +9164,7 @@ function PlanetSelector({
       longPressTimer.current = undefined;
       const activation = interaction.current.activatePointer(pointerId);
       if (!activation.activated || !activation.planetId) return;
+      touchReorderingPlanetId.current = activation.planetId;
       setDraggingPlanetId(activation.planetId);
       const activePlanet = planets.find((planet) => planet.planetId === activation.planetId);
       setReorderAnnouncement(
@@ -9177,6 +9182,7 @@ function PlanetSelector({
     });
     if (move.status === "cancelled") {
       clearLongPressTimer();
+      touchReorderingPlanetId.current = undefined;
       suppressedClickPlanetId.current = move.planetId;
       releaseCapturedPointer(event.pointerId);
       return;
@@ -9202,6 +9208,7 @@ function PlanetSelector({
   const finishPointerDrag = useCallback((event: JSX.TargetedPointerEvent<HTMLButtonElement>) => {
     clearLongPressTimer();
     const result = interaction.current.finishPointer(event.pointerId);
+    touchReorderingPlanetId.current = undefined;
     releaseCapturedPointer(event.pointerId);
     if (!result.finished) return;
     if (result.wasDragging && result.planetId) {
@@ -9222,6 +9229,7 @@ function PlanetSelector({
       event.preventDefault();
       event.stopPropagation();
       clearLongPressTimer();
+      touchReorderingPlanetId.current = undefined;
       if (result.planetId) suppressedClickPlanetId.current = result.planetId;
       if (capturedPointer.current) releaseCapturedPointer(capturedPointer.current.pointerId);
       setDraggingPlanetId(undefined);
@@ -9258,6 +9266,11 @@ function PlanetSelector({
     event.preventDefault();
   }, []);
 
+  const shouldPreventPlanetTouchMove = useCallback(
+    (planetId: string) => touchReorderingPlanetId.current === planetId,
+    [],
+  );
+
   if (!selectedPlanet) return null;
 
   const selectorItems = planets.map((planet) => (
@@ -9279,6 +9292,7 @@ function PlanetSelector({
       planet={planet}
       selectedBodyKind={selectedBodyKind}
       selectedPlanet={selectedPlanet}
+      shouldPreventPlanetTouchMove={shouldPreventPlanetTouchMove}
     />
   ));
 
@@ -9322,6 +9336,7 @@ function PlanetSelectorItem({
   planet,
   selectedBodyKind,
   selectedPlanet,
+  shouldPreventPlanetTouchMove,
 }: {
   dragging: boolean;
   fleetVisibility: FleetMissionVisibilityResponse | undefined;
@@ -9339,6 +9354,7 @@ function PlanetSelectorItem({
   planet: ManagedPlanetResponse;
   selectedBodyKind: OrbitBodyKind;
   selectedPlanet: ManagedPlanetResponse;
+  shouldPreventPlanetTouchMove: (planetId: string) => boolean;
 }) {
   const selectedPlanetBody = planet.planetId === selectedPlanet.planetId && selectedBodyKind === "planet";
   const selectedMoonBody = planet.planetId === selectedPlanet.planetId && selectedBodyKind === "moon";
@@ -9382,6 +9398,7 @@ function PlanetSelectorItem({
         planet={planet}
         reordering={dragging}
         selected={selectedPlanetBody}
+        shouldPreventTouchMove={() => shouldPreventPlanetTouchMove(planet.planetId)}
         showMoonIndicator={planet.moon?.exists === true && !hasDedicatedMoonSelector}
       />
       {planet.moon?.exists ? (
@@ -9412,6 +9429,7 @@ function PlanetSelectorButton({
   planet,
   reordering,
   selected,
+  shouldPreventTouchMove,
   showMoonIndicator,
 }: {
   ariaDescribedBy?: string;
@@ -9430,8 +9448,16 @@ function PlanetSelectorButton({
   planet: ManagedPlanetResponse;
   reordering?: boolean;
   selected: boolean;
+  shouldPreventTouchMove?: () => boolean;
   showMoonIndicator: boolean;
 }) {
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!buttonRef.current) return;
+    const guard = installPlanetPickerTouchMoveGuard(buttonRef.current, shouldPreventTouchMove);
+    return () => guard.dispose();
+  }, []);
+
   const bodyLabel = bodyKind === "moon" ? "moon" : "planet";
   const label = `${hasIncomingAttack ? "Incoming attack warning. " : ""}Select ${planetDisplayName(planet)} ${bodyLabel} at ${planet.coordinates}`;
   return (
@@ -9440,7 +9466,7 @@ function PlanetSelectorButton({
       aria-describedby={ariaDescribedBy}
       aria-label={label}
       className={`veydrift-planet-selector-button group relative grid w-full min-w-0 shrink-0 justify-items-center gap-1 rounded border p-1.5 text-center transition focus:outline-none ${
-        reordering ? "cursor-grabbing touch-none" : "cursor-pointer [touch-action:pan-x_pan-y]"
+        reordering ? "cursor-grabbing" : "cursor-pointer"
       } ${
         hasIncomingAttack
           ? "border-red-400/70 bg-red-500/15 shadow-lg shadow-red-950/25"
@@ -9461,6 +9487,8 @@ function PlanetSelectorButton({
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
+      ref={buttonRef}
+      style={{ touchAction: "pan-x pan-y" }}
       title={label}
       type="button"
     >
