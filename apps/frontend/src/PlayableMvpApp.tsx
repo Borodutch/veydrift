@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
-import type { ComponentChildren } from "preact";
+import type { ComponentChildren, JSX } from "preact";
 import type { Coordinates, Planet, PlanetType } from "./types";
 import { haptic } from "./haptics";
 import { playSfx } from "./sfx";
@@ -47,7 +47,7 @@ import { BattleReportsPage } from "./components/BattleReportsPage";
 import { RankingsPage } from "./components/RankingsPage";
 import { RaidTargetFinderPage } from "./components/RaidTargetFinderPage";
 import { AllianceInspectPage, PlayerInspectPage } from "./components/InspectPages";
-import { AlertTriangle } from "lucide-preact";
+import { AlertTriangle, GripVertical } from "lucide-preact";
 import {
   buildInspectPath,
   canonicalEntityPathForLegacyHashLocation,
@@ -59,6 +59,17 @@ import {
 } from "./inspectRoutes";
 import { resetDocumentTitle } from "./pageTitle";
 import { hasPlanetSelectorChoice } from "./planetSelectorChoice";
+import {
+  browserPlanetPickerOrderStorage,
+  movePlanetPickerIdToIndex,
+  planetPickerWalletKey,
+  readPlanetPickerOrder,
+  reconcilePlanetPickerOrder,
+  reorderPlanetPickerIds,
+  shouldStartPlanetPickerDrag,
+  writePlanetPickerOrder,
+  type PlanetPickerDropPosition,
+} from "./planetPickerOrder";
 import { ShareDialog } from "./components/ShareDialog";
 import { rankingsAttackProtectionForEntry } from "./rankingsAttackProtection";
 import {
@@ -3407,6 +3418,63 @@ export function PlayableMvpApp({
   const [onChainSettlementState, setOnChainSettlementState] = useState<WalletSettlementResponse | undefined>();
   const [playerProfile, setPlayerProfile] = useState<PlayerProfile | undefined>();
   const [walletPlanets, setWalletPlanets] = useState<ManagedPlanetResponse[]>([]);
+  const planetPickerWallet = planetPickerWalletKey(account);
+  const [planetPickerOrderState, setPlanetPickerOrderState] = useState<{
+    planetIds: string[] | undefined;
+    walletKey: string;
+  }>({ planetIds: undefined, walletKey: "" });
+  useEffect(() => {
+    setPlanetPickerOrderState({
+      planetIds: readPlanetPickerOrder(browserPlanetPickerOrderStorage(), planetPickerWallet),
+      walletKey: planetPickerWallet,
+    });
+  }, [planetPickerWallet]);
+  const orderedWalletPlanets = useMemo(() => {
+    const savedPlanetIds = planetPickerOrderState.walletKey === planetPickerWallet
+      ? planetPickerOrderState.planetIds
+      : undefined;
+    const reconciledIds = reconcilePlanetPickerOrder(
+      walletPlanets.map((planet) => planet.planetId),
+      savedPlanetIds,
+    );
+    const planetsById = new Map(walletPlanets.map((planet) => [planet.planetId, planet]));
+    return reconciledIds.flatMap((planetId) => {
+      const planet = planetsById.get(planetId);
+      return planet ? [planet] : [];
+    });
+  }, [planetPickerOrderState, planetPickerWallet, walletPlanets]);
+  useEffect(() => {
+    if (
+      planetPickerOrderState.walletKey !== planetPickerWallet
+      || !planetPickerOrderState.planetIds
+      || walletPlanets.length === 0
+    ) {
+      return;
+    }
+
+    const reconciledIds = reconcilePlanetPickerOrder(
+      walletPlanets.map((planet) => planet.planetId),
+      planetPickerOrderState.planetIds,
+    );
+    if (
+      reconciledIds.length === planetPickerOrderState.planetIds.length
+      && reconciledIds.every((planetId, index) => planetId === planetPickerOrderState.planetIds?.[index])
+    ) {
+      return;
+    }
+
+    setPlanetPickerOrderState({ planetIds: reconciledIds, walletKey: planetPickerWallet });
+    writePlanetPickerOrder(browserPlanetPickerOrderStorage(), planetPickerWallet, reconciledIds);
+  }, [planetPickerOrderState, planetPickerWallet, walletPlanets]);
+  const handlePlanetPickerOrderChange = useCallback((nextPlanetIds: string[]) => {
+    if (!planetPickerWallet) return;
+    const reconciledIds = reconcilePlanetPickerOrder(
+      orderedWalletPlanets.map((planet) => planet.planetId),
+      nextPlanetIds,
+    );
+    setPlanetPickerOrderState({ planetIds: reconciledIds, walletKey: planetPickerWallet });
+    writePlanetPickerOrder(browserPlanetPickerOrderStorage(), planetPickerWallet, reconciledIds);
+  }, [orderedWalletPlanets, planetPickerWallet]);
   const [watchedPlanets, setWatchedPlanets] = useState<WatchedPlanetsResponse | undefined>();
   const [watchedPlanetsLoading, setWatchedPlanetsLoading] = useState(false);
   const [watchedPlanetsError, setWatchedPlanetsError] = useState<string | undefined>();
@@ -8320,8 +8388,9 @@ export function PlayableMvpApp({
       fleetVisibility={displayFleetVisibility}
       layout="mobile"
       now={now}
+      onOrderChange={handlePlanetPickerOrderChange}
       onSelect={handleSelectManagedPlanet}
-      planets={walletPlanets}
+      planets={orderedWalletPlanets}
       researchQueue={activeResearchQueue(effectiveResearchState?.queue) ?? activeResearchQueue(onChainQueues?.research) ?? null}
       selectedBodyKind={activeBodyKind}
       selectedPlanetId={activePlanetId}
@@ -8341,8 +8410,9 @@ export function PlayableMvpApp({
       fleetVisibility={displayFleetVisibility}
       layout="sidebar"
       now={now}
+      onOrderChange={handlePlanetPickerOrderChange}
       onSelect={handleSelectManagedPlanet}
-      planets={walletPlanets}
+      planets={orderedWalletPlanets}
       researchQueue={activeResearchQueue(effectiveResearchState?.queue) ?? activeResearchQueue(onChainQueues?.research) ?? null}
       selectedBodyKind={activeBodyKind}
       selectedPlanetId={activePlanetId}
@@ -9075,6 +9145,7 @@ function PlanetSelector({
   fleetVisibility,
   layout,
   now,
+  onOrderChange,
   onSelect,
   planets,
   researchQueue,
@@ -9084,31 +9155,141 @@ function PlanetSelector({
   fleetVisibility: FleetMissionVisibilityResponse | undefined;
   layout: "mobile" | "sidebar";
   now: number;
+  onOrderChange: (planetIds: string[]) => void;
   onSelect: (planetId: string, bodyKind?: OrbitBodyKind) => void;
   planets: ManagedPlanetResponse[];
   researchQueue: QueueStateResponse | null | undefined;
   selectedBodyKind: OrbitBodyKind;
   selectedPlanetId: string | undefined;
 }) {
+  const [draggingPlanetId, setDraggingPlanetId] = useState<string | undefined>();
+  const [reorderAnnouncement, setReorderAnnouncement] = useState("");
+  const pointerDrag = useRef<{
+    planetId: string;
+    pointerId: number;
+    orderIds: string[];
+    started: boolean;
+    startX: number;
+    startY: number;
+  } | null>(null);
+  const planetIds = planets.map((planet) => planet.planetId);
   const selectedPlanet = planets.find((planet) => planet.planetId === selectedPlanetId) ?? planets[0];
+
+  const commitOrder = useCallback((nextPlanetIds: string[], movedPlanetId: string) => {
+    onOrderChange(nextPlanetIds);
+    const movedPlanet = planets.find((planet) => planet.planetId === movedPlanetId);
+    const position = nextPlanetIds.indexOf(movedPlanetId) + 1;
+    setReorderAnnouncement(
+      `${movedPlanet ? planetDisplayName(movedPlanet) : "Planet"} moved to position ${position} of ${nextPlanetIds.length}.`,
+    );
+  }, [onOrderChange, planetIds, planets]);
+
+  const handlePointerDown = useCallback((
+    planetId: string,
+    event: JSX.TargetedPointerEvent<HTMLButtonElement>,
+  ) => {
+    if (event.button !== 0) return;
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    pointerDrag.current = {
+      orderIds: [...planetIds],
+      planetId,
+      pointerId: event.pointerId,
+      started: false,
+      startX: event.clientX,
+      startY: event.clientY,
+    };
+  }, [planetIds]);
+
+  const handlePointerMove = useCallback((event: JSX.TargetedPointerEvent<HTMLButtonElement>) => {
+    const drag = pointerDrag.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+
+    if (!drag.started) {
+      if (!shouldStartPlanetPickerDrag(event.clientX - drag.startX, event.clientY - drag.startY)) return;
+      drag.started = true;
+      setDraggingPlanetId(drag.planetId);
+    }
+
+    event.preventDefault();
+    const target = document
+      .elementFromPoint(event.clientX, event.clientY)
+      ?.closest<HTMLElement>("[data-planet-selector-item]");
+    const targetPlanetId = target?.dataset.planetSelectorItem;
+    if (!targetPlanetId || targetPlanetId === drag.planetId) return;
+
+    const bounds = target.getBoundingClientRect();
+    const position: PlanetPickerDropPosition = layout === "mobile"
+      ? event.clientX < bounds.left + bounds.width / 2 ? "before" : "after"
+      : event.clientY < bounds.top + bounds.height / 2 ? "before" : "after";
+    const nextPlanetIds = reorderPlanetPickerIds(
+      drag.orderIds,
+      drag.planetId,
+      targetPlanetId,
+      position,
+    );
+    if (nextPlanetIds.every((planetId, index) => planetId === drag.orderIds[index])) return;
+
+    drag.orderIds = nextPlanetIds;
+    commitOrder(nextPlanetIds, drag.planetId);
+  }, [commitOrder, layout]);
+
+  const finishPointerDrag = useCallback((event: JSX.TargetedPointerEvent<HTMLButtonElement>) => {
+    const drag = pointerDrag.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    pointerDrag.current = null;
+    setDraggingPlanetId(undefined);
+  }, []);
+
+  const handleReorderKeyDown = useCallback((
+    planetId: string,
+    event: JSX.TargetedKeyboardEvent<HTMLButtonElement>,
+  ) => {
+    const sourceIndex = planetIds.indexOf(planetId);
+    let destinationIndex: number | undefined;
+    if (event.key === "ArrowLeft" || event.key === "ArrowUp") destinationIndex = sourceIndex - 1;
+    if (event.key === "ArrowRight" || event.key === "ArrowDown") destinationIndex = sourceIndex + 1;
+    if (event.key === "Home") destinationIndex = 0;
+    if (event.key === "End") destinationIndex = planetIds.length - 1;
+    if (destinationIndex === undefined) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    const nextPlanetIds = movePlanetPickerIdToIndex(planetIds, planetId, destinationIndex);
+    if (nextPlanetIds.every((nextPlanetId, index) => nextPlanetId === planetIds[index])) return;
+    commitOrder(nextPlanetIds, planetId);
+  }, [commitOrder, planetIds]);
+
   if (!selectedPlanet) return null;
+
+  const selectorItems = planets.map((planet) => (
+    <PlanetSelectorItem
+      dragging={draggingPlanetId === planet.planetId}
+      fleetVisibility={fleetVisibility}
+      key={planet.planetId}
+      now={now}
+      onHandleKeyDown={handleReorderKeyDown}
+      onHandlePointerCancel={finishPointerDrag}
+      onHandlePointerDown={handlePointerDown}
+      onHandlePointerMove={handlePointerMove}
+      onHandlePointerUp={finishPointerDrag}
+      onSelect={onSelect}
+      planet={planet}
+      selectedBodyKind={selectedBodyKind}
+      selectedPlanet={selectedPlanet}
+    />
+  ));
 
   if (layout === "mobile") {
     return (
       <section aria-label="Select planet" className="block min-w-0 max-w-full overflow-x-auto overscroll-x-contain">
+        <span aria-live="polite" className="sr-only">{reorderAnnouncement}</span>
         <PlanetSelectorResearchProgress now={now} queue={researchQueue} />
         <div className="flex w-max min-w-full gap-2 pb-1">
-          {planets.map((planet) => (
-            <PlanetSelectorItem
-              fleetVisibility={fleetVisibility}
-              key={planet.planetId}
-              now={now}
-              onSelect={onSelect}
-              planet={planet}
-              selectedBodyKind={selectedBodyKind}
-              selectedPlanet={selectedPlanet}
-            />
-          ))}
+          {selectorItems}
         </div>
       </section>
     );
@@ -9116,34 +9297,37 @@ function PlanetSelector({
 
   return (
     <aside aria-label="Select planet" className="hidden w-32 shrink-0 border-l border-white/10 bg-[#07111d]/92 p-2 shadow-2xl shadow-black/20 backdrop-blur-xl lg:flex lg:flex-col">
+      <span aria-live="polite" className="sr-only">{reorderAnnouncement}</span>
       <PlanetSelectorResearchProgress now={now} queue={researchQueue} />
       <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
-        {planets.map((planet) => (
-          <PlanetSelectorItem
-            fleetVisibility={fleetVisibility}
-            key={planet.planetId}
-            now={now}
-            onSelect={onSelect}
-            planet={planet}
-            selectedBodyKind={selectedBodyKind}
-            selectedPlanet={selectedPlanet}
-          />
-        ))}
+        {selectorItems}
       </div>
     </aside>
   );
 }
 
 function PlanetSelectorItem({
+  dragging,
   fleetVisibility,
   now,
+  onHandleKeyDown,
+  onHandlePointerCancel,
+  onHandlePointerDown,
+  onHandlePointerMove,
+  onHandlePointerUp,
   onSelect,
   planet,
   selectedBodyKind,
   selectedPlanet,
 }: {
+  dragging: boolean;
   fleetVisibility: FleetMissionVisibilityResponse | undefined;
   now: number;
+  onHandleKeyDown: (planetId: string, event: JSX.TargetedKeyboardEvent<HTMLButtonElement>) => void;
+  onHandlePointerCancel: (event: JSX.TargetedPointerEvent<HTMLButtonElement>) => void;
+  onHandlePointerDown: (planetId: string, event: JSX.TargetedPointerEvent<HTMLButtonElement>) => void;
+  onHandlePointerMove: (event: JSX.TargetedPointerEvent<HTMLButtonElement>) => void;
+  onHandlePointerUp: (event: JSX.TargetedPointerEvent<HTMLButtonElement>) => void;
   onSelect: (planetId: string, bodyKind?: OrbitBodyKind) => void;
   planet: ManagedPlanetResponse;
   selectedBodyKind: OrbitBodyKind;
@@ -9154,9 +9338,31 @@ function PlanetSelectorItem({
   const hasDedicatedMoonSelector = Boolean(planet.moon?.exists);
   return (
     <div
-      className="grid w-24 min-w-0 shrink-0 gap-1"
+      className={`relative grid w-24 min-w-0 shrink-0 gap-1 rounded transition ${
+        dragging ? "z-20 scale-[1.02] opacity-80 shadow-lg shadow-cyan-950/40" : ""
+      }`}
       data-planet-selector-item={planet.planetId}
     >
+      <button
+        aria-label={`Reorder ${planetDisplayName(planet)}. Use arrow keys, Home, or End to move it.`}
+        aria-pressed={dragging}
+        className={`absolute left-1 top-1 z-10 grid h-8 w-8 touch-none place-items-center rounded-full border text-slate-300 shadow transition ${
+          dragging
+            ? "cursor-grabbing border-cyan-200/60 bg-cyan-950/95 text-cyan-100"
+            : "cursor-grab border-white/15 bg-slate-950/75 hover:border-cyan-200/45 hover:bg-cyan-950/90"
+        }`}
+        data-planet-selector-drag-handle={planet.planetId}
+        onClick={(event) => event.stopPropagation()}
+        onKeyDown={(event) => onHandleKeyDown(planet.planetId, event)}
+        onPointerCancel={onHandlePointerCancel}
+        onPointerDown={(event) => onHandlePointerDown(planet.planetId, event)}
+        onPointerMove={onHandlePointerMove}
+        onPointerUp={onHandlePointerUp}
+        title={`Drag to reorder ${planetDisplayName(planet)}`}
+        type="button"
+      >
+        <GripVertical aria-hidden="true" size={16} />
+      </button>
       <PlanetSelectorButton
         bodyKind="planet"
         hasIncomingAttack={planetHasIncomingAttack(fleetVisibility, planet.planetId)}

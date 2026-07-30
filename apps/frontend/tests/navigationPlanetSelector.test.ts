@@ -99,7 +99,7 @@ describe("navigation and planet selector UI source contracts", () => {
 
   test("shows full planet names in the picker without permanent truncation", () => {
     expect(playableSource).toContain('aria-label="Select planet" className="hidden w-32 shrink-0');
-    expect(playableSource).toContain('className="grid w-24 min-w-0 shrink-0 gap-1"');
+    expect(playableSource).toContain("relative grid w-24 min-w-0 shrink-0 gap-1");
     expect(playableSource).toContain("title={label}");
     expect(playableSource).toContain("line-clamp-2 block max-w-full");
     expect(playableSource).toContain("[overflow-wrap:anywhere]");
@@ -152,13 +152,30 @@ describe("navigation and planet selector UI source contracts", () => {
     expect(playableSource).toContain("data-planet-selector-item={planet.planetId}");
     expect(playableSource).toContain('data-planet-selector-moon="true"');
     expect(playableSource).toContain("<PlanetSelectorMoonButton");
-    expect(playableSource).toContain('className="grid w-24 min-w-0 shrink-0 gap-1"');
+    expect(playableSource).toContain("relative grid w-24 min-w-0 shrink-0 gap-1");
     expect(playableSource).toContain("grid w-full min-w-0 grid-cols-[1.25rem_minmax(0,1fr)] items-center gap-1 overflow-hidden");
     expect(playableSource).not.toContain("planets.flatMap((planet) => planetSelectorButtons");
     expect(gameAssetsSource).toContain("frozen-ice.webp");
     expect(moonIndicatorSource).toContain('data-planet-moon-subsection="true"');
     expect(moonIndicatorSource).not.toContain("Child moon body");
     expect(rankingsSource).toContain("<PlanetMoonSubsection");
+  });
+
+  test("shares persistent accessible planet ordering across every picker layout", () => {
+    expect(playableSource).toContain("const orderedWalletPlanets = useMemo(() =>");
+    expect(playableSource).toContain("readPlanetPickerOrder(browserPlanetPickerOrderStorage(), planetPickerWallet)");
+    expect(playableSource).toContain("writePlanetPickerOrder(browserPlanetPickerOrderStorage(), planetPickerWallet, reconciledIds)");
+    expect(playableSource.match(/planets=\{orderedWalletPlanets\}/g)?.length).toBe(2);
+    expect(playableSource.match(/onOrderChange=\{handlePlanetPickerOrderChange\}/g)?.length).toBe(2);
+    expect(playableSource).toContain("data-planet-selector-drag-handle={planet.planetId}");
+    expect(playableSource).toContain('className={`absolute left-1 top-1 z-10 grid h-8 w-8 touch-none');
+    expect(playableSource).toContain("onPointerDown={(event) => onHandlePointerDown(planet.planetId, event)}");
+    expect(playableSource).toContain("onPointerMove={onHandlePointerMove}");
+    expect(playableSource).toContain("onKeyDown={(event) => onHandleKeyDown(planet.planetId, event)}");
+    expect(playableSource).toContain('if (event.key === "ArrowLeft" || event.key === "ArrowUp")');
+    expect(playableSource).toContain('<span aria-live="polite" className="sr-only">{reorderAnnouncement}</span>');
+    expect(playableSource).toContain("onClick={() => onSelect(planet.planetId, bodyKind)}");
+    expect(playableSource).toContain('onClick={() => onSelect(planet.planetId, "moon")}');
   });
 
   test("normal navigation from a selected moon returns to the parent planet context", () => {
