@@ -61,14 +61,12 @@ import { resetDocumentTitle } from "./pageTitle";
 import { hasPlanetSelectorChoice } from "./planetSelectorChoice";
 import {
   browserPlanetPickerOrderStorage,
-  movePlanetPickerIdToIndex,
+  createPlanetPickerInteractionController,
+  planetPickerDropPosition,
   planetPickerWalletKey,
   readPlanetPickerOrder,
   reconcilePlanetPickerOrder,
-  reorderPlanetPickerIds,
-  shouldStartPlanetPickerDrag,
   writePlanetPickerOrder,
-  type PlanetPickerDropPosition,
 } from "./planetPickerOrder";
 import { ShareDialog } from "./components/ShareDialog";
 import { rankingsAttackProtectionForEntry } from "./rankingsAttackProtection";
@@ -9164,14 +9162,7 @@ function PlanetSelector({
 }) {
   const [draggingPlanetId, setDraggingPlanetId] = useState<string | undefined>();
   const [reorderAnnouncement, setReorderAnnouncement] = useState("");
-  const pointerDrag = useRef<{
-    planetId: string;
-    pointerId: number;
-    orderIds: string[];
-    started: boolean;
-    startX: number;
-    startY: number;
-  } | null>(null);
+  const interaction = useRef(createPlanetPickerInteractionController());
   const planetIds = planets.map((planet) => planet.planetId);
   const selectedPlanet = planets.find((planet) => planet.planetId === selectedPlanetId) ?? planets[0];
 
@@ -9188,59 +9179,49 @@ function PlanetSelector({
     planetId: string,
     event: JSX.TargetedPointerEvent<HTMLButtonElement>,
   ) => {
-    if (event.button !== 0) return;
-    event.stopPropagation();
-    event.currentTarget.setPointerCapture(event.pointerId);
-    pointerDrag.current = {
-      orderIds: [...planetIds],
+    const accepted = interaction.current.beginPointer({
+      button: event.button,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      orderIds: planetIds,
       planetId,
       pointerId: event.pointerId,
-      started: false,
-      startX: event.clientX,
-      startY: event.clientY,
-    };
+      pointerType: event.pointerType,
+    });
+    if (!accepted) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
   }, [planetIds]);
 
   const handlePointerMove = useCallback((event: JSX.TargetedPointerEvent<HTMLButtonElement>) => {
-    const drag = pointerDrag.current;
-    if (!drag || drag.pointerId !== event.pointerId) return;
-
-    if (!drag.started) {
-      if (!shouldStartPlanetPickerDrag(event.clientX - drag.startX, event.clientY - drag.startY)) return;
-      drag.started = true;
-      setDraggingPlanetId(drag.planetId);
-    }
+    const move = interaction.current.movePointer({
+      clientX: event.clientX,
+      clientY: event.clientY,
+      pointerId: event.pointerId,
+      pointerType: event.pointerType,
+    });
+    if (move.status !== "dragging") return;
+    if (move.dragStarted) setDraggingPlanetId(move.planetId);
 
     event.preventDefault();
     const target = document
       .elementFromPoint(event.clientX, event.clientY)
       ?.closest<HTMLElement>("[data-planet-selector-item]");
     const targetPlanetId = target?.dataset.planetSelectorItem;
-    if (!targetPlanetId || targetPlanetId === drag.planetId) return;
+    if (!targetPlanetId || targetPlanetId === move.planetId) return;
 
     const bounds = target.getBoundingClientRect();
-    const position: PlanetPickerDropPosition = layout === "mobile"
-      ? event.clientX < bounds.left + bounds.width / 2 ? "before" : "after"
-      : event.clientY < bounds.top + bounds.height / 2 ? "before" : "after";
-    const nextPlanetIds = reorderPlanetPickerIds(
-      drag.orderIds,
-      drag.planetId,
-      targetPlanetId,
-      position,
-    );
-    if (nextPlanetIds.every((planetId, index) => planetId === drag.orderIds[index])) return;
-
-    drag.orderIds = nextPlanetIds;
-    commitOrder(nextPlanetIds, drag.planetId);
+    const position = planetPickerDropPosition(layout, event.clientX, event.clientY, bounds);
+    const reorder = interaction.current.reorderPointerTarget(targetPlanetId, position);
+    if (!reorder) return;
+    commitOrder(reorder.nextPlanetIds, reorder.movedPlanetId);
   }, [commitOrder, layout]);
 
   const finishPointerDrag = useCallback((event: JSX.TargetedPointerEvent<HTMLButtonElement>) => {
-    const drag = pointerDrag.current;
-    if (!drag || drag.pointerId !== event.pointerId) return;
+    const result = interaction.current.finishPointer(event.pointerId);
+    if (!result.finished) return;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
-    pointerDrag.current = null;
     setDraggingPlanetId(undefined);
   }, []);
 
@@ -9248,17 +9229,12 @@ function PlanetSelector({
     planetId: string,
     event: JSX.TargetedKeyboardEvent<HTMLButtonElement>,
   ) => {
-    const sourceIndex = planetIds.indexOf(planetId);
-    let destinationIndex: number | undefined;
-    if (event.key === "ArrowLeft" || event.key === "ArrowUp") destinationIndex = sourceIndex - 1;
-    if (event.key === "ArrowRight" || event.key === "ArrowDown") destinationIndex = sourceIndex + 1;
-    if (event.key === "Home") destinationIndex = 0;
-    if (event.key === "End") destinationIndex = planetIds.length - 1;
-    if (destinationIndex === undefined) return;
+    const reorder = interaction.current.reorderFromKey(planetIds, planetId, event.key);
+    if (!reorder.handled) return;
 
     event.preventDefault();
     event.stopPropagation();
-    const nextPlanetIds = movePlanetPickerIdToIndex(planetIds, planetId, destinationIndex);
+    const nextPlanetIds = reorder.nextPlanetIds;
     if (nextPlanetIds.every((nextPlanetId, index) => nextPlanetId === planetIds[index])) return;
     commitOrder(nextPlanetIds, planetId);
   }, [commitOrder, planetIds]);
@@ -9343,26 +9319,16 @@ function PlanetSelectorItem({
       }`}
       data-planet-selector-item={planet.planetId}
     >
-      <button
-        aria-label={`Reorder ${planetDisplayName(planet)}. Use arrow keys, Home, or End to move it.`}
-        aria-pressed={dragging}
-        className={`absolute left-1 top-1 z-10 grid h-8 w-8 touch-none place-items-center rounded-full border text-slate-300 shadow transition ${
-          dragging
-            ? "cursor-grabbing border-cyan-200/60 bg-cyan-950/95 text-cyan-100"
-            : "cursor-grab border-white/15 bg-slate-950/75 hover:border-cyan-200/45 hover:bg-cyan-950/90"
-        }`}
-        data-planet-selector-drag-handle={planet.planetId}
-        onClick={(event) => event.stopPropagation()}
+      <PlanetPickerReorderHandle
+        dragging={dragging}
+        label={planetDisplayName(planet)}
         onKeyDown={(event) => onHandleKeyDown(planet.planetId, event)}
         onPointerCancel={onHandlePointerCancel}
         onPointerDown={(event) => onHandlePointerDown(planet.planetId, event)}
         onPointerMove={onHandlePointerMove}
         onPointerUp={onHandlePointerUp}
-        title={`Drag to reorder ${planetDisplayName(planet)}`}
-        type="button"
-      >
-        <GripVertical aria-hidden="true" size={16} />
-      </button>
+        planetId={planet.planetId}
+      />
       <PlanetSelectorButton
         bodyKind="planet"
         hasIncomingAttack={planetHasIncomingAttack(fleetVisibility, planet.planetId)}
@@ -9380,6 +9346,64 @@ function PlanetSelectorItem({
         />
       ) : null}
     </div>
+  );
+}
+
+export function PlanetPickerReorderHandle({
+  dragging,
+  label,
+  onKeyDown,
+  onPointerCancel,
+  onPointerDown,
+  onPointerMove,
+  onPointerUp,
+  planetId,
+}: {
+  dragging: boolean;
+  label: string;
+  onKeyDown: (event: JSX.TargetedKeyboardEvent<HTMLButtonElement>) => void;
+  onPointerCancel: (event: JSX.TargetedPointerEvent<HTMLButtonElement>) => void;
+  onPointerDown: (event: JSX.TargetedPointerEvent<HTMLButtonElement>) => void;
+  onPointerMove: (event: JSX.TargetedPointerEvent<HTMLButtonElement>) => void;
+  onPointerUp: (event: JSX.TargetedPointerEvent<HTMLButtonElement>) => void;
+  planetId: string;
+}) {
+  return (
+    <button
+      aria-label={`Reorder ${label}. Use arrow keys, Home, or End to move it.`}
+      aria-pressed={dragging}
+      className={`absolute left-1 top-1 z-10 grid h-8 w-8 touch-none place-items-center rounded-full border text-slate-300 shadow transition ${
+        dragging
+          ? "cursor-grabbing border-cyan-200/60 bg-cyan-950/95 text-cyan-100"
+          : "cursor-grab border-white/15 bg-slate-950/75 hover:border-cyan-200/45 hover:bg-cyan-950/90"
+      }`}
+      data-planet-selector-drag-handle={planetId}
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      }}
+      onKeyDown={onKeyDown}
+      onPointerCancel={(event) => {
+        event.stopPropagation();
+        onPointerCancel(event);
+      }}
+      onPointerDown={(event) => {
+        event.stopPropagation();
+        onPointerDown(event);
+      }}
+      onPointerMove={(event) => {
+        event.stopPropagation();
+        onPointerMove(event);
+      }}
+      onPointerUp={(event) => {
+        event.stopPropagation();
+        onPointerUp(event);
+      }}
+      title={`Drag to reorder ${label}`}
+      type="button"
+    >
+      <GripVertical aria-hidden="true" size={16} />
+    </button>
   );
 }
 
