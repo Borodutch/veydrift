@@ -12,7 +12,6 @@ import {
   rankingsRefreshButtonState,
   RankingsCurrentPlayerIndicator,
   RankingsPagination,
-  RankingsPageHeader,
   RankingsTable,
   scrollRankingsCurrentPlayerRow,
   shouldShowRankingsInitialLoader,
@@ -44,15 +43,6 @@ describe("RankingsPage", () => {
 
   test("uses one ranking table with the active category score and total context", () => {
     expect([...rankingsColumnLabels]).toEqual(["Rank", "Commander", "Score"]);
-  });
-
-  test("renders the rankings title without the old highscores eyebrow", () => {
-    const header = RankingsPageHeader({ loading: false, onRefresh: () => undefined });
-    const text = visibleText(header);
-
-    expect(text).toContain("Rankings");
-    expect(text).toContain("Refresh");
-    expect(text).not.toContain("Public Highscores");
   });
 
   test("renders rank, commander, planet icons, and the active score without duplicate totals", () => {

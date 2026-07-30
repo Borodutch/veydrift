@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { ComponentChildren, VNode } from "preact";
-import { QueueProgressPanel, queueTimestampToMs } from "../src/components/QueueProgressPanel";
+import { formatQueueEta, QueueProgressPanel, queueTimestampToMs } from "../src/components/QueueProgressPanel";
 
 describe("QueueProgressPanel", () => {
   test("normalizes chain seconds and millisecond timestamps", () => {
@@ -8,9 +8,10 @@ describe("QueueProgressPanel", () => {
     expect(queueTimestampToMs(1_700_000_000_000)).toBe(1_700_000_000_000);
     expect(queueTimestampToMs(null)).toBeUndefined();
     expect(queueTimestampToMs("not-a-number")).toBeUndefined();
+    expect(formatQueueEta(null)).toBe("ETA —");
   });
 
-  test("renders shared active queue progress with action, remaining time, and quantity", () => {
+  test("renders a compact queue strip with an ETA and no visible item title", () => {
     const panel = QueueProgressPanel({
       action: {
         label: "Complete queue",
@@ -26,12 +27,15 @@ describe("QueueProgressPanel", () => {
     });
     const text = visibleText(panel);
 
-    expect(text).toContain("Active queue");
-    expect(text).toContain("Rocket Launcher x2");
+    expect(panel.props["aria-label"]).toBe("Active queue: Rocket Launcher");
+    expect(text.replace(/\s+/g, "")).toContain("×2");
     expect(text).toContain("50%");
-    expect(text).toContain("Time remaining 8m 20s");
-    expect(text).toContain("Ready at");
     expect(text).toContain("Complete queue");
+    expect(text).toContain("Active queue");
+    expect(text).not.toContain("Rocket Launcher");
+    expect(text).not.toContain("Time remaining");
+    expect(text).not.toContain("Ready at");
+    expect(panel.props.className).toContain("border");
   });
 
   test("renders a freshly started ship queue near 0%, not nearly full", () => {
@@ -54,7 +58,7 @@ describe("QueueProgressPanel", () => {
     expect(hasClass(panel, "animate-pulse")).toBe(false);
   });
 
-  test("renders backend-sourced completed units and current-unit timing", () => {
+  test("keeps unit-detail metadata out of the compact queue rail", () => {
     const panel = QueueProgressPanel({
       completedQuantity: 2,
       currentUnitProgressBps: 3750,
@@ -72,8 +76,9 @@ describe("QueueProgressPanel", () => {
     const text = visibleText(panel);
 
     expect(text).toContain("33%");
-    expect(text).toContain("Units complete 2 / 5");
-    expect(text).toContain("Current unit 38% · 1m 15s left");
+    expect(text.replace(/\s+/g, "")).toContain("2/5·33%");
+    expect(text).not.toContain("Units complete");
+    expect(text).not.toContain("Current unit");
   });
 
   test("keeps pending queues without a canonical timeline indeterminate", () => {
@@ -87,7 +92,7 @@ describe("QueueProgressPanel", () => {
     });
     const text = visibleText(panel);
 
-    expect(text).toContain("Pending");
+    expect(text).toContain("…");
     expect(text).not.toContain("0%");
     expect(hasClass(panel, "animate-pulse")).toBe(true);
   });
@@ -104,7 +109,7 @@ describe("QueueProgressPanel", () => {
     const text = visibleText(panel);
 
     expect(text).toContain("100%");
-    expect(text).toContain("Time remaining Ready");
+    expect(text).not.toContain("Ready");
     expect(hasClass(panel, "animate-pulse")).toBe(false);
   });
 });

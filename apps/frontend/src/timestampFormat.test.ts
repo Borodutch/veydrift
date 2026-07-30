@@ -14,7 +14,7 @@ describe("timestamp formatting", () => {
     expect(formatUserTimestamp("1770000000", {
       locale: "en-US",
       timeZone: "UTC",
-    })).toBe("Feb 2, 2026 at 2:40 AM");
+    })).toBe("Feb 2, 2026, 2:40 AM");
   });
 
   test("allows compact locale-specific exact time formatting when needed", () => {

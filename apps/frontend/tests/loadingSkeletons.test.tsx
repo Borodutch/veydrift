@@ -9,6 +9,7 @@ import {
   InspectPanelSkeleton,
   MissionControlSkeleton,
   MoonSkeleton,
+  ProductionCatalogSkeleton,
   RaidTargetsSkeleton,
   RankingsRowsSkeleton,
   RiftSkeleton,
@@ -67,6 +68,10 @@ describe("Skeleton primitives", () => {
 
 const skeletons: Array<{ name: string; node: ComponentChildren }> = [
   { name: "CatalogSkeleton", node: CatalogSkeleton({ label: "Loading research" }) },
+  {
+    name: "ProductionCatalogSkeleton",
+    node: ProductionCatalogSkeleton({ groups: [2, 4, 2, 2], label: "Loading defenses" }),
+  },
   { name: "MoonSkeleton", node: MoonSkeleton({}) },
   { name: "RankingsRowsSkeleton", node: RankingsRowsSkeleton({}) },
   { name: "MissionControlSkeleton", node: MissionControlSkeleton({}) },
@@ -125,5 +130,18 @@ describe("Pages render skeleton loaders, not text loaders, during initial load",
       const sectionLoader = /<VeydriftLoader\s+label=(?:(?!variant)[^>])*\/>/.test(source);
       expect({ page, sectionLoader }).toEqual({ page, sectionLoader: false });
     }
+  });
+
+  test("production pages use the grouped row and featured-card skeleton", () => {
+    const skeleton = ProductionCatalogSkeleton({
+      groups: [4, 8, 3],
+      label: "Loading shipyard",
+    });
+    const classes = classNames(skeleton).join(" ");
+
+    expect(classes).toContain("grid-cols-[44px_minmax(0,1fr)]");
+    expect(classes).toContain("xl:grid-cols-[minmax(0,1fr)_minmax(320px,380px)]");
+    expect(classes).toContain("xl:aspect-[4/3]");
+    expect(classes).toContain("border-cyan-300/20");
   });
 });

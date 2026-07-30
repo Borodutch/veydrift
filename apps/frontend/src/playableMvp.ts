@@ -642,6 +642,7 @@ export const defenseCatalog: Array<{
   label: string;
   group: "kinetic" | "energy" | "shield" | "missile";
   baseCost: Resources;
+  description: string;
   requirements: UnlockRequirement[];
   asset: string;
 }> = [
@@ -651,6 +652,7 @@ export const defenseCatalog: Array<{
     label: "Rocket Launcher",
     group: "kinetic",
     baseCost: { metal: 2_000, crystal: 0, deuterium: 0 },
+    description: "A rugged, inexpensive battery that forms the backbone of a young colony's defenses. Simple tracking systems keep it effective against early raiders.",
     requirements: [{ kind: "building", key: "shipyard", label: "Shipyard", level: 1 }],
     asset: defenseAssetByKey.rocketLauncher,
   },
@@ -660,6 +662,7 @@ export const defenseCatalog: Array<{
     label: "Light Laser",
     group: "energy",
     baseCost: { metal: 1_500, crystal: 500, deuterium: 0 },
+    description: "Fast-cycling laser emplacements sweep the lower atmosphere for light attackers. They are cheap to field in numbers and easy for a colony to maintain.",
     requirements: [
       { kind: "building", key: "shipyard", label: "Shipyard", level: 2 },
       { kind: "technology", key: "energy", label: "Energy", level: 1 },
@@ -673,6 +676,7 @@ export const defenseCatalog: Array<{
     label: "Heavy Laser",
     group: "energy",
     baseCost: { metal: 6_000, crystal: 2_000, deuterium: 0 },
+    description: "Reinforced capacitors turn a standard laser battery into a slower, harder-hitting weapon built to burn through armored hulls.",
     requirements: [
       { kind: "building", key: "shipyard", label: "Shipyard", level: 4 },
       { kind: "technology", key: "energy", label: "Energy", level: 3 },
@@ -686,6 +690,7 @@ export const defenseCatalog: Array<{
     label: "Small Shield Dome",
     group: "shield",
     baseCost: { metal: 10_000, crystal: 10_000, deuterium: 0 },
+    description: "A compact energy canopy shelters critical settlements from the opening volleys of an attack, buying the surface batteries time to respond.",
     requirements: [
       { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
       { kind: "technology", key: "shielding", label: "Shielding", level: 2 },
@@ -698,6 +703,7 @@ export const defenseCatalog: Array<{
     label: "Gauss Cannon",
     group: "kinetic",
     baseCost: { metal: 20_000, crystal: 15_000, deuterium: 2_000 },
+    description: "Magnetic rails hurl dense slugs at extreme velocity. The machinery is demanding, but a clean hit can tear through shields and armor alike.",
     requirements: [
       { kind: "building", key: "shipyard", label: "Shipyard", level: 6 },
       { kind: "technology", key: "energy", label: "Energy", level: 6 },
@@ -712,6 +718,7 @@ export const defenseCatalog: Array<{
     label: "Ion Cannon",
     group: "energy",
     baseCost: { metal: 2_000, crystal: 6_000, deuterium: 0 },
+    description: "Charged ion bursts wash across hostile formations, punishing shielded ships with precise pulses from a compact surface installation.",
     requirements: [
       { kind: "building", key: "shipyard", label: "Shipyard", level: 4 },
       { kind: "technology", key: "ion", label: "Ion", level: 4 },
@@ -724,6 +731,7 @@ export const defenseCatalog: Array<{
     label: "Plasma Turret",
     group: "energy",
     baseCost: { metal: 50_000, crystal: 50_000, deuterium: 30_000 },
+    description: "Contained stellar plasma is hurled skyward in devastating bolts. Few colonies can afford these turrets, and fewer attackers can ignore them.",
     requirements: [
       { kind: "building", key: "shipyard", label: "Shipyard", level: 8 },
       { kind: "technology", key: "plasma", label: "Plasma", level: 7 },
@@ -736,6 +744,7 @@ export const defenseCatalog: Array<{
     label: "Large Shield Dome",
     group: "shield",
     baseCost: { metal: 50_000, crystal: 50_000, deuterium: 0 },
+    description: "A planet-spanning lattice projects a deep defensive barrier over cities, shipyards, and batteries—the last shelter before an enemy reaches the surface.",
     requirements: [
       { kind: "building", key: "shipyard", label: "Shipyard", level: 6 },
       { kind: "technology", key: "shielding", label: "Shielding", level: 6 },
@@ -748,6 +757,7 @@ export const defenseCatalog: Array<{
     label: "Anti-Ballistic Missile",
     group: "missile",
     baseCost: { metal: 8_000, crystal: 0, deuterium: 2_000 },
+    description: "Compact interceptors wait in hardened silos, ready to meet incoming strategic missiles before their warheads can reach the colony.",
     requirements: [
       { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
       { kind: "building", key: "missileSilo", label: "Missile Silo", level: 2 },
@@ -760,6 +770,7 @@ export const defenseCatalog: Array<{
     label: "Interplanetary Missile",
     group: "missile",
     baseCost: { metal: 12_500, crystal: 2_500, deuterium: 10_000 },
+    description: "A long-range siege missile built to carry destructive force from one world to another, softening entrenched defenses before the fleets arrive.",
     requirements: [
       { kind: "building", key: "shipyard", label: "Shipyard", level: 1 },
       { kind: "building", key: "missileSilo", label: "Missile Silo", level: 4 },

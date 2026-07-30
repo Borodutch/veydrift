@@ -1,32 +1,22 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import type { ComponentChildren } from "preact";
 import {
   formatRiftCountdown,
   isWithdrawalReady,
-  RiftPageHeader,
   riftRequirementFlairs,
   riftRequirementStatus,
 } from "./components/RiftPage";
 
 describe("RiftPage helpers", () => {
-  test("renders Rift Stabilizer as the page title without the old eyebrow or bridge title", () => {
-    const text = visibleText(RiftPageHeader({ loading: false, onRefresh: () => undefined }));
-
-    expect(text).toContain("Rift Stabilizer");
-    expect(text).toContain("Refresh");
-    expect(text).not.toContain("Veydrift Rift Stabilizer");
-    expect(text).not.toContain("Resource Bridge");
-  });
-
-  test("uses only the shared refresh button as the loaded Rift refresh indicator", () => {
+  test("omits the redundant page title and manual refresh control", () => {
     const source = readFileSync(
       fileURLToPath(new URL("./components/RiftPage.tsx", import.meta.url)),
       "utf8",
     );
 
-    expect(source).toContain("<RefreshButton loading={loading}");
+    expect(source).not.toContain("<RefreshButton");
+    expect(source).not.toContain("<PageHeader");
     expect(source).not.toContain("InlineSyncIndicator");
     expect(source).not.toContain("Refreshing Rift");
   });
@@ -130,37 +120,3 @@ describe("RiftPage helpers", () => {
     }, now)).toBe(true);
   });
 });
-
-function visibleText(node: ComponentChildren): string {
-  return textParts(node).join(" ").replace(/\s+/g, " ").trim();
-}
-
-function textParts(node: ComponentChildren): string[] {
-  if (node === null || node === undefined || typeof node === "boolean") {
-    return [];
-  }
-  if (typeof node === "string" || typeof node === "number" || typeof node === "bigint") {
-    return [String(node)];
-  }
-  if (Array.isArray(node)) {
-    return node.flatMap(textParts);
-  }
-  if (typeof node !== "object") {
-    return [];
-  }
-
-  const vnode = node as {
-    type?: unknown;
-    props?: { children?: ComponentChildren; title?: unknown; "aria-label"?: unknown };
-  };
-  if (typeof vnode.type === "function") {
-    if ("size" in (vnode.props ?? {}) || "strokeWidth" in (vnode.props ?? {})) return [];
-    const render = vnode.type as (props: Record<string, unknown>) => ComponentChildren;
-    return textParts(render({ ...(vnode.props ?? {}) }));
-  }
-
-  const labels = typeof vnode.type === "string"
-    ? [vnode.props?.["aria-label"], vnode.props?.title].filter((value): value is string => typeof value === "string")
-    : [];
-  return [...labels, ...textParts(vnode.props?.children)];
-}

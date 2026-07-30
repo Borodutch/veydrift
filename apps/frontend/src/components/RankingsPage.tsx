@@ -7,7 +7,7 @@ import type { GalaxyAction } from "../galaxyActions";
 import type { Coordinates } from "../types";
 import { fetchHighscores, shortAddress, type FleetMissionSummary, type HighscoreCategory, type HighscoreEntry, type HighscorePlanet, type HighscoreResponse } from "../walletFlow";
 import { OptimizedImage } from "./OptimizedImage";
-import { PageHeader, RefreshButton, refreshButtonState } from "./PageHeader";
+import { refreshButtonState } from "./PageHeader";
 import { PlanetMoonSubsection } from "./PlanetMoonIndicator";
 import { PlanetMissionLines } from "./PlanetMissionLines";
 import { RankingsRowsSkeleton } from "./LoadingSkeletons";
@@ -186,8 +186,6 @@ export function RankingsPage({ activeMissions, apiBaseUrl, currentAllianceId, cu
 
   return (
     <section className="space-y-4" ref={rankingsSectionRef}>
-      <RankingsPageHeader loading={loading} onRefresh={() => load(page)} />
-
       <RankingsCurrentPlayerIndicator
         currentPlayerPage={currentPlayerPage}
         currentScore={currentPlayerScore}
@@ -323,22 +321,6 @@ export function RankingsCurrentPlayerIndicator({
         <span className="ml-auto hidden whitespace-nowrap text-xs text-cyan-200/70 sm:inline">Jump to your row →</span>
       ) : null}
     </button>
-  );
-}
-
-export function RankingsPageHeader({
-  loading,
-  onRefresh,
-}: {
-  loading: boolean;
-  onRefresh: () => void;
-}) {
-  return (
-    <PageHeader
-      actions={<RefreshButton loading={loading} onRefresh={onRefresh} title="Refresh rankings" />}
-      title="Rankings"
-      titleSize="xl"
-    />
   );
 }
 

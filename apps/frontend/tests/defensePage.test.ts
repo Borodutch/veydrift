@@ -234,7 +234,10 @@ describe("Defense page display helpers", () => {
     });
     expect(items.find((item) => item.key === "rocketLauncher")).not.toHaveProperty("durationSeconds");
     expect(items.find((item) => item.key === "rocketLauncher")).not.toHaveProperty("description");
-    expect(items.find((item) => item.key === "rocketLauncher")?.notes).toBeUndefined();
+    expect(items.find((item) => item.key === "rocketLauncher")?.notes).toEqual([
+      defenseCatalog.find((defense) => defense.key === "rocketLauncher")?.description,
+    ]);
+    expect(defenseCatalog.every((defense) => defense.description.trim().length > 0)).toBe(true);
     expect(items.find((item) => item.key === "lightLaser")).toMatchObject({
       countValue: 3,
       labelTone: "normal",
@@ -471,10 +474,10 @@ describe("Defense page display helpers", () => {
     });
 
     expect(selectedProductionItem(items, "rocketLauncher")).toMatchObject({
-      actionLabel: "Add",
+      actionLabel: "Build",
       queued: 2,
       status: "queued",
-      statusLabel: "Queued",
+      statusLabel: undefined,
     });
     expect(items.find((item) => item.key === "lightLaser")).toMatchObject({
       actionLabel: "Build",
@@ -552,7 +555,7 @@ describe("Defense page display helpers", () => {
     });
 
     expect(selectedProductionItem(items, "rocketLauncher")).toMatchObject({
-      actionLabel: "Add",
+      actionLabel: "Build",
       queued: 4,
       status: "queued",
     });
@@ -645,7 +648,9 @@ describe("Defense build time (VEY-KANEO-472)", () => {
       resources: { metal: 100000, crystal: 100000, deuterium: 100000 },
     });
 
-    expect(items.find((item) => item.key === "rocketLauncher")?.durationSeconds).toBe(150);
+    const rocketLauncher = items.find((item) => item.key === "rocketLauncher");
+    expect(rocketLauncher?.durationSeconds).toBe(150);
+    expect(rocketLauncher?.cost).toEqual({ metal: 2000, crystal: 0, deuterium: 0 });
   });
 
   test("omits build time when the backend supplies no per-unit duration", () => {

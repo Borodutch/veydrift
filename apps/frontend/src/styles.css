@@ -101,6 +101,17 @@ button:focus-visible {
   --tw-ring-shadow: 0 0 0 2px var(--tw-ring-color);
 }
 
+[aria-current="page"]:focus-visible,
+[aria-current="true"]:focus-visible,
+[aria-selected="true"]:focus-visible,
+[aria-pressed="true"]:focus-visible {
+  outline: none;
+  outline-offset: 0;
+  --tw-ring-offset-shadow: 0 0 #0000;
+  --tw-ring-shadow: 0 0 #0000;
+  box-shadow: var(--tw-shadow, 0 0 #0000);
+}
+
 *::-webkit-scrollbar {
   width: 10px;
   height: 10px;

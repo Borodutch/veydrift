@@ -44,8 +44,6 @@ export function PageHeader({
   actions,
   bordered = true,
   beforeTitle,
-  title,
-  titleSize = "lg",
 }: {
   actions?: ComponentChildren | undefined;
   bordered?: boolean | undefined;
@@ -53,19 +51,15 @@ export function PageHeader({
   title: ComponentChildren;
   titleSize?: "lg" | "xl" | undefined;
 }) {
+  if (!beforeTitle && !actions) return null;
+
   const borderClass = bordered ? "border-b border-white/10 pb-4" : "";
-  const titleClass = titleSize === "xl" ? "text-2xl" : "text-lg";
 
   return (
-    <header className={`flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between ${borderClass}`}>
-      <div className="min-w-0">
-        {beforeTitle}
-        <h1 className={`${titleClass} font-semibold text-white`}>
-          {title}
-        </h1>
-      </div>
+    <header className={`flex flex-wrap items-center gap-2 ${beforeTitle ? "justify-between" : "justify-end"} ${borderClass}`}>
+      {beforeTitle ? <div className="min-w-0 [&>*]:mb-0">{beforeTitle}</div> : null}
       {actions ? (
-        <div className="flex max-w-full min-w-0 flex-wrap items-center gap-2 sm:justify-end">
+        <div className="flex max-w-full min-w-0 flex-wrap items-center gap-2 justify-end">
           {actions}
         </div>
       ) : null}

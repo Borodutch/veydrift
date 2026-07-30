@@ -866,6 +866,7 @@ describe("SettlementIndexer", () => {
     expect(indexer.researchQueue(player)).toMatchObject({
       active: true,
       itemId: 0,
+      planetId: "380",
       targetLevel: 10
     });
     expect(database.query(`

@@ -84,7 +84,7 @@ describe("shared inspect/progress layout primitives", () => {
     expect(singleItemQueueProgressPercentClassName).not.toContain("shrink-0");
   });
 
-  test("renders shared page header and two-column inspect layout wrappers", () => {
+  test("renders page actions without a screen title and keeps the two-column inspect layout wrappers", () => {
     const header = InspectPageHeader({
       actions: <button type="button">Refresh</button>,
       title: "Research",
@@ -95,7 +95,7 @@ describe("shared inspect/progress layout primitives", () => {
       detail: <span>Detail panel</span>,
     });
 
-    expect(visibleText(header)).toContain("Research");
+    expect(visibleText(header)).not.toContain("Research");
     expect(visibleText(header)).not.toContain("Select an item to inspect live state");
     expect(visibleText(header)).toContain("Refresh");
     expect(visibleText(layout)).toContain("Catalog tiles");

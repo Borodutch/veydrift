@@ -26,13 +26,12 @@ import {
   InspectDetailHero,
   InspectDetailImage,
   InspectDetailShell,
-  InspectPageHeader,
   InspectInfoRow,
   InspectTwoColumnLayout,
   SingleItemQueueProgress,
   useInspectDetailSelection,
 } from "./InspectProgressLayout";
-import { RefreshButton, refreshButtonState } from "./PageHeader";
+import { refreshButtonState } from "./PageHeader";
 import { RequirementFlairs, type RequirementFlair, type RequirementTarget } from "./RequirementFlairs";
 import { CatalogSkeleton } from "./LoadingSkeletons";
 import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailableNotice";
@@ -95,7 +94,6 @@ export function ResearchPage({
   loading,
   now = Date.now(),
   onOpenRequirement,
-  onRefresh,
   onResearch,
   onSelectResearch,
   productionRates,
@@ -125,13 +123,6 @@ export function ResearchPage({
 
   return (
     <div className="grid gap-4">
-      <InspectPageHeader
-        actions={(
-          <RefreshButton loading={loading} onRefresh={onRefresh} title="Refresh research state" />
-        )}
-        title="Research"
-      />
-
       <ResearchStatusPanel
         actionState={actionState}
         error={error}

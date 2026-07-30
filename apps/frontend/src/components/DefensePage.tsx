@@ -13,9 +13,9 @@ import {
   type ProductionRequirementState,
   productionQueueViewModel,
 } from "./ProductionCatalog";
-import { PageHeader, RefreshButton, refreshButtonState } from "./PageHeader";
+import { refreshButtonState } from "./PageHeader";
 import type { RequirementTarget } from "./RequirementFlairs";
-import { CatalogSkeleton } from "./LoadingSkeletons";
+import { ProductionCatalogSkeleton } from "./LoadingSkeletons";
 import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailableNotice";
 
 type DefenseActionState =
@@ -72,7 +72,6 @@ export function DefensePage({
   now,
   onBuild,
   onOpenRequirement,
-  onRefresh,
   onSelectDefense,
   overviewQueue,
   productionRates,
@@ -92,11 +91,6 @@ export function DefensePage({
 
   return (
     <div className="grid gap-4">
-      <PageHeader
-        actions={<RefreshButton loading={loading} onRefresh={onRefresh} title="Refresh defense state" />}
-        title="Defenses"
-      />
-
       <StatusPanel
         actionState={actionState}
         defenseState={defenseState}
@@ -105,7 +99,7 @@ export function DefensePage({
       />
 
       {initialLoading ? (
-        <CatalogSkeleton label="Loading defenses" />
+        <ProductionCatalogSkeleton groups={[2, 4, 2, 2]} label="Loading defenses" />
       ) : (
         <ProductionSection
           actionPending={actionState.status === "pending"}
@@ -247,9 +241,9 @@ export function defenseProductionItems({
     const stats = combatStats.rows.map((row) => `${row.label} ${formatStatValue(row.value)}`).join(" · ");
 
     return {
-      actionLabel: queued > 0 ? "Add" : "Build",
+      actionLabel: "Build",
       blockedReason,
-      cost: totalCost,
+      cost: baseCost,
       ...(durationSeconds === undefined ? {} : { durationSeconds }),
       countLabel: "Deployed",
       countValue: deployed,
@@ -258,10 +252,11 @@ export function defenseProductionItems({
       groupLabel: groupLabels[defense.group],
       labelTone: blockedReason ? "muted" : "normal",
       missing,
+      notes: [defense.description],
       queued,
       requirements,
       status: queued > 0 ? "queued" : missing.length === 0 ? "ready" : "locked",
-      statusLabel: queued > 0 ? "Queued" : undefined,
+      statusLabel: undefined,
     };
   });
 }

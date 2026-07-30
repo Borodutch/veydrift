@@ -2,7 +2,6 @@ import { useMemo, useState } from "preact/hooks";
 import type { BuildingKey, ResearchKey } from "../playableMvp";
 import { formatUserTimestamp } from "../timestampFormat";
 import type { ChainRiftState, PendingWithdrawal, RiftResourceKey, RiftResourceState } from "../walletFlow";
-import { PageHeader, RefreshButton } from "./PageHeader";
 import { ActionReasonNote } from "./ActionReasonNote";
 import { RequirementFlairs, type RequirementFlair, type RequirementTarget } from "./RequirementFlairs";
 import { RiftSkeleton } from "./LoadingSkeletons";
@@ -45,7 +44,6 @@ export function RiftPage({
   onDeposit,
   onFinishWithdrawal,
   onOpenRequirement,
-  onRefresh,
   onRequestWithdrawal,
   riftState,
   transactionUnavailableReason,
@@ -68,8 +66,6 @@ export function RiftPage({
 
   return (
     <section className="grid gap-4">
-      <RiftPageHeader loading={loading} onRefresh={onRefresh} />
-
       {/* Only surface failures. Success/pending action banners are intentionally
           not rendered so the page does not flash transient status banners. */}
       {actionState.status === "error" && (
@@ -173,21 +169,6 @@ export function RiftPage({
         </>
       )}
     </section>
-  );
-}
-
-export function RiftPageHeader({
-  loading,
-  onRefresh,
-}: {
-  loading: boolean;
-  onRefresh: () => void;
-}) {
-  return (
-    <PageHeader
-      actions={<RefreshButton loading={loading} onRefresh={onRefresh} title="Refresh Rift state" />}
-      title="Rift Stabilizer"
-    />
   );
 }
 

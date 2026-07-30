@@ -209,7 +209,7 @@ describe("Mission Control battle reports", () => {
       onRefresh: () => undefined,
     })).join(" ");
 
-    expect(text).toContain("Mission Control");
+    expect(text).not.toContain("Mission Control");
     expect(text).not.toContain("Watch inbound attacks");
     // "Hostile inbound" persists as the active-row direction label, not as a summary stat card.
     expect(text).toContain("Hostile inbound");
@@ -1236,7 +1236,7 @@ describe("Mission Control battle reports", () => {
       onSelectPlayer: () => undefined,
     })).join(" ");
 
-    expect(text).toContain("Mission #42");
+    expect(text).not.toContain("Mission #42");
     expect(text).not.toContain("Mission Detail");
     // VEY-KANEO-468: arrival/return completions reconcile lazily on-chain, so the former manual
     // "Resolve" order is gone from the detail screen; an arrived outbound attack shows no order.

@@ -40,7 +40,7 @@ import {
   rosterPageRows,
 } from "./AlliancePage";
 import { OptimizedImage } from "./OptimizedImage";
-import { PageHeader, RefreshButton } from "./PageHeader";
+import { PageHeader } from "./PageHeader";
 import { InspectPanelSkeleton } from "./LoadingSkeletons";
 import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailableNotice";
 import { EntityMediaPanel } from "./EntityMediaPanel";
@@ -310,7 +310,6 @@ export function AllianceInspectPage({
   onKick,
   onLeaveAlliance,
   onOpenPlayer,
-  onRefresh,
   onSetRole,
   onTransferOwnership,
   provider,
@@ -373,9 +372,6 @@ export function AllianceInspectPage({
     <InspectShell
       title={alliance ? allianceDisplayName(alliance) : `Alliance #${allianceId}`}
       onBack={onBack}
-      action={(
-        <RefreshButton disabled={actionBusy} loading={disabled} onRefresh={onRefresh} title="Refresh alliance state" />
-      )}
     >
       {!allianceState ? <InspectPanelSkeleton label="Loading alliance" /> : null}
       {allianceState && !alliance ? <Notice tone="error">Alliance details are not indexed for this id yet.</Notice> : null}

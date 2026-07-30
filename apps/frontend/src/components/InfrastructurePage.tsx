@@ -30,7 +30,7 @@ import {
   InspectPageHeader,
   SingleItemQueueProgress,
 } from "./InspectProgressLayout";
-import { RefreshButton, refreshButtonState } from "./PageHeader";
+import { refreshButtonState } from "./PageHeader";
 import { RequirementFlairs, type RequirementFlair, type RequirementTarget } from "./RequirementFlairs";
 import { LevelInfoButton, LevelInfoModal, type LevelInfoColumn, type LevelInfoRow } from "./LevelInfoModal";
 import { StructureCatalog, StructureDetail, type StructureLevelInfo } from "./StructureCatalog";
@@ -99,11 +99,9 @@ export function InfrastructurePage({
   chainCosts,
   chainDurations,
   hasLoadedInfrastructureState = false,
-  loading = false,
   loadError,
   now = Date.now(),
   onOpenRequirement,
-  onRefresh,
   onSelectBuilding,
   planetProductionProfile,
   productionRates,
@@ -131,12 +129,6 @@ export function InfrastructurePage({
   if (initialLoadError) {
     return (
       <div className="grid gap-4">
-        <InspectPageHeader
-          actions={onRefresh ? (
-            <RefreshButton loading={loading} onRefresh={onRefresh} title="Refresh infrastructure state" />
-          ) : undefined}
-          title="Infrastructure"
-        />
         <InfrastructureLoadErrorPanel reason={initialLoadError} />
       </div>
     );
@@ -151,9 +143,6 @@ export function InfrastructurePage({
             <ActiveBuildingBadge
               label={buildingQueueLabel(settledState.queue.label, settledState.queue.targetLevel)}
             />
-          ) : null}
-          {onRefresh ? (
-            <RefreshButton loading={loading} onRefresh={onRefresh} title="Refresh infrastructure state" />
           ) : null}
           </>
         )}
