@@ -80,6 +80,11 @@ energy scale = produced / required
     expect(rawDocs).toContain("MAX_RAPIDFIRE_CHAIN = 64");
     expect(rawDocs).toContain("continueBps = floor((R - 1) * 10,000 / R)");
     expect(rawDocs).toContain('keccak256("veydrift.classic-combat-random-stream.v1")');
+    expect(rawDocs).toContain("raw metal per hour = floor(scaled level value(30, metal level) * metal multiplier bps / 10,000)");
+    expect(rawDocs).toContain("Mine level tables and building detail cards show these raw values.");
+    expect(rawDocs).toContain("The resource top bar and its Resources popup show live effective production");
+    expect(rawDocs).toContain("maximum temperature + 140");
+    expect(rawDocs).not.toContain("maximum temperature + 160");
     expect(rawDocs).not.toContain("Veydrift AI Reference");
     expect(existsSync(new URL("../public/docs.md", import.meta.url))).toBe(false);
 

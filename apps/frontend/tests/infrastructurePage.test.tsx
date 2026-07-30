@@ -519,7 +519,7 @@ describe("Infrastructure page display helpers", () => {
     });
   });
 
-  test("restores backend-anchored mine production deltas in details", () => {
+  test("shows raw mine production in details instead of backend live-effective production", () => {
     const state = {
       ...createInitialPlayableState(1_000),
       buildings: {
@@ -545,8 +545,8 @@ describe("Infrastructure page display helpers", () => {
     expect(rows).toContainEqual({
       delta: "+38/h",
       label: "Metal output",
-      next: "80/h",
-      value: "42/h",
+      next: "70/h",
+      value: "32/h",
     });
     expect(rows).toContainEqual({
       delta: "+13",
@@ -556,7 +556,7 @@ describe("Infrastructure page display helpers", () => {
     });
   });
 
-  test("keeps catalog cards to current production without next-level deltas", () => {
+  test("keeps catalog cards on raw current production without next-level deltas", () => {
     const state = {
       ...createInitialPlayableState(1_000),
       buildings: {
@@ -571,10 +571,10 @@ describe("Infrastructure page display helpers", () => {
       "crystalMine",
       undefined,
       { metal: 0, crystal: 30, deuterium: 0 },
-    )).toBe("30/h");
+    )).toBe("22/h");
   });
 
-  test("uses selected colony production multipliers for backend-anchored mine detail deltas", () => {
+  test("uses selected colony production multipliers for raw mine detail deltas", () => {
     const state = {
       ...createInitialPlayableState(1_000),
       buildings: {
@@ -593,7 +593,7 @@ describe("Infrastructure page display helpers", () => {
       state,
       "metalMine",
       colonyProfile,
-      { metal: 49, crystal: 0, deuterium: 0 },
+      { metal: 1, crystal: 0, deuterium: 0 },
       effect,
     );
     const rows = detailEffectRows(

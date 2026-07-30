@@ -5,7 +5,6 @@ import {
   buildingCatalog,
   buildingEffectMetrics,
   buildingRequirementsFor,
-  productionPerHour,
   isBinaryBuilding,
   researchCatalog,
   unmetBuildingRequirement,
@@ -814,7 +813,7 @@ export function buildingProductionUpgradeEffect(
   state: PlayableState,
   key: BuildingKey,
   profile?: PlanetProductionProfile | undefined,
-  productionRates?: Resources | undefined,
+  _productionRates?: Resources | undefined,
   effect: BuildingEffectMetrics = buildingEffectMetrics(
     state.buildings,
     key,
@@ -822,32 +821,12 @@ export function buildingProductionUpgradeEffect(
     state.research.energy,
   ),
 ): ProductionUpgradeEffect | undefined {
-  if (effect.kind !== "production" || !productionRates) return undefined;
-
-  const nextBuildings = {
-    ...state.buildings,
-    [key]: state.buildings[key] + 1,
-  };
-  const currentModeled = productionPerHour(
-    state.buildings,
-    profile,
-    state.research.energy,
-    state.ships.solarSatellite,
-  );
-  const nextModeled = productionPerHour(
-    nextBuildings,
-    profile,
-    state.research.energy,
-    state.ships.solarSatellite,
-  );
-  const modeledDelta = nextModeled[effect.resource] - currentModeled[effect.resource];
-  const currentPerHour = productionRates[effect.resource];
-  const nextPerHour = Math.max(0, currentPerHour + modeledDelta);
+  if (effect.kind !== "production") return undefined;
 
   return {
-    currentPerHour,
-    deltaPerHour: nextPerHour - currentPerHour,
-    nextPerHour,
+    currentPerHour: effect.currentPerHour,
+    deltaPerHour: effect.deltaPerHour,
+    nextPerHour: effect.nextPerHour,
     resource: effect.resource,
   };
 }
