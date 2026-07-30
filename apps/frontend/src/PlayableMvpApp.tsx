@@ -19,7 +19,7 @@ import {
 } from "./components/OverviewPage";
 import { InfrastructurePage } from "./components/InfrastructurePage";
 import { DefensePage } from "./components/DefensePage";
-import { AllianceInvitesPage, AlliancePage, allianceInviteAcceptanceState, allianceJoinRequestApprovalState, allianceJoinRequestDismissalState } from "./components/AlliancePage";
+import { AllianceInvitesPage, AlliancePage, allianceInviteAcceptanceState, allianceJoinRequestApprovalState, allianceJoinRequestDismissalState, hasAllianceMembership } from "./components/AlliancePage";
 import { ResearchPage, type ResearchActionState } from "./components/ResearchPage";
 import { ShipyardPage } from "./components/ShipyardPage";
 import type { RequirementTarget } from "./components/RequirementFlairs";
@@ -902,7 +902,11 @@ export function planOnChainRefresh(
 }
 
 export function shouldRefreshAllianceStateForPage(page: Page): boolean {
-  return page === "alliance" || page === "rankings" || page === "raid-target-finder" || page === "alliance-inspect";
+  return page === "alliance"
+    || page === "mission-control"
+    || page === "rankings"
+    || page === "raid-target-finder"
+    || page === "alliance-inspect";
 }
 
 export function shouldRefreshMissionActionStateForPage(page: Page): boolean {
@@ -4987,13 +4991,14 @@ export function PlayableMvpApp({
   // button passes it as a void `onRefresh` and ignores the result (behavior unchanged).
   const refreshMissionControl = useCallback(async () => {
     await Promise.allSettled([
+      refreshAllianceState(),
       refreshOnChainState(),
       loadMissionArchive(missionArchivePage),
       loadIncomingAttackArchive(incomingAttackArchivePage),
       loadAllActiveMissions(),
       loadGlobalMissionArchive(globalMissionArchivePage),
     ]);
-  }, [globalMissionArchivePage, incomingAttackArchivePage, loadAllActiveMissions, loadGlobalMissionArchive, loadIncomingAttackArchive, loadMissionArchive, missionArchivePage, refreshOnChainState]);
+  }, [globalMissionArchivePage, incomingAttackArchivePage, loadAllActiveMissions, loadGlobalMissionArchive, loadIncomingAttackArchive, loadMissionArchive, missionArchivePage, refreshAllianceState, refreshOnChainState]);
 
   const refreshFinishedBuildingState = useCallback(async (expectation: FinishedBuildingExpectation): Promise<boolean> => {
     const planetSwitchRequestId = planetSwitchGate.current;
@@ -8752,7 +8757,7 @@ export function PlayableMvpApp({
           allActiveMissions={displayAllActiveMissions}
           canTransact={canSubmitMissionTransaction}
           fleetVisibility={displayFleetVisibility}
-          hasAlliance={Boolean(allianceState?.membership.allianceId && allianceState.membership.allianceId !== "0")}
+          hasAlliance={hasAllianceMembership(allianceState)}
           globalMissionArchive={globalMissionArchive}
           globalMissionArchiveError={globalMissionArchiveSection.status.error ?? globalMissionArchiveError}
           globalMissionArchiveLoading={globalMissionArchiveLoading || globalMissionArchiveSection.status.loading}

@@ -1441,6 +1441,11 @@ export class SettlementIndexer {
       SELECT alliance_id, active, tag, name, description, owner, created_at, member_count
       FROM contract_alliances
       WHERE active = 1
+        AND EXISTS (
+          SELECT 1
+          FROM contract_alliance_members member
+          WHERE member.alliance_id = contract_alliances.alliance_id
+        )
       ORDER BY CAST(alliance_id AS INTEGER) ASC
     `).all() as AllianceRow[];
     return rows.map((row) => {
@@ -7630,7 +7635,8 @@ export class SettlementIndexer {
       `).run(event.allianceId, event.player, event.roleId, event.joinedAt);
       this.db.query(`
         UPDATE contract_alliances
-        SET member_count = (
+        SET active = 1,
+          member_count = (
           SELECT COUNT(*)
           FROM contract_alliance_members
           WHERE alliance_id = ?
@@ -7650,9 +7656,14 @@ export class SettlementIndexer {
           SELECT COUNT(*)
           FROM contract_alliance_members
           WHERE alliance_id = ?
-        )
+        ),
+          active = CASE WHEN (
+            SELECT COUNT(*)
+            FROM contract_alliance_members
+            WHERE alliance_id = ?
+          ) = 0 THEN 0 ELSE active END
         WHERE alliance_id = ?
-      `).run(event.allianceId, event.allianceId);
+      `).run(event.allianceId, event.allianceId, event.allianceId);
     } else if (event.eventName === "AllianceRoleUpdated") {
       this.db.query(`
         UPDATE contract_alliance_members
@@ -7686,6 +7697,10 @@ export class SettlementIndexer {
   private applyAllianceDirectorySnapshot(directory: readonly AllianceState["directory"][number][]): void {
     for (const alliance of directory) {
       const memberCount = alliance.members ? alliance.members.length : alliance.memberCount;
+      // The current contract leaves its profile `active` after the final owner exits. Canonical
+      // indexed directory state treats a rosterless alliance as dissolved; a later join/create
+      // event restores it through the normal AllianceJoined path.
+      const active = alliance.active && memberCount > 0;
       this.db.query(`
         INSERT INTO contract_alliances (
           alliance_id, active, tag, name, description, owner, created_at, member_count, event_json
@@ -7702,7 +7717,7 @@ export class SettlementIndexer {
           event_json = excluded.event_json
       `).run(
         alliance.allianceId,
-        alliance.active ? 1 : 0,
+        active ? 1 : 0,
         alliance.tag,
         alliance.name,
         alliance.description,
@@ -7712,7 +7727,7 @@ export class SettlementIndexer {
         JSON.stringify({
           eventName: "AllianceDirectorySnapshot",
           allianceId: alliance.allianceId,
-          active: alliance.active,
+          active,
           tag: alliance.tag,
           name: alliance.name,
           description: alliance.description,

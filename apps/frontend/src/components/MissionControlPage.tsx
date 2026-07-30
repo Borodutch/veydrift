@@ -92,9 +92,9 @@ interface MissionControlPageProps {
   globalMissionArchive?: GlobalMissionArchiveResponse | undefined;
   globalMissionArchiveError?: string | undefined;
   globalMissionArchiveLoading?: boolean | undefined;
-  // The Alliance active tab only ever holds joinable alliance attacks; for a player with no
-  // alliance it is a permanent "(0)", so it hides entirely. Defaults to visible so callers/tests
-  // that don't track membership keep the full tab set.
+  // Canonical indexed alliance membership owns Alliance-tab visibility. Defaults to visible so
+  // legacy callers/tests that do not model membership retain their historical tab set; the playable
+  // app always passes an explicit membership-derived boolean.
   hasAlliance?: boolean | undefined;
   incomingAttackArchive?: FleetMissionArchiveResponse | undefined;
   incomingAttackArchiveError?: string | undefined;
@@ -168,7 +168,10 @@ export function MissionControlPage({
   const incoming = fleetVisibility?.incoming ?? [];
   const outgoing = fleetVisibility?.outgoing ?? [];
   const returning = fleetVisibility?.returning ?? [];
-  const joinableAttacks = fleetVisibility?.joinableAttacks ?? [];
+  // A fleet-visibility response can race a newer alliance-membership response during dissolve,
+  // leave, or removal. Fail closed on canonical membership so stale joinable rows cannot leak into
+  // either the Alliance tab or the universe-wide All tab.
+  const joinableAttacks = hasAlliance ? (fleetVisibility?.joinableAttacks ?? []) : [];
   const completedMissions = fleetVisibility?.completedMissions ?? [];
   const battleReports = fleetVisibility?.battleReports ?? [];
   const activeMissionRows = chronologicalActiveMissionRows({ incoming, joinableAttacks, outgoing, returning });
@@ -253,12 +256,17 @@ export function MissionControlPage({
   // remounts on returning from a mission detail (browser back or the in-app "← Mission Control").
   // The view comes from the URL hash first (shareable, survives reload + browser back), then the
   // sessionStorage fallback for the in-app back button which lands on a bare `#/mission-control`.
-  const view = initialView ?? resolveMissionControlView();
-  // Keep the Alliance tab visible for alliance members (even when currently empty) and for anyone
-  // actually looking at joinable alliance attacks; otherwise it is dead chrome and hides. A
-  // persisted "alliance" selection falls back to My missions when the tab is hidden.
-  const showAllianceTab = hasAlliance || filteredAllianceMissionRows.length > 0;
-  const activeTab = view.activeTab === "alliance" && !showAllianceTab ? "mine" : view.activeTab;
+  const requestedView = initialView ?? resolveMissionControlView();
+  const showAllianceTab = hasAlliance;
+  const view = missionControlViewForAllianceMembership(requestedView, showAllianceTab);
+  // A canonical membership refresh can invalidate an `at=alliance` selection while this page is
+  // already mounted. Repair all three runtime sources of truth synchronously: rendered view,
+  // session/in-memory persistence, and the URL hash. Explicit test/story views remain side-effect
+  // free because they do not represent persisted app navigation.
+  if (view !== requestedView && initialView === undefined) {
+    persistMissionControlView(view);
+  }
+  const activeTab = view.activeTab;
   const selectedActiveRows = activeTab === "all"
     ? filteredAllActiveRows
     : activeTab === "alliance"
@@ -1999,6 +2007,18 @@ export const DEFAULT_MISSION_CONTROL_VIEW: MissionControlView = {
   pastPage: 0,
   pastTab: PAST_MISSION_DEFAULT_TAB,
 };
+
+export function missionControlViewForAllianceMembership(
+  view: MissionControlView,
+  hasAlliance: boolean,
+): MissionControlView {
+  if (hasAlliance || view.activeTab !== "alliance") return view;
+  return {
+    ...view,
+    activePage: 0,
+    activeTab: ACTIVE_MISSION_DEFAULT_TAB,
+  };
+}
 
 function clampPageIndex(value: unknown): number {
   const page = Math.trunc(Number(value));

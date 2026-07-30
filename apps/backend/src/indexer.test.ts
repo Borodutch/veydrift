@@ -50,6 +50,7 @@ const allianceProfileUpdatedTopic = "0x6cd70a2e9b3cebb75f35ae8c618b15036c7b0c425
 const allianceInviteCreatedTopic = "0x2ebeddd3f0119f5464f0f6acb95cbc1477a11e19b059f3234bbb0a671cf2b4bd";
 const allianceJoinRequestedTopic = "0x57dc0d6d966259dfce732817e0ad98a199174482159ce86fec64334a407ed2b5";
 const allianceJoinedTopic = "0x966912f1fd05e1765f8d822e0db01e534676a830ea4b161fc254f4e63f0324eb";
+const allianceLeftTopic = "0x65b0be45688803f341e315da7be3de9dd83ebf51eb3cccb3788080695e19ec54";
 const allianceRoleUpdatedTopic = "0xe4ba1cf47cfd4ff05de8585bf5cb06e7b0856932c0d81ef64a3458e26877f30d";
 const allianceOwnershipTransferredTopic = "0x68f6446f7a86cbeefdd42de0fd5fe8291d2183c90343d9a43c0cdc976e5a1617";
 const allianceDiplomacyUpdatedTopic = "0x3df4b2aa5708b43ef1805908826beae5c9a30fb60b1952ad99ce3444b2eec6da";
@@ -4741,6 +4742,65 @@ describe("SettlementIndexer", () => {
     ]));
   });
 
+  test("VEY-KANEO-783: removes a dissolved zero-member alliance from canonical directory reads", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyLog({
+      blockNumber: "0x90",
+      blockTimestamp: "0x69801c80",
+      transactionHash: "0xalliance-create",
+      logIndex: "0x0",
+      topics: [allianceCreatedTopic, topic(1n), addressTopic(player)],
+      data: abiStrings("SETO", "Seto")
+    });
+    indexer.applyLog({
+      blockNumber: "0x91",
+      blockTimestamp: "0x69801c81",
+      transactionHash: "0xalliance-owner",
+      logIndex: "0x0",
+      topics: [allianceJoinedTopic, topic(1n), addressTopic(player)],
+      data: abiWords(3n)
+    });
+    expect(indexer.allianceState(player)).toMatchObject({
+      membership: { allianceId: "1", role: "owner" },
+      directory: [{ allianceId: "1", tag: "SETO", memberCount: 1 }]
+    });
+
+    indexer.applyLog({
+      blockNumber: "0x92",
+      blockTimestamp: "0x69801c82",
+      transactionHash: "0xalliance-dissolve",
+      logIndex: "0x0",
+      topics: [allianceLeftTopic, topic(1n), addressTopic(player)],
+      data: "0x"
+    });
+
+    expect(indexer.allianceState(player)).toMatchObject({
+      membership: { allianceId: "0", role: "none" },
+      profile: null,
+      directory: []
+    });
+    expect(indexer.allianceProfile("1")).toBeNull();
+
+    // A later canonical join/create event makes a live roster visible again; zero-member filtering
+    // is lifecycle-derived, not a permanent tombstone.
+    indexer.applyLog({
+      blockNumber: "0x93",
+      blockTimestamp: "0x69801c83",
+      transactionHash: "0xalliance-rejoin",
+      logIndex: "0x0",
+      topics: [allianceJoinedTopic, topic(1n), addressTopic(player)],
+      data: abiWords(3n)
+    });
+    expect(indexer.allianceState(player)).toMatchObject({
+      membership: { allianceId: "1", role: "owner" },
+      directory: [{ allianceId: "1", tag: "SETO", memberCount: 1 }]
+    });
+  });
+
   test("projects one war declaration reciprocally with shared declarer metadata", () => {
     const rival = "0x3333333333333333333333333333333333333333" as Address;
     const indexer = new SettlementIndexer({
@@ -5420,6 +5480,14 @@ describe("SettlementIndexer", () => {
             logIndex: "0x0",
             topics: [allianceCreatedTopic, topic(1n), addressTopic(player)],
             data: abiStrings("VEY", "Veydrift Command")
+          },
+          {
+            blockNumber: "0x91",
+            blockTimestamp: "0x69801c81",
+            transactionHash: "0xalliance-owner",
+            logIndex: "0x0",
+            topics: [allianceJoinedTopic, topic(1n), addressTopic(player)],
+            data: abiWords(3n)
           }
         ];
       }
