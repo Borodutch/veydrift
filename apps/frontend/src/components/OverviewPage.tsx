@@ -53,6 +53,7 @@ import {
 } from "./GalaxyView";
 import { WatchablePlanetRow, type PlanetMetaItem } from "./WatchablePlanetRow";
 import { watchedPlanetsPanelRange } from "../watchedPlanetsView";
+import { missionTypeLabel } from "./MissionControlPage";
 
 function queueRemaining(readyAt: string | null, now: number): string {
   if (!readyAt) return "Pending";
@@ -1148,6 +1149,7 @@ export type FleetSummaryLine = {
   key: string;
   text: string;
   hostile: boolean;
+  relation: "friendly" | "hostile" | "self";
 };
 
 export type FleetsSummaryData = {
@@ -1171,22 +1173,36 @@ function missionEndpointLabel(
 
 export function summarizeFleets(fleetVisibility: FleetMissionVisibilityResponse, now: number): FleetsSummaryData {
   const { incoming, outgoing, returning } = fleetVisibility;
-  const activeCount = incoming.length + outgoing.length + returning.length;
   const lines: FleetSummaryLine[] = [];
+  const seen = new Set<string>();
+  const wallet = fleetVisibility.wallet.trim().toLowerCase();
 
   for (const mission of incoming) {
-    const arrivalMs = timestampToMs(mission.arrivalAt);
-    const timing = arrivalMs === undefined
+    if (seen.has(mission.missionId)) continue;
+    seen.add(mission.missionId);
+    const isReturning = mission.status === "Returning" || mission.status === "Recalled";
+    const eventMs = timestampToMs(isReturning ? mission.returnAt : mission.arrivalAt);
+    const timing = eventMs === undefined
       ? "ETA unknown"
-      : arrivalMs > now ? `hits in ${formatDurationUntil(arrivalMs, now)}` : "arriving now";
+      : eventMs > now
+        ? `${isReturning ? "lands" : "arrives"} in ${formatDurationUntil(eventMs, now)}`
+        : "resolving";
+    const self = mission.owner.trim().toLowerCase() === wallet;
+    const hostile = !self && isOffensiveFleetMission(mission.missionType);
+    const relation = self ? "self" : hostile ? "hostile" : "friendly";
+    const direction = isReturning ? `${capitalize(relation)} departing` : `${capitalize(relation)} inbound`;
+    const status = overviewMissionStatus(mission, now);
     lines.push({
-      hostile: true,
+      hostile,
       key: `in-${mission.missionId}`,
-      text: `${mission.missionType} from ${missionEndpointLabel(mission.originPlanet, mission.originPlanetId)} · ${timing}`,
+      relation,
+      text: `${direction} · ${missionTypeLabel(mission.missionType)} from ${missionEndpointLabel(mission.originPlanet, mission.originPlanetId)} · ${status} · ${timing}`,
     });
   }
 
   for (const mission of outgoing) {
+    if (seen.has(mission.missionId)) continue;
+    seen.add(mission.missionId);
     const arrivalMs = timestampToMs(mission.arrivalAt);
     const defenseHoldUntilMs = mission.missionType === "DefenseHold"
       ? timestampToMs(mission.defenseHoldUntil ?? mission.returnAt)
@@ -1202,11 +1218,14 @@ export function summarizeFleets(fleetVisibility: FleetMissionVisibilityResponse,
     lines.push({
       hostile: false,
       key: `out-${mission.missionId}`,
-      text: `${mission.missionType} → ${missionEndpointLabel(mission.targetPlanet, mission.targetPlanetId)} · ${timing}`,
+      relation: "self",
+      text: `Outbound · ${missionTypeLabel(mission.missionType)} to ${missionEndpointLabel(mission.targetPlanet, mission.targetPlanetId)} · ${overviewMissionStatus(mission, now)} · ${timing}`,
     });
   }
 
   for (const mission of returning) {
+    if (seen.has(mission.missionId)) continue;
+    seen.add(mission.missionId);
     const returnMs = timestampToMs(mission.returnAt);
     const timing = returnMs === undefined
       ? "ETA unknown"
@@ -1216,11 +1235,20 @@ export function summarizeFleets(fleetVisibility: FleetMissionVisibilityResponse,
     lines.push({
       hostile: false,
       key: `ret-${mission.missionId}`,
-      text: `${mission.missionType} returning from ${missionEndpointLabel(mission.targetPlanet, mission.targetPlanetId)} · ${timing}`,
+      relation: "self",
+      text: `Returning · ${missionTypeLabel(mission.missionType)} from ${missionEndpointLabel(mission.targetPlanet, mission.targetPlanetId)} · ${mission.status} · ${timing}`,
     });
   }
 
-  const hostileIncoming = incoming.filter((mission) => mission.missionType === "Attack");
+  const hostileMissionIds = new Set<string>();
+  const hostileIncoming = incoming.filter((mission) => {
+    const hostile = mission.status === "Outbound"
+      && mission.owner.trim().toLowerCase() !== wallet
+      && isOffensiveFleetMission(mission.missionType)
+      && !hostileMissionIds.has(mission.missionId);
+    if (hostile) hostileMissionIds.add(mission.missionId);
+    return hostile;
+  });
   let underAttack: FleetsSummaryData["underAttack"] = null;
   if (hostileIncoming.length > 0) {
     const soonestMs = hostileIncoming
@@ -1233,7 +1261,36 @@ export function summarizeFleets(fleetVisibility: FleetMissionVisibilityResponse,
     underAttack = { count: hostileIncoming.length, soonestLabel };
   }
 
-  return { activeCount, lines, underAttack };
+  return { activeCount: lines.length, lines, underAttack };
+}
+
+const OFFENSIVE_FLEET_MISSIONS = new Set(["Attack", "AcsAttack", "MissileAttack"]);
+
+function isOffensiveFleetMission(missionType: string): boolean {
+  return OFFENSIVE_FLEET_MISSIONS.has(missionType);
+}
+
+function overviewMissionStatus(
+  mission: FleetMissionVisibilityResponse["outgoing"][number],
+  now: number,
+): string {
+  const arrivalMs = timestampToMs(mission.arrivalAt);
+  const holdUntilMs = timestampToMs(mission.defenseHoldUntil ?? mission.returnAt);
+  if (
+    mission.missionType === "DefenseHold"
+    && mission.status === "Outbound"
+    && arrivalMs !== undefined
+    && arrivalMs <= now
+    && holdUntilMs !== undefined
+    && holdUntilMs > now
+  ) {
+    return "Stationed";
+  }
+  return mission.status;
+}
+
+function capitalize(value: string): string {
+  return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
 export function FleetsSummary({
@@ -1274,15 +1331,17 @@ export function FleetsSummary({
       ) : null}
 
       {summary.activeCount === 0 ? (
-        <p className="mt-3 text-xs text-slate-500">No fleets in flight.</p>
+        <p className="mt-3 text-xs text-slate-500">No active fleets for this planet.</p>
       ) : (
         <ul className="mt-3 grid gap-1.5">
           {summary.lines.map((line) => (
             <li
               key={line.key}
-              className={`min-w-0 truncate rounded-md border px-2.5 py-1.5 text-[11px] ${
-                line.hostile
+              className={`min-w-0 break-words rounded-md border px-2.5 py-1.5 text-[11px] leading-5 ${
+                line.relation === "hostile"
                   ? "border-red-400/25 bg-red-500/10 text-red-100"
+                  : line.relation === "friendly"
+                    ? "border-cyan-300/20 bg-cyan-300/[0.06] text-cyan-100"
                   : "border-white/10 bg-black/20 text-slate-300"
               }`}
               title={line.text}

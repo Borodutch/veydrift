@@ -240,7 +240,7 @@ export function MissionControlPage({
   const filteredAllianceMissionRows = filterActiveMissionRows(allianceMissionRows, normalizedFilters);
   const filteredAllActiveRows = filterActiveMissionRows(allActiveRows, normalizedFilters);
   const filteredStationedIncoming = incoming.filter((mission) =>
-    activeMissionRowMatchesFilters({ context: "incoming", direction: "Hostile inbound", mission }, normalizedFilters)
+    activeMissionRowMatchesFilters({ context: "incoming", direction: incomingMissionDirection(mission), mission }, normalizedFilters)
   );
   const filteredStationedOutgoing = outgoing.filter((mission) =>
     activeMissionRowMatchesFilters({ context: "outgoing", direction: "Outbound", mission }, normalizedFilters)
@@ -2938,7 +2938,7 @@ function chronologicalActiveMissionRows({
   const rows: ActiveMissionRow[] = [
     ...incoming.map((mission): ActiveMissionRow => ({
       context: "incoming",
-      direction: mission.status === "Returning" ? "Combat resolved · attacker returning" : "Hostile inbound",
+      direction: incomingMissionDirection(mission),
       mission
     })),
     ...outgoing.map((mission): ActiveMissionRow => ({ context: "outgoing", direction: "Outbound", mission })),
@@ -2946,6 +2946,14 @@ function chronologicalActiveMissionRows({
     ...joinableAttacks.map((mission): ActiveMissionRow => ({ context: "joinable", direction: "Joinable attack", mission })),
   ];
   return sortedUniqueActiveMissionRows(rows);
+}
+
+function incomingMissionDirection(mission: FleetMissionSummary): string {
+  const hostile = isOffensiveMissionType(mission.missionType);
+  if (mission.status === "Returning" || mission.status === "Recalled") {
+    return hostile ? "Combat resolved · attacker returning" : "Visit complete · fleet returning";
+  }
+  return hostile ? "Hostile inbound" : "Friendly inbound";
 }
 
 function sortedUniqueActiveMissionRows(rows: ActiveMissionRow[]): ActiveMissionRow[] {

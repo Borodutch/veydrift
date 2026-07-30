@@ -5663,6 +5663,78 @@ describe("SettlementIndexer", () => {
     expect(attackerVisibility.returning).toEqual([]);
   });
 
+  test("surfaces authorized friendly inbound missions without exposing missions targeting other wallets", () => {
+    const friendly = "0x3333333333333333333333333333333333333333" as Address;
+    const otherOwner = "0x4444444444444444444444444444444444444444" as Address;
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    indexer.applyEvent({ ...planet, planetId: "98", owner: otherOwner, name: "Other target" });
+    indexer.applyEvent({ ...planet, planetId: "99", owner: friendly, name: "Friendly origin" });
+
+    for (const [missionId, targetPlanetId] of [[46n, 7n], [47n, 98n]] as const) {
+      indexer.applyLog({
+        blockNumber: "0x90",
+        transactionHash: `0xtransport-${missionId}`,
+        logIndex: "0x0",
+        topics: [fleetMissionLaunchedTopic, topic(missionId), addressTopic(friendly), topic(0n)],
+        data: abiWords(99n, targetPlanetId, 4_000_000_000n, 4_000_001_200n, 0n)
+      });
+      indexer.applyLog({
+        blockNumber: "0x90",
+        transactionHash: `0xtransport-${missionId}`,
+        logIndex: "0x1",
+        topics: [fleetMissionCargoTopic, topic(missionId)],
+        data: abiWords(100n, 50n, 25n, 20n)
+      });
+      indexer.applyLog({
+        blockNumber: "0x90",
+        transactionHash: `0xtransport-${missionId}`,
+        logIndex: "0x2",
+        topics: [fleetMissionShipsTopic, topic(missionId)],
+        data: abiWords(1n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n)
+      });
+    }
+
+    const visibility = indexer.fleetMissionVisibility(player);
+    expect(visibility.incoming).toEqual([
+      expect.objectContaining({
+        missionId: "46",
+        missionType: "Transport",
+        owner: friendly,
+        originPlanetId: "99",
+        targetPlanetId: "7",
+        status: "Outbound"
+      })
+    ]);
+    expect(visibility.incoming.some((mission) => mission.missionId === "47")).toBe(false);
+    expect(visibility.outgoing).toEqual([]);
+    expect(visibility.returning).toEqual([]);
+
+    indexer.applyLog({
+      blockNumber: "0x91",
+      transactionHash: "0xtransport-46-return",
+      logIndex: "0x0",
+      topics: [fleetMissionReturnExposedTopic, topic(46n), addressTopic(friendly), topic(2n)],
+      data: abiWords(99n, 7n, 4_000_001_200n, 0n, 0n, 0n)
+    });
+    expect(indexer.fleetMissionVisibility(player).incoming).toEqual([
+      expect.objectContaining({ missionId: "46", status: "Returning" })
+    ]);
+
+    indexer.applyLog({
+      blockNumber: "0x92",
+      transactionHash: "0xtransport-46-returned",
+      logIndex: "0x0",
+      topics: [fleetMissionReturnedTopic, topic(46n), addressTopic(friendly), topic(99n)],
+      data: "0x"
+    });
+    expect(indexer.fleetMissionVisibility(player).incoming).toEqual([]);
+  });
+
   // VEY-KANEO-456: an incoming attack must expose its stationed allied defenders with full per-defender
   // detail (identity, ship composition, hold-until, the defended planet's Alliance Depot level) so the
   // Stationed defenses panel can render them — and the resolution must lazily reconcile as-of-now, so a

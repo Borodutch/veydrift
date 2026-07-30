@@ -2056,8 +2056,7 @@ export class VeydriftGameReader implements ChainReader {
       incoming: summaries.filter((mission) =>
         mission.owner.toLowerCase() !== walletLower
           && ownedPlanetIds.has(mission.targetPlanetId)
-          && ["Attack", "AcsAttack", "MissileAttack"].includes(mission.missionType)
-          && mission.status === "Outbound"
+          && (mission.status === "Outbound" || mission.status === "Returning")
       ),
       outgoing: summaries.filter((mission) =>
         mission.owner.toLowerCase() === walletLower && mission.status === "Outbound"

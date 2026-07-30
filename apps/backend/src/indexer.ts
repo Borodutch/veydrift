@@ -1765,16 +1765,18 @@ export class SettlementIndexer {
         isVisibleActiveFleetMission(mission)
         && mission.owner.toLowerCase() !== walletLower
         && ownedPlanetIds.has(mission.targetPlanetId)
-        && ["Attack", "AcsAttack", "MissileAttack"].includes(mission.missionType)
-        // A resolved attack remains defender-visible while its surviving fleet flies home. Keep it
-        // in the same wallet-scoped feed as the outbound warning; the owner still receives the
-        // mission through `returning`, and Mission Control classifies this copy as an incoming attack.
+        // Keep every authorized visit to an owned planet visible, not only attacks. The target owner
+        // needs the same active lifecycle for transports, deployments, defenses, and future mission
+        // types represented by the canonical read model. Returning rows remain target-visible until
+        // the fleet lands so Overview/Mission Control do not develop a post-arrival disappearance gap.
         && (mission.status === "Outbound" || mission.status === "Returning")
       )
-      .map((attack) => ({
-        ...attack,
-        stationedDefenders: this.stationedDefendersForAttack(attack, summariesById, nowSeconds)
-      }));
+      .map((mission) => ["Attack", "AcsAttack", "MissileAttack"].includes(mission.missionType)
+        ? {
+            ...mission,
+            stationedDefenders: this.stationedDefendersForAttack(mission, summariesById, nowSeconds)
+          }
+        : mission);
 
     // VEY-KANEO-471: prepend a synthetic populated incoming attack so QA can verify the Stationed
     // defenses panel deterministically. Hard-gated to non-production by config, and additionally only
