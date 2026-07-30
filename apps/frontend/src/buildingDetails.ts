@@ -9,7 +9,7 @@ import {
   isBinaryBuilding,
   fusionReactorDeuteriumConsumption,
   missileSiloCapacity,
-  productionPerHour,
+  productionCapacityPerHour,
   storageCaps,
   unmetBuildingRequirement,
   type PlanetProductionProfile,
@@ -203,7 +203,7 @@ export function buildingLevelInfoRows(
   profile?: PlanetProductionProfile | undefined,
   maxLevel = MAX_BUILDING_LEVEL,
   energyTechnologyLevel = 0,
-  solarSatelliteCount = 0,
+  _solarSatelliteCount = 0,
 ): BuildingLevelInfoRow[] {
   const currentLevel = buildings[key];
   const cappedMaxLevel = Math.max(1, maxLevel);
@@ -223,18 +223,11 @@ export function buildingLevelInfoRows(
 
     if (key === "metalMine" || key === "crystalMine" || key === "deuteriumSynthesizer") {
       const resource = productionResourceForBuilding(key);
-      const previousProduction = productionPerHour(
-        preUpgradeBuildings,
-        profile,
-        energyTechnologyLevel,
-        solarSatelliteCount,
-      )[resource];
-      const production = productionPerHour(
-        rowBuildings,
-        profile,
-        energyTechnologyLevel,
-        solarSatelliteCount,
-      )[resource];
+      // Building education surfaces show the contract's raw per-level mine
+      // production. Live modifiers (energy, Satellites, crawlers, and Fusion
+      // upkeep) belong exclusively to the backend-fed resource topbar.
+      const previousProduction = productionCapacityPerHour(preUpgradeBuildings, profile)[resource];
+      const production = productionCapacityPerHour(rowBuildings, profile)[resource];
       const energyRequired = energyRequiredForBuildingLevel(key, level);
       row.production = {
         deltaFromPrevious: production - previousProduction,

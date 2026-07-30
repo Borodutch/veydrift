@@ -94,6 +94,22 @@ contract VeydriftFormulaConformanceTest is Test {
         assertEq(scaleBps, BPS);
     }
 
+    function testCrawlerAndSolarSatelliteProductionUnderEnergyDeficit() public pure {
+        (uint256 produced, uint256 required, uint256 scaleBps) =
+            VeydriftFormulas.energyBalance(5, 4, 3, 0, 0, 3, 80, 0);
+        assertEq(produced, 108, "three hot-planet satellites");
+        assertEq(required, 217, "representative mine demand");
+        assertEq(scaleBps, 4_976, "shortage basis points round down");
+
+        // Raw mine output is 241 / 117 / 50. Fifty crawlers add 100 bps,
+        // then the 4,976 bps shortage is applied with integer flooring.
+        (uint256 metal, uint256 crystal, uint256 deuterium) =
+            VeydriftFormulas.productionPerHour(5, 4, 3, 0, 0, 3, 50, 80, 0, 10_000, 10_000, 13_040);
+        assertEq(metal, 120);
+        assertEq(crystal, 58);
+        assertEq(deuterium, 24);
+    }
+
     function testCanonicalVeydriftPlanetMultipliers() public pure {
         (uint16 metalMultiplier, uint16 crystalMultiplier, uint16 deuteriumMultiplier) =
             VeydriftFormulas.planetMultipliers(-12, 206);

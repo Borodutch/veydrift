@@ -522,6 +522,29 @@ describe("building detail helpers", () => {
     expect(rows.every((row) => typeof row.durationSeconds === "number" && row.durationSeconds > 0)).toBe(true);
   });
 
+  test("keeps mine level production raw when the selected planet is unpowered or has Solar Satellites", () => {
+    const initial = createInitialPlayableState(1_000);
+    const profile = {
+      metalMultiplierBps: 10_000,
+      crystalMultiplierBps: 10_000,
+      deuteriumMultiplierBps: 10_000,
+    };
+    const cases = [
+      { key: "metalMine", values: [33, 72] },
+      { key: "crystalMine", values: [22, 48] },
+      { key: "deuteriumSynthesizer", values: [11, 24] },
+    ] as const;
+
+    for (const { key, values } of cases) {
+      const buildings = { ...initial.buildings, [key]: 1, solarPlant: 0 };
+      const unpoweredRows = buildingLevelInfoRows(buildings, key, profile, 2, 0, 0);
+      const satellitePoweredRows = buildingLevelInfoRows(buildings, key, profile, 2, 0, 100);
+
+      expect(unpoweredRows.map((row) => row.production?.value)).toEqual(values);
+      expect(satellitePoweredRows.map((row) => row.production?.value)).toEqual(values);
+    }
+  });
+
   test("builds Solar Plant level table rows with energy output", () => {
     const rows = buildingLevelInfoRows(createInitialPlayableState(1_000).buildings, "solarPlant", undefined, 2);
 
