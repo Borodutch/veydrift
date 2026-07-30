@@ -409,20 +409,37 @@ describe("Playable MVP app display helpers", () => {
         fleetMission({ missionId: "in-other", missionType: "Attack", targetPlanetId: "7" }),
       ],
       outgoing: [
+        fleetMission({ missionId: "self-inbound", owner: wallet, originPlanetId: "7", targetPlanetId: "8" }),
         fleetMission({ missionId: "out-selected", originPlanetId: "8", targetPlanetId: "9" }),
         fleetMission({ missionId: "out-other", originPlanetId: "7", targetPlanetId: "9" }),
       ],
       returning: [
         fleetMission({ missionId: "ret-selected", originPlanetId: "8", targetPlanetId: "9", status: "Returning" }),
         fleetMission({ missionId: "ret-other", originPlanetId: "7", targetPlanetId: "9", status: "Returning" }),
+        fleetMission({ missionId: "terminal-selected", originPlanetId: "8", targetPlanetId: "9", status: "Returned" }),
       ],
     };
 
-    const scoped = planetScopedFleetVisibility(visibility, "8");
+    const scoped = planetScopedFleetVisibility(visibility, "8", ["7", "8"]);
 
-    expect(scoped?.incoming.map((mission) => mission.missionId)).toEqual(["in-selected"]);
+    expect(scoped?.incoming.map((mission) => mission.missionId)).toEqual(["in-selected", "self-inbound"]);
     expect(scoped?.outgoing.map((mission) => mission.missionId)).toEqual(["out-selected"]);
     expect(scoped?.returning.map((mission) => mission.missionId)).toEqual(["ret-selected"]);
+
+    const switched = planetScopedFleetVisibility(visibility, "7", ["7", "8"]);
+    expect(switched?.incoming.map((mission) => mission.missionId)).toEqual(["in-other"]);
+    expect(switched?.outgoing.map((mission) => mission.missionId)).toEqual(["in-selected", "self-inbound", "out-other"]);
+    expect(switched?.returning.map((mission) => mission.missionId)).toEqual(["ret-other"]);
+  });
+
+  test("does not scope private inbound fleet rows to a planet the wallet does not own", () => {
+    const wallet = "0x2222222222222222222222222222222222222222";
+    const visibility = {
+      ...emptyFleetVisibilityFixture(wallet, "7"),
+      incoming: [fleetMission({ missionId: "private-inbound", targetPlanetId: "99" })],
+    };
+
+    expect(planetScopedFleetVisibility(visibility, "99", ["7", "8"])).toBeUndefined();
   });
 
   test("Overview owned planet actions use the selected planet as origin and hide same-body self-target actions", () => {

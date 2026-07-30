@@ -1022,13 +1022,44 @@ export function nextProductionQueueCompletionEventMs(
 export function planetScopedFleetVisibility(
   fleetVisibility: FleetMissionVisibilityResponse | undefined,
   planetId: string | undefined,
+  ownedPlanetIds?: readonly string[],
 ): FleetMissionVisibilityResponse | undefined {
   if (!fleetVisibility || !planetId) return fleetVisibility;
+  if (ownedPlanetIds && !ownedPlanetIds.includes(planetId)) return undefined;
+
+  const incoming: FleetMissionSummary[] = [];
+  const outgoing: FleetMissionSummary[] = [];
+  const returning: FleetMissionSummary[] = [];
+  const seen = new Set<string>();
+  const missions = [
+    ...fleetVisibility.incoming,
+    ...fleetVisibility.outgoing,
+    ...fleetVisibility.returning,
+  ];
+
+  for (const mission of missions) {
+    if (seen.has(mission.missionId)) continue;
+    seen.add(mission.missionId);
+    if (!["Outbound", "Returning", "Recalled"].includes(mission.status)) continue;
+
+    const isReturning = mission.status === "Returning" || mission.status === "Recalled";
+    if (mission.targetPlanetId === planetId) {
+      // Retain the target owner's view through the active return leg. This avoids the row vanishing
+      // between arrival and the terminal Returned/Resolved state, and lets Overview label it as
+      // departing rather than incorrectly claiming it is still inbound.
+      incoming.push(mission);
+    } else if (isReturning && mission.originPlanetId === planetId) {
+      returning.push(mission);
+    } else if (!isReturning && mission.originPlanetId === planetId) {
+      outgoing.push(mission);
+    }
+  }
+
   return {
     ...fleetVisibility,
-    incoming: fleetVisibility.incoming.filter((mission) => mission.targetPlanetId === planetId),
-    outgoing: fleetVisibility.outgoing.filter((mission) => mission.originPlanetId === planetId),
-    returning: fleetVisibility.returning.filter((mission) => mission.originPlanetId === planetId),
+    incoming,
+    outgoing,
+    returning,
   };
 }
 
@@ -3776,8 +3807,12 @@ export function PlayableMvpApp({
     }
   }, [allActiveMissions, fleetVisibility, pendingMissionLaunches]);
   const overviewFleetVisibility = useMemo(
-    () => planetScopedFleetVisibility(displayFleetVisibility, activePlanetId),
-    [activePlanetId, displayFleetVisibility]
+    () => planetScopedFleetVisibility(
+      displayFleetVisibility,
+      activePlanetId,
+      walletPlanets?.map((planet) => planet.planetId),
+    ),
+    [activePlanetId, displayFleetVisibility, walletPlanets]
   );
   const activePlanetCoords = selectedManagedPlanet
     ? {

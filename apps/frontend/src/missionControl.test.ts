@@ -675,6 +675,27 @@ describe("Mission Control battle reports", () => {
     expect(text).not.toContain("Mission Route Fleet");
   });
 
+  test("labels non-offensive inbound missions as friendly in Mission Control", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const text = collectText(MissionControlPage(missionControlProps(now, {
+      incoming: [
+        mission(
+          "35",
+          "Transport",
+          "Outbound",
+          "0x2222222222222222222222222222222222222222",
+          "8",
+          "7",
+          now + 60_000,
+        ),
+      ],
+    }))).join(" ");
+
+    expect(text).toContain("Friendly inbound");
+    expect(text).toContain("Incoming transport");
+    expect(text).not.toContain("Hostile inbound");
+  });
+
   test("hides the disabled Join action and renders no manual Resolve order (VEY-KANEO-468)", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
     // Own outbound attack already arrived: arrival now reconciles lazily on-chain, so there is no

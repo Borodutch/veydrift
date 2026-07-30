@@ -1453,7 +1453,8 @@ describe("fleet mission visibility", () => {
     const attackerVisibility = await reader.getFleetMissionVisibility(attacker);
 
     expect(defenderVisibility.homePlanetId).toBe("1");
-    expect(defenderVisibility.incoming.map((mission) => mission.missionId)).toEqual(["10", "11"]);
+    expect(defenderVisibility.incoming.map((mission) => mission.missionId)).toEqual(["10", "11", "13"]);
+    expect(defenderVisibility.incoming[2]).toMatchObject({ missionId: "13", status: "Returning" });
     expect(defenderVisibility.outgoing.map((mission) => mission.missionId)).toEqual(["12"]);
     expect(defenderVisibility.returning).toEqual([]);
     expect(defenderVisibility.battleReports.map((report) => report.missionId)).toEqual(["10"]);

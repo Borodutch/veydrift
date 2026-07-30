@@ -42,8 +42,8 @@ describe("Overview fleets summary", () => {
     expect(summary.activeCount).toBe(2);
     expect(summary.underAttack).toBeNull();
     expect(summary.lines.map((line) => line.text)).toEqual([
-      "Attack → 1517 [5:407:4] · arrives in 13m",
-      "Transport returning from Outpost [6:12:3] · lands in 5m",
+      "Outbound · Attack to 1517 [5:407:4] · Outbound · arrives in 13m",
+      "Returning · Transport from Outpost [6:12:3] · Returning · lands in 5m",
     ]);
 
     const text = collectText(FleetsSummary({
@@ -53,11 +53,9 @@ describe("Overview fleets summary", () => {
     })).join(" ");
 
     expect(text).not.toContain("2 active");
-    expect(text).toContain("Attack → 1517 [5:407:4] · arrives in 13m");
+    expect(text).toContain("Outbound · Attack to 1517 [5:407:4] · Outbound · arrives in 13m");
     expect(text).toContain("Open Mission Control");
-    // No per-panel splitting labels on Overview anymore.
-    expect(text).not.toContain("Incoming");
-    expect(text).not.toContain("Outbound");
+    // Rows carry their direction inline instead of splitting the compact panel into sub-panels.
     expect(text).not.toContain("Joinable");
     // No raw "1 -> 40" id rendering.
     expect(text).not.toContain("1 -> 40");
@@ -104,6 +102,66 @@ describe("Overview fleets summary", () => {
     expect(text).toContain("soonest in 3m");
   });
 
+  test("distinguishes hostile, friendly, and self inbound rows and deduplicates by mission id", () => {
+    const now = Date.parse("2026-06-07T22:00:00.000Z");
+    const hostile = mission({
+      missionId: "10",
+      missionType: "Attack",
+      status: "Outbound",
+      owner: ENEMY_WALLET,
+      originPlanetId: "40",
+      targetPlanetId: "1",
+      arrivalMs: now + 8 * 60_000,
+      originPlanet: planetRef("40", ENEMY_WALLET, "Raider", 5, 407, 4),
+    });
+    const friendly = mission({
+      missionId: "11",
+      missionType: "Transport",
+      status: "Outbound",
+      owner: ENEMY_WALLET,
+      originPlanetId: "41",
+      targetPlanetId: "1",
+      arrivalMs: now + 6 * 60_000,
+      originPlanet: planetRef("41", ENEMY_WALLET, "Ally", 5, 407, 9),
+    });
+    const selfInbound = mission({
+      missionId: "12",
+      missionType: "Deploy",
+      status: "Outbound",
+      owner: PLAYER_WALLET,
+      originPlanetId: "2",
+      targetPlanetId: "1",
+      arrivalMs: now + 4 * 60_000,
+      originPlanet: planetRef("2", PLAYER_WALLET, "Colony", 5, 408, 2),
+    });
+    const fleetVisibility = visibility({
+      incoming: [hostile, friendly, selfInbound],
+      outgoing: [selfInbound],
+    });
+
+    const summary = summarizeFleets(fleetVisibility, now);
+    expect(summary.activeCount).toBe(3);
+    expect(summary.lines.map((line) => line.text)).toEqual([
+      "Hostile inbound · Attack from Raider [5:407:4] · Outbound · arrives in 8m",
+      "Friendly inbound · Transport from Ally [5:407:9] · Outbound · arrives in 6m",
+      "Self inbound · Deploy from Colony [5:408:2] · Outbound · arrives in 4m",
+    ]);
+    expect(summary.lines.map((line) => line.relation)).toEqual(["hostile", "friendly", "self"]);
+
+    const node = FleetsSummary({
+      fleetVisibility,
+      now,
+      onOpenMissionControl: () => undefined,
+    });
+    const rows = collectElementsByType(node, "li");
+    expect(rows).toHaveLength(3);
+    expect(rows.map((row) => row.props?.className)).toEqual([
+      expect.stringContaining("break-words"),
+      expect.stringContaining("break-words"),
+      expect.stringContaining("break-words"),
+    ]);
+  });
+
   test("shows all active fleet rows without a Mission Control overflow truncation", () => {
     const now = Date.parse("2026-06-07T22:00:00.000Z");
     const outgoing: FleetMissionSummary[] = Array.from({ length: 6 }, (_unused, index) =>
@@ -127,8 +185,8 @@ describe("Overview fleets summary", () => {
       now,
       onOpenMissionControl: () => undefined,
     })).join(" ");
-    expect(text).toContain("Transport → T0 [1:1:0] · arrives in 1m");
-    expect(text).toContain("Transport → T5 [1:1:5] · arrives in 6m");
+    expect(text).toContain("Outbound · Transport to T0 [1:1:0] · Outbound · arrives in 1m");
+    expect(text).toContain("Outbound · Transport to T5 [1:1:5] · Outbound · arrives in 6m");
     expect(text).toContain("Open Mission Control");
     expect(text).not.toContain("+2 more");
     expect(text).not.toContain("open Mission Control");
@@ -149,6 +207,20 @@ describe("Overview fleets summary", () => {
     expect(activeBadge).toBeUndefined();
   });
 
+  test("renders the selected-planet empty state in the responsive fleets panel", () => {
+    const node = FleetsSummary({
+      fleetVisibility: visibility({}),
+      now: Date.parse("2026-06-07T22:00:00.000Z"),
+      onOpenMissionControl: () => undefined,
+    });
+    const section = collectElementsByType(node, "section")[0];
+    const text = collectText(node).join(" ");
+
+    expect(text).toContain("No active fleets for this planet.");
+    expect(section?.props?.className).toContain("min-w-0");
+    expect(section?.props?.className).toContain("sm:p-4");
+  });
+
   test("falls back to a coordinate-free planet id when the planet reference is missing", () => {
     const now = Date.parse("2026-06-07T22:00:00.000Z");
     const summary = summarizeFleets(visibility({
@@ -165,7 +237,7 @@ describe("Overview fleets summary", () => {
         }),
       ],
     }), now);
-    expect(summary.lines[0]?.text).toBe("Deploy → Planet #77 · arrives in 1m");
+    expect(summary.lines[0]?.text).toBe("Outbound · Deploy to Planet #77 · Outbound · arrives in 1m");
   });
 
   test("labels stationed DefenseHold missions as holding instead of resolving", () => {
@@ -186,7 +258,7 @@ describe("Overview fleets summary", () => {
       ],
     }), now);
 
-    expect(summary.lines[0]?.text).toBe("DefenseHold → Bastion [7:14:2] · holding for 45m");
+    expect(summary.lines[0]?.text).toBe("Outbound · Stationed defense to Bastion [7:14:2] · Stationed · holding for 45m");
     expect(summary.lines[0]?.text).not.toContain("resolving");
   });
 });
