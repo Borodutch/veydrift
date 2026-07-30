@@ -1760,7 +1760,10 @@ export class SettlementIndexer {
         && mission.owner.toLowerCase() !== walletLower
         && ownedPlanetIds.has(mission.targetPlanetId)
         && ["Attack", "AcsAttack", "MissileAttack"].includes(mission.missionType)
-        && mission.status === "Outbound"
+        // A resolved attack remains defender-visible while its surviving fleet flies home. Keep it
+        // in the same wallet-scoped feed as the outbound warning; the owner still receives the
+        // mission through `returning`, and Mission Control classifies this copy as an incoming attack.
+        && (mission.status === "Outbound" || mission.status === "Returning")
       )
       .map((attack) => ({
         ...attack,
@@ -1883,11 +1886,23 @@ export class SettlementIndexer {
     );
     const targetIds = [...ownedPlanetIds].filter((planetId) => planetId.length > 0);
     const asOfSeconds = nowSeconds();
+    // Mission type ids 3/7/8 are Attack/MissileAttack/AcsAttack. Only defender-side return legs are
+    // preloaded into the archive; the attacker's own returning-flight archive payload stays unchanged.
+    const returningDefenderAttackSql = targetIds.length > 0
+      ? `OR (
+        status_id = 2
+        AND mission_type_id IN (3, 7, 8)
+        AND owner != ?
+        AND target_planet_id IN (${targetIds.map(() => "?").join(",")})
+      )`
+      : "";
     const statusSql = `(
       status_id IN (3, 4)
       OR (status_id IN (2, 5) AND CAST(return_at AS INTEGER) <= CAST(? AS INTEGER))
+      ${returningDefenderAttackSql}
     )`;
     const params: SQLQueryBindings[] = [asOfSeconds.toString()];
+    if (targetIds.length > 0) params.push(walletLower, ...targetIds);
     let visibilitySql: string;
     if (options.filter === "incomingAttacks") {
       visibilitySql = targetIds.length > 0
@@ -8632,7 +8647,18 @@ export class SettlementIndexer {
     const walletLower = wallet.toLowerCase();
     const asOfSeconds = nowSeconds();
     const targetIds = [...ownedPlanetIds].filter((planetId) => planetId.length > 0);
-    const params: SQLQueryBindings[] = [asOfSeconds.toString(), walletLower, ...targetIds];
+    // Match fleetMissionArchivePage: preload only defender-side offensive return legs as standby rows.
+    const returningDefenderAttackSql = targetIds.length > 0
+      ? `OR (
+        status_id = 2
+        AND mission_type_id IN (3, 7, 8)
+        AND owner != ?
+        AND target_planet_id IN (${targetIds.map(() => "?").join(",")})
+      )`
+      : "";
+    const params: SQLQueryBindings[] = [asOfSeconds.toString()];
+    if (targetIds.length > 0) params.push(walletLower, ...targetIds);
+    params.push(walletLower, ...targetIds);
     const targetSql = targetIds.length > 0
       ? ` OR target_planet_id IN (${targetIds.map(() => "?").join(",")})`
       : "";
@@ -8642,6 +8668,7 @@ export class SettlementIndexer {
       WHERE (
           status_id IN (3, 4)
           OR (status_id IN (2, 5) AND CAST(return_at AS INTEGER) <= CAST(? AS INTEGER))
+          ${returningDefenderAttackSql}
         )
         AND (owner = ?${targetSql})
       ORDER BY CAST(return_at AS INTEGER) DESC, CAST(arrival_at AS INTEGER) DESC, CAST(mission_id AS INTEGER) DESC

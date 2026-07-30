@@ -2918,7 +2918,11 @@ function chronologicalActiveMissionRows({
   returning: FleetMissionSummary[];
 }): ActiveMissionRow[] {
   const rows: ActiveMissionRow[] = [
-    ...incoming.map((mission): ActiveMissionRow => ({ context: "incoming", direction: "Hostile inbound", mission })),
+    ...incoming.map((mission): ActiveMissionRow => ({
+      context: "incoming",
+      direction: mission.status === "Returning" ? "Combat resolved · attacker returning" : "Hostile inbound",
+      mission
+    })),
     ...outgoing.map((mission): ActiveMissionRow => ({ context: "outgoing", direction: "Outbound", mission })),
     ...returning.map((mission): ActiveMissionRow => ({ context: "returning", direction: "Returning", mission })),
     ...joinableAttacks.map((mission): ActiveMissionRow => ({ context: "joinable", direction: "Joinable attack", mission })),
@@ -3054,11 +3058,11 @@ function dedupePastMissionRows(
   const seen = new Set<string>();
   return rows.filter((row) => {
     const missionId = pastRowMissionId(row);
-    // A battle report whose mission is still active (Outbound / Returning / Recalled — e.g. a fleet
-    // that has fought but not yet arrived home) belongs to the active section, not Past Missions. Its
-    // loot already surfaces on the active card, so drop it here to avoid duplicating the live mission
-    // into the archive. The report returns to Past Missions once the fleet fully lands (VEY-KANEO-434).
-    if (row.kind === "battleReport" && activeMissionIds.has(missionId)) return false;
+    // Returning missions are intentionally present in the archive as a standby row so a wallet never
+    // has a zero-row transition when the active response advances first. While any mission is active,
+    // suppress both its archive summary and report; the already-loaded archive row appears immediately
+    // when the active copy leaves, preserving VEY-KANEO-434's exactly-once behavior without its gap.
+    if (activeMissionIds.has(missionId)) return false;
     // Collapse a battle report into its mission summary row when both exist, so each mission
     // appears once with links to both the mission detail and its battle report.
     if (row.kind === "battleReport" && missionSummaryIds.has(missionId)) return false;

@@ -292,6 +292,63 @@ describe("Mission Control battle reports", () => {
     expect(text.join(" ")).not.toContain("My missions (2)");
   });
 
+  test("renders mission 9445 exactly once from outbound through defender return and archive handoff", () => {
+    const now = Date.parse("2026-07-30T16:40:00.000Z");
+    const attacker = "0x2222222222222222222222222222222222222222";
+    const outbound = mission("9445", "Attack", "Outbound", attacker, "9", "7", now + 60_000);
+    const returning = {
+      ...outbound,
+      status: "Returning",
+      arrivalAt: Math.floor((now - 60_000) / 1_000).toString(),
+      returnAt: Math.floor((now + 594_000) / 1_000).toString(),
+    };
+    const returned = { ...returning, status: "Returned" };
+    const report = battleReport("9445");
+    const archive = (archivedMission: FleetMissionSummary) => ({
+      wallet: "0x1111111111111111111111111111111111111111",
+      homePlanetId: "7",
+      rows: [{ kind: "mission" as const, mission: archivedMission, report }],
+      pagination: {
+        page: 1,
+        pageSize: 25,
+        totalEntries: 1,
+        totalPages: 1,
+        hasPreviousPage: false,
+        hasNextPage: false,
+      },
+    });
+    const render = (
+      incoming: FleetMissionSummary[],
+      battleReports: BattleReport[],
+      missionArchive?: ReturnType<typeof archive>,
+    ) => MissionControlPage({
+      ...missionControlProps(now, { incoming }),
+      fleetVisibility: {
+        ...missionControlProps(now, { incoming }).fleetVisibility!,
+        battleReports,
+      },
+      missionArchive,
+    });
+
+    const outboundText = collectText(render([outbound], [])).join(" ");
+    expect(countOccurrences(outboundText, "#9445")).toBe(1);
+    expect(outboundText).toContain("Hostile inbound");
+
+    // The backend supplies the returning mission in both active visibility and the archive. The
+    // archive copy is a standby for an atomic handoff, not a second rendered row (VEY-KANEO-434).
+    const returningText = collectText(render([returning], [report], archive(returning))).join(" ");
+    expect(countOccurrences(returningText, "#9445")).toBe(1);
+    expect(returningText).toContain("Combat resolved · attacker returning");
+    expect(returningText).toContain("Returning");
+    expect(returningText).toContain("Loot");
+    expect(returningText).toContain("Attacker losses");
+    expect(returningText).toContain("Defender losses");
+
+    const returnedText = collectText(render([], [], archive(returned))).join(" ");
+    expect(countOccurrences(returnedText, "#9445")).toBe(1);
+    expect(returnedText).toContain("Returned");
+  });
+
   test("past missions reuse the shared row: clickable origin+target, returned subtext, Open label, deduped count (VEY-399#1/#2/#8/#9)", () => {
     const now = Date.parse("2026-06-08T23:00:00.000Z");
     const owner = "0x1111111111111111111111111111111111111111";

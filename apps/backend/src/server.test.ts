@@ -1201,7 +1201,7 @@ describe("Veydrift backend", () => {
     expect(staleKeyUsed).toBe(true);
   });
 
-  test("does not serve versionless shared stale wallet snapshots across indexed-state versions", async () => {
+  test("does not serve versionless shared stale wallet or Mission Control snapshots across indexed-state versions", async () => {
     let staleKeyUsed = false;
     const staleBody = new TextEncoder().encode(JSON.stringify({ stale: true })).buffer as ArrayBuffer;
     const sharedResponseCache = {
@@ -1240,6 +1240,18 @@ describe("Veydrift backend", () => {
     expect(response.status).toBe(200);
     expect(body.wallet).toBe(player);
     expect(body.planets).toHaveLength(1);
+
+    const fleetResponse = await handler(new Request(`http://localhost/wallet/${player}/fleet-visibility?archive=none`));
+    const fleetBody = await fleetResponse.json() as { wallet: string; incoming: FleetMissionSummary[] };
+    expect(fleetResponse.status).toBe(200);
+    expect(fleetBody.wallet).toBe(player);
+    expect(fleetBody.incoming).toEqual([]);
+
+    const archiveResponse = await handler(new Request(`http://localhost/wallet/${player}/missions?status=completed&page=1&pageSize=25`));
+    const archiveBody = await archiveResponse.json() as { wallet: string; rows: unknown[] };
+    expect(archiveResponse.status).toBe(200);
+    expect(archiveBody.wallet).toBe(player);
+    expect(archiveBody.rows).toEqual([]);
     expect(staleKeyUsed).toBe(false);
   });
 
@@ -3631,6 +3643,126 @@ describe("Veydrift backend", () => {
     expect(body.completedMissions).toEqual([]);
     expect(body.battleReports.map((report: BattleReport) => report.missionId)).toEqual(["1154"]);
     expect(body.battleReports[0].loot).toEqual({ metal: "75", crystal: "25", deuterium: "0" });
+  });
+
+  test("keeps mission 9445 visible to its defender through the full attacker return leg", async () => {
+    const attacker = "0x3333333333333333333333333333333333333333" as Address;
+    const missionId = 9445n;
+    const arrivalAt = 1_800_000_000n;
+    const returnAt = arrivalAt + 654n;
+    const indexer = new SettlementIndexer(new MockChainReader(), configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    indexer.applyEvent({ ...planet, eventName: "PlanetStarted", transactionHash: "0xdefender-home", blockNumber: "100" });
+    indexer.applyEvent({
+      ...planet,
+      eventName: "PlanetStarted",
+      planetId: "9",
+      owner: attacker,
+      transactionHash: "0xattacker-home",
+      blockNumber: "101"
+    });
+    for (const log of activeFleetMissionLogs({
+      arrivalAt,
+      missionId,
+      missionTypeId: 3n,
+      owner: attacker,
+      originPlanetId: 9n,
+      returnAt,
+      targetPlanetId: 7n
+    })) {
+      indexer.applyLog(log);
+    }
+
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader: new MockChainReader(),
+      indexer
+    });
+    const defenderVisibility = async () => {
+      const response = await handler(new Request(`http://localhost/wallet/${player}/fleet-visibility?archive=none`));
+      expect(response.status).toBe(200);
+      return response.json();
+    };
+    const defenderArchive = async () => {
+      const response = await handler(new Request(`http://localhost/wallet/${player}/missions?status=completed&page=1&pageSize=25`));
+      expect(response.status).toBe(200);
+      return response.json();
+    };
+    const visibleMissionIds = (visibility: {
+      incoming: FleetMissionSummary[];
+      outgoing: FleetMissionSummary[];
+      returning: FleetMissionSummary[];
+    }, archive: { rows: Array<{ kind: string; mission?: FleetMissionSummary }> }) => [
+      ...visibility.incoming,
+      ...visibility.outgoing,
+      ...visibility.returning,
+      ...archive.rows.flatMap((row) => row.kind === "mission" && row.mission ? [row.mission] : [])
+    ].map((mission) => mission.missionId);
+
+    const outboundVisibility = await defenderVisibility();
+    const outboundArchive = await defenderArchive();
+    expect(visibleMissionIds(outboundVisibility, outboundArchive).filter((id) => id === "9445")).toHaveLength(1);
+    expect(outboundVisibility.incoming[0]).toMatchObject({ missionId: "9445", status: "Outbound" });
+
+    indexer.applyLog(fleetMissionLog({
+      topics: [fleetMissionReturnExposedTopic, topic(missionId), addressTopic(attacker), topic(2n)],
+      data: abiWords(9n, 7n, returnAt, 75n, 25n, 0n),
+      logIndex: Number(missionId * 10n + 3n)
+    }));
+    indexer.applyLog(fleetMissionLog({
+      topics: [attackBattleResolvedTopic, topic(missionId), addressTopic(attacker), topic(7n)],
+      data: abiWords(1n, 2n, 12345n, 75n, 25n, 0n),
+      logIndex: Number(missionId * 10n + 4n)
+    }));
+    indexer.applyLog(fleetMissionLog({
+      topics: [combatLossesTopic, topic(missionId)],
+      data: abiWords(200n, 50n, 0n, 400n, 100n, 0n),
+      logIndex: Number(missionId * 10n + 5n)
+    }));
+    indexer.materializeBattleReportReadModelsForWorker(["9445"], "ingest");
+
+    const returningVisibility = await defenderVisibility();
+    const returningArchive = await defenderArchive();
+    expect(returningVisibility.incoming[0]).toMatchObject({ missionId: "9445", status: "Returning" });
+    expect(returningArchive.rows[0]).toMatchObject({
+      kind: "mission",
+      mission: { missionId: "9445", status: "Returning" },
+      report: { missionId: "9445" }
+    });
+    expect(returningVisibility.battleReports[0]).toMatchObject({
+      missionId: "9445",
+      loot: { metal: "75", crystal: "25", deuterium: "0" },
+      attackerLosses: { metal: "200", crystal: "50", deuterium: "0" },
+      defenderLosses: { metal: "400", crystal: "100", deuterium: "0" }
+    });
+    const attackerVisibilityResponse = await handler(
+      new Request(`http://localhost/wallet/${attacker}/fleet-visibility?archive=none`)
+    );
+    const attackerVisibility = await attackerVisibilityResponse.json();
+    const attackerArchiveResponse = await handler(
+      new Request(`http://localhost/wallet/${attacker}/missions?status=completed&page=1&pageSize=25`)
+    );
+    const attackerArchive = await attackerArchiveResponse.json();
+    expect(attackerVisibility.returning).toEqual([
+      expect.objectContaining({ missionId: "9445", status: "Returning" })
+    ]);
+    expect(attackerArchive.rows).toEqual([]);
+
+    indexer.applyLog(fleetMissionLog({
+      topics: [fleetMissionReturnedTopic, topic(missionId), addressTopic(attacker), topic(9n)],
+      data: "0x",
+      logIndex: Number(missionId * 10n + 6n)
+    }));
+
+    const returnedVisibility = await defenderVisibility();
+    const returnedArchive = await defenderArchive();
+    expect(visibleMissionIds(returnedVisibility, returnedArchive).filter((id) => id === "9445")).toHaveLength(1);
+    expect(returnedVisibility.incoming).toEqual([]);
+    expect(returnedArchive.rows[0]).toMatchObject({
+      kind: "mission",
+      mission: { missionId: "9445", status: "Returned" },
+      report: { missionId: "9445" }
+    });
   });
 
   test("mission detail exposes target combat intel before a battle report exists (VEY-KANEO-516)", async () => {
