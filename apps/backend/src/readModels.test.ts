@@ -206,6 +206,52 @@ describe("deriveInfrastructureFields crawler production", () => {
       capped: true
     });
   });
+
+  test("matches the contract vector for crawlers and Solar Satellites under an energy deficit", () => {
+    const fields = deriveInfrastructureFields(
+      {
+        ...crawlerTestPlanet,
+        temperature: 80,
+        deuteriumMultiplierBps: 13_040
+      },
+      deriveBuildingRows((id) => {
+        if (id === 0) return 5;
+        if (id === 1) return 4;
+        if (id === 2) return 3;
+        return 0;
+      }),
+      deriveShipRows((id) => {
+        if (id === 9) return 3;
+        if (id === 15) return 50;
+        return 0;
+      }),
+      {}
+    );
+
+    expect(fields.energyBalance).toEqual({
+      produced: "108",
+      required: "217",
+      scaleBps: "4976",
+      sources: {
+        solarPlant: "0",
+        fusionReactor: "0",
+        fusionReactorDeuteriumConsumed: "0",
+        solarSatellites: "108",
+        solarSatelliteCount: 3,
+        solarSatelliteEnergy: "36"
+      }
+    });
+    expect(fields.crawlerProduction).toMatchObject({
+      total: 50,
+      effective: 50,
+      boostBps: "100"
+    });
+    expect(fields.productionPerHour).toEqual({
+      metal: "120",
+      crystal: "58",
+      deuterium: "24"
+    });
+  });
 });
 
 function poweredMineRows() {

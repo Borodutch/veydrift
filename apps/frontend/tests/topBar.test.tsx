@@ -91,6 +91,32 @@ describe("TopBar", () => {
     expect(panelText).toContain("Insufficient energy reduces mine output to 80%");
   });
 
+  test("renders canonical live-effective backend rates without recomputing them", () => {
+    const topBar = renderTopBar({
+      energy: {
+        produced: 108,
+        required: 217,
+        scaleBps: 4_976,
+        sources: {
+          solarPlant: 0,
+          fusionReactor: 0,
+          fusionReactorDeuteriumConsumed: 0,
+          solarSatellites: 108,
+          solarSatelliteCount: 3,
+          solarSatelliteEnergy: 36,
+        },
+      },
+      rates: { metal: 120, crystal: 58, deuterium: 24 },
+    });
+    const panelText = visibleText(energyDetailsNode(topBar));
+
+    expect(panelText).toContain("Metal production +120/h");
+    expect(panelText).toContain("Crystal production +58/h");
+    expect(panelText).toContain("Deuterium production +24/h");
+    expect(panelText.replace(/\(\s+/g, "(")).toContain("Solar Satellites 108 from 3 satellites (36 E/Sat)");
+    expect(panelText).toContain("Insufficient energy reduces mine output to 49%");
+  });
+
   test("keeps crawler production visible while backend crawler metadata is syncing", () => {
     const topBar = renderTopBar({ crawlerProduction: undefined });
     const energyInfo = elementNodes(topBar).find(

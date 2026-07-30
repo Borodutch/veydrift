@@ -280,24 +280,58 @@ Binary buildings such as Rift Stabilizer use their base cost and do not scale pa
 
 ### Production
 
+Production is measured in whole resource units per hour. For a mine at level `L`,
+the contract first calculates its raw per-level output and rounds down:
+
 ```text
-metal per hour = 30 * level * 1.1 ^ level * planet metal multiplier
-crystal per hour = 20 * level * 1.1 ^ level * planet crystal multiplier
-deuterium per hour = 10 * level * 1.1 ^ level * planet deuterium multiplier
-crawler boost bps = min(effective crawlers * 2, 5,000)
-effective crawlers = min(crawler count, 8 * (metal level + crystal level + deuterium level))
+scaled level value(base, L) = floor(base * L * 11 ^ L / 10 ^ L), or 0 at L = 0
+raw metal per hour = floor(scaled level value(30, metal level) * metal multiplier bps / 10,000)
+raw crystal per hour = floor(scaled level value(20, crystal level) * crystal multiplier bps / 10,000)
+raw deuterium per hour = floor(scaled level value(10, deuterium level) * deuterium multiplier bps / 10,000)
+metal multiplier bps = 10,000
+crystal multiplier bps = 10,000
+deuterium multiplier bps = max(0, 12,800 - 20 * planet maximum temperature in °C)
 ```
 
-Fusion Reactor deuterium upkeep is subtracted from deuterium production. If required energy is greater than produced energy, all mine production is multiplied by `produced energy / required energy`.
+Mine level tables and building detail cards show these raw values. They do not
+include crawlers, Fusion Reactor upkeep, energy shortage scaling, or Solar
+Satellite effects.
+
+The resource top bar and its Resources popup show live effective production
+from the backend's canonical contract-derived model. The contract applies the
+live modifiers in this order, rounding down after every basis-point scaling:
+
+```text
+crawler boost bps = min(effective crawlers * 2, 5,000)
+effective crawlers = min(crawler count, 8 * (metal level + crystal level + deuterium level))
+boosted mine output = floor(raw mine output * (10,000 + crawler boost bps) / 10,000)
+fusion deuterium upkeep = ceil(10 * fusion level * 11 ^ fusion level / 10 ^ fusion level)
+post-upkeep deuterium = max(0, boosted deuterium - fusion deuterium upkeep)
+live effective output = floor(post-boost output * energy scale bps / 10,000)
+```
+
+For Metal and Crystal, `post-boost output` is the boosted mine output. For
+Deuterium it is the post-upkeep value. If energy production is sufficient, the
+energy scale is 10,000 bps and output is not reduced.
 
 ### Energy
 
 ```text
+metal mine demand = scaled level value(10, metal level)
+crystal mine demand = scaled level value(10, crystal level)
+deuterium synthesizer demand = scaled level value(20, deuterium level)
 required energy = metal mine demand + crystal mine demand + deuterium synthesizer demand
-produced energy = solar plant energy + fusion reactor energy + solar satellite energy
+solar plant energy = scaled level value(20, solar plant level)
+fusion reactor energy = floor(30 * fusion level * (105 + Energy Technology level) ^ fusion level / 100 ^ fusion level)
+Solar Satellite energy total = Solar Satellite count * energy per Satellite
+produced energy = solar plant energy + fusion reactor energy + Solar Satellite energy total
 energy scale bps = 10,000 when produced >= required, otherwise floor(produced * 10,000 / required)
-solar satellite energy = floor((max temperature + 160) / 6)
+Solar Satellite energy per Satellite = clamp(truncate-toward-zero((maximum temperature + 140) / 6), 1, 65)
 ```
+
+Solar Satellites therefore change live resource production only by contributing
+to the energy balance. They never change the raw mine values shown in building
+details.
 
 ### Storage And Fields
 
