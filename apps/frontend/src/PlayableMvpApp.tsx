@@ -38,6 +38,8 @@ import {
 } from "./components/MissionControlPage";
 import {
   MissionCreationPage,
+  emptyMissionCargoDraft,
+  normalizeMissionCargoDraft,
   type CombatTechLevels,
   type JoinAttackForecastContext,
   type MissionCargoDraft,
@@ -189,7 +191,6 @@ import type { RaidTargetAttackAction } from "./components/RaidTargetFinderPage";
 import type { DebrisFinderTarget, RaidTarget } from "./raidTargetFinder";
 import {
   type FleetDriveLevels,
-  fleetMissionAvailableCargoCapacity,
   fleetMissionDistance,
   fleetMissionDistanceForMission,
   fleetMissionFuelCost,
@@ -2287,6 +2288,29 @@ type PendingGalaxyMission = {
   originPlanet: ManagedPlanetResponse | undefined;
 };
 
+export function missionComposerIdentity({
+  account,
+  activePlanetId,
+  pending,
+}: {
+  account: string | undefined;
+  activePlanetId: string | undefined;
+  pending: PendingGalaxyMission;
+}): string {
+  const targetPlanetId = pending.target?.occupiedBy?.planetId ?? pending.target?.id ?? "empty";
+  return [
+    account?.toLowerCase() ?? "disconnected",
+    pending.action.mode,
+    pending.action.kind,
+    pending.action.mode === "mission" ? pending.action.mission : "",
+    pending.originPlanet?.planetId ?? activePlanetId ?? "unknown-origin",
+    pending.bodySelectionDefaults?.originIsMoon === true ? "origin-moon" : "origin-planet",
+    targetPlanetId,
+    `${pending.coords.galaxy}:${pending.coords.system}:${pending.coords.position}`,
+    pending.bodySelectionDefaults?.targetIsMoon === true ? "target-moon" : "target-planet",
+  ].join("|");
+}
+
 export function overviewMyPlanetActionsFor({
   account,
   activePlanetId,
@@ -2548,99 +2572,14 @@ function moonOverviewMissionAction(
   };
 }
 
-type MissionCargoResourceSnapshot = Pick<OnChainResources, "metal" | "crystal" | "deuterium"> | PlayableState["resources"];
-
-export function transportCargoForOrigin(
-  resources: MissionCargoResourceSnapshot | undefined,
-  ships: MissionShips,
-  origin: Coordinates,
-  target: Coordinates,
-  driveLevels: FleetDriveLevels = {},
-  speedPercent = 100,
-  body: {
-    originIsMoon?: boolean | undefined;
-    targetIsMoon?: boolean | undefined;
-  } = {},
-): Partial<Pick<OnChainResources, "metal" | "crystal" | "deuterium">> | undefined {
-  if (!resources) return undefined;
-
-  const distance = fleetMissionDistance(origin, target, body);
-  const fuelCost = fleetMissionFuelCost(ships, distance, driveLevels, speedPercent);
-  let remaining = fleetMissionAvailableCargoCapacity(ships, distance, driveLevels, speedPercent);
-  if (remaining <= 0) return undefined;
-
-  const metal = Math.min(safeResourceNumber(resources.metal) ?? 0, remaining);
-  remaining -= metal;
-  const crystal = Math.min(safeResourceNumber(resources.crystal) ?? 0, remaining);
-  remaining -= crystal;
-
-  const deuteriumAvailable = Math.max(0, (safeResourceNumber(resources.deuterium) ?? 0) - fuelCost);
-  const deuterium = Math.min(deuteriumAvailable, remaining);
-
-  if (metal === 0 && crystal === 0 && deuterium === 0) return undefined;
-  return {
-    metal: String(metal),
-    crystal: String(crystal),
-    deuterium: String(deuterium),
-  };
-}
-
-function transportCargoForSelectedOrigin({
-  originPlanet,
-  originResources,
-  originIsMoon,
-  ships,
-  target,
-  targetIsMoon,
-  driveLevels,
-  speedPercent,
-}: {
-  originPlanet: ManagedPlanetResponse | undefined;
-  originResources: MissionCargoResourceSnapshot | undefined;
-  originIsMoon: boolean;
-  ships: MissionShips;
-  target: Coordinates;
-  targetIsMoon: boolean;
-  driveLevels?: FleetDriveLevels | undefined;
-  speedPercent?: number | undefined;
-}): Partial<Pick<OnChainResources, "metal" | "crystal" | "deuterium">> | undefined {
-  const originCoords = managedPlanetCoordinates(originPlanet);
-  if (!originCoords) return undefined;
-  return transportCargoForOrigin(
-    originResources,
-    ships,
-    originCoords,
-    target,
-    driveLevels,
-    speedPercent,
-    { originIsMoon, targetIsMoon },
-  );
-}
-
 export function cargoForCargoMissionLaunch({
-  actionKind,
-  autoFilledCargo,
   cargo,
 }: {
-  actionKind: "transport" | "deploy";
-  autoFilledCargo: Partial<Pick<OnChainResources, "metal" | "crystal" | "deuterium">> | undefined;
   cargo: MissionCargoDraft | undefined;
-}): Partial<Pick<OnChainResources, "metal" | "crystal" | "deuterium">> | undefined {
-  const selectedCargo = missionCargoFromDraft(cargo);
-  if (selectedCargo || actionKind === "deploy") return selectedCargo;
-  return autoFilledCargo;
-}
-
-function missionCargoFromDraft(cargo: MissionCargoDraft | undefined): Partial<Pick<OnChainResources, "metal" | "crystal" | "deuterium">> | undefined {
-  if (!cargo) return undefined;
-  const normalized = {
-    metal: String(Math.max(0, Math.trunc(Number(cargo.metal ?? 0) || 0))),
-    crystal: String(Math.max(0, Math.trunc(Number(cargo.crystal ?? 0) || 0))),
-    deuterium: String(Math.max(0, Math.trunc(Number(cargo.deuterium ?? 0) || 0))),
-  };
-  return normalized.metal === "0" && normalized.crystal === "0" && normalized.deuterium === "0"
-    ? undefined
-    : normalized;
+}): Pick<OnChainResources, "metal" | "crystal" | "deuterium"> {
+  // Confirmation-time invariant: calldata is derived only from the rendered draft. Inventory
+  // hydration and prior missions have no fallback path into this payload.
+  return normalizeMissionCargoDraft(cargo ?? emptyMissionCargoDraft());
 }
 
 function driveLevelsFromTechnologyLevels(levels: Record<string, number> | undefined): FleetDriveLevels {
@@ -7790,10 +7729,6 @@ export function PlayableMvpApp({
     const supportsBodyMission = supportsCargoMission || action.kind === "attack";
     const originIsMoon = supportsBodyMission && draft.originIsMoon === true;
     const targetIsMoon = supportsBodyMission && draft.targetIsMoon === true;
-    const originCargoResources = originIsMoon
-      ? missionMoonResources(moonState)
-      : missionResourcesForOrigin(missionOriginPlanet);
-
     if (action.kind === "attack" && draft.lootRatio && !originIsMoon && !targetIsMoon) {
       const { metal, crystal, deuterium } = draft.lootRatio;
       closeMissionCreationWhenComplete(runGalaxyTransaction(`${action.label} mission`, () => sendLaunchAttackMissionTransaction(
@@ -7823,17 +7758,6 @@ export function PlayableMvpApp({
     }
     const cargo = supportsCargoMission
       ? cargoForCargoMissionLaunch({
-          actionKind: action.kind === "deploy" ? "deploy" : "transport",
-          autoFilledCargo: transportCargoForSelectedOrigin({
-            originPlanet: missionOriginPlanet,
-            originResources: originCargoResources,
-            originIsMoon,
-            ships: draft.ships,
-            target: coords,
-            targetIsMoon,
-            driveLevels,
-            speedPercent: draft.speedPercent,
-          }),
           cargo: draft.cargo,
         })
       : undefined;
@@ -8597,6 +8521,11 @@ export function PlayableMvpApp({
             : undefined}
           defenseHoldMode={pendingGalaxyMission.action.kind === "defenseHold"}
           driveLevels={driveLevelsFromTechnologyLevels(shipyardState?.technologyLevels)}
+          key={missionComposerIdentity({
+            account,
+            activePlanetId,
+            pending: pendingGalaxyMission,
+          })}
           nowMs={now}
           onBack={() => setPendingGalaxyMission(null)}
           onConfirm={handleConfirmGalaxyMission}

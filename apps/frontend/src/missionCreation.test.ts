@@ -3,12 +3,16 @@ import {
   AttackIntelPanel,
   AttackOutcomePanel,
   buildMissionLaunchDraft,
+  emptyMissionCargoDraft,
   DestinationIntelPanel,
   forecastRaidLoot,
   initialMissionShips,
   LootRatioControls,
   MissionCargoPicker,
   type MissionCargoDraft,
+  missionCargoAfterBodyChange,
+  normalizeMissionCargoDraft,
+  reconcileMissionCargoAfterFleetChange,
   lootRatioFromUpToAmount,
   missionCargoMaxForResource,
   missionBodySelectionVisibility,
@@ -32,9 +36,10 @@ import {
 import {
   cargoForCargoMissionLaunch,
   joinAttackTargetFromSystemPayload,
+  missionComposerIdentity,
   missionMoonShipyardState,
-  transportCargoForOrigin,
 } from "./PlayableMvpApp";
+import { encodeLaunchFleetMissionCall } from "./walletFlow";
 import type { GalaxyAction } from "./galaxyActions";
 import type { Planet } from "./types";
 
@@ -377,40 +382,14 @@ describe("mission creation", () => {
     ]);
   });
 
-  test("auto-filled body cargo reserves fuel for same-coordinate planet to moon deploy", () => {
-    const cargo = transportCargoForOrigin(
-      { metal: 10_459, crystal: 14_541, deuterium: 0 },
-      { ...deployAction.ships, smallCargo: 0, largeCargo: 1 },
-      { galaxy: 4, system: 291, position: 3 },
-      { galaxy: 4, system: 291, position: 3 },
-      {},
-      100,
-      { originIsMoon: false, targetIsMoon: true },
-    );
-
-    expect(cargo).toEqual({
-      metal: "10459",
-      crystal: "14540",
+  test("never hydrates Transport cargo from planet or moon inventory", () => {
+    expect(cargoForCargoMissionLaunch({ cargo: undefined })).toEqual({
+      metal: "0",
+      crystal: "0",
       deuterium: "0",
     });
-  });
-
-  test("auto-filled moon-origin cargo reads the selected moon resources", () => {
-    const cargo = transportCargoForOrigin(
-      { metal: 123, crystal: 456, deuterium: 789 },
-      { ...transportAction.ships, smallCargo: 1 },
-      { galaxy: 4, system: 291, position: 3 },
-      { galaxy: 4, system: 291, position: 3 },
-      {},
-      100,
-      { originIsMoon: true, targetIsMoon: false },
-    );
-
-    expect(cargo).toEqual({
-      metal: "123",
-      crystal: "456",
-      deuterium: "788",
-    });
+    expect(playableMvpAppSource).not.toContain("transportCargoForOrigin");
+    expect(playableMvpAppSource).not.toContain("autoFilledCargo");
   });
 
   test("moon-origin composition uses launchable moon ships and refreshed global slots, never parent ships", () => {
@@ -1651,7 +1630,7 @@ describe("mission creation", () => {
     };
     const draft = buildMissionLaunchDraft({
       action: deployAction,
-      cargo: {},
+      cargo: emptyMissionCargoDraft(),
       defenseHoldActive: false,
       defenseHoldSeconds: 0,
       effectiveOriginIsMoon: true,
@@ -1666,23 +1645,17 @@ describe("mission creation", () => {
 
     expect(draft).toMatchObject({
       ships,
-      cargo: undefined,
+      cargo: { metal: "0", crystal: "0", deuterium: "0" },
       originIsMoon: true,
       targetIsMoon: false,
     });
     expect(cargoForCargoMissionLaunch({
-      actionKind: "deploy",
-      autoFilledCargo: { metal: "50", crystal: "25", deuterium: "10" },
       cargo: draft.cargo,
-    })).toBeUndefined();
+    })).toEqual({ metal: "0", crystal: "0", deuterium: "0" });
     expect(cargoForCargoMissionLaunch({
-      actionKind: "transport",
-      autoFilledCargo: { metal: "50", crystal: "25", deuterium: "10" },
       cargo: draft.cargo,
-    })).toEqual({ metal: "50", crystal: "25", deuterium: "10" });
+    })).toEqual({ metal: "0", crystal: "0", deuterium: "0" });
     expect(cargoForCargoMissionLaunch({
-      actionKind: "deploy",
-      autoFilledCargo: { metal: "50", crystal: "25", deuterium: "10" },
       cargo: { metal: "12", crystal: "3", deuterium: "0" },
     })).toEqual({ metal: "12", crystal: "3", deuterium: "0" });
     expect(missionDraftBlocker({
@@ -1698,6 +1671,119 @@ describe("mission creation", () => {
       selectedShipCount: 3,
       totalCargoCapacity: 0,
     })).toBeUndefined();
+  });
+
+  test("keeps consecutive desktop and mobile Transport fields, draft state, and encoded cargo identical", () => {
+    for (const viewport of ["desktop", "mobile"] as const) {
+      let cargo = emptyMissionCargoDraft();
+      const renderCargo = (maxCargoResources = { metal: 9_000, crystal: 8_000, deuterium: 7_000 }) =>
+        MissionCargoPicker({
+          cargo,
+          cargoCapacity: 10_000,
+          maxCargoResources,
+          onCargoChange: (updater) => {
+            cargo = updater(cargo);
+          },
+        });
+      const visibleValues = () => findElements(renderCargo(), "input").map((input) => input.props?.value);
+      const buildDraft = () => buildMissionLaunchDraft({
+        action: transportAction,
+        cargo,
+        defenseHoldActive: false,
+        defenseHoldSeconds: 0,
+        effectiveOriginIsMoon: false,
+        effectiveTargetIsMoon: false,
+        lootRatio: { metal: 34, crystal: 33, deuterium: 33 },
+        lootRatioActive: false,
+        primaryTargetId: 0,
+        quantity: 1,
+        ships: { ...transportAction.ships, smallCargo: 2 },
+        speedPercent: 100,
+      });
+      const encodedCargo = (draftCargo: MissionCargoDraft | undefined) => {
+        const calldata = encodeLaunchFleetMissionCall({
+          originPlanetId: 7,
+          targetPlanetId: 9,
+          missionType: 0,
+          ships: { ...transportAction.ships, smallCargo: 2 },
+          cargo: cargoForCargoMissionLaunch({ cargo: draftCargo }),
+        });
+        const words = calldata.slice(10).match(/.{64}/g) ?? [];
+        return words.slice(17, 20).map((word) => BigInt(`0x${word}`).toString());
+      };
+
+      expect(visibleValues()).toEqual(["0", "0", "0"]);
+      expect(cargo).toEqual({ metal: "0", crystal: "0", deuterium: "0" });
+      expect(encodedCargo(buildDraft().cargo)).toEqual(["0", "0", "0"]);
+
+      // This is the state produced by explicit typing; the picker renders this exact controlled value.
+      cargo = { metal: "1200", crystal: "340", deuterium: "56" };
+      const firstDraft = buildDraft();
+      expect(visibleValues()).toEqual(["1200", "340", "56"]);
+      expect(firstDraft.cargo).toEqual(cargo);
+      expect(encodedCargo(firstDraft.cargo)).toEqual(["1200", "340", "56"]);
+
+      // A rejected transaction leaves this same composer open, so the explicit values remain visible.
+      expect(visibleValues()).toEqual(["1200", "340", "56"]);
+
+      // Cancel/reopen (or a changed composer identity) creates a fresh zero-valued state.
+      cargo = emptyMissionCargoDraft();
+      expect(visibleValues()).toEqual(["0", "0", "0"]);
+      expect(encodedCargo(buildDraft().cargo)).toEqual(["0", "0", "0"]);
+
+      // Async inventory hydration only changes Max availability; it cannot inject cargo.
+      renderCargo({ metal: 99_000, crystal: 88_000, deuterium: 77_000 });
+      expect(cargo).toEqual({ metal: "0", crystal: "0", deuterium: "0" });
+    }
+  });
+
+  test("changes composer identity for wallet, mission, origin, destination, and body context", () => {
+    const pending = {
+      action: transportAction,
+      coords: { galaxy: 4, system: 291, position: 3 },
+      originPlanet: undefined,
+      target: undefined,
+    };
+    const base = missionComposerIdentity({
+      account: "0x1111111111111111111111111111111111111111",
+      activePlanetId: "7",
+      pending,
+    });
+
+    expect(missionComposerIdentity({
+      account: "0x2222222222222222222222222222222222222222",
+      activePlanetId: "7",
+      pending,
+    })).not.toBe(base);
+    expect(missionComposerIdentity({
+      account: "0x1111111111111111111111111111111111111111",
+      activePlanetId: "8",
+      pending,
+    })).not.toBe(base);
+    expect(missionComposerIdentity({
+      account: "0x1111111111111111111111111111111111111111",
+      activePlanetId: "7",
+      pending: { ...pending, action: deployAction },
+    })).not.toBe(base);
+    expect(missionComposerIdentity({
+      account: "0x1111111111111111111111111111111111111111",
+      activePlanetId: "7",
+      pending: { ...pending, coords: { galaxy: 4, system: 292, position: 3 } },
+    })).not.toBe(base);
+    expect(missionComposerIdentity({
+      account: "0x1111111111111111111111111111111111111111",
+      activePlanetId: "7",
+      pending: { ...pending, bodySelectionDefaults: { targetIsMoon: true } },
+    })).not.toBe(base);
+    expect(normalizeMissionCargoDraft(undefined)).toEqual(emptyMissionCargoDraft());
+    expect(missionCargoAfterBodyChange(
+      { metal: "12", crystal: "3", deuterium: "1" },
+      false,
+      true,
+    )).toEqual(emptyMissionCargoDraft());
+    expect(reconcileMissionCargoAfterFleetChange(
+      { metal: "12", crystal: "3", deuterium: "1" },
+    )).toEqual({ metal: "12", crystal: "3", deuterium: "1" });
   });
 
   test("uses the compact Attack-style intel shell for non-attack mission setup", () => {
