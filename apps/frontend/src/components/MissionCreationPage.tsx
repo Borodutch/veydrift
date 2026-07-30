@@ -1348,29 +1348,13 @@ export function stationedDefendersAtAttackArrival(
 }
 
 export function initialMissionShips(
-  action: EnabledGalaxyAction,
-  originShipyardState?: MissionShipInventorySnapshot | null,
+  _action: EnabledGalaxyAction,
+  _originShipyardState?: MissionShipInventorySnapshot | null,
 ): MissionShips {
-  if (action.mode === "missile" || action.kind === "attack") return emptyMissionShips();
-  if (originShipyardState !== undefined) {
-    const allowed = allowedShipKeysForAction(action);
-    const preferred = missionShipOptions.find((ship) => {
-      if (!allowed.has(ship.key)) return false;
-      const selected = Math.max(0, Math.trunc(action.ships[ship.key] ?? 0));
-      const available = originShipyardState?.ships.find((item) => item.id === ship.id)?.count ?? 0;
-      return selected > 0 && selected <= available;
-    });
-    const fallback = preferred ?? missionShipOptions.find((ship) =>
-      allowed.has(ship.key)
-      && (originShipyardState?.ships.find((item) => item.id === ship.id)?.count ?? 0) > 0
-    );
-    if (!fallback) return emptyMissionShips();
-    return {
-      ...emptyMissionShips(),
-      [fallback.key]: preferred ? Math.max(1, Math.trunc(action.ships[fallback.key] ?? 1)) : 1,
-    };
-  }
-  return { ...emptyMissionShips(), ...action.ships };
+  // Action descriptors and live inventory determine eligibility and picker availability, not player
+  // intent. Keeping every mount/reset empty also prevents later inventory hydration from becoming an
+  // implicit selection path for required-ship missions.
+  return emptyMissionShips();
 }
 
 function missionShipOptionsForAction(action: EnabledGalaxyAction, shipyardState: ChainShipyardState | null): ShipOption[] {

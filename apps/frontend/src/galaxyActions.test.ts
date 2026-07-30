@@ -26,7 +26,7 @@ describe("galaxyActions", () => {
       mode: "mission",
       mission: "harvest",
       ships: {
-        recycler: 1,
+        recycler: 0,
       },
     });
   });
@@ -78,7 +78,7 @@ describe("galaxyActions", () => {
       }).find((action) => action.kind === "harvest")).toMatchObject({
         enabled: true,
         mission: "harvest",
-        ships: { recycler: 1 },
+        ships: { recycler: 0 },
       });
     }
   });
@@ -269,6 +269,53 @@ describe("galaxyActions", () => {
     ]);
   });
 
+  test("never seeds enabled fleet actions from mission requirements or available inventory", () => {
+    const readyShipyard = shipyardState([
+      { id: 0, count: 4 },
+      { id: 1, count: 4 },
+      { id: 2, count: 4 },
+      { id: 3, count: 4 },
+    ]);
+    const enemyActions = galaxyActionsForSlot({
+      account,
+      homePlanetId: "7",
+      planet: planet({ debrisField: { metal: 10_000, crystal: 10_000 } }),
+      shipyardState: readyShipyard,
+    });
+    const ownActions = galaxyActionsForSlot({
+      account,
+      homePlanetId: "7",
+      planet: planet({
+        ownerId: account,
+        occupiedBy: { owner: account, planetId: "9" },
+      }),
+      shipyardState: readyShipyard,
+    });
+    const colonizeActions = galaxyActionsForSlot({
+      account,
+      homePlanetId: "7",
+      planet: planet({ owner: null, ownerId: null, occupiedBy: null }),
+      shipyardState: readyShipyard,
+    });
+    const fleetActions = [...enemyActions, ...ownActions, ...colonizeActions]
+      .filter((action) => action.enabled && action.mode !== "missile");
+
+    expect(fleetActions.map((action) => action.kind).sort()).toEqual([
+      "attack",
+      "colonize",
+      "defenseHold",
+      "deploy",
+      "harvest",
+      "transport",
+    ]);
+    for (const action of fleetActions) {
+      expect(
+        Object.values(action.ships).every((quantity) => quantity === 0),
+        `${action.kind} must wait for an explicit player quantity`,
+      ).toBe(true);
+    }
+  });
+
   test("enables Deploy with a combat-only origin while Transport keeps its cargo requirement", () => {
     const ownColony = planet({
       ownerId: account,
@@ -291,7 +338,7 @@ describe("galaxyActions", () => {
     });
     expect(actions.find((action) => action.kind === "deploy")).toMatchObject({
       enabled: true,
-      ships: { lightFighter: 1 },
+      ships: { lightFighter: 0 },
     });
 
     const emptyOriginActions = galaxyActionsForSlot({
@@ -353,7 +400,7 @@ describe("galaxyActions", () => {
     const allyDefend = allyActions.find((action) => action.kind === "defenseHold");
     expect(allyTransport).toBeUndefined();
     expect(allyActions[0]).toMatchObject({ kind: "defenseHold", enabled: true, label: "Defend" });
-    expect(allyDefend).toMatchObject({ enabled: true, mission: "defenseHold", ships: { lightFighter: 1 } });
+    expect(allyDefend).toMatchObject({ enabled: true, mission: "defenseHold", ships: { lightFighter: 0 } });
 
     const hostileActions = galaxyActionsForSlot({
       account,

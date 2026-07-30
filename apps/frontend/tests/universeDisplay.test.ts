@@ -1026,7 +1026,7 @@ describe("tester universe display data", () => {
       mode: "mission",
       mission: "harvest",
       ships: {
-        recycler: 1,
+        recycler: 0,
       },
     });
     expect(noRecyclerHarvestActions.find((action) => action.kind === "harvest")).toMatchObject({
@@ -1057,7 +1057,7 @@ describe("tester universe display data", () => {
       { enabled: false, kind: "transport", reason: "Requires a cargo-capable ship on your home planet." },
       // Deploy and proactive Defend both accept a lone movable Light Fighter; Transport keeps its
       // cargo-capable ship requirement.
-      { enabled: true, kind: "deploy", ships: { lightFighter: 1 } },
+      { enabled: true, kind: "deploy", ships: { lightFighter: 0 } },
       { enabled: true, kind: "defenseHold", label: "Defend" },
     ]);
     expect([...enemyActions, ...ownActions, ...missingPlanetActions].map((action) => action.label).join(" ")).not.toMatch(/spy|espionage|probe/i);
