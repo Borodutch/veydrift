@@ -83,7 +83,8 @@ describe("planOnChainRefresh", () => {
 });
 
 describe("shouldRefreshAllianceStateForPage", () => {
-  test("loads alliance membership for Raid Finder before the Alliance tab is opened", () => {
+  test("loads alliance membership for Mission Control and Raid Finder before the Alliance tab is opened", () => {
+    expect(shouldRefreshAllianceStateForPage("mission-control")).toBe(true);
     expect(shouldRefreshAllianceStateForPage("raid-target-finder")).toBe(true);
   });
 });

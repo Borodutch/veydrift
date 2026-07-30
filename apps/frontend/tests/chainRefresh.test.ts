@@ -90,7 +90,8 @@ describe("playable chain refresh", () => {
     expect(recordedResourceSnapshotFreshness(current, markerless)).toBe(current);
   });
 
-  test("refreshes alliance state for rankings so same-alliance rows can highlight", () => {
+  test("refreshes alliance state for Mission Control membership and rankings highlights", () => {
+    expect(shouldRefreshAllianceStateForPage("mission-control")).toBe(true);
     expect(shouldRefreshAllianceStateForPage("rankings")).toBe(true);
     expect(shouldRefreshAllianceStateForPage("alliance")).toBe(true);
     expect(shouldRefreshAllianceStateForPage("alliance-invites")).toBe(false);
