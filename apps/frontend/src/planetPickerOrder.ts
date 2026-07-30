@@ -8,6 +8,45 @@ type PlanetPickerOrderRecord = {
 type PlanetPickerOrderStorage = Pick<Storage, "getItem" | "setItem">;
 
 export type PlanetPickerDropPosition = "after" | "before";
+export type PlanetPickerLayout = "mobile" | "sidebar";
+
+export type PlanetPickerPointerMoveResult =
+  | { status: "dragging"; dragStarted: boolean; planetId: string }
+  | { status: "ignored" }
+  | { status: "pending"; planetId: string };
+
+export type PlanetPickerKeyboardReorderResult = {
+  handled: boolean;
+  nextPlanetIds: string[];
+};
+
+export type PlanetPickerInteractionController = {
+  beginPointer(input: {
+    button: number;
+    clientX: number;
+    clientY: number;
+    orderIds: readonly string[];
+    planetId: string;
+    pointerId: number;
+    pointerType?: string;
+  }): boolean;
+  finishPointer(pointerId: number): { finished: boolean; wasDragging: boolean };
+  movePointer(input: {
+    clientX: number;
+    clientY: number;
+    pointerId: number;
+    pointerType?: string;
+  }): PlanetPickerPointerMoveResult;
+  reorderFromKey(
+    planetIds: readonly string[],
+    planetId: string,
+    key: string,
+  ): PlanetPickerKeyboardReorderResult;
+  reorderPointerTarget(
+    targetPlanetId: string,
+    position: PlanetPickerDropPosition,
+  ): { movedPlanetId: string; nextPlanetIds: string[] } | undefined;
+};
 
 export function planetPickerWalletKey(wallet: string | null | undefined): string {
   return wallet?.trim().toLowerCase() ?? "";
@@ -114,6 +153,116 @@ export function shouldStartPlanetPickerDrag(
   threshold = 6,
 ): boolean {
   return Math.hypot(deltaX, deltaY) >= threshold;
+}
+
+export function planetPickerDropPosition(
+  layout: PlanetPickerLayout,
+  clientX: number,
+  clientY: number,
+  bounds: Pick<DOMRect, "height" | "left" | "top" | "width">,
+): PlanetPickerDropPosition {
+  if (layout === "mobile") {
+    return clientX < bounds.left + bounds.width / 2 ? "before" : "after";
+  }
+  return clientY < bounds.top + bounds.height / 2 ? "before" : "after";
+}
+
+export function createPlanetPickerInteractionController(
+  dragThreshold = 6,
+): PlanetPickerInteractionController {
+  let pointerDrag: {
+    orderIds: string[];
+    planetId: string;
+    pointerId: number;
+    pointerType: string;
+    started: boolean;
+    startX: number;
+    startY: number;
+  } | undefined;
+
+  return {
+    beginPointer(input) {
+      const orderIds = uniquePlanetIds(input.orderIds);
+      if (input.button !== 0 || !orderIds.includes(input.planetId)) return false;
+
+      pointerDrag = {
+        orderIds,
+        planetId: input.planetId,
+        pointerId: input.pointerId,
+        pointerType: input.pointerType ?? "mouse",
+        started: false,
+        startX: input.clientX,
+        startY: input.clientY,
+      };
+      return true;
+    },
+
+    finishPointer(pointerId) {
+      if (!pointerDrag || pointerDrag.pointerId !== pointerId) {
+        return { finished: false, wasDragging: false };
+      }
+
+      const wasDragging = pointerDrag.started;
+      pointerDrag = undefined;
+      return { finished: true, wasDragging };
+    },
+
+    movePointer(input) {
+      if (!pointerDrag || pointerDrag.pointerId !== input.pointerId) {
+        return { status: "ignored" };
+      }
+      if (input.pointerType && input.pointerType !== pointerDrag.pointerType) {
+        return { status: "ignored" };
+      }
+
+      if (!pointerDrag.started) {
+        if (!shouldStartPlanetPickerDrag(
+          input.clientX - pointerDrag.startX,
+          input.clientY - pointerDrag.startY,
+          dragThreshold,
+        )) {
+          return { status: "pending", planetId: pointerDrag.planetId };
+        }
+        pointerDrag.started = true;
+        return { status: "dragging", dragStarted: true, planetId: pointerDrag.planetId };
+      }
+
+      return { status: "dragging", dragStarted: false, planetId: pointerDrag.planetId };
+    },
+
+    reorderFromKey(planetIds, planetId, key) {
+      const sourceIndex = planetIds.indexOf(planetId);
+      let destinationIndex: number | undefined;
+      if (key === "ArrowLeft" || key === "ArrowUp") destinationIndex = sourceIndex - 1;
+      if (key === "ArrowRight" || key === "ArrowDown") destinationIndex = sourceIndex + 1;
+      if (key === "Home") destinationIndex = 0;
+      if (key === "End") destinationIndex = planetIds.length - 1;
+      return {
+        handled: destinationIndex !== undefined,
+        nextPlanetIds: destinationIndex === undefined
+          ? [...planetIds]
+          : movePlanetPickerIdToIndex(planetIds, planetId, destinationIndex),
+      };
+    },
+
+    reorderPointerTarget(targetPlanetId, position) {
+      const drag = pointerDrag;
+      if (!drag?.started || targetPlanetId === drag.planetId) return undefined;
+
+      const nextPlanetIds = reorderPlanetPickerIds(
+        drag.orderIds,
+        drag.planetId,
+        targetPlanetId,
+        position,
+      );
+      if (nextPlanetIds.every((planetId, index) => planetId === drag.orderIds[index])) {
+        return undefined;
+      }
+
+      drag.orderIds = nextPlanetIds;
+      return { movedPlanetId: drag.planetId, nextPlanetIds };
+    },
+  };
 }
 
 function isValidPlanetIdOrder(value: unknown): value is readonly string[] {

@@ -167,12 +167,13 @@ describe("navigation and planet selector UI source contracts", () => {
     expect(playableSource).toContain("writePlanetPickerOrder(browserPlanetPickerOrderStorage(), planetPickerWallet, reconciledIds)");
     expect(playableSource.match(/planets=\{orderedWalletPlanets\}/g)?.length).toBe(2);
     expect(playableSource.match(/onOrderChange=\{handlePlanetPickerOrderChange\}/g)?.length).toBe(2);
-    expect(playableSource).toContain("data-planet-selector-drag-handle={planet.planetId}");
+    expect(playableSource).toContain("data-planet-selector-drag-handle={planetId}");
     expect(playableSource).toContain('className={`absolute left-1 top-1 z-10 grid h-8 w-8 touch-none');
     expect(playableSource).toContain("onPointerDown={(event) => onHandlePointerDown(planet.planetId, event)}");
     expect(playableSource).toContain("onPointerMove={onHandlePointerMove}");
     expect(playableSource).toContain("onKeyDown={(event) => onHandleKeyDown(planet.planetId, event)}");
-    expect(playableSource).toContain('if (event.key === "ArrowLeft" || event.key === "ArrowUp")');
+    expect(playableSource).toContain("interaction.current.reorderFromKey(planetIds, planetId, event.key)");
+    expect(playableSource).toContain("interaction.current.reorderPointerTarget(targetPlanetId, position)");
     expect(playableSource).toContain('<span aria-live="polite" className="sr-only">{reorderAnnouncement}</span>');
     expect(playableSource).toContain("onClick={() => onSelect(planet.planetId, bodyKind)}");
     expect(playableSource).toContain('onClick={() => onSelect(planet.planetId, "moon")}');
