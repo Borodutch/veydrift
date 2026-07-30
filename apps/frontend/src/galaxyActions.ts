@@ -154,7 +154,7 @@ export function galaxyActionsForSlot({
           kind: "colonize",
           label: "Colonize",
           mode: "colonize",
-          ships: singleShip("colonyShip"),
+          ships: emptyMissionShips(),
         },
         disabled: {
           kind: "colonize",
@@ -185,14 +185,12 @@ export function galaxyActionsForSlot({
     }
 
     const cargoBlocker = commonBlocker ?? firstAvailableCargoShipBlocker(shipyardState);
-    const cargoShips = firstAvailableCargoShips(shipyardState);
     const deployBlocker = commonBlocker ?? firstAvailableDeployShipBlocker(shipyardState);
-    const deployShips = firstAvailableDeployShips(shipyardState);
 
     return [
       enabledOrDisabled({
         blocker: cargoBlocker,
-        enabled: transportAction(cargoShips),
+        enabled: transportAction(),
         disabled: transportDisabledAction(),
       }),
       enabledOrDisabled({
@@ -203,7 +201,7 @@ export function galaxyActionsForSlot({
           label: "Deploy",
           mode: "mission",
           mission: "deploy",
-          ships: deployShips,
+          ships: emptyMissionShips(),
         },
         disabled: {
           kind: "deploy",
@@ -230,7 +228,7 @@ export function galaxyActionsForSlot({
         label: "Attack",
         mode: "mission",
         mission: "attack",
-        ships: firstAvailableFleetShips(shipyardState),
+        ships: emptyMissionShips(),
       },
       disabled: {
         kind: "attack",
@@ -276,7 +274,7 @@ function harvestAction(
       label: "Harvest",
       mode: "mission",
       mission: "harvest",
-      ships: singleShip("recycler"),
+      ships: emptyMissionShips(),
     },
     disabled: {
       kind: "harvest",
@@ -287,14 +285,14 @@ function harvestAction(
   });
 }
 
-function transportAction(ships: MissionShips): Extract<GalaxyAction, { enabled: true }> {
+function transportAction(): Extract<GalaxyAction, { enabled: true }> {
   return {
     enabled: true,
     kind: "transport",
     label: "Transport",
     mode: "mission",
     mission: "transport",
-    ships,
+    ships: emptyMissionShips(),
   };
 }
 
@@ -346,7 +344,7 @@ function defenseHoldAction(
       label: "Defend",
       mode: "mission",
       mission: "defenseHold",
-      ships: firstAvailableFleetShips(shipyardState),
+      ships: emptyMissionShips(),
     },
     disabled: {
       kind: "defenseHold",
@@ -412,21 +410,6 @@ function firstAvailableDeployShipBlocker(shipyardState: ChainShipyardState | nul
   return firstAvailableDeployShip(shipyardState) ? undefined : "Requires at least one movable ship on the active origin.";
 }
 
-function firstAvailableCargoShips(shipyardState: ChainShipyardState | null): MissionShips {
-  const ship = firstAvailableCargoShip(shipyardState);
-  return ship ? singleShip(ship) : emptyMissionShips();
-}
-
-function firstAvailableFleetShips(shipyardState: ChainShipyardState | null): MissionShips {
-  const ship = firstAvailableFleetShip(shipyardState);
-  return ship ? singleShip(ship) : emptyMissionShips();
-}
-
-function firstAvailableDeployShips(shipyardState: ChainShipyardState | null): MissionShips {
-  const ship = firstAvailableDeployShip(shipyardState);
-  return ship ? singleShip(ship) : emptyMissionShips();
-}
-
 function interplanetaryMissileBlocker(defenseState: ChainDefenseState | null | undefined): string | undefined {
   if (!defenseState) return "Defense state is still loading.";
   if (defenseState.productionAvailable === false) {
@@ -480,13 +463,6 @@ function firstAvailableFleetShip(shipyardState: ChainShipyardState | null): Miss
 
 function firstAvailableDeployShip(shipyardState: ChainShipyardState | null): MissionShipKey | undefined {
   return firstAvailableFleetShip(shipyardState) ?? firstAvailableCargoShip(shipyardState);
-}
-
-function singleShip(ship: MissionShipKey): MissionShips {
-  return {
-    ...emptyMissionShips(),
-    [ship]: 1,
-  };
 }
 
 function shipCount(shipyardState: ChainShipyardState | null, shipKey: MissionShipKey): number {

@@ -199,19 +199,47 @@ describe("mission creation", () => {
     expect(missionShipOptions.some((option) => /pathfinder/i.test(option.label))).toBe(false);
   });
 
-  test("starts attack mission ship quantities at zero instead of prefilling Heavy Fighter", () => {
-    const initial = initialMissionShips({
-      ...attackAction,
-      ships: {
-        ...attackAction.ships,
-        heavyFighter: 1,
-        smallCargo: 1,
-      },
-    });
+  test("starts every mission composer at zero despite action defaults or hydrated inventory", () => {
+    const actions = [
+      attackAction,
+      deployAction,
+      transportAction,
+      harvestAction,
+      defenseHoldAction,
+      colonizeAction,
+    ];
+    const hydratedInventory = {
+      ships: missionShipOptions.map((ship) => ({ id: ship.id, count: 9 })),
+    };
 
-    expect(initial.heavyFighter).toBe(0);
-    expect(initial.smallCargo).toBe(0);
-    expect(Object.values(initial).every((count) => count === 0)).toBe(true);
+    for (const action of actions) {
+      for (const inventory of [undefined, hydratedInventory, { ships: [] }]) {
+        expect(
+          Object.values(initialMissionShips(action, inventory)).every((count) => count === 0),
+          `${action.kind} must not infer a fleet from action defaults or inventory hydration`,
+        ).toBe(true);
+      }
+      expect(missionDraftBlocker({
+        action,
+        cargoCapacity: 0,
+        cargoSupported: action.kind === "transport" || action.kind === "deploy",
+        cargoTotal: 0,
+        fleetSlots: { active: 0, limit: 5 },
+        fuelCost: 0,
+        originCoords: { galaxy: 2, system: 44, position: 7 },
+        quantity: 1,
+        resources: { metal: 0, crystal: 0, deuterium: 0 },
+        selectedShipCount: 0,
+        totalCargoCapacity: 0,
+      })).toBe("Choose at least one ship.");
+    }
+
+    // Desktop and mobile share this single responsive component state. The only fleet-state write is
+    // the quantity input handler, so inventory refreshes, body/target changes, and async hydration
+    // cannot inject a quantity after the all-zero mount/reset initializer runs.
+    expect(missionCreationSource.match(/useState<MissionShips>/g)).toHaveLength(1);
+    expect(missionCreationSource.match(/setShips\(/g)).toHaveLength(1);
+    expect(missionCreationSource).toContain('className="grid gap-4 p-4 sm:p-5 lg:p-6"');
   });
 
   test("allows a non-cargo-only Deploy from the selected origin inventory", () => {
@@ -226,11 +254,7 @@ describe("mission creation", () => {
 
     expect(initialMissionShips(lightFighterDeploy, {
       ships: [{ id: 1, count: 3 }],
-    })).toEqual({
-      ...deployAction.ships,
-      smallCargo: 0,
-      lightFighter: 3,
-    });
+    })).toEqual(initialMissionShips(deployAction));
 
     expect(staleSelectedShipQuantityBlocker(
       deployAction,
@@ -240,10 +264,7 @@ describe("mission creation", () => {
 
     expect(initialMissionShips(transportAction, {
       ships: [{ id: 1, count: 3 }],
-    })).toEqual({
-      ...transportAction.ships,
-      smallCargo: 0,
-    });
+    })).toEqual(initialMissionShips(transportAction));
   });
 
   test("renders attack target intel with planet image, coordinates, commander, and alliance", () => {
@@ -435,7 +456,7 @@ describe("mission creation", () => {
     expect(playableMvpAppSource).toContain("refreshInfrastructureState()");
   });
 
-  test("seeds Moon to Planet Deploy from the moon fleet instead of the parent planet", () => {
+  test("keeps Moon to Planet Deploy empty through moon inventory hydration", () => {
     const moonOriginState = {
       ships: [
         { id: 1, count: 2 },
@@ -445,10 +466,23 @@ describe("mission creation", () => {
     const initial = initialMissionShips(deployAction, moonOriginState);
 
     expect(initial.smallCargo).toBe(0);
-    expect(initial.lightFighter).toBe(1);
+    expect(Object.values(initial).every((count) => count === 0)).toBe(true);
     expect(staleSelectedShipQuantityBlocker(deployAction, initial, moonOriginState)).toBeUndefined();
     expect(playableMvpAppSource).toContain("const moonOriginShipyardState = missionMoonShipyardState({ moonState, shipyardState });");
     expect(playableMvpAppSource).toContain("shipyardState: moonOriginShipyardState,");
+    expect(missionDraftBlocker({
+      action: deployAction,
+      cargoCapacity: 0,
+      cargoSupported: true,
+      cargoTotal: 0,
+      fleetSlots: { active: 2, limit: 5 },
+      fuelCost: 0,
+      originCoords: { galaxy: 4, system: 291, position: 11 },
+      quantity: 1,
+      resources: { metal: 0, crystal: 0, deuterium: 100 },
+      selectedShipCount: 0,
+      totalCargoCapacity: 0,
+    })).toBe("Choose at least one ship.");
     expect(missionDraftBlocker({
       action: deployAction,
       cargoCapacity: 49,

@@ -480,12 +480,12 @@ describe("Playable MVP app display helpers", () => {
     expect(actions.find((action) => action.kind === "transport")).toMatchObject({
       enabled: true,
       mission: "transport",
-      ships: { smallCargo: 1 },
+      ships: { smallCargo: 0 },
     });
     expect(actions.find((action) => action.kind === "deploy")).toMatchObject({
       enabled: true,
       mission: "deploy",
-      ships: { smallCargo: 1 },
+      ships: { smallCargo: 0 },
     });
   });
 
@@ -548,7 +548,7 @@ describe("Playable MVP app display helpers", () => {
       label: "Transport",
       mission: "transport",
       defaultTargetIsMoon: true,
-      ships: { smallCargo: 1 },
+      ships: { smallCargo: 0 },
     });
     expect(moonActions[1]).toMatchObject({
       enabled: true,
@@ -556,7 +556,7 @@ describe("Playable MVP app display helpers", () => {
       label: "Deploy",
       mission: "deploy",
       defaultTargetIsMoon: true,
-      ships: { smallCargo: 1 },
+      ships: { smallCargo: 0 },
     });
     expect(moonActions[2]).toMatchObject({
       enabled: true,
@@ -564,6 +564,7 @@ describe("Playable MVP app display helpers", () => {
       label: "Defend",
       mission: "defenseHold",
       defaultTargetIsMoon: true,
+      ships: { smallCargo: 0 },
     });
   });
 
