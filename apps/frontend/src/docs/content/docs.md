@@ -359,7 +359,63 @@ debris crystal = floor((attacker crystal losses + defender crystal losses) * 30 
 
 Each surviving unit fires once per round before round losses are applied. Shots are distributed across the opposing side by live unit counts. If 100 shots fire into a defender with 80 Rocket Launchers and 20 Light Lasers, about 80 shots target Rocket Launchers and 20 target Light Lasers, with deterministic randomness deciding the remainder. Shields refresh every round, so damage does not carry over between rounds unless it destroys a unit in that round.
 
-Rapidfire can create extra shots after the normal shot assignment. A rapidfire value of `N` gives each selected shot a `(N - 1) / N` chance to create another shot, chained up to the contract limit. For example, Cruiser rapidfire `10` against Rocket Launchers means each Cruiser shot that selects a Rocket Launcher has a 90% chance to generate one more shot against the defender pool.
+### Rapidfire Reference
+
+Rapidfire can create extra shots after the normal shot assignment. A rapidfire factor `R` is **not** a guaranteed `R` shots: every selected shot against an eligible target has a continue chance of `(R - 1) / R` and a stop chance of `1 / R`. An omitted attacker-to-target pair has factor `1` and creates no rapidfire shots. Only ships can generate rapidfire; defenses do not have rapidfire as firing units.
+
+| Attacker ship | Target ship | Factor `R` | Continue chance | Stop chance |
+| --- | --- | ---: | ---: | ---: |
+| Cruiser | Light Fighter | 6 | 5/6 = 83.333% | 1/6 = 16.667% |
+| Destroyer | Small Cargo | 3 | 2/3 = 66.667% | 1/3 = 33.333% |
+| Destroyer | Large Cargo | 3 | 2/3 = 66.667% | 1/3 = 33.333% |
+| Destroyer | Battlecruiser | 2 | 1/2 = 50% | 1/2 = 50% |
+| Battlecruiser | Small Cargo | 3 | 2/3 = 66.667% | 1/3 = 33.333% |
+| Battlecruiser | Large Cargo | 4 | 3/4 = 75% | 1/4 = 25% |
+| Battlecruiser | Heavy Fighter | 4 | 3/4 = 75% | 1/4 = 25% |
+| Battlecruiser | Cruiser | 4 | 3/4 = 75% | 1/4 = 25% |
+| Battlecruiser | Battleship | 7 | 6/7 = 85.714% | 1/7 = 14.286% |
+| Reaper | Destroyer | 2 | 1/2 = 50% | 1/2 = 50% |
+| Reaper | Deathstar | 10 | 9/10 = 90% | 1/10 = 10% |
+| Pathfinder | Recycler | 3 | 2/3 = 66.667% | 1/3 = 33.333% |
+
+| Attacker ship | Target defense | Factor `R` | Continue chance | Stop chance |
+| --- | --- | ---: | ---: | ---: |
+| Cruiser | Rocket Launcher | 10 | 9/10 = 90% | 1/10 = 10% |
+| Bomber | Rocket Launcher | 20 | 19/20 = 95% | 1/20 = 5% |
+| Bomber | Light Laser | 20 | 19/20 = 95% | 1/20 = 5% |
+| Bomber | Heavy Laser | 10 | 9/10 = 90% | 1/10 = 10% |
+| Bomber | Ion Cannon | 10 | 9/10 = 90% | 1/10 = 10% |
+| Destroyer | Light Laser | 10 | 9/10 = 90% | 1/10 = 10% |
+| Deathstar | Any defense | 200 | 199/200 = 99.5% | 1/200 = 0.5% |
+| Reaper | Plasma Turret | 2 | 1/2 = 50% | 1/2 = 50% |
+
+For an ideal chain that stays on eligible targets, the unbounded expected number of shots, including the original shot, is `R`. The contract limits rapidfire to 64 extra-shot chain steps, so that ideal capped expectation is `R * (1 - ((R - 1) / R)^65)`. In a real mixed defender pool, that expectation is not a promise: every chain step retargets by the live target counts and applies deterministic integer rounding.
+
+#### Exact Onchain Rapidfire Math
+
+The contract works in basis points (`BPS = 10,000`) and has `MAX_RAPIDFIRE_CHAIN = 64`. Let `I_k` be the incoming shots for chain step `k`, `n_t` the live count of target bucket `t`, and `N` the number of live target units in the full opposing pool. For every target bucket with factor `R > 1`:
+
+```text
+I_0 = normal shots assigned to the firing ship
+
+weighted_t = I_k * n_t
+assigned_t = floor(weighted_t / N)
+           + 1 when combatHash(seed, round, side, firing unit, target lane + (k + 1) * 8192) mod N
+             < weighted_t mod N
+
+continueBps = floor((R - 1) * 10,000 / R)
+scaled_t = assigned_t * continueBps
+extra_t = floor(scaled_t / 10,000)
+        + 1 when combatHash(seed, round, side, firing unit, target lane, 30,000 + k) mod 10,000
+          < scaled_t mod 10,000
+
+I_(k + 1) = sum(extra_t for every live eligible target bucket)
+total extra shots = sum(I_(k + 1)) for k = 0..63
+```
+
+`combatHash(seed, round, side, firing unit, target lane, stream)` is exactly `uint256(keccak256(abi.encode(keccak256("veydrift.classic-combat-random-stream.v1"), seed, round, side, firing unit, target lane, stream)))`.
+
+The battle engine then applies each generated shot with the same attack, shield, hull, and explosion rules as normal shots. A bucket with no live units, no incoming shots, or factor `1` produces zero extra shots. The deterministic combat hash means the same indexed battle seed and state produce the same rapidfire result; it is not wallet- or UI-generated randomness.
 
 Combat example:
 

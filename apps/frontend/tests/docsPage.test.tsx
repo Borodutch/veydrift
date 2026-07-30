@@ -54,6 +54,32 @@ energy scale = produced / required
     expect(rawDocs).toContain("# Veydrift Documentation");
     expect(rawDocs).toContain("GitHub: https://github.com/Borodutch/veydrift");
     expect(rawDocs).toContain("Combat example:");
+    expect(rawDocs).toContain("### Rapidfire Reference");
+    for (const row of [
+      "| Cruiser | Light Fighter | 6 |",
+      "| Destroyer | Small Cargo | 3 |",
+      "| Destroyer | Large Cargo | 3 |",
+      "| Destroyer | Battlecruiser | 2 |",
+      "| Battlecruiser | Small Cargo | 3 |",
+      "| Battlecruiser | Large Cargo | 4 |",
+      "| Battlecruiser | Heavy Fighter | 4 |",
+      "| Battlecruiser | Cruiser | 4 |",
+      "| Battlecruiser | Battleship | 7 |",
+      "| Reaper | Destroyer | 2 |",
+      "| Reaper | Deathstar | 10 |",
+      "| Pathfinder | Recycler | 3 |",
+      "| Cruiser | Rocket Launcher | 10 |",
+      "| Bomber | Rocket Launcher | 20 |",
+      "| Bomber | Light Laser | 20 |",
+      "| Bomber | Heavy Laser | 10 |",
+      "| Bomber | Ion Cannon | 10 |",
+      "| Destroyer | Light Laser | 10 |",
+      "| Deathstar | Any defense | 200 |",
+      "| Reaper | Plasma Turret | 2 |",
+    ]) expect(rawDocs).toContain(row);
+    expect(rawDocs).toContain("MAX_RAPIDFIRE_CHAIN = 64");
+    expect(rawDocs).toContain("continueBps = floor((R - 1) * 10,000 / R)");
+    expect(rawDocs).toContain('keccak256("veydrift.classic-combat-random-stream.v1")');
     expect(rawDocs).not.toContain("Veydrift AI Reference");
     expect(existsSync(new URL("../public/docs.md", import.meta.url))).toBe(false);
 
