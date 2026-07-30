@@ -1097,6 +1097,67 @@ describe("Mission Control battle reports", () => {
     expect(text).toContain("No joinable alliance attacks.");
   });
 
+  test("VEY-KANEO-783: canonical membership alone controls Alliance visibility across loss, stale rows, and rejoin", () => {
+    const now = Date.parse("2026-07-30T17:30:00.000Z");
+    const joinable = mission(
+      "783",
+      "AcsAttack",
+      "Outbound",
+      "0x2222222222222222222222222222222222222222",
+      "8",
+      "9",
+      now + 120_000,
+    );
+    const props = missionControlProps(now, { joinableAttacks: [joinable] });
+
+    const memberTree = MissionControlPage({ ...props, hasAlliance: true });
+    const memberAllianceButton = findElements(memberTree, "button")
+      .find((node) => node.props?.["data-active-tab-button"] === "alliance");
+    expect(memberAllianceButton).toBeDefined();
+    // One responsive tab control covers the touch/mobile and desktop layouts.
+    expect(String(memberAllianceButton?.props?.className)).toContain("py-2");
+    expect(String(memberAllianceButton?.props?.className)).toContain("sm:py-1");
+
+    for (const transition of ["dissolved", "left-or-removed"] as const) {
+      const nonmemberTree = MissionControlPage({ ...props, hasAlliance: false });
+      expect(
+        findElements(nonmemberTree, "button")
+          .some((node) => node.props?.["data-active-tab-button"] === "alliance"),
+        transition,
+      ).toBe(false);
+      const nonmemberText = collectText(nonmemberTree).join(" ");
+      expect(nonmemberText).not.toContain("Alliance (1)");
+      expect(nonmemberText).not.toContain("#783");
+    }
+
+    const rejoinedTree = MissionControlPage({ ...props, hasAlliance: true });
+    expect(
+      findElements(rejoinedTree, "button")
+        .some((node) => node.props?.["data-active-tab-button"] === "alliance"),
+    ).toBe(true);
+  });
+
+  test("VEY-KANEO-783: losing membership repairs a persisted Alliance view back to My missions", () => {
+    const now = Date.parse("2026-07-30T17:30:00.000Z");
+    persistMissionControlView({ activePage: 3, activeTab: "alliance", pastPage: 2, pastTab: "all" });
+    try {
+      const tree = MissionControlPage({
+        ...missionControlProps(now, {}),
+        hasAlliance: false,
+      });
+
+      expect(sectionByData(tree, "data-active-tab")?.props?.["data-active-tab"]).toBe("mine");
+      expect(resolveMissionControlView()).toEqual({
+        activePage: 0,
+        activeTab: "mine",
+        pastPage: 2,
+        pastTab: "all",
+      });
+    } finally {
+      persistMissionControlView({ activePage: 0, activeTab: "mine", pastPage: 0, pastTab: "mine" });
+    }
+  });
+
   test("paginates the My missions tab at 25 rows per page", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
     const outgoing = Array.from({ length: 26 }, (_unused, index) =>

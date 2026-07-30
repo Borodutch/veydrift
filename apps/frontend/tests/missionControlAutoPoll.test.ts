@@ -139,6 +139,13 @@ describe("VEY-KANEO-433 Mission Control auto-poll wiring", () => {
     expect(source).toContain("window.setInterval(pollMissionControl, TOP_BAR_RESOURCE_POLL_INTERVAL_MS)");
     // The periodic poll refreshes both the lists and the open battle-report detail together.
     expect(source).toContain("Promise.allSettled([refreshMissionControl(), refreshOpenMissionDetailSilently()]).finally(");
+    // VEY-KANEO-783: the shared Mission Control refresher also reloads canonical alliance
+    // membership, so dissolve/leave/removal hides Alliance without reconnecting or reloading.
+    const refresher = source.slice(
+      source.indexOf("const refreshMissionControl = useCallback"),
+      source.indexOf("const refreshFinishedBuildingState", source.indexOf("const refreshMissionControl = useCallback")),
+    );
+    expect(refresher).toContain("refreshAllianceState()");
     // Tightened one-shot refresh around the next resolution ETA.
     expect(source).toContain("nextMissionResolutionEventMs(fleetVisibility, Date.now())");
     expect(source).toContain("MISSION_RESOLUTION_REFRESH_BUFFER_MS");
