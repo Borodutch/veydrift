@@ -7,7 +7,7 @@ import { formatDurationUntil } from "../durationFormat";
 import { formatUserTimestamp } from "../timestampFormat";
 import type { AllianceDiplomacyStatus, AllianceRole, ChainAllianceState, HighscoreEntry, WalletPlanetsResponse } from "../walletFlow";
 import { fetchWalletPlanets, shortAddress } from "../walletFlow";
-import { PageHeader, RefreshButton, refreshButtonState } from "./PageHeader";
+import { refreshButtonState } from "./PageHeader";
 import { VeydriftLoader } from "./VeydriftLoader";
 import { AllianceSkeleton } from "./LoadingSkeletons";
 import { escapeCloseRef } from "./modalDismiss";
@@ -102,7 +102,6 @@ export function AlliancePage({
   onLeaveAlliance,
   onOpenAlliance,
   onOpenPlayer,
-  onRefresh,
   onSetRole,
   onSetDiplomacy,
   onTransferOwnership,
@@ -191,12 +190,6 @@ export function AlliancePage({
 
   return (
     <section className="grid min-h-0 gap-4">
-      <PageHeader
-        actions={<RefreshButton loading={loading} onRefresh={onRefresh} title="Refresh alliance state" />}
-        title="Alliance"
-        titleSize="xl"
-      />
-
       {error ? (
         isGameUnavailableMessage(error) ? <GameUnavailableNotice /> : <Notice tone="error">{error}</Notice>
       ) : null}
@@ -308,11 +301,6 @@ export function AllianceInvitesPage({
 }: AllianceInvitesPageProps) {
   return (
     <section className="invite-page grid min-h-0 gap-4">
-      <PageHeader
-        title="Invite"
-        titleSize="xl"
-      />
-
       {referralProgramPanel}
     </section>
   );

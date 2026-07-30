@@ -8329,6 +8329,10 @@ export function PlayableMvpApp({
   );
 
   const showPlanetSelector = hasPlanetSelectorChoice(walletPlanets);
+  const selectorResearchQueue = researchQueueWithPlanetAttribution(
+    activeResearchQueue(effectiveResearchState?.queue) ?? activeResearchQueue(onChainQueues?.research) ?? null,
+    effectiveResearchState?.planetId ?? activePlanetId,
+  );
   const mobilePlanetPicker = showPlanetSelector ? (
     <PlanetSelector
       fleetVisibility={displayFleetVisibility}
@@ -8337,7 +8341,7 @@ export function PlayableMvpApp({
       onOrderChange={handlePlanetPickerOrderChange}
       onSelect={handleSelectManagedPlanet}
       planets={orderedWalletPlanets}
-      researchQueue={activeResearchQueue(effectiveResearchState?.queue) ?? activeResearchQueue(onChainQueues?.research) ?? null}
+      researchQueue={selectorResearchQueue}
       selectedBodyKind={activeBodyKind}
       selectedPlanetId={activePlanetId}
     />
@@ -8359,7 +8363,7 @@ export function PlayableMvpApp({
       onOrderChange={handlePlanetPickerOrderChange}
       onSelect={handleSelectManagedPlanet}
       planets={orderedWalletPlanets}
-      researchQueue={activeResearchQueue(effectiveResearchState?.queue) ?? activeResearchQueue(onChainQueues?.research) ?? null}
+      researchQueue={selectorResearchQueue}
       selectedBodyKind={activeBodyKind}
       selectedPlanetId={activePlanetId}
     />
@@ -9312,6 +9316,7 @@ function PlanetSelector({
       onPlanetPointerUp={finishPointerDrag}
       onSelect={onSelect}
       planet={planet}
+      researchQueue={researchQueue}
       selectedBodyKind={selectedBodyKind}
       selectedPlanet={selectedPlanet}
       shouldPreventPlanetTouchMove={shouldPreventPlanetTouchMove}
@@ -9322,7 +9327,6 @@ function PlanetSelector({
     return (
       <section aria-label="Select planet" className="block min-w-0 max-w-full overflow-x-auto overscroll-x-contain">
         <span aria-live="polite" className="sr-only">{reorderAnnouncement}</span>
-        <PlanetSelectorResearchProgress now={now} queue={researchQueue} />
         <div className="flex w-max min-w-full gap-2 pb-1">
           {selectorItems}
         </div>
@@ -9333,7 +9337,6 @@ function PlanetSelector({
   return (
     <aside aria-label="Select planet" className="hidden w-32 shrink-0 border-l border-white/10 bg-[#07111d]/92 p-2 shadow-2xl shadow-black/20 backdrop-blur-xl lg:flex lg:flex-col">
       <span aria-live="polite" className="sr-only">{reorderAnnouncement}</span>
-      <PlanetSelectorResearchProgress now={now} queue={researchQueue} />
       <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
         {selectorItems}
       </div>
@@ -9356,6 +9359,7 @@ function PlanetSelectorItem({
   onPlanetPointerUp,
   onSelect,
   planet,
+  researchQueue,
   selectedBodyKind,
   selectedPlanet,
   shouldPreventPlanetTouchMove,
@@ -9374,6 +9378,7 @@ function PlanetSelectorItem({
   onPlanetPointerUp: (event: JSX.TargetedPointerEvent<HTMLButtonElement>) => void;
   onSelect: (planetId: string, bodyKind?: OrbitBodyKind) => void;
   planet: ManagedPlanetResponse;
+  researchQueue: QueueStateResponse | null | undefined;
   selectedBodyKind: OrbitBodyKind;
   selectedPlanet: ManagedPlanetResponse;
   shouldPreventPlanetTouchMove: (planetId: string) => boolean;
@@ -9419,6 +9424,7 @@ function PlanetSelectorItem({
         onSelect={onSelect}
         planet={planet}
         reordering={dragging}
+        researchQueue={researchQueue}
         selected={selectedPlanetBody}
         shouldPreventTouchMove={() => shouldPreventPlanetTouchMove(planet.planetId)}
         showMoonIndicator={planet.moon?.exists === true && !hasDedicatedMoonSelector}
@@ -9450,6 +9456,7 @@ function PlanetSelectorButton({
   onSelect,
   planet,
   reordering,
+  researchQueue,
   selected,
   shouldPreventTouchMove,
   showMoonIndicator,
@@ -9469,6 +9476,7 @@ function PlanetSelectorButton({
   onSelect: (planetId: string, bodyKind?: OrbitBodyKind) => void;
   planet: ManagedPlanetResponse;
   reordering?: boolean;
+  researchQueue: QueueStateResponse | null | undefined;
   selected: boolean;
   shouldPreventTouchMove?: () => boolean;
   showMoonIndicator: boolean;
@@ -9538,7 +9546,7 @@ function PlanetSelectorButton({
       <span className="block max-w-full truncate font-mono text-[0.6rem] leading-3 text-slate-400">
         {planet.coordinates}
       </span>
-      <PlanetSelectorProgressBars now={now} planet={planet} />
+      <PlanetSelectorProgressBars now={now} planet={planet} researchQueue={researchQueue} />
     </button>
   );
 }
@@ -9546,11 +9554,13 @@ function PlanetSelectorButton({
 function PlanetSelectorProgressBars({
   now,
   planet,
+  researchQueue,
 }: {
   now: number;
   planet: ManagedPlanetResponse;
+  researchQueue: QueueStateResponse | null | undefined;
 }) {
-  const bars = planetSelectorQueueProgressBars(planet, now).filter((bar) => bar.active);
+  const bars = planetSelectorQueueProgressBars(planet, now, researchQueue).filter((bar) => bar.active);
   if (bars.length === 0) return null;
 
   const summary = bars.map((bar) => bar.title).join(". ");
@@ -9588,53 +9598,6 @@ type PlanetSelectorProgressBar = {
   title: string;
 };
 
-export function PlanetSelectorResearchProgress({
-  now,
-  queue,
-}: {
-  now: number;
-  queue: QueueStateResponse | null | undefined;
-}) {
-  const preview = researchQueuePreview(queue);
-  const bar = planetSelectorQueueProgressBar({
-    color: "bg-violet-300",
-    kind: "research",
-    label: "Research",
-    now,
-    preview,
-    queue,
-  });
-  if (!bar.active) return null;
-
-  // Research is wallet/global, so the selector renders it once instead of copying
-  // the same queue onto every planet card.
-  return (
-    <div
-      aria-label={`Selector research progress. ${preview.label}`}
-      className="mb-2 grid min-w-0 gap-1 rounded border border-violet-200/15 bg-violet-200/[0.055] p-1.5 text-left"
-      data-planet-selector-research-progress="true"
-      title={preview.label}
-    >
-      <div className="min-w-0 text-[0.6rem] leading-3 text-violet-100">
-        <span
-          className="min-w-0 break-words font-semibold [overflow-wrap:anywhere]"
-          data-planet-selector-research-name="true"
-        >
-          {preview.label}
-        </span>
-      </div>
-      <span className="h-1.5 overflow-hidden rounded-full border border-white/5 bg-white/10">
-        <span
-          className={`block h-full rounded-full ${bar.color} ${bar.indeterminate ? "w-2/3 animate-pulse" : "transition-[width]"}`}
-          data-planet-selector-progress="research"
-          data-planet-selector-progress-active="true"
-          style={bar.indeterminate ? undefined : { width: `${Math.round(bar.progress * 100)}%` }}
-        />
-      </span>
-    </div>
-  );
-}
-
 function researchQueuePreview(queue: QueueStateResponse | null | undefined): { label: string } {
   const research = queue?.itemId === undefined
     ? undefined
@@ -9645,7 +9608,9 @@ function researchQueuePreview(queue: QueueStateResponse | null | undefined): { l
 function planetSelectorQueueProgressBars(
   planet: ManagedPlanetResponse,
   now: number,
+  researchQueue?: QueueStateResponse | null | undefined,
 ): PlanetSelectorProgressBar[] {
+  const attributedResearchQueue = researchQueueForPlanet(researchQueue, planet.planetId);
   return [
     planetSelectorQueueProgressBar({
       color: "bg-amber-300",
@@ -9671,7 +9636,49 @@ function planetSelectorQueueProgressBars(
       preview: shipQueuePreview(planet.queues.ship),
       queue: planet.queues.ship,
     }),
+    planetSelectorQueueProgressBar({
+      color: "bg-violet-300",
+      kind: "research",
+      label: "Research",
+      now,
+      preview: researchQueuePreview(attributedResearchQueue),
+      queue: attributedResearchQueue,
+    }),
   ];
+}
+
+export function researchQueueForPlanet(
+  queue: QueueStateResponse | null | undefined,
+  planetId: string,
+): QueueStateResponse | null {
+  if (!queue?.active || !queue.planetId || queue.planetId !== planetId) return null;
+  return queue;
+}
+
+const selectorResearchOriginByQueueKey = new Map<string, string>();
+
+export function researchQueueWithPlanetAttribution(
+  queue: QueueStateResponse | null | undefined,
+  fallbackPlanetId: string | null | undefined,
+): QueueStateResponse | null {
+  if (!queue?.active) return null;
+
+  const queueKey = [
+    queue.kind ?? "research",
+    queue.itemId ?? "unknown",
+    queue.targetLevel ?? "unknown",
+    queue.readyAt ?? "unknown",
+  ].join(":");
+  const planetId =
+    queue.planetId ??
+    selectorResearchOriginByQueueKey.get(queueKey) ??
+    fallbackPlanetId ??
+    undefined;
+
+  if (!planetId) return queue;
+
+  selectorResearchOriginByQueueKey.set(queueKey, planetId);
+  return queue.planetId === planetId ? queue : { ...queue, planetId };
 }
 
 function planetSelectorQueueProgressBar({

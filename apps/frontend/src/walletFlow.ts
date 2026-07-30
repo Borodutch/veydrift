@@ -353,6 +353,7 @@ export type QueueAsOfNowResponse = {
 export type QueueStateResponse = {
   active: boolean;
   kind: string | null;
+  planetId?: string;
   itemId?: number;
   targetLevel?: number;
   quantity?: number;

@@ -16,9 +16,9 @@ import {
   type ProductionRequirementState,
   productionQueueViewModel,
 } from "./ProductionCatalog";
-import { PageHeader, RefreshButton, refreshButtonState } from "./PageHeader";
+import { refreshButtonState } from "./PageHeader";
 import type { RequirementTarget } from "./RequirementFlairs";
-import { CatalogSkeleton } from "./LoadingSkeletons";
+import { ProductionCatalogSkeleton } from "./LoadingSkeletons";
 import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailableNotice";
 
 type ShipyardActionState =
@@ -75,7 +75,6 @@ export function ShipyardPage({
   onBuild,
   onCollect,
   onOpenRequirement,
-  onRefresh,
   onSelectShip,
   overviewQueue,
   productionRates,
@@ -97,11 +96,6 @@ export function ShipyardPage({
 
   return (
     <div className="grid gap-4">
-      <PageHeader
-        actions={<RefreshButton loading={loading} onRefresh={onRefresh} title="Refresh shipyard state" />}
-        title="Shipyard"
-      />
-
       <StatusPanel
         actionState={actionState}
         error={error}
@@ -110,7 +104,7 @@ export function ShipyardPage({
       />
 
       {initialLoading ? (
-        <CatalogSkeleton label="Loading shipyard" />
+        <ProductionCatalogSkeleton groups={[4, 8, 3]} label="Loading shipyard" />
       ) : (
         <ProductionSection
           actionPending={actionState.status === "pending"}
@@ -274,12 +268,13 @@ export function shipProductionItems({
     return {
       actionLabel: "Build",
       blockedReason,
-      cost: totalCost,
+      cost: baseCost,
       ...(durationSeconds === undefined ? {} : { durationSeconds }),
       countLabel: "At planet",
       countValue: owned,
+      detailLayout: "inline",
       detailSections: shipDetailSections({
-        cost: totalCost,
+        cost: baseCost,
         durationSeconds,
         energyPerUnit,
         owned,
@@ -294,7 +289,7 @@ export function shipProductionItems({
       queued,
       requirements,
       status: queued > 0 ? "queued" : shipUnavailable ? "unavailable" : missing.length === 0 ? "ready" : "locked",
-      statusLabel: queued > 0 ? "Queued" : undefined,
+      statusLabel: undefined,
     };
   });
 }

@@ -3,10 +3,9 @@ import { useState } from "preact/hooks";
 import { formatCost } from "../buildingDetails";
 import { formatDuration } from "../durationFormat";
 import type { Resources } from "../playableMvp";
-import { timestampToMs } from "../timestampFormat";
 import type { QueueStateResponse } from "../walletFlow";
 import { OptimizedImage } from "./OptimizedImage";
-import { QueueProgressPanel } from "./QueueProgressPanel";
+import { formatQueueEta, QueueProgressPanel } from "./QueueProgressPanel";
 import {
   RequirementFlairs as SharedRequirementFlairs,
   type RequirementFlair,
@@ -56,6 +55,7 @@ export type ProductionCatalogItem<Key extends string = string> = {
   disabled: boolean;
   actionLabel: string;
   detailNote: string;
+  detailLayout?: "sections" | "inline" | undefined;
   detailSections?: ProductionDetailSection[] | undefined;
   notes?: string[] | undefined;
   thumbnailStyle?: Record<string, string> | undefined;
@@ -202,7 +202,6 @@ export function ProductionCatalog<Key extends string>({
   onBuild,
   onOpenRequirement,
   onQuantity,
-  onRefreshQueue,
   onSelect,
   queue,
   selectedKey,
@@ -214,10 +213,7 @@ export function ProductionCatalog<Key extends string>({
     <div className="grid gap-4">
       {queue && (
         <ProductionQueuePanel
-          actionPending={actionPending}
-          canTransact={canTransact}
           now={now}
-          onRefresh={onRefreshQueue}
           queue={queue}
         />
       )}
@@ -259,27 +255,14 @@ export function ProductionCatalog<Key extends string>({
 }
 
 function ProductionQueuePanel({
-  actionPending,
-  canTransact,
   now,
-  onRefresh,
   queue,
 }: {
-  actionPending: boolean;
-  canTransact: boolean;
   now: number;
-  onRefresh?: (() => void) | undefined;
   queue: ProductionQueue;
 }) {
-  const ready = isQueueReady(queue.readyAt, now);
-
   return (
     <QueueProgressPanel
-      action={onRefresh ? {
-        disabled: !canTransact || actionPending,
-        label: "Refresh queue",
-        onClick: onRefresh,
-      } : undefined}
       asset={queue.asset}
       label={queue.label}
       now={now}
@@ -291,25 +274,42 @@ function ProductionQueuePanel({
       readyAt={queue.readyAt}
       remainingQuantity={queue.remainingQuantity}
       startedAt={queue.startedAt}
-      title="Active queue"
+      title="Queue"
       tone="cyan"
     >
-      <div className="grid gap-2">
-        <span>{ready ? "Ready now." : "Production in progress."}</span>
-        {queue.backlog && queue.backlog.length > 0 ? (
-          <div className="grid gap-1 border-t border-white/10 pt-2 text-xs text-slate-300">
-            <span className="font-semibold uppercase tracking-[0.14em] text-slate-500">Queued next</span>
-            {queue.backlog.map((entry, index) => (
-              <div className="flex items-center justify-between gap-3" key={`${entry.label}-${index}`}>
-                <span className="min-w-0 truncate">
-                  {entry.label}{entry.quantity ? ` x${formatter.format(entry.quantity)}` : ""}
+      {queue.backlog && queue.backlog.length > 0 ? (
+        queue.backlog.map((entry, index) => {
+          const entryTitle = `${entry.label}${entry.quantity ? ` ×${formatter.format(entry.quantity)}` : ""}`;
+          return (
+            <span
+              className="inline-flex items-center gap-1.5"
+              key={`${entry.label}-${index}`}
+              title={entryTitle}
+            >
+              {entry.asset ? (
+                <OptimizedImage
+                  alt=""
+                  className="h-6 w-6 shrink-0 rounded object-contain"
+                  sizes="icon"
+                  src={entry.asset}
+                />
+              ) : (
+                <span className="h-6 w-6 shrink-0 rounded bg-white/5" />
+              )}
+              <span className="grid gap-0.5 leading-none">
+                {entry.quantity ? (
+                  <span className="text-[11px] font-medium tabular-nums text-slate-300">
+                    ×{formatter.format(entry.quantity)}
+                  </span>
+                ) : null}
+                <span className="text-[9px] tabular-nums text-slate-500">
+                  {formatQueueEta(entry.readyAt)}
                 </span>
-                <span className="shrink-0 text-slate-500">{formatQueueReadyAt(entry.readyAt)}</span>
-              </div>
-            ))}
-          </div>
-        ) : null}
-      </div>
+              </span>
+            </span>
+          );
+        })
+      ) : null}
     </QueueProgressPanel>
   );
 }
@@ -342,10 +342,10 @@ function CatalogButton<Key extends string>({
       onClick={() => onSelect(item.key)}
       type="button"
     >
-      <div className="h-11 w-11 overflow-hidden rounded border border-white/10 bg-black/20 p-1">
+      <div className="h-11 w-11 overflow-hidden rounded border border-white/10 bg-black/20">
         <OptimizedImage
           alt=""
-          className="h-full w-full object-contain"
+          className="h-full w-full object-cover"
           sizes="icon"
           src={item.asset}
           style={item.thumbnailStyle}
@@ -386,62 +386,37 @@ function SelectedProductionPanel<Key extends string>({
 
   const quantityInput = item.quantityInput ?? item.quantity;
   const quantityInvalid = item.quantityValid === false;
+  const quantityDigits = Math.max(1, String(quantityInput).length);
 
   return (
-    <aside className="grid gap-4 rounded border border-white/10 bg-[#101624] p-4 xl:sticky xl:top-4 xl:order-2">
-      <div className="grid grid-cols-[84px_minmax(0,1fr)] gap-3">
-        <div className="aspect-square overflow-hidden rounded border border-white/10 bg-black/20 p-1">
+    <aside className="grid min-w-0 max-w-full gap-3 overflow-hidden rounded border border-white/10 bg-[#101624] p-4 xl:sticky xl:top-4 xl:order-2">
+      <div
+        className="grid grid-cols-[84px_minmax(0,1fr)] gap-3 xl:grid-cols-1 xl:gap-4"
+        data-selected-production-layout="featured"
+      >
+        <div className="aspect-square overflow-hidden rounded border border-white/10 bg-black/20 p-1 xl:aspect-[4/3] xl:w-full xl:p-0">
           <OptimizedImage
             alt=""
-            className="h-full w-full object-contain"
-            sizes="shipThumbnail"
+            className="h-full w-full object-contain xl:object-cover"
+            sizes="(min-width: 1280px) 348px, 84px"
             src={item.asset}
             style={item.thumbnailStyle}
           />
         </div>
         <div className="min-w-0">
-          <h3 className="text-base font-semibold text-white">{item.label}</h3>
+          <h3 className="text-base font-semibold text-white xl:text-lg">{item.label}</h3>
           <p className="mt-1 text-xs text-slate-400">{item.detailNote}</p>
+          <div className="mt-3">
+            <SelectedProductionDetails item={item} />
+          </div>
         </div>
       </div>
 
       {item.notes?.length ? (
-        <div className="grid gap-2 text-xs leading-5 text-slate-300">
+        <div className="hidden gap-2 text-xs leading-5 text-slate-300 xl:grid">
           {item.notes.map((note) => <p key={note}>{note}</p>)}
         </div>
       ) : null}
-
-      {item.detailSections?.length ? (
-        <div className="grid gap-3">
-          {item.detailSections.map((section) => (
-            <div className="grid gap-2" key={section.title}>
-              <h4 className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">{section.title}</h4>
-              <dl className="grid grid-cols-2 gap-2 text-xs">
-                {section.stats.map((stat) => (
-                  <Stat
-                    className={stat.wide ? "col-span-2" : ""}
-                    hint={stat.hint}
-                    key={`${section.title}-${stat.label}`}
-                    label={stat.label}
-                    value={stat.value}
-                  />
-                ))}
-              </dl>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div className="grid gap-2">
-          <h4 className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Details</h4>
-          <dl className="grid grid-cols-2 gap-2 text-xs">
-            <Stat className="col-span-2" label="Price" value={item.cost ? formatProductionPrice(item.cost) : "-"} />
-            <Stat label={item.countLabel} value={item.countValue === undefined ? "unavailable" : format(item.countValue)} />
-            {item.durationSeconds === undefined ? null : (
-              <Stat label="Build time" value={formatDuration(item.durationSeconds)} />
-            )}
-          </dl>
-        </div>
-      )}
 
       <ProductionRequirementFlairs
         missing={item.missing}
@@ -451,24 +426,44 @@ function SelectedProductionPanel<Key extends string>({
 
       <div className="grid gap-2">
         <div className="flex flex-wrap items-center gap-2">
-          <input
-            aria-label={`${item.label} quantity`}
-            className="h-11 w-24 rounded border border-white/10 bg-black/20 px-2 text-sm text-white outline-none focus:border-signal/60 sm:h-9"
-            inputMode="numeric"
-            min={1}
-            onBlur={() => {
-              if (quantityInvalid) {
-                onQuantity(item.key, 1);
-              }
-            }}
-            onInput={(event) => {
-              const rawValue = (event.currentTarget as HTMLInputElement).value;
-              onQuantity(item.key, rawValue);
-            }}
-            step={1}
-            type="number"
-            value={quantityInput}
-          />
+          <div className="grid grid-cols-[2.75rem_auto_2.75rem] items-center gap-1 sm:grid-cols-[2rem_auto_2rem]">
+            <button
+              aria-label={`Decrease ${item.label} quantity`}
+              className="h-11 rounded border border-white/10 bg-white/[0.03] text-sm font-semibold text-slate-300 transition hover:border-white/20 hover:text-white disabled:cursor-not-allowed disabled:text-slate-600 sm:h-9"
+              disabled={quantityInvalid || item.quantity <= 1}
+              onClick={() => onQuantity(item.key, Math.max(1, item.quantity - 1))}
+              type="button"
+            >
+              -
+            </button>
+            <input
+              aria-label={`${item.label} quantity`}
+              className="h-9 min-w-16 rounded border border-white/10 bg-[#070913] px-2 text-center font-mono text-sm text-white outline-none [appearance:textfield] [color-scheme:dark] focus:border-signal/50 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+              inputMode="numeric"
+              min={1}
+              onBlur={() => {
+                if (quantityInvalid) {
+                  onQuantity(item.key, 1);
+                }
+              }}
+              onInput={(event) => {
+                const rawValue = (event.currentTarget as HTMLInputElement).value;
+                onQuantity(item.key, rawValue);
+              }}
+              step={1}
+              style={{ width: `calc(${quantityDigits}ch + 3rem)` }}
+              type="number"
+              value={quantityInput}
+            />
+            <button
+              aria-label={`Increase ${item.label} quantity`}
+              className="h-11 rounded border border-white/10 bg-white/[0.03] text-sm font-semibold text-slate-300 transition hover:border-white/20 hover:text-white disabled:cursor-not-allowed disabled:text-slate-600 sm:h-9"
+              onClick={() => onQuantity(item.key, (parseProductionQuantity(quantityInput) ?? 1) + 1)}
+              type="button"
+            >
+              +
+            </button>
+          </div>
           <button
             className="h-11 rounded-md border border-signal/40 bg-signal/10 px-3 text-sm font-semibold text-signal transition hover:bg-signal/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500 sm:h-9"
             disabled={item.disabled || quantityInvalid}
@@ -485,6 +480,62 @@ function SelectedProductionPanel<Key extends string>({
         ) : null}
       </div>
     </aside>
+  );
+}
+
+function SelectedProductionDetails<Key extends string>({
+  item,
+}: {
+  item: ProductionCatalogItem<Key>;
+}) {
+  if (item.detailSections?.length && item.detailLayout !== "inline") {
+    return (
+      <div className="grid gap-3">
+        {item.detailSections.map((section) => (
+          <div className="grid gap-2" key={section.title}>
+            <h4 className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">{section.title}</h4>
+            <dl className="grid grid-cols-2 gap-2 text-xs">
+              {section.stats.map((stat) => (
+                <Stat
+                  className={stat.wide ? "col-span-2" : ""}
+                  hint={stat.hint}
+                  key={`${section.title}-${stat.label}`}
+                  label={stat.label}
+                  value={stat.value}
+                />
+              ))}
+            </dl>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  const stats: ProductionDetailStat[] = item.detailSections?.length
+    ? item.detailSections.flatMap((section) => section.stats)
+    : [
+        { label: "Price", value: item.cost ? formatProductionPrice(item.cost) : "-" },
+        {
+          label: item.countLabel,
+          value: item.countValue === undefined ? "unavailable" : format(item.countValue),
+        },
+        ...(item.durationSeconds === undefined
+          ? []
+          : [{ label: "Build time", value: formatDuration(item.durationSeconds) }]),
+      ];
+
+  return (
+    <p className="flex min-w-0 flex-wrap gap-x-2 text-xs leading-5 text-slate-400">
+      {stats.map((stat, index) => (
+        <span
+          className={stat.label === "Price" ? "min-w-0 break-words" : "whitespace-nowrap"}
+          key={`${stat.label}-${index}`}
+          title={stat.hint}
+        >
+          {stat.label} <span className="text-slate-300">{stat.value}</span>
+        </span>
+      ))}
+    </p>
   );
 }
 
@@ -550,20 +601,6 @@ function Stat({
       {hint ? <dd className="mt-1 line-clamp-2 text-[10px] leading-3 text-slate-500">{hint}</dd> : null}
     </div>
   );
-}
-
-function isQueueReady(readyAt: string | null, now = Date.now()): boolean {
-  const readyAtMs = timestampToMs(readyAt);
-  return readyAtMs !== undefined && readyAtMs <= now;
-}
-
-function formatQueueReadyAt(readyAt: string | null): string {
-  const readyAtMs = timestampToMs(readyAt);
-  if (readyAtMs === undefined) return "Ready time unknown";
-  return new Date(readyAtMs).toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
 }
 
 function format(value: number): string {

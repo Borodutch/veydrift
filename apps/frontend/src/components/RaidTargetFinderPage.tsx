@@ -32,7 +32,6 @@ import {
 } from "../raidTargetFinder";
 import { defenseCatalog, shipCatalog } from "../playableMvp";
 import { OptimizedImage } from "./OptimizedImage";
-import { PageHeader, RefreshButton } from "./PageHeader";
 import { PlanetMoonSubsection } from "./PlanetMoonIndicator";
 import { PlanetMissionLines } from "./PlanetMissionLines";
 import { RaidTargetsSkeleton } from "./LoadingSkeletons";
@@ -247,12 +246,6 @@ export function RaidTargetFinderPage({
 
   return (
     <section className="space-y-4">
-      <PageHeader
-        actions={<RefreshButton loading={loading} onRefresh={load} title="Refresh raid targets" />}
-        title="Raid Finder"
-        titleSize="xl"
-      />
-
       {!currentWallet ? (
         <div className="rounded border border-amber-300/20 bg-amber-300/10 p-3 text-sm text-amber-100">
           Connect your wallet to compute distances from your active planet and hide protected or allied targets.

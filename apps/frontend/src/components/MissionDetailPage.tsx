@@ -16,7 +16,7 @@ import {
   missionRouteLeg,
   shortAddress,
 } from "./missionRoute";
-import { PageHeader, RefreshButton } from "./PageHeader";
+import { PageHeader } from "./PageHeader";
 import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailableNotice";
 
 type MissionActionContext = "incoming" | "observer" | "outgoing" | "returning";
@@ -62,7 +62,6 @@ export function MissionDetailPage({
   onShareReport,
   onCounterplay,
   onRecall,
-  onRetry,
   onSelectCoordinates,
   onSelectMoon,
   onSelectPlayer,
@@ -80,9 +79,7 @@ export function MissionDetailPage({
           </button>
         )}
         actions={(
-          <>
-            <RefreshButton loading={loading} onRefresh={onRetry} title="Refresh mission" />
-            <button
+          <button
               aria-label="Share battle report"
               className="inline-flex h-11 w-11 items-center justify-center rounded border border-cyan-300/30 bg-cyan-300/10 text-sm font-medium text-cyan-100 transition hover:bg-cyan-300/20 sm:h-9 sm:w-9"
               onClick={(event) => {
@@ -97,7 +94,6 @@ export function MissionDetailPage({
             >
               <Share2 aria-hidden="true" size={15} />
             </button>
-          </>
         )}
         title={(
           <span className="inline-flex flex-wrap items-center gap-2">

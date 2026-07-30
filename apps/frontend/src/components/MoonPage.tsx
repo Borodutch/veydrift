@@ -14,7 +14,6 @@ import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import {
   InspectInfoBlock,
 } from "./InspectProgressLayout";
-import { PageHeader, RefreshButton } from "./PageHeader";
 import { ActionReasonNote } from "./ActionReasonNote";
 import { InlineSyncIndicator } from "./VeydriftLoader";
 import { MoonSkeleton } from "./LoadingSkeletons";
@@ -74,7 +73,6 @@ export function MoonPage({
   moonState,
   onBurnChicken,
   onJumpGate,
-  onRefresh,
   onStartBuilding,
   onStartDefense,
   parentPlanetLabel,
@@ -85,16 +83,8 @@ export function MoonPage({
   const hasMoon = Boolean(moon?.exists);
   const unavailableReason = moonState?.unavailableReason;
   const moonUnavailable = moonState?.moonAvailable === false;
-  const isLoading = Boolean(loading);
-
   return (
     <div className="grid gap-4">
-      <PageHeader
-        actions={onRefresh ? <RefreshButton loading={isLoading} onRefresh={onRefresh} title="Refresh moon state" /> : undefined}
-        title="Moon"
-        titleSize="xl"
-      />
-
       {!hasMoon ? (
         <ChickenBurnPanel
           action={action}
@@ -809,16 +799,7 @@ function MoonDefenseSection({
       queue={productionQueueViewModel(moonState?.defenseQueue, defenseCatalog)}
       selectedKey={selectedDefenseKey}
       title="Moon Defenses"
-    >
-      {moonState?.defenseQueue?.active ? (
-        <div className="rounded border border-amber-300/20 bg-amber-300/10 px-3 py-2 text-xs text-amber-200">
-          <span>
-            Defense queue: {moonDefenseLabel(moonState.defenseQueue.itemId)} x{moonState.defenseQueue.quantity ?? 0} / ready{" "}
-            {formatMoonReadyAt(moonState.defenseQueue.readyAt)}
-          </span>
-        </div>
-      ) : null}
-    </ProductionSection>
+    />
   );
 }
 
@@ -1435,10 +1416,6 @@ function moonBuildingLabel(itemId: number | undefined): string {
     { id: 2, label: "Jump Gate" },
     { id: 3, label: "Shipyard" },
   ].find((building) => building.id === itemId)?.label ?? "Moon building";
-}
-
-function moonDefenseLabel(itemId: number | undefined): string {
-  return defenseCatalog.find((defense) => defense.id === itemId)?.label ?? "Moon defense";
 }
 
 function firstMissingRequirementLabel(rows: RequirementRow[]): string | undefined {

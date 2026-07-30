@@ -1,49 +1,24 @@
 import { describe, expect, test } from "bun:test";
-import type { ComponentChildren, VNode } from "preact";
-
 import { InspectPageHeader } from "./components/InspectProgressLayout";
 import { MoonPage } from "./components/MoonPage";
-import { PageHeader } from "./components/PageHeader";
 
-describe("page header separators", () => {
-  test("keeps inspect progress headers aligned with the shared page header separator", () => {
+describe("title-free page headers", () => {
+  test("omits inspect progress headers when there are no page actions", () => {
     const header = InspectPageHeader({ title: "Research" });
 
-    expect(classNameOf(header)).toContain("border-b");
-    expect(classNameOf(header)).toContain("border-white/10");
-    expect(classNameOf(header)).toContain("pb-4");
+    expect(header).toBeNull();
   });
 
-  test("keeps moon screen header aligned with the shared page header separator", () => {
+  test("omits the moon screen header", () => {
     const page = MoonPage({ loading: false });
-    const headerNode = findPageHeader(page);
-
-    expect(headerNode).not.toBeNull();
-    if (!headerNode) throw new Error("Moon page header was not rendered");
-
-    expect(headerNode.props.bordered).not.toBe(false);
-    expect(classNameOf(PageHeader(headerNode.props))).toContain("border-b");
+    expect(visibleText(page)).not.toContain("Moon Operations");
   });
 });
 
-function classNameOf(node: ComponentChildren): string {
-  if (!isVNode(node)) return "";
-  return String((node.props as { className?: unknown }).className ?? "");
-}
-
-function findPageHeader(node: ComponentChildren): VNode<Parameters<typeof PageHeader>[0]> | null {
-  if (!isVNode(node)) return null;
-  if (node.type === PageHeader) return node as VNode<Parameters<typeof PageHeader>[0]>;
-
-  const children = (node.props as { children?: ComponentChildren }).children;
-  const childNodes = Array.isArray(children) ? children : [children];
-  for (const child of childNodes) {
-    const found = findPageHeader(child);
-    if (found) return found;
-  }
-  return null;
-}
-
-function isVNode(node: ComponentChildren): node is VNode {
-  return Boolean(node && typeof node === "object" && "props" in node);
+function visibleText(node: unknown): string {
+  if (node === null || node === undefined || typeof node === "boolean") return "";
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(visibleText).join(" ");
+  if (typeof node !== "object" || !("props" in node)) return "";
+  return visibleText((node as { props?: { children?: unknown } }).props?.children);
 }

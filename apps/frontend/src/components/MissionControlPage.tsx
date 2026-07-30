@@ -33,7 +33,7 @@ import {
   missionRouteLeg,
   shortAddress,
 } from "./missionRoute";
-import { PageHeader, RefreshButton, refreshButtonState } from "./PageHeader";
+import { PageHeader, refreshButtonState } from "./PageHeader";
 import { MissionControlSkeleton } from "./LoadingSkeletons";
 import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailableNotice";
 
@@ -159,7 +159,6 @@ export function MissionControlPage({
   onMissionFiltersChange,
   onMissionNumberSearchChange,
   onRecall,
-  onRefresh,
   planetArchetypesByCoordinate = EMPTY_PLANET_ARCHETYPE_LOOKUP,
   reportMissionId,
   reportUrlForMission,
@@ -297,7 +296,6 @@ export function MissionControlPage({
               }}
             />
             <MissionRowsDisclosureControl hidden={!hasVisibleExpandableRows} />
-            <RefreshButton loading={loading || missionArchiveLoading} onRefresh={onRefresh} title="Refresh missions" />
           </>
         )}
         title="Mission Control"

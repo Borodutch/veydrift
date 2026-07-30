@@ -169,6 +169,7 @@ export type MissionAsOfNow = {
 export type QueueState = {
   active: boolean;
   kind: string | null;
+  planetId?: string;
   itemId?: number;
   targetLevel?: number;
   quantity?: number;

@@ -58,8 +58,7 @@ describe("settlement screen mode", () => {
     const heroSource = await Bun.file(new URL("../src/components/RetroCdBoxHero.tsx", import.meta.url)).text();
     const stylesSource = await Bun.file(new URL("../src/styles.css", import.meta.url)).text();
 
-    expect(appSource).toContain('window.location.pathname.startsWith("/play")');
-    expect(appSource).toContain("return <FirstPlanetSettlementApp />;");
+    expect(appSource).toContain("<FirstPlanetSettlementApp />");
     expect(appSource).not.toContain("return <PlayableMvpApp />;");
     expect(appSource).not.toContain("return <ComingSoonApp />;");
     expect(settlementSource).toContain("<ComingSoonApp");

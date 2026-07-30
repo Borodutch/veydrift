@@ -237,6 +237,7 @@ describe("Shipyard page display helpers", () => {
       actionLabel: "Build",
       countLabel: "At planet",
       countValue: 4,
+      detailLayout: "inline",
       detailNote: "Attack 5 · Shield 10 · Hull 400 · Cargo 5,000",
       detailSections: [
         {
@@ -253,7 +254,7 @@ describe("Shipyard page display helpers", () => {
               label: "At planet",
               value: "4",
             },
-            { label: "Price", value: "Metal 6,000, Crystal 6,000", wide: true },
+            { label: "Price", value: "Metal 2,000, Crystal 2,000", wide: true },
           ],
         },
       ],
@@ -386,6 +387,7 @@ describe("Shipyard page display helpers", () => {
       ?.find((section) => section.title === "Build")
       ?.stats.find((stat) => stat.label === "Build time");
     expect(buildStat?.value).toBe(formatDuration(180));
+    expect(smallCargo?.cost).toEqual({ metal: 2000, crystal: 2000, deuterium: 0 });
   });
 
   test("omits build time when the backend supplies no per-unit duration (VEY-KANEO-472)", () => {
@@ -683,7 +685,7 @@ describe("Shipyard page display helpers", () => {
       disabled: false,
       queued: 3,
       status: "queued",
-      statusLabel: "Queued",
+      statusLabel: undefined,
     });
     expect(items.find((item) => item.key === "lightFighter")).toMatchObject({
       blockedReason: undefined,

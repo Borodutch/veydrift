@@ -45,17 +45,15 @@ describe("AlliancePage loading display", () => {
     expect(stylesSource).toContain(".invite-page .referral-copy-button");
   });
 
-  test("uses the shared labeled refresh button treatment", () => {
-    expect(alliancePageSource).toContain("<RefreshButton");
-    expect(alliancePageSource).toContain("Refresh alliance state");
-    expect(alliancePageSource).toContain("Refresh");
+  test("omits the redundant manual refresh control", () => {
+    expect(alliancePageSource).not.toContain("<RefreshButton");
+    expect(alliancePageSource).not.toContain("Refresh alliance state");
     expect(alliancePageSource).not.toContain('className="icon-button" onClick={onRefresh}');
   });
 
-  test("uses the shared labeled refresh button treatment on inspected alliances", () => {
-    expect(inspectPagesSource).toContain("<RefreshButton");
-    expect(inspectPagesSource).toContain("loading={disabled}");
-    expect(inspectPagesSource).toContain("Refresh alliance state");
+  test("omits the redundant manual refresh control on inspected alliances", () => {
+    expect(inspectPagesSource).not.toContain("<RefreshButton");
+    expect(inspectPagesSource).not.toContain("Refresh alliance state");
     expect(inspectPagesSource).not.toContain('<button className="icon-button" disabled={actionBusy} onClick={onRefresh}');
   });
 

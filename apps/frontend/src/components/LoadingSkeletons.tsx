@@ -56,6 +56,91 @@ export function CatalogSkeleton({ label, tiles = 9 }: { label: string; tiles?: n
   );
 }
 
+function ProductionTileSkeleton(): JSX.Element {
+  return (
+    <div className="grid min-h-16 grid-cols-[44px_minmax(0,1fr)] items-center gap-2 rounded border border-white/10 bg-[#101624] p-2">
+      <Skeleton className="h-11 w-11 rounded" />
+      <div className="min-w-0">
+        <Skeleton className="h-3.5 w-3/4" />
+        <Skeleton className="mt-2 h-3 w-1/2" />
+      </div>
+    </div>
+  );
+}
+
+function ProductionDetailSkeleton(): JSX.Element {
+  return (
+    <div className={`${CARD} grid min-w-0 gap-3 xl:order-2`}>
+      <div className="grid grid-cols-[84px_minmax(0,1fr)] gap-3 xl:grid-cols-1 xl:gap-4">
+        <Skeleton className="aspect-square w-full rounded xl:aspect-[4/3]" />
+        <div className="min-w-0">
+          <Skeleton className="h-5 w-1/2" />
+          <Skeleton className="mt-2 h-3.5 w-3/4" />
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Skeleton className="h-3 w-24" />
+            <Skeleton className="h-3 w-20" />
+            <Skeleton className="h-3 w-24" />
+          </div>
+        </div>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <Skeleton className="h-7 w-20 rounded" />
+        <Skeleton className="h-7 w-24 rounded" />
+      </div>
+      <div className="flex items-center gap-2">
+        <Skeleton className="h-9 w-8 rounded" />
+        <Skeleton className="h-9 w-16 rounded" />
+        <Skeleton className="h-9 w-8 rounded" />
+        <Skeleton className="h-9 w-16 rounded" />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Production-page skeleton matching the live Defenses and Shipyard layout:
+ * compact queue strip, grouped row selectors, and a featured 4:3 detail card.
+ */
+export function ProductionCatalogSkeleton({
+  groups,
+  label,
+}: {
+  groups: readonly number[];
+  label: string;
+}): JSX.Element {
+  return (
+    <SkeletonRegion className="grid gap-4" label={label}>
+      <div className="grid gap-2 rounded border border-cyan-300/20 bg-cyan-300/[0.08] px-2.5 py-2">
+        <Skeleton className="h-2.5 w-12" />
+        <div className="flex items-center gap-2">
+          <Skeleton className="h-7 w-7 rounded" />
+          <Skeleton className="h-3 w-10" />
+          <Skeleton className="h-1 w-20 rounded-full" />
+          <Skeleton className="h-3 w-16" />
+        </div>
+      </div>
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(320px,380px)] xl:items-start">
+        <ProductionDetailSkeleton />
+        <div className="grid gap-3 xl:order-1">
+          {groups.map((tileCount, groupIndex) => (
+            <section className="grid gap-2" key={`${groupIndex}-${tileCount}`}>
+              <div className="flex items-center gap-3">
+                <Skeleton className="h-3 w-32" />
+                <span className="h-px flex-1 bg-white/10" />
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2 2xl:grid-cols-3">
+                {skeletonList(tileCount, (tileIndex) => (
+                  <ProductionTileSkeleton key={`${groupIndex}-${tileIndex}`} />
+                ))}
+              </div>
+            </section>
+          ))}
+        </div>
+      </div>
+    </SkeletonRegion>
+  );
+}
+
 /** Moon page skeleton: metrics row, structures grid, jump-gate controls. */
 export function MoonSkeleton(): JSX.Element {
   return (

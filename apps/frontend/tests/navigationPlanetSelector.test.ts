@@ -114,10 +114,10 @@ describe("navigation and planet selector UI source contracts", () => {
   });
 
   test("shows per-planet queue progress bars in the selector", () => {
-    expect(playableSource).toContain("<PlanetSelectorProgressBars now={now} planet={planet} />");
+    expect(playableSource).toContain("<PlanetSelectorProgressBars now={now} planet={planet} researchQueue={researchQueue} />");
     expect(playableSource).toContain("data-planet-selector-progress-bars={planet.planetId}");
     expect(playableSource).toContain("data-planet-selector-progress={bar.kind}");
-    expect(playableSource).toContain("const bars = planetSelectorQueueProgressBars(planet, now).filter((bar) => bar.active);");
+    expect(playableSource).toContain("const bars = planetSelectorQueueProgressBars(planet, now, researchQueue).filter((bar) => bar.active);");
     expect(playableSource).toContain('className="grid w-full gap-1"');
     expect(playableSource).toContain("buildingQueuePreview(planet.queues.building)");
     expect(playableSource).toContain("defenseQueuePreview(planet.queues.defense)");
@@ -134,17 +134,15 @@ describe("navigation and planet selector UI source contracts", () => {
     expect(playableSource).not.toContain('className="grid w-full grid-cols-3 gap-1 min-h-');
   });
 
-  test("renders research as the fourth selector progress category without per-planet duplication", () => {
-    expect(playableSource).toContain("researchQueue={activeResearchQueue(effectiveResearchState?.queue) ?? activeResearchQueue(onChainQueues?.research) ?? null}");
-    expect(playableSource).toContain("<PlanetSelectorResearchProgress now={now} queue={researchQueue} />");
-    expect(playableSource).toContain('data-planet-selector-research-progress="true"');
-    expect(playableSource).toContain('data-planet-selector-progress="research"');
-    expect(playableSource).toContain("Research is wallet/global, so the selector renders it once");
+  test("renders research as the fourth progress bar only on its owning planet", () => {
+    expect(playableSource).toContain("const selectorResearchQueue = researchQueueWithPlanetAttribution(");
+    expect(playableSource).toContain("researchQueue={selectorResearchQueue}");
+    expect(playableSource).toContain("researchQueueForPlanet(researchQueue, planet.planetId)");
+    expect(playableSource).toContain('kind: "research"');
+    expect(playableSource).toContain('color: "bg-violet-300"');
     expect(playableSource).toContain("function researchQueuePreview(queue: QueueStateResponse | null | undefined)");
-    expect(playableSource).toContain('data-planet-selector-research-name="true"');
-    expect(playableSource).toContain('className="min-w-0 break-words font-semibold [overflow-wrap:anywhere]"');
-    expect(playableSource).not.toContain('<span className="truncate font-semibold">Research</span>');
-    expect(playableSource).not.toContain('data-planet-selector-research-status="true"');
+    expect(playableSource).not.toContain("<PlanetSelectorResearchProgress");
+    expect(playableSource).not.toContain("data-planet-selector-research-progress");
     expect(playableSource).not.toContain("planet.queues.research");
   });
 

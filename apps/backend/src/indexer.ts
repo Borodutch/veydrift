@@ -380,6 +380,7 @@ type QueueRow = {
   item_id: number;
   metal_cost: string;
   original_quantity?: number | null;
+  planet_id?: string | null;
   production_rate?: string | null;
   queue_kind: string;
   quantity: number | null;
@@ -2842,7 +2843,7 @@ export class SettlementIndexer {
 
   private productionQueueProjectionCacheVersion(nowSec = nowSeconds()): string {
     const rows = this.db.query(`
-      SELECT queue_kind, item_id, target_level, quantity, ready_at, started_at,
+      SELECT queue_kind, planet_id, item_id, target_level, quantity, ready_at, started_at,
         original_quantity, unit_work_seconds, production_rate,
         metal_cost, crystal_cost, deuterium_cost, backlog_json
       FROM contract_production_queues
@@ -6285,7 +6286,7 @@ export class SettlementIndexer {
   private applyProductionQueueTimingEvent(event: IndexedProductionQueueTimingEvent): void {
     const key = queueKey(event);
     const row = this.db.query(`
-      SELECT queue_kind, item_id, target_level, quantity, ready_at, started_at,
+      SELECT queue_kind, planet_id, item_id, target_level, quantity, ready_at, started_at,
         original_quantity, unit_work_seconds, production_rate,
         metal_cost, crystal_cost, deuterium_cost, backlog_json
       FROM contract_production_queues
@@ -6955,7 +6956,7 @@ export class SettlementIndexer {
     }
 
     const row = this.db.query(`
-      SELECT queue_kind, item_id, target_level, quantity, ready_at, started_at,
+      SELECT queue_kind, planet_id, item_id, target_level, quantity, ready_at, started_at,
         original_quantity, unit_work_seconds, production_rate,
         metal_cost, crystal_cost, deuterium_cost, backlog_json
       FROM contract_production_queues
@@ -7033,7 +7034,7 @@ export class SettlementIndexer {
     }
 
     const row = this.db.query(`
-      SELECT queue_kind, item_id, target_level, quantity, ready_at, started_at,
+      SELECT queue_kind, planet_id, item_id, target_level, quantity, ready_at, started_at,
         original_quantity, unit_work_seconds, production_rate,
         metal_cost, crystal_cost, deuterium_cost, backlog_json
       FROM contract_production_queues
@@ -7130,7 +7131,7 @@ export class SettlementIndexer {
     }
 
     const row = this.db.query(`
-      SELECT queue_kind, item_id, target_level, quantity, ready_at, started_at,
+      SELECT queue_kind, planet_id, item_id, target_level, quantity, ready_at, started_at,
         original_quantity, unit_work_seconds, production_rate,
         metal_cost, crystal_cost, deuterium_cost, backlog_json
       FROM contract_production_queues
@@ -7166,6 +7167,9 @@ export class SettlementIndexer {
         deuterium: row.deuterium_cost
       }
     };
+    if (row.planet_id) {
+      queue.planetId = row.planet_id;
+    }
     if (row.target_level !== null) {
       queue.targetLevel = row.target_level;
     }
@@ -11004,6 +11008,7 @@ function queueStateFromEvent(event: QueueUpsertEvent): QueueState {
     readyAt: event.readyAt,
     cost: event.cost
   };
+  if (event.planetId !== undefined) queue.planetId = event.planetId;
   if (event.targetLevel !== undefined) queue.targetLevel = event.targetLevel;
   if (event.quantity !== undefined) queue.quantity = event.quantity;
   if (event.startedAt !== undefined) queue.startedAt = event.startedAt;

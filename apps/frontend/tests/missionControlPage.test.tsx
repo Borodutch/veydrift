@@ -222,7 +222,7 @@ describe("MissionControlPage", () => {
     });
     const text = visibleText(page);
 
-    expect(text).toContain("Mission Control");
+    expect(text).not.toContain("Mission Control");
     expect(text).not.toContain("Watch inbound attacks");
     // The top summary stat-card row was removed; the lists below convey the same counts.
     expect(text).not.toContain("Active missions 3");
@@ -285,7 +285,7 @@ describe("MissionControlPage", () => {
     expect(text).not.toContain("Contract raid protection");
   });
 
-  test("uses the shared refresh button treatment", () => {
+  test("omits the redundant manual refresh control", () => {
     expect(missionControlRefreshButtonState(false)).toEqual({ disabled: false, label: "Refresh" });
     expect(missionControlRefreshButtonState(true)).toEqual({ disabled: true, label: "Refreshing" });
 
@@ -293,9 +293,9 @@ describe("MissionControlPage", () => {
     const refreshingPage = missionControlPage({ loading: true });
     const source = readFileSync(new URL("../src/components/MissionControlPage.tsx", import.meta.url), "utf8");
 
-    expect(visibleText(idlePage)).toContain("Refresh");
-    expect(visibleText(refreshingPage)).toContain("Refreshing");
-    expect(source).toContain("<RefreshButton");
+    expect(visibleText(idlePage)).not.toContain("Refresh");
+    expect(visibleText(refreshingPage)).not.toContain("Refreshing");
+    expect(source).not.toContain("<RefreshButton");
     expect(source).not.toContain("RefreshCw");
   });
 

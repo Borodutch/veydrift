@@ -21,7 +21,7 @@ export type SfxName =
   | "tx-confirm"
   | "tx-pending";
 
-export type SfxLoopName = "ambient" | "disc-spin";
+export type SfxLoopName = "disc-spin";
 
 const MUTED_STORAGE_KEY = "veydrift:sfx-muted";
 const MASTER_VOLUME = 0.5;
@@ -256,37 +256,17 @@ export function startSfxLoop(name: SfxLoopName): void {
   loopGain.connect(masterGain);
   const nodes: AudioScheduledSourceNode[] = [];
 
-  if (name === "disc-spin") {
-    const source = context.createBufferSource();
-    const filter = context.createBiquadFilter();
-    source.buffer = ensureNoiseBuffer(context);
-    source.loop = true;
-    filter.type = "bandpass";
-    filter.frequency.value = 900;
-    filter.Q.value = 2.2;
-    source.connect(filter).connect(loopGain);
-    source.start();
-    nodes.push(source);
-    loopGain.gain.setTargetAtTime(0.05, context.currentTime, 0.25);
-  } else {
-    // ambient: two detuned low triangles with a slow beating gain LFO.
-    for (const freq of [54, 54.6]) {
-      const oscillator = context.createOscillator();
-      oscillator.type = "triangle";
-      oscillator.frequency.value = freq;
-      oscillator.connect(loopGain);
-      oscillator.start();
-      nodes.push(oscillator);
-    }
-    const lfo = context.createOscillator();
-    const lfoGain = context.createGain();
-    lfo.frequency.value = 0.08;
-    lfoGain.gain.value = 0.012;
-    lfo.connect(lfoGain).connect(loopGain.gain);
-    lfo.start();
-    nodes.push(lfo);
-    loopGain.gain.setTargetAtTime(0.028, context.currentTime, 0.8);
-  }
+  const source = context.createBufferSource();
+  const filter = context.createBiquadFilter();
+  source.buffer = ensureNoiseBuffer(context);
+  source.loop = true;
+  filter.type = "bandpass";
+  filter.frequency.value = 900;
+  filter.Q.value = 2.2;
+  source.connect(filter).connect(loopGain);
+  source.start();
+  nodes.push(source);
+  loopGain.gain.setTargetAtTime(0.05, context.currentTime, 0.25);
 
   activeLoops.set(name, { gain: loopGain, nodes });
 }
@@ -325,9 +305,6 @@ export function initSfx(): void {
     const context = ensureContext();
     if (context?.state === "suspended") {
       void context.resume();
-    }
-    if (!muted) {
-      startSfxLoop("ambient");
     }
   };
   document.addEventListener("pointerdown", unlock, { once: true, passive: true });

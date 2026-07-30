@@ -3,7 +3,7 @@ import { useState } from "preact/hooks";
 
 import type { BattleReport } from "../walletFlow";
 import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailableNotice";
-import { PageHeader, RefreshButton } from "./PageHeader";
+import { PageHeader } from "./PageHeader";
 
 interface BattleReportsPageProps {
   error?: string | undefined;
@@ -20,7 +20,6 @@ export function BattleReportsPage({
   loading,
   onBack,
   onOpenBattleReport,
-  onRetry,
   reports,
   shareUrl,
 }: BattleReportsPageProps) {
@@ -45,7 +44,6 @@ export function BattleReportsPage({
             <ArrowLeft aria-hidden="true" size={15} />
             Mission Control
           </button>
-          <RefreshButton loading={loading} onRefresh={onRetry} title="Refresh battle reports" />
           <button className="inline-flex h-9 items-center justify-center gap-2 rounded border border-cyan-300/30 bg-cyan-300/10 px-3 text-sm font-medium text-cyan-100 transition hover:bg-cyan-300/20" onClick={copyShareUrl} type="button">
             <Copy aria-hidden="true" size={15} />
             {copied ? "Copied" : "Copy list link"}

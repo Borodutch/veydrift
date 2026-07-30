@@ -160,8 +160,8 @@ describe("Moon page helpers", () => {
     expect(moonPageSource).toContain('kind: "inspect" | "attack" | "transport" | "deploy" | "defend"');
   });
 
-  test("uses the larger page title styling without redundant section helper copy", () => {
-    expect(moonPageSource).toContain('titleSize="xl"');
+  test("omits the redundant page title and section helper copy", () => {
+    expect(moonPageSource).not.toContain("<PageHeader");
     expect(moonPageSource).toContain('<h3 className="text-base font-semibold text-white">Moon Structures</h3>');
     expect(moonPageSource).toContain('title="Moon Shipyard"');
     expect(moonPageSource).toContain('title="Moon Defenses"');
@@ -867,8 +867,8 @@ describe("Moon page helpers", () => {
       { quantity: 3, quantityValid: true, durationSeconds: 60 },
     ]);
     expect([moonDefense, planetDefense].map(({ cost, blockedReason, detailSections }) => ({ cost, blockedReason, detailSections }))).toEqual([
-      { cost: { metal: 6_000, crystal: 0, deuterium: 0 }, blockedReason: undefined, detailSections: undefined },
-      { cost: { metal: 6_000, crystal: 0, deuterium: 0 }, blockedReason: undefined, detailSections: undefined },
+      { cost: { metal: 2_000, crystal: 0, deuterium: 0 }, blockedReason: undefined, detailSections: undefined },
+      { cost: { metal: 2_000, crystal: 0, deuterium: 0 }, blockedReason: undefined, detailSections: undefined },
     ]);
   });
 

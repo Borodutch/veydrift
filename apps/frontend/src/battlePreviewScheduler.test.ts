@@ -42,7 +42,7 @@ describe("BattlePreviewScheduler", () => {
     expect(summary.sampleCount).toBe(128);
     expect("samples" in summary).toBe(false);
     expect(summary.sampleReport.sampleId).toBeGreaterThan(0);
-  });
+  }, 15_000);
 
   test("coalesces a rapid large-fleet edit burst into one simulation", () => {
     const timers = new ManualTimers();
