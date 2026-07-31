@@ -919,8 +919,8 @@ export function MissionCreationPage({
           {lootRatioSupported ? (
             <MissionFormSection title="Loot" eyebrow="Plunder">
               <AttackLootProjection
-                arrivalAvailable={resourceIntel.projectedArrivalLootable}
-                arrivalCarry={maxLootForecast}
+                availableCargo={cargoCapacity}
+                predictedLoot={maxLootForecast}
               />
               <LootRatioControls
                 cargoCapacity={cargoCapacity}
@@ -2864,18 +2864,18 @@ function DestinationIntelContent({
   );
 }
 
-function AttackLootProjection({
-  arrivalAvailable,
-  arrivalCarry,
+export function AttackLootProjection({
+  availableCargo,
+  predictedLoot,
 }: {
-  arrivalAvailable: MissionResourceSnapshot | null;
-  arrivalCarry: MissionResourceSnapshot;
+  availableCargo: number;
+  predictedLoot: MissionResourceSnapshot;
 }) {
   return (
     <div className="grid gap-2">
       <LootProjectionCard
-        available={arrivalAvailable}
-        carry={arrivalCarry}
+        availableCargo={availableCargo}
+        predictedLoot={predictedLoot}
         title="Loot at arrival"
       />
     </div>
@@ -2883,30 +2883,42 @@ function AttackLootProjection({
 }
 
 function LootProjectionCard({
-  available,
-  carry,
+  availableCargo,
+  predictedLoot,
   title,
 }: {
-  available: MissionResourceSnapshot | null;
-  carry: MissionResourceSnapshot;
+  availableCargo: number;
+  predictedLoot: MissionResourceSnapshot;
   title: string;
 }) {
-  const carryTotal = resourceSnapshotTotal(carry);
-  const availableTotal = available ? resourceSnapshotTotal(available) : null;
+  const predictedResources = [
+    { key: "crystal", label: "Crystal", suffix: "C" },
+    { key: "metal", label: "Metal", suffix: "M" },
+    { key: "deuterium", label: "Deuterium", suffix: "D" },
+  ] as const;
   return (
-    <section className="grid gap-1 rounded border border-white/10 bg-black/15 p-2">
-      <div className="flex items-baseline justify-between gap-3">
-        <h4 className="text-[11px] font-semibold uppercase text-slate-500">{title}</h4>
-        <p
-          className="shrink-0 text-sm font-semibold tabular-nums text-slate-200"
-          title={`${carryTotal.toLocaleString()} can be carried / ${availableTotal?.toLocaleString() ?? "unknown"} available loot`}
-        >
-          {carryTotal.toLocaleString()} / {availableTotal?.toLocaleString() ?? "Unknown"}
-        </p>
+    <section className="grid gap-2 rounded border border-white/10 bg-black/15 p-2">
+      <h4 className="text-[11px] font-semibold uppercase text-slate-500">{title}</h4>
+      <div className="grid gap-1 sm:grid-cols-3">
+        {predictedResources.map(({ key, label, suffix }) => (
+          <div
+            className="flex min-w-0 items-baseline justify-between gap-2 rounded border border-white/[0.07] bg-black/15 px-2 py-1.5 sm:grid sm:gap-0"
+            key={key}
+          >
+            <span className="text-[10px] uppercase tracking-wide text-slate-500">{label}</span>
+            <span
+              className="min-w-0 break-all text-right text-sm font-semibold tabular-nums text-slate-200"
+              title={`${formatResourceAmount(predictedLoot[key])} ${label.toLowerCase()} predicted at arrival`}
+            >
+              {formatResourceAmount(predictedLoot[key])} {suffix}
+            </span>
+          </div>
+        ))}
       </div>
-      <p className="text-right text-[10px] text-slate-500">Can carry / available loot</p>
-      <CompactFactRow label="Carry" value={formatCompactResources(carry)} />
-      <CompactFactRow label="Available" value={formatCompactResources(available)} />
+      <CompactFactRow
+        label="Available cargo"
+        value={`${formatResourceAmount(availableCargo)} after fuel`}
+      />
     </section>
   );
 }
@@ -3369,10 +3381,6 @@ function resourceLabel(key: ResourceKey): string {
 function formatCompactResources(resources: MissionResourceSnapshot | null): string {
   if (!resources) return "Unknown";
   return `${formatResourceAmount(resources.metal)} M / ${formatResourceAmount(resources.crystal)} C / ${formatResourceAmount(resources.deuterium)} D`;
-}
-
-function resourceSnapshotTotal(resources: MissionResourceSnapshot): number {
-  return resources.metal + resources.crystal + resources.deuterium;
 }
 
 function formatLossRange(losses: BattleForecastLossRange | undefined): string {

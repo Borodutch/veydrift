@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  AttackLootProjection,
   AttackIntelPanel,
   AttackOutcomePanel,
   buildMissionLaunchDraft,
@@ -633,6 +634,47 @@ describe("mission creation", () => {
       crystal: 300,
       deuterium: 60,
     });
+
+    const resourceBoundForecast = forecastRaidLoot(
+      { metal: 5, crystal: 500, deuterium: 900 },
+      200,
+      { metal: 50, crystal: 25, deuterium: 25 },
+    );
+    expect(resourceBoundForecast).toEqual({ metal: 5, crystal: 145, deuterium: 50 });
+    expect(Object.values(resourceBoundForecast).reduce((total, value) => total + value, 0)).toBe(200);
+  });
+
+  test("shows predicted raid loot as separate C / M / D values and labels post-fuel cargo", () => {
+    const projection = AttackLootProjection({
+      availableCargo: 9_816,
+      predictedLoot: { metal: 5_516, crystal: 3_239, deuterium: 1_061 },
+    });
+    const text = collectText(projection).join(" ").replace(/\s+/g, " ");
+
+    expect(text).toContain("Loot at arrival");
+    expect(text).toContain("Crystal");
+    expect(text).toContain("3,239 C");
+    expect(text).toContain("Metal");
+    expect(text).toContain("5,516 M");
+    expect(text).toContain("Deuterium");
+    expect(text).toContain("1,061 D");
+    expect(text).toContain("Available cargo 9,816 after fuel");
+    expect(text.indexOf("Crystal")).toBeLessThan(text.indexOf("Metal"));
+    expect(text.indexOf("Metal")).toBeLessThan(text.indexOf("Deuterium"));
+    expect(text).not.toContain("Can carry / available loot");
+    expect(text).not.toMatch(/\bCarry\b/);
+    expect(text).not.toContain("9,816 / 13,555");
+
+    const updatedText = collectText(AttackLootProjection({
+      availableCargo: 750_000_000,
+      predictedLoot: { metal: 20, crystal: 10, deuterium: 30 },
+    })).join(" ").replace(/\s+/g, " ");
+    expect(updatedText).toContain("10 C");
+    expect(updatedText).toContain("20 M");
+    expect(updatedText).toContain("30 D");
+    expect(updatedText).toContain("Available cargo 750,000,000 after fuel");
+    expect(missionCreationSource).toContain("availableCargo={cargoCapacity}");
+    expect(missionCreationSource).toContain("predictedLoot={maxLootForecast}");
   });
 
   test("builds target resource intel from backend production and projects lootable arrival state", () => {
@@ -1588,7 +1630,8 @@ describe("mission creation", () => {
     expect(missionCreationSource).toContain("<AttackLootProjection");
     expect(missionCreationSource).not.toContain('title="Loot now"');
     expect(missionCreationSource).toContain('title="Loot at arrival"');
-    expect(missionCreationSource).toContain("Can carry / available loot");
+    expect(missionCreationSource).toContain('label="Available cargo"');
+    expect(missionCreationSource).not.toContain("Can carry / available loot");
     expect(missionCreationSource).toContain("action.mode !== \"missile\" && !joinAttackMode && timingSummary");
     expect(missionCreationSource).toContain('className="grid gap-2 border-t border-white/10 pt-3"');
     expect(missionCreationSource).toContain('aria-label="Mission speed"');
