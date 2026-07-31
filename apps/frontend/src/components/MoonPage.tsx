@@ -21,11 +21,13 @@ import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailab
 import { MoonImage } from "./PlanetMoonIndicator";
 import {
   adaptProductionItems,
+  maxAffordableProductionQuantity,
   ProductionSection,
   type ProductionCatalogItem,
   type ProductionDetailSection,
   type ProductionQuantityInput,
   productionQueueViewModel,
+  scaleProductionCost,
 } from "./ProductionCatalog";
 import { defenseProductionItems } from "./DefensePage";
 import { RequirementFlairs, type RequirementFlair, type RequirementTarget } from "./RequirementFlairs";
@@ -821,10 +823,12 @@ export function moonShipProductionItems({
 }): ProductionCatalogItem<ShipKey>[] {
   const moonShips = moonState?.ships ?? moonState?.fleet ?? [];
 
-  return adaptProductionItems(shipyardCatalog, quantities, (ship, { quantity }) => {
+  const resources = toResources(moonState?.resourcesAsOfNow ?? moonState?.resources);
+  return adaptProductionItems(shipyardCatalog, quantities, (ship, { quantity, quantityValid }) => {
     const chainShip = moonShips.find((item) => item.id === ship.id);
     const count = chainShip?.count ?? 0;
-    const cost = toResources(chainShip?.cost);
+    const unitCost = toResources(chainShip?.cost);
+    const totalCost = unitCost && quantityValid ? scaleProductionCost(unitCost, quantity) : undefined;
     const durationSeconds = chainShip?.durationSeconds === undefined
       ? undefined
       : chainShip.durationSeconds * quantity;
@@ -832,11 +836,13 @@ export function moonShipProductionItems({
     return {
       actionLabel: "Stationed",
       blockedReason: "Moon shipyard is a stationed fleet view. Build ships from a planet Shipyard.",
-      cost: cost ? multiplyResources(cost, quantity) : undefined,
+      cost: totalCost,
+      unitCost,
+      maxQuantity: maxAffordableProductionQuantity(resources, unitCost),
       ...(durationSeconds === undefined ? {} : { durationSeconds }),
       countLabel: "On moon",
       countValue: count,
-      detailSections: moonShipDetailSections({ cost, count, durationSeconds, ship }),
+      detailSections: moonShipDetailSections({ count, durationSeconds, ship, totalCost, unitCost }),
       detailNote: ship.description,
       disabled: true,
       groupLabel: moonShipGroupLabel(ship.group),
@@ -910,22 +916,25 @@ export function moonDefenseProductionItems({
 }
 
 function moonShipDetailSections({
-  cost,
   count,
   durationSeconds,
   ship,
+  totalCost,
+  unitCost,
 }: {
-  cost: Resources | undefined;
   count: number;
   durationSeconds: number | undefined;
   ship: (typeof shipCatalog)[number];
+  totalCost: Resources | undefined;
+  unitCost: Resources | undefined;
 }): ProductionDetailSection[] {
   return [{
     title: "Stationed",
     stats: [
       { label: "On moon", value: count.toLocaleString("en-US") },
       { label: "Unit", value: ship.group === "civil" ? "Civil ship" : ship.group === "combat" ? "Combat ship" : "Special unit" },
-      { label: "Base cost", value: cost ? formatCost(cost) : "-", wide: true },
+      { label: "Total cost", value: totalCost ? formatCost(totalCost) : "-", wide: true },
+      { label: "Per unit", value: unitCost ? formatCost(unitCost) : "-", wide: true },
       ...(durationSeconds === undefined ? [] : [{ label: "Build time", value: formatDuration(durationSeconds), wide: true }]),
     ],
   }];
@@ -943,14 +952,6 @@ function toResources(resources: ChainMoonState["resources"] | ChainMoonState["de
     metal: Number(resources.metal),
     crystal: Number(resources.crystal),
     deuterium: Number(resources.deuterium),
-  };
-}
-
-function multiplyResources(resources: Resources, quantity: number): Resources {
-  return {
-    metal: resources.metal * quantity,
-    crystal: resources.crystal * quantity,
-    deuterium: resources.deuterium * quantity,
   };
 }
 

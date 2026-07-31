@@ -294,7 +294,9 @@ describe("Defense page display helpers", () => {
     });
 
     expect(items.find((item) => item.key === "rocketLauncher")).toMatchObject({
+      cost: { metal: 4_000, crystal: 0, deuterium: 0 },
       blockedReason: "Requires 500 more Metal",
+      costAffordable: false,
       labelTone: "muted",
       status: "ready",
       statusLabel: undefined,
@@ -341,6 +343,8 @@ describe("Defense page display helpers", () => {
     });
 
     expect(items.find((item) => item.key === "rocketLauncher")).toMatchObject({
+      cost: { metal: 44_000, crystal: 0, deuterium: 0 },
+      maxQuantity: 50,
       quantity: 22,
       quantityInput: "22",
       quantityValid: true,
@@ -377,6 +381,7 @@ describe("Defense page display helpers", () => {
       });
 
       expect(items.find((item) => item.key === "rocketLauncher")).toMatchObject({
+        cost: undefined,
         quantity: 1,
         quantityInput: input,
         quantityValid: false,
@@ -650,7 +655,8 @@ describe("Defense build time (VEY-KANEO-472)", () => {
 
     const rocketLauncher = items.find((item) => item.key === "rocketLauncher");
     expect(rocketLauncher?.durationSeconds).toBe(150);
-    expect(rocketLauncher?.cost).toEqual({ metal: 2000, crystal: 0, deuterium: 0 });
+    expect(rocketLauncher?.cost).toEqual({ metal: 10000, crystal: 0, deuterium: 0 });
+    expect(rocketLauncher?.unitCost).toEqual({ metal: 2000, crystal: 0, deuterium: 0 });
   });
 
   test("omits build time when the backend supplies no per-unit duration", () => {

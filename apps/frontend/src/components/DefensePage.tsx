@@ -6,12 +6,14 @@ import { activeProductionQueue } from "../productionQueueFallback";
 import { walletRecoveryActionMessage, type ChainDefenseState } from "../walletFlow";
 import {
   adaptProductionItems,
+  maxAffordableProductionQuantity,
   Notice,
   ProductionSection,
   type ProductionCatalogItem,
   type ProductionQuantityInput,
   type ProductionRequirementState,
   productionQueueViewModel,
+  scaleProductionCost,
 } from "./ProductionCatalog";
 import { refreshButtonState } from "./PageHeader";
 import type { RequirementTarget } from "./RequirementFlairs";
@@ -208,13 +210,13 @@ export function defenseProductionItems({
   productionRates?: Resources | undefined;
   transactionUnavailableReason?: string | undefined;
 }): ProductionCatalogItem<DefenseKey>[] {
-  return adaptProductionItems(defenseCatalog, quantities, (defense, { quantity }) => {
+  return adaptProductionItems(defenseCatalog, quantities, (defense, { quantity, quantityValid }) => {
     const chainDefense = defenseState?.defenses.find((item) => item.id === defense.id);
     const deployed = productionAvailable ? chainDefense?.count : undefined;
     const baseCost = productionAvailable && chainDefense
       ? resolveDefenseUnitCost(defense.baseCost, chainDefense.cost)
       : undefined;
-    const totalCost = baseCost ? multiply(baseCost, quantity) : undefined;
+    const totalCost = baseCost && quantityValid ? scaleProductionCost(baseCost, quantity) : undefined;
     // Backend-sourced per-unit build time scaled by the selected quantity (VEY-KANEO-472).
     const durationSeconds = chainDefense?.durationSeconds === undefined
       ? undefined
@@ -223,7 +225,7 @@ export function defenseProductionItems({
     const requirements = getDefenseRequirementStates(defense, defenseState);
     const limitReason = getDefenseLimitReason(defense.key, quantity, defenseState, queue);
     const affordable = resources && totalCost ? canAfford(resources, totalCost) : false;
-    const blockedReason = getBlockedReason({
+    const blockedReason = quantityValid ? getBlockedReason({
       affordable,
       canTransact,
       defenseState,
@@ -234,7 +236,7 @@ export function defenseProductionItems({
       totalCost,
       productionRates,
       transactionUnavailableReason,
-    });
+    }) : undefined;
     const disabled = Boolean(blockedReason) || actionPending;
     const queued = queuedDefenseCount(defense.id, queue);
     const combatStats = defenseCombatStats(defense);
@@ -243,7 +245,15 @@ export function defenseProductionItems({
     return {
       actionLabel: "Build",
       blockedReason,
-      cost: baseCost,
+      cost: totalCost,
+      costAffordable: totalCost === undefined ? undefined : affordable,
+      unitCost: baseCost,
+      maxQuantity: boundedDefenseMaxQuantity(
+        maxAffordableProductionQuantity(resources, baseCost),
+        defense.key,
+        defenseState,
+        queue,
+      ),
       ...(durationSeconds === undefined ? {} : { durationSeconds }),
       countLabel: "Deployed",
       countValue: deployed,
@@ -413,6 +423,31 @@ function defenseCount(defenseState: ChainDefenseState, key: DefenseKey): number 
   return defenseState.defenses.find((item) => item.id === defense.id)?.count ?? 0;
 }
 
+function boundedDefenseMaxQuantity(
+  affordableMaximum: number | undefined,
+  key: DefenseKey,
+  defenseState: ChainDefenseState | null,
+  queue: ChainDefenseState["queue"] | undefined,
+): number | undefined {
+  if (!defenseState) return affordableMaximum;
+  const queued = queuedDefenseCountByKey(key, queue);
+  let rulesMaximum: number | undefined;
+
+  if (key === "smallShieldDome" || key === "largeShieldDome") {
+    rulesMaximum = Math.max(0, 1 - defenseCount(defenseState, key) - queued);
+  } else if (key === "antiBallisticMissile" || key === "interplanetaryMissile") {
+    const usedSlots =
+      defenseCount(defenseState, "antiBallisticMissile")
+      + queuedDefenseCountByKey("antiBallisticMissile", queue)
+      + (defenseCount(defenseState, "interplanetaryMissile") + queuedDefenseCountByKey("interplanetaryMissile", queue)) * 2;
+    const slotsPerUnit = key === "antiBallisticMissile" ? 1 : 2;
+    rulesMaximum = Math.max(0, Math.floor(((defenseState.missileSiloLevel ?? 0) * 10 - usedSlots) / slotsPerUnit));
+  }
+
+  if (rulesMaximum === undefined) return affordableMaximum;
+  return affordableMaximum === undefined ? rulesMaximum : Math.min(affordableMaximum, rulesMaximum);
+}
+
 function toResources(resources: ChainDefenseState["resources"] | ChainDefenseState["defenses"][number]["cost"] | null | undefined): Resources | undefined {
   if (!resources) return undefined;
   return {
@@ -434,14 +469,6 @@ export function resolveDefenseUnitCost(
 
 function hasResourceCost(resources: Resources): boolean {
   return resources.metal !== 0 || resources.crystal !== 0 || resources.deuterium !== 0;
-}
-
-function multiply(resources: Resources, quantity: number): Resources {
-  return {
-    metal: resources.metal * quantity,
-    crystal: resources.crystal * quantity,
-    deuterium: resources.deuterium * quantity,
-  };
 }
 
 const technologyIdByKey: Partial<Record<string, number>> = {

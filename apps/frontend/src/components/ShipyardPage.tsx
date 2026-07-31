@@ -7,6 +7,7 @@ import { activeProductionQueue } from "../productionQueueFallback";
 import { walletRecoveryActionMessage, type ChainShipyardState } from "../walletFlow";
 import {
   adaptProductionItems,
+  maxAffordableProductionQuantity,
   Notice,
   formatProductionPrice,
   ProductionSection,
@@ -15,6 +16,7 @@ import {
   type ProductionQuantityInput,
   type ProductionRequirementState,
   productionQueueViewModel,
+  scaleProductionCost,
 } from "./ProductionCatalog";
 import { refreshButtonState } from "./PageHeader";
 import type { RequirementTarget } from "./RequirementFlairs";
@@ -232,12 +234,12 @@ export function shipProductionItems({
   // Build only from the buildable subset so expedition-only ships (Pathfinder) are
   // hidden from the shipyard. `shipCatalog` is still used elsewhere for queue label
   // resolution so a pre-existing on-chain queue entry keeps its name.
-  return adaptProductionItems(shipyardCatalog, quantities, (ship, { quantity }) => {
+  return adaptProductionItems(shipyardCatalog, quantities, (ship, { quantity, quantityValid }) => {
     const chainShip = shipyardState?.ships.find((item) => item.id === ship.id);
     const shipUnavailable = Boolean(shipyardState) && productionAvailable && !chainShip;
     const owned = productionAvailable && chainShip ? chainShip.count : undefined;
     const baseCost = productionAvailable && chainShip ? toResources(chainShip.cost) : undefined;
-    const totalCost = baseCost ? multiply(baseCost, quantity) : undefined;
+    const totalCost = baseCost && quantityValid ? scaleProductionCost(baseCost, quantity) : undefined;
     // Backend-sourced per-unit build time scaled by the selected quantity (VEY-KANEO-472).
     const durationSeconds = chainShip?.durationSeconds === undefined
       ? undefined
@@ -249,7 +251,7 @@ export function shipProductionItems({
     const requirements = getShipRequirementStates(ship, shipyardState);
     const affordable = resources && totalCost ? canAfford(resources, totalCost) : false;
     const queued = queuedShipCount(ship.id, queue);
-    const blockedReason = getBlockedReason({
+    const blockedReason = quantityValid ? getBlockedReason({
       affordable,
       canTransact,
       hasPlanet: Boolean(shipyardState?.homePlanetId),
@@ -260,7 +262,7 @@ export function shipProductionItems({
       totalCost,
       productionRates,
       transactionUnavailableReason,
-    });
+    }) : undefined;
     const disabled = Boolean(blockedReason) || actionPending;
     const combatStats = shipCombatStats(ship);
     const stats = combatStats.rows.map((row) => formatShipSummaryStat(row.label, row.value)).join(" · ");
@@ -268,13 +270,18 @@ export function shipProductionItems({
     return {
       actionLabel: "Build",
       blockedReason,
-      cost: baseCost,
+      cost: totalCost,
+      costAffordable: totalCost === undefined ? undefined : affordable,
+      unitCost: baseCost,
+      maxQuantity: maxAffordableProductionQuantity(resources, baseCost),
       ...(durationSeconds === undefined ? {} : { durationSeconds }),
       countLabel: "At planet",
       countValue: owned,
       detailLayout: "inline",
       detailSections: shipDetailSections({
-        cost: baseCost,
+        affordable,
+        totalCost,
+        unitCost: baseCost,
         durationSeconds,
         energyPerUnit,
         owned,
@@ -313,17 +320,21 @@ function shipNotes(ship: (typeof shipCatalog)[number]): string[] {
 }
 
 function shipDetailSections({
-  cost,
+  affordable,
   durationSeconds,
   energyPerUnit,
   owned,
   ship,
+  totalCost,
+  unitCost,
 }: {
-  cost: Resources | undefined;
+  affordable: boolean;
   durationSeconds: number | undefined;
   energyPerUnit: string | undefined;
   owned: number | undefined;
   ship: (typeof shipCatalog)[number];
+  totalCost: Resources | undefined;
+  unitCost: Resources | undefined;
 }): ProductionDetailSection[] {
   const specs = shipSpecRows(ship);
   const stat = (label: string) => specs.find((row) => row.label === label)?.value ?? "-";
@@ -346,7 +357,13 @@ function shipDetailSections({
         ...(energyPerUnit === undefined
           ? []
           : [{ label: "Energy output", value: energyPerUnit, wide: true } as const]),
-        { label: "Price", value: cost ? formatProductionPrice(cost) : "-", wide: true },
+        {
+          label: "Total cost",
+          value: totalCost ? formatProductionPrice(totalCost) : "-",
+          tone: totalCost && !affordable ? "danger" : "normal",
+          wide: true,
+        },
+        { label: "Per unit", value: unitCost ? formatProductionPrice(unitCost) : "-", wide: true },
         ...(durationSeconds === undefined
           ? []
           : [{ label: "Build time", value: formatDuration(durationSeconds), wide: true } as const]),
@@ -474,14 +491,6 @@ function toResources(resources: ChainShipyardState["resources"] | ChainShipyardS
     metal: Number(resources.metal),
     crystal: Number(resources.crystal),
     deuterium: Number(resources.deuterium),
-  };
-}
-
-function multiply(resources: Resources, quantity: number): Resources {
-  return {
-    metal: resources.metal * quantity,
-    crystal: resources.crystal * quantity,
-    deuterium: resources.deuterium * quantity,
   };
 }
 

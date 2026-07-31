@@ -70,6 +70,31 @@ describe("ProductionCatalog selected panel", () => {
     expect(increment?.props.className).toContain("h-11");
   });
 
+  test("applies Max and Reset quantity presets through the shared responsive controls", () => {
+    const quantities: ProductionQuantityInput[] = [];
+    const catalog = ProductionCatalog({
+      actionPending: false,
+      canTransact: true,
+      emptyLabel: "Select an item.",
+      items: [catalogItem({ maxQuantity: 9, quantity: 2 })],
+      onBuild: () => undefined,
+      onQuantity: (_key, quantity) => quantities.push(quantity),
+      onSelect: () => undefined,
+      selectedKey: "rocketLauncher",
+    });
+    const buttons = elementNodes(catalog).filter((node) => node.type === "button");
+    const maximum = buttons.find((node) => node.props["aria-label"] === "Rocket Launcher maximum affordable quantity");
+    const reset = buttons.find((node) => node.props["aria-label"] === "Rocket Launcher reset quantity");
+
+    maximum?.props.onClick();
+    reset?.props.onClick();
+
+    expect(quantities).toEqual([9, 1]);
+    expect(maximum?.props.className).toContain("h-11");
+    expect(maximum?.props.className).toContain("sm:h-9");
+    expect(reset?.props.className).toContain("h-11");
+  });
+
   for (const [label, input] of [
     ["empty", ""],
     ["zero", "0"],
@@ -100,7 +125,7 @@ describe("ProductionCatalog selected panel", () => {
       .find((node) => node.type === "p" && String(node.props.className).includes("leading-5 text-slate-400"));
 
     // VEY-KANEO-465: client-derived build time is removed; backend owns durations.
-    expect(visibleText(details).replace(/\s+/g, " ").trim()).toContain("Price Metal 2,000 Deployed 12");
+    expect(visibleText(details).replace(/\s+/g, " ").trim()).toContain("Total cost Metal 2,000 Deployed 12");
     expect(details?.props.className).not.toContain("border");
     expect(details?.props.className).toContain("flex-wrap");
     expect(details?.props.className).toContain("min-w-0");

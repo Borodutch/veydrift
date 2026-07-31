@@ -1,6 +1,14 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import type { ComponentChildren, VNode } from "preact";
-import { formatProductionPrice, productionQueueViewModel, selectedProductionItem } from "../src/components/ProductionCatalog";
+import {
+  formatProductionPrice,
+  maxAffordableProductionQuantity,
+  productionQueueViewModel,
+  scaleProductionCost,
+  selectedProductionItem,
+} from "../src/components/ProductionCatalog";
 import {
   getBlockedReason,
   getShipRequirementStates,
@@ -96,6 +104,29 @@ function visibleText(node: ComponentChildren): string {
 describe("Shipyard page display helpers", () => {
   test("formats shipyard prices like building cost rows", () => {
     expect(formatProductionPrice({ metal: 2_000, crystal: 2_000, deuterium: 0 })).toBe("Metal 2,000, Crystal 2,000");
+  });
+
+  test("scales total cost and derives the resource-limited Max quantity", () => {
+    const unitCost = { metal: 2_000, crystal: 2_000, deuterium: 0 };
+    expect(scaleProductionCost(unitCost, 1)).toEqual(unitCost);
+    expect(scaleProductionCost(unitCost, 3)).toEqual({ metal: 6_000, crystal: 6_000, deuterium: 0 });
+    expect(scaleProductionCost(unitCost, 5_000)).toEqual({ metal: 10_000_000, crystal: 10_000_000, deuterium: 0 });
+    expect(maxAffordableProductionQuantity(
+      { metal: 11_999, crystal: 9_999, deuterium: 0 },
+      unitCost,
+    )).toBe(4);
+  });
+
+  test("keeps total-cost and quantity controls responsive on mobile and desktop", () => {
+    const source = readFileSync(
+      fileURLToPath(new URL("../src/components/ProductionCatalog.tsx", import.meta.url)),
+      "utf8",
+    );
+    expect(source).toContain('label: "Total cost"');
+    expect(source).toContain('label: "Per unit"');
+    expect(source).toContain("sm:h-9");
+    expect(source).toContain("Max");
+    expect(source).toContain("Reset");
   });
 
   test("reports a per-ship deployment mismatch without treating the whole page as unloaded", () => {
@@ -254,7 +285,8 @@ describe("Shipyard page display helpers", () => {
               label: "At planet",
               value: "4",
             },
-            { label: "Price", value: "Metal 2,000, Crystal 2,000", wide: true },
+            { label: "Total cost", value: "Metal 6,000, Crystal 6,000", tone: "normal", wide: true },
+            { label: "Per unit", value: "Metal 2,000, Crystal 2,000", wide: true },
           ],
         },
       ],
@@ -387,7 +419,8 @@ describe("Shipyard page display helpers", () => {
       ?.find((section) => section.title === "Build")
       ?.stats.find((stat) => stat.label === "Build time");
     expect(buildStat?.value).toBe(formatDuration(180));
-    expect(smallCargo?.cost).toEqual({ metal: 2000, crystal: 2000, deuterium: 0 });
+    expect(smallCargo?.cost).toEqual({ metal: 6000, crystal: 6000, deuterium: 0 });
+    expect(smallCargo?.unitCost).toEqual({ metal: 2000, crystal: 2000, deuterium: 0 });
   });
 
   test("omits build time when the backend supplies no per-unit duration (VEY-KANEO-472)", () => {
@@ -425,6 +458,8 @@ describe("Shipyard page display helpers", () => {
     });
 
     expect(items.find((item) => item.key === "smallCargo")).toMatchObject({
+      cost: { metal: 44_000, crystal: 44_000, deuterium: 0 },
+      maxQuantity: 50,
       quantity: 22,
       quantityInput: "22",
       quantityValid: true,
@@ -449,6 +484,7 @@ describe("Shipyard page display helpers", () => {
       });
 
       expect(items.find((item) => item.key === "smallCargo")).toMatchObject({
+        cost: undefined,
         quantity: 1,
         quantityInput: input,
         quantityValid: false,
