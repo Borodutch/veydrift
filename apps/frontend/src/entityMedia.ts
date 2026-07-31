@@ -1,4 +1,4 @@
-import type { Eip1193Provider } from "./walletFlow";
+import { requestPersonalSignature, type Eip1193Provider } from "./walletFlow";
 
 export type EntityMediaKind = "planet" | "moon" | "player" | "alliance";
 export type YouTubeMedia = {
@@ -136,19 +136,17 @@ export async function updateEntityMedia(
     entityKind,
     normalizedEntityId
   );
-  const signature = await provider.request<string>({
-    method: "personal_sign",
-    params: [
-      entityMediaMessage({
-        entityId: normalizedEntityId,
-        entityKind,
-        media: preview.media,
-        version: challenge.version,
-        wallet,
-      }),
+  const signature = await requestPersonalSignature(
+    provider,
+    wallet,
+    entityMediaMessage({
+      entityId: normalizedEntityId,
+      entityKind,
+      media: preview.media,
+      version: challenge.version,
       wallet,
-    ],
-  });
+    }),
+  );
   const response = await fetch(entityMediaEndpoint(apiUrl, entityKind, normalizedEntityId), {
     body: JSON.stringify({ mediaUrl, signature, version: challenge.version, wallet }),
     headers: {
