@@ -20,6 +20,7 @@ import {
   type DefenseState,
   type FleetMissionArchiveEntry,
   type FleetMissionArchiveResponse,
+  type MissileAttackArchiveResponse,
   type FleetMissionSummary,
   type FleetMissionVisibility,
   type GlobalActiveMissionsResponse,
@@ -127,6 +128,7 @@ const acceptedCacheQueryParams = new Map<string, ReadonlySet<string>>([
   // fragment the shared cache for every planet picker selection.
   ["/wallet/*/fleet-visibility", new Set(["archive"])],
   ["/wallet/*/missions", new Set(["filter", "missionNumber", "missionType", "page", "pageSize", "planetId", "status"])],
+  ["/wallet/*/missile-attacks", new Set(["page", "pageSize", "planetId"])],
   ["/wallet/*/overview", new Set(["planetId"])],
   ["/wallet/*/queues", new Set(["planetId"])],
   ["/wallet/*/infrastructure", new Set(["planetId"])],
@@ -1197,6 +1199,17 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       try {
         return indexedWalletStateResponse(url, indexer, "mission archive", (wallet, _settlement, _planet, _detail, indexer) =>
           indexedMissionArchive(wallet, url, indexer), {
+          includeSelectedPlanet: false
+        });
+      } catch (error) {
+        return errorResponse(error, 400);
+      }
+    }
+
+    if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/missile-attacks$/)) {
+      try {
+        return indexedWalletStateResponse(url, indexer, "missile strike archive", (wallet, _settlement, _planet, _detail, indexer) =>
+          indexedMissileAttackArchive(wallet, url, indexer), {
           includeSelectedPlanet: false
         });
       } catch (error) {
@@ -2347,6 +2360,7 @@ function cacheableJsonRequestTtlMs(request: Request, url: URL): number {
   // they stay fresh across indexed mission events while still coalescing repeated UI refreshes.
   if (url.pathname.match(/^\/wallet\/[^/]+\/fleet-visibility$/)) return 60_000;
   if (url.pathname.match(/^\/wallet\/[^/]+\/missions$/)) return 30_000;
+  if (url.pathname.match(/^\/wallet\/[^/]+\/missile-attacks$/)) return 30_000;
   if (url.pathname === "/missions") return livePublicDataRequest(url) ? 1_000 : 300_000;
   if (url.pathname.match(/^\/mission\/[^/]+$/)) return 30_000;
   // Moon payloads include an as-of-now launchable ship projection for arrived Deploy missions. Like
@@ -2380,6 +2394,7 @@ function cacheableJsonRequestStaleKey(request: Request, url: URL, cacheKey: stri
   if (
     url.pathname.match(/^\/wallet\/[^/]+\/fleet-visibility$/)
     || url.pathname.match(/^\/wallet\/[^/]+\/missions$/)
+    || url.pathname.match(/^\/wallet\/[^/]+\/missile-attacks$/)
   ) {
     return cacheKey;
   }
@@ -2398,6 +2413,7 @@ function cacheableJsonRequestVersion(url: URL, indexer: SettlementIndexer): stri
   // unrelated queue completion invalidated every wallet's fleet cache and rebuilt this hot route.
   if (url.pathname.match(/^\/wallet\/[^/]+\/fleet-visibility$/)) return indexer.missionResponseCacheVersion();
   if (url.pathname.match(/^\/wallet\/[^/]+\/missions$/)) return indexer.missionResponseCacheVersion();
+  if (url.pathname.match(/^\/wallet\/[^/]+\/missile-attacks$/)) return indexer.responseCacheVersion();
   if (url.pathname === "/missions") return livePublicDataRequest(url) ? indexer.missionResponseCacheVersion() : "ttl";
   if (url.pathname.match(/^\/mission\/[^/]+$/)) return indexer.missionResponseCacheVersion();
   if (cacheableWalletSnapshotPath(url.pathname)) return indexer.responseCacheVersion();
@@ -3247,6 +3263,33 @@ function indexedMissionArchive(
       totalPages,
       hasPreviousPage: page > 1,
       hasNextPage: page < totalPages
+    }
+  };
+}
+
+function indexedMissileAttackArchive(
+  wallet: `0x${string}`,
+  url: URL,
+  indexer: SettlementIndexer
+): MissileAttackArchiveResponse {
+  const requested = missionArchivePagination(url);
+  const archive = indexer.missileAttackArchivePage(wallet, {
+    page: requested.page,
+    pageSize: requested.pageSize,
+    planetId: url.searchParams.get("planetId")
+  });
+  const totalPages = Math.max(1, Math.ceil(archive.totalEntries / requested.pageSize));
+  return {
+    wallet,
+    homePlanetId: archive.homePlanetId,
+    rows: archive.rows,
+    pagination: {
+      page: archive.page,
+      pageSize: requested.pageSize,
+      totalEntries: archive.totalEntries,
+      totalPages,
+      hasPreviousPage: archive.page > 1,
+      hasNextPage: archive.page < totalPages
     }
   };
 }

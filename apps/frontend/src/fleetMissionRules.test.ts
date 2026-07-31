@@ -8,6 +8,8 @@ import {
   fleetMissionDistanceForMission,
   fleetMissionFuelCost,
   fleetMissionTravelSeconds,
+  interplanetaryMissileRange,
+  interplanetaryMissileSystemDistance,
 } from "./fleetMissionRules";
 import type { MissionShips } from "./galaxyActions";
 
@@ -85,5 +87,21 @@ describe("fleetMissionDistance", () => {
     expect(fleetMissionFuelCost(ships, distance)).toBeGreaterThan(0);
     expect(fleetMissionTravelSeconds(distance, ships)).toBeGreaterThan(10);
     expect(fleetMissionDistanceForMission(coords, coords, "transport")).toBe(0);
+  });
+});
+
+describe("interplanetaryMissileRange", () => {
+  test("mirrors the contract's exact Impulse Drive range and same-galaxy rule", () => {
+    expect(interplanetaryMissileRange(0)).toBe(0);
+    expect(interplanetaryMissileRange(1)).toBe(4);
+    expect(interplanetaryMissileRange(4)).toBe(19);
+    expect(interplanetaryMissileSystemDistance(
+      { galaxy: 2, system: 7, position: 4 },
+      { galaxy: 2, system: 26, position: 11 },
+    )).toBe(19);
+    expect(interplanetaryMissileSystemDistance(
+      { galaxy: 2, system: 7, position: 4 },
+      { galaxy: 3, system: 7, position: 4 },
+    )).toBeNull();
   });
 });

@@ -590,6 +590,30 @@ export type FleetMissionArchiveResponse = {
   };
 };
 
+export type IndexedMissileAttack = {
+  eventId: string;
+  attacker: string;
+  originPlanetId: string;
+  targetPlanetId: string;
+  primaryTargetDefenseId: number;
+  launched: number;
+  intercepted: number;
+  hits: number;
+  destroyedPrimary: number;
+  transactionHash: string;
+  blockNumber: string;
+  logIndex: string;
+  originPlanet: FleetMissionPlanetReference | null;
+  targetPlanet: FleetMissionPlanetReference | null;
+};
+
+export type MissileAttackArchiveResponse = {
+  wallet: string;
+  homePlanetId: string | null;
+  rows: IndexedMissileAttack[];
+  pagination: FleetMissionArchiveResponse["pagination"];
+};
+
 export type DefenderPlanetState = {
   fleet: Array<{ id: number; count: number }>;
   defenses: Array<{ id: number; count: number }>;
@@ -4020,6 +4044,18 @@ export async function fetchFleetMissionArchive(
   params.set("page", String(options.page ?? 1));
   params.set("pageSize", String(options.pageSize ?? 25));
   return fetchWalletJson<FleetMissionArchiveResponse>(apiUrl, wallet, `missions?${params.toString()}`, "Mission archive");
+}
+
+export async function fetchMissileAttackArchive(
+  apiUrl: string,
+  wallet: string,
+  options: { page?: number; pageSize?: number; planetId?: string } = {}
+): Promise<MissileAttackArchiveResponse> {
+  const params = new URLSearchParams();
+  if (options.planetId) params.set("planetId", options.planetId);
+  params.set("page", String(options.page ?? 1));
+  params.set("pageSize", String(options.pageSize ?? 25));
+  return fetchWalletJson<MissileAttackArchiveResponse>(apiUrl, wallet, `missile-attacks?${params.toString()}`, "Missile strike archive");
 }
 
 export async function fetchGlobalActiveMissions(apiUrl: string): Promise<GlobalActiveMissionsResponse> {

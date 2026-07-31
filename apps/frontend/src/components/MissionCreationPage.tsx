@@ -1,4 +1,5 @@
 import type { ComponentChildren } from "preact";
+import { Flame } from "lucide-preact";
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { Coordinates, DebrisField, Planet, PublicStationedDefender } from "../types";
 import { ActionReasonNote } from "./ActionReasonNote";
@@ -10,6 +11,8 @@ import {
   fleetMissionDistance,
   fleetMissionDistanceForMission,
   fleetMissionFuelCost,
+  interplanetaryMissileRange,
+  interplanetaryMissileSystemDistance,
   fleetMissionShipCount,
   fleetMissionTravelSeconds,
   type AcsDefendFuelBreakdown,
@@ -377,6 +380,7 @@ export function MissionCreationPage({
   originCoords,
   originLabel,
   resources,
+  missileInventory,
   shipyardState,
   submitBlocker,
   target,
@@ -409,6 +413,8 @@ export function MissionCreationPage({
   originCoords: Coordinates | undefined;
   originLabel?: string | undefined;
   resources?: MissionResourceSnapshot | undefined;
+  /** Current origin-planet Interplanetary Missile count (defense id 9). */
+  missileInventory?: number | undefined;
   shipyardState: ChainShipyardState | null;
   submitBlocker?: string | undefined;
   target: Planet | undefined;
@@ -457,6 +463,18 @@ export function MissionCreationPage({
   const totalCargoCapacity = action.mode === "missile" ? 0 : fleetMissionCargoCapacity(ships);
   const cargoCapacity = action.mode === "missile" ? 0 : fleetMissionAvailableCargoCapacity(ships, distance, driveLevels, speedPercent);
   const selectedShipCount = action.mode === "missile" ? 0 : fleetMissionShipCount(ships);
+  const availableMissiles = Math.max(0, Math.trunc(missileInventory ?? 0));
+  const missileRange = interplanetaryMissileRange(driveLevels.impulseDrive);
+  const missileSystemDistance = originCoords ? interplanetaryMissileSystemDistance(originCoords, coords) : null;
+  const missileRangeBlocker = action.mode !== "missile" ? undefined
+    : missileSystemDistance === null
+      ? "Interplanetary missiles cannot cross galaxies."
+      : missileSystemDistance > missileRange
+        ? `Target is ${missileSystemDistance} systems away; Impulse Drive ${Math.max(0, Math.trunc(driveLevels.impulseDrive ?? 0))} reaches ${missileRange}.`
+        : undefined;
+  const missileTargetOptions = defenseCatalog.filter((defense) => defense.id >= 0 && defense.id <= 7);
+  const selectedMissileTarget = missileTargetOptions.find((defense) => defense.id === primaryTargetId) ?? missileTargetOptions[0];
+  const selectedMissileTargetCount = target?.publicState?.defenses?.find((defense) => defense.id === primaryTargetId)?.count ?? 0;
   const effectiveResources = effectiveOriginIsMoon ? bodySelection?.originMoonResources : resources;
   const effectiveShipyardState = effectiveOriginIsMoon ? bodySelection?.originMoonShipyardState ?? null : shipyardState;
   const availableShips = useMemo(() => missionShipOptionsForAction(action, effectiveShipyardState), [action, effectiveShipyardState]);
@@ -566,6 +584,8 @@ export function MissionCreationPage({
   // Net holding fuel rides in the defending fleet's own deuterium spend on-chain, so it counts toward
   // both the deuterium balance and cargo-capacity gates.
   const effectiveFuelCost = holdingBreakdown ? fuelCost + holdingBreakdown.netHoldingFuel : fuelCost;
+  const hasInsufficientFuel = effectiveResources !== undefined
+    && (effectiveResources.deuterium ?? 0) < effectiveFuelCost;
 
   const blockedReason = missionDraftBlocker({
     acsArrivalTooSlow,
@@ -582,6 +602,8 @@ export function MissionCreationPage({
     lootRatioActive,
     lootRatioTotal,
     originCoords,
+    missileInventory: availableMissiles,
+    missileRangeBlocker,
     quantity,
     resources: effectiveResources,
     selectedShipCount,
@@ -645,12 +667,14 @@ export function MissionCreationPage({
     speedPercent,
     ships,
   }));
-  const confirmLabel = missionConfirmButtonLabel({
-    acsDefendMode,
-    actionPendingLabel,
-    defenseHoldMode,
-    joinAttackMode,
-  });
+  const confirmLabel = action.mode === "missile"
+    ? actionPendingLabel ?? "Launch missile strike"
+    : missionConfirmButtonLabel({
+      acsDefendMode,
+      actionPendingLabel,
+      defenseHoldMode,
+      joinAttackMode,
+    });
 
   return (
     <section
@@ -752,20 +776,37 @@ export function MissionCreationPage({
           ) : null}
 
           {action.mode === "missile" ? (
-            <MissionFormSection title="Payload" eyebrow="Ordnance">
+            <MissionFormSection summary={`${availableMissiles.toLocaleString()} ready`} title="Missile strike" eyebrow="Ordnance">
+              <p className="mb-3 text-sm text-slate-300">
+                Instant strike — no ships, fuel, fleet slot, or return flight.
+              </p>
               <div className="grid gap-3 sm:grid-cols-2">
                 <NumberField
-                  label="Missiles"
+                  label="Interplanetary missiles"
+                  max={availableMissiles}
                   min={1}
                   onChange={setQuantity}
                   value={quantity}
                 />
-                <NumberField
-                  label="Primary target"
-                  min={0}
-                  onChange={setPrimaryTargetId}
-                  value={primaryTargetId}
-                />
+                <label className="grid gap-1">
+                  <span className="text-xs text-slate-500">Primary defense target</span>
+                  <select
+                    aria-label="Primary defense target"
+                    className="h-9 rounded border border-white/10 bg-[#070913] px-2 text-sm text-white outline-none focus:border-signal/50"
+                    onChange={(event) => setPrimaryTargetId(Number((event.currentTarget as HTMLSelectElement).value))}
+                    value={primaryTargetId}
+                  >
+                    {missileTargetOptions.map((defense) => {
+                      const count = target?.publicState?.defenses?.find((item) => item.id === defense.id)?.count ?? 0;
+                      return <option key={defense.id} value={defense.id}>{defense.label} — {count.toLocaleString()}</option>;
+                    })}
+                  </select>
+                </label>
+              </div>
+              <div className="mt-3 grid gap-2 rounded border border-sky-300/20 bg-sky-300/5 px-3 py-2 text-xs text-sky-100/90 sm:grid-cols-2">
+                <p>Range: Impulse Drive {Math.max(0, Math.trunc(driveLevels.impulseDrive ?? 0))} → {missileRange.toLocaleString()} systems (5 × drive − 1).</p>
+                <p>Route: {missileSystemDistance === null ? "different galaxy — unavailable" : `${missileSystemDistance.toLocaleString()} / ${missileRange.toLocaleString()} systems`}</p>
+                <p className="sm:col-span-2">Target anti-ballistic missiles intercept one-for-one first. Remaining hits destroy up to {selectedMissileTargetCount.toLocaleString()} {selectedMissileTarget?.label ?? "selected defenses"}.</p>
               </div>
             </MissionFormSection>
           ) : specificLoadout ? (
@@ -812,10 +853,13 @@ export function MissionCreationPage({
 
           {joinAttackMode || action.mode === "missile" ? null : (
             <MissionFormSection
-              summary={`Fuel ${effectiveFuelCost.toLocaleString()} deuterium`}
               title="Speed"
               eyebrow="Flight plan"
             >
+              <MissionFuelCost
+                fuelCost={effectiveFuelCost}
+                insufficient={hasInsufficientFuel}
+              />
               <div className="flex items-center gap-3">
                 <input
                   aria-label="Mission speed"
@@ -1198,6 +1242,40 @@ function MissionFormSection({
   );
 }
 
+export function MissionFuelCost({
+  fuelCost,
+  insufficient,
+}: {
+  fuelCost: number;
+  insufficient: boolean;
+}) {
+  const formattedFuelCost = Math.max(0, Math.trunc(fuelCost)).toLocaleString();
+
+  return (
+    <output
+      aria-atomic="true"
+      aria-label={`Mission fuel cost: ${formattedFuelCost} deuterium${insufficient ? ". Insufficient deuterium." : ""}`}
+      aria-live="polite"
+      className={`flex min-w-0 items-center justify-between gap-3 rounded-md border px-3 py-2 shadow-sm ${
+        insufficient
+          ? "border-amber-200/50 bg-amber-300/15 shadow-amber-950/20"
+          : "border-cyan-200/45 bg-cyan-300/10 shadow-cyan-950/20"
+      }`}
+      htmlFor="mission-speed"
+    >
+      <span className={`flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] ${insufficient ? "text-amber-100" : "text-cyan-100"}`}>
+        <Flame aria-hidden="true" className="h-4 w-4 shrink-0" />
+        Mission fuel cost
+      </span>
+      <span className="flex min-w-0 flex-wrap items-baseline justify-end gap-x-1 gap-y-0.5 text-right">
+        <strong className="text-base font-bold leading-none tabular-nums text-white sm:text-lg">{formattedFuelCost}</strong>
+        <span className={`text-xs font-semibold ${insufficient ? "text-amber-100" : "text-cyan-100"}`}>deuterium</span>
+        {insufficient ? <span className="basis-full text-[11px] font-semibold text-amber-100">Insufficient deuterium</span> : null}
+      </span>
+    </output>
+  );
+}
+
 function RouteTiming({
   align,
   time,
@@ -1263,6 +1341,8 @@ export function missionDraftBlocker({
   lootRatioActive = false,
   lootRatioTotal = 0,
   originCoords,
+  missileInventory,
+  missileRangeBlocker,
   quantity,
   resources,
   selectedShipCount,
@@ -1284,6 +1364,8 @@ export function missionDraftBlocker({
   lootRatioActive?: boolean | undefined;
   lootRatioTotal?: number | undefined;
   originCoords: Coordinates | undefined;
+  missileInventory?: number | undefined;
+  missileRangeBlocker?: string | undefined;
   quantity: number;
   resources: MissionResourceSnapshot | undefined;
   selectedShipCount: number;
@@ -1294,7 +1376,11 @@ export function missionDraftBlocker({
   if (submitBlocker) return submitBlocker;
   if (!originCoords) return "Active origin planet is unavailable.";
   // Interplanetary missiles do not occupy fleet slots, so they skip the fleet-slot gate below.
-  if (action.mode === "missile") return quantity > 0 ? undefined : "Choose at least one missile.";
+  if (action.mode === "missile") {
+    if (quantity <= 0) return "Choose at least one missile.";
+    if (missileInventory !== undefined && quantity > Math.max(0, Math.trunc(missileInventory))) return `Only ${Math.max(0, Math.trunc(missileInventory)).toLocaleString()} interplanetary missiles are ready.`;
+    return missileRangeBlocker;
+  }
   // Every fleet mission (attack/transport/deploy/harvest/colonize) consumes a fleet slot, capped by the
   // contract's Computer Technology-derived limit (FleetSlotLimitReached). Block before submit when the
   // cap is reached, and also block while slot state is missing so stale UI cannot open a reverting
@@ -3461,11 +3547,13 @@ function PercentField({
 
 function NumberField({
   label,
+  max,
   min,
   onChange,
   value,
 }: {
   label: string;
+  max?: number | undefined;
   min: number;
   onChange: (value: number) => void;
   value: number;
@@ -3476,8 +3564,9 @@ function NumberField({
       <input
         className="h-9 rounded border border-white/10 bg-[#070913] px-2 text-right font-mono text-sm text-white outline-none [color-scheme:dark] focus:border-signal/50"
         inputMode="numeric"
+        max={max}
         min={min}
-        onInput={(event) => onChange(Math.max(min, Math.trunc(Number((event.currentTarget as HTMLInputElement).value) || min)))}
+        onInput={(event) => onChange(clampInteger(Number((event.currentTarget as HTMLInputElement).value), min, max ?? Number.MAX_SAFE_INTEGER))}
         type="number"
         value={value}
       />

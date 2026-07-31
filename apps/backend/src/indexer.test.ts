@@ -1511,6 +1511,18 @@ describe("SettlementIndexer", () => {
     expect(indexer.defenseRows("7").find((defense) => defense.id === 9)?.count).toBe(0);
     expect(indexer.defenseRows("8").find((defense) => defense.id === 8)?.count).toBe(0);
     expect(indexer.defenseRows("8").find((defense) => defense.id === 1)?.count).toBe(3);
+    expect(indexer.missileAttackArchivePage(player, { page: 1, pageSize: 25 }).rows).toMatchObject([{
+      attacker: player,
+      originPlanetId: "7",
+      targetPlanetId: "8",
+      primaryTargetDefenseId: 1,
+      launched: 3,
+      intercepted: 1,
+      hits: 2,
+      destroyedPrimary: 2,
+      originPlanet: { planetId: "7" },
+      targetPlanet: { planetId: "8" },
+    }]);
   });
 
   test("legacy combat losses apply when the defender loss vector has one exact unit solution", () => {
