@@ -653,7 +653,10 @@ export function MissionCreationPage({
   });
 
   return (
-    <section className="grid gap-3">
+    <section
+      aria-label="Mission creation"
+      className="mx-auto grid w-full min-w-0 max-w-4xl gap-3"
+    >
       <section
         aria-label="Mission route"
         className="rounded-lg border border-white/10 bg-[#101624] px-3 py-2.5 shadow-sm shadow-black/10"

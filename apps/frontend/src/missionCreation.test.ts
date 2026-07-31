@@ -248,8 +248,33 @@ describe("mission creation", () => {
     expect(missionCreationSource.match(/setShips\(/g)).toHaveLength(1);
     // The application shell already pads the page; the composer must not add a
     // second outer padding layer.
-    expect(missionCreationSource).toContain('<section className="grid gap-3">');
+    expect(missionCreationSource).toContain('aria-label="Mission creation"');
+    expect(missionCreationSource).toContain('className="mx-auto grid w-full min-w-0 max-w-4xl gap-3"');
     expect(missionCreationSource).not.toContain('className="grid gap-3 p-4 sm:p-5 lg:p-6"');
+  });
+
+  test("centers and caps the shared mission composer across wide desktop, laptop, tablet, and mobile widths", () => {
+    const composerClasses = "mx-auto grid w-full min-w-0 max-w-4xl gap-3".split(" ");
+    const shellClasses = "min-w-0 max-w-full flex-1 overflow-y-auto p-3 sm:p-4 lg:p-6".split(" ");
+    const viewportExpectations = [
+      { label: "wide desktop", width: 1_920, composer: ["mx-auto", "max-w-4xl"], shell: ["lg:p-6"] },
+      { label: "ordinary laptop", width: 1_280, composer: ["w-full", "max-w-4xl"], shell: ["lg:p-6"] },
+      { label: "tablet", width: 768, composer: ["w-full", "min-w-0"], shell: ["sm:p-4"] },
+      { label: "mobile", width: 390, composer: ["w-full", "min-w-0"], shell: ["p-3"] },
+    ] as const;
+
+    for (const viewport of viewportExpectations) {
+      for (const expectedClass of viewport.composer) {
+        expect(composerClasses, `${viewport.label} (${viewport.width}px) composer`).toContain(expectedClass);
+      }
+      for (const expectedClass of viewport.shell) {
+        expect(shellClasses, `${viewport.label} (${viewport.width}px) shell`).toContain(expectedClass);
+      }
+    }
+
+    expect(missionCreationSource).toContain('className="mx-auto grid w-full min-w-0 max-w-4xl gap-3"');
+    expect(playableMvpAppSource).toContain('className="min-w-0 max-w-full flex-1 overflow-y-auto p-3 sm:p-4 lg:p-6"');
+    expect(missionCreationSource.match(/aria-label="Mission creation"/g)).toHaveLength(1);
   });
 
   test("allows a non-cargo-only Deploy from the selected origin inventory", () => {
