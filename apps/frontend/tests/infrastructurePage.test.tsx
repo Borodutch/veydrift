@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { ComponentChildren, VNode } from "preact";
 import { buildingEnergyDetail, buildingLevelInfoRows, buildingUpgradeStatus } from "../src/buildingDetails";
 import {
-  ActiveBuildingQueueDetail,
+  ActiveBuildingQueuePanel,
   BuildingLevelInfoButton,
   BuildingLevelInfoModal,
   InfrastructureLoadErrorPanel,
@@ -103,7 +103,7 @@ describe("Infrastructure page display helpers", () => {
     expect(infrastructureCatalogTitleTone(status)).toBe("muted");
   });
 
-  test("mutes starter-locked building titles but not unrelated active-queue states", () => {
+  test("keeps catalog affordability visible while a building queue is active", () => {
     const state = {
       ...createInitialPlayableState(1_000),
       resources: { metal: 10_000, crystal: 10_000, deuterium: 10_000 },
@@ -129,10 +129,21 @@ describe("Infrastructure page display helpers", () => {
     )).toBe("muted");
     expect(infrastructureCatalogTitleTone(
       buildingUpgradeStatus(activeQueueState, "metalMine", {
+        ignoreActiveQueue: true,
         now: 1_700_000_030_000,
         starterPlanet: true,
       }),
     )).toBe("normal");
+    expect(infrastructureCatalogTitleTone(
+      buildingUpgradeStatus({
+        ...activeQueueState,
+        resources: { metal: 0, crystal: 0, deuterium: 0 },
+      }, "metalMine", {
+        ignoreActiveQueue: true,
+        now: 1_700_000_030_000,
+        starterPlanet: true,
+      }),
+    )).toBe("muted");
   });
 
   test("keeps initial infrastructure load failures in the full load-error state", () => {
@@ -701,7 +712,7 @@ describe("Infrastructure page display helpers", () => {
     expect(modalText).not.toContain("Level 1Level 2");
   });
 
-  test("renders selected active building queue timer with progress", () => {
+  test("renders a compact page-level building queue with its infrastructure asset", () => {
     const queue = {
       kind: "building" as const,
       key: "deuteriumSynthesizer" as const,
@@ -711,22 +722,23 @@ describe("Infrastructure page display helpers", () => {
       targetLevel: 2,
     };
 
-    const panel = ActiveBuildingQueueDetail({
-      isSelectedBuilding: true,
+    const panel = ActiveBuildingQueuePanel({
       now: 1_700_000_060_000,
       queue,
     });
     const text = visibleText(panel);
 
-    expect(text).toContain("Construction in progress");
-    expect(text).toContain("Deuterium Synthesizer Level 2 is upgrading");
-    expect(text).toContain("50 %");
-    expect(text).toContain("Time remaining");
-    expect(text).toContain("1m");
-    expect(text).toContain("Ready at");
+    expect(panel.type).toBe(QueueProgressPanel);
+    expect(panel.props.asset).toContain("deuterium");
+    expect(text).toContain("Construction");
+    expect(text).toContain("Deuterium Synthesizer 2");
+    expect(text).not.toContain("Deuterium Synthesizer Level 2");
+    expect(text).toContain("50%");
+    expect(text).not.toContain("Time remaining");
+    expect(text).not.toContain("Ready at");
   });
 
-  test("renders active queue context separately for an unselected building", () => {
+  test("keeps the page-level queue independent of the selected building", () => {
     const queue = {
       kind: "building" as const,
       key: "solarPlant" as const,
@@ -736,17 +748,16 @@ describe("Infrastructure page display helpers", () => {
       targetLevel: 3,
     };
 
-    const panel = ActiveBuildingQueueDetail({
-      isSelectedBuilding: false,
+    const panel = ActiveBuildingQueuePanel({
       now: 1_700_000_030_000,
       queue,
     });
     const text = visibleText(panel);
 
-    expect(text).toContain("Active construction");
-    expect(text).toContain("Solar Plant Level 3 is upgrading");
+    expect(text).toContain("Construction");
+    expect(text).toContain("Solar Plant 3");
     expect(text).not.toMatch(/selected building is waiting/i);
-    expect(text).toContain("25 %");
+    expect(text).toContain("25%");
   });
 
   test("shows Research Lab 1 as unlocking research without a misleading speed multiplier", () => {

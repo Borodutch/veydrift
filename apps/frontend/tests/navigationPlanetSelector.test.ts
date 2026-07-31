@@ -113,6 +113,12 @@ describe("navigation and planet selector UI source contracts", () => {
     expect(playableSource).toContain("h-14 w-14 overflow-hidden rounded-full bg-black/30");
   });
 
+  test("anchors incoming attack warnings to the planet thumbnail", () => {
+    expect(playableSource).toContain('className="absolute -right-1 -top-1 z-10 grid h-5 w-5 place-items-center rounded-full');
+    expect(playableSource).toContain('<AlertTriangle className="block h-3 w-3"');
+    expect(playableSource).not.toContain('<AlertTriangle className="block translate-y-px"');
+  });
+
   test("shows per-planet queue progress bars in the selector", () => {
     expect(playableSource).toContain("<PlanetSelectorProgressBars now={now} planet={planet} researchQueue={researchQueue} />");
     expect(playableSource).toContain("data-planet-selector-progress-bars={planet.planetId}");
@@ -164,6 +170,8 @@ describe("navigation and planet selector UI source contracts", () => {
     expect(playableSource).toContain("readPlanetPickerOrder(browserPlanetPickerOrderStorage(), planetPickerWallet)");
     expect(playableSource).toContain("writePlanetPickerOrder(browserPlanetPickerOrderStorage(), planetPickerWallet, reconciledIds)");
     expect(playableSource.match(/planets=\{orderedWalletPlanets\}/g)?.length).toBe(2);
+    expect(playableSource).toContain("orderedWalletPlanets.map((managedPlanet) => ({");
+    expect(playableSource).not.toContain("walletPlanets.map((managedPlanet) => ({");
     expect(playableSource.match(/onOrderChange=\{handlePlanetPickerOrderChange\}/g)?.length).toBe(2);
     expect(playableSource).not.toContain("PlanetPickerReorderHandle");
     expect(playableSource).not.toContain("data-planet-selector-drag-handle");
@@ -205,13 +213,18 @@ describe("navigation and planet selector UI source contracts", () => {
 
   test("keeps planet selector selected and keyboard focus states subtle", () => {
     expect(playableSource).toContain("veydrift-planet-selector-button");
-    expect(playableSource).toContain("border-cyan-300/35 bg-cyan-300/[0.07]");
+    expect(playableSource).toContain("border-cyan-300/35");
+    expect(playableSource).toContain("bg-cyan-300/[0.07]");
     expect(playableSource).toContain("shadow-[inset_0_0_0_1px_rgba(128,241,255,0.10)]");
+    expect(playableSource).toContain("const selectionStateClass = selected");
+    expect(playableSource).toContain("const borderStateClass = hasIncomingAttack");
+    expect(playableSource).toContain("${selectionStateClass} ${borderStateClass}");
     expect(playableSource).not.toContain("border-cyan-300/70 bg-cyan-300/12 shadow-lg shadow-cyan-950/25");
     expect(playableSource).not.toContain("focus:ring-2 focus:ring-cyan-300/60");
     expect(stylesSource).toContain(".veydrift-planet-selector-button:focus-visible");
     expect(stylesSource).toContain("outline: 1px solid rgba(128, 241, 255, 0.68)");
-    expect(stylesSource).toContain("--tw-ring-shadow: 0 0 0 2px var(--tw-ring-color);");
+    expect(stylesSource).toContain("outline-offset: -2px");
+    expect(stylesSource).toContain("--tw-ring-shadow: inset 0 0 0 2px var(--tw-ring-color);");
   });
 
   test("keeps the desktop sidebar footer compact and sticky", () => {
@@ -351,7 +364,8 @@ describe("navigation and planet selector UI source contracts", () => {
   });
 
   test("keeps mission speed selection inside mission creation only", () => {
-    expect(missionCreationSource).toContain("MISSION_SPEED_OPTIONS.map");
+    expect(missionCreationSource).toContain('aria-label="Mission speed"');
+    expect(missionCreationSource).toContain('type="range"');
     expect(galaxySource).not.toContain("Mission speed");
     expect(galaxySource).not.toContain("MISSION_SPEED_OPTIONS.map");
     expect(planetDetailSource).not.toContain("MISSION_SPEED_OPTIONS.map");

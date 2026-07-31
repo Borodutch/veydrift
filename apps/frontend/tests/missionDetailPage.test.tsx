@@ -592,8 +592,8 @@ describe("MissionDetailPage Recall action", () => {
 // which derives them from the backend's wallet-scoped fleet-visibility. The pre-rework detail code
 // re-derived the viewer's role from a bare `owner === account` check, so it (a) only matched the
 // owner's Recall by luck and (b) fabricated an "incoming" defender role for ANY viewer of someone
-// else's attack, wrongly rendering Group defend / Intercept to strangers. QA hit case (b): on an
-// outbound attack they did not own, Available Orders showed Group defend / Intercept and no Recall.
+// else's attack, wrongly rendering Defend planet / Intercept to strangers. QA hit case (b): on an
+// outbound attack they did not own, Available Orders showed Defend planet / Intercept and no Recall.
 describe("MissionDetailPage order authorization (matches Mission Control)", () => {
   function outboundAttack(overrides: Partial<FleetMissionSummary> = {}): FleetMissionSummary {
     // Far-future arrival so the fleet is still in flight (not yet due) under renderDetailText's now.
@@ -624,17 +624,17 @@ describe("MissionDetailPage order authorization (matches Mission Control)", () =
 
     expect(text).not.toContain("Available Orders");
     expect(text).not.toContain("Recall fleet");
-    expect(text).not.toContain("Group defend");
+    expect(text).not.toContain("Defend planet");
     expect(text).not.toContain("Intercept");
   });
 
-  test("offers Group defend only to the actual defender (incoming attack)", () => {
+  test("offers Defend planet only to the actual defender (incoming attack)", () => {
     const mission = outboundAttack();
     const text = renderDetailText({ mission }, { ...emptyVisibility, incoming: [mission] });
 
     expect(text).toContain("Available Orders");
-    expect(text).toContain("Group defend");
-    // VEY-KANEO-439: Intercept removed from the frontend; only Group defend (AcsDefend) remains.
+    expect(text).toContain("Defend planet");
+    // VEY-KANEO-439: Intercept removed from the frontend; only Defend planet (AcsDefend) remains.
     expect(text).not.toContain("Intercept");
     expect(text).not.toContain("Recall fleet");
     // VEY-KANEO-424 rework: the defender has no Recall button, so they must not see a recall-cost
@@ -649,7 +649,7 @@ describe("MissionDetailPage order authorization (matches Mission Control)", () =
     const text = renderDetailText({ mission }, { ...emptyVisibility, outgoing: [mission] });
 
     expect(text).toContain("Recall fleet");
-    expect(text).not.toContain("Group defend");
+    expect(text).not.toContain("Defend planet");
     expect(text).not.toContain("Intercept");
   });
 });

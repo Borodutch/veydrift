@@ -1,10 +1,9 @@
 import type { ComponentChildren } from "preact";
-import { useEffect, useMemo, useState } from "preact/hooks";
+import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { Coordinates, DebrisField, Planet, PublicStationedDefender } from "../types";
 import { ActionReasonNote } from "./ActionReasonNote";
 import {
   DEFAULT_MISSION_SPEED_PERCENT,
-  MISSION_SPEED_OPTIONS,
   acsDefendHoldingFuel,
   fleetMissionAvailableCargoCapacity,
   fleetMissionCargoCapacity,
@@ -16,6 +15,7 @@ import {
   type AcsDefendFuelBreakdown,
   type FleetDriveLevels,
 } from "../fleetMissionRules";
+import { planetArtTypeFromArchetypeOrCoords } from "../data/mockUniverse";
 import { defenseAssetByKey, shipAssetByKey } from "../gameAssets";
 import { emptyMissionShips, type GalaxyAction, type MissionShipKey, type MissionShips } from "../galaxyActions";
 import {
@@ -31,8 +31,8 @@ import {
 import { shortAddress, type ChainShipyardState } from "../walletFlow";
 import { formatDuration } from "../durationFormat";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
-import { PageHeader } from "./PageHeader";
 import { PlanetMoonIndicator } from "./PlanetMoonIndicator";
+import { MissionRouteCell, type MissionEndpoint } from "./missionRoute";
 import {
   contractCombatPower,
   forecastContractBattle,
@@ -41,12 +41,11 @@ import {
   type CombatResources,
   type ContractBattleForecastSummary,
   type ContractBattleInput,
+  type ContractBattleReportSeed,
   type ContractBattleResult,
 } from "../battlePreview";
 import {
-  BattlePreviewScheduler,
   battlePreviewInputKey,
-  type BattlePreviewWorker,
 } from "../battlePreviewScheduler";
 
 export type CombatTechLevels = {
@@ -85,7 +84,6 @@ export type MissionLaunchDraft = {
 };
 
 export type MissionSpecificLoadout = {
-  title: string;
   shipsTitle: string;
   cargoTitle: string;
 };
@@ -146,6 +144,9 @@ export type BattleForecastState =
       attackerTechLevels?: CombatTechLevels;
       defenderTechLevels?: CombatTechLevels;
       defenderTechKnown?: boolean;
+      loading?: boolean;
+      reportInput?: ContractBattleInput;
+      reportSeed?: ContractBattleReportSeed;
       sampleReport?: ContractBattleResult | null;
     })
   | ({
@@ -159,6 +160,9 @@ export type BattleForecastState =
       attackerTechLevels?: CombatTechLevels;
       defenderTechLevels?: CombatTechLevels;
       defenderTechKnown?: boolean;
+      loading?: boolean;
+      reportInput?: ContractBattleInput;
+      reportSeed?: ContractBattleReportSeed;
       sampleReport?: ContractBattleResult;
     });
 
@@ -232,7 +236,11 @@ export type TargetResourceIntel = {
 };
 
 export function shouldShowDestinationIntel(action: EnabledGalaxyAction): boolean {
-  return action.kind !== "colonize" && action.kind !== "deploy" && action.kind !== "transport";
+  return action.kind !== "colonize"
+    && action.kind !== "deploy"
+    && action.kind !== "transport"
+    && action.kind !== "defenseHold"
+    && action.kind !== "acsDefend";
 }
 
 export function shouldShowReturnTiming(action: EnabledGalaxyAction, hasHoldingBreakdown: boolean): boolean {
@@ -267,19 +275,65 @@ export function missionSpecificLoadout(action: EnabledGalaxyAction): MissionSpec
   if (action.mode !== "mission") return null;
   if (action.kind === "transport") {
     return {
-      title: "Transport manifest",
       shipsTitle: "Ships to transport",
       cargoTitle: "Cargo to transport",
     };
   }
   if (action.kind === "deploy") {
     return {
-      title: "Deployment manifest",
       shipsTitle: "Ships to deploy",
       cargoTitle: "Supplies to deploy",
     };
   }
   return null;
+}
+
+export function missionComposerRouteEndpoints({
+  originCoords,
+  originIsMoon,
+  originLabel,
+  target,
+  targetCoords,
+  targetIsMoon,
+}: {
+  originCoords: Coordinates | undefined;
+  originIsMoon: boolean;
+  originLabel?: string | undefined;
+  target: Planet | undefined;
+  targetCoords: Coordinates;
+  targetIsMoon: boolean;
+}): { origin: MissionEndpoint; target: MissionEndpoint } {
+  const originCoordinates = originCoords ? coordinateString(originCoords) : null;
+  const targetCoordinates = coordinateString(targetCoords);
+  const originPlanetName = originLabel?.trim() || originCoordinates || "Active planet";
+  const targetPlanetName = target?.name?.trim() || targetCoordinates;
+
+  return {
+    origin: {
+      archetype: planetArtTypeFromArchetypeOrCoords(null, originCoords ?? null),
+      bodyKind: originIsMoon ? "moon" : "planet",
+      commanderName: null,
+      commanderWallet: null,
+      coordinates: originCoordinates,
+      coords: originCoords ?? null,
+      hasMoon: originIsMoon,
+      name: originIsMoon ? `Moon of ${originPlanetName}` : originPlanetName,
+    },
+    target: {
+      archetype: planetArtTypeFromArchetypeOrCoords(target?.type, targetCoords),
+      bodyKind: targetIsMoon ? "moon" : "planet",
+      commanderName: null,
+      commanderWallet: null,
+      coordinates: targetCoordinates,
+      coords: targetCoords,
+      hasMoon: targetIsMoon || Boolean(target?.hasMoon),
+      name: targetIsMoon ? `Moon of ${targetPlanetName}` : targetPlanetName,
+    },
+  };
+}
+
+function coordinateString(coords: Coordinates): string {
+  return `${coords.galaxy}:${coords.system}:${coords.position}`;
 }
 
 export type AcsDefendComposeContext = {
@@ -327,7 +381,7 @@ export function MissionCreationPage({
   submitBlocker,
   target,
 }: {
-  // VEY-KANEO-440: render the picker for an ACS Defend ("Group defend") counterplay. Like a normal
+  // VEY-KANEO-440: render the picker for an ACS Defend ("Defend planet") counterplay. Like a normal
   // mission it keeps the ship picker and speed control, but adds a hold-duration / holding-fuel /
   // Alliance Depot preview and pins the launch to the hostile attack's arrival.
   acsDefendContext?: AcsDefendComposeContext | undefined;
@@ -481,6 +535,10 @@ export function MissionCreationPage({
     () => forecastRaidLoot(resourceIntel.projectedArrivalLootable, cargoCapacity, greedyLootEnabled ? null : lootRatio),
     [cargoCapacity, greedyLootEnabled, lootRatio, resourceIntel.projectedArrivalLootable],
   );
+  const currentLootForecast = useMemo(
+    () => forecastRaidLoot(resourceIntel.currentLootable, cargoCapacity, greedyLootEnabled ? null : lootRatio),
+    [cargoCapacity, greedyLootEnabled, lootRatio, resourceIntel.currentLootable],
+  );
 
   // VEY-KANEO-440: ACS Defend holding-fuel preview. The fleet arrives naturally after `travelSeconds`,
   // then holds until the hostile attack lands; holding fuel scales with that gap and the Alliance Depot
@@ -509,7 +567,6 @@ export function MissionCreationPage({
 
   // Both flows share the same holding-fuel summary; whichever is active drives the preview.
   const holdingBreakdown = acsBreakdown ?? defenseHoldBreakdown;
-  const holdDepotLevel = acsDefendContext?.depotLevel ?? defenseHoldContext?.depotLevel ?? 0;
   // Net holding fuel rides in the defending fleet's own deuterium spend on-chain, so it counts toward
   // both the deuterium balance and cargo-capacity gates.
   const effectiveFuelCost = holdingBreakdown ? fuelCost + holdingBreakdown.netHoldingFuel : fuelCost;
@@ -570,29 +627,69 @@ export function MissionCreationPage({
     setGreedyLootEnabled(false);
     setLootRatio((current) => lootRatioFromUpToAmount(current, key, value, cargoCapacity));
   };
+  const routeEndpoints = missionComposerRouteEndpoints({
+    originCoords,
+    originIsMoon: effectiveOriginIsMoon,
+    originLabel,
+    target,
+    targetCoords: coords,
+    targetIsMoon: effectiveTargetIsMoon,
+  });
+  const confirmMission = () => onConfirm(buildMissionLaunchDraft({
+    action,
+    cargo,
+    defenseHoldSeconds,
+    defenseHoldActive,
+    effectiveOriginIsMoon,
+    effectiveTargetIsMoon,
+    lootRatio,
+    lootRatioActive,
+    primaryTargetId,
+    quantity,
+    speedPercent,
+    ships,
+  }));
+  const confirmLabel = missionConfirmButtonLabel({
+    acsDefendMode,
+    actionPendingLabel,
+    defenseHoldMode,
+    joinAttackMode,
+  });
 
   return (
-    <section className="grid gap-4 p-4 sm:p-5 lg:p-6">
-      <PageHeader
-        actions={(
-          <button
-            className="rounded-md border border-white/15 bg-white/8 px-4 py-2.5 text-sm text-slate-300 transition-colors hover:bg-white/15 hover:text-white sm:px-3 sm:py-1.5"
-            onClick={onBack}
-            type="button"
-          >
-            Back
-          </button>
-        )}
-        beforeTitle={(
-          <p className="mb-1 text-xs text-slate-400">
-            {originLabel ?? "Active planet"} to [{coords.galaxy}:{coords.system}:{coords.position}]
-          </p>
-        )}
-        title={joinAttackMode || acsDefendMode || defenseHoldMode ? action.label : `${action.label} Mission`}
-        titleSize="xl"
-      />
+    <section className="grid gap-3">
+      <section
+        aria-label="Mission route"
+        className="rounded-lg border border-white/10 bg-[#101624] px-3 py-2.5 shadow-sm shadow-black/10"
+      >
+        <MissionRouteCell
+          arrowLabel={`Planned route from ${routeEndpoints.origin.name} to ${routeEndpoints.target.name}`}
+          compact
+          direction="outbound"
+          origin={routeEndpoints.origin}
+          progressPercent={100}
+          subdued
+          target={routeEndpoints.target}
+        />
+        {action.mode !== "missile" && !joinAttackMode && timingSummary ? (
+          <div className="mt-2 grid grid-cols-2 gap-3 border-t border-white/10 pt-2 text-xs">
+            {shouldShowReturnTiming(action, Boolean(holdingBreakdown)) ? (
+              <RouteTiming
+                align="left"
+                time={timingSummary.returnClock}
+                value={timingSummary.returnDuration}
+              />
+            ) : null}
+            <RouteTiming
+              align="right"
+              time={timingSummary.arrivalClock}
+              value={timingSummary.arrivalDuration}
+            />
+          </div>
+        ) : null}
+      </section>
 
-      <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_21rem] lg:items-start">
+      <div className="grid gap-3">
         <section className="grid gap-3">
           {bodySelectionVisibility.sectionVisible ? (
             <MissionFormSection title="Bodies" eyebrow="Route">
@@ -620,30 +717,20 @@ export function MissionCreationPage({
           {lootRatioSupported || joinAttackMode ? (
             <AttackIntelPanel
               battleForecast={battleForecast}
-              coords={coords}
-              lootableAtArrival={resourceIntel.projectedArrivalLootable}
-              maxLootForecast={maxLootForecast}
-              resourceIntel={resourceIntel}
               stationedDefenderUnits={stationedDefenderUnits}
-              target={target}
               targetDefenseUnits={targetDefenseUnits}
               targetFleetUnits={targetFleetUnits}
-              showLoot={!joinAttackMode}
             />
-          ) : (
+          ) : specificLoadout || (!destinationIntelVisible && action.kind !== "harvest") ? null : (
             <NonAttackMissionIntelPanel
               action={action}
               cargoCapacity={cargoCapacity}
-              cargoSupported={cargoSupported}
-              coords={coords}
               destinationIntelVisible={destinationIntelVisible}
-              holdDepotLevel={holdDepotLevel}
-              holdingBreakdown={holdingBreakdown}
               resourceIntel={resourceIntel}
               stationedDefenderUnits={stationedDefenderUnits}
-              target={target}
               targetDefenseUnits={targetDefenseUnits}
               targetFleetUnits={targetFleetUnits}
+              targetDebrisField={target?.debrisField ?? null}
             />
           )}
 
@@ -683,26 +770,38 @@ export function MissionCreationPage({
               </div>
             </MissionFormSection>
           ) : specificLoadout ? (
-            <MissionFormSection title={specificLoadout.title} eyebrow="Loadout">
-              <MissionLoadoutGroup title={specificLoadout.shipsTitle}>
+            <>
+              <MissionFormSection
+                summary={`${selectedShipCount.toLocaleString()} selected`}
+                title={specificLoadout.shipsTitle}
+                eyebrow="Loadout"
+              >
                 <MissionShipPicker
                   availableShips={availableShips}
                   onShipQuantityChange={setShipQuantity}
                   shipyardState={effectiveShipyardState}
                   ships={ships}
                 />
-              </MissionLoadoutGroup>
-              <MissionLoadoutGroup title={specificLoadout.cargoTitle}>
+              </MissionFormSection>
+              <MissionFormSection
+                summary={`Capacity left ${cargoTotal.toLocaleString()} / ${cargoCapacity.toLocaleString()}`}
+                title={specificLoadout.cargoTitle}
+                eyebrow="Cargo"
+              >
                 <MissionCargoPicker
                   cargo={cargo}
                   cargoCapacity={cargoCapacity}
                   maxCargoResources={maxCargoResources}
                   onCargoChange={setCargo}
                 />
-              </MissionLoadoutGroup>
-            </MissionFormSection>
+              </MissionFormSection>
+            </>
           ) : (
-            <MissionFormSection title="Fleet" eyebrow="Ships">
+            <MissionFormSection
+              summary={`${selectedShipCount.toLocaleString()} selected`}
+              title="Fleet"
+              eyebrow="Ships"
+            >
               <MissionShipPicker
                 availableShips={availableShips}
                 onShipQuantityChange={setShipQuantity}
@@ -712,38 +811,40 @@ export function MissionCreationPage({
             </MissionFormSection>
           )}
 
-          {joinAttackMode ? null : (
-            <MissionFormSection title="Speed" eyebrow="Flight plan">
-              <div className="flex flex-wrap gap-1.5">
-                {MISSION_SPEED_OPTIONS.map((speed) => (
-                  <button
-                    aria-pressed={speedPercent === speed}
-                    className={`h-10 rounded border px-2 text-xs font-semibold transition sm:h-8 ${
-                      speedPercent === speed
-                        ? "border-signal/45 bg-signal/15 text-signal"
-                        : "border-white/10 bg-white/[0.03] text-slate-400 hover:border-white/20 hover:text-white"
-                    }`}
-                    key={speed}
-                    onClick={() => setSpeedPercent(speed)}
-                    type="button"
-                  >
-                    {speed}%
-                  </button>
-                ))}
+          {joinAttackMode || action.mode === "missile" ? null : (
+            <MissionFormSection
+              summary={`Fuel ${effectiveFuelCost.toLocaleString()} deuterium`}
+              title="Speed"
+              eyebrow="Flight plan"
+            >
+              <div className="flex items-center gap-3">
+                <input
+                  aria-label="Mission speed"
+                  className="h-10 min-w-0 flex-1 cursor-pointer accent-cyan-300"
+                  id="mission-speed"
+                  max={100}
+                  min={10}
+                  onInput={(event) => setSpeedPercent(Number(event.currentTarget.value))}
+                  step={10}
+                  type="range"
+                  value={speedPercent}
+                />
+                <output
+                  className="min-w-12 rounded border border-signal/30 bg-signal/10 px-2 py-1 text-center text-sm font-semibold tabular-nums text-signal"
+                  htmlFor="mission-speed"
+                >
+                  {speedPercent}%
+                </output>
               </div>
-              {timingSummary ? (
-                <div className="grid gap-1 rounded border border-white/10 bg-black/15 p-2">
-                  <CompactFactRow label={holdingBreakdown ? "Reach" : "Arrival"} value={`${timingSummary.arrivalDuration} / ${timingSummary.arrivalClock}`} />
-                  {shouldShowReturnTiming(action, Boolean(holdingBreakdown)) ? (
-                    <CompactFactRow label="Return" value={`${timingSummary.returnDuration} / ${timingSummary.returnClock}`} />
-                  ) : null}
-                </div>
-              ) : null}
             </MissionFormSection>
           )}
 
           {defenseHoldMode ? (
-            <MissionFormSection title="Hold" eyebrow="Stationing">
+            <MissionFormSection
+              summary={holdingBreakdown ? `${holdingBreakdown.netHoldingFuel.toLocaleString()} deuterium holding fuel` : undefined}
+              title="Hold"
+              eyebrow="Stationing"
+            >
               <div className="flex flex-wrap gap-1.5">
                 {DEFENSE_HOLD_HOUR_OPTIONS.map((hours) => (
                   <button
@@ -761,15 +862,31 @@ export function MissionCreationPage({
                   </button>
                 ))}
               </div>
-              <p className="text-xs text-slate-500">
-                The fleet holds at the target planet for this long, defending any attack that lands while
-                stationed, then flies home. Longer holds cost more deuterium.
-              </p>
+            </MissionFormSection>
+          ) : null}
+
+          {acsActive && holdingBreakdown ? (
+            <MissionFormSection
+              summary={`${holdingBreakdown.netHoldingFuel.toLocaleString()} deuterium holding fuel`}
+              title="Hold"
+              eyebrow="Stationing"
+            >
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-3">
+                <CompactFactRow label="Duration" value={formatDuration(holdingBreakdown.holdSeconds)} />
+                <CompactFactRow label="Depot" value={acsDefendContext?.depotLevel ? `Level ${acsDefendContext.depotLevel}` : "No support"} />
+                <CompactFactRow label="Total fuel" value={`${effectiveFuelCost.toLocaleString()} D`} />
+              </div>
             </MissionFormSection>
           ) : null}
 
           {lootRatioSupported ? (
             <MissionFormSection title="Loot" eyebrow="Plunder">
+              <AttackLootProjection
+                arrivalAvailable={resourceIntel.projectedArrivalLootable}
+                arrivalCarry={maxLootForecast}
+                currentAvailable={resourceIntel.currentLootable}
+                currentCarry={currentLootForecast}
+              />
               <LootRatioControls
                 cargoCapacity={cargoCapacity}
                 greedyLootEnabled={greedyLootEnabled}
@@ -787,124 +904,58 @@ export function MissionCreationPage({
           ) : null}
         </section>
 
-        <aside className="grid content-start gap-2 rounded-lg border border-signal/20 bg-[#101624] p-3 shadow-lg shadow-black/20 lg:sticky lg:top-4">
-          <h3 className="text-sm font-semibold text-white">Launch</h3>
-          <SummaryRow label="Distance" value={distance.toLocaleString()} />
-          <SummaryRow label="Ships" value={action.mode === "missile" ? "Missile launch" : selectedShipCount.toLocaleString()} />
-          <SummaryRow
-            label={holdingBreakdown ? "Travel fuel" : "Fuel"}
-            value={`${fuelCost.toLocaleString()} / ${totalCargoCapacity.toLocaleString()} deuterium`}
+      </div>
+      <div className="grid gap-2 border-t border-white/10 pt-3">
+        {visibleBlockedReason ? (
+          <p className="rounded border border-amber-300/20 bg-amber-300/10 px-3 py-2 text-xs text-amber-100">
+            {visibleBlockedReason}
+          </p>
+        ) : null}
+        <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-2">
+          <MissionCancelButton onCancel={onBack} />
+          <MissionConfirmButton
+            actionPending={actionPending}
+            blockedReason={blockedReason}
+            label={confirmLabel}
+            onConfirm={confirmMission}
           />
-          {holdingBreakdown ? (
-            <>
-              <SummaryRow label="Hold duration" value={holdingBreakdown.holdSeconds > 0 ? formatDuration(holdingBreakdown.holdSeconds) : "None"} />
-              <SummaryRow label="Holding fuel" value={`${holdingBreakdown.holdingFuel.toLocaleString()} deuterium`} />
-              <SummaryRow
-                label="Alliance Depot"
-                subvalue={`Depot lvl ${holdDepotLevel.toLocaleString()}`}
-                value={holdingBreakdown.depotSupport > 0 ? `−${holdingBreakdown.depotSupport.toLocaleString()} deuterium` : "No support"}
-              />
-              <SummaryRow label="Net holding fuel" value={`${holdingBreakdown.netHoldingFuel.toLocaleString()} deuterium`} />
-              <SummaryRow label="Total fuel" value={`${effectiveFuelCost.toLocaleString()} deuterium`} />
-            </>
-          ) : null}
-          <SummaryRow label="Cargo" value={cargoSupported ? `${cargoTotal.toLocaleString()} / ${cargoCapacity.toLocaleString()}` : "None"} />
-          {lootRatioSupported ? (
-            <SummaryRow
-              label="Max loot"
-              subvalue={greedyLootEnabled ? "Greedy" : "Manual split"}
-              value={formatCompactResources(maxLootForecast)}
-            />
-          ) : null}
-          {timingSummary ? (
-            <>
-              <SummaryRow label={holdingBreakdown ? "Reach planet" : "Arrival"} subvalue={timingSummary.arrivalClock} value={timingSummary.arrivalDuration} />
-              {shouldShowReturnTiming(action, Boolean(holdingBreakdown)) ? (
-                <SummaryRow label="Return" subvalue={timingSummary.returnClock} value={timingSummary.returnDuration} />
-              ) : null}
-            </>
-          ) : null}
-          {visibleBlockedReason ? (
-            <p className="rounded border border-amber-300/20 bg-amber-300/10 px-3 py-2 text-xs text-amber-100">
-              {visibleBlockedReason}
-            </p>
-          ) : null}
-          <button
-            className="mt-1 min-h-10 rounded border border-signal/35 bg-signal/15 px-3 py-2 text-sm font-semibold leading-snug text-signal transition hover:bg-signal/25 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/[0.03] disabled:text-slate-500"
-            disabled={Boolean(blockedReason) || actionPending}
-            onClick={() => onConfirm(buildMissionLaunchDraft({
-              action,
-              cargo,
-              defenseHoldSeconds,
-              defenseHoldActive,
-              effectiveOriginIsMoon,
-              effectiveTargetIsMoon,
-              lootRatio,
-              lootRatioActive,
-              primaryTargetId,
-              quantity,
-              speedPercent,
-              ships,
-            }))}
-            type="button"
-          >
-            {missionConfirmButtonLabel({
-              acsDefendMode,
-              actionPendingLabel,
-              defenseHoldMode,
-              joinAttackMode,
-            })}
-          </button>
-        </aside>
+        </div>
       </div>
     </section>
   );
 }
 
+const OUTCOME_PREVIEW_SAMPLE_COUNT = 16;
+const OUTCOME_PREVIEW_CACHE_LIMIT = 64;
+const outcomePreviewCache = new Map<string, ContractBattleForecastSummary>();
+
 function useDeferredPublicTargetBattleForecast(
   prepared: PreparedPublicTargetBattleForecast,
 ): BattleForecastState {
-  const [scheduler] = useState(() => new BattlePreviewScheduler({
-    createWorker: () => new Worker(
-      new URL("../battlePreview.worker.ts", import.meta.url),
-      { type: "module" },
-    ) as unknown as BattlePreviewWorker,
-  }));
-  const [resolved, setResolved] = useState<{ key: string; forecast: BattleForecastState } | null>(null);
-  const previewKey = prepared.status === "simulate" ? battlePreviewInputKey(prepared.input) : null;
-
-  useEffect(() => {
-    if (prepared.status === "complete" || previewKey === null) {
-      scheduler.reset();
-      return;
-    }
-
-    scheduler.schedule(
-      previewKey,
-      prepared.input,
-      (simulation) => {
-        setResolved({
-          key: previewKey,
-          forecast: resolvePreparedPublicTargetBattleForecast(prepared, simulation),
-        });
-      },
-      (error) => {
-        setResolved({
-          key: previewKey,
-          forecast: {
-            ...prepared.pending,
-            detail: `Outcome preview unavailable: ${error}`,
-          },
-        });
-      },
-    );
-  }, [previewKey, scheduler]);
-
-  useEffect(() => () => scheduler.dispose(), [scheduler]);
-
   if (prepared.status === "complete") return prepared.forecast;
-  if (resolved?.key === previewKey) return resolved.forecast;
-  return prepared.pending;
+  const previewKey = battlePreviewInputKey(prepared.input);
+  try {
+    let simulation = outcomePreviewCache.get(previewKey);
+    if (!simulation) {
+      simulation = summarizeContractBattleForecast(
+        forecastContractBattle(prepared.input, OUTCOME_PREVIEW_SAMPLE_COUNT, false),
+      );
+      outcomePreviewCache.set(previewKey, simulation);
+      if (outcomePreviewCache.size > OUTCOME_PREVIEW_CACHE_LIMIT) {
+        const oldestKey = outcomePreviewCache.keys().next().value;
+        if (oldestKey !== undefined) outcomePreviewCache.delete(oldestKey);
+      }
+    }
+    return resolvePreparedPublicTargetBattleForecast(prepared, simulation);
+  } catch (error) {
+    return {
+      ...prepared.pending,
+      detail: `Outcome preview unavailable: ${
+        error instanceof Error ? error.message : "Battle simulation failed."
+      }`,
+      loading: false,
+    };
+  }
 }
 
 function BodySelectionRow({
@@ -1034,15 +1085,6 @@ export function buildMissionLaunchDraft({
   };
 }
 
-function MissionLoadoutGroup({ children, title }: { children: ComponentChildren; title: string }) {
-  return (
-    <div className="grid gap-2 rounded border border-white/10 bg-black/15 p-3">
-      <h4 className="text-xs font-semibold uppercase text-slate-400">{title}</h4>
-      {children}
-    </div>
-  );
-}
-
 function MissionShipPicker({
   availableShips,
   onShipQuantityChange,
@@ -1113,10 +1155,6 @@ export function MissionCargoPicker({
 
   return (
     <>
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-xs text-slate-400">Load cargo after reserving mission fuel.</p>
-        <span className="text-xs text-slate-500">Capacity {cargoCapacity.toLocaleString()}</span>
-      </div>
       <div className="grid gap-2 sm:grid-cols-3">
         {fields.map(({ key, label }) => {
           const maxValue = missionCargoMaxForResource(cargo, cargoCapacity, maxCargoResources, key);
@@ -1144,17 +1182,74 @@ export function MissionCargoPicker({
 
 function MissionFormSection({
   children,
+  summary,
   title,
 }: {
   children: ComponentChildren;
   eyebrow: string;
+  summary?: string | undefined;
   title: string;
 }) {
   return (
     <section className="grid gap-2 rounded-lg border border-white/10 bg-[#101624] p-3 shadow-sm shadow-black/10">
-      <h3 className="text-xs font-semibold uppercase text-slate-400">{title}</h3>
+      <header className="flex min-w-0 items-center justify-between gap-3">
+        <h3 className="min-w-0 text-xs font-semibold uppercase text-slate-400">{title}</h3>
+        {summary ? <span className="shrink-0 text-xs tabular-nums text-slate-500">{summary}</span> : null}
+      </header>
       {children}
     </section>
+  );
+}
+
+function RouteTiming({
+  align,
+  time,
+  value,
+}: {
+  align: "left" | "right";
+  time: string;
+  value: string;
+}) {
+  return (
+    <div className={`grid min-w-0 gap-0.5 ${align === "right" ? "col-start-2 justify-items-end text-right" : "justify-items-start text-left"}`}>
+      <span className="font-medium tabular-nums text-slate-200">{value}</span>
+      <span className="max-w-full truncate text-[10px] tabular-nums text-slate-500">{time}</span>
+    </div>
+  );
+}
+
+function MissionCancelButton({ onCancel }: { onCancel: () => void }) {
+  return (
+    <button
+      className="min-h-11 rounded border border-white/15 bg-white/[0.04] px-4 text-sm font-semibold text-slate-300 transition hover:border-white/25 hover:bg-white/[0.08] hover:text-white"
+      onClick={onCancel}
+      type="button"
+    >
+      Cancel
+    </button>
+  );
+}
+
+function MissionConfirmButton({
+  actionPending,
+  blockedReason,
+  label,
+  onConfirm,
+}: {
+  actionPending: boolean;
+  blockedReason: string | undefined;
+  label: string;
+  onConfirm: () => void;
+}) {
+  return (
+    <button
+      className="min-h-11 w-full rounded border border-signal/35 bg-signal/15 px-4 py-2 text-sm font-semibold leading-snug text-signal transition hover:bg-signal/25 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/[0.03] disabled:text-slate-500"
+      disabled={Boolean(blockedReason) || actionPending}
+      onClick={onConfirm}
+      type="button"
+    >
+      {label}
+    </button>
   );
 }
 
@@ -1567,16 +1662,15 @@ export function preparePublicTargetBattleForecast(
     return total + shipRecordCombatPower(participant.ships, participant.combatTechnology);
   }, 0);
   const attackerPower = missionShipsCombatPower(ships, normalizedAttackerTechLevels) + joinedAttackerPower;
-  if (fleetMissionShipCount(ships) <= 0) {
-    return complete({
-      kind: "uncertain",
-      label: "Uncertain",
-      detail: "Select ships to preview the attack against public destination intel.",
-      attackerPower,
-      defenderPower: null,
-      ...forecastTech,
-    });
-  }
+  const pendingCombatIntel = (detail: string): PreparedPublicTargetBattleForecast => complete({
+    kind: "uncertain",
+    label: "Uncertain",
+    detail,
+    loading: true,
+    attackerPower,
+    defenderPower: null,
+    ...forecastTech,
+  });
   if (joinAttackContext?.unavailableReason) {
     return complete({
       kind: "uncertain",
@@ -1632,64 +1726,35 @@ export function preparePublicTargetBattleForecast(
     }
   }
   if (!target) {
-    return complete({
-      kind: "uncertain",
-      label: "Uncertain",
-      detail: "Destination fleet and defense data is unavailable, so exact defender strength is unknown.",
-      attackerPower,
-      defenderPower: null,
-      ...forecastTech,
-    });
+    return pendingCombatIntel("Destination fleet and defense data is unavailable, so exact defender strength is unknown.");
   }
   const bodyState = targetIsMoon ? target.publicMoonState : target.publicState;
   if (!bodyState) {
-    return complete({
-      kind: "uncertain",
-      label: "Uncertain",
-      detail: targetIsMoon
+    return pendingCombatIntel(
+      targetIsMoon
         ? "Moon fleet and defense intel is unavailable. Parent-planet forces are never substituted for a moon battle."
         : "Destination fleet and defense data is unavailable, so exact defender strength is unknown.",
-      attackerPower,
-      defenderPower: null,
-      ...forecastTech,
-    });
+    );
   }
   if (!Array.isArray(bodyState.fleet) || !Array.isArray(bodyState.defenses)) {
-    return complete({
-      kind: "uncertain",
-      label: "Uncertain",
-      detail: targetIsMoon
+    return pendingCombatIntel(
+      targetIsMoon
         ? "Moon fleet or defense intel is incomplete. Parent-planet forces are never substituted for a moon battle."
         : "Destination fleet or defense intel is incomplete, so absent fields are not treated as empty forces.",
-      attackerPower,
-      defenderPower: null,
-      ...forecastTech,
-    });
+    );
   }
   if (!defenderTechKnown) {
-    return complete({
-      kind: "uncertain",
-      label: "Uncertain",
-      detail: "The destination owner's combat technology is missing from public intel, so the preview will not assume zero levels.",
-      attackerPower,
-      defenderPower: null,
-      ...forecastTech,
-    });
+    return pendingCombatIntel("The destination owner's combat technology is missing from public intel, so the preview will not assume zero levels.");
   }
   const forecastStationedDefenders = targetIsMoon
     ? []
     : joinAttackContext?.stationedDefenders ?? target.publicState?.stationedDefenderForecastTimeline;
   if (!targetIsMoon && !Array.isArray(forecastStationedDefenders)) {
-    return complete({
-      kind: "uncertain",
-      label: "Uncertain",
-      detail: joinAttackContext
+    return pendingCombatIntel(
+      joinAttackContext
         ? "Attack-specific stationed/counterplay defender intel is unavailable, so defending fleets are not silently omitted."
         : "Stationed-defender intel is unavailable, so allied defending fleets are not silently omitted.",
-      attackerPower,
-      defenderPower: null,
-      ...forecastTech,
-    });
+    );
   }
 
   let stationedDefenders = forecastStationedDefenders ?? [];
@@ -1700,14 +1765,7 @@ export function preparePublicTargetBattleForecast(
       target.publicState?.stationedDefenderTimelineComplete === true,
     );
     if (qualification.unavailableReason) {
-      return complete({
-        kind: "uncertain",
-        label: "Uncertain",
-        detail: qualification.unavailableReason,
-        attackerPower,
-        defenderPower: null,
-        ...forecastTech,
-      });
+      return pendingCombatIntel(qualification.unavailableReason);
     }
     stationedDefenders = qualification.defenders;
   }
@@ -1778,13 +1836,14 @@ export function preparePublicTargetBattleForecast(
       })),
     },
   };
-  return {
+  const prepared: Extract<PreparedPublicTargetBattleForecast, { status: "simulate" }> = {
     status: "simulate",
     input,
     pending: {
       kind: "uncertain",
       label: "Uncertain",
       detail: "Calculating the latest outcome preview…",
+      loading: true,
       attackerPower,
       defenderPower,
       ...forecastTech,
@@ -1797,6 +1856,17 @@ export function preparePublicTargetBattleForecast(
       ...forecastTech,
     },
   };
+  // There is nothing stochastic to defer when no attacking unit exists. Apart
+  // from making the empty picker feel instant, resolving this inline prevents
+  // an unnecessary worker request during the brief zero-selection state while
+  // the user is composing a fleet.
+  if (input.attackers.every((attacker) => attacker.ships.every((count) => count <= 0))) {
+    return complete(resolvePreparedPublicTargetBattleForecast(
+      prepared,
+      summarizeContractBattleForecast(forecastContractBattle(input, 1, false)),
+    ));
+  }
+  return prepared;
 }
 
 export function resolvePreparedPublicTargetBattleForecast(
@@ -1823,7 +1893,8 @@ export function resolvePreparedPublicTargetBattleForecast(
       outcomeCounts: simulation.outcomeCounts,
       attackerSurvivorRange: simulation.attackerSurvivorRange,
     },
-    sampleReport: simulation.sampleReport,
+    reportInput: prepared.input,
+    reportSeed: simulation.sampleReport,
     attackerTechLevels: prepared.context.attackerTechLevels,
     defenderTechLevels: prepared.context.defenderTechLevels,
     defenderTechKnown: prepared.context.defenderTechKnown,
@@ -1847,10 +1918,14 @@ export function publicTargetBattleForecast(
     timing,
   );
   if (prepared.status === "complete") return prepared.forecast;
-  return resolvePreparedPublicTargetBattleForecast(
-    prepared,
-    summarizeContractBattleForecast(forecastContractBattle(prepared.input)),
-  );
+  const simulation = forecastContractBattle(prepared.input);
+  return {
+    ...resolvePreparedPublicTargetBattleForecast(
+      prepared,
+      summarizeContractBattleForecast(simulation),
+    ),
+    sampleReport: simulation.sampleReport,
+  };
 }
 
 export function ShipQuantityRow({
@@ -1864,8 +1939,10 @@ export function ShipQuantityRow({
   ship: ShipOption;
   value: number;
 }) {
+  const quantityDigits = Math.max(1, String(value).length);
+
   return (
-    <label className="grid gap-2 rounded border border-white/10 bg-black/15 px-3 py-2 sm:grid-cols-[minmax(0,1fr)_10rem] sm:items-center">
+    <label className="grid gap-2 rounded border border-white/10 bg-black/15 px-3 py-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
       <span className="flex min-w-0 items-center gap-2">
         <img alt="" className="h-9 w-9 shrink-0 rounded border border-white/10 object-contain" loading="lazy" src={ship.asset} />
         <span className="min-w-0">
@@ -1873,10 +1950,10 @@ export function ShipQuantityRow({
           <span className="block text-xs text-slate-500">Fleet unit</span>
         </span>
       </span>
-      <span className="grid grid-cols-[2.75rem_minmax(0,1fr)_auto_2.75rem] items-center gap-1 sm:grid-cols-[2rem_minmax(0,1fr)_auto_2rem]">
+      <span className="flex shrink-0 items-center justify-end gap-1">
         <button
           aria-label={`Decrease ${ship.label}`}
-          className="h-11 rounded border border-white/10 bg-white/[0.03] text-sm font-semibold text-slate-300 transition hover:border-white/20 hover:text-white disabled:cursor-not-allowed disabled:text-slate-600 sm:h-9"
+          className="h-11 w-11 shrink-0 rounded border border-white/10 bg-white/[0.03] text-sm font-semibold text-slate-300 transition hover:border-white/20 hover:text-white disabled:cursor-not-allowed disabled:text-slate-600 sm:h-9 sm:w-9"
           disabled={value <= 0}
           onClick={() => onChange(value - 1)}
           type="button"
@@ -1885,18 +1962,19 @@ export function ShipQuantityRow({
         </button>
         <input
           aria-label={`${ship.label} quantity`}
-          className="h-9 min-w-0 rounded border border-white/10 bg-[#070913] px-2 text-right font-mono text-sm text-white outline-none [color-scheme:dark] focus:border-signal/50"
+          className="h-9 min-w-16 rounded border border-white/10 bg-[#070913] px-2 text-center font-mono text-sm text-white outline-none [appearance:textfield] [color-scheme:dark] focus:border-signal/50 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
           inputMode="numeric"
           max={owned}
           min={0}
           onInput={(event) => onChange(Number((event.currentTarget as HTMLInputElement).value))}
+          style={{ width: `calc(${quantityDigits}ch + 3rem)` }}
           type="number"
           value={value}
         />
         <span className="whitespace-nowrap text-xs tabular-nums text-slate-500">/ {owned.toLocaleString()}</span>
         <button
           aria-label={`Increase ${ship.label}`}
-          className="h-11 rounded border border-white/10 bg-white/[0.03] text-sm font-semibold text-slate-300 transition hover:border-white/20 hover:text-white disabled:cursor-not-allowed disabled:text-slate-600 sm:h-9"
+          className="h-11 w-11 shrink-0 rounded border border-white/10 bg-white/[0.03] text-sm font-semibold text-slate-300 transition hover:border-white/20 hover:text-white disabled:cursor-not-allowed disabled:text-slate-600 sm:h-9 sm:w-9"
           disabled={value >= owned}
           onClick={() => onChange(value + 1)}
           type="button"
@@ -1967,43 +2045,27 @@ function TargetIdentityContent({
 
 export function AttackIntelPanel({
   battleForecast,
-  coords,
-  lootableAtArrival,
-  maxLootForecast,
-  resourceIntel,
-  showLoot = true,
   stationedDefenderUnits,
-  target,
   targetDefenseUnits,
   targetFleetUnits,
 }: {
   battleForecast: BattleForecastState;
-  coords: Coordinates;
-  lootableAtArrival: MissionResourceSnapshot | null;
-  maxLootForecast: MissionResourceSnapshot;
-  resourceIntel: TargetResourceIntel;
+  coords?: Coordinates | undefined;
+  lootableAtArrival?: MissionResourceSnapshot | null | undefined;
+  maxLootForecast?: MissionResourceSnapshot | undefined;
+  resourceIntel?: TargetResourceIntel | undefined;
   showLoot?: boolean | undefined;
   stationedDefenderUnits: UnitItem[];
-  target: Planet | undefined;
+  target?: Planet | undefined;
   targetDefenseUnits: UnitItem[];
   targetFleetUnits: UnitItem[];
 }) {
   return (
     <section className="overflow-hidden rounded-lg border border-white/10 bg-[#101624] shadow-sm shadow-black/10">
-      <div className="grid divide-y divide-white/10 xl:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)] xl:divide-x xl:divide-y-0">
-        <TargetDecisionTable coords={coords} target={target} />
+      <div className="grid divide-y divide-white/10">
         <AttackOutcomeContent
           battleForecast={battleForecast}
           compact
-          lootableAtArrival={lootableAtArrival}
-          maxLootForecast={maxLootForecast}
-          showLoot={showLoot}
-        />
-      </div>
-      <div className="grid divide-y divide-white/10 border-t border-white/10 xl:grid-cols-[minmax(0,1fr)_minmax(0,0.9fr)] xl:divide-x xl:divide-y-0">
-        <ResourceIntelTable
-          maxLootForecast={maxLootForecast}
-          resourceIntel={resourceIntel}
         />
         <ForceIntelTable
           stationedDefenderUnits={stationedDefenderUnits}
@@ -2018,138 +2080,71 @@ export function AttackIntelPanel({
 export function NonAttackMissionIntelPanel({
   action,
   cargoCapacity,
-  cargoSupported,
-  coords,
   destinationIntelVisible,
-  holdDepotLevel,
-  holdingBreakdown,
   resourceIntel,
   stationedDefenderUnits,
   target,
   targetDefenseUnits,
   targetFleetUnits,
+  targetDebrisField,
 }: {
   action: EnabledGalaxyAction;
   cargoCapacity: number;
-  cargoSupported: boolean;
-  coords: Coordinates;
+  cargoSupported?: boolean | undefined;
+  coords?: Coordinates | undefined;
   destinationIntelVisible: boolean;
-  holdDepotLevel: number;
-  holdingBreakdown: AcsDefendFuelBreakdown | null;
+  holdDepotLevel?: number | undefined;
+  holdingBreakdown?: AcsDefendFuelBreakdown | null | undefined;
   resourceIntel: TargetResourceIntel;
   stationedDefenderUnits: UnitItem[];
-  target: Planet | undefined;
+  target?: Planet | undefined;
   targetDefenseUnits: UnitItem[];
   targetFleetUnits: UnitItem[];
+  targetDebrisField?: DebrisField | null | undefined;
 }) {
+  const harvestDebris = action.kind === "harvest"
+    ? targetDebrisSnapshot(targetDebrisField ?? target?.debrisField ?? null)
+    : null;
+  if (!harvestDebris && !destinationIntelVisible) return null;
   return (
     <section className="overflow-hidden rounded-lg border border-white/10 bg-[#101624] shadow-sm shadow-black/10">
-      <div className="grid divide-y divide-white/10 xl:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)] xl:divide-x xl:divide-y-0">
-        <TargetDecisionTable coords={coords} target={target} />
-        <MissionPlanContent
-          action={action}
-          cargoCapacity={cargoCapacity}
-          cargoSupported={cargoSupported}
-          holdDepotLevel={holdDepotLevel}
-          holdingBreakdown={holdingBreakdown}
-          targetDebrisField={target?.debrisField ?? null}
-        />
-      </div>
-      {destinationIntelVisible ? (
-        <div className="grid divide-y divide-white/10 border-t border-white/10 xl:grid-cols-[minmax(0,1fr)_minmax(0,0.9fr)] xl:divide-x xl:divide-y-0">
+      <div className={`grid divide-y divide-white/10 lg:divide-x lg:divide-y-0 ${
+        harvestDebris && destinationIntelVisible ? "lg:grid-cols-3" : destinationIntelVisible ? "lg:grid-cols-2" : ""
+      }`}>
+        {harvestDebris ? (
+          <HarvestIntelTable cargoCapacity={cargoCapacity} resources={harvestDebris} />
+        ) : null}
+        {destinationIntelVisible ? (
+          <>
           <ResourceIntelTable resourceIntel={resourceIntel} />
           <ForceIntelTable
             stationedDefenderUnits={stationedDefenderUnits}
             targetDefenseUnits={targetDefenseUnits}
             targetFleetUnits={targetFleetUnits}
           />
-        </div>
-      ) : null}
+          </>
+        ) : null}
+      </div>
     </section>
   );
 }
 
-function MissionPlanContent({
-  action,
+function HarvestIntelTable({
   cargoCapacity,
-  cargoSupported,
-  holdDepotLevel,
-  holdingBreakdown,
-  targetDebrisField,
+  resources,
 }: {
-  action: EnabledGalaxyAction;
   cargoCapacity: number;
-  cargoSupported: boolean;
-  holdDepotLevel: number;
-  holdingBreakdown: AcsDefendFuelBreakdown | null;
-  targetDebrisField: DebrisField | null;
+  resources: MissionResourceSnapshot;
 }) {
-  const harvestDebris = action.kind === "harvest" ? targetDebrisSnapshot(targetDebrisField) : null;
   return (
-    <div className="grid content-start gap-2 bg-signal/[0.04] p-3">
-      <div className="min-w-0">
-        <span className="text-[11px] font-semibold uppercase text-slate-500">Mission</span>
-        <p className="truncate text-base font-semibold text-white">{missionPlanTitle(action)}</p>
-      </div>
-      <p className="text-xs text-slate-500">{missionPlanDetail(action)}</p>
+    <div className="grid content-start gap-2 p-3">
+      <span className="text-[11px] font-semibold uppercase text-slate-500">Debris</span>
       <div className="grid gap-1 rounded border border-white/10 bg-black/15 p-2">
-        <CompactFactRow label="Target rule" value={missionTargetRule(action)} />
-        <CompactFactRow label="Cargo" value={missionCargoRule(action, cargoSupported, cargoCapacity)} />
-        {harvestDebris ? (
-          <>
-            <CompactFactRow label="Debris" value={formatHarvestDebris(harvestDebris)} />
-            <CompactFactRow label="Coverage" value={harvestCoverageLabel(harvestDebris, cargoCapacity)} />
-          </>
-        ) : null}
-        <CompactFactRow label="Timing" value={missionTimingRule(action, Boolean(holdingBreakdown))} />
-        {holdingBreakdown ? (
-          <>
-            <CompactFactRow label="Hold fuel" value={`${holdingBreakdown.netHoldingFuel.toLocaleString()} D net`} />
-            <CompactFactRow label="Depot" value={holdDepotLevel > 0 ? `Level ${holdDepotLevel.toLocaleString()} support` : "No support"} />
-          </>
-        ) : null}
+        <CompactFactRow label="Field" value={formatHarvestDebris(resources)} />
+        <CompactFactRow label="Coverage" value={harvestCoverageLabel(resources, cargoCapacity)} />
       </div>
     </div>
   );
-}
-
-function missionPlanTitle(action: EnabledGalaxyAction): string {
-  if (action.kind === "transport") return "Transport run";
-  if (action.kind === "harvest") return "Debris sweep";
-  if (action.kind === "defenseHold" || action.kind === "acsDefend") return "Station defense";
-  if (action.kind === "deploy") return "Deploy fleet";
-  if (action.kind === "colonize") return "Colonize slot";
-  if (action.kind === "missileAttack") return "Missile strike";
-  return `${action.label} mission`;
-}
-
-function missionPlanDetail(action: EnabledGalaxyAction): string {
-  if (action.kind === "transport") return "Send cargo to an owned or allied planet while the fleet returns home.";
-  if (action.kind === "harvest") return "Send recyclers to collect the debris field, reserving cargo room for fuel first.";
-  if (action.kind === "defenseHold" || action.kind === "acsDefend") return "Station a fleet at the target planet for a defensive hold, then bring it home.";
-  if (action.kind === "deploy") return "Move ships and loaded resources to another owned planet.";
-  if (action.kind === "colonize") return "Send a colony ship to claim an empty coordinate.";
-  if (action.kind === "missileAttack") return "Launch interplanetary missiles at the selected defense target.";
-  return "Configure fleet, timing, validation, and launch from the same mission flow.";
-}
-
-function missionTargetRule(action: EnabledGalaxyAction): string {
-  if (action.kind === "transport") return "Own planet";
-  if (action.kind === "harvest") return "Debris field target";
-  if (action.kind === "defenseHold" || action.kind === "acsDefend") return "Own or alliance planet";
-  if (action.kind === "deploy") return "Own planets only";
-  if (action.kind === "colonize") return "Empty coordinate";
-  if (action.kind === "missileAttack") return "Occupied planet";
-  return "Valid target required";
-}
-
-function missionCargoRule(action: EnabledGalaxyAction, cargoSupported: boolean, cargoCapacity: number): string {
-  if (cargoSupported) return `Manual load / ${cargoCapacity.toLocaleString()} capacity`;
-  if (action.kind === "harvest") return `${cargoCapacity.toLocaleString()} recycler capacity`;
-  if (action.kind === "defenseHold" || action.kind === "acsDefend") return "Fuel and hold reserve";
-  if (action.kind === "colonize") return "Colony ship only";
-  if (action.kind === "missileAttack") return "No fleet cargo";
-  return "No cargo input";
 }
 
 function targetDebrisSnapshot(field: DebrisField | null): MissionResourceSnapshot {
@@ -2179,18 +2174,9 @@ function harvestCoverageLabel(resources: MissionResourceSnapshot, cargoCapacity:
   return `${formatResourceAmount(capacity)} / ${formatResourceAmount(total)} debris capacity`;
 }
 
-function missionTimingRule(action: EnabledGalaxyAction, hasHoldingBreakdown: boolean): string {
-  if (hasHoldingBreakdown) return "Arrive, hold, return";
-  if (action.kind === "deploy") return "One-way arrival";
-  if (action.kind === "colonize") return "Arrival settlement";
-  if (action.kind === "missileAttack") return "Instant launch";
-  return "Round trip";
-}
 
 export function AttackOutcomePanel({
   battleForecast,
-  lootableAtArrival,
-  maxLootForecast,
 }: {
   battleForecast: BattleForecastState;
   lootableAtArrival: MissionResourceSnapshot | null;
@@ -2200,8 +2186,6 @@ export function AttackOutcomePanel({
     <section className="grid gap-2 rounded-md border border-white/10 bg-black/15 p-3">
       <AttackOutcomeContent
         battleForecast={battleForecast}
-        lootableAtArrival={lootableAtArrival}
-        maxLootForecast={maxLootForecast}
       />
     </section>
   );
@@ -2210,16 +2194,17 @@ export function AttackOutcomePanel({
 function AttackOutcomeContent({
   battleForecast,
   compact = false,
-  lootableAtArrival,
-  maxLootForecast,
-  showLoot = true,
 }: {
   battleForecast: BattleForecastState;
   compact?: boolean | undefined;
-  lootableAtArrival: MissionResourceSnapshot | null;
-  maxLootForecast: MissionResourceSnapshot;
+  lootableAtArrival?: MissionResourceSnapshot | null | undefined;
+  maxLootForecast?: MissionResourceSnapshot | undefined;
   showLoot?: boolean | undefined;
 }) {
+  if (battleForecast.loading) {
+    return <AttackOutcomeSkeleton battleForecast={battleForecast} compact={compact} />;
+  }
+
   if (compact) {
     return (
       <div className="grid content-start gap-2 bg-signal/[0.04] p-3">
@@ -2227,7 +2212,7 @@ function AttackOutcomeContent({
           <div className="min-w-0">
             <div className="flex items-center gap-1">
               <span className="text-[11px] font-semibold uppercase text-slate-500">Outcome</span>
-              <SimulatedBattleReportControl report={battleForecast.sampleReport ?? null} />
+              <SimulatedBattleReportControl battleForecast={battleForecast} />
             </div>
             <p className={`truncate text-base font-semibold ${battleForecast.kind === "win" ? "text-emerald-200" : battleForecast.kind === "defeat" ? "text-red-200" : battleForecast.kind === "draw" ? "text-amber-200" : "text-slate-300"}`}>
               {battleForecast.label}
@@ -2241,16 +2226,11 @@ function AttackOutcomeContent({
         <div className="grid gap-1 rounded border border-white/10 bg-black/15 p-2">
           <CompactFactRow label="Attacker losses" value={formatLossRange(battleForecast.attackerLosses)} />
           {battleForecast.randomness ? (
-            <CompactFactRow label="Randomness" value={formatRandomnessRange(battleForecast.randomness, battleForecast.attackerLosses)} />
-          ) : null}
-          {showLoot ? (
             <>
-              <CompactFactRow label="Max loot" value={formatCompactResources(maxLootForecast)} />
-              <CompactFactRow label="Lootable" value={formatCompactResources(lootableAtArrival)} />
+              <CompactFactRow label="Simulations" value={formatSimulationOutcomes(battleForecast.randomness)} />
+              <CompactFactRow label="Attacker survivors" value={formatAttackerSurvivors(battleForecast.randomness)} />
             </>
-          ) : (
-            <CompactFactRow label="Loot" value="Inherited from the lead attack group" />
-          )}
+          ) : null}
           <CompactFactRow
             label="Tech"
             value={`${formatTechLevels(battleForecast.attackerTechLevels ?? ZERO_COMBAT_TECH_LEVELS)} / ${battleForecast.defenderTechKnown ? formatTechLevels(battleForecast.defenderTechLevels ?? ZERO_COMBAT_TECH_LEVELS) : "DEF unknown"}`}
@@ -2266,7 +2246,7 @@ function AttackOutcomeContent({
         <div className="min-w-0">
           <div className="flex items-center gap-1">
             <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Outcome</h3>
-            <SimulatedBattleReportControl report={battleForecast.sampleReport ?? null} />
+            <SimulatedBattleReportControl battleForecast={battleForecast} />
           </div>
           <p className={`mt-0.5 text-base font-semibold ${battleForecast.kind === "win" ? "text-emerald-200" : battleForecast.kind === "defeat" ? "text-red-200" : battleForecast.kind === "draw" ? "text-amber-200" : "text-slate-300"}`}>
             {battleForecast.label}
@@ -2287,27 +2267,71 @@ function AttackOutcomeContent({
         ) : null}
       </div>
       {battleForecast.randomness ? (
-        <p className="text-xs text-amber-200">{formatRandomnessRange(battleForecast.randomness, battleForecast.attackerLosses)}</p>
+        <p className="text-xs text-amber-200">
+          {formatSimulationOutcomes(battleForecast.randomness)}
+          {" · "}
+          {formatAttackerSurvivors(battleForecast.randomness)} attacker survivors
+        </p>
       ) : null}
       <CombatTechSummary
         attackerLevels={battleForecast.attackerTechLevels ?? ZERO_COMBAT_TECH_LEVELS}
         defenderKnown={battleForecast.defenderTechKnown ?? false}
         defenderLevels={battleForecast.defenderTechLevels ?? ZERO_COMBAT_TECH_LEVELS}
       />
-      {showLoot ? (
-        <div className="grid gap-2 sm:grid-cols-2">
-          <ResourceSummary title="Max loot at arrival" resources={maxLootForecast} />
-          <ResourceSummary title="Lootable at arrival" resources={lootableAtArrival} />
-        </div>
-      ) : (
-        <p className="text-xs text-slate-500">Loot allocation is inherited from the lead attack group.</p>
-      )}
     </div>
   );
 }
 
-function SimulatedBattleReportControl({ report }: { report: ContractBattleResult | null }) {
-  if (!report) {
+function AttackOutcomeSkeleton({
+  battleForecast,
+  compact,
+}: {
+  battleForecast: BattleForecastState;
+  compact: boolean;
+}) {
+  return (
+    <div
+      aria-busy="true"
+      aria-label="Calculating battle outcome"
+      className={`grid animate-pulse content-start gap-2 ${compact ? "bg-signal/[0.04] p-3" : ""}`}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="grid min-w-0 gap-2">
+          <span className="text-[11px] font-semibold uppercase text-slate-500">Outcome</span>
+          <span className="h-5 w-28 rounded bg-white/10" />
+        </div>
+        <div className="grid shrink-0 gap-1 text-right text-[11px] text-slate-500">
+          <span>ATK <span className="font-semibold tabular-nums text-slate-300">{battleForecast.attackerPower.toLocaleString()}</span></span>
+          <span>DEF <span className="font-semibold tabular-nums text-slate-300">{battleForecast.defenderPower == null ? "—" : battleForecast.defenderPower.toLocaleString()}</span></span>
+        </div>
+      </div>
+      <span className="h-3 w-full rounded bg-white/[0.07]" />
+      <span className="h-3 w-2/3 rounded bg-white/[0.07]" />
+    </div>
+  );
+}
+
+type LazyBattleReportState =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "ready"; report: ContractBattleResult }
+  | { status: "error"; message: string };
+
+function SimulatedBattleReportControl({ battleForecast }: { battleForecast: BattleForecastState }) {
+  const eagerReport = battleForecast.sampleReport ?? null;
+  const reportInput = battleForecast.reportInput;
+  const reportSeed = battleForecast.reportSeed;
+  if (eagerReport) {
+    return (
+      <SimulatedBattleReportDetails
+        generateReport={() => undefined}
+        report={eagerReport}
+        sourceKey="eager-report"
+        state={{ status: "ready", report: eagerReport }}
+      />
+    );
+  }
+  if (!reportInput || !reportSeed) {
     return (
       <button
         aria-label="Open simulated battle report"
@@ -2321,11 +2345,104 @@ function SimulatedBattleReportControl({ report }: { report: ContractBattleResult
     );
   }
 
+  const sourceKey = `${battlePreviewInputKey(reportInput)}:${reportSeed.sampleId}:${reportSeed.randomWord}`;
+  return (
+    <LazySimulatedBattleReportControl
+      key={sourceKey}
+      reportInput={reportInput}
+      reportSeed={reportSeed}
+      sourceKey={sourceKey}
+    />
+  );
+}
+
+function LazySimulatedBattleReportControl({
+  reportInput,
+  reportSeed,
+  sourceKey,
+}: {
+  reportInput: ContractBattleInput;
+  reportSeed: ContractBattleReportSeed;
+  sourceKey: string;
+}) {
+  const [state, setState] = useState<LazyBattleReportState>({ status: "idle" });
+  const workerRef = useRef<Worker | null>(null);
+  const requestIdRef = useRef(0);
+
+  useEffect(() => {
+    requestIdRef.current += 1;
+    workerRef.current?.terminate();
+    workerRef.current = null;
+    setState({ status: "idle" });
+    return () => {
+      requestIdRef.current += 1;
+      workerRef.current?.terminate();
+      workerRef.current = null;
+    };
+  }, [sourceKey]);
+
+  const generateReport = useCallback(() => {
+    if (state.status === "loading" || state.status === "ready") return;
+    requestIdRef.current += 1;
+    const requestId = requestIdRef.current;
+    workerRef.current?.terminate();
+    const worker = new Worker(new URL("../battleReport.worker.ts", import.meta.url), { type: "module" });
+    workerRef.current = worker;
+    setState({ status: "loading" });
+    worker.onmessage = (event: MessageEvent<
+      | { report: ContractBattleResult; requestId: number }
+      | { error: string; requestId: number }
+    >) => {
+      if (event.data.requestId !== requestId || requestIdRef.current !== requestId) return;
+      worker.terminate();
+      if (workerRef.current === worker) workerRef.current = null;
+      if ("report" in event.data) setState({ status: "ready", report: event.data.report });
+      else setState({ status: "error", message: event.data.error });
+    };
+    worker.onerror = () => {
+      if (requestIdRef.current !== requestId) return;
+      worker.terminate();
+      if (workerRef.current === worker) workerRef.current = null;
+      setState({ status: "error", message: "The battle report worker failed." });
+    };
+    worker.postMessage({
+      input: reportInput,
+      randomWord: reportSeed.randomWord,
+      requestId,
+      sampleId: reportSeed.sampleId,
+    });
+  }, [reportInput, reportSeed, state.status]);
+
+  return (
+    <SimulatedBattleReportDetails
+      generateReport={generateReport}
+      report={state.status === "ready" ? state.report : null}
+      sourceKey={sourceKey}
+      state={state}
+    />
+  );
+}
+
+function SimulatedBattleReportDetails({
+  generateReport,
+  report,
+  sourceKey,
+  state,
+}: {
+  generateReport: () => void;
+  report: ContractBattleResult | null;
+  sourceKey: string;
+  state: LazyBattleReportState;
+}) {
   return (
     <details
       className="group/report"
+      key={sourceKey}
       onKeyDown={(event) => {
         if (event.key === "Escape") event.currentTarget.open = false;
+      }}
+      onToggle={(event) => {
+        if (event.currentTarget.open) generateReport();
       }}
     >
       <summary
@@ -2368,68 +2485,85 @@ function SimulatedBattleReportControl({ report }: { report: ContractBattleResult
               </button>
             </div>
 
-            <div className="grid gap-1 rounded border border-white/10 bg-black/20 p-3 text-xs">
-              <CompactFactRow label="Sample" value={`#${report.sampleId}`} />
-              <div className="grid grid-cols-[7rem_minmax(0,1fr)] gap-3">
-                <span className="text-slate-500">Random word</span>
-                <code className="break-all text-right text-[11px] text-slate-300">{report.randomWord}</code>
-              </div>
-              <CompactFactRow label="Final outcome" value={battleOutcomeLabel(report.outcome)} />
-              <CompactFactRow label="Attacker losses" value={formatCompactResources(report.attackerLosses)} />
-              <CompactFactRow label="Defender losses" value={formatCompactResources(report.defenderLosses)} />
-              <CompactFactRow
-                label="Rapidfire"
-                value={`${report.rapidfireExtraShots.attacker.toLocaleString()} attacker / ${report.rapidfireExtraShots.defender.toLocaleString()} defender extra shots`}
-              />
-            </div>
-
-            <section className="grid gap-2">
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Inputs and technology owners</h3>
-              <div className="grid gap-2 sm:grid-cols-2">
-                {report.attackers.map((participant) => (
-                  <BattleParticipantCard key={participant.id} participant={participant} />
-                ))}
-                <BattleParticipantCard participant={report.defender} />
-                {report.defender.counterplay.map((participant) => (
-                  <BattleParticipantCard key={participant.id} participant={participant} />
-                ))}
-              </div>
-              {report.defender.startingDefenses.length > 0 ? (
-                <p className="rounded border border-white/10 bg-white/[0.03] p-2 text-xs text-slate-300">
-                  <span className="font-medium text-slate-400">Starting defenses: </span>
-                  {formatBattleComposition(report.defender.startingDefenses)}
-                </p>
-              ) : null}
-            </section>
-
-            <section className="grid gap-2">
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Combat rounds</h3>
-              {report.rounds.length === 0 ? (
-                <p className="rounded border border-white/10 bg-white/[0.03] p-3 text-xs text-slate-400">
-                  Combat ended before round 1 because one side had no battlefield units.
-                </p>
-              ) : report.rounds.map((round) => (
-                <article className="grid gap-2 rounded border border-white/10 bg-white/[0.03] p-3" key={round.round}>
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <h4 className="text-sm font-semibold text-white">Round {round.round}</h4>
-                    <span className="text-xs tabular-nums text-slate-400">
-                      {round.attackerStartingUnits.toLocaleString()} attackers / {round.defenderStartingUnits.toLocaleString()} defenders at start
-                    </span>
+            {report ? (
+              <>
+                <div className="grid gap-1 rounded border border-white/10 bg-black/20 p-3 text-xs">
+                  <CompactFactRow label="Sample" value={`#${report.sampleId}`} />
+                  <div className="grid grid-cols-[7rem_minmax(0,1fr)] gap-3">
+                    <span className="text-slate-500">Random word</span>
+                    <code className="break-all text-right text-[11px] text-slate-300">{report.randomWord}</code>
                   </div>
-                  <p className="text-xs text-slate-400">
-                    Rapidfire extra shots: {round.attackerRapidfireExtraShots.toLocaleString()} attacker / {round.defenderRapidfireExtraShots.toLocaleString()} defender
-                  </p>
+                  <CompactFactRow label="Final outcome" value={battleOutcomeLabel(report.outcome)} />
+                  <CompactFactRow label="Attacker losses" value={formatCompactResources(report.attackerLosses)} />
+                  <CompactFactRow label="Defender losses" value={formatCompactResources(report.defenderLosses)} />
+                  <CompactFactRow
+                    label="Rapidfire"
+                    value={`${report.rapidfireExtraShots.attacker.toLocaleString()} attacker / ${report.rapidfireExtraShots.defender.toLocaleString()} defender extra shots`}
+                  />
+                </div>
+
+                <section className="grid gap-2">
+                  <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Inputs and technology owners</h3>
                   <div className="grid gap-2 sm:grid-cols-2">
-                    <RoundSideReport title="Attackers" participants={round.attackers} />
-                    <RoundSideReport
-                      defenses={round.defender}
-                      participants={[round.defender, ...round.defender.counterplay]}
-                      title="Defenders"
-                    />
+                    {report.attackers.map((participant) => (
+                      <BattleParticipantCard key={participant.id} participant={participant} />
+                    ))}
+                    <BattleParticipantCard participant={report.defender} />
+                    {report.defender.counterplay.map((participant) => (
+                      <BattleParticipantCard key={participant.id} participant={participant} />
+                    ))}
                   </div>
-                </article>
-              ))}
-            </section>
+                  {report.defender.startingDefenses.length > 0 ? (
+                    <p className="rounded border border-white/10 bg-white/[0.03] p-2 text-xs text-slate-300">
+                      <span className="font-medium text-slate-400">Starting defenses: </span>
+                      {formatBattleComposition(report.defender.startingDefenses)}
+                    </p>
+                  ) : null}
+                </section>
+
+                <section className="grid gap-2">
+                  <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Combat rounds</h3>
+                  {report.rounds.length === 0 ? (
+                    <p className="rounded border border-white/10 bg-white/[0.03] p-3 text-xs text-slate-400">
+                      Combat ended before round 1 because one side had no battlefield units.
+                    </p>
+                  ) : report.rounds.map((round) => (
+                    <article className="grid gap-2 rounded border border-white/10 bg-white/[0.03] p-3" key={round.round}>
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <h4 className="text-sm font-semibold text-white">Round {round.round}</h4>
+                        <span className="text-xs tabular-nums text-slate-400">
+                          {round.attackerStartingUnits.toLocaleString()} attackers / {round.defenderStartingUnits.toLocaleString()} defenders at start
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-400">
+                        Rapidfire extra shots: {round.attackerRapidfireExtraShots.toLocaleString()} attacker / {round.defenderRapidfireExtraShots.toLocaleString()} defender
+                      </p>
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        <RoundSideReport title="Attackers" participants={round.attackers} />
+                        <RoundSideReport
+                          defenses={round.defender}
+                          participants={[round.defender, ...round.defender.counterplay]}
+                          title="Defenders"
+                        />
+                      </div>
+                    </article>
+                  ))}
+                </section>
+              </>
+            ) : state.status === "error" ? (
+              <div className="grid gap-3 rounded border border-red-300/20 bg-red-300/10 p-4 text-sm text-red-100">
+                <p>{state.message}</p>
+                <button
+                  className="w-fit rounded border border-white/15 px-3 py-2 text-sm font-medium text-slate-100"
+                  onClick={generateReport}
+                  type="button"
+                >
+                  Retry
+                </button>
+              </div>
+            ) : (
+              <BattleReportSkeleton />
+            )}
           </div>
         </div>
       </div>
@@ -2452,6 +2586,23 @@ function BattleParticipantCard({
       <p className="mt-1 text-slate-400">{formatTechLevels(participant.technology)}</p>
       <p className="mt-1 text-slate-300">{formatBattleComposition(participant.startingShips)}</p>
     </article>
+  );
+}
+
+function BattleReportSkeleton() {
+  return (
+    <div aria-busy="true" aria-label="Generating simulated battle report" className="grid animate-pulse gap-4">
+      <div className="grid gap-2 rounded border border-white/10 bg-black/20 p-3">
+        <span className="h-3 w-24 rounded bg-white/10" />
+        <span className="h-3 w-full rounded bg-white/[0.07]" />
+        <span className="h-3 w-2/3 rounded bg-white/[0.07]" />
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2">
+        <span className="h-24 rounded border border-white/10 bg-white/[0.04]" />
+        <span className="h-24 rounded border border-white/10 bg-white/[0.04]" />
+      </div>
+      <span className="h-36 rounded border border-white/10 bg-white/[0.04]" />
+    </div>
   );
 }
 
@@ -2498,46 +2649,6 @@ function formatBattleComposition(rows: Array<{ label: string; count: number }>):
 
 function battleOutcomeLabel(outcome: BattleOutcome): string {
   return outcome === "win" ? "Attacker win" : outcome === "defeat" ? "Defender win" : "Draw";
-}
-
-function TargetDecisionTable({ coords, target }: { coords: Coordinates; target: Planet | undefined }) {
-  return (
-    <div className="grid gap-3 p-3 sm:grid-cols-[3.75rem_minmax(0,1fr)]">
-      {target?.image ? (
-        <span className="relative block h-16 w-16 overflow-hidden rounded-md border border-white/10 sm:h-14 sm:w-14">
-          <img
-            alt=""
-            className="h-full w-full object-cover"
-            loading="lazy"
-            src={target.image}
-          />
-          {target.hasMoon ? <PlanetMoonIndicator compact planetType={target.type} /> : null}
-        </span>
-      ) : (
-        <div className="grid h-16 w-16 place-items-center rounded-md border border-white/10 bg-white/[0.03] text-[11px] text-slate-500 sm:h-14 sm:w-14">
-          No image
-        </div>
-      )}
-      <div className="min-w-0">
-        <div className="flex min-w-0 items-start justify-between gap-3">
-          <div className="min-w-0">
-            <span className="text-[11px] font-semibold uppercase text-slate-500">Target</span>
-            <p className="truncate text-base font-semibold text-white" title={target?.name ?? undefined}>
-              {target?.name ?? `Coordinate ${coords.galaxy}:${coords.system}:${coords.position}`}
-            </p>
-          </div>
-          <span className="shrink-0 rounded border border-white/10 bg-black/20 px-1.5 py-0.5 text-[11px] tabular-nums text-slate-400">
-            {target?.id ? `#${target.id}` : "Uncharted"}
-          </span>
-        </div>
-        <div className="mt-2 grid gap-1">
-          <CompactFactRow label="Coords" value={`[${coords.galaxy}:${coords.system}:${coords.position}]`} />
-          <CompactFactRow label="Commander" value={commanderLabel(target)} />
-          <CompactFactRow label="Alliance" value={allianceLabel(target)} />
-        </div>
-      </div>
-    </div>
-  );
 }
 
 function ResourceIntelTable({
@@ -2598,7 +2709,7 @@ function ForceIntelTable({
 }) {
   return (
     <div className="grid content-start gap-2 p-3">
-      <span className="text-[11px] font-semibold uppercase text-slate-500">Forces</span>
+      <span className="text-[11px] font-semibold uppercase text-slate-500">Defending forces</span>
       <div className="grid gap-1">
         <UnitSection emptyLabel="None" title="Fleet" units={targetFleetUnits} />
         <UnitSection emptyLabel="None" title="Defense" units={targetDefenseUnits} />
@@ -2705,6 +2816,62 @@ function DestinationIntelContent({
         <ResourceSummary title="Lootable at arrival" resources={resourceIntel.projectedArrivalLootable} />
       </div>
     </div>
+  );
+}
+
+function AttackLootProjection({
+  arrivalAvailable,
+  arrivalCarry,
+  currentAvailable,
+  currentCarry,
+}: {
+  arrivalAvailable: MissionResourceSnapshot | null;
+  arrivalCarry: MissionResourceSnapshot;
+  currentAvailable: MissionResourceSnapshot | null;
+  currentCarry: MissionResourceSnapshot;
+}) {
+  return (
+    <div className="grid gap-2 sm:grid-cols-2">
+      <LootProjectionCard
+        available={currentAvailable}
+        carry={currentCarry}
+        title="Loot now"
+      />
+      <LootProjectionCard
+        available={arrivalAvailable}
+        carry={arrivalCarry}
+        title="Loot at arrival"
+      />
+    </div>
+  );
+}
+
+function LootProjectionCard({
+  available,
+  carry,
+  title,
+}: {
+  available: MissionResourceSnapshot | null;
+  carry: MissionResourceSnapshot;
+  title: string;
+}) {
+  const carryTotal = resourceSnapshotTotal(carry);
+  const availableTotal = available ? resourceSnapshotTotal(available) : null;
+  return (
+    <section className="grid gap-1 rounded border border-white/10 bg-black/15 p-2">
+      <div className="flex items-baseline justify-between gap-3">
+        <h4 className="text-[11px] font-semibold uppercase text-slate-500">{title}</h4>
+        <p
+          className="shrink-0 text-sm font-semibold tabular-nums text-slate-200"
+          title={`${carryTotal.toLocaleString()} can be carried after a win / ${availableTotal?.toLocaleString() ?? "unknown"} available`}
+        >
+          {carryTotal.toLocaleString()} / {availableTotal?.toLocaleString() ?? "Unknown"}
+        </p>
+      </div>
+      <p className="text-right text-[10px] text-slate-500">Can carry after a win / available</p>
+      <CompactFactRow label="Carry" value={formatCompactResources(carry)} />
+      <CompactFactRow label="Available" value={formatCompactResources(available)} />
+    </section>
   );
 }
 
@@ -3168,6 +3335,10 @@ function formatCompactResources(resources: MissionResourceSnapshot | null): stri
   return `${formatResourceAmount(resources.metal)} M / ${formatResourceAmount(resources.crystal)} C / ${formatResourceAmount(resources.deuterium)} D`;
 }
 
+function resourceSnapshotTotal(resources: MissionResourceSnapshot): number {
+  return resources.metal + resources.crystal + resources.deuterium;
+}
+
 function formatLossRange(losses: BattleForecastLossRange | undefined): string {
   if (!losses) return "Unknown";
   if (resourceSnapshotsEqual(losses.best, losses.worst)) return formatCompactResources(losses.average);
@@ -3183,14 +3354,27 @@ function lossRangeSpread(losses: BattleForecastLossRange | undefined): MissionRe
   };
 }
 
-function formatRandomnessRange(randomness: BattleForecastRandomness, losses: BattleForecastLossRange | undefined): string {
-  const percentage = (count: number) => `${Math.round((count * 100) / randomness.sampleCount)}%`;
-  const distribution = `Win ${randomness.outcomeCounts.win} (${percentage(randomness.outcomeCounts.win)}) · Draw ${randomness.outcomeCounts.draw} (${percentage(randomness.outcomeCounts.draw)}) · Loss ${randomness.outcomeCounts.defeat} (${percentage(randomness.outcomeCounts.defeat)})`;
-  const survivors = randomness.attackerSurvivorRange.min === randomness.attackerSurvivorRange.max
-    ? `${randomness.attackerSurvivorRange.min.toLocaleString()} attacker survivors`
-    : `${randomness.attackerSurvivorRange.min.toLocaleString()}–${randomness.attackerSurvivorRange.max.toLocaleString()} attacker survivors`;
-  if (!losses) return `${distribution}; ${survivors}`;
-  return `${distribution}; ${survivors}; losses ${formatCompactResources(losses.best)} to ${formatCompactResources(losses.worst)}`;
+function formatSimulationOutcomes(randomness: BattleForecastRandomness): string {
+  const outcomes = [
+    ["win", "win", "wins"],
+    ["draw", "draw", "draws"],
+    ["defeat", "defeat", "defeats"],
+  ] as const;
+  const present = outcomes.filter(([kind]) => randomness.outcomeCounts[kind] > 0);
+  if (present.length === 1) {
+    const [, singular] = present[0]!;
+    const outcome = `${singular[0]?.toUpperCase() ?? ""}${singular.slice(1)}`;
+    return randomness.sampleCount === 1
+      ? `${outcome} in 1 simulation`
+      : `${outcome} in all ${randomness.sampleCount.toLocaleString()} simulations`;
+  }
+  return `${randomness.outcomeCounts.win.toLocaleString()} wins · ${randomness.outcomeCounts.draw.toLocaleString()} draws · ${randomness.outcomeCounts.defeat.toLocaleString()} defeats (${randomness.sampleCount.toLocaleString()} simulations)`;
+}
+
+function formatAttackerSurvivors(randomness: BattleForecastRandomness): string {
+  return randomness.attackerSurvivorRange.min === randomness.attackerSurvivorRange.max
+    ? randomness.attackerSurvivorRange.min.toLocaleString()
+    : `${randomness.attackerSurvivorRange.min.toLocaleString()}–${randomness.attackerSurvivorRange.max.toLocaleString()}`;
 }
 
 function formatResourceAmount(value: number): string {
@@ -3298,18 +3482,6 @@ function NumberField({
         value={value}
       />
     </label>
-  );
-}
-
-function SummaryRow({ label, subvalue, value }: { label: string; subvalue?: string | undefined; value: string }) {
-  return (
-    <div className="flex items-start justify-between gap-3 border-b border-white/10 pb-2 text-sm last:border-b-0 last:pb-0">
-      <span className="text-slate-500">{label}</span>
-      <span className="text-right">
-        <span className="block font-medium text-slate-200">{value}</span>
-        {subvalue ? <span className="block text-xs text-slate-500">{subvalue}</span> : null}
-      </span>
-    </div>
   );
 }
 

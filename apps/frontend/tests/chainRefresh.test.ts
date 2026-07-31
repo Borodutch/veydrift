@@ -11,6 +11,8 @@ import {
   resourceSnapshotFreshnessForSettlement,
   shouldApplyResourceSnapshot,
   shouldClearCachedShipyardStateForPageRefresh,
+  shouldEagerlyRefreshPlanetSwitchForPage,
+  shouldRefreshPlanetStateForIdentityChange,
   shouldRefreshAllianceStateForPage,
   shouldRefreshMissionActionStateForPage,
 } from "../src/PlayableMvpApp";
@@ -98,23 +100,53 @@ describe("playable chain refresh", () => {
     expect(shouldRefreshAllianceStateForPage("overview")).toBe(false);
   });
 
-  test("refreshes mission action state for all fleet-action surfaces", () => {
+  test("refreshes mission action state eagerly only where launch controls are already visible", () => {
     expect(shouldRefreshMissionActionStateForPage("galaxy")).toBe(true);
     expect(shouldRefreshMissionActionStateForPage("planet")).toBe(true);
-    expect(shouldRefreshMissionActionStateForPage("mission-control")).toBe(true);
+    expect(shouldRefreshMissionActionStateForPage("mission-control")).toBe(false);
+    expect(shouldRefreshMissionActionStateForPage("rankings")).toBe(true);
     expect(shouldRefreshMissionActionStateForPage("raid-target-finder")).toBe(true);
     expect(shouldRefreshMissionActionStateForPage("shipyard")).toBe(false);
     expect(shouldRefreshMissionActionStateForPage("overview")).toBe(true);
   });
 
-  test("clears cached shipyard counts before rendering fleet-action surfaces", async () => {
+  test("keeps Mission Control planet switches cached until a launch composer opens", async () => {
     const source = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.url)).text();
 
     expect(shouldClearCachedShipyardStateForPageRefresh("shipyard")).toBe(true);
     expect(shouldClearCachedShipyardStateForPageRefresh("galaxy")).toBe(true);
-    expect(shouldClearCachedShipyardStateForPageRefresh("mission-control")).toBe(true);
+    expect(shouldClearCachedShipyardStateForPageRefresh("mission-control")).toBe(false);
+    expect(shouldClearCachedShipyardStateForPageRefresh("rankings")).toBe(true);
     expect(shouldClearCachedShipyardStateForPageRefresh("raid-target-finder")).toBe(true);
+    expect(shouldEagerlyRefreshPlanetSwitchForPage("mission-control")).toBe(false);
+    expect(shouldEagerlyRefreshPlanetSwitchForPage("overview")).toBe(true);
     expect(source).toContain("refreshShipyardState({ clearCachedState: true });");
+    expect(source).toContain("Mission Control can switch origins entirely from its cached wallet roster.");
+  });
+
+  test("skips only hydrated Mission Control planet switches, never initial or connection reads", () => {
+    const connected = { account: "0x123", activePlanetId: "7", apiBaseUrl: "https://game.test" };
+
+    expect(shouldRefreshPlanetStateForIdentityChange(
+      "mission-control",
+      connected,
+      { ...connected, activePlanetId: "8" },
+    )).toBe(false);
+    expect(shouldRefreshPlanetStateForIdentityChange(
+      "overview",
+      connected,
+      { ...connected, activePlanetId: "8" },
+    )).toBe(true);
+    expect(shouldRefreshPlanetStateForIdentityChange(
+      "mission-control",
+      { ...connected, activePlanetId: undefined },
+      connected,
+    )).toBe(true);
+    expect(shouldRefreshPlanetStateForIdentityChange(
+      "mission-control",
+      connected,
+      { ...connected, account: "0x456" },
+    )).toBe(true);
   });
 
   test("blocks follow-up mission submits while a previous mission is settling", () => {

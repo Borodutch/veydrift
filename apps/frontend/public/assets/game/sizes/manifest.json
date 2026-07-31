@@ -1097,6 +1097,15 @@
       "512": "/assets/game/sizes/512/style-pass/generated/research/weapons.webp"
     }
   },
+  "/assets/game/style-pass/generated/rift-under-construction.webp": {
+    "width": 1536,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/rift-under-construction.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/rift-under-construction.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/rift-under-construction.webp"
+    }
+  },
   "/assets/game/style-pass/generated/ships/battlecruiser.webp": {
     "width": 1024,
     "height": 1024,

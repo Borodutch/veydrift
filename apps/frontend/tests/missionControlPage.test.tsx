@@ -57,6 +57,20 @@ describe("MissionControlPage", () => {
     ]);
 
     expect(missionLifecycleActions({
+      activePlanetId: "9",
+      canTransact: true,
+      context: "incoming",
+      mission: mission({
+        arrivalAt: "1770000300",
+        missionId: "4",
+        missionType: "Attack",
+        status: "Outbound",
+        targetPlanetId: "9",
+      }),
+      now,
+    })).toEqual([]);
+
+    expect(missionLifecycleActions({
       canTransact: true,
       context: "joinable",
       mission: mission({ arrivalAt: "1770000300", missionId: "5", missionType: "Attack", status: "Outbound" }),
@@ -445,8 +459,8 @@ describe("MissionControlPage", () => {
     expect(defenderText).toContain("Astra");
     expect(defenderText).toContain("New Eos");
     expect(defenderText).toContain("Red Haven");
-    expect(defenderText).toContain("Group defend");
-    // Intercept was removed from the frontend (VEY-KANEO-439); only Group defend remains for the defender.
+    expect(defenderText).toContain("Defend planet");
+    // Intercept was removed from the frontend (VEY-KANEO-439); only Defend planet remains for the defender.
     expect(defenderText).not.toContain("Intercept");
     expect(defenderText).toContain("Battle report");
     expect(defenderText).toContain("Past missions");
@@ -501,7 +515,7 @@ describe("MissionControlPage", () => {
     expect(attackerText).toContain("Open");
     expect(attackerText).toContain("Battle report");
     expect(attackerText).toContain("Past missions");
-    expect(attackerText).not.toContain("Group defend");
+    expect(attackerText).not.toContain("Defend planet");
     expect(attackerText).not.toContain("Intercept");
   });
 

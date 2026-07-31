@@ -1,6 +1,7 @@
-import { ArrowLeft, RefreshCw, Share2, Swords } from "lucide-preact";
+import { ArrowLeft, Share2, Swords, Undo2 } from "lucide-preact";
 
 import { ActionReasonNote } from "./ActionReasonNote";
+import { galaxyActionIcon } from "./GalaxyActionIcon";
 import { formatDurationUntil } from "../durationFormat";
 import { defenseAssetByKey, shipAssetByKey } from "../gameAssets";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
@@ -29,6 +30,7 @@ export type MissionDetailActionState =
 
 interface MissionDetailPageProps {
   actionState: MissionDetailActionState;
+  activePlanetId?: string | undefined;
   canTransact: boolean;
   detail?: MissionDetailResponse | undefined;
   error?: string | undefined;
@@ -51,6 +53,7 @@ interface MissionDetailPageProps {
 
 export function MissionDetailPage({
   actionState,
+  activePlanetId,
   canTransact,
   detail,
   error,
@@ -114,6 +117,7 @@ export function MissionDetailPage({
       ) : mission ? (
         <>
           <MissionActions
+            activePlanetId={activePlanetId}
             canTransact={canTransact}
             fleetVisibility={fleetVisibility}
             mission={mission}
@@ -209,12 +213,14 @@ function TargetMissionTraffic({
 }
 
 function MissionActions({
+  activePlanetId,
   canTransact,
   fleetVisibility,
   mission,
   now,  onCounterplay,
   onRecall,
 }: {
+  activePlanetId?: string | undefined;
   canTransact: boolean;
   fleetVisibility?: FleetMissionVisibilityResponse | undefined;
   mission: FleetMissionSummary;
@@ -227,7 +233,7 @@ function MissionActions({
   // that field is only emitted by FleetMissionRecalled, so a still-recallable Outbound fleet would
   // carry a null cost and lose its Recall button. The backend now projects the cost for Outbound
   // fleets, and the cost row below tolerates a null cost regardless.
-  const actions = missionLifecycleActions({ canTransact, context, mission, now });
+  const actions = missionLifecycleActions({ activePlanetId, canTransact, context, mission, now });
 
   // Hide the section entirely when no wallet action applies at this stage.
   if (actions.length === 0) {
@@ -239,7 +245,7 @@ function MissionActions({
       <h3 className="mb-3 text-sm font-semibold text-white">Available Orders</h3>
       <div className="flex flex-wrap gap-2">
         {actions.map((action) => action.kind === "counterplay" ? (
-          <ActionButton action={{ ...action, label: "Group defend" }} key={action.kind} onClick={() => onCounterplay(mission, "acsDefend")} />
+          <ActionButton action={{ ...action, label: "Defend planet" }} key={action.kind} onClick={() => onCounterplay(mission, "acsDefend")} />
         ) : (
           <ActionButton
             action={action}
@@ -649,9 +655,11 @@ function MissionBattleReport({
 }
 
 function ActionButton({ action, onClick }: { action: MissionLifecycleAction; onClick: () => void }) {
+  const Icon = action.kind === "counterplay" ? galaxyActionIcon("acsDefend") : Undo2;
   const button = (
     <button
-      className={`inline-flex h-11 items-center justify-center gap-2 rounded border px-3 text-sm font-medium transition sm:h-9 ${
+      aria-label={action.label}
+      className={`inline-flex h-11 w-11 shrink-0 items-center justify-center rounded border transition sm:h-9 sm:w-9 ${
         action.enabled
           ? "border-cyan-300/35 bg-cyan-300/10 text-cyan-100 hover:bg-cyan-300/20"
           : "cursor-not-allowed border-white/10 bg-white/[0.03] text-slate-500"
@@ -661,8 +669,8 @@ function ActionButton({ action, onClick }: { action: MissionLifecycleAction; onC
       title={action.enabled ? action.label : action.reason}
       type="button"
     >
-      <RefreshCw aria-hidden="true" size={14} />
-      {action.label}
+      <Icon aria-hidden="true" size={15} strokeWidth={1.9} />
+      <span className="sr-only">{action.label}</span>
     </button>
   );
 
@@ -805,12 +813,12 @@ function Notice({ children, tone = "neutral" }: { children: preact.ComponentChil
   return <div className={`notice-enter rounded-lg border p-4 text-sm ${className}`}>{children}</div>;
 }
 
-// The detail page must authorize orders (Recall / Resolve / Group defend)
+// The detail page must authorize orders (Recall / Resolve / Defend planet)
 // the same way the Mission Control list does, or the two screens disagree for the same fleet
 // (VEY-KANEO-424). Mission Control gets that classification from the backend's wallet-scoped
 // fleet-visibility lists; the detail page reuses those same lists by mission id rather than
 // re-deriving authorization from a bare `owner === account` check. That bare check was wrong twice
-// over: it offered Group defend / Intercept to any viewer of someone else's attack (the detail page
+// over: it offered Defend planet / Intercept to any viewer of someone else's attack (the detail page
 // fabricated an "incoming" defender role for strangers), and it only matched the owner's Recall by
 // luck. A fleet the wallet has no visibility relationship with is an observer and gets no orders.
 //

@@ -4,6 +4,7 @@ import { formatDurationUntil } from "../durationFormat";
 import { queueProgressPercent, type QueueTimeline } from "../playableMvp";
 import { formatUserTimestamp } from "../timestampFormat";
 import { OptimizedImage } from "./OptimizedImage";
+import { AnimatedProgressBar } from "./AnimatedProgressBar";
 import { PageHeader } from "./PageHeader";
 
 const loadedDetailImageKeys = new Set<string>();
@@ -253,6 +254,7 @@ export function InspectInfoRow({
 }
 
 export function SingleItemQueueProgress({
+  fillClassName = "bg-amber-300",
   isPrimaryItem,
   label,
   now,
@@ -260,6 +262,7 @@ export function SingleItemQueueProgress({
   readyAtLabel = "Ready at",
   title,
 }: {
+  fillClassName?: string | undefined;
   isPrimaryItem: boolean;
   label: string;
   now: number;
@@ -286,12 +289,12 @@ export function SingleItemQueueProgress({
         </span>
       </div>
 
-      <div className="mt-3 h-2 overflow-hidden rounded-full bg-black/25">
-        <div
-          className="h-full rounded-full bg-amber-300 transition-[width]"
-          style={{ width: `${percent}%` }}
-        />
-      </div>
+      <AnimatedProgressBar
+        className="mt-3 h-2 bg-black/25"
+        fillClassName={fillClassName}
+        label={`${label} progress`}
+        value={percent / 100}
+      />
 
       <div className="mt-3 grid gap-2 text-xs text-amber-100 sm:grid-cols-2">
         <p className="min-w-0">

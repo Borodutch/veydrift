@@ -28,10 +28,10 @@ import {
   InspectDetailShell,
   InspectInfoRow,
   InspectTwoColumnLayout,
-  SingleItemQueueProgress,
   useInspectDetailSelection,
 } from "./InspectProgressLayout";
 import { refreshButtonState } from "./PageHeader";
+import { QueueProgressPanel } from "./QueueProgressPanel";
 import { RequirementFlairs, type RequirementFlair, type RequirementTarget } from "./RequirementFlairs";
 import { CatalogSkeleton } from "./LoadingSkeletons";
 import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailableNotice";
@@ -137,6 +137,8 @@ export function ResearchPage({
         />
       ) : (
         <>
+      {queue ? <ActiveResearchQueuePanel now={now} queue={queue} /> : null}
+
       {viewState.buildings.researchLab === 0 ? (
         <div className="rounded border border-amber-300/30 bg-amber-300/10 px-3 py-2 text-sm text-amber-100">
           Research Lab 1 is required before any technology can be queued.
@@ -156,6 +158,7 @@ export function ResearchPage({
                     canTransact,
                     chainCost: chainCostFor(researchState, research.id),
                     error,
+                    ignoreActiveQueue: true,
                     key: research.key,
                     loading,
                     now,
@@ -195,7 +198,6 @@ export function ResearchPage({
             now={now}
             onResearch={() => onResearch(selectedResearch.id, selectedResearch.key)}
             onOpenRequirement={onOpenRequirement}
-            queue={queue}
             research={selectedResearch}
             researchState={researchState}
             productionRates={productionRates}
@@ -360,7 +362,6 @@ function ResearchDetailPanel({
   now,
   onResearch,
   onOpenRequirement,
-  queue,
   research,
   researchState,
   productionRates,
@@ -376,7 +377,6 @@ function ResearchDetailPanel({
   now: number;
   onResearch: () => void;
   onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
-  queue: ReturnType<typeof researchQueueForDisplay>;
   research: (typeof researchCatalog)[number];
   researchState: ChainResearchState | null;
   productionRates?: Resources | undefined;
@@ -408,7 +408,6 @@ function ResearchDetailPanel({
   const levelInfoRows = researchLevelInfoRows(state, research.key, {
     researchNetworkLabLevels: researchState?.researchNetworkLabLevels,
   });
-  const isSelectedResearchQueued = queue?.key === research.key;
   const [isInfoOpen, setIsInfoOpen] = useState(false);
 
   return (
@@ -457,14 +456,6 @@ function ResearchDetailPanel({
       <ResearchEffectsSection effectRows={effectRows} unlockRows={unlockRows} />
 
       <ResearchActionReasonNotice disabled={status.disabled} reason={status.reason} />
-
-      {queue && (
-        <ActiveResearchQueueDetail
-          isSelectedResearch={Boolean(isSelectedResearchQueued)}
-          now={now}
-          queue={queue}
-        />
-      )}
 
       <button
         aria-label={`Research ${research.label} to Level ${status.targetLevel}`}
@@ -886,25 +877,28 @@ function researchUnlockLevel(row: string): number {
   return level === undefined ? Number.MAX_SAFE_INTEGER : Number(level);
 }
 
-export function ActiveResearchQueueDetail({
-  isSelectedResearch,
+export function ActiveResearchQueuePanel({
   now,
   queue,
 }: {
-  isSelectedResearch: boolean;
   now: number;
   queue: NonNullable<ReturnType<typeof researchQueueForDisplay>>;
 }) {
-  return SingleItemQueueProgress({
-    isPrimaryItem: isSelectedResearch,
-    label: `${queue.label} Level ${queue.targetLevel} is researching.`,
-    now,
-    queue,
-    title: {
-      active: "Research in progress",
-      context: "Active research",
-    },
-  });
+  const queueLabel = `${queue.label} ${queue.targetLevel}`;
+  const asset = researchCatalog.find((research) => research.key === queue.key)?.asset;
+
+  return (
+    <QueueProgressPanel
+      asset={asset}
+      itemText={queueLabel}
+      label={queueLabel}
+      now={now}
+      readyAt={queue.readyAt}
+      startedAt={queue.startedAt}
+      title="Research"
+      tone="violet"
+    />
+  );
 }
 
 export function researchActionStatus({
@@ -914,6 +908,7 @@ export function researchActionStatus({
   chainCost,
   chainDurationSeconds,
   error,
+  ignoreActiveQueue = false,
   key,
   loading,
   now,
@@ -929,6 +924,7 @@ export function researchActionStatus({
   chainCost: Resources | undefined;
   chainDurationSeconds?: number | undefined;
   error: string | undefined;
+  ignoreActiveQueue?: boolean | undefined;
   key: ResearchKey;
   loading: boolean;
   now: number;
@@ -940,7 +936,9 @@ export function researchActionStatus({
 }) {
   const cost = chainCost;
   const currentLevel = state.research[key];
-  const activeQueue = researchState?.queue?.active ? researchState.queue : undefined;
+  const activeQueue = !ignoreActiveQueue && researchState?.queue?.active
+    ? researchState.queue
+    : undefined;
   const activeQueueResearch = activeQueue?.itemId === undefined
     ? undefined
     : researchCatalog.find((research) => research.id === activeQueue.itemId);
@@ -948,13 +946,15 @@ export function researchActionStatus({
   const resourcesAvailable = Boolean(researchState?.resourcesAsOfNow ?? researchState?.resources);
   const spendable = spendableResources ?? state.resources;
   const affordable = cost ? canAfford(spendable, cost) : false;
-  const displayedActive = state.researchQueue?.key === key;
+  const displayedActive = !ignoreActiveQueue && state.researchQueue?.key === key;
   const active = displayedActive || activeQueueResearch?.key === key;
   const activeTargetLevel = state.researchQueue?.targetLevel ?? activeQueue?.targetLevel;
   const targetLevel = active ? activeTargetLevel ?? currentLevel + 1 : currentLevel + 1;
   const activeReadyAt = displayedActive ? state.researchQueue?.readyAt : timestampToMs(activeQueue?.readyAt);
   const activeReady = active && Boolean(activeReadyAt && activeReadyAt <= now);
-  const queueOccupied = (Boolean(state.researchQueue) || Boolean(activeQueue)) && !active;
+  const queueOccupied = !ignoreActiveQueue
+    && (Boolean(state.researchQueue) || Boolean(activeQueue))
+    && !active;
   const occupiedQueueLabel = state.researchQueue?.label ?? activeQueueResearch?.label;
   const reason = actionPending
     ? actionPendingLabel ?? "Awaiting wallet"

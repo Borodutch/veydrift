@@ -419,6 +419,8 @@ describe("sortRaidTargets", () => {
       shipUnits: [],
       combatShipUnits: [],
       defenseUnits: [],
+      stationedDefenderForecastTimeline: [],
+      stationedDefenderTimelineComplete: true,
       protection: {
         isProtected: false,
         isSameAlliance: false,
@@ -657,5 +659,16 @@ describe("incomingThreats", () => {
     expect(incomingThreats(undefined)).toEqual([]);
     const threats = incomingThreats(visibility({ incoming: [mission({ missionId: "done", status: "Resolved" })] }));
     expect(threats).toEqual([]);
+  });
+
+  test("keeps harvest fleets out of the hostile Raid Finder banner", () => {
+    const threats = incomingThreats(visibility({
+      incoming: [
+        mission({ missionId: "harvest", missionType: "Harvest" }),
+        mission({ missionId: "attack", missionType: "Attack" }),
+      ],
+    }));
+
+    expect(threats.map((threat) => threat.missionId)).toEqual(["attack"]);
   });
 });

@@ -119,8 +119,11 @@ export type ContractBattleForecast = {
   };
 };
 
-export type ContractBattleForecastSummary = Omit<ContractBattleForecast, "samples"> & {
+export type ContractBattleReportSeed = Pick<ContractBattleResult, "sampleId" | "randomWord">;
+
+export type ContractBattleForecastSummary = Omit<ContractBattleForecast, "samples" | "sampleReport"> & {
   sampleCount: number;
+  sampleReport: ContractBattleReportSeed;
 };
 
 type CatalogUnit = (typeof combatCatalogArtifact.ships)[number];
@@ -187,10 +190,11 @@ export function deterministicBattleSampleWord(index: number): Hex {
 export function forecastContractBattle(
   input: ContractBattleInput,
   sampleCount = CONTRACT_BATTLE_SAMPLE_COUNT,
+  includeRoundReports = true,
 ): ContractBattleForecast {
   const count = Math.max(1, Math.trunc(sampleCount));
   const samples = Array.from({ length: count }, (_, index) =>
-    runContractBattle(input, deterministicBattleSampleWord(index), index + 1),
+    runContractBattle(input, deterministicBattleSampleWord(index), index + 1, includeRoundReports),
   );
   const outcomeCounts: Record<BattleOutcome, number> = { win: 0, draw: 0, defeat: 0 };
   for (const sample of samples) outcomeCounts[sample.outcome] += 1;
@@ -226,10 +230,14 @@ export function forecastContractBattle(
 export function summarizeContractBattleForecast(
   forecast: ContractBattleForecast,
 ): ContractBattleForecastSummary {
-  const { samples: _samples, ...summary } = forecast;
+  const { samples: _samples, sampleReport, ...summary } = forecast;
   return {
     ...summary,
     sampleCount: forecast.samples.length,
+    sampleReport: {
+      sampleId: sampleReport.sampleId,
+      randomWord: sampleReport.randomWord,
+    },
   };
 }
 
@@ -237,6 +245,7 @@ export function runContractBattle(
   input: ContractBattleInput,
   randomWord: Hex,
   sampleId = 1,
+  includeRoundReports = true,
 ): ContractBattleResult {
   const battle = mutableBattle(input);
   const initial = cloneBattle(battle);
@@ -263,7 +272,7 @@ export function runContractBattle(
     for (let id = 0; id < destroyedDefenses.length; id += 1) {
       destroyedDefenses[id] = Math.max(destroyedDefenses[id] ?? 0, (initial.defender.defenses[id] ?? 0) - (battle.defender.defenses[id] ?? 0));
     }
-    rounds.push(roundReport(snapshot, battle, losses, round));
+    if (includeRoundReports) rounds.push(roundReport(snapshot, battle, losses, round));
   }
 
   const attackerSurvivors = attackerUnitTotal(battle.attackers);

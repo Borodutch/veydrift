@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { ChevronLeft, ChevronRight, UserRound } from "lucide-preact";
+import { ChevronDown, ChevronLeft, ChevronRight, UserRound } from "lucide-preact";
 import { planetImageForType } from "../data/mockUniverse";
 import { fleetMissionDistance } from "../fleetMissionRules";
-import { activeMissionsByPlanetId, countPlanetsWithActiveMissions, planetMissionSubtext } from "../planetMissionSubtext";
+import { activeMissionsByPlanetId, planetMissionSubtext } from "../planetMissionSubtext";
 import type { GalaxyAction } from "../galaxyActions";
 import type { Coordinates } from "../types";
 import { fetchHighscores, shortAddress, type FleetMissionSummary, type HighscoreCategory, type HighscoreEntry, type HighscorePlanet, type HighscoreResponse } from "../walletFlow";
@@ -15,6 +15,8 @@ import { AfkFlair } from "./AfkFlair";
 import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailableNotice";
 import { InlineStateNotice } from "./InlineStateNotice";
 import { rankingsProtectionPresentation } from "../rankingsAttackProtection";
+import { galaxyActionIcon } from "./GalaxyActionIcon";
+import { Skeleton, SkeletonRegion } from "./Skeleton";
 
 type RankingsPageProps = {
   // Universe-wide active fleet missions (the unfiltered `/missions?status=active` feed). Shown as
@@ -37,14 +39,12 @@ type RankingsPageProps = {
   planetActionsForPlanet?: ((planet: HighscorePlanet, entry: HighscoreEntry) => GalaxyAction[]) | undefined;
 };
 
-const categories: Array<{ key: HighscoreCategory; label: string }> = [
+export const rankingsCategories: Array<{ key: HighscoreCategory; label: string }> = [
   { key: "total", label: "Total" },
   { key: "economy", label: "Economy" },
   { key: "research", label: "Research" },
-  { key: "researchLevels", label: "Research levels" },
   { key: "military", label: "Military" },
   { key: "fleet", label: "Fleet value" },
-  { key: "fleetCount", label: "Ships" },
   { key: "defense", label: "Defense" },
 ];
 
@@ -62,11 +62,13 @@ export function rankingsPaginationLabel(pagination: NonNullable<HighscoreRespons
 export function shouldShowRankingsInitialLoader({
   hasLoadedData,
   loading,
+  viewTransitioning = false,
 }: {
   hasLoadedData: boolean;
   loading: boolean;
+  viewTransitioning?: boolean;
 }): boolean {
-  return loading && !hasLoadedData;
+  return loading && (!hasLoadedData || viewTransitioning);
 }
 
 export function rankingsRefreshButtonState(loading: boolean): { disabled: boolean; label: "Refresh" | "Refreshing" } {
@@ -117,14 +119,18 @@ export function RankingsPage({ activeMissions, apiBaseUrl, currentAllianceId, cu
   const [active, setActive] = useState<HighscoreCategory>("total");
   const [data, setData] = useState<HighscoreResponse | null>(null);
   const [loading, setLoading] = useState(false);
+  const [viewTransitioning, setViewTransitioning] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [page, setPage] = useState(1);
   const [pendingCurrentPlayerJumpPage, setPendingCurrentPlayerJumpPage] = useState<number | null>(null);
+  const [expandedRankingWallets, setExpandedRankingWallets] = useState<Set<string>>(() => new Set());
   const rankingsSectionRef = useRef<HTMLElement | null>(null);
 
   const load = (targetPage = page) => {
     if (!apiBaseUrl) {
       setData(null);
+      setLoading(false);
+      setViewTransitioning(false);
       setError("Game API unavailable.");
       return;
     }
@@ -142,12 +148,25 @@ export function RankingsPage({ activeMissions, apiBaseUrl, currentAllianceId, cu
         console.error(nextError);
         setError(nextError instanceof Error ? nextError.message : "Rankings could not be loaded.");
       })
-      .finally(() => setLoading(false));
+      .finally(() => {
+        setLoading(false);
+        setViewTransitioning(false);
+      });
+  };
+
+  const beginViewTransition = () => {
+    setLoading(true);
+    setViewTransitioning(true);
+    setError(undefined);
   };
 
   useEffect(() => {
     load(page);
   }, [active, apiBaseUrl, currentWallet, page]);
+
+  useEffect(() => {
+    setExpandedRankingWallets(new Set());
+  }, [active, page]);
 
   const missionsByPlanetId = useMemo(() => activeMissionsByPlanetId(activeMissions ?? []), [activeMissions]);
   const nowMs = now ?? Date.now();
@@ -161,22 +180,10 @@ export function RankingsPage({ activeMissions, apiBaseUrl, currentAllianceId, cu
   const currentPlayerScore = currentPlayerEntry ? rankingDisplayScore(currentPlayerEntry, active) : null;
   const handleCurrentPlayerJump = () => {
     if (!currentPlayerPage) return;
+    beginViewTransition();
     setPendingCurrentPlayerJumpPage(currentPlayerPage.page);
     setPage(currentPlayerPage.page);
   };
-  // VEY-KANEO-448: discoverability signal so the enriched per-planet mission subtext is never buried in
-  // a long rank-ordered page (mirrors the Raid Target Finder footer). Counts visible planets that carry
-  // at least one active mission line, using the same owner (entry wallet) the rows classify against.
-  const activeMissionPlanetCount = useMemo(
-    () =>
-      countPlanetsWithActiveMissions(
-        entries.flatMap((entry) => rankingPlanets(entry).map((planet) => ({ planetId: planet.planetId, owner: entry.wallet }))),
-        missionsByPlanetId,
-        nowMs,
-      ),
-    [entries, missionsByPlanetId, nowMs],
-  );
-
   useEffect(() => {
     if (pendingCurrentPlayerJumpPage === null || loading) return;
     if (!currentWallet || !data?.pagination || data.pagination.page !== pendingCurrentPlayerJumpPage) return;
@@ -193,6 +200,7 @@ export function RankingsPage({ activeMissions, apiBaseUrl, currentAllianceId, cu
         hasLoadedData={Boolean(data)}
         loading={loading}
         onCurrentPlayer={handleCurrentPlayerJump}
+        viewTransitioning={viewTransitioning}
       />
 
       {errorPresentation ? (
@@ -209,8 +217,8 @@ export function RankingsPage({ activeMissions, apiBaseUrl, currentAllianceId, cu
         )
       ) : null}
 
-      <div className="flex flex-wrap gap-2 rounded-md border border-white/10 bg-white/[0.02] p-2">
-        {categories.map((category) => (
+      <div className="flex flex-wrap gap-2">
+        {rankingsCategories.map((category) => (
           <button
             aria-pressed={active === category.key}
             className={`h-9 rounded border px-3 text-xs font-semibold transition ${
@@ -219,7 +227,11 @@ export function RankingsPage({ activeMissions, apiBaseUrl, currentAllianceId, cu
                 : "border-white/10 bg-white/5 text-slate-300 hover:bg-white/10"
             }`}
             key={category.key}
-            onClick={() => setActive(category.key)}
+            onClick={() => {
+              if (category.key === active) return;
+              beginViewTransition();
+              setActive(category.key);
+            }}
             type="button"
           >
             {category.label}
@@ -232,6 +244,7 @@ export function RankingsPage({ activeMissions, apiBaseUrl, currentAllianceId, cu
         currentAllianceId={currentAllianceId}
         currentWallet={currentWallet}
         entries={entries}
+        expandedWallets={expandedRankingWallets}
         hasLoadedData={Boolean(data)}
         loading={loading}
         missionsByPlanetId={missionsByPlanetId}
@@ -243,34 +256,39 @@ export function RankingsPage({ activeMissions, apiBaseUrl, currentAllianceId, cu
         onSelectMoon={onSelectMoon}
         onSelectPlayer={onSelectPlayer}
         onSelectPlanet={onSelectPlanet}
+        onTogglePlayerBodies={(wallet) => {
+          setExpandedRankingWallets((current) => {
+            const next = new Set(current);
+            if (next.has(wallet)) {
+              next.delete(wallet);
+            } else {
+              next.add(wallet);
+            }
+            return next;
+          });
+        }}
         originCoordinates={originCoordinates}
         planetActionsForPlanet={planetActionsForPlanet}
+        viewTransitioning={viewTransitioning}
       />
 
       {pagination ? (
         <RankingsPagination
           loading={loading}
           currentPlayerPage={currentPlayerPage}
-          onNext={() => setPage((currentPage) => currentPage + 1)}
-          onPrevious={() => setPage((currentPage) => Math.max(1, currentPage - 1))}
+          onNext={() => {
+            beginViewTransition();
+            setPage((currentPage) => currentPage + 1);
+          }}
+          onPrevious={() => {
+            beginViewTransition();
+            setPage((currentPage) => Math.max(1, currentPage - 1));
+          }}
           onCurrentPlayer={handleCurrentPlayerJump}
           pagination={pagination}
         />
       ) : null}
 
-      {data ? (
-        <p className="text-xs leading-5 text-slate-500">
-          {data.formula.summary}
-          {activeMissionPlanetCount > 0 ? (
-            <>
-              {" "}
-              <span className="text-slate-400">
-                {activeMissionPlanetCount} {activeMissionPlanetCount === 1 ? "planet has" : "planets have"} active fleet activity on this page — shown as mission subtext under the planet.
-              </span>
-            </>
-          ) : null}
-        </p>
-      ) : null}
     </section>
   );
 }
@@ -282,6 +300,7 @@ export function RankingsCurrentPlayerIndicator({
   hasLoadedData,
   loading,
   onCurrentPlayer,
+  viewTransitioning = false,
 }: {
   currentPlayerPage?: { rank: number; page: number } | null | undefined;
   currentScore?: string | null | undefined;
@@ -289,8 +308,26 @@ export function RankingsCurrentPlayerIndicator({
   hasLoadedData: boolean;
   loading: boolean;
   onCurrentPlayer?: (() => void) | undefined;
+  viewTransitioning?: boolean | undefined;
 }) {
-  if (!currentWallet || !hasLoadedData) return null;
+  if (!currentWallet) return null;
+
+  if (shouldShowRankingsInitialLoader({ hasLoadedData, loading, viewTransitioning })) {
+    return (
+      <SkeletonRegion
+        className="flex min-h-14 w-full min-w-0 items-center gap-3 rounded-md border border-white/10 bg-white/[0.04] px-4 py-2.5"
+        label="Loading your rank"
+      >
+        <Skeleton className="h-4 w-4 shrink-0 rounded-full" />
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <Skeleton className="h-3.5 w-20" />
+          <Skeleton className="h-4 w-24" />
+        </div>
+      </SkeletonRegion>
+    );
+  }
+
+  if (!hasLoadedData) return null;
 
   const canJumpToCurrentPlayer = Boolean(currentPlayerPage && onCurrentPlayer);
 
@@ -394,6 +431,7 @@ export function RankingsTable({
   currentAllianceId,
   currentWallet,
   entries,
+  expandedWallets,
   hasLoadedData = entries.length > 0,
   loading,
   missionsByPlanetId,
@@ -405,13 +443,16 @@ export function RankingsTable({
   onSelectMoon,
   onSelectPlayer,
   onSelectPlanet,
+  onTogglePlayerBodies,
   originCoordinates,
   planetActionsForPlanet,
+  viewTransitioning = false,
 }: {
   active?: HighscoreCategory;
   currentAllianceId?: string | null | undefined;
   currentWallet?: string | undefined;
   entries: HighscoreEntry[];
+  expandedWallets?: ReadonlySet<string> | undefined;
   hasLoadedData?: boolean | undefined;
   loading: boolean;
   missionsByPlanetId?: ReadonlyMap<string, FleetMissionSummary[]> | undefined;
@@ -423,8 +464,10 @@ export function RankingsTable({
   onSelectMoon?: ((coords: Coordinates) => void) | undefined;
   onSelectPlayer?: ((wallet: string) => void) | undefined;
   onSelectPlanet?: ((coords: Coordinates) => void) | undefined;
+  onTogglePlayerBodies?: ((wallet: string) => void) | undefined;
   originCoordinates?: Coordinates | null | undefined;
   planetActionsForPlanet?: ((planet: HighscorePlanet, entry: HighscoreEntry) => GalaxyAction[]) | undefined;
+  viewTransitioning?: boolean | undefined;
 }) {
   return (
     <div className="min-w-0 max-w-full overflow-hidden rounded-md border border-white/10 bg-[#0d1422]/90">
@@ -435,7 +478,7 @@ export function RankingsTable({
           </span>
         ))}
       </div>
-      {shouldShowRankingsInitialLoader({ hasLoadedData, loading }) ? (
+      {shouldShowRankingsInitialLoader({ hasLoadedData, loading, viewTransitioning }) ? (
         <RankingsRowsSkeleton />
       ) : entries.length === 0 ? (
         <RankingsMessage label="No settled commanders indexed yet" />
@@ -446,6 +489,7 @@ export function RankingsTable({
             currentAllianceId={currentAllianceId}
             currentWallet={currentWallet}
             entry={entry}
+            expanded={expandedWallets ? expandedWallets.has(entry.wallet.toLowerCase()) : true}
             key={`${active}-${entry.wallet}`}
             missionsByPlanetId={missionsByPlanetId}
             now={now}
@@ -456,6 +500,7 @@ export function RankingsTable({
             onSelectMoon={onSelectMoon}
             onSelectPlayer={onSelectPlayer}
             onSelectPlanet={onSelectPlanet}
+            onToggleBodies={onTogglePlayerBodies}
             originCoordinates={originCoordinates}
             planetActionsForPlanet={planetActionsForPlanet}
           />
@@ -470,6 +515,7 @@ function RankingRow({
   currentAllianceId,
   currentWallet,
   entry,
+  expanded,
   missionsByPlanetId,
   now,
   moonActionsForPlanet,
@@ -479,6 +525,7 @@ function RankingRow({
   onSelectMoon,
   onSelectPlayer,
   onSelectPlanet,
+  onToggleBodies,
   originCoordinates,
   planetActionsForPlanet,
 }: {
@@ -486,6 +533,7 @@ function RankingRow({
   currentAllianceId?: string | null | undefined;
   currentWallet?: string | undefined;
   entry: HighscoreEntry;
+  expanded: boolean;
   missionsByPlanetId?: ReadonlyMap<string, FleetMissionSummary[]> | undefined;
   now?: number | undefined;
   moonActionsForPlanet?: ((planet: HighscorePlanet, entry: HighscoreEntry) => GalaxyAction[]) | undefined;
@@ -495,6 +543,7 @@ function RankingRow({
   onSelectMoon?: ((coords: Coordinates) => void) | undefined;
   onSelectPlayer?: ((wallet: string) => void) | undefined;
   onSelectPlanet?: ((coords: Coordinates) => void) | undefined;
+  onToggleBodies?: ((wallet: string) => void) | undefined;
   originCoordinates?: Coordinates | null | undefined;
   planetActionsForPlanet?: ((planet: HighscorePlanet, entry: HighscoreEntry) => GalaxyAction[]) | undefined;
 }) {
@@ -518,6 +567,11 @@ function RankingRow({
     )
   );
   const protectionPresentation = rankingsProtectionPresentation(entry.attackProtection);
+  const bodyCount = rankedPlanets.reduce(
+    (count, planet) => count + 1 + (planet.hasMoon || planet.moon?.exists ? 1 : 0),
+    0,
+  );
+  const bodiesId = `ranking-bodies-${normalizedWallet}`;
   const isAttackProtected = Boolean(protectionPresentation);
   const isAfk = entry.attackProtection?.defenderInactive === true;
   const rowTone = isCurrentPlayer
@@ -547,7 +601,7 @@ function RankingRow({
       tabIndex={isCurrentPlayer ? -1 : undefined}
     >
       <span className={`font-mono ${isCurrentPlayer ? "text-cyan-100" : isSameAlliance ? "text-sky-100" : "text-slate-400"}`}>#{entry.rank}</span>
-      <span className="flex min-w-0 items-center overflow-hidden">
+      <span className="flex min-w-0 items-center">
         <span className="min-w-0 text-left">
           <span className="flex min-w-0 items-center gap-1.5">
             {alliance ? (
@@ -610,18 +664,34 @@ function RankingRow({
           <span className="mt-0.5 block font-mono text-xs font-semibold text-cyan-100 sm:hidden">
             Score {formatScore(rankingDisplayScore(entry, active))}
           </span>
-          {protectionPresentation ? (
-            <span className="mt-1 block max-w-2xl text-[11px] leading-4 text-red-100/80">
-              {protectionPresentation.detailLabel}
-            </span>
-          ) : null}
         </span>
+        {bodyCount > 0 && onToggleBodies ? (
+          <button
+            aria-controls={bodiesId}
+            aria-expanded={expanded}
+            aria-label={`${expanded ? "Hide" : "Show"} planets and moons for ${commanderLabel}`}
+            className="ml-auto inline-flex h-7 shrink-0 items-center gap-1 rounded border border-white/10 bg-white/5 px-1.5 text-[10px] font-semibold text-slate-300 transition hover:border-cyan-300/30 hover:bg-cyan-300/10 hover:text-cyan-100"
+            onClick={() => onToggleBodies(normalizedWallet)}
+            title={`${expanded ? "Hide" : "Show"} ${bodyCount} ${bodyCount === 1 ? "body" : "bodies"}`}
+            type="button"
+          >
+            <span className="hidden sm:inline">{bodyCount}</span>
+            <ChevronDown
+              aria-hidden="true"
+              className={`transition-transform ${expanded ? "rotate-180" : ""}`}
+              size={13}
+            />
+          </button>
+        ) : null}
       </span>
       <span className="hidden text-right font-mono sm:block">
         <span className="block font-semibold text-cyan-100">{formatScore(rankingDisplayScore(entry, active))}</span>
       </span>
-      {rankedPlanets.length > 0 ? (
-        <div className="col-start-1 col-end-3 mt-2 min-w-0 max-w-full overflow-hidden space-y-1 sm:col-start-2 sm:col-end-4">
+      {expanded && rankedPlanets.length > 0 ? (
+        <div
+          className="col-start-1 col-end-3 mt-2 min-w-0 max-w-full overflow-hidden space-y-1 sm:col-start-2 sm:col-end-4"
+          id={bodiesId}
+        >
           <div className="grid grid-cols-[22px_minmax(0,1fr)] items-center gap-1 px-2 text-[10px] font-semibold uppercase tracking-normal text-slate-500 sm:grid-cols-[26px_minmax(0,1fr)_56px_88px_82px_minmax(72px,auto)] sm:gap-2">
             <span className="col-span-2">Planet</span>
             <span className="hidden text-right sm:block">Dist</span>
@@ -692,6 +762,7 @@ function RankingRow({
                     <RankingsActionButtons
                       actions={planetActions}
                       blockedAttackLabel={protectionPresentation?.blockedAttackLabel}
+                      blockedAttackHint={protectionPresentation?.detailLabel}
                       className="col-start-2 justify-start sm:col-start-6 sm:justify-end"
                       onAction={(action) => onPlanetAction?.(action, planet, entry)}
                     />
@@ -705,6 +776,7 @@ function RankingRow({
                         <RankingsActionButtons
                           actions={moonActions}
                           blockedAttackLabel={protectionPresentation?.blockedAttackLabel}
+                          blockedAttackHint={protectionPresentation?.detailLabel}
                           className="min-w-0"
                           onAction={(action) => onMoonAction?.(action, planet, entry)}
                         />
@@ -737,38 +809,51 @@ function RankingsMessage({ label }: { label: string }) {
 export function RankingsActionButtons({
   actions,
   blockedAttackLabel,
+  blockedAttackHint,
   className = "",
   onAction,
 }: {
   actions: GalaxyAction[];
   blockedAttackLabel?: string | undefined;
+  blockedAttackHint?: string | undefined;
   className?: string | undefined;
   onAction: (action: GalaxyAction) => void;
 }) {
-  const visibleActions = actions.filter((action) => action.enabled || (blockedAttackLabel && action.kind === "attack"));
+  const visibleActions = actions.filter((action) => action.enabled || action.kind === "attack");
   if (visibleActions.length === 0) return null;
 
   return (
     <span className={`flex flex-wrap justify-end gap-1 ${className}`}>
-      {visibleActions.map((action) => (
-        <button
-          className={`rounded border px-2 py-1 text-[10px] font-semibold transition ${
-            action.enabled
-              ? "border-signal/30 bg-signal/10 text-signal hover:bg-signal/20"
-              : "cursor-not-allowed border-red-200/20 bg-red-200/[0.08] text-red-100/70"
-          }`}
-          disabled={!action.enabled}
-          key={action.kind}
-          onClick={(event) => {
-            event.stopPropagation();
-            onAction(action);
-          }}
-          title={action.enabled ? action.label : action.reason}
-          type="button"
-        >
-          {action.enabled ? action.label : blockedAttackLabel}
-        </button>
-      ))}
+      {visibleActions.map((action) => {
+        const Icon = galaxyActionIcon(action.kind);
+        const protectedAttack = Boolean(blockedAttackLabel && action.kind === "attack");
+        const label = protectedAttack ? blockedAttackLabel : action.label;
+        const hint = protectedAttack
+          ? `${label}: ${blockedAttackHint ?? "Attack blocked by protection."}`
+          : action.enabled
+            ? label
+            : `${label}: ${action.reason}`;
+        return (
+          <button
+            aria-label={hint}
+            className={`inline-flex h-8 w-8 items-center justify-center rounded border transition ${
+              action.enabled
+                ? "border-signal/30 bg-signal/10 text-signal hover:bg-signal/20"
+                : "cursor-not-allowed border-red-200/20 bg-red-200/[0.08] text-red-100/70"
+            }`}
+            disabled={!action.enabled}
+            key={action.kind}
+            onClick={(event) => {
+              event.stopPropagation();
+              onAction(action);
+            }}
+            title={hint}
+            type="button"
+          >
+            <Icon aria-hidden="true" size={14} strokeWidth={1.9} />
+          </button>
+        );
+      })}
     </span>
   );
 }

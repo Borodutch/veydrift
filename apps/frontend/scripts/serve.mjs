@@ -120,10 +120,6 @@ function playAppRouteForPathname(pathname) {
   return pathname === "/play" || pathname.startsWith("/play/");
 }
 
-function ccaAppRouteForPathname(pathname) {
-  return pathname === "/cca" || pathname.startsWith("/cca/");
-}
-
 export function inviteAppRouteForPathname(pathname) {
   return pathname === "/invite" || pathname === "/alliance-invites";
 }
@@ -138,8 +134,6 @@ export function shareRouteForUrl(url) {
 }
 
 function shareRouteForPathname(pathname) {
-  if (pathname === "/cca") return { kind: "cca" };
-
   const mission = pathname.match(/^\/mission\/([0-9]+)$/);
   if (mission) return { kind: "mission", id: mission[1] };
 
@@ -176,7 +170,6 @@ function shareRouteForPathname(pathname) {
 }
 
 export function imageRouteForPathname(pathname) {
-  if (pathname === "/og/cca.png") return { kind: "cca" };
   if (pathname === "/og/referral.png") return { kind: "referral" };
 
   const referral = pathname.match(/^\/og\/referral\/([A-Za-z0-9_-]{1,24})\.png$/);
@@ -215,7 +208,6 @@ export function imageRouteForPathname(pathname) {
 }
 
 function sharePathForRoute(route) {
-  if (route.kind === "cca") return "/cca";
   if (route.kind === "referral") return "/";
   if (route.kind === "mission") return `/mission/${encodeURIComponent(route.id)}`;
   if (route.kind === "planet") return `/planet/${route.galaxy}/${route.system}/${route.position}`;
@@ -225,7 +217,6 @@ function sharePathForRoute(route) {
 }
 
 function imagePathForRoute(route) {
-  if (route.kind === "cca") return "/og/cca.png";
   if (route.kind === "referral") {
     return route.code
       ? `/og/referral/${encodeURIComponent(route.code)}.png`
@@ -249,27 +240,12 @@ export async function routeMeta(route) {
 }
 
 async function buildRouteMeta(route) {
-  if (route.kind === "cca") return ccaMeta();
   if (route.kind === "referral") return referralMeta(route.code);
   if (route.kind === "mission") return missionMeta(route.id);
   if (route.kind === "planet") return planetMeta(route);
   if (route.kind === "moon") return moonMeta(route);
   if (route.kind === "player") return playerMeta(route.wallet);
   return allianceMeta(route.allianceId);
-}
-
-function ccaMeta() {
-  return {
-    kind: "cca",
-    title: "$VEYDRIFT CCA | Bid on Base",
-    imageTitle: "$VEYDRIFT CCA",
-    description: "Bid for $VEYDRIFT in the official Base Continuous Clearing Auction with ETH or WETH. Play Veydrift at veydrift.com.",
-    status: "LIVE ON BASE",
-    subtitle: "Bid with ETH or WETH",
-    accent: "#ff4daf",
-    footer: "veydrift.com · Play the game",
-    commander: true,
-  };
 }
 
 function referralMeta(code = "") {
@@ -396,7 +372,6 @@ async function allianceMeta(allianceId) {
 }
 
 function fallbackMeta(route) {
-  if (route.kind === "cca") return ccaMeta();
   if (route.kind === "referral") return referralMeta(route.code);
 
   if (route.kind === "mission") {
@@ -959,7 +934,7 @@ if (import.meta.main) {
         return responseFor(file, route);
       }
 
-      if (docsAppRouteForPathname(route) || playAppRouteForPathname(route) || ccaAppRouteForPathname(route) || inviteAppRouteForPathname(route)) {
+      if (docsAppRouteForPathname(route) || playAppRouteForPathname(route) || inviteAppRouteForPathname(route)) {
         return responseFor(Bun.file(staticFileUrl("/index.html")), "/index.html");
       }
 

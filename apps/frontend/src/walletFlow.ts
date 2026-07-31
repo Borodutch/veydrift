@@ -2,7 +2,7 @@ import { sdk } from "@farcaster/miniapp-sdk";
 import { encodeAbiParameters, keccak256, parseAbiParameters, toHex } from "viem";
 import { GAME_UNAVAILABLE_MESSAGE, serverUnavailableRetryMessage } from "./gameUnavailable";
 import type { ApiPlanet } from "./data/mockUniverse";
-import type { PlanetType } from "./types";
+import type { PlanetType, PublicStationedDefender } from "./types";
 
 export type Eip1193Provider = {
   request<T = unknown>(args: {
@@ -1112,6 +1112,8 @@ export type HighscorePlanet = {
     resources?: OnChainResources | null;
     resourcesAsOfNow?: OnChainResources | null;
   } | null;
+  stationedDefenderForecastTimeline?: PublicStationedDefender[] | null;
+  stationedDefenderTimelineComplete?: boolean;
   tactical?: {
     currentResources?: OnChainResources;
     raidableResources: OnChainResources;

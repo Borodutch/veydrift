@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import {
   planOnChainRefresh,
   shouldClearCachedShipyardStateForPageRefresh,
+  shouldEagerlyRefreshPlanetSwitchForPage,
+  shouldRefreshPlanetStateForIdentityChange,
   shouldRefreshAllianceStateForPage,
 } from "./PlayableMvpApp";
 
@@ -90,15 +92,43 @@ describe("shouldRefreshAllianceStateForPage", () => {
 });
 
 describe("shouldClearCachedShipyardStateForPageRefresh", () => {
-  test("forces mission-action pages to replace stale shipyard inventory before rendering launch controls", () => {
+  test("forces pages with visible launch controls to replace stale shipyard inventory", () => {
     expect(shouldClearCachedShipyardStateForPageRefresh("shipyard")).toBe(true);
     expect(shouldClearCachedShipyardStateForPageRefresh("raid-target-finder")).toBe(true);
-    expect(shouldClearCachedShipyardStateForPageRefresh("mission-control")).toBe(true);
+    expect(shouldClearCachedShipyardStateForPageRefresh("mission-control")).toBe(false);
+    expect(shouldClearCachedShipyardStateForPageRefresh("rankings")).toBe(true);
     expect(shouldClearCachedShipyardStateForPageRefresh("galaxy")).toBe(true);
   });
 
   test("does not clear cached shipyard inventory on unrelated pages", () => {
     expect(shouldClearCachedShipyardStateForPageRefresh("research")).toBe(false);
     expect(shouldClearCachedShipyardStateForPageRefresh("alliance")).toBe(false);
+  });
+});
+
+describe("shouldEagerlyRefreshPlanetSwitchForPage", () => {
+  test("uses cached planet state while switching origins on Mission Control", () => {
+    expect(shouldEagerlyRefreshPlanetSwitchForPage("mission-control")).toBe(false);
+    expect(shouldEagerlyRefreshPlanetSwitchForPage("overview")).toBe(true);
+    expect(shouldEagerlyRefreshPlanetSwitchForPage("infrastructure")).toBe(true);
+  });
+
+  test("still refreshes initial hydration and connection changes", () => {
+    const current = { account: "0x123", activePlanetId: "8", apiBaseUrl: "https://game.test" };
+    expect(shouldRefreshPlanetStateForIdentityChange(
+      "mission-control",
+      { ...current, activePlanetId: "7" },
+      current,
+    )).toBe(false);
+    expect(shouldRefreshPlanetStateForIdentityChange(
+      "mission-control",
+      { ...current, activePlanetId: undefined },
+      current,
+    )).toBe(true);
+    expect(shouldRefreshPlanetStateForIdentityChange(
+      "mission-control",
+      { ...current, apiBaseUrl: "https://other.test" },
+      current,
+    )).toBe(true);
   });
 });

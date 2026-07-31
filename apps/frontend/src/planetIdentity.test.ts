@@ -121,6 +121,15 @@ describe("planet identity", () => {
     expect(identity.hasMoon).toBe(true);
   });
 
+  test("preserves a managed planet name in settlement-derived mission identity", () => {
+    const identity = planetFromSettlementPlanet({
+      ...settlementPlanet,
+      name: "New Zion",
+    });
+
+    expect(identity.name).toBe("New Zion");
+  });
+
   test("keeps canonical commander and alliance identity when settlement data refreshes galaxy rows", () => {
     const [systemPlanet] = planetsFromSystemResponse({
       galaxy: 6,

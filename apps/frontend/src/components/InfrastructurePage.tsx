@@ -1,4 +1,3 @@
-import { Hammer } from "lucide-preact";
 import { useState } from "preact/hooks";
 import type { BuildingEffectMetrics, BuildingKey, BuildingRequirement, PlanetProductionProfile, PlayableState, Resources } from "../playableMvp";
 import {
@@ -23,14 +22,10 @@ import {
   frontendOnlyBuildingRequirementsFor,
   missingFrontendOnlyBuildingRequirementFor,
 } from "../buildingDetails";
-import { buildingQueueLabel } from "../overviewData";
 import { actionNoticeForBuilding, type InfrastructureActionNotice } from "../buildingActionNotice";
-import {
-  InspectInfoBlock,
-  InspectPageHeader,
-  SingleItemQueueProgress,
-} from "./InspectProgressLayout";
+import { InspectInfoBlock } from "./InspectProgressLayout";
 import { refreshButtonState } from "./PageHeader";
+import { QueueProgressPanel } from "./QueueProgressPanel";
 import { RequirementFlairs, type RequirementFlair, type RequirementTarget } from "./RequirementFlairs";
 import { LevelInfoButton, LevelInfoModal, type LevelInfoColumn, type LevelInfoRow } from "./LevelInfoModal";
 import { StructureCatalog, StructureDetail, type StructureLevelInfo } from "./StructureCatalog";
@@ -116,6 +111,9 @@ export function InfrastructurePage({
   const selectedKey = selectedBuildingKey ?? localSelectedKey;
   const selectedBuilding = buildingCatalog.find((building) => building.key === selectedKey)
     ?? buildingCatalog[0]!;
+  const activeBuildingQueue = settledState.queue?.kind === "building"
+    ? settledState.queue
+    : undefined;
   const showInitialLoadError = shouldShowInfrastructureInitialLoadError({
     hasLoadedInfrastructureState,
     loadError,
@@ -136,18 +134,9 @@ export function InfrastructurePage({
 
   return (
     <div className="grid gap-4">
-      <InspectPageHeader
-        actions={(
-          <>
-          {settledState.queue?.kind === "building" ? (
-            <ActiveBuildingBadge
-              label={buildingQueueLabel(settledState.queue.label, settledState.queue.targetLevel)}
-            />
-          ) : null}
-          </>
-        )}
-        title="Infrastructure"
-      />
+      {activeBuildingQueue ? (
+        <ActiveBuildingQueuePanel now={now} queue={activeBuildingQueue} />
+      ) : null}
 
       {loadError ? <InfrastructureRefreshErrorPanel reason={loadError} /> : null}
 
@@ -159,6 +148,7 @@ export function InfrastructurePage({
           const upgradeStatus = buildingUpgradeStatus(settledState, building.key, {
             chainCost: chainCosts?.[building.key],
             chainDurationSeconds: chainDurations?.[building.key],
+            ignoreActiveQueue: true,
             now,
             productionRates,
             spendableResources,
@@ -248,15 +238,6 @@ export function InfrastructureRefreshErrorPanel({ reason }: { reason: string }) 
   );
 }
 
-function ActiveBuildingBadge({ label }: { label: string }) {
-  return (
-    <span className="inline-flex max-w-full min-w-0 items-center gap-2 rounded border border-amber-300/20 bg-amber-300/10 px-2.5 py-1.5 text-xs font-semibold leading-5 text-amber-200">
-      <Hammer aria-hidden="true" className="shrink-0" size={14} strokeWidth={2.2} />
-      <span className="min-w-0 break-words">Building: {label}</span>
-    </span>
-  );
-}
-
 function buildingStatusText(label: string, currentLevel: number): string {
   if (label === "Rift Stabilizer") {
     return currentLevel > 0 ? "Built" : "Not built";
@@ -336,14 +317,14 @@ function BuildingDetailPanel({
     defaultLabel: `${actionVerb} Level ${status.targetLevel}`,
     statusDisabled: status.disabled,
   });
-  const activeBuildingQueue = state.queue?.kind === "building" ? state.queue : undefined;
   const dedupedActionNotice = deduplicatedInfrastructureActionNotice(actionNotice, [
     status.reason,
   ]);
   // Only surface failures. Success action banners are intentionally not rendered
   // so the panel does not flash a transient status banner on every action.
   const visibleActionNotice = dedupedActionNotice?.tone === "error" ? dedupedActionNotice : undefined;
-  const isSelectedBuildingQueued = activeBuildingQueue?.key === building.key;
+  const isSelectedBuildingQueued = state.queue?.kind === "building"
+    && state.queue.key === building.key;
   const requirementStates = getBuildingRequirementStates(state, building.key, { starterPlanet });
 
   return (
@@ -389,13 +370,6 @@ function BuildingDetailPanel({
       label={building.label}
       levelInfo={!binary ? buildingLevelInfoTable(currentLevel, levelInfoRows) : undefined}
       notice={visibleActionNotice ? { label: visibleActionNotice.label, tone: "error" } : undefined}
-      queue={activeBuildingQueue ? {
-        isPrimaryItem: Boolean(isSelectedBuildingQueued),
-        label: `${buildingQueueLabel(activeBuildingQueue.label, activeBuildingQueue.targetLevel)} is upgrading.`,
-        now,
-        queue: activeBuildingQueue,
-        title: { active: "Construction in progress", context: "Active construction" },
-      } : undefined}
       statusReason={{ disabled: status.disabled, label: status.reason }}
       summary={binary ? (built ? "Built on this planet" : "Build on this planet") : currentLevel === 0 ? `Build Level ${status.targetLevel}` : `Level ${currentLevel} to ${status.targetLevel}`}
     />
@@ -442,27 +416,28 @@ function normalizeInfrastructureNotice(label: string | undefined): string | unde
   return normalized || undefined;
 }
 
-export function ActiveBuildingQueueDetail({
-  isSelectedBuilding,
+export function ActiveBuildingQueuePanel({
   now,
   queue,
 }: {
-  isSelectedBuilding: boolean;
   now: number;
   queue: BuildingQueueItem;
 }) {
-  const queueLabel = buildingQueueLabel(queue.label, queue.targetLevel);
+  const queueLabel = `${queue.label} ${queue.targetLevel}`;
+  const asset = buildingCatalog.find((building) => building.key === queue.key)?.asset;
 
-  return SingleItemQueueProgress({
-    isPrimaryItem: isSelectedBuilding,
-    label: `${queueLabel} is upgrading.`,
-    now,
-    queue,
-    title: {
-      active: "Construction in progress",
-      context: "Active construction",
-    },
-  });
+  return (
+    <QueueProgressPanel
+      asset={asset}
+      itemText={queueLabel}
+      label={queueLabel}
+      now={now}
+      readyAt={queue.readyAt}
+      startedAt={queue.startedAt}
+      title="Construction"
+      tone="amber"
+    />
+  );
 }
 
 export function BuildingLevelInfoButton({

@@ -19,7 +19,7 @@ import {
   fleetMissionTravelSeconds,
   type FleetDriveLevels,
 } from "./fleetMissionRules";
-import type { Coordinates, PlanetType } from "./types";
+import type { Coordinates, PlanetType, PublicStationedDefender } from "./types";
 import { emptyMissionShips } from "./galaxyActions";
 import type {
   ChainShipyardState,
@@ -105,6 +105,8 @@ export type RaidTarget = {
   defensePower: number;
   defenseCount: number;
   defenseUnits: RaidTargetUnitBreakdown[];
+  stationedDefenderForecastTimeline: PublicStationedDefender[];
+  stationedDefenderTimelineComplete: boolean;
   protection: RaidTargetProtection;
   inbound: RaidTargetInbound;
 };
@@ -442,6 +444,8 @@ export function buildRaidTargets({
         defensePower: safeNumber(tactical?.defenses.power),
         defenseCount: tactical?.defenses.count ?? 0,
         defenseUnits: unitBreakdown(tactical?.defenses.units),
+        stationedDefenderForecastTimeline: planet.stationedDefenderForecastTimeline ?? [],
+        stationedDefenderTimelineComplete: planet.stationedDefenderTimelineComplete === true,
         protection,
         inbound: inboundSummary(inboundByTarget.get(planet.planetId)),
       });
@@ -681,6 +685,8 @@ export type IncomingThreat = {
   arrivalAtMs: number | null;
 };
 
+const RAID_FINDER_HOSTILE_MISSION_TYPES = new Set(["Attack", "AcsAttack", "MissileAttack"]);
+
 /**
  * Fleets inbound to the viewer's own planets (hostile attacks). Surfaced as a
  * situational-awareness banner so the raider knows what is coming at them while
@@ -691,7 +697,10 @@ export function incomingThreats(
 ): IncomingThreat[] {
   if (!fleetVisibility) return [];
   return fleetVisibility.incoming
-    .filter((mission) => mission.status === "Outbound")
+    .filter((mission) =>
+      mission.status === "Outbound"
+      && RAID_FINDER_HOSTILE_MISSION_TYPES.has(mission.missionType)
+    )
     .map((mission) => ({
       missionId: mission.missionId,
       attacker: mission.owner,

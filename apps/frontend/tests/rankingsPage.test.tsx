@@ -4,6 +4,7 @@ import type { Coordinates } from "../src/types";
 import type { GalaxyAction } from "../src/galaxyActions";
 import {
   primaryRankingEntries,
+  rankingsCategories,
   rankingsColumnLabels,
   rankingsCurrentPlayerRowSelector,
   rankingsErrorPresentation,
@@ -43,6 +44,46 @@ describe("RankingsPage", () => {
 
   test("uses one ranking table with the active category score and total context", () => {
     expect([...rankingsColumnLabels]).toEqual(["Rank", "Commander", "Score"]);
+  });
+
+  test("keeps one score-based filter for research and fleet rankings", () => {
+    expect(rankingsCategories.map(({ key, label }) => [key, label])).toEqual([
+      ["total", "Total"],
+      ["economy", "Economy"],
+      ["research", "Research"],
+      ["military", "Military"],
+      ["fleet", "Fleet value"],
+      ["defense", "Defense"],
+    ]);
+  });
+
+  test("collapses player bodies by default and toggles each commander independently", () => {
+    const entry = rankingEntry();
+    const toggled: string[] = [];
+    const collapsed = RankingsTable({
+      entries: [entry],
+      expandedWallets: new Set(),
+      loading: false,
+      onTogglePlayerBodies: (wallet) => toggled.push(wallet),
+    });
+    const collapsedRow = rowWithWallet(collapsed, entry.wallet);
+    const toggle = buttonWithTitle(collapsedRow, "Show 1 body");
+
+    expect(toggle?.props?.["aria-expanded"]).toBe(false);
+    expect(planetRowWithPlanetId(collapsedRow, entry.homePlanet!.planetId)).toBeUndefined();
+    toggle?.props?.onClick?.();
+    expect(toggled).toEqual([entry.wallet.toLowerCase()]);
+
+    const expanded = RankingsTable({
+      entries: [entry],
+      expandedWallets: new Set([entry.wallet.toLowerCase()]),
+      loading: false,
+      onTogglePlayerBodies: () => undefined,
+    });
+    const expandedRow = rowWithWallet(expanded, entry.wallet);
+
+    expect(buttonWithTitle(expandedRow, "Hide 1 body")?.props?.["aria-expanded"]).toBe(true);
+    expect(planetRowWithPlanetId(expandedRow, entry.homePlanet!.planetId)).toBeTruthy();
   });
 
   test("renders rank, commander, planet icons, and the active score without duplicate totals", () => {
@@ -248,7 +289,8 @@ describe("RankingsPage", () => {
     const moonRow = elementWithTitle(table, "Open moon at [2:44:9]");
     const attack = buttonWithTitle(table, "Attack");
 
-    expect(visibleText(table)).toContain("Moon Attack");
+    expect(visibleText(table)).not.toContain("Moon Attack");
+    expect(attack?.props?.["aria-label"]).toBe("Attack");
     expect(buttonWithTitle(table, "Inspect moon")).toBeUndefined();
     expect(moonRow).toBeTruthy();
     expect(attack).toBeTruthy();
@@ -347,8 +389,8 @@ describe("RankingsPage", () => {
     const transport = buttonWithTitle(table, "Transport");
     const planetRow = planetRowWithPlanetId(table, "7");
 
-    expect(visibleText(table)).toContain("Transport");
-    expect(visibleText(planetRow)).toContain("Transport");
+    expect(visibleText(table)).not.toContain("Transport");
+    expect(visibleText(planetRow)).not.toContain("Transport");
     expect(buttonWithTitle(planetRow, "Transport")).toBeTruthy();
     expect(transport).toBeTruthy();
     transport?.props?.onClick?.(clickEvent());
@@ -356,7 +398,7 @@ describe("RankingsPage", () => {
     expect(launched).toEqual([{ action: planetAction, planetId: "7", wallet: entry.wallet }]);
   });
 
-  test("hides unavailable ranked planet actions inside the target row", () => {
+  test("keeps the primary attack affordance visible while it is unavailable", () => {
     const planetAction: GalaxyAction = {
       enabled: false,
       kind: "attack",
@@ -374,7 +416,7 @@ describe("RankingsPage", () => {
 
     expect(planetRow).toBeTruthy();
     expect(visibleText(planetRow)).not.toContain("Attack");
-    expect(buttonWithTitle(planetRow, "Attack")).toBeUndefined();
+    expect(buttonWithTitle(planetRow, "Attack: Attack unavailable.")?.props?.disabled).toBe(true);
   });
 
   test("marks the home planet inside the planet list instead of commander subtext", () => {
@@ -523,13 +565,14 @@ describe("RankingsPage", () => {
       }],
     });
     const row = rowWithWallet(table, protectedEntry.wallet);
-    const protectedAction = buttonWithTitle(row, blockedReasonLabel);
+    const protectedAction = buttonWithTitle(row, `Protected: ${blockedReasonLabel}`);
 
     expect(row?.props?.className).toContain("bg-red-300");
     expect(visibleText(row)).toContain("Score protected");
-    expect(visibleText(row)).toContain(blockedReasonLabel);
+    const protectionBadge = elementNodes(row).find((item) => item.props?.title === blockedReasonLabel);
+    expect(visibleText(protectionBadge)).toContain("Score protected");
     expect(protectedAction?.props?.disabled).toBe(true);
-    expect(visibleText(protectedAction)).toBe("Protected");
+    expect(visibleText(protectedAction)).toBe("");
     expect(visibleText(row)).toContain("25,437");
     expect(visibleText(row)).not.toContain("Score 25,437 vs 7,340");
     expect(visibleText(row)).not.toContain("7,340");
@@ -612,6 +655,11 @@ describe("RankingsPage", () => {
       hasLoadedData: true,
       loading: true,
     })).toBe(false);
+    expect(shouldShowRankingsInitialLoader({
+      hasLoadedData: true,
+      loading: true,
+      viewTransitioning: true,
+    })).toBe(true);
 
     const table = RankingsTable({
       entries: [],
@@ -623,6 +671,19 @@ describe("RankingsPage", () => {
     expect(text).toContain("No settled commanders indexed yet");
     expect(text).not.toContain("Loading rankings");
     expect(text).not.toContain("Refreshing rankings");
+  });
+
+  test("shows row skeletons while changing ranking filters or pages", () => {
+    const table = RankingsTable({
+      entries: [rankingEntry()],
+      hasLoadedData: true,
+      loading: true,
+      viewTransitioning: true,
+    });
+    const text = visibleText(table);
+
+    expect(text).toContain("Loading rankings");
+    expect(text).not.toContain("Commander One");
   });
 
   test("uses the refresh button as the rankings background refresh indicator", () => {
@@ -661,6 +722,26 @@ describe("RankingsPage", () => {
 
     expect(visibleText(indicator)).toContain("Your rank: Unranked");
     expect(visibleText(indicator)).not.toContain("Jump to your row");
+  });
+
+  test("shows a rank skeleton during initial loads and ranking view changes", () => {
+    const transitioning = RankingsCurrentPlayerIndicator({
+      currentPlayerPage: null,
+      currentWallet: "0x1111111111111111111111111111111111111111",
+      hasLoadedData: true,
+      loading: true,
+      viewTransitioning: true,
+    });
+    const initial = RankingsCurrentPlayerIndicator({
+      currentPlayerPage: null,
+      currentWallet: "0x1111111111111111111111111111111111111111",
+      hasLoadedData: false,
+      loading: true,
+    });
+
+    expect(visibleText(transitioning)).toContain("Loading your rank");
+    expect(visibleText(transitioning)).not.toContain("Unranked");
+    expect(visibleText(initial)).toContain("Loading your rank");
   });
 
   test("updates the current-player rank indicator from the selected category payload", () => {

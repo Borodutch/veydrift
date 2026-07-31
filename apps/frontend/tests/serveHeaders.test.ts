@@ -50,6 +50,11 @@ describe("frontend static server headers", () => {
     )).toBe("/?ref=borodutch");
   });
 
+  test("does not expose the retired CCA page or social image routes", () => {
+    expect(shareRouteForUrl(new URL("https://veydrift.com/cca"))).toBeNull();
+    expect(imageRouteForPathname("/og/cca.png")).toBeNull();
+  });
+
   test("falls back quickly when mission share metadata is slow", async () => {
     const originalFetch = globalThis.fetch;
     const originalTimeout = process.env.VEYDRIFT_OG_METADATA_TIMEOUT_MS;

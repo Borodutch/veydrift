@@ -1,6 +1,7 @@
-import { ChevronDown, ChevronLeft, ChevronRight, Clipboard, ExternalLink, Filter, List } from "lucide-preact";
+import { ChevronDown, ChevronLeft, ChevronRight, Clipboard, ExternalLink, Filter, List, Undo2 } from "lucide-preact";
 
 import { ActionReasonNote } from "./ActionReasonNote";
+import { galaxyActionIcon } from "./GalaxyActionIcon";
 import { planetTypeFromTemperature } from "../data/mockUniverse";
 import { formatDuration, formatDurationUntil } from "../durationFormat";
 import { acsHoldingFuelRatePerHour, allianceDepotSustainSeconds } from "../fleetMissionRules";
@@ -86,6 +87,7 @@ export function missionControlRefreshButtonState(loading: boolean): { disabled: 
 
 interface MissionControlPageProps {
   actionState: MissionControlActionState;
+  activePlanetId?: string | undefined;
   allActiveMissions?: FleetMissionSummary[] | undefined;
   canTransact: boolean;
   fleetVisibility?: FleetMissionVisibilityResponse | undefined;
@@ -131,6 +133,7 @@ interface MissionControlPageProps {
 
 export function MissionControlPage({
   actionState,
+  activePlanetId,
   allActiveMissions = [],
   canTransact,
   fleetVisibility,
@@ -329,6 +332,7 @@ export function MissionControlPage({
           ) : null}
 
           <ActiveMissionSection
+            activePlanetId={activePlanetId}
             activePage={view.activePage}
             activeTab={activeTab}
             allRows={filteredAllActiveRows}
@@ -407,7 +411,7 @@ const EMPTY_PLANET_ARCHETYPE_LOOKUP: ReadonlyMap<string, PlanetType> = new Map()
 // surfaces both sides of that arrangement: (a) the defense fleets the player currently has stationed
 // at allied planets, and (b) the allied fleets stationed at the player's own attacked planets. Each
 // "holds" until the defended attack lands, so the countdown is the defended attack's arrival. The panel
-// is read-only — the launch flow lives on the "Group defend" action of an incoming attack.
+// is read-only — the launch flow lives on the "Defend planet" action of an incoming attack.
 export function StationedDefenseSection({
   incoming,
   now,
@@ -538,15 +542,7 @@ function StationedDefenseCard({
   return (
     <MissionCard
       actions={
-        <button
-          className={rowActionButtonClass}
-          onClick={() => onOpenReport(mission.missionId)}
-          title="Open the full mission detail screen"
-          type="button"
-        >
-          <ExternalLink aria-hidden="true" size={13} />
-          Open
-        </button>
+        <OpenMissionButton onClick={() => onOpenReport(mission.missionId)} />
       }
       badgeLabel="Defending"
       badgeTone={missionTypeTone("AcsDefend")}
@@ -584,15 +580,7 @@ function DefendedPlanetCard({
   return (
     <MissionCard
       actions={
-        <button
-          className={rowActionButtonClass}
-          onClick={() => onOpenReport(attack.missionId)}
-          title="Open the full mission detail screen"
-          type="button"
-        >
-          <ExternalLink aria-hidden="true" size={13} />
-          Open
-        </button>
+        <OpenMissionButton onClick={() => onOpenReport(attack.missionId)} />
       }
       badgeLabel="Defended"
       badgeTone={missionTypeTone("AcsDefend")}
@@ -688,12 +676,14 @@ function shipCountsToNumbers(ships: Record<string, string>): Record<string, numb
 }
 
 export function missionLifecycleActions({
+  activePlanetId,
   canTransact,
   context,
   mission,
   now,
   transactionUnavailableReason,
 }: {
+  activePlanetId?: string | undefined;
   canTransact: boolean;
   context: ActiveMissionContext;
   mission: FleetMissionSummary;
@@ -727,7 +717,12 @@ export function missionLifecycleActions({
   // "Land fleet" button is removed so the frontend never drives a non-lazy
   // complete/land action; returning rows are read-only until the backend lands them.
 
-  if (context === "incoming" && mission.status === "Outbound" && mission.missionType === "Attack") {
+  if (
+    context === "incoming"
+    && mission.status === "Outbound"
+    && mission.missionType === "Attack"
+    && (!activePlanetId || mission.targetPlanetId !== activePlanetId)
+  ) {
     actions.push({
       enabled: canTransact && !due,
       kind: "counterplay",
@@ -773,6 +768,7 @@ type ActiveMissionTabKey = (typeof ACTIVE_MISSION_TABS)[number]["key"];
 const ACTIVE_MISSION_DEFAULT_TAB: ActiveMissionTabKey = "mine";
 
 function ActiveMissionSection({
+  activePlanetId,
   activePage,
   activeTab,
   allRows,
@@ -793,6 +789,7 @@ function ActiveMissionSection({
   wallet,
   walletPlanetIds,
 }: {
+  activePlanetId?: string | undefined;
   activePage: number;
   activeTab: ActiveMissionTabKey;
   allRows: ActiveMissionRow[];
@@ -816,6 +813,7 @@ function ActiveMissionSection({
   const rowsByTab: Record<ActiveMissionTabKey, ActiveMissionRow[]> = { all: allRows, alliance: allianceRows, mine: myRows };
   const visibleTabs = ACTIVE_MISSION_TABS.filter((tab) => tab.key !== "alliance" || showAllianceTab);
   const sharedRowProps = {
+    activePlanetId,
     canTransact,
     lootByMissionId,
     lossesByMissionId,
@@ -1098,6 +1096,7 @@ function missionFilterEmptyLabel(filters: MissionControlFilters): string {
 }
 
 function ActiveMissionList({
+  activePlanetId,
   canTransact,
   emptyLabel,
   initialPage = 0,
@@ -1113,6 +1112,7 @@ function ActiveMissionList({
   wallet,
   walletPlanetIds,
 }: {
+  activePlanetId?: string | undefined;
   canTransact: boolean;
   emptyLabel: string;
   initialPage?: number | undefined;
@@ -1154,6 +1154,7 @@ function ActiveMissionList({
         >
           {pageRows.map(({ context, direction, mission }) => (
             <MissionRow
+              activePlanetId={activePlanetId}
               canTransact={canTransact}
               context={context}
               direction={direction}
@@ -1180,6 +1181,7 @@ function ActiveMissionList({
 }
 
 function MissionRow({
+  activePlanetId,
   canTransact,
   context,
   direction,
@@ -1196,6 +1198,7 @@ function MissionRow({
   wallet,
   walletPlanetIds,
 }: {
+  activePlanetId?: string | undefined;
   canTransact: boolean;
   context: ActiveMissionContext;
   direction: string;
@@ -1213,7 +1216,7 @@ function MissionRow({
   walletPlanetIds: ReadonlySet<string>;
 }) {
   // VEY-397#11: only surface Join when it is actionable.
-  const actions = missionLifecycleActions({ canTransact, context, mission, now, transactionUnavailableReason })
+  const actions = missionLifecycleActions({ activePlanetId, canTransact, context, mission, now, transactionUnavailableReason })
     .filter((action) => action.kind !== "joinAttack" || action.enabled);
   const missionDirection = resolveMissionDirection({ context, mission, wallet, walletPlanetIds });
   const origin = missionEndpoint(mission, "origin", planetLookup);
@@ -1233,7 +1236,7 @@ function MissionRow({
         <>
           {!pendingMission && actions.map((action) => action.kind === "counterplay" ? (
             <ActionButton
-              action={{ ...action, label: "Group defend" }}
+              action={{ ...action, label: "Defend planet" }}
               key={action.kind}
               onClick={() => onCounterplay(mission, "acsDefend")}
             />
@@ -1262,15 +1265,7 @@ function MissionRow({
               Indexing
             </span>
           ) : (
-            <button
-              className={rowActionButtonClass}
-              onClick={() => onOpenReport(mission.missionId)}
-              title="Open the full mission detail screen"
-              type="button"
-            >
-              <ExternalLink aria-hidden="true" size={13} />
-              Open
-            </button>
+            <OpenMissionButton onClick={() => onOpenReport(mission.missionId)} />
           )}
         </>
       }
@@ -1509,6 +1504,7 @@ export function missionStatusPill(mission: FleetMissionSummary, now: number): Mi
 
 // Shared style for the "Open" and "Join" row actions (VEY-397#14).
 const rowActionButtonClass = "inline-flex h-10 items-center justify-center gap-2 rounded border border-white/10 bg-white/5 px-2 text-xs font-medium text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500 sm:h-8";
+const iconRowActionButtonClass = "inline-flex h-10 w-10 shrink-0 items-center justify-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500 sm:h-8 sm:w-8";
 
 // Compact absolute timestamp like "Jun 8, 9:55 AM" (VEY-399#4) — collapsing to time-only ("9:55 AM")
 // when the moment falls on the viewer's current calendar day, since repeating today's date on every
@@ -1846,9 +1842,11 @@ function FleetIcons({ ships }: { ships: Record<string, string> }) {
 }
 
 function ActionButton({ action, onClick }: { action: MissionLifecycleAction; onClick: () => void }) {
+  const Icon = action.kind === "counterplay" ? galaxyActionIcon("acsDefend") : Undo2;
   const button = (
     <button
-      className={`rounded border px-3 py-2 text-xs font-medium transition sm:px-2 sm:py-1 ${
+      aria-label={action.label}
+      className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded border transition sm:h-8 sm:w-8 ${
         action.enabled
           ? "border-cyan-300/35 bg-cyan-300/10 text-cyan-100 hover:bg-cyan-300/20"
           : "cursor-not-allowed border-white/10 bg-white/[0.03] text-slate-500"
@@ -1858,7 +1856,8 @@ function ActionButton({ action, onClick }: { action: MissionLifecycleAction; onC
       title={action.enabled ? action.label : action.reason}
       type="button"
     >
-      {action.label}
+      <Icon aria-hidden="true" size={15} strokeWidth={1.9} />
+      <span className="sr-only">{action.label}</span>
     </button>
   );
 
@@ -1871,6 +1870,21 @@ function ActionButton({ action, onClick }: { action: MissionLifecycleAction; onC
       {button}
       <ActionReasonNote reason={action.reason} />
     </span>
+  );
+}
+
+function OpenMissionButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      aria-label="Open"
+      className={iconRowActionButtonClass}
+      onClick={onClick}
+      title="Open the full mission detail screen"
+      type="button"
+    >
+      <ExternalLink aria-hidden="true" size={14} strokeWidth={1.9} />
+      <span className="sr-only">Open</span>
+    </button>
   );
 }
 
@@ -2463,15 +2477,7 @@ function PastMissionSummaryRow({
   return (
     <MissionCard
       actions={
-        <button
-          className={rowActionButtonClass}
-          onClick={() => onOpenReport(mission.missionId)}
-          title="Open the full mission detail screen"
-          type="button"
-        >
-          <ExternalLink aria-hidden="true" size={13} />
-          Open
-        </button>
+        <OpenMissionButton onClick={() => onOpenReport(mission.missionId)} />
       }
       glance={missionGlance({ direction: missionDirection, harvested, loot, losses, mission })}
       badgeLabel={directionalMissionTypeLabel(mission.missionType, missionDirection)}
@@ -2556,15 +2562,7 @@ function PastBattleReportRow({
   return (
     <MissionCard
       actions={
-        <button
-          className={rowActionButtonClass}
-          onClick={() => onOpenReport(report.missionId)}
-          title="Open the full mission detail screen"
-          type="button"
-        >
-          <ExternalLink aria-hidden="true" size={13} />
-          Open
-        </button>
+        <OpenMissionButton onClick={() => onOpenReport(report.missionId)} />
       }
       badgeLabel="Battle report"
       badgeTone="border-red-300/25 bg-red-400/10 text-red-100"

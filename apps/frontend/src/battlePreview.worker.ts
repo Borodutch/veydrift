@@ -16,7 +16,7 @@ workerScope.onmessage = (event) => {
   try {
     workerScope.postMessage({
       requestId,
-      forecast: summarizeContractBattleForecast(forecastContractBattle(input)),
+      forecast: summarizeContractBattleForecast(forecastContractBattle(input, undefined, false)),
     });
   } catch (error) {
     workerScope.postMessage({

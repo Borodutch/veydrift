@@ -44,6 +44,7 @@ function pickPlanetType(position: number, seed: number): PlanetType {
 
 export type ApiPlanet = {
   key?: string;
+  name?: string | null | undefined;
   galaxy: number;
   system: number;
   position: number;
@@ -67,6 +68,7 @@ export type ApiPlanet = {
 
 export type SettlementPlanetIdentity = {
   planetId: string;
+  name?: string | null | undefined;
   owner: string;
   galaxy: number;
   system: number;
@@ -143,6 +145,7 @@ export function mergePlanetAtCoordinates(planets: Planet[], planet: Planet | und
 export function planetFromSettlementPlanet(planet: SettlementPlanetIdentity): Planet {
   const parsed = planetFromApi({
     key: `${planet.galaxy}:${planet.system}:${planet.position}`,
+    name: planet.name,
     galaxy: planet.galaxy,
     system: planet.system,
     position: planet.position,
@@ -223,7 +226,7 @@ function planetFromApi(planet: ApiPlanet): Planet | null {
 
   return {
     id: planet.key ?? `${planet.galaxy}-${planet.system}-${planet.position}`,
-    name: `Planet ${planet.galaxy}.${planet.system}.${planet.position}`,
+    name: planet.name?.trim() || `Planet ${planet.galaxy}.${planet.system}.${planet.position}`,
     type,
     image: PLANET_IMAGES[type],
     position: planet.position,

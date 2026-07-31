@@ -232,8 +232,8 @@ describe("Mission Control battle reports", () => {
     expect(text).not.toContain("Target Planet #7");
     // VEY-397#9: fleet column shows ship icons with xN counts (ship name is in the hover title).
     expect(text).toContain("x3");
-    expect(text).toContain("Group defend");
-    // VEY-KANEO-439: Intercept removed from the frontend; only Group defend (AcsDefend) remains.
+    expect(text).toContain("Defend planet");
+    // VEY-KANEO-439: Intercept removed from the frontend; only Defend planet (AcsDefend) remains.
     expect(text).not.toContain("Intercept");
     // VEY-397#12: the active-row action is "Open" (the past-report row keeps "Open mission").
     expect(text).toContain("Open");
@@ -2138,6 +2138,8 @@ describe("Mission Control battle reports", () => {
     const indicator = findElements(tree, "a").find((item) => item.props?.["data-planet-moon-indicator"] === "true");
     expect(indicator?.props?.["aria-label"]).toBe("Open moon at 1:2:3");
     expect(indicator?.props?.href).toBe("/moon/1/2/3");
+    expect(missionRouteSource).toContain('className="!-right-1 !-top-1 !h-3 !w-3"');
+    expect(missionRouteSource).toContain('className="absolute inset-0 overflow-hidden rounded-full');
   });
 
   test("keeps planet endpoints with moon badges linked to both planet and moon detail paths", () => {

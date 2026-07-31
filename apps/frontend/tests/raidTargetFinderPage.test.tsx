@@ -1,9 +1,53 @@
 import { describe, expect, test } from "bun:test";
 import type { ComponentChildren, VNode } from "preact";
-import { DebrisTargetRow, RaidTargetFilterControls, RaidTargetRow, defenseLabel } from "../src/components/RaidTargetFinderPage";
+import {
+  DebrisTargetRow,
+  RaidFinderPagination,
+  RaidTargetFilterControls,
+  RaidTargetRow,
+  defenseLabel,
+  raidFinderPagination,
+} from "../src/components/RaidTargetFinderPage";
 import { DEFAULT_RAID_TARGET_FILTERS, type DebrisFinderTarget, type RaidTarget } from "../src/raidTargetFinder";
 
 describe("RaidTargetFinderPage", () => {
+  test("paginates every result mode at 25 rows and clamps stale pages", () => {
+    expect(raidFinderPagination(62, 1)).toMatchObject({
+      firstEntry: 1,
+      lastEntry: 25,
+      page: 1,
+      totalPages: 3,
+    });
+    expect(raidFinderPagination(62, 3)).toMatchObject({
+      firstEntry: 51,
+      lastEntry: 62,
+      page: 3,
+      totalPages: 3,
+    });
+    expect(raidFinderPagination(4, 99)).toMatchObject({
+      firstEntry: 1,
+      lastEntry: 4,
+      page: 1,
+      totalPages: 1,
+    });
+  });
+
+  test("renders compact previous and next pagination controls", () => {
+    const selected: string[] = [];
+    const pagination = RaidFinderPagination({
+      onNext: () => selected.push("next"),
+      onPrevious: () => selected.push("previous"),
+      pagination: raidFinderPagination(62, 2),
+    });
+
+    const paginationText = visibleText(pagination).replace(/\s+/g, " ").trim();
+    expect(paginationText).toContain("Page 2 of 3");
+    expect(paginationText).toContain("26 - 50 of 62");
+    buttonWithTitle(pagination, "Previous page")?.props?.onClick?.();
+    buttonWithTitle(pagination, "Next page")?.props?.onClick?.();
+    expect(selected).toEqual(["previous", "next"]);
+  });
+
   test("renders the Hide active fleet filter control", () => {
     const controls = RaidTargetFilterControls({
       filters: DEFAULT_RAID_TARGET_FILTERS,
@@ -26,29 +70,26 @@ describe("RaidTargetFinderPage", () => {
     expect(defenseLabel(target)).toBe("Defense 6,000 — Ships: Light Fighter x1 (4K); Defenses: Rocket Launcher x1 (2K)");
   });
 
-  test("row exposes enabled and disabled attack actions without dropping Inspect", () => {
+  test("row exposes enabled and disabled attack actions while the planet label opens details", () => {
     const selected: string[] = [];
     const row = RaidTargetRow({
       attackAction: { label: "Attack" },
-      missionSubtext: { lines: [], overflow: 0 },
-      now: 1_770_000_000_000,
       onAttackTarget: (target) => selected.push(target.planetId),
       onSelectPlanet: () => undefined,
       target: raidTarget({ planetId: "9" }),
     });
-    const attack = buttonWithText(row, "Attack");
-    const inspect = buttonWithText(row, "Inspect");
+    const attack = buttonWithTitle(row, "Attack");
+    const openPlanet = buttonWithTitle(row, "Open [1:2:3]");
 
     expect(attack).toBeTruthy();
     expect(attack?.props?.disabled).toBe(false);
     attack?.props?.onClick?.();
     expect(selected).toEqual(["9"]);
-    expect(inspect).toBeTruthy();
+    expect(openPlanet).toBeTruthy();
+    expect(buttonWithTitle(row, "Inspect planet")).toBeUndefined();
 
     const disabled = RaidTargetRow({
       attackAction: { label: "Attack", disabledReason: "Attack blocked by score protection" },
-      missionSubtext: { lines: [], overflow: 0 },
-      now: 1_770_000_000_000,
       onAttackTarget: (target) => selected.push(target.planetId),
       target: raidTarget({
         planetId: "10",
@@ -62,11 +103,12 @@ describe("RaidTargetFinderPage", () => {
         },
       }),
     });
-    const disabledAttack = buttonWithText(disabled, "Attack");
+    const disabledAttack = buttonWithTitle(disabled, "Attack: Attack blocked by score protection");
     const protectedBadge = elementWithExactText(disabled, "Protected");
     expect(disabledAttack?.props?.disabled).toBe(true);
-    expect(disabledAttack?.props?.title).toBe("Attack blocked by score protection");
+    expect(disabledAttack?.props?.title).toBe("Attack: Attack blocked by score protection");
     expect(protectedBadge?.props?.title).toBe("Attack blocked by score protection");
+    expect(visibleText(disabled)).not.toContain("Attack blocked by score protection");
     expect(visibleText(disabled)).not.toContain("Score 25,437 vs 7,340");
     expect(visibleText(disabled)).not.toContain("Score ");
     expect(visibleText(disabled)).not.toContain("Protection score");
@@ -75,8 +117,6 @@ describe("RaidTargetFinderPage", () => {
   test("row top-level cells expose one combined Defense column before actions", () => {
     const row = RaidTargetRow({
       attackAction: { label: "Attack" },
-      missionSubtext: { lines: [], overflow: 0 },
-      now: 1_770_000_000_000,
       onAttackTarget: () => undefined,
       onSelectPlanet: () => undefined,
       target: raidTarget({ combatPower: 6_000, defensePower: 2_000, distance: 100, loot: 1_000 }),
@@ -88,11 +128,33 @@ describe("RaidTargetFinderPage", () => {
     expect(cells[2]?.props?.title).toContain("LOOT M");
     expect(cells[3]?.props?.title).toContain("Defense 6,000");
     expect(visibleText(cells[3])).toBe("6K");
-    expect(visibleText(cells[4])).toContain("Attack");
-    expect(visibleText(cells[4])).toContain("Inspect");
+    expect(buttonWithTitle(cells[4], "Attack")).toBeTruthy();
+    expect(buttonWithTitle(cells[4], "Inspect planet")).toBeUndefined();
   });
 
-  test("debris row exposes harvest blockers and keeps Inspect", () => {
+  test("does not repeat coordinates when a target has no custom planet name", () => {
+    const row = RaidTargetRow({
+      onSelectPlanet: () => undefined,
+      target: raidTarget({ name: null }),
+    });
+
+    expect(visibleText(row).match(/\[1:2:3\]/g)).toHaveLength(1);
+  });
+
+  test("omits moon and fleet-activity presentation from raid rows", () => {
+    const row = RaidTargetRow({
+      target: raidTarget({
+        hasMoon: true,
+        moonResources: { metal: "100", crystal: "200", deuterium: "300" },
+        inbound: { count: 2, nextArrivalAtMs: 1_770_000_060_000 },
+      }),
+    });
+
+    expect(visibleText(row)).not.toContain("Moon");
+    expect(visibleText(row)).not.toContain("Inbound");
+  });
+
+  test("debris row exposes harvest blockers while the planet label opens details", () => {
     const selected: string[] = [];
     const row = DebrisTargetRow({
       action: { label: "Harvest", disabledReason: "Requires a recycler on your active planet." },
@@ -101,13 +163,14 @@ describe("RaidTargetFinderPage", () => {
       onSelectPlanet: () => undefined,
       target: debrisTarget(),
     });
-    const harvest = buttonWithText(row, "Harvest");
-    const inspect = buttonWithText(row, "Inspect");
+    const harvest = buttonWithTitle(row, "Harvest: Requires a recycler on your active planet.");
+    const openPlanet = buttonWithTitle(row, "Open [1:2:3]");
 
     expect(harvest).toBeTruthy();
     expect(harvest?.props?.disabled).toBe(true);
-    expect(harvest?.props?.title).toBe("Requires a recycler on your active planet.");
-    expect(inspect).toBeTruthy();
+    expect(harvest?.props?.title).toBe("Harvest: Requires a recycler on your active planet.");
+    expect(openPlanet).toBeTruthy();
+    expect(buttonWithTitle(row, "Inspect planet")).toBeUndefined();
 
     const enabled = DebrisTargetRow({
       action: { label: "Harvest" },
@@ -115,7 +178,7 @@ describe("RaidTargetFinderPage", () => {
       onHarvest: (target) => selected.push(target.planetId),
       target: debrisTarget({ planetId: "10" }),
     });
-    const enabledHarvest = buttonWithText(enabled, "Harvest");
+    const enabledHarvest = buttonWithTitle(enabled, "Harvest");
     enabledHarvest?.props?.onClick?.();
     expect(selected).toEqual(["10"]);
   });
@@ -129,8 +192,9 @@ describe("RaidTargetFinderPage", () => {
       target: debrisTarget(),
     });
 
-    expect(buttonWithText(row, "Harvest")).toBeUndefined();
-    expect(buttonWithText(row, "Inspect")).toBeTruthy();
+    expect(buttonWithTitle(row, "Harvest")).toBeUndefined();
+    expect(buttonWithTitle(row, "Open [1:2:3]")).toBeTruthy();
+    expect(buttonWithTitle(row, "Inspect planet")).toBeUndefined();
   });
 });
 
@@ -157,6 +221,8 @@ function raidTarget(overrides: Partial<RaidTarget> = {}): RaidTarget {
     defensePower: 0,
     defenseCount: 0,
     defenseUnits: [],
+    stationedDefenderForecastTimeline: [],
+    stationedDefenderTimelineComplete: true,
     protection: { isProtected: false, isSameAlliance: false, blockedReason: "none", blockedReasonLabel: null, scoreComparison: null, defenderInactive: false },
     inbound: { count: 0, nextArrivalAtMs: null },
     ...overrides,
@@ -214,8 +280,8 @@ function directElementChildren(node: ComponentChildren): VNode[] {
   return children.filter((item): item is VNode => typeof item === "object" && item !== null);
 }
 
-function buttonWithText(node: ComponentChildren, text: string): VNode | undefined {
-  return elementNodes(node).find((item) => item.type === "button" && visibleText(item).includes(text));
+function buttonWithTitle(node: ComponentChildren, title: string): VNode | undefined {
+  return elementNodes(node).find((item) => item.type === "button" && item.props?.title === title);
 }
 
 function elementWithExactText(node: ComponentChildren, text: string): VNode | undefined {

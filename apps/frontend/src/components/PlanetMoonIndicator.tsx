@@ -98,6 +98,7 @@ export function PlanetMoonIndicator({
 export function PlanetMoonSubsection({
   action,
   className = "",
+  compact = false,
   detail,
   label = "Moon",
   onClick,
@@ -106,6 +107,7 @@ export function PlanetMoonSubsection({
 }: {
   action?: ComponentChildren;
   className?: string | undefined;
+  compact?: boolean | undefined;
   detail?: string | undefined;
   label?: string | undefined;
   onClick?: (() => void) | undefined;
@@ -114,7 +116,7 @@ export function PlanetMoonSubsection({
 }) {
   const summaryContent = (
     <>
-      <span className="h-7 w-7 overflow-hidden rounded-full border border-cyan-100/30 bg-black/40">
+      <span className={`${compact ? "h-6 w-6" : "h-7 w-7"} overflow-hidden rounded-full border border-cyan-100/30 bg-black/40`}>
         <MoonImage className="h-full w-full object-cover" planetType={planetType} />
       </span>
       <span className="min-w-0">
@@ -129,7 +131,10 @@ export function PlanetMoonSubsection({
       {action}
     </>
   );
-  const baseClass = `mt-1.5 grid grid-cols-[1.75rem_minmax(0,1fr)_auto] items-center gap-2 rounded border border-cyan-200/15 bg-cyan-200/[0.06] px-2 py-1.5 text-left ${className}`;
+  const baseClass = `${compact
+    ? "mt-0.5 grid-cols-[1.5rem_minmax(0,1fr)_auto] gap-1.5 px-1.5 py-1"
+    : "mt-1.5 grid-cols-[1.75rem_minmax(0,1fr)_auto] gap-2 px-2 py-1.5"
+  } grid items-center rounded border border-cyan-200/15 bg-cyan-200/[0.06] text-left ${className}`;
   if (onClick && action) {
     return (
       <div

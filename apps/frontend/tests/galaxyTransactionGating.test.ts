@@ -11,10 +11,10 @@ describe("Galaxy transaction gating", () => {
     expect(playableSource).toContain("const missionLaunchBlocker = missionTransactionUnavailableReason ?? missionLaunchStateBlocker;");
     expect(playableSource).toContain("transactionUnavailableReason={missionTransactionUnavailableReason}");
     expect(galaxySource).toContain("transactionUnavailableReason?: string | undefined;");
-    expect(galaxySource).toContain("{transactionUnavailableReason ? (");
     expect(galaxySource).toContain('busy={actionState.status === "pending" || Boolean(transactionUnavailableReason)}');
     expect(galaxySource).toContain("busyReason={transactionUnavailableReason}");
-    expect(galaxySource).toContain("title={busyReason ?? (action.enabled ? action.label : action.reason)}");
+    expect(galaxySource).toContain("const hint = busyReason");
+    expect(galaxySource).toContain("title={hint}");
     expect(planetDetailSource).toContain("transactionUnavailableReason?: string | undefined;");
     expect(planetDetailSource).toContain("{transactionUnavailableReason ? (");
     expect(planetDetailSource).toContain("busyReason={transactionUnavailableReason}");
