@@ -4453,7 +4453,9 @@ type RankedHighscorePlanet = {
     resourcesAsOfNow?: Resources | null;
   } | null;
   stationedDefenderForecastTimeline: StationedDefenderSummary[];
-  stationedDefenderTimelineComplete: true;
+  // Highscore discovery rows intentionally omit this expensive per-target forecast; selected
+  // targets are hydrated from the public system endpoint before an attack preview.
+  stationedDefenderTimelineComplete: boolean;
   tactical: {
     currentResources: Resources;
     raidableResources: Resources;
@@ -4937,8 +4939,14 @@ function rankedHighscorePlanets(
       archetype: planetArchetypeForTemperature(planet.temperature),
       hasMoon,
       moon,
-      stationedDefenderForecastTimeline: indexer?.stationedDefenderForecastTimelineForPlanet(planet.planetId) ?? [],
-      stationedDefenderTimelineComplete: true,
+      // Highscore rows are a discovery surface, not an authoritative combat read. Building a
+      // future stationed-defender timeline for every visible planet repeatedly walks active
+      // DefenseHold state and made cold Rankings/Raid Finder requests take tens of seconds in
+      // production. The client already hydrates the selected target from its public system
+      // payload before showing an attack preview, so advertise this list as compact and defer
+      // that exact, per-target work until the player selects an attack. (VEydrift perf)
+      stationedDefenderForecastTimeline: [],
+      stationedDefenderTimelineComplete: false,
       tactical
     };
   });
