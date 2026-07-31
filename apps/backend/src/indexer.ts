@@ -365,6 +365,17 @@ type LegacyUnitMutation = {
   delta: number;
 };
 
+// The contract emits these events with the resulting absolute count, rather than a delta. They can
+// therefore repair a materialized roster safely, but only when the event is the latest snapshot for
+// that exact body/unit pair.
+type AbsoluteUnitCountProjection = {
+  body: "planet" | "moon";
+  kind: "ship" | "defense";
+  planetId: string;
+  itemId: number;
+  total: number;
+};
+
 type UnitCountSnapshot = {
   fleet: Map<number, number>;
   defenses: Map<number, number>;
@@ -4578,6 +4589,7 @@ export class SettlementIndexer {
     if (runStartupBackfill) {
       this.backfillMissionEventLogs();
       this.backfillUnitCountEventLogs();
+      this.repairAbsoluteUnitCountProjectionsFromEventLogs();
       this.backfillMissileAttackEvents();
       this.backfillCanonicalTables();
       this.replayFleetMissionRowsFromEventLogs();
@@ -4953,6 +4965,104 @@ export class SettlementIndexer {
       && event.total !== undefined
       && (event.eventName === "ShipCompleted" || event.eventName === "DefenseCompleted")
     );
+  }
+
+  // Older indexer builds could persist indexed_event_logs before a later handler failure rolled back
+  // the corresponding ship/defense projection. Atomic ingestion prevents new instances of that bug,
+  // but this targeted repair makes a restart heal any legacy journal-only absolute snapshots. We only
+  // apply the latest contract-emitted snapshot for each body/unit pair, never an older event that could
+  // overwrite a newer count.
+  private repairAbsoluteUnitCountProjectionsFromEventLogs(): number {
+    const rows = this.db.query(`
+      SELECT event_json
+      FROM indexed_unit_count_event_logs
+      ORDER BY CAST(block_number AS INTEGER) ASC, CAST(log_index AS INTEGER) ASC
+    `).all() as EventRow[];
+    const latestByUnit = new Map<string, AbsoluteUnitCountProjection>();
+
+    for (const log of sortedEventRows(rows)) {
+      const projection = this.absoluteUnitCountProjection(log);
+      if (!projection) continue;
+      latestByUnit.set(this.absoluteUnitCountProjectionKey(projection), projection);
+    }
+
+    let repairedRows = 0;
+    for (const projection of latestByUnit.values()) {
+      if (this.applyAbsoluteUnitCountProjectionIfStale(projection)) repairedRows += 1;
+    }
+    if (repairedRows > 0) {
+      this.setMetadata("lastAbsoluteUnitCountProjectionRepairAt", new Date().toISOString());
+      this.setMetadata("lastAbsoluteUnitCountProjectionRepairRows", repairedRows.toString());
+      this.touch();
+    }
+    return repairedRows;
+  }
+
+  private repairLatestAbsoluteUnitCountProjectionForEvent(eventId: string, log: IndexedRpcLog): boolean {
+    const projection = this.absoluteUnitCountProjection(log);
+    if (!projection) return false;
+    const [topic0, topic1, topic2] = log.topics;
+    if (!topic0 || !topic1 || !topic2) return false;
+
+    const latest = this.db.query(`
+      SELECT event_id
+      FROM indexed_unit_count_event_logs
+      WHERE lower(json_extract(event_json, '$.topics[0]')) = lower(?)
+        AND lower(json_extract(event_json, '$.topics[1]')) = lower(?)
+        AND lower(json_extract(event_json, '$.topics[2]')) = lower(?)
+      ORDER BY CAST(block_number AS INTEGER) DESC, CAST(log_index AS INTEGER) DESC
+      LIMIT 1
+    `).get(topic0, topic1, topic2) as { event_id: string } | null;
+    if (latest?.event_id !== eventId) return false;
+    if (!this.applyAbsoluteUnitCountProjectionIfStale(projection)) return false;
+    this.touch();
+    return true;
+  }
+
+  private absoluteUnitCountProjection(log: IndexedRpcLog): AbsoluteUnitCountProjection | null {
+    if (isShipCountChangedLog(log)) {
+      const event = decodeShipCountChangedLog(log);
+      return { body: "planet", kind: "ship", planetId: event.planetId, itemId: event.shipId, total: event.total };
+    }
+    if (isDefenseCountChangedLog(log)) {
+      const event = decodeDefenseCountChangedLog(log);
+      return { body: "planet", kind: "defense", planetId: event.planetId, itemId: event.defenseId, total: event.total };
+    }
+    if (isMoonShipCountChangedLog(log)) {
+      const event = decodeMoonShipCountChangedLog(log);
+      return { body: "moon", kind: "ship", planetId: event.planetId, itemId: event.shipId, total: event.total };
+    }
+    if (isMoonDefenseCountChangedLog(log)) {
+      const event = decodeMoonDefenseCountChangedLog(log);
+      return { body: "moon", kind: "defense", planetId: event.planetId, itemId: event.defenseId, total: event.total };
+    }
+    return null;
+  }
+
+  private absoluteUnitCountProjectionKey(projection: AbsoluteUnitCountProjection): string {
+    return `${projection.body}:${projection.kind}:${projection.planetId}:${projection.itemId}`;
+  }
+
+  private applyAbsoluteUnitCountProjectionIfStale(projection: AbsoluteUnitCountProjection): boolean {
+    const idColumn: "ship_id" | "defense_id" = projection.kind === "ship" ? "ship_id" : "defense_id";
+    const tables: Array<
+      | "contract_moon_ship_counts"
+      | "contract_moon_defense_counts"
+      | "indexed_ship_counts"
+      | "contract_ship_counts"
+      | "indexed_defense_counts"
+      | "contract_defense_counts"
+    > = projection.body === "moon"
+      ? [projection.kind === "ship" ? "contract_moon_ship_counts" : "contract_moon_defense_counts"]
+      : projection.kind === "ship"
+        ? ["indexed_ship_counts", "contract_ship_counts"]
+        : ["indexed_defense_counts", "contract_defense_counts"];
+    const stale = tables.some((table) => this.indexedLevel(table, idColumn, projection.planetId, projection.itemId) !== projection.total);
+    if (!stale) return false;
+    for (const table of tables) {
+      this.upsertIndexedLevel(table, idColumn, "count", projection.planetId, projection.itemId, projection.total);
+    }
+    return true;
   }
 
   private replayMaterializedStateFromEventLogs(): void {
@@ -8244,6 +8354,11 @@ export class SettlementIndexer {
         .get(eventId);
       if (!existingUnitCountEvent) {
         this.recordUnitCountEventLog(eventId, log);
+        repairedRows += 1;
+      }
+      // A journaled absolute count may predate atomic ingestion. If the event is replayed, restore
+      // its materialized projection only when it remains the latest snapshot for that body/unit.
+      if (this.repairLatestAbsoluteUnitCountProjectionForEvent(eventId, log)) {
         repairedRows += 1;
       }
     }
