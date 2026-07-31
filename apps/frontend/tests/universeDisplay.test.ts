@@ -30,8 +30,11 @@ import {
 } from "../src/components/GalaxyView";
 import { GAME_UNAVAILABLE_MESSAGE } from "../src/gameUnavailable";
 import {
+  canApplyPlanetDetailResponse,
   planetDetailRefreshResultPlanet,
   planetDetailRefreshStartPlanet,
+  planetDetailRequestKey,
+  planetDetailVisiblePlanet,
   planetRecordStatusLabel,
   publicCommanderRows,
   publicQueueRows,
@@ -749,6 +752,33 @@ describe("tester universe display data", () => {
       currentPlanet: loadedPlanet,
       trustedHomePlanet: null,
     })).toBeNull();
+  });
+
+  test("never exposes a previous planet payload or late response under new coordinates", () => {
+    const [oldPlanet] = planetsFromSystemResponse({
+      galaxy: 2,
+      system: 44,
+      planets: [{
+        fields: 211,
+        galaxy: 2,
+        metalMultiplierBps: 10_000,
+        crystalMultiplierBps: 10_000,
+        deuteriumMultiplierBps: 10_000,
+        position: 8,
+        system: 44,
+        temperature: -8,
+      }],
+    });
+    const oldCoords = { galaxy: 2, system: 44, position: 8 };
+    const newCoords = { galaxy: 6, system: 9, position: 13 };
+    const oldRequest = planetDetailRequestKey(oldCoords);
+    const newRequest = planetDetailRequestKey(newCoords);
+
+    expect(planetDetailVisiblePlanet(oldPlanet, newCoords)).toBeNull();
+    expect(planetDetailVisiblePlanet(null, newCoords, oldPlanet)).toBeNull();
+    expect(canApplyPlanetDetailResponse(oldRequest, newCoords)).toBe(false);
+    expect(canApplyPlanetDetailResponse(newRequest, newCoords)).toBe(true);
+    expect(canApplyPlanetDetailResponse(newRequest, newCoords, true)).toBe(false);
   });
 
   test("formats moon chance status for galaxy rows", () => {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import type { Coordinates, Planet } from "../types";
 import { formatPlanetType, planetsFromSystemResponse } from "../data/mockUniverse";
 import { galaxyActionsForSlot, type GalaxyAction } from "../galaxyActions";
@@ -12,6 +12,7 @@ import { MoonImage } from "./PlanetMoonIndicator";
 import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
 import { EntityMediaPanel } from "./EntityMediaPanel";
 import { canEditEntityMedia } from "../entityMedia";
+import { canApplyPlanetDetailResponse, planetDetailRequestKey, planetDetailVisiblePlanet } from "./PlanetDetail";
 
 type PublicMoonDetailProps = {
   account?: string | undefined;
@@ -42,12 +43,16 @@ export function PublicMoonDetail({
   shipyardState = null,
   transactionUnavailableReason,
 }: PublicMoonDetailProps) {
-  const [planet, setPlanet] = useState<Planet | null>(null);
+  const [loadedPlanet, setPlanet] = useState<Planet | null>(null);
   const [source, setSource] = useState<"api" | "error" | "loading">("loading");
   const [attackProtection, setAttackProtection] = useState<AttackProtectionStatus | null>(null);
+  const currentRequestKey = useRef(planetDetailRequestKey(coords));
+  currentRequestKey.current = planetDetailRequestKey(coords);
+  const planet = planetDetailVisiblePlanet(loadedPlanet, coords);
 
   useEffect(() => {
     const abortController = new AbortController();
+    const requestKey = planetDetailRequestKey(coords);
     setSource("loading");
 
     fetch(`${apiBaseUrl.replace(/\/+$/, "")}/universe/galaxies/${coords.galaxy}/systems/${coords.system}?detail=full`, {
@@ -59,6 +64,8 @@ export function PublicMoonDetail({
         return response.json();
       })
       .then((payload) => {
+        if (!canApplyPlanetDetailResponse(requestKey, coords, abortController.signal.aborted)
+          || currentRequestKey.current !== requestKey) return;
         const apiPlanet = planetsFromSystemResponse(payload).find((item) => item.position === coords.position) ?? null;
         setPlanet(apiPlanet);
         setSource("api");
