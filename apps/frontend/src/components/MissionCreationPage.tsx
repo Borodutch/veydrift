@@ -1,5 +1,4 @@
 import type { ComponentChildren } from "preact";
-import { Flame } from "lucide-preact";
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { Coordinates, DebrisField, Planet, PublicStationedDefender } from "../types";
 import { ActionReasonNote } from "./ActionReasonNote";
@@ -883,13 +882,15 @@ export function MissionCreationPage({
 
           {joinAttackMode || action.mode === "missile" ? null : (
             <MissionFormSection
+              summary={(
+                <MissionFuelCost
+                  fuelCost={effectiveFuelCost}
+                  insufficient={hasInsufficientFuel}
+                />
+              )}
               title="Speed"
               eyebrow="Flight plan"
             >
-              <MissionFuelCost
-                fuelCost={effectiveFuelCost}
-                insufficient={hasInsufficientFuel}
-              />
               <div className="flex items-center gap-3">
                 <input
                   aria-label="Mission speed"
@@ -1256,14 +1257,16 @@ function MissionFormSection({
 }: {
   children: ComponentChildren;
   eyebrow: string;
-  summary?: string | undefined;
+  summary?: ComponentChildren | undefined;
   title: string;
 }) {
   return (
     <section className="grid min-w-0 max-w-full gap-2 rounded-lg border border-white/10 bg-[#101624] p-3 shadow-sm shadow-black/10">
       <header className="flex min-w-0 items-center justify-between gap-3">
-        <h3 className="min-w-0 text-xs font-semibold uppercase text-slate-400">{title}</h3>
-        {summary ? <span className="shrink-0 text-xs tabular-nums text-slate-500">{summary}</span> : null}
+        <h3 className="shrink-0 text-xs font-semibold uppercase text-slate-400">{title}</h3>
+        {typeof summary === "string"
+          ? <span className="min-w-0 truncate text-right text-xs tabular-nums text-slate-500">{summary}</span>
+          : summary}
       </header>
       {children}
     </section>
@@ -1284,22 +1287,16 @@ export function MissionFuelCost({
       aria-atomic="true"
       aria-label={`Mission fuel cost: ${formattedFuelCost} deuterium${insufficient ? ". Insufficient deuterium." : ""}`}
       aria-live="polite"
-      className={`flex min-w-0 items-center justify-between gap-3 rounded-md border px-3 py-2 shadow-sm ${
+      className={`flex min-w-0 max-w-full items-center justify-end gap-1.5 overflow-hidden rounded border px-2 py-1 text-right text-[11px] font-medium tabular-nums ${
         insufficient
-          ? "border-amber-200/50 bg-amber-300/15 shadow-amber-950/20"
-          : "border-cyan-200/45 bg-cyan-300/10 shadow-cyan-950/20"
+          ? "border-amber-200/40 bg-amber-300/10 text-amber-100"
+          : "border-white/10 bg-white/[0.04] text-white"
       }`}
       htmlFor="mission-speed"
+      title="Mission fuel cost"
     >
-      <span className={`flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] ${insufficient ? "text-amber-100" : "text-cyan-100"}`}>
-        <Flame aria-hidden="true" className="h-4 w-4 shrink-0" />
-        Mission fuel cost
-      </span>
-      <span className="flex min-w-0 flex-wrap items-baseline justify-end gap-x-1 gap-y-0.5 text-right">
-        <strong className="text-base font-bold leading-none tabular-nums text-white sm:text-lg">{formattedFuelCost}</strong>
-        <span className={`text-xs font-semibold ${insufficient ? "text-amber-100" : "text-cyan-100"}`}>deuterium</span>
-        {insufficient ? <span className="basis-full text-[11px] font-semibold text-amber-100">Insufficient deuterium</span> : null}
-      </span>
+      <span className="whitespace-nowrap text-white">{formattedFuelCost} deuterium</span>
+      {insufficient ? <span className="truncate font-semibold">· Insufficient</span> : null}
     </output>
   );
 }
