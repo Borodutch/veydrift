@@ -102,6 +102,24 @@ const ZERO_COMBAT_TECH_LEVELS: CombatTechLevels = { weapons: 0, shielding: 0, ar
 type EnabledGalaxyAction = Extract<GalaxyAction, { enabled: true }>;
 export type ResourceKey = (typeof RESOURCE_KEYS)[number];
 
+export type MissionAttackLootMode = "none" | "joined" | "custom" | "body-greedy";
+
+export function missionAttackLootMode({
+  action,
+  joinAttackMode,
+  originIsMoon,
+  targetIsMoon,
+}: {
+  action: EnabledGalaxyAction;
+  joinAttackMode: boolean;
+  originIsMoon: boolean;
+  targetIsMoon: boolean;
+}): MissionAttackLootMode {
+  if (action.mode !== "mission" || action.kind !== "attack") return "none";
+  if (joinAttackMode) return "joined";
+  return originIsMoon || targetIsMoon ? "body-greedy" : "custom";
+}
+
 export type MissionResourceSnapshot = {
   metal: number;
   crystal: number;
@@ -481,8 +499,15 @@ export function MissionCreationPage({
   const destinationIntelVisible = shouldShowDestinationIntel(action);
   const cargoTotal = resourceDraftNumber(cargo.metal) + resourceDraftNumber(cargo.crystal) + resourceDraftNumber(cargo.deuterium);
   const normalizedCargo = cargoSupported ? normalizeMissionCargoDraft(cargo) : undefined;
-  const bodyAttackSelected = action.mode === "mission" && action.kind === "attack" && (effectiveOriginIsMoon || effectiveTargetIsMoon);
-  const lootRatioSupported = !bodyAttackSelected && !joinAttackMode && !acsDefendMode && action.mode === "mission" && action.kind === "attack";
+  const attackLootMode = missionAttackLootMode({
+    action,
+    joinAttackMode,
+    originIsMoon: effectiveOriginIsMoon,
+    targetIsMoon: effectiveTargetIsMoon,
+  });
+  const attackIntelVisible = attackLootMode !== "none";
+  const lootPreviewVisible = attackLootMode === "custom" || attackLootMode === "body-greedy";
+  const lootRatioSupported = attackLootMode === "custom" && !acsDefendMode;
   const lootRatioActive = lootRatioSupported && !greedyLootEnabled;
   const displayedLootRatio = lootRatioActive ? lootRatio : GREEDY_LOOT_RATIO;
   const lootRatioTotal = displayedLootRatio.metal + displayedLootRatio.crystal + displayedLootRatio.deuterium;
@@ -550,8 +575,12 @@ export function MissionCreationPage({
     [action, effectiveShipyardState, ships],
   );
   const maxLootForecast = useMemo(
-    () => forecastRaidLoot(resourceIntel.projectedArrivalLootable, cargoCapacity, greedyLootEnabled ? null : lootRatio),
-    [cargoCapacity, greedyLootEnabled, lootRatio, resourceIntel.projectedArrivalLootable],
+    () => forecastRaidLoot(
+      resourceIntel.projectedArrivalLootable,
+      cargoCapacity,
+      lootRatioSupported && !greedyLootEnabled ? lootRatio : null,
+    ),
+    [cargoCapacity, greedyLootEnabled, lootRatio, lootRatioSupported, resourceIntel.projectedArrivalLootable],
   );
 
   // VEY-KANEO-440: ACS Defend holding-fuel preview. The fleet arrives naturally after `travelSeconds`,
@@ -679,7 +708,8 @@ export function MissionCreationPage({
   return (
     <section
       aria-label="Mission creation"
-      className="mx-auto grid w-full min-w-0 max-w-4xl gap-3"
+      className="mx-auto grid w-full min-w-0 max-w-4xl gap-3 overflow-x-clip"
+      data-mission-composer
     >
       <section
         aria-label="Mission route"
@@ -737,7 +767,7 @@ export function MissionCreationPage({
             </MissionFormSection>
           ) : null}
 
-          {lootRatioSupported || joinAttackMode ? (
+          {attackIntelVisible ? (
             <AttackIntelPanel
               battleForecast={battleForecast}
               stationedDefenderUnits={stationedDefenderUnits}
@@ -922,31 +952,29 @@ export function MissionCreationPage({
             </MissionFormSection>
           ) : null}
 
-          {lootRatioSupported ? (
-            <MissionFormSection title="Loot" eyebrow="Plunder">
-              <AttackLootProjection
-                availableCargo={cargoCapacity}
-                predictedLoot={maxLootForecast}
-              />
-              <LootRatioControls
-                cargoCapacity={cargoCapacity}
-                greedyLootEnabled={greedyLootEnabled}
-                lootRatio={displayedLootRatio}
-                lootRatioTotal={lootRatioTotal}
-                onAmountChange={updateLootAmount}
-                onGreedyChange={setGreedyLootEnabled}
-                onPercentChange={updateLootPercent}
-                onResetEven={() => {
-                  setGreedyLootEnabled(false);
-                  setLootRatio(DEFAULT_LOOT_RATIO);
-                }}
-              />
-            </MissionFormSection>
+          {lootPreviewVisible ? (
+            <MissionLootSection
+              availableCargo={cargoCapacity}
+              availabilityDetail={resourceIntel.projectionDetail}
+              greedyLootEnabled={greedyLootEnabled}
+              lootIntelAvailable={resourceIntel.projectedArrivalLootable !== null}
+              lootMode={attackLootMode}
+              lootRatio={displayedLootRatio}
+              lootRatioTotal={lootRatioTotal}
+              onAmountChange={updateLootAmount}
+              onGreedyChange={setGreedyLootEnabled}
+              onPercentChange={updateLootPercent}
+              onResetEven={() => {
+                setGreedyLootEnabled(false);
+                setLootRatio(DEFAULT_LOOT_RATIO);
+              }}
+              predictedLoot={maxLootForecast}
+            />
           ) : null}
         </section>
 
       </div>
-      <div className="grid gap-2 border-t border-white/10 pt-3">
+      <div className="grid gap-2 border-t border-white/10 pt-3" data-mission-actions>
         {visibleBlockedReason ? (
           <p className="rounded border border-amber-300/20 bg-amber-300/10 px-3 py-2 text-xs text-amber-100">
             {visibleBlockedReason}
@@ -1232,7 +1260,7 @@ function MissionFormSection({
   title: string;
 }) {
   return (
-    <section className="grid gap-2 rounded-lg border border-white/10 bg-[#101624] p-3 shadow-sm shadow-black/10">
+    <section className="grid min-w-0 max-w-full gap-2 rounded-lg border border-white/10 bg-[#101624] p-3 shadow-sm shadow-black/10">
       <header className="flex min-w-0 items-center justify-between gap-3">
         <h3 className="min-w-0 text-xs font-semibold uppercase text-slate-400">{title}</h3>
         {summary ? <span className="shrink-0 text-xs tabular-nums text-slate-500">{summary}</span> : null}
@@ -2904,20 +2932,84 @@ function DestinationIntelContent({
   );
 }
 
-export function AttackLootProjection({
+export function MissionLootSection({
   availableCargo,
+  availabilityDetail,
+  greedyLootEnabled,
+  lootIntelAvailable,
+  lootMode,
+  lootRatio,
+  lootRatioTotal,
+  onAmountChange,
+  onGreedyChange,
+  onPercentChange,
+  onResetEven,
   predictedLoot,
 }: {
   availableCargo: number;
+  availabilityDetail: string;
+  greedyLootEnabled: boolean;
+  lootIntelAvailable: boolean;
+  lootMode: Extract<MissionAttackLootMode, "custom" | "body-greedy">;
+  lootRatio: MissionLootRatioDraft;
+  lootRatioTotal: number;
+  onAmountChange: (key: ResourceKey, value: number) => void;
+  onGreedyChange: (enabled: boolean) => void;
+  onPercentChange: (key: ResourceKey, value: number) => void;
+  onResetEven: () => void;
   predictedLoot: MissionResourceSnapshot;
 }) {
   return (
-    <div className="grid gap-2">
+    <MissionFormSection title="Loot" eyebrow="Plunder">
+      <AttackLootProjection
+        availableCargo={availableCargo}
+        predictedLoot={predictedLoot}
+        unavailableDetail={lootIntelAvailable ? undefined : availabilityDetail}
+      />
+      {lootMode === "custom" ? (
+        <LootRatioControls
+          cargoCapacity={availableCargo}
+          greedyLootEnabled={greedyLootEnabled}
+          lootRatio={lootRatio}
+          lootRatioTotal={lootRatioTotal}
+          onAmountChange={onAmountChange}
+          onGreedyChange={onGreedyChange}
+          onPercentChange={onPercentChange}
+          onResetEven={onResetEven}
+        />
+      ) : (
+        <p
+          aria-label="Body attack loot allocation"
+          className="rounded border border-signal/20 bg-signal/[0.06] px-3 py-2 text-xs leading-5 text-slate-300"
+        >
+          Moon attacks use the on-chain greedy loot order: metal first, then crystal, then deuterium. Custom splits are unavailable when the origin or target is a moon.
+        </p>
+      )}
+    </MissionFormSection>
+  );
+}
+
+export function AttackLootProjection({
+  availableCargo,
+  predictedLoot,
+  unavailableDetail,
+}: {
+  availableCargo: number;
+  predictedLoot: MissionResourceSnapshot;
+  unavailableDetail?: string | undefined;
+}) {
+  return (
+    <div className="grid min-w-0 max-w-full gap-2">
       <LootProjectionCard
         availableCargo={availableCargo}
         predictedLoot={predictedLoot}
         title="Loot at arrival"
       />
+      {unavailableDetail ? (
+        <p className="rounded border border-amber-300/20 bg-amber-300/10 px-3 py-2 text-xs leading-5 text-amber-100">
+          {unavailableDetail}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -2937,9 +3029,9 @@ function LootProjectionCard({
     { key: "deuterium", label: "Deuterium", suffix: "D" },
   ] as const;
   return (
-    <section className="grid gap-2 rounded border border-white/10 bg-black/15 p-2">
+    <section className="grid min-w-0 max-w-full gap-2 rounded border border-white/10 bg-black/15 p-2">
       <h4 className="text-[11px] font-semibold uppercase text-slate-500">{title}</h4>
-      <div className="grid gap-1 sm:grid-cols-3">
+      <div className="grid min-w-0 gap-1 sm:grid-cols-3">
         {predictedResources.map(({ key, label, suffix }) => (
           <div
             className="flex min-w-0 items-baseline justify-between gap-2 rounded border border-white/[0.07] bg-black/15 px-2 py-1.5 sm:grid sm:gap-0"
@@ -2983,10 +3075,10 @@ export function LootRatioControls({
   onResetEven: () => void;
 }) {
   return (
-    <div className="grid gap-2">
-      <div className="flex items-center justify-between gap-2">
+    <div className="grid min-w-0 max-w-full gap-2">
+      <div className="flex min-w-0 items-center justify-between gap-2">
         <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">Loot ratio</span>
-        <label className="flex cursor-pointer items-center gap-2 text-xs text-slate-400">
+        <label className="flex min-h-11 cursor-pointer items-center gap-2 text-xs text-slate-400 sm:min-h-0">
           Greedy
           <input
             checked={greedyLootEnabled}
@@ -3002,7 +3094,7 @@ export function LootRatioControls({
         </p>
       ) : (
         <div className="grid gap-2">
-          <div className="grid gap-2 sm:grid-cols-3">
+          <div className="grid min-w-0 gap-2 sm:grid-cols-3">
             {RESOURCE_KEYS.map((key) => (
               <PercentField
                 key={key}
@@ -3012,7 +3104,7 @@ export function LootRatioControls({
               />
             ))}
           </div>
-          <div className="grid gap-2 sm:grid-cols-3">
+          <div className="grid min-w-0 gap-2 sm:grid-cols-3">
             {RESOURCE_KEYS.map((key) => (
               <ResourceField
                 key={key}
@@ -3028,7 +3120,7 @@ export function LootRatioControls({
               Total {lootRatioTotal}% (must equal {LOOT_RATIO_TOTAL_PERCENT}%). Unfilled shares roll over metal, crystal, then deuterium.
             </span>
             <button
-              className="rounded border border-white/10 bg-white/[0.03] px-3 py-2 font-semibold text-slate-400 transition hover:border-white/20 hover:text-white sm:px-2 sm:py-1"
+              className="min-h-11 rounded border border-white/10 bg-white/[0.03] px-3 py-2 font-semibold text-slate-400 transition hover:border-white/20 hover:text-white sm:min-h-0 sm:px-2 sm:py-1"
               onClick={onResetEven}
               type="button"
             >
@@ -3052,7 +3144,7 @@ function TargetFact({ label, value }: { label: string; value: string }) {
 
 function CompactFactRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="grid grid-cols-[8rem_minmax(0,1fr)] items-baseline gap-2 text-[11px]">
+    <div className="grid min-w-0 gap-0.5 text-[11px] min-[360px]:grid-cols-[8rem_minmax(0,1fr)] min-[360px]:items-baseline min-[360px]:gap-2">
       <span className="text-slate-500">{label}</span>
       <span className="break-words text-right tabular-nums text-slate-200">{value}</span>
     </div>
@@ -3498,7 +3590,7 @@ function ResourceField({
 }) {
   const inputId = `resource-${label.toLowerCase().replaceAll(/[^a-z0-9]+/g, "-")}`;
   return (
-    <div className="grid gap-1">
+    <div className="grid min-w-0 gap-1">
       <div className="flex min-h-6 items-center justify-between gap-2">
         <label className="text-xs text-slate-500" htmlFor={inputId}>{label}</label>
         {maxAction ? (
@@ -3514,7 +3606,7 @@ function ResourceField({
         ) : null}
       </div>
       <input
-        className="h-9 rounded border border-white/10 bg-[#070913] px-2 text-right font-mono text-sm text-white outline-none [color-scheme:dark] focus:border-signal/50"
+        className="h-11 min-w-0 w-full rounded border border-white/10 bg-[#070913] px-2 text-right font-mono text-sm text-white outline-none [color-scheme:dark] focus:border-signal/50 sm:h-9"
         id={inputId}
         inputMode="numeric"
         max={max}
@@ -3538,10 +3630,10 @@ function PercentField({
   value: number;
 }) {
   return (
-    <label className="grid gap-1">
+    <label className="grid min-w-0 gap-1">
       <span className="text-xs text-slate-500">{label}</span>
       <input
-        className="h-9 rounded border border-white/10 bg-[#070913] px-2 text-right font-mono text-sm text-white outline-none [color-scheme:dark] focus:border-signal/50"
+        className="h-11 min-w-0 w-full rounded border border-white/10 bg-[#070913] px-2 text-right font-mono text-sm text-white outline-none [color-scheme:dark] focus:border-signal/50 sm:h-9"
         inputMode="numeric"
         max={LOOT_RATIO_TOTAL_PERCENT}
         min={0}

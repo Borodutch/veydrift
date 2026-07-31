@@ -9,6 +9,7 @@ import {
   forecastRaidLoot,
   initialMissionShips,
   LootRatioControls,
+  MissionLootSection,
   MissionCargoPicker,
   type MissionCargoDraft,
   missionCargoAfterBodyChange,
@@ -17,6 +18,7 @@ import {
   lootRatioFromUpToAmount,
   missionCargoMaxForResource,
   missionBodySelectionVisibility,
+  missionAttackLootMode,
   missionConfirmButtonLabel,
   missionComposerRouteEndpoints,
   missionDraftBlocker,
@@ -251,18 +253,18 @@ describe("mission creation", () => {
     // The application shell already pads the page; the composer must not add a
     // second outer padding layer.
     expect(missionCreationSource).toContain('aria-label="Mission creation"');
-    expect(missionCreationSource).toContain('className="mx-auto grid w-full min-w-0 max-w-4xl gap-3"');
+    expect(missionCreationSource).toContain('className="mx-auto grid w-full min-w-0 max-w-4xl gap-3 overflow-x-clip"');
     expect(missionCreationSource).not.toContain('className="grid gap-3 p-4 sm:p-5 lg:p-6"');
   });
 
   test("centers and caps the shared mission composer across wide desktop, laptop, tablet, and mobile widths", () => {
-    const composerClasses = "mx-auto grid w-full min-w-0 max-w-4xl gap-3".split(" ");
-    const shellClasses = "min-w-0 max-w-full flex-1 overflow-y-auto p-3 sm:p-4 lg:p-6".split(" ");
+    const composerClasses = "mx-auto grid w-full min-w-0 max-w-4xl gap-3 overflow-x-clip".split(" ");
+    const shellClasses = "min-w-0 max-w-full flex-1 overflow-visible p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] sm:p-4 sm:pb-[calc(1rem+env(safe-area-inset-bottom))] md:min-h-0 md:overflow-y-auto md:overscroll-contain lg:p-6 lg:pb-6".split(" ");
     const viewportExpectations = [
       { label: "wide desktop", width: 1_920, composer: ["mx-auto", "max-w-4xl"], shell: ["lg:p-6"] },
       { label: "ordinary laptop", width: 1_280, composer: ["w-full", "max-w-4xl"], shell: ["lg:p-6"] },
-      { label: "tablet", width: 768, composer: ["w-full", "min-w-0"], shell: ["sm:p-4"] },
-      { label: "mobile", width: 390, composer: ["w-full", "min-w-0"], shell: ["p-3"] },
+      { label: "tablet", width: 768, composer: ["w-full", "min-w-0"], shell: ["md:min-h-0", "md:overflow-y-auto"] },
+      { label: "mobile", width: 390, composer: ["w-full", "min-w-0", "overflow-x-clip"], shell: ["overflow-visible", "p-3", "pb-[calc(0.75rem+env(safe-area-inset-bottom))]"] },
     ] as const;
 
     for (const viewport of viewportExpectations) {
@@ -274,8 +276,12 @@ describe("mission creation", () => {
       }
     }
 
-    expect(missionCreationSource).toContain('className="mx-auto grid w-full min-w-0 max-w-4xl gap-3"');
-    expect(playableMvpAppSource).toContain('className="min-w-0 max-w-full flex-1 overflow-y-auto p-3 sm:p-4 lg:p-6"');
+    expect(missionCreationSource).toContain('className="mx-auto grid w-full min-w-0 max-w-4xl gap-3 overflow-x-clip"');
+    expect(playableMvpAppSource).toContain("overflow-visible p-3");
+    expect(playableMvpAppSource).toContain("md:min-h-0 md:overflow-y-auto md:overscroll-contain");
+    expect(playableMvpAppSource).toContain("env(safe-area-inset-bottom)");
+    expect(playableMvpAppSource).toContain("data-app-scrollport");
+    expect(missionCreationSource).toContain("data-mission-actions");
     expect(missionCreationSource.match(/aria-label="Mission creation"/g)).toHaveLength(1);
   });
 
@@ -412,6 +418,126 @@ describe("mission creation", () => {
     expect(moonBattleForecast.sampleReport?.defender.startingDefenses).toEqual([
       expect.objectContaining({ id: 0, count: 1 }),
     ]);
+  });
+
+  test("keeps attack loot visible across every supported planet and moon body route", () => {
+    const routeModes = [
+      { label: "planet→planet", originIsMoon: false, targetIsMoon: false, mode: "custom" },
+      { label: "planet→moon", originIsMoon: false, targetIsMoon: true, mode: "body-greedy" },
+      { label: "moon→planet", originIsMoon: true, targetIsMoon: false, mode: "body-greedy" },
+      { label: "moon→moon", originIsMoon: true, targetIsMoon: true, mode: "body-greedy" },
+    ] as const;
+
+    for (const route of routeModes) {
+      expect(missionAttackLootMode({
+        action: attackAction,
+        joinAttackMode: false,
+        originIsMoon: route.originIsMoon,
+        targetIsMoon: route.targetIsMoon,
+      }), route.label).toBe(route.mode);
+      const draft = buildMissionLaunchDraft({
+        action: attackAction,
+        cargo: emptyMissionCargoDraft(),
+        defenseHoldActive: false,
+        defenseHoldSeconds: 0,
+        effectiveOriginIsMoon: route.originIsMoon,
+        effectiveTargetIsMoon: route.targetIsMoon,
+        lootRatio: { metal: 34, crystal: 33, deuterium: 33 },
+        lootRatioActive: route.mode === "custom",
+        primaryTargetId: 0,
+        quantity: 1,
+        ships: attackAction.ships,
+        speedPercent: 100,
+      });
+      expect(draft.originIsMoon, `${route.label} origin flag`).toBe(route.originIsMoon);
+      expect(draft.targetIsMoon, `${route.label} target flag`).toBe(route.targetIsMoon);
+      expect(draft.lootRatio, `${route.label} launch ratio`).toEqual(
+        route.mode === "custom" ? { metal: 34, crystal: 33, deuterium: 33 } : undefined,
+      );
+    }
+    expect(missionAttackLootMode({
+      action: attackAction,
+      joinAttackMode: true,
+      originIsMoon: true,
+      targetIsMoon: true,
+    })).toBe("joined");
+    expect(missionAttackLootMode({
+      action: deployAction,
+      joinAttackMode: false,
+      originIsMoon: true,
+      targetIsMoon: false,
+    })).toBe("none");
+
+    const sharedProps = {
+      availableCargo: 600,
+      availabilityDetail: "Moon resource intel is unavailable for this target.",
+      greedyLootEnabled: false,
+      lootRatio: { metal: 34, crystal: 33, deuterium: 33 },
+      lootRatioTotal: 100,
+      onAmountChange: () => undefined,
+      onGreedyChange: () => undefined,
+      onPercentChange: () => undefined,
+      onResetEven: () => undefined,
+      predictedLoot: { metal: 300, crystal: 150, deuterium: 50 },
+    } as const;
+    const bodyLoot = MissionLootSection({
+      ...sharedProps,
+      lootIntelAvailable: false,
+      lootMode: "body-greedy",
+    });
+    const customLoot = MissionLootSection({
+      ...sharedProps,
+      lootIntelAvailable: true,
+      lootMode: "custom",
+    });
+    const bodyText = collectText(bodyLoot).join(" ");
+    const customText = collectText(customLoot).join(" ");
+
+    expect(bodyText).toContain("Loot");
+    expect(bodyText).toContain("Loot at arrival");
+    expect(bodyText).toContain("Moon attacks use the on-chain greedy loot order");
+    expect(bodyText).toContain("Custom splits are unavailable");
+    expect(bodyText).toContain("Moon resource intel is unavailable for this target.");
+    expect(bodyText).not.toContain("Metal %");
+    expect(findElements(bodyLoot, "p").some(
+      (element) => element.props?.["aria-label"] === "Body attack loot allocation",
+    )).toBe(true);
+
+    expect(customText).toContain("Loot at arrival");
+    expect(customText).toContain("Metal %");
+    expect(customText).toContain("Metal up to");
+    expect(customText).toContain("Even split");
+    expect(missionCreationSource).toContain('const lootPreviewVisible = attackLootMode === "custom" || attackLootMode === "body-greedy";');
+    expect(missionCreationSource).toContain("lootRatioSupported && !greedyLootEnabled ? lootRatio : null");
+    expect(missionCreationSource).toContain("<MissionLootSection");
+  });
+
+  test("keeps the Loot controls width-safe and naturally scroll-reachable at supported mobile sizes", () => {
+    const supportedWidths = [320, 360, 390, 667, 768] as const;
+    const manual = LootRatioControls({
+      cargoCapacity: 600,
+      greedyLootEnabled: false,
+      lootRatio: { metal: 34, crystal: 33, deuterium: 33 },
+      lootRatioTotal: 100,
+      onAmountChange: () => undefined,
+      onGreedyChange: () => undefined,
+      onPercentChange: () => undefined,
+      onResetEven: () => undefined,
+    });
+    const controls = findElements(manual, "input");
+
+    for (const width of supportedWidths) {
+      expect(controls.every((control) => String(control.props?.className).includes("min-w-0") || control.props?.type === "checkbox"), `${width}px input minimum width`).toBe(true);
+      expect(controls.every((control) => String(control.props?.className).includes("w-full") || control.props?.type === "checkbox"), `${width}px input width`).toBe(true);
+    }
+    expect(String(manual.props?.className)).toContain("min-w-0");
+    expect(String(manual.props?.className)).toContain("max-w-full");
+    expect(missionCreationSource).toContain("min-[360px]:grid-cols-[8rem_minmax(0,1fr)]");
+    expect(missionCreationSource).toContain("data-mission-composer");
+    expect(missionCreationSource).toContain("data-mission-actions");
+    expect(playableMvpAppSource).toContain("overflow-visible p-3");
+    expect(playableMvpAppSource).toContain("md:min-h-0 md:overflow-y-auto");
+    expect(playableMvpAppSource).not.toContain('className="min-w-0 max-w-full flex-1 overflow-y-auto p-3 sm:p-4 lg:p-6"');
   });
 
   test("never hydrates Transport cargo from planet or moon inventory", () => {
@@ -1993,7 +2119,7 @@ describe("mission creation", () => {
 
   test("uses compact mission-specific intel without repeating the route target or mission summary", () => {
     expect(missionCreationSource).toContain("<NonAttackMissionIntelPanel");
-    expect(missionCreationSource).toContain("lootRatioSupported || joinAttackMode");
+    expect(missionCreationSource).toContain("attackIntelVisible");
     expect(missionCreationSource).toContain("joinAttackContext");
     expect(missionCreationSource).not.toContain("<TargetDecisionTable");
     expect(missionCreationSource).not.toContain("<MissionPlanContent");
