@@ -697,29 +697,44 @@ describe("mission creation", () => {
     expect(missionCreationSource).toContain("if (actionPendingLabel) return actionPendingLabel;");
   });
 
-  test("renders mission fuel as a prominent live cost with an accessible insufficient state", () => {
+  test("renders mission fuel as a compact live Speed-row cost with an accessible insufficient state", () => {
     const normal = MissionFuelCost({ fuelCost: 1_372, insufficient: false });
     const updated = MissionFuelCost({ fuelCost: 942, insufficient: false });
     const insufficient = MissionFuelCost({ fuelCost: 2_400, insufficient: true });
     const normalOutput = findElements(normal, "output")[0];
     const insufficientOutput = findElements(insufficient, "output")[0];
+    const normalVisibleText = findElements(normal, "span")
+      .flatMap((element) => collectText(element.props?.children))
+      .join(" ")
+      .replace(/\s+/g, " ");
 
-    expect(collectText(normal).join(" ")).toContain("Mission fuel cost 1,372 deuterium");
-    expect(collectText(updated).join(" ")).toContain("Mission fuel cost 942 deuterium");
+    expect(normalVisibleText).toContain("1,372 deuterium");
+    expect(normalVisibleText).not.toContain("Mission fuel cost");
+    expect(collectText(updated).join(" ")).toContain("942 deuterium");
     expect(normalOutput?.props).toMatchObject({
       "aria-atomic": "true",
       "aria-label": "Mission fuel cost: 1,372 deuterium",
       "aria-live": "polite",
       htmlFor: "mission-speed",
     });
-    expect(String(normalOutput?.props?.className)).toContain("border-cyan-200/45");
-    expect(collectText(insufficient).join(" ")).toContain("2,400 deuterium Insufficient deuterium");
+    expect(normalOutput?.props?.title).toBe("Mission fuel cost");
+    expect(String(normalOutput?.props?.className)).toContain("border-white/10");
+    expect(String(normalOutput?.props?.className)).toContain("text-white");
+    expect(String(normalOutput?.props?.className)).toContain("justify-end");
+    expect(String(normalOutput?.props?.className)).toContain("overflow-hidden");
+    expect(String(normalOutput?.props?.className)).not.toContain("border-cyan");
+    expect(String(findElements(normal, "span")[0]?.props?.className)).toContain("whitespace-nowrap");
+    expect(collectText(insufficient).join(" ").replace(/\s+/g, " "))
+      .toContain("2,400 deuterium · Insufficient");
     expect(insufficientOutput?.props?.["aria-label"]).toBe(
       "Mission fuel cost: 2,400 deuterium. Insufficient deuterium.",
     );
-    expect(String(insufficientOutput?.props?.className)).toContain("border-amber-200/50");
+    expect(String(insufficientOutput?.props?.className)).toContain("border-amber-200/40");
     expect(missionCreationSource).toContain("fuelCost={effectiveFuelCost}");
     expect(missionCreationSource).toContain("insufficient={hasInsufficientFuel}");
+    expect(missionCreationSource).toContain("summary={(\n                <MissionFuelCost");
+    expect(missionCreationSource).not.toContain("Mission fuel cost\n      </span>");
+    expect(missionCreationSource).not.toContain("<Flame");
   });
 
   test("renders ship quantity rows with centered digit-growing input, / N availability, and full-size steppers", () => {
