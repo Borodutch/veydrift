@@ -9404,8 +9404,10 @@ describe("Veydrift backend", () => {
     expect(highscoreResponse.status).toBe(200);
 
     const tacticalPlanet = highscoreBody.rankings.total[0].planets[0];
+    // Rankings/Raid Finder deliberately omit per-planet future DefenseHold timelines. The
+    // selected target is hydrated from the public system endpoint before the attack preview.
     expect(tacticalPlanet.stationedDefenderForecastTimeline).toEqual([]);
-    expect(tacticalPlanet.stationedDefenderTimelineComplete).toBe(true);
+    expect(tacticalPlanet.stationedDefenderTimelineComplete).toBe(false);
     // The finder's raidable loot reflects the accrued 5128 metal (~50% plunder =>
     // 2564), matching the accrued resources the public planet read exposes. Before VEY-454 this
     // used the stale stored 5000 and under-reported LOOT at 2500.
@@ -9622,6 +9624,9 @@ describe("Veydrift backend", () => {
     indexer.moonState = (() => {
       throw new Error("no-moon rankings must not hydrate the full moon read model");
     }) as SettlementIndexer["moonState"];
+    indexer.stationedDefenderForecastTimelineForPlanet = (() => {
+      throw new Error("highscore discovery rows must defer stationed-defender forecasts until target selection");
+    }) as SettlementIndexer["stationedDefenderForecastTimelineForPlanet"];
 
     const handler = createRequestHandler({
       config: configuredTestConfig,
