@@ -17,6 +17,28 @@ export type Eip1193Provider = {
   isOKExWallet?: boolean;
 };
 
+/**
+ * EIP-1193 requires the first `personal_sign` parameter to be a hexadecimal
+ * byte string. Some injected wallets accept plain text as a convenience, but
+ * strict providers (including the Farcaster Mini App wallet) reject it before
+ * showing a signature prompt. Keep the human-readable text as the EIP-191
+ * message and encode only the JSON-RPC transport value.
+ */
+export function personalSignPayload(message: string): `0x${string}` {
+  return toHex(message);
+}
+
+export async function requestPersonalSignature(
+  provider: Eip1193Provider,
+  wallet: string,
+  message: string,
+): Promise<string> {
+  return provider.request<string>({
+    method: "personal_sign",
+    params: [personalSignPayload(message), wallet],
+  });
+}
+
 type WalletLockProbe = {
   _metamask?: {
     isUnlocked?: () => boolean | Promise<boolean>;
@@ -3768,10 +3790,7 @@ export async function requestReferralWalletSignature(
   action: ReferralWalletAction,
   commitment?: string
 ): Promise<string> {
-  return provider.request<string>({
-    method: "personal_sign",
-    params: [referralWalletMessage(wallet, action, commitment), wallet]
-  });
+  return requestPersonalSignature(provider, wallet, referralWalletMessage(wallet, action, commitment));
 }
 
 export async function fetchReferralDashboard(apiUrl: string, wallet: string): Promise<ReferralDashboard> {
@@ -3921,7 +3940,7 @@ export async function requestWatchedPlanetSignature(
 ): Promise<string> {
   return readWalletRequest<string>(provider, {
     method: "personal_sign",
-    params: [watchedPlanetMessage(wallet, action, planetId), wallet]
+    params: [personalSignPayload(watchedPlanetMessage(wallet, action, planetId)), wallet]
   }, "watched planet signature", timeoutMs);
 }
 
@@ -4080,10 +4099,7 @@ export async function updatePlayerDisplayName(
   displayName: string
 ): Promise<PlayerProfile> {
   const message = playerDisplayNameMessage(account, displayName);
-  const signature = await provider.request<string>({
-    method: "personal_sign",
-    params: [message, account]
-  });
+  const signature = await requestPersonalSignature(provider, account, message);
   const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(account)}/profile/display-name`, {
     body: JSON.stringify({ displayName, signature }),
     headers: {
@@ -4107,10 +4123,7 @@ export async function updatePlayerProfile(
   description: string | null
 ): Promise<PlayerProfile> {
   const message = playerProfileMessage(account, displayName, description);
-  const signature = await provider.request<string>({
-    method: "personal_sign",
-    params: [message, account]
-  });
+  const signature = await requestPersonalSignature(provider, account, message);
   const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(account)}/profile`, {
     body: JSON.stringify({ description, displayName, signature }),
     headers: {

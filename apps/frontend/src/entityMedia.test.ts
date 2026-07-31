@@ -8,6 +8,7 @@ import {
   updateEntityMedia,
 } from "./entityMedia";
 import type { Eip1193Provider } from "./walletFlow";
+import { personalSignPayload } from "./walletFlow";
 
 describe("entity media", () => {
   test("parses supported YouTube video and playlist URLs without accepting arbitrary providers", () => {
@@ -74,10 +75,10 @@ describe("entity media", () => {
   test("acquires a fresh entity challenge and binds it to the signed mutation", async () => {
     const originalFetch = globalThis.fetch;
     const requests: Array<{ body?: string; url: string }> = [];
-    let signedMessage = "";
+    let signedPayload = "";
     const provider: Eip1193Provider = {
       async request<T>(args: { method: string; params?: unknown[] }): Promise<T> {
-        signedMessage = String(args.params?.[0] ?? "");
+        signedPayload = String(args.params?.[0] ?? "");
         return "0x1234" as T;
       },
     };
@@ -105,7 +106,13 @@ describe("entity media", () => {
         ""
       );
       expect(requests[0]?.url).toContain("/entity-media/planet/7/challenge?wallet=");
-      expect(signedMessage).toContain("Entity: planet:7\nVersion: 12\nYouTube media: none");
+      expect(signedPayload).toBe(personalSignPayload(entityMediaMessage({
+        entityId: "7",
+        entityKind: "planet",
+        media: null,
+        version: 12,
+        wallet: "0x1111111111111111111111111111111111111111",
+      })));
       expect(JSON.parse(requests[1]?.body ?? "{}")).toMatchObject({ version: 12 });
     } finally {
       globalThis.fetch = originalFetch;

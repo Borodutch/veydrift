@@ -106,6 +106,7 @@ import {
   veydriftChainForChainId,
   isOnChainRevertError,
   playerProfileMessage,
+  personalSignPayload,
   updatePlayerProfile,
   unwatchPlanet,
   watchedPlanetMessage,
@@ -155,6 +156,10 @@ function bytes32StringErrorData(selector: string, value: string): string {
 }
 
 describe("walletFlow", () => {
+  test("encodes personal-sign messages as EIP-1193 hexadecimal bytes", () => {
+    expect(personalSignPayload("Veydrift profile\nName: Karsa")).toBe("0x56657964726966742070726f66696c650a4e616d653a204b61727361");
+  });
+
   test("classifies Base Sepolia chain ids", () => {
     expect(isBaseSepoliaChain("0x14a34")).toBe(true);
     expect(isBaseSepoliaChain("84532")).toBe(true);
@@ -3012,7 +3017,7 @@ describe("walletFlow", () => {
     const description = "Open diplomacy: https://veydrift.com/nova";
     const provider = mockProvider(async ({ method, params }) => {
       expect(method).toBe("personal_sign");
-      expect(params).toEqual([playerProfileMessage(account, "borodutch", description), account]);
+      expect(params).toEqual([personalSignPayload(playerProfileMessage(account, "borodutch", description)), account]);
       return "0xsignature";
     });
 
@@ -3167,7 +3172,7 @@ describe("walletFlow", () => {
     const originalFetch = globalThis.fetch;
     const provider = mockProvider(async ({ method, params }) => {
       expect(method).toBe("personal_sign");
-      expect(params).toEqual([watchedPlanetMessage(account, "watch", "42"), account]);
+      expect(params).toEqual([personalSignPayload(watchedPlanetMessage(account, "watch", "42")), account]);
       return "0xwatchsignature";
     });
 
@@ -3204,7 +3209,7 @@ describe("walletFlow", () => {
   test("times out stuck watched-planet signature requests", async () => {
     const provider = mockProvider(async ({ method, params }) => {
       expect(method).toBe("personal_sign");
-      expect(params).toEqual([watchedPlanetMessage(account, "watch", "42"), account]);
+      expect(params).toEqual([personalSignPayload(watchedPlanetMessage(account, "watch", "42")), account]);
       return await new Promise<string>(() => undefined);
     });
 
@@ -3217,7 +3222,7 @@ describe("walletFlow", () => {
     const originalFetch = globalThis.fetch;
     const provider = mockProvider(async ({ method, params }) => {
       expect(method).toBe("personal_sign");
-      expect(params).toEqual([watchedPlanetMessage(account, "unwatch", "42"), account]);
+      expect(params).toEqual([personalSignPayload(watchedPlanetMessage(account, "unwatch", "42")), account]);
       return "0xunwatchsignature";
     });
 
