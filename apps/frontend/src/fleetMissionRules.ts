@@ -10,6 +10,19 @@ export const DEFAULT_MISSION_SPEED_PERCENT = 100;
 export const LOCAL_HARVEST_DISTANCE = 5;
 export const MISSION_SPEED_OPTIONS = [100, 90, 80, 70, 60, 50, 40, 30, 20, 10] as const;
 
+// Exact VeydriftPlanetManagementModule._interplanetaryMissileRange math. Interplanetary
+// missiles are immediate contract actions (not fleet missions): same galaxy only, with a
+// system-range of Impulse Drive × 5 − 1. Level zero has no range.
+export function interplanetaryMissileRange(impulseDrive: number | undefined): number {
+  const level = Math.max(0, Math.trunc(impulseDrive ?? 0));
+  return level === 0 ? 0 : level * 5 - 1;
+}
+
+export function interplanetaryMissileSystemDistance(origin: Coordinates, target: Coordinates): number | null {
+  if (origin.galaxy !== target.galaxy) return null;
+  return Math.abs(origin.system - target.system);
+}
+
 // VEY-KANEO-440: an ACS Defend fleet "holds" at the defended planet from its natural arrival until
 // the hostile attack lands, burning holding fuel proportional to the hold time. These mirror the
 // on-chain math in VeydriftAllianceSystem._acsHoldingFuelCost / counterplayDefenseFuelContext so the

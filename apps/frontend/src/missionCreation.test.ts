@@ -2302,6 +2302,35 @@ describe("mission creation", () => {
       selectedShipCount: 0,
       totalCargoCapacity: 0,
     })).toBe("Choose at least one missile.");
+
+    expect(missionDraftBlocker({
+      action: missileAction,
+      cargoCapacity: 0,
+      cargoSupported: false,
+      cargoTotal: 0,
+      fuelCost: 0,
+      missileInventory: 2,
+      originCoords: { galaxy: 2, system: 44, position: 7 },
+      quantity: 3,
+      resources: { metal: 0, crystal: 0, deuterium: 0 },
+      selectedShipCount: 0,
+      totalCargoCapacity: 0,
+    })).toBe("Only 2 interplanetary missiles are ready.");
+
+    expect(missionDraftBlocker({
+      action: missileAction,
+      cargoCapacity: 0,
+      cargoSupported: false,
+      cargoTotal: 0,
+      fuelCost: 0,
+      missileInventory: 3,
+      missileRangeBlocker: "Interplanetary missiles cannot cross galaxies.",
+      originCoords: { galaxy: 2, system: 44, position: 7 },
+      quantity: 1,
+      resources: { metal: 0, crystal: 0, deuterium: 0 },
+      selectedShipCount: 0,
+      totalCargoCapacity: 0,
+    })).toBe("Interplanetary missiles cannot cross galaxies.");
   });
 
   test("gates a proactive DefenseHold on ship selection and total (travel + holding) fuel", () => {
