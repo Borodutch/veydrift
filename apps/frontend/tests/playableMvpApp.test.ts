@@ -428,13 +428,22 @@ describe("Playable MVP app display helpers", () => {
 
     const scoped = planetScopedFleetVisibility(visibility, "8", ["7", "8"]);
 
-    expect(scoped?.incoming.map((mission) => mission.missionId)).toEqual(["in-selected", "self-inbound"]);
+    expect(scoped?.incoming.map((mission) => mission.missionId)).toEqual([
+      "in-selected",
+      "self-inbound",
+      "transport-to-selected",
+    ]);
     expect(scoped?.outgoing.map((mission) => mission.missionId)).toEqual(["out-selected"]);
     expect(scoped?.returning.map((mission) => mission.missionId)).toEqual(["ret-selected"]);
 
     const switched = planetScopedFleetVisibility(visibility, "7", ["7", "8"]);
     expect(switched?.incoming.map((mission) => mission.missionId)).toEqual(["in-other"]);
-    expect(switched?.outgoing.map((mission) => mission.missionId)).toEqual(["in-selected", "self-inbound", "out-other"]);
+    expect(switched?.outgoing.map((mission) => mission.missionId)).toEqual([
+      "in-selected",
+      "self-inbound",
+      "out-other",
+      "transport-to-selected",
+    ]);
     expect(switched?.returning.map((mission) => mission.missionId)).toEqual(["ret-other"]);
   });
 

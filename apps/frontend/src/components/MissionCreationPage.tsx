@@ -535,10 +535,6 @@ export function MissionCreationPage({
     () => forecastRaidLoot(resourceIntel.projectedArrivalLootable, cargoCapacity, greedyLootEnabled ? null : lootRatio),
     [cargoCapacity, greedyLootEnabled, lootRatio, resourceIntel.projectedArrivalLootable],
   );
-  const currentLootForecast = useMemo(
-    () => forecastRaidLoot(resourceIntel.currentLootable, cargoCapacity, greedyLootEnabled ? null : lootRatio),
-    [cargoCapacity, greedyLootEnabled, lootRatio, resourceIntel.currentLootable],
-  );
 
   // VEY-KANEO-440: ACS Defend holding-fuel preview. The fleet arrives naturally after `travelSeconds`,
   // then holds until the hostile attack lands; holding fuel scales with that gap and the Alliance Depot
@@ -884,8 +880,6 @@ export function MissionCreationPage({
               <AttackLootProjection
                 arrivalAvailable={resourceIntel.projectedArrivalLootable}
                 arrivalCarry={maxLootForecast}
-                currentAvailable={resourceIntel.currentLootable}
-                currentCarry={currentLootForecast}
               />
               <LootRatioControls
                 cargoCapacity={cargoCapacity}
@@ -2224,16 +2218,22 @@ function AttackOutcomeContent({
           </div>
         </div>
         <div className="grid gap-1 rounded border border-white/10 bg-black/15 p-2">
-          <CompactFactRow label="Attacker losses" value={formatLossRange(battleForecast.attackerLosses)} />
+          <CompactFactRow label="Estimated losses" value={formatLossRangeLong(battleForecast.attackerLosses)} />
           {battleForecast.randomness ? (
             <>
-              <CompactFactRow label="Simulations" value={formatSimulationOutcomes(battleForecast.randomness)} />
-              <CompactFactRow label="Attacker survivors" value={formatAttackerSurvivors(battleForecast.randomness)} />
+              <CompactFactRow label="Simulated outcomes" value={formatSimulationOutcomes(battleForecast.randomness)} />
+              <CompactFactRow label="Attacker survivors" value={`${formatAttackerSurvivors(battleForecast.randomness)} ships`} />
             </>
           ) : null}
           <CompactFactRow
-            label="Tech"
-            value={`${formatTechLevels(battleForecast.attackerTechLevels ?? ZERO_COMBAT_TECH_LEVELS)} / ${battleForecast.defenderTechKnown ? formatTechLevels(battleForecast.defenderTechLevels ?? ZERO_COMBAT_TECH_LEVELS) : "DEF unknown"}`}
+            label="Your technology"
+            value={formatTechLevelsLong(battleForecast.attackerTechLevels ?? ZERO_COMBAT_TECH_LEVELS)}
+          />
+          <CompactFactRow
+            label="Defender technology"
+            value={battleForecast.defenderTechKnown
+              ? formatTechLevelsLong(battleForecast.defenderTechLevels ?? ZERO_COMBAT_TECH_LEVELS)
+              : "Still loading"}
           />
         </div>
       </div>
@@ -2466,40 +2466,33 @@ function SimulatedBattleReportDetails({
           >
             <div className="flex items-start justify-between gap-3">
               <div>
-                <p className="text-[11px] font-semibold uppercase tracking-wider text-signal">Illustrative simulation</p>
-                <h2 className="mt-1 text-lg font-semibold text-white">Sample possible battle</h2>
+                <h2 className="text-lg font-semibold text-white">Possible battle</h2>
                 <p className="mt-1 text-xs text-slate-400">
-                  This report uses the exact preview engine for one deterministic 256-bit sample. It is not the already-determined future on-chain result.
+                  One possible outcome from the battle preview. The future on-chain result may differ.
                 </p>
               </div>
               <button
                 aria-label="Close simulated battle report"
-                className="h-9 shrink-0 rounded border border-white/15 px-3 text-sm font-medium text-slate-200 transition hover:border-white/30 hover:text-white"
+                className="inline-grid h-9 w-9 shrink-0 place-items-center rounded border border-white/15 text-slate-300 transition hover:border-white/30 hover:bg-white/[0.05] hover:text-white"
                 onClick={(event) => {
                   const details = event.currentTarget.closest("details");
                   if (details) details.open = false;
                 }}
+                title="Close"
                 type="button"
               >
-                Close
+                <svg aria-hidden="true" fill="none" height="16" viewBox="0 0 24 24" width="16">
+                  <path d="M18 6 6 18M6 6l12 12" stroke="currentColor" strokeLinecap="round" strokeWidth="2.2" />
+                </svg>
               </button>
             </div>
 
             {report ? (
               <>
                 <div className="grid gap-1 rounded border border-white/10 bg-black/20 p-3 text-xs">
-                  <CompactFactRow label="Sample" value={`#${report.sampleId}`} />
-                  <div className="grid grid-cols-[7rem_minmax(0,1fr)] gap-3">
-                    <span className="text-slate-500">Random word</span>
-                    <code className="break-all text-right text-[11px] text-slate-300">{report.randomWord}</code>
-                  </div>
                   <CompactFactRow label="Final outcome" value={battleOutcomeLabel(report.outcome)} />
                   <CompactFactRow label="Attacker losses" value={formatCompactResources(report.attackerLosses)} />
                   <CompactFactRow label="Defender losses" value={formatCompactResources(report.defenderLosses)} />
-                  <CompactFactRow
-                    label="Rapidfire"
-                    value={`${report.rapidfireExtraShots.attacker.toLocaleString()} attacker / ${report.rapidfireExtraShots.defender.toLocaleString()} defender extra shots`}
-                  />
                 </div>
 
                 <section className="grid gap-2">
@@ -2508,17 +2501,11 @@ function SimulatedBattleReportDetails({
                     {report.attackers.map((participant) => (
                       <BattleParticipantCard key={participant.id} participant={participant} />
                     ))}
-                    <BattleParticipantCard participant={report.defender} />
+                    <BattleParticipantCard participant={report.defender} showDefenses />
                     {report.defender.counterplay.map((participant) => (
                       <BattleParticipantCard key={participant.id} participant={participant} />
                     ))}
                   </div>
-                  {report.defender.startingDefenses.length > 0 ? (
-                    <p className="rounded border border-white/10 bg-white/[0.03] p-2 text-xs text-slate-300">
-                      <span className="font-medium text-slate-400">Starting defenses: </span>
-                      {formatBattleComposition(report.defender.startingDefenses)}
-                    </p>
-                  ) : null}
                 </section>
 
                 <section className="grid gap-2">
@@ -2573,18 +2560,29 @@ function SimulatedBattleReportDetails({
 
 function BattleParticipantCard({
   participant,
+  showDefenses = false,
 }: {
-  participant: ContractBattleResult["attackers"][number];
+  participant: ContractBattleResult["attackers"][number] | ContractBattleResult["defender"];
+  showDefenses?: boolean | undefined;
 }) {
+  const defenses = "startingDefenses" in participant ? participant.startingDefenses : [];
   return (
     <article className="rounded border border-white/10 bg-white/[0.03] p-2 text-xs">
       <p className="font-medium text-slate-200">{participant.label}</p>
-      <p className="mt-0.5 break-all text-[11px] text-slate-500">{participant.owner}</p>
-      {participant.laneGroup !== undefined ? (
-        <p className="mt-0.5 text-[11px] text-slate-500">Contract lane {participant.laneGroup}</p>
+      {participant.owner !== "Connected commander" ? (
+        <p className="mt-0.5 break-all text-[11px] text-slate-500">{participant.owner}</p>
       ) : null}
       <p className="mt-1 text-slate-400">{formatTechLevels(participant.technology)}</p>
-      <p className="mt-1 text-slate-300">{formatBattleComposition(participant.startingShips)}</p>
+      <p className="mt-1 text-slate-300">
+        <span className="font-medium text-slate-400">Fleet: </span>
+        {formatBattleComposition(participant.startingShips)}
+      </p>
+      {showDefenses ? (
+        <p className="mt-1 text-slate-300">
+          <span className="font-medium text-slate-400">Defenses: </span>
+          {formatBattleComposition(defenses)}
+        </p>
+      ) : null}
     </article>
   );
 }
@@ -2664,8 +2662,7 @@ function ResourceIntelTable({
       <div className="grid gap-1 rounded border border-white/10 bg-black/15 p-2">
         <ResourceTableRow label="Now" resources={resourceIntel.current} />
         <ResourceTableRow label="Arrival" resources={resourceIntel.projectedArrival} />
-        <ResourceTableRow label="Loot now" resources={resourceIntel.currentLootable} />
-        <ResourceTableRow label="Loot arr." resources={resourceIntel.projectedArrivalLootable} />
+        <ResourceTableRow label="Loot at arrival" resources={resourceIntel.projectedArrivalLootable} />
         {maxLootForecast ? <ResourceTableRow label="Max carry" resources={maxLootForecast} tone="signal" /> : null}
       </div>
     </div>
@@ -2812,7 +2809,6 @@ function DestinationIntelContent({
       <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
         <ResourceSummary title="Resources now" resources={resourceIntel.current} />
         <ResourceSummary title="Projected at arrival" resources={resourceIntel.projectedArrival} />
-        <ResourceSummary title="Lootable now" resources={resourceIntel.currentLootable} />
         <ResourceSummary title="Lootable at arrival" resources={resourceIntel.projectedArrivalLootable} />
       </div>
     </div>
@@ -2822,21 +2818,12 @@ function DestinationIntelContent({
 function AttackLootProjection({
   arrivalAvailable,
   arrivalCarry,
-  currentAvailable,
-  currentCarry,
 }: {
   arrivalAvailable: MissionResourceSnapshot | null;
   arrivalCarry: MissionResourceSnapshot;
-  currentAvailable: MissionResourceSnapshot | null;
-  currentCarry: MissionResourceSnapshot;
 }) {
   return (
-    <div className="grid gap-2 sm:grid-cols-2">
-      <LootProjectionCard
-        available={currentAvailable}
-        carry={currentCarry}
-        title="Loot now"
-      />
+    <div className="grid gap-2">
       <LootProjectionCard
         available={arrivalAvailable}
         carry={arrivalCarry}
@@ -2863,12 +2850,12 @@ function LootProjectionCard({
         <h4 className="text-[11px] font-semibold uppercase text-slate-500">{title}</h4>
         <p
           className="shrink-0 text-sm font-semibold tabular-nums text-slate-200"
-          title={`${carryTotal.toLocaleString()} can be carried after a win / ${availableTotal?.toLocaleString() ?? "unknown"} available`}
+          title={`${carryTotal.toLocaleString()} can be carried / ${availableTotal?.toLocaleString() ?? "unknown"} available loot`}
         >
           {carryTotal.toLocaleString()} / {availableTotal?.toLocaleString() ?? "Unknown"}
         </p>
       </div>
-      <p className="text-right text-[10px] text-slate-500">Can carry after a win / available</p>
+      <p className="text-right text-[10px] text-slate-500">Can carry / available loot</p>
       <CompactFactRow label="Carry" value={formatCompactResources(carry)} />
       <CompactFactRow label="Available" value={formatCompactResources(available)} />
     </section>
@@ -2964,9 +2951,9 @@ function TargetFact({ label, value }: { label: string; value: string }) {
 
 function CompactFactRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="grid grid-cols-[5.5rem_minmax(0,1fr)] items-baseline gap-2 text-[11px]">
-      <span className="truncate text-slate-500">{label}</span>
-      <span className="truncate text-right tabular-nums text-slate-200" title={value}>{value}</span>
+    <div className="grid grid-cols-[8rem_minmax(0,1fr)] items-baseline gap-2 text-[11px]">
+      <span className="text-slate-500">{label}</span>
+      <span className="break-words text-right tabular-nums text-slate-200">{value}</span>
     </div>
   );
 }
@@ -3345,6 +3332,12 @@ function formatLossRange(losses: BattleForecastLossRange | undefined): string {
   return `${formatCompactResources(losses.average)} avg`;
 }
 
+function formatLossRangeLong(losses: BattleForecastLossRange | undefined): string {
+  if (!losses) return "Unknown";
+  const average = `Metal ${formatResourceAmount(losses.average.metal)} · Crystal ${formatResourceAmount(losses.average.crystal)} · Deuterium ${formatResourceAmount(losses.average.deuterium)}`;
+  return resourceSnapshotsEqual(losses.best, losses.worst) ? average : `${average} average`;
+}
+
 function lossRangeSpread(losses: BattleForecastLossRange | undefined): MissionResourceSnapshot | null {
   if (!losses) return null;
   return {
@@ -3368,13 +3361,17 @@ function formatSimulationOutcomes(randomness: BattleForecastRandomness): string 
       ? `${outcome} in 1 simulation`
       : `${outcome} in all ${randomness.sampleCount.toLocaleString()} simulations`;
   }
-  return `${randomness.outcomeCounts.win.toLocaleString()} wins · ${randomness.outcomeCounts.draw.toLocaleString()} draws · ${randomness.outcomeCounts.defeat.toLocaleString()} defeats (${randomness.sampleCount.toLocaleString()} simulations)`;
+  return `${randomness.outcomeCounts.win.toLocaleString()} wins · ${randomness.outcomeCounts.draw.toLocaleString()} draws · ${randomness.outcomeCounts.defeat.toLocaleString()} defeats (${randomness.sampleCount.toLocaleString()} runs)`;
 }
 
 function formatAttackerSurvivors(randomness: BattleForecastRandomness): string {
   return randomness.attackerSurvivorRange.min === randomness.attackerSurvivorRange.max
     ? randomness.attackerSurvivorRange.min.toLocaleString()
     : `${randomness.attackerSurvivorRange.min.toLocaleString()}–${randomness.attackerSurvivorRange.max.toLocaleString()}`;
+}
+
+function formatTechLevelsLong(levels: CombatTechLevels): string {
+  return `Weapons ${levels.weapons} · Shields ${levels.shielding} · Armor ${levels.armor}`;
 }
 
 function formatResourceAmount(value: number): string {

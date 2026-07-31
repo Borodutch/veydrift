@@ -89,8 +89,8 @@ describe("Overview fleets summary", () => {
 
     const summary = summarizeFleets(fleetVisibility, now);
     expect(summary.lines.map((line) => line.text)).toEqual([
-      "Attack from Raider [5:407:4] · hits in 8m",
-      "Attack from Reaver [5:407:9] · hits in 3m",
+      "Hostile inbound · Attack from Raider [5:407:4] · Outbound · arrives in 8m",
+      "Hostile inbound · Attack from Reaver [5:407:9] · Outbound · arrives in 3m",
     ]);
 
     const text = collectText(FleetsSummary({
@@ -99,8 +99,8 @@ describe("Overview fleets summary", () => {
       onOpenMissionControl: () => undefined,
     })).join(" ");
 
-    expect(text).toContain("Attack from Raider [5:407:4] · hits in 8m");
-    expect(text).toContain("Attack from Reaver [5:407:9] · hits in 3m");
+    expect(text).toContain("Hostile inbound · Attack from Raider [5:407:4] · Outbound · arrives in 8m");
+    expect(text).toContain("Hostile inbound · Attack from Reaver [5:407:9] · Outbound · arrives in 3m");
     expect(text).not.toContain("Under attack");
     expect(text).not.toContain("hostile fleets inbound");
   });
@@ -127,6 +127,7 @@ describe("Overview fleets summary", () => {
 
     expect(summary.lines).toEqual([{
       key: "in-12",
+      relation: "friendly",
       text: "Harvest returning to Recycler Base [4:140:13] · lands in 5m",
       tone: "harvest",
     }]);
@@ -296,7 +297,7 @@ describe("Overview fleets summary", () => {
       new Map([["id:77", "New London"]]),
     );
 
-    expect(summary.lines[0]?.text).toBe("Transport → New London [6:9:4] · arrives in 1m");
+    expect(summary.lines[0]?.text).toBe("Outbound · Transport to New London [6:9:4] · Outbound · arrives in 1m");
   });
 
   test("uses the commander identity when an unnamed mission planet has no known roster name", () => {

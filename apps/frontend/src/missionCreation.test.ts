@@ -875,14 +875,18 @@ describe("mission creation", () => {
     expect(text).toMatch(/\d+ wins/);
     expect(text).toMatch(/\d+ draws/);
     expect(text).toMatch(/\d+ defeats/);
-    expect(text).toContain("simulations");
+    expect(text).toContain("runs");
     expect(text).toContain("attacker survivors");
-    expect(text).toContain("Illustrative simulation");
-    expect(text).toContain("Sample possible battle");
-    expect(text).toContain("Random word");
+    expect(text).toContain("Possible battle");
+    expect(text).not.toContain("Illustrative simulation");
+    expect(text).not.toContain("Random word");
+    expect(text).not.toContain("Contract lane");
+    expect(text).not.toContain("Connected commander");
+    expect(text).toContain("Fleet:");
+    expect(text).toContain("Defenses:");
     expect(text).toContain("Combat rounds");
     expect(text).toContain("Rapidfire");
-    expect(text).toContain("not the already-determined future on-chain result");
+    expect(text).toContain("future on-chain result may differ");
     expect(reportTrigger?.props?.role).toBe("button");
     expect(dialog?.props?.["aria-modal"]).toBe("true");
     expect(dialog?.props?.className).toContain("overflow-y-auto");
@@ -1016,8 +1020,8 @@ describe("mission creation", () => {
 
     expect(shipyardOnlyForecast.attackerPower).toBeGreaterThan(baseForecast.attackerPower);
     expect(shipyardOnlyForecast.attackerTechLevels).toEqual({ weapons: 4, shielding: 0, armor: 5 });
-    expect(text).toMatch(/Tech W4 S0 A5/);
-    expect(text).toMatch(/\/ W0 S0 A0/);
+    expect(text).toContain("Your technology Weapons 4 · Shields 0 · Armor 5");
+    expect(text).toContain("Defender technology Weapons 0 · Shields 0 · Armor 0");
   });
 
   test("includes public stationed defenders in attack intel and battle forecast", () => {
@@ -1528,8 +1532,9 @@ describe("mission creation", () => {
 
     expect(text).toContain("Outcome");
     expect(text).toContain("Probable win");
-    expect(text).toContain("Tech");
-    expect(text).toContain("DEF unknown");
+    expect(text).toContain("Your technology");
+    expect(text).toContain("DEF");
+    expect(text).toContain("200");
     expect(text).toContain("Defending forces");
     expect(text).toContain("Fleet");
     expect(text).toContain("Small Cargo");
@@ -1556,9 +1561,9 @@ describe("mission creation", () => {
     expect(missionCreationSource).toContain("ResourceIntelTable");
     expect(missionCreationSource).toContain("ForceIntelTable");
     expect(missionCreationSource).toContain("<AttackLootProjection");
-    expect(missionCreationSource).toContain('title="Loot now"');
+    expect(missionCreationSource).not.toContain('title="Loot now"');
     expect(missionCreationSource).toContain('title="Loot at arrival"');
-    expect(missionCreationSource).toContain("Can carry after a win / available");
+    expect(missionCreationSource).toContain("Can carry / available loot");
     expect(missionCreationSource).toContain("action.mode !== \"missile\" && !joinAttackMode && timingSummary");
     expect(missionCreationSource).toContain('className="grid gap-2 border-t border-white/10 pt-3"');
     expect(missionCreationSource).toContain('aria-label="Mission speed"');
