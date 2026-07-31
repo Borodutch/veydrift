@@ -9297,7 +9297,10 @@ export function PlayableMvpApp({
           playerProfileAction={playerProfileAction}
         />
 
-        <main className="min-w-0 max-w-full flex-1 overflow-y-auto p-3 sm:p-4 lg:p-6">
+        <main
+          className="min-w-0 max-w-full flex-1 overflow-visible p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] sm:p-4 sm:pb-[calc(1rem+env(safe-area-inset-bottom))] md:min-h-0 md:overflow-y-auto md:overscroll-contain lg:p-6 lg:pb-6"
+          data-app-scrollport
+        >
           {compactPlanetSelector}
           <div className="page-enter" key={page}>
             {content}

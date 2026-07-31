@@ -108,7 +108,9 @@ describe("navigation and planet selector UI source contracts", () => {
     // the viewport while still clipping horizontal overflow.
     expect(playableSource).toContain('className="playable-starfield relative isolate min-h-dvh w-full max-w-full overflow-x-clip bg-[#05070f] text-slate-100"');
     expect(playableSource).toContain('className="relative z-10 mx-auto flex w-full max-w-[96rem] flex-col overflow-x-clip md:h-[calc(100dvh-var(--topbar-h,2.75rem))] md:flex-row"');
-    expect(playableSource).toContain('className="min-w-0 max-w-full flex-1 overflow-y-auto p-3 sm:p-4 lg:p-6"');
+    expect(playableSource).toContain("overflow-visible p-3");
+    expect(playableSource).toContain("md:min-h-0 md:overflow-y-auto md:overscroll-contain");
+    expect(playableSource).toContain("env(safe-area-inset-bottom)");
     expect(playableSource).not.toContain("flex min-w-max gap-2 pb-1");
   });
 
