@@ -866,10 +866,14 @@ describe("Moon page helpers", () => {
       { quantity: 3, quantityValid: true, durationSeconds: 60 },
       { quantity: 3, quantityValid: true, durationSeconds: 60 },
     ]);
-    expect([moonDefense, planetDefense].map(({ cost, blockedReason, detailSections }) => ({ cost, blockedReason, detailSections }))).toEqual([
-      { cost: { metal: 2_000, crystal: 0, deuterium: 0 }, blockedReason: undefined, detailSections: undefined },
-      { cost: { metal: 2_000, crystal: 0, deuterium: 0 }, blockedReason: undefined, detailSections: undefined },
+    expect([moonDefense, planetDefense].map(({ cost, unitCost, blockedReason, detailSections }) => ({ cost, unitCost, blockedReason, detailSections }))).toEqual([
+      { cost: { metal: 6_000, crystal: 0, deuterium: 0 }, unitCost: { metal: 2_000, crystal: 0, deuterium: 0 }, blockedReason: undefined, detailSections: undefined },
+      { cost: { metal: 6_000, crystal: 0, deuterium: 0 }, unitCost: { metal: 2_000, crystal: 0, deuterium: 0 }, blockedReason: undefined, detailSections: undefined },
     ]);
+    expect(moonShip).toMatchObject({
+      cost: { metal: 6_000, crystal: 6_000, deuterium: 0 },
+      unitCost: { metal: 2_000, crystal: 2_000, deuterium: 0 },
+    });
   });
 
   test("falls back from stale zero Moon costs and applies shared affordability", () => {

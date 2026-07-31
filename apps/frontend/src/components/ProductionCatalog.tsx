@@ -21,6 +21,7 @@ export type ProductionDetailStat = {
   label: string;
   value: string;
   hint?: string | undefined;
+  tone?: "danger" | "normal" | undefined;
   wide?: boolean | undefined;
 };
 
@@ -42,7 +43,11 @@ export type ProductionCatalogItem<Key extends string = string> = {
   status: "ready" | "locked" | "queued" | "unavailable";
   statusLabel?: string | undefined;
   labelTone?: "normal" | "muted" | undefined;
+  // The prominently displayed amount charged for the currently selected quantity.
   cost: Resources | undefined;
+  unitCost?: Resources | undefined;
+  costAffordable?: boolean | undefined;
+  maxQuantity?: number | undefined;
   // Predicted build time for the selected quantity (VEY-KANEO-472). Backend-sourced
   // per-unit duration scaled by quantity; undefined when the backend omits it.
   durationSeconds?: number | undefined;
@@ -472,6 +477,26 @@ function SelectedProductionPanel<Key extends string>({
           >
             {item.actionLabel}
           </button>
+          <button
+            aria-label={`${item.label} maximum affordable quantity`}
+            className="h-11 rounded border border-white/10 bg-white/[0.03] px-2 text-xs font-semibold text-slate-300 transition hover:border-white/20 hover:text-white disabled:cursor-not-allowed disabled:text-slate-600 sm:h-9"
+            disabled={item.maxQuantity === undefined || item.maxQuantity < 1 || (!quantityInvalid && item.quantity === item.maxQuantity)}
+            onClick={() => {
+              if (item.maxQuantity !== undefined && item.maxQuantity >= 1) onQuantity(item.key, item.maxQuantity);
+            }}
+            type="button"
+          >
+            Max
+          </button>
+          <button
+            aria-label={`${item.label} reset quantity`}
+            className="h-11 rounded border border-white/10 bg-white/[0.03] px-2 text-xs font-semibold text-slate-300 transition hover:border-white/20 hover:text-white disabled:cursor-not-allowed disabled:text-slate-600 sm:h-9"
+            disabled={!quantityInvalid && item.quantity === 1}
+            onClick={() => onQuantity(item.key, 1)}
+            type="button"
+          >
+            Reset
+          </button>
         </div>
         {quantityInvalid || item.blockedReason ? (
           <p className="text-xs text-slate-500">
@@ -501,6 +526,7 @@ function SelectedProductionDetails<Key extends string>({
                   hint={stat.hint}
                   key={`${section.title}-${stat.label}`}
                   label={stat.label}
+                  tone={stat.tone}
                   value={stat.value}
                 />
               ))}
@@ -514,7 +540,14 @@ function SelectedProductionDetails<Key extends string>({
   const stats: ProductionDetailStat[] = item.detailSections?.length
     ? item.detailSections.flatMap((section) => section.stats)
     : [
-        { label: "Price", value: item.cost ? formatProductionPrice(item.cost) : "-" },
+        {
+          label: "Total cost",
+          value: item.cost ? formatProductionPrice(item.cost) : "-",
+          tone: item.costAffordable === false ? "danger" as const : "normal" as const,
+        },
+        ...(item.unitCost
+          ? [{ label: "Per unit", value: formatProductionPrice(item.unitCost), tone: "normal" as const }]
+          : []),
         {
           label: item.countLabel,
           value: item.countValue === undefined ? "unavailable" : format(item.countValue),
@@ -528,11 +561,11 @@ function SelectedProductionDetails<Key extends string>({
     <p className="flex min-w-0 flex-wrap gap-x-2 text-xs leading-5 text-slate-400">
       {stats.map((stat, index) => (
         <span
-          className={stat.label === "Price" ? "min-w-0 break-words" : "whitespace-nowrap"}
+          className={stat.label.includes("cost") || stat.label === "Per unit" ? "min-w-0 break-words" : "whitespace-nowrap"}
           key={`${stat.label}-${index}`}
           title={stat.hint}
         >
-          {stat.label} <span className="text-slate-300">{stat.value}</span>
+          {stat.label} <span className={stat.tone === "danger" ? "text-rose-300" : "text-slate-300"}>{stat.value}</span>
         </span>
       ))}
     </p>
@@ -587,17 +620,19 @@ function Stat({
   className = "",
   hint,
   label,
+  tone = "normal",
   value,
 }: {
   className?: string | undefined;
   hint?: string | undefined;
   label: string;
+  tone?: "danger" | "normal" | undefined;
   value: string;
 }) {
   return (
-    <div className={`rounded border border-white/10 bg-black/20 px-2 py-1.5 ${className}`}>
+    <div className={`rounded border px-2 py-1.5 ${tone === "danger" ? "border-rose-300/30 bg-rose-300/5" : "border-white/10 bg-black/20"} ${className}`}>
       <dt className="text-[10px] uppercase tracking-wide text-slate-500">{label}</dt>
-      <dd className="break-words text-slate-200">{value}</dd>
+      <dd className={`break-words ${tone === "danger" ? "text-rose-200" : "text-slate-200"}`}>{value}</dd>
       {hint ? <dd className="mt-1 line-clamp-2 text-[10px] leading-3 text-slate-500">{hint}</dd> : null}
     </div>
   );
@@ -609,6 +644,26 @@ function format(value: number): string {
 
 export function formatProductionPrice(cost: Resources): string {
   return formatCost(cost);
+}
+
+export function scaleProductionCost(unitCost: Resources, quantity: number): Resources {
+  return {
+    metal: unitCost.metal * quantity,
+    crystal: unitCost.crystal * quantity,
+    deuterium: unitCost.deuterium * quantity,
+  };
+}
+
+export function maxAffordableProductionQuantity(
+  resources: Resources | undefined,
+  unitCost: Resources | undefined,
+): number | undefined {
+  if (!resources || !unitCost) return undefined;
+  const limits = (["metal", "crystal", "deuterium"] as const)
+    .filter((resource) => unitCost[resource] > 0)
+    .map((resource) => Math.floor(resources[resource] / unitCost[resource]));
+  if (limits.length === 0) return undefined;
+  return Math.max(0, Math.min(...limits, Number.MAX_SAFE_INTEGER));
 }
 
 export function Notice({
