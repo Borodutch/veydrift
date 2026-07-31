@@ -349,6 +349,111 @@ async function inspectorSnapshot() {
   })`);
 }
 
+async function responsiveDetailSnapshot() {
+  return evaluate(`(() => {
+    const detail = document.querySelector('[data-celestial-detail]');
+    const layout = detail?.querySelector('[data-celestial-layout]');
+    const artwork = detail?.querySelector('[data-celestial-artwork]');
+    const media = detail?.querySelector('[data-celestial-media]');
+    const summary = detail?.querySelector('[data-celestial-summary]');
+    const back = detail?.querySelector('[data-celestial-back]');
+    if (!detail || !layout || !artwork || !media || !summary || !back) return null;
+    const detailRect = detail.getBoundingClientRect();
+    const main = detail.closest('main');
+    const mainRect = main?.getBoundingClientRect();
+    const layoutRect = layout.getBoundingClientRect();
+    const artworkRect = artwork.getBoundingClientRect();
+    const mediaRect = media.getBoundingClientRect();
+    const summaryRect = summary.getBoundingClientRect();
+    const backRect = back.getBoundingClientRect();
+    const recordValues = [...detail.querySelectorAll('[data-celestial-record-value]')].map((value) => {
+      const rect = value.getBoundingClientRect();
+      const style = getComputedStyle(value);
+      return {
+        clientWidth: value.clientWidth,
+        left: rect.left,
+        right: rect.right,
+        scrollWidth: value.scrollWidth,
+        textOverflow: style.textOverflow,
+        whiteSpace: style.whiteSpace,
+      };
+    });
+    const tapTargets = [...detail.querySelectorAll('button')].map((button) => {
+      const rect = button.getBoundingClientRect();
+      return { height: rect.height, text: button.textContent?.trim() ?? '', width: rect.width };
+    });
+    const overflowing = [...detail.querySelectorAll('*')]
+      .map((element) => ({ element, rect: element.getBoundingClientRect() }))
+      .filter(({ rect }) => rect.width > 0 && (rect.left < -1 || rect.right > innerWidth + 1))
+      .map(({ element, rect }) => ({
+        className: typeof element.className === 'string' ? element.className : '',
+        left: rect.left,
+        right: rect.right,
+        tag: element.tagName,
+      }));
+    return {
+      artwork: { bottom: artworkRect.bottom, height: artworkRect.height, left: artworkRect.left, right: artworkRect.right, top: artworkRect.top, width: artworkRect.width },
+      back: { height: backRect.height, width: backRect.width },
+      detail: { bottom: detailRect.bottom, left: detailRect.left, right: detailRect.right, width: detailRect.width },
+      documentWidth: document.documentElement.scrollWidth,
+      layout: { left: layoutRect.left, right: layoutRect.right, width: layoutRect.width },
+      minHeight: getComputedStyle(detail).minHeight,
+      media: { height: mediaRect.height, width: mediaRect.width },
+      overflowing,
+      recordValues,
+      summary: { left: summaryRect.left, right: summaryRect.right, top: summaryRect.top, width: summaryRect.width },
+      tailGap: main && mainRect ? main.scrollHeight - (detailRect.bottom - mainRect.top + main.scrollTop) : null,
+      tapTargets,
+      viewportWidth: document.documentElement.clientWidth,
+    };
+  })()`);
+}
+
+for (const { width, route, kind } of [
+  { width: 360, route: "/planet/9/9/9", kind: "planet" },
+  { width: 360, route: "/moon/9/9/9", kind: "moon" },
+  { width: 390, route: "/planet/1/2/3", kind: "planet" },
+  { width: 390, route: "/moon/1/2/3", kind: "moon" },
+  { width: 768, route: "/planet/9/9/9", kind: "planet" },
+  { width: 768, route: "/moon/9/9/9", kind: "moon" },
+  { width: 1280, route: "/planet/1/2/3", kind: "planet" },
+  { width: 1280, route: "/moon/1/2/3", kind: "moon" },
+]) {
+  test(`${kind} detail is responsive without horizontal overflow at ${width}px`, async () => {
+    await loadInspectorFixture(route, width);
+    await waitForExpression(`document.querySelector('[data-celestial-detail="${kind}"] [data-celestial-summary]') !== null`);
+    const snapshot = await responsiveDetailSnapshot();
+    assert.ok(snapshot, "expected the celestial detail layout markers");
+    assert.equal(snapshot.documentWidth, snapshot.viewportWidth);
+    assert.deepEqual(snapshot.overflowing, []);
+    assert.equal(snapshot.minHeight, "0px");
+    assert.ok(Math.abs(snapshot.media.width - snapshot.media.height) <= 1, JSON.stringify(snapshot.media));
+    assert.ok(snapshot.artwork.width <= snapshot.layout.width + 1);
+    assert.ok(snapshot.back.height >= 43.5, `expected a 44px back target, got ${snapshot.back.height}`);
+    for (const value of snapshot.recordValues) {
+      assert.ok(value.left >= snapshot.detail.left - 1 && value.right <= snapshot.detail.right + 1, JSON.stringify(value));
+      assert.ok(value.scrollWidth <= value.clientWidth + 1, JSON.stringify(value));
+      assert.notEqual(value.textOverflow, "ellipsis");
+      assert.notEqual(value.whiteSpace, "nowrap");
+    }
+    if (width < 1280) {
+      for (const target of snapshot.tapTargets) {
+        assert.ok(target.height >= 43.5, `expected a 44px tap target: ${JSON.stringify(target)}`);
+      }
+    }
+    if (width < 1280) {
+      assert.ok(snapshot.tailGap === null || snapshot.tailGap <= 48, `unexpected empty detail tail: ${snapshot.tailGap}px`);
+    }
+    if (width < 1280) {
+      assert.ok(snapshot.artwork.bottom <= snapshot.summary.top + 1, JSON.stringify(snapshot));
+      assert.ok(snapshot.summary.width >= snapshot.layout.width - 1, JSON.stringify(snapshot));
+    } else {
+      assert.ok(snapshot.artwork.right <= snapshot.summary.left + 1, JSON.stringify(snapshot));
+      assert.ok(Math.abs(snapshot.artwork.top - snapshot.summary.top) <= 1, JSON.stringify(snapshot));
+    }
+  });
+}
+
 test("desktop selector atomically replaces an unrelated inspector with one owned route and dataset", async () => {
   await loadInspectorFixture("/planet/9/9/9", 1280);
   await waitForExpression("document.querySelector('main h2')?.textContent === 'Unrelated Gamma'");

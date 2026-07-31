@@ -982,7 +982,7 @@ export function GalaxyActionButtons({
         return (
           <button
             aria-label={hint}
-            className={`inline-flex h-10 w-10 items-center justify-center rounded border transition sm:h-8 sm:w-8 ${
+            className={`inline-flex h-11 w-11 items-center justify-center rounded border transition xl:h-8 xl:w-8 ${
               !disabled
                 ? "border-signal/30 bg-signal/10 text-signal hover:bg-signal/20"
                 : "cursor-not-allowed border-white/10 bg-white/[0.03] text-slate-500"
