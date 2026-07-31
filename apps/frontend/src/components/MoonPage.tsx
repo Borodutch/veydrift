@@ -469,7 +469,7 @@ export function MoonActionStrip({ actions }: { actions?: MoonOverviewAction[] | 
           return (
             <button
               aria-label={action.disabledReason ? `${action.label}: ${action.disabledReason}` : action.label}
-              className="inline-flex h-10 w-10 items-center justify-center rounded border border-cyan-200/20 bg-cyan-200/10 text-cyan-100 transition hover:border-cyan-200/40 hover:bg-cyan-200/15 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/[0.03] disabled:text-slate-500"
+              className="inline-flex h-11 w-11 items-center justify-center rounded border border-cyan-200/20 bg-cyan-200/10 text-cyan-100 transition hover:border-cyan-200/40 hover:bg-cyan-200/15 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/[0.03] disabled:text-slate-500 xl:h-10 xl:w-10"
               disabled={disabled}
               key={action.kind}
               onClick={action.onClick}

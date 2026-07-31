@@ -20,6 +20,7 @@ import {
   missionConfirmButtonLabel,
   missionComposerRouteEndpoints,
   missionDraftBlocker,
+  MissionFuelCost,
   missionSpecificLoadout,
   missionShipOptions,
   missionTimingSummary,
@@ -568,6 +569,31 @@ describe("mission creation", () => {
     expect(missionCreationSource).toContain("const visibleBlockedReason = actionPending ? undefined : blockedReason;");
     expect(missionCreationSource).toContain("missionConfirmButtonLabel({");
     expect(missionCreationSource).toContain("if (actionPendingLabel) return actionPendingLabel;");
+  });
+
+  test("renders mission fuel as a prominent live cost with an accessible insufficient state", () => {
+    const normal = MissionFuelCost({ fuelCost: 1_372, insufficient: false });
+    const updated = MissionFuelCost({ fuelCost: 942, insufficient: false });
+    const insufficient = MissionFuelCost({ fuelCost: 2_400, insufficient: true });
+    const normalOutput = findElements(normal, "output")[0];
+    const insufficientOutput = findElements(insufficient, "output")[0];
+
+    expect(collectText(normal).join(" ")).toContain("Mission fuel cost 1,372 deuterium");
+    expect(collectText(updated).join(" ")).toContain("Mission fuel cost 942 deuterium");
+    expect(normalOutput?.props).toMatchObject({
+      "aria-atomic": "true",
+      "aria-label": "Mission fuel cost: 1,372 deuterium",
+      "aria-live": "polite",
+      htmlFor: "mission-speed",
+    });
+    expect(String(normalOutput?.props?.className)).toContain("border-cyan-200/45");
+    expect(collectText(insufficient).join(" ")).toContain("2,400 deuterium Insufficient deuterium");
+    expect(insufficientOutput?.props?.["aria-label"]).toBe(
+      "Mission fuel cost: 2,400 deuterium. Insufficient deuterium.",
+    );
+    expect(String(insufficientOutput?.props?.className)).toContain("border-amber-200/50");
+    expect(missionCreationSource).toContain("fuelCost={effectiveFuelCost}");
+    expect(missionCreationSource).toContain("insufficient={hasInsufficientFuel}");
   });
 
   test("renders ship quantity rows with centered digit-growing input, / N availability, and full-size steppers", () => {
@@ -1660,7 +1686,7 @@ describe("mission creation", () => {
     expect(missionCreationSource).toContain('eyebrow="Cargo"');
     expect(missionCreationSource).toContain('summary={`${selectedShipCount.toLocaleString()} selected`}');
     expect(missionCreationSource).toContain("Capacity left ${cargoTotal.toLocaleString()} / ${cargoCapacity.toLocaleString()}");
-    expect(missionCreationSource).toContain("summary={`Fuel ${effectiveFuelCost.toLocaleString()} deuterium`}");
+    expect(missionCreationSource).toContain("fuelCost={effectiveFuelCost}");
     expect(missionCreationSource).toContain('<MissionCancelButton onCancel={onBack} />');
     expect(missionCreationSource).toContain('className="min-h-11 w-full');
     expect(missionCreationSource).toContain('align="left"');
@@ -2640,6 +2666,7 @@ function collectText(node: unknown): string[] {
   const vnode = node as { type?: unknown; props?: Record<string, unknown> & { children?: unknown; title?: unknown; "aria-label"?: unknown } };
   if (typeof vnode.type === "function") {
     const render = vnode.type as (props: Record<string, unknown>) => unknown;
+    if (render.name === "Icon") return [];
     return collectText(render({ ...(vnode.props ?? {}) }));
   }
   const labels = typeof vnode.type === "string"

@@ -1,4 +1,5 @@
 import type { ComponentChildren } from "preact";
+import { Flame } from "lucide-preact";
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { Coordinates, DebrisField, Planet, PublicStationedDefender } from "../types";
 import { ActionReasonNote } from "./ActionReasonNote";
@@ -583,6 +584,8 @@ export function MissionCreationPage({
   // Net holding fuel rides in the defending fleet's own deuterium spend on-chain, so it counts toward
   // both the deuterium balance and cargo-capacity gates.
   const effectiveFuelCost = holdingBreakdown ? fuelCost + holdingBreakdown.netHoldingFuel : fuelCost;
+  const hasInsufficientFuel = effectiveResources !== undefined
+    && (effectiveResources.deuterium ?? 0) < effectiveFuelCost;
 
   const blockedReason = missionDraftBlocker({
     acsArrivalTooSlow,
@@ -850,10 +853,13 @@ export function MissionCreationPage({
 
           {joinAttackMode || action.mode === "missile" ? null : (
             <MissionFormSection
-              summary={`Fuel ${effectiveFuelCost.toLocaleString()} deuterium`}
               title="Speed"
               eyebrow="Flight plan"
             >
+              <MissionFuelCost
+                fuelCost={effectiveFuelCost}
+                insufficient={hasInsufficientFuel}
+              />
               <div className="flex items-center gap-3">
                 <input
                   aria-label="Mission speed"
@@ -1233,6 +1239,40 @@ function MissionFormSection({
       </header>
       {children}
     </section>
+  );
+}
+
+export function MissionFuelCost({
+  fuelCost,
+  insufficient,
+}: {
+  fuelCost: number;
+  insufficient: boolean;
+}) {
+  const formattedFuelCost = Math.max(0, Math.trunc(fuelCost)).toLocaleString();
+
+  return (
+    <output
+      aria-atomic="true"
+      aria-label={`Mission fuel cost: ${formattedFuelCost} deuterium${insufficient ? ". Insufficient deuterium." : ""}`}
+      aria-live="polite"
+      className={`flex min-w-0 items-center justify-between gap-3 rounded-md border px-3 py-2 shadow-sm ${
+        insufficient
+          ? "border-amber-200/50 bg-amber-300/15 shadow-amber-950/20"
+          : "border-cyan-200/45 bg-cyan-300/10 shadow-cyan-950/20"
+      }`}
+      htmlFor="mission-speed"
+    >
+      <span className={`flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] ${insufficient ? "text-amber-100" : "text-cyan-100"}`}>
+        <Flame aria-hidden="true" className="h-4 w-4 shrink-0" />
+        Mission fuel cost
+      </span>
+      <span className="flex min-w-0 flex-wrap items-baseline justify-end gap-x-1 gap-y-0.5 text-right">
+        <strong className="text-base font-bold leading-none tabular-nums text-white sm:text-lg">{formattedFuelCost}</strong>
+        <span className={`text-xs font-semibold ${insufficient ? "text-amber-100" : "text-cyan-100"}`}>deuterium</span>
+        {insufficient ? <span className="basis-full text-[11px] font-semibold text-amber-100">Insufficient deuterium</span> : null}
+      </span>
+    </output>
   );
 }
 

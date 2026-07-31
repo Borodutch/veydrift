@@ -131,14 +131,14 @@ export function PublicMoonDetail({
     return (
       <div className="flex flex-col gap-4 p-4 sm:p-6">
         <button
-          className="w-fit rounded border border-white/15 bg-white/8 px-3 py-1.5 text-sm text-slate-300 transition-colors hover:bg-white/15 hover:text-white"
+          className="min-h-11 w-fit rounded border border-white/15 bg-white/8 px-3 py-1.5 text-sm text-slate-300 transition-colors hover:bg-white/15 hover:text-white"
           onClick={onBack}
           type="button"
         >
           ← Back
         </button>
-        <div className="grid gap-4 lg:grid-cols-[300px_1fr]">
-          <PlanetImageSkeleton className="aspect-square rounded-lg border border-white/15" />
+        <div className="celestial-detail celestial-detail-layout">
+          <PlanetImageSkeleton className="celestial-detail-artwork aspect-square rounded-lg border border-white/15" />
           <div className="rounded-lg border border-white/10 bg-white/5 p-4">
             <div className="h-5 w-40 animate-pulse rounded bg-white/10" />
             <div className="mt-3 h-4 w-64 max-w-full animate-pulse rounded bg-white/5" />
@@ -166,27 +166,28 @@ export function PublicMoonDetail({
   }
 
   return (
-    <div className="flex flex-col gap-4 p-4 sm:p-6">
+    <div className="celestial-detail flex min-w-0 flex-col gap-4 p-4 sm:p-6" data-celestial-detail="moon">
       <button
-        className="w-fit rounded border border-white/15 bg-white/8 px-3 py-1.5 text-sm text-slate-300 transition-colors hover:bg-white/15 hover:text-white"
+        className="min-h-11 w-fit rounded border border-white/15 bg-white/8 px-3 py-1.5 text-sm text-slate-300 transition-colors hover:bg-white/15 hover:text-white"
+        data-celestial-back
         onClick={onBack}
         type="button"
       >
         ← System {coordinateText}
       </button>
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(240px,300px)_minmax(0,1fr)] lg:items-start">
-        <div className="aspect-square overflow-hidden rounded-lg border border-cyan-200/20 bg-black/40">
+      <div className="celestial-detail-layout" data-celestial-layout>
+        <div className="celestial-detail-artwork aspect-square overflow-hidden rounded-lg border border-cyan-200/20 bg-black/40" data-celestial-artwork data-celestial-media>
           <MoonImage
             alt={planet.moonName ?? "Moon"}
-            className="h-full w-full object-cover"
+            className="h-full w-full object-contain"
             loading="eager"
             planetType={planet.type}
             sizes="planetPreview"
           />
         </div>
 
-        <div className="grid min-w-0 gap-3">
+        <div className="grid min-w-0 gap-3" data-celestial-summary>
           <div className="rounded-lg border border-white/10 bg-white/5 p-4">
             <h2 className="text-xl font-semibold text-white">{planet.moonName ?? "Moon"}</h2>
             <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-slate-400">
@@ -227,7 +228,7 @@ export function PublicMoonDetail({
             />
           ) : null}
 
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="celestial-detail-panel-grid">
             <MoonRecordPanel title="Public Owner" rows={[
               { label: "Player", value: planet.occupiedBy?.ownerDisplayName ?? (planet.ownerId ? shortAddress(planet.ownerId) : "Unknown") },
               { label: "Planet", value: planet.name },
@@ -261,9 +262,9 @@ function MoonRecordPanel({
       </h3>
       <div className="grid gap-2">
         {rows.map((row) => (
-          <div className="flex items-baseline justify-between gap-3 text-sm" key={row.label}>
+          <div className="grid min-w-0 grid-cols-[minmax(0,auto)_minmax(0,1fr)] items-start gap-3 text-sm" key={row.label}>
             <span className="text-slate-500">{row.label}</span>
-            <span className="min-w-0 truncate text-right font-mono text-slate-200">{row.value}</span>
+            <span className="min-w-0 break-words text-right font-mono text-slate-200" data-celestial-record-value>{row.value}</span>
           </div>
         ))}
       </div>
