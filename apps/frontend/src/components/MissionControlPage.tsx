@@ -6,7 +6,7 @@ import { planetTypeFromTemperature } from "../data/mockUniverse";
 import { formatDuration, formatDurationUntil } from "../durationFormat";
 import { acsHoldingFuelRatePerHour, allianceDepotSustainSeconds } from "../fleetMissionRules";
 import { shipAssetByKey } from "../gameAssets";
-import type { ShipKey } from "../playableMvp";
+import { defenseCatalog, type ShipKey } from "../playableMvp";
 import type { Coordinates, PlanetType } from "../types";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import { isPendingMissionLaunch } from "../postTransactionRefresh";
@@ -20,6 +20,7 @@ import {
   type FleetMissionVisibilityResponse,
   type GlobalMissionArchiveResponse,
   type ManagedPlanetResponse,
+  type MissileAttackArchiveResponse,
   type StationedDefenderSummary,
   decodeColonizationTargetId,
 } from "../walletFlow";
@@ -108,6 +109,9 @@ interface MissionControlPageProps {
   missionArchive?: FleetMissionArchiveResponse | undefined;
   missionArchiveError?: string | undefined;
   missionArchiveLoading?: boolean | undefined;
+  missileAttackArchive?: MissileAttackArchiveResponse | undefined;
+  missileAttackArchiveError?: string | undefined;
+  missileAttackArchiveLoading?: boolean | undefined;
   missionFilters?: Partial<MissionControlFilters> | undefined;
   missionNumberSearch?: string | undefined;
   now: number;  onCounterplay: (mission: FleetMissionSummary, mode: "acsDefend") => void;
@@ -149,6 +153,9 @@ export function MissionControlPage({
   missionArchive,
   missionArchiveError,
   missionArchiveLoading = false,
+  missileAttackArchive,
+  missileAttackArchiveError,
+  missileAttackArchiveLoading = false,
   missionFilters,
   missionNumberSearch = "",
   now,  onCounterplay,
@@ -365,6 +372,12 @@ export function MissionControlPage({
             planetLookup={planetLookup}
           />
 
+          <MissileStrikeSection
+            archive={missileAttackArchive}
+            error={missileAttackArchiveError}
+            loading={missileAttackArchiveLoading}
+          />
+
           <PastMissionSection
             allCollapsedCount={globalPastCollapsedCount}
             allError={globalMissionArchiveError}
@@ -405,6 +418,58 @@ export function MissionControlPage({
 
 const EMPTY_PLANET_LOOKUP: ReadonlyMap<string, MissionPlanetIdentity> = new Map();
 const EMPTY_PLANET_ARCHETYPE_LOOKUP: ReadonlyMap<string, PlanetType> = new Map();
+
+function MissileStrikeSection({
+  archive,
+  error,
+  loading,
+}: {
+  archive?: MissileAttackArchiveResponse | undefined;
+  error?: string | undefined;
+  loading: boolean;
+}) {
+  const rows = archive?.rows ?? [];
+  if (!loading && !error && rows.length === 0) return null;
+  return (
+    <section className="grid gap-2 rounded-lg border border-amber-300/15 bg-amber-300/[0.03] p-3" data-missile-strike-history>
+      <div className="flex items-center justify-between gap-2">
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-amber-200/70">Immediate combat</p>
+          <h2 className="text-sm font-semibold text-amber-100">Missile strikes</h2>
+        </div>
+        <span className="text-[11px] tabular-nums text-slate-400">{archive?.pagination.totalEntries ?? 0}</span>
+      </div>
+      {error ? <p className="text-xs text-rose-200">{error}</p> : null}
+      {loading && rows.length === 0 ? <p className="text-xs text-slate-400">Loading missile strikes…</p> : null}
+      {rows.length > 0 ? (
+        <div className="divide-y divide-white/[0.06] overflow-hidden rounded-md border border-white/[0.08] bg-black/20">
+          {rows.map((strike) => {
+            const target = defenseCatalog.find((defense) => defense.id === strike.primaryTargetDefenseId)?.label ?? "selected defense";
+            const origin = strike.originPlanet?.name ?? `Planet #${strike.originPlanetId}`;
+            const destination = strike.targetPlanet?.name ?? `Planet #${strike.targetPlanetId}`;
+            return (
+              <a
+                className="grid gap-1 px-3 py-2 text-xs transition-colors hover:bg-white/[0.04]"
+                href={`https://basescan.org/tx/${strike.transactionHash}`}
+                key={strike.eventId}
+                rel="noreferrer"
+                target="_blank"
+              >
+                <span className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-slate-200">
+                  <span className="font-medium">{origin} <span className="text-slate-500">→</span> {destination}</span>
+                  <span className="text-slate-500">Block {strike.blockNumber}</span>
+                </span>
+                <span className="text-slate-400">
+                  {strike.launched.toLocaleString()} launched · {strike.intercepted.toLocaleString()} intercepted · {strike.hits.toLocaleString()} hit · {strike.destroyedPrimary.toLocaleString()} {target} destroyed
+                </span>
+              </a>
+            );
+          })}
+        </div>
+      ) : null}
+    </section>
+  );
+}
 
 // VEY-KANEO-440 stationed-defense display. ACS Defend stations a fleet at a planet to defend it
 // against a specific incoming attack (the only stationing today's contract supports), so this panel

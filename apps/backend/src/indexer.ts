@@ -112,6 +112,7 @@ import {
   type IndexedRiftExtractionEvent,
   type IndexedShipCountChangedEvent,
   type IndexedDefenseCountChangedEvent,
+  type IndexedMissileAttack,
   type InterplanetaryMissileAttackEvent,
   type InfrastructureState,
   type ManagedPlanet,
@@ -131,7 +132,8 @@ import {
   type ShipyardState,
   type WalletPlanets,
   diplomacyStatusName,
-  startPriceUpdatedEventTopic
+  startPriceUpdatedEventTopic,
+  interplanetaryMissileAttackTopic
 } from "./evm";
 import {
   calculateIndexedHighscore,
@@ -1867,6 +1869,63 @@ export class SettlementIndexer {
       ownedPlanetIds,
       completedMissions,
       battleReports: []
+    };
+  }
+
+  missileAttackArchivePage(
+    wallet: `0x${string}`,
+    options: { page: number; pageSize: number; planetId?: string | null }
+  ): {
+    wallet: `0x${string}`;
+    homePlanetId: string | null;
+    rows: IndexedMissileAttack[];
+    page: number;
+    totalEntries: number;
+  } {
+    const settlement = this.walletSettlement(wallet);
+    const walletLower = wallet.toLowerCase();
+    const ownedPlanetIds = [...new Set(this.settledPlanetsForOwner(wallet).map((planet) => planet.planetId))];
+    const visibilitySql = ownedPlanetIds.length > 0
+      ? "(attacker = lower(?) OR target_planet_id IN (" + ownedPlanetIds.map(() => "?").join(",") + "))"
+      : "attacker = lower(?)";
+    const params: SQLQueryBindings[] = [walletLower, ...ownedPlanetIds];
+    const rawPlanetId = (options.planetId ?? "").trim();
+    const planetId = rawPlanetId.replace(/\D+/g, "").replace(/^0+(?=\d)/, "");
+    const planetSql = rawPlanetId ? (planetId ? " AND (origin_planet_id = ? OR target_planet_id = ?)" : " AND 0 = 1") : "";
+    if (planetId) params.push(planetId, planetId);
+
+    const count = this.db.query(`
+      SELECT COUNT(*) AS count
+      FROM indexed_missile_attacks
+      WHERE ${visibilitySql}${planetSql}
+    `).get(...params) as CountRow | null;
+    const totalEntries = Number(count?.count ?? 0);
+    const pageSize = Math.max(1, Math.min(100, Math.trunc(options.pageSize) || 25));
+    const totalPages = Math.max(1, Math.ceil(totalEntries / pageSize));
+    const page = Math.min(Math.max(1, Math.trunc(options.page) || 1), totalPages);
+    const stored = this.db.query(`
+      SELECT event_id, event_json, log_index
+      FROM indexed_missile_attacks
+      WHERE ${visibilitySql}${planetSql}
+      ORDER BY CAST(block_number AS INTEGER) DESC, length(log_index) DESC, log_index DESC
+      LIMIT ? OFFSET ?
+    `).all(...params, pageSize, (page - 1) * pageSize) as Array<{ event_id: string; event_json: string; log_index: string }>;
+    const stateVersion = this.indexedStateCacheVersion();
+    return {
+      wallet,
+      homePlanetId: settlement.homePlanetId,
+      rows: stored.map((row) => {
+        const event = parseEvent<InterplanetaryMissileAttackEvent>(row.event_json);
+        return {
+          ...event,
+          eventId: row.event_id,
+          logIndex: row.log_index,
+          originPlanet: this.fleetMissionPlanetReference(event.originPlanetId, stateVersion),
+          targetPlanet: this.fleetMissionPlanetReference(event.targetPlanetId, stateVersion)
+        };
+      }),
+      page,
+      totalEntries
     };
   }
 
@@ -4048,6 +4107,25 @@ export class SettlementIndexer {
         ON indexed_event_logs (transaction_hash);
       CREATE INDEX IF NOT EXISTS indexed_event_logs_transaction_lower_idx
         ON indexed_event_logs (lower(transaction_hash));
+      CREATE TABLE IF NOT EXISTS indexed_missile_attacks (
+        event_id TEXT PRIMARY KEY,
+        attacker TEXT NOT NULL,
+        origin_planet_id TEXT NOT NULL,
+        target_planet_id TEXT NOT NULL,
+        primary_target_defense_id INTEGER NOT NULL,
+        launched INTEGER NOT NULL,
+        intercepted INTEGER NOT NULL,
+        hits INTEGER NOT NULL,
+        destroyed_primary INTEGER NOT NULL,
+        transaction_hash TEXT NOT NULL,
+        block_number TEXT NOT NULL,
+        log_index TEXT NOT NULL,
+        event_json TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS indexed_missile_attacks_attacker_idx
+        ON indexed_missile_attacks (attacker, CAST(block_number AS INTEGER) DESC, log_index DESC);
+      CREATE INDEX IF NOT EXISTS indexed_missile_attacks_target_idx
+        ON indexed_missile_attacks (target_planet_id, CAST(block_number AS INTEGER) DESC, log_index DESC);
       CREATE TABLE IF NOT EXISTS indexed_referral_claims (
         event_id TEXT PRIMARY KEY,
         owner TEXT NOT NULL,
@@ -4500,6 +4578,7 @@ export class SettlementIndexer {
     if (runStartupBackfill) {
       this.backfillMissionEventLogs();
       this.backfillUnitCountEventLogs();
+      this.backfillMissileAttackEvents();
       this.backfillCanonicalTables();
       this.replayFleetMissionRowsFromEventLogs();
     }
@@ -4816,6 +4895,22 @@ export class SettlementIndexer {
         if (!this.isUnitCountSnapshotLog(log)) continue;
         insert.run(row.event_id, blockNumberToDecimal(log.blockNumber), log.logIndex ?? "0x0", row.event_json);
       }
+    })();
+  }
+
+  private backfillMissileAttackEvents(): void {
+    const rows = this.db.query(`
+      SELECT indexed_event_logs.event_id, indexed_event_logs.event_json
+      FROM indexed_event_logs
+      LEFT JOIN indexed_missile_attacks
+        ON indexed_missile_attacks.event_id = indexed_event_logs.event_id
+      WHERE indexed_event_logs.removed = 0
+        AND lower(json_extract(indexed_event_logs.event_json, '$.topics[0]')) = lower(?)
+        AND indexed_missile_attacks.event_id IS NULL
+    `).all(interplanetaryMissileAttackTopic) as Array<EventRow & { event_id: string }>;
+    if (rows.length === 0) return;
+    this.db.transaction(() => {
+      for (const row of rows) this.recordMissileAttackEvent(row.event_id, parseEvent<IndexedRpcLog>(row.event_json));
     })();
   }
 
@@ -8075,8 +8170,34 @@ export class SettlementIndexer {
     if (result.changes > 0) {
       this.recordMissionEventLog(eventId, log);
       this.recordUnitCountEventLog(eventId, log);
+      this.recordMissileAttackEvent(eventId, log);
     }
     return result.changes > 0;
+  }
+
+  private recordMissileAttackEvent(eventId: string, log: IndexedRpcLog): void {
+    if (log.removed || !isInterplanetaryMissileAttackLog(log)) return;
+    const event = decodeInterplanetaryMissileAttackLog(log);
+    this.db.query(`
+      INSERT OR REPLACE INTO indexed_missile_attacks
+        (event_id, attacker, origin_planet_id, target_planet_id, primary_target_defense_id,
+         launched, intercepted, hits, destroyed_primary, transaction_hash, block_number, log_index, event_json)
+      VALUES (?, lower(?), ?, ?, ?, ?, ?, ?, ?, lower(?), ?, ?, ?)
+    `).run(
+      eventId,
+      event.attacker,
+      event.originPlanetId,
+      event.targetPlanetId,
+      event.primaryTargetDefenseId,
+      event.launched,
+      event.intercepted,
+      event.hits,
+      event.destroyedPrimary,
+      event.transactionHash,
+      blockNumberToDecimal(event.blockNumber),
+      log.logIndex ?? "0x0",
+      JSON.stringify(event)
+    );
   }
 
   private recordMissionEventLog(eventId: string, log: IndexedRpcLog): void {
@@ -8123,6 +8244,16 @@ export class SettlementIndexer {
         .get(eventId);
       if (!existingUnitCountEvent) {
         this.recordUnitCountEventLog(eventId, log);
+        repairedRows += 1;
+      }
+    }
+
+    if (isInterplanetaryMissileAttackLog(log)) {
+      const existingMissileAttack = this.db
+        .query("SELECT 1 FROM indexed_missile_attacks WHERE event_id = ?")
+        .get(eventId);
+      if (!existingMissileAttack) {
+        this.recordMissileAttackEvent(eventId, log);
         repairedRows += 1;
       }
     }

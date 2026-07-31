@@ -212,6 +212,7 @@ import {
   fetchWalletPlanets,
   fetchWatchedPlanets,
   fetchFleetMissionArchive,
+  fetchMissileAttackArchive,
   fetchFleetMissionVisibility,
   fetchGlobalActiveMissions,
   fetchGlobalMissionArchive,
@@ -294,6 +295,7 @@ import {
   type Eip1193Provider,
   type FleetMissionVisibilityResponse,
   type FleetMissionArchiveResponse,
+  type MissileAttackArchiveResponse,
   type FleetMissionPlanetReference,
   type FleetMissionSummary,
   type GlobalMissionArchiveResponse,
@@ -3560,6 +3562,9 @@ export function PlayableMvpApp({
   const [missionArchivePage, setMissionArchivePage] = useState(1);
   const [missionArchiveLoading, setMissionArchiveLoading] = useState(false);
   const [missionArchiveError, setMissionArchiveError] = useState<string | undefined>();
+  const [missileAttackArchive, setMissileAttackArchive] = useState<MissileAttackArchiveResponse | undefined>();
+  const [missileAttackArchiveLoading, setMissileAttackArchiveLoading] = useState(false);
+  const [missileAttackArchiveError, setMissileAttackArchiveError] = useState<string | undefined>();
   const [missionFilters, setMissionFilters] = useState<MissionControlFilters>({ ...EMPTY_MISSION_CONTROL_FILTERS });
   const normalizedMissionFilters = normalizeMissionControlFilters(missionFilters);
   const [incomingAttackArchive, setIncomingAttackArchive] = useState<FleetMissionArchiveResponse | undefined>();
@@ -3738,6 +3743,7 @@ export function PlayableMvpApp({
   const researchRefreshGate = useRef(0);
   const riftRefreshGate = useRef(0);
   const missionArchiveRefreshGate = useRef(0);
+  const missileAttackArchiveRefreshGate = useRef(0);
   const incomingAttackArchiveRefreshGate = useRef(0);
   const allActiveMissionsRefreshGate = useRef(0);
   const globalMissionArchiveRefreshGate = useRef(0);
@@ -4901,6 +4907,28 @@ export function PlayableMvpApp({
     }
   }, [account, activePlanetId, apiBaseUrl, normalizedMissionFilters.missionNumber, normalizedMissionFilters.missionType, normalizedMissionFilters.planetId, setMissionArchive]);
 
+  const loadMissileAttackArchive = useCallback(async () => {
+    const requestId = beginRefreshRequest(missileAttackArchiveRefreshGate);
+    if (!apiBaseUrl || !account) {
+      setMissileAttackArchive(undefined);
+      setMissileAttackArchiveError(undefined);
+      setMissileAttackArchiveLoading(false);
+      return;
+    }
+    setMissileAttackArchiveLoading(true);
+    setMissileAttackArchiveError(undefined);
+    try {
+      const nextArchive = await fetchMissileAttackArchive(apiBaseUrl, account, { page: 1, pageSize: 25 });
+      if (!canApplyRefreshRequest(missileAttackArchiveRefreshGate, requestId)) return;
+      setMissileAttackArchive(nextArchive);
+    } catch (error) {
+      if (!canApplyRefreshRequest(missileAttackArchiveRefreshGate, requestId)) return;
+      setMissileAttackArchiveError(error instanceof Error ? error.message : "Missile strike history could not be loaded.");
+    } finally {
+      if (canApplyRefreshRequest(missileAttackArchiveRefreshGate, requestId)) setMissileAttackArchiveLoading(false);
+    }
+  }, [account, apiBaseUrl]);
+
   const loadIncomingAttackArchive = useCallback(async (page: number) => {
     const requestId = beginRefreshRequest(incomingAttackArchiveRefreshGate);
     if (!apiBaseUrl || !account) {
@@ -5028,11 +5056,12 @@ export function PlayableMvpApp({
   useEffect(() => {
     if (page === "mission-control") {
       void loadMissionArchive(1);
+      void loadMissileAttackArchive();
       void loadIncomingAttackArchive(1);
       void loadAllActiveMissions();
       void loadGlobalMissionArchive(1);
     }
-  }, [account, apiBaseUrl, loadAllActiveMissions, loadGlobalMissionArchive, loadIncomingAttackArchive, loadMissionArchive, page]);
+  }, [account, apiBaseUrl, loadAllActiveMissions, loadGlobalMissionArchive, loadIncomingAttackArchive, loadMissionArchive, loadMissileAttackArchive, page]);
 
   // VEY-KANEO-445: the Rankings page shows each planet's active inbound/outbound fleet missions as
   // subtext. Load the universe-wide active feed when Rankings opens and poll it on the shared cadence
@@ -5071,11 +5100,12 @@ export function PlayableMvpApp({
       refreshAllianceState(),
       refreshOnChainState(),
       loadMissionArchive(missionArchivePage),
+      loadMissileAttackArchive(),
       loadIncomingAttackArchive(incomingAttackArchivePage),
       loadAllActiveMissions(),
       loadGlobalMissionArchive(globalMissionArchivePage),
     ]);
-  }, [globalMissionArchivePage, incomingAttackArchivePage, loadAllActiveMissions, loadGlobalMissionArchive, loadIncomingAttackArchive, loadMissionArchive, missionArchivePage, refreshAllianceState, refreshOnChainState]);
+  }, [globalMissionArchivePage, incomingAttackArchivePage, loadAllActiveMissions, loadGlobalMissionArchive, loadIncomingAttackArchive, loadMissionArchive, loadMissileAttackArchive, missionArchivePage, refreshAllianceState, refreshOnChainState]);
 
   const refreshFinishedBuildingState = useCallback(async (expectation: FinishedBuildingExpectation): Promise<boolean> => {
     const planetSwitchRequestId = planetSwitchGate.current;
@@ -8740,6 +8770,7 @@ export function PlayableMvpApp({
           onConfirm={handleConfirmGalaxyMission}
           originCoords={pendingMissionOriginCoords}
           originLabel={pendingMissionOriginLabel}
+          missileInventory={defenseState?.defenses?.find((defense) => defense.id === 9)?.count ?? 0}
           resources={pendingMissionOriginResources}
           shipyardState={shipyardState}
           submitBlocker={missionLaunchBlocker}
@@ -8948,6 +8979,9 @@ export function PlayableMvpApp({
           missionArchive={missionArchive}
           missionArchiveError={missionArchiveSection.status.error ?? missionArchiveError}
           missionArchiveLoading={missionArchiveLoading || missionArchiveSection.status.loading}
+          missileAttackArchive={missileAttackArchive}
+          missileAttackArchiveError={missileAttackArchiveError}
+          missileAttackArchiveLoading={missileAttackArchiveLoading}
           missionFilters={normalizedMissionFilters}
           now={now}
           onCounterplay={handleMissionCounterplay}
