@@ -26,18 +26,16 @@ describe("navigation and planet selector UI source contracts", () => {
     { galaxy: 4, system: 5, position: 6, planetId: "owned-b", moon: null },
   ];
 
-  test("atomically routes unrelated inspectors to the selected owned body on desktop and mobile", () => {
-    for (const layout of ["desktop", "mobile"] as const) {
-      const route = inspectRouteForManagedPlanetSelection("planet", "planet", ownedPlanets[1]);
-      expect(route, layout).toEqual({
-        kind: "planet",
-        coords: { galaxy: 4, system: 5, position: 6 },
-      });
-      expect(managedPlanetSelectionForInspectRoute(route, ownedPlanets), layout).toEqual({
-        bodyKind: "planet",
-        planetId: "owned-b",
-      });
-    }
+  test("builds one canonical owned-body route for an unrelated inspector selection", () => {
+    const route = inspectRouteForManagedPlanetSelection("planet", "planet", ownedPlanets[1]);
+    expect(route).toEqual({
+      kind: "planet",
+      coords: { galaxy: 4, system: 5, position: 6 },
+    });
+    expect(managedPlanetSelectionForInspectRoute(route, ownedPlanets)).toEqual({
+      bodyKind: "planet",
+      planetId: "owned-b",
+    });
 
     expect(playableSource.match(/onSelect=\{handleSelectManagedPlanet\}/g)?.length).toBe(2);
     expect(playableSource).toContain("writeInspectRoute(nextInspectRoute)");

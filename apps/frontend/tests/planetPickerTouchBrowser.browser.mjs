@@ -20,6 +20,7 @@ let browserCdp;
 let chrome;
 let chromeProfile;
 let fixtureUrl;
+let inspectorFixtureUrl;
 let server;
 
 function delay(milliseconds) {
@@ -158,6 +159,7 @@ before(async () => {
     throw new Error("Vite did not expose a browser-test port.");
   }
   fixtureUrl = `http://127.0.0.1:${address.port}/tests/fixtures/planetPickerTouchBrowser.html`;
+  inspectorFixtureUrl = `http://127.0.0.1:${address.port}/tests/fixtures/planetInspectorBrowser.html`;
 
   cdp = await launchChrome();
   await cdp.send("Page.enable");
@@ -301,3 +303,144 @@ test("native two-axis touch scroll works before the hold and post-hold movement 
   assert.equal(reorderState.scrollLeft, 0);
   assert.equal(reorderState.scrollTop, 0);
 });
+
+async function loadInspectorFixture(route, width) {
+  await cdp.send("Emulation.setDeviceMetricsOverride", {
+    deviceScaleFactor: 1,
+    height: 900,
+    mobile: width < 768,
+    width,
+  });
+  await cdp.send("Page.navigate", {
+    url: `${inspectorFixtureUrl}?route=${encodeURIComponent(route)}`,
+  });
+  await waitForExpression("window.inspectorProof?.appReady === true");
+  try {
+    await waitForExpression("document.querySelectorAll('[data-planet-selector-item]').length >= 2");
+  } catch (error) {
+    const diagnostics = await evaluate(`({
+      body: document.body.innerText.slice(0, 2000),
+      html: document.querySelector('#app')?.innerHTML.slice(0, 2000),
+      path: location.pathname,
+      errors: window.inspectorProof?.errors,
+      requests: window.inspectorProof?.requests,
+      selectors: document.querySelectorAll('[data-planet-selector-item]').length,
+    })`);
+    throw new Error(`${error.message}\nInspector diagnostics: ${JSON.stringify(diagnostics)}`);
+  }
+}
+
+async function clickExpression(expression) {
+  const clicked = await evaluate(`(() => {
+    const target = ${expression};
+    if (!target) return false;
+    target.click();
+    return true;
+  })()`);
+  assert.equal(clicked, true, `could not click ${expression}`);
+}
+
+async function inspectorSnapshot() {
+  return evaluate(`({
+    heading: document.querySelector('main h2')?.textContent?.trim() ?? null,
+    path: location.pathname,
+    text: document.querySelector('main')?.textContent?.replace(/\\s+/g, ' ').trim() ?? '',
+    topBarTitles: [...document.querySelectorAll('.sticky.top-0 summary[title]')].map((summary) => summary.title),
+  })`);
+}
+
+test("desktop selector atomically replaces an unrelated inspector with one owned route and dataset", async () => {
+  await loadInspectorFixture("/planet/9/9/9", 1280);
+  await waitForExpression("document.querySelector('main h2')?.textContent === 'Unrelated Gamma'");
+
+  await clickExpression("document.querySelector('aside[aria-label=\"Select planet\"] [data-planet-selector-item=\"owned-b\"] button[data-planet-selector-long-press]')");
+  await waitForExpression("location.pathname === '/planet/4/5/6'");
+  try {
+    await waitForExpression("document.querySelector('main h2')?.textContent?.includes('Owned Beta') === true");
+  } catch (error) {
+    const diagnostics = await evaluate(`({
+      errors: window.inspectorProof.errors,
+      heading: document.querySelector('main h2')?.textContent,
+      path: location.pathname,
+      requests: window.inspectorProof.requests.slice(-20),
+      text: document.querySelector('main')?.textContent?.replace(/\\s+/g, ' ').trim().slice(0, 2000),
+    })`);
+    throw new Error(`${error.message}\nPost-click diagnostics: ${JSON.stringify(diagnostics)}`);
+  }
+
+  const snapshot = await inspectorSnapshot();
+  assert.equal(snapshot.path, "/planet/4/5/6");
+  assert.equal(snapshot.heading, "Owned Beta");
+  assert.match(snapshot.text, /Home Planet/);
+  assert.match(snapshot.text, /Your home world/);
+  assert.match(snapshot.text, /Add media/);
+  assert.ok(snapshot.topBarTitles.some((title) => title.startsWith("Metal: 203")));
+  assert.ok(snapshot.topBarTitles.some((title) => title.startsWith("Crystal: 201")));
+  assert.ok(snapshot.topBarTitles.some((title) => title.startsWith("Deuterium: 202")));
+  assert.doesNotMatch(snapshot.text, /Unrelated Gamma|9,909/);
+});
+
+test("mobile hamburger selector independently invokes the owned-planet transition", async () => {
+  await loadInspectorFixture("/planet/9/9/9", 390);
+  await waitForExpression("document.querySelector('main h2')?.textContent === 'Unrelated Gamma'");
+  await clickExpression("document.querySelector('button[aria-label=\"Open navigation menu\"]')");
+  await waitForExpression("document.querySelector('#mobile-navigation-menu section[aria-label=\"Select planet\"]') !== null");
+  await clickExpression("document.querySelector('#mobile-navigation-menu [data-planet-selector-item=\"owned-b\"] button[data-planet-selector-long-press]')");
+  await waitForExpression("location.pathname === '/planet/4/5/6' && document.querySelector('main h2')?.textContent === 'Owned Beta'");
+
+  const snapshot = await inspectorSnapshot();
+  assert.equal(snapshot.heading, "Owned Beta");
+  assert.match(snapshot.text, /Home Planet/);
+  assert.match(snapshot.text, /Add media/);
+  assert.ok(snapshot.topBarTitles.some((title) => title.startsWith("Metal: 203")));
+  assert.doesNotMatch(snapshot.text, /Unrelated Gamma|9,909/);
+});
+
+test("owned deep links and real back-forward events never expose owned controls under an unrelated identity", async () => {
+  await loadInspectorFixture("/planet/1/2/3", 1280);
+  await waitForExpression("document.querySelector('main h2')?.textContent === 'Owned Alpha'");
+  assert.match((await inspectorSnapshot()).text, /Home Planet/);
+
+  await evaluate(`(() => {
+    history.pushState({ proof: 'unrelated' }, '', '/planet/9/9/9');
+    dispatchEvent(new PopStateEvent('popstate', { state: history.state }));
+  })()`);
+  await waitForExpression("document.querySelector('main h2')?.textContent === 'Unrelated Gamma'");
+  let snapshot = await inspectorSnapshot();
+  assert.equal(snapshot.path, "/planet/9/9/9");
+  assert.doesNotMatch(snapshot.text, /Add media|Home Planet|Your home world|Owned Alpha Public/);
+  assert.match(snapshot.text, /Occupied public world|Unrelated Gamma/);
+
+  await evaluate("history.back()");
+  await waitForExpression("location.pathname === '/planet/1/2/3' && document.querySelector('main h2')?.textContent === 'Owned Alpha'");
+  snapshot = await inspectorSnapshot();
+  assert.match(snapshot.text, /Add media/);
+  assert.match(snapshot.text, /Home Planet|Your home world/);
+
+  await evaluate("history.forward()");
+  await waitForExpression("location.pathname === '/planet/9/9/9' && document.querySelector('main h2')?.textContent === 'Unrelated Gamma'");
+  snapshot = await inspectorSnapshot();
+  assert.doesNotMatch(snapshot.text, /Add media|Home Planet|Your home world|Owned Alpha Public/);
+});
+
+for (const kind of ["planet", "moon"]) {
+  test(`late ${kind} detail responses cannot replace the currently rendered body`, async () => {
+    await loadInspectorFixture("/planet/9/9/9", 1280);
+    await evaluate(`window.inspectorProof.beginDetailRace('${kind}')`);
+    await waitForExpression("JSON.stringify(window.inspectorProof.pendingDetailRequests()) === JSON.stringify(['7:1', '8:2'])");
+
+    await evaluate("window.inspectorProof.resolveDetailRequest('8:2')");
+    const expectedHeading = kind === "moon" ? "Moon" : "Current Planet";
+    await waitForExpression(`document.querySelector('#app h2')?.textContent === '${expectedHeading}'`);
+    let text = await evaluate("document.querySelector('#app')?.textContent?.replace(/\\s+/g, ' ').trim() ?? ''");
+    assert.match(text, kind === "moon" ? /8,002|8,003|8,004/ : /8,002|8,003|8,004|Level 8/);
+    assert.doesNotMatch(text, /Stale|7,001|7,002|7,003/);
+
+    await evaluate("window.inspectorProof.resolveDetailRequest('7:1')");
+    await delay(100);
+    text = await evaluate("document.querySelector('#app')?.textContent?.replace(/\\s+/g, ' ').trim() ?? ''");
+    assert.match(text, new RegExp(expectedHeading));
+    assert.match(text, /8,002|8,003|8,004/);
+    assert.doesNotMatch(text, /Stale|7,001|7,002|7,003/);
+  });
+}
