@@ -3502,9 +3502,12 @@ function indexedShipyardState(
     shipyardLevel,
     naniteLevel,
     technologyLevels: indexer.technologyLevels(wallet),
-    // Launchable ships only: exclude fleets already away on missions so Mission Compose stops offering
-    // phantom ships that revert at launch (VEY-KANEO-447).
-    ships: planet ? indexer.availableShipRows(planet.planetId, { shipyardLevel, naniteLevel }) : [],
+    // `ships` must mirror the committed contract count. Keep the deterministic
+    // lazy-settlement projection separate for fleet composition, so a due build
+    // never makes the Shipyard or any public inventory surface disagree with
+    // `shipCount`.
+    ships: planet ? indexer.shipRows(planet.planetId, { shipyardLevel, naniteLevel }) : [],
+    launchableShips: planet ? indexer.availableShipRows(planet.planetId, { shipyardLevel, naniteLevel }) : [],
     queue: planet ? indexer.planetQueue(planet.planetId, "ship") : null
   };
 }

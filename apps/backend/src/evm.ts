@@ -833,6 +833,9 @@ export type ShipyardState = {
   shipyardLevel: number;
   naniteLevel: number;
   technologyLevels: Record<string, number>;
+  // Canonical on-chain inventory. This is intentionally not projected from a
+  // due production queue: `shipCount` remains the source of truth until the
+  // contract finalizes that queue.
   ships: Array<{
     id: number;
     count: number;
@@ -842,6 +845,10 @@ export type ShipyardState = {
     // Shipyard detail payload, omitted on count-only projections.
     durationSeconds?: number;
   }>;
+  // Inventory the next fleet-launch transaction can use after the contract's
+  // deterministic lazy production settlement prologue. This may be ahead of
+  // `ships` while a completed queue has not emitted PlanetShipCountChanged.
+  launchableShips?: ShipyardState["ships"];
   queue: QueueState | null;
 };
 

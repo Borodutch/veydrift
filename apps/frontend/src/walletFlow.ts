@@ -766,6 +766,10 @@ export type ChainShipyardState = {
     // Backend-sourced predicted per-unit build time (VEY-KANEO-472).
     durationSeconds?: number;
   }>;
+  // Canonical `ships` plus due production that the next fleet launch can
+  // settle atomically. Mission composition uses this; inventory displays use
+  // canonical `ships`.
+  launchableShips?: ChainShipyardState["ships"];
   queue: QueueStateResponse | null;
   resourcesAsOfNow?: OnChainResources | null;
   resourceSnapshot?: ResourceSnapshotMetadata | null;

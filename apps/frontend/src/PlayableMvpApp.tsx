@@ -1119,7 +1119,11 @@ export function shipyardStateForMissionActions({
   shipyardLoading: boolean;
   shipyardState: ChainShipyardState | null;
 }): ChainShipyardState | null {
-  if (shipyardState) return shipyardState;
+  if (shipyardState) {
+    return shipyardState.launchableShips
+      ? { ...shipyardState, ships: shipyardState.launchableShips }
+      : shipyardState;
+  }
   if (!account || !shipyardError || shipyardLoading) return null;
 
   return {
