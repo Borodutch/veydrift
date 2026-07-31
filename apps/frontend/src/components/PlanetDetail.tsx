@@ -47,7 +47,10 @@ export function planetDetailRefreshStartPlanet({
   currentPlanet: Planet | null;
   trustedHomePlanet: Planet | null;
 }): Planet | null {
-  return trustedHomePlanet ?? (currentPlanet && sameCoordinates(currentPlanet, coords) ? currentPlanet : null);
+  const matchingTrustedPlanet = trustedHomePlanet && sameCoordinates(trustedHomePlanet, coords)
+    ? trustedHomePlanet
+    : null;
+  return matchingTrustedPlanet ?? (currentPlanet && sameCoordinates(currentPlanet, coords) ? currentPlanet : null);
 }
 
 export function planetDetailRefreshResultPlanet({
@@ -61,7 +64,32 @@ export function planetDetailRefreshResultPlanet({
   currentPlanet: Planet | null;
   trustedHomePlanet: Planet | null;
 }): Planet | null {
-  return trustedHomePlanet ?? apiPlanet ?? (currentPlanet && sameCoordinates(currentPlanet, coords) ? currentPlanet : null);
+  const matchingTrustedPlanet = trustedHomePlanet && sameCoordinates(trustedHomePlanet, coords)
+    ? trustedHomePlanet
+    : null;
+  const matchingApiPlanet = apiPlanet && sameCoordinates(apiPlanet, coords) ? apiPlanet : null;
+  return matchingTrustedPlanet ?? matchingApiPlanet ?? (currentPlanet && sameCoordinates(currentPlanet, coords) ? currentPlanet : null);
+}
+
+export function planetDetailRequestKey(coords: Coordinates): string {
+  return `${coords.galaxy}:${coords.system}:${coords.position}`;
+}
+
+export function canApplyPlanetDetailResponse(
+  requestKey: string,
+  currentCoords: Coordinates,
+  aborted = false,
+): boolean {
+  return !aborted && requestKey === planetDetailRequestKey(currentCoords);
+}
+
+export function planetDetailVisiblePlanet(
+  loadedPlanet: Planet | null,
+  coords: Coordinates,
+  trustedPlanet: Planet | null = null,
+): Planet | null {
+  const matchingTrustedPlanet = trustedPlanet && sameCoordinates(trustedPlanet, coords) ? trustedPlanet : null;
+  return matchingTrustedPlanet ?? (loadedPlanet && sameCoordinates(loadedPlanet, coords) ? loadedPlanet : null);
 }
 
 export function PlanetDetail({
@@ -86,15 +114,19 @@ export function PlanetDetail({
       : null,
     [coords.galaxy, coords.position, coords.system, homeCoords?.galaxy, homeCoords?.position, homeCoords?.system, homePlanet],
   );
-  const [planet, setPlanet] = useState<Planet | null>(trustedHomePlanet);
+  const [loadedPlanet, setPlanet] = useState<Planet | null>(trustedHomePlanet);
   const [source, setSource] = useState<"api" | "error" | "loading">("loading");
   const [attackProtection, setAttackProtection] = useState<AttackProtectionStatus | null>(null);
   const [imageLoaded, setImageLoaded] = useState(false);
   const imageRef = useRef<HTMLImageElement>(null);
+  const currentRequestKey = useRef(planetDetailRequestKey(coords));
+  currentRequestKey.current = planetDetailRequestKey(coords);
+  const planet = planetDetailVisiblePlanet(loadedPlanet, coords, trustedHomePlanet);
   const isHome = planet ? sameCoordinates(homeCoords, planet) : false;
 
   useEffect(() => {
     const abortController = new AbortController();
+    const requestKey = planetDetailRequestKey(coords);
     setPlanet((current) => planetDetailRefreshStartPlanet({
       coords,
       currentPlanet: current,
@@ -111,6 +143,8 @@ export function PlanetDetail({
         return response.json();
       })
       .then((payload) => {
+        if (!canApplyPlanetDetailResponse(requestKey, coords, abortController.signal.aborted)
+          || currentRequestKey.current !== requestKey) return;
         const apiPlanet = planetsFromSystemResponse(payload).find((item) => item.position === coords.position) ?? null;
         setPlanet((current) => planetDetailRefreshResultPlanet({
           apiPlanet,

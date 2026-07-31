@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import {
   hasUsefulPlanetDetailBackRoute,
+  inspectRouteForManagedPlanetSelection,
+  managedPlanetSelectionForInspectRoute,
+  parseInspectRoute,
   planetDetailBackRouteForCurrentScreen,
 } from "../src/inspectRoutes";
 import { hasPlanetSelectorChoice } from "../src/planetSelectorChoice";
@@ -18,6 +21,65 @@ const topBarSource = await Bun.file(new URL("../src/components/TopBar.tsx", impo
 const stylesSource = await Bun.file(new URL("../src/styles.css", import.meta.url)).text();
 
 describe("navigation and planet selector UI source contracts", () => {
+  const ownedPlanets = [
+    { galaxy: 1, system: 2, position: 3, planetId: "owned-a", moon: { exists: true } },
+    { galaxy: 4, system: 5, position: 6, planetId: "owned-b", moon: null },
+  ];
+
+  test("atomically routes unrelated inspectors to the selected owned body on desktop and mobile", () => {
+    for (const layout of ["desktop", "mobile"] as const) {
+      const route = inspectRouteForManagedPlanetSelection("planet", "planet", ownedPlanets[1]);
+      expect(route, layout).toEqual({
+        kind: "planet",
+        coords: { galaxy: 4, system: 5, position: 6 },
+      });
+      expect(managedPlanetSelectionForInspectRoute(route, ownedPlanets), layout).toEqual({
+        bodyKind: "planet",
+        planetId: "owned-b",
+      });
+    }
+
+    expect(playableSource.match(/onSelect=\{handleSelectManagedPlanet\}/g)?.length).toBe(2);
+    expect(playableSource).toContain("writeInspectRoute(nextInspectRoute)");
+  });
+
+  test("preserves unrelated inspection while restoring owned deep links and browser history routes", () => {
+    const unrelated = parseInspectRoute("#/planet/9/9/9");
+    expect(unrelated.kind).toBe("planet");
+    expect(managedPlanetSelectionForInspectRoute(
+      unrelated.kind === "planet" ? unrelated : null,
+      ownedPlanets,
+    )).toBeNull();
+
+    const ownedPlanet = parseInspectRoute("#/planet/1/2/3");
+    const ownedMoon = parseInspectRoute("#/moon/1/2/3");
+    expect(managedPlanetSelectionForInspectRoute(
+      ownedPlanet.kind === "planet" ? ownedPlanet : null,
+      ownedPlanets,
+    )).toEqual({ bodyKind: "planet", planetId: "owned-a" });
+    expect(managedPlanetSelectionForInspectRoute(
+      ownedMoon.kind === "moon" ? ownedMoon : null,
+      ownedPlanets,
+    )).toEqual({ bodyKind: "moon", planetId: "owned-a" });
+
+    // Back/forward applies the location route in either ordering rather than
+    // retaining the selection inferred for the previously visited body.
+    expect([
+      managedPlanetSelectionForInspectRoute(unrelated.kind === "planet" ? unrelated : null, ownedPlanets),
+      managedPlanetSelectionForInspectRoute(ownedPlanet.kind === "planet" ? ownedPlanet : null, ownedPlanets),
+      managedPlanetSelectionForInspectRoute(unrelated.kind === "planet" ? unrelated : null, ownedPlanets),
+    ]).toEqual([null, { bodyKind: "planet", planetId: "owned-a" }, null]);
+  });
+
+  test("keeps normal owned-page switching inline outside an inspector", () => {
+    expect(inspectRouteForManagedPlanetSelection("overview", "planet", ownedPlanets[0])).toBeNull();
+    expect(inspectRouteForManagedPlanetSelection("infrastructure", "planet", ownedPlanets[1])).toBeNull();
+    expect(inspectRouteForManagedPlanetSelection("planet", "moon", ownedPlanets[0])).toEqual({
+      kind: "moon",
+      coords: { galaxy: 1, system: 2, position: 3 },
+    });
+  });
+
   test("uses a mobile hamburger menu instead of always-visible mobile tabs", () => {
     expect(navSource).toContain("Open navigation menu");
     expect(navSource).toContain("Close navigation menu");

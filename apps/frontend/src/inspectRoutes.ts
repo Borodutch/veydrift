@@ -12,6 +12,19 @@ export type InspectRoute =
 
 export type PlanetDetailBackRoute = Exclude<InspectRoute, { kind: "planet" } | { kind: "moon" }>;
 
+export type ManagedPlanetInspectTarget = {
+  galaxy: number;
+  moon?: { exists: boolean } | null | undefined;
+  planetId: string;
+  position: number;
+  system: number;
+};
+
+export type ManagedPlanetInspectSelection = {
+  bodyKind: "moon" | "planet";
+  planetId: string;
+};
+
 const pageNames = new Set<Page>([
   "overview",
   "infrastructure",
@@ -182,4 +195,39 @@ export function planetDetailBackRouteForCurrentScreen({
 
 export function hasUsefulPlanetDetailBackRoute(route: InspectRoute | null | undefined): route is PlanetDetailBackRoute {
   return Boolean(route && route.kind !== "planet" && route.kind !== "moon" && !(route.kind === "page" && route.page === "planet"));
+}
+
+export function inspectRouteForManagedPlanetSelection(
+  page: Page,
+  bodyKind: "moon" | "planet",
+  planet: ManagedPlanetInspectTarget | undefined,
+): Extract<InspectRoute, { kind: "moon" | "planet" }> | null {
+  if (!planet || (page !== "planet" && page !== "moon-inspect")) return null;
+
+  const coords = {
+    galaxy: planet.galaxy,
+    system: planet.system,
+    position: planet.position,
+  };
+  return bodyKind === "moon" && planet.moon?.exists
+    ? { kind: "moon", coords }
+    : { kind: "planet", coords };
+}
+
+export function managedPlanetSelectionForInspectRoute(
+  route: Extract<InspectRoute, { kind: "moon" | "planet" }> | null,
+  planets: readonly ManagedPlanetInspectTarget[],
+): ManagedPlanetInspectSelection | null {
+  if (!route) return null;
+  const planet = planets.find((candidate) => (
+    candidate.galaxy === route.coords.galaxy
+    && candidate.system === route.coords.system
+    && candidate.position === route.coords.position
+  ));
+  if (!planet) return null;
+
+  return {
+    bodyKind: route.kind === "moon" && planet.moon?.exists ? "moon" : "planet",
+    planetId: planet.planetId,
+  };
 }

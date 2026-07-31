@@ -55,6 +55,8 @@ import {
   buildInspectPath,
   canonicalEntityPathForLegacyHashLocation,
   hasUsefulPlanetDetailBackRoute,
+  inspectRouteForManagedPlanetSelection,
+  managedPlanetSelectionForInspectRoute,
   parseInspectRouteFromLocation,
   planetDetailBackRouteForCurrentScreen,
   type InspectRoute,
@@ -7262,7 +7264,8 @@ export function PlayableMvpApp({
   const handleSelectManagedPlanet = useCallback((planetId: string, bodyKind: OrbitBodyKind = "planet") => {
     const nextPlanet = walletPlanets.find((planet) => planet.planetId === planetId);
     const nextBodyKind: OrbitBodyKind = bodyKind === "moon" && nextPlanet?.moon?.exists ? "moon" : "planet";
-    if (planetId === activePlanetId && nextBodyKind === activeBodyKind) return;
+    const nextInspectRoute = inspectRouteForManagedPlanetSelection(page, nextBodyKind, nextPlanet);
+    if (planetId === activePlanetId && nextBodyKind === activeBodyKind && !nextInspectRoute) return;
     markFreshStateWrite(planetSwitchGate);
     markFreshStateWrite(onChainRefreshGate);
     markFreshStateWrite(infrastructureRefreshGate);
@@ -7274,7 +7277,17 @@ export function PlayableMvpApp({
     latestInfrastructureResourceSnapshot.current = { planetId, lastSettledAt: null };
     setSelectedPlanetId(planetId);
     setSelectedBodyKind(nextBodyKind);
-    if (nextBodyKind === "moon") {
+    if (nextInspectRoute) {
+      setPlanetBackRoute(null);
+      setInspectedPlayerWallet(null);
+      setInspectedAllianceId(null);
+      setMissionDetailId(null);
+      setMissionReportId(null);
+      setGalaxyNav({ galaxy: nextInspectRoute.coords.galaxy, system: nextInspectRoute.coords.system });
+      setSelectedCoords(nextInspectRoute.coords);
+      setPage(nextInspectRoute.kind === "moon" ? "moon-inspect" : "planet");
+      writeInspectRoute(nextInspectRoute);
+    } else if (nextBodyKind === "moon") {
       setPage("moon");
     }
     applyOnChainSettlementSnapshot(walletSettlementForManagedPlanet(onChainSettlement, nextPlanet));
@@ -7331,9 +7344,22 @@ export function PlayableMvpApp({
     applyOnChainSettlementSnapshot,
     onChainQueues,
     onChainSettlement,
+    page,
     playerProfile?.displayName,
     walletPlanets,
   ]);
+
+  useEffect(() => {
+    const inspectRoute = page === "planet" && selectedCoords
+      ? { kind: "planet" as const, coords: selectedCoords }
+      : page === "moon-inspect" && selectedCoords
+        ? { kind: "moon" as const, coords: selectedCoords }
+        : null;
+    const routedSelection = managedPlanetSelectionForInspectRoute(inspectRoute, walletPlanets);
+    if (!routedSelection) return;
+    if (routedSelection.planetId === activePlanetId && routedSelection.bodyKind === activeBodyKind) return;
+    handleSelectManagedPlanet(routedSelection.planetId, routedSelection.bodyKind);
+  }, [activeBodyKind, activePlanetId, handleSelectManagedPlanet, page, selectedCoords, walletPlanets]);
 
   const handleRenamePlanet = useCallback((name: string) => {
     if (!provider || !account || !gameContract || !activePlanetId) {
@@ -8801,6 +8827,7 @@ export function PlayableMvpApp({
     if (page === "planet" && selectedCoords) {
       return (
         <PlanetDetail
+          key={`planet:${selectedCoords.galaxy}:${selectedCoords.system}:${selectedCoords.position}`}
           account={account}
           actionState={galaxyAction}
           apiBaseUrl={apiBaseUrl}
@@ -8822,6 +8849,7 @@ export function PlayableMvpApp({
     if (page === "moon-inspect" && selectedCoords) {
       return (
         <PublicMoonDetail
+          key={`moon:${selectedCoords.galaxy}:${selectedCoords.system}:${selectedCoords.position}`}
           account={account}
           actionState={galaxyAction}
           apiBaseUrl={apiBaseUrl}
