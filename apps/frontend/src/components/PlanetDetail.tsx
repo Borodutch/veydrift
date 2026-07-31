@@ -210,13 +210,13 @@ export function PlanetDetail({
           <div className="flex items-center gap-3">
             <button
               onClick={onBack}
-              className="rounded border border-white/15 bg-white/8 px-3 py-1.5 text-sm text-slate-300 transition-colors hover:bg-white/15 hover:text-white"
+              className="min-h-11 rounded border border-white/15 bg-white/8 px-3 py-1.5 text-sm text-slate-300 transition-colors hover:bg-white/15 hover:text-white"
             >
               ← System [{coords.galaxy}:{coords.system}:{coords.position}]
             </button>
           </div>
-          <div className="grid gap-4 lg:grid-cols-[300px_1fr]">
-            <PlanetImageSkeleton className="aspect-square rounded-lg border border-white/15" />
+          <div className="celestial-detail celestial-detail-layout">
+            <PlanetImageSkeleton className="celestial-detail-artwork aspect-square rounded-lg border border-white/15" />
             <div className="grid content-start gap-3">
               <div className="rounded-lg border border-white/10 bg-white/5 p-4">
                 <div className="h-5 w-40 animate-pulse rounded bg-white/10" />
@@ -289,25 +289,26 @@ export function PlanetDetail({
     : null;
 
   return (
-    <div className="flex flex-col gap-4 p-4 sm:p-6">
+    <div className="celestial-detail flex min-w-0 flex-col gap-4 p-4 sm:p-6" data-celestial-detail="planet">
       <div className="flex items-center gap-3">
         <button
           onClick={onBack}
-          className="rounded border border-white/15 bg-white/8 px-3 py-1.5 text-sm text-slate-300 transition-colors hover:bg-white/15 hover:text-white"
+          className="min-h-11 rounded border border-white/15 bg-white/8 px-3 py-1.5 text-sm text-slate-300 transition-colors hover:bg-white/15 hover:text-white"
+          data-celestial-back
         >
           ← System [{coords.galaxy}:{coords.system}:{coords.position}]
         </button>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(240px,300px)_minmax(0,1fr)] lg:items-start">
+      <div className="celestial-detail-layout" data-celestial-layout>
         {/* Planet image */}
-        <div className="flex flex-col gap-3 lg:sticky lg:top-4">
-          <div className="relative aspect-square overflow-hidden rounded-lg border border-white/15 bg-black/30">
+        <div className="celestial-detail-artwork flex flex-col gap-3" data-celestial-artwork>
+          <div className="relative aspect-square overflow-hidden rounded-lg border border-white/15 bg-black/30" data-celestial-media>
             {!imageLoaded && <PlanetImageSkeleton className="absolute inset-0" />}
             <OptimizedImage
               key={planet.image}
               alt={planet.name}
-              className={`h-full w-full object-cover transition-opacity duration-200 ${imageLoaded ? "opacity-100" : "opacity-0"}`}
+              className={`h-full w-full object-contain transition-opacity duration-200 ${imageLoaded ? "opacity-100" : "opacity-0"}`}
               imageRef={imageRef}
               loading="eager"
               onLoad={(event) => {
@@ -354,7 +355,7 @@ export function PlanetDetail({
         </div>
 
         {/* Planet summary */}
-        <div className="grid min-w-0 gap-3">
+        <div className="grid min-w-0 gap-3" data-celestial-summary>
           <div className="rounded-lg border border-white/10 bg-white/5 p-4">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
               <div className="min-w-0">
@@ -413,14 +414,14 @@ export function PlanetDetail({
             />
           ) : null}
 
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="celestial-detail-panel-grid">
             <PlanetCommanderPanel planet={planet} isHome={isHome} />
             <PlanetTemperaturePanel planet={planet} />
           </div>
         </div>
       </div>
 
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+      <div className="grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-4">
         <div className="rounded-lg border border-white/10 bg-white/5 p-4 md:col-span-2 xl:col-span-4">
           <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
             Public Planet Data
@@ -780,11 +781,16 @@ function PublicRecordRows({
   rows: PlanetRecordRow[];
 }) {
   return (
-    <dl className={`grid gap-2 ${columns ? "sm:grid-cols-2" : ""}`}>
+    <dl className={`grid min-w-0 gap-2 ${columns ? "sm:grid-cols-2" : ""}`}>
       {rows.map((row) => (
-        <div className="flex min-w-0 items-baseline justify-between gap-3" key={row.label}>
+        <div className="grid min-w-0 grid-cols-[minmax(0,auto)_minmax(0,1fr)] items-start gap-3" key={row.label}>
           <dt className="text-xs text-slate-500">{row.label}</dt>
-          <dd className={`truncate text-right text-sm ${recordToneClass(row.tone)}`}>{row.value}</dd>
+          <dd
+            className={`min-w-0 break-words text-right text-sm ${recordToneClass(row.tone)}`}
+            data-celestial-record-value
+          >
+            {row.value}
+          </dd>
         </div>
       ))}
     </dl>
@@ -927,8 +933,8 @@ function ProductionMetric({
 }) {
   return (
     <div className="flex flex-col gap-1">
-      <div className="flex items-center justify-between gap-2">
-        <span className="min-w-0 truncate text-xs text-slate-500" title={label}>{label}</span>
+      <div className="flex items-start justify-between gap-2">
+        <span className="min-w-0 break-words text-xs text-slate-500" title={label}>{label}</span>
         <span className="whitespace-nowrap text-xs font-medium text-slate-300">{value}</span>
       </div>
       <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">

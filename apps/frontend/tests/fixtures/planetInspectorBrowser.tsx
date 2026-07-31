@@ -47,9 +47,9 @@ const ownedPlanets = [
 ];
 
 const publicSystems = new Map([
-  ["1:2", systemPayload(1, 2, 3, "Owned Alpha Public", account, "owned-a", 1101, false)],
+  ["1:2", systemPayload(1, 2, 3, "Owned Alpha Public", account, "owned-a", 1101, true)],
   ["4:5", systemPayload(4, 5, 6, "Owned Beta Public", account, "owned-b", 2202, false)],
-  ["9:9", systemPayload(9, 9, 9, "Unrelated Gamma", unrelatedOwner, "unrelated", 9909, false)],
+  ["9:9", systemPayload(9, 9, 9, "Unrelated Gamma", unrelatedOwner, "unrelated", 9909, true)],
 ]);
 
 const pendingDetailRequests = new Map<string, (response: Response) => void>();
@@ -293,7 +293,7 @@ function systemPayload(
       hasMoon,
       metalMultiplierBps: 10_000,
       name,
-      occupiedBy: { owner, ownerDisplayName: name, planetId },
+      occupiedBy: { owner, ownerDisplayName: `${name} — Long Range Expeditionary Commander`, planetId },
       position,
       publicMoonState: hasMoon ? {
         buildings: [{ id: 0, level: metal === 8002 ? 8 : 7 }],

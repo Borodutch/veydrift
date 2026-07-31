@@ -106,7 +106,7 @@ export function EntityMediaPanel({
         <div className="flex flex-wrap gap-2">
           {record ? (
             <button
-              className="rounded border border-white/15 bg-white/5 px-3 py-1.5 text-xs font-semibold text-slate-200 transition hover:bg-white/10"
+              className="min-h-11 rounded border border-white/15 bg-white/5 px-3 py-1.5 text-xs font-semibold text-slate-200 transition hover:bg-white/10 xl:min-h-0"
               onClick={() => setPlayback((current) => nextEntityMediaPlaybackState(current, entityKey, current.enabled ? "turn-off" : "turn-on"))}
               type="button"
             >
@@ -115,7 +115,7 @@ export function EntityMediaPanel({
           ) : null}
           {canEdit ? (
             <button
-              className="rounded border border-cyan-300/25 bg-cyan-300/10 px-3 py-1.5 text-xs font-semibold text-cyan-100 transition hover:bg-cyan-300/15"
+              className="min-h-11 rounded border border-cyan-300/25 bg-cyan-300/10 px-3 py-1.5 text-xs font-semibold text-cyan-100 transition hover:bg-cyan-300/15 xl:min-h-0"
               onClick={() => setEditorOpen((current) => !current)}
               type="button"
             >
@@ -165,7 +165,7 @@ export function EntityMediaPanel({
           />
           <div className="flex flex-wrap gap-2">
             <button
-              className="rounded border border-cyan-300/25 bg-cyan-300/10 px-3 py-2 text-sm font-semibold text-cyan-100 disabled:opacity-50"
+              className="min-h-11 rounded border border-cyan-300/25 bg-cyan-300/10 px-3 py-2 text-sm font-semibold text-cyan-100 disabled:opacity-50 xl:min-h-0"
               disabled={action.status === "pending" || !mediaUrl.trim()}
               type="submit"
             >
@@ -173,7 +173,7 @@ export function EntityMediaPanel({
             </button>
             {record ? (
               <button
-                className="rounded border border-red-300/25 px-3 py-2 text-sm font-semibold text-red-100 disabled:opacity-50"
+                className="min-h-11 rounded border border-red-300/25 px-3 py-2 text-sm font-semibold text-red-100 disabled:opacity-50 xl:min-h-0"
                 disabled={action.status === "pending"}
                 onClick={() => void save("")}
                 type="button"

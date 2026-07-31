@@ -51,7 +51,7 @@ export function PlanetMoonIndicator({
   planetType?: PlanetType | null | undefined;
   title?: string | undefined;
 }) {
-  const sizeClass = compact ? "h-8 w-8 sm:h-4 sm:w-4" : "h-10 w-10 sm:h-5 sm:w-5";
+  const sizeClass = compact ? "h-8 w-8 xl:h-4 xl:w-4" : "h-11 w-11 xl:h-5 xl:w-5";
   const indicatorClass = `absolute right-1 top-1 inline-flex ${sizeClass} items-center justify-center overflow-hidden rounded-full border border-cyan-100/70 bg-slate-950/85 shadow-[0_0_10px_rgba(103,232,249,0.35)] ${className}`;
 
   if (href) {
