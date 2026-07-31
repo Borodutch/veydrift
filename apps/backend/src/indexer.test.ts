@@ -3378,7 +3378,7 @@ describe("SettlementIndexer", () => {
     expect(indexer.fleetSlots(player)).toEqual({ active: 5, limit: 5 });
   });
 
-  test("projects elapsed research queues while available ship rows include lazy-completed queues", () => {
+  test("keeps served unit rows canonical while launchable ships include lazy-completed queues", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
       async listMoonChanceReportEvents() { return []; },
@@ -3428,7 +3428,7 @@ describe("SettlementIndexer", () => {
     });
     expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 0)).toMatchObject({
       id: 0,
-      count: 23
+      count: 9
     });
     expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 0)).toMatchObject({
       id: 0,
@@ -3436,7 +3436,7 @@ describe("SettlementIndexer", () => {
     });
     expect(indexer.defenseRows(planet.planetId).find((defense) => defense.id === 1)).toMatchObject({
       id: 1,
-      count: 13
+      count: 8
     });
     expect(indexer.technologyLevels(player)).toMatchObject({ "4": 2 });
   });
@@ -8584,7 +8584,7 @@ describe("SettlementIndexer", () => {
 
     expect(indexer.defenseRows(planet.planetId).find((defense) => defense.id === 0)?.count).toBe(9);
     expect(indexer.defenseRows(planet.planetId).find((defense) => defense.id === 1)?.count).toBe(12);
-    expect(indexer.defenseRows(planet.planetId).find((defense) => defense.id === 2)?.count).toBe(2);
+    expect(indexer.defenseRows(planet.planetId).find((defense) => defense.id === 2)?.count).toBe(0);
     expect(indexer.playerQueues(player, planet.planetId).defense).toBeNull();
 
     await expect(indexer.seedCurrentCanonicalState({ planetConcurrency: 25 })).resolves.toMatchObject({
@@ -8594,7 +8594,7 @@ describe("SettlementIndexer", () => {
     });
     expect(indexer.defenseRows(planet.planetId).find((defense) => defense.id === 0)?.count).toBe(9);
     expect(indexer.defenseRows(planet.planetId).find((defense) => defense.id === 1)?.count).toBe(12);
-    expect(indexer.defenseRows(planet.planetId).find((defense) => defense.id === 2)?.count).toBe(2);
+    expect(indexer.defenseRows(planet.planetId).find((defense) => defense.id === 2)?.count).toBe(0);
   });
 
   test("serves only future deduplicated defense backlog entries behind the active queue", async () => {
@@ -8707,7 +8707,7 @@ describe("SettlementIndexer", () => {
     ]);
   });
 
-  test("projects elapsed ship and defense queues into unit rows", () => {
+  test("keeps elapsed ship and defense queues out of canonical unit rows", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
       async listMoonChanceReportEvents() { return []; },
@@ -8761,16 +8761,14 @@ describe("SettlementIndexer", () => {
     });
 
     expect(indexer.shipRows("7").filter((ship) => ship.count > 0).map(({ id, count }) => ({ id, count }))).toEqual([
-      { id: 0, count: 7 },
-      { id: 2, count: 1 }
+      { id: 0, count: 4 }
     ]);
     expect(indexer.availableShipRows("7").filter((ship) => ship.count > 0).map(({ id, count }) => ({ id, count }))).toEqual([
       { id: 0, count: 7 },
       { id: 2, count: 1 }
     ]);
     expect(indexer.defenseRows("7").filter((defense) => defense.count > 0).map(({ id, count }) => ({ id, count }))).toEqual([
-      { id: 0, count: 15 },
-      { id: 1, count: 2 }
+      { id: 0, count: 10 }
     ]);
     expect(indexer.playerQueues(player, "7")).toMatchObject({
       ship: null,
@@ -8778,7 +8776,7 @@ describe("SettlementIndexer", () => {
     });
   });
 
-  test("unit rows project ready production while highscores ignore stale queue artifacts", () => {
+  test("unit rows stay canonical while launchable ships and highscores ignore queue artifacts", () => {
     const shalex = "0x4065de123cf18e9c4ab7da18db21518285ea164e" as Address;
     const noseals = "0x01bf1238aadc0f32d7881b90dc3c57247dff9ba9" as Address;
     const shipPlanet: SettledPlanetEvent = {
@@ -8864,13 +8862,11 @@ describe("SettlementIndexer", () => {
     expect(indexer.shipRows("24").filter((ship) => ship.count > 0).map(({ id, count }) => ({ id, count }))).toEqual([
       { id: 0, count: 5 },
       { id: 1, count: 3 },
-      { id: 3, count: 1 },
       { id: 5, count: 2 },
       { id: 9, count: 4 }
     ]);
     expect(indexer.defenseRows("146").filter((defense) => defense.count > 0).map(({ id, count }) => ({ id, count }))).toEqual([
-      { id: 0, count: 17 },
-      { id: 1, count: 10 }
+      { id: 0, count: 17 }
     ]);
 
     const shalexScore = indexer.highscoreForWallet(shalex);

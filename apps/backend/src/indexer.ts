@@ -2520,9 +2520,8 @@ export class SettlementIndexer {
 
   shipRows(planetId: string, durationLevels?: { shipyardLevel: number; naniteLevel: number }): ShipyardState["ships"] {
     const counts = this.indexedLevelsById("contract_ship_counts", "ship_id", "count", planetId);
-    const completedQueueQuantities = this.completedQueueQuantities(`ship:${planetId}`);
     return deriveShipRows(
-      (id) => (counts.get(id) ?? 0) + (completedQueueQuantities.get(id) ?? 0),
+      (id) => counts.get(id) ?? 0,
       this.planet(planetId)?.temperature,
       durationLevels
     );
@@ -2638,9 +2637,8 @@ export class SettlementIndexer {
 
   defenseRows(planetId: string, durationLevels?: { shipyardLevel: number; naniteLevel: number }): DefenseState["defenses"] {
     const counts = this.indexedLevelsById("contract_defense_counts", "defense_id", "count", planetId);
-    const completedQueueQuantities = this.completedQueueQuantities(`defense:${planetId}`);
     return deriveDefenseRows(
-      (id) => (counts.get(id) ?? 0) + (completedQueueQuantities.get(id) ?? 0),
+      (id) => counts.get(id) ?? 0,
       durationLevels
     );
   }

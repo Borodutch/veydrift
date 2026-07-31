@@ -6429,19 +6429,18 @@ describe("Veydrift backend", () => {
         deuterium: "4800"
       }
     });
-    // Ready building/research/unit queues are projected complete for public read state; contract
-    // events still remain the persisted source, and this is request-local read projection.
+    // Ready building/research queues are projected complete for public read state; ship and
+    // defense inventories remain committed-contract counts until their completion events land.
     expect(occupiedPlanet.publicState.queues.building).toBeNull();
     expect(occupiedPlanet.publicState.queues.research).toBeNull();
     expect(occupiedPlanet.publicState.buildings).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 0, level: 2 })
     ]));
     expect(occupiedPlanet.publicState.fleet).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: 0, count: 3 }),
       expect.objectContaining({ id: 9, count: 5 })
     ]));
     expect(occupiedPlanet.publicState.defenses).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: 0, count: 5 })
+      expect.objectContaining({ id: 0, count: 3 })
     ]));
     expect(occupiedPlanet.publicState.stationedDefenders).toEqual([
       expect.objectContaining({
@@ -7308,7 +7307,7 @@ describe("Veydrift backend", () => {
     expect(fresh.ships).toContainEqual(expect.objectContaining({ id: 0, count: 0 }));
   });
 
-  test("projects lazy-completed shipyard counts after readyAt without mutating indexed counts", async () => {
+  test("serves canonical shipyard counts while exposing lazy-completed launches separately", async () => {
     const dir = mkdtempSync(join(tmpdir(), "veydrift-lazy-shipyard-"));
     const databasePath = join(dir, "index.sqlite");
     const beforeReadyAt = 1_770_007_680;
@@ -7355,7 +7354,8 @@ describe("Veydrift backend", () => {
       const afterVersion = indexer.responseCacheVersion();
       const fresh = await (await handler(new Request(`http://localhost/wallet/${player}/shipyard?planetId=7`))).json() as ShipyardState;
       expect(afterVersion).not.toBe(beforeVersion);
-      expect(fresh.ships).toContainEqual(expect.objectContaining({ id: 1, count: 3 }));
+      expect(fresh.ships).toContainEqual(expect.objectContaining({ id: 1, count: 0 }));
+      expect(fresh.launchableShips).toContainEqual(expect.objectContaining({ id: 1, count: 3 }));
       expect(fresh.queue).toBeNull();
 
       const db = new Database(databasePath);
@@ -8602,7 +8602,7 @@ describe("Veydrift backend", () => {
     }));
   });
 
-  test("serves lazy-completed ship and defense queues as present in indexed reads", async () => {
+  test("serves canonical ship and defense counts while exposing lazy-completed launch inventory", async () => {
     const chainReader = new MockChainReader();
     chainReader.getShipyardState = async () => {
       throw new Error("shipyard page must not use live reads for lazy projection");
@@ -8674,13 +8674,15 @@ describe("Veydrift backend", () => {
 
     expect(shipyardBody.queue).toBeNull();
     expect(shipyardBody.ships.filter((ship: { count: number }) => ship.count > 0).map(({ id, count }: { id: number; count: number }) => ({ id, count }))).toEqual([
+      { id: 0, count: 4 }
+    ]);
+    expect(shipyardBody.launchableShips.filter((ship: { count: number }) => ship.count > 0).map(({ id, count }: { id: number; count: number }) => ({ id, count }))).toEqual([
       { id: 0, count: 7 },
       { id: 2, count: 1 }
     ]);
     expect(defensesBody.queue).toBeNull();
     expect(defensesBody.defenses.filter((defense: { count: number }) => defense.count > 0).map(({ id, count }: { id: number; count: number }) => ({ id, count }))).toEqual([
-      { id: 0, count: 15 },
-      { id: 1, count: 2 }
+      { id: 0, count: 10 }
     ]);
   });
 
