@@ -78,6 +78,7 @@ type RouteNavigation = {
 // directional arrow points along the active leg (outbound -> target, returning -> home) and fills
 // with mission progress. An optional whole-route subtext (e.g. "Returned · <time>") sits below.
 export function MissionRouteCell({
+  arrowLabel,
   compact = false,
   direction,
   onSelectCoordinates,
@@ -89,6 +90,7 @@ export function MissionRouteCell({
   subtext,
   target,
 }: {
+  arrowLabel?: string | undefined;
   // Compact rows (Mission Control's collapsed list rows) shrink the planet art, type, and arrow so a
   // route fits inside a one-line summary; the Mission Detail hero keeps the default sizing.
   compact?: boolean | undefined;
@@ -109,7 +111,13 @@ export function MissionRouteCell({
           capped (via the RouteEndpoint max-width) so the arrow always owns the central span. */}
       <div className={`grid grid-cols-[minmax(0,auto)_minmax(2.5rem,1fr)_minmax(0,auto)] items-center ${compact ? "gap-x-1.5 sm:gap-x-2" : "gap-x-2 sm:gap-x-3"}`}>
         <RouteEndpoint align="left" compact={compact} endpoint={origin} nav={nav} />
-        <RouteArrow compact={compact} direction={direction} progressPercent={progressPercent ?? 100} subdued={subdued} />
+        <RouteArrow
+          ariaLabel={arrowLabel}
+          compact={compact}
+          direction={direction}
+          progressPercent={progressPercent ?? 100}
+          subdued={subdued}
+        />
         <RouteEndpoint align="right" compact={compact} endpoint={target} nav={nav} />
       </div>
       {subtext ? <p className="mt-1.5 text-[11px] text-slate-500">{subtext}</p> : null}
@@ -136,17 +144,16 @@ function RouteEndpoint({ align, compact, endpoint, nav }: { align: "left" | "rig
 // Falls back to a subtle ringed placeholder only when no planet can be resolved (e.g. a
 // battle-report attacker without coordinates).
 function EndpointPlanetImage({ compact, endpoint, nav }: { compact: boolean; endpoint: MissionEndpoint; nav: RouteNavigation }) {
-  const frameClass = `relative shrink-0 overflow-hidden rounded-full border border-white/15 bg-black/30 ${compact ? "h-6 w-6 sm:h-7 sm:w-7" : "h-8 w-8 sm:h-9 sm:w-9"}`;
+  const sizeClass = compact ? "h-6 w-6 sm:h-7 sm:w-7" : "h-8 w-8 sm:h-9 sm:w-9";
+  const frameClass = `relative shrink-0 ${sizeClass}`;
   if (!endpoint.archetype) {
-    return <span aria-hidden="true" className={`${frameClass} flex items-center justify-center`}><span className="h-3 w-3 rounded-full border border-white/25" /></span>;
+    return <span aria-hidden="true" className={`${frameClass} flex items-center justify-center overflow-hidden rounded-full border border-white/15 bg-black/30`}><span className="h-3 w-3 rounded-full border border-white/25" /></span>;
   }
   const moonLabel = endpoint.coordinates ? `Open moon at ${endpoint.coordinates}` : "Open moon";
   const moonIndicator = endpoint.hasMoon && endpoint.coords ? (
     <PlanetMoonIndicator
-      // The indicator's default compact sizing is tuned for large planet cards; inside this small
-      // route art frame it would cover most of the planet and clip on the frame edge, so pin a tiny
-      // corner dot instead.
-      className={compact ? "!right-0 !top-0 !h-3 !w-3" : ""}
+      // Keep the moon outside the clipped planet artwork so it reads as a distinct orbiting body.
+      className="!-right-1 !-top-1 !h-3 !w-3"
       compact
       href={nav.onSelectMoon ? undefined : buildInspectPath({ coords: endpoint.coords, kind: "moon" })}
       label={moonLabel}
@@ -158,13 +165,15 @@ function EndpointPlanetImage({ compact, endpoint, nav }: { compact: boolean; end
 
   return (
     <span className={frameClass}>
-      <img
-        alt={`${endpoint.name} planet`}
-        className="h-full w-full object-cover"
-        data-planet-art={endpoint.archetype}
-        loading="lazy"
-        src={planetImageForType(endpoint.archetype)}
-      />
+      <span className="absolute inset-0 overflow-hidden rounded-full border border-white/15 bg-black/30">
+        <img
+          alt={`${endpoint.name} planet`}
+          className="h-full w-full object-cover"
+          data-planet-art={endpoint.archetype}
+          loading="lazy"
+          src={planetImageForType(endpoint.archetype)}
+        />
+      </span>
       {moonIndicator}
     </span>
   );
@@ -238,18 +247,30 @@ function EndpointCommander({ endpoint, nav }: { endpoint: MissionEndpoint; nav: 
 // cyan fill grows from the trailing end to the current position, ending in a matching arrowhead, so
 // the head sits at 100% on arrival/return. A muted destination chevron marks the leading end even at
 // 0% progress.
-function RouteArrow({ compact, direction, progressPercent, subdued }: { compact?: boolean | undefined; direction: RouteLeg; progressPercent: number; subdued?: boolean | undefined }) {
+function RouteArrow({
+  ariaLabel,
+  compact,
+  direction,
+  progressPercent,
+  subdued,
+}: {
+  ariaLabel?: string | undefined;
+  compact?: boolean | undefined;
+  direction: RouteLeg;
+  progressPercent: number;
+  subdued?: boolean | undefined;
+}) {
   const progress = clamp(progressPercent, 0, 100);
   const returning = direction === "returning";
   const rounded = Math.round(progress);
   const chevronSize = compact ? 12 : 13;
   const fillTone = subdued ? "bg-slate-500/40" : "bg-cyan-300";
   const headTone = subdued ? "text-slate-500" : "text-cyan-200";
-  const label = subdued
+  const label = ariaLabel ?? (subdued
     ? "Completed journey to target"
     : returning
       ? `Returning home, ${rounded}% of the way back`
-      : `Outbound to target, ${rounded}% of the way there`;
+      : `Outbound to target, ${rounded}% of the way there`);
   const Chevron = returning ? ChevronLeft : ChevronRight;
   // The track is inset by 0.5rem on each side to leave room for the destination chevron; the fill
   // and its leading chevron are positioned within that same inset span so the head reaches the tip

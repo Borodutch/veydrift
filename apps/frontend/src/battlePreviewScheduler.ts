@@ -1,6 +1,7 @@
 import type { ContractBattleForecastSummary, ContractBattleInput } from "./battlePreview";
 
-export const ATTACK_BATTLE_PREVIEW_DEBOUNCE_MS = 180;
+export const ATTACK_BATTLE_PREVIEW_DEBOUNCE_MS = 350;
+export const ATTACK_BATTLE_PREVIEW_TIMEOUT_MS = 4_000;
 
 export type BattlePreviewWorkerRequest = {
   requestId: number;
@@ -29,6 +30,7 @@ type TimerHandle = ReturnType<typeof setTimeout>;
 export type BattlePreviewSchedulerOptions = {
   createWorker: () => BattlePreviewWorker;
   debounceMs?: number;
+  workerTimeoutMs?: number;
   setTimer?: (callback: () => void, delay: number) => TimerHandle;
   clearTimer?: (handle: TimerHandle) => void;
 };
@@ -41,21 +43,25 @@ export type BattlePreviewSchedulerOptions = {
 export class BattlePreviewScheduler {
   private readonly createWorker: () => BattlePreviewWorker;
   private readonly debounceMs: number;
+  private readonly workerTimeoutMs: number;
   private readonly setTimer: (callback: () => void, delay: number) => TimerHandle;
   private readonly clearTimer: (handle: TimerHandle) => void;
   private activeRequestId = 0;
   private lastKey: string | undefined;
   private timer: TimerHandle | undefined;
+  private workerTimer: TimerHandle | undefined;
   private worker: BattlePreviewWorker | undefined;
 
   constructor({
     createWorker,
     debounceMs = ATTACK_BATTLE_PREVIEW_DEBOUNCE_MS,
+    workerTimeoutMs = ATTACK_BATTLE_PREVIEW_TIMEOUT_MS,
     setTimer = setTimeout,
     clearTimer = clearTimeout,
   }: BattlePreviewSchedulerOptions) {
     this.createWorker = createWorker;
     this.debounceMs = debounceMs;
+    this.workerTimeoutMs = workerTimeoutMs;
     this.setTimer = setTimer;
     this.clearTimer = clearTimer;
   }
@@ -93,6 +99,12 @@ export class BattlePreviewScheduler {
           onError("The battle preview worker failed.");
         };
         worker.postMessage({ requestId, input });
+        this.workerTimer = this.setTimer(() => {
+          this.workerTimer = undefined;
+          if (requestId !== this.activeRequestId || this.worker !== worker) return;
+          this.finishWorker(worker);
+          onError("The battle preview worker timed out.");
+        }, this.workerTimeoutMs);
       } catch (error) {
         if (requestId === this.activeRequestId) {
           onError(error instanceof Error ? error.message : "The battle preview worker could not start.");
@@ -117,6 +129,10 @@ export class BattlePreviewScheduler {
       this.clearTimer(this.timer);
       this.timer = undefined;
     }
+    if (this.workerTimer !== undefined) {
+      this.clearTimer(this.workerTimer);
+      this.workerTimer = undefined;
+    }
     if (this.worker) {
       this.worker.onmessage = null;
       this.worker.onerror = null;
@@ -126,6 +142,10 @@ export class BattlePreviewScheduler {
   }
 
   private finishWorker(worker: BattlePreviewWorker): void {
+    if (this.workerTimer !== undefined) {
+      this.clearTimer(this.workerTimer);
+      this.workerTimer = undefined;
+    }
     worker.onmessage = null;
     worker.onerror = null;
     worker.terminate();

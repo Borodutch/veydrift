@@ -5,7 +5,11 @@ import { formatDuration } from "../durationFormat";
 import type { Resources } from "../playableMvp";
 import type { QueueStateResponse } from "../walletFlow";
 import { OptimizedImage } from "./OptimizedImage";
-import { formatQueueEta, QueueProgressPanel } from "./QueueProgressPanel";
+import {
+  formatQueueEta,
+  QueueProgressPanel,
+  type QueueProgressTone,
+} from "./QueueProgressPanel";
 import {
   RequirementFlairs as SharedRequirementFlairs,
   type RequirementFlair,
@@ -171,6 +175,7 @@ export type ProductionCatalogProps<Key extends string> = {
   onRefreshQueue?: (() => void) | undefined;
   onSelect: (key: Key) => void;
   queue?: ProductionQueue | undefined;
+  queueTone?: QueueProgressTone | undefined;
   selectedKey: Key | undefined;
 };
 
@@ -209,6 +214,7 @@ export function ProductionCatalog<Key extends string>({
   onQuantity,
   onSelect,
   queue,
+  queueTone = "cyan",
   selectedKey,
 }: ProductionCatalogProps<Key>) {
   const selected = selectedProductionItem(items, selectedKey);
@@ -220,6 +226,7 @@ export function ProductionCatalog<Key extends string>({
         <ProductionQueuePanel
           now={now}
           queue={queue}
+          tone={queueTone}
         />
       )}
 
@@ -259,12 +266,18 @@ export function ProductionCatalog<Key extends string>({
   );
 }
 
-function ProductionQueuePanel({
+export function ProductionQueuePanel({
+  embedded = false,
   now,
   queue,
+  showBacklogEta = true,
+  tone = "cyan",
 }: {
+  embedded?: boolean | undefined;
   now: number;
   queue: ProductionQueue;
+  showBacklogEta?: boolean | undefined;
+  tone?: QueueProgressTone | undefined;
 }) {
   return (
     <QueueProgressPanel
@@ -274,13 +287,14 @@ function ProductionQueuePanel({
       completedQuantity={queue.completedQuantity}
       currentUnitProgressBps={queue.currentUnitProgressBps}
       currentUnitSecondsRemaining={queue.currentUnitSecondsRemaining}
+      embedded={embedded}
       progress={queue.overallProgressBps === undefined ? undefined : queue.overallProgressBps / 10_000}
       quantity={queue.quantity}
       readyAt={queue.readyAt}
       remainingQuantity={queue.remainingQuantity}
       startedAt={queue.startedAt}
       title="Queue"
-      tone="cyan"
+      tone={tone}
     >
       {queue.backlog && queue.backlog.length > 0 ? (
         queue.backlog.map((entry, index) => {
@@ -307,9 +321,11 @@ function ProductionQueuePanel({
                     ×{formatter.format(entry.quantity)}
                   </span>
                 ) : null}
-                <span className="text-[9px] tabular-nums text-slate-500">
-                  {formatQueueEta(entry.readyAt)}
-                </span>
+                {showBacklogEta ? (
+                  <span className="text-[9px] tabular-nums text-slate-500">
+                    {formatQueueEta(entry.readyAt)}
+                  </span>
+                ) : null}
               </span>
             </span>
           );

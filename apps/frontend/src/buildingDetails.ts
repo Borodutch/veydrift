@@ -104,6 +104,7 @@ export function buildingUpgradeStatus(
     actionUnavailableReason?: string | undefined;
     chainCost?: Resources | undefined;
     chainDurationSeconds?: number | undefined;
+    ignoreActiveQueue?: boolean | undefined;
     now?: number | undefined;
     productionRates?: Resources | undefined;
     spendableResources?: Resources | undefined;
@@ -137,7 +138,7 @@ export function buildingUpgradeStatus(
     };
   }
 
-  if (state.queue?.kind === "building") {
+  if (state.queue?.kind === "building" && !options.ignoreActiveQueue) {
     const queuedBuildingLabel = formatBuildingQueueLabel(state.queue.key, state.queue.label, state.queue.targetLevel);
     const queueReady = state.queue.readyAt <= (options.now ?? Date.now());
 

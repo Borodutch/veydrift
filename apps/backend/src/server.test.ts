@@ -4211,6 +4211,7 @@ describe("Veydrift backend", () => {
       ownerDisplayName: "borodutch",
       planetId: "7"
     });
+    expect(occupied.name).toBe(planet.name);
     expect(occupied).not.toHaveProperty("publicState");
     expect(occupied).not.toHaveProperty("publicMoonState");
   });
@@ -9403,6 +9404,8 @@ describe("Veydrift backend", () => {
     expect(highscoreResponse.status).toBe(200);
 
     const tacticalPlanet = highscoreBody.rankings.total[0].planets[0];
+    expect(tacticalPlanet.stationedDefenderForecastTimeline).toEqual([]);
+    expect(tacticalPlanet.stationedDefenderTimelineComplete).toBe(true);
     // The finder's raidable loot reflects the accrued 5128 metal (~50% plunder =>
     // 2564), matching the accrued resources the public planet read exposes. Before VEY-454 this
     // used the stale stored 5000 and under-reported LOOT at 2500.

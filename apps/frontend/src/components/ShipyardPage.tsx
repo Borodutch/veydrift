@@ -133,6 +133,7 @@ export function ShipyardPage({
             onSelectShip?.(key);
           }}
           queue={productionQueueViewModel(queue, shipCatalog)}
+          queueTone="sky"
           selectedKey={selectedKey}
         />
       )}

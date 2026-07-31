@@ -2,7 +2,6 @@ import type { ComponentChildren } from "preact";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { Copy, FileText, Link, Share2, TicketCheck } from "lucide-preact";
 import { ComingSoonApp } from "./ComingSoonApp";
-import { CcaLaunchBanner } from "./components/CcaLaunchBanner";
 import { TelegramIcon } from "./components/TelegramIcon";
 import { PlayableMvpApp } from "./PlayableMvpApp";
 import { apiBaseUrlForRuntimeConfig, gameContractAddress, playableApiUrl, runtimeConfigUrl, type RuntimeConfig } from "./runtimeConfig";
@@ -1471,7 +1470,6 @@ export function FirstPlanetSettlementApp() {
         account={account}
         miniAppMode={miniAppMode}
         planet={planet.kind === "success" || planet.kind === "already-settled" ? planet.planet : undefined}
-        auctionBanner={<CcaLaunchBanner embedded />}
         referralProgramPanel={(
           <ReferralProgramPanel
             claimCode={referralClaimCodeInput}

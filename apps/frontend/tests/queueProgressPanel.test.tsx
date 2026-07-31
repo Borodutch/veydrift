@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { ComponentChildren, VNode } from "preact";
 import { formatQueueEta, QueueProgressPanel, queueTimestampToMs } from "../src/components/QueueProgressPanel";
+import { OptimizedImage } from "../src/components/OptimizedImage";
 
 describe("QueueProgressPanel", () => {
   test("normalizes chain seconds and millisecond timestamps", () => {
@@ -36,6 +37,45 @@ describe("QueueProgressPanel", () => {
     expect(text).not.toContain("Time remaining");
     expect(text).not.toContain("Ready at");
     expect(panel.props.className).toContain("border");
+  });
+
+  test("can show compact item text directly above its completion time", () => {
+    const readyAt = "2000";
+    const panel = QueueProgressPanel({
+      asset: "/assets/game/style-pass/generated/buildings/shipyard.webp",
+      itemText: "Shipyard 9",
+      label: "Shipyard 9",
+      now: 1_500_000,
+      readyAt,
+      startedAt: "1000",
+      title: "Construction",
+      tone: "amber",
+    });
+    const text = visibleText(panel);
+
+    expect(text).toContain("Shipyard 9");
+    expect(text.indexOf("Shipyard 9")).toBeLessThan(text.indexOf(formatQueueEta(readyAt)));
+  });
+
+  test("renders an embedded queue without a visible label, border, or background", () => {
+    const panel = QueueProgressPanel({
+      asset: "/assets/game/style-pass/generated/ships/small-cargo.webp",
+      embedded: true,
+      label: "Rocket Launcher",
+      now: 1_500_000,
+      quantity: 2,
+      readyAt: "2000",
+      startedAt: "1000",
+      title: "Queue",
+      tone: "cyan",
+    });
+    const title = childNodes(panel).find((node) => node.type === "span" && visibleText(node) === "Queue");
+
+    expect(panel.props["aria-label"]).toBe("Queue: Rocket Launcher");
+    expect(panel.props.className).not.toContain("border");
+    expect(panel.props.className).not.toContain("bg-cyan");
+    expect(title?.props.className).toBe("sr-only");
+    expect(descendants(panel, OptimizedImage)[0]?.props.className).toContain("border-white/10");
   });
 
   test("renders a freshly started ship queue near 0%, not nearly full", () => {
@@ -118,6 +158,17 @@ function visibleText(node: ComponentChildren): string {
   return textParts(node).join(" ").replace(/\s+/g, " ").trim();
 }
 
+function descendants(node: ComponentChildren, type: VNode["type"]): VNode[] {
+  if (node === null || node === undefined || typeof node === "boolean") return [];
+  if (typeof node === "string" || typeof node === "number") return [];
+  if (Array.isArray(node)) return node.flatMap((child) => descendants(child, type));
+  const vnode = node as VNode;
+  return [
+    ...(vnode.type === type ? [vnode] : []),
+    ...descendants(vnode.props?.children, type),
+  ];
+}
+
 function textParts(node: ComponentChildren): string[] {
   if (node === null || node === undefined || typeof node === "boolean") {
     return [];
@@ -149,6 +200,18 @@ function hasClass(node: ComponentChildren, className: string): boolean {
   }
 
   const vnode = node as VNode;
+  if (typeof vnode.type === "function") {
+    const Component = vnode.type as (props: Record<string, unknown>) => ComponentChildren;
+    return hasClass(Component(vnode.props ?? {}), className);
+  }
   const classes = typeof vnode.props?.className === "string" ? vnode.props.className : "";
   return classes.split(/\s+/).includes(className) || hasClass(vnode.props?.children, className);
+}
+
+function childNodes(node: ComponentChildren): VNode[] {
+  if (node === null || node === undefined || typeof node === "boolean") return [];
+  if (typeof node === "string" || typeof node === "number") return [];
+  if (Array.isArray(node)) return node.flatMap(childNodes);
+  const vnode = node as VNode;
+  return [vnode, ...childNodes(vnode.props?.children)];
 }

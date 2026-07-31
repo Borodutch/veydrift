@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "preact/hooks";
-import { AlertTriangle, ArrowDown, ArrowUp, Crosshair, Recycle, ShieldAlert, Swords } from "lucide-preact";
-import { ActionReasonNote } from "./ActionReasonNote";
+import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Recycle, ShieldAlert, Swords } from "lucide-preact";
 import { planetImageForType } from "../data/mockUniverse";
 import { formatDurationUntil } from "../durationFormat";
 import { activeMissionsByPlanetId, planetMissionSubtext } from "../planetMissionSubtext";
@@ -14,7 +13,6 @@ import {
   buildDebrisTargets,
   filterRaidTargets,
   hasActiveAlliance,
-  incomingThreats,
   persistRaidTargetSettings,
   raidTargetTotals,
   readPersistedRaidTargetSettings,
@@ -32,8 +30,6 @@ import {
 } from "../raidTargetFinder";
 import { defenseCatalog, shipCatalog } from "../playableMvp";
 import { OptimizedImage } from "./OptimizedImage";
-import { PlanetMoonSubsection } from "./PlanetMoonIndicator";
-import { PlanetMissionLines } from "./PlanetMissionLines";
 import { RaidTargetsSkeleton } from "./LoadingSkeletons";
 import { AfkFlair } from "./AfkFlair";
 import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailableNotice";
@@ -44,9 +40,8 @@ export type RaidTargetAttackAction = {
 };
 
 type RaidTargetFinderPageProps = {
-  // Universe-wide active fleet missions (the unfiltered `/missions?status=active` feed). Drives the
-  // per-target mission subtext so the Raid Finder classifies owner-originated vs incoming third-party
-  // fleets exactly like Rankings (VEY-KANEO-448). Defaults to empty so the page renders without it.
+  // Universe-wide activity lets the Hide active fleet filter classify targets
+  // without adding fleet-status noise to each result row.
   activeMissions?: readonly FleetMissionSummary[] | undefined;
   apiBaseUrl: string | undefined;
   currentAllianceId?: string | null | undefined;
@@ -58,17 +53,16 @@ type RaidTargetFinderPageProps = {
   onAttackTarget?: ((target: RaidTarget) => void) | undefined;
   onHarvestDebrisTarget?: ((target: DebrisFinderTarget) => void) | undefined;
   onSelectAlliance?: ((allianceId: string) => void) | undefined;
-  onSelectMoon?: ((coords: Coordinates) => void) | undefined;
   onSelectPlanet?: ((coords: Coordinates) => void) | undefined;
   onSelectPlayer?: ((wallet: string) => void) | undefined;
   originCoordinates?: Coordinates | null | undefined;
   shipyardState?: ChainShipyardState | null | undefined;
 };
 
-// The finder pulls the top slice of the public highscore feed; this already
-// carries every occupied planet plus tactical intel and viewer attack
-// protection, so a single large page is enough to scout the field.
+// Pull a broad tactical snapshot so filtering and sorting stay global, then
+// paginate the resulting Raid Finder lists locally for a compact viewport.
 export const raidTargetFinderPageSize = 250;
+export const raidFinderRowsPerPage = 25;
 
 const sortColumns: Array<{ key: RaidTargetSortKey; label: string; hint: string }> = [
   { key: "distance", label: "Dist", hint: "Flight distance from your active planet" },
@@ -84,6 +78,41 @@ const debrisSortColumns: Array<{ key: DebrisTargetSortKey; label: string; hint: 
   { key: "fuel", label: "Fuel", hint: "Estimated deuterium fuel at full speed" },
 ];
 type RaidFinderMode = "raids" | "debris" | "rifters";
+type RaidFinderPages = Record<RaidFinderMode, number>;
+
+export type RaidFinderPaginationState = {
+  endIndex: number;
+  firstEntry: number;
+  lastEntry: number;
+  page: number;
+  pageSize: number;
+  startIndex: number;
+  totalEntries: number;
+  totalPages: number;
+};
+
+export function raidFinderPagination(
+  totalEntries: number,
+  requestedPage: number,
+  pageSize = raidFinderRowsPerPage,
+): RaidFinderPaginationState {
+  const safeTotal = Number.isFinite(totalEntries) ? Math.max(0, Math.trunc(totalEntries)) : 0;
+  const safePageSize = Number.isFinite(pageSize) ? Math.max(1, Math.trunc(pageSize)) : raidFinderRowsPerPage;
+  const totalPages = Math.max(1, Math.ceil(safeTotal / safePageSize));
+  const page = Math.min(totalPages, Math.max(1, Math.trunc(requestedPage) || 1));
+  const startIndex = (page - 1) * safePageSize;
+  const endIndex = Math.min(startIndex + safePageSize, safeTotal);
+  return {
+    endIndex,
+    firstEntry: safeTotal === 0 ? 0 : startIndex + 1,
+    lastEntry: endIndex,
+    page,
+    pageSize: safePageSize,
+    startIndex,
+    totalEntries: safeTotal,
+    totalPages,
+  };
+}
 
 export function RaidTargetFinderPage({
   activeMissions,
@@ -97,7 +126,6 @@ export function RaidTargetFinderPage({
   onAttackTarget,
   onHarvestDebrisTarget,
   onSelectAlliance,
-  onSelectMoon,
   onSelectPlanet,
   onSelectPlayer,
   originCoordinates,
@@ -112,6 +140,7 @@ export function RaidTargetFinderPage({
   const [rifterError, setRifterError] = useState<string | undefined>();
   const [hasLoaded, setHasLoaded] = useState(false);
   const [mode, setMode] = useState<RaidFinderMode>("raids");
+  const [pages, setPages] = useState<RaidFinderPages>({ raids: 1, debris: 1, rifters: 1 });
   const [persistedSettings] = useState(() => readPersistedRaidTargetSettings());
   const [filters, setFilters] = useState<RaidTargetFilters>(() => persistedSettings.filters);
   const [sort, setSort] = useState<RaidTargetSort>(() => persistedSettings.sort);
@@ -137,6 +166,7 @@ export function RaidTargetFinderPage({
     setError(undefined);
     setDebrisError(undefined);
     setRifterError(undefined);
+    setPages({ raids: 1, debris: 1, rifters: 1 });
     const highscoresRequest = fetchHighscores(apiBaseUrl, {
       category: "total",
       ...(currentWallet ? { currentWallet } : {}),
@@ -203,7 +233,6 @@ export function RaidTargetFinderPage({
     [allTargets, effectiveFilters, hasActiveFleetActivity, sort],
   );
   const totals = useMemo(() => raidTargetTotals(allTargets, visibleTargets), [allTargets, visibleTargets]);
-  const threats = useMemo(() => incomingThreats(fleetVisibility), [fleetVisibility]);
   const debrisTargets = useMemo(
     () => sortDebrisTargets(buildDebrisTargets({
       targets: debrisEntries,
@@ -215,15 +244,31 @@ export function RaidTargetFinderPage({
   );
   const availableRecyclers = recyclerCount(shipyardState);
   const totalRecyclerCapacity = availableRecyclers * 20_000;
-  const subtextByPlanetId = useMemo(() => {
-    const map = new Map<string, ReturnType<typeof planetMissionSubtext>>();
-    for (const target of visibleTargets) {
-      map.set(target.planetId, allTargetSubtextByPlanetId.get(target.planetId) ?? planetMissionSubtext(target.planetId, target.owner, [], now));
-    }
-    return map;
-  }, [visibleTargets, allTargetSubtextByPlanetId, now]);
-
+  const raidPagination = useMemo(
+    () => raidFinderPagination(visibleTargets.length, pages.raids),
+    [pages.raids, visibleTargets.length],
+  );
+  const debrisPagination = useMemo(
+    () => raidFinderPagination(debrisTargets.length, pages.debris),
+    [debrisTargets.length, pages.debris],
+  );
+  const rifterPagination = useMemo(
+    () => raidFinderPagination(rifterEntries.length, pages.rifters),
+    [pages.rifters, rifterEntries.length],
+  );
+  const pagedRaidTargets = visibleTargets.slice(raidPagination.startIndex, raidPagination.endIndex);
+  const pagedDebrisTargets = debrisTargets.slice(debrisPagination.startIndex, debrisPagination.endIndex);
+  const pagedRifterEntries = rifterEntries.slice(rifterPagination.startIndex, rifterPagination.endIndex);
+  const activePagination = mode === "raids"
+    ? raidPagination
+    : mode === "debris"
+      ? debrisPagination
+      : rifterPagination;
+  const setModePage = (nextPage: number) => {
+    setPages((current) => ({ ...current, [mode]: nextPage }));
+  };
   const toggleSort = (key: RaidTargetSortKey) => {
+    setPages((current) => ({ ...current, raids: 1 }));
     setSort((current) =>
       current.key === key
         ? { key, direction: current.direction === "asc" ? "desc" : "asc" }
@@ -232,6 +277,7 @@ export function RaidTargetFinderPage({
     );
   };
   const toggleDebrisSort = (key: DebrisTargetSortKey) => {
+    setPages((current) => ({ ...current, debris: 1 }));
     setDebrisSort((current) =>
       current.key === key
         ? { key, direction: current.direction === "asc" ? "desc" : "asc" }
@@ -245,17 +291,15 @@ export function RaidTargetFinderPage({
       : error;
 
   return (
-    <section className="space-y-4">
+    <section className="space-y-3">
       {!currentWallet ? (
         <div className="rounded border border-amber-300/20 bg-amber-300/10 p-3 text-sm text-amber-100">
           Connect your wallet to compute distances from your active planet and hide protected or allied targets.
         </div>
       ) : null}
 
-      <IncomingThreatsBanner now={now} threats={threats} />
-
       <div className="flex flex-wrap items-center gap-2">
-        <ModeButton active={mode === "raids"} label="Raid targets" onClick={() => setMode("raids")} />
+        <ModeButton active={mode === "raids"} label="Raids" onClick={() => setMode("raids")} />
         <ModeButton active={mode === "rifters"} label="Rifters" onClick={() => setMode("rifters")} />
         <ModeButton active={mode === "debris"} label="Debris" onClick={() => setMode("debris")} />
         {mode === "debris" ? (
@@ -280,7 +324,10 @@ export function RaidTargetFinderPage({
       {mode === "raids" ? (
         <RaidTargetFilterControls
           filters={filters}
-          onChange={setFilters}
+          onChange={(nextFilters) => {
+            setFilters(nextFilters);
+            setPages((current) => ({ ...current, raids: 1 }));
+          }}
           showAllianceFilter={showAllianceFilter}
           totals={totals}
         />
@@ -307,24 +354,19 @@ export function RaidTargetFinderPage({
             {hasLoaded ? "No active Rift extractions indexed yet." : "No Rift targets loaded yet."}
           </div>
         ) : mode === "raids" ? (
-          visibleTargets.map((target) => (
+          pagedRaidTargets.map((target) => (
             <RaidTargetRow
               attackAction={attackActionForTarget?.(target) ?? null}
               key={target.planetId}
-              missionSubtext={
-                subtextByPlanetId.get(target.planetId) ?? planetMissionSubtext(target.planetId, target.owner, [], now)
-              }
-              now={now}
               onAttackTarget={onAttackTarget}
               onSelectAlliance={onSelectAlliance}
-              onSelectMoon={onSelectMoon}
               onSelectPlanet={onSelectPlanet}
               onSelectPlayer={onSelectPlayer}
               target={target}
             />
           ))
         ) : mode === "debris" ? (
-          debrisTargets.map((target) => (
+          pagedDebrisTargets.map((target) => (
             <DebrisTargetRow
               action={harvestActionForDebrisTarget
                 ? harvestActionForDebrisTarget(target)
@@ -332,14 +374,13 @@ export function RaidTargetFinderPage({
               key={target.planetId}
               now={now}
               onHarvest={onHarvestDebrisTarget}
-              onSelectMoon={onSelectMoon}
               onSelectPlanet={onSelectPlanet}
               onSelectPlayer={onSelectPlayer}
               target={target}
             />
           ))
         ) : (
-          rifterEntries.map((target) => (
+          pagedRifterEntries.map((target) => (
             <RifterTargetRow
               key={target.planetId}
               now={now}
@@ -349,6 +390,13 @@ export function RaidTargetFinderPage({
             />
           ))
         )}
+        {!loading && activePagination.totalEntries > 0 ? (
+          <RaidFinderPagination
+            onNext={() => setModePage(activePagination.page + 1)}
+            onPrevious={() => setModePage(activePagination.page - 1)}
+            pagination={activePagination}
+          />
+        ) : null}
       </div>
     </section>
   );
@@ -366,7 +414,7 @@ function ModeButton({
   return (
     <button
       aria-pressed={active}
-      className={`h-11 rounded border px-3 text-xs font-semibold transition sm:h-9 ${
+      className={`h-9 rounded border px-2.5 text-xs font-semibold transition sm:h-8 ${
         active
           ? "border-signal/60 bg-signal/10 text-signal"
           : "border-white/10 bg-white/5 text-slate-300 hover:bg-white/10"
@@ -376,6 +424,49 @@ function ModeButton({
     >
       {label}
     </button>
+  );
+}
+
+export function RaidFinderPagination({
+  onNext,
+  onPrevious,
+  pagination,
+}: {
+  onNext: () => void;
+  onPrevious: () => void;
+  pagination: RaidFinderPaginationState;
+}) {
+  return (
+    <div className="flex items-center justify-between border-t border-white/10 px-3 py-2 text-xs text-slate-400">
+      <span>
+        Page {pagination.page} of {pagination.totalPages}
+        <span className="ml-2 text-slate-600">
+          {pagination.firstEntry}-{pagination.lastEntry} of {pagination.totalEntries}
+        </span>
+      </span>
+      <div className="flex items-center gap-1.5">
+        <button
+          aria-label="Previous Raid Finder page"
+          className="inline-flex h-10 w-10 items-center justify-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50 sm:h-8 sm:w-8"
+          disabled={pagination.page <= 1}
+          onClick={onPrevious}
+          title="Previous page"
+          type="button"
+        >
+          <ChevronLeft aria-hidden="true" size={14} />
+        </button>
+        <button
+          aria-label="Next Raid Finder page"
+          className="inline-flex h-10 w-10 items-center justify-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50 sm:h-8 sm:w-8"
+          disabled={pagination.page >= pagination.totalPages}
+          onClick={onNext}
+          title="Next page"
+          type="button"
+        >
+          <ChevronRight aria-hidden="true" size={14} />
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -398,8 +489,8 @@ function RifterTargetRow({
     ["D", target.resources.deuterium, "text-emerald-100"],
   ] as const;
   return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-fuchsia-300/10 px-3 py-3 text-sm last:border-b-0">
-      <span className="relative h-8 w-8 shrink-0 overflow-hidden rounded border border-fuchsia-300/25 bg-fuchsia-300/10">
+    <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 border-b border-fuchsia-300/10 px-3 py-2 text-sm last:border-b-0">
+      <span className="relative h-7 w-7 shrink-0 overflow-hidden rounded border border-fuchsia-300/25 bg-fuchsia-300/10">
         <OptimizedImage alt="" className="h-full w-full object-cover" loading="lazy" sizes="icon" src={planetImageForType(target.archetype)} />
       </span>
       <div className="min-w-0 flex-1">
@@ -413,7 +504,12 @@ function RifterTargetRow({
             {target.name?.trim() || coords}
           </button>
           <span className="font-mono text-[10px] text-slate-500">{coords}</span>
-          <span className="rounded border border-fuchsia-300/30 bg-fuchsia-300/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-fuchsia-100">Rifting · no newbie/bashing protection</span>
+          <span
+            className="rounded border border-fuchsia-300/30 bg-fuchsia-300/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-fuchsia-100"
+            title="Rift withdrawals are fully raidable"
+          >
+            Rifting
+          </span>
         </div>
         <button
           className="mt-0.5 block font-mono text-xs text-slate-500 hover:text-cyan-100 disabled:cursor-default disabled:hover:text-slate-500"
@@ -438,61 +534,6 @@ function RifterTargetRow({
   );
 }
 
-function IncomingThreatsBanner({
-  now,
-  threats,
-}: {
-  now: number;
-  threats: ReturnType<typeof incomingThreats>;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  if (threats.length === 0) return null;
-
-  const soonest = threats[0]?.arrivalAtMs ?? null;
-
-  return (
-    <div className="rounded-md border border-red-400/30 bg-red-500/10 p-3 text-sm text-red-100">
-      <button
-        aria-expanded={expanded}
-        className="flex w-full items-center gap-2 text-left"
-        onClick={() => setExpanded((open) => !open)}
-        type="button"
-      >
-        <AlertTriangle aria-hidden="true" className="shrink-0" size={16} />
-        <span className="font-semibold">
-          {threats.length} fleet{threats.length === 1 ? "" : "s"} inbound to your planets
-        </span>
-        {soonest !== null ? (
-          <span className="ml-auto whitespace-nowrap font-mono text-xs text-red-200/90">
-            Next in {formatDurationUntil(soonest, now)}
-          </span>
-        ) : null}
-      </button>
-      {expanded ? (
-        <ul className="mt-3 space-y-1.5">
-          {threats.map((threat) => (
-            <li
-              className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded border border-red-400/20 bg-black/20 px-2.5 py-1.5 font-mono text-xs"
-              key={threat.missionId}
-            >
-              <span className="font-semibold text-red-100">{threat.missionType}</span>
-              <span className="text-red-200/90">
-                {threat.originCoordinates ?? "?"} → {threat.targetCoordinates ?? "your planet"}
-              </span>
-              <span className="text-red-200/80">
-                {threat.attackerDisplayName?.trim() || shortAddress(threat.attacker)}
-              </span>
-              {threat.arrivalAtMs !== null ? (
-                <span className="ml-auto text-red-200/90">ETA {formatDurationUntil(threat.arrivalAtMs, now)}</span>
-              ) : null}
-            </li>
-          ))}
-        </ul>
-      ) : null}
-    </div>
-  );
-}
-
 export function RaidTargetFilterControls({
   filters,
   onChange,
@@ -510,55 +551,50 @@ export function RaidTargetFilterControls({
   ].filter(Boolean);
 
   return (
-    <div className="grid gap-3 rounded-md border border-white/10 bg-white/[0.02] p-3">
-      <div className="flex flex-wrap items-center gap-2">
+    <div className="flex flex-wrap items-center gap-2 rounded-md border border-white/10 bg-white/[0.02] p-2">
+      <FilterToggle
+        active={filters.hideProtected}
+        label="Hide protected"
+        onToggle={() => onChange({ ...filters, hideProtected: !filters.hideProtected })}
+      />
+      {showAllianceFilter ? (
         <FilterToggle
-          active={filters.hideProtected}
-          label="Hide protected"
-          onToggle={() => onChange({ ...filters, hideProtected: !filters.hideProtected })}
+          active={filters.hideSameAlliance}
+          label="Hide alliance"
+          onToggle={() => onChange({ ...filters, hideSameAlliance: !filters.hideSameAlliance })}
         />
-        {showAllianceFilter ? (
-          <FilterToggle
-            active={filters.hideSameAlliance}
-            label="Hide alliance"
-            onToggle={() => onChange({ ...filters, hideSameAlliance: !filters.hideSameAlliance })}
-          />
-        ) : null}
-        <FilterToggle
-          active={filters.hideDefended}
-          label="Hide defended"
-          onToggle={() => onChange({ ...filters, hideDefended: !filters.hideDefended })}
-        />
-        <FilterToggle
-          active={filters.hideActiveFleet}
-          label="Hide active fleet"
-          onToggle={() => onChange({ ...filters, hideActiveFleet: !filters.hideActiveFleet })}
-        />
-        <span className="ml-auto text-xs text-slate-400">
-          <span className="font-mono text-cyan-100">{totals.visible}</span>
-          <span className="text-slate-600"> / </span>
-          <span className="font-mono">{totals.total}</span> targets
-          {suppressedTotals.length > 0 ? (
-            <span className="ml-2 text-slate-500">
-              ({suppressedTotals.join(", ")})
-            </span>
-          ) : null}
-        </span>
-      </div>
-      <div className="flex flex-wrap items-center gap-3">
-        <NumberFilter
-          label="Min loot"
-          onChange={(value) => onChange({ ...filters, minLoot: value ?? 0 })}
-          placeholder="0"
-          value={filters.minLoot > 0 ? filters.minLoot : null}
-        />
-        <NumberFilter
-          label="Max distance"
-          onChange={(value) => onChange({ ...filters, maxDistance: value })}
-          placeholder="any"
-          value={filters.maxDistance}
-        />
-      </div>
+      ) : null}
+      <FilterToggle
+        active={filters.hideDefended}
+        label="Hide defended"
+        onToggle={() => onChange({ ...filters, hideDefended: !filters.hideDefended })}
+      />
+      <FilterToggle
+        active={filters.hideActiveFleet}
+        label="Hide active fleet"
+        onToggle={() => onChange({ ...filters, hideActiveFleet: !filters.hideActiveFleet })}
+      />
+      <NumberFilter
+        label="Min loot"
+        onChange={(value) => onChange({ ...filters, minLoot: value ?? 0 })}
+        placeholder="0"
+        value={filters.minLoot > 0 ? filters.minLoot : null}
+      />
+      <NumberFilter
+        label="Max distance"
+        onChange={(value) => onChange({ ...filters, maxDistance: value })}
+        placeholder="any"
+        value={filters.maxDistance}
+      />
+      <span
+        className="ml-auto whitespace-nowrap text-xs text-slate-400"
+        title={suppressedTotals.length > 0 ? suppressedTotals.join(", ") : "Visible / total targets"}
+      >
+        <span className="font-mono text-cyan-100">{totals.visible}</span>
+        <span className="text-slate-600"> / </span>
+        <span className="font-mono">{totals.total}</span>
+        <span className="hidden md:inline"> targets</span>
+      </span>
     </div>
   );
 }
@@ -575,7 +611,7 @@ function FilterToggle({
   return (
     <button
       aria-pressed={active}
-      className={`h-11 rounded border px-3 text-xs font-semibold transition sm:h-9 ${
+      className={`h-9 rounded border px-2.5 text-xs font-semibold transition sm:h-8 ${
         active
           ? "border-cyan-300/60 bg-cyan-300/10 text-cyan-100"
           : "border-white/10 bg-white/5 text-slate-300 hover:bg-white/10"
@@ -600,10 +636,10 @@ function NumberFilter({
   value: number | null;
 }) {
   return (
-    <label className="flex h-9 items-center gap-2 rounded border border-white/15 bg-[#070913] px-2">
+    <label className="flex h-9 items-center gap-1.5 rounded border border-white/15 bg-[#070913] px-2 sm:h-8">
       <span className="text-[11px] font-medium uppercase text-slate-500">{label}</span>
       <input
-        className="h-10 w-24 rounded border border-white/10 bg-[#101624] px-2 text-sm font-semibold text-white outline-none [color-scheme:dark] focus:border-signal/50 sm:h-7"
+        className="h-8 w-20 rounded border border-white/10 bg-[#101624] px-2 text-xs font-semibold text-white outline-none [color-scheme:dark] focus:border-signal/50 sm:h-6"
         inputMode="numeric"
         onInput={(event) => {
           const raw = (event.currentTarget as HTMLInputElement).value.replace(/[^0-9]/g, "");
@@ -669,7 +705,7 @@ function RaidTargetTableHeader({
 }) {
   return (
     <>
-      <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 border-b border-white/10 px-2 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500 sm:grid-cols-[minmax(0,1fr)_64px_96px_88px_auto] sm:px-3">
+      <div className="grid grid-cols-[minmax(0,1fr)_40px] gap-2 border-b border-white/10 px-2 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500 sm:grid-cols-[minmax(0,1fr)_64px_96px_88px_40px] sm:px-3">
         <span>Target</span>
         {sortColumns.map((column) => (
           <button
@@ -708,7 +744,7 @@ function DebrisTargetTableHeader({
 }) {
   return (
     <>
-      <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 border-b border-white/10 px-2 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500 sm:grid-cols-[minmax(0,1fr)_64px_88px_88px_88px_72px_72px_auto] sm:px-3">
+      <div className="grid grid-cols-[minmax(0,1fr)_40px] gap-2 border-b border-white/10 px-2 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500 sm:grid-cols-[minmax(0,1fr)_64px_88px_88px_88px_72px_72px_40px] sm:px-3">
         <span>Debris field</span>
         {debrisSortColumns.map((column) => (
           <button
@@ -743,7 +779,6 @@ export function DebrisTargetRow({
   now,
   onHarvest,
   onSelectPlanet,
-  onSelectMoon,
   onSelectPlayer,
   target,
 }: {
@@ -751,13 +786,13 @@ export function DebrisTargetRow({
   now: number;
   onHarvest?: ((target: DebrisFinderTarget) => void) | undefined;
   onSelectPlanet?: ((coords: Coordinates) => void) | undefined;
-  onSelectMoon?: ((coords: Coordinates) => void) | undefined;
   onSelectPlayer?: ((wallet: string) => void) | undefined;
   target: DebrisFinderTarget;
 }) {
   const commanderLabel = shortAddress(target.owner);
+  const targetName = target.name?.trim();
   return (
-    <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 border-b border-white/5 px-2 py-2.5 text-sm last:border-b-0 sm:grid-cols-[minmax(0,1fr)_64px_88px_88px_88px_72px_72px_auto] sm:px-3">
+    <div className="grid grid-cols-[minmax(0,1fr)_40px] items-center gap-2 border-b border-white/5 px-2 py-1.5 text-sm last:border-b-0 sm:grid-cols-[minmax(0,1fr)_64px_88px_88px_88px_72px_72px_40px] sm:px-3">
       <div className="flex min-w-0 items-center gap-2.5">
         <span className="relative h-7 w-7 shrink-0 overflow-hidden rounded border border-white/10 bg-black/30">
           <OptimizedImage
@@ -777,9 +812,11 @@ export function DebrisTargetRow({
               title={`Open ${coordinateLabel(target.coordinates)}`}
               type="button"
             >
-              {target.name?.trim() || coordinateLabel(target.coordinates)}
+              {targetName || coordinateLabel(target.coordinates)}
             </button>
-            <span className="shrink-0 font-mono text-[10px] text-slate-500">{coordinateLabel(target.coordinates)}</span>
+            {targetName ? (
+              <span className="shrink-0 font-mono text-[10px] text-slate-500">{coordinateLabel(target.coordinates)}</span>
+            ) : null}
             <span
               className="inline-flex shrink-0 items-center gap-1 rounded border border-amber-300/40 bg-amber-400/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase leading-none text-amber-100"
               title={`${target.metal.toLocaleString("en-US")} metal / ${target.crystal.toLocaleString("en-US")} crystal`}
@@ -806,15 +843,6 @@ export function DebrisTargetRow({
               <span><span className="text-slate-600">ETA </span>{etaLabel(target.etaSeconds, now)}</span>
             </span>
           </div>
-          {target.hasMoon ? (
-            <PlanetMoonSubsection
-              className="ml-4"
-              label="Moon"
-              onClick={onSelectMoon ? () => onSelectMoon(target.coordinates) : undefined}
-              planetType={target.archetype}
-              title={`Open moon at ${coordinateLabel(target.coordinates)}`}
-            />
-          ) : null}
         </div>
       </div>
       <span className="hidden text-right font-mono text-slate-400 sm:block" title="Distance from your active planet">{distanceLabel(target.distance)}</span>
@@ -823,27 +851,19 @@ export function DebrisTargetRow({
       <span className="hidden text-right font-mono text-cyan-100 sm:block" title="Crystal debris">{compactNumber(target.crystal)}</span>
       <span className="hidden text-right font-mono text-slate-400 sm:block" title="Estimated recycler ETA">{etaLabel(target.etaSeconds, now)}</span>
       <span className="hidden text-right font-mono text-slate-400 sm:block" title="Estimated fuel">{target.fuelCost === null ? "--" : compactNumber(target.fuelCost)}</span>
-      <div className="flex shrink-0 flex-col items-end gap-1 self-start">
+      <div className="flex shrink-0 items-center justify-end self-center">
         {action ? (
           <button
-            className="inline-flex h-10 shrink-0 items-center gap-1 rounded border border-amber-300/25 px-2 text-xs font-semibold text-amber-100 transition hover:bg-amber-300/10 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/[0.03] disabled:text-slate-500 sm:h-7"
+            aria-label={action.disabledReason ? `${action.label}: ${action.disabledReason}` : action.label}
+            className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded border border-amber-300/25 text-amber-100 transition hover:bg-amber-300/10 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/[0.03] disabled:text-slate-500 sm:h-8 sm:w-8"
             disabled={Boolean(action.disabledReason) || !onHarvest}
             onClick={() => onHarvest?.(target)}
-            title={action.disabledReason ?? "Harvest this debris field"}
+            title={action.disabledReason ? `${action.label}: ${action.disabledReason}` : action.label}
             type="button"
           >
-            <Recycle aria-hidden="true" size={12} /> {action.label}
+            <Recycle aria-hidden="true" size={14} strokeWidth={1.9} />
           </button>
         ) : null}
-        <ActionReasonNote reason={action?.disabledReason} />
-        <button
-          className="inline-flex h-10 shrink-0 items-center gap-1 rounded border border-signal/25 px-2 text-xs font-medium text-signal transition hover:bg-signal/10 disabled:cursor-default disabled:opacity-50 sm:h-7"
-          disabled={!onSelectPlanet}
-          onClick={() => onSelectPlanet?.(target.coordinates)}
-          type="button"
-        >
-          <Crosshair aria-hidden="true" size={12} /> Inspect
-        </button>
       </div>
     </div>
   );
@@ -851,26 +871,21 @@ export function DebrisTargetRow({
 
 export function RaidTargetRow({
   attackAction,
-  missionSubtext,
-  now,
   onAttackTarget,
   onSelectAlliance,
-  onSelectMoon,
   onSelectPlanet,
   onSelectPlayer,
   target,
 }: {
   attackAction?: RaidTargetAttackAction | null | undefined;
-  missionSubtext: ReturnType<typeof planetMissionSubtext>;
-  now: number;
   onAttackTarget?: ((target: RaidTarget) => void) | undefined;
   onSelectAlliance?: ((allianceId: string) => void) | undefined;
-  onSelectMoon?: ((coords: Coordinates) => void) | undefined;
   onSelectPlanet?: ((coords: Coordinates) => void) | undefined;
   onSelectPlayer?: ((wallet: string) => void) | undefined;
   target: RaidTarget;
 }) {
   const commanderLabel = target.ownerDisplayName?.trim() || shortAddress(target.owner);
+  const targetName = target.name?.trim();
   const alliance = target.alliance;
   const rowTone = target.protection.isProtected
     ? "border-red-300/15 bg-red-300/[0.04]"
@@ -882,7 +897,7 @@ export function RaidTargetRow({
 
   return (
     <div
-      className={`grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 border-b px-2 py-2.5 text-sm last:border-b-0 sm:grid-cols-[minmax(0,1fr)_64px_96px_88px_auto] sm:px-3 ${rowTone}`}
+      className={`grid grid-cols-[minmax(0,1fr)_40px] items-center gap-2 border-b px-2 py-1.5 text-sm last:border-b-0 sm:grid-cols-[minmax(0,1fr)_64px_96px_88px_40px] sm:px-3 ${rowTone}`}
     >
       <div className="flex min-w-0 items-center gap-2.5">
         <span className="relative h-7 w-7 shrink-0 overflow-hidden rounded border border-white/10 bg-black/30">
@@ -903,9 +918,11 @@ export function RaidTargetRow({
               title={`Open ${coordinateLabel(target.coordinates)}`}
               type="button"
             >
-              {target.name?.trim() || coordinateLabel(target.coordinates)}
+              {targetName || coordinateLabel(target.coordinates)}
             </button>
-            <span className="shrink-0 font-mono text-[10px] text-slate-500">{coordinateLabel(target.coordinates)}</span>
+            {targetName ? (
+              <span className="shrink-0 font-mono text-[10px] text-slate-500">{coordinateLabel(target.coordinates)}</span>
+            ) : null}
             {target.protection.defenderInactive ? <AfkFlair /> : null}
             {target.protection.isProtected ? (
               <span
@@ -929,18 +946,6 @@ export function RaidTargetRow({
                 title={`At war with ${alliance.name}`}
               >
                 {`War [${alliance.tag}]`}
-              </span>
-            ) : null}
-            {target.inbound.count > 0 ? (
-              <span
-                className="inline-flex shrink-0 items-center gap-1 rounded border border-amber-300/40 bg-amber-400/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase leading-none text-amber-100"
-                title={
-                  target.inbound.nextArrivalAtMs !== null
-                    ? `Fleet inbound — arrives in ${formatDurationUntil(target.inbound.nextArrivalAtMs, now)}`
-                    : "Fleet already inbound to this target"
-                }
-              >
-                <Swords aria-hidden="true" size={10} /> Inbound {target.inbound.count}
               </span>
             ) : null}
           </div>
@@ -980,17 +985,6 @@ export function RaidTargetRow({
               </span>
             </span>
           </div>
-          <PlanetMissionLines className="mt-1" planetId={target.planetId} subtext={missionSubtext} />
-          {target.hasMoon ? (
-            <PlanetMoonSubsection
-              className="ml-4"
-              detail={moonRaidableResourcesLabel(target.moonResources)}
-              label="Moon"
-              onClick={onSelectMoon ? () => onSelectMoon(target.coordinates) : undefined}
-              planetType={target.archetype}
-              title={`Open moon at ${coordinateLabel(target.coordinates)}`}
-            />
-          ) : null}
         </div>
       </div>
 
@@ -1010,27 +1004,19 @@ export function RaidTargetRow({
         {compactNumber(target.combatPower)}
       </span>
 
-      <div className="row-span-2 flex shrink-0 flex-col items-end gap-1 self-start sm:row-span-1">
+      <div className="flex shrink-0 items-center justify-end self-center">
         {attackAction ? (
           <button
-            className="inline-flex h-10 shrink-0 items-center gap-1 rounded border border-rose-300/25 px-2 text-xs font-semibold text-rose-100 transition hover:bg-rose-300/10 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/[0.03] disabled:text-slate-500 sm:h-7"
+            aria-label={attackAction.disabledReason ? `${attackAction.label}: ${attackAction.disabledReason}` : attackAction.label}
+            className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded border border-rose-300/25 text-rose-100 transition hover:bg-rose-300/10 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/[0.03] disabled:text-slate-500 sm:h-8 sm:w-8"
             disabled={Boolean(attackAction.disabledReason) || !onAttackTarget}
             onClick={() => onAttackTarget?.(target)}
-            title={attackAction.disabledReason ?? "Attack this planet"}
+            title={attackAction.disabledReason ? `${attackAction.label}: ${attackAction.disabledReason}` : attackAction.label}
             type="button"
           >
-            <Swords aria-hidden="true" size={12} /> {attackAction.label}
+            <Swords aria-hidden="true" size={14} strokeWidth={1.9} />
           </button>
         ) : null}
-        <ActionReasonNote reason={attackAction?.disabledReason} />
-        <button
-          className="inline-flex h-10 shrink-0 items-center gap-1 rounded border border-signal/25 px-2 text-xs font-medium text-signal transition hover:bg-signal/10 disabled:cursor-default disabled:opacity-50 sm:h-7"
-          disabled={!onSelectPlanet}
-          onClick={() => onSelectPlanet?.(target.coordinates)}
-          type="button"
-        >
-          <Crosshair aria-hidden="true" size={12} /> Inspect
-        </button>
       </div>
     </div>
   );
@@ -1087,18 +1073,6 @@ function raidableResourcesLabel(target: RaidTarget): string {
     return `${breakdown} — ~${pct}% plunder of the planet's full accrued public resources (${compactNumber(target.grossLoot)}), not its full stockpile`;
   }
   return breakdown;
-}
-
-function moonRaidableResourcesLabel(resources: RaidTarget["moonResources"]): string {
-  if (!resources) return "Moon resources unavailable";
-  const total = safeResourceNumber(resources.metal) + safeResourceNumber(resources.crystal) + safeResourceNumber(resources.deuterium);
-  return `Moon resources ${compactNumber(total)}`;
-}
-
-function safeResourceNumber(value: string | number | null | undefined): number {
-  if (value === null || value === undefined) return 0;
-  const parsed = typeof value === "number" ? value : Number.parseFloat(value);
-  return Number.isFinite(parsed) ? Math.max(0, Math.trunc(parsed)) : 0;
 }
 
 export function defenseLabel(target: RaidTarget): string {

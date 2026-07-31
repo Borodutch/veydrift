@@ -12,17 +12,13 @@ import {
   cachedGalaxySystemPlanets,
   clearGalaxySystemCache,
   estimateGalaxyMissionPreview,
-  PUBLIC_INTEL_SUMMARY_LABEL,
   formatGalaxyHeatLabel,
   formatAllianceLabel,
   formatAttackBlockReason,
-  formatAttackRuleLabels,
   formatGalaxyAllianceIdentityLabel,
   formatGalaxyCommanderLabel,
   formatMoonChanceLabel,
   formatMissionPreview,
-  formatGalaxyOccupancySource,
-  formatGalaxyOccupancySummary,
   galaxySystemRequestUrl,
   galaxyMissionFuelCost,
   galaxyMissionTravelSeconds,
@@ -356,10 +352,10 @@ describe("tester universe display data", () => {
     });
 
     expect(formatGalaxyCommanderLabel(planet!)).toBe("Nova Prime");
-    expect(formatGalaxyAllianceIdentityLabel(planet?.alliance ?? null)).toBe("No alliance");
+    expect(formatGalaxyAllianceIdentityLabel(planet?.alliance ?? null)).toBe("");
   });
 
-  test("galaxy attack intel uses clear target and loot copy", () => {
+  test("galaxy attack blockers use clear copy without tactical relationship clutter", () => {
     const sameAllianceStatus = {
       allowed: false,
       blockedReason: "same_alliance" as const,
@@ -371,32 +367,10 @@ describe("tester universe display data", () => {
     };
 
     expect(formatAttackBlockReason(sameAllianceStatus)).toBe("Attack blocked: target belongs to your alliance.");
-    expect(formatAttackRuleLabels(sameAllianceStatus)).toEqual([
-      "Weaker target",
-      "Honor target",
-      "Loot: 75%",
-    ]);
-    expect(formatAttackRuleLabels(sameAllianceStatus).join(" ")).not.toMatch(/\bHonorable\b|Inactive target\b|plunder/i);
     expect(formatAttackBlockReason({
       allowed: false,
       blockedReason: "same_alliance",
     })).toBe("Attack blocked: target belongs to your alliance.");
-  });
-
-  test("galaxy occupancy summary avoids implementation wording", () => {
-    const labels = [
-      formatGalaxyOccupancySummary(0),
-      formatGalaxyOccupancySummary(3),
-      formatGalaxyOccupancySource("api", false),
-      formatGalaxyOccupancySource("error", false),
-      formatGalaxyOccupancySource("api", true),
-    ].filter((label): label is string => Boolean(label));
-
-    expect(labels).toEqual([
-      "No occupants",
-      "3 occupied",
-    ]);
-    expect(labels.join(" ")).not.toMatch(/\b(indexed|real|fallback|injected|data|current system|home planet shown)\b/i);
   });
 
   test("keeps current galaxy system rows visible during background refreshes", () => {
@@ -1061,7 +1035,6 @@ describe("tester universe display data", () => {
       { enabled: true, kind: "defenseHold", label: "Defend" },
     ]);
     expect([...enemyActions, ...ownActions, ...missingPlanetActions].map((action) => action.label).join(" ")).not.toMatch(/spy|espionage|probe/i);
-    expect(PUBLIC_INTEL_SUMMARY_LABEL).toBe("Public intel");
     expect(Object.keys(enemyActions.find((action) => action.kind === "attack" && action.enabled)?.ships ?? {})).toEqual(
       Object.keys(emptyMissionShips())
     );

@@ -529,10 +529,9 @@ describe("AlliancePage loading display", () => {
       enabled: false,
       reason: "War declaration time is unavailable; End War remains locked.",
     });
-    expect(alliancePageSource).toContain("disabledReasonId");
-    expect(alliancePageSource).toContain("aria-describedby={disabledReasonId}");
-    expect(alliancePageSource).toContain('role="tooltip"');
-    expect(alliancePageSource).toContain("group-hover:opacity-100 group-focus-within:opacity-100");
+    expect(alliancePageSource).not.toContain("disabledReasonId");
+    expect(alliancePageSource).not.toContain('role="tooltip"');
+    expect(alliancePageSource).toContain('title={endAction.reason ?? "End war"}');
     expect(alliancePageSource).toContain("Only the alliance that declared this war can end it.");
     expect(alliancePageSource).toContain("Reciprocal war: attack score protection and bashing limits are bypassed for both alliances.");
   });

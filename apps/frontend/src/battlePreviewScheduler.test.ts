@@ -6,6 +6,7 @@ import {
   type ContractBattleInput,
 } from "./battlePreview";
 import {
+  ATTACK_BATTLE_PREVIEW_DEBOUNCE_MS,
   BattlePreviewScheduler,
   battlePreviewInputKey,
   type BattlePreviewWorker,
@@ -37,11 +38,12 @@ const forecast = { probableOutcome: "draw", sampleCount: 128 } as ContractBattle
 
 describe("BattlePreviewScheduler", () => {
   test("returns a compact 128-sample result instead of cloning every sample to the UI", () => {
-    const summary = summarizeContractBattleForecast(forecastContractBattle(mixedFleetInput));
+    const summary = summarizeContractBattleForecast(forecastContractBattle(mixedFleetInput, undefined, false));
 
     expect(summary.sampleCount).toBe(128);
     expect("samples" in summary).toBe(false);
     expect(summary.sampleReport.sampleId).toBeGreaterThan(0);
+    expect("rounds" in summary.sampleReport).toBe(false);
   }, 15_000);
 
   test("coalesces a rapid large-fleet edit burst into one simulation", () => {
@@ -54,7 +56,7 @@ describe("BattlePreviewScheduler", () => {
         workers.push(worker);
         return worker;
       },
-      debounceMs: 180,
+      debounceMs: ATTACK_BATTLE_PREVIEW_DEBOUNCE_MS,
       setTimer: timers.set,
       clearTimer: timers.clear,
     });
@@ -111,6 +113,27 @@ describe("BattlePreviewScheduler", () => {
     latestWorker?.respond({ requestId: latestWorker.requests[0]?.requestId ?? -1, forecast });
     expect(results).toEqual(["latest"]);
   });
+
+  test("terminates a worker that never responds instead of leaving the outcome loading forever", () => {
+    const timers = new ManualTimers();
+    const workers: FakeWorker[] = [];
+    const errors: string[] = [];
+    const scheduler = schedulerWithFakes(timers, workers);
+
+    scheduler.schedule(
+      battlePreviewInputKey(mixedFleetInput),
+      mixedFleetInput,
+      () => undefined,
+      (error) => errors.push(error),
+    );
+    timers.runPending();
+    expect(workers).toHaveLength(1);
+    expect(timers.pendingCount).toBe(1);
+
+    timers.runPending();
+    expect(workers[0]?.terminated).toBe(true);
+    expect(errors).toEqual(["The battle preview worker timed out."]);
+  });
 });
 
 class ManualTimers {
@@ -165,7 +188,7 @@ function schedulerWithFakes(timers: ManualTimers, workers: FakeWorker[]): Battle
       workers.push(worker);
       return worker;
     },
-    debounceMs: 180,
+    debounceMs: ATTACK_BATTLE_PREVIEW_DEBOUNCE_MS,
     setTimer: timers.set,
     clearTimer: timers.clear,
   });

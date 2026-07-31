@@ -3551,6 +3551,7 @@ function indexedRiftState(
 type GalaxySystemDetail = "summary" | "full";
 
 type GalaxySystemSummaryPlanet = PlanetMetadata & {
+  name?: string;
   occupiedBy: ReturnType<typeof occupiedPlanetRef>;
   migrationReservation?: ReturnType<typeof migrationReservationRef>;
   debrisField: ReturnType<typeof debrisFieldRef>;
@@ -3720,9 +3721,11 @@ function galaxySystemPayload({
       system
     ).map((planet) => {
       const occupiedPlanet = occupied.get(planet.position);
+      const occupiedPlanetName = occupiedPlanet?.name?.trim();
       const reservedPlanet = occupiedPlanet ? undefined : reserved.get(planet.position);
       const summary: GalaxySystemSummaryPlanet = {
         ...planet,
+        ...(occupiedPlanetName ? { name: occupiedPlanetName } : {}),
         occupiedBy: occupiedPlanetRef(occupiedPlanet, indexer, allianceIntel),
         migrationReservation: migrationReservationRef(reservedPlanet),
         debrisField: debrisFieldRef(debris.get(planet.position)),
@@ -4449,6 +4452,8 @@ type RankedHighscorePlanet = {
     resources: Resources | null;
     resourcesAsOfNow?: Resources | null;
   } | null;
+  stationedDefenderForecastTimeline: StationedDefenderSummary[];
+  stationedDefenderTimelineComplete: true;
   tactical: {
     currentResources: Resources;
     raidableResources: Resources;
@@ -4932,6 +4937,8 @@ function rankedHighscorePlanets(
       archetype: planetArchetypeForTemperature(planet.temperature),
       hasMoon,
       moon,
+      stationedDefenderForecastTimeline: indexer?.stationedDefenderForecastTimelineForPlanet(planet.planetId) ?? [],
+      stationedDefenderTimelineComplete: true,
       tactical
     };
   });

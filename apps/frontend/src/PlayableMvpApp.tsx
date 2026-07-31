@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { ComponentChildren, JSX } from "preact";
-import type { Coordinates, Planet, PlanetType } from "./types";
+import type { Coordinates, Planet, PlanetType, PublicStationedDefender } from "./types";
 import { haptic } from "./haptics";
 import { playSfx } from "./sfx";
 import {
@@ -50,6 +50,7 @@ import { RankingsPage } from "./components/RankingsPage";
 import { RaidTargetFinderPage } from "./components/RaidTargetFinderPage";
 import { AllianceInspectPage, PlayerInspectPage } from "./components/InspectPages";
 import { AlertTriangle } from "lucide-preact";
+import { AnimatedProgressBar } from "./components/AnimatedProgressBar";
 import {
   buildInspectPath,
   canonicalEntityPathForLegacyHashLocation,
@@ -547,6 +548,8 @@ type TacticalMissionTarget = {
   ownerDisplayName: string | null;
   productionPerHour?: OnChainResources | null | undefined;
   resources?: OnChainResources | null | undefined;
+  stationedDefenderForecastTimeline?: PublicStationedDefender[] | null | undefined;
+  stationedDefenderTimelineComplete?: boolean | undefined;
   storageCaps?: OnChainResources | null | undefined;
 };
 
@@ -587,6 +590,8 @@ function tacticalPlanetForMission(target: TacticalMissionTarget): Planet {
           fleet: target.fleetUnits.map((unit) => ({ id: unit.id, count: unit.count })),
           defenses: target.defenseUnits.map((unit) => ({ id: unit.id, count: unit.count })),
           stationedDefenders: null,
+          stationedDefenderForecastTimeline: target.stationedDefenderForecastTimeline ?? null,
+          stationedDefenderTimelineComplete: target.stationedDefenderTimelineComplete === true,
           research,
           productionPerHour: target.productionPerHour ?? null,
           storageCaps: target.storageCaps ?? null,
@@ -632,6 +637,8 @@ export function raidTargetPlanetForMission(target: RaidTarget): Planet {
     ownerDisplayName: target.ownerDisplayName,
     productionPerHour: target.productionPerHour,
     resources: target.currentResources,
+    stationedDefenderForecastTimeline: target.stationedDefenderForecastTimeline,
+    stationedDefenderTimelineComplete: target.stationedDefenderTimelineComplete,
     storageCaps: target.storageCaps,
   });
 }
@@ -910,11 +917,30 @@ export function shouldRefreshAllianceStateForPage(page: Page): boolean {
 }
 
 export function shouldRefreshMissionActionStateForPage(page: Page): boolean {
-  return page === "overview" || page === "galaxy" || page === "planet" || page === "mission-control" || page === "raid-target-finder";
+  return page === "overview" || page === "galaxy" || page === "planet" || page === "rankings" || page === "raid-target-finder";
 }
 
 export function shouldClearCachedShipyardStateForPageRefresh(page: Page): boolean {
   return page === "shipyard" || shouldRefreshMissionActionStateForPage(page);
+}
+
+export function shouldEagerlyRefreshPlanetSwitchForPage(page: Page): boolean {
+  return page !== "mission-control";
+}
+
+export function shouldRefreshPlanetStateForIdentityChange(
+  page: Page,
+  previous: { account: string | undefined; activePlanetId: string | undefined; apiBaseUrl: string | undefined },
+  current: { account: string | undefined; activePlanetId: string | undefined; apiBaseUrl: string | undefined },
+): boolean {
+  const switchingBetweenHydratedPlanets = Boolean(
+    previous.account === current.account
+    && previous.apiBaseUrl === current.apiBaseUrl
+    && previous.activePlanetId
+    && current.activePlanetId
+    && previous.activePlanetId !== current.activePlanetId
+  );
+  return !switchingBetweenHydratedPlanets || shouldEagerlyRefreshPlanetSwitchForPage(page);
 }
 
 // VEY-KANEO-433: Mission Control auto-polls its own data (active missions, the past-mission archives,
@@ -1862,7 +1888,6 @@ interface PlayableMvpAppProps {
   provider?: Eip1193Provider | undefined;
   walletProviderSource?: "injected" | "farcaster" | undefined;
   account?: string | undefined;
-  auctionBanner?: ComponentChildren | undefined;
   miniAppMode?: boolean | undefined;
   onConnectWallet?: (() => void) | undefined;
   planet?: PlanetSummary | undefined;
@@ -2437,6 +2462,13 @@ function overviewMoonMissionAction(
   kind: "transport" | "deploy" | "defenseHold",
   label: string,
 ): GalaxyAction {
+  if (kind === "defenseHold") {
+    return disabledOwnedPlanetMissionAction(
+      kind,
+      label,
+      "Stationed defense can only target planets in the current mission contract.",
+    );
+  }
   if (!action) return disabledOwnedPlanetMissionAction(kind, label, `${label} is unavailable.`);
   if (!action.enabled) {
     return {
@@ -2460,6 +2492,13 @@ function moonTargetMissionAction(
   kind: "attack" | "transport" | "deploy" | "defenseHold",
   label: string,
 ): GalaxyAction {
+  if (kind === "defenseHold") {
+    return disabledMoonTargetMissionAction(
+      kind,
+      label,
+      "Stationed defense can only target planets in the current mission contract.",
+    );
+  }
   if (!action) return disabledMoonTargetMissionAction(kind, label, `${label} is unavailable.`);
   if (!action.enabled) return { ...action, label };
   if (action.mode !== "mission" || action.kind !== kind) {
@@ -2505,6 +2544,8 @@ export function highscorePlanetForMission(planet: HighscorePlanet, entry: Highsc
     ownerDisplayName: entry.displayName ?? null,
     productionPerHour: tactical?.productionPerHour,
     resources: tactical?.currentResources,
+    stationedDefenderForecastTimeline: planet.stationedDefenderForecastTimeline,
+    stationedDefenderTimelineComplete: planet.stationedDefenderTimelineComplete,
     storageCaps: tactical?.storageCaps,
   });
 }
@@ -3235,7 +3276,6 @@ export function PlayableMvpApp({
   provider: providedProvider,
   walletProviderSource: providedWalletProviderSource,
   account: providedAccount,
-  auctionBanner,
   miniAppMode: providedMiniAppMode = false,
   onConnectWallet,
   planet,
@@ -3646,7 +3686,7 @@ export function PlayableMvpApp({
     mission: FleetMissionSummary;
     target: Planet | undefined;
   } | null>(null);
-  // VEY-KANEO-440: an ACS Defend ("Group defend") counterplay awaiting fleet selection. When set, the
+  // VEY-KANEO-440: an ACS Defend ("Defend planet") counterplay awaiting fleet selection. When set, the
   // mission compose picker opens with a hold-duration / holding-fuel / Alliance Depot preview so the
   // player chooses the fleet and speed, instead of immediately sending a default counterplay fleet.
   const [pendingAcsDefend, setPendingAcsDefend] = useState<{
@@ -5417,20 +5457,32 @@ export function PlayableMvpApp({
   }, [homePlanetIdentitySyncKey]);
 
   const initialPageRefreshRef = useRef({
+    page,
     refreshInfrastructureState,
     refreshOnChainState,
   });
   initialPageRefreshRef.current = {
+    page,
     refreshInfrastructureState,
     refreshOnChainState,
   };
+  const previousOnChainRefreshIdentityRef = useRef({ account, activePlanetId, apiBaseUrl });
+  const previousInfrastructureRefreshIdentityRef = useRef({ account, activePlanetId, apiBaseUrl });
 
   useEffect(() => {
+    const previous = previousOnChainRefreshIdentityRef.current;
+    const current = { account, activePlanetId, apiBaseUrl };
+    previousOnChainRefreshIdentityRef.current = current;
+    if (!shouldRefreshPlanetStateForIdentityChange(initialPageRefreshRef.current.page, previous, current)) return;
     void initialPageRefreshRef.current.refreshOnChainState();
   }, [account, activePlanetId, apiBaseUrl]);
 
   useEffect(() => {
     if (!pageStateHydrationReady) return;
+    const previous = previousInfrastructureRefreshIdentityRef.current;
+    const current = { account, activePlanetId, apiBaseUrl };
+    previousInfrastructureRefreshIdentityRef.current = current;
+    if (!shouldRefreshPlanetStateForIdentityChange(initialPageRefreshRef.current.page, previous, current)) return;
     void initialPageRefreshRef.current.refreshInfrastructureState();
   }, [account, activePlanetId, apiBaseUrl, pageStateHydrationReady]);
 
@@ -6043,6 +6095,19 @@ export function PlayableMvpApp({
   useEffect(() => {
     if (!pageStateHydrationReady) return;
     if (page === "moon") {
+      refreshInfrastructureState();
+    }
+  }, [page, pageStateHydrationReady, refreshInfrastructureState]);
+
+  const previousInfrastructurePageRef = useRef(page);
+  useEffect(() => {
+    const previousPage = previousInfrastructurePageRef.current;
+    previousInfrastructurePageRef.current = page;
+    if (
+      pageStateHydrationReady
+      && previousPage !== page
+      && (page === "overview" || page === "infrastructure")
+    ) {
       refreshInfrastructureState();
     }
   }, [page, pageStateHydrationReady, refreshInfrastructureState]);
@@ -7379,6 +7444,25 @@ export function PlayableMvpApp({
     ]);
   }, [missionComposerRefreshKey, refreshInfrastructureState, refreshShipyardState]);
 
+  const missionCounterplayComposerRefreshKey = pendingJoinAttack
+    ? `join:${pendingJoinAttack.attackMissionId}:${activePlanetId ?? "unknown"}`
+    : pendingAcsDefend
+      ? `defend:${pendingAcsDefend.hostileMissionId}:${activePlanetId ?? "unknown"}`
+      : null;
+  const missionCounterplayComposerRefreshKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!missionCounterplayComposerRefreshKey) {
+      missionCounterplayComposerRefreshKeyRef.current = null;
+      return;
+    }
+    if (missionCounterplayComposerRefreshKeyRef.current === missionCounterplayComposerRefreshKey) return;
+    missionCounterplayComposerRefreshKeyRef.current = missionCounterplayComposerRefreshKey;
+
+    // Mission Control can switch origins entirely from its cached wallet roster. Only fetch the
+    // selected origin's live ship inventory once the player actually opens Join/Defend composition.
+    void refreshShipyardState({ clearCachedState: true });
+  }, [missionCounterplayComposerRefreshKey, refreshShipyardState]);
+
   const handleGalaxyAction = useCallback((action: GalaxyAction, target: Planet | undefined, coords: Coordinates) => {
     if (!action.enabled) return;
     setGalaxyAction({ status: "idle" });
@@ -7386,7 +7470,7 @@ export function PlayableMvpApp({
   }, [selectedManagedPlanet]);
 
   const overviewMyPlanetActionGroups = useMemo<OverviewMyPlanetActionGroup[]>(() =>
-    walletPlanets.map((managedPlanet) => ({
+    orderedWalletPlanets.map((managedPlanet) => ({
       planet: managedPlanet,
       actions: overviewMyPlanetActionsFor({
         account,
@@ -7404,7 +7488,7 @@ export function PlayableMvpApp({
         shipyardState,
       }),
     })),
-    [account, activePlanetId, defenseState, onChainSettlement?.homePlanetId, shipyardState, walletPlanets]
+    [account, activePlanetId, defenseState, onChainSettlement?.homePlanetId, orderedWalletPlanets, shipyardState]
   );
 
   const handleOverviewMyPlanetAction = useCallback((action: GalaxyAction, managedPlanet: ManagedPlanetResponse) => {
@@ -7531,6 +7615,27 @@ export function PlayableMvpApp({
     });
   }, [account, allianceState?.membership.allianceId, defenseState, onChainSettlement?.homePlanetId, shipyardState]);
 
+  const hydratePendingAttackTarget = useCallback((targetPlanetId: string, coords: Coordinates) => {
+    if (!apiBaseUrl) return;
+    void fetch(`${apiBaseUrl.replace(/\/+$/, "")}/universe/galaxies/${coords.galaxy}/systems/${coords.system}?detail=full`, {
+      headers: { accept: "application/json" },
+    })
+      .then((response) => {
+        if (!response.ok) throw new Error(`Universe request failed with ${response.status}`);
+        return response.json();
+      })
+      .then((payload) => {
+        const hydratedTarget = joinAttackTargetFromSystemPayload(payload, targetPlanetId, coords);
+        if (!hydratedTarget) return;
+        setPendingGalaxyMission((current) =>
+          current?.action.kind === "attack" && current.target?.id === targetPlanetId
+            ? { ...current, target: hydratedTarget }
+            : current
+        );
+      })
+      .catch((error) => console.error(error));
+  }, [apiBaseUrl]);
+
   const handleRankingsMoonAction = useCallback((action: GalaxyAction, planet: HighscorePlanet, entry: HighscoreEntry) => {
     if (!action.enabled) return;
     setGalaxyAction({ status: "idle" });
@@ -7541,7 +7646,8 @@ export function PlayableMvpApp({
       originPlanet: selectedManagedPlanet,
       target: highscorePlanetForMission(planet, entry),
     });
-  }, [selectedManagedPlanet]);
+    if (action.kind === "attack") hydratePendingAttackTarget(planet.planetId, planet.coordinates);
+  }, [hydratePendingAttackTarget, selectedManagedPlanet]);
 
   const handleRankingsPlanetAction = useCallback((action: GalaxyAction, planet: HighscorePlanet, entry: HighscoreEntry) => {
     if (!action.enabled) return;
@@ -7552,7 +7658,8 @@ export function PlayableMvpApp({
       originPlanet: selectedManagedPlanet,
       target: highscorePlanetForMission(planet, entry),
     });
-  }, [selectedManagedPlanet]);
+    if (action.kind === "attack") hydratePendingAttackTarget(planet.planetId, planet.coordinates);
+  }, [hydratePendingAttackTarget, selectedManagedPlanet]);
 
   const raidFinderAttackAction = useCallback((target: RaidTarget): GalaxyAction => {
     const planet = raidTargetPlanetForMission(target);
@@ -7586,8 +7693,16 @@ export function PlayableMvpApp({
   }, [raidFinderAttackAction]);
 
   const handleRaidFinderAttack = useCallback((target: RaidTarget) => {
-    handleGalaxyAction(raidFinderAttackAction(target), raidTargetPlanetForMission(target), target.coordinates);
-  }, [handleGalaxyAction, raidFinderAttackAction]);
+    const action = raidFinderAttackAction(target);
+    handleGalaxyAction(action, raidTargetPlanetForMission(target), target.coordinates);
+    if (!action.enabled || target.stationedDefenderTimelineComplete) return;
+
+    // Highscore/Raid Finder rows are intentionally compact and older API deployments do not carry
+    // the complete stationed-defense forecast timeline. Hydrate the selected target from the public
+    // system payload so visible base forces, scheduled defenders, and combat tech all feed the same
+    // exact battle preview instead of leaving DEF/report availability unknown.
+    hydratePendingAttackTarget(target.planetId, target.coordinates);
+  }, [handleGalaxyAction, hydratePendingAttackTarget, raidFinderAttackAction]);
 
   const raidFinderHarvestAction = useCallback((target: DebrisFinderTarget): GalaxyAction | null => {
     const planet = debrisTargetPlanetForMission(target);
@@ -7957,7 +8072,7 @@ export function PlayableMvpApp({
     );
   }, [account, gameContract, provider, runMissionTransaction]);
 
-  // VEY-KANEO-440: ACS Defend ("Group defend") opens the full compose picker (fleet + speed +
+  // VEY-KANEO-440: ACS Defend ("Defend planet") opens the full compose picker (fleet + speed +
   // hold/holding-fuel + Alliance Depot preview) instead of firing a default fleet. Intercept was
   // removed from the frontend (VEY-KANEO-439), so this is the only remaining counterplay path.
   const handleMissionCounterplay = useCallback((mission: FleetMissionSummary, _mode: "acsDefend") => {
@@ -8065,7 +8180,7 @@ export function PlayableMvpApp({
     });
 
     if (cachedTarget || !apiBaseUrl || coords.galaxy <= 0 || coords.system <= 0) return;
-    void fetch(`${apiBaseUrl.replace(/\/+$/, "")}/universe/galaxies/${coords.galaxy}/systems/${coords.system}`, {
+    void fetch(`${apiBaseUrl.replace(/\/+$/, "")}/universe/galaxies/${coords.galaxy}/systems/${coords.system}?detail=full`, {
       headers: { accept: "application/json" },
     })
       .then((response) => {
@@ -8355,7 +8470,6 @@ export function PlayableMvpApp({
 
   const topBar = (
     <TopBar
-      auctionBanner={auctionBanner}
       caps={caps}
       crawlerProduction={infrastructureChainState?.crawlerProduction}
       energy={topBarEnergy}
@@ -8517,6 +8631,7 @@ export function PlayableMvpApp({
       return (
         <MissionDetailPage
           actionState={missionAction}
+          activePlanetId={activePlanetId}
           canTransact={canSubmitMissionTransaction}
           detail={missionDetail}
           error={missionDetailError}
@@ -8636,7 +8751,7 @@ export function PlayableMvpApp({
         <MissionCreationPage
           acsDefendContext={{ hostileArrivalMs: pendingAcsDefend.hostileArrivalMs, depotLevel: pendingAcsDefend.depotLevel }}
           acsDefendMode
-          action={{ enabled: true, kind: "acsDefend", label: "Group defend", mode: "mission", mission: "acsDefend", ships: emptyMissionShips() }}
+          action={{ enabled: true, kind: "acsDefend", label: "Defend planet", mode: "mission", mission: "acsDefend", ships: emptyMissionShips() }}
           actionPending={galaxyAction.status === "pending"}
           actionPendingLabel={galaxyAction.status === "pending" ? galaxyAction.label : undefined}
           attackerCombatTechLevels={attackerCombatTechLevels}
@@ -8665,6 +8780,7 @@ export function PlayableMvpApp({
           homeCoords={activePlanetCoords}
           homePlanetId={activePlanetId ?? onChainSettlement?.homePlanetId}
           homePlanet={homePlanetIdentity}
+          ownedPlanets={walletPlanets.map(planetFromSettlementPlanet)}
           defenseState={defenseState}
           shipyardState={missionActionShipyardState}
           onAction={handleGalaxyAction}
@@ -8789,6 +8905,7 @@ export function PlayableMvpApp({
       return (
         <MissionControlPage
           actionState={missionAction}
+          activePlanetId={activePlanetId}
           allActiveMissions={displayAllActiveMissions}
           canTransact={canSubmitMissionTransaction}
           fleetVisibility={displayFleetVisibility}
@@ -9032,7 +9149,6 @@ export function PlayableMvpApp({
           onAttackTarget={handleRaidFinderAttack}
           onHarvestDebrisTarget={handleRaidFinderHarvest}
           onSelectAlliance={handleSelectAlliance}
-          onSelectMoon={handleSelectMoon}
           onSelectPlanet={handleSelectPlanet}
           onSelectPlayer={handleSelectPlayer}
           originCoordinates={activePlanetCoords}
@@ -9530,6 +9646,16 @@ function PlanetSelectorButton({
 
   const bodyLabel = bodyKind === "moon" ? "moon" : "planet";
   const label = `${hasIncomingAttack ? "Incoming attack warning. " : ""}Select ${planetDisplayName(planet)} ${bodyLabel} at ${planet.coordinates}`;
+  const selectionStateClass = selected
+    ? "bg-cyan-300/[0.07] shadow-[inset_0_0_0_1px_rgba(128,241,255,0.10)]"
+    : hasIncomingAttack
+      ? "bg-red-500/15 shadow-lg shadow-red-950/25"
+      : "bg-white/[0.045] hover:bg-white/[0.075]";
+  const borderStateClass = hasIncomingAttack
+    ? "border-red-400/70 ring-1 ring-red-400/25"
+    : selected
+      ? "border-cyan-300/35"
+      : "border-white/10 hover:border-cyan-200/40";
   return (
     <button
       aria-current={selected ? "true" : undefined}
@@ -9537,13 +9663,7 @@ function PlanetSelectorButton({
       aria-label={label}
       className={`veydrift-planet-selector-button group relative grid w-full min-w-0 shrink-0 justify-items-center gap-1 rounded border p-1.5 text-center transition focus:outline-none ${
         reordering ? "cursor-grabbing" : "cursor-pointer"
-      } ${
-        hasIncomingAttack
-          ? "border-red-400/70 bg-red-500/15 shadow-lg shadow-red-950/25"
-          : selected
-          ? "border-cyan-300/35 bg-cyan-300/[0.07] shadow-[inset_0_0_0_1px_rgba(128,241,255,0.10)]"
-          : "border-white/10 bg-white/[0.045] hover:border-cyan-200/40 hover:bg-white/[0.075]"
-      }`}
+      } ${selectionStateClass} ${borderStateClass}`}
       data-planet-selector-long-press={bodyKind === "planet" ? planet.planetId : undefined}
       data-planet-selector-reorder-active={reordering ? "true" : undefined}
       onClick={(event) => {
@@ -9562,23 +9682,25 @@ function PlanetSelectorButton({
       title={label}
       type="button"
     >
-      {hasIncomingAttack ? (
-        <span
-          aria-hidden="true"
-          className="absolute right-1 top-1 inline-grid h-5 w-5 place-items-center rounded-full border border-red-300/60 bg-red-500/85 text-white shadow shadow-red-950/40"
-          title="Incoming attack"
-        >
-          <AlertTriangle size={12} strokeWidth={2.4} />
+      <span className="relative h-14 w-14">
+        <span className="block h-14 w-14 overflow-hidden rounded-full bg-black/30">
+          <img
+            alt=""
+            className="h-full w-full object-cover"
+            loading="lazy"
+            src={planetImage(planet)}
+          />
+          {showMoonIndicator ? <PlanetMoonIndicator compact planetType={planetTypeFromTemperature(planet.temperature)} /> : null}
         </span>
-      ) : null}
-      <span className="relative h-14 w-14 overflow-hidden rounded-full bg-black/30">
-        <img
-          alt=""
-          className="h-full w-full object-cover"
-          loading="lazy"
-          src={planetImage(planet)}
-        />
-        {showMoonIndicator ? <PlanetMoonIndicator compact planetType={planetTypeFromTemperature(planet.temperature)} /> : null}
+        {hasIncomingAttack ? (
+          <span
+            aria-hidden="true"
+            className="absolute -right-1 -top-1 z-10 grid h-5 w-5 place-items-center rounded-full border border-red-300/60 bg-red-500/85 text-white shadow shadow-red-950/40"
+            title="Incoming attack"
+          >
+            <AlertTriangle className="block h-3 w-3" strokeWidth={2.4} />
+          </span>
+        ) : null}
       </span>
       <span className="line-clamp-2 block max-w-full text-[0.68rem] font-medium leading-4 text-slate-200 [overflow-wrap:anywhere]">
         {planetDisplayName(planet)}
@@ -9612,15 +9734,18 @@ function PlanetSelectorProgressBars({
     >
       {bars.map((bar) => (
         <span
-          className="h-1.5 overflow-hidden rounded-full border border-white/5 bg-white/10 opacity-100"
+          className="contents"
           data-planet-selector-progress={bar.kind}
           data-planet-selector-progress-active="true"
           key={bar.kind}
           title={bar.title}
         >
-          <span
-            className={`block h-full rounded-full ${bar.color} ${bar.indeterminate ? "w-2/3 animate-pulse" : "transition-[width]"}`}
-            style={bar.indeterminate ? undefined : { width: `${Math.round(bar.progress * 100)}%` }}
+          <AnimatedProgressBar
+            className="h-1.5 border border-white/5 bg-white/10 opacity-100"
+            fillClassName={bar.color}
+            indeterminate={bar.indeterminate}
+            label={bar.title}
+            value={bar.progress}
           />
         </span>
       ))}

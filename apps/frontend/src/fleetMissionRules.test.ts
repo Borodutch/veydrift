@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 
 import {
   LOCAL_HARVEST_DISTANCE,
+  fleetMissionAvailableCargoCapacity,
+  fleetMissionCargoCapacity,
   fleetMissionDistance,
   fleetMissionDistanceForMission,
   fleetMissionFuelCost,
@@ -42,6 +44,23 @@ describe("fleetMissionFuelCost", () => {
     expect(fleetMissionFuelCost({ ...noShips, deathstar: 1, lightFighter: 100 }, 20_000, {}, 50)).toBeLessThan(
       fleetMissionFuelCost({ ...noShips, deathstar: 1, lightFighter: 100 }, 20_000),
     );
+  });
+});
+
+describe("fleet mission cargo capacity", () => {
+  test("includes combat-ship holds and reserves their deuterium fuel", () => {
+    const ships = {
+      ...noShips,
+      heavyFighter: 5,
+      cruiser: 2,
+      battleship: 1,
+    };
+    const distance = 1_025;
+    const fuel = fleetMissionFuelCost(ships, distance);
+
+    expect(fleetMissionCargoCapacity(ships)).toBe(3_600);
+    expect(fuel).toBe(161);
+    expect(fleetMissionAvailableCargoCapacity(ships, distance)).toBe(3_600 - fuel);
   });
 });
 

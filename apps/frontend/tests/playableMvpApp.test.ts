@@ -412,6 +412,12 @@ describe("Playable MVP app display helpers", () => {
         fleetMission({ missionId: "self-inbound", owner: wallet, originPlanetId: "7", targetPlanetId: "8" }),
         fleetMission({ missionId: "out-selected", originPlanetId: "8", targetPlanetId: "9" }),
         fleetMission({ missionId: "out-other", originPlanetId: "7", targetPlanetId: "9" }),
+        fleetMission({
+          missionId: "transport-to-selected",
+          missionType: "Transport",
+          originPlanetId: "7",
+          targetPlanetId: "8",
+        }),
       ],
       returning: [
         fleetMission({ missionId: "ret-selected", originPlanetId: "8", targetPlanetId: "9", status: "Returning" }),
@@ -422,13 +428,22 @@ describe("Playable MVP app display helpers", () => {
 
     const scoped = planetScopedFleetVisibility(visibility, "8", ["7", "8"]);
 
-    expect(scoped?.incoming.map((mission) => mission.missionId)).toEqual(["in-selected", "self-inbound"]);
+    expect(scoped?.incoming.map((mission) => mission.missionId)).toEqual([
+      "in-selected",
+      "self-inbound",
+      "transport-to-selected",
+    ]);
     expect(scoped?.outgoing.map((mission) => mission.missionId)).toEqual(["out-selected"]);
     expect(scoped?.returning.map((mission) => mission.missionId)).toEqual(["ret-selected"]);
 
     const switched = planetScopedFleetVisibility(visibility, "7", ["7", "8"]);
     expect(switched?.incoming.map((mission) => mission.missionId)).toEqual(["in-other"]);
-    expect(switched?.outgoing.map((mission) => mission.missionId)).toEqual(["in-selected", "self-inbound", "out-other"]);
+    expect(switched?.outgoing.map((mission) => mission.missionId)).toEqual([
+      "in-selected",
+      "self-inbound",
+      "out-other",
+      "transport-to-selected",
+    ]);
     expect(switched?.returning.map((mission) => mission.missionId)).toEqual(["ret-other"]);
   });
 
@@ -576,12 +591,11 @@ describe("Playable MVP app display helpers", () => {
       ships: { smallCargo: 0 },
     });
     expect(moonActions[2]).toMatchObject({
-      enabled: true,
+      enabled: false,
       kind: "defenseHold",
       label: "Defend",
       mission: "defenseHold",
-      defaultTargetIsMoon: true,
-      ships: { smallCargo: 0 },
+      reason: "Stationed defense can only target planets in the current mission contract.",
     });
   });
 
@@ -650,7 +664,12 @@ describe("Playable MVP app display helpers", () => {
     });
 
     expect(ownMoonActions.map((action) => action.label)).toEqual(["Transport", "Deploy", "Defend"]);
-    expect(ownMoonActions.every((action) => action.enabled && action.defaultTargetIsMoon === true)).toBe(true);
+    expect(ownMoonActions.slice(0, 2).every((action) => action.enabled && action.defaultTargetIsMoon === true)).toBe(true);
+    expect(ownMoonActions[2]).toMatchObject({
+      enabled: false,
+      kind: "defenseHold",
+      reason: "Stationed defense can only target planets in the current mission contract.",
+    });
     expect(enemyMoonActions).toHaveLength(1);
     expect(enemyMoonActions[0]).toMatchObject({
       enabled: true,
@@ -1506,6 +1525,16 @@ describe("Playable MVP app display helpers", () => {
       { id: 6, level: 2 },
       { id: 7, level: 1 },
     ]);
+    expect(target.publicState?.stationedDefenderForecastTimeline).toEqual([]);
+    expect(target.publicState?.stationedDefenderTimelineComplete).toBe(true);
+
+    const forecast = publicTargetBattleForecast(
+      { ...emptyMissionShips(), lightFighter: 1 },
+      target,
+    );
+    expect(forecast.kind).not.toBe("uncertain");
+    expect(forecast.defenderPower).toBeGreaterThan(0);
+    expect(forecast.sampleReport).toBeDefined();
   });
 
   test("carries Rankings target defenses, fleet, and combat techs into attack mission public state", () => {
@@ -1515,6 +1544,8 @@ describe("Playable MVP app display helpers", () => {
       coordinates: { galaxy: 5, system: 314, position: 5 },
       archetype: "temperate-ocean",
       hasMoon: true,
+      stationedDefenderForecastTimeline: [],
+      stationedDefenderTimelineComplete: true,
       tactical: {
         currentResources: { metal: "1000", crystal: "2000", deuterium: "3000" },
         raidableResources: { metal: "500", crystal: "1000", deuterium: "1500" },
@@ -1587,9 +1618,9 @@ describe("Playable MVP app display helpers", () => {
 
     expect(composition.defenses.reduce((sum, unit) => sum + unit.count, 0)).toBe(135);
     expect(composition.fleet).toEqual([expect.objectContaining({ label: "Heavy Fighter", count: 57 })]);
-    expect(forecast.kind).toBe("uncertain");
-    expect(forecast.defenderPower).toBeNull();
-    expect(forecast.detail).toContain("Stationed-defender intel is unavailable");
+    expect(forecast.kind).not.toBe("uncertain");
+    expect(forecast.defenderPower).toBeGreaterThan(0);
+    expect(forecast.sampleReport).toBeDefined();
     expect(forecast.defenderTechLevels).toEqual({ weapons: 7, shielding: 6, armor: 6 });
     expect(renderedText).toContain("Heavy Fighter");
     expect(renderedText).toContain("Rocket Launcher");
@@ -3600,6 +3631,8 @@ function raidTarget(overrides: Partial<RaidTarget> = {}): RaidTarget {
     defensePower: 0,
     defenseCount: 0,
     defenseUnits: [],
+    stationedDefenderForecastTimeline: [],
+    stationedDefenderTimelineComplete: true,
     protection: {
       isProtected: false,
       isSameAlliance: false,

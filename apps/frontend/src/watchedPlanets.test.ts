@@ -105,6 +105,19 @@ describe("watched planets UI", () => {
     expect(overviewSource).toContain("Retry");
     expect(overviewSource).toContain("watchedPlanetsPanelRange");
   });
+
+  test("keeps Galaxy identity and secondary actions visually quiet", () => {
+    expect(galaxySource).toContain("!isOwnedByAccount && planet.occupiedBy?.planetId");
+    expect(galaxySource).not.toContain("Inspect moon");
+    expect(watchableRowSource).toContain('planet.alliance ? "self-start sm:block" : "self-stretch items-center justify-end sm:flex"');
+    expect(watchableRowSource).toContain('grid-cols-[2rem_minmax(0,1fr)_auto] sm:grid-cols-[2.25rem_minmax(0,1fr)_8rem_auto]');
+    expect(watchableRowSource).toContain('"col-start-3 row-start-1 self-center justify-end sm:col-start-4"');
+    expect(watchableRowSource).toContain("mobileIdentityInMeta && index === 0");
+    expect(galaxySource).toContain("mobileIdentityInMeta");
+    expect(watchableRowSource).toContain("items-center whitespace-nowrap");
+    expect(watchableRowSource).toContain("showIdentity && !compact");
+    expect(watchableRowSource).not.toContain("hover:underline");
+  });
 });
 
 describe("overview planet sections", () => {
@@ -134,6 +147,9 @@ describe("overview planet sections", () => {
     expect(overviewSource.match(/showMoonIndicator={false}/g)?.length).toBe(2);
     expect(overviewSource).toContain("current={isSelected}");
     expect(overviewSource).not.toContain("{myPlanets.length} owned");
+    expect(watchableRowSource).toContain("canWatch || actionSlot");
+    expect(watchableRowSource).toContain("{actionSlot}");
+    expect(watchableRowSource).toContain('compact ? "pt-0" : "pt-2"');
   });
 
   test("lets nested moon rows span the full watchable row width", () => {

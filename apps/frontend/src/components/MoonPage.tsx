@@ -462,21 +462,21 @@ export function MoonActionStrip({ actions }: { actions?: MoonOverviewAction[] | 
 
   return (
     <div className="grid gap-2">
-      <div aria-label="Moon actions" className="grid gap-2 sm:grid-cols-5">
+      <div aria-label="Moon actions" className="flex flex-wrap gap-2">
         {actions.map((action) => {
           const Icon = moonActionIcon(action.kind);
           const disabled = Boolean(action.disabledReason || !action.onClick);
           return (
             <button
-              className="inline-flex min-h-10 items-center justify-center gap-2 rounded border border-cyan-200/20 bg-cyan-200/10 px-3 py-2 text-xs font-semibold text-cyan-100 transition hover:border-cyan-200/40 hover:bg-cyan-200/15 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/[0.03] disabled:text-slate-500"
+              aria-label={action.disabledReason ? `${action.label}: ${action.disabledReason}` : action.label}
+              className="inline-flex h-10 w-10 items-center justify-center rounded border border-cyan-200/20 bg-cyan-200/10 text-cyan-100 transition hover:border-cyan-200/40 hover:bg-cyan-200/15 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/[0.03] disabled:text-slate-500"
               disabled={disabled}
               key={action.kind}
               onClick={action.onClick}
-              title={action.disabledReason}
+              title={action.disabledReason ? `${action.label}: ${action.disabledReason}` : action.label}
               type="button"
             >
               <Icon aria-hidden="true" size={15} strokeWidth={1.9} />
-              <span>{action.label}</span>
             </button>
           );
         })}

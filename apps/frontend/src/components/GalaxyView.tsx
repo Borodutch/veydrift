@@ -1,6 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from "preact/hooks";
 import type { Planet, Coordinates } from "../types";
-import { ActionReasonNote } from "./ActionReasonNote";
 import {
   DEFAULT_MISSION_SPEED_PERCENT,
   type FleetDriveLevels,
@@ -40,12 +39,11 @@ import { InlineSyncIndicator } from "./VeydriftLoader";
 import { GalaxyRowsSkeleton } from "./LoadingSkeletons";
 import { InlineStateNotice } from "./InlineStateNotice";
 import { WatchablePlanetRow, type PlanetMetaItem } from "./WatchablePlanetRow";
+import { galaxyActionIcon } from "./GalaxyActionIcon";
 
 const SMALL_CARGO_SHIP_ID = 0;
 const GALAXY_SYSTEM_CACHE_TTL_MS = 2 * 60 * 1_000;
 const defaultMissionShips = (): Partial<MissionShips> => ({ smallCargo: 1 });
-export const PUBLIC_INTEL_SUMMARY_LABEL = "Public intel";
-
 type GalaxySystemCacheEntry = {
   planets: Planet[];
   storedAt: number;
@@ -66,7 +64,7 @@ export function formatGalaxyCommanderLabel(planet: Planet): string {
 }
 
 export function formatGalaxyAllianceIdentityLabel(alliance: Planet["alliance"]): string {
-  if (!alliance) return "No alliance";
+  if (!alliance) return "";
   return alliance.tag ? `[${alliance.tag}]` : alliance.name;
 }
 
@@ -142,6 +140,7 @@ interface Props {
   homeCoords?: Coordinates | undefined;
   homePlanetId?: string | null | undefined;
   homePlanet?: Planet | undefined;
+  ownedPlanets?: readonly Planet[] | undefined;
   defenseState?: ChainDefenseState | null | undefined;
   shipyardState?: ChainShipyardState | null | undefined;
   onAction?: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates) => void) | undefined;
@@ -165,6 +164,7 @@ export function GalaxyView({
   homeCoords,
   homePlanetId,
   homePlanet,
+  ownedPlanets = [],
   defenseState = null,
   shipyardState = null,
   onAction,
@@ -188,7 +188,6 @@ export function GalaxyView({
   const [loadedSystemKey, setLoadedSystemKey] = useState<string | undefined>(
     () => cachedSystem ? currentSystemKey : undefined
   );
-  const [source, setSource] = useState<GalaxySystemSource>(cachedSystem ? "cache" : "loading");
   const loadedSystemKeyRef = useRef<string | undefined>();
   const homeCoordsInSystem = homeCoords?.galaxy === galaxy && homeCoords.system === system
     ? homeCoords
@@ -196,9 +195,13 @@ export function GalaxyView({
   const homePlanetOverride = homePlanet?.galaxy === galaxy && homePlanet.system === system
     ? homePlanet
     : undefined;
+  const ownedPlanetsInSystem = useMemo(
+    () => ownedPlanets.filter((planet) => planet.galaxy === galaxy && planet.system === system),
+    [galaxy, ownedPlanets, system]
+  );
   const planets = useMemo(
-    () => withHomePlanet(systemPlanets, homePlanetOverride),
-    [homePlanetOverride, systemPlanets]
+    () => withOwnedPlanetNames(withHomePlanet(systemPlanets, homePlanetOverride), ownedPlanetsInSystem),
+    [homePlanetOverride, ownedPlanetsInSystem, systemPlanets]
   );
   const galaxySystemUrl = useMemo(
     () => galaxySystemRequestUrl(apiBaseUrl, galaxy, system),
@@ -217,12 +220,10 @@ export function GalaxyView({
     if (cachedPlanets && !canPreserveCurrentSystem) {
       setSystemPlanets(cachedPlanets);
       setLoadedSystemKey(currentSystemKey);
-      setSource("cache");
     }
 
     setLoading(true);
     setLoadError(undefined);
-    if (!cachedPlanets) setSource("loading");
 
     fetch(galaxySystemUrl, {
       headers: { accept: "application/json" },
@@ -236,7 +237,6 @@ export function GalaxyView({
         const nextPlanets = rememberGalaxySystemPayload(apiBaseUrl, galaxy, system, payload);
         setSystemPlanets(nextPlanets);
         setLoadedSystemKey(currentSystemKey);
-        setSource("api");
       })
       .catch((error) => {
         if (!abortController.signal.aborted) {
@@ -246,7 +246,6 @@ export function GalaxyView({
             setLoadedSystemKey(undefined);
           }
           setLoadError(systemLoadErrorLabel(error));
-          setSource("error");
         }
       })
       .finally(() => {
@@ -329,13 +328,6 @@ export function GalaxyView({
   for (const p of planets) planetByPosition.set(p.position, p);
 
   const positions = Array.from({ length: POSITION_COUNT }, (_, i) => i + 1);
-  const homePlanetInSystem = planets.find((planet) => sameCoordinates(homeCoords, planet));
-  const occupiedCount = planets.filter((planet) => planet.occupiedBy || sameCoordinates(homeCoords, planet)).length;
-  const debrisCount = planets.filter((planet) => planet.debrisField).length;
-  const moonChanceCount = planets.filter((planet) => planet.moonChance).length;
-  const emptyCount = POSITION_COUNT - planets.length;
-  const occupiedSummary = formatGalaxyOccupancySummary(occupiedCount);
-  const occupancySource = formatGalaxyOccupancySource(source, Boolean(homePlanetInSystem));
   const hasCurrentSystemData = loadedSystemKey === currentSystemKey;
   const showInitialGalaxyLoader = shouldShowGalaxyInitialLoader({ hasCurrentSystemData, loading });
   const showGalaxyRows = shouldShowGalaxyRows({ hasCurrentSystemData });
@@ -343,16 +335,13 @@ export function GalaxyView({
   const loadErrorPresentation = galaxyLoadErrorPresentation({ hasCurrentSystemData, loadError });
 
   return (
-    <div className="grid gap-4">
-      <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
+    <div className="grid gap-3">
+      <div className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
         <div className="min-w-0">
           <h2 className="text-lg font-semibold text-white">Galaxy</h2>
-          <p className="mt-0.5 text-xs text-slate-400">
-            System [{galaxy}:{system}:1-{POSITION_COUNT}]
-          </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-white/10 bg-[#101624] p-2 shadow-[0_0_0_1px_rgba(255,255,255,0.02)_inset]">
+        <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-white/10 bg-[#101624] p-1.5 shadow-[0_0_0_1px_rgba(255,255,255,0.02)_inset]">
           <button
             onClick={handlePrevSystem}
             className="h-11 rounded border border-white/15 bg-white/8 px-3 text-sm text-slate-300 transition-colors hover:bg-white/15 hover:text-white sm:h-9"
@@ -383,41 +372,7 @@ export function GalaxyView({
         </div>
       </div>
 
-      <div className="grid gap-2 rounded-lg border border-white/10 bg-[#101624] p-2 sm:p-3">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 px-1 pb-2">
-          <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
-            {loadError && !hasCurrentSystemData ? (
-              <span>System unavailable</span>
-            ) : (
-              <>
-                <span>{planets.length} planet slots</span>
-                <span className="text-slate-700">/</span>
-                <span>{emptyCount} empty</span>
-                <span className="text-slate-700">/</span>
-                <span>{occupiedSummary}</span>
-                {debrisCount > 0 ? (
-                  <>
-                    <span className="text-slate-700">/</span>
-                    <span>{debrisCount} debris</span>
-                  </>
-                ) : null}
-                {moonChanceCount > 0 ? (
-                  <>
-                    <span className="text-slate-700">/</span>
-                    <span>{moonChanceCount} moon chance</span>
-                  </>
-                ) : null}
-                <span className="text-slate-700">/</span>
-                <span>{PUBLIC_INTEL_SUMMARY_LABEL}</span>
-              </>
-            )}
-          </div>
-          {occupancySource ? (
-            <span className="rounded border border-white/10 bg-white/5 px-2 py-1 text-[11px] text-slate-500">
-              {occupancySource}
-            </span>
-          ) : null}
-        </div>
+      <div className="grid gap-1.5 rounded-lg border border-white/10 bg-[#101624] p-2">
         {actionState.status !== "idle" ? (
           <InlineStateNotice
             blocking={actionState.status === "error"}
@@ -427,13 +382,7 @@ export function GalaxyView({
             {actionState.label}
           </InlineStateNotice>
         ) : null}
-        {transactionUnavailableReason ? (
-          <InlineStateNotice className="text-xs" title="Actions temporarily paused">
-            {transactionUnavailableReason}
-          </InlineStateNotice>
-        ) : null}
-
-        <div className="grid gap-1.5">
+        <div className="grid gap-1">
           {showInitialGalaxyLoader ? <GalaxyRowsSkeleton /> : null}
           {loading && hasCurrentSystemData ? <InlineSyncIndicator label="Refreshing galaxy" /> : null}
 
@@ -571,20 +520,6 @@ function galaxySystemKey(galaxy: number, system: number): string {
 
 export function galaxySystemRequestUrl(apiBaseUrl: string, galaxy: number, system: number): string {
   return `${apiBaseUrl.replace(/\/+$/, "")}/universe/galaxies/${galaxy}/systems/${system}`;
-}
-
-export function formatGalaxyOccupancySummary(occupiedCount: number): string {
-  return occupiedCount > 0 ? `${occupiedCount} occupied` : "No occupants";
-}
-
-export type GalaxySystemSource = "api" | "cache" | "loading" | "error";
-
-export function formatGalaxyOccupancySource(
-  source: GalaxySystemSource,
-  hasHomePlanet: boolean
-): string | undefined {
-  if (source === "loading") return "Loading";
-  return undefined;
 }
 
 export function planetsForFailedGalaxyLoad(): Planet[] {
@@ -797,7 +732,7 @@ function GalaxySlot({
   if (!planet) {
     if (isPendingHomePlanet) {
       return (
-        <div className="grid min-h-16 grid-cols-[3rem_minmax(0,1fr)] items-center gap-3 rounded-md border border-cyan-300/25 bg-cyan-300/[0.06] px-3 py-2 sm:grid-cols-[4rem_minmax(0,1fr)_7rem]">
+        <div className="grid min-h-12 grid-cols-[2.5rem_minmax(0,1fr)] items-center gap-2 rounded-md border border-cyan-300/25 bg-cyan-300/[0.06] px-2 py-1.5 sm:grid-cols-[3rem_minmax(0,1fr)_7rem]">
           <SlotNumber position={position} />
           <div className="flex min-w-0 items-center gap-3">
             <PlanetImageSkeleton className="h-11 w-11 flex-shrink-0 rounded-md border border-cyan-300/25" />
@@ -812,7 +747,7 @@ function GalaxySlot({
     }
 
     return (
-      <div className="grid min-h-16 grid-cols-[3rem_minmax(0,1fr)] items-center gap-3 rounded-md border border-white/5 bg-black/15 px-3 py-2 sm:grid-cols-[4rem_minmax(0,1fr)_minmax(8rem,auto)]">
+      <div className="grid min-h-11 grid-cols-[2.5rem_minmax(0,1fr)] items-center gap-2 rounded-md border border-white/5 bg-black/15 px-2 py-1 sm:grid-cols-[3rem_minmax(0,1fr)_minmax(8rem,auto)]">
         <SlotNumber position={position} muted />
         <div className="min-w-0">
           <div className="text-sm font-medium text-slate-500">Empty space</div>
@@ -827,18 +762,22 @@ function GalaxySlot({
     ? `${formatCompactResource(planet.debrisField.metal)} M / ${formatCompactResource(planet.debrisField.crystal)} C`
     : null;
   const moonChanceLabel = formatMoonChanceLabel(planet.moonChance);
-  const attackBlockLabel = formatAttackBlockReason(attackProtection);
-  const attackRuleLabels = formatAttackRuleLabels(attackProtection);
+  const planetOwner = planet.occupiedBy?.owner ?? planet.ownerId;
+  const isOwnedByAccount = Boolean(account && planetOwner?.toLowerCase() === account.toLowerCase());
   const watched = Boolean(planet.occupiedBy?.planetId && watchedPlanetIds.includes(planet.occupiedBy.planetId));
-  const moonActions = galaxyMoonActionsForSlot({ account, actions, planet });
+  const moonActions = galaxyActionsForMoonSlot({
+    account,
+    attackProtection,
+    defenseState,
+    homePlanetId,
+    planet,
+    shipyardState,
+  });
   const meta: PlanetMetaItem[] = [
     { label: formatGalaxyHeatLabel(planet.temperature) },
     { label: `${planet.fields} fields` },
     ...(planet.migrationReservation ? [{ label: "Reserved", tone: "info" as const }] : []),
-    ...(planet.hasMoon ? [{ label: "Moon" }] : []),
     ...(attackProtection?.defenderInactive ? [{ label: "Inactive", tone: "warning" as const }] : []),
-    ...(attackBlockLabel ? [{ label: attackBlockLabel, tone: "warning" as const }] : []),
-    ...attackRuleLabels.map((label) => ({ label, tone: "info" as const })),
     ...(debrisLabel ? [{ label: debrisLabel, tone: "warning" as const }] : []),
     ...(moonChanceLabel ? [{ label: moonChanceLabel, tone: "info" as const }] : []),
   ];
@@ -857,10 +796,12 @@ function GalaxySlot({
       )}
       allianceLabel={allianceLabel}
       commanderLabel={commanderLabel}
+      compact
       coords={coords}
       isHome={isHome}
       leadingSlot={<SlotNumber position={position} />}
       meta={meta}
+      mobileIdentityInMeta
       moonActionSlot={moonActions.length > 0 ? (
         <GalaxyMoonActionButtons
           actions={moonActions}
@@ -868,7 +809,6 @@ function GalaxySlot({
           busyReason={transactionUnavailableReason}
           coords={coords}
           onAction={onAction}
-          onInspect={onSelectMoon ? () => onSelectMoon(coords) : undefined}
           planet={planet}
         />
       ) : undefined}
@@ -876,7 +816,9 @@ function GalaxySlot({
       onInspectMoon={onSelectMoon}
       onSelectAlliance={onSelectAlliance}
       onSelectPlayer={onSelectPlayer}
-      onToggleWatch={planet.occupiedBy?.planetId ? () => onToggleWatchPlanet?.(planet.occupiedBy!.planetId, watched) : undefined}
+      onToggleWatch={!isOwnedByAccount && planet.occupiedBy?.planetId
+        ? () => onToggleWatchPlanet?.(planet.occupiedBy!.planetId, watched)
+        : undefined}
       planet={planet}
       showMoonIndicator={false}
       watchBusy={watchBusyPlanetId === planet.occupiedBy?.planetId}
@@ -906,14 +848,51 @@ export function galaxyMoonActionsForSlot({
     return [
       moonTargetGalaxyAction(actionsByKind.get("transport"), "transport", "Transport"),
       moonTargetGalaxyAction(actionsByKind.get("deploy"), "deploy", "Deploy"),
-      moonTargetGalaxyAction(actionsByKind.get("defenseHold"), "defenseHold", "Defend"),
+      disabledMoonTargetGalaxyAction(
+        "defenseHold",
+        "Defend",
+        "Stationed defense can only target planets in the current mission contract.",
+      ),
     ];
   }
 
   const defendAction = actionsByKind.get("defenseHold");
   return defendAction
-    ? [moonTargetGalaxyAction(defendAction, "defenseHold", "Defend")]
+    ? [disabledMoonTargetGalaxyAction(
+        "defenseHold",
+        "Defend",
+        "Stationed defense can only target planets in the current mission contract.",
+      )]
     : [moonTargetGalaxyAction(actionsByKind.get("attack"), "attack", "Attack")];
+}
+
+export function galaxyActionsForMoonSlot({
+  account,
+  attackProtection,
+  defenseState,
+  homePlanetId,
+  planet,
+  shipyardState,
+}: {
+  account: string | undefined;
+  attackProtection?: AttackProtectionStatus | undefined;
+  defenseState: ChainDefenseState | null;
+  homePlanetId: string | null | undefined;
+  planet: Planet;
+  shipyardState: ChainShipyardState | null;
+}): GalaxyAction[] {
+  const actions = galaxyActionsForSlot({
+    account,
+    attackProtection,
+    defenseState,
+    homePlanetId,
+    // A parent planet may be the launch body while its moon is the target body.
+    // They share a planet id but are not the same mission endpoint.
+    isOrigin: false,
+    planet,
+    shipyardState,
+  });
+  return galaxyMoonActionsForSlot({ account, actions, planet });
 }
 
 function moonTargetGalaxyAction(
@@ -955,7 +934,6 @@ function GalaxyMoonActionButtons({
   busyReason,
   coords,
   onAction,
-  onInspect,
   planet,
 }: {
   actions: GalaxyAction[];
@@ -963,21 +941,10 @@ function GalaxyMoonActionButtons({
   busyReason?: string | undefined;
   coords: Coordinates;
   onAction: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates) => void) | undefined;
-  onInspect?: (() => void) | undefined;
   planet: Planet;
 }) {
   return (
     <div className="flex flex-wrap justify-end gap-1.5">
-      {onInspect ? (
-        <button
-          className="rounded border border-cyan-200/20 bg-cyan-200/10 px-3 py-2 text-xs font-medium text-cyan-100 transition hover:border-cyan-200/40 hover:bg-cyan-200/15 sm:px-2 sm:py-1"
-          onClick={onInspect}
-          title="Inspect moon"
-          type="button"
-        >
-          Inspect
-        </button>
-      ) : null}
       <GalaxyActionButtons
         actions={actions}
         busy={busy}
@@ -1005,31 +972,33 @@ export function GalaxyActionButtons({
   onAction: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates) => void) | undefined;
   planet: Planet | undefined;
 }) {
-  const blockedReason = busy ? undefined : actions.find((action) => !action.enabled)?.reason;
-
   return (
-    <div className="grid justify-items-end gap-1">
-      <div className="flex flex-wrap justify-end gap-1.5">
-        {actions.map((action) => (
+    <div className="flex flex-wrap justify-end gap-1.5">
+      {actions.map((action) => {
+        const Icon = galaxyActionIcon(action.kind);
+        const disabled = !action.enabled || busy || !onAction;
+        const hint = busyReason
+          ?? (!onAction ? `${action.label} is unavailable.` : action.enabled ? action.label : `${action.label}: ${action.reason}`);
+        return (
           <button
-            className={`rounded border px-3 py-2 text-xs font-medium transition sm:px-2 sm:py-1 ${
-              action.enabled && !busy
+            aria-label={hint}
+            className={`inline-flex h-10 w-10 items-center justify-center rounded border transition sm:h-8 sm:w-8 ${
+              !disabled
                 ? "border-signal/30 bg-signal/10 text-signal hover:bg-signal/20"
                 : "cursor-not-allowed border-white/10 bg-white/[0.03] text-slate-500"
             }`}
-            disabled={!action.enabled || busy || !onAction}
+            disabled={disabled}
             key={action.kind}
             onClick={() => {
               if (action.enabled) onAction?.(action, planet, coords);
             }}
-            title={busyReason ?? (action.enabled ? action.label : action.reason)}
+            title={hint}
             type="button"
           >
-            {action.label}
+            <Icon aria-hidden="true" size={15} strokeWidth={1.9} />
           </button>
-        ))}
-      </div>
-      <ActionReasonNote reason={blockedReason} />
+        );
+      })}
     </div>
   );
 }
@@ -1048,21 +1017,6 @@ export function formatAttackBlockReason(status: AttackProtectionStatus | undefin
   if (status.blockedReason === "score_protection") return "Attack blocked: score protection allows a 1.5× gap below 50,000 score and a 10× gap below 500,000.";
   if (status.blockedReason === "same_alliance") return "Attack blocked: target belongs to your alliance.";
   return "Attack blocked";
-}
-
-export function formatAttackRuleLabels(status: AttackProtectionStatus | undefined): string[] {
-  if (!status) return [];
-  const labels: string[] = [];
-  if (status.relation === "stronger") labels.push("Stronger target");
-  if (status.relation === "weaker") labels.push("Weaker target");
-  if (status.defenderHonorStatus === "honorable") labels.push("Honor target");
-  if (status.defenderHonorStatus === "bandit") labels.push("Bandit target");
-  if (status.atWar) labels.push("War target");
-  if (status.riftProtectionBypass) labels.push("Rift: no newbie/bashing protection");
-  if (status.plunderBps && status.plunderBps !== 5000) {
-    labels.push(`Loot: ${Math.floor(status.plunderBps / 100)}%`);
-  }
-  return labels;
 }
 
 export function formatMoonChanceLabel(moonChance: Planet["moonChance"]): string | null {
@@ -1094,7 +1048,7 @@ export function formatCompactResource(value: number): string {
 
 function SlotNumber({ position, muted = false }: { position: number; muted?: boolean }) {
   return (
-    <div className={`flex h-9 w-9 items-center justify-center rounded border font-mono text-sm sm:h-10 sm:w-10 ${
+    <div className={`flex h-8 w-8 items-center justify-center rounded border font-mono text-xs sm:h-9 sm:w-9 ${
       muted
         ? "border-white/5 bg-white/[0.02] text-slate-700"
         : "border-white/10 bg-black/20 text-slate-400"
@@ -1128,4 +1082,21 @@ function withHomePlanet(
   }
 
   return planets;
+}
+
+export function withOwnedPlanetNames(
+  planets: Planet[],
+  ownedPlanets: readonly Planet[]
+): Planet[] {
+  return ownedPlanets.reduce((current, ownedPlanet) => {
+    const publicPlanet = current.find((planet) => sameCoordinateValues(planet, ownedPlanet));
+    const namedPlanet = publicPlanet
+      ? {
+          ...publicPlanet,
+          name: ownedPlanet.name,
+          ...(ownedPlanet.moonName ? { moonName: ownedPlanet.moonName } : {}),
+        }
+      : ownedPlanet;
+    return mergePlanetAtCoordinates(current, namedPlanet);
+  }, planets);
 }

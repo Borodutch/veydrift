@@ -1,12 +1,19 @@
-import { queueProgress as queueProgressValue, researchCatalog, type MainQueueItem, type PlayableState, type Resources } from "../playableMvp";
+import {
+  defenseCatalog,
+  queueProgress as queueProgressValue,
+  researchCatalog,
+  shipCatalog,
+  type MainQueueItem,
+  type PlayableState,
+  type Resources,
+} from "../playableMvp";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
-import { AlertTriangle, ArrowRight, Check, Info, Pencil, RefreshCw, Trash2, X } from "lucide-preact";
+import { ArrowRight, Check, Info, Pencil, RefreshCw, Trash2, X } from "lucide-preact";
 import { researchQueueForDisplay } from "../chainState";
 import {
   buildingQueueAsset,
   buildingQueueLabel,
   buildingQueuePreview,
-  defenseQueuePreview,
   displayPlanetStats,
   overviewPlanetEffects,
   type OverviewPlanetEffectsDisplay,
@@ -14,7 +21,6 @@ import {
   overviewQueueItemRemainingClassName,
   queueProgressBarState,
   queueProgressFillState,
-  shipQueuePreview,
   usedFieldsFromBuildings,
   type ChainLoadStatus,
 } from "../overviewData";
@@ -29,12 +35,11 @@ import {
   type ManagedPlanetResponse,
   type PlanetSummary,
   type PlayerQueuesResponse,
-  type QueueStateResponse,
   type WatchedPlanetsResponse,
   type WalletSettlementResponse
 } from "../walletFlow";
 import type { GalaxyAction } from "../galaxyActions";
-import { formatDuration, formatDurationUntil } from "../durationFormat";
+import { formatDurationUntil } from "../durationFormat";
 import { timestampToMs, type TimestampInput } from "../timestampFormat";
 import {
   actionNoticeForBuilding,
@@ -42,6 +47,8 @@ import {
   type InfrastructureActionNotice,
 } from "../buildingActionNotice";
 import { OptimizedImage } from "./OptimizedImage";
+import { AnimatedProgressBar } from "./AnimatedProgressBar";
+import { ProductionQueuePanel, productionQueueViewModel } from "./ProductionCatalog";
 import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
 import { PlanetMoonIndicator } from "./PlanetMoonIndicator";
 import { InlineSyncIndicator } from "./VeydriftLoader";
@@ -54,6 +61,11 @@ import {
 import { WatchablePlanetRow, type PlanetMetaItem } from "./WatchablePlanetRow";
 import { watchedPlanetsPanelRange } from "../watchedPlanetsView";
 import { missionTypeLabel } from "./MissionControlPage";
+import { galaxyActionIcon } from "./GalaxyActionIcon";
+
+export function compactOverviewLevelLabel(label: string): string {
+  return label.replace(/\s+[Ll]evel\s+(\d+)$/, " $1");
+}
 
 function queueRemaining(readyAt: string | null, now: number): string {
   if (!readyAt) return "Pending";
@@ -197,15 +209,19 @@ export function OverviewPage({
     usedFields,
   });
   const buildingQueue = activeBuildingQueue ?? (settledState.queue?.kind === "building" ? settledState.queue : undefined);
+  const buildingPreview = buildingQueuePreview(onChainQueues?.building);
   const onChainBuildingQueue = buildingQueue
     ? {
       asset: buildingQueueAsset(buildingQueue.key),
-      label: buildingQueueLabel(buildingQueue.label, buildingQueue.targetLevel),
+      label: compactOverviewLevelLabel(buildingQueueLabel(buildingQueue.label, buildingQueue.targetLevel)),
     }
-    : buildingQueuePreview(onChainQueues?.building);
+    : {
+      ...buildingPreview,
+      label: compactOverviewLevelLabel(buildingPreview.label),
+    };
   const localBuildingAsset = buildingQueue ? buildingQueueAsset(buildingQueue.key) : undefined;
   const localBuildingLabel = buildingQueue
-    ? buildingQueueLabel(buildingQueue.label, buildingQueue.targetLevel)
+    ? compactOverviewLevelLabel(buildingQueueLabel(buildingQueue.label, buildingQueue.targetLevel))
     : settledState.queue?.label;
   const onChainResearchQueue = researchQueueForDisplay(onChainQueues?.research ?? null, now, {
     buildings: settledState.buildings,
@@ -220,24 +236,8 @@ export function OverviewPage({
     ? researchCatalog.find((research) => research.key === settledState.researchQueue?.key)?.asset
     : undefined;
   const activeResearchProgress = onChainResearchQueue ? queueProgressValue(onChainResearchQueue, now) : researchProgress;
-  const onChainDefenseQueue = defenseQueuePreview(onChainQueues?.defense);
-  const onChainDefenseBacklog = onChainQueues?.defense?.backlog
-    ?.filter((queue) => queue.active)
-    .map((queue) => defenseQueuePreview(queue)) ?? [];
-  const defenseReadyAt = queueTimestampMs(onChainQueues?.defense?.readyAt);
-  const defenseStartedAt = queueTimestampMs(onChainQueues?.defense?.startedAt);
-  const defenseProgress = queueProductionProgress(onChainQueues?.defense);
-  const defenseUnitSummary = queueProductionUnitSummary(onChainQueues?.defense);
-  const onChainShipQueue = shipQueuePreview(onChainQueues?.ship);
-  const onChainShipBacklog = onChainQueues?.ship?.backlog
-    ?.filter((queue) => queue.active)
-    .map((queue) => shipQueuePreview(queue)) ?? [];
-  const shipReadyAt = queueTimestampMs(onChainQueues?.ship?.readyAt);
-  const shipStartedAt = queueTimestampMs(onChainQueues?.ship?.startedAt);
-  const shipBackendProgress = queueProductionProgress(onChainQueues?.ship);
-  const shipUnitSummary = queueProductionUnitSummary(onChainQueues?.ship);
-  const shipHasCanonicalTimeline =
-    shipReadyAt !== undefined && shipStartedAt !== undefined && shipStartedAt < shipReadyAt;
+  const onChainDefenseQueue = productionQueueViewModel(onChainQueues?.defense, defenseCatalog);
+  const onChainShipQueue = productionQueueViewModel(onChainQueues?.ship, shipCatalog);
   const buildingNoticeKey = buildingQueue?.key ?? buildingKeyForContractId(onChainQueues?.building?.itemId);
   const scopedBuildingNotice = overviewBuildingActionNoticeFor(buildingActionNotice, buildingNoticeKey);
   const pendingBuildingNotice = buildingActionPendingLabel
@@ -262,6 +262,27 @@ export function OverviewPage({
       : [],
     [watchedPlanets]
   );
+  const fleetPlanetNames = useMemo(() => {
+    const names = new Map<string, string>();
+    const remember = (planetId: string | null | undefined, coordinates: string, name: string | null | undefined) => {
+      const trimmedName = name?.trim();
+      if (!trimmedName) return;
+      if (planetId) names.set(`id:${planetId}`, trimmedName);
+      names.set(`coords:${coordinates}`, trimmedName);
+    };
+
+    for (const group of myPlanets) {
+      remember(group.planet.planetId, group.planet.coordinates, group.planet.name);
+    }
+    for (const watched of watchedPlanets?.planets ?? []) {
+      remember(
+        watched.occupiedBy?.planetId,
+        `${watched.galaxy}:${watched.system}:${watched.position}`,
+        watched.name,
+      );
+    }
+    return names;
+  }, [myPlanets, watchedPlanets]);
 
   // Only ever derive the planet name from real data: the loaded home planet's name, or a
   // coordinate-derived label once coordinates hydrate. Never fall back to a hardcoded fake planet
@@ -340,6 +361,20 @@ export function OverviewPage({
     setRenameValidation(undefined);
     onRenamePlanet?.(name);
   };
+
+  useEffect(() => {
+    if (!renamePanelOpen && !effectsPanelOpen) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (!renameBusy) setRenamePanelOpen(false);
+      setEffectsPanelOpen(false);
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [effectsPanelOpen, renameBusy, renamePanelOpen]);
+
   return (
     <div className="grid gap-3">
       <div className={shouldShowFleetsSummary ? "grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,0.82fr)] lg:items-stretch" : "grid gap-3"}>
@@ -401,9 +436,13 @@ export function OverviewPage({
                   <button
                     aria-controls="overview-planet-effects"
                     aria-expanded={effectsPanelOpen}
+                    aria-haspopup="dialog"
                     aria-label="Show planet stats and effects"
                     className="inline-grid h-10 w-10 shrink-0 place-items-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:border-cyan-300/40 hover:bg-cyan-300/10 hover:text-cyan-100 focus:outline-none focus:ring-2 focus:ring-cyan-300/50 sm:h-6 sm:w-6"
-                    onClick={() => setEffectsPanelOpen((open) => !open)}
+                    onClick={() => {
+                      setRenamePanelOpen(false);
+                      setEffectsPanelOpen(true);
+                    }}
                     title="Planet stats and effects"
                     type="button"
                   >
@@ -411,12 +450,15 @@ export function OverviewPage({
                   </button>
                   {canShowRename && (
                     <button
+                      aria-controls="overview-planet-name-editor"
                       aria-expanded={renamePanelOpen}
+                      aria-haspopup="dialog"
                       aria-label="Rename planet"
                       className="relative inline-grid h-10 w-10 translate-y-px place-items-center self-center rounded text-slate-200/80 transition after:absolute after:-inset-1.5 after:content-[''] hover:bg-cyan-200/10 hover:text-cyan-100 focus:outline-none focus:ring-1 focus:ring-cyan-300/70 disabled:cursor-not-allowed disabled:text-slate-500 sm:h-5 sm:w-5"
                       disabled={renameBusy}
                       onClick={() => {
-                        setRenamePanelOpen((open) => !open);
+                        setEffectsPanelOpen(false);
+                        setRenamePanelOpen(true);
                         setRenameDraft(planetName);
                         setRenameValidation(undefined);
                       }}
@@ -451,65 +493,7 @@ export function OverviewPage({
                 </p>
               )}
             </div>
-            {canShowRename && renamePanelOpen && (
-              <form
-                className="grid gap-2 rounded border border-white/10 bg-black/25 p-3"
-                onSubmit={handleRenameSubmit}
-              >
-                <label className="grid gap-1 text-xs font-medium text-slate-200">
-                  New planet name
-                  <input
-                    className="h-9 rounded border border-white/10 bg-[#080d18]/95 px-3 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/60 disabled:cursor-not-allowed disabled:text-slate-500"
-                    disabled={renameBusy}
-                    maxLength={64}
-                    onInput={(event) => {
-                      setRenameDraft(event.currentTarget.value);
-                      setRenameValidation(undefined);
-                    }}
-                    placeholder="Enter planet name"
-                    value={renameDraft}
-                  />
-                </label>
-                <p className="text-[11px] leading-4 text-slate-300">
-                  Renaming this planet is an onchain transaction. Your wallet will ask for confirmation, and gas may be required.
-                </p>
-                {(renameValidation || renameStatusLabel) && (
-                  <p className={`text-xs ${renameValidation ? "text-amber-200" : renameStatusTone}`}>
-                    {renameValidation ?? renameStatusLabel}
-                  </p>
-                )}
-                <div className="flex flex-wrap justify-end gap-2">
-                  <button
-                    className="inline-flex h-10 items-center gap-1 rounded border border-white/10 bg-white/5 px-2.5 text-xs font-semibold text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500 sm:h-8"
-                    disabled={renameBusy}
-                    onClick={() => setRenamePanelOpen(false)}
-                    type="button"
-                  >
-                    <X aria-hidden="true" size={13} strokeWidth={2} />
-                    Cancel
-                  </button>
-                  <button
-                    className="inline-flex h-10 items-center gap-1 rounded border border-cyan-300/40 bg-cyan-300/10 px-2.5 text-xs font-semibold text-cyan-100 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500 sm:h-8"
-                    disabled={!canRenamePlanet || renameBusy}
-                    type="submit"
-                  >
-                    <Check aria-hidden="true" size={13} strokeWidth={2} />
-                    {renameBusy ? "Confirming" : "Rename onchain"}
-                  </button>
-                </div>
-              </form>
-            )}
           </div>
-          {effectsPanelOpen ? (
-            <div>
-              <PlanetEffectsPanel
-                effects={planetEffects}
-                id="overview-planet-effects"
-                onClose={() => setEffectsPanelOpen(false)}
-                stats={stats}
-              />
-            </div>
-          ) : null}
         </div>
       </div>
       )}
@@ -517,11 +501,101 @@ export function OverviewPage({
       {shouldShowFleetsSummary && fleetVisibility ? (
         <FleetsSummary
           fleetVisibility={fleetVisibility}
+          planetNames={fleetPlanetNames}
           now={now}
           onOpenMissionControl={() => onNavigate("mission-control")}
         />
       ) : null}
       </div>
+
+      {canShowRename && renamePanelOpen ? (
+        <div
+          className="modal-backdrop-enter fixed inset-0 z-50 grid place-items-end bg-black/60 p-3 backdrop-blur-sm sm:place-items-center sm:p-4"
+          onClick={(event) => {
+            if (event.target === event.currentTarget && !renameBusy) setRenamePanelOpen(false);
+          }}
+        >
+          <form
+            aria-labelledby="overview-planet-name-editor-title"
+            aria-modal="true"
+            className="modal-panel-enter grid max-h-[calc(100dvh-1.5rem)] w-full max-w-sm gap-3 overflow-y-auto rounded-lg border border-white/10 bg-[#08101d] p-3 shadow-2xl shadow-black/45"
+            id="overview-planet-name-editor"
+            onSubmit={handleRenameSubmit}
+            role="dialog"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-[10px] font-semibold uppercase text-slate-500">Planet</p>
+                <h2 className="mt-1 break-words text-sm font-semibold leading-5 text-white" id="overview-planet-name-editor-title">
+                  Edit name
+                </h2>
+              </div>
+              <button
+                aria-label="Cancel planet name edit"
+                className="inline-grid h-8 w-8 shrink-0 place-items-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500"
+                disabled={renameBusy}
+                onClick={() => setRenamePanelOpen(false)}
+                title="Cancel"
+                type="button"
+              >
+                <X aria-hidden="true" size={14} strokeWidth={2} />
+              </button>
+            </div>
+            <label className="grid gap-1 text-xs font-medium text-slate-200">
+              New planet name
+              <input
+                className="h-9 rounded border border-white/10 bg-[#050b14]/95 px-3 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/60 disabled:cursor-not-allowed disabled:text-slate-500"
+                disabled={renameBusy}
+                maxLength={64}
+                onInput={(event) => {
+                  setRenameDraft(event.currentTarget.value);
+                  setRenameValidation(undefined);
+                }}
+                placeholder="Enter planet name"
+                value={renameDraft}
+              />
+            </label>
+            <p className="text-[11px] leading-4 text-slate-300">
+              Renaming this planet is an onchain transaction. Your wallet will ask for confirmation, and gas may be required.
+            </p>
+            {(renameValidation || renameStatusLabel) && (
+              <p className={`break-words text-[11px] leading-4 ${renameValidation ? "text-amber-200" : renameStatusTone}`}>
+                {renameValidation ?? renameStatusLabel}
+              </p>
+            )}
+            <div className="flex justify-end gap-2">
+              <button
+                aria-label="Cancel planet name edit"
+                className="inline-grid h-8 w-8 place-items-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500"
+                disabled={renameBusy}
+                onClick={() => setRenamePanelOpen(false)}
+                title="Cancel"
+                type="button"
+              >
+                <X aria-hidden="true" size={14} strokeWidth={2} />
+              </button>
+              <button
+                aria-label="Rename planet onchain"
+                className="inline-grid h-8 w-8 place-items-center rounded border border-cyan-300/40 bg-cyan-300/10 text-cyan-100 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
+                disabled={!canRenamePlanet || renameBusy}
+                title={renameBusy ? "Confirming" : "Rename onchain"}
+                type="submit"
+              >
+                <Check aria-hidden="true" size={14} strokeWidth={2} />
+              </button>
+            </div>
+          </form>
+        </div>
+      ) : null}
+
+      {effectsPanelOpen ? (
+        <PlanetEffectsPanel
+          effects={planetEffects}
+          id="overview-planet-effects"
+          onClose={() => setEffectsPanelOpen(false)}
+          stats={stats}
+        />
+      ) : null}
 
       {isWalletConnected && onChainStatus === "error" && (
         <div className="rounded-lg border border-amber-300/20 bg-amber-300/10 p-3 text-xs leading-5 text-amber-100 sm:p-4">
@@ -533,14 +607,12 @@ export function OverviewPage({
       {/* Contract production queues */}
       <div className="grid min-w-0 auto-rows-fr gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {/* Building queue */}
-        <QueuePanel
-          label="Buildings"
-          tag={onChainQueues?.building?.active ? "Active" : undefined}
-        >
+        <QueuePanel label="Buildings">
           {onChainQueues?.building?.active ? (
             <QueuePanelContent>
               {buildingQueue ? (
                 <QueueItemDisplay
+                  color="bg-amber-300"
                   label={onChainBuildingQueue.label}
                   remaining={formatDurationUntil(buildingQueue.readyAt, now)}
                   progress={queueProgress}
@@ -551,6 +623,7 @@ export function OverviewPage({
                 />
               ) : (
                 <QueueItemDisplay
+                  color="bg-amber-300"
                   label={onChainBuildingQueue.label}
                   remaining={queueRemaining(onChainQueues.building.readyAt, now)}
                   thumbnailSrc={onChainBuildingQueue.asset}
@@ -562,6 +635,7 @@ export function OverviewPage({
           ) : buildingQueue ? (
             <QueuePanelContent>
               <QueueItemDisplay
+                color="bg-amber-300"
                 label={localBuildingLabel ?? buildingQueue.label}
                 remaining={formatDurationUntil(buildingQueue.readyAt, now)}
                 progress={queueProgress}
@@ -580,31 +654,16 @@ export function OverviewPage({
         </QueuePanel>
 
         {/* Defense queue */}
-        <QueuePanel
-          label="Defenses"
-          tag={onChainQueues?.defense?.active ? "Active" : undefined}
-        >
-          {onChainQueues?.defense?.active ? (
+        <QueuePanel label="Defenses">
+          {onChainDefenseQueue ? (
             <QueuePanelContent>
-              <QueueItemDisplay
-                label={onChainDefenseQueue.label}
-                remaining={queueRemaining(onChainQueues.defense.readyAt, now)}
-                detail={defenseUnitSummary}
-                progress={defenseProgress}
-                readyAt={defenseReadyAt}
-                startedAt={defenseStartedAt}
-                thumbnailSrc={onChainDefenseQueue.asset}
-                color="bg-rose-300"
+              <ProductionQueuePanel
+                embedded
                 now={now}
+                queue={onChainDefenseQueue}
+                showBacklogEta={false}
+                tone="rose"
               />
-              {onChainDefenseBacklog.length > 0 ? (
-                <div className="grid gap-1 border-t border-white/10 pt-2 text-xs text-slate-400">
-                  <span className="font-semibold uppercase tracking-[0.14em] text-slate-500">Queued next</span>
-                  {onChainDefenseBacklog.map((queue, index) => (
-                    <span className="truncate" key={`${queue.label}-${index}`}>{queue.label}</span>
-                  ))}
-                </div>
-              ) : null}
             </QueuePanelContent>
           ) : (
             <EmptyQueue actionLabel="Defenses" onAction={() => onNavigate("defenses")}>
@@ -614,20 +673,17 @@ export function OverviewPage({
         </QueuePanel>
 
         {/* Research queue */}
-        <QueuePanel
-          label="Research"
-          tag={onChainQueues?.research?.active ? "Active" : undefined}
-        >
+        <QueuePanel label="Research">
           {onChainResearchQueue ? (
             <QueuePanelContent>
               <QueueItemDisplay
-                label={`${onChainResearchQueue.label} Level ${onChainResearchQueue.targetLevel}`}
+                label={`${onChainResearchQueue.label} ${onChainResearchQueue.targetLevel}`}
                 remaining={formatDurationUntil(onChainResearchQueue.readyAt, now)}
                 progress={activeResearchProgress}
                 readyAt={onChainResearchQueue.readyAt}
                 startedAt={onChainResearchQueue.startedAt}
                 thumbnailSrc={onChainResearchAsset}
-                color="bg-cyan-300"
+                color="bg-violet-300"
                 now={now}
               />
               <OverviewResearchActionNotice actionState={researchAction} />
@@ -635,11 +691,11 @@ export function OverviewPage({
           ) : onChainQueues?.research?.active ? (
             <QueuePanelContent>
               <QueueItemDisplay
-                label={`${onChainQueues.research.kind === "research" ? "Research" : onChainQueues.research.kind} level ${onChainQueues.research.targetLevel}`}
+                label={`${onChainQueues.research.kind === "research" ? "Research" : onChainQueues.research.kind} ${onChainQueues.research.targetLevel}`}
                 remaining={queueRemaining(onChainQueues.research.readyAt, now)}
                 indeterminate
                 thumbnailSrc={onChainResearchAsset}
-                color="bg-cyan-300"
+                color="bg-violet-300"
               />
               <OverviewResearchActionNotice actionState={researchAction} />
             </QueuePanelContent>
@@ -652,7 +708,7 @@ export function OverviewPage({
                 readyAt={settledState.researchQueue.readyAt}
                 startedAt={settledState.researchQueue.startedAt}
                 thumbnailSrc={settledResearchAsset}
-                color="bg-cyan-300"
+                color="bg-violet-300"
                 now={now}
               />
               <OverviewResearchActionNotice actionState={researchAction} />
@@ -668,31 +724,16 @@ export function OverviewPage({
         </QueuePanel>
 
         {/* Shipyard queue */}
-        <QueuePanel
-          label="Shipyard"
-          tag={onChainQueues?.ship?.active ? "Active" : undefined}
-        >
-          {onChainQueues?.ship?.active ? (
+        <QueuePanel label="Shipyard">
+          {onChainShipQueue ? (
             <QueuePanelContent>
-              <QueueItemDisplay
-                label={onChainShipQueue.label}
-                remaining={queueRemaining(onChainQueues.ship.readyAt, now)}
-                detail={shipUnitSummary}
-                progress={shipBackendProgress ?? (shipHasCanonicalTimeline ? 0 : undefined)}
-                readyAt={shipReadyAt}
-                startedAt={shipHasCanonicalTimeline ? shipStartedAt : undefined}
-                thumbnailSrc={onChainShipQueue.asset}
-                color="bg-emerald-300"
+              <ProductionQueuePanel
+                embedded
                 now={now}
+                queue={onChainShipQueue}
+                showBacklogEta={false}
+                tone="sky"
               />
-              {onChainShipBacklog.length > 0 ? (
-                <div className="grid gap-1 border-t border-white/10 pt-2 text-xs text-slate-400">
-                  <span className="font-semibold uppercase tracking-[0.14em] text-slate-500">Queued next</span>
-                  {onChainShipBacklog.map((queue, index) => (
-                    <span className="truncate" key={`${queue.label}-${index}`}>{queue.label}</span>
-                  ))}
-                </div>
-              ) : null}
             </QueuePanelContent>
           ) : settledState.queue?.kind === "ship" ? (
             <QueuePanelContent>
@@ -702,7 +743,7 @@ export function OverviewPage({
                 progress={shipProgress}
                 readyAt={settledState.queue.readyAt}
                 startedAt={settledState.queue.startedAt}
-                color="bg-emerald-300"
+                color="bg-sky-300"
                 now={now}
               />
             </QueuePanelContent>
@@ -783,11 +824,8 @@ function MyPlanetsPanel({
   selectedPlanetId: string | undefined;
 }) {
   return (
-    <section className="grid gap-2 rounded-lg border border-white/10 bg-[#101624] p-3">
-      <div>
-        <h3 className="text-sm font-semibold text-white">My planets</h3>
-      </div>
-      <div className="grid gap-1.5">
+    <section aria-label="My planets" className="grid gap-1 rounded-lg border border-white/10 bg-[#101624] p-2">
+      <div className="grid gap-1">
         {myPlanets.map(({ actions, moonActions, planet }) => {
           const coords = { galaxy: planet.galaxy, system: planet.system, position: planet.position };
           const rowPlanet = overviewPlanetFromManagedPlanet(planet);
@@ -796,11 +834,12 @@ function MyPlanetsPanel({
             <WatchablePlanetRow
               allianceLabel="No alliance"
               commanderLabel={commanderLabel}
+              compact
               coords={coords}
               current={isSelected}
               isHome={planet.isHomePlanet}
               key={planet.planetId}
-              meta={myPlanetMeta(planet)}
+              meta={[]}
               // Tapping one of the player's own planets switches the overview to it (the mobile
               // planet rail); the inspect screen stays reachable from the hero and Galaxy.
               onInspect={onSwitchPlanet ? () => onSwitchPlanet(planet.planetId, "planet") : onSelectPlanet ?? (() => undefined)}
@@ -840,17 +879,21 @@ function MyPlanetActionButtons({
 
   return (
     <span className="flex flex-wrap justify-end gap-1.5">
-      {enabledActions.map((action) => (
-        <button
-          className="rounded border border-signal/30 bg-signal/10 px-3 py-2 text-xs font-medium text-signal transition hover:bg-signal/20 sm:px-2 sm:py-1"
-          key={action.kind}
-          onClick={() => onAction(action)}
-          title={action.label}
-          type="button"
-        >
-          {action.label}
-        </button>
-      ))}
+      {enabledActions.map((action) => {
+        const Icon = galaxyActionIcon(action.kind);
+        return (
+          <button
+            aria-label={action.label}
+            className="inline-flex h-10 w-10 items-center justify-center rounded border border-signal/30 bg-signal/10 text-signal transition hover:bg-signal/20 sm:h-8 sm:w-8"
+            key={action.kind}
+            onClick={() => onAction(action)}
+            title={action.label}
+            type="button"
+          >
+            <Icon aria-hidden="true" size={15} strokeWidth={1.9} />
+          </button>
+        );
+      })}
     </span>
   );
 }
@@ -886,16 +929,6 @@ function overviewPlanetFromManagedPlanet(planet: ManagedPlanetResponse): Planet 
 
 export function managedPlanetOverviewDisplayName(planet: ManagedPlanetResponse): string {
   return planet.name?.trim() || `Planet ${planet.coordinates}`;
-}
-
-function myPlanetMeta(planet: ManagedPlanetResponse): PlanetMetaItem[] {
-  const meta: PlanetMetaItem[] = [
-    { label: planet.coordinates },
-    { label: formatGalaxyHeatLabel({ min: planet.temperature - 20, max: planet.temperature + 20 }) },
-    { label: `${planet.fieldsUsed}/${planet.fieldsCapacity} fields` },
-  ];
-  if (planet.moon?.exists) meta.push({ label: "Moon", tone: "info" });
-  return meta;
 }
 
 export function overviewBuildingActionNoticeFor(
@@ -1148,30 +1181,42 @@ export function overviewResearchActionNoticeFor(
 export type FleetSummaryLine = {
   key: string;
   text: string;
-  hostile: boolean;
   relation: "friendly" | "hostile" | "self";
+  tone: "harvest" | "hostile" | "neutral";
 };
 
 export type FleetsSummaryData = {
   activeCount: number;
   lines: FleetSummaryLine[];
-  underAttack: { count: number; soonestLabel: string } | null;
 };
 
 function missionEndpointLabel(
   ref: FleetMissionPlanetReference | null | undefined,
   fallbackPlanetId: string,
+  planetNames?: ReadonlyMap<string, string>,
 ): string {
   if (ref) {
-    const name = ref.name?.trim();
-    return `${name && name.length > 0 ? name : "Planet"} [${ref.coordinates}]`;
+    const name = ref.name?.trim()
+      || planetNames?.get(`id:${ref.planetId}`)
+      || planetNames?.get(`coords:${ref.coordinates}`);
+    const commander = ref.ownerDisplayName?.trim();
+    const label = name && name.length > 0
+      ? name
+      : commander ? `${commander}'s planet` : "Planet";
+    return `${label} [${ref.coordinates}]`;
   }
+  const knownName = planetNames?.get(`id:${fallbackPlanetId}`);
+  if (knownName) return knownName;
   const colonyTarget = decodeColonizationTargetId(fallbackPlanetId);
   if (colonyTarget) return `Uncharted [${colonyTarget.coordinates}]`;
   return `Planet #${fallbackPlanetId}`;
 }
 
-export function summarizeFleets(fleetVisibility: FleetMissionVisibilityResponse, now: number): FleetsSummaryData {
+export function summarizeFleets(
+  fleetVisibility: FleetMissionVisibilityResponse,
+  now: number,
+  planetNames?: ReadonlyMap<string, string>,
+): FleetsSummaryData {
   const { incoming, outgoing, returning } = fleetVisibility;
   const lines: FleetSummaryLine[] = [];
   const seen = new Set<string>();
@@ -1192,11 +1237,14 @@ export function summarizeFleets(fleetVisibility: FleetMissionVisibilityResponse,
     const relation = self ? "self" : hostile ? "hostile" : "friendly";
     const direction = isReturning ? `${capitalize(relation)} departing` : `${capitalize(relation)} inbound`;
     const status = overviewMissionStatus(mission, now);
+    const endpoint = missionEndpointLabel(mission.originPlanet, mission.originPlanetId, planetNames);
     lines.push({
-      hostile,
       key: `in-${mission.missionId}`,
       relation,
-      text: `${direction} · ${missionTypeLabel(mission.missionType)} from ${missionEndpointLabel(mission.originPlanet, mission.originPlanetId)} · ${status} · ${timing}`,
+      tone: mission.missionType === "Harvest" ? "harvest" : hostile ? "hostile" : "neutral",
+      text: mission.missionType === "Harvest" && isReturning
+        ? `Harvest returning to ${endpoint} · ${timing}`
+        : `${direction} · ${missionTypeLabel(mission.missionType)} from ${endpoint} · ${status} · ${timing}`,
     });
   }
 
@@ -1216,10 +1264,10 @@ export function summarizeFleets(fleetVisibility: FleetMissionVisibilityResponse,
       // the chain reflects it the honest state is "resolving", not a finished "arrived".
         : arrivalMs > now ? `arrives in ${formatDurationUntil(arrivalMs, now)}` : "resolving";
     lines.push({
-      hostile: false,
-      key: `out-${mission.missionId}`,
       relation: "self",
-      text: `Outbound · ${missionTypeLabel(mission.missionType)} to ${missionEndpointLabel(mission.targetPlanet, mission.targetPlanetId)} · ${overviewMissionStatus(mission, now)} · ${timing}`,
+      tone: mission.missionType === "Harvest" ? "harvest" : "neutral",
+      key: `out-${mission.missionId}`,
+      text: `Outbound · ${missionTypeLabel(mission.missionType)} to ${missionEndpointLabel(mission.targetPlanet, mission.targetPlanetId, planetNames)} · ${overviewMissionStatus(mission, now)} · ${timing}`,
     });
   }
 
@@ -1233,35 +1281,14 @@ export function summarizeFleets(fleetVisibility: FleetMissionVisibilityResponse,
       // "resolving" until the chain lands it rather than a misleading "ready to land" (no manual land).
       : returnMs > now ? `lands in ${formatDurationUntil(returnMs, now)}` : "resolving";
     lines.push({
-      hostile: false,
-      key: `ret-${mission.missionId}`,
       relation: "self",
-      text: `Returning · ${missionTypeLabel(mission.missionType)} from ${missionEndpointLabel(mission.targetPlanet, mission.targetPlanetId)} · ${mission.status} · ${timing}`,
+      tone: mission.missionType === "Harvest" ? "harvest" : "neutral",
+      key: `ret-${mission.missionId}`,
+      text: `Returning · ${missionTypeLabel(mission.missionType)} from ${missionEndpointLabel(mission.targetPlanet, mission.targetPlanetId, planetNames)} · ${mission.status} · ${timing}`,
     });
   }
 
-  const hostileMissionIds = new Set<string>();
-  const hostileIncoming = incoming.filter((mission) => {
-    const hostile = mission.status === "Outbound"
-      && mission.owner.trim().toLowerCase() !== wallet
-      && isOffensiveFleetMission(mission.missionType)
-      && !hostileMissionIds.has(mission.missionId);
-    if (hostile) hostileMissionIds.add(mission.missionId);
-    return hostile;
-  });
-  let underAttack: FleetsSummaryData["underAttack"] = null;
-  if (hostileIncoming.length > 0) {
-    const soonestMs = hostileIncoming
-      .map((mission) => timestampToMs(mission.arrivalAt))
-      .filter((ms): ms is number => ms !== undefined)
-      .reduce((min, ms) => (ms < min ? ms : min), Number.POSITIVE_INFINITY);
-    const soonestLabel = !Number.isFinite(soonestMs)
-      ? "soon"
-      : soonestMs > now ? `in ${formatDurationUntil(soonestMs, now)}` : "now";
-    underAttack = { count: hostileIncoming.length, soonestLabel };
-  }
-
-  return { activeCount: lines.length, lines, underAttack };
+  return { activeCount: lines.length, lines };
 }
 
 const OFFENSIVE_FLEET_MISSIONS = new Set(["Attack", "AcsAttack", "MissileAttack"]);
@@ -1297,12 +1324,14 @@ export function FleetsSummary({
   fleetVisibility,
   now,
   onOpenMissionControl,
+  planetNames,
 }: {
   fleetVisibility: FleetMissionVisibilityResponse;
   now: number;
   onOpenMissionControl: () => void;
+  planetNames?: ReadonlyMap<string, string> | undefined;
 }) {
-  const summary = summarizeFleets(fleetVisibility, now);
+  const summary = summarizeFleets(fleetVisibility, now, planetNames);
   return (
     <section aria-label="Fleets" className="flex h-full min-w-0 flex-col rounded-lg border border-white/10 bg-white/[0.04] p-3 sm:p-4">
       <div className="flex items-center justify-between gap-2">
@@ -1317,19 +1346,6 @@ export function FleetsSummary({
         </button>
       </div>
 
-      {summary.underAttack ? (
-        <div
-          className="mt-3 flex items-start gap-2 rounded-md border border-red-400/40 bg-red-500/15 p-2.5 text-[11px] leading-5 text-red-100"
-          role="alert"
-        >
-          <AlertTriangle aria-hidden="true" className="mt-0.5 shrink-0 text-red-300" size={14} strokeWidth={2} />
-          <p className="min-w-0">
-            <span className="font-semibold uppercase tracking-wide">Under attack</span>
-            {` — ${summary.underAttack.count} hostile ${summary.underAttack.count === 1 ? "fleet" : "fleets"} inbound · soonest ${summary.underAttack.soonestLabel}`}
-          </p>
-        </div>
-      ) : null}
-
       {summary.activeCount === 0 ? (
         <p className="mt-3 text-xs text-slate-500">No active fleets for this planet.</p>
       ) : (
@@ -1338,11 +1354,13 @@ export function FleetsSummary({
             <li
               key={line.key}
               className={`min-w-0 break-words rounded-md border px-2.5 py-1.5 text-[11px] leading-5 ${
-                line.relation === "hostile"
+                line.tone === "harvest"
+                  ? "border-amber-300/25 bg-amber-300/10 text-amber-100"
+                  : line.relation === "hostile"
                   ? "border-red-400/25 bg-red-500/10 text-red-100"
                   : line.relation === "friendly"
                     ? "border-cyan-300/20 bg-cyan-300/[0.06] text-cyan-100"
-                  : "border-white/10 bg-black/20 text-slate-300"
+                    : "border-white/10 bg-black/20 text-slate-300"
               }`}
               title={line.text}
             >
@@ -1371,44 +1389,58 @@ function PlanetEffectsPanel({
   stats: ReturnType<typeof displayPlanetStats>;
 }) {
   return (
-    <section
-      aria-label="Planet effects"
-      className="grid gap-3 rounded-md border border-cyan-300/20 bg-[#09111f]/95 p-3 text-xs leading-5 text-slate-200 shadow-lg shadow-black/20"
-      id={id}
+    <div
+      className="modal-backdrop-enter fixed inset-0 z-50 grid place-items-end bg-black/60 p-3 backdrop-blur-sm sm:place-items-center sm:p-4"
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
     >
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-cyan-100">Planet effects</p>
-          <p className="mt-1 text-slate-300">
-            Fields are the planet development budget: each building level consumes one field, and Terraformer expands the limit.
-          </p>
-          <p className="mt-1 text-slate-400">
-            Temperature changes deuterium production and Solar Satellite energy output, so colder and hotter planets favor different builds.
-          </p>
+      <section
+        aria-labelledby={`${id}-title`}
+        aria-modal="true"
+        className="modal-panel-enter grid max-h-[calc(100dvh-1.5rem)] w-full max-w-lg gap-3 overflow-y-auto rounded-lg border border-white/10 bg-[#08101d] p-3 text-xs leading-5 text-slate-200 shadow-2xl shadow-black/45"
+        id={id}
+        role="dialog"
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-[10px] font-semibold uppercase text-slate-500">Planet</p>
+            <h2 className="mt-1 break-words text-sm font-semibold leading-5 text-white" id={`${id}-title`}>
+              Stats and effects
+            </h2>
+          </div>
+          <button
+            aria-label="Close planet effects"
+            className="inline-grid h-8 w-8 shrink-0 place-items-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:bg-white/10"
+            onClick={onClose}
+            title="Close"
+            type="button"
+          >
+            <X aria-hidden="true" size={14} strokeWidth={2} />
+          </button>
         </div>
-        <button
-          aria-label="Close planet effects"
-          className="inline-grid h-10 w-10 shrink-0 place-items-center rounded border border-white/10 bg-white/5 text-slate-300 transition hover:bg-white/10 hover:text-white focus:outline-none focus:ring-2 focus:ring-cyan-300/50 sm:h-7 sm:w-7"
-          onClick={onClose}
-          type="button"
-        >
-          <X aria-hidden="true" size={14} strokeWidth={2} />
-        </button>
-      </div>
 
-      <dl className="grid gap-2 sm:grid-cols-3">
-        <EffectMetric label="Fields" value={stats.fields} />
-        <EffectMetric label="Temperature" value={stats.temperature} />
-        <EffectMetric label="Diameter" value={stats.diameter} />
-        <EffectMetric label="Terraformer" value={effects.terraformer} />
-        <EffectMetric label="Deuterium multiplier" value={effects.deuteriumMultiplier} />
-        <EffectMetric
-          label="Solar Satellite"
-          nowrap
-          value={effects.solarSatelliteEnergy === undefined ? "Unavailable" : `${effects.solarSatelliteEnergy.toLocaleString()} E each`}
-        />
-      </dl>
-    </section>
+        <p className="text-slate-300">
+          Fields are the planet development budget: each building level consumes one field, and Terraformer expands the limit.
+        </p>
+        <p className="text-slate-400">
+          Temperature changes deuterium production and Solar Satellite energy output, so colder and hotter planets favor different builds.
+        </p>
+
+        <dl className="grid gap-2 sm:grid-cols-3">
+          <EffectMetric label="Fields" value={stats.fields} />
+          <EffectMetric label="Temperature" value={stats.temperature} />
+          <EffectMetric label="Diameter" value={stats.diameter} />
+          <EffectMetric label="Terraformer" value={effects.terraformer} />
+          <EffectMetric label="Deuterium multiplier" value={effects.deuteriumMultiplier} />
+          <EffectMetric
+            label="Solar Satellite"
+            nowrap
+            value={effects.solarSatelliteEnergy === undefined ? "Unavailable" : `${effects.solarSatelliteEnergy.toLocaleString()} E each`}
+          />
+        </dl>
+      </section>
+    </div>
   );
 }
 
@@ -1423,23 +1455,18 @@ function EffectMetric({ label, value, nowrap = false }: { label: string; value: 
 
 function QueuePanel({
   label,
-  tag,
   children,
 }: {
   label: string;
-  tag?: string | undefined;
   children: preact.ComponentChildren;
 }) {
   return (
-    <div className="flex min-h-[8.5rem] w-full min-w-0 flex-col rounded-lg border border-white/10 bg-[#101624] p-3 sm:p-4">
-      <div className="flex items-center justify-between gap-2">
-        <h3 className="text-sm font-semibold text-white">{label}</h3>
-        {tag && (
-          <span className="text-[10px] font-medium uppercase tracking-wider text-slate-500">{tag}</span>
-        )}
-      </div>
-      <div className="mt-3 flex flex-1 flex-col">{children}</div>
-    </div>
+    <section
+      aria-label={label}
+      className="flex w-full min-w-0 flex-col rounded-lg border border-white/10 bg-[#101624] p-3 sm:p-4"
+    >
+      <div className="flex flex-1 flex-col">{children}</div>
+    </section>
   );
 }
 
@@ -1488,8 +1515,6 @@ function QueueItemDisplay({
     remaining,
     startedAt,
   });
-  const progressStyle = { width: `${progressFill.progress * 100}%` };
-
   return (
     <div className={thumbnailSrc ? "flex min-w-0 items-center gap-3" : undefined}>
       {thumbnailSrc ? (
@@ -1509,47 +1534,16 @@ function QueueItemDisplay({
           <p className={overviewQueueItemRemainingClassName}>{remaining}</p>
           {detail ? <p className="truncate text-[11px] text-slate-400">{detail}</p> : null}
         </div>
-        <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10">
-          {progressBar.indeterminate ? (
-            <div className={`h-full w-2/3 rounded-full ${color} animate-pulse`} />
-          ) : (
-            <div
-              className={`h-full rounded-full ${color} transition-[width]`}
-              style={progressStyle}
-            />
-          )}
-        </div>
+        <AnimatedProgressBar
+          className="mt-2 h-1.5 bg-white/10"
+          fillClassName={color}
+          indeterminate={progressBar.indeterminate}
+          label={`${label} progress`}
+          value={progressFill.progress}
+        />
       </div>
     </div>
   );
-}
-
-function queueProductionProgress(queue: QueueStateResponse | null | undefined): number | undefined {
-  const bps = queue?.asOfNow?.overallProgressBps;
-  return bps === undefined ? undefined : Math.max(0, Math.min(1, bps / 10_000));
-}
-
-function queueProductionUnitSummary(queue: QueueStateResponse | null | undefined): string | undefined {
-  const asOfNow = queue?.asOfNow;
-  if (!asOfNow) return undefined;
-  const completed = asOfNow?.completedQuantity;
-  const remaining = asOfNow?.remainingQuantity;
-  if (completed === undefined || remaining === undefined) return undefined;
-
-  const currentUnitSeconds = asOfNow.currentUnitSecondsRemaining;
-  const currentUnit = currentUnitSeconds === undefined
-    ? ""
-    : currentUnitSeconds <= 0
-      ? " · current unit ready"
-      : ` · current unit ${formatDuration(currentUnitSeconds)}`;
-  return `${completed} / ${completed + remaining} complete${currentUnit}`;
-}
-
-function queueTimestampMs(timestamp: string | null | undefined): number | undefined {
-  if (!timestamp) return undefined;
-  const seconds = Number(timestamp);
-  if (!Number.isFinite(seconds)) return undefined;
-  return seconds * 1_000;
 }
 
 function EmptyQueue({

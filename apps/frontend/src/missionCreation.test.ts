@@ -17,12 +17,14 @@ import {
   missionCargoMaxForResource,
   missionBodySelectionVisibility,
   missionConfirmButtonLabel,
+  missionComposerRouteEndpoints,
   missionDraftBlocker,
   missionSpecificLoadout,
   missionShipOptions,
   missionTimingSummary,
   NonAttackMissionIntelPanel,
   projectedMissionArrivalAtSeconds,
+  preparePublicTargetBattleForecast,
   publicTargetBattleForecast,
   rebalanceLootRatio,
   ShipQuantityRow,
@@ -244,7 +246,10 @@ describe("mission creation", () => {
     // cannot inject a quantity after the all-zero mount/reset initializer runs.
     expect(missionCreationSource.match(/useState<MissionShips>/g)).toHaveLength(1);
     expect(missionCreationSource.match(/setShips\(/g)).toHaveLength(1);
-    expect(missionCreationSource).toContain('className="grid gap-4 p-4 sm:p-5 lg:p-6"');
+    // The application shell already pads the page; the composer must not add a
+    // second outer padding layer.
+    expect(missionCreationSource).toContain('<section className="grid gap-3">');
+    expect(missionCreationSource).not.toContain('className="grid gap-3 p-4 sm:p-5 lg:p-6"');
   });
 
   test("allows a non-cargo-only Deploy from the selected origin inventory", () => {
@@ -539,15 +544,15 @@ describe("mission creation", () => {
     expect(missionCreationSource).toContain("if (actionPendingLabel) return actionPendingLabel;");
   });
 
-  test("renders ship quantity rows with image assets, keyboard input, / N availability, and steppers", () => {
+  test("renders ship quantity rows with centered digit-growing input, / N availability, and full-size steppers", () => {
     const heavyFighter = missionShipOptions.find((option) => option.key === "heavyFighter");
     expect(heavyFighter).toBeDefined();
 
     const row = ShipQuantityRow({
       onChange: () => undefined,
-      owned: 5,
+      owned: 500,
       ship: heavyFighter!,
-      value: 0,
+      value: 123,
     });
     const text = collectText(row).join(" ").replace(/\s+/g, " ");
     const buttons = findElements(row, "button");
@@ -555,19 +560,23 @@ describe("mission creation", () => {
     const images = findElements(row, "img");
 
     expect(text).toContain("Heavy Fighter");
-    expect(text).toContain("/ 5");
+    expect(text).toContain("/ 500");
     expect(buttons.map((button) => button.props?.["aria-label"])).toEqual([
       "Decrease Heavy Fighter",
       "Increase Heavy Fighter",
     ]);
+    expect(buttons.every((button) => String(button.props?.className).includes("w-11"))).toBe(true);
+    expect(buttons.every((button) => String(button.props?.className).includes("shrink-0"))).toBe(true);
     expect(inputs[0]?.props).toMatchObject({
       "aria-label": "Heavy Fighter quantity",
       inputMode: "numeric",
-      max: 5,
+      max: 500,
       min: 0,
       type: "number",
-      value: 0,
+      value: 123,
+      style: { width: "calc(3ch + 3rem)" },
     });
+    expect(String(inputs[0]?.props?.className)).toContain("text-center");
     expect(images[0]?.props?.src).toBe(heavyFighter?.asset);
   });
 
@@ -712,6 +721,35 @@ describe("mission creation", () => {
     }))).toMatchObject({ kind: "defeat", label: "Probable defeat" });
   });
 
+  test("treats an empty attacking fleet as a concrete battle outcome with a report", () => {
+    const emptyShips = {
+      ...attackAction.ships,
+      lightFighter: 0,
+    };
+    const target = targetPlanet({
+      publicState: {
+        resources: { metal: "1_000", crystal: "500", deuterium: "200" },
+        fleet: [],
+        defenses: [{ id: 0, count: 1 }],
+        stationedDefenders: [],
+        stationedDefenderForecastTimeline: [],
+        stationedDefenderTimelineComplete: true,
+        buildings: [],
+        research: [],
+        queues: null,
+      },
+    });
+    const prepared = preparePublicTargetBattleForecast(emptyShips, target);
+    const forecast = publicTargetBattleForecast(
+      emptyShips,
+      target,
+    );
+
+    expect(prepared.status).toBe("complete");
+    expect(forecast.kind).toBe("defeat");
+    expect(forecast.reportSeed).toBeDefined();
+  });
+
   test("does not label the mission-1791 cargo defender shape as a probable win", () => {
     const forecast = publicTargetBattleForecast({
       ...attackAction.ships,
@@ -834,15 +872,21 @@ describe("mission creation", () => {
       (element) => element.props?.["aria-label"] === "Close simulated battle report",
     );
 
-    expect(text).toMatch(/Win \d+ \(\d+(?:\.\d)?%\)/);
-    expect(text).toMatch(/Draw \d+ \(\d+(?:\.\d)?%\)/);
-    expect(text).toMatch(/Loss \d+ \(\d+(?:\.\d)?%\)/);
-    expect(text).toContain("Illustrative simulation");
-    expect(text).toContain("Sample possible battle");
-    expect(text).toContain("Random word");
+    expect(text).toMatch(/\d+ wins/);
+    expect(text).toMatch(/\d+ draws/);
+    expect(text).toMatch(/\d+ defeats/);
+    expect(text).toContain("runs");
+    expect(text).toContain("attacker survivors");
+    expect(text).toContain("Possible battle");
+    expect(text).not.toContain("Illustrative simulation");
+    expect(text).not.toContain("Random word");
+    expect(text).not.toContain("Contract lane");
+    expect(text).not.toContain("Connected commander");
+    expect(text).toContain("Fleet:");
+    expect(text).toContain("Defenses:");
     expect(text).toContain("Combat rounds");
     expect(text).toContain("Rapidfire");
-    expect(text).toContain("not the already-determined future on-chain result");
+    expect(text).toContain("future on-chain result may differ");
     expect(reportTrigger?.props?.role).toBe("button");
     expect(dialog?.props?.["aria-modal"]).toBe("true");
     expect(dialog?.props?.className).toContain("overflow-y-auto");
@@ -850,7 +894,32 @@ describe("mission creation", () => {
     expect(missionCreationSource).toContain("max-h-[calc(100dvh-1.5rem)]");
   });
 
-  test("disables the report control when public defender technology is unavailable", () => {
+  test("shows an outcome skeleton while a debounced battle preview is calculating", () => {
+    const panel = AttackOutcomePanel({
+      battleForecast: {
+        attackerPower: 186,
+        defenderPower: 682,
+        detail: "Calculating battle outcome…",
+        kind: "uncertain",
+        label: "Uncertain",
+        loading: true,
+      },
+      lootableAtArrival: { metal: 0, crystal: 0, deuterium: 0 },
+      maxLootForecast: { metal: 0, crystal: 0, deuterium: 0 },
+    });
+    const skeleton = findElements(panel, "div").find(
+      (element) => element.props?.["aria-label"] === "Calculating battle outcome",
+    );
+    const text = collectText(panel).join(" ");
+
+    expect(skeleton?.props?.["aria-busy"]).toBe("true");
+    expect(text).not.toContain("Uncertain");
+    expect(text).not.toContain("Calculating battle outcome…");
+    expect(text).toContain("ATK");
+    expect(text).toContain("DEF");
+  });
+
+  test("keeps the outcome loading while public defender technology is unavailable", () => {
     const panel = AttackOutcomePanel({
       battleForecast: publicTargetBattleForecast(
         { ...attackAction.ships, lightFighter: 1 },
@@ -873,7 +942,10 @@ describe("mission creation", () => {
       (element) => element.props?.["aria-label"] === "Open simulated battle report",
     );
 
-    expect(reportButton?.props?.disabled).toBe(true);
+    expect(reportButton).toBeUndefined();
+    expect(findElements(panel, "div").some(
+      (element) => element.props?.["aria-label"] === "Calculating battle outcome",
+    )).toBe(true);
     expect(findElements(panel, "div").some((element) => element.props?.role === "dialog")).toBe(false);
   });
 
@@ -918,8 +990,10 @@ describe("mission creation", () => {
       publicState: {
         resources: { metal: "0", crystal: "0", deuterium: "0" },
         fleet: [],
-        defenses: [{ id: 0, count: 1 }],
-        buildings: [],
+          defenses: [{ id: 0, count: 1 }],
+          stationedDefenderForecastTimeline: [],
+          stationedDefenderTimelineComplete: true,
+          buildings: [],
         research: [],
         queues: null,
       },
@@ -946,8 +1020,8 @@ describe("mission creation", () => {
 
     expect(shipyardOnlyForecast.attackerPower).toBeGreaterThan(baseForecast.attackerPower);
     expect(shipyardOnlyForecast.attackerTechLevels).toEqual({ weapons: 4, shielding: 0, armor: 5 });
-    expect(text).toMatch(/Tech W4 S0 A5/);
-    expect(text).toMatch(/\/ W0 S0 A0/);
+    expect(text).toContain("Your technology Weapons 4 · Shields 0 · Armor 5");
+    expect(text).toContain("Defender technology Weapons 0 · Shields 0 · Armor 0");
   });
 
   test("includes public stationed defenders in attack intel and battle forecast", () => {
@@ -1188,7 +1262,7 @@ describe("mission creation", () => {
     expect(reportText).toContain("Joined fleet #78");
     expect(reportText).toContain("Selected joining fleet");
     expect(reportText).toContain("Group Defender");
-    expect(reportText).toContain("Inherited from the lead attack group");
+    expect(reportText).not.toContain("Inherited from the lead attack group");
     expect(findElements(joinPanel, "summary").some(
       (element) => element.props?.["aria-label"] === "Open simulated battle report",
     )).toBe(true);
@@ -1456,22 +1530,21 @@ describe("mission creation", () => {
     });
     const text = collectText(intel).join(" ");
 
-    expect(text).toContain("Target");
-    expect(text).toContain("New Zion");
-    expect(text).toContain("[7:41:6]");
     expect(text).toContain("Outcome");
     expect(text).toContain("Probable win");
-    expect(text).toContain("Tech");
-    expect(text).toContain("DEF unknown");
-    expect(text).toContain("Max loot");
-    expect(text).toContain("Resources");
-    expect(text).toContain("Max carry");
-    expect(text).toContain("Forces");
+    expect(text).toContain("Your technology");
+    expect(text).toContain("DEF");
+    expect(text).toContain("200");
+    expect(text).toContain("Defending forces");
     expect(text).toContain("Fleet");
     expect(text).toContain("Small Cargo");
     expect(text).toContain("Rocket Launcher");
-    expect(text).toContain("Now");
-    expect(text).toMatch(/1,000\s+M/);
+    expect(text).not.toContain("Resources");
+    expect(text).not.toContain("Max carry");
+    expect(text).not.toContain("Lootable");
+    expect(text).not.toContain("Target");
+    expect(text).not.toContain("New Zion");
+    expect(text).not.toContain("[7:41:6]");
     expect(text).not.toContain("Public state");
     expect(text).not.toContain("Destination intel");
     expect(text).not.toContain("Projected arrival resources use");
@@ -1479,13 +1552,22 @@ describe("mission creation", () => {
   });
 
   test("keeps Attack Mission setup compact with aligned intel rows and no rejected section clutter", () => {
-    expect(missionCreationSource).toContain("<MissionFormSection title=\"Fleet\" eyebrow=\"Ships\">");
-    expect(missionCreationSource).toContain("<MissionFormSection title=\"Speed\" eyebrow=\"Flight plan\">");
+    expect(missionCreationSource).toContain('title="Fleet"');
+    expect(missionCreationSource).toContain('eyebrow="Ships"');
+    expect(missionCreationSource).toContain('title="Speed"');
+    expect(missionCreationSource).toContain('eyebrow="Flight plan"');
     expect(missionCreationSource).toContain("<MissionFormSection title=\"Loot\" eyebrow=\"Plunder\">");
-    expect(missionCreationSource).toContain("<h3 className=\"text-sm font-semibold text-white\">Launch</h3>");
+    expect(missionCreationSource).not.toContain("<h3 className=\"text-sm font-semibold text-white\">Launch</h3>");
     expect(missionCreationSource).toContain("ResourceIntelTable");
     expect(missionCreationSource).toContain("ForceIntelTable");
-    expect(missionCreationSource).toContain("CompactFactRow label={holdingBreakdown ? \"Reach\" : \"Arrival\"}");
+    expect(missionCreationSource).toContain("<AttackLootProjection");
+    expect(missionCreationSource).not.toContain('title="Loot now"');
+    expect(missionCreationSource).toContain('title="Loot at arrival"');
+    expect(missionCreationSource).toContain("Can carry / available loot");
+    expect(missionCreationSource).toContain("action.mode !== \"missile\" && !joinAttackMode && timingSummary");
+    expect(missionCreationSource).toContain('className="grid gap-2 border-t border-white/10 pt-3"');
+    expect(missionCreationSource).toContain('aria-label="Mission speed"');
+    expect(missionCreationSource).not.toContain("MISSION_SPEED_OPTIONS.map");
     expect(missionCreationSource).not.toContain("Launch decision");
     expect(missionCreationSource).not.toContain("Mission Summary");
     expect(missionCreationSource).not.toContain("MissionStatCard");
@@ -1494,21 +1576,50 @@ describe("mission creation", () => {
 
   test("uses mission-specific loadouts instead of generic Fleet and Resources sections for Transport and Deploy", () => {
     expect(missionSpecificLoadout(transportAction)).toEqual({
-      title: "Transport manifest",
       shipsTitle: "Ships to transport",
       cargoTitle: "Cargo to transport",
     });
     expect(missionSpecificLoadout(deployAction)).toEqual({
-      title: "Deployment manifest",
       shipsTitle: "Ships to deploy",
       cargoTitle: "Supplies to deploy",
     });
     expect(missionSpecificLoadout(attackAction)).toBeNull();
 
     expect(missionCreationSource).toContain("specificLoadout ? (");
-    expect(missionCreationSource).toContain("<MissionFormSection title={specificLoadout.title} eyebrow=\"Loadout\">");
+    expect(missionCreationSource).toContain("title={specificLoadout.shipsTitle}");
+    expect(missionCreationSource).toContain('eyebrow="Loadout"');
+    expect(missionCreationSource).toContain("title={specificLoadout.cargoTitle}");
+    expect(missionCreationSource).toContain('eyebrow="Cargo"');
+    expect(missionCreationSource).toContain('summary={`${selectedShipCount.toLocaleString()} selected`}');
+    expect(missionCreationSource).toContain("Capacity left ${cargoTotal.toLocaleString()} / ${cargoCapacity.toLocaleString()}");
+    expect(missionCreationSource).toContain("summary={`Fuel ${effectiveFuelCost.toLocaleString()} deuterium`}");
+    expect(missionCreationSource).toContain('<MissionCancelButton onCancel={onBack} />');
+    expect(missionCreationSource).toContain('className="min-h-11 w-full');
+    expect(missionCreationSource).toContain('align="left"');
+    expect(missionCreationSource).toContain('align="right"');
+    expect(missionCreationSource).toContain("grid grid-cols-2 gap-3");
+    expect(missionCreationSource).toContain("grid min-w-0 gap-0.5");
+    expect(missionCreationSource).not.toContain('<header className="border-b border-white/10 pb-3">');
+    expect(missionCreationSource).not.toContain("Transport manifest");
+    expect(missionCreationSource).not.toContain("Load cargo after reserving mission fuel");
     expect(missionCreationSource).not.toContain("<MissionFormSection title=\"Cargo\" eyebrow=\"Resources\">");
-    expect(missionCreationSource).toContain("<MissionFormSection title=\"Fleet\" eyebrow=\"Ships\">");
+    expect(missionCreationSource).toContain('title="Fleet"');
+  });
+
+  test("builds the mission composer route from real planet names", () => {
+    const endpoints = missionComposerRouteEndpoints({
+      originCoords: { galaxy: 6, system: 9, position: 4 },
+      originIsMoon: false,
+      originLabel: "New Montreal",
+      target: targetPlanet({ name: "New Zion" }),
+      targetCoords: { galaxy: 6, system: 9, position: 1 },
+      targetIsMoon: false,
+    });
+
+    expect(endpoints.origin.name).toBe("New Montreal");
+    expect(endpoints.target.name).toBe("New Zion");
+    expect(endpoints.origin.coords).toEqual({ galaxy: 6, system: 9, position: 4 });
+    expect(endpoints.target.coords).toEqual({ galaxy: 6, system: 9, position: 1 });
   });
 
   test("Transport Max controls fill the inventory-limited amount and recompute for reduced capacity", () => {
@@ -1786,14 +1897,14 @@ describe("mission creation", () => {
     )).toEqual({ metal: "12", crystal: "3", deuterium: "1" });
   });
 
-  test("uses the compact Attack-style intel shell for non-attack mission setup", () => {
+  test("uses compact mission-specific intel without repeating the route target or mission summary", () => {
     expect(missionCreationSource).toContain("<NonAttackMissionIntelPanel");
     expect(missionCreationSource).toContain("lootRatioSupported || joinAttackMode");
     expect(missionCreationSource).toContain("joinAttackContext");
-    expect(missionCreationSource).toContain("<TargetDecisionTable coords={coords} target={target} />");
-    expect(missionCreationSource).toContain("<MissionPlanContent");
+    expect(missionCreationSource).not.toContain("<TargetDecisionTable");
+    expect(missionCreationSource).not.toContain("<MissionPlanContent");
+    expect(missionCreationSource).toContain("<HarvestIntelTable");
     expect(missionCreationSource).toContain("<ResourceIntelTable resourceIntel={resourceIntel} />");
-    expect(missionCreationSource).toContain("missionPlanTitle(action)");
   });
 
   test("keeps non-attack mission panels visually shared but mission-specific", () => {
@@ -1856,35 +1967,18 @@ describe("mission creation", () => {
       destinationIntelVisible: shouldShowDestinationIntel(deployAction),
     })).join(" ");
 
-    expect(transportText).toContain("Target");
-    expect(transportText).toContain("Transport run");
-    expect(transportText).toContain("Own planet");
-    expect(transportText).toContain("Manual load / 4,000 capacity");
-    expect(transportText).not.toContain("Resources");
-    expect(transportText).not.toContain("Forces");
-    expect(transportText).not.toContain("Max carry");
+    expect(transportText).toEqual("");
 
-    expect(harvestText).toContain("Debris sweep");
-    expect(harvestText).toContain("Debris field target");
-    expect(harvestText).toContain("2,000 recycler capacity");
     expect(harvestText).toContain("Debris");
+    expect(harvestText).toContain("Field");
     expect(harvestText).toContain("27,000 M");
     expect(harvestText).toContain("9,000 C");
     expect(harvestText).toContain("36,000 total");
     expect(harvestText).toContain("2,000 / 36,000 debris capacity");
 
-    expect(defendText).toContain("Station defense");
-    expect(defendText).toContain("Arrive, hold, return");
-    expect(defendText).toContain("180 D net");
-    expect(defendText).toContain("Level 3 support");
-    expect(defendText).toContain("Resources");
-    expect(defendText).toContain("Forces");
+    expect(defendText).toEqual("");
 
-    expect(deployText).toContain("Deploy fleet");
-    expect(deployText).toContain("Own planets only");
-    expect(deployText).toContain("One-way arrival");
-    expect(deployText).not.toContain("Resources");
-    expect(deployText).not.toContain("Forces");
+    expect(deployText).toEqual("");
   });
 
   test("shows no indexed debris state on Harvest mission setup when the target has no debris field", () => {
@@ -1942,18 +2036,18 @@ describe("mission creation", () => {
     expect(text).toContain("Resources now");
   });
 
-  test("hides destination intel for colonize, transport, and deploy mission screens", () => {
+  test("hides destination intel where the route or mission controls already carry the useful context", () => {
     expect(shouldShowDestinationIntel(colonizeAction)).toBe(false);
     expect(shouldShowReturnTiming(colonizeAction, false)).toBe(false);
     expect(shouldShowDestinationIntel(transportAction)).toBe(false);
     expect(shouldShowDestinationIntel(deployAction)).toBe(false);
+    expect(shouldShowDestinationIntel(defenseHoldAction)).toBe(false);
     expect(shouldShowReturnTiming(deployAction, false)).toBe(true);
 
     expect(shouldShowDestinationIntel(attackAction)).toBe(true);
     expect(shouldShowReturnTiming(attackAction, false)).toBe(true);
     expect(shouldShowReturnTiming(attackAction, true)).toBe(false);
     expect(shouldShowDestinationIntel(harvestAction)).toBe(true);
-    expect(shouldShowDestinationIntel(defenseHoldAction)).toBe(true);
   });
 
   test("renders Greedy off as manual loot fields and Greedy on as concise copy only", () => {
@@ -2324,7 +2418,7 @@ describe("mission creation", () => {
   const acsDefendAction: Extract<GalaxyAction, { enabled: true }> = {
     enabled: true,
     kind: "acsDefend",
-    label: "Group defend",
+    label: "Defend planet",
     mode: "mission",
     mission: "acsDefend",
     ships: { ...attackAction.ships },

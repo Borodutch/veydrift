@@ -40,7 +40,6 @@ describe("Overview fleets summary", () => {
 
     const summary = summarizeFleets(fleetVisibility, now);
     expect(summary.activeCount).toBe(2);
-    expect(summary.underAttack).toBeNull();
     expect(summary.lines.map((line) => line.text)).toEqual([
       "Outbound · Attack to 1517 [5:407:4] · Outbound · arrives in 13m",
       "Returning · Transport from Outpost [6:12:3] · Returning · lands in 5m",
@@ -61,7 +60,7 @@ describe("Overview fleets summary", () => {
     expect(text).not.toContain("1 -> 40");
   });
 
-  test("raises a prominent under-attack alert for hostile inbound attacks with the soonest ETA", () => {
+  test("shows hostile inbound attacks once as red mission lines without a redundant alert banner", () => {
     const now = Date.parse("2026-06-07T22:00:00.000Z");
     const fleetVisibility = visibility({
       incoming: [
@@ -89,7 +88,10 @@ describe("Overview fleets summary", () => {
     });
 
     const summary = summarizeFleets(fleetVisibility, now);
-    expect(summary.underAttack).toEqual({ count: 2, soonestLabel: "in 3m" });
+    expect(summary.lines.map((line) => line.text)).toEqual([
+      "Hostile inbound · Attack from Raider [5:407:4] · Outbound · arrives in 8m",
+      "Hostile inbound · Attack from Reaver [5:407:9] · Outbound · arrives in 3m",
+    ]);
 
     const text = collectText(FleetsSummary({
       fleetVisibility,
@@ -97,9 +99,43 @@ describe("Overview fleets summary", () => {
       onOpenMissionControl: () => undefined,
     })).join(" ");
 
-    expect(text).toContain("Under attack");
-    expect(text).toContain("2 hostile fleets inbound");
-    expect(text).toContain("soonest in 3m");
+    expect(text).toContain("Hostile inbound · Attack from Raider [5:407:4] · Outbound · arrives in 8m");
+    expect(text).toContain("Hostile inbound · Attack from Reaver [5:407:9] · Outbound · arrives in 3m");
+    expect(text).not.toContain("Under attack");
+    expect(text).not.toContain("hostile fleets inbound");
+  });
+
+  test("shows a returning incoming Harvest as amber and uses its return timing", () => {
+    const now = Date.parse("2026-06-07T22:00:00.000Z");
+    const fleetVisibility = visibility({
+      incoming: [
+        mission({
+          missionId: "12",
+          missionType: "Harvest",
+          status: "Returning",
+          owner: ENEMY_WALLET,
+          originPlanetId: "40",
+          targetPlanetId: "1",
+          arrivalMs: now - 2 * 60_000,
+          returnMs: now + 5 * 60_000,
+          originPlanet: planetRef("40", ENEMY_WALLET, "Recycler Base", 4, 140, 13),
+        }),
+      ],
+    });
+
+    const summary = summarizeFleets(fleetVisibility, now);
+
+    expect(summary.lines).toEqual([{
+      key: "in-12",
+      relation: "friendly",
+      text: "Harvest returning to Recycler Base [4:140:13] · lands in 5m",
+      tone: "harvest",
+    }]);
+    expect(collectText(FleetsSummary({
+      fleetVisibility,
+      now,
+      onOpenMissionControl: () => undefined,
+    })).join(" ")).not.toContain("arriving now");
   });
 
   test("distinguishes hostile, friendly, and self inbound rows and deduplicates by mission id", () => {
@@ -238,6 +274,55 @@ describe("Overview fleets summary", () => {
       ],
     }), now);
     expect(summary.lines[0]?.text).toBe("Outbound · Deploy to Planet #77 · Outbound · arrives in 1m");
+  });
+
+  test("uses a known planet-roster name when the mission endpoint omits it", () => {
+    const now = Date.parse("2026-06-07T22:00:00.000Z");
+    const summary = summarizeFleets(
+      visibility({
+        outgoing: [
+          mission({
+            missionId: "1",
+            missionType: "Transport",
+            status: "Outbound",
+            owner: PLAYER_WALLET,
+            originPlanetId: "1",
+            targetPlanetId: "77",
+            arrivalMs: now + 60_000,
+            targetPlanet: planetRef("77", PLAYER_WALLET, null, 6, 9, 4),
+          }),
+        ],
+      }),
+      now,
+      new Map([["id:77", "New London"]]),
+    );
+
+    expect(summary.lines[0]?.text).toBe("Outbound · Transport to New London [6:9:4] · Outbound · arrives in 1m");
+  });
+
+  test("uses the commander identity when an unnamed mission planet has no known roster name", () => {
+    const now = Date.parse("2026-06-07T22:00:00.000Z");
+    const originPlanet = {
+      ...planetRef("162", ENEMY_WALLET, null, 4, 140, 13),
+      ownerDisplayName: "arcturus",
+    };
+    const summary = summarizeFleets(visibility({
+      incoming: [
+        mission({
+          missionId: "12",
+          missionType: "Harvest",
+          status: "Returning",
+          owner: ENEMY_WALLET,
+          originPlanetId: "162",
+          targetPlanetId: "1",
+          arrivalMs: now - 60_000,
+          returnMs: now + 5 * 60_000,
+          originPlanet,
+        }),
+      ],
+    }), now);
+
+    expect(summary.lines[0]?.text).toBe("Harvest returning to arcturus's planet [4:140:13] · lands in 5m");
   });
 
   test("labels stationed DefenseHold missions as holding instead of resolving", () => {

@@ -954,7 +954,6 @@ function WarSection({
               initiatedByAllianceId: war.initiatedByAllianceId,
               nowSeconds: Math.floor(nowMs / 1_000),
             });
-            const disabledReasonId = endAction.reason ? `alliance-war-${war.otherAllianceId}-end-reason` : undefined;
             return (
               <div className="grid gap-2 rounded border border-rose-300/25 bg-rose-300/[0.06] px-3 py-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center" key={war.otherAllianceId}>
                 <div className="min-w-0">
@@ -967,9 +966,8 @@ function WarSection({
                   <p className="mt-1 text-xs text-slate-400">Reciprocal war: attack score protection and bashing limits are bypassed for both alliances. {warMinimumDurationCopy}</p>
                 </div>
                 {endAction.visible ? (
-                  <div className="group relative justify-self-start sm:justify-self-end">
+                  <div className="justify-self-start sm:justify-self-end">
                     <button
-                      aria-describedby={disabledReasonId}
                       aria-disabled={!endAction.enabled}
                       className={`rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-100 ${
                         endAction.enabled ? "hover:bg-white/10" : "cursor-not-allowed opacity-50"
@@ -984,15 +982,6 @@ function WarSection({
                     >
                       End War
                     </button>
-                    {endAction.reason ? (
-                      <span
-                        className="pointer-events-none absolute right-0 top-full z-20 mt-1 w-56 rounded border border-white/10 bg-slate-950 px-2 py-1.5 text-xs font-medium text-slate-200 opacity-0 shadow-lg transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
-                        id={disabledReasonId}
-                        role="tooltip"
-                      >
-                        {endAction.reason}
-                      </span>
-                    ) : null}
                   </div>
                 ) : null}
               </div>

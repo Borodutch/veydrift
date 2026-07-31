@@ -5,6 +5,7 @@ import {
 import { productionQueueViewModel } from "../src/components/ProductionCatalog";
 import {
   isOverviewResearchReadyToFinish,
+  compactOverviewLevelLabel,
   overviewBuildingActionNoticeFor,
   overviewResearchActionNoticeFor,
 } from "../src/components/OverviewPage";
@@ -115,9 +116,16 @@ describe("overview planet hero image", () => {
 });
 
 describe("overview queue progress display", () => {
+  test("uses compact level labels inside overview queue cards", () => {
+    expect(compactOverviewLevelLabel("Shipyard Level 9")).toBe("Shipyard 9");
+    expect(compactOverviewLevelLabel("Plasma Technology level 7")).toBe("Plasma Technology 7");
+    expect(compactOverviewLevelLabel("Rift Stabilizer")).toBe("Rift Stabilizer");
+  });
+
   test("renders compact planet stats and effects behind the info control", () => {
     expect(overviewSource).toContain('aria-label="Show planet stats and effects"');
     expect(overviewSource).toContain('aria-controls="overview-planet-effects"');
+    expect(overviewSource).toContain('aria-haspopup="dialog"');
     expect(overviewSource).toContain("<PlanetEffectsPanel");
     expect(overviewSource).not.toContain(">Planet stats<");
     expect(overviewSource).not.toContain("<StatPip");
@@ -140,12 +148,24 @@ describe("overview queue progress display", () => {
     expect(overviewSource).toContain('aria-label="Close planet effects"');
   });
 
+  test("opens planet info and rename in viewport modals like the commander editor", () => {
+    expect(overviewSource).toContain('id="overview-planet-name-editor"');
+    expect(overviewSource).toContain('aria-labelledby="overview-planet-name-editor-title"');
+    expect(overviewSource).toContain('aria-modal="true"');
+    expect(overviewSource.match(/role="dialog"/g)?.length).toBe(2);
+    expect(overviewSource.match(/modal-backdrop-enter fixed inset-0 z-50/g)?.length).toBe(2);
+    expect(overviewSource.match(/modal-panel-enter grid max-h-\[calc\(100dvh-1\.5rem\)\]/g)?.length).toBe(2);
+    expect(overviewSource).toContain("event.target === event.currentTarget");
+    expect(overviewSource).toContain('event.key !== "Escape"');
+    expect(overviewSource).not.toContain('className="grid gap-2 rounded border border-white/10 bg-black/25 p-3"');
+  });
+
   test("renders the Solar Satellite effect energy in the compact non-wrapping form", () => {
     // The verbose "NN energy each" value wrapped on the Overview planet effects panel.
     // Use the established "NN E" energy unit and keep the value on one line.
     expect(overviewSource).toContain("} E each`}");
     expect(overviewSource).not.toContain("energy each`}");
-    expect(overviewSource).toContain('label="Solar Satellite"\n          nowrap');
+    expect(overviewSource).toMatch(/label="Solar Satellite"\s+nowrap/);
   });
 
   test("derives selected planet effect values from canonical production helpers", () => {
@@ -215,13 +235,16 @@ describe("overview queue progress display", () => {
     expect(overviewSource).not.toContain("max-w-[calc(100vw-1.5rem)]");
   });
 
-  test("uses canonical on-chain timelines for Overview defense and shipyard queues", () => {
-    expect(overviewSource).toContain("const defenseStartedAt = queueTimestampMs(onChainQueues?.defense?.startedAt)");
-    expect(overviewSource).toContain("startedAt={defenseStartedAt}");
-    expect(overviewSource).toContain("const shipStartedAt = queueTimestampMs(onChainQueues?.ship?.startedAt)");
-    expect(overviewSource).toContain("startedAt={shipHasCanonicalTimeline ? shipStartedAt : undefined}");
-    expect(overviewSource).toContain("const shouldIndeterminate = indeterminate ?? (!hasCanonicalTimeline && progress === undefined)");
-    expect(overviewSource).toContain("label={onChainShipQueue.label}");
+  test("reuses the compact production queue rail for Overview defense and shipyard queues", () => {
+    expect(overviewSource).toContain("productionQueueViewModel(onChainQueues?.defense, defenseCatalog)");
+    expect(overviewSource).toContain("productionQueueViewModel(onChainQueues?.ship, shipCatalog)");
+    expect(overviewSource.match(/<ProductionQueuePanel/g)?.length).toBe(2);
+    expect(overviewSource.match(/<ProductionQueuePanel\s+embedded/g)?.length).toBe(2);
+    expect(overviewSource).toContain("queue={onChainDefenseQueue}");
+    expect(overviewSource).toContain("queue={onChainShipQueue}");
+    expect(overviewSource).not.toContain("Queued next");
+    expect(overviewSource).not.toContain('tag={onChainQueues?.defense?.active ? "Active" : undefined}');
+    expect(overviewSource).not.toContain('tag={onChainQueues?.ship?.active ? "Active" : undefined}');
   });
 
   test("matches Defense page label, asset, and progress for the same queue snapshot", () => {

@@ -126,6 +126,7 @@ export function DefensePage({
             onSelectDefense?.(key);
           }}
           queue={productionQueueViewModel(queue, defenseCatalog)}
+          queueTone="rose"
           selectedKey={selectedKey}
         />
       )}

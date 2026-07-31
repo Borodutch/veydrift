@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { ComponentChildren, VNode } from "preact";
 import {
-  ActiveResearchQueueDetail,
+  ActiveResearchQueuePanel,
   formatCost,
   formatResearchRequirements,
   getResearchRequirementStates,
@@ -20,6 +20,7 @@ import {
   sortResearchUnlockRows,
   shouldHideResearchValues,
 } from "../src/components/ResearchPage";
+import { QueueProgressPanel } from "../src/components/QueueProgressPanel";
 import { RequirementFlairs } from "../src/components/RequirementFlairs";
 import { createInitialPlayableState, researchEffectRows, researchUnlockRows } from "../src/playableMvp";
 import type { ChainResearchState } from "../src/walletFlow";
@@ -256,9 +257,8 @@ describe("Research page load-error display", () => {
     expect(infoChip.type).toBe("span");
   });
 
-  test("renders active research progress with the shared single-item queue pattern", () => {
-    const panel = ActiveResearchQueueDetail({
-      isSelectedResearch: true,
+  test("renders a compact page-level research queue with its technology asset", () => {
+    const panel = ActiveResearchQueuePanel({
       now: 1_700_000_060_000,
       queue: {
         kind: "research",
@@ -271,11 +271,14 @@ describe("Research page load-error display", () => {
     });
     const text = visibleText(panel);
 
-    expect(text).toContain("Research in progress");
-    expect(text).toContain("Energy Technology Level 1 is researching");
-    expect(text).toContain("50 %");
-    expect(text).toContain("Time remaining");
-    expect(text).toContain("Ready at");
+    expect(panel.type).toBe(QueueProgressPanel);
+    expect(panel.props.asset).toContain("energy");
+    expect(text).toContain("Research");
+    expect(text).toContain("Energy Technology 1");
+    expect(text).not.toContain("Energy Technology Level 1");
+    expect(text).toContain("50%");
+    expect(text).not.toContain("Time remaining");
+    expect(text).not.toContain("Ready at");
   });
 
   test("shows Energy Technology impact on Fusion Reactor output", () => {
@@ -674,6 +677,40 @@ describe("Research page load-error display", () => {
         resources: { metal: 700, crystal: 1_000, deuterium: 1_000 },
       },
     });
+    const insufficientResourcesDuringActiveResearch = researchActionStatus({
+      actionPending: false,
+      canTransact: true,
+      chainCost: { metal: 1_600, crystal: 800, deuterium: 0 },
+      error: undefined,
+      ignoreActiveQueue: true,
+      key: "energy",
+      loading: false,
+      now: 1_700_000_000_000,
+      researchState: researchState({
+        resources: { metal: "700", crystal: "1000", deuterium: "1000" },
+        queue: {
+          active: true,
+          kind: "research",
+          itemId: 0,
+          targetLevel: 2,
+          readyAt: "1700000120",
+          startedAt: "1700000000",
+          cost: { metal: "0", crystal: "1600", deuterium: "800" },
+        },
+      }),
+      state: {
+        ...state,
+        resources: { metal: 700, crystal: 1_000, deuterium: 1_000 },
+        researchQueue: {
+          kind: "research",
+          key: "energy",
+          label: "Energy Technology",
+          readyAt: 1_700_000_120_000,
+          startedAt: 1_700_000_000_000,
+          targetLevel: 2,
+        },
+      },
+    });
 
     expect(ready).toMatchObject({
       tileStatus: "Ready",
@@ -700,6 +737,12 @@ describe("Research page load-error display", () => {
     });
     expect(researchCatalogTitleTone(insufficientResources)).toBe("muted");
     expect(researchCatalogStatusText(insufficientResources)).toBe("");
+
+    expect(insufficientResourcesDuringActiveResearch).toMatchObject({
+      reason: "Requires 900 more Metal",
+      tileStatus: "ShortResources",
+    });
+    expect(researchCatalogTitleTone(insufficientResourcesDuringActiveResearch)).toBe("muted");
   });
 
   test("marks Shielding short on crystal when prerequisites are met but resourcesAsOfNow cannot pay (VEY-KANEO-596)", () => {
