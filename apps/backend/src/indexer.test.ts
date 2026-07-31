@@ -7869,6 +7869,52 @@ describe("SettlementIndexer", () => {
     }
   });
 
+  test("repairs stale ship projections from the latest journaled absolute-count event", () => {
+    const dir = mkdtempSync(join(tmpdir(), "veydrift-indexer-"));
+    const databasePath = join(dir, "contract-state.sqlite");
+    const chainReader = {
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return [planet]; }
+    };
+    const absoluteShipCount = {
+      blockNumber: "0x90",
+      transactionHash: "0xabsolute-ship-count",
+      logIndex: "0x0",
+      topics: [planetShipCountChangedTopic, topic(BigInt(planet.planetId)), topic(4n)],
+      data: abiWords(9n)
+    };
+    try {
+      const writer = new SettlementIndexer(chainReader, 100n, { databasePath });
+      writer.applyEvent(planet);
+      writer.applyLog(absoluteShipCount);
+
+      // Simulate the legacy failure mode: the immutable event journal survives but its mutable
+      // ship-count rows were lost after a process interruption.
+      const db = new Database(databasePath);
+      for (const table of ["indexed_ship_counts", "contract_ship_counts"]) {
+        db.query(`UPDATE ${table} SET count = 2 WHERE planet_id = ? AND ship_id = ?`).run(planet.planetId, 4);
+      }
+      db.close();
+
+      expect(writer.applyLog(absoluteShipCount)).toMatchObject({ applied: true, duplicate: true });
+      expect(writer.shipRows(planet.planetId).find((ship) => ship.id === 4)?.count).toBe(9);
+
+      // The startup repair also handles a stale journal-only row even when no websocket duplicate
+      // happens to arrive after a restart.
+      const staleDb = new Database(databasePath);
+      for (const table of ["indexed_ship_counts", "contract_ship_counts"]) {
+        staleDb.query(`UPDATE ${table} SET count = 1 WHERE planet_id = ? AND ship_id = ?`).run(planet.planetId, 4);
+      }
+      staleDb.close();
+
+      const restarted = new SettlementIndexer(chainReader, 100n, { databasePath });
+      expect(restarted.shipRows(planet.planetId).find((ship) => ship.id === 4)?.count).toBe(9);
+    } finally {
+      rmSync(dir, { force: true, recursive: true });
+    }
+  });
+
   test("canonical mission event_json supplies terminal return fields when decoded mission logs are launch-era", async () => {
     const dir = mkdtempSync(join(tmpdir(), "veydrift-indexer-"));
     const databasePath = join(dir, "contract-state.sqlite");
