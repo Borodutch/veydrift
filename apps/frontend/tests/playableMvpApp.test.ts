@@ -826,6 +826,41 @@ describe("Playable MVP app display helpers", () => {
     expect(planetHasIncomingAttack(visibility, "9")).toBe(false);
   });
 
+  test("does not transfer moon attacks to the parent planet and includes grouped attacks", () => {
+    const wallet = "0x2222222222222222222222222222222222222222";
+    const visibility = {
+      ...emptyFleetVisibilityFixture(wallet, "7"),
+      incoming: [
+        fleetMission({ missionId: "moon-attack", targetIsMoon: true, targetPlanetId: "7" }),
+        fleetMission({ missionId: "group-attack", missionType: "AcsAttack", targetPlanetId: "8" }),
+      ],
+    };
+
+    expect(planetHasIncomingAttack(visibility, "7")).toBe(false);
+    expect(planetHasIncomingAttack(visibility, "8")).toBe(true);
+  });
+
+  test("keeps a delayed older attack response from replacing the latest target", () => {
+    const wallet = "0x2222222222222222222222222222222222222222";
+    const refreshGate = { current: 0 };
+    const olderRequest = beginRefreshRequest(refreshGate);
+    const latestRequest = beginRefreshRequest(refreshGate);
+    let applied = emptyFleetVisibilityFixture(wallet, "7");
+    const apply = (requestId: number, targetPlanetId: string) => {
+      if (!canApplyRefreshRequest(refreshGate, requestId)) return;
+      applied = {
+        ...emptyFleetVisibilityFixture(wallet, "7"),
+        incoming: [fleetMission({ missionId: `attack-${targetPlanetId}`, targetPlanetId })],
+      };
+    };
+
+    apply(latestRequest, "8");
+    apply(olderRequest, "7");
+
+    expect(planetHasIncomingAttack(applied, "8")).toBe(true);
+    expect(planetHasIncomingAttack(applied, "7")).toBe(false);
+  });
+
   test("conditions planet picker moon indicators on the nested moon selector", () => {
     const itemSource = sourceBetween(
       playableMvpSource,

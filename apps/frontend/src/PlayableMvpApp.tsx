@@ -75,6 +75,11 @@ import {
   reconcilePlanetPickerOrder,
   writePlanetPickerOrder,
 } from "./planetPickerOrder";
+import {
+  derivePlanetPickerAttackHighlights,
+  planetPickerHasIncomingAttack,
+  type PlanetPickerAttackHighlights,
+} from "./planetPickerAttackHighlights";
 import { ShareDialog } from "./components/ShareDialog";
 import { rankingsAttackProtectionForEntry } from "./rankingsAttackProtection";
 import {
@@ -1096,12 +1101,14 @@ export function planetScopedFleetVisibility(
 export function planetHasIncomingAttack(
   fleetVisibility: FleetMissionVisibilityResponse | undefined,
   planetId: string,
+  bodyKind: OrbitBodyKind = "planet",
 ): boolean {
-  const wallet = fleetVisibility?.wallet.trim().toLowerCase();
-  return Boolean(fleetVisibility?.incoming.some((mission) =>
-    mission.missionType === "Attack" && mission.targetPlanetId === planetId
-    && (!wallet || mission.owner.trim().toLowerCase() !== wallet)
-  ));
+  return planetPickerHasIncomingAttack(derivePlanetPickerAttackHighlights({
+    account: fleetVisibility?.wallet,
+    fleetVisibility,
+    hydrated: Boolean(fleetVisibility),
+    planetIds: [planetId],
+  }), planetId, bodyKind);
 }
 
 export function shipyardStateForMissionActions({
@@ -3888,6 +3895,13 @@ export function PlayableMvpApp({
   const apiBaseUrl = useMemo(() => {
     return runtimeConfig.status === "ready" ? apiBaseUrlForRuntimeConfig(runtimeConfig.config) : undefined;
   }, [runtimeConfig]);
+  const expectedWalletSnapshotKey = walletSnapshotHydrationKey(apiBaseUrl, account);
+  const planetPickerAttackHighlights = useMemo(() => derivePlanetPickerAttackHighlights({
+    account,
+    fleetVisibility: displayFleetVisibility,
+    hydrated: Boolean(expectedWalletSnapshotKey && hydratedWalletSnapshotKey === expectedWalletSnapshotKey),
+    planetIds: walletPlanets.map((planet) => planet.planetId),
+  }), [account, displayFleetVisibility, expectedWalletSnapshotKey, hydratedWalletSnapshotKey, walletPlanets]);
   const gameWalletChain = useMemo<VeydriftWalletChain>(() => {
     return runtimeConfig.status === "ready"
       ? veydriftChainForChainId(runtimeConfig.config.chainId)
@@ -8549,7 +8563,7 @@ export function PlayableMvpApp({
   );
   const mobilePlanetPicker = showPlanetSelector ? (
     <PlanetSelector
-      fleetVisibility={displayFleetVisibility}
+      attackHighlights={planetPickerAttackHighlights}
       layout="mobile"
       now={now}
       onOrderChange={handlePlanetPickerOrderChange}
@@ -8571,7 +8585,7 @@ export function PlayableMvpApp({
 
   const planetSidebar = showPlanetSelector ? (
     <PlanetSelector
-      fleetVisibility={displayFleetVisibility}
+      attackHighlights={planetPickerAttackHighlights}
       layout="sidebar"
       now={now}
       onOrderChange={handlePlanetPickerOrderChange}
@@ -9322,7 +9336,7 @@ export function PlayableMvpApp({
 }
 
 function PlanetSelector({
-  fleetVisibility,
+  attackHighlights,
   layout,
   now,
   onOrderChange,
@@ -9332,7 +9346,7 @@ function PlanetSelector({
   selectedBodyKind,
   selectedPlanetId,
 }: {
-  fleetVisibility: FleetMissionVisibilityResponse | undefined;
+  attackHighlights: PlanetPickerAttackHighlights;
   layout: "mobile" | "sidebar";
   now: number;
   onOrderChange: (planetIds: string[]) => void;
@@ -9526,8 +9540,8 @@ function PlanetSelector({
 
   const selectorItems = planets.map((planet) => (
     <PlanetSelectorItem
+      attackHighlights={attackHighlights}
       dragging={draggingPlanetId === planet.planetId}
-      fleetVisibility={fleetVisibility}
       key={planet.planetId}
       layout={layout}
       now={now}
@@ -9570,8 +9584,8 @@ function PlanetSelector({
 }
 
 function PlanetSelectorItem({
+  attackHighlights,
   dragging,
-  fleetVisibility,
   layout,
   now,
   onBeforePlanetSelect,
@@ -9589,8 +9603,8 @@ function PlanetSelectorItem({
   selectedPlanet,
   shouldPreventPlanetTouchMove,
 }: {
+  attackHighlights: PlanetPickerAttackHighlights;
   dragging: boolean;
-  fleetVisibility: FleetMissionVisibilityResponse | undefined;
   layout: "mobile" | "sidebar";
   now: number;
   onBeforePlanetSelect: (planetId: string, event: JSX.TargetedMouseEvent<HTMLButtonElement>) => boolean;
@@ -9610,6 +9624,8 @@ function PlanetSelectorItem({
 }) {
   const selectedPlanetBody = planet.planetId === selectedPlanet.planetId && selectedBodyKind === "planet";
   const selectedMoonBody = planet.planetId === selectedPlanet.planetId && selectedBodyKind === "moon";
+  const hasIncomingPlanetAttack = planetPickerHasIncomingAttack(attackHighlights, planet.planetId, "planet");
+  const hasIncomingMoonAttack = planetPickerHasIncomingAttack(attackHighlights, planet.planetId, "moon");
   const hasDedicatedMoonSelector = Boolean(planet.moon?.exists);
   const reorderInstructionsId = `planet-picker-reorder-${layout}-${planet.planetId}`;
   return (
@@ -9618,6 +9634,15 @@ function PlanetSelectorItem({
         dragging ? "z-20 scale-[1.03] ring-2 ring-cyan-200/80 shadow-lg shadow-cyan-950/60" : ""
       }`}
       data-planet-selector-item={planet.planetId}
+      data-planet-selector-incoming-attack={
+        hasIncomingPlanetAttack && hasIncomingMoonAttack
+          ? "planet-and-moon"
+          : hasIncomingPlanetAttack
+            ? "planet"
+            : hasIncomingMoonAttack
+              ? "moon"
+              : undefined
+      }
       data-planet-selector-reordering={dragging ? "true" : undefined}
     >
       <span className="sr-only" id={reorderInstructionsId}>
@@ -9636,7 +9661,7 @@ function PlanetSelectorItem({
       <PlanetSelectorButton
         ariaDescribedBy={reorderInstructionsId}
         bodyKind="planet"
-        hasIncomingAttack={planetHasIncomingAttack(fleetVisibility, planet.planetId)}
+        hasIncomingAttack={hasIncomingPlanetAttack}
         now={now}
         onBeforeSelect={onBeforePlanetSelect}
         onContextMenu={(event) => onPlanetContextMenu(planet.planetId, event)}
@@ -9656,6 +9681,7 @@ function PlanetSelectorItem({
       />
       {planet.moon?.exists ? (
         <PlanetSelectorMoonButton
+          hasIncomingAttack={hasIncomingMoonAttack}
           onSelect={onSelect}
           planet={planet}
           selected={selectedMoonBody}
@@ -9963,31 +9989,47 @@ function planetSelectorQueueProgressBar({
 }
 
 function PlanetSelectorMoonButton({
+  hasIncomingAttack,
   onSelect,
   planet,
   selected,
 }: {
+  hasIncomingAttack: boolean;
   onSelect: (planetId: string, bodyKind?: OrbitBodyKind) => void;
   planet: ManagedPlanetResponse;
   selected: boolean;
 }) {
-  const label = `Select ${planetDisplayName(planet)} moon at ${planet.coordinates}`;
+  const label = `${hasIncomingAttack ? "Incoming attack warning. " : ""}Select ${planetDisplayName(planet)} moon at ${planet.coordinates}`;
+  const selectionStateClass = selected
+    ? "bg-cyan-200/[0.10] text-cyan-100"
+    : hasIncomingAttack
+      ? "bg-red-500/15 text-red-100"
+      : "bg-cyan-200/[0.055] text-slate-300 hover:bg-cyan-200/[0.09]";
+  const borderStateClass = hasIncomingAttack
+    ? "border-red-400/70 ring-1 ring-red-400/25"
+    : selected
+      ? "border-cyan-200/45"
+      : "border-cyan-200/15 hover:border-cyan-200/35";
   return (
     <button
       aria-current={selected ? "true" : undefined}
       aria-label={label}
-      className={`grid w-full min-w-0 grid-cols-[1.25rem_minmax(0,1fr)] items-center gap-1 overflow-hidden rounded border px-1 py-1 text-left transition focus:outline-none ${
-        selected
-          ? "border-cyan-200/45 bg-cyan-200/[0.10] text-cyan-100"
-          : "border-cyan-200/15 bg-cyan-200/[0.055] text-slate-300 hover:border-cyan-200/35 hover:bg-cyan-200/[0.09]"
-      }`}
+      className={`grid w-full min-w-0 grid-cols-[1.25rem_minmax(0,1fr)] items-center gap-1 overflow-hidden rounded border px-1 py-1 text-left transition focus:outline-none ${selectionStateClass} ${borderStateClass}`}
+      data-planet-selector-incoming-attack={hasIncomingAttack ? "moon" : undefined}
       data-planet-selector-moon="true"
       onClick={() => onSelect(planet.planetId, "moon")}
       title={label}
       type="button"
     >
-      <span className="h-5 w-5 overflow-hidden rounded-full border border-cyan-100/30 bg-black/40">
-        <MoonImage className="h-full w-full object-cover" planetType={planetTypeFromTemperature(planet.temperature)} />
+      <span className="relative h-5 w-5 rounded-full border border-cyan-100/30 bg-black/40">
+        <span className="block h-full w-full overflow-hidden rounded-full">
+          <MoonImage className="h-full w-full object-cover" planetType={planetTypeFromTemperature(planet.temperature)} />
+        </span>
+        {hasIncomingAttack ? (
+          <span aria-hidden="true" className="absolute -right-1.5 -top-1.5 grid h-3.5 w-3.5 place-items-center rounded-full bg-red-500 text-white">
+            <AlertTriangle className="h-2.5 w-2.5" strokeWidth={2.4} />
+          </span>
+        ) : null}
       </span>
       <span className="min-w-0">
         <span className="block truncate text-[0.62rem] font-semibold leading-3">Moon</span>
