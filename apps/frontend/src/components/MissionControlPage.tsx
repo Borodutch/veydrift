@@ -9,6 +9,7 @@ import { shipAssetByKey } from "../gameAssets";
 import { defenseCatalog, type ShipKey } from "../playableMvp";
 import type { Coordinates, PlanetType } from "../types";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
+import { shouldRenderMissileStrikeHistory } from "../missionVisibilityRefresh";
 import { isPendingMissionLaunch } from "../postTransactionRefresh";
 import {
   type BattleReport,
@@ -429,7 +430,10 @@ function MissileStrikeSection({
   loading: boolean;
 }) {
   const rows = archive?.rows ?? [];
-  if (!loading && !error && rows.length === 0) return null;
+  // Background polling previously set `loading` before every request, briefly mounting this card
+  // as “Immediate combat / Missile strikes”, then unmounting it again when an empty archive arrived.
+  // Empty history is stable UI: show this section only when it has a strike or an actionable error.
+  if (!shouldRenderMissileStrikeHistory({ error, rowCount: rows.length })) return null;
   return (
     <section className="grid gap-2 rounded-lg border border-amber-300/15 bg-amber-300/[0.03] p-3" data-missile-strike-history>
       <div className="flex items-center justify-between gap-2">

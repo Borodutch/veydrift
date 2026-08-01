@@ -142,7 +142,7 @@ describe("loadWalletPlanetSyncSnapshot", () => {
     expect(result.planetsResponse.planets.map((entry) => entry.planetId)).toEqual(["7", "8"]);
   });
 
-  test("hydrates critical planet state when the overview fast path and fleet visibility stall", async () => {
+  test("hydrates critical planet state without replacing mission visibility after a transient stall", async () => {
     const result = await loadWalletPlanetSyncSnapshot("https://api.test", wallet, "7", {}, {
       fetchWalletOverviewSnapshot: async (_apiUrl, _account, _planetId, options) => {
         expect(options?.timeoutMs).toBeLessThan(10_000);
@@ -164,12 +164,8 @@ describe("loadWalletPlanetSyncSnapshot", () => {
     expect(result.settlement.planet?.planetId).toBe("7");
     expect(result.planetsResponse.planets).toHaveLength(1);
     expect(result.queues).toEqual(queues());
-    expect(result.fleetVisibility).toMatchObject({
-      wallet,
-      homePlanetId: "7",
-      incoming: [],
-      outgoing: [],
-      returning: [],
-    });
+    // A failed visibility read is intentionally absent, not synthesized as a fake empty mission
+    // response. The app retains the last successful missions and retries on its next poll.
+    expect(result.fleetVisibility).toBeUndefined();
   });
 });
