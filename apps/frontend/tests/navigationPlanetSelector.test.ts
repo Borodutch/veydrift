@@ -181,6 +181,16 @@ describe("navigation and planet selector UI source contracts", () => {
     expect(playableSource).not.toContain('<AlertTriangle className="block translate-y-px"');
   });
 
+  test("hydrates attack highlights as wallet-scoped planet and moon id sets", () => {
+    expect(playableSource).toContain("derivePlanetPickerAttackHighlights({");
+    expect(playableSource).toContain("hydrated: Boolean(expectedWalletSnapshotKey && hydratedWalletSnapshotKey === expectedWalletSnapshotKey)");
+    expect(playableSource).toContain("planetPickerHasIncomingAttack(attackHighlights, planet.planetId, \"planet\")");
+    expect(playableSource).toContain("planetPickerHasIncomingAttack(attackHighlights, planet.planetId, \"moon\")");
+    expect(playableSource).toContain("hasIncomingAttack={hasIncomingMoonAttack}");
+    expect(playableSource).toContain("data-planet-selector-incoming-attack={hasIncomingAttack ? \"moon\" : undefined}");
+    expect(playableSource).not.toContain("hasIncomingAttack={planetHasIncomingAttack(fleetVisibility, planet.planetId)}");
+  });
+
   test("shows per-planet queue progress bars in the selector", () => {
     expect(playableSource).toContain("<PlanetSelectorProgressBars now={now} planet={planet} researchQueue={researchQueue} />");
     expect(playableSource).toContain("data-planet-selector-progress-bars={planet.planetId}");
