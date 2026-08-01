@@ -6,6 +6,15 @@ import { encodeColonizationTargetId } from "../src/walletFlow";
 import type { BattleReport, FleetMissionSummary, ManagedPlanetResponse } from "../src/walletFlow";
 
 describe("MissionControlPage", () => {
+  test("does not flash an empty missile-strike section during background polling", () => {
+    const page = missionControlPage({
+      missileAttackArchiveLoading: true,
+    });
+
+    expect(visibleText(page)).not.toContain("Immediate combat");
+    expect(visibleText(page)).not.toContain("Missile strikes");
+  });
+
   test("renders mission timing with relative and exact local timestamps", () => {
     const secondsLabel = formatMissionTime("1770000300", 1_770_000_000_000);
     const millisecondsLabel = formatMissionTime("1770000300000", 1_770_000_000_000);

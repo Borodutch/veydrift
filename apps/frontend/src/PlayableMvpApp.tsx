@@ -4,6 +4,9 @@ import type { Coordinates, Planet, PlanetType, PublicStationedDefender } from ".
 import { haptic } from "./haptics";
 import { playSfx } from "./sfx";
 import {
+  confirmedFleetVisibility,
+} from "./missionVisibilityRefresh";
+import {
   GalaxyView,
   rememberGalaxySystemPayload,
   type GalaxyActionState,
@@ -2802,9 +2805,10 @@ function walletPlanetSyncSnapshotFromResults(
   const queues = queuesResult.status === "fulfilled"
     ? queuesResult.value
     : emptyPlayerQueues(account, settlement.homePlanetId);
-  const fleetVisibility = visibilityResult.status === "fulfilled"
-    ? visibilityResult.value
-    : emptyFleetVisibility(account, settlement.homePlanetId);
+  // Never turn a temporary mission-feed timeout into an empty authoritative response. Doing that
+  // made real outbound/returning missions disappear for one refresh cycle, then pop back on the
+  // next successful poll. The caller preserves the last confirmed list until this read succeeds.
+  const fleetVisibility = confirmedFleetVisibility(visibilityResult);
 
   return {
     fleetVisibility,
@@ -4841,7 +4845,14 @@ export function PlayableMvpApp({
       // Successful wallet sync reads are authoritative for queues and fleet visibility.
       if (plan.applyQueues) {
         setOnChainQueues(queues);
-        setFleetVisibility(fleetVisibility);
+        if (fleetVisibility) {
+          setFleetVisibility(fleetVisibility);
+        } else {
+          setPlanetSectionStore((current) => setPlanetSectionStatus(current, activePlanetId, "fleetVisibilityState", {
+            loading: false,
+            error: undefined,
+          }));
+        }
         setOnChainError(undefined);
         setOnChainStatus("ready");
       }
@@ -5002,8 +5013,8 @@ export function PlayableMvpApp({
     } catch (error) {
       if (!canApplyRefreshRequest(allActiveMissionsRefreshGate, requestId)) return;
       console.error(error);
-      // The "All" active tab is supplementary; failing to load it must not break My missions/Alliance.
-      setAllActiveMissions([]);
+      // The "All" active tab is supplementary. Keep its last confirmed rows when a background
+      // request fails; replacing them with [] produces a visible disappear/reappear cycle.
       setPlanetSectionStore((current) => setPlanetSectionStatus(current, activePlanetId, "allActiveMissionsState", {
         loading: false,
         error: error instanceof Error ? error.message : "Active missions could not be loaded.",

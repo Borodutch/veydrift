@@ -87,7 +87,10 @@ export type FinishedResearchSnapshot = {
 };
 
 export type WalletPlanetSyncSnapshot = {
-  fleetVisibility: FleetMissionVisibilityResponse;
+  // Mission visibility is supplementary to a wallet/planet refresh. A transient timeout must not
+  // be represented as an authoritative empty mission list: callers retain their last confirmed
+  // visibility until a successful visibility response arrives.
+  fleetVisibility?: FleetMissionVisibilityResponse | undefined;
   planetsResponse: WalletPlanetsResponse;
   queues: PlayerQueuesResponse;
   settlement: WalletSettlementResponse;
