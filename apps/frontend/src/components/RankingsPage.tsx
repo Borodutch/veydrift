@@ -51,6 +51,45 @@ export const rankingsCategories: Array<{ key: HighscoreCategory; label: string }
 export const rankingsColumnLabels = ["Rank", "Commander", "Score"] as const;
 export const rankingsPageSize = 50;
 
+export function RankingCommanderLink({
+  displayName,
+  href,
+  onSelect,
+  wallet,
+}: {
+  displayName?: string | null | undefined;
+  href?: string | undefined;
+  onSelect?: (() => void) | undefined;
+  wallet: string;
+}) {
+  const commanderLabel = displayName?.trim() || shortAddress(wallet);
+  const label = (
+    <span className="block truncate font-mono text-slate-100 transition hover:text-cyan-100">
+      {commanderLabel}
+    </span>
+  );
+
+  if (href) {
+    return (
+      <a className="min-w-0 text-left" href={href} title={`Open player ${commanderLabel}`}>
+        {label}
+      </a>
+    );
+  }
+
+  return (
+    <button
+      className={`min-w-0 text-left ${onSelect ? "cursor-pointer" : "cursor-default"}`}
+      disabled={!onSelect}
+      onClick={onSelect}
+      title={`Open player ${commanderLabel}`}
+      type="button"
+    >
+      {label}
+    </button>
+  );
+}
+
 export function primaryRankingEntries(data: HighscoreResponse | null): HighscoreEntry[] {
   return data?.rankings.total ?? [];
 }
@@ -619,17 +658,11 @@ function RankingRow({
                 {`[${alliance.tag}]`}
               </button>
             ) : null}
-            <button
-              className={`min-w-0 text-left ${canOpenPlayer ? "cursor-pointer" : "cursor-default"}`}
-              disabled={!canOpenPlayer}
-              onClick={openPlayer}
-              title={`Open player ${commanderLabel}`}
-              type="button"
-            >
-              <span className={`block truncate font-mono ${canOpenPlayer ? "text-slate-100 hover:text-cyan-100" : "text-slate-100"}`}>
-                {commanderLabel}
-              </span>
-            </button>
+            <RankingCommanderLink
+              displayName={commanderLabel}
+              onSelect={canOpenPlayer ? openPlayer : undefined}
+              wallet={entry.wallet}
+            />
             {isCurrentPlayer ? (
               <span className="shrink-0 rounded border border-cyan-200/30 bg-cyan-200/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase leading-none tracking-normal text-cyan-100">
                 You

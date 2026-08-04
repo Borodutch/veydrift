@@ -175,16 +175,39 @@ describe("referral hardening", () => {
       link: "https://veydrift.com?ref=borodutch",
       status: "renewable"
     });
-    expect(referralClaimCodeAfterDashboard("new_code", expired)).toBe("new_code");
+    expect(referralClaimCodeAfterDashboard("new_code", expired)).toBe("borodutch");
   });
 
   test("atomically installs the indexed renewal dashboard returned by claim recording", async () => {
     const appSource = await Bun.file(new URL("../src/FirstPlanetSettlementApp.tsx", import.meta.url)).text();
     expect(appSource).toContain("const dashboard = await recordReferralClaimTransactionAfterIndexing(");
     expect(appSource).toContain('setReferralProgram({ status: "ready", dashboard });');
-    expect(appSource).toContain("uses left for this invite");
+    expect(appSource).toContain("uses left");
     expect(appSource).not.toContain("uses left today");
     expect(appSource).not.toContain("await refreshReferralProgram(wallet.account);");
+  });
+
+  test("keeps the invite dashboard concise across active and renewable windows", async () => {
+    const appSource = await Bun.file(new URL("../src/FirstPlanetSettlementApp.tsx", import.meta.url)).text();
+    expect(appSource).toContain("Top up your invite code");
+    expect(appSource).toContain("3 invite uses every day");
+    expect(appSource).toContain("Your code stays reserved");
+    expect(appSource).toContain("for inviting a friend");
+    expect(appSource).toContain("Your friend gets");
+    expect(appSource).toContain("to start");
+    expect(appSource).toContain("<RankingCommanderLink");
+    expect(appSource).toContain("fetchReferralHistory(apiBaseUrl, wallet, historyPage, 25)");
+    expect(appSource).toContain("<RankingsPagination");
+    expect(appSource).not.toContain("fetchPlayerProfile(apiBaseUrl, wallet)");
+    expect(appSource).toContain("Lifetime earned");
+    expect(appSource).toContain("Active invite code");
+    expect(appSource).not.toContain("The previous invite window expired");
+    expect(appSource).not.toContain("permanently owned valid code");
+    expect(appSource).not.toContain("Rewards:");
+    expect(appSource).not.toContain("Owned by you ·");
+    expect(appSource).not.toContain("total invite use");
+    expect(appSource).not.toContain("No invite link claimed yet");
+    expect(appSource).not.toContain("redemption.invitee.slice");
   });
 
   test("blocks active-window rotation and enables expired-window claims", () => {
@@ -222,7 +245,7 @@ describe("referral hardening", () => {
     expect(appSource).not.toContain("Unlock invite");
     expect(appSource).not.toContain("fetchPrivateReferralDashboard");
     expect(appSource).not.toContain("referral:reveal");
-    expect(appSource).toContain("{inviteActive ? (");
+    expect(appSource).toContain("{inviteActive && invite ? (");
     expect(appSource).toContain("Copy code");
     expect(appSource).toContain("Copy link");
     expect(appSource).toContain("Share on X");

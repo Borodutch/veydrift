@@ -130,6 +130,7 @@ const acceptedCacheQueryParams = new Map<string, ReadonlySet<string>>([
   ["/wallet/*/fleet-visibility", new Set(["archive"])],
   ["/wallet/*/missions", new Set(["filter", "missionNumber", "missionType", "page", "pageSize", "planetId", "status"])],
   ["/wallet/*/missile-attacks", new Set(["page", "pageSize", "planetId"])],
+  ["/wallet/*/referrals/history", new Set(["page", "pageSize"])],
   ["/wallet/*/overview", new Set(["planetId"])],
   ["/wallet/*/queues", new Set(["planetId"])],
   ["/wallet/*/infrastructure", new Set(["planetId"])],
@@ -887,6 +888,24 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           indexer,
           startPriceWei,
           referralConfigurationReady(loaded.config, startPriceWei)
+        ), {
+          headers: corsHeaders
+        });
+      } catch (error) {
+        return errorResponse(error, 400);
+      }
+    }
+
+    if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/referrals\/history$/)) {
+      const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
+      try {
+        assertAddress(wallet);
+        if (!indexer) return indexedReadNotReadyResponse("referral history", indexer, { wallet });
+        return Response.json(referralStore.history(
+          wallet,
+          indexer,
+          positiveIntegerQuery(url, "page", 1, 1_000_000),
+          positiveIntegerQuery(url, "pageSize", 25, 100)
         ), {
           headers: corsHeaders
         });
@@ -2280,6 +2299,7 @@ function acceptedCacheParams(pathname: string): ReadonlySet<string> | undefined 
   if (direct) return direct;
   if (pathname.match(/^\/wallet\/[^/]+\/fleet-visibility$/)) return acceptedCacheQueryParams.get("/wallet/*/fleet-visibility");
   if (pathname.match(/^\/wallet\/[^/]+\/missions$/)) return acceptedCacheQueryParams.get("/wallet/*/missions");
+  if (pathname.match(/^\/wallet\/[^/]+\/referrals\/history$/)) return acceptedCacheQueryParams.get("/wallet/*/referrals/history");
   if (pathname.match(/^\/wallet\/[^/]+\/overview$/)) return acceptedCacheQueryParams.get("/wallet/*/overview");
   if (pathname.match(/^\/wallet\/[^/]+\/queues$/)) return acceptedCacheQueryParams.get("/wallet/*/queues");
   if (pathname.match(/^\/wallet\/[^/]+\/infrastructure$/)) return acceptedCacheQueryParams.get("/wallet/*/infrastructure");

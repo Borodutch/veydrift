@@ -430,6 +430,12 @@ describe("SettlementIndexer", () => {
     expect(indexer.referralClaims(player)).toHaveLength(1);
     expect(indexer.referralClaimsByCodeHash(codeHash)).toHaveLength(1);
     expect(indexer.referralRedemptionsForInviter(player)).toHaveLength(1);
+    expect(indexer.referralRedemptionPageForInviter(player, 1, 25)).toMatchObject({
+      page: 1,
+      pageSize: 25,
+      totalEntries: 1,
+      redemptions: [{ invitee, transactionHash: redemptionTxHash }]
+    });
     expect(indexer.referralRedemptionsForInvitee(invitee)).toHaveLength(1);
     expect(indexer.referralRewardClaimsForInviter(player)).toEqual([
       expect.objectContaining({

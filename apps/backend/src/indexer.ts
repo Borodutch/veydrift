@@ -1684,6 +1684,36 @@ export class SettlementIndexer {
     return rows.map((row) => parseEvent<IndexedReferralRedemptionEvent>(row.event_json));
   }
 
+  referralRedemptionPageForInviter(
+    inviter: `0x${string}`,
+    requestedPage = 1,
+    requestedPageSize = 25
+  ): { page: number; pageSize: number; redemptions: IndexedReferralRedemptionEvent[]; totalEntries: number } {
+    const pageSize = Math.max(1, Math.min(100, Math.floor(requestedPageSize)));
+    const totalRow = this.db.query(`
+      SELECT COUNT(*) AS total
+      FROM indexed_referral_redemptions
+      WHERE inviter = lower(?)
+    `).get(inviter) as { total: number };
+    const totalEntries = Number(totalRow.total);
+    const totalPages = Math.max(1, Math.ceil(totalEntries / pageSize));
+    const page = Math.min(Math.max(1, Math.floor(requestedPage)), totalPages);
+    const rows = this.db.query(`
+      SELECT event_json
+      FROM indexed_referral_redemptions
+      WHERE inviter = lower(?)
+      ORDER BY CAST(block_number AS INTEGER) DESC, event_id DESC
+      LIMIT ? OFFSET ?
+    `).all(inviter, pageSize, (page - 1) * pageSize) as ReferralRedemptionRow[];
+
+    return {
+      page,
+      pageSize,
+      redemptions: rows.map((row) => parseEvent<IndexedReferralRedemptionEvent>(row.event_json)),
+      totalEntries
+    };
+  }
+
   referralRedemptionsForInvitee(invitee: `0x${string}`): IndexedReferralRedemptionEvent[] {
     const rows = this.db.query(`
       SELECT event_json

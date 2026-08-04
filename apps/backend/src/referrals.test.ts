@@ -10,6 +10,7 @@ import type {
   IndexedReferralRewardClaimEvent
 } from "./evm";
 import type { SettlementIndexer } from "./indexer";
+import { playerFallbackName } from "./playerProfiles";
 import {
   normalizeReferralCode,
   ReferralInviteStore,
@@ -60,6 +61,16 @@ function referralIndex() {
   const rewardClaims: IndexedReferralRewardClaimEvent[] = [];
   const indexer = {
     currentStartPriceWei: () => startPriceWei,
+    playerProfiles: (wallets: Iterable<string>) => new Map([...wallets].map((wallet) => {
+      const normalized = wallet.toLowerCase() as `0x${string}`;
+      return [normalized, {
+        wallet: normalized,
+        displayName: normalized === invitee ? "Nova Recruit" : null,
+        description: null,
+        fallbackName: playerFallbackName(normalized),
+        updatedAt: null
+      }];
+    })),
     referralClaim: (owner: string, commitment: string, txHash: string) => claims.find((event) =>
       event.inviter.toLowerCase() === owner.toLowerCase()
       && event.commitment.toLowerCase() === commitment.toLowerCase()
@@ -74,6 +85,23 @@ function referralIndex() {
       && event.transactionHash.toLowerCase() === txHash.toLowerCase()
     ) ?? null,
     referralRedemptionsForInviter: (owner: string) => redemptions.filter((event) => event.inviter.toLowerCase() === owner.toLowerCase()),
+    referralRedemptionPageForInviter: (owner: string, requestedPage: number, requestedPageSize: number) => {
+      const pageSize = Math.max(1, Math.min(100, Math.floor(requestedPageSize)));
+      const matches = redemptions
+        .filter((event) => event.inviter.toLowerCase() === owner.toLowerCase())
+        .reverse();
+      const totalEntries = matches.length;
+      const page = Math.min(
+        Math.max(1, Math.floor(requestedPage)),
+        Math.max(1, Math.ceil(totalEntries / pageSize))
+      );
+      return {
+        page,
+        pageSize,
+        redemptions: matches.slice((page - 1) * pageSize, page * pageSize),
+        totalEntries
+      };
+    },
     referralRedemptionsForInvitee: (wallet: string) => redemptions.filter((event) => event.invitee.toLowerCase() === wallet.toLowerCase()),
     referralRewardClaimsForInviter: (owner: string) => rewardClaims.filter((event) => event.inviter.toLowerCase() === owner.toLowerCase())
   } as unknown as SettlementIndexer & ReferralChainIndex;
@@ -347,6 +375,59 @@ describe("referral invites", () => {
     expect(dashboard.totalAccruedRewardsWei).toBe("6000000000000000");
     expect(dashboard.totalPaidRewardsWei).toBe("6000000000000000");
     expect(dashboard.claimableRewardsWei).toBe("0");
+  });
+
+  test("returns paginated invite history with batched commander profiles", async () => {
+    const chain = referralIndex();
+    const nowSeconds = Math.floor(Date.now() / 1_000);
+    for (let index = 0; index < 30; index += 1) {
+      const suffix = (index + 1).toString(16).padStart(40, "0");
+      chain.redemptions.push(redemptionEvent({
+        code: "history",
+        invitee: `0x${suffix}`,
+        redeemedAt: nowSeconds + index,
+        txByte: (index + 1).toString(16).padStart(2, "0")
+      }));
+    }
+
+    const store = new ReferralInviteStore();
+    const firstPage = store.history(player, chain.indexer, 1, 25);
+    expect(firstPage.pagination).toEqual({
+      page: 1,
+      pageSize: 25,
+      totalEntries: 30,
+      totalPages: 2,
+      hasPreviousPage: false,
+      hasNextPage: true
+    });
+    expect(firstPage.entries).toHaveLength(25);
+    expect(firstPage.entries[0]?.commander).toEqual({
+      wallet: `0x${(30).toString(16).padStart(40, "0")}`,
+      displayName: null,
+      fallbackName: "0x0000...001e"
+    });
+
+    const handler = createRequestHandler({
+      config: testConfig(),
+      indexer: chain.indexer,
+      referralStore: store,
+      role: "reader"
+    });
+    const response = await handler(new Request(
+      `http://localhost/wallet/${player}/referrals/history?page=2&pageSize=25`
+    ));
+    expect(response.status).toBe(200);
+    const secondPage = await response.json() as ReturnType<ReferralInviteStore["history"]>;
+    expect(secondPage.entries).toHaveLength(5);
+    expect(secondPage.entries[0]?.commander.wallet).toBe(`0x${(5).toString(16).padStart(40, "0")}`);
+    expect(secondPage.pagination).toEqual({
+      page: 2,
+      pageSize: 25,
+      totalEntries: 30,
+      totalPages: 2,
+      hasPreviousPage: true,
+      hasNextPage: false
+    });
   });
 
   test("claim-intent validates chain availability without creating a JSON authority file", async () => {
