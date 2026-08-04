@@ -933,6 +933,10 @@ export function shouldRefreshMissionActionStateForPage(page: Page): boolean {
   return page === "overview" || page === "galaxy" || page === "planet" || page === "rankings" || page === "raid-target-finder";
 }
 
+export function shouldRefreshShipyardStateForPage(page: Page): boolean {
+  return page === "shipyard" || shouldRefreshMissionActionStateForPage(page);
+}
+
 export function shouldClearCachedShipyardStateForPageRefresh(page: Page): boolean {
   // A live refresh always follows navigation, but clearing the last confirmed inventory before
   // that read completes turns a slow or transiently failed request into a false "no eligible ships"
@@ -6181,9 +6185,10 @@ export function PlayableMvpApp({
 
   useEffect(() => {
     if (!pageStateHydrationReady) return;
+    if (!shouldRefreshShipyardStateForPage(page)) return;
     if (shouldClearCachedShipyardStateForPageRefresh(page)) {
       refreshShipyardState({ clearCachedState: true });
-    } else if (shouldRefreshMissionActionStateForPage(page)) {
+    } else {
       refreshShipyardState();
     }
   }, [page, pageStateHydrationReady, refreshShipyardState]);

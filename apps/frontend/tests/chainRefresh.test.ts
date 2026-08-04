@@ -15,6 +15,7 @@ import {
   shouldRefreshPlanetStateForIdentityChange,
   shouldRefreshAllianceStateForPage,
   shouldRefreshMissionActionStateForPage,
+  shouldRefreshShipyardStateForPage,
 } from "../src/PlayableMvpApp";
 import type { ChainInfrastructureState, WalletSettlementResponse } from "../src/walletFlow";
 
@@ -108,6 +109,17 @@ describe("playable chain refresh", () => {
     expect(shouldRefreshMissionActionStateForPage("raid-target-finder")).toBe(true);
     expect(shouldRefreshMissionActionStateForPage("shipyard")).toBe(false);
     expect(shouldRefreshMissionActionStateForPage("overview")).toBe(true);
+  });
+
+  test("refreshes Shipyard state on the Shipyard page without clearing confirmed inventory", async () => {
+    const source = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.url)).text();
+
+    expect(shouldRefreshShipyardStateForPage("shipyard")).toBe(true);
+    expect(shouldRefreshShipyardStateForPage("galaxy")).toBe(true);
+    expect(shouldRefreshShipyardStateForPage("mission-control")).toBe(false);
+    expect(shouldRefreshShipyardStateForPage("research")).toBe(false);
+    expect(shouldClearCachedShipyardStateForPageRefresh("shipyard")).toBe(false);
+    expect(source).toContain("if (!shouldRefreshShipyardStateForPage(page)) return;");
   });
 
   test("keeps Mission Control planet switches cached until a launch composer opens", async () => {
