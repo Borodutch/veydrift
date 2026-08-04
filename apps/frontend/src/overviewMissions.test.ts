@@ -231,6 +231,7 @@ describe("Overview fleets summary", () => {
       fleetVisibility: visibility({ outgoing }),
       now,
       onOpenMissionControl: () => undefined,
+      planetContextKey: "planet-7",
     });
     const text = collectText(node).join(" ");
     const disclosure = collectElementsByType(node, "details")[0];
@@ -240,6 +241,7 @@ describe("Overview fleets summary", () => {
     expect(text).toContain("Open Mission Control");
     expect(disclosure?.props?.["data-hidden-count"]).toBe(2);
     expect(disclosure?.props?.className).toContain("group/fleet-overflow");
+    expect(disclosure?.key).toBe("planet-7");
 
     const exactlyFour = FleetsSummary({
       fleetVisibility: visibility({ outgoing: outgoing.slice(0, 4) }),
@@ -494,6 +496,7 @@ function collectText(node: unknown): string[] {
 }
 
 function collectElementsByType(node: unknown, type: string): Array<{
+  key?: string | number | null;
   props?: { children?: unknown; className?: string; [key: string]: unknown };
   type?: unknown;
 }> {
@@ -501,6 +504,7 @@ function collectElementsByType(node: unknown, type: string): Array<{
   if (Array.isArray(node)) return node.flatMap((child) => collectElementsByType(child, type));
 
   const vnode = node as {
+    key?: string | number | null;
     type?: unknown;
     props?: { children?: unknown; className?: string; [key: string]: unknown };
   };

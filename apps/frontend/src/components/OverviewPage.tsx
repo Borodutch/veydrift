@@ -518,6 +518,7 @@ export function OverviewPage({
       {shouldShowFleetsSummary && fleetVisibility ? (
         <FleetsSummary
           fleetVisibility={fleetVisibility}
+          planetContextKey={selectedPlanetId}
           planetNames={fleetPlanetNames}
           now={now}
           onOpenMissionControl={() => onNavigate("mission-control")}
@@ -1409,11 +1410,13 @@ export function FleetsSummary({
   fleetVisibility,
   now,
   onOpenMissionControl,
+  planetContextKey,
   planetNames,
 }: {
   fleetVisibility: FleetMissionVisibilityResponse;
   now: number;
   onOpenMissionControl: () => void;
+  planetContextKey?: string | undefined;
   planetNames?: ReadonlyMap<string, string> | undefined;
 }) {
   const summary = summarizeFleets(fleetVisibility, now, planetNames);
@@ -1439,7 +1442,11 @@ export function FleetsSummary({
             {summary.visibleLines.map((line) => <FleetSummaryRow key={line.key} line={line} />)}
           </ul>
           {summary.hiddenCount > 0 ? (
-            <details className="group/fleet-overflow mt-1.5" data-hidden-count={summary.hiddenCount}>
+            <details
+              className="group/fleet-overflow mt-1.5"
+              data-hidden-count={summary.hiddenCount}
+              key={planetContextKey}
+            >
               <summary className="flex min-h-8 cursor-pointer list-none items-center justify-center gap-1.5 rounded-md border border-white/10 bg-black/15 px-2.5 py-1 text-[11px] font-semibold text-slate-300 transition hover:border-cyan-300/25 hover:bg-cyan-300/[0.06] hover:text-cyan-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/40 [&::-webkit-details-marker]:hidden">
                 <span className="group-open/fleet-overflow:hidden">+{summary.hiddenCount} more</span>
                 <span className="hidden group-open/fleet-overflow:inline">Show fewer</span>
