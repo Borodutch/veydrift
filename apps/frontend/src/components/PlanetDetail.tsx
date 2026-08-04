@@ -386,7 +386,7 @@ export function PlanetDetail({
               </div>
               {planet.hasMoon ? (
                 <PlanetMoonIndicator
-                  className="right-[2%] top-[7%] shadow-xl shadow-black/40 sm:!h-9 sm:!w-9 lg:!h-11 lg:!w-11"
+                  className="right-[2%] top-[7%] shadow-xl shadow-black/40 sm:!h-11 sm:!w-11 lg:!h-12 lg:!w-12"
                   label={`Open ${planet.moonName ?? "Moon"}`}
                   onClick={onSelectMoon ? () => onSelectMoon({ galaxy: planet.galaxy, system: planet.system, position: planet.position }) : undefined}
                   planetType={planet.type}
@@ -411,7 +411,7 @@ export function PlanetDetail({
             ) : null}
 
             <div className={`${isHome || source === "loading" ? "mt-3" : ""} flex min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-2`}>
-              <h1 className="min-w-0 break-words text-2xl font-semibold tracking-tight text-white sm:text-3xl lg:text-4xl">{planet.name}</h1>
+              <h2 className="min-w-0 break-words text-2xl font-semibold tracking-tight text-white sm:text-3xl lg:text-4xl">{planet.name}</h2>
               {visibleMissionActions.length > 0 ? (
                 <PlanetMissionControls
                   actions={visibleMissionActions}
@@ -646,7 +646,7 @@ function PlanetFact({
   const className = "inline-flex items-center gap-2 rounded-md border border-white/10 bg-black/20 px-2.5 py-1.5 text-xs text-slate-300";
 
   return onClick ? (
-    <button className={`${className} min-h-11 transition-colors hover:border-cyan-200/35 hover:text-cyan-100 xl:min-h-0`} data-celestial-back onClick={onClick} title={label} type="button">
+    <button className={`${className} min-h-11 transition-colors hover:border-cyan-200/35 hover:text-cyan-100`} data-celestial-back onClick={onClick} title={label} type="button">
       {content}
     </button>
   ) : <span className={className}>{content}</span>;
