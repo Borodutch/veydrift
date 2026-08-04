@@ -7,11 +7,13 @@ import { PlayableMvpApp } from "./PlayableMvpApp";
 import { apiBaseUrlForRuntimeConfig, gameContractAddress, playableApiUrl, runtimeConfigUrl, type RuntimeConfig } from "./runtimeConfig";
 import {
   readReferralStorage,
+  referralCodeFromText,
   referralCodeForLanding,
   REFERRAL_CLAIM_CODE_STORAGE_KEY,
   REFERRAL_CODE_STORAGE_KEY,
   writeReferralStorage
 } from "./referralStorage";
+import { copyReferralText, type ReferralCopyOutcome } from "./referralClipboard";
 import { preSettlementMode, type PlanetState, type WalletState } from "./settlementScreen";
 import { TELEGRAM_SUPPORT_URL, WHITEPAPER_URL } from "./supportLinks";
 import { fetchReferralShareImage, shareReferralOnX } from "./referralShare";
@@ -1544,6 +1546,7 @@ function ReferralProgramPanel({
   const busy = claiming;
   const [xShareImage, setXShareImage] = useState<File | null>(null);
   const [xShareState, setXShareState] = useState<"idle" | "sharing">("idle");
+  const [copyState, setCopyState] = useState<"idle" | "code-copied" | "link-copied" | "unavailable">("idle");
   const claimCodeValid = /^[A-Za-z0-9_-]{1,24}$/.test(claimCode.trim());
   const inspected = inspection.status === "resolved" ? inspection.resolution : undefined;
   const selectedCodeClaimable = inspected?.ownership === "available"
@@ -1582,6 +1585,12 @@ function ReferralProgramPanel({
     return () => { cancelled = true; };
   }, [inviteActive, invite?.code, invite?.link]);
 
+  useEffect(() => {
+    if (copyState === "idle" || typeof window === "undefined") return;
+    const timer = window.setTimeout(() => setCopyState("idle"), 3_500);
+    return () => window.clearTimeout(timer);
+  }, [copyState]);
+
   async function shareInviteOnX() {
     if (!invite) return;
     setXShareState("sharing");
@@ -1592,6 +1601,11 @@ function ReferralProgramPanel({
     } finally {
       setXShareState("idle");
     }
+  }
+
+  async function copyInviteValue(value: string, kind: "code" | "link") {
+    const outcome: ReferralCopyOutcome = await copyReferralText(value);
+    setCopyState(outcome === "copied" ? `${kind}-copied` : "unavailable");
   }
 
   return (
@@ -1677,7 +1691,17 @@ function ReferralProgramPanel({
         {invite ? (
           <div className="referral-link-row">
             <div>
-              <strong>{invite.link}</strong>
+              <label className="referral-shared-code">
+                <span>Invite code — select manually if copy is blocked</span>
+                <input
+                  aria-label="Active referral invite code"
+                  onClick={(event) => event.currentTarget.select()}
+                  onFocus={(event) => event.currentTarget.select()}
+                  readOnly
+                  value={invite.code}
+                />
+              </label>
+              <a href={invite.link}>{invite.link}</a>
               <span>
                 {invite.status === "active"
                   ? `Owned by you · active · ${invite.remainingRedemptions}/3 uses left for this invite`
@@ -1695,24 +1719,24 @@ function ReferralProgramPanel({
                   onClick={() => {
                     playSfx("copy");
                     haptic("tick");
-                    void navigator.clipboard?.writeText(invite.code);
+                    void copyInviteValue(invite.code, "code");
                   }}
                   type="button"
                 >
                   <Copy aria-hidden="true" size={14} />
-                  Copy code
+                  {copyState === "code-copied" ? "Code copied" : "Copy code"}
                 </button>
                 <button
                   className="referral-copy-button"
                   onClick={() => {
                     playSfx("copy");
                     haptic("tick");
-                    void navigator.clipboard?.writeText(invite.link);
+                    void copyInviteValue(invite.link, "link");
                   }}
                   type="button"
                 >
                   <Link aria-hidden="true" size={14} />
-                  Copy link
+                  {copyState === "link-copied" ? "Link copied" : "Copy link"}
                 </button>
                 <button
                   className="referral-copy-button"
@@ -1723,6 +1747,9 @@ function ReferralProgramPanel({
                   <Share2 aria-hidden="true" size={14} />
                   {xShareState === "sharing" ? "Opening X" : "Share on X"}
                 </button>
+                {copyState === "unavailable" ? (
+                  <span className="referral-copy-error">Clipboard blocked — select the code above, or open the invite link.</span>
+                ) : null}
               </div>
             ) : null}
           </div>
@@ -1766,6 +1793,12 @@ function ReferralCodeField({
         disabled={disabled}
         inputMode="text"
         onInput={(event) => onChange((event.currentTarget as HTMLInputElement).value)}
+        onPaste={(event) => {
+          const code = referralCodeFromText(event.clipboardData?.getData("text") ?? "");
+          if (!code) return;
+          event.preventDefault();
+          onChange(code);
+        }}
         placeholder="Paste invite code"
         value={value}
       />

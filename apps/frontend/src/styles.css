@@ -1080,8 +1080,17 @@ h4 {
   gap: 8px;
 }
 
+.referral-copy-error {
+  flex-basis: 100%;
+  color: #fecaca;
+  font-size: 0.76rem;
+  line-height: 1.35;
+  text-align: right;
+}
+
 .referral-link-row strong,
-.referral-link-row span {
+.referral-link-row span,
+.referral-link-row a {
   display: block;
   overflow-wrap: anywhere;
 }
@@ -1089,6 +1098,33 @@ h4 {
 .referral-link-row strong {
   color: #ecfdf5;
   font-size: 0.88rem;
+}
+
+.referral-link-row a {
+  color: #80f1ff;
+  font-size: 0.82rem;
+}
+
+.referral-shared-code {
+  display: grid;
+  gap: 5px;
+  margin-bottom: 8px;
+}
+
+.referral-shared-code span {
+  color: #b8ccc7;
+  font-size: 0.72rem;
+}
+
+.referral-shared-code input {
+  min-width: 0;
+  border: 1px solid rgba(128, 241, 255, 0.28);
+  border-radius: 6px;
+  background: rgba(5, 16, 18, 0.76);
+  color: #ecfdf5;
+  font: inherit;
+  letter-spacing: 0.03em;
+  padding: 7px 9px;
 }
 
 .referral-link-row span,
