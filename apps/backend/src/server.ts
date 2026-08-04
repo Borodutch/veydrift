@@ -1808,8 +1808,10 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           // concurrent cold read carried on and rebuilt the same indexed response, which
           // turned a single ~600ms wallet/mission read into a multi-worker CPU stampede.
           // Wait briefly for that owner before falling back; the bounded timeout still lets
-          // this request recover if the other worker dies while holding its SQLite lock.
-          const refreshedByPeer = await sharedResponseCache.waitForFresh(cacheKey, 1_000);
+          // this request recover if the other worker dies while holding its SQLite lock. The hot
+          // projections are bounded below this window; a one-second wait made a stale abandoned
+          // lock itself a visible backend timeout on mobile navigation.
+          const refreshedByPeer = await sharedResponseCache.waitForFresh(cacheKey, sharedColdReadWaitMs);
           if (refreshedByPeer) {
             responseCache.set(cacheKey, refreshedByPeer);
             return withRequestCors(request, cachedJsonResponse(request, refreshedByPeer));
@@ -2174,6 +2176,7 @@ function isIndexableChainReader(
 const readRateLimitWindowMs = 10_000;
 const readRateLimitMaxRequests = 40;
 const staleCachedJsonWindowMs = 300_000;
+const sharedColdReadWaitMs = 200;
 
 function readRateLimitResponse(
   request: Request,
