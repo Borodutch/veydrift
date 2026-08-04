@@ -9,12 +9,14 @@ import {
   InspectPanelSkeleton,
   MissionControlSkeleton,
   MoonSkeleton,
+  PlanetDetailSkeleton,
   ProductionCatalogSkeleton,
   RaidTargetsSkeleton,
   RankingsRowsSkeleton,
   RiftSkeleton,
 } from "../src/components/LoadingSkeletons";
 import { Skeleton, SkeletonRegion } from "../src/components/Skeleton";
+import { EntityMediaPanelSkeleton } from "../src/components/EntityMediaPanel";
 
 function classNames(node: ComponentChildren): string[] {
   if (node === null || node === undefined || typeof node !== "object") {
@@ -73,6 +75,8 @@ const skeletons: Array<{ name: string; node: ComponentChildren }> = [
     node: ProductionCatalogSkeleton({ groups: [2, 4, 2, 2], label: "Loading defenses" }),
   },
   { name: "MoonSkeleton", node: MoonSkeleton({}) },
+  { name: "PlanetDetailSkeleton", node: PlanetDetailSkeleton({}) },
+  { name: "EntityMediaPanelSkeleton", node: EntityMediaPanelSkeleton({ canEdit: true, heading: "Planet anthem" }) },
   { name: "RankingsRowsSkeleton", node: RankingsRowsSkeleton({}) },
   { name: "MissionControlSkeleton", node: MissionControlSkeleton({}) },
   { name: "GalaxyRowsSkeleton", node: GalaxyRowsSkeleton({}) },
@@ -97,6 +101,7 @@ describe("Pages render skeleton loaders, not text loaders, during initial load",
   // in a LoadingSkeletons component so a hard refresh shows skeletons.
   const pages = [
     "MoonPage.tsx",
+    "PlanetDetail.tsx",
     "ShipyardPage.tsx",
     "DefensePage.tsx",
     "ResearchPage.tsx",

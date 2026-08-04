@@ -280,14 +280,14 @@ export function MissionControlPage({
   // VEY-412: restore the previously selected tabs + past page. The panel is DOM-driven (tabs/pages
   // toggle `hidden`), so without this the selection resets to defaults every time the component
   // remounts on returning from a mission detail (browser back or the in-app "← Mission Control").
-  // The view comes from the URL hash first (shareable, survives reload + browser back), then the
-  // sessionStorage fallback for the in-app back button which lands on a bare `#/mission-control`.
+  // The view comes from the URL query first (shareable, survives reload + browser back), then the
+  // sessionStorage fallback for the in-app back button which lands on bare `/mission-control`.
   const requestedView = initialView ?? resolveMissionControlView();
   const showAllianceTab = hasAlliance;
   const view = missionControlViewForAllianceMembership(requestedView, showAllianceTab);
   // A canonical membership refresh can invalidate an `at=alliance` selection while this page is
   // already mounted. Repair all three runtime sources of truth synchronously: rendered view,
-  // session/in-memory persistence, and the URL hash. Explicit test/story views remain side-effect
+  // session/in-memory persistence, and the URL query. Explicit test/story views remain side-effect
   // free because they do not represent persisted app navigation.
   if (view !== requestedView && initialView === undefined) {
     persistMissionControlView(view);
@@ -2100,8 +2100,13 @@ export type MissionControlView = {
 const MISSION_CONTROL_VIEW_STORAGE_KEY = "veydrift:mission-control:view";
 
 // VEY-412: the bare Mission Control list route. Only this exact path carries the tab/page query
-// params — never a detail (`#/mission/<id>`) or report (`#/mission-control/report/<id>`) route.
-const MISSION_CONTROL_HASH_PATH = "mission-control";
+// params — never a detail (`/mission/<id>`) or report (`/mission-control/report/<id>`) route.
+const MISSION_CONTROL_ROUTE_PATH = "/mission-control";
+const MISSION_CONTROL_VIEW_PARAM_KEYS = ["at", "pt", "ap", "pp"] as const;
+
+function isMissionControlListPath(pathname: string): boolean {
+  return pathname.replace(/\/+$/, "") === MISSION_CONTROL_ROUTE_PATH;
+}
 
 const ACTIVE_MISSION_TAB_KEYS = new Set<string>(ACTIVE_MISSION_TABS.map((tab) => tab.key));
 const PAST_MISSION_TAB_KEYS = new Set<string>(PAST_MISSION_TABS.map((tab) => tab.key));
@@ -2167,7 +2172,7 @@ export function readPersistedMissionControlView(): MissionControlView {
 // VEY-412 rework: in-memory mirror of the last selected view. The Mission Control panel runs inside
 // a Farcaster Mini App iframe where sessionStorage is partitioned/blocked (the guarded accessor
 // returns null), so the in-app "← Mission Control" back button — which lands on a bare
-// `#/mission-control` with no query — cannot restore from the URL or storage there. This
+// `/mission-control` with no query — cannot restore from the URL or storage there. This
 // module-level value survives the panel remount within the SPA session and covers that case.
 let lastMissionControlView: MissionControlView = DEFAULT_MISSION_CONTROL_VIEW;
 
@@ -2182,14 +2187,14 @@ export function persistMissionControlView(partial: Partial<MissionControlView>):
       // Best-effort persistence: ignore quota/security errors.
     }
   }
-  // VEY-412 rework: the URL hash is the source of truth — it survives browser back, hard reload, and
+  // VEY-412 rework: the URL query is the source of truth — it survives browser back, hard reload, and
   // is shareable. sessionStorage / the in-memory mirror are the fallbacks for the in-app
-  // "← Mission Control" button, which navigates to a bare `#/mission-control` (no query).
-  writeMissionControlViewToHash(next);
+  // "← Mission Control" button, which navigates to bare `/mission-control` (no query).
+  writeMissionControlViewToLocation(next);
 }
 
 // VEY-412 rework: pure (window-free) encoders so the round-trip is unit-testable. Only non-default
-// fields are written, keeping fresh-load URLs clean (`#/mission-control`).
+// fields are written, keeping fresh-load URLs clean (`/mission-control`).
 export function parseMissionControlViewParams(query: string): Partial<MissionControlView> {
   const params = new URLSearchParams(query);
   const out: Partial<MissionControlView> = {};
@@ -2211,44 +2216,38 @@ export function buildMissionControlViewQuery(view: MissionControlView): string {
   return params.toString();
 }
 
-// Split a location hash into its `path` (without leading `#`/`/`) and `query` parts.
-function splitHash(hash: string): { path: string; query: string } {
-  const withoutHash = hash.replace(/^#/, "").replace(/^\/+/, "");
-  const [path = "", query = ""] = withoutHash.split("?");
-  return { path, query };
-}
-
-// Read the tab/page selection encoded in the current location hash, but only when we are on the bare
+// Read the tab/page selection encoded in the current location query, but only when we are on the bare
 // Mission Control list route. Returns null elsewhere (detail/report routes, SSR, parse errors).
-function readMissionControlViewFromHash(): Partial<MissionControlView> | null {
+function readMissionControlViewFromLocation(): Partial<MissionControlView> | null {
   if (typeof window === "undefined") return null;
   try {
-    const { path, query } = splitHash(window.location.hash || "");
-    if (path !== MISSION_CONTROL_HASH_PATH || !query) return null;
-    const parsed = parseMissionControlViewParams(query);
+    if (!isMissionControlListPath(window.location.pathname) || !window.location.search) return null;
+    const parsed = parseMissionControlViewParams(window.location.search);
     return Object.keys(parsed).length > 0 ? parsed : null;
   } catch {
     return null;
   }
 }
 
-// Reflect the view in the URL via replaceState — no new history entry and no `hashchange` event, so
-// the router is undisturbed. Guarded to the bare list route so we never rewrite a detail URL.
-function writeMissionControlViewToHash(view: MissionControlView): void {
+// Reflect the view in the URL via replaceState without creating a new history entry. Guarded to the
+// bare list route so we never rewrite a detail URL.
+function writeMissionControlViewToLocation(view: MissionControlView): void {
   if (typeof window === "undefined") return;
   try {
-    const { path } = splitHash(window.location.hash || "");
-    if (path !== MISSION_CONTROL_HASH_PATH) return;
-    const query = buildMissionControlViewQuery(view);
-    const nextHash = query ? `#/${MISSION_CONTROL_HASH_PATH}?${query}` : `#/${MISSION_CONTROL_HASH_PATH}`;
-    const url = `${window.location.pathname}${window.location.search}${nextHash}`;
+    if (!isMissionControlListPath(window.location.pathname)) return;
+    const params = new URLSearchParams(window.location.search);
+    for (const key of MISSION_CONTROL_VIEW_PARAM_KEYS) params.delete(key);
+    const viewParams = new URLSearchParams(buildMissionControlViewQuery(view));
+    viewParams.forEach((value, key) => params.set(key, value));
+    const query = params.toString();
+    const url = `${window.location.pathname}${query ? `?${query}` : ""}`;
     window.history.replaceState(window.history.state, "", url);
   } catch {
     // Best-effort: a sandboxed history (some embeds) can throw on replaceState.
   }
 }
 
-// VEY-412 rework: resolve the initial view by precedence — URL hash (shareable, survives browser
+// VEY-412 rework: resolve the initial view by precedence — URL query (shareable, survives browser
 // back + reload) first; then sessionStorage when it holds a real selection; then the in-memory
 // mirror, which is the only fallback that works for the in-app back button inside the Farcaster
 // iframe (sessionStorage is blocked there). A blocked/empty storage reads back as the default, so
@@ -2256,8 +2255,8 @@ function writeMissionControlViewToHash(view: MissionControlView): void {
 export function resolveMissionControlView(): MissionControlView {
   const persisted = readPersistedMissionControlView();
   const base = isDefaultMissionControlView(persisted) ? lastMissionControlView : persisted;
-  const fromHash = readMissionControlViewFromHash();
-  return fromHash ? { ...base, ...fromHash } : base;
+  const fromLocation = readMissionControlViewFromLocation();
+  return fromLocation ? { ...base, ...fromLocation } : base;
 }
 
 function isDefaultMissionControlView(view: MissionControlView): boolean {

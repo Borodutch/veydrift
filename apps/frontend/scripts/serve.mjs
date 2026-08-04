@@ -124,6 +124,28 @@ export function inviteAppRouteForPathname(pathname) {
   return pathname === "/invite" || pathname === "/alliance-invites";
 }
 
+const gameAppPaths = new Set([
+  "/overview",
+  "/infrastructure",
+  "/defenses",
+  "/research",
+  "/shipyard",
+  "/mission-control",
+  "/moon",
+  "/alliance",
+  "/rift",
+  "/rankings",
+  "/galaxy",
+  "/raid-target-finder",
+  "/planet",
+  "/battle-reports",
+]);
+
+export function gameAppRouteForPathname(pathname) {
+  const normalized = pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname;
+  return gameAppPaths.has(normalized);
+}
+
 export function shareRouteForUrl(url) {
   const referralCode = referralCodeForCanonical(url.searchParams.get("ref"));
   if ((url.pathname === "/" || url.pathname === "/index.html") && referralCode) {
@@ -934,7 +956,12 @@ if (import.meta.main) {
         return responseFor(file, route);
       }
 
-      if (docsAppRouteForPathname(route) || playAppRouteForPathname(route) || inviteAppRouteForPathname(route)) {
+      if (
+        docsAppRouteForPathname(route)
+        || playAppRouteForPathname(route)
+        || inviteAppRouteForPathname(route)
+        || gameAppRouteForPathname(route)
+      ) {
         return responseFor(Bun.file(staticFileUrl("/index.html")), "/index.html");
       }
 

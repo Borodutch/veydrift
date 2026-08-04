@@ -1,12 +1,12 @@
 import { render } from "preact";
 import { App } from "./App";
 import { scheduleFarcasterReady } from "./farcasterReady";
-import { canonicalEntityPathForLegacyHashLocation } from "./inspectRoutes";
+import { canonicalPathForLegacyHashLocation } from "./inspectRoutes";
 import { resetDocumentTitle } from "./pageTitle";
 import { initSfx } from "./sfx";
 import "./styles.css";
 
-const canonicalPath = canonicalEntityPathForLegacyHashLocation(window.location);
+const canonicalPath = canonicalPathForLegacyHashLocation(window.location);
 if (canonicalPath) {
   window.history.replaceState(null, "", canonicalPath);
 }

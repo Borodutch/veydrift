@@ -32,13 +32,13 @@ export function Layout({ children, gameMode }: Props) {
           </div>
           <nav className="flex items-center gap-2">
             <a
-              href="#/universe"
+              href="/"
               className="rounded px-3 py-1.5 text-xs text-slate-300 transition-colors hover:bg-white/10 hover:text-white"
             >
               Universe
             </a>
             <a
-              href={`#/galaxy/1/1`}
+              href="/galaxy"
               className="rounded px-3 py-1.5 text-xs text-slate-300 transition-colors hover:bg-white/10 hover:text-white"
             >
               Galaxy

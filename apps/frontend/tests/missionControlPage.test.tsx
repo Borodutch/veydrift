@@ -240,7 +240,7 @@ describe("MissionControlPage", () => {
       onRecall: () => undefined,
       onRefresh: () => undefined,
       onResolve: () => undefined,
-      reportUrlForMission: (missionId) => `#/mission-control/report/${missionId}`,
+      reportUrlForMission: (missionId) => `/mission/${missionId}`,
       walletPlanets: [managedPlanet({ planetId: "7", coordinates: "2:44:9", name: "New Eos" })],
     });
     const text = visibleText(page);
@@ -555,7 +555,7 @@ describe("MissionControlPage", () => {
         battleReports: [],
       },
       reportMissionId: "12",
-      reportUrlForMission: (missionId) => `https://test.veydrift.com/#/mission-control/report/${missionId}`,
+      reportUrlForMission: (missionId) => `https://test.veydrift.com/mission/${missionId}`,
       walletPlanets: [managedPlanet({ planetId: "7", coordinates: "2:44:9", name: "New Eos" })],
     });
     const text = visibleText(page);
@@ -572,7 +572,7 @@ describe("MissionControlPage", () => {
     expect(text).toContain("Red Haven [4:55:11]");
     expect(text).toContain("Orion (0x9999...9999)");
     expect(text).toContain("Group 42");
-    expect(text).toContain("https://test.veydrift.com/#/mission-control/report/12");
+    expect(text).toContain("https://test.veydrift.com/mission/12");
     expect(text).not.toContain("Alliance Combat System");
     expect(text).not.toContain("ACS");
   });

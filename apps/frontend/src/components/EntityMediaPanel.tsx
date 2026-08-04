@@ -10,6 +10,7 @@ import {
 } from "../entityMedia";
 import { playableApiUrl } from "../runtimeConfig";
 import type { Eip1193Provider } from "../walletFlow";
+import { Skeleton, SkeletonRegion } from "./Skeleton";
 
 export function EntityMediaPanel({
   account,
@@ -35,6 +36,7 @@ export function EntityMediaPanel({
   const [mediaUrl, setMediaUrl] = useState("");
   const [action, setAction] = useState<{ status: "idle" | "pending" | "success" | "error"; label?: string }>({ status: "idle" });
   const [playback, setPlayback] = useState<EntityMediaPlaybackState>({ enabled: true, entityKey });
+  const heading = entityMediaHeading(entityKind);
 
   useEffect(() => {
     setPlayback((current) => nextEntityMediaPlaybackState(current, entityKey, "sync-entity"));
@@ -93,16 +95,13 @@ export function EntityMediaPanel({
     }
   };
 
-  if (loading && !canEdit) return null;
+  if (loading) return <EntityMediaPanelSkeleton canEdit={canEdit} heading={heading} />;
   if (!record && !canEdit) return null;
 
   return (
-    <section className="rounded-lg border border-cyan-300/20 bg-black/30 p-3" aria-label="YouTube media">
+    <section className="rounded-lg border border-cyan-300/20 bg-black/30 p-3" aria-label={heading}>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <h3 className="text-sm font-semibold text-white">YouTube media</h3>
-          {record ? <p className="mt-0.5 text-xs text-slate-500">Autoplay starts muted for browser and mobile compatibility.</p> : null}
-        </div>
+        <h3 className="text-sm font-semibold text-white">{heading}</h3>
         <div className="flex flex-wrap gap-2">
           {record ? (
             <button
@@ -202,4 +201,31 @@ export function EntityMediaPanel({
       ) : null}
     </section>
   );
+}
+
+export function EntityMediaPanelSkeleton({
+  canEdit = false,
+  heading,
+}: {
+  canEdit?: boolean | undefined;
+  heading: string;
+}) {
+  return (
+    <section className="rounded-lg border border-cyan-300/20 bg-black/30 p-3" aria-label={heading}>
+      <SkeletonRegion className="flex items-center justify-between gap-3" label={`Loading ${heading.toLowerCase()}`}>
+        <Skeleton className="h-4 w-28" />
+        <div className="flex gap-2">
+          <Skeleton className="h-8 w-24 rounded" />
+          {canEdit ? <Skeleton className="h-8 w-20 rounded" /> : null}
+        </div>
+      </SkeletonRegion>
+    </section>
+  );
+}
+
+export function entityMediaHeading(entityKind: EntityMediaKind): string {
+  if (entityKind === "planet") return "Planet anthem";
+  if (entityKind === "moon") return "Moon anthem";
+  if (entityKind === "player") return "Player media";
+  return "Alliance media";
 }

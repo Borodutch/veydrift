@@ -7,10 +7,17 @@ import {
   parseYouTubeMediaUrl,
   updateEntityMedia,
 } from "./entityMedia";
-import type { Eip1193Provider } from "./walletFlow";
-import { personalSignPayload } from "./walletFlow";
+import { personalSignPayload, type Eip1193Provider } from "./walletFlow";
+import { entityMediaHeading } from "./components/EntityMediaPanel";
 
 describe("entity media", () => {
+  test("uses entity-specific media headings without provider copy", () => {
+    expect(entityMediaHeading("planet")).toBe("Planet anthem");
+    expect(entityMediaHeading("moon")).toBe("Moon anthem");
+    expect(entityMediaHeading("player")).toBe("Player media");
+    expect(entityMediaHeading("alliance")).toBe("Alliance media");
+  });
+
   test("parses supported YouTube video and playlist URLs without accepting arbitrary providers", () => {
     expect(parseYouTubeMediaUrl("https://youtu.be/dQw4w9WgXcQ?t=2")).toEqual({
       ok: true,

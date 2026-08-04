@@ -6,6 +6,7 @@ import {
   canonicalSharePathForRoute,
   injectShareMeta,
   imageRouteForPathname,
+  gameAppRouteForPathname,
   inviteAppRouteForPathname,
   ogPng,
   ogSvg,
@@ -36,6 +37,29 @@ describe("frontend static server headers", () => {
     expect(inviteAppRouteForPathname("/invite")).toBe(true);
     expect(inviteAppRouteForPathname("/alliance-invites")).toBe(true);
     expect(inviteAppRouteForPathname("/alliance")).toBe(false);
+  });
+
+  test("serves every clean page URL through the frontend app", () => {
+    const routes = [
+      "/overview",
+      "/infrastructure",
+      "/defenses",
+      "/research",
+      "/shipyard",
+      "/mission-control",
+      "/moon",
+      "/alliance",
+      "/rift",
+      "/rankings",
+      "/galaxy",
+      "/raid-target-finder",
+      "/planet",
+      "/battle-reports",
+    ];
+
+    for (const route of routes) expect(gameAppRouteForPathname(route)).toBe(true);
+    expect(gameAppRouteForPathname("/rankings/")).toBe(true);
+    expect(gameAppRouteForPathname("/missing")).toBe(false);
   });
 
   test("keeps referral canonical URLs clean while ignoring Card cache parameters", () => {

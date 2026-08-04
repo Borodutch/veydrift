@@ -6,7 +6,7 @@ import {
   planetImageForType,
   planetsFromSystemResponse
 } from "../src/data/mockUniverse";
-import { buildingCatalog, defenseCatalog, shipCatalog } from "../src/playableMvp";
+import { buildingCatalog, defenseCatalog, researchCatalog, shipCatalog } from "../src/playableMvp";
 import { emptyMissionShips, galaxyActionsForSlot, type GalaxyAction } from "../src/galaxyActions";
 import {
   cachedGalaxySystemPlanets,
@@ -31,21 +31,27 @@ import {
 import { GAME_UNAVAILABLE_MESSAGE } from "../src/gameUnavailable";
 import {
   canApplyPlanetDetailResponse,
+  compactResearchRows,
   planetDetailRefreshResultPlanet,
   planetDetailRefreshStartPlanet,
   planetDetailRequestKey,
   planetDetailVisiblePlanet,
+  planetEconomyPillRows,
+  planetFleetActivityRows,
   planetRecordStatusLabel,
   publicCommanderRows,
+  publicQueueViews,
   publicQueueRows,
   publicPlanetDataRows,
   publicProductionRows,
   publicResourceRows,
+  publicStateAssetRows,
   publicStateRows,
   publicStationedDefenderRows,
   publicSignalRows,
   shouldShowPlanetDetailInitialLoader
 } from "../src/components/PlanetDetail";
+import type { FleetMissionSummary } from "../src/walletFlow";
 import {
   moonQueueRows,
   moonRecordRows,
@@ -57,6 +63,28 @@ import { isImageReady, type ImageLoadState } from "../src/imageLoadState";
 import { getSrcSet, VARIANT_WIDTHS } from "../src/utils/imageSizes";
 
 const PUBLIC_DIR = join(import.meta.dir, "..", "public");
+
+function activeFleetMission(overrides: Partial<FleetMissionSummary> & { missionId: string }): FleetMissionSummary {
+  return {
+    arrivalAt: "1770000060",
+    attackGroupId: null,
+    blockNumber: "1",
+    cargo: { crystal: "0", deuterium: "0", metal: "0" },
+    fuelCost: "0",
+    joinedAttackMissionIds: [],
+    missionType: "Transport",
+    originPlanetId: "1",
+    owner: "0x1111111111111111111111111111111111111111",
+    recallCost: null,
+    returnAt: "1770000120",
+    ships: {},
+    status: "Outbound",
+    targetPlanetId: "2",
+    transactionHash: "0x1",
+    ...overrides,
+  };
+}
+
 const PLANET_TYPES = [
   "scorching-molten",
   "hot-desert",
@@ -214,8 +242,14 @@ describe("tester universe display data", () => {
             queues: {
               building: {
                 active: true,
+                asOfNow: {
+                  complete: false,
+                  overallProgressBps: 5000,
+                  secondsRemaining: 30,
+                },
                 itemId: 0,
                 kind: "building",
+                startedAt: "1770000000",
                 targetLevel: 13,
                 readyAt: "1770000060",
               },
@@ -237,6 +271,15 @@ describe("tester universe display data", () => {
       "Metal: 5,000",
       "Crystal: 4,900",
       "Deuterium: 4,800",
+    ]);
+    expect(planetEconomyPillRows(planet)).toEqual([
+      { label: "Metal", modifier: "100%", value: "5,000" },
+      { label: "Crystal", modifier: "100%", value: "4,900" },
+      { label: "Deuterium", modifier: "100%", value: "4,800" },
+      {
+        label: "Solar satellite",
+        value: publicProductionRows(planet).find((row) => row.label === "Solar satellite")?.value,
+      },
     ]);
     expect(publicStateRows(planet.publicState?.buildings, buildingCatalog, "level")).toContainEqual({
       label: "Metal Mine",
@@ -286,8 +329,66 @@ describe("tester universe display data", () => {
       value: "Metal Mine Level 13",
       tone: "accent",
     });
+    expect(publicQueueViews(planet)).toEqual([
+      expect.objectContaining({
+        asset: buildingCatalog[0]?.asset,
+        itemText: "Metal Mine · Level 13",
+        label: "Metal Mine",
+        progress: 0.5,
+        readyAt: "1770000060",
+        startedAt: "1770000000",
+        title: "Buildings",
+        tone: "amber",
+      }),
+    ]);
 
     expect(publicResourceRows(undefined)).toBeNull();
+  });
+
+  test("planet fleet activity shows inbound and outbound traffic with ship art", () => {
+    const outbound = activeFleetMission({
+      missionId: "81",
+      originPlanetId: "7",
+      targetPlanetId: "9",
+      targetPlanet: {
+        coordinates: "2:44:9",
+        galaxy: 2,
+        name: "Waystation",
+        owner: "0x2222222222222222222222222222222222222222",
+        planetId: "9",
+        position: 9,
+        system: 44,
+      },
+      ships: { smallCargo: "4", lightFighter: "2" },
+    });
+    const returning = activeFleetMission({
+      missionId: "82",
+      originPlanetId: "7",
+      targetPlanetId: "10",
+      status: "Returning",
+      missionType: "Attack",
+      ships: { lightFighter: "3" },
+    });
+
+    expect(planetFleetActivityRows("7", [outbound, returning])).toEqual([
+      expect.objectContaining({
+        asset: shipCatalog[0]?.asset,
+        direction: "Outbound",
+        missionId: "81",
+        missionLabel: "Transport",
+        routeLabel: "To Waystation [2:44:9]",
+        shipCountLabel: "6 ships",
+      }),
+      expect.objectContaining({
+        asset: shipCatalog[1]?.asset,
+        direction: "Inbound",
+        missionId: "82",
+        missionLabel: "Attack",
+        routeLabel: "From Planet 10",
+        shipCountLabel: "3 ships",
+      }),
+    ]);
+    expect(planetFleetActivityRows("99", [outbound, returning])).toEqual([]);
   });
 
   test("public occupancy preserves owner alliance intel when the API provides it", () => {
@@ -414,7 +515,7 @@ describe("tester universe display data", () => {
 
     expect(shouldShowPlanetDetailInitialLoader({ planet: null, source: "loading" })).toBe(true);
     expect(shouldShowPlanetDetailInitialLoader({ planet, source: "loading" })).toBe(false);
-    expect(planetRecordStatusLabel(planet, "loading", false)).toBe("Refreshing public records");
+    expect(planetRecordStatusLabel(planet, "loading", false)).toBe("Loading records");
   });
 
   test("planet detail public records show useful public planet data", () => {
@@ -451,7 +552,7 @@ describe("tester universe display data", () => {
       ],
     });
 
-    expect(planetRecordStatusLabel(planet, "api", false)).toBe("Occupied public world");
+    expect(planetRecordStatusLabel(planet, "api", false)).toBe("Occupied world");
     expect(publicCommanderRows(planet, false).map((row) => `${row.label}: ${row.value}`)).toEqual([
       "Settlement: Occupied",
       "Player: 0x2222...2222",
@@ -481,6 +582,28 @@ describe("tester universe display data", () => {
       ...publicProductionRows(planet).map((row) => row.value),
     ].join(" ");
     expect(copy).not.toMatch(/\b(indexed|indexer|backend|universe data|OGame|ogame)\b/i);
+  });
+
+  test("planet detail visual inventory rows resolve catalog art for public assets", () => {
+    expect(publicStateAssetRows([{ id: 1, count: 12 }], shipCatalog, "count")).toEqual([
+      expect.objectContaining({ label: "Light Fighter", value: "12", asset: shipCatalog[1]?.asset }),
+    ]);
+    expect(publicStateAssetRows([{ id: 0, count: 3 }], defenseCatalog, "count")).toEqual([
+      expect.objectContaining({ label: "Rocket Launcher", value: "3", asset: defenseCatalog[0]?.asset }),
+    ]);
+    expect(publicStateAssetRows([{ id: 0, level: 8 }], researchCatalog, "level")).toEqual([
+      expect.objectContaining({ label: "Energy Technology", value: "Level 8", asset: researchCatalog[0]?.asset }),
+    ]);
+    expect(publicStateAssetRows([{ id: 0, level: 12 }], buildingCatalog, "level")).toEqual([
+      expect.objectContaining({ label: "Metal Mine", value: "Level 12", asset: buildingCatalog[0]?.asset }),
+    ]);
+    expect(compactResearchRows([
+      { asset: researchCatalog[0]?.asset, label: "Energy Technology", value: "Level 8" },
+      { asset: researchCatalog[7]?.asset, label: "Hyperspace Drive", value: "Level 4" },
+    ])).toEqual([
+      { asset: researchCatalog[0]?.asset, label: "Energy", value: "Level 8" },
+      { asset: researchCatalog[7]?.asset, label: "Hyperspace Drive", value: "Level 4" },
+    ]);
   });
 
   test("public moon detail rows use indexed moon state from universe responses", () => {
@@ -731,6 +854,65 @@ describe("tester universe display data", () => {
     })).toBe(freshPlanet);
   });
 
+  test("enriches the trusted home planet with indexed public state", () => {
+    const [trustedHomePlanet] = planetsFromSystemResponse({
+      galaxy: 6,
+      system: 9,
+      planets: [{
+        fields: 218,
+        galaxy: 6,
+        key: "trusted-home",
+        metalMultiplierBps: 10_000,
+        crystalMultiplierBps: 10_000,
+        deuteriumMultiplierBps: 11_450,
+        occupiedBy: { owner: "0x1111111111111111111111111111111111111111", ownerDisplayName: "Commander", planetId: "1" },
+        position: 1,
+        publicState: null,
+        system: 9,
+        temperature: 68,
+      }],
+    });
+    const [apiPlanet] = planetsFromSystemResponse({
+      galaxy: 6,
+      system: 9,
+      planets: [{
+        fields: 218,
+        galaxy: 6,
+        key: "api-home",
+        metalMultiplierBps: 10_000,
+        crystalMultiplierBps: 10_000,
+        deuteriumMultiplierBps: 11_450,
+        occupiedBy: { owner: "0x1111111111111111111111111111111111111111", planetId: "1" },
+        position: 1,
+        publicState: {
+          resources: { metal: "7138", crystal: "58794", deuterium: "748" },
+          buildings: [{ id: 0, level: 21 }],
+          fleet: [{ id: 4, count: 13 }],
+          defenses: [{ id: 0, count: 72 }],
+          research: [{ id: 0, level: 8 }],
+          queues: {
+            building: { active: true, itemId: 3, kind: "building", readyAt: "1785892267", targetLevel: 22 },
+          },
+        },
+        system: 9,
+        temperature: 68,
+      }],
+    });
+
+    const result = planetDetailRefreshResultPlanet({
+      apiPlanet,
+      coords: { galaxy: 6, system: 9, position: 1 },
+      currentPlanet: trustedHomePlanet,
+      trustedHomePlanet,
+    });
+
+    expect(result?.id).toBe("trusted-home");
+    expect(result?.occupiedBy?.ownerDisplayName).toBe("Commander");
+    expect(result?.publicState).toBe(apiPlanet.publicState);
+    expect(result?.publicState?.buildings).toEqual([{ id: 0, level: 21 }]);
+    expect(publicQueueRows(result!)).toContainEqual({ label: "Building", value: "Solar Plant Level 22", tone: "accent" });
+  });
+
   test("uses initial planet detail loader only when the selected coordinates have no loaded data", () => {
     const [loadedPlanet] = planetsFromSystemResponse({
       galaxy: 2,
@@ -779,6 +961,28 @@ describe("tester universe display data", () => {
     expect(canApplyPlanetDetailResponse(oldRequest, newCoords)).toBe(false);
     expect(canApplyPlanetDetailResponse(newRequest, newCoords)).toBe(true);
     expect(canApplyPlanetDetailResponse(newRequest, newCoords, true)).toBe(false);
+  });
+
+  test("shows the refreshed planet instead of masking it with the trusted summary", () => {
+    const [planet] = planetsFromSystemResponse({
+      galaxy: 6,
+      system: 9,
+      planets: [{
+        fields: 218,
+        galaxy: 6,
+        metalMultiplierBps: 10_000,
+        crystalMultiplierBps: 10_000,
+        deuteriumMultiplierBps: 11_450,
+        position: 1,
+        system: 9,
+        temperature: 48,
+      }],
+    });
+    const coords = { galaxy: 6, system: 9, position: 1 };
+    const trustedSummary = { ...planet, name: "Trusted summary" };
+    const refreshedPlanet = { ...planet, name: "Refreshed planet" };
+
+    expect(planetDetailVisiblePlanet(refreshedPlanet, coords, trustedSummary)).toBe(refreshedPlanet);
   });
 
   test("formats moon chance status for galaxy rows", () => {

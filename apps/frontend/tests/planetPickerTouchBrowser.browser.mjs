@@ -314,7 +314,7 @@ async function loadInspectorFixture(route, width) {
   await cdp.send("Page.navigate", {
     url: `${inspectorFixtureUrl}?route=${encodeURIComponent(route)}`,
   });
-  await waitForExpression("window.inspectorProof?.appReady === true");
+  await waitForExpression("window.inspectorProof?.appReady === true", 10_000);
   try {
     await waitForExpression("document.querySelectorAll('[data-planet-selector-item]').length >= 2");
   } catch (error) {
@@ -476,8 +476,7 @@ test("desktop selector atomically replaces an unrelated inspector with one owned
   const snapshot = await inspectorSnapshot();
   assert.equal(snapshot.path, "/planet/4/5/6");
   assert.equal(snapshot.heading, "Owned Beta");
-  assert.match(snapshot.text, /Home Planet/);
-  assert.match(snapshot.text, /Your home world/);
+  assert.match(snapshot.text, /Home world/);
   assert.match(snapshot.text, /Add media/);
   assert.ok(snapshot.topBarTitles.some((title) => title.startsWith("Metal: 203")));
   assert.ok(snapshot.topBarTitles.some((title) => title.startsWith("Crystal: 201")));
@@ -495,7 +494,7 @@ test("mobile hamburger selector independently invokes the owned-planet transitio
 
   const snapshot = await inspectorSnapshot();
   assert.equal(snapshot.heading, "Owned Beta");
-  assert.match(snapshot.text, /Home Planet/);
+  assert.match(snapshot.text, /Home world/);
   assert.match(snapshot.text, /Add media/);
   assert.ok(snapshot.topBarTitles.some((title) => title.startsWith("Metal: 203")));
   assert.doesNotMatch(snapshot.text, /Unrelated Gamma|9,909/);
@@ -504,7 +503,7 @@ test("mobile hamburger selector independently invokes the owned-planet transitio
 test("owned deep links and real back-forward events never expose owned controls under an unrelated identity", async () => {
   await loadInspectorFixture("/planet/1/2/3", 1280);
   await waitForExpression("document.querySelector('main h2')?.textContent === 'Owned Alpha'");
-  assert.match((await inspectorSnapshot()).text, /Home Planet/);
+  assert.match((await inspectorSnapshot()).text, /Home world/);
 
   await evaluate(`(() => {
     history.pushState({ proof: 'unrelated' }, '', '/planet/9/9/9');
@@ -513,19 +512,19 @@ test("owned deep links and real back-forward events never expose owned controls 
   await waitForExpression("document.querySelector('main h2')?.textContent === 'Unrelated Gamma'");
   let snapshot = await inspectorSnapshot();
   assert.equal(snapshot.path, "/planet/9/9/9");
-  assert.doesNotMatch(snapshot.text, /Add media|Home Planet|Your home world|Owned Alpha Public/);
+  assert.doesNotMatch(snapshot.text, /Add media|Home world|Owned Alpha Public/);
   assert.match(snapshot.text, /Occupied public world|Unrelated Gamma/);
 
   await evaluate("history.back()");
   await waitForExpression("location.pathname === '/planet/1/2/3' && document.querySelector('main h2')?.textContent === 'Owned Alpha'");
   snapshot = await inspectorSnapshot();
   assert.match(snapshot.text, /Add media/);
-  assert.match(snapshot.text, /Home Planet|Your home world/);
+  assert.match(snapshot.text, /Home world/);
 
   await evaluate("history.forward()");
   await waitForExpression("location.pathname === '/planet/9/9/9' && document.querySelector('main h2')?.textContent === 'Unrelated Gamma'");
   snapshot = await inspectorSnapshot();
-  assert.doesNotMatch(snapshot.text, /Add media|Home Planet|Your home world|Owned Alpha Public/);
+  assert.doesNotMatch(snapshot.text, /Add media|Home world|Owned Alpha Public/);
 });
 
 for (const kind of ["planet", "moon"]) {

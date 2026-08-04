@@ -6,7 +6,7 @@ import { shareReportUrl, type ShareCapableNavigator } from "../src/shareReport";
 // prefers the native Web Share dialog and falls back to a clipboard copy, and — critically — it only
 // ever calls navigator.share / navigator.clipboard, so it can never mutate the route.
 
-const URL = "https://test.veydrift.com/#/mission/228";
+const URL = "https://test.veydrift.com/mission/228";
 
 describe("shareReportUrl", () => {
   test("uses the native Web Share API when available and reports a share", async () => {

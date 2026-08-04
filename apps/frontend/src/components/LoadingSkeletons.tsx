@@ -3,6 +3,71 @@ import { Skeleton, SkeletonRegion, skeletonList } from "./Skeleton";
 
 const CARD = "rounded-md border border-white/10 bg-[#101624] p-4";
 
+/** Planet detail skeleton matching the compact hero and visual inventory cards. */
+export function PlanetDetailSkeleton(): JSX.Element {
+  return (
+    <SkeletonRegion className="grid gap-3" label="Loading planet details">
+      <section className="overflow-hidden rounded-xl border border-white/10 bg-[#0b111e]">
+        <div className="grid sm:grid-cols-[minmax(13rem,15rem)_minmax(0,1fr)] sm:items-stretch lg:grid-cols-[minmax(15rem,18.75rem)_minmax(0,1fr)]">
+          <div className="flex items-center justify-center border-b border-white/10 bg-black/10 p-3 sm:border-b-0 sm:border-r sm:p-4 lg:p-5">
+            <Skeleton className="aspect-square w-full max-w-44 rounded-full sm:max-w-[13rem] lg:max-w-[17rem]" />
+          </div>
+          <div className="min-w-0 p-3 sm:p-4 lg:p-5">
+            <Skeleton className="h-8 w-64 max-w-full" />
+            <Skeleton className="mt-2 h-3.5 w-32" />
+            <div className="mt-3 flex flex-wrap gap-1.5 sm:mt-4 sm:gap-2">
+              {skeletonList(4, (index) => <Skeleton className="h-8 w-24 rounded-md" key={index} />)}
+            </div>
+            <div className="mt-4 flex flex-wrap gap-2 border-t border-white/10 pt-4">
+              {skeletonList(4, (index) => <Skeleton className={`h-9 rounded-md ${["w-36", "w-40", "w-44", "w-36"][index]}`} key={index} />)}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <div className="grid gap-3 xl:grid-cols-2">
+        {skeletonList(4, (panelIndex) => (
+          <section className="overflow-hidden rounded-lg border border-white/10 bg-[#101624]" key={panelIndex}>
+            <div className="flex items-center gap-2 border-b border-white/10 px-3 py-2">
+              <Skeleton className="h-7 w-7 rounded-md" />
+              <Skeleton className="h-3.5 w-28" />
+            </div>
+            <div className="grid gap-2 p-3 sm:grid-cols-2">
+              {skeletonList(4, (index) => (
+                <div className="grid min-h-14 grid-cols-[2.5rem_minmax(0,1fr)] items-center gap-2 rounded border border-white/[0.08] bg-black/20 p-1.5" key={index}>
+                  <Skeleton className="h-10 w-10 rounded" />
+                  <div className="min-w-0">
+                    <Skeleton className="h-3 w-3/4" />
+                    <Skeleton className="mt-2 h-2.5 w-12" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        ))}
+      </div>
+
+      <section className="overflow-hidden rounded-lg border border-white/10 bg-[#101624]">
+        <div className="flex items-center gap-2 border-b border-white/10 px-3 py-2">
+          <Skeleton className="h-7 w-7 rounded-md" />
+          <Skeleton className="h-3.5 w-36" />
+        </div>
+        <div className="grid gap-3 p-3 sm:grid-cols-2 xl:grid-cols-4">
+          {skeletonList(4, (index) => (
+            <div className="rounded-lg border border-white/10 bg-black/15 p-3" key={index}>
+              <Skeleton className="h-2.5 w-16" />
+              <div className="mt-3 grid grid-cols-[2.75rem_minmax(0,1fr)] items-center gap-3">
+                <Skeleton className="h-11 w-11 rounded" />
+                <div><Skeleton className="h-3 w-4/5" /><Skeleton className="mt-2 h-2.5 w-20" /><Skeleton className="mt-2 h-1.5 w-full rounded-full" /></div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+    </SkeletonRegion>
+  );
+}
+
 /** A catalog tile placeholder: square thumbnail above two short text lines. */
 function CatalogTileSkeleton(): JSX.Element {
   return (
