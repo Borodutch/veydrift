@@ -1,3 +1,12 @@
+import {
+  Building2,
+  Database,
+  MapPin,
+  Orbit,
+  Rocket,
+  Shield,
+} from "lucide-preact";
+import type { ComponentChildren } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { Coordinates, Planet } from "../types";
 import { formatPlanetType, planetsFromSystemResponse } from "../data/mockUniverse";
@@ -6,13 +15,30 @@ import { defenseCatalog, shipCatalog } from "../playableMvp";
 import { playableApiUrl } from "../runtimeConfig";
 import { formatAttackBlockReason, type AttackProtectionStatus, type GalaxyActionState } from "./GalaxyView";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
-import { shortAddress, type ChainDefenseState, type ChainShipyardState, type Eip1193Provider } from "../walletFlow";
+import {
+  shortAddress,
+  type ChainDefenseState,
+  type ChainShipyardState,
+  type FleetMissionSummary,
+  type GlobalActiveMissionsResponse,
+} from "../walletFlow";
 import { MoonActionStrip, type MoonOverviewAction } from "./MoonPage";
 import { MoonImage } from "./PlanetMoonIndicator";
-import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
-import { EntityMediaPanel } from "./EntityMediaPanel";
-import { canEditEntityMedia } from "../entityMedia";
-import { canApplyPlanetDetailResponse, planetDetailRequestKey, planetDetailVisiblePlanet } from "./PlanetDetail";
+import {
+  canApplyPlanetDetailResponse,
+  planetDetailRequestKey,
+  planetDetailVisiblePlanet,
+  planetFleetActivityRows,
+  PlanetFleetActivityPanel,
+  PublicAssetStatePanel,
+  PublicQueuesPanel,
+  publicQueueView,
+  publicStateAssetRows,
+  type PublicQueueView,
+} from "./PlanetDetail";
+import { MoonDetailSkeleton } from "./LoadingSkeletons";
+import { Skeleton, SkeletonRegion, skeletonList } from "./Skeleton";
+import { buildInspectPath } from "../inspectRoutes";
 
 type PublicMoonDetailProps = {
   account?: string | undefined;
@@ -24,7 +50,7 @@ type PublicMoonDetailProps = {
   homePlanetId?: string | null | undefined;
   onAction?: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates) => void) | undefined;
   onBack: () => void;
-  provider?: Eip1193Provider | undefined;
+  onSelectPlanet?: ((coords: Coordinates) => void) | undefined;
   shipyardState?: ChainShipyardState | null | undefined;
   transactionUnavailableReason?: string | undefined;
 };
@@ -39,13 +65,14 @@ export function PublicMoonDetail({
   homePlanetId,
   onAction,
   onBack,
-  provider,
+  onSelectPlanet,
   shipyardState = null,
   transactionUnavailableReason,
 }: PublicMoonDetailProps) {
   const [loadedPlanet, setPlanet] = useState<Planet | null>(null);
   const [source, setSource] = useState<"api" | "error" | "loading">("loading");
   const [attackProtection, setAttackProtection] = useState<AttackProtectionStatus | null>(null);
+  const [activeMissions, setActiveMissions] = useState<FleetMissionSummary[] | null>(null);
   const currentRequestKey = useRef(planetDetailRequestKey(coords));
   currentRequestKey.current = planetDetailRequestKey(coords);
   const planet = planetDetailVisiblePlanet(loadedPlanet, coords);
@@ -110,6 +137,40 @@ export function PublicMoonDetail({
     return () => abortController.abort();
   }, [account, apiBaseUrl, homeCoords?.galaxy, homeCoords?.position, homeCoords?.system, planet?.occupiedBy?.planetId]);
 
+  useEffect(() => {
+    const planetId = planet?.occupiedBy?.planetId;
+    if (!planetId) {
+      setActiveMissions([]);
+      return;
+    }
+
+    const abortController = new AbortController();
+    setActiveMissions(null);
+    fetch(`${apiBaseUrl.replace(/\/+$/, "")}/missions?status=active`, {
+      headers: { accept: "application/json" },
+      signal: abortController.signal,
+    })
+      .then((response) => {
+        if (!response.ok) throw new Error(`Active missions request failed with ${response.status}`);
+        return response.json() as Promise<GlobalActiveMissionsResponse>;
+      })
+      .then((payload) => {
+        if (abortController.signal.aborted) return;
+        setActiveMissions(payload.missions.filter((mission) => (
+          (mission.originPlanetId === planetId && mission.originIsMoon === true)
+          || (mission.targetPlanetId === planetId && mission.targetIsMoon === true)
+        )));
+      })
+      .catch((error) => {
+        if (!abortController.signal.aborted) {
+          console.error(error);
+          setActiveMissions([]);
+        }
+      });
+
+    return () => abortController.abort();
+  }, [apiBaseUrl, planet?.occupiedBy?.planetId]);
+
   const coordinateText = `[${coords.galaxy}:${coords.system}:${coords.position}]`;
   const actions = planet?.hasMoon
       ? publicMoonActions({
@@ -126,150 +187,203 @@ export function PublicMoonDetail({
         transactionUnavailableReason,
       })
     : [];
+  const visibleActions = actions.filter((action) => Boolean(action.onClick && !action.disabledReason));
 
   if (source === "loading" && !planet) {
-    return (
-      <div className="flex flex-col gap-4 p-4 sm:p-6">
-        <button
-          className="min-h-11 w-fit rounded border border-white/15 bg-white/8 px-3 py-1.5 text-sm text-slate-300 transition-colors hover:bg-white/15 hover:text-white"
-          onClick={onBack}
-          type="button"
-        >
-          ← Back
-        </button>
-        <div className="celestial-detail celestial-detail-layout">
-          <PlanetImageSkeleton className="celestial-detail-artwork aspect-square rounded-lg border border-white/15" />
-          <div className="rounded-lg border border-white/10 bg-white/5 p-4">
-            <div className="h-5 w-40 animate-pulse rounded bg-white/10" />
-            <div className="mt-3 h-4 w-64 max-w-full animate-pulse rounded bg-white/5" />
-          </div>
-        </div>
-      </div>
-    );
+    return <MoonDetailSkeleton />;
   }
 
   if (!planet || !planet.hasMoon) {
+    const parentPath = buildInspectPath({ kind: "planet", coords });
     return (
       <div className="flex flex-col items-center gap-4 p-8 text-center">
         <p className="text-slate-400">
           {source === "error" ? "Moon data could not be loaded." : `No moon in orbit at ${coordinateText}.`}
         </p>
-        <button
-          className="rounded border border-white/15 bg-white/8 px-4 py-2 text-sm text-slate-300 transition-colors hover:bg-white/15 hover:text-white"
-          onClick={onBack}
-          type="button"
+        <a
+          className="inline-flex min-h-11 items-center gap-2 rounded-md border border-white/10 bg-black/20 px-3 py-2 font-mono text-xs text-slate-300 transition-colors hover:border-cyan-200/30 hover:text-cyan-100"
+          href={parentPath}
+          onClick={onSelectPlanet ? (event) => {
+            event.preventDefault();
+            onSelectPlanet(coords);
+          } : undefined}
         >
-          ← Back
-        </button>
+          <MapPin aria-hidden="true" className="text-cyan-200/75" size={14} />
+          {coordinateText}
+        </a>
       </div>
     );
   }
 
+  const isHome = sameCoordinates(homeCoords, planet);
+  const moon = planet.publicMoonState;
+  const parentPath = buildInspectPath({ kind: "planet", coords });
+  const moonStateLoading = source === "loading";
+  const parentClick = onSelectPlanet ? () => onSelectPlanet(coords) : onBack;
+
   return (
-    <div className="celestial-detail flex min-w-0 flex-col gap-4 p-4 sm:p-6" data-celestial-detail="moon">
-      <button
-        className="min-h-11 w-fit rounded border border-white/15 bg-white/8 px-3 py-1.5 text-sm text-slate-300 transition-colors hover:bg-white/15 hover:text-white"
-        data-celestial-back
-        onClick={onBack}
-        type="button"
-      >
-        ← System {coordinateText}
-      </button>
-
-      <div className="celestial-detail-layout" data-celestial-layout>
-        <div className="celestial-detail-artwork aspect-square overflow-hidden rounded-lg border border-cyan-200/20 bg-black/40" data-celestial-artwork data-celestial-media>
-          <MoonImage
-            alt={planet.moonName ?? "Moon"}
-            className="h-full w-full object-contain"
-            loading="eager"
-            planetType={planet.type}
-            sizes="planetPreview"
-          />
-        </div>
-
-        <div className="grid min-w-0 gap-3" data-celestial-summary>
-          <div className="rounded-lg border border-white/10 bg-white/5 p-4">
-            <h2 className="text-xl font-semibold text-white">{planet.moonName ?? "Moon"}</h2>
-            <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-slate-400">
-              <span>Moon orbiting {planet.name}</span>
-              <span className="text-slate-700">|</span>
-              <span>{coordinateText}</span>
-              <span className="text-slate-700">|</span>
-              <span>{formatPlanetType(planet.type)} parent</span>
+    <div className="celestial-detail moon-detail-page flex min-w-0 flex-col gap-3" data-celestial-detail="moon">
+      <section className="overflow-hidden rounded-xl border border-white/10 bg-[#0b111e] shadow-lg shadow-black/15">
+        <div className="celestial-detail-layout moon-detail-layout" data-celestial-layout>
+          <div className="celestial-detail-artwork relative flex items-center justify-center p-3 sm:p-4 lg:p-5" data-celestial-artwork>
+            <div className="relative aspect-square w-full max-w-40 sm:max-w-[11rem] lg:max-w-[13rem]">
+              <div className="relative h-full overflow-hidden rounded-full border border-cyan-100/20 bg-black/40 shadow-[0_0_70px_rgba(128,241,255,0.13)]" data-celestial-media>
+                <MoonImage
+                  alt={planet.moonName ?? "Moon"}
+                  className="relative h-full w-full object-contain"
+                  loading="eager"
+                  planetType={planet.type}
+                  sizes="planetPreview"
+                />
+                <div aria-hidden="true" className="absolute inset-0 rounded-full shadow-[inset_30px_-24px_54px_rgba(0,0,0,0.55)]" />
+              </div>
             </div>
-            <div className="mt-4">
-              <MoonActionStrip actions={actions} />
+          </div>
+
+          <div className="flex min-w-0 flex-col justify-center p-3 sm:p-4 lg:p-5" data-celestial-summary>
+            {isHome ? (
+              <span className="inline-flex h-7 w-fit items-center rounded-full border border-emerald-300/25 bg-emerald-300/10 px-2.5 pt-px text-[11px] font-bold uppercase leading-none tracking-[0.14em] text-emerald-100">Home moon</span>
+            ) : null}
+
+            <div className={`${isHome ? "mt-3" : ""} flex min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-2`}>
+              <h2 className="min-w-0 break-words text-2xl font-semibold tracking-tight text-white sm:text-3xl lg:text-4xl">{planet.moonName ?? "Moon"}</h2>
+              {actionState.status === "pending" ? (
+                <SkeletonRegion className="flex gap-2" label="Loading moon actions">
+                  {skeletonList(2, (index) => <Skeleton className="h-11 w-11 rounded" key={index} />)}
+                </SkeletonRegion>
+              ) : visibleActions.length > 0 ? (
+                <MoonActionStrip actions={visibleActions} />
+              ) : null}
             </div>
-            {actionState.status !== "idle" ? (
+
+            <div className="mt-3 flex flex-wrap gap-1.5 sm:mt-4 sm:gap-2">
+              <MoonFact href={parentPath} icon={<MapPin aria-hidden="true" size={14} />} label="Open coordinates" onClick={parentClick} value={coordinateText} mono />
+              {moon?.diameterKm !== undefined ? <MoonFact icon={<Orbit aria-hidden="true" size={14} />} label="Diameter" value={`${moon.diameterKm.toLocaleString("en-US")} km`} /> : null}
+              {moon?.fields !== undefined ? <MoonFact icon={<Database aria-hidden="true" size={14} />} label="Fields" value={moon.fields.toLocaleString("en-US")} /> : null}
+            </div>
+
+            <div className="mt-4 border-t border-white/10 pt-4">
+              <MoonResourcePills loading={moonStateLoading && moon?.resources == null} rows={moonResourceRows(planet)} />
+            </div>
+
+            {actionState.status === "error" || actionState.status === "success" ? (
               <div className={`mt-3 rounded border px-3 py-2 text-xs ${
                 actionState.status === "error"
                   ? "border-red-300/30 bg-red-500/10 text-red-100"
-                  : actionState.status === "success"
-                    ? "border-emerald-300/30 bg-emerald-400/10 text-emerald-100"
-                    : "border-signal/25 bg-signal/10 text-signal"
+                  : "border-emerald-300/30 bg-emerald-400/10 text-emerald-100"
               }`}>
                 {actionState.label}
               </div>
             ) : null}
           </div>
-
-          {planet.occupiedBy?.planetId ? (
-            <EntityMediaPanel
-              account={account}
-              apiBaseUrl={apiBaseUrl}
-              canEdit={canEditEntityMedia({
-                entityKind: "moon",
-                ownerWallet: planet.occupiedBy.owner,
-                viewerWallet: account,
-              })}
-              entityId={planet.occupiedBy.planetId}
-              entityKind="moon"
-              provider={provider}
-            />
-          ) : null}
-
-          <div className="celestial-detail-panel-grid">
-            <MoonRecordPanel title="Public Owner" rows={[
-              { label: "Player", value: planet.occupiedBy?.ownerDisplayName ?? (planet.ownerId ? shortAddress(planet.ownerId) : "Unknown") },
-              { label: "Planet", value: planet.name },
-              { label: "Planet ID", value: planet.occupiedBy?.planetId ? `#${planet.occupiedBy.planetId}` : "Unknown" },
-            ]} />
-            <MoonRecordPanel title="Moon Record" rows={moonRecordRows(planet)} />
-            <MoonRecordPanel title="Moon Resources" rows={moonResourceRows(planet)} />
-            <MoonRecordPanel title="Moon Structures" rows={moonStateRows(planet.publicMoonState?.buildings, moonBuildingCatalog, "level")} />
-            <MoonRecordPanel title="Moon Fleet" rows={moonStateRows(planet.publicMoonState?.fleet, shipCatalog, "count")} />
-            <MoonRecordPanel title="Moon Defenses" rows={moonStateRows(planet.publicMoonState?.defenses, defenseCatalog, "count")} />
-          </div>
-
-          <MoonRecordPanel title="Moon Queues" rows={moonQueueRows(planet)} />
         </div>
+      </section>
+
+      <PlanetFleetActivityPanel
+        loading={activeMissions === null}
+        rows={planetFleetActivityRows(planet.occupiedBy?.planetId, activeMissions ?? [], "moon")}
+      />
+
+      <div className="grid gap-3 xl:grid-cols-2">
+        <PublicAssetStatePanel
+          icon={<Building2 aria-hidden="true" size={17} />}
+          loading={moonStateLoading && moon?.buildings == null}
+          rows={publicStateAssetRows(moon?.buildings, moonBuildingCatalog, "level")}
+          title="Structures"
+        />
+        <PublicAssetStatePanel
+          icon={<Rocket aria-hidden="true" size={17} />}
+          loading={moonStateLoading && moon?.fleet == null}
+          rows={publicStateAssetRows(moon?.fleet, shipCatalog, "count")}
+          title="Fleet"
+        />
+        <PublicAssetStatePanel
+          icon={<Shield aria-hidden="true" size={17} />}
+          loading={moonStateLoading && moon?.defenses == null}
+          rows={publicStateAssetRows(moon?.defenses, defenseCatalog, "count")}
+          title="Defenses"
+        />
       </div>
+
+      <PublicQueuesPanel
+        loading={moonStateLoading && moon?.queues == null}
+        queues={publicMoonQueueViews(planet)}
+      />
     </div>
   );
 }
 
-function MoonRecordPanel({
+function MoonResourcePills({
+  loading,
   rows,
-  title,
 }: {
+  loading: boolean;
   rows: Array<{ label: string; value: string }>;
-  title: string;
 }) {
+  if (loading) {
+    return (
+      <SkeletonRegion className="flex flex-wrap gap-2" label="Loading moon resources">
+        {skeletonList(3, (index) => <Skeleton className={`h-9 rounded-md ${["w-32", "w-36", "w-40"][index]}`} key={index} />)}
+      </SkeletonRegion>
+    );
+  }
+
   return (
-    <div className="rounded-lg border border-white/10 bg-white/5 p-4">
-      <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
-        {title}
-      </h3>
-      <div className="grid gap-2">
-        {rows.map((row) => (
-          <div className="grid min-w-0 grid-cols-[minmax(0,auto)_minmax(0,1fr)] items-start gap-3 text-sm" key={row.label}>
-            <span className="text-slate-500">{row.label}</span>
-            <span className="min-w-0 break-words text-right font-mono text-slate-200" data-celestial-record-value>{row.value}</span>
-          </div>
-        ))}
-      </div>
-    </div>
+    <dl className="flex flex-wrap gap-2">
+      {rows.map((row) => (
+        <div className="inline-flex h-9 w-fit shrink-0 items-center justify-center rounded-md border border-white/10 bg-black/20 px-2.5 text-xs leading-none" key={row.label}>
+          <dt className="sr-only">{row.label}</dt>
+          <dd className="whitespace-nowrap text-center leading-none text-slate-400 tabular-nums">
+            {row.label} <span className="font-semibold text-slate-100">{row.value}</span>
+          </dd>
+        </div>
+      ))}
+    </dl>
   );
+}
+
+function MoonFact({
+  href,
+  icon,
+  label,
+  mono = false,
+  onClick,
+  value,
+}: {
+  href?: string | undefined;
+  icon: ComponentChildren;
+  label: string;
+  mono?: boolean;
+  onClick?: (() => void) | undefined;
+  value: string;
+}) {
+  const content = (
+    <>
+      <span className="text-cyan-200/75">{icon}</span>
+      <span className="sr-only">{label}: </span>
+      <span className={mono ? "font-mono" : "font-medium"}>{value}</span>
+    </>
+  );
+  const className = "inline-flex items-center gap-2 rounded-md border border-white/10 bg-black/20 px-2.5 py-1.5 text-xs text-slate-300";
+
+  if (href) {
+    return (
+      <a
+        className={`${className} min-h-11 transition-colors hover:border-cyan-200/35 hover:text-cyan-100`}
+        data-celestial-back
+        href={href}
+        onClick={onClick ? (event) => {
+          event.preventDefault();
+          onClick();
+        } : undefined}
+        title={label}
+      >
+        {content}
+      </a>
+    );
+  }
+
+  return <span className={`${className} min-h-8`}>{content}</span>;
 }
 
 export function moonResourceRows(planet: Planet): Array<{ label: string; value: string }> {
@@ -289,18 +403,27 @@ export function moonResourceRows(planet: Planet): Array<{ label: string; value: 
 }
 
 const moonBuildingCatalog = [
-  { id: 0, label: "Lunar Base" },
-  { id: 1, label: "Robotics Factory" },
-  { id: 2, label: "Jump Gate" },
-  { id: 3, label: "Shipyard" },
+  { asset: "/assets/game/style-pass/generated/buildings/lunar-base.webp", id: 0, label: "Lunar Base" },
+  { asset: "/assets/game/style-pass/generated/buildings/moon-robotics-factory.webp", id: 1, label: "Robotics Factory" },
+  { asset: "/assets/game/style-pass/generated/buildings/jump-gate.webp", id: 2, label: "Jump Gate" },
+  { asset: "/assets/game/style-pass/generated/buildings/moon-shipyard.webp", id: 3, label: "Shipyard" },
 ] as const;
+
+export function publicMoonQueueViews(planet: Planet): PublicQueueView[] {
+  const queues = planet.publicMoonState?.queues;
+  if (!queues) return [];
+
+  return [
+    publicQueueView("moon-building", "Structures", queues.building, moonBuildingCatalog, "amber", "level"),
+    publicQueueView("moon-defense", "Defenses", queues.defense, defenseCatalog, "rose", "quantity"),
+  ].filter((queue): queue is PublicQueueView => queue !== null);
+}
 
 export function moonRecordRows(planet: Planet): Array<{ label: string; value: string }> {
   const moon = planet.publicMoonState;
   return [
     { label: "Fields", value: moon?.fields === undefined ? "Unknown" : moon.fields.toLocaleString("en-US") },
     { label: "Diameter", value: moon?.diameterKm === undefined ? "Unknown" : `${moon.diameterKm.toLocaleString("en-US")} km` },
-    { label: "Created", value: moon?.createdAt ? formatUserTimestamp(timestampToMs(moon.createdAt)) : "Unknown" },
     { label: "Parent type", value: formatPlanetType(planet.type) },
   ];
 }

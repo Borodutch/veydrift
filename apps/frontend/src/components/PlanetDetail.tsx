@@ -4,12 +4,14 @@ import {
   Building2,
   Database,
   FlaskConical,
+  Globe2,
   Hash,
   MapPin,
   Orbit,
   Rocket,
   Shield,
   Thermometer,
+  Trophy,
   UserRound,
 } from "lucide-preact";
 import type { ComponentChildren } from "preact";
@@ -366,7 +368,7 @@ export function PlanetDetail({
     <div className="celestial-detail planet-detail-page flex min-w-0 flex-col gap-3" data-celestial-detail="planet">
       <section className="overflow-hidden rounded-xl border border-white/10 bg-[#0b111e] shadow-lg shadow-black/15">
         <div className="celestial-detail-layout" data-celestial-layout>
-          <div className="celestial-detail-artwork relative flex items-center justify-center border-b border-white/10 bg-black/10 p-3 sm:border-b-0 sm:border-r sm:p-4 lg:p-5" data-celestial-artwork>
+          <div className="celestial-detail-artwork relative flex items-center justify-center p-3 sm:p-4 lg:p-5" data-celestial-artwork>
             <div className="relative aspect-square w-full max-w-44 sm:max-w-[13rem] lg:max-w-[17rem]">
               <div className="relative h-full overflow-hidden rounded-full border border-cyan-100/20 bg-black/40 shadow-[0_0_70px_rgba(128,241,255,0.13)]" data-celestial-media>
                 {!imageLoaded && <PlanetImageSkeleton className="absolute inset-0" />}
@@ -422,15 +424,15 @@ export function PlanetDetail({
                 />
               ) : null}
             </div>
-            <p className="mt-1 text-sm text-slate-400">{formatPlanetType(planet.type)}</p>
-
             <div className="mt-3 flex flex-wrap gap-1.5 sm:mt-4 sm:gap-2">
               <PlanetFact icon={<MapPin aria-hidden="true" size={14} />} label="Open system" onClick={onBack} value={planetCoords} mono />
+              <PlanetFact icon={<Globe2 aria-hidden="true" size={14} />} label="Planet type" value={formatPlanetType(planet.type)} />
               <PlanetFact icon={<Orbit aria-hidden="true" size={14} />} label="Diameter" value={`${planet.diameter.toLocaleString()} km`} />
               <PlanetFact icon={<Database aria-hidden="true" size={14} />} label="Fields" value={planet.fields.toLocaleString()} />
               <PlanetFact icon={<Thermometer aria-hidden="true" size={14} />} label="Climate" value={`${planet.temperature.min}° to ${planet.temperature.max}°C`} />
               {commanderLabel ? <PlanetFact icon={<UserRound aria-hidden="true" size={14} />} label="Commander" value={commanderLabel} /> : null}
               {planetIdLabel ? <PlanetFact icon={<Hash aria-hidden="true" size={14} />} label="Planet ID" value={planetIdLabel} mono /> : null}
+              {targetScoreText ? <PlanetFact icon={<Trophy aria-hidden="true" size={14} />} label="Score" value={targetScoreText} mono /> : null}
             </div>
 
             <div className="mt-4 border-t border-white/10 pt-4">
@@ -440,10 +442,9 @@ export function PlanetDetail({
               />
             </div>
 
-            {(attackBlockLabel || targetScoreText) ? (
+            {attackBlockLabel ? (
               <div className="mt-4 flex flex-wrap gap-2 text-xs">
-                {attackBlockLabel ? <span className="rounded border border-rose-300/20 bg-rose-300/10 px-2.5 py-1.5 text-rose-100">{attackBlockLabel}</span> : null}
-                {targetScoreText ? <span className="rounded border border-cyan-300/20 bg-cyan-300/10 px-2.5 py-1.5 font-mono text-cyan-100">Score {targetScoreText}</span> : null}
+                <span className="rounded border border-rose-300/20 bg-rose-300/10 px-2.5 py-1.5 text-rose-100">{attackBlockLabel}</span>
               </div>
             ) : null}
 
@@ -923,23 +924,33 @@ export type PlanetFleetActivityRow = {
 export function planetFleetActivityRows(
   planetId: string | null | undefined,
   missions: readonly FleetMissionSummary[],
+  bodyKind: "planet" | "moon" = "planet",
 ): PlanetFleetActivityRow[] {
   if (!planetId) return [];
 
   return missions
-    .filter((mission) => mission.originPlanetId === planetId || mission.targetPlanetId === planetId)
+    .filter((mission) => (
+      mission.originPlanetId === planetId && missionBodyMatches(mission.originIsMoon, bodyKind)
+    ) || (
+      mission.targetPlanetId === planetId && missionBodyMatches(mission.targetIsMoon, bodyKind)
+    ))
     .map((mission) => {
       const returning = mission.status === "Returning" || mission.status === "Recalled";
       const destinationId = returning ? mission.originPlanetId : mission.targetPlanetId;
+      const destinationIsMoon = returning ? mission.originIsMoon : mission.targetIsMoon;
       const sourceId = returning ? mission.targetPlanetId : mission.originPlanetId;
-      const direction = sourceId === planetId && destinationId === planetId
+      const sourceIsMoon = returning ? mission.targetIsMoon : mission.originIsMoon;
+      const sourceMatches = sourceId === planetId && missionBodyMatches(sourceIsMoon, bodyKind);
+      const destinationMatches = destinationId === planetId && missionBodyMatches(destinationIsMoon, bodyKind);
+      const direction = sourceMatches && destinationMatches
         ? "Local" as const
-        : destinationId === planetId ? "Inbound" as const : "Outbound" as const;
+        : destinationMatches ? "Inbound" as const : "Outbound" as const;
       const endpointSide = direction === "Inbound"
         ? (returning ? "target" : "origin")
         : (returning ? "origin" : "target");
       const endpoint = endpointSide === "origin" ? mission.originPlanet : mission.targetPlanet;
       const endpointId = endpointSide === "origin" ? mission.originPlanetId : mission.targetPlanetId;
+      const endpointIsMoon = endpointSide === "origin" ? mission.originIsMoon : mission.targetIsMoon;
       const eventAt = returning ? mission.returnAt : mission.arrivalAt;
       const shipEntries = shipCatalog
         .map((ship) => ({ ship, count: Number(mission.ships[ship.key] ?? 0) }))
@@ -955,8 +966,8 @@ export function planetFleetActivityRows(
         missionId: mission.missionId,
         missionLabel: missionTypeLabel(mission.missionType),
         routeLabel: direction === "Local"
-          ? planetFleetEndpointLabel(endpoint, endpointId)
-          : `${direction === "Inbound" ? "From" : "To"} ${planetFleetEndpointLabel(endpoint, endpointId)}`,
+          ? planetFleetEndpointLabel(endpoint, endpointId, endpointIsMoon)
+          : `${direction === "Inbound" ? "From" : "To"} ${planetFleetEndpointLabel(endpoint, endpointId, endpointIsMoon)}`,
         shipCountLabel: `${shipCount.toLocaleString()} ${shipCount === 1 ? "ship" : "ships"}`,
         tone: hostile ? "danger" as const : "accent" as const,
       };
@@ -970,18 +981,24 @@ export function planetFleetActivityRows(
     });
 }
 
+function missionBodyMatches(isMoon: boolean | undefined, bodyKind: "planet" | "moon"): boolean {
+  return bodyKind === "moon" ? isMoon === true : isMoon !== true;
+}
+
 function planetFleetEndpointLabel(
   endpoint: FleetMissionSummary["originPlanet"],
   fallbackPlanetId: string,
+  isMoon = false,
 ): string {
   if (endpoint) {
     const name = endpoint.name?.trim() || `Planet ${endpoint.planetId}`;
-    return endpoint.coordinates ? `${name} [${endpoint.coordinates}]` : name;
+    const bodyName = isMoon ? `${name} moon` : name;
+    return endpoint.coordinates ? `${bodyName} [${endpoint.coordinates}]` : bodyName;
   }
-  return `Planet ${fallbackPlanetId}`;
+  return `Planet ${fallbackPlanetId}${isMoon ? " moon" : ""}`;
 }
 
-function PlanetFleetActivityPanel({
+export function PlanetFleetActivityPanel({
   loading,
   rows,
 }: {
@@ -1039,7 +1056,7 @@ function PlanetFleetActivityPanel({
   );
 }
 
-function PublicAssetStatePanel({
+export function PublicAssetStatePanel({
   icon,
   loading,
   rows,
@@ -1244,7 +1261,7 @@ export function publicQueueViews(planet: Planet): PublicQueueView[] {
   ].filter((queue): queue is PublicQueueView => queue !== null);
 }
 
-function publicQueueView(
+export function publicQueueView(
   key: string,
   title: string,
   queue: PublicQueueState | null | undefined,
@@ -1289,7 +1306,7 @@ function publicQueueView(
   };
 }
 
-function PublicQueuesPanel({
+export function PublicQueuesPanel({
   loading,
   queues,
 }: {

@@ -9,6 +9,7 @@ import {
   InspectPanelSkeleton,
   MissionControlSkeleton,
   MoonSkeleton,
+  MoonDetailSkeleton,
   PlanetDetailSkeleton,
   ProductionCatalogSkeleton,
   RaidTargetsSkeleton,
@@ -75,6 +76,7 @@ const skeletons: Array<{ name: string; node: ComponentChildren }> = [
     node: ProductionCatalogSkeleton({ groups: [2, 4, 2, 2], label: "Loading defenses" }),
   },
   { name: "MoonSkeleton", node: MoonSkeleton({}) },
+  { name: "MoonDetailSkeleton", node: MoonDetailSkeleton({}) },
   { name: "PlanetDetailSkeleton", node: PlanetDetailSkeleton({}) },
   { name: "EntityMediaPanelSkeleton", node: EntityMediaPanelSkeleton({ canEdit: true, heading: "Planet anthem" }) },
   { name: "RankingsRowsSkeleton", node: RankingsRowsSkeleton({}) },
@@ -101,6 +103,7 @@ describe("Pages render skeleton loaders, not text loaders, during initial load",
   // in a LoadingSkeletons component so a hard refresh shows skeletons.
   const pages = [
     "MoonPage.tsx",
+    "PublicMoonDetail.tsx",
     "PlanetDetail.tsx",
     "ShipyardPage.tsx",
     "DefensePage.tsx",
