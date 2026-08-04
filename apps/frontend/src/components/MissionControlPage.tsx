@@ -129,10 +129,12 @@ interface MissionControlPageProps {
   // (enabled+explained where eligible, or disabled+explained on the launch planet itself).
   onDefendPlanet?: (() => void) | undefined;
   onJoinAttack: (mission: FleetMissionSummary, targetCoords: { galaxy: number; system: number; position: number } | null) => void;
+  onActiveMissionTabChange?: ((tab: ActiveMissionTabKey) => void) | undefined;
   onOpenReport: (missionId: string) => void;
   onOpenReportList: () => void;
   onGlobalMissionArchivePageChange?: ((page: number) => void) | undefined;
   onIncomingAttackArchivePageChange?: ((page: number) => void) | undefined;
+  onPastMissionTabChange?: ((tab: PastMissionTabKey) => void) | undefined;
   onMissionArchivePageChange?: ((page: number) => void) | undefined;
   onMissionFiltersChange?: ((filters: MissionControlFilters) => void) | undefined;
   onMissionNumberSearchChange?: ((value: string) => void) | undefined;
@@ -171,10 +173,12 @@ export function MissionControlPage({
   now,  onCounterplay,
   onDefendPlanet,
   onJoinAttack,
+  onActiveMissionTabChange,
   onOpenReport,
   onOpenReportList,
   onGlobalMissionArchivePageChange,
   onIncomingAttackArchivePageChange,
+  onPastMissionTabChange,
   onMissionArchivePageChange,
   onMissionFiltersChange,
   onMissionNumberSearchChange,
@@ -363,6 +367,7 @@ export function MissionControlPage({
             myRows={filteredMyMissionRows}
             now={now}
             onCounterplay={onCounterplay}
+            onTabChange={onActiveMissionTabChange}
             onJoinAttack={onJoinAttack}
             onOpenReport={onOpenReport}
             onRecall={onRecall}
@@ -407,6 +412,7 @@ export function MissionControlPage({
             now={now}
             onAllPageChange={onGlobalMissionArchivePageChange}
             onIncomingAttackPageChange={onIncomingAttackArchivePageChange}
+            onTabChange={onPastMissionTabChange}
             onOpenReport={onOpenReport}
             onPageChange={onMissionArchivePageChange}
             pagination={missionArchive?.pagination}
@@ -861,6 +867,7 @@ function ActiveMissionSection({
   onJoinAttack,
   onOpenReport,
   onRecall,
+  onTabChange,
   planetLookup,
   showAllianceTab = true,
   transactionUnavailableReason,
@@ -882,6 +889,7 @@ function ActiveMissionSection({
   onJoinAttack: (mission: FleetMissionSummary, targetCoords: { galaxy: number; system: number; position: number } | null) => void;
   onOpenReport: (missionId: string) => void;
   onRecall: (missionId: string) => void;
+  onTabChange?: ((tab: ActiveMissionTabKey) => void) | undefined;
   planetLookup: ReadonlyMap<string, MissionPlanetIdentity>;
   showAllianceTab?: boolean | undefined;
   transactionUnavailableReason?: string | undefined;
@@ -915,7 +923,10 @@ function ActiveMissionSection({
               className="rounded border border-white/10 bg-white/5 px-3 py-2 text-xs font-medium text-slate-300 transition hover:bg-white/10 aria-selected:border-cyan-300/35 aria-selected:bg-cyan-300/10 aria-selected:text-cyan-100 sm:py-1"
               data-active-tab-button={tab.key}
               key={tab.key}
-              onClick={(event) => showActiveMissionTab(event, tab.key)}
+              onClick={(event) => {
+                showActiveMissionTab(event, tab.key);
+                onTabChange?.(tab.key);
+              }}
               role="tab"
               type="button"
             >
@@ -924,12 +935,11 @@ function ActiveMissionSection({
           ))}
         </div>
       </div>
-      {visibleTabs.map((tab) => (
-        <div data-active-tab-panel={tab.key} hidden={tab.key !== activeTab} key={tab.key} role="tabpanel">
-          {/* Only the initially-visible tab restores its remembered page; the hidden tabs start at 0. */}
+      {visibleTabs.filter((tab) => tab.key === activeTab).map((tab) => (
+        <div data-active-tab-panel={tab.key} key={tab.key} role="tabpanel">
           <ActiveMissionList
             emptyLabel={missionFiltersActive ? missionFilterEmptyLabel : tab.emptyLabel}
-            initialPage={tab.key === activeTab ? activePage : 0}
+            initialPage={activePage}
             rows={rowsByTab[tab.key]}
             {...sharedRowProps}
           />
@@ -2317,6 +2327,7 @@ function PastMissionSection({
   onIncomingAttackPageChange,
   onOpenReport,
   onPageChange,
+  onTabChange,
   pagination,
   pastPage,
   pastTab,
@@ -2348,6 +2359,7 @@ function PastMissionSection({
   onIncomingAttackPageChange?: ((page: number) => void) | undefined;
   onOpenReport: (missionId: string) => void;
   onPageChange?: ((page: number) => void) | undefined;
+  onTabChange?: ((tab: PastMissionTabKey) => void) | undefined;
   pagination?: FleetMissionArchiveResponse["pagination"] | undefined;
   pastPage: number;
   pastTab: PastMissionTabKey;
@@ -2404,7 +2416,10 @@ function PastMissionSection({
                 className="rounded border border-white/10 bg-white/5 px-3 py-2 text-xs font-medium text-slate-300 transition hover:bg-white/10 aria-selected:border-cyan-300/35 aria-selected:bg-cyan-300/10 aria-selected:text-cyan-100 sm:py-1"
                 data-past-tab-button={tab.key}
                 key={tab.key}
-                onClick={(event) => showPastMissionTab(event, tab.key)}
+                onClick={(event) => {
+                  showPastMissionTab(event, tab.key);
+                  onTabChange?.(tab.key);
+                }}
                 role="tab"
                 type="button"
               >
@@ -2414,11 +2429,9 @@ function PastMissionSection({
           })}
         </div>
       </div>
-      {PAST_MISSION_TABS.map((tab) => (
-        <div data-past-tab-panel={tab.key} hidden={tab.key !== pastTab} key={tab.key} role="tabpanel">
-          {/* Server-paginated tabs keep their page in app state; the client-paginated fallback restores
-              the remembered page for the initially-visible tab only (VEY-412). */}
-          <PastMissionTable initialClientPage={tab.key === pastTab ? pastPage : 0} {...dataByTab[tab.key]} {...sharedRowProps} />
+      {PAST_MISSION_TABS.filter((tab) => tab.key === pastTab).map((tab) => (
+        <div data-past-tab-panel={tab.key} key={tab.key} role="tabpanel">
+          <PastMissionTable initialClientPage={pastPage} {...dataByTab[tab.key]} {...sharedRowProps} />
         </div>
       ))}
     </section>

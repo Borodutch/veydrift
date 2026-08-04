@@ -479,7 +479,7 @@ describe("Mission Control battle reports", () => {
     const allPanel = findElements(tree, "div").find((node) => node.props?.["data-past-tab-panel"] === "all");
     const text = collectText(allPanel).join(" ");
 
-    expect(allPanel?.props?.hidden).toBe(false);
+    expect(allPanel).toBeDefined();
     expect(text).toMatch(/Outcome\s+Attacker win/);
     expect(text).toMatch(/Loot\s+900 M \/ 450 C \/ 75 D/);
     expect(text).toMatch(/Attacker losses\s+100 M \/ 50 C/);
@@ -527,7 +527,7 @@ describe("Mission Control battle reports", () => {
 
     const incomingPanel = findElements(tree, "div").find((node) => node.props?.["data-past-tab-panel"] === "incomingAttacks");
     const incomingText = collectText(incomingPanel).join(" ");
-    expect(incomingPanel?.props?.hidden).toBe(false);
+    expect(incomingPanel).toBeDefined();
     expect(incomingText).toContain("Incoming attack");
     expect(incomingText).toContain("Raider");
     expect(incomingText).not.toContain("Borealis");
@@ -730,12 +730,12 @@ describe("Mission Control battle reports", () => {
 
   test("renders My missions / Alliance tabs with counts, join action, and per-tab empty state", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
-    const text = collectText(MissionControlPage(missionControlProps(now, {
+    const text = collectText(MissionControlPage({ ...missionControlProps(now, {
       incoming: [mission("31", "Attack", "Outbound", "0x2222222222222222222222222222222222222222", "8", "7", now + 60_000)],
       outgoing: [mission("32", "Transport", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now + 120_000)],
       returning: [mission("33", "Deploy", "Returning", "0x1111111111111111111111111111111111111111", "9", "7", now - 60_000)],
       joinableAttacks: [mission("34", "Attack", "Outbound", "0x3333333333333333333333333333333333333333", "5", "6", now + 180_000)],
-    }))).join(" ");
+    }), initialView: { activePage: 0, activeTab: "alliance", pastPage: 0, pastTab: "mine" } })).join(" ");
 
     expect(text).toContain("My missions (3)");
     expect(text).toContain("Alliance (1)");
@@ -756,6 +756,7 @@ describe("Mission Control battle reports", () => {
       onJoinAttack: (mission, targetCoords) => {
         joinCalls.push([mission, targetCoords]);
       },
+      initialView: { activePage: 0, activeTab: "alliance", pastPage: 0, pastTab: "mine" },
     });
 
     const joinButton = findElements(tree, "button").find(
@@ -791,6 +792,7 @@ describe("Mission Control battle reports", () => {
     const text = collectText(MissionControlPage({
       ...missionControlProps(now, { outgoing: [mine] }),
       allActiveMissions: [mine, other],
+      initialView: { activePage: 0, activeTab: "all", pastPage: 0, pastTab: "mine" },
     })).join(" ");
 
     expect(text).toContain("My missions (1)");
@@ -814,6 +816,7 @@ describe("Mission Control battle reports", () => {
         rows: rows.slice(0, 25),
         pagination: { page: 1, pageSize: 25, totalEntries: 26, totalPages: 2, hasPreviousPage: false, hasNextPage: true },
       },
+      initialView: { activePage: 0, activeTab: "mine", pastPage: 0, pastTab: "all" },
     })).join(" ");
 
     // The past panel gains a scope tab control; My missions is empty here, All carries the universe count.
@@ -1123,10 +1126,10 @@ describe("Mission Control battle reports", () => {
 
   test("shows the Alliance empty state when there are no joinable attacks", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
-    const text = collectText(MissionControlPage(missionControlProps(now, {
+    const text = collectText(MissionControlPage({ ...missionControlProps(now, {
       outgoing: [mission("32", "Transport", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now + 120_000)],
       joinableAttacks: [],
-    }))).join(" ");
+    }), initialView: { activePage: 0, activeTab: "alliance", pastPage: 0, pastTab: "mine" } })).join(" ");
 
     expect(text).toContain("My missions (1)");
     expect(text).toContain("Alliance (0)");
@@ -1209,10 +1212,9 @@ describe("Mission Control battle reports", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
     const joinableAttacks = Array.from({ length: 26 }, (_unused, index) =>
       mission(String(200 + index), "Attack", "Outbound", "0x3333333333333333333333333333333333333333", "5", "6", now + (index + 1) * 60_000));
-    const text = collectText(MissionControlPage(missionControlProps(now, { joinableAttacks }))).join(" ");
+    const text = collectText(MissionControlPage({ ...missionControlProps(now, { joinableAttacks }), initialView: { activePage: 0, activeTab: "alliance", pastPage: 0, pastTab: "mine" } })).join(" ");
 
     expect(text).toContain("Alliance (26)");
-    expect(text).toContain("No active missions for this wallet.");
     // Pagination range proves the 25-per-page split (26 rows -> first page shows 1-25).
     expect(text).toContain("1-25 of 26");
   });
@@ -2447,8 +2449,8 @@ describe("Mission Control battle reports", () => {
     const view: MissionControlView = { activePage: 0, activeTab: "all", pastPage: 0, pastTab: "all" };
     const tree = MissionControlPage({ ...missionControlProps(now, { outgoing: [mission("11")] }), initialView: view });
 
-    // The sections advertise the restored tab, the restored tab buttons read selected, and the
-    // restored panels are the visible (non-hidden) ones.
+    // The sections advertise the restored tab, the restored tab buttons read selected, and only
+    // the restored panels mount. Hidden archive rows must not add initial mobile render work.
     expect(sectionByData(tree, "data-active-tab")?.props?.["data-active-tab"]).toBe("all");
     expect(sectionByData(tree, "data-past-tab")?.props?.["data-past-tab"]).toBe("all");
 
@@ -2458,9 +2460,15 @@ describe("Mission Control battle reports", () => {
     expect(pastAllButton?.props?.["aria-selected"]).toBe(true);
 
     const activeAllPanel = findElements(tree, "div").find((node) => node.props?.["data-active-tab-panel"] === "all");
-    expect(activeAllPanel?.props?.hidden).toBe(false);
+    expect(activeAllPanel).toBeDefined();
     const activeMinePanel = findElements(tree, "div").find((node) => node.props?.["data-active-tab-panel"] === "mine");
-    expect(activeMinePanel?.props?.hidden).toBe(true);
+    expect(activeMinePanel).toBeUndefined();
+    const pastAllPanel = findElements(tree, "div").find((node) => node.props?.["data-past-tab-panel"] === "all");
+    const pastMinePanel = findElements(tree, "div").find((node) => node.props?.["data-past-tab-panel"] === "mine");
+    const pastIncomingPanel = findElements(tree, "div").find((node) => node.props?.["data-past-tab-panel"] === "incomingAttacks");
+    expect(pastAllPanel).toBeDefined();
+    expect(pastMinePanel).toBeUndefined();
+    expect(pastIncomingPanel).toBeUndefined();
   });
 
   test("restores the persisted active-missions pagination page (VEY-412)", () => {
