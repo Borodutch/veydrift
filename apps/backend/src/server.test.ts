@@ -1255,7 +1255,7 @@ describe("Veydrift backend", () => {
     expect(staleKeyUsed).toBe(false);
   });
 
-  test("does not wait on stale shared-cache locks for cold indexed reads", async () => {
+  test("briefly waits for an in-flight shared-cache refresh on cold indexed reads", async () => {
     let waitCalled = false;
     const sharedResponseCache = {
       get() {
@@ -1283,7 +1283,52 @@ describe("Veydrift backend", () => {
     const response = await handler(new Request("http://localhost/universe/galaxies/1/systems/1"));
 
     expect(response.status).toBe(200);
-    expect(waitCalled).toBe(false);
+    expect(waitCalled).toBe(true);
+  });
+
+  test("uses a peer's completed shared-cache refresh instead of rebuilding the same cold read", async () => {
+    let routeBuilt = false;
+    const cachedBody = new TextEncoder().encode(JSON.stringify({ fromPeer: true })).buffer as ArrayBuffer;
+    const sharedResponseCache = {
+      get() {
+        return null;
+      },
+      tryAcquireRefresh() {
+        return false;
+      },
+      async waitForFresh(_cacheKey: string, deadlineMs?: number) {
+        expect(deadlineMs).toBe(1_000);
+        return {
+          body: cachedBody,
+          expiresAt: Date.now() + 1_000,
+          headers: [["content-type", "application/json"]],
+          status: 200,
+          statusText: ""
+        };
+      },
+      set() {},
+      releaseRefresh() {}
+    } as unknown as import("./sharedResponseCache").SharedResponseCache;
+    const indexer = testIndexer();
+    const originalSnapshot = indexer.snapshot.bind(indexer);
+    indexer.snapshot = () => {
+      routeBuilt = true;
+      return originalSnapshot();
+    };
+    const handler = createRequestHandler({
+      chainReader: new MockChainReader(),
+      config: configuredTestConfig,
+      enableResponseCache: true,
+      indexer,
+      prewarmResponseCache: false,
+      sharedResponseCache
+    });
+
+    const response = await handler(new Request(`http://localhost/wallet/${player}/fleet-visibility?archive=none`));
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ fromPeer: true });
+    expect(routeBuilt).toBe(false);
   });
 
   test("keeps health off the response-cache path", async () => {

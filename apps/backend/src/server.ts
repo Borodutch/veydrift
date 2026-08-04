@@ -1802,6 +1802,17 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
             responseCache.set(cacheKey, refreshed);
             return withRequestCors(request, cachedJsonResponse(request, refreshed));
           }
+
+          // A different reader is already building this exact cache key. Previously every
+          // concurrent cold read carried on and rebuilt the same indexed response, which
+          // turned a single ~600ms wallet/mission read into a multi-worker CPU stampede.
+          // Wait briefly for that owner before falling back; the bounded timeout still lets
+          // this request recover if the other worker dies while holding its SQLite lock.
+          const refreshedByPeer = await sharedResponseCache.waitForFresh(cacheKey, 1_000);
+          if (refreshedByPeer) {
+            responseCache.set(cacheKey, refreshedByPeer);
+            return withRequestCors(request, cachedJsonResponse(request, refreshedByPeer));
+          }
         }
 
         let resolveInflight: (cached: CachedJsonResponse | null) => void;
