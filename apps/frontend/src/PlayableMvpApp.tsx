@@ -37,6 +37,7 @@ import {
   missionPlanetCoordinateKey,
   missionSystemKeysMissingUniverseArchetypes,
   normalizeMissionControlFilters,
+  resolveMissionControlView,
   type MissionControlFilters,
 } from "./components/MissionControlPage";
 import {
@@ -3438,6 +3439,17 @@ export function PlayableMvpApp({
   const [now, setNow] = useState(() => Date.now());
   const [runtimeConfig, setRuntimeConfig] = useState<RuntimeConfigState>({ status: "loading" });
   const [page, setPage] = useState<Page>(() => initialInspectPageState().page);
+  // Mission Control used to fetch and mount every All/Incoming archive before the default My
+  // missions view could become interactive. Keep the persisted deep-link selection working while
+  // letting the visible scope determine which expensive archive reads are needed initially.
+  const missionControlInitialView = page === "mission-control" ? resolveMissionControlView() : undefined;
+  // The tab widgets persist their selection directly to the URL/session state. This lightweight
+  // revision asks the app layer to load that newly-selected scope without reintroducing eager
+  // fetches for every hidden tab.
+  const [missionControlTabRevision, setMissionControlTabRevision] = useState(0);
+  const requestMissionControlTabLoad = useCallback(() => {
+    setMissionControlTabRevision((current) => current + 1);
+  }, []);
   const [inspectedPlayerWallet, setInspectedPlayerWallet] = useState<string | null>(() => initialInspectPageState().playerWallet);
   const [inspectedAllianceId, setInspectedAllianceId] = useState<string | null>(() => initialInspectPageState().allianceId);
   const [missionDetailId, setMissionDetailId] = useState<string | null>(() => initialInspectPageState().missionDetailId);
@@ -5083,14 +5095,27 @@ export function PlayableMvpApp({
   }, [activePlanetId, apiBaseUrl, normalizedMissionFilters.missionNumber, normalizedMissionFilters.missionType, normalizedMissionFilters.planetId, setGlobalMissionArchive]);
 
   useEffect(() => {
-    if (page === "mission-control") {
-      void loadMissionArchive(1);
-      void loadMissileAttackArchive();
-      void loadIncomingAttackArchive(1);
+    if (page !== "mission-control") return;
+    // The default visible scope. These are wallet-sized reads and make the initial screen useful
+    // without waiting for the two universe/incoming archives behind hidden tabs.
+    void loadMissionArchive(1);
+    void loadMissileAttackArchive();
+  }, [account, apiBaseUrl, loadMissionArchive, loadMissileAttackArchive, page]);
+
+  useEffect(() => {
+    if (page !== "mission-control") return;
+    // Load expensive scopes only when their persisted deep-link tab is selected or the user
+    // switches to it. The active tab widgets increment missionControlTabRevision after persisting
+    // selection, so resolveMissionControlView above is already authoritative here.
+    if (missionControlInitialView?.activeTab === "all") {
       void loadAllActiveMissions();
-      void loadGlobalMissionArchive(1);
     }
-  }, [account, apiBaseUrl, loadAllActiveMissions, loadGlobalMissionArchive, loadIncomingAttackArchive, loadMissionArchive, loadMissileAttackArchive, page]);
+    if (missionControlInitialView?.pastTab === "all") {
+      void loadGlobalMissionArchive(1);
+    } else if (missionControlInitialView?.pastTab === "incomingAttacks") {
+      void loadIncomingAttackArchive(1);
+    }
+  }, [apiBaseUrl, loadAllActiveMissions, loadGlobalMissionArchive, loadIncomingAttackArchive, missionControlInitialView?.activeTab, missionControlInitialView?.pastTab, missionControlTabRevision, page]);
 
   // VEY-KANEO-445: the Rankings page shows each planet's active inbound/outbound fleet missions as
   // subtext. Load the universe-wide active feed when Rankings opens and poll it on the shared cadence
@@ -5125,15 +5150,19 @@ export function PlayableMvpApp({
   // Returns a promise so the auto-poll can guard against overlapping refreshes; the manual Refresh
   // button passes it as a void `onRefresh` and ignores the result (behavior unchanged).
   const refreshMissionControl = useCallback(async () => {
-    await Promise.allSettled([
+    const view = resolveMissionControlView();
+    const refreshes: Array<Promise<unknown>> = [
       refreshAllianceState(),
       refreshOnChainState(),
       loadMissionArchive(missionArchivePage),
       loadMissileAttackArchive(),
-      loadIncomingAttackArchive(incomingAttackArchivePage),
-      loadAllActiveMissions(),
-      loadGlobalMissionArchive(globalMissionArchivePage),
-    ]);
+    ];
+    // Do not spend every ten-second poll refreshing data from hidden tabs. A selected All or
+    // Incoming tab remains live; switching tabs starts its own load through the tab callback.
+    if (view.activeTab === "all") refreshes.push(loadAllActiveMissions());
+    if (view.pastTab === "all") refreshes.push(loadGlobalMissionArchive(globalMissionArchivePage));
+    if (view.pastTab === "incomingAttacks") refreshes.push(loadIncomingAttackArchive(incomingAttackArchivePage));
+    await Promise.allSettled(refreshes);
   }, [globalMissionArchivePage, incomingAttackArchivePage, loadAllActiveMissions, loadGlobalMissionArchive, loadIncomingAttackArchive, loadMissionArchive, loadMissileAttackArchive, missionArchivePage, refreshAllianceState, refreshOnChainState]);
 
   const refreshFinishedBuildingState = useCallback(async (expectation: FinishedBuildingExpectation): Promise<boolean> => {
@@ -9005,6 +9034,7 @@ export function PlayableMvpApp({
           incomingAttackArchiveError={incomingAttackArchiveError}
           incomingAttackArchiveLoading={incomingAttackArchiveLoading}
           loading={isWalletConnected && onChainStatus === "loading"}
+          initialView={missionControlInitialView}
           missionArchive={missionArchive}
           missionArchiveError={missionArchiveSection.status.error ?? missionArchiveError}
           missionArchiveLoading={missionArchiveLoading || missionArchiveSection.status.loading}
@@ -9016,11 +9046,13 @@ export function PlayableMvpApp({
           onCounterplay={handleMissionCounterplay}
           onDefendPlanet={handleDefendPlanet}
           onJoinAttack={handleJoinAttack}
+          onActiveMissionTabChange={requestMissionControlTabLoad}
           onOpenReport={handleOpenMissionReport}
           onOpenReportList={handleOpenMissionReportList}
           onRecall={handleRecallMission}
           onGlobalMissionArchivePageChange={(page) => void loadGlobalMissionArchive(page)}
           onIncomingAttackArchivePageChange={(page) => void loadIncomingAttackArchive(page)}
+          onPastMissionTabChange={requestMissionControlTabLoad}
           onMissionArchivePageChange={(page) => void loadMissionArchive(page)}
           onMissionFiltersChange={setMissionFilters}
           onRefresh={() => void activePlanetSections.refresh("fleetVisibilityState")}
