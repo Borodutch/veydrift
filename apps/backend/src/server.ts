@@ -2426,12 +2426,12 @@ function cacheableJsonRequestVersion(url: URL, indexer: SettlementIndexer): stri
   if (url.pathname === "/raid-finder/rifters") return "ttl";
   // Do not use the global mission/battle-report generation for hot per-wallet views. It advances
   // for every player's event, including completed missions that cannot affect another wallet's
-  // active view. The five-second bucket matches the TTL above and bounds any transition delay
-  // without throwing away every player's cache on every block.
+  // active view. Keep one stable key and let the five-second TTL/stale-while-revalidate path own
+  // refreshes. Time-bucketed keys synchronized every wallet's cold rebuild at once.
   if (
     url.pathname.match(/^\/wallet\/[^/]+\/(?:fleet-visibility|missions|overview)$/)
   ) {
-    return `mission-poll:${Math.floor(Date.now() / 5_000)}`;
+    return "mission-poll";
   }
   if (url.pathname.match(/^\/wallet\/[^/]+\/missile-attacks$/)) return indexer.responseCacheVersion();
   if (url.pathname === "/missions") return livePublicDataRequest(url) ? indexer.missionResponseCacheVersion() : "ttl";
