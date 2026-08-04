@@ -9409,7 +9409,7 @@ describe("Veydrift backend", () => {
     expect(unprotectedBody.rankings.total.find((entry: HighscoreEntry) => entry.wallet === player)?.attackProtection).toBeNull();
   });
 
-  test("sends private browser cache headers for cached wallet API reads", async () => {
+  test("uses short private snapshots for overview so unrelated mission events cannot stampede hot reads", async () => {
     const chainReader = new MockChainReader();
     const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
     await indexer.rebuild();
@@ -9424,7 +9424,7 @@ describe("Veydrift backend", () => {
     const response = await handler(new Request(`http://localhost/wallet/${player}/overview`));
 
     expect(response.status).toBe(200);
-    expect(response.headers.get("cache-control")).toBe("private, max-age=15, stale-while-revalidate=15");
+    expect(response.headers.get("cache-control")).toBe("private, max-age=5, stale-while-revalidate=5");
   });
 
   test("accrues production into highscore raidable loot so it matches the public planet read (VEY-KANEO-454)", async () => {

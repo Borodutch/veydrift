@@ -2368,10 +2368,12 @@ function cacheableJsonRequestTtlMs(request: Request, url: URL): number {
   if (url.pathname === "/highscores") return livePublicDataRequest(url) ? 1_000 : 300_000;
   if (url.pathname === "/raid-finder/debris") return 30_000;
   if (url.pathname === "/raid-finder/rifters") return 30_000;
-  // Mission-control reads are backed by the mission read-model version in responseCacheVersion(), so
-  // they stay fresh across indexed mission events while still coalescing repeated UI refreshes.
-  if (url.pathname.match(/^\/wallet\/[^/]+\/fleet-visibility$/)) return 60_000;
-  if (url.pathname.match(/^\/wallet\/[^/]+\/missions$/)) return 30_000;
+  // These feeds are polled from every active game view. A global read-model version changed for
+  // *unrelated* missions and battle reports, which effectively defeated their cache and made every
+  // player rebuild the same expensive visibility/archive projection. A five-second snapshot keeps
+  // mission transitions live to the UI while preventing that universe-wide invalidation stampede.
+  if (url.pathname.match(/^\/wallet\/[^/]+\/fleet-visibility$/)) return 5_000;
+  if (url.pathname.match(/^\/wallet\/[^/]+\/missions$/)) return 5_000;
   if (url.pathname.match(/^\/wallet\/[^/]+\/missile-attacks$/)) return 30_000;
   if (url.pathname === "/missions") return livePublicDataRequest(url) ? 1_000 : 300_000;
   if (url.pathname.match(/^\/mission\/[^/]+$/)) return 30_000;
@@ -2379,6 +2381,8 @@ function cacheableJsonRequestTtlMs(request: Request, url: URL): number {
   // fleet slots, that projection changes when time crosses arrivalAt even without a new indexed log,
   // so a TTL cache can preserve the exact stale 6/6 + zero-moon-ships state the composer is fixing.
   if (url.pathname.match(/^\/wallet\/[^/]+\/(?:moon|shipyard|defenses)$/)) return 0;
+  // Overview contains fleet visibility, so give its combined snapshot the same bounded freshness.
+  if (url.pathname.match(/^\/wallet\/[^/]+\/overview$/)) return 5_000;
   if (cacheableWalletSnapshotPath(url.pathname)) return 15_000;
   if (url.pathname.startsWith("/wallet/")) return 5_000;
   if (url.pathname.match(/^\/universe\/galaxies\/[0-9]+\/systems\/[0-9]+$/)) return 30_000;
@@ -2420,11 +2424,15 @@ function cacheableJsonRequestVersion(url: URL, indexer: SettlementIndexer): stri
   if (url.pathname === "/highscores") return livePublicDataRequest(url) ? indexer.indexedStateCacheVersion() : "ttl";
   if (url.pathname === "/raid-finder/debris") return "ttl";
   if (url.pathname === "/raid-finder/rifters") return "ttl";
-  // Fleet visibility is derived exclusively from the mission read model. Keying it to the broad
-  // response version also included every ship/defense production queue in the universe, so an
-  // unrelated queue completion invalidated every wallet's fleet cache and rebuilt this hot route.
-  if (url.pathname.match(/^\/wallet\/[^/]+\/fleet-visibility$/)) return indexer.missionResponseCacheVersion();
-  if (url.pathname.match(/^\/wallet\/[^/]+\/missions$/)) return indexer.missionResponseCacheVersion();
+  // Do not use the global mission/battle-report generation for hot per-wallet views. It advances
+  // for every player's event, including completed missions that cannot affect another wallet's
+  // active view. The five-second bucket matches the TTL above and bounds any transition delay
+  // without throwing away every player's cache on every block.
+  if (
+    url.pathname.match(/^\/wallet\/[^/]+\/(?:fleet-visibility|missions|overview)$/)
+  ) {
+    return `mission-poll:${Math.floor(Date.now() / 5_000)}`;
+  }
   if (url.pathname.match(/^\/wallet\/[^/]+\/missile-attacks$/)) return indexer.responseCacheVersion();
   if (url.pathname === "/missions") return livePublicDataRequest(url) ? indexer.missionResponseCacheVersion() : "ttl";
   if (url.pathname.match(/^\/mission\/[^/]+$/)) return indexer.missionResponseCacheVersion();
