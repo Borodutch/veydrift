@@ -1297,7 +1297,7 @@ describe("Veydrift backend", () => {
         return false;
       },
       async waitForFresh(_cacheKey: string, deadlineMs?: number) {
-        expect(deadlineMs).toBe(1_000);
+        expect(deadlineMs).toBe(200);
         return {
           body: cachedBody,
           expiresAt: Date.now() + 1_000,
