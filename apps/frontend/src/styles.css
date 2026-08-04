@@ -864,6 +864,10 @@ body {
     max-width: none;
     justify-self: stretch;
   }
+
+  .moon-detail-layout {
+    grid-template-columns: minmax(180px, 230px) minmax(0, 1fr);
+  }
 }
 
 .playable-starfield::before,

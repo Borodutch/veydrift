@@ -3,13 +3,17 @@ import { Skeleton, SkeletonRegion, skeletonList } from "./Skeleton";
 
 const CARD = "rounded-md border border-white/10 bg-[#101624] p-4";
 
-/** Planet detail skeleton matching the compact hero and visual inventory cards. */
-export function PlanetDetailSkeleton(): JSX.Element {
+/** Celestial detail skeleton matching the compact hero and visual inventory cards. */
+export function PlanetDetailSkeleton({
+  label = "Loading planet details",
+}: {
+  label?: string | undefined;
+} = {}): JSX.Element {
   return (
-    <SkeletonRegion className="grid gap-3" label="Loading planet details">
+    <SkeletonRegion className="grid gap-3" label={label}>
       <section className="overflow-hidden rounded-xl border border-white/10 bg-[#0b111e]">
         <div className="grid sm:grid-cols-[minmax(13rem,15rem)_minmax(0,1fr)] sm:items-stretch lg:grid-cols-[minmax(15rem,18.75rem)_minmax(0,1fr)]">
-          <div className="flex items-center justify-center border-b border-white/10 bg-black/10 p-3 sm:border-b-0 sm:border-r sm:p-4 lg:p-5">
+          <div className="flex items-center justify-center p-3 sm:p-4 lg:p-5">
             <Skeleton className="aspect-square w-full max-w-44 rounded-full sm:max-w-[13rem] lg:max-w-[17rem]" />
           </div>
           <div className="min-w-0 p-3 sm:p-4 lg:p-5">
@@ -66,6 +70,10 @@ export function PlanetDetailSkeleton(): JSX.Element {
       </section>
     </SkeletonRegion>
   );
+}
+
+export function MoonDetailSkeleton(): JSX.Element {
+  return <PlanetDetailSkeleton label="Loading moon details" />;
 }
 
 /** A catalog tile placeholder: square thumbnail above two short text lines. */

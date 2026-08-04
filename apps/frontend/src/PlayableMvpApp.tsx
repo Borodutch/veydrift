@@ -8982,7 +8982,7 @@ export function PlayableMvpApp({
           homePlanetId={activePlanetId ?? onChainSettlement?.homePlanetId}
           onAction={handleGalaxyAction}
           onBack={handlePlanetDetailBack}
-          provider={provider}
+          onSelectPlanet={handleSelectPlanet}
           shipyardState={missionActionShipyardState}
           transactionUnavailableReason={missionTransactionUnavailableReason}
         />

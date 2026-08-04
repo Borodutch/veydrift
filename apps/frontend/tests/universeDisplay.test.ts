@@ -58,6 +58,7 @@ import {
   moonResourceRows,
   moonStateRows,
   publicMoonActions,
+  publicMoonQueueViews,
 } from "../src/components/PublicMoonDetail";
 import { isImageReady, type ImageLoadState } from "../src/imageLoadState";
 import { getSrcSet, VARIANT_WIDTHS } from "../src/utils/imageSizes";
@@ -391,6 +392,35 @@ describe("tester universe display data", () => {
     expect(planetFleetActivityRows("99", [outbound, returning])).toEqual([]);
   });
 
+  test("moon fleet activity includes only missions touching the lunar body", () => {
+    const moonOutbound = activeFleetMission({
+      missionId: "83",
+      originIsMoon: true,
+      originPlanetId: "7",
+      ships: { smallCargo: "2" },
+      targetIsMoon: false,
+      targetPlanetId: "9",
+    });
+    const planetOutbound = activeFleetMission({
+      missionId: "84",
+      originIsMoon: false,
+      originPlanetId: "7",
+      ships: { smallCargo: "3" },
+      targetPlanetId: "10",
+    });
+
+    expect(planetFleetActivityRows("7", [moonOutbound, planetOutbound], "moon")).toEqual([
+      expect.objectContaining({
+        direction: "Outbound",
+        missionId: "83",
+        shipCountLabel: "2 ships",
+      }),
+    ]);
+    expect(planetFleetActivityRows("7", [moonOutbound, planetOutbound])).toEqual([
+      expect.objectContaining({ missionId: "84" }),
+    ]);
+  });
+
   test("public occupancy preserves owner alliance intel when the API provides it", () => {
     const [planet] = planetsFromSystemResponse({
       galaxy: 2,
@@ -656,11 +686,21 @@ describe("tester universe display data", () => {
       "Diameter: 8,777 km",
       "Parent type: Temperate Ocean",
     ]));
+    expect(moonRecordRows(planet).map((row) => row.label)).not.toContain("Created");
     expect(moonStateRows(planet.publicMoonState?.buildings, [{ id: 0, label: "Lunar Base" }, { id: 3, label: "Shipyard" }], "level")).toEqual([
       { label: "Lunar Base", value: "Level 2" },
       { label: "Shipyard", value: "Level 1" },
     ]);
     expect(moonQueueRows(planet).map((row) => row.label)).toContain("Defense");
+    expect(publicMoonQueueViews(planet)).toEqual([
+      expect.objectContaining({
+        asset: defenseCatalog[0]?.asset,
+        itemText: "Rocket Launcher · ×3",
+        label: "Rocket Launcher",
+        title: "Defenses",
+        tone: "rose",
+      }),
+    ]);
   });
 
   test("public moon detail actions target the moon body when launched", () => {
