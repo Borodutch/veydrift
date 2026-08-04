@@ -860,7 +860,7 @@ body {
 
   .celestial-detail-artwork {
     position: sticky;
-    top: 1rem;
+    top: 0;
     max-width: none;
     justify-self: stretch;
   }
