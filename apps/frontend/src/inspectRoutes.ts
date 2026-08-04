@@ -66,7 +66,7 @@ function parseInspectPathValue(rawPath: string): InspectRoute | null {
   if (kind === "alliance" && value) {
     return { kind: "alliance", allianceId: decodeURIComponent(value) };
   }
-  // Legacy `#/battle-report/<id>` deep links now resolve to the unified mission
+  // Legacy `#/battle-report/<id>` deep links resolve to the unified mission
   // detail page, which is itself the shareable public report.
   if (kind === "battle-report" && value && /^[0-9]+$/.test(decodeURIComponent(value))) {
     return { kind: "mission", missionId: decodeURIComponent(value) };
@@ -78,7 +78,7 @@ function parseInspectPathValue(rawPath: string): InspectRoute | null {
     return { kind: "mission-report", missionId: decodeURIComponent(detailId) };
   }
   if (kind === "planet") {
-    // Canonical path form (#/planet/<galaxy>/<system>/<position>) with a
+    // Canonical path form (/planet/<galaxy>/<system>/<position>) with a
     // legacy query-string fallback (#/planet?galaxy=&system=&position=) so
     // deep links and reloads keep the selected planet instead of dropping to
     // the overview page.
@@ -119,35 +119,32 @@ export function parseInspectPath(pathname: string): InspectRoute | null {
 }
 
 export function parseInspectRouteFromLocation(location: Pick<Location, "hash" | "pathname">): InspectRoute {
-  if (location.hash && location.hash !== "#" && location.hash !== "#/") {
+  const pathRoute = parseInspectPath(location.pathname);
+  if (pathRoute) return pathRoute;
+
+  const isLegacyHashEntry = location.pathname === "/" || location.pathname === "/index.html";
+  if (isLegacyHashEntry && location.hash && location.hash !== "#" && location.hash !== "#/") {
     return parseInspectRoute(location.hash);
   }
-  return parseInspectPath(location.pathname) ?? parseInspectRoute(location.hash);
+  return { kind: "page", page: "overview" };
 }
 
-export function canonicalEntityPathForLegacyHashLocation(location: Pick<Location, "hash" | "pathname" | "search">): string | null {
+export function canonicalPathForLegacyHashLocation(location: Pick<Location, "hash" | "pathname" | "search">): string | null {
   if (location.pathname !== "/" && location.pathname !== "/index.html") return null;
   if (!location.hash || location.hash === "#" || location.hash === "#/") return null;
 
-  const route = parseInspectRoute(location.hash);
-  if (route.kind === "page") return null;
+  const route = parseInspectPathValue(location.hash);
+  if (!route) return null;
 
-  return `${buildInspectPath(route)}${location.search ?? ""}`;
-}
+  if (route.kind === "page" && route.page === "mission-control" && location.hash.includes("?")) {
+    const params = new URLSearchParams(location.search);
+    const legacyViewParams = new URLSearchParams(location.hash.slice(location.hash.indexOf("?") + 1));
+    legacyViewParams.forEach((value, key) => params.set(key, value));
+    const query = params.toString();
+    return `${buildInspectPath(route)}${query ? `?${query}` : ""}`;
+  }
 
-export function buildInspectHash(route: InspectRoute): string {
-  if (route.kind === "planet") {
-    return `#/planet/${route.coords.galaxy}/${route.coords.system}/${route.coords.position}`;
-  }
-  if (route.kind === "moon") {
-    return `#/moon/${route.coords.galaxy}/${route.coords.system}/${route.coords.position}`;
-  }
-  if (route.kind === "player") return `#/player/${encodeURIComponent(route.wallet)}`;
-  if (route.kind === "alliance") return `#/alliance/${encodeURIComponent(route.allianceId)}`;
-  if (route.kind === "mission") return `#/mission/${encodeURIComponent(route.missionId)}`;
-  if (route.kind === "mission-report") return `#/mission-control/report/${encodeURIComponent(route.missionId)}`;
-  if (route.page === "alliance-invites") return "#/invite";
-  return route.page === "overview" ? "#/" : `#/${route.page}`;
+  return `${buildInspectPath(route)}${location.search}`;
 }
 
 export function buildInspectPath(route: InspectRoute): string {
@@ -162,7 +159,7 @@ export function buildInspectPath(route: InspectRoute): string {
   if (route.kind === "mission") return `/mission/${encodeURIComponent(route.missionId)}`;
   if (route.kind === "mission-report") return `/mission-control/report/${encodeURIComponent(route.missionId)}`;
   if (route.page === "alliance-invites") return "/invite";
-  return route.page === "overview" ? "/#/" : `/#/${route.page}`;
+  return route.page === "overview" ? "/" : `/${route.page}`;
 }
 
 export function planetDetailBackRouteForCurrentScreen({

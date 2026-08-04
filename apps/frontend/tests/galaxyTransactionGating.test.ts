@@ -17,7 +17,8 @@ describe("Galaxy transaction gating", () => {
     expect(galaxySource).toContain("title={hint}");
     expect(planetDetailSource).toContain("transactionUnavailableReason?: string | undefined;");
     expect(planetDetailSource).toContain("{transactionUnavailableReason ? (");
-    expect(planetDetailSource).toContain("busyReason={transactionUnavailableReason}");
+    expect(planetDetailSource).toContain("const visibleMissionActions = onAction && !transactionUnavailableReason ? missionActions : [];");
+    expect(planetDetailSource).not.toContain("busyReason={transactionUnavailableReason}");
   });
 
   test("keeps attackability surfaces free of two-score comparison copy", () => {

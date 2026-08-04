@@ -1,15 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import {
-  buildInspectHash,
   buildInspectPath,
-  canonicalEntityPathForLegacyHashLocation,
+  canonicalPathForLegacyHashLocation,
   parseInspectPath,
   parseInspectRoute,
   parseInspectRouteFromLocation,
 } from "../src/inspectRoutes";
 
 describe("inspect routes", () => {
-  test("parses dedicated player and alliance hash routes", () => {
+  test("keeps legacy hash links readable", () => {
     expect(parseInspectRoute("#/player/0xabc")).toEqual({ kind: "player", wallet: "0xabc" });
     expect(parseInspectRoute("#/alliance/7")).toEqual({ kind: "alliance", allianceId: "7" });
     // Legacy single battle-report links redirect to the unified mission detail page.
@@ -17,19 +16,15 @@ describe("inspect routes", () => {
     expect(parseInspectRoute("#/mission-control/report/12")).toEqual({ kind: "mission-report", missionId: "12" });
   });
 
-  test("round-trips page and inspect hashes", () => {
-    expect(buildInspectHash({ kind: "page", page: "rankings" })).toBe("#/rankings");
-    expect(buildInspectHash({ kind: "player", wallet: "0x1111111111111111111111111111111111111111" })).toBe("#/player/0x1111111111111111111111111111111111111111");
-    expect(buildInspectHash({ kind: "alliance", allianceId: "fleet 7" })).toBe("#/alliance/fleet%207");
-    expect(buildInspectHash({ kind: "mission-report", missionId: "attack 12" })).toBe("#/mission-control/report/attack%2012");
+  test("decodes legacy hash link values", () => {
     expect(parseInspectRoute("#/alliance/fleet%207")).toEqual({ kind: "alliance", allianceId: "fleet 7" });
     expect(parseInspectRoute("#/battle-report/12")).toEqual({ kind: "mission", missionId: "12" });
     expect(parseInspectRoute("#/mission-control/report/attack%2012")).toEqual({ kind: "mission-report", missionId: "attack 12" });
   });
 
-  test("builds clean shareable paths for entity routes", () => {
-    expect(buildInspectPath({ kind: "page", page: "rankings" })).toBe("/#/rankings");
-    expect(buildInspectPath({ kind: "page", page: "overview" })).toBe("/#/");
+  test("builds clean shareable paths for all routes", () => {
+    expect(buildInspectPath({ kind: "page", page: "rankings" })).toBe("/rankings");
+    expect(buildInspectPath({ kind: "page", page: "overview" })).toBe("/");
     expect(buildInspectPath({ kind: "mission", missionId: "2104" })).toBe("/mission/2104");
     expect(buildInspectPath({ kind: "planet", coords: { galaxy: 6, system: 9, position: 1 } })).toBe("/planet/6/9/1");
     expect(buildInspectPath({ kind: "moon", coords: { galaxy: 6, system: 9, position: 1 } })).toBe("/moon/6/9/1");
@@ -54,25 +49,34 @@ describe("inspect routes", () => {
     expect(parseInspectPath("/alliance/fleet%207")).toEqual({ kind: "alliance", allianceId: "fleet 7" });
   });
 
-  test("prefers hash routes but falls back to clean path routes", () => {
+  test("prefers clean path routes and reads legacy hashes only at the root", () => {
     expect(parseInspectRouteFromLocation({ hash: "", pathname: "/mission/2104" })).toEqual({
       kind: "mission",
       missionId: "2104",
     });
     expect(parseInspectRouteFromLocation({ hash: "#/rankings", pathname: "/mission/2104" })).toEqual({
-      kind: "page",
-      page: "rankings",
+      kind: "mission",
+      missionId: "2104",
     });
+    expect(parseInspectRouteFromLocation({ hash: "#/rankings", pathname: "/" })).toEqual({ kind: "page", page: "rankings" });
   });
 
-  test("canonicalizes legacy hash entity links to clean share paths", () => {
-    expect(canonicalEntityPathForLegacyHashLocation({ hash: "#/planet/6/9/13", pathname: "/", search: "" })).toBe("/planet/6/9/13");
-    expect(canonicalEntityPathForLegacyHashLocation({ hash: "#/moon/6/9/13", pathname: "/", search: "" })).toBe("/moon/6/9/13");
-    expect(canonicalEntityPathForLegacyHashLocation({ hash: "#/player/0xabc", pathname: "/", search: "?miniApp=true" })).toBe(
+  test("canonicalizes all legacy hash links to clean paths", () => {
+    expect(canonicalPathForLegacyHashLocation({ hash: "#/planet/6/9/13", pathname: "/", search: "" })).toBe("/planet/6/9/13");
+    expect(canonicalPathForLegacyHashLocation({ hash: "#/moon/6/9/13", pathname: "/", search: "" })).toBe("/moon/6/9/13");
+    expect(canonicalPathForLegacyHashLocation({ hash: "#/player/0xabc", pathname: "/", search: "?miniApp=true" })).toBe(
       "/player/0xabc?miniApp=true",
     );
-    expect(canonicalEntityPathForLegacyHashLocation({ hash: "#/rankings", pathname: "/", search: "" })).toBeNull();
-    expect(canonicalEntityPathForLegacyHashLocation({ hash: "#/planet/6/9/13", pathname: "/mission/2104", search: "" })).toBeNull();
+    expect(canonicalPathForLegacyHashLocation({ hash: "#/rankings", pathname: "/", search: "" })).toBe("/rankings");
+    expect(
+      canonicalPathForLegacyHashLocation({
+        hash: "#/mission-control?at=alliance&ap=2",
+        pathname: "/",
+        search: "?miniApp=true",
+      }),
+    ).toBe("/mission-control?miniApp=true&at=alliance&ap=2");
+    expect(canonicalPathForLegacyHashLocation({ hash: "#/missing/route", pathname: "/", search: "" })).toBeNull();
+    expect(canonicalPathForLegacyHashLocation({ hash: "#/planet/6/9/13", pathname: "/mission/2104", search: "" })).toBeNull();
   });
 
   test("falls back to overview for unknown routes", () => {
@@ -85,8 +89,8 @@ describe("inspect routes", () => {
       kind: "planet",
       coords: { galaxy: 5, system: 407, position: 4 },
     });
-    expect(buildInspectHash({ kind: "planet", coords: { galaxy: 5, system: 407, position: 4 } })).toBe("#/planet/5/407/4");
-    expect(buildInspectHash({ kind: "moon", coords: { galaxy: 5, system: 407, position: 4 } })).toBe("#/moon/5/407/4");
+    expect(buildInspectPath({ kind: "planet", coords: { galaxy: 5, system: 407, position: 4 } })).toBe("/planet/5/407/4");
+    expect(buildInspectPath({ kind: "moon", coords: { galaxy: 5, system: 407, position: 4 } })).toBe("/moon/5/407/4");
     // Legacy query-string deep links still resolve to the selected planet.
     expect(parseInspectRoute("#/planet?galaxy=5&system=407&position=4")).toEqual({
       kind: "planet",

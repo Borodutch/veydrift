@@ -4,7 +4,7 @@ import { MissionDetailPage } from "./components/MissionDetailPage";
 import { EMPTY_MISSION_CONTROL_FILTERS, MissionControlPage, StationedDefenseSection, activeMissionRowMatchesFilters, allActiveMissionRows, applyMissionFilterSelectInput, buildMissionControlViewQuery, initializeMissionRowDisclosure, missionControlActiveFilterCount, missionIdMatchesMissionNumberSearch, missionPlanetCoordinateKey, missionReport, missionRowsDisclosureState, missionStatusPill, normalizeMissionControlFilters, normalizeMissionNumberSearch, parseMissionControlViewParams, persistMissionControlView, resolveMissionControlView, setMissionRowsExpanded, partitionActiveMissionRows, type ActiveMissionRow, type MissionControlFilters, type MissionControlView } from "./components/MissionControlPage";
 import { MissionRouteCell, missionEndpoint, type MissionPlanetIdentity } from "./components/missionRoute";
 import { planetImageForType, planetTypeFromCoordinates } from "./data/mockUniverse";
-import { buildInspectHash, buildInspectPath, parseInspectPath, parseInspectRoute } from "./inspectRoutes";
+import { buildInspectPath, parseInspectPath, parseInspectRoute } from "./inspectRoutes";
 import type { Coordinates } from "./types";
 import { fetchBattleReports, fetchFleetMissionArchive, fetchGlobalMissionArchive, fetchMission, type BattleReport, type FleetMissionPlanetReference, type FleetMissionSummary, type FleetMissionVisibilityResponse } from "./walletFlow";
 
@@ -14,19 +14,17 @@ const missionControlSource = await Bun.file(new URL("./components/MissionControl
 describe("Mission Control battle reports", () => {
   test("builds shareable report list and detail routes", () => {
     expect(parseInspectRoute("#/battle-reports")).toEqual({ kind: "page", page: "battle-reports" });
-    expect(buildInspectHash({ kind: "page", page: "battle-reports" })).toBe("#/battle-reports");
+    expect(buildInspectPath({ kind: "page", page: "battle-reports" })).toBe("/battle-reports");
     // Legacy single-report deep links now redirect to the unified mission detail page,
     // which is itself the shareable public report.
     expect(parseInspectRoute("#/battle-report/42")).toEqual({ kind: "mission", missionId: "42" });
     expect(parseInspectRoute("#/mission/42")).toEqual({ kind: "mission", missionId: "42" });
-    expect(buildInspectHash({ kind: "mission", missionId: "42" })).toBe("#/mission/42");
+    expect(buildInspectPath({ kind: "mission", missionId: "42" })).toBe("/mission/42");
     expect(parseInspectRoute("#/moon/6/9/1")).toEqual({ kind: "moon", coords: { galaxy: 6, system: 9, position: 1 } });
     expect(parseInspectPath("/moon/6/9/1")).toEqual({ kind: "moon", coords: { galaxy: 6, system: 9, position: 1 } });
-    expect(buildInspectHash({ kind: "moon", coords: { galaxy: 6, system: 9, position: 1 } })).toBe("#/moon/6/9/1");
     expect(buildInspectPath({ kind: "moon", coords: { galaxy: 6, system: 9, position: 1 } })).toBe("/moon/6/9/1");
     expect(parseInspectPath("/invite")).toEqual({ kind: "page", page: "alliance-invites" });
     expect(parseInspectPath("/alliance-invites")).toEqual({ kind: "page", page: "alliance-invites" });
-    expect(buildInspectHash({ kind: "page", page: "alliance-invites" })).toBe("#/invite");
     expect(buildInspectPath({ kind: "page", page: "alliance-invites" })).toBe("/invite");
   });
 
@@ -2517,7 +2515,7 @@ describe("Mission Control battle reports", () => {
     expect(secondPage?.props?.hidden).toBe(false);
   });
 
-  // VEY-412 rework: the view is encoded in the URL hash query (source of truth — shareable, survives
+  // VEY-412 rework: the view is encoded in the URL query (source of truth — shareable, survives
   // browser back + hard reload). These cover the pure encoder/decoder round-trip.
   test("encodes only non-default view fields into the URL query (VEY-412)", () => {
     // A fresh/default view yields a clean URL with no query noise.
@@ -2551,7 +2549,7 @@ describe("Mission Control battle reports", () => {
   });
 
   // VEY-412 rework: inside the Farcaster Mini App iframe sessionStorage is blocked (reads back as the
-  // default) and the in-app back button lands on a bare hash (no query). Without a window in this
+  // default) and the in-app back button lands on a bare path (no query). Without a window in this
   // test env both the URL and storage paths are unavailable — exactly the iframe in-app-back case —
   // so the in-memory mirror set by the last selection must be what resolve() restores.
   test("restores the last selection from the in-memory mirror when URL + storage are unavailable (VEY-412)", () => {

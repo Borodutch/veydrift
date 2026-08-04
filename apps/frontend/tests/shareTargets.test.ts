@@ -6,7 +6,7 @@ import { shareTargets } from "../src/shareTargets";
 // intent URLs are well-formed, point at the right networks, and carry the encoded report link, so the
 // in-app dialog always offers working "share to X / Telegram / Farcaster" targets.
 
-const URL = "https://test.veydrift.com/#/mission/228";
+const URL = "https://test.veydrift.com/mission/228";
 
 describe("shareTargets", () => {
   test("returns no targets for an empty URL so the dialog can omit the social row", () => {

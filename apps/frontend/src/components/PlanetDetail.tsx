@@ -1,9 +1,31 @@
+import {
+  ArrowDownLeft,
+  ArrowUpRight,
+  Building2,
+  Database,
+  FlaskConical,
+  Hash,
+  MapPin,
+  Orbit,
+  Rocket,
+  Shield,
+  Thermometer,
+  UserRound,
+} from "lucide-preact";
+import type { ComponentChildren } from "preact";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { Planet, Coordinates, PublicPlanetState, PublicQueueState } from "../types";
 import { formatPlanetType, planetsFromSystemResponse } from "../data/mockUniverse";
 import { galaxyActionsForSlot, type GalaxyAction } from "../galaxyActions";
 import { playableApiUrl } from "../runtimeConfig";
-import { shortAddress, type ChainDefenseState, type ChainShipyardState, type Eip1193Provider } from "../walletFlow";
+import {
+  shortAddress,
+  type ChainDefenseState,
+  type ChainShipyardState,
+  type Eip1193Provider,
+  type FleetMissionSummary,
+  type GlobalActiveMissionsResponse,
+} from "../walletFlow";
 import { isImageReady } from "../imageLoadState";
 import { formatScore } from "../attackProtectionLabels";
 import { buildingCatalog, defenseCatalog, researchCatalog, shipCatalog, solarSatelliteEnergy } from "../playableMvp";
@@ -14,6 +36,11 @@ import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
 import { MoonImage, PlanetMoonIndicator } from "./PlanetMoonIndicator";
 import { EntityMediaPanel } from "./EntityMediaPanel";
 import { canEditEntityMedia } from "../entityMedia";
+import { PlanetDetailSkeleton } from "./LoadingSkeletons";
+import { QueueProgressPanel, type QueueProgressTone } from "./QueueProgressPanel";
+import { Skeleton, SkeletonRegion, skeletonList } from "./Skeleton";
+import { missionTypeLabel } from "./MissionControlPage";
+import { buildInspectPath } from "../inspectRoutes";
 
 interface Props {
   account?: string | undefined;
@@ -68,6 +95,25 @@ export function planetDetailRefreshResultPlanet({
     ? trustedHomePlanet
     : null;
   const matchingApiPlanet = apiPlanet && sameCoordinates(apiPlanet, coords) ? apiPlanet : null;
+  if (matchingTrustedPlanet && matchingApiPlanet) {
+    const moonName = matchingTrustedPlanet.moonName ?? matchingApiPlanet.moonName;
+    const publicMoonState = matchingApiPlanet.publicMoonState ?? matchingTrustedPlanet.publicMoonState;
+    const publicState = matchingApiPlanet.publicState ?? matchingTrustedPlanet.publicState;
+    return {
+      ...matchingApiPlanet,
+      ...matchingTrustedPlanet,
+      alliance: matchingTrustedPlanet.alliance ?? matchingApiPlanet.alliance,
+      debrisField: matchingApiPlanet.debrisField,
+      hasMoon: matchingTrustedPlanet.hasMoon || matchingApiPlanet.hasMoon,
+      moonChance: matchingApiPlanet.moonChance,
+      occupiedBy: matchingTrustedPlanet.occupiedBy
+        ? { ...matchingApiPlanet.occupiedBy, ...matchingTrustedPlanet.occupiedBy }
+        : matchingApiPlanet.occupiedBy,
+      ...(moonName !== undefined ? { moonName } : {}),
+      ...(publicMoonState !== undefined ? { publicMoonState } : {}),
+      ...(publicState !== undefined ? { publicState } : {}),
+    };
+  }
   return matchingTrustedPlanet ?? matchingApiPlanet ?? (currentPlanet && sameCoordinates(currentPlanet, coords) ? currentPlanet : null);
 }
 
@@ -88,8 +134,9 @@ export function planetDetailVisiblePlanet(
   coords: Coordinates,
   trustedPlanet: Planet | null = null,
 ): Planet | null {
+  const matchingLoadedPlanet = loadedPlanet && sameCoordinates(loadedPlanet, coords) ? loadedPlanet : null;
   const matchingTrustedPlanet = trustedPlanet && sameCoordinates(trustedPlanet, coords) ? trustedPlanet : null;
-  return matchingTrustedPlanet ?? (loadedPlanet && sameCoordinates(loadedPlanet, coords) ? loadedPlanet : null);
+  return matchingLoadedPlanet ?? matchingTrustedPlanet;
 }
 
 export function PlanetDetail({
@@ -117,6 +164,7 @@ export function PlanetDetail({
   const [loadedPlanet, setPlanet] = useState<Planet | null>(trustedHomePlanet);
   const [source, setSource] = useState<"api" | "error" | "loading">("loading");
   const [attackProtection, setAttackProtection] = useState<AttackProtectionStatus | null>(null);
+  const [activeMissions, setActiveMissions] = useState<FleetMissionSummary[] | null>(null);
   const [imageLoaded, setImageLoaded] = useState(false);
   const imageRef = useRef<HTMLImageElement>(null);
   const currentRequestKey = useRef(planetDetailRequestKey(coords));
@@ -200,40 +248,60 @@ export function PlanetDetail({
   }, [account, apiBaseUrl, isHome, planet?.occupiedBy?.planetId]);
 
   useEffect(() => {
+    const planetId = planet?.occupiedBy?.planetId;
+    if (!planetId) {
+      setActiveMissions([]);
+      return;
+    }
+
+    const abortController = new AbortController();
+    setActiveMissions(null);
+    fetch(`${apiBaseUrl.replace(/\/+$/, "")}/missions?status=active`, {
+      headers: { accept: "application/json" },
+      signal: abortController.signal,
+    })
+      .then((response) => {
+        if (!response.ok) throw new Error(`Active missions request failed with ${response.status}`);
+        return response.json() as Promise<GlobalActiveMissionsResponse>;
+      })
+      .then((payload) => {
+        if (abortController.signal.aborted) return;
+        setActiveMissions(payload.missions.filter((mission) => (
+          mission.originPlanetId === planetId || mission.targetPlanetId === planetId
+        )));
+      })
+      .catch((error) => {
+        if (!abortController.signal.aborted) {
+          console.error(error);
+          setActiveMissions([]);
+        }
+      });
+
+    return () => abortController.abort();
+  }, [apiBaseUrl, planet?.occupiedBy?.planetId]);
+
+  useEffect(() => {
     setImageLoaded(isImageReady(imageRef.current));
   }, [planet?.image]);
 
   if (!planet) {
     if (shouldShowPlanetDetailInitialLoader({ planet, source })) {
       return (
-        <div className="flex flex-col gap-4 p-4 sm:p-6">
-          <div className="flex items-center gap-3">
-            <button
-              onClick={onBack}
-              className="min-h-11 rounded border border-white/15 bg-white/8 px-3 py-1.5 text-sm text-slate-300 transition-colors hover:bg-white/15 hover:text-white"
-            >
-              ← System [{coords.galaxy}:{coords.system}:{coords.position}]
-            </button>
-          </div>
-          <div className="celestial-detail celestial-detail-layout">
-            <PlanetImageSkeleton className="celestial-detail-artwork aspect-square rounded-lg border border-white/15" />
-            <div className="grid content-start gap-3">
-              <div className="rounded-lg border border-white/10 bg-white/5 p-4">
-                <div className="h-5 w-40 animate-pulse rounded bg-white/10" />
-                <div className="mt-3 h-4 w-64 max-w-full animate-pulse rounded bg-white/5" />
-              </div>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="h-28 rounded-lg border border-white/10 bg-white/5" />
-                <div className="h-28 rounded-lg border border-white/10 bg-white/5" />
-                <div className="h-32 rounded-lg border border-white/10 bg-white/5 sm:col-span-2" />
-              </div>
-            </div>
-          </div>
+        <div>
+          <button
+            onClick={onBack}
+            className="mb-3 inline-flex items-center gap-2 rounded-md border border-white/10 bg-black/20 px-2.5 py-1.5 font-mono text-xs text-slate-300 transition-colors hover:border-cyan-200/30 hover:text-cyan-100"
+            type="button"
+          >
+            <MapPin aria-hidden="true" className="text-cyan-200/75" size={14} />
+            [{coords.galaxy}:{coords.system}:{coords.position}]
+          </button>
+          <PlanetDetailSkeleton />
         </div>
       );
     }
 
-    const emptyMissionActions = source === "api"
+    const emptyMissionActions = source === "api" && !transactionUnavailableReason
       ? planetDetailGalaxyActions({
         account,
         attackProtection: null,
@@ -243,7 +311,7 @@ export function PlanetDetail({
         homePlanetId,
         planet: undefined,
         shipyardState,
-      })
+      }).filter((action) => action.enabled)
       : [];
 
     return (
@@ -263,11 +331,9 @@ export function PlanetDetail({
             <PlanetActionStatus actionState={actionState} />
           </div>
         ) : null}
-        <button
-          onClick={onBack}
-          className="rounded border border-white/15 bg-white/8 px-4 py-2 text-sm text-slate-300 transition-colors hover:bg-white/15 hover:text-white"
-        >
-          ← Back
+        <button onClick={onBack} className="inline-flex items-center gap-2 rounded-md border border-white/10 bg-black/20 px-2.5 py-1.5 font-mono text-xs text-slate-300 transition-colors hover:border-cyan-200/30 hover:text-cyan-100" type="button">
+          <MapPin aria-hidden="true" className="text-cyan-200/75" size={14} />
+          [{coords.galaxy}:{coords.system}:{coords.position}]
         </button>
       </div>
     );
@@ -282,199 +348,203 @@ export function PlanetDetail({
     homePlanetId,
     planet,
     shipyardState,
-  });
+  }).filter((action) => action.enabled);
+  const visibleMissionActions = onAction && !transactionUnavailableReason ? missionActions : [];
   const attackBlockLabel = formatAttackBlockReason(attackProtection ?? undefined);
   const targetScoreText = attackProtection?.scoreComparison?.defenderScore
     ? formatScore(attackProtection.scoreComparison.defenderScore)
     : null;
 
+  const planetCoords = `[${planet.galaxy}:${planet.system}:${planet.position}]`;
+  const planetStatusRows = publicPlanetStatusRows(planet);
+  const commanderLabel = planet.occupiedBy?.ownerDisplayName
+    ?? (planet.occupiedBy?.owner ? shortAddress(planet.occupiedBy.owner) : null);
+  const planetIdLabel = planet.occupiedBy?.planetId ?? (isHome ? homePlanetId : null);
+  const publicStateLoading = source === "loading";
+
   return (
-    <div className="celestial-detail flex min-w-0 flex-col gap-4 p-4 sm:p-6" data-celestial-detail="planet">
-      <div className="flex items-center gap-3">
-        <button
-          onClick={onBack}
-          className="min-h-11 rounded border border-white/15 bg-white/8 px-3 py-1.5 text-sm text-slate-300 transition-colors hover:bg-white/15 hover:text-white"
-          data-celestial-back
-        >
-          ← System [{coords.galaxy}:{coords.system}:{coords.position}]
-        </button>
-      </div>
-
-      <div className="celestial-detail-layout" data-celestial-layout>
-        {/* Planet image */}
-        <div className="celestial-detail-artwork flex flex-col gap-3" data-celestial-artwork>
-          <div className="relative aspect-square overflow-hidden rounded-lg border border-white/15 bg-black/30" data-celestial-media>
-            {!imageLoaded && <PlanetImageSkeleton className="absolute inset-0" />}
-            <OptimizedImage
-              key={planet.image}
-              alt={planet.name}
-              className={`h-full w-full object-contain transition-opacity duration-200 ${imageLoaded ? "opacity-100" : "opacity-0"}`}
-              imageRef={imageRef}
-              loading="eager"
-              onLoad={(event) => {
-                if (isImageReady(event.currentTarget)) setImageLoaded(true);
-              }}
-              sizes="planetPreview"
-              src={planet.image}
-            />
-            <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_80%,rgba(5,7,13,0.6),transparent_60%)]" />
-            {planet.hasMoon ? (
-              <PlanetMoonIndicator
-                className="right-3 top-3"
-                label={`Open ${planet.moonName ?? "Moon"}`}
-                onClick={onSelectMoon ? () => onSelectMoon({ galaxy: planet.galaxy, system: planet.system, position: planet.position }) : undefined}
-                planetType={planet.type}
-                title={`Open ${planet.moonName ?? "Moon"} at [${planet.galaxy}:${planet.system}:${planet.position}]`}
-              />
-            ) : null}
-            {isHome ? (
-              <span className="absolute left-3 top-3 rounded border border-cyan-300/30 bg-cyan-300/15 px-2 py-1 text-xs font-semibold uppercase text-cyan-100">
-                Home Planet
-              </span>
-            ) : null}
+    <div className="celestial-detail planet-detail-page flex min-w-0 flex-col gap-3" data-celestial-detail="planet">
+      <section className="overflow-hidden rounded-xl border border-white/10 bg-[#0b111e] shadow-lg shadow-black/15">
+        <div className="celestial-detail-layout" data-celestial-layout>
+          <div className="celestial-detail-artwork relative flex items-center justify-center border-b border-white/10 bg-black/10 p-3 sm:border-b-0 sm:border-r sm:p-4 lg:p-5" data-celestial-artwork>
+            <div className="relative aspect-square w-full max-w-44 sm:max-w-[13rem] lg:max-w-[17rem]">
+              <div className="relative h-full overflow-hidden rounded-full border border-cyan-100/20 bg-black/40 shadow-[0_0_70px_rgba(128,241,255,0.13)]" data-celestial-media>
+                {!imageLoaded && <PlanetImageSkeleton className="absolute inset-0" />}
+                <OptimizedImage
+                  key={planet.image}
+                  alt={planet.name}
+                  className={`h-full w-full object-contain transition-opacity duration-500 ${imageLoaded ? "opacity-100" : "opacity-0"}`}
+                  imageRef={imageRef}
+                  loading="eager"
+                  onLoad={(event) => {
+                    if (isImageReady(event.currentTarget)) setImageLoaded(true);
+                  }}
+                  sizes="planetPreview"
+                  src={planet.image}
+                />
+                <div className="absolute inset-0 rounded-full shadow-[inset_30px_-24px_54px_rgba(0,0,0,0.55)]" />
+              </div>
+              {planet.hasMoon ? (
+                <PlanetMoonIndicator
+                  className="right-[2%] top-[7%] shadow-xl shadow-black/40 sm:!h-9 sm:!w-9 lg:!h-11 lg:!w-11"
+                  label={`Open ${planet.moonName ?? "Moon"}`}
+                  onClick={onSelectMoon ? () => onSelectMoon({ galaxy: planet.galaxy, system: planet.system, position: planet.position }) : undefined}
+                  planetType={planet.type}
+                  title={`Open ${planet.moonName ?? "Moon"} at ${planetCoords}`}
+                />
+              ) : null}
+            </div>
           </div>
-          {planet.hasMoon ? (
-            <button
-              className="rounded border border-white/10 bg-white/5 px-3 py-2 text-left transition hover:border-cyan-200/35 hover:bg-cyan-200/[0.08] disabled:cursor-default disabled:hover:border-white/10 disabled:hover:bg-white/5"
-              disabled={!onSelectMoon}
-              onClick={() => onSelectMoon?.({ galaxy: planet.galaxy, system: planet.system, position: planet.position })}
-              title={`Open ${planet.moonName ?? "Moon"} at [${planet.galaxy}:${planet.system}:${planet.position}]`}
-              type="button"
-            >
-              <div className="flex items-center gap-2">
-                <span className="h-8 w-8 overflow-hidden rounded-full border border-cyan-100/30 bg-black/40">
-                  <MoonImage className="h-full w-full object-cover" planetType={planet.type} />
-                </span>
-                <span className="min-w-0">
-                  <span className="block text-sm font-semibold text-cyan-100">{planet.moonName ?? "Moon"}</span>
-                  <span className="block text-xs text-slate-500">Nested moon body</span>
-                </span>
-              </div>
-            </button>
-          ) : null}
-        </div>
 
-        {/* Planet summary */}
-        <div className="grid min-w-0 gap-3" data-celestial-summary>
-          <div className="rounded-lg border border-white/10 bg-white/5 p-4">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-              <div className="min-w-0">
-                <h2 className="text-xl font-semibold text-white">{planet.name}</h2>
-                <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-slate-400">
-                  <span>{formatPlanetType(planet.type)}</span>
-                  <span className="text-slate-700">|</span>
-                  <span>Position [{planet.galaxy}:{planet.system}:{planet.position}]</span>
-                  <span className="text-slate-700">|</span>
-                  <span>{planet.diameter.toLocaleString()} km</span>
-                  <span className="text-slate-700">|</span>
-                  <span>{planetRecordStatusLabel(planet, source, isHome)}</span>
-                  {attackBlockLabel ? (
-                    <>
-                      <span className="text-slate-700">|</span>
-                      <span className="text-red-100">{attackBlockLabel}</span>
-                    </>
-                  ) : null}
-                  {targetScoreText ? (
-                    <>
-                      <span className="text-slate-700">|</span>
-                      <span className="font-mono text-cyan-100">Score {targetScoreText}</span>
-                    </>
-                  ) : null}
-                </div>
+          <div className="flex min-w-0 flex-col justify-center p-3 sm:p-4 lg:p-5" data-celestial-summary>
+            {isHome || source === "loading" ? (
+              <div className="flex flex-wrap items-center gap-2">
+                {isHome ? (
+                  <span className="inline-flex h-7 items-center rounded-full border border-emerald-300/25 bg-emerald-300/10 px-2.5 pt-px text-[11px] font-bold uppercase leading-none tracking-[0.14em] text-emerald-100">Home world</span>
+                ) : null}
+                {source === "loading" ? (
+                  <SkeletonRegion label="Loading planet data">
+                    <Skeleton className="h-7 w-20 rounded-full border border-white/10" />
+                  </SkeletonRegion>
+                ) : null}
               </div>
-              <PlanetMissionControls
-                actions={missionActions}
-                busy={actionState.status === "pending" || Boolean(transactionUnavailableReason)}
-                coords={{ galaxy: planet.galaxy, system: planet.system, position: planet.position }}
-                onAction={onAction}
-                planet={planet}
-                transactionUnavailableReason={transactionUnavailableReason}
+            ) : null}
+
+            <div className={`${isHome || source === "loading" ? "mt-3" : ""} flex min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-2`}>
+              <h1 className="min-w-0 break-words text-2xl font-semibold tracking-tight text-white sm:text-3xl lg:text-4xl">{planet.name}</h1>
+              {visibleMissionActions.length > 0 ? (
+                <PlanetMissionControls
+                  actions={visibleMissionActions}
+                  busy={actionState.status === "pending"}
+                  coords={{ galaxy: planet.galaxy, system: planet.system, position: planet.position }}
+                  onAction={onAction}
+                  planet={planet}
+                />
+              ) : null}
+            </div>
+            <p className="mt-1 text-sm text-slate-400">{formatPlanetType(planet.type)}</p>
+
+            <div className="mt-3 flex flex-wrap gap-1.5 sm:mt-4 sm:gap-2">
+              <PlanetFact icon={<MapPin aria-hidden="true" size={14} />} label="Open system" onClick={onBack} value={planetCoords} mono />
+              <PlanetFact icon={<Orbit aria-hidden="true" size={14} />} label="Diameter" value={`${planet.diameter.toLocaleString()} km`} />
+              <PlanetFact icon={<Database aria-hidden="true" size={14} />} label="Fields" value={planet.fields.toLocaleString()} />
+              <PlanetFact icon={<Thermometer aria-hidden="true" size={14} />} label="Climate" value={`${planet.temperature.min}° to ${planet.temperature.max}°C`} />
+              {commanderLabel ? <PlanetFact icon={<UserRound aria-hidden="true" size={14} />} label="Commander" value={commanderLabel} /> : null}
+              {planetIdLabel ? <PlanetFact icon={<Hash aria-hidden="true" size={14} />} label="Planet ID" value={planetIdLabel} mono /> : null}
+            </div>
+
+            <div className="mt-4 border-t border-white/10 pt-4">
+              <PlanetEconomyPills
+                loading={publicStateLoading && planet.publicState?.resources == null}
+                rows={planetEconomyPillRows(planet)}
               />
             </div>
-            <PlanetActionStatus actionState={actionState} />
-            {transactionUnavailableReason ? (
-              <div className="mt-3 rounded border border-amber-300/20 bg-amber-300/10 px-3 py-2 text-xs text-amber-100">
-                {transactionUnavailableReason}
+
+            {(attackBlockLabel || targetScoreText) ? (
+              <div className="mt-4 flex flex-wrap gap-2 text-xs">
+                {attackBlockLabel ? <span className="rounded border border-rose-300/20 bg-rose-300/10 px-2.5 py-1.5 text-rose-100">{attackBlockLabel}</span> : null}
+                {targetScoreText ? <span className="rounded border border-cyan-300/20 bg-cyan-300/10 px-2.5 py-1.5 font-mono text-cyan-100">Score {targetScoreText}</span> : null}
+              </div>
+            ) : null}
+
+            {actionState.status !== "idle" || transactionUnavailableReason ? (
+              <div className="mt-3 flex flex-col gap-2 sm:mt-4">
+              <PlanetActionStatus actionState={actionState} />
+              {transactionUnavailableReason ? (
+                <div className="rounded border border-amber-300/20 bg-amber-300/10 px-3 py-2 text-xs text-amber-100">{transactionUnavailableReason}</div>
+              ) : null}
               </div>
             ) : null}
           </div>
+        </div>
+      </section>
 
-          {planet.occupiedBy?.planetId ? (
-            <EntityMediaPanel
-              account={account}
-              apiBaseUrl={apiBaseUrl}
-              canEdit={canEditEntityMedia({
-                entityKind: "planet",
-                ownerWallet: planet.occupiedBy.owner,
-                viewerWallet: account,
-              })}
-              entityId={planet.occupiedBy.planetId}
-              entityKind="planet"
-              provider={provider}
-            />
-          ) : null}
+      {planet.hasMoon ? (
+        <button
+          className="group flex items-center gap-3 rounded-lg border border-white/10 bg-[#101624] p-2 text-left transition hover:border-cyan-200/35 disabled:cursor-default"
+          disabled={!onSelectMoon}
+          onClick={() => onSelectMoon?.({ galaxy: planet.galaxy, system: planet.system, position: planet.position })}
+          title={`Open ${planet.moonName ?? "Moon"} at ${planetCoords}`}
+          type="button"
+        >
+          <span className="h-10 w-10 shrink-0 overflow-hidden rounded-full border border-cyan-100/30 bg-black/40">
+            <MoonImage className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-110" planetType={planet.type} />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-semibold text-cyan-50">{planet.moonName ?? "Moon"}</span>
+            <span className="mt-0.5 block font-mono text-[11px] text-slate-500">{planetCoords}</span>
+          </span>
+          <span aria-hidden="true" className="pr-1 text-cyan-200/60 transition-transform group-hover:translate-x-1">→</span>
+        </button>
+      ) : null}
 
-          <div className="celestial-detail-panel-grid">
-            <PlanetCommanderPanel planet={planet} isHome={isHome} />
-            <PlanetTemperaturePanel planet={planet} />
+      <PlanetFleetActivityPanel
+        loading={activeMissions === null}
+        rows={planetFleetActivityRows(planet.occupiedBy?.planetId, activeMissions ?? [])}
+      />
+
+      {planet.occupiedBy?.planetId ? (
+        <EntityMediaPanel
+          account={account}
+          apiBaseUrl={apiBaseUrl}
+          canEdit={canEditEntityMedia({
+            entityKind: "planet",
+            ownerWallet: planet.occupiedBy.owner,
+            viewerWallet: account,
+          })}
+          entityId={planet.occupiedBy.planetId}
+          entityKind="planet"
+          provider={provider}
+        />
+      ) : null}
+
+      {planetStatusRows.length > 0 ? (
+        <section className="overflow-hidden rounded-lg border border-white/10 bg-[#101624]">
+          <SectionHeading icon={<Orbit aria-hidden="true" size={16} />} title="Planet status" />
+          <div className="grid gap-px bg-white/10 sm:grid-cols-2">
+            {planetStatusRows.map((row) => <TelemetryCard key={row.label} row={row} />)}
           </div>
-        </div>
-      </div>
+        </section>
+      ) : null}
 
-      <div className="grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <div className="rounded-lg border border-white/10 bg-white/5 p-4 md:col-span-2 xl:col-span-4">
-          <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
-            Public Planet Data
-          </h3>
-          <PublicRecordRows rows={publicPlanetDataRows(planet)} columns />
-        </div>
-
-        <div className="rounded-lg border border-white/10 bg-white/5 p-4 md:col-span-2">
-          <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
-            Production Modifiers
-          </h3>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            {publicProductionRows(planet).map((row) => (
-              <ProductionMetric key={row.label} {...row} />
-            ))}
-          </div>
-        </div>
-
-        <div className="rounded-lg border border-white/10 bg-white/5 p-4 md:col-span-2">
-          <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
-            Current Public Resources
-          </h3>
-          <ResourceBars resources={planet.publicState?.resources} />
-        </div>
-
-        <PublicStatePanel
+      <div className="grid gap-3 xl:grid-cols-2">
+        <PublicAssetStatePanel
+          icon={<Building2 aria-hidden="true" size={17} />}
+          loading={publicStateLoading && planet.publicState?.buildings == null}
+          rows={publicStateAssetRows(planet.publicState?.buildings, buildingCatalog, "level")}
           title="Buildings"
-          rows={publicStateRows(planet.publicState?.buildings, buildingCatalog, "level")}
         />
-        <PublicStatePanel
-          title="Fleet"
-          rows={publicStateRows(planet.publicState?.fleet, shipCatalog, "count")}
-        />
-        <PublicStatePanel
-          title="Defenses"
-          rows={publicStateRows(planet.publicState?.defenses, defenseCatalog, "count")}
-        />
-        <PublicStatePanel
-          title="Stationed Defenders"
-          rows={publicStationedDefenderRows(planet.publicState)}
-        />
-        <PublicStatePanel
+        <PublicAssetStatePanel
+          icon={<FlaskConical aria-hidden="true" size={17} />}
+          loading={publicStateLoading && planet.publicState?.research == null}
+          rows={compactResearchRows(publicStateAssetRows(planet.publicState?.research, researchCatalog, "level"))}
           title="Research"
-          rows={publicStateRows(planet.publicState?.research, researchCatalog, "level")}
         />
-
-        <div className="rounded-lg border border-white/10 bg-white/5 p-4 md:col-span-2 xl:col-span-4">
-          <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
-            Active Public Queues
-          </h3>
-          <PublicRecordRows rows={publicQueueRows(planet)} columns />
-        </div>
+        <PublicAssetStatePanel
+          icon={<Rocket aria-hidden="true" size={17} />}
+          loading={publicStateLoading && planet.publicState?.fleet == null}
+          rows={publicStateAssetRows(planet.publicState?.fleet, shipCatalog, "count")}
+          title="Fleet"
+        />
+        <PublicAssetStatePanel
+          icon={<Shield aria-hidden="true" size={17} />}
+          loading={publicStateLoading && planet.publicState?.defenses == null}
+          rows={publicStateAssetRows(planet.publicState?.defenses, defenseCatalog, "count")}
+          title="Defenses"
+        />
       </div>
+
+      <PublicStatePanel
+        icon={<UserRound aria-hidden="true" size={17} />}
+        loading={publicStateLoading && planet.publicState?.stationedDefenders == null}
+        title="Stationed defenders"
+        rows={publicStationedDefenderRows(planet.publicState)}
+      />
+
+      <PublicQueuesPanel
+        loading={publicStateLoading && planet.publicState?.queues == null}
+        queues={publicQueueViews(planet)}
+      />
     </div>
   );
 }
@@ -515,23 +585,20 @@ function PlanetMissionControls({
   coords,
   onAction,
   planet,
-  transactionUnavailableReason,
 }: {
   actions: GalaxyAction[];
   busy: boolean;
   coords: Coordinates;
   onAction: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates) => void) | undefined;
   planet: Planet | undefined;
-  transactionUnavailableReason?: string | undefined;
 }) {
   if (actions.length === 0) return null;
 
   return (
-    <div className="flex flex-col items-start gap-2 lg:items-end">
+    <div className="flex flex-col items-start gap-2 sm:items-end">
       <GalaxyActionButtons
         actions={actions}
         busy={busy}
-        busyReason={transactionUnavailableReason}
         coords={coords}
         onAction={onAction}
         planet={planet}
@@ -556,37 +623,49 @@ function PlanetActionStatus({ actionState }: { actionState: GalaxyActionState })
   );
 }
 
-function PlanetCommanderPanel({ isHome, planet }: { isHome: boolean; planet: Planet }) {
+function PlanetFact({
+  icon,
+  label,
+  mono = false,
+  onClick,
+  value,
+}: {
+  icon: ComponentChildren;
+  label: string;
+  mono?: boolean;
+  onClick?: (() => void) | undefined;
+  value: string;
+}) {
+  const content = (
+    <>
+      <span className="text-cyan-200/75">{icon}</span>
+      <span className="sr-only">{label}: </span>
+      <span className={mono ? "font-mono" : "font-medium"}>{value}</span>
+    </>
+  );
+  const className = "inline-flex items-center gap-2 rounded-md border border-white/10 bg-black/20 px-2.5 py-1.5 text-xs text-slate-300";
+
+  return onClick ? (
+    <button className={`${className} min-h-11 transition-colors hover:border-cyan-200/35 hover:text-cyan-100 xl:min-h-0`} data-celestial-back onClick={onClick} title={label} type="button">
+      {content}
+    </button>
+  ) : <span className={className}>{content}</span>;
+}
+
+function SectionHeading({ icon, title }: { icon: ComponentChildren; title: string }) {
   return (
-    <div className="rounded-lg border border-white/10 bg-white/5 p-4">
-      <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
-        Public Commander
-      </h3>
-      <PublicRecordRows rows={publicCommanderRows(planet, isHome)} />
-    </div>
+    <header className="flex items-center gap-2 border-b border-white/10 px-3 py-2">
+      <span className="grid h-7 w-7 shrink-0 place-items-center rounded-md border border-cyan-200/15 bg-cyan-200/[0.07] text-cyan-100">{icon}</span>
+      <span className="min-w-0 text-sm font-semibold text-slate-100">{title}</span>
+    </header>
   );
 }
 
-function PlanetTemperaturePanel({ planet }: { planet: Planet }) {
+function TelemetryCard({ row }: { row: PlanetRecordRow }) {
   return (
-    <div className="rounded-lg border border-white/10 bg-white/5 p-4">
-      <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
-        Temperature
-      </h3>
-      <span className="text-sm text-slate-300">
-        {planet.temperature.min}°C to {planet.temperature.max}°C
-      </span>
-      <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
-        <div
-          className="h-full rounded-full bg-signal/60"
-          style={{
-            width: `${Math.min(
-              100,
-              Math.max(0, (planet.temperature.max + 150) / 300 * 100)
-            )}%`,
-          }}
-        />
-      </div>
+    <div className="min-w-0 bg-[#0d1421] px-3 py-2.5">
+      <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-600">{row.label}</div>
+      <div className={`mt-1 truncate text-sm font-medium ${recordToneClass(row.tone)}`} title={row.value}>{row.value}</div>
     </div>
   );
 }
@@ -606,11 +685,11 @@ export function planetRecordStatusLabel(
   source: "api" | "error" | "loading",
   isHome: boolean
 ): string {
-  if (source === "loading") return "Refreshing public records";
-  if (source === "error") return "Last known public profile";
+  if (source === "loading") return "Loading records";
+  if (source === "error") return "Last known profile";
   if (isHome) return "Your settled world";
-  if (planet.occupiedBy) return "Occupied public world";
-  return "Open public world";
+  if (planet.occupiedBy) return "Occupied world";
+  return "Open world";
 }
 
 export function publicCommanderRows(planet: Planet, isHome: boolean): PlanetRecordRow[] {
@@ -632,7 +711,7 @@ export function publicCommanderRows(planet: Planet, isHome: boolean): PlanetReco
 
   return [
     { label: "Settlement", value: "Unclaimed", tone: "muted" },
-    { label: "Wallet", value: "No public owner yet", tone: "muted" },
+    { label: "Wallet", value: "No owner yet", tone: "muted" },
   ];
 }
 
@@ -648,13 +727,20 @@ export function publicPlanetDataRows(planet: Planet): PlanetRecordRow[] {
   ];
 }
 
+export function publicPlanetStatusRows(planet: Planet): PlanetRecordRow[] {
+  return [
+    ...(planet.debrisField ? [{ label: "Debris", value: debrisFieldLabel(planet), tone: "accent" as const }] : []),
+    ...(!planet.hasMoon && planet.moonChance
+      ? [{ label: "Moon signal", value: moonSignalLabel(planet), tone: "accent" as const }]
+      : []),
+  ];
+}
+
 export const publicSignalRows = publicPlanetDataRows;
 
 type ProductionMetricRow = {
   label: string;
   value: string;
-  fillPercent: number;
-  color: string;
 };
 
 export function publicProductionRows(planet: Planet): ProductionMetricRow[] {
@@ -662,26 +748,18 @@ export function publicProductionRows(planet: Planet): ProductionMetricRow[] {
     {
       label: "Metal",
       value: formatProductionMultiplier(planet.resources.metal),
-      fillPercent: productionFillPercent(planet.resources.metal),
-      color: "bg-slate-400",
     },
     {
       label: "Crystal",
       value: formatProductionMultiplier(planet.resources.crystal),
-      fillPercent: productionFillPercent(planet.resources.crystal),
-      color: "bg-signal",
     },
     {
       label: "Deuterium",
       value: formatProductionMultiplier(planet.resources.deuterium),
-      fillPercent: productionFillPercent(planet.resources.deuterium),
-      color: "bg-blue-400",
     },
     {
       label: "Solar satellite",
       value: formatSolarSatelliteEnergy(planetSolarSatelliteTemperature(planet.temperature)),
-      fillPercent: solarSatelliteFillPercent(planetSolarSatelliteTemperature(planet.temperature)),
-      color: "bg-ember",
     },
   ];
 }
@@ -694,26 +772,18 @@ export function publicResourceRows(resources: PublicPlanetState["resources"] | u
     crystal: publicResourceValue(resources.crystal),
     deuterium: publicResourceValue(resources.deuterium),
   };
-  const max = Math.max(1, values.metal, values.crystal, values.deuterium);
-
   return [
     {
       label: "Metal",
       value: values.metal.toLocaleString(),
-      fillPercent: values.metal / max * 100,
-      color: "bg-slate-400",
     },
     {
       label: "Crystal",
       value: values.crystal.toLocaleString(),
-      fillPercent: values.crystal / max * 100,
-      color: "bg-signal",
     },
     {
       label: "Deuterium",
       value: values.deuterium.toLocaleString(),
-      fillPercent: values.deuterium / max * 100,
-      color: "bg-blue-400",
     },
   ];
 }
@@ -727,16 +797,8 @@ function formatProductionMultiplier(resourceIndex: number): string {
   return `${(resourceIndex / 2).toLocaleString(undefined, { maximumFractionDigits: 1 })}%`;
 }
 
-function productionFillPercent(resourceIndex: number): number {
-  return Math.min(100, Math.max(0, resourceIndex / 2));
-}
-
 function formatSolarSatelliteEnergy(maxTemperature: number): string {
   return `${solarSatelliteEnergy(maxTemperature).toLocaleString()} E`;
-}
-
-function solarSatelliteFillPercent(maxTemperature: number): number {
-  return Math.min(100, Math.max(0, solarSatelliteEnergy(maxTemperature) / 50 * 100));
 }
 
 function planetSolarSatelliteTemperature(temperature: Planet["temperature"]): number {
@@ -781,15 +843,61 @@ function PublicRecordRows({
   rows: PlanetRecordRow[];
 }) {
   return (
-    <dl className={`grid min-w-0 gap-2 ${columns ? "sm:grid-cols-2" : ""}`}>
+    <dl className={`grid gap-2 ${columns ? "sm:grid-cols-2" : ""}`}>
       {rows.map((row) => (
         <div className="grid min-w-0 grid-cols-[minmax(0,auto)_minmax(0,1fr)] items-start gap-3" key={row.label}>
           <dt className="text-xs text-slate-500">{row.label}</dt>
-          <dd
-            className={`min-w-0 break-words text-right text-sm ${recordToneClass(row.tone)}`}
-            data-celestial-record-value
-          >
-            {row.value}
+          <dd className={`min-w-0 break-words text-right text-sm ${recordToneClass(row.tone)}`} data-celestial-record-value>{row.value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+export type PlanetEconomyPillRow = {
+  label: string;
+  modifier?: string | undefined;
+  value: string;
+};
+
+export function planetEconomyPillRows(planet: Planet): PlanetEconomyPillRow[] {
+  const resources = publicResourceRows(planet.publicState?.resources) ?? [];
+  const production = new Map(publicProductionRows(planet).map((row) => [row.label, row.value]));
+  return [
+    ...resources.map((row) => ({
+      label: row.label,
+      modifier: production.get(row.label),
+      value: row.value,
+    })),
+    { label: "Solar satellite", value: production.get("Solar satellite") ?? "Unknown" },
+  ];
+}
+
+function PlanetEconomyPills({
+  loading,
+  rows,
+}: {
+  loading: boolean;
+  rows: PlanetEconomyPillRow[];
+}) {
+  if (loading) {
+    return (
+      <SkeletonRegion className="flex flex-wrap gap-2" label="Loading planet economy">
+        {skeletonList(4, (index) => <Skeleton className={`h-9 rounded-md ${["w-36", "w-40", "w-44", "w-36"][index]}`} key={index} />)}
+      </SkeletonRegion>
+    );
+  }
+
+  return (
+    <dl className="flex flex-wrap gap-2">
+      {rows.map((row) => (
+        <div className="inline-flex h-9 w-fit shrink-0 items-center justify-center rounded-md border border-white/10 bg-black/20 px-2.5 text-xs leading-none" key={row.label}>
+          <dt className="sr-only">{row.label}</dt>
+          <dd className="whitespace-nowrap text-center leading-none text-slate-400 tabular-nums">
+            {row.label} <span className="font-semibold text-slate-100">{row.value}</span>
+            {row.modifier ? (
+              <> <span className="text-slate-600">at</span> <span className="font-semibold text-cyan-100">{row.modifier}</span></>
+            ) : null}
           </dd>
         </div>
       ))}
@@ -797,34 +905,249 @@ function PublicRecordRows({
   );
 }
 
-function ResourceBars({
-  resources,
-}: {
-  resources: PublicPlanetState["resources"] | undefined;
-}) {
-  const rows = publicResourceRows(resources);
-  if (!rows) {
-    return (
-      <PublicRecordRows rows={[{ label: "Resources", value: "Public resource state unavailable", tone: "muted" }]} />
-    );
+export type PlanetAssetRecordRow = PlanetRecordRow & {
+  asset?: string | undefined;
+};
+
+export type PlanetFleetActivityRow = {
+  asset?: string | undefined;
+  direction: "Inbound" | "Outbound" | "Local";
+  eventLabel: string;
+  missionId: string;
+  missionLabel: string;
+  routeLabel: string;
+  shipCountLabel: string;
+  tone: "accent" | "danger";
+};
+
+export function planetFleetActivityRows(
+  planetId: string | null | undefined,
+  missions: readonly FleetMissionSummary[],
+): PlanetFleetActivityRow[] {
+  if (!planetId) return [];
+
+  return missions
+    .filter((mission) => mission.originPlanetId === planetId || mission.targetPlanetId === planetId)
+    .map((mission) => {
+      const returning = mission.status === "Returning" || mission.status === "Recalled";
+      const destinationId = returning ? mission.originPlanetId : mission.targetPlanetId;
+      const sourceId = returning ? mission.targetPlanetId : mission.originPlanetId;
+      const direction = sourceId === planetId && destinationId === planetId
+        ? "Local" as const
+        : destinationId === planetId ? "Inbound" as const : "Outbound" as const;
+      const endpointSide = direction === "Inbound"
+        ? (returning ? "target" : "origin")
+        : (returning ? "origin" : "target");
+      const endpoint = endpointSide === "origin" ? mission.originPlanet : mission.targetPlanet;
+      const endpointId = endpointSide === "origin" ? mission.originPlanetId : mission.targetPlanetId;
+      const eventAt = returning ? mission.returnAt : mission.arrivalAt;
+      const shipEntries = shipCatalog
+        .map((ship) => ({ ship, count: Number(mission.ships[ship.key] ?? 0) }))
+        .filter((entry) => Number.isFinite(entry.count) && entry.count > 0)
+        .sort((left, right) => right.count - left.count);
+      const shipCount = shipEntries.reduce((total, entry) => total + entry.count, 0);
+      const hostile = direction === "Inbound" && (mission.missionType === "Attack" || mission.missionType === "AcsAttack");
+
+      return {
+        ...(shipEntries[0]?.ship.asset ? { asset: shipEntries[0].ship.asset } : {}),
+        direction,
+        eventLabel: `${returning ? "Lands" : "Arrives"} ${formatUserTimestamp(eventAt)}`,
+        missionId: mission.missionId,
+        missionLabel: missionTypeLabel(mission.missionType),
+        routeLabel: direction === "Local"
+          ? planetFleetEndpointLabel(endpoint, endpointId)
+          : `${direction === "Inbound" ? "From" : "To"} ${planetFleetEndpointLabel(endpoint, endpointId)}`,
+        shipCountLabel: `${shipCount.toLocaleString()} ${shipCount === 1 ? "ship" : "ships"}`,
+        tone: hostile ? "danger" as const : "accent" as const,
+      };
+    })
+    .sort((left, right) => {
+      const leftMission = missions.find((mission) => mission.missionId === left.missionId);
+      const rightMission = missions.find((mission) => mission.missionId === right.missionId);
+      const leftAt = timestampToMs(leftMission?.status === "Returning" || leftMission?.status === "Recalled" ? leftMission.returnAt : leftMission?.arrivalAt);
+      const rightAt = timestampToMs(rightMission?.status === "Returning" || rightMission?.status === "Recalled" ? rightMission.returnAt : rightMission?.arrivalAt);
+      return (leftAt ?? Number.MAX_SAFE_INTEGER) - (rightAt ?? Number.MAX_SAFE_INTEGER);
+    });
+}
+
+function planetFleetEndpointLabel(
+  endpoint: FleetMissionSummary["originPlanet"],
+  fallbackPlanetId: string,
+): string {
+  if (endpoint) {
+    const name = endpoint.name?.trim() || `Planet ${endpoint.planetId}`;
+    return endpoint.coordinates ? `${name} [${endpoint.coordinates}]` : name;
   }
+  return `Planet ${fallbackPlanetId}`;
+}
+
+function PlanetFleetActivityPanel({
+  loading,
+  rows,
+}: {
+  loading: boolean;
+  rows: PlanetFleetActivityRow[];
+}) {
+  if (!loading && rows.length === 0) return null;
+  const visibleRows = rows.slice(0, 6);
+  const overflow = rows.length - visibleRows.length;
 
   return (
-    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-      {rows.map((row) => (
-        <ProductionMetric key={row.label} {...row} />
-      ))}
-    </div>
+    <section className="overflow-hidden rounded-lg border border-white/10 bg-[#101624]">
+      <SectionHeading icon={<Rocket aria-hidden="true" size={17} />} title="Fleet activity" />
+      {loading ? (
+        <SkeletonRegion className="grid gap-2 p-3 sm:grid-cols-2" label="Loading fleet activity">
+          {skeletonList(2, (index) => (
+            <div className="grid min-h-14 grid-cols-[2.5rem_minmax(0,1fr)] items-center gap-2 rounded border border-white/[0.08] bg-black/20 p-1.5" key={index}>
+              <Skeleton className="h-10 w-10 rounded" />
+              <div className="min-w-0">
+                <Skeleton className="h-3 w-2/3" />
+                <Skeleton className="mt-2 h-2.5 w-4/5" />
+              </div>
+            </div>
+          ))}
+        </SkeletonRegion>
+      ) : (
+        <div className="grid gap-2 p-3 sm:grid-cols-2">
+          {visibleRows.map((row) => {
+            const DirectionIcon = row.direction === "Inbound" ? ArrowDownLeft : ArrowUpRight;
+            return (
+              <a
+                className="group grid min-h-14 grid-cols-[2.5rem_minmax(0,1fr)_auto] items-center gap-2 rounded border border-white/[0.08] bg-black/20 p-1.5 transition hover:border-cyan-200/25 hover:bg-cyan-200/[0.035]"
+                href={buildInspectPath({ kind: "mission", missionId: row.missionId })}
+                key={`${row.missionId}-${row.direction}`}
+              >
+                <span className="h-10 w-10 overflow-hidden rounded border border-white/10 bg-[#080d18]">
+                  {row.asset ? <OptimizedImage alt="" className="h-full w-full object-cover transition-transform group-hover:scale-105" loading="lazy" sizes="icon" src={row.asset} /> : <Rocket aria-hidden="true" className="m-2.5 text-cyan-200/40" size={18} />}
+                </span>
+                <span className="min-w-0">
+                  <span className="flex min-w-0 items-center gap-1.5 text-xs font-semibold text-slate-200">
+                    <DirectionIcon aria-hidden="true" className={row.tone === "danger" ? "text-rose-300" : "text-cyan-200"} size={14} />
+                    <span className="truncate">{row.direction} · {row.missionLabel}</span>
+                    <span className="shrink-0 font-mono text-[10px] text-slate-500">#{row.missionId}</span>
+                  </span>
+                  <span className="mt-1 block truncate text-[11px] text-slate-500" title={`${row.routeLabel} · ${row.eventLabel}`}>{row.routeLabel} · {row.eventLabel}</span>
+                </span>
+                <span className="whitespace-nowrap font-mono text-[11px] text-slate-400">{row.shipCountLabel}</span>
+              </a>
+            );
+          })}
+          {overflow > 0 ? <p className="px-1 text-xs text-slate-500 sm:col-span-2">{overflow.toLocaleString()} more active {overflow === 1 ? "fleet" : "fleets"}</p> : null}
+        </div>
+      )}
+    </section>
   );
 }
 
-function PublicStatePanel({ rows, title }: { rows: PlanetRecordRow[]; title: string }) {
+function PublicAssetStatePanel({
+  icon,
+  loading,
+  rows,
+  title,
+}: {
+  icon: ComponentChildren;
+  loading: boolean;
+  rows: PlanetAssetRecordRow[];
+  title: string;
+}) {
   return (
-    <div className="rounded-lg border border-white/10 bg-white/5 p-4">
-      <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
-        {title}
-      </h3>
-      <PublicRecordRows rows={rows.length > 0 ? rows : [{ label: "Public records", value: "No public entries", tone: "muted" }]} />
+    <section className="overflow-hidden rounded-lg border border-white/10 bg-[#101624]">
+      <SectionHeading icon={icon} title={title} />
+      {loading ? (
+        <AssetRowsSkeleton label={`Loading ${title.toLowerCase()}`} />
+      ) : rows.length > 0 ? (
+        <div className="grid gap-2 p-3 sm:grid-cols-2">
+          {rows.map((row) => (
+            <article className="group grid min-h-14 min-w-0 grid-cols-[2.5rem_minmax(0,1fr)] items-center gap-2 overflow-hidden rounded border border-white/[0.08] bg-black/20 p-1.5 transition-colors hover:border-cyan-200/20 hover:bg-cyan-200/[0.035]" key={row.label}>
+              <div className="relative h-10 w-10 overflow-hidden rounded border border-white/10 bg-[#080d18]">
+                {row.asset ? (
+                  <OptimizedImage
+                    alt=""
+                    className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
+                    loading="lazy"
+                    sizes="icon"
+                    src={row.asset}
+                  />
+                ) : (
+                  <div aria-hidden="true" className="grid h-full place-items-center bg-[radial-gradient(circle,rgba(128,241,255,0.12),transparent_68%)] text-cyan-200/35">
+                    <Orbit size={20} />
+                  </div>
+                )}
+                <div aria-hidden="true" className="absolute inset-0 bg-[linear-gradient(145deg,transparent_55%,rgba(5,7,13,0.45))]" />
+              </div>
+              <div className="min-w-0">
+                <h4 className="break-words text-xs font-semibold leading-tight text-slate-200">{row.label}</h4>
+                <p className={`mt-1 font-mono text-[11px] font-semibold leading-none ${recordToneClass(row.tone)}`}>{row.value}</p>
+              </div>
+            </article>
+          ))}
+        </div>
+      ) : (
+        <EmptyPublicState label={`No ${title.toLowerCase()}`} />
+      )}
+    </section>
+  );
+}
+
+function PublicStatePanel({
+  icon,
+  loading,
+  rows,
+  title,
+}: {
+  icon: ComponentChildren;
+  loading: boolean;
+  rows: PlanetRecordRow[];
+  title: string;
+}) {
+  return (
+    <section className="overflow-hidden rounded-lg border border-white/10 bg-[#101624]">
+      <SectionHeading icon={icon} title={title} />
+      {loading ? (
+        <RecordRowsSkeleton label={`Loading ${title.toLowerCase()}`} />
+      ) : rows.length > 0 ? (
+        <div className="p-3"><PublicRecordRows columns rows={rows} /></div>
+      ) : (
+        <EmptyPublicState label="No entries" />
+      )}
+    </section>
+  );
+}
+
+function AssetRowsSkeleton({ label }: { label: string }) {
+  return (
+    <SkeletonRegion className="grid gap-2 p-3 sm:grid-cols-2" label={label}>
+      {skeletonList(4, (index) => (
+        <div className="grid min-h-14 grid-cols-[2.5rem_minmax(0,1fr)] items-center gap-2 rounded border border-white/[0.08] bg-black/20 p-1.5" key={index}>
+          <Skeleton className="h-10 w-10 rounded" />
+          <div className="min-w-0">
+            <Skeleton className="h-3 w-4/5" />
+            <Skeleton className="mt-2 h-2.5 w-12" />
+          </div>
+        </div>
+      ))}
+    </SkeletonRegion>
+  );
+}
+
+function RecordRowsSkeleton({ label }: { label: string }) {
+  return (
+    <SkeletonRegion className="grid gap-2 p-3 sm:grid-cols-2" label={label}>
+      {skeletonList(2, (index) => (
+        <div className="flex items-center justify-between gap-3" key={index}>
+          <Skeleton className="h-3 w-24" />
+          <Skeleton className="h-3 w-32" />
+        </div>
+      ))}
+    </SkeletonRegion>
+  );
+}
+
+function EmptyPublicState({ label }: { label: string }) {
+  return (
+    <div className="flex items-center gap-3 p-3 text-sm text-slate-500">
+      <span aria-hidden="true" className="h-2 w-2 rounded-full border border-slate-500/50 bg-slate-500/10" />
+      {label}
     </div>
   );
 }
@@ -850,6 +1173,36 @@ export function publicStateRows(
     }));
 }
 
+export function publicStateAssetRows(
+  rows: Array<{ id: number; level?: number; count?: number }> | null | undefined,
+  catalog: readonly { id?: number; label: string; asset?: string | undefined }[],
+  valueKind: "level" | "count"
+): PlanetAssetRecordRow[] {
+  return (rows ?? [])
+    .map((row) => {
+      const value = valueKind === "level" ? row.level ?? 0 : row.count ?? 0;
+      const catalogItem = catalog.find((item, index) => (item.id ?? index) === row.id);
+      return {
+        asset: catalogItem?.asset,
+        label: catalogItem?.label ?? `ID ${row.id}`,
+        value,
+      };
+    })
+    .filter((row) => row.value > 0)
+    .map((row) => ({
+      asset: row.asset,
+      label: row.label,
+      value: valueKind === "level" ? `Level ${row.value}` : row.value.toLocaleString(),
+    }));
+}
+
+export function compactResearchRows(rows: PlanetAssetRecordRow[]): PlanetAssetRecordRow[] {
+  return rows.map((row) => ({
+    ...row,
+    label: row.label.replace(/\s+Technology$/i, ""),
+  }));
+}
+
 export function publicStationedDefenderRows(
   publicState: PublicPlanetState | null | undefined
 ): PlanetRecordRow[] {
@@ -862,9 +1215,140 @@ export function publicStationedDefenderRows(
     }));
 }
 
+export type PublicQueueView = {
+  asset?: string | undefined;
+  completedQuantity?: number | undefined;
+  currentUnitProgressBps?: number | undefined;
+  currentUnitSecondsRemaining?: number | undefined;
+  itemText: string;
+  key: string;
+  label: string;
+  progress?: number | undefined;
+  quantity?: number | undefined;
+  readyAt: string | null;
+  remainingQuantity?: number | undefined;
+  startedAt?: string | null | undefined;
+  title: string;
+  tone: QueueProgressTone;
+};
+
+export function publicQueueViews(planet: Planet): PublicQueueView[] {
+  const queues = planet.publicState?.queues;
+  if (!queues) return [];
+
+  return [
+    publicQueueView("building", "Buildings", queues.building, buildingCatalog, "amber", "level"),
+    publicQueueView("defense", "Defenses", queues.defense, defenseCatalog, "rose", "quantity"),
+    publicQueueView("research", "Research", queues.research, researchCatalog, "violet", "level"),
+    publicQueueView("shipyard", "Shipyard", queues.ship, shipCatalog, "sky", "quantity"),
+  ].filter((queue): queue is PublicQueueView => queue !== null);
+}
+
+function publicQueueView(
+  key: string,
+  title: string,
+  queue: PublicQueueState | null | undefined,
+  catalog: readonly { id?: number; label: string; asset?: string | undefined }[],
+  tone: QueueProgressTone,
+  valueKind: "level" | "quantity",
+): PublicQueueView | null {
+  if (!queue?.active) return null;
+  const item = queue.itemId === undefined
+    ? undefined
+    : catalog.find((candidate, index) => (candidate.id ?? index) === queue.itemId);
+  const label = item?.label ?? queue.kind ?? "Queue";
+  const detail = valueKind === "level"
+    ? queue.targetLevel ? `Level ${queue.targetLevel}` : null
+    : queue.quantity ? `×${queue.quantity.toLocaleString()}` : null;
+
+  return {
+    ...(item?.asset ? { asset: item.asset } : {}),
+    ...(queue.asOfNow?.completedQuantity !== undefined
+      ? { completedQuantity: queue.asOfNow.completedQuantity }
+      : {}),
+    ...(queue.asOfNow?.currentUnitProgressBps !== undefined
+      ? { currentUnitProgressBps: queue.asOfNow.currentUnitProgressBps }
+      : {}),
+    ...(queue.asOfNow?.currentUnitSecondsRemaining !== undefined
+      ? { currentUnitSecondsRemaining: queue.asOfNow.currentUnitSecondsRemaining }
+      : {}),
+    ...(queue.asOfNow?.overallProgressBps !== undefined
+      ? { progress: queue.asOfNow.overallProgressBps / 10_000 }
+      : {}),
+    ...(queue.quantity !== undefined ? { quantity: queue.quantity } : {}),
+    ...(queue.asOfNow?.remainingQuantity !== undefined
+      ? { remainingQuantity: queue.asOfNow.remainingQuantity }
+      : {}),
+    itemText: detail ? `${label} · ${detail}` : label,
+    key,
+    label,
+    readyAt: queue.readyAt,
+    startedAt: queue.startedAt ?? queue.productionTiming?.startedAt,
+    title,
+    tone,
+  };
+}
+
+function PublicQueuesPanel({
+  loading,
+  queues,
+}: {
+  loading: boolean;
+  queues: PublicQueueView[];
+}) {
+  return (
+    <section className="overflow-hidden rounded-lg border border-white/10 bg-[#101624]">
+      <SectionHeading icon={<Orbit aria-hidden="true" size={17} />} title="Active queues" />
+      {loading ? (
+        <SkeletonRegion className="grid gap-3 p-3 sm:grid-cols-2 xl:grid-cols-4" label="Loading active queues">
+          {skeletonList(4, (index) => (
+            <div className="rounded-lg border border-white/10 bg-black/15 p-3" key={index}>
+              <Skeleton className="h-2.5 w-16" />
+              <div className="mt-3 grid grid-cols-[2.75rem_minmax(0,1fr)] items-center gap-3">
+                <Skeleton className="h-11 w-11 rounded" />
+                <div>
+                  <Skeleton className="h-3 w-4/5" />
+                  <Skeleton className="mt-2 h-2.5 w-20" />
+                  <Skeleton className="mt-2 h-1.5 w-full rounded-full" />
+                </div>
+              </div>
+            </div>
+          ))}
+        </SkeletonRegion>
+      ) : queues.length > 0 ? (
+        <div className="grid gap-3 p-3 sm:grid-cols-2 xl:grid-cols-4">
+          {queues.map((queue) => (
+            <article className="min-w-0 rounded-lg border border-white/10 bg-black/15 p-3" key={queue.key}>
+              <h3 className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">{queue.title}</h3>
+              <QueueProgressPanel
+                asset={queue.asset}
+                completedQuantity={queue.completedQuantity}
+                currentUnitProgressBps={queue.currentUnitProgressBps}
+                currentUnitSecondsRemaining={queue.currentUnitSecondsRemaining}
+                embedded
+                itemText={queue.itemText}
+                label={queue.label}
+                progress={queue.progress}
+                quantity={queue.quantity}
+                readyAt={queue.readyAt}
+                remainingQuantity={queue.remainingQuantity}
+                startedAt={queue.startedAt}
+                title={queue.title}
+                tone={queue.tone}
+              />
+            </article>
+          ))}
+        </div>
+      ) : (
+        <EmptyPublicState label="No active queues" />
+      )}
+    </section>
+  );
+}
+
 export function publicQueueRows(planet: Planet): PlanetRecordRow[] {
   const queues = planet.publicState?.queues;
-  if (!queues) return [{ label: "Queues", value: "Public queue data unavailable", tone: "muted" }];
+  if (!queues) return [{ label: "Queues", value: "Queue data unavailable", tone: "muted" }];
 
   const rows: PlanetRecordRow[] = [
     queueRow("Building", queues.building, buildingCatalog, "Level"),
@@ -875,7 +1359,7 @@ export function publicQueueRows(planet: Planet): PlanetRecordRow[] {
 
   return rows.some((row) => row.tone === "accent")
     ? rows
-    : [{ label: "Queues", value: "No active public queues", tone: "muted" }];
+    : [{ label: "Queues", value: "No active queues", tone: "muted" }];
 }
 
 function stationedDefenderShipCount(ships: Record<string, string>): number {
@@ -917,32 +1401,5 @@ function sameCoordinates(homeCoords: Coordinates | undefined, planet: Coordinate
       && homeCoords.galaxy === planet.galaxy
       && homeCoords.system === planet.system
       && homeCoords.position === planet.position
-  );
-}
-
-function ProductionMetric({
-  label,
-  value,
-  fillPercent,
-  color,
-}: {
-  label: string;
-  value: string;
-  fillPercent: number;
-  color: string;
-}) {
-  return (
-    <div className="flex flex-col gap-1">
-      <div className="flex items-start justify-between gap-2">
-        <span className="min-w-0 break-words text-xs text-slate-500" title={label}>{label}</span>
-        <span className="whitespace-nowrap text-xs font-medium text-slate-300">{value}</span>
-      </div>
-      <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
-        <div
-          className={`h-full rounded-full ${color}`}
-          style={{ width: `${fillPercent}%` }}
-        />
-      </div>
-    </div>
   );
 }

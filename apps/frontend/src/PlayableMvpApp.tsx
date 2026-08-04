@@ -57,7 +57,7 @@ import { AlertTriangle } from "lucide-preact";
 import { AnimatedProgressBar } from "./components/AnimatedProgressBar";
 import {
   buildInspectPath,
-  canonicalEntityPathForLegacyHashLocation,
+  canonicalPathForLegacyHashLocation,
   hasUsefulPlanetDetailBackRoute,
   inspectRouteForManagedPlanetSelection,
   managedPlanetSelectionForInspectRoute,
@@ -3243,7 +3243,7 @@ function initialInspectPageState(): {
   if (typeof window === "undefined") {
     return { page: "overview", playerWallet: null, allianceId: null, missionDetailId: null, missionReportId: null };
   }
-  replaceLegacyHashEntityRoute();
+  replaceLegacyHashRoute();
   const route = parseInspectRouteFromLocation(window.location);
   if (route.kind === "player") {
     return { page: "player-inspect", playerWallet: route.wallet, allianceId: null, missionDetailId: null, missionReportId: null };
@@ -3268,14 +3268,14 @@ function initialInspectPageState(): {
 
 function initialSelectedCoords(): Coordinates | undefined {
   if (typeof window === "undefined") return undefined;
-  replaceLegacyHashEntityRoute();
+  replaceLegacyHashRoute();
   const route = parseInspectRouteFromLocation(window.location);
   return route.kind === "planet" || route.kind === "moon" ? route.coords : undefined;
 }
 
-function replaceLegacyHashEntityRoute(): boolean {
+function replaceLegacyHashRoute(): boolean {
   if (typeof window === "undefined") return false;
-  const canonicalPath = canonicalEntityPathForLegacyHashLocation(window.location);
+  const canonicalPath = canonicalPathForLegacyHashLocation(window.location);
   if (!canonicalPath) return false;
   window.history.replaceState(null, "", canonicalPath);
   resetDocumentTitle();
@@ -4036,7 +4036,7 @@ export function PlayableMvpApp({
   useEffect(() => {
     if (typeof window === "undefined") return;
     const handleRouteChange = () => {
-      replaceLegacyHashEntityRoute();
+      replaceLegacyHashRoute();
       resetDocumentTitle();
       applyInspectRoute(parseInspectRouteFromLocation(window.location));
     };
@@ -4208,7 +4208,7 @@ export function PlayableMvpApp({
   }, [apiBaseUrl, missionDetailId]);
 
   // VEY-KANEO-433: background refresh for the *open* mission detail. The auto-poll/ETA one-shot keep
-  // the Mission Control lists live, but a viewer sitting on a battle report (`#/mission/<id>` or the
+  // the Mission Control lists live, but a viewer sitting on a battle report (`/mission/<id>` or a
   // legacy `#/battle-report/<id>`) when the mission resolves would still see stale loot / "no battle
   // report yet" until a manual Refresh — exactly the gap this ticket targets. Unlike `loadMissionDetail`
   // (the manual Refresh button), this never toggles the loading spinner and never clobbers the rendered
