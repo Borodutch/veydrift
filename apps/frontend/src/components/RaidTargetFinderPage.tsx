@@ -653,6 +653,10 @@ function NumberFilter({
   );
 }
 
+export function applyMobileSortSelection<K extends string>(key: K, currentKey: K, onSort: (key: K) => void): void {
+  if (key !== currentKey) onSort(key);
+}
+
 function MobileSortControls<K extends string>({
   columns,
   id,
@@ -672,9 +676,9 @@ function MobileSortControls<K extends string>({
       <select
         className="h-10 min-w-0 flex-1 rounded border border-white/10 bg-[#0d1422] px-2 text-xs font-semibold text-slate-200"
         id={id}
-        onChange={(event) => {
+        onInput={(event) => {
           const key = event.currentTarget.value as K;
-          if (key !== sort.key) onSort(key);
+          applyMobileSortSelection(key, sort.key, onSort);
         }}
         value={sort.key}
       >

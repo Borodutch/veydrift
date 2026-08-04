@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { MissionDetailPage } from "./components/MissionDetailPage";
-import { EMPTY_MISSION_CONTROL_FILTERS, MissionControlPage, StationedDefenseSection, activeMissionRowMatchesFilters, allActiveMissionRows, buildMissionControlViewQuery, initializeMissionRowDisclosure, missionControlActiveFilterCount, missionIdMatchesMissionNumberSearch, missionPlanetCoordinateKey, missionReport, missionRowsDisclosureState, missionStatusPill, normalizeMissionControlFilters, normalizeMissionNumberSearch, parseMissionControlViewParams, persistMissionControlView, resolveMissionControlView, setMissionRowsExpanded, partitionActiveMissionRows, type ActiveMissionRow, type MissionControlFilters, type MissionControlView } from "./components/MissionControlPage";
+import { EMPTY_MISSION_CONTROL_FILTERS, MissionControlPage, StationedDefenseSection, activeMissionRowMatchesFilters, allActiveMissionRows, applyMissionFilterSelectInput, buildMissionControlViewQuery, initializeMissionRowDisclosure, missionControlActiveFilterCount, missionIdMatchesMissionNumberSearch, missionPlanetCoordinateKey, missionReport, missionRowsDisclosureState, missionStatusPill, normalizeMissionControlFilters, normalizeMissionNumberSearch, parseMissionControlViewParams, persistMissionControlView, resolveMissionControlView, setMissionRowsExpanded, partitionActiveMissionRows, type ActiveMissionRow, type MissionControlFilters, type MissionControlView } from "./components/MissionControlPage";
 import { MissionRouteCell, missionEndpoint, type MissionPlanetIdentity } from "./components/missionRoute";
 import { planetImageForType, planetTypeFromCoordinates } from "./data/mockUniverse";
 import { buildInspectHash, buildInspectPath, parseInspectPath, parseInspectRoute } from "./inspectRoutes";
@@ -9,6 +9,7 @@ import type { Coordinates } from "./types";
 import { fetchBattleReports, fetchFleetMissionArchive, fetchGlobalMissionArchive, fetchMission, type BattleReport, type FleetMissionPlanetReference, type FleetMissionSummary, type FleetMissionVisibilityResponse } from "./walletFlow";
 
 const missionRouteSource = await Bun.file(new URL("./components/missionRoute.tsx", import.meta.url)).text();
+const missionControlSource = await Bun.file(new URL("./components/MissionControlPage.tsx", import.meta.url)).text();
 
 describe("Mission Control battle reports", () => {
   test("builds shareable report list and detail routes", () => {
@@ -1039,6 +1040,20 @@ describe("Mission Control battle reports", () => {
     const neutralTrigger = findElements(neutralDetails, "summary")[0];
     expect(neutralDetails?.props?.["data-active-filter-count"]).toBe(0);
     expect(neutralTrigger?.props?.["aria-label"]).toBe("Mission filters");
+  });
+
+  test("applies mission type and flight state from the mobile select input event", () => {
+    const changes: MissionControlFilters[] = [];
+    const onChange = (filters: MissionControlFilters) => changes.push(filters);
+    applyMissionFilterSelectInput(EMPTY_MISSION_CONTROL_FILTERS, "missionType", "Harvest", onChange);
+    applyMissionFilterSelectInput(EMPTY_MISSION_CONTROL_FILTERS, "direction", "returning", onChange);
+
+    expect(changes).toEqual([
+      { ...EMPTY_MISSION_CONTROL_FILTERS, missionType: "Harvest" },
+      { ...EMPTY_MISSION_CONTROL_FILTERS, direction: "returning" },
+    ]);
+    expect(missionControlSource).toContain('onInput={(event) => applyMissionFilterSelectInput(filters, "missionType"');
+    expect(missionControlSource).toContain('onInput={(event) => applyMissionFilterSelectInput(filters, "direction"');
   });
 
   test("switches Expand all to Collapse all and tracks individual row changes", () => {
