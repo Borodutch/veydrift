@@ -934,7 +934,12 @@ export function shouldRefreshMissionActionStateForPage(page: Page): boolean {
 }
 
 export function shouldClearCachedShipyardStateForPageRefresh(page: Page): boolean {
-  return page === "shipyard" || shouldRefreshMissionActionStateForPage(page);
+  // A live refresh always follows navigation, but clearing the last confirmed inventory before
+  // that read completes turns a slow or transiently failed request into a false "no eligible ships"
+  // / "fleet slots still loading" composer. Keep the last known state until the fresh response wins;
+  // planet-scoped storage prevents a different origin planet leaking into this view.
+  void page;
+  return false;
 }
 
 export function shouldEagerlyRefreshPlanetSwitchForPage(page: Page): boolean {
