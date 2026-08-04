@@ -8,7 +8,7 @@ const PLAYER_WALLET = "0x1111111111111111111111111111111111111111";
 const ENEMY_WALLET = "0x2222222222222222222222222222222222222222";
 
 describe("Overview fleets summary", () => {
-  test("summarizes active counts and a one-line description per mission (type + direction + ETA)", () => {
+  test("renders compact structured mission rows with type, direction, lifecycle, and ETA", () => {
     const now = Date.parse("2026-06-07T22:00:00.000Z");
     const fleetVisibility = visibility({
       outgoing: [
@@ -41,8 +41,8 @@ describe("Overview fleets summary", () => {
     const summary = summarizeFleets(fleetVisibility, now);
     expect(summary.activeCount).toBe(2);
     expect(summary.lines.map((line) => line.text)).toEqual([
-      "Outbound · Attack to 1517 [5:407:4] · Outbound · arrives in 13m",
-      "Returning · Transport from Outpost [6:12:3] · Returning · lands in 5m",
+      "Attack · Outbound to 1517 [5:407:4] · Outbound · ETA 13m",
+      "Transport · Returning from Outpost [6:12:3] · Returning · Lands 5m",
     ]);
 
     const text = collectText(FleetsSummary({
@@ -52,15 +52,15 @@ describe("Overview fleets summary", () => {
     })).join(" ");
 
     expect(text).not.toContain("2 active");
-    expect(text).toContain("Outbound · Attack to 1517 [5:407:4] · Outbound · arrives in 13m");
+    expect(text).toContain("Attack Priority Outbound to 1517 [5:407:4] Outbound ETA");
+    expect(text).toContain("Transport Returning from Outpost [6:12:3] Returning Lands");
     expect(text).toContain("Open Mission Control");
-    // Rows carry their direction inline instead of splitting the compact panel into sub-panels.
-    expect(text).not.toContain("Joinable");
-    // No raw "1 -> 40" id rendering.
+    // Structured cells replace the former repeated sentence punctuation and raw id route.
+    expect(text).not.toContain(" · ");
     expect(text).not.toContain("1 -> 40");
   });
 
-  test("shows hostile inbound attacks once as red mission lines without a redundant alert banner", () => {
+  test("sorts hostile inbound attacks by ETA and keeps every attack in the uncapped priority group", () => {
     const now = Date.parse("2026-06-07T22:00:00.000Z");
     const fleetVisibility = visibility({
       incoming: [
@@ -88,10 +88,12 @@ describe("Overview fleets summary", () => {
     });
 
     const summary = summarizeFleets(fleetVisibility, now);
-    expect(summary.lines.map((line) => line.text)).toEqual([
-      "Hostile inbound · Attack from Raider [5:407:4] · Outbound · arrives in 8m",
-      "Hostile inbound · Attack from Reaver [5:407:9] · Outbound · arrives in 3m",
+    expect(summary.attackLines.map((line) => line.text)).toEqual([
+      "Attack · Inbound from Reaver [5:407:9] · Outbound · ETA 3m",
+      "Attack · Inbound from Raider [5:407:4] · Outbound · ETA 8m",
     ]);
+    expect(summary.visibleLines).toHaveLength(2);
+    expect(summary.hiddenCount).toBe(0);
 
     const text = collectText(FleetsSummary({
       fleetVisibility,
@@ -99,8 +101,8 @@ describe("Overview fleets summary", () => {
       onOpenMissionControl: () => undefined,
     })).join(" ");
 
-    expect(text).toContain("Hostile inbound · Attack from Raider [5:407:4] · Outbound · arrives in 8m");
-    expect(text).toContain("Hostile inbound · Attack from Reaver [5:407:9] · Outbound · arrives in 3m");
+    expect(text).toContain("Attack Priority Inbound from Raider [5:407:4]");
+    expect(text).toContain("Attack Priority Inbound from Reaver [5:407:9]");
     expect(text).not.toContain("Under attack");
     expect(text).not.toContain("hostile fleets inbound");
   });
@@ -125,12 +127,17 @@ describe("Overview fleets summary", () => {
 
     const summary = summarizeFleets(fleetVisibility, now);
 
-    expect(summary.lines).toEqual([{
+    expect(summary.lines[0]).toMatchObject({
+      direction: "returning",
+      endpointLabel: "Recycler Base [4:140:13]",
       key: "in-12",
+      missionType: "Harvest",
       relation: "friendly",
-      text: "Harvest returning to Recycler Base [4:140:13] · lands in 5m",
+      state: "Returning",
+      timingLabel: "Lands",
+      timingValue: "5m",
       tone: "harvest",
-    }]);
+    });
     expect(collectText(FleetsSummary({
       fleetVisibility,
       now,
@@ -178,11 +185,11 @@ describe("Overview fleets summary", () => {
     const summary = summarizeFleets(fleetVisibility, now);
     expect(summary.activeCount).toBe(3);
     expect(summary.lines.map((line) => line.text)).toEqual([
-      "Hostile inbound · Attack from Raider [5:407:4] · Outbound · arrives in 8m",
-      "Friendly inbound · Transport from Ally [5:407:9] · Outbound · arrives in 6m",
-      "Self inbound · Deploy from Colony [5:408:2] · Outbound · arrives in 4m",
+      "Attack · Inbound from Raider [5:407:4] · Outbound · ETA 8m",
+      "Deploy · Inbound from Colony [5:408:2] · Outbound · ETA 4m",
+      "Transport · Inbound from Ally [5:407:9] · Outbound · ETA 6m",
     ]);
-    expect(summary.lines.map((line) => line.relation)).toEqual(["hostile", "friendly", "self"]);
+    expect(summary.lines.map((line) => line.relation)).toEqual(["hostile", "self", "friendly"]);
 
     const node = FleetsSummary({
       fleetVisibility,
@@ -192,13 +199,14 @@ describe("Overview fleets summary", () => {
     const rows = collectElementsByType(node, "li");
     expect(rows).toHaveLength(3);
     expect(rows.map((row) => row.props?.className)).toEqual([
-      expect.stringContaining("break-words"),
-      expect.stringContaining("break-words"),
-      expect.stringContaining("break-words"),
+      expect.stringContaining("grid-cols-[1.75rem_minmax(0,1fr)_auto]"),
+      expect.stringContaining("grid-cols-[1.75rem_minmax(0,1fr)_auto]"),
+      expect.stringContaining("grid-cols-[1.75rem_minmax(0,1fr)_auto]"),
     ]);
+    expect(rows[0]?.props?.["data-attack-priority"]).toBe("true");
   });
 
-  test("shows all active fleet rows without a Mission Control overflow truncation", () => {
+  test("caps ETA-sorted non-attacks at four and exposes an accurate inline disclosure", () => {
     const now = Date.parse("2026-06-07T22:00:00.000Z");
     const outgoing: FleetMissionSummary[] = Array.from({ length: 6 }, (_unused, index) =>
       mission({
@@ -215,17 +223,61 @@ describe("Overview fleets summary", () => {
     const summary = summarizeFleets(visibility({ outgoing }), now);
     expect(summary.activeCount).toBe(6);
     expect(summary.lines.length).toBe(6);
+    expect(summary.visibleLines.map((line) => line.key)).toEqual(["out-o0", "out-o1", "out-o2", "out-o3"]);
+    expect(summary.hiddenLines.map((line) => line.key)).toEqual(["out-o4", "out-o5"]);
+    expect(summary.hiddenCount).toBe(2);
 
-    const text = collectText(FleetsSummary({
+    const node = FleetsSummary({
       fleetVisibility: visibility({ outgoing }),
       now,
       onOpenMissionControl: () => undefined,
-    })).join(" ");
-    expect(text).toContain("Outbound · Transport to T0 [1:1:0] · Outbound · arrives in 1m");
-    expect(text).toContain("Outbound · Transport to T5 [1:1:5] · Outbound · arrives in 6m");
+    });
+    const text = collectText(node).join(" ");
+    const disclosure = collectElementsByType(node, "details")[0];
+    expect(text).toContain("Transport Outbound to T0 [1:1:0]");
+    expect(text.replace(/\s+/g, " ")).toContain("+ 2 more");
+    expect(text).toContain("Show fewer");
     expect(text).toContain("Open Mission Control");
-    expect(text).not.toContain("+2 more");
-    expect(text).not.toContain("open Mission Control");
+    expect(disclosure?.props?.["data-hidden-count"]).toBe(2);
+    expect(disclosure?.props?.className).toContain("group/fleet-overflow");
+
+    const exactlyFour = FleetsSummary({
+      fleetVisibility: visibility({ outgoing: outgoing.slice(0, 4) }),
+      now,
+      onOpenMissionControl: () => undefined,
+    });
+    expect(collectElementsByType(exactlyFour, "details")).toHaveLength(0);
+  });
+
+  test("never spends the four-row non-attack allowance on attacks", () => {
+    const now = Date.parse("2026-06-07T22:00:00.000Z");
+    const outgoing = [
+      ...Array.from({ length: 6 }, (_unused, index) => mission({
+        missionId: `attack-${index}`,
+        missionType: index % 2 === 0 ? "Attack" : "AcsAttack",
+        status: "Outbound",
+        owner: PLAYER_WALLET,
+        originPlanetId: "1",
+        targetPlanetId: `a${index}`,
+        arrivalMs: now + (10 + index) * 60_000,
+      })),
+      ...Array.from({ length: 6 }, (_unused, index) => mission({
+        missionId: `transport-${index}`,
+        missionType: "Transport",
+        status: "Outbound",
+        owner: PLAYER_WALLET,
+        originPlanetId: "1",
+        targetPlanetId: `t${index}`,
+        arrivalMs: now + (index + 1) * 60_000,
+      })),
+    ];
+
+    const summary = summarizeFleets(visibility({ outgoing }), now);
+    expect(summary.attackLines).toHaveLength(6);
+    expect(summary.visibleLines).toHaveLength(10);
+    expect(summary.visibleLines.filter((line) => line.isAttack)).toHaveLength(6);
+    expect(summary.visibleLines.filter((line) => !line.isAttack)).toHaveLength(4);
+    expect(summary.hiddenCount).toBe(2);
   });
 
   test("does not render the redundant active-count header pill", () => {
@@ -273,7 +325,7 @@ describe("Overview fleets summary", () => {
         }),
       ],
     }), now);
-    expect(summary.lines[0]?.text).toBe("Outbound · Deploy to Planet #77 · Outbound · arrives in 1m");
+    expect(summary.lines[0]?.text).toBe("Deploy · Outbound to Planet #77 · Outbound · ETA 1m");
   });
 
   test("uses a known planet-roster name when the mission endpoint omits it", () => {
@@ -297,7 +349,7 @@ describe("Overview fleets summary", () => {
       new Map([["id:77", "New London"]]),
     );
 
-    expect(summary.lines[0]?.text).toBe("Outbound · Transport to New London [6:9:4] · Outbound · arrives in 1m");
+    expect(summary.lines[0]?.text).toBe("Transport · Outbound to New London [6:9:4] · Outbound · ETA 1m");
   });
 
   test("uses the commander identity when an unnamed mission planet has no known roster name", () => {
@@ -322,7 +374,7 @@ describe("Overview fleets summary", () => {
       ],
     }), now);
 
-    expect(summary.lines[0]?.text).toBe("Harvest returning to arcturus's planet [4:140:13] · lands in 5m");
+    expect(summary.lines[0]?.text).toBe("Harvest · Returning to arcturus's planet [4:140:13] · Returning · Lands 5m");
   });
 
   test("labels stationed DefenseHold missions as holding instead of resolving", () => {
@@ -343,8 +395,68 @@ describe("Overview fleets summary", () => {
       ],
     }), now);
 
-    expect(summary.lines[0]?.text).toBe("Outbound · Stationed defense to Bastion [7:14:2] · Stationed · holding for 45m");
-    expect(summary.lines[0]?.text).not.toContain("resolving");
+    expect(summary.lines[0]?.text).toBe("Stationed defense · Outbound to Bastion [7:14:2] · Stationed · Ends 45m");
+    expect(summary.lines[0]?.text).not.toContain("Resolving");
+  });
+
+  test("recomputes lifecycle and countdown fields as the next event passes", () => {
+    const now = Date.parse("2026-06-07T22:00:00.000Z");
+    const outbound = mission({
+      missionId: "clocked",
+      missionType: "Transport",
+      status: "Outbound",
+      owner: PLAYER_WALLET,
+      originPlanetId: "1",
+      targetPlanetId: "2",
+      arrivalMs: now + 60_000,
+    });
+
+    expect(summarizeFleets(visibility({ outgoing: [outbound] }), now).lines[0]).toMatchObject({
+      state: "Outbound",
+      timingLabel: "ETA",
+      timingValue: "1m",
+    });
+    expect(summarizeFleets(visibility({ outgoing: [outbound] }), now + 2 * 60_000).lines[0]).toMatchObject({
+      state: "Resolving",
+      timingLabel: "ETA",
+      timingValue: "Now",
+    });
+
+    const returning = { ...outbound, status: "Returning", returnAt: Math.floor((now + 5 * 60_000) / 1_000).toString() };
+    expect(summarizeFleets(visibility({ returning: [returning] }), now).lines[0]).toMatchObject({
+      direction: "returning",
+      routeLabel: "Returning from",
+      state: "Returning",
+      timingLabel: "Lands",
+      timingValue: "5m",
+    });
+  });
+
+  test("keeps long planet names inside the compact responsive row", () => {
+    const now = Date.parse("2026-06-07T22:00:00.000Z");
+    const longName = "The Extremely Long Planet Name That Must Never Overflow";
+    const node = FleetsSummary({
+      fleetVisibility: visibility({
+        outgoing: [mission({
+          missionId: "long-name",
+          missionType: "Transport",
+          status: "Outbound",
+          owner: PLAYER_WALLET,
+          originPlanetId: "1",
+          targetPlanetId: "2",
+          arrivalMs: now + 60_000,
+          targetPlanet: planetRef("2", PLAYER_WALLET, longName, 9, 499, 15),
+        })],
+      }),
+      now,
+      onOpenMissionControl: () => undefined,
+    });
+    const row = collectElementsByType(node, "li")[0];
+    const endpoint = collectElementsByType(node, "span").find((element) => element.props?.title === `${longName} [9:499:15]`);
+
+    expect(row?.props?.className).toContain("min-w-0");
+    expect(row?.props?.className).toContain("grid-cols-[1.75rem_minmax(0,1fr)_auto]");
+    expect(endpoint?.props?.className).toContain("truncate");
   });
 });
 
@@ -381,11 +493,22 @@ function collectText(node: unknown): string[] {
   return collectText(vnode.props?.children);
 }
 
-function collectElementsByType(node: unknown, type: string): Array<{ props?: { children?: unknown; className?: string }; type?: unknown }> {
+function collectElementsByType(node: unknown, type: string): Array<{
+  props?: { children?: unknown; className?: string; [key: string]: unknown };
+  type?: unknown;
+}> {
   if (node === null || node === undefined || typeof node !== "object") return [];
   if (Array.isArray(node)) return node.flatMap((child) => collectElementsByType(child, type));
 
-  const vnode = node as { type?: unknown; props?: { children?: unknown; className?: string } };
+  const vnode = node as {
+    type?: unknown;
+    props?: { children?: unknown; className?: string; [key: string]: unknown };
+  };
+  if (typeof vnode.type === "function") {
+    const render = vnode.type as (props: { children?: unknown; [key: string]: unknown }) => unknown;
+    if (render.name === "Icon") return [];
+    return collectElementsByType(render({ ...(vnode.props ?? {}) }), type);
+  }
   const current = vnode.type === type ? [vnode] : [];
   return [...current, ...collectElementsByType(vnode.props?.children, type)];
 }

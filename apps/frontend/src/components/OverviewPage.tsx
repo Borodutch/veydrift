@@ -8,7 +8,24 @@ import {
   type Resources,
 } from "../playableMvp";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
-import { ArrowRight, Check, Info, Pencil, RefreshCw, Trash2, X } from "lucide-preact";
+import {
+  ArrowDownLeft,
+  ArrowRight,
+  ArrowUpRight,
+  Check,
+  ChevronDown,
+  Info,
+  Package,
+  Pencil,
+  RefreshCw,
+  Rocket,
+  RotateCcw,
+  Satellite,
+  Shield,
+  Swords,
+  Trash2,
+  X,
+} from "lucide-preact";
 import { researchQueueForDisplay } from "../chainState";
 import {
   buildingQueueAsset,
@@ -1179,16 +1196,32 @@ export function overviewResearchActionNoticeFor(
 }
 
 export type FleetSummaryLine = {
+  direction: "incoming" | "outgoing" | "returning";
+  endpointLabel: string;
+  eventAt: number | undefined;
+  isAttack: boolean;
   key: string;
+  missionType: string;
   text: string;
   relation: "friendly" | "hostile" | "self";
+  routeLabel: string;
+  state: string;
+  timingLabel: string;
+  timingValue: string;
   tone: "harvest" | "hostile" | "neutral";
 };
 
 export type FleetsSummaryData = {
   activeCount: number;
+  attackLines: FleetSummaryLine[];
+  hiddenCount: number;
+  hiddenLines: FleetSummaryLine[];
   lines: FleetSummaryLine[];
+  nonAttackLines: FleetSummaryLine[];
+  visibleLines: FleetSummaryLine[];
 };
+
+export const OVERVIEW_NON_ATTACK_LIMIT = 4;
 
 function missionEndpointLabel(
   ref: FleetMissionPlanetReference | null | undefined,
@@ -1227,24 +1260,29 @@ export function summarizeFleets(
     seen.add(mission.missionId);
     const isReturning = mission.status === "Returning" || mission.status === "Recalled";
     const eventMs = timestampToMs(isReturning ? mission.returnAt : mission.arrivalAt);
-    const timing = eventMs === undefined
-      ? "ETA unknown"
-      : eventMs > now
-        ? `${isReturning ? "lands" : "arrives"} in ${formatDurationUntil(eventMs, now)}`
-        : "resolving";
     const self = mission.owner.trim().toLowerCase() === wallet;
     const hostile = !self && isOffensiveFleetMission(mission.missionType);
     const relation = self ? "self" : hostile ? "hostile" : "friendly";
-    const direction = isReturning ? `${capitalize(relation)} departing` : `${capitalize(relation)} inbound`;
-    const status = overviewMissionStatus(mission, now);
     const endpoint = missionEndpointLabel(mission.originPlanet, mission.originPlanetId, planetNames);
+    const state = eventMs !== undefined && eventMs <= now ? "Resolving" : overviewMissionStatus(mission, now);
+    const timingLabel = isReturning ? "Lands" : "ETA";
+    const timingValue = overviewMissionTimingValue(eventMs, now);
+    const directionLabel = isReturning ? "Returning to" : "Inbound from";
+    const isAttack = isOffensiveFleetMission(mission.missionType);
     lines.push({
+      direction: isReturning ? "returning" : "incoming",
+      endpointLabel: endpoint,
+      eventAt: eventMs,
+      isAttack,
       key: `in-${mission.missionId}`,
+      missionType: mission.missionType,
       relation,
-      tone: mission.missionType === "Harvest" ? "harvest" : hostile ? "hostile" : "neutral",
-      text: mission.missionType === "Harvest" && isReturning
-        ? `Harvest returning to ${endpoint} · ${timing}`
-        : `${direction} · ${missionTypeLabel(mission.missionType)} from ${endpoint} · ${status} · ${timing}`,
+      routeLabel: directionLabel,
+      state,
+      text: `${missionTypeLabel(mission.missionType)} · ${directionLabel} ${endpoint} · ${state} · ${timingLabel} ${timingValue}`,
+      timingLabel,
+      timingValue,
+      tone: mission.missionType === "Harvest" ? "harvest" : isAttack ? "hostile" : "neutral",
     });
   }
 
@@ -1255,19 +1293,36 @@ export function summarizeFleets(
     const defenseHoldUntilMs = mission.missionType === "DefenseHold"
       ? timestampToMs(mission.defenseHoldUntil ?? mission.returnAt)
       : undefined;
-    const timing = arrivalMs === undefined
-      ? "ETA unknown"
-      : mission.missionType === "DefenseHold" && arrivalMs <= now && defenseHoldUntilMs !== undefined && defenseHoldUntilMs > now
-        ? `holding for ${formatDurationUntil(defenseHoldUntilMs, now)}`
-      // Lazy on-chain reconciliation (VEY-KANEO-468): once the arrival time passes, the mission is
-      // settled lazily on the next mutating call (combat is resolved by the battle keeper), so until
-      // the chain reflects it the honest state is "resolving", not a finished "arrived".
-        : arrivalMs > now ? `arrives in ${formatDurationUntil(arrivalMs, now)}` : "resolving";
+    const isHolding = mission.missionType === "DefenseHold"
+      && arrivalMs !== undefined
+      && arrivalMs <= now
+      && defenseHoldUntilMs !== undefined
+      && defenseHoldUntilMs > now;
+    const eventMs = isHolding ? defenseHoldUntilMs : arrivalMs;
+    // Lazy on-chain reconciliation (VEY-KANEO-468): once the arrival time passes, the mission is
+    // settled lazily on the next mutating call (combat is resolved by the battle keeper), so until
+    // the chain reflects it the honest state is "Resolving", not a finished "Arrived".
+    const state = !isHolding && arrivalMs !== undefined && arrivalMs <= now
+      ? "Resolving"
+      : overviewMissionStatus(mission, now);
+    const timingLabel = isHolding ? "Ends" : "ETA";
+    const timingValue = overviewMissionTimingValue(eventMs, now);
+    const endpoint = missionEndpointLabel(mission.targetPlanet, mission.targetPlanetId, planetNames);
+    const isAttack = isOffensiveFleetMission(mission.missionType);
     lines.push({
+      direction: "outgoing",
+      endpointLabel: endpoint,
+      eventAt: eventMs,
+      isAttack,
       relation: "self",
-      tone: mission.missionType === "Harvest" ? "harvest" : "neutral",
       key: `out-${mission.missionId}`,
-      text: `Outbound · ${missionTypeLabel(mission.missionType)} to ${missionEndpointLabel(mission.targetPlanet, mission.targetPlanetId, planetNames)} · ${overviewMissionStatus(mission, now)} · ${timing}`,
+      missionType: mission.missionType,
+      routeLabel: "Outbound to",
+      state,
+      text: `${missionTypeLabel(mission.missionType)} · Outbound to ${endpoint} · ${state} · ${timingLabel} ${timingValue}`,
+      timingLabel,
+      timingValue,
+      tone: mission.missionType === "Harvest" ? "harvest" : isAttack ? "hostile" : "neutral",
     });
   }
 
@@ -1275,20 +1330,42 @@ export function summarizeFleets(
     if (seen.has(mission.missionId)) continue;
     seen.add(mission.missionId);
     const returnMs = timestampToMs(mission.returnAt);
-    const timing = returnMs === undefined
-      ? "ETA unknown"
-      // VEY-KANEO-468: a returned-by-time leg settles lazily on the next mutating call, so show
-      // "resolving" until the chain lands it rather than a misleading "ready to land" (no manual land).
-      : returnMs > now ? `lands in ${formatDurationUntil(returnMs, now)}` : "resolving";
+    // VEY-KANEO-468: a returned-by-time leg settles lazily on the next mutating call, so show
+    // "Resolving" until the chain lands it rather than a misleading ready-to-land action.
+    const state = returnMs !== undefined && returnMs <= now ? "Resolving" : mission.status;
+    const timingValue = overviewMissionTimingValue(returnMs, now);
+    const endpoint = missionEndpointLabel(mission.targetPlanet, mission.targetPlanetId, planetNames);
+    const isAttack = isOffensiveFleetMission(mission.missionType);
     lines.push({
+      direction: "returning",
+      endpointLabel: endpoint,
+      eventAt: returnMs,
+      isAttack,
       relation: "self",
-      tone: mission.missionType === "Harvest" ? "harvest" : "neutral",
       key: `ret-${mission.missionId}`,
-      text: `Returning · ${missionTypeLabel(mission.missionType)} from ${missionEndpointLabel(mission.targetPlanet, mission.targetPlanetId, planetNames)} · ${mission.status} · ${timing}`,
+      missionType: mission.missionType,
+      routeLabel: "Returning from",
+      state,
+      text: `${missionTypeLabel(mission.missionType)} · Returning from ${endpoint} · ${state} · Lands ${timingValue}`,
+      timingLabel: "Lands",
+      timingValue,
+      tone: mission.missionType === "Harvest" ? "harvest" : isAttack ? "hostile" : "neutral",
     });
   }
 
-  return { activeCount: lines.length, lines };
+  const attackLines = lines.filter((line) => line.isAttack).sort(compareOverviewFleetLines);
+  const nonAttackLines = lines.filter((line) => !line.isAttack).sort(compareOverviewFleetLines);
+  const visibleNonAttackLines = nonAttackLines.slice(0, OVERVIEW_NON_ATTACK_LIMIT);
+  const hiddenLines = nonAttackLines.slice(OVERVIEW_NON_ATTACK_LIMIT);
+  return {
+    activeCount: lines.length,
+    attackLines,
+    hiddenCount: hiddenLines.length,
+    hiddenLines,
+    lines: [...attackLines, ...nonAttackLines],
+    nonAttackLines,
+    visibleLines: [...attackLines, ...visibleNonAttackLines],
+  };
 }
 
 const OFFENSIVE_FLEET_MISSIONS = new Set(["Attack", "AcsAttack", "MissileAttack"]);
@@ -1316,8 +1393,16 @@ function overviewMissionStatus(
   return mission.status;
 }
 
-function capitalize(value: string): string {
-  return value.charAt(0).toUpperCase() + value.slice(1);
+function overviewMissionTimingValue(eventMs: number | undefined, now: number): string {
+  if (eventMs === undefined) return "Unknown";
+  if (eventMs <= now) return "Now";
+  return formatDurationUntil(eventMs, now);
+}
+
+function compareOverviewFleetLines(left: FleetSummaryLine, right: FleetSummaryLine): number {
+  const leftEvent = left.eventAt ?? Number.POSITIVE_INFINITY;
+  const rightEvent = right.eventAt ?? Number.POSITIVE_INFINITY;
+  return leftEvent - rightEvent || left.key.localeCompare(right.key);
 }
 
 export function FleetsSummary({
@@ -1349,28 +1434,91 @@ export function FleetsSummary({
       {summary.activeCount === 0 ? (
         <p className="mt-3 text-xs text-slate-500">No active fleets for this planet.</p>
       ) : (
-        <ul className="mt-3 grid gap-1.5">
-          {summary.lines.map((line) => (
-            <li
-              key={line.key}
-              className={`min-w-0 break-words rounded-md border px-2.5 py-1.5 text-[11px] leading-5 ${
-                line.tone === "harvest"
-                  ? "border-amber-300/25 bg-amber-300/10 text-amber-100"
-                  : line.relation === "hostile"
-                  ? "border-red-400/25 bg-red-500/10 text-red-100"
-                  : line.relation === "friendly"
-                    ? "border-cyan-300/20 bg-cyan-300/[0.06] text-cyan-100"
-                    : "border-white/10 bg-black/20 text-slate-300"
-              }`}
-              title={line.text}
-            >
-              {line.text}
-            </li>
-          ))}
-        </ul>
+        <div className="mt-3 min-w-0">
+          <ul className="grid gap-1" data-fleet-visible-count={summary.visibleLines.length}>
+            {summary.visibleLines.map((line) => <FleetSummaryRow key={line.key} line={line} />)}
+          </ul>
+          {summary.hiddenCount > 0 ? (
+            <details className="group/fleet-overflow mt-1.5" data-hidden-count={summary.hiddenCount}>
+              <summary className="flex min-h-8 cursor-pointer list-none items-center justify-center gap-1.5 rounded-md border border-white/10 bg-black/15 px-2.5 py-1 text-[11px] font-semibold text-slate-300 transition hover:border-cyan-300/25 hover:bg-cyan-300/[0.06] hover:text-cyan-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/40 [&::-webkit-details-marker]:hidden">
+                <span className="group-open/fleet-overflow:hidden">+{summary.hiddenCount} more</span>
+                <span className="hidden group-open/fleet-overflow:inline">Show fewer</span>
+                <ChevronDown aria-hidden="true" className="shrink-0 transition-transform group-open/fleet-overflow:rotate-180" size={13} strokeWidth={2} />
+              </summary>
+              <ul className="mt-1 grid gap-1" data-fleet-hidden-count={summary.hiddenCount}>
+                {summary.hiddenLines.map((line) => <FleetSummaryRow key={line.key} line={line} />)}
+              </ul>
+            </details>
+          ) : null}
+        </div>
       )}
     </section>
   );
+}
+
+function FleetSummaryRow({ line }: { line: FleetSummaryLine }) {
+  return (
+    <li
+      aria-label={line.text}
+      className={`grid min-w-0 grid-cols-[1.75rem_minmax(0,1fr)_auto] items-center gap-2 rounded-md border px-2 py-1.5 text-[11px] leading-4 ${
+        line.tone === "hostile"
+          ? "border-red-400/35 bg-red-500/[0.11] text-red-50"
+          : line.tone === "harvest"
+            ? "border-amber-300/25 bg-amber-300/[0.08] text-amber-50"
+            : line.relation === "friendly"
+              ? "border-cyan-300/20 bg-cyan-300/[0.05] text-cyan-50"
+              : "border-white/10 bg-black/20 text-slate-200"
+      }`}
+      data-attack-priority={line.isAttack ? "true" : undefined}
+      data-direction={line.direction}
+      title={line.text}
+    >
+      <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded border ${overviewMissionTypeTone(line)}`}>
+        <OverviewMissionTypeIcon missionType={line.missionType} />
+      </span>
+      <span className="min-w-0">
+        <span className="flex min-w-0 items-center gap-1.5">
+          <span className="truncate font-semibold text-current">{missionTypeLabel(line.missionType)}</span>
+          {line.isAttack ? <span className="shrink-0 rounded bg-red-400/15 px-1 py-px text-[9px] font-bold uppercase tracking-[0.08em] text-red-200">Priority</span> : null}
+        </span>
+        <span className="flex min-w-0 items-center gap-1 text-[10px] text-slate-400">
+          <OverviewMissionDirectionIcon direction={line.direction} />
+          <span className="shrink-0">{line.routeLabel}</span>
+          <span className="truncate" title={line.endpointLabel}>{line.endpointLabel}</span>
+        </span>
+      </span>
+      <span className="ml-auto flex min-w-0 flex-col items-end text-right tabular-nums">
+        <span className={`max-w-[5.75rem] truncate text-[10px] font-medium ${line.isAttack ? "text-red-200" : "text-slate-300"}`} title={line.state}>{line.state}</span>
+        <span className="whitespace-nowrap text-[10px] text-slate-500"><span className="hidden sm:inline">{line.timingLabel} </span>{line.timingValue}</span>
+      </span>
+    </li>
+  );
+}
+
+function OverviewMissionTypeIcon({ missionType }: { missionType: string }) {
+  const props = { "aria-hidden": true, size: 14, strokeWidth: 2 } as const;
+  if (isOffensiveFleetMission(missionType)) return <Swords {...props} />;
+  if (missionType === "Transport") return <Package {...props} />;
+  if (missionType === "Deploy") return <Rocket {...props} />;
+  if (missionType === "Harvest") return <RefreshCw {...props} />;
+  if (["AcsDefend", "DefenseHold", "Intercept"].includes(missionType)) return <Shield {...props} />;
+  return <Satellite {...props} />;
+}
+
+function OverviewMissionDirectionIcon({ direction }: { direction: FleetSummaryLine["direction"] }) {
+  const props = { "aria-hidden": true, className: "shrink-0", size: 11, strokeWidth: 2 } as const;
+  if (direction === "incoming") return <ArrowDownLeft {...props} />;
+  if (direction === "outgoing") return <ArrowUpRight {...props} />;
+  return <RotateCcw {...props} />;
+}
+
+function overviewMissionTypeTone(line: FleetSummaryLine): string {
+  if (line.isAttack) return "border-red-300/30 bg-red-400/15 text-red-100";
+  if (line.missionType === "Transport") return "border-cyan-300/25 bg-cyan-300/10 text-cyan-100";
+  if (line.missionType === "Deploy") return "border-emerald-300/25 bg-emerald-300/10 text-emerald-100";
+  if (line.missionType === "Harvest") return "border-amber-300/25 bg-amber-300/10 text-amber-100";
+  if (["AcsDefend", "DefenseHold", "Intercept"].includes(line.missionType)) return "border-violet-300/25 bg-violet-300/10 text-violet-100";
+  return "border-slate-300/20 bg-slate-300/10 text-slate-100";
 }
 
 function planetKeyFromCoordinates(coordinates: { galaxy: number; system: number; position: number }): string {
