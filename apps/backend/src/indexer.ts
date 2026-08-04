@@ -713,6 +713,13 @@ export class SettlementIndexer {
   private productionQueueProjectionVersionCache:
     | { indexedStateVersion: string; validThroughSecond: number | null; value: string }
     | null = null;
+  // Wallet snapshot routes include that wallet's queues, not every production queue in the
+  // universe. Keep their time-bound fingerprint scoped accordingly so an unrelated queue
+  // completion cannot evict every player's overview cache.
+  private readonly walletProductionQueueProjectionVersionCaches = new Map<
+    string,
+    { indexedStateVersion: string; validThroughSecond: number | null; value: string }
+  >();
   private technologyLevelsCache: TechnologyLevelsCache | null = null;
   private allianceIntelCache: AllianceIntelCache | null = null;
   private resolvedBattleMissionIdsCache:
@@ -2832,6 +2839,13 @@ export class SettlementIndexer {
     return `${this.indexedStateCacheVersion()}:${this.currentMissionReadModelDbVersion()}:${this.currentBattleReportReadModelDbVersion()}:${this.productionQueueProjectionCacheVersion()}`;
   }
 
+  walletResponseCacheVersion(wallet: `0x${string}`): string {
+    // Overview includes fleet visibility, so retain the mission/report generations. Its queue
+    // projection is wallet-scoped: a due queue belonging to a different player must not force a
+    // cold rebuild of this wallet's response.
+    return `${this.indexedStateCacheVersion()}:${this.currentMissionReadModelDbVersion()}:${this.currentBattleReportReadModelDbVersion()}:${this.walletProductionQueueProjectionCacheVersion(wallet)}`;
+  }
+
   universeSystemSummaryVersion(galaxy: number, system: number): string {
     return [
       this.universeSystemFingerprint(galaxy, system, "planets", `
@@ -2971,6 +2985,56 @@ export class SettlementIndexer {
       validThroughSecond: nextReadyAt,
       value
     };
+    return value;
+  }
+
+  private walletProductionQueueProjectionCacheVersion(wallet: `0x${string}`, nowSec = nowSeconds()): string {
+    const normalizedWallet = wallet.toLowerCase();
+    const indexedStateVersion = this.indexedStateCacheVersion();
+    const cached = this.walletProductionQueueProjectionVersionCaches.get(normalizedWallet);
+    if (
+      cached
+      && cached.indexedStateVersion === indexedStateVersion
+      && (cached.validThroughSecond === null || nowSec < cached.validThroughSecond)
+    ) {
+      return cached.value;
+    }
+
+    const planetIds = this.settledPlanetsForOwner(wallet).map((planet) => planet.planetId);
+    const ownershipSql = planetIds.length > 0
+      ? "(owner = lower(?) OR planet_id IN (" + planetIds.map(() => "?").join(",") + "))"
+      : "owner = lower(?)";
+    const rows = this.db.query(`
+      SELECT queue_kind, planet_id, item_id, target_level, quantity, ready_at, started_at,
+        original_quantity, unit_work_seconds, production_rate,
+        metal_cost, crystal_cost, deuterium_cost, backlog_json
+      FROM contract_production_queues
+      WHERE ${ownershipSql}
+    `).all(wallet, ...planetIds) as QueueRow[];
+
+    let completed = 0;
+    let nextReadyAt: number | null = null;
+    for (const row of rows) {
+      const queue = this.productionQueueFromRow(row);
+      if (row.backlog_json) {
+        const backlog = parseEvent<QueueState[]>(row.backlog_json);
+        const sanitizedBacklog = this.sanitizedProductionBacklog(row.queue_kind, queue, Array.isArray(backlog) ? backlog : []);
+        if (sanitizedBacklog.length > 0) queue.backlog = sanitizedBacklog;
+      }
+      const settlement = settleQueueAsOfNow(queue, nowSec);
+      completed += settlement.completed.length;
+      const readyAt = Number(settlement.queue?.readyAt);
+      if (Number.isFinite(readyAt) && readyAt > nowSec) {
+        nextReadyAt = nextReadyAt === null ? readyAt : Math.min(nextReadyAt, readyAt);
+      }
+    }
+
+    const value = `wallet-pq:${completed}:${nextReadyAt ?? "none"}`;
+    this.walletProductionQueueProjectionVersionCaches.set(normalizedWallet, {
+      indexedStateVersion,
+      validThroughSecond: nextReadyAt,
+      value
+    });
     return value;
   }
 

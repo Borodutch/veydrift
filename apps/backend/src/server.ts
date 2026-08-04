@@ -2416,7 +2416,7 @@ function cacheableJsonRequestVersion(url: URL, indexer: SettlementIndexer): stri
   if (url.pathname.match(/^\/wallet\/[^/]+\/missile-attacks$/)) return indexer.responseCacheVersion();
   if (url.pathname === "/missions") return livePublicDataRequest(url) ? indexer.missionResponseCacheVersion() : "ttl";
   if (url.pathname.match(/^\/mission\/[^/]+$/)) return indexer.missionResponseCacheVersion();
-  if (cacheableWalletSnapshotPath(url.pathname)) return indexer.responseCacheVersion();
+  if (cacheableWalletSnapshotPath(url.pathname)) return indexer.walletResponseCacheVersion(walletAddressFromPath(url));
   if (url.pathname.match(/^\/universe\/galaxies\/[0-9]+\/systems\/[0-9]+$/)) {
     const parts = url.pathname.split("/");
     const galaxy = Number.parseInt(parts[3] ?? "", 10);
