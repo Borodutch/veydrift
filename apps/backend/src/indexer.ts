@@ -2060,6 +2060,7 @@ export class SettlementIndexer {
       page: number;
       pageSize: number;
       planetId?: string | null;
+      summaryOnly?: boolean;
     }
   ): {
     completedMissions: FleetMissionSummary[];
@@ -2097,6 +2098,9 @@ export class SettlementIndexer {
     const pageSize = Math.max(1, Math.min(100, Math.trunc(options.pageSize) || 25));
     const totalPages = Math.max(1, Math.ceil(totalEntries / pageSize));
     const page = Math.min(Math.max(1, Math.trunc(options.page) || 1), totalPages);
+    if (options.summaryOnly) {
+      return { completedMissions: [], page, totalEntries };
+    }
     const rows = this.db.query(`
       SELECT *
       FROM contract_fleet_missions INDEXED BY contract_fleet_missions_completed_archive_idx

@@ -4071,13 +4071,21 @@ export async function fetchGlobalActiveMissions(apiUrl: string): Promise<GlobalA
 
 export async function fetchGlobalMissionArchive(
   apiUrl: string,
-  options: { missionNumber?: string; missionType?: string; page?: number; pageSize?: number; planetId?: string } = {}
+  options: {
+    missionNumber?: string;
+    missionType?: string;
+    page?: number;
+    pageSize?: number;
+    planetId?: string;
+    summaryOnly?: boolean;
+  } = {}
 ): Promise<GlobalMissionArchiveResponse> {
   const params = new URLSearchParams();
   params.set("status", "completed");
   if (options.missionNumber) params.set("missionNumber", options.missionNumber);
   if (options.missionType) params.set("missionType", options.missionType);
   if (options.planetId) params.set("planetId", options.planetId);
+  if (options.summaryOnly) params.set("summaryOnly", "true");
   params.set("page", String(options.page ?? 1));
   params.set("pageSize", String(options.pageSize ?? 25));
   return fetchGameApiJson<GlobalMissionArchiveResponse>(

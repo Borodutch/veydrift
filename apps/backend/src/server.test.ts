@@ -2692,6 +2692,22 @@ describe("Veydrift backend", () => {
     });
     expect(body.rows).toHaveLength(1);
     expect(body.rows[0]).toMatchObject({ kind: "mission", mission: { status: "Returned" } });
+
+    const summaryResponse = await createRequestHandler({ config: configuredTestConfig, chainReader, indexer })(
+      new Request("http://localhost/missions?status=completed&page=1&pageSize=1&summaryOnly=true")
+    );
+    const summary = await summaryResponse.json();
+
+    expect(summaryResponse.status).toBe(200);
+    expect(summary.rows).toEqual([]);
+    expect(summary.pagination).toEqual({
+      page: 1,
+      pageSize: 1,
+      totalEntries: 26,
+      totalPages: 26,
+      hasPreviousPage: false,
+      hasNextPage: true
+    });
   });
 
   test("paginates a production-sized global completed mission archive before hydrating rows", async () => {

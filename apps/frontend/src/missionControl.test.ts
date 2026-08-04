@@ -177,9 +177,11 @@ describe("Mission Control battle reports", () => {
       const filters = { missionNumber: "147", missionType: "Harvest", page: 1, pageSize: 25, planetId: "9" };
       await fetchFleetMissionArchive("https://api.example.test/", wallet, filters);
       await fetchGlobalMissionArchive("https://api.example.test/", filters);
+      await fetchGlobalMissionArchive("https://api.example.test/", { ...filters, pageSize: 1, summaryOnly: true });
       expect(requestedUrls).toEqual([
         `https://api.example.test/wallet/${wallet}/missions?status=completed&missionNumber=147&missionType=Harvest&planetId=9&page=1&pageSize=25`,
         "https://api.example.test/missions?status=completed&missionNumber=147&missionType=Harvest&planetId=9&page=1&pageSize=25",
+        "https://api.example.test/missions?status=completed&missionNumber=147&missionType=Harvest&planetId=9&summaryOnly=true&page=1&pageSize=1",
       ]);
     } finally {
       globalThis.fetch = originalFetch;
@@ -824,6 +826,31 @@ describe("Mission Control battle reports", () => {
     expect(text).toContain("All (26)");
     // Server-side pagination range proves the 25-per-page split (26 rows -> first page shows 1-25).
     expect(text).toContain("1-25 of 26");
+  });
+
+  test("shows the eager universe archive total before the hidden All tab loads", () => {
+    const now = Date.parse("2026-08-04T05:00:00.000Z");
+    const tree = MissionControlPage({
+      ...missionControlProps(now, {}),
+      globalMissionArchiveTotalEntries: 12_881,
+      initialView: { activePage: 0, activeTab: "mine", pastPage: 0, pastTab: "mine" },
+    });
+    const text = collectText(tree).join(" ");
+    const allPanel = findElements(tree, "div").find((node) => node.props?.["data-past-tab-panel"] === "all");
+
+    expect(text).toContain("All (12881)");
+    expect(allPanel).toBeUndefined();
+  });
+
+  test("does not claim the hidden All archive has zero missions while its eager total loads", () => {
+    const tree = MissionControlPage({
+      ...missionControlProps(Date.parse("2026-08-04T05:00:00.000Z"), {}),
+      initialView: { activePage: 0, activeTab: "mine", pastPage: 0, pastTab: "mine" },
+    });
+    const allPastButton = findElements(tree, "button").find((node) => node.props?.["data-past-tab-button"] === "all");
+    const text = collectText(allPastButton).join(" ");
+
+    expect(text).toBe("All (…)");
   });
 
   test("filters Mission Control active and past rows by mission number and clears back to the full list", () => {

@@ -3622,6 +3622,7 @@ export function PlayableMvpApp({
   const [globalMissionArchivePage, setGlobalMissionArchivePage] = useState(1);
   const [globalMissionArchiveLoading, setGlobalMissionArchiveLoading] = useState(false);
   const [globalMissionArchiveError, setGlobalMissionArchiveError] = useState<string | undefined>();
+  const [globalMissionArchiveTotalEntries, setGlobalMissionArchiveTotalEntries] = useState<number | undefined>();
   const [missionPlanetArchetypesByCoordinateState, setMissionPlanetArchetypesByCoordinateState] = useState<Map<string, PlanetType>>(
     () => new Map()
   );
@@ -3774,6 +3775,7 @@ export function PlayableMvpApp({
   const incomingAttackArchiveRefreshGate = useRef(0);
   const allActiveMissionsRefreshGate = useRef(0);
   const globalMissionArchiveRefreshGate = useRef(0);
+  const globalMissionArchiveSummaryRefreshGate = useRef(0);
   const planetSwitchGate = useRef(0);
   const latestOnChainResourceSnapshot = useRef<ResourceSnapshotFreshness>({ planetId: null, lastSettledAt: null });
   const latestInfrastructureResourceSnapshot = useRef<ResourceSnapshotFreshness>({ planetId: null, lastSettledAt: null });
@@ -5077,6 +5079,7 @@ export function PlayableMvpApp({
       });
       if (!canApplyRefreshRequest(globalMissionArchiveRefreshGate, requestId)) return;
       setGlobalMissionArchive(nextArchive);
+      setGlobalMissionArchiveTotalEntries(nextArchive.pagination.totalEntries);
       setGlobalMissionArchivePage(nextArchive.pagination.page);
     } catch (error) {
       if (!canApplyRefreshRequest(globalMissionArchiveRefreshGate, requestId)) return;
@@ -5094,13 +5097,38 @@ export function PlayableMvpApp({
     }
   }, [activePlanetId, apiBaseUrl, normalizedMissionFilters.missionNumber, normalizedMissionFilters.missionType, normalizedMissionFilters.planetId, setGlobalMissionArchive]);
 
+  const loadGlobalMissionArchiveSummary = useCallback(async () => {
+    const requestId = beginRefreshRequest(globalMissionArchiveSummaryRefreshGate);
+    if (!apiBaseUrl) {
+      setGlobalMissionArchiveTotalEntries(undefined);
+      return;
+    }
+
+    try {
+      const summary = await fetchGlobalMissionArchive(apiBaseUrl, {
+        missionNumber: normalizedMissionFilters.missionNumber,
+        missionType: normalizedMissionFilters.missionType,
+        page: 1,
+        pageSize: 1,
+        planetId: normalizedMissionFilters.planetId,
+        summaryOnly: true,
+      });
+      if (!canApplyRefreshRequest(globalMissionArchiveSummaryRefreshGate, requestId)) return;
+      setGlobalMissionArchiveTotalEntries(summary.pagination.totalEntries);
+    } catch (error) {
+      if (!canApplyRefreshRequest(globalMissionArchiveSummaryRefreshGate, requestId)) return;
+      console.error("Universe mission archive total could not be loaded.", error);
+    }
+  }, [apiBaseUrl, normalizedMissionFilters.missionNumber, normalizedMissionFilters.missionType, normalizedMissionFilters.planetId]);
+
   useEffect(() => {
     if (page !== "mission-control") return;
     // The default visible scope. These are wallet-sized reads and make the initial screen useful
     // without waiting for the two universe/incoming archives behind hidden tabs.
     void loadMissionArchive(1);
     void loadMissileAttackArchive();
-  }, [account, apiBaseUrl, loadMissionArchive, loadMissileAttackArchive, page]);
+    void loadGlobalMissionArchiveSummary();
+  }, [account, apiBaseUrl, loadGlobalMissionArchiveSummary, loadMissionArchive, loadMissileAttackArchive, page]);
 
   useEffect(() => {
     if (page !== "mission-control") return;
@@ -5161,9 +5189,10 @@ export function PlayableMvpApp({
     // Incoming tab remains live; switching tabs starts its own load through the tab callback.
     if (view.activeTab === "all") refreshes.push(loadAllActiveMissions());
     if (view.pastTab === "all") refreshes.push(loadGlobalMissionArchive(globalMissionArchivePage));
+    else refreshes.push(loadGlobalMissionArchiveSummary());
     if (view.pastTab === "incomingAttacks") refreshes.push(loadIncomingAttackArchive(incomingAttackArchivePage));
     await Promise.allSettled(refreshes);
-  }, [globalMissionArchivePage, incomingAttackArchivePage, loadAllActiveMissions, loadGlobalMissionArchive, loadIncomingAttackArchive, loadMissionArchive, loadMissileAttackArchive, missionArchivePage, refreshAllianceState, refreshOnChainState]);
+  }, [globalMissionArchivePage, incomingAttackArchivePage, loadAllActiveMissions, loadGlobalMissionArchive, loadGlobalMissionArchiveSummary, loadIncomingAttackArchive, loadMissionArchive, loadMissileAttackArchive, missionArchivePage, refreshAllianceState, refreshOnChainState]);
 
   const refreshFinishedBuildingState = useCallback(async (expectation: FinishedBuildingExpectation): Promise<boolean> => {
     const planetSwitchRequestId = planetSwitchGate.current;
@@ -9030,6 +9059,7 @@ export function PlayableMvpApp({
           globalMissionArchive={globalMissionArchive}
           globalMissionArchiveError={globalMissionArchiveSection.status.error ?? globalMissionArchiveError}
           globalMissionArchiveLoading={globalMissionArchiveLoading || globalMissionArchiveSection.status.loading}
+          globalMissionArchiveTotalEntries={globalMissionArchiveTotalEntries}
           incomingAttackArchive={incomingAttackArchive}
           incomingAttackArchiveError={incomingAttackArchiveError}
           incomingAttackArchiveLoading={incomingAttackArchiveLoading}
