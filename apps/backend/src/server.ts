@@ -45,6 +45,7 @@ import {
 } from "./evm";
 import { highscoreCategories, highscoreFormula, type HighscoreEntry, type ScoreBreakdown } from "./highscores";
 import {
+  indexedManagedPlanet,
   SettlementIndexer,
   type IndexedDebrisFieldEvent,
   type IndexedDebrisTarget,
@@ -3042,10 +3043,31 @@ function indexedWalletPlanets(
   indexer: SettlementIndexer,
   wallet: `0x${string}`
 ): ReturnType<SettlementIndexer["walletPlanets"]> {
-  const response = indexer.walletPlanets(wallet);
+  const settlement = indexer.walletSettlement(wallet);
   return {
-    ...response,
-    planets: response.planets.map((planet) => indexedWalletPlanetState(indexer, planet))
+    wallet,
+    homePlanetId: settlement.homePlanetId,
+    queues: {
+      research: indexer.researchQueue(wallet)
+    },
+    // `walletPlanets()` is a complete standalone indexer view, including a moon summary for each
+    // planet. This response immediately enriches every planet with the same moon/tactical state,
+    // so using that full view here performed two all-planet passes on each cold overview/roster
+    // read. Build the managed planet shell once and let indexedWalletPlanetState hydrate details.
+    planets: indexer.settledPlanetsForOwner(wallet).map((planet) => {
+      const buildings = indexer.infrastructureRows(planet.planetId);
+      const managed = indexedManagedPlanet(
+        planet,
+        settlement.homePlanetId,
+        buildings,
+        {
+          building: indexer.planetQueue(planet.planetId, "building"),
+          defense: indexer.planetQueue(planet.planetId, "defense"),
+          ship: indexer.planetQueue(planet.planetId, "ship")
+        }
+      );
+      return indexedWalletPlanetState(indexer, managed, buildings);
+    })
   };
 }
 
@@ -3113,8 +3135,11 @@ function watchedPlanetPayload(
   };
 }
 
-function indexedWalletPlanetState(indexer: SettlementIndexer, planet: ManagedPlanet): ManagedPlanet {
-  const buildings = indexer.infrastructureRows(planet.planetId);
+function indexedWalletPlanetState(
+  indexer: SettlementIndexer,
+  planet: ManagedPlanet,
+  buildings: InfrastructureState["buildings"] = indexer.infrastructureRows(planet.planetId)
+): ManagedPlanet {
   const ships = indexer.shipRows(planet.planetId);
   const defenses = indexer.defenseRows(planet.planetId);
   const technologyLevels = indexer.technologyLevels(planet.owner);
