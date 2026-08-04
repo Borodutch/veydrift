@@ -61,10 +61,17 @@ describe("Moon page helpers", () => {
     const text = visibleText(page);
     const systemsPanel = componentNodes(page).find((node) => typeof node.type === "function" && node.type.name === "MoonSystemsPanel");
 
-    expect(text).toContain("Refreshing moon state");
+    expect(text).not.toContain("Refreshing moon state");
     expect(systemsPanel?.props?.moon?.fields).toBe(3);
     expect(systemsPanel?.props?.moonState?.buildings?.[0]?.label).toBe("Lunar Base");
     expect(text).not.toContain("No moon in orbit");
+  });
+
+  test("uses the Moon skeleton before the first state response", () => {
+    const text = visibleText(MoonPage({ loading: true, moonState: null }));
+
+    expect(text).not.toContain("No moon in orbit");
+    expect(text).not.toContain("Burning Chickens");
   });
 
   test("renders moon-owned resources and units instead of parent planet state", () => {
@@ -130,7 +137,9 @@ describe("Moon page helpers", () => {
     expect(moonPageSource).not.toContain("Stationed Units");
     expect(moonPageSource).not.toContain("<h3 className=\"text-sm font-semibold text-white\">Moon Units</h3>");
     expect(moonPageSource).not.toContain("Created {formatMoonReadyAt(moon.createdAt)}");
-    expect(moonPageSource).toContain("Moon orbiting {moonOrbitParentLabel(parentPlanetLabel, moon.planetId)}");
+    expect(moonPageSource).toContain("Orbiting {moonOrbitParentLabel(parentPlanetLabel, moon.planetId)}");
+    expect(moonPageSource).toContain("<MoonResourceBar rows={moonResourceRows(moonState)} />");
+    expect(moonPageSource).not.toContain("radial-gradient");
   });
 
   test("renders selected moon primary actions with clear unavailable states", () => {
@@ -162,9 +171,9 @@ describe("Moon page helpers", () => {
 
   test("omits the redundant page title and section helper copy", () => {
     expect(moonPageSource).not.toContain("<PageHeader");
-    expect(moonPageSource).toContain('<h3 className="text-base font-semibold text-white">Moon Structures</h3>');
-    expect(moonPageSource).toContain('title="Moon Shipyard"');
-    expect(moonPageSource).toContain('title="Moon Defenses"');
+    expect(moonPageSource).toContain('<h3 className="text-base font-semibold text-white">Structures</h3>');
+    expect(moonPageSource).toContain('title="Stationed fleet"');
+    expect(moonPageSource).toContain('title="Defenses"');
     expect(moonPageSource).not.toContain("Lunar Base expands fields. Jump Gate supports fleet movement between owned moons.");
     expect(moonPageSource).not.toContain("Enter a Chicken ID to burn it on Base mainnet");
     expect(moonPageSource).not.toContain("Burn a verified Chicken to grant a moon to this planet");
@@ -411,11 +420,11 @@ describe("Moon page helpers", () => {
     expect(moonPageSource).toContain("MoonStructuresSection");
     expect(moonPageSource).toContain("MoonShipyardSection");
     expect(moonPageSource).toContain("MoonDefenseSection");
-    expect(moonPageSource).toContain("Moon Structures");
-    expect(moonPageSource).toContain("Moon Shipyard");
-    expect(moonPageSource).toContain("Moon Defenses");
+    expect(moonPageSource).toContain("Structures");
+    expect(moonPageSource).toContain("Stationed fleet");
+    expect(moonPageSource).toContain("Defenses");
     expect(moonPageSource).not.toContain("Moon Shipyard and Defenses");
-    expect(moonPageSource).toContain('sizes="(min-width: 1280px) 38vw, (min-width: 768px) 46vw, 100vw"');
+    expect(moonPageSource).toContain('sizes="(min-width: 1024px) 288px, 100vw"');
     expect(moonPageSource).toContain("lunar-base.webp");
     expect(moonPageSource).toContain("jump-gate.webp");
   });
@@ -622,6 +631,7 @@ describe("Moon page helpers", () => {
     });
     const robotics = moonState.buildings[1]!;
     const shipyard = moonState.buildings[2]!;
+    const lunarBaseRows = moonStructureLevelInfoRows(moonState.buildings[0]!, moonState.moon!, moonState);
     const roboticsRows = moonStructureLevelInfoRows(robotics, moonState.moon!, moonState);
     const shipyardRows = moonStructureLevelInfoRows(shipyard, moonState.moon!, moonState);
     const roboticsModal = MoonStructureLevelInfoModal({
@@ -641,11 +651,14 @@ describe("Moon page helpers", () => {
 
     expect(visibleText(roboticsModal)).toContain("Robotics Factory levels");
     expect(visibleText(roboticsModal)).toContain("Metal 800, Crystal 240, Deuterium 400");
-    expect(visibleText(roboticsModal)).toContain("Moon structure build divisor x2");
+    expect(lunarBaseRows).toHaveLength(50);
+    expect(roboticsRows).toHaveLength(50);
+    expect(shipyardRows).toHaveLength(50);
+    expect(visibleText(roboticsModal)).toContain("Construction speed x2");
     expect(visibleText(shipyardModal)).toContain("Shipyard levels");
     expect(visibleText(shipyardModal)).not.toContain("Requirements");
     expect(visibleText(shipyardModal)).not.toContain("Robotics Factory level 2");
-    expect(visibleText(shipyardModal)).toContain("Moon defense build divisor x2");
+    expect(visibleText(shipyardModal)).toContain("Defense production speed x2");
   });
 
   test("omits Lunar Base requirements and portals the shared popup above detail cards", () => {
@@ -817,6 +830,12 @@ describe("Moon page helpers", () => {
       moonState,
       quantities: { rocketLauncher: "3" },
     })[0]!;
+    const moonDefenseCatalog = moonDefenseProductionItems({
+      actionPending: false,
+      canTransact: true,
+      moonState,
+      quantities: {},
+    });
     const planetShip = shipProductionItems({
       actionPending: false,
       canTransact: true,
@@ -874,6 +893,13 @@ describe("Moon page helpers", () => {
       cost: { metal: 6_000, crystal: 6_000, deuterium: 0 },
       unitCost: { metal: 2_000, crystal: 2_000, deuterium: 0 },
     });
+    expect(moonDefenseCatalog.some((item) => item.group === "missile")).toBe(false);
+    expect(moonDefense.requirements).toContainEqual({
+      label: "Shipyard 1",
+      met: true,
+      target: { kind: "building", key: "shipyard" },
+    });
+    expect(moonPageSource).toContain('document.getElementById("moon-structure-detail")');
   });
 
   test("falls back from stale zero Moon costs and applies shared affordability", () => {

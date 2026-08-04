@@ -66,6 +66,7 @@ export type ProductionCatalogItem<Key extends string = string> = {
   detailNote: string;
   detailLayout?: "sections" | "inline" | undefined;
   detailSections?: ProductionDetailSection[] | undefined;
+  readOnly?: boolean | undefined;
   notes?: string[] | undefined;
   thumbnailStyle?: Record<string, string> | undefined;
 };
@@ -219,6 +220,14 @@ export function ProductionCatalog<Key extends string>({
 }: ProductionCatalogProps<Key>) {
   const selected = selectedProductionItem(items, selectedKey);
   const groups = Array.from(new Map(items.map((item) => [item.group, item.groupLabel])).entries());
+
+  if (items.length === 0) {
+    return (
+      <div className="rounded border border-white/10 bg-[#101624] px-4 py-3 text-sm text-slate-400">
+        {emptyLabel}
+      </div>
+    );
+  }
 
   return (
     <div className="grid gap-4">
@@ -439,13 +448,15 @@ function SelectedProductionPanel<Key extends string>({
         </div>
       ) : null}
 
-      <ProductionRequirementFlairs
-        missing={item.missing}
-        onOpenRequirement={onOpenRequirement}
-        requirements={item.requirements}
-      />
+      {!item.readOnly ? (
+        <ProductionRequirementFlairs
+          missing={item.missing}
+          onOpenRequirement={onOpenRequirement}
+          requirements={item.requirements}
+        />
+      ) : null}
 
-      <div className="grid gap-2">
+      {!item.readOnly ? <div className="grid gap-2">
         <div className="flex flex-wrap items-center gap-2">
           <div className="grid grid-cols-[2.75rem_auto_2.75rem] items-center gap-1 sm:grid-cols-[2rem_auto_2rem]">
             <button
@@ -519,7 +530,7 @@ function SelectedProductionPanel<Key extends string>({
             {quantityInvalid ? productionQuantityValidationMessage : item.blockedReason}
           </p>
         ) : null}
-      </div>
+      </div> : null}
     </aside>
   );
 }

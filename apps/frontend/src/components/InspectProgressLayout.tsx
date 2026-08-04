@@ -94,7 +94,7 @@ export function InspectCatalogTile({
   labelTone?: "normal" | "muted" | undefined;
   label: string;
   onClick: () => void;
-  statusText: string;
+  statusText?: string | undefined;
   statusTone?: "accent" | "warning" | undefined;
 }) {
   const accentClass = statusTone === "warning" ? "text-amber-300" : "text-signal";
@@ -126,7 +126,7 @@ export function InspectCatalogTile({
           <span className={isDimmed ? "text-slate-500" : "text-slate-300"}>
             {currentText}
           </span>
-          <span className={`truncate text-right ${accentClass}`}>{statusText}</span>
+          {statusText ? <span className={`truncate text-right ${accentClass}`}>{statusText}</span> : null}
         </span>
       </span>
     </button>

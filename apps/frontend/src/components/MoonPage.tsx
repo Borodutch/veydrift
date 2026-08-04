@@ -5,7 +5,7 @@ import type { Resources } from "../playableMvp";
 import type { MissionShips } from "../galaxyActions";
 import type { ChainMoonState } from "../walletFlow";
 import type { PlanetType } from "../types";
-import { formatCost } from "../buildingDetails";
+import { formatCost, MAX_BUILDING_LEVEL } from "../buildingDetails";
 import { formatDuration } from "../durationFormat";
 import { buildingCatalog, buildingDurationEstimate, canAfford, defenseCatalog, shipCatalog, shipyardCatalog } from "../playableMvp";
 import type { DefenseKey, ShipKey } from "../playableMvp";
@@ -15,7 +15,6 @@ import {
   InspectInfoBlock,
 } from "./InspectProgressLayout";
 import { ActionReasonNote } from "./ActionReasonNote";
-import { InlineSyncIndicator } from "./VeydriftLoader";
 import { MoonSkeleton } from "./LoadingSkeletons";
 import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailableNotice";
 import { MoonImage } from "./PlanetMoonIndicator";
@@ -32,6 +31,7 @@ import {
 import { defenseProductionItems } from "./DefensePage";
 import { RequirementFlairs, type RequirementFlair, type RequirementTarget } from "./RequirementFlairs";
 import { LevelInfoModal, type LevelInfoColumn } from "./LevelInfoModal";
+import { QueueProgressPanel } from "./QueueProgressPanel";
 import { StructureCatalog, StructureDetail, type StructureLevelInfo } from "./StructureCatalog";
 
 const burningChickensOpenSeaCollectionUrl = "https://opensea.io/collection/chickens-by-eggs";
@@ -49,6 +49,7 @@ interface MoonPageProps {
   moonState?: ChainMoonState | null | undefined;
   onBurnChicken?: ((tokenId: string) => void) | undefined;
   onJumpGate?: ((destinationPlanetId: string, ships?: Partial<MissionShips>) => void) | undefined;
+  onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
   onRefresh?: (() => void) | undefined;
   onStartBuilding?: ((buildingId: number, label: string) => void) | undefined;
   onStartDefense?: ((defenseId: number, label: string, quantity: number) => void) | undefined;
@@ -75,6 +76,7 @@ export function MoonPage({
   moonState,
   onBurnChicken,
   onJumpGate,
+  onOpenRequirement,
   onStartBuilding,
   onStartDefense,
   parentPlanetLabel,
@@ -87,7 +89,7 @@ export function MoonPage({
   const moonUnavailable = moonState?.moonAvailable === false;
   return (
     <div className="grid gap-4">
-      {!hasMoon ? (
+      {!loading && !hasMoon ? (
         <ChickenBurnPanel
           action={action}
           burningChicken={burningChicken}
@@ -100,9 +102,7 @@ export function MoonPage({
 
       {hasMoon && moon ? (
         <>
-          {loading ? (
-            <InlineSyncIndicator label="Refreshing moon state" />
-          ) : error ? (
+          {error ? (
             isGameUnavailableMessage(error) ? <GameUnavailableNotice /> : <MoonStatusPanel title="Moon state refresh failed" body={error} tone="warning" />
           ) : null}
           <MoonSystemsPanel
@@ -112,6 +112,7 @@ export function MoonPage({
             moonActions={moonActions}
             moonState={moonState}
             onJumpGate={onJumpGate}
+            onOpenRequirement={onOpenRequirement}
             onStartBuilding={onStartBuilding}
             onStartDefense={onStartDefense}
             parentPlanetLabel={parentPlanetLabel}
@@ -319,6 +320,7 @@ function MoonSystemsPanel({
   moonActions,
   moonState,
   onJumpGate,
+  onOpenRequirement,
   onStartBuilding,
   onStartDefense,
   parentPlanetLabel,
@@ -331,6 +333,7 @@ function MoonSystemsPanel({
   moonActions?: MoonOverviewAction[] | undefined;
   moonState?: ChainMoonState | null | undefined;
   onJumpGate?: MoonPageProps["onJumpGate"];
+  onOpenRequirement?: MoonPageProps["onOpenRequirement"];
   onStartBuilding?: MoonPageProps["onStartBuilding"];
   onStartDefense?: MoonPageProps["onStartDefense"];
   parentPlanetLabel?: string | undefined;
@@ -350,45 +353,61 @@ function MoonSystemsPanel({
   const [selectedBuildingKey, setSelectedBuildingKey] = useState<MoonBuilding["key"]>("lunarBase");
   const [selectedShipKey, setSelectedShipKey] = useState<ShipKey>("smallCargo");
   const [selectedDefenseKey, setSelectedDefenseKey] = useState<DefenseKey>("rocketLauncher");
+  const openMoonRequirement = (target: RequirementTarget) => {
+    if (target.kind === "building" && target.key === "shipyard") {
+      setSelectedBuildingKey("shipyard");
+      if (typeof window !== "undefined") {
+        window.setTimeout(() => document.getElementById("moon-structure-detail")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
+      }
+      return;
+    }
+    onOpenRequirement?.(target);
+  };
 
   return (
     <div className="grid gap-4">
+      <MoonResourceBar rows={moonResourceRows(moonState)} />
+
       <section className="overflow-hidden rounded-md border border-white/10 bg-[#101624]">
-        <div className="grid lg:grid-cols-[minmax(220px,0.8fr)_minmax(0,1.2fr)]">
-          <div className="relative min-h-56 overflow-hidden bg-black/40">
+        <div className="grid lg:grid-cols-[18rem_minmax(0,1fr)]">
+          <div className="relative aspect-[16/9] overflow-hidden bg-black/25 lg:aspect-auto lg:h-60">
             <MoonImage
               className="absolute inset-0 h-full w-full object-cover"
               height={1254}
               loading="eager"
               planetType={parentPlanetType}
-              sizes="(min-width: 1280px) 38vw, (min-width: 768px) 46vw, 100vw"
+              sizes="(min-width: 1024px) 288px, 100vw"
               width={1254}
             />
-            <div className="absolute inset-0 bg-[radial-gradient(circle_at_45%_25%,transparent,rgba(5,7,13,0.18)_42%,rgba(5,7,13,0.86)_100%)]" />
-            <div className="absolute bottom-3 left-3 max-w-[calc(100%-1.5rem)] truncate rounded border border-cyan-200/25 bg-black/55 px-2 py-1 text-xs font-semibold text-cyan-100">
-              Moon orbiting {moonOrbitParentLabel(parentPlanetLabel, moon.planetId)}
-            </div>
           </div>
-          <div className="grid gap-4 p-4">
-            <div className="grid gap-2 sm:grid-cols-2">
-              <MoonMetric icon={Orbit} label="Diameter" value={moon.diameterKm.toLocaleString() + " km"} />
-              <MoonMetric icon={Orbit} label="Fields" value={`${fieldSummary.used} / ${fieldSummary.capacity}`} />
-            </div>
-            <MoonActionStrip actions={moonActions} />
-            <div>
-              <h3 className="text-base font-semibold text-white">Resources</h3>
-              <div className="mt-2 flex flex-wrap gap-2">
-                {moonResourceRows(moonState).map((resource) => (
-                  <div className="min-w-24 rounded border border-white/10 bg-black/15 px-2.5 py-1.5" key={resource.label}>
-                    <div className="text-[10px] font-semibold uppercase tracking-normal text-cyan-200/80">{resource.label}</div>
-                    <div className="text-sm font-semibold text-slate-100">{resource.value}</div>
-                  </div>
-                ))}
+          <div className="flex min-w-0 flex-col justify-center p-4 lg:p-5" data-celestial-summary>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0">
+                <h2 className="text-2xl font-semibold text-white sm:text-3xl">Moon</h2>
+                <p className="mt-1 truncate text-sm text-slate-400">
+                  Orbiting {moonOrbitParentLabel(parentPlanetLabel, moon.planetId)}
+                </p>
               </div>
+              <MoonActionStrip actions={moonActions} />
             </div>
+
+            <div className="mt-4 flex flex-wrap gap-2">
+              <MoonSummaryPill icon={Orbit} label="Diameter" value={`${moon.diameterKm.toLocaleString()} km`} />
+              <MoonSummaryPill label="Fields" value={`${fieldSummary.used}/${fieldSummary.capacity}`} />
+            </div>
+
+            {moonStructureFieldHint(fieldSummary) ? (
+              <p className="mt-3 text-xs text-slate-500">{moonStructureFieldHint(fieldSummary)}</p>
+            ) : null}
           </div>
         </div>
       </section>
+
+      <MoonShipyardSection
+        moonState={moonState}
+        onSelectShip={setSelectedShipKey}
+        selectedShipKey={selectedShipKey}
+      />
 
       <MoonStructuresSection
         action={action}
@@ -402,16 +421,11 @@ function MoonSystemsPanel({
         transactionUnavailableReason={transactionUnavailableReason}
       />
 
-      <MoonShipyardSection
-        moonState={moonState}
-        onSelectShip={setSelectedShipKey}
-        selectedShipKey={selectedShipKey}
-      />
-
       <MoonDefenseSection
         actionPending={pending}
         canTransact={Boolean(canTransact)}
         moonState={moonState}
+        onOpenRequirement={openMoonRequirement}
         onSelectDefense={setSelectedDefenseKey}
         onStartDefense={onStartDefense}
         selectedDefenseKey={selectedDefenseKey}
@@ -455,33 +469,68 @@ function MoonSystemsPanel({
   );
 }
 
-export function MoonActionStrip({ actions }: { actions?: MoonOverviewAction[] | undefined }) {
-  if (!actions?.length) return null;
+function MoonSummaryPill({
+  icon: Icon,
+  label,
+  value,
+}: {
+  icon?: LucideIcon | undefined;
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="inline-flex min-w-0 items-center gap-2 whitespace-nowrap rounded border border-white/10 bg-black/15 px-3 py-2 text-sm">
+      {Icon ? <Icon aria-hidden="true" className="shrink-0 text-cyan-200" size={15} strokeWidth={1.8} /> : null}
+      <span className="text-slate-400">{label}</span>
+      <span className="font-semibold tabular-nums text-slate-100">{value}</span>
+    </div>
+  );
+}
 
-  const blockedReason = actions.find((action) => action.disabledReason)?.disabledReason;
+function MoonResourceBar({ rows }: { rows: Array<{ label: string; value: string }> }) {
+  const tones: Record<string, string> = {
+    Metal: "text-amber-300",
+    Crystal: "text-cyan-300",
+    Deuterium: "text-emerald-300",
+  };
+  return (
+    <dl className="flex min-h-10 flex-wrap items-center gap-x-5 gap-y-2 rounded-md border border-white/10 bg-[#0b111d] px-3 py-2">
+      {rows.map((row) => (
+        <div className="inline-flex items-baseline gap-2 whitespace-nowrap text-sm" key={row.label}>
+          <dt className={`font-semibold ${tones[row.label] ?? "text-slate-300"}`}>{row.label}</dt>
+          <dd className="font-medium tabular-nums text-slate-100">{row.value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+function moonStructureFieldHint(fieldSummary: { capacity: number; used: number; open: number }): string | undefined {
+  if (fieldSummary.open > 0) return undefined;
+  return "Build or upgrade the Lunar Base to open more structure fields.";
+}
+
+export function MoonActionStrip({ actions }: { actions?: MoonOverviewAction[] | undefined }) {
+  const availableActions = actions?.filter((action) => action.kind !== "inspect" && action.onClick && !action.disabledReason) ?? [];
+  if (availableActions.length === 0) return null;
 
   return (
-    <div className="grid gap-2">
-      <div aria-label="Moon actions" className="flex flex-wrap gap-2">
-        {actions.map((action) => {
+    <div aria-label="Moon actions" className="flex flex-wrap gap-2">
+        {availableActions.map((action) => {
           const Icon = moonActionIcon(action.kind);
-          const disabled = Boolean(action.disabledReason || !action.onClick);
           return (
             <button
-              aria-label={action.disabledReason ? `${action.label}: ${action.disabledReason}` : action.label}
-              className="inline-flex h-11 w-11 items-center justify-center rounded border border-cyan-200/20 bg-cyan-200/10 text-cyan-100 transition hover:border-cyan-200/40 hover:bg-cyan-200/15 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/[0.03] disabled:text-slate-500 xl:h-10 xl:w-10"
-              disabled={disabled}
+              aria-label={action.label}
+              className="inline-flex h-11 w-11 items-center justify-center rounded border border-cyan-200/20 bg-cyan-200/10 text-cyan-100 transition hover:border-cyan-200/40 hover:bg-cyan-200/15 xl:h-10 xl:w-10"
               key={action.kind}
               onClick={action.onClick}
-              title={action.disabledReason ? `${action.label}: ${action.disabledReason}` : action.label}
+              title={action.label}
               type="button"
             >
               <Icon aria-hidden="true" size={15} strokeWidth={1.9} />
             </button>
           );
         })}
-      </div>
-      <ActionReasonNote reason={blockedReason} />
     </div>
   );
 }
@@ -518,18 +567,24 @@ function MoonStructuresSection({
   const buildings = moonState?.buildings ?? [];
   const selectedBuilding = buildings.find((building) => building.key === selectedBuildingKey)
     ?? buildings[0];
+  const constructionQueue = moonState?.queue?.active ? moonState.queue : undefined;
+  const constructionLabel = constructionQueue
+    ? `${moonBuildingLabel(constructionQueue.itemId)}${constructionQueue.targetLevel ? ` Level ${constructionQueue.targetLevel}` : ""}`
+    : undefined;
   return (
-    <section className="grid gap-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="min-w-0">
-          <h3 className="text-base font-semibold text-white">Moon Structures</h3>
-        </div>
-      </div>
+    <section className="grid gap-3" id="moon-structures">
+      <h3 className="text-base font-semibold text-white">Structures</h3>
 
-      {!canTransact && transactionUnavailableReason ? (
-        <p className="rounded border border-cyan-300/20 bg-cyan-300/10 px-2 py-1.5 text-xs text-cyan-100">
-          {transactionUnavailableReason}
-        </p>
+      {constructionQueue && constructionLabel ? (
+        <QueueProgressPanel
+          asset={moonBuildingAssetForId(constructionQueue.itemId)}
+          itemText={constructionLabel}
+          label={constructionLabel}
+          readyAt={constructionQueue.readyAt}
+          startedAt={constructionQueue.startedAt}
+          title="Construction"
+          tone="amber"
+        />
       ) : null}
 
       {buildings.length > 0 ? (
@@ -555,21 +610,23 @@ function MoonStructuresSection({
           onSelect={onSelectBuilding}
           selectedKey={selectedBuilding?.key}
           detail={(selectBuilding) => selectedBuilding ? (
-            <MoonStructureDetailPanel
-              action={action}
-              building={selectedBuilding}
-              canTransact={canTransact}
-              moon={moon}
-              moonState={moonState}
-              onOpenRequirement={(target) => {
-                if (target.kind === "moonStructure" && isMoonBuildingKey(target.key, buildings)) {
-                  selectBuilding(target.key);
-                }
-              }}
-              onStartBuilding={onStartBuilding}
-              pending={pending}
-              transactionUnavailableReason={transactionUnavailableReason}
-            />
+            <div id="moon-structure-detail">
+              <MoonStructureDetailPanel
+                action={action}
+                building={selectedBuilding}
+                canTransact={canTransact}
+                moon={moon}
+                moonState={moonState}
+                onOpenRequirement={(target) => {
+                  if (target.kind === "moonStructure" && isMoonBuildingKey(target.key, buildings)) {
+                    selectBuilding(target.key);
+                  }
+                }}
+                onStartBuilding={onStartBuilding}
+                pending={pending}
+                transactionUnavailableReason={transactionUnavailableReason}
+              />
+            </div>
           ) : null}
         />
       ) : (
@@ -611,8 +668,6 @@ function MoonStructureDetailPanel({
   const currentEffect = moonStructureLevelEffect(building.key, building.level);
   const nextEffect = moonStructureLevelEffect(building.key, building.level + 1);
   const levelInfoRows = moonStructureLevelInfoRows(building, moon, moonState);
-  const visibleQueue = moonState?.queue;
-  const queueProgress = moonStructureQueueProgress(visibleQueue);
   const levelInfo = moonStructureHasLevelInfo(building.key)
     ? moonStructureLevelInfoTable(building.key, building.level, levelInfoRows)
     : undefined;
@@ -649,13 +704,7 @@ function MoonStructureDetailPanel({
       label={building.label}
       levelInfo={levelInfo}
       notice={action?.status === "error" && action.label ? { label: action.label, tone: "error" } : undefined}
-      queue={visibleQueue?.active && queueProgress ? {
-        isPrimaryItem: visibleQueue.itemId === building.id,
-        label: `${moonBuildingLabel(visibleQueue.itemId)} ${visibleQueue.targetLevel ? `L${visibleQueue.targetLevel}` : ""} is upgrading.`,
-        now: Date.now(),
-        queue: queueProgress,
-        title: { active: "Construction in progress", context: "Active Moon construction" },
-      } : undefined}
+      statusReason={{ disabled: status.disabled, label: status.reason }}
       summary={moonStructureLevelSummary(building, status.targetLevel)}
     />
   );
@@ -754,16 +803,16 @@ function MoonShipyardSection({
   selectedShipKey: ShipKey;
 }) {
   return (
-      <ProductionSection
-        actionPending={false}
-        canTransact={false}
-        emptyLabel="No moon ships are available yet."
-        items={(quantities) => moonShipProductionItems({ moonState, quantities })}
-        onBuild={() => undefined}
-        onSelect={onSelectShip}
-        selectedKey={selectedShipKey}
-        title="Moon Shipyard"
-      />
+    <ProductionSection
+      actionPending={false}
+      canTransact={false}
+      emptyLabel="No ships are stationed on this moon."
+      items={(quantities) => moonShipProductionItems({ moonState, quantities })}
+      onBuild={() => undefined}
+      onSelect={onSelectShip}
+      selectedKey={selectedShipKey}
+      title="Stationed fleet"
+    />
   );
 }
 
@@ -771,6 +820,7 @@ function MoonDefenseSection({
   actionPending,
   canTransact,
   moonState,
+  onOpenRequirement,
   onSelectDefense,
   onStartDefense,
   selectedDefenseKey,
@@ -779,6 +829,7 @@ function MoonDefenseSection({
   actionPending: boolean;
   canTransact: boolean;
   moonState?: ChainMoonState | null | undefined;
+  onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
   onSelectDefense: (key: DefenseKey) => void;
   onStartDefense?: MoonPageProps["onStartDefense"];
   selectedDefenseKey: DefenseKey;
@@ -797,10 +848,12 @@ function MoonDefenseSection({
         transactionUnavailableReason,
       })}
       onBuild={(item) => onStartDefense?.(item.id, item.label, item.quantity)}
+      onOpenRequirement={onOpenRequirement}
       onSelect={onSelectDefense}
       queue={productionQueueViewModel(moonState?.defenseQueue, defenseCatalog)}
+      queueTone="rose"
       selectedKey={selectedDefenseKey}
-      title="Moon Defenses"
+      title="Defenses"
     />
   );
 }
@@ -824,7 +877,7 @@ export function moonShipProductionItems({
   const moonShips = moonState?.ships ?? moonState?.fleet ?? [];
 
   const resources = toResources(moonState?.resourcesAsOfNow ?? moonState?.resources);
-  return adaptProductionItems(shipyardCatalog, quantities, (ship, { quantity, quantityValid }) => {
+  return adaptProductionItems<ShipKey, (typeof shipyardCatalog)[number]>(shipyardCatalog, quantities, (ship, { quantity, quantityValid }) => {
     const chainShip = moonShips.find((item) => item.id === ship.id);
     const count = chainShip?.count ?? 0;
     const unitCost = toResources(chainShip?.cost);
@@ -848,11 +901,12 @@ export function moonShipProductionItems({
       groupLabel: moonShipGroupLabel(ship.group),
       labelTone: count > 0 ? "normal" : "muted",
       missing: [],
+      readOnly: true,
       requirements: [],
       status: count > 0 ? "ready" : "unavailable",
       statusLabel: count > 0 ? "Stationed" : undefined,
     };
-  });
+  }).filter((item) => (item.countValue ?? 0) > 0);
 }
 
 export function moonDefenseProductionItems({
@@ -892,7 +946,7 @@ export function moonDefenseProductionItems({
     transactionUnavailableReason,
   });
 
-  return sharedItems.map((item) => {
+  return sharedItems.filter((item) => item.group !== "missile").map((item) => {
     const available = moonState?.defenses.some((defense) => defense.id === item.id) ?? false;
     const moonBlocker = !canTransact
       ? transactionUnavailableReason ?? "Wallet or moon contract unavailable"
@@ -1031,28 +1085,6 @@ function moonStructurePreviewBuildings(moonState?: ChainMoonState | null | undef
     }));
 }
 
-function MoonMetric({
-  icon: Icon,
-  label,
-  value,
-}: {
-  icon: LucideIcon;
-  label: string;
-  value: string;
-}) {
-  return (
-    <div className="flex min-w-0 items-center gap-2 rounded border border-white/10 bg-black/15 px-2.5 py-2">
-      <span className="grid h-8 w-8 shrink-0 place-items-center rounded border border-cyan-200/20 bg-cyan-200/10 text-cyan-200">
-        <Icon aria-hidden="true" size={17} strokeWidth={1.8} />
-      </span>
-      <div className="min-w-0">
-        <div className="text-[10px] font-semibold uppercase tracking-normal text-slate-500">{label}</div>
-        <div className="truncate text-sm font-semibold text-slate-100">{value}</div>
-      </div>
-    </div>
-  );
-}
-
 function resourcesFromChain(resources: ChainMoonState["resources"] | ChainMoonState["buildings"][number]["cost"] | null | undefined): Resources {
   return {
     metal: Number(resources?.metal ?? 0),
@@ -1188,10 +1220,8 @@ function moonStructureCatalogTitleTone(
 }
 
 function moonStructureCatalogStatusText(building: MoonBuilding): string {
-  if (building.key === "lunarBase") return "Moon fields";
-  if (building.key === "roboticsFactory") return "Build speed";
-  if (building.key === "shipyard") return "Defense queue";
-  return building.level > 0 ? "Built" : "One-time gate";
+  void building;
+  return "";
 }
 
 export function moonBuildingRequirementRows(
@@ -1340,7 +1370,7 @@ export function moonStructureLevelInfoRows(
   const currentLevel = building.level;
   const highestLevel = isBinaryMoonStructure(building.key)
     ? 1
-    : Math.max(currentLevel + 6, 10);
+    : MAX_BUILDING_LEVEL;
   return Array.from({ length: highestLevel }, (_, index) => {
     const level = index + 1;
     const status = level === currentLevel ? "current" : level === currentLevel + 1 ? "next" : "future";
@@ -1404,9 +1434,9 @@ function moonBuildingEffect(key: ChainMoonState["buildings"][number]["key"]): st
 
 function moonStructureLevelEffect(key: ChainMoonState["buildings"][number]["key"], level: number): string {
   if (level <= 0) return "Not built";
-  if (key === "lunarBase") return `+${level * 3} gross fields, ${level} field${level === 1 ? "" : "s"} used`;
-  if (key === "roboticsFactory") return `Moon structure build divisor x${level + 1}`;
-  if (key === "shipyard") return `Moon defense build divisor x${level + 1}`;
+  if (key === "lunarBase") return `+${level * 3} gross fields`;
+  if (key === "roboticsFactory") return `Construction speed x${level + 1}`;
+  if (key === "shipyard") return `Defense production speed x${level + 1}`;
   return "Moon-to-moon fleet jumps enabled";
 }
 
@@ -1417,6 +1447,16 @@ function moonBuildingLabel(itemId: number | undefined): string {
     { id: 2, label: "Jump Gate" },
     { id: 3, label: "Shipyard" },
   ].find((building) => building.id === itemId)?.label ?? "Moon building";
+}
+
+function moonBuildingAssetForId(itemId: number | undefined): string | undefined {
+  const building = [
+    { id: 0, key: "lunarBase" as const },
+    { id: 1, key: "roboticsFactory" as const },
+    { id: 2, key: "jumpGate" as const },
+    { id: 3, key: "shipyard" as const },
+  ].find((candidate) => candidate.id === itemId);
+  return building ? moonBuildingAsset(building.key) : undefined;
 }
 
 function firstMissingRequirementLabel(rows: RequirementRow[]): string | undefined {
