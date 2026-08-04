@@ -87,6 +87,15 @@ export function missionControlRefreshButtonState(loading: boolean): { disabled: 
   return refreshButtonState(loading);
 }
 
+export function applyMissionFilterSelectInput(
+  filters: MissionControlFilters,
+  field: "direction" | "missionType",
+  value: string,
+  onChange: (filters: MissionControlFilters) => void,
+): void {
+  onChange(normalizeMissionControlFilters({ ...filters, [field]: value }));
+}
+
 interface MissionControlPageProps {
   actionState: MissionControlActionState;
   activePlanetId?: string | undefined;
@@ -1118,7 +1127,7 @@ function MissionFilterPopover({
               <select
                 aria-label="Filter by mission type"
                 className="h-8 w-full min-w-0 appearance-none rounded border border-white/10 bg-[#080d18] px-2 pr-7 text-xs text-white outline-none transition focus:border-cyan-300/45 focus:ring-1 focus:ring-cyan-300/25"
-                onChange={(event) => update({ missionType: event.currentTarget.value })}
+                onInput={(event) => applyMissionFilterSelectInput(filters, "missionType", event.currentTarget.value, onChange)}
                 value={filters.missionType}
               >
                 <option value="">All types</option>
@@ -1136,7 +1145,7 @@ function MissionFilterPopover({
               <select
                 aria-label="Filter by mission direction or state"
                 className="h-8 w-full min-w-0 appearance-none rounded border border-white/10 bg-[#080d18] px-2 pr-7 text-xs text-white outline-none transition focus:border-cyan-300/45 focus:ring-1 focus:ring-cyan-300/25"
-                onChange={(event) => update({ direction: event.currentTarget.value as MissionControlDirectionFilter })}
+                onInput={(event) => applyMissionFilterSelectInput(filters, "direction", event.currentTarget.value, onChange)}
                 value={filters.direction}
               >
                 <option value="">Any</option>

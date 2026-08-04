@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { applyMobileSortSelection } from "./components/RaidTargetFinderPage";
 import {
   RAID_TARGET_FINDER_STORAGE_KEY,
   DEFAULT_RAID_TARGET_FILTERS,
@@ -35,6 +36,13 @@ function installWindowStorage() {
 }
 
 describe("RaidTargetFinderPage persistence", () => {
+  test("applies the mobile Raid-tab sort selection from the input event", () => {
+    const selected: string[] = [];
+    applyMobileSortSelection("loot", "distance", (key) => selected.push(key));
+    applyMobileSortSelection("loot", "loot", (key) => selected.push(key));
+    expect(selected).toEqual(["loot"]);
+  });
+
   test("persists and restores Raid Finder filter settings from localStorage", () => {
     const storage = installWindowStorage();
 
