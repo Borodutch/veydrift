@@ -1,10 +1,10 @@
 import type { ComponentChildren } from "preact";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { Coins, Copy, FileText, Gift, Link, RefreshCw, Share2, TicketCheck } from "lucide-preact";
+import { Coins, Copy, FileText, Gift, Link, RefreshCw, Share2, TicketCheck, UserRound } from "lucide-preact";
 import { ComingSoonApp } from "./ComingSoonApp";
 import { TelegramIcon } from "./components/TelegramIcon";
 import { PlayableMvpApp } from "./PlayableMvpApp";
-import { RankingCommanderLink, RankingsPagination } from "./components/RankingsPage";
+import { RankingCommanderLink, RankingsPagination, RankingsTable } from "./components/RankingsPage";
 import { Skeleton, SkeletonRegion } from "./components/Skeleton";
 import { buildInspectPath } from "./inspectRoutes";
 import { apiBaseUrlForRuntimeConfig, gameContractAddress, playableApiUrl, runtimeConfigUrl, type RuntimeConfig } from "./runtimeConfig";
@@ -1562,6 +1562,7 @@ function ReferralProgramPanel({
   const [history, setHistory] = useState<ReferralHistoryResponse | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState(false);
+  const [expandedHistoryWallets, setExpandedHistoryWallets] = useState<Set<string>>(() => new Set());
   const claimCodeValid = /^[A-Za-z0-9_-]{1,24}$/.test(claimCode.trim());
   const inspected = inspection.status === "resolved" ? inspection.resolution : undefined;
   const selectedCodeClaimable = inspected?.ownership === "available"
@@ -1582,6 +1583,18 @@ function ReferralProgramPanel({
     : referralInviterRewardLabel(startPriceWei);
   const accruedRewards = dashboard ? BigInt(dashboard.totalAccruedRewardsWei) : 0n;
   const claimableRewards = dashboard ? BigInt(dashboard.claimableRewardsWei) : 0n;
+  const rankedHistoryEntries = useMemo(
+    () => history?.entries.flatMap((entry) => entry.ranking ? [entry.ranking] : []) ?? [],
+    [history]
+  );
+  const unrankedHistoryEntries = useMemo(
+    () => history?.entries.filter((entry) => !entry.ranking) ?? [],
+    [history]
+  );
+  const referralHistoryByWallet = useMemo(
+    () => new Map(history?.entries.map((entry) => [entry.commander.wallet.toLowerCase(), entry]) ?? []),
+    [history]
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -1802,31 +1815,90 @@ function ReferralProgramPanel({
         ) : null}
 
         {historyLoading && !history && dashboard?.redemptions.length ? (
-          <SkeletonRegion className="referral-history referral-history-loading" label="Loading invite history">
+          <div className="referral-history" aria-label="Loading invited commanders">
             <Skeleton className="h-4 w-28" />
-            <Skeleton className="h-11 w-full rounded-md" />
-            <Skeleton className="h-11 w-full rounded-md" />
-          </SkeletonRegion>
+            <RankingsTable entries={[]} hasLoadedData={false} loading />
+          </div>
         ) : null}
 
         {history?.entries.length ? (
-          <div className="referral-history" aria-label="Invite history">
-            <h3>Invite history</h3>
-            <div className="referral-history-list">
-              {history.entries.map((redemption) => (
-                <div className="referral-history-row" key={`${redemption.txHash}:${redemption.invitee}`}>
-                  <RankingCommanderLink
-                    displayName={redemption.commander.displayName ?? redemption.commander.fallbackName}
-                    href={buildInspectPath({ kind: "player", wallet: redemption.commander.wallet })}
-                    wallet={redemption.commander.wallet}
-                  />
-                  <span className="referral-history-reward">
-                    {redemption.rewardAmountWei === null ? "Joined" : `+${formatEth(BigInt(redemption.rewardAmountWei))} ETH`}
-                  </span>
-                  <time dateTime={redemption.redeemedAt}>{formatDateTime(redemption.redeemedAt)}</time>
+          <div className="referral-history" aria-label="Commanders you've invited">
+            <h3>Commanders you've invited</h3>
+            {rankedHistoryEntries.length ? (
+              <RankingsTable
+                active="total"
+                commanderDetailForEntry={(entry) => {
+                  const redemption = referralHistoryByWallet.get(entry.wallet.toLowerCase());
+                  if (!redemption) return null;
+                  return (
+                    <>
+                      <time dateTime={redemption.redeemedAt}>{formatDateTime(redemption.redeemedAt)}</time>
+                      {redemption.rewardAmountWei === null
+                        ? null
+                        : ` · +${formatEth(BigInt(redemption.rewardAmountWei))} ETH`}
+                    </>
+                  );
+                }}
+                currentWallet={wallet}
+                entries={rankedHistoryEntries}
+                expandedWallets={expandedHistoryWallets}
+                hasLoadedData
+                loading={historyLoading}
+                onSelectAlliance={(allianceId) => window.location.assign(buildInspectPath({ kind: "alliance", allianceId }))}
+                onSelectMoon={(coords) => window.location.assign(buildInspectPath({ kind: "moon", coords }))}
+                onSelectPlanet={(coords) => window.location.assign(buildInspectPath({ kind: "planet", coords }))}
+                onSelectPlayer={(selectedWallet) => window.location.assign(buildInspectPath({ kind: "player", wallet: selectedWallet }))}
+                onTogglePlayerBodies={(selectedWallet) => {
+                  setExpandedHistoryWallets((current) => {
+                    const next = new Set(current);
+                    if (next.has(selectedWallet)) {
+                      next.delete(selectedWallet);
+                    } else {
+                      next.add(selectedWallet);
+                    }
+                    return next;
+                  });
+                }}
+              />
+            ) : null}
+            {unrankedHistoryEntries.length ? (
+              <div className="referral-history-list">
+                <div className="referral-history-header" aria-hidden="true">
+                  <span>Commander</span>
+                  <span>Reward</span>
+                  <span>Joined</span>
                 </div>
-              ))}
-            </div>
+                {unrankedHistoryEntries.map((redemption) => {
+                  const commanderName = redemption.commander.displayName?.trim();
+                  return (
+                    <div className="referral-history-row" key={`${redemption.txHash}:${redemption.invitee}`}>
+                      <span className="referral-history-commander">
+                        <span className="referral-history-commander-icon" aria-hidden="true">
+                          <UserRound size={17} />
+                        </span>
+                        <span className="referral-history-commander-identity">
+                          <RankingCommanderLink
+                            displayName={commanderName || redemption.commander.fallbackName}
+                            href={buildInspectPath({ kind: "player", wallet: redemption.commander.wallet })}
+                            wallet={redemption.commander.wallet}
+                          />
+                          {commanderName ? (
+                            <span className="referral-history-wallet">{redemption.commander.fallbackName}</span>
+                          ) : null}
+                        </span>
+                      </span>
+                      <span className="referral-history-reward">
+                        {redemption.rewardAmountWei === null ? "—" : `+${formatEth(BigInt(redemption.rewardAmountWei))} ETH`}
+                      </span>
+                      <span className="referral-history-joined">
+                        <span className="referral-history-joined-label">Joined </span>
+                        <time dateTime={redemption.redeemedAt}>{formatDateTime(redemption.redeemedAt)}</time>
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : null}
             {history.pagination.totalPages > 1 ? (
               <RankingsPagination
                 loading={historyLoading}

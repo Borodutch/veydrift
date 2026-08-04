@@ -74,6 +74,7 @@ import {
   ReferralInviteStore,
   resolveReferralCode,
   verifyReferralWalletSignature,
+  type ReferralHistoryResponse,
   type ReferralResolveResult
 } from "./referrals";
 import { deriveInfrastructureFields, isCombatShipId, zeroResources } from "./readModels";
@@ -901,12 +902,13 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       try {
         assertAddress(wallet);
         if (!indexer) return indexedReadNotReadyResponse("referral history", indexer, { wallet });
-        return Response.json(referralStore.history(
+        const history = referralStore.history(
           wallet,
           indexer,
           positiveIntegerQuery(url, "page", 1, 1_000_000),
           positiveIntegerQuery(url, "pageSize", 25, 100)
-        ), {
+        );
+        return Response.json(rankedReferralHistory(history, indexer), {
           headers: corsHeaders
         });
       } catch (error) {
@@ -4549,6 +4551,12 @@ type RankedHighscoreEntry = HighscoreEntry & {
   rank: number;
 };
 
+type RankedReferralHistoryResponse = Omit<ReferralHistoryResponse, "entries"> & {
+  entries: Array<ReferralHistoryResponse["entries"][number] & {
+    ranking: RankedHighscoreEntry | null;
+  }>;
+};
+
 type RankedHighscoreAttackProtection = Pick<AttackProtectionStatus, "allowed" | "atWar" | "blockedReason" | "blockedReasonLabel" | "defenderInactive" | "scoreComparison" | "targetAlliance">;
 
 type RankedHighscorePlanet = {
@@ -4613,6 +4621,50 @@ type RankedTacticalUnitBreakdown = {
 };
 
 type HighscoreCategory = keyof ScoreBreakdown;
+
+function rankedReferralHistory(
+  history: ReferralHistoryResponse,
+  indexer: SettlementIndexer
+): RankedReferralHistoryResponse {
+  const wallets = [...new Set(history.entries.map(({ commander }) => commander.wallet.toLowerCase()))];
+  if (wallets.length === 0) return { ...history, entries: [] };
+
+  const leaderboard = indexer.highscoreLeaderboard();
+  const highscoreByWallet = new Map(
+    leaderboard.entries.map((entry) => [entry.wallet.toLowerCase(), entry])
+  );
+  const rankByWallet = new Map(
+    sortedHighscores(leaderboard.entries, "total")
+      .map((entry, index) => [entry.wallet.toLowerCase(), index + 1])
+  );
+  const invitedEntries = wallets
+    .map((wallet) => highscoreByWallet.get(wallet))
+    .filter((entry): entry is HighscoreEntry => Boolean(entry));
+  const rows = highscoreRows(
+    invitedEntries,
+    leaderboard.planetsByOwner,
+    indexer.playerProfiles(wallets),
+    allianceIntelForPlayers(wallets, indexer),
+    indexer
+  );
+
+  return {
+    ...history,
+    entries: history.entries.map((entry) => {
+      const wallet = entry.commander.wallet.toLowerCase();
+      const row = rows.get(wallet);
+      return {
+        ...entry,
+        ranking: row
+          ? {
+              ...row,
+              rank: rankByWallet.get(wallet) ?? 0
+            }
+          : null
+      };
+    })
+  };
+}
 
 type HighscoreCurrentPlayerPage = {
   rank: number;

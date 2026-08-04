@@ -60,7 +60,27 @@ function referralIndex() {
   const redemptions: IndexedReferralRedemptionEvent[] = [];
   const rewardClaims: IndexedReferralRewardClaimEvent[] = [];
   const indexer = {
+    allianceIntelForPlayers: () => new Map(),
     currentStartPriceWei: () => startPriceWei,
+    highscoreLeaderboard: () => ({
+      entries: [...new Set(redemptions.map(({ invitee }) => invitee.toLowerCase()))].map((wallet, index) => ({
+        wallet,
+        homePlanetId: null,
+        planetCount: 0,
+        score: {
+          total: String(index + 1),
+          economy: "0",
+          research: "0",
+          researchLevels: "0",
+          military: "0",
+          fleet: "0",
+          fleetCount: "0",
+          defense: "0"
+        },
+        totalUserScore: String(index + 1)
+      })),
+      planetsByOwner: new Map()
+    }),
     playerProfiles: (wallets: Iterable<string>) => new Map([...wallets].map((wallet) => {
       const normalized = wallet.toLowerCase() as `0x${string}`;
       return [normalized, {
@@ -103,7 +123,8 @@ function referralIndex() {
       };
     },
     referralRedemptionsForInvitee: (wallet: string) => redemptions.filter((event) => event.invitee.toLowerCase() === wallet.toLowerCase()),
-    referralRewardClaimsForInviter: (owner: string) => rewardClaims.filter((event) => event.inviter.toLowerCase() === owner.toLowerCase())
+    referralRewardClaimsForInviter: (owner: string) => rewardClaims.filter((event) => event.inviter.toLowerCase() === owner.toLowerCase()),
+    technologyLevels: () => ({})
   } as unknown as SettlementIndexer & ReferralChainIndex;
   return { claims, indexer, redemptions, rewardClaims };
 }
@@ -417,9 +438,18 @@ describe("referral invites", () => {
       `http://localhost/wallet/${player}/referrals/history?page=2&pageSize=25`
     ));
     expect(response.status).toBe(200);
-    const secondPage = await response.json() as ReturnType<ReferralInviteStore["history"]>;
+    const secondPage = await response.json() as ReturnType<ReferralInviteStore["history"]> & {
+      entries: Array<ReturnType<ReferralInviteStore["history"]>["entries"][number] & {
+        ranking: { wallet: string; planets: unknown[]; rank: number } | null;
+      }>;
+    };
     expect(secondPage.entries).toHaveLength(5);
     expect(secondPage.entries[0]?.commander.wallet).toBe(`0x${(5).toString(16).padStart(40, "0")}`);
+    expect(secondPage.entries[0]?.ranking).toMatchObject({
+      wallet: `0x${(5).toString(16).padStart(40, "0")}`,
+      planets: [],
+      rank: 26
+    });
     expect(secondPage.pagination).toEqual({
       page: 2,
       pageSize: 25,

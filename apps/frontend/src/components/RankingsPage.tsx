@@ -1,3 +1,4 @@
+import type { ComponentChildren } from "preact";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { ChevronDown, ChevronLeft, ChevronRight, UserRound } from "lucide-preact";
 import { planetImageForType } from "../data/mockUniverse";
@@ -467,6 +468,7 @@ export function RankingsPagination({
 
 export function RankingsTable({
   active = "total",
+  commanderDetailForEntry,
   currentAllianceId,
   currentWallet,
   entries,
@@ -488,6 +490,7 @@ export function RankingsTable({
   viewTransitioning = false,
 }: {
   active?: HighscoreCategory;
+  commanderDetailForEntry?: ((entry: HighscoreEntry) => ComponentChildren) | undefined;
   currentAllianceId?: string | null | undefined;
   currentWallet?: string | undefined;
   entries: HighscoreEntry[];
@@ -525,6 +528,7 @@ export function RankingsTable({
         entries.map((entry) => (
           <RankingRow
             active={active}
+            commanderDetail={commanderDetailForEntry?.(entry)}
             currentAllianceId={currentAllianceId}
             currentWallet={currentWallet}
             entry={entry}
@@ -551,6 +555,7 @@ export function RankingsTable({
 
 function RankingRow({
   active,
+  commanderDetail,
   currentAllianceId,
   currentWallet,
   entry,
@@ -569,6 +574,7 @@ function RankingRow({
   planetActionsForPlanet,
 }: {
   active: HighscoreCategory;
+  commanderDetail?: ComponentChildren;
   currentAllianceId?: string | null | undefined;
   currentWallet?: string | undefined;
   entry: HighscoreEntry;
@@ -694,6 +700,11 @@ function RankingRow({
               </span>
             ) : null}
           </span>
+          {commanderDetail ? (
+            <span className="mt-1 block truncate text-xs text-slate-500">
+              {commanderDetail}
+            </span>
+          ) : null}
           <span className="mt-0.5 block font-mono text-xs font-semibold text-cyan-100 sm:hidden">
             Score {formatScore(rankingDisplayScore(entry, active))}
           </span>
