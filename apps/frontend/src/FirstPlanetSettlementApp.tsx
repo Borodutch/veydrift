@@ -1,9 +1,12 @@
 import type { ComponentChildren } from "preact";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { Copy, FileText, Link, Share2, TicketCheck } from "lucide-preact";
+import { Coins, Copy, FileText, Gift, Link, RefreshCw, Share2, TicketCheck } from "lucide-preact";
 import { ComingSoonApp } from "./ComingSoonApp";
 import { TelegramIcon } from "./components/TelegramIcon";
 import { PlayableMvpApp } from "./PlayableMvpApp";
+import { RankingCommanderLink, RankingsPagination } from "./components/RankingsPage";
+import { Skeleton, SkeletonRegion } from "./components/Skeleton";
+import { buildInspectPath } from "./inspectRoutes";
 import { apiBaseUrlForRuntimeConfig, gameContractAddress, playableApiUrl, runtimeConfigUrl, type RuntimeConfig } from "./runtimeConfig";
 import {
   readReferralStorage,
@@ -39,6 +42,7 @@ import {
   defaultVeydriftChainForLocation,
   ensureVeydriftNetwork,
   fetchReferralDashboard,
+  fetchReferralHistory,
   fetchSettlementFundingState,
   fetchWalletSettlement,
   farcasterChainFor,
@@ -75,6 +79,7 @@ import {
   type MigrationReservation,
   type PlanetSummary,
   type ReferralDashboard,
+  type ReferralHistoryResponse,
   type ReferralRedemption,
   type ReferralResolution,
   type SettlementTransactionOptions,
@@ -290,7 +295,7 @@ export function referralClaimCodeAfterDashboard(
   dashboard: ReferralDashboard,
 ): string {
   const invite = dashboard.invite ?? dashboard.invites[0];
-  return invite?.status === "active" ? invite.code : currentCode;
+  return invite?.status === "active" || invite?.status === "renewable" ? invite.code : currentCode;
 }
 
 export function referralInviteActionAvailability(input: {
@@ -424,7 +429,7 @@ export function FirstPlanetSettlementApp() {
       : undefined;
     if (!dashboard) return;
     const invite = dashboard?.invite ?? dashboard?.invites[0];
-    if (invite?.status === "active") {
+    if (invite?.status === "active" || invite?.status === "renewable") {
       setReferralClaimCodeInput((current) => referralClaimCodeAfterDashboard(current, dashboard));
     } else if (referralProgram.status === "ready") {
       setReferralClaimCodeInput((current) => current.trim() ? current : generateReferralClaimCode());
@@ -1474,12 +1479,14 @@ export function FirstPlanetSettlementApp() {
         planet={planet.kind === "success" || planet.kind === "already-settled" ? planet.planet : undefined}
         referralProgramPanel={(
           <ReferralProgramPanel
+            apiBaseUrl={settlementConfigState.apiUrl ?? playableApiUrl}
             claimCode={referralClaimCodeInput}
             inspection={referralClaimInspection}
             onClaimCodeChange={setReferralClaimCodeInput}
             onClaim={claimReferralInvite}
             state={referralProgram}
             startPriceWei={referralBenefitStartPriceWei(settlementFunding)}
+            wallet={account}
           />
         )}
       />
@@ -1522,19 +1529,23 @@ export function FirstPlanetSettlementApp() {
 }
 
 function ReferralProgramPanel({
+  apiBaseUrl,
   claimCode,
   inspection,
   onClaim,
   onClaimCodeChange,
   startPriceWei,
   state,
+  wallet,
 }: {
+  apiBaseUrl: string | undefined;
   claimCode: string;
   inspection: ReferralValidationState;
   onClaim: () => void;
   onClaimCodeChange: (value: string) => void;
   startPriceWei: bigint | null;
   state: ReferralProgramState;
+  wallet: string | undefined;
 }) {
   const dashboard = state.status === "ready"
       || state.status === "claiming"
@@ -1547,6 +1558,10 @@ function ReferralProgramPanel({
   const [xShareImage, setXShareImage] = useState<File | null>(null);
   const [xShareState, setXShareState] = useState<"idle" | "sharing">("idle");
   const [copyState, setCopyState] = useState<"idle" | "code-copied" | "link-copied" | "unavailable">("idle");
+  const [historyPage, setHistoryPage] = useState(1);
+  const [history, setHistory] = useState<ReferralHistoryResponse | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState(false);
   const claimCodeValid = /^[A-Za-z0-9_-]{1,24}$/.test(claimCode.trim());
   const inspected = inspection.status === "resolved" ? inspection.resolution : undefined;
   const selectedCodeClaimable = inspected?.ownership === "available"
@@ -1558,15 +1573,42 @@ function ReferralProgramPanel({
     selectedCodeClaimable: Boolean(selectedCodeClaimable)
   });
   const actionLabel = claiming
-    ? "Claiming invites"
+    ? "Activating invites"
     : inspected?.ownership === "owned_by_you" && inspected.renewable
-      ? "Claim 3 invites"
-      : inviteActive
-        ? "3 invites active"
-        : "Claim code + 3 invites";
+      ? "Top up 3 uses"
+      : "Activate 3 uses";
   const rewardLabel = dashboard?.rewardPerUseWei
     ? `${formatEth(BigInt(dashboard.rewardPerUseWei))} ETH`
     : referralInviterRewardLabel(startPriceWei);
+  const accruedRewards = dashboard ? BigInt(dashboard.totalAccruedRewardsWei) : 0n;
+  const claimableRewards = dashboard ? BigInt(dashboard.claimableRewardsWei) : 0n;
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!apiBaseUrl || !wallet || !dashboard) {
+      setHistory(null);
+      setHistoryLoading(false);
+      setHistoryError(false);
+      return () => { cancelled = true; };
+    }
+
+    setHistoryLoading(true);
+    setHistoryError(false);
+    void fetchReferralHistory(apiBaseUrl, wallet, historyPage, 25)
+      .then((response) => {
+        if (cancelled) return;
+        setHistory(response);
+        if (response.pagination.page !== historyPage) setHistoryPage(response.pagination.page);
+      })
+      .catch(() => {
+        if (!cancelled) setHistoryError(true);
+      })
+      .finally(() => {
+        if (!cancelled) setHistoryLoading(false);
+      });
+
+    return () => { cancelled = true; };
+  }, [apiBaseUrl, dashboard?.totalAccruedRewardsWei, historyPage, wallet]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1612,64 +1654,74 @@ function ReferralProgramPanel({
     <section className="referral-program" aria-label="Referral invites">
       <div className="referral-program-inner">
         <div className="referral-program-header">
-          <div>
-            <span className="referral-kicker">Referral invites</span>
-            <h2>Invite commanders</h2>
-            <span className="referral-benefit-copy">
-              Earn {rewardLabel}. Invitees start with 1,000 M / 1,000 C / 0 D after validation.
-            </span>
-          </div>
-          <button
-            className="referral-claim-button"
-            disabled={!canClaim}
-            onClick={onClaim}
-            type="button"
-          >
-            <TicketCheck aria-hidden="true" size={15} />
-            {actionLabel}
-          </button>
+          <h2>Invite commanders</h2>
+          {canClaim || claiming ? (
+            <button
+              className="referral-claim-button"
+              disabled={claiming}
+              onClick={onClaim}
+              type="button"
+            >
+              <TicketCheck aria-hidden="true" size={15} />
+              {actionLabel}
+            </button>
+          ) : null}
         </div>
 
         <div className="referral-benefits" aria-label="Referral benefits">
           <div>
-            <strong>Inviter</strong>
-            <span>50% current starting fee: {rewardLabel}</span>
+            <Coins aria-hidden="true" size={18} />
+            <span>You get <strong>{rewardLabel}</strong> for inviting a friend</span>
           </div>
           <div>
-            <strong>Invitee</strong>
-            <span>2x starting resources: 1,000 M / 1,000 C / 0 D</span>
+            <Gift aria-hidden="true" size={18} />
+            <span>Your friend gets <strong>1,000 M · 1,000 C</strong> to start</span>
           </div>
         </div>
 
-        <label className="referral-claim-code-field">
-          <span>Invite code</span>
-          <input
-            autoComplete="off"
-            disabled={busy || inviteActive}
-            inputMode="text"
-            maxLength={24}
-            onInput={(event) => onClaimCodeChange((event.currentTarget as HTMLInputElement).value)}
-            placeholder="borodutch"
-            value={claimCode}
-          />
-        </label>
-        {inviteActive && invite ? (
-          <p className="referral-muted">
-            Current code {invite.code} is active until {formatDateTime(invite.expiresAt)}. A new available code or any permanently owned valid code can be selected after expiry.
-          </p>
-        ) : invite?.status === "renewable" ? (
-          <p className="referral-muted">
-            The previous invite window expired {formatDateTime(invite.expiresAt)}. Enter a new available code or a permanently owned valid code to activate the next window.
-          </p>
-        ) : null}
-        {!claimCodeValid && !inviteActive ? (
-          <p className="referral-muted">Use 1–24 letters, numbers, underscores, or hyphens.</p>
-        ) : null}
+        <p className="referral-daily-note">
+          You get 3 invite uses every day. Your code stays reserved—come back daily to top it up.
+        </p>
 
-        {!inviteActive && claimCodeValid ? <ReferralClaimInspectionMessage state={inspection} /> : null}
+        {!inviteActive && state.status !== "loading" ? (
+          <>
+            {invite?.status === "renewable" ? (
+              <div className="referral-renewal-note">
+                <RefreshCw aria-hidden="true" size={18} />
+                <div>
+                  <strong>Top up your invite code</strong>
+                  <span>
+                    Add 3 uses to <b>{invite.code}</b> for today.
+                  </span>
+                </div>
+              </div>
+            ) : null}
+
+            <label className="referral-claim-code-field">
+              <span>{invite?.status === "renewable" ? "Your invite code" : "Choose your invite code"}</span>
+              <input
+                autoComplete="off"
+                disabled={busy}
+                inputMode="text"
+                maxLength={24}
+                onInput={(event) => onClaimCodeChange((event.currentTarget as HTMLInputElement).value)}
+                placeholder="borodutch"
+                value={claimCode}
+              />
+            </label>
+            {!claimCodeValid ? (
+              <p className="referral-muted">Use 1–24 letters, numbers, underscores, or hyphens.</p>
+            ) : (
+              <ReferralClaimInspectionMessage state={inspection} />
+            )}
+          </>
+        ) : null}
 
         {state.status === "loading" ? (
-          <p className="referral-muted">Loading invite code.</p>
+          <SkeletonRegion className="referral-loading" label="Loading invites">
+            <Skeleton className="h-12 w-full rounded-md" />
+            <Skeleton className="h-3 w-2/3" />
+          </SkeletonRegion>
         ) : state.status === "error" ? (
           <p className="referral-error">{state.message}</p>
         ) : null}
@@ -1678,21 +1730,22 @@ function ReferralProgramPanel({
           <p className="referral-muted">Referral invites are not configured on this deployment.</p>
         ) : null}
 
-        {dashboard?.nextRedemptionAt ? (
-          <p className="referral-muted">Next invite use opens {formatDateTime(dashboard.nextRedemptionAt)}.</p>
+        {dashboard && (accruedRewards > 0n || claimableRewards > 0n) ? (
+          <div className="referral-reward-summary" aria-label="Referral rewards">
+            {accruedRewards > 0n ? (
+              <span><small>Lifetime earned</small><strong>{formatEth(accruedRewards)} ETH</strong></span>
+            ) : null}
+            {claimableRewards > 0n ? (
+              <span><small>Available</small><strong>{formatEth(claimableRewards)} ETH</strong></span>
+            ) : null}
+          </div>
         ) : null}
 
-        {dashboard ? (
-          <p className="referral-muted">
-            Rewards: {formatEth(BigInt(dashboard.totalAccruedRewardsWei))} ETH accrued · {formatEth(BigInt(dashboard.totalPaidRewardsWei))} ETH paid · {formatEth(BigInt(dashboard.claimableRewardsWei))} ETH claimable.
-          </p>
-        ) : null}
-
-        {invite ? (
-          <div className="referral-link-row">
-            <div>
+        {inviteActive && invite ? (
+          <div className="referral-link-row referral-active-invite">
+            <div className="referral-invite-primary">
               <label className="referral-shared-code">
-                <span>Invite code — select manually if copy is blocked</span>
+                <span>Active invite code</span>
                 <input
                   aria-label="Active referral invite code"
                   onClick={(event) => event.currentTarget.select()}
@@ -1701,73 +1754,92 @@ function ReferralProgramPanel({
                   value={invite.code}
                 />
               </label>
-              <a href={invite.link}>{invite.link}</a>
-              <span>
-                {invite.status === "active"
-                  ? `Owned by you · active · ${invite.remainingRedemptions}/3 uses left for this invite`
-                  : invite.status === "renewable"
-                    ? "Owned by you · renewable"
-                    : "Owned by you · another code is active"}
-              </span>
-              {invite.expiresAt ? <span>Expires {formatDateTime(invite.expiresAt)}</span> : null}
-              <span>{invite.redemptionCount} total invite use{invite.redemptionCount === 1 ? "" : "s"}</span>
-            </div>
-            {inviteActive ? (
-              <div className="referral-copy-actions">
-                <button
-                  className="referral-copy-button"
-                  onClick={() => {
-                    playSfx("copy");
-                    haptic("tick");
-                    void copyInviteValue(invite.code, "code");
-                  }}
-                  type="button"
-                >
-                  <Copy aria-hidden="true" size={14} />
-                  {copyState === "code-copied" ? "Code copied" : "Copy code"}
-                </button>
-                <button
-                  className="referral-copy-button"
-                  onClick={() => {
-                    playSfx("copy");
-                    haptic("tick");
-                    void copyInviteValue(invite.link, "link");
-                  }}
-                  type="button"
-                >
-                  <Link aria-hidden="true" size={14} />
-                  {copyState === "link-copied" ? "Link copied" : "Copy link"}
-                </button>
-                <button
-                  className="referral-copy-button"
-                  disabled={xShareState === "sharing"}
-                  onClick={() => void shareInviteOnX()}
-                  type="button"
-                >
-                  <Share2 aria-hidden="true" size={14} />
-                  {xShareState === "sharing" ? "Opening X" : "Share on X"}
-                </button>
-                {copyState === "unavailable" ? (
-                  <span className="referral-copy-error">Clipboard blocked — select the code above, or open the invite link.</span>
-                ) : null}
+              <a href={invite.link}>Open invite link</a>
+              <div className="referral-invite-meta">
+                <span><strong>{invite.remainingRedemptions}/3</strong> uses left</span>
+                {invite.expiresAt ? <span>Ends {formatDateTime(invite.expiresAt)}</span> : null}
               </div>
-            ) : null}
+            </div>
+            <div className="referral-copy-actions">
+              <button
+                className="referral-copy-button"
+                onClick={() => {
+                  playSfx("copy");
+                  haptic("tick");
+                  void copyInviteValue(invite.code, "code");
+                }}
+                type="button"
+              >
+                <Copy aria-hidden="true" size={14} />
+                {copyState === "code-copied" ? "Code copied" : "Copy code"}
+              </button>
+              <button
+                className="referral-copy-button"
+                onClick={() => {
+                  playSfx("copy");
+                  haptic("tick");
+                  void copyInviteValue(invite.link, "link");
+                }}
+                type="button"
+              >
+                <Link aria-hidden="true" size={14} />
+                {copyState === "link-copied" ? "Link copied" : "Copy link"}
+              </button>
+              <button
+                className="referral-copy-button"
+                disabled={xShareState === "sharing"}
+                onClick={() => void shareInviteOnX()}
+                type="button"
+              >
+                <Share2 aria-hidden="true" size={14} />
+                {xShareState === "sharing" ? "Opening X" : "Share on X"}
+              </button>
+              {copyState === "unavailable" ? (
+                <span className="referral-copy-error">Clipboard blocked — select the code above, or open the invite link.</span>
+              ) : null}
+            </div>
           </div>
-        ) : (
-          state.status !== "loading" ? <p className="referral-muted">No invite link claimed yet.</p> : null
-        )}
+        ) : null}
 
-        {dashboard?.redemptions.length ? (
-          <div className="referral-link-row" aria-label="Referral redemption history">
-            <div>
-              <strong>On-chain redemption history</strong>
-              {dashboard.redemptions.map((redemption) => (
-                <span key={`${redemption.txHash}:${redemption.invitee}`}>
-                  {redemption.invitee.slice(0, 6)}…{redemption.invitee.slice(-4)} · {redemption.rewardAmountWei === null ? "legacy reward amount unavailable" : `${formatEth(BigInt(redemption.rewardAmountWei))} ETH`} · {redemption.paymentStatus.replace("legacy_unknown", "legacy payment state unavailable")} · {formatDateTime(redemption.redeemedAt)}
-                </span>
+        {historyLoading && !history && dashboard?.redemptions.length ? (
+          <SkeletonRegion className="referral-history referral-history-loading" label="Loading invite history">
+            <Skeleton className="h-4 w-28" />
+            <Skeleton className="h-11 w-full rounded-md" />
+            <Skeleton className="h-11 w-full rounded-md" />
+          </SkeletonRegion>
+        ) : null}
+
+        {history?.entries.length ? (
+          <div className="referral-history" aria-label="Invite history">
+            <h3>Invite history</h3>
+            <div className="referral-history-list">
+              {history.entries.map((redemption) => (
+                <div className="referral-history-row" key={`${redemption.txHash}:${redemption.invitee}`}>
+                  <RankingCommanderLink
+                    displayName={redemption.commander.displayName ?? redemption.commander.fallbackName}
+                    href={buildInspectPath({ kind: "player", wallet: redemption.commander.wallet })}
+                    wallet={redemption.commander.wallet}
+                  />
+                  <span className="referral-history-reward">
+                    {redemption.rewardAmountWei === null ? "Joined" : `+${formatEth(BigInt(redemption.rewardAmountWei))} ETH`}
+                  </span>
+                  <time dateTime={redemption.redeemedAt}>{formatDateTime(redemption.redeemedAt)}</time>
+                </div>
               ))}
             </div>
+            {history.pagination.totalPages > 1 ? (
+              <RankingsPagination
+                loading={historyLoading}
+                onNext={() => setHistoryPage((page) => page + 1)}
+                onPrevious={() => setHistoryPage((page) => Math.max(1, page - 1))}
+                pagination={history.pagination}
+              />
+            ) : null}
           </div>
+        ) : null}
+
+        {historyError && !history ? (
+          <p className="referral-muted">Invite history is temporarily unavailable.</p>
         ) : null}
       </div>
     </section>
@@ -1809,7 +1881,7 @@ function ReferralCodeField({
 
 function ReferralClaimInspectionMessage({ state }: { state: ReferralValidationState }) {
   if (state.status === "loading" || state.status === "idle") {
-    return <p className="referral-muted">Checking permanent ownership on-chain.</p>;
+    return <p className="referral-muted">Checking code…</p>;
   }
   if (state.status === "error") {
     return <p className="referral-error">{state.message}</p>;
@@ -1821,30 +1893,33 @@ function ReferralClaimInspectionMessage({ state }: { state: ReferralValidationSt
   if (resolution.ownership === "available") {
     return (
       <p className="referral-muted">
-        Available · this normalized code can be permanently claimed.
+        Available
         {resolution.remainingRedemptions === 0 && resolution.nextRedemptionAt
-          ? ` Invite quota exhausted until ${formatDateTime(resolution.nextRedemptionAt)}.`
+          ? ` · invites reopen ${formatDateTime(resolution.nextRedemptionAt)}`
           : ""}
       </p>
     );
   }
   if (resolution.ownership === "owned_by_you") {
+    if (resolution.renewable && !(resolution.remainingRedemptions === 0 && resolution.nextRedemptionAt)) {
+      return null;
+    }
     return (
       <p className="referral-muted">
         {resolution.renewable
-          ? "Owned by you · invite window is renewable."
-          : "Owned by you · another invite code is currently active."}
+          ? "Invites are not available yet"
+          : "Another invite code is active"}
         {resolution.remainingRedemptions === 0 && resolution.nextRedemptionAt
-          ? ` Quota exhausted until ${formatDateTime(resolution.nextRedemptionAt)}.`
-          : ` ${resolution.remainingRedemptions}/3 inviter uses remain.`}
+          ? ` · invites reopen ${formatDateTime(resolution.nextRedemptionAt)}`
+          : ""}
       </p>
     );
   }
   return (
     <p className="referral-error">
-      Reserved by another wallet · {resolution.status === "inactive"
-        ? "the owner may renew it."
-        : `active until ${resolution.expiresAt ? formatDateTime(resolution.expiresAt) : "the indexed expiry"}.`}
+      Owned by another wallet{resolution.status !== "inactive" && resolution.expiresAt
+        ? ` until ${formatDateTime(resolution.expiresAt)}`
+        : ""}
     </p>
   );
 }

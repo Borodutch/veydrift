@@ -34,6 +34,7 @@ import {
   fetchMoonState,
   fetchPlayerProfile,
   fetchReferralDashboard,
+  fetchReferralHistory,
   fetchResearchState,
   fetchShipyardState,
   fetchWalletPlanets,
@@ -3085,6 +3086,59 @@ describe("walletFlow", () => {
       await expect(fetchReferralDashboard("https://api.example.test///", account)).resolves.toMatchObject({
         configured: true,
         remainingRedemptions: 3
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("fetches paginated invite history with backend-hydrated commanders", async () => {
+    const originalFetch = globalThis.fetch;
+
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      const url = new URL(String(input));
+      expect(`${url.origin}${url.pathname}`).toBe(`https://api.example.test/wallet/${account}/referrals/history`);
+      expect(url.searchParams.get("page")).toBe("2");
+      expect(url.searchParams.get("pageSize")).toBe("25");
+      expect(init).toEqual({
+        cache: "no-store",
+        headers: { accept: "application/json" },
+        signal: expect.any(AbortSignal),
+      });
+      return new Response(JSON.stringify({
+        entries: [{
+          commander: {
+            wallet: account.toLowerCase(),
+            displayName: "Nova Recruit",
+            fallbackName: "0x1111...1111"
+          },
+          invitee: account.toLowerCase(),
+          commitment: `0x${"11".repeat(32)}`,
+          redeemedAt: "2026-08-04T18:00:00.000Z",
+          rewardAmountWei: "6000000000000000",
+          paid: true,
+          credited: false,
+          paymentStatus: "paid",
+          txHash: `0x${"22".repeat(32)}`
+        }],
+        pagination: {
+          page: 2,
+          pageSize: 25,
+          totalEntries: 26,
+          totalPages: 2,
+          hasPreviousPage: true,
+          hasNextPage: false
+        }
+      }), {
+        headers: { "content-type": "application/json" },
+        status: 200,
+      });
+    }) as unknown as typeof fetch;
+
+    try {
+      await expect(fetchReferralHistory("https://api.example.test///", account, 2)).resolves.toMatchObject({
+        entries: [{ commander: { displayName: "Nova Recruit" } }],
+        pagination: { page: 2, pageSize: 25, totalEntries: 26 }
       });
     } finally {
       globalThis.fetch = originalFetch;

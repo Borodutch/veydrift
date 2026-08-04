@@ -1030,28 +1030,11 @@ h4 {
   gap: 16px;
 }
 
-.referral-kicker {
-  display: block;
-  color: #80f1ff;
-  font-size: 0.75rem;
-  font-weight: 700;
-  letter-spacing: 0;
-  text-transform: uppercase;
-}
-
 .referral-program h2 {
-  margin: 4px 0 0;
+  margin: 0;
   color: #ecfdf5;
   font-size: 1.1rem;
   line-height: 1.2;
-}
-
-.referral-benefit-copy {
-  display: block;
-  margin-top: 6px;
-  color: #b8ccc7;
-  font-size: 0.82rem;
-  line-height: 1.45;
 }
 
 .referral-benefits {
@@ -1061,6 +1044,10 @@ h4 {
 }
 
 .referral-benefits div {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
   min-width: 0;
   border: 1px solid rgba(128, 241, 255, 0.13);
   border-radius: 8px;
@@ -1071,6 +1058,10 @@ h4 {
 .referral-benefits strong,
 .referral-benefits span {
   display: block;
+}
+
+.referral-benefits svg {
+  color: #80f1ff;
 }
 
 .referral-benefits strong {
@@ -1220,40 +1211,36 @@ h4 {
 
 .invite-page .referral-program {
   overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.04);
-  box-shadow: none;
+  border: 1px solid rgba(103, 232, 249, 0.16);
+  border-radius: 12px;
+  background:
+    radial-gradient(circle at 90% -15%, rgba(34, 211, 238, 0.1), transparent 22rem),
+    linear-gradient(145deg, rgba(15, 23, 39, 0.98), rgba(8, 13, 24, 0.98));
+  box-shadow: 0 22px 60px rgba(0, 0, 0, 0.22);
   color: #e2e8f0;
 }
 
 .invite-page .referral-program-inner {
   max-width: none;
-  padding: 16px;
+  gap: 16px;
+  padding: 20px;
 }
 
 .invite-page .referral-program-header {
-  align-items: flex-start;
-}
-
-.invite-page .referral-kicker {
-  color: #94a3b8;
-  font-size: 0.72rem;
+  align-items: center;
 }
 
 .invite-page .referral-program h2 {
+  margin: 0;
   color: #ffffff;
-  font-size: 1rem;
-}
-
-.invite-page .referral-benefit-copy {
-  color: #94a3b8;
+  font-size: 1.15rem;
 }
 
 .invite-page .referral-benefits div {
-  border-color: rgba(255, 255, 255, 0.1);
-  border-radius: 6px;
-  background: rgba(0, 0, 0, 0.2);
+  border-color: rgba(103, 232, 249, 0.12);
+  border-radius: 8px;
+  background: rgba(5, 10, 20, 0.52);
+  padding: 12px;
 }
 
 .invite-page .referral-benefits strong {
@@ -1261,14 +1248,25 @@ h4 {
 }
 
 .invite-page .referral-benefits span {
+  margin: 0;
   color: #94a3b8;
+  line-height: 1.4;
+}
+
+.invite-page .referral-benefits svg {
+  box-sizing: content-box;
+  border: 1px solid rgba(103, 232, 249, 0.16);
+  border-radius: 7px;
+  background: rgba(103, 232, 249, 0.08);
+  padding: 7px;
 }
 
 .invite-page .referral-link-row {
   align-items: flex-start;
-  border-color: rgba(255, 255, 255, 0.1);
-  border-radius: 6px;
-  background: rgba(0, 0, 0, 0.2);
+  border-color: rgba(255, 255, 255, 0.09);
+  border-radius: 8px;
+  background: rgba(2, 6, 14, 0.5);
+  padding: 14px;
 }
 
 .invite-page .referral-link-row strong {
@@ -1278,6 +1276,176 @@ h4 {
 .invite-page .referral-link-row span,
 .invite-page .referral-muted {
   color: #94a3b8;
+}
+
+.invite-page .referral-muted {
+  margin: 0;
+}
+
+.referral-daily-note {
+  margin: -4px 0 0;
+  color: #8fa3b8;
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.referral-renewal-note {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  border: 1px solid rgba(251, 191, 36, 0.16);
+  border-radius: 8px;
+  background: rgba(251, 191, 36, 0.055);
+  padding: 12px;
+}
+
+.referral-renewal-note > svg {
+  margin-top: 1px;
+  color: #fcd34d;
+}
+
+.referral-renewal-note div,
+.referral-renewal-note span {
+  display: block;
+  min-width: 0;
+}
+
+.referral-renewal-note strong {
+  color: #f8fafc;
+  font-size: 0.84rem;
+}
+
+.referral-renewal-note span {
+  margin-top: 3px;
+  color: #a8b3c5;
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.referral-renewal-note b {
+  color: #e2e8f0;
+  font-weight: 700;
+}
+
+.referral-loading {
+  display: grid;
+  gap: 9px;
+}
+
+.referral-reward-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.referral-reward-summary > span {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  min-height: 34px;
+  border: 1px solid rgba(103, 232, 249, 0.13);
+  border-radius: 7px;
+  background: rgba(103, 232, 249, 0.055);
+  padding: 7px 10px;
+}
+
+.referral-reward-summary small {
+  color: #94a3b8;
+  font-size: 0.72rem;
+}
+
+.referral-reward-summary strong {
+  color: #cffafe;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.78rem;
+}
+
+.invite-page .referral-active-invite {
+  border-color: rgba(103, 232, 249, 0.18);
+  background: rgba(8, 18, 31, 0.76);
+}
+
+.referral-invite-primary {
+  min-width: min(100%, 22rem);
+}
+
+.referral-invite-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.invite-page .referral-invite-meta span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.035);
+  padding: 5px 8px;
+  color: #a8b3c5;
+  font-size: 0.73rem;
+}
+
+.invite-page .referral-invite-meta strong {
+  margin-right: 4px;
+  color: #cffafe;
+}
+
+.invite-page .referral-shared-code input {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.referral-history {
+  display: grid;
+  gap: 8px;
+}
+
+.referral-history-loading {
+  gap: 9px;
+}
+
+.referral-history h3 {
+  margin: 0;
+  color: #f8fafc;
+  font-size: 0.86rem;
+}
+
+.referral-history-list {
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 8px;
+  background: rgba(2, 6, 14, 0.5);
+}
+
+.referral-history-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 14px;
+  min-height: 44px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  padding: 8px 12px;
+  font-size: 0.78rem;
+}
+
+.referral-history-row:last-child {
+  border-bottom: 0;
+}
+
+.referral-history-row time {
+  color: #64748b;
+  white-space: nowrap;
+}
+
+.referral-history-reward {
+  color: #a7f3d0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  white-space: nowrap;
 }
 
 .invite-page .referral-claim-button,
@@ -1318,6 +1486,15 @@ h4 {
 
   .invite-page .referral-copy-actions {
     justify-content: flex-start;
+  }
+
+  .referral-history-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 5px 10px;
+  }
+
+  .referral-history-row time {
+    grid-column: 1 / -1;
   }
 }
 

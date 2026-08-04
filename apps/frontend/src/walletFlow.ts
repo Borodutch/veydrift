@@ -158,6 +158,22 @@ export type ReferralDashboard = {
   redemptions: ReferralRedemptionRecord[];
 };
 
+export type ReferralHistoryEntry = ReferralRedemptionRecord & {
+  commander: Pick<PlayerProfile, "wallet" | "displayName" | "fallbackName">;
+};
+
+export type ReferralHistoryResponse = {
+  entries: ReferralHistoryEntry[];
+  pagination: {
+    page: number;
+    pageSize: number;
+    totalEntries: number;
+    totalPages: number;
+    hasPreviousPage: boolean;
+    hasNextPage: boolean;
+  };
+};
+
 export type ReferralResolution = {
   valid: boolean;
   status: "active" | "inactive" | "exhausted" | "self_invite" | "already_redeemed" | "available" | "invalid" | "unavailable";
@@ -3827,6 +3843,24 @@ export async function fetchReferralDashboard(apiUrl: string, wallet: string): Pr
     wallet,
     "referrals",
     "Referral invites"
+  );
+}
+
+export async function fetchReferralHistory(
+  apiUrl: string,
+  wallet: string,
+  page = 1,
+  pageSize = 25
+): Promise<ReferralHistoryResponse> {
+  const params = new URLSearchParams({
+    page: String(page),
+    pageSize: String(pageSize)
+  });
+  return fetchWalletJson<ReferralHistoryResponse>(
+    apiUrl,
+    wallet,
+    `referrals/history?${params.toString()}`,
+    "Invite history"
   );
 }
 

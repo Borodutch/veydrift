@@ -15,11 +15,13 @@ import type {
   IndexedReferralRedemptionEvent,
   IndexedReferralRewardClaimEvent
 } from "./evm";
+import { playerFallbackName, type PlayerProfile } from "./playerProfiles";
 
 export const referralRedeemDomain = keccak256(toHex("veydrift.referral.redeem.v1"));
 export const referralInviteUrlBase = "https://veydrift.com";
 export const referralClaimWindowMs = 24 * 60 * 60 * 1000;
 export const referralClaimsPerWindow = 3;
+export const referralHistoryPageSize = 25;
 export const referralCodePattern = /^[A-Za-z0-9_-]{1,24}$/;
 
 export type ReferralInviteRecord = {
@@ -76,6 +78,24 @@ export type ReferralDashboard = {
   redemptions: ReferralRedemptionRecord[];
 };
 
+export type ReferralHistoryCommander = Pick<PlayerProfile, "wallet" | "displayName" | "fallbackName">;
+
+export type ReferralHistoryEntry = ReferralRedemptionRecord & {
+  commander: ReferralHistoryCommander;
+};
+
+export type ReferralHistoryResponse = {
+  entries: ReferralHistoryEntry[];
+  pagination: {
+    page: number;
+    pageSize: number;
+    totalEntries: number;
+    totalPages: number;
+    hasPreviousPage: boolean;
+    hasNextPage: boolean;
+  };
+};
+
 export type ReferralRedemption = {
   code: string;
   commitment: Hex;
@@ -117,10 +137,16 @@ export type ReferralResolveResult = {
 export type ReferralWalletAction = "claim-transaction";
 
 export type ReferralChainIndex = {
+  playerProfiles(wallets: Iterable<string>): Map<string, PlayerProfile>;
   referralClaim(owner: `0x${string}`, commitment: `0x${string}`, txHash: `0x${string}`): IndexedReferralClaimEvent | null;
   referralClaims(owner: `0x${string}`): IndexedReferralClaimEvent[];
   referralClaimsByCodeHash(codeHash: `0x${string}`): IndexedReferralClaimEvent[];
   referralRedemptionsForInviter(inviter: `0x${string}`): IndexedReferralRedemptionEvent[];
+  referralRedemptionPageForInviter(
+    inviter: `0x${string}`,
+    page: number,
+    pageSize: number
+  ): { page: number; pageSize: number; redemptions: IndexedReferralRedemptionEvent[]; totalEntries: number };
   referralRedemptionsForInvitee(invitee: `0x${string}`): IndexedReferralRedemptionEvent[];
   referralRewardClaimsForInviter(inviter: `0x${string}`): IndexedReferralRewardClaimEvent[];
 };
@@ -139,6 +165,45 @@ export class ReferralInviteStore {
     now = new Date()
   ): ReferralDashboard {
     return canonicalReferralDashboard({ configured, index, now, startPriceWei, wallet });
+  }
+
+  history(
+    wallet: string,
+    index: ReferralChainIndex,
+    requestedPage = 1,
+    requestedPageSize = referralHistoryPageSize
+  ): ReferralHistoryResponse {
+    const owner = normalizeAddress(wallet).toLowerCase() as `0x${string}`;
+    const requested = index.referralRedemptionPageForInviter(owner, requestedPage, requestedPageSize);
+    const { page, pageSize, redemptions: visibleRedemptions, totalEntries } = requested;
+    const totalPages = Math.max(1, Math.ceil(totalEntries / pageSize));
+    const claimedCredits = new Set(
+      index.referralRewardClaimsForInviter(owner).map((claim) => rewardKey(claim.commitment, claim.invitee))
+    );
+    const profiles = index.playerProfiles(visibleRedemptions.map(({ invitee }) => invitee));
+
+    return {
+      entries: visibleRedemptions.map((event) => {
+        const normalizedInvitee = event.invitee.toLowerCase() as `0x${string}`;
+        const profile = profiles.get(normalizedInvitee);
+        return {
+          ...chainRedemptionRecord(event, claimedCredits),
+          commander: {
+            wallet: normalizedInvitee,
+            displayName: profile?.displayName ?? null,
+            fallbackName: profile?.fallbackName ?? playerFallbackName(normalizedInvitee)
+          }
+        };
+      }),
+      pagination: {
+        page,
+        pageSize,
+        totalEntries,
+        totalPages,
+        hasPreviousPage: page > 1,
+        hasNextPage: page < totalPages
+      }
+    };
   }
 }
 
