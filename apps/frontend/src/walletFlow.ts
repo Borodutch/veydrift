@@ -160,6 +160,7 @@ export type ReferralDashboard = {
 
 export type ReferralHistoryEntry = ReferralRedemptionRecord & {
   commander: Pick<PlayerProfile, "wallet" | "displayName" | "fallbackName">;
+  ranking?: HighscoreEntry | null;
 };
 
 export type ReferralHistoryResponse = {

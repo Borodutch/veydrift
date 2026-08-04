@@ -196,6 +196,11 @@ describe("referral hardening", () => {
     expect(appSource).toContain("Your friend gets");
     expect(appSource).toContain("to start");
     expect(appSource).toContain("<RankingCommanderLink");
+    expect(appSource).toContain("<RankingsTable");
+    expect(appSource).toContain("expandedHistoryWallets");
+    expect(appSource).toContain("Commanders you've invited");
+    expect(appSource).toContain("referral-history-header");
+    expect(appSource).toContain("referral-history-commander");
     expect(appSource).toContain("fetchReferralHistory(apiBaseUrl, wallet, historyPage, 25)");
     expect(appSource).toContain("<RankingsPagination");
     expect(appSource).not.toContain("fetchPlayerProfile(apiBaseUrl, wallet)");
