@@ -267,6 +267,54 @@ export function shouldShowReturnTiming(action: EnabledGalaxyAction, hasHoldingBr
   return action.kind !== "colonize" && !hasHoldingBreakdown;
 }
 
+export const MISSION_TIMING_RESERVED_HEIGHT_PX = 42;
+export const MISSION_TIMING_PLACEHOLDER = "Select ships to calculate";
+
+export type MissionTimingSummary = {
+  arrivalClock: string;
+  arrivalDuration: string;
+  returnClock: string;
+  returnDuration: string;
+};
+
+export type MissionTimingRow = {
+  align: "left" | "right";
+  kind: "arrival" | "return";
+  placeholder: boolean;
+  time: string;
+  value: string;
+};
+
+// Keep the timing cells present before travel math is valid. The route card owns a fixed-height
+// two-line timing strip, while missions without a return leg simply leave the opposite column empty.
+// `hasHoldingPeriod` describes the mission mode, not a selected-fleet calculation, so adding/removing
+// ships cannot make the return cell itself appear or disappear.
+export function missionTimingRows(
+  action: EnabledGalaxyAction,
+  hasHoldingPeriod: boolean,
+  summary: MissionTimingSummary | null,
+): MissionTimingRow[] {
+  const placeholder = summary === null;
+  const rows: MissionTimingRow[] = [];
+  if (shouldShowReturnTiming(action, hasHoldingPeriod)) {
+    rows.push({
+      align: "left",
+      kind: "return",
+      placeholder,
+      time: summary?.returnClock ?? MISSION_TIMING_PLACEHOLDER,
+      value: summary?.returnDuration ?? "—",
+    });
+  }
+  rows.push({
+    align: "right",
+    kind: "arrival",
+    placeholder,
+    time: summary?.arrivalClock ?? MISSION_TIMING_PLACEHOLDER,
+    value: summary?.arrivalDuration ?? "—",
+  });
+  return rows;
+}
+
 // VEY-KANEO-493: the mission ship picker intentionally omits Pathfinder. It is an
 // expedition-only vessel and expeditions are not implemented, so it can never be built
 // or owned and listing it here would only surface dead, confusing copy. This mirrors the
@@ -609,6 +657,9 @@ export function MissionCreationPage({
 
   // Both flows share the same holding-fuel summary; whichever is active drives the preview.
   const holdingBreakdown = acsBreakdown ?? defenseHoldBreakdown;
+  const timingRows = action.mode === "missile" || joinAttackMode
+    ? []
+    : missionTimingRows(action, acsActive || defenseHoldActive, timingSummary);
   // Net holding fuel rides in the defending fleet's own deuterium spend on-chain, so it counts toward
   // both the deuterium balance and cargo-capacity gates.
   const effectiveFuelCost = holdingBreakdown ? fuelCost + holdingBreakdown.netHoldingFuel : fuelCost;
@@ -723,22 +774,7 @@ export function MissionCreationPage({
           subdued
           target={routeEndpoints.target}
         />
-        {action.mode !== "missile" && !joinAttackMode && timingSummary ? (
-          <div className="mt-2 grid grid-cols-2 gap-3 border-t border-white/10 pt-2 text-xs">
-            {shouldShowReturnTiming(action, Boolean(holdingBreakdown)) ? (
-              <RouteTiming
-                align="left"
-                time={timingSummary.returnClock}
-                value={timingSummary.returnDuration}
-              />
-            ) : null}
-            <RouteTiming
-              align="right"
-              time={timingSummary.arrivalClock}
-              value={timingSummary.arrivalDuration}
-            />
-          </div>
-        ) : null}
+        {timingRows.length > 0 ? <MissionTimingGrid rows={timingRows} /> : null}
       </section>
 
       <div className="grid gap-3">
@@ -1301,19 +1337,54 @@ export function MissionFuelCost({
   );
 }
 
+export function MissionTimingGrid({ rows }: { rows: readonly MissionTimingRow[] }) {
+  return (
+    <div
+      aria-label="Planned mission timing"
+      className="mt-2 grid grid-cols-2 gap-3 overflow-hidden border-t border-white/10 pt-2 text-xs"
+      data-mission-timing
+      style={{ minHeight: `${MISSION_TIMING_RESERVED_HEIGHT_PX}px` }}
+    >
+      {rows.map((row) => (
+        <RouteTiming
+          align={row.align}
+          key={row.kind}
+          kind={row.kind}
+          placeholder={row.placeholder}
+          time={row.time}
+          value={row.value}
+        />
+      ))}
+    </div>
+  );
+}
+
 function RouteTiming({
   align,
+  kind,
+  placeholder,
   time,
   value,
 }: {
   align: "left" | "right";
+  kind: "arrival" | "return";
+  placeholder: boolean;
   time: string;
   value: string;
 }) {
+  const label = kind === "arrival" ? "Arrival" : "Return";
   return (
-    <div className={`grid min-w-0 gap-0.5 ${align === "right" ? "col-start-2 justify-items-end text-right" : "justify-items-start text-left"}`}>
-      <span className="font-medium tabular-nums text-slate-200">{value}</span>
-      <span className="max-w-full truncate text-[10px] tabular-nums text-slate-500">{time}</span>
+    <div
+      aria-atomic="true"
+      aria-label={placeholder ? `${label} timing: ${time}` : `${label} timing: ${value}, ${time}`}
+      aria-live="polite"
+      className={`grid min-w-0 gap-0.5 ${align === "right" ? "col-start-2 justify-items-end text-right" : "justify-items-start text-left"}`}
+      data-mission-timing-kind={kind}
+      data-mission-timing-state={placeholder ? "placeholder" : "calculated"}
+      title={placeholder ? time : undefined}
+    >
+      <span className={`font-medium tabular-nums ${placeholder ? "text-slate-500" : "text-slate-200"}`}>{value}</span>
+      <span className="max-w-full truncate whitespace-nowrap text-[10px] tabular-nums text-slate-500">{time}</span>
     </div>
   );
 }
@@ -1480,12 +1551,7 @@ export function staleSelectedShipQuantityBlocker(
   return `Selected ships are not available on the selected origin body: ${overSelected.join(", ")}. Switch the origin body or reduce the quantity before launching.`;
 }
 
-export function missionTimingSummary(travelSeconds: number, nowMs: number = Date.now()): {
-  arrivalClock: string;
-  arrivalDuration: string;
-  returnClock: string;
-  returnDuration: string;
-} | null {
+export function missionTimingSummary(travelSeconds: number, nowMs: number = Date.now()): MissionTimingSummary | null {
   if (!Number.isFinite(travelSeconds) || travelSeconds <= 0) return null;
   const arrivalSeconds = Math.ceil(travelSeconds);
   const returnSeconds = arrivalSeconds * 2;

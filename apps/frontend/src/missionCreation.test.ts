@@ -23,8 +23,12 @@ import {
   missionComposerRouteEndpoints,
   missionDraftBlocker,
   MissionFuelCost,
+  MissionTimingGrid,
+  MISSION_TIMING_PLACEHOLDER,
+  MISSION_TIMING_RESERVED_HEIGHT_PX,
   missionSpecificLoadout,
   missionShipOptions,
+  missionTimingRows,
   missionTimingSummary,
   NonAttackMissionIntelPanel,
   projectedMissionArrivalAtSeconds,
@@ -1799,7 +1803,7 @@ describe("mission creation", () => {
     expect(missionCreationSource).toContain('title="Loot at arrival"');
     expect(missionCreationSource).toContain('label="Available cargo"');
     expect(missionCreationSource).not.toContain("Can carry / available loot");
-    expect(missionCreationSource).toContain("action.mode !== \"missile\" && !joinAttackMode && timingSummary");
+    expect(missionCreationSource).toContain("missionTimingRows(action, acsActive || defenseHoldActive, timingSummary)");
     expect(missionCreationSource).toContain('className="grid gap-2 border-t border-white/10 pt-3"');
     expect(missionCreationSource).toContain('aria-label="Mission speed"');
     expect(missionCreationSource).not.toContain("MISSION_SPEED_OPTIONS.map");
@@ -1830,8 +1834,8 @@ describe("mission creation", () => {
     expect(missionCreationSource).toContain("fuelCost={effectiveFuelCost}");
     expect(missionCreationSource).toContain('<MissionCancelButton onCancel={onBack} />');
     expect(missionCreationSource).toContain('className="min-h-11 w-full');
-    expect(missionCreationSource).toContain('align="left"');
-    expect(missionCreationSource).toContain('align="right"');
+    expect(missionCreationSource).toContain('align: "left"');
+    expect(missionCreationSource).toContain('align: "right"');
     expect(missionCreationSource).toContain("grid grid-cols-2 gap-3");
     expect(missionCreationSource).toContain("grid min-w-0 gap-0.5");
     expect(missionCreationSource).not.toContain('<header className="border-b border-white/10 pb-3">');
@@ -2728,6 +2732,69 @@ describe("mission creation", () => {
     expect(missionTimingSummary(0)).toBeNull();
     expect(projectedMissionArrivalAtSeconds(3_900, Date.UTC(2026, 0, 1, 12, 0, 0) + 999))
       .toBe(Math.floor(Date.UTC(2026, 0, 1, 12, 0, 0) / 1_000) + 3_900);
+  });
+
+  test("reserves identical route timing geometry for empty, partial, and valid fleet states", () => {
+    const validSummary = missionTimingSummary(3_900, Date.UTC(2026, 0, 1, 12, 0, 0));
+    const states = [
+      missionTimingRows(transportAction, false, null),
+      missionTimingRows(transportAction, false, null),
+      missionTimingRows(transportAction, false, validSummary),
+    ];
+
+    expect(states.map((rows) => rows.length)).toEqual([2, 2, 2]);
+    expect(states[0]).toEqual([
+      {
+        align: "left",
+        kind: "return",
+        placeholder: true,
+        time: MISSION_TIMING_PLACEHOLDER,
+        value: "—",
+      },
+      {
+        align: "right",
+        kind: "arrival",
+        placeholder: true,
+        time: MISSION_TIMING_PLACEHOLDER,
+        value: "—",
+      },
+    ]);
+
+    const geometry = states.map((rows) => {
+      const grid = MissionTimingGrid({ rows });
+      return {
+        columns: grid.props.className.includes("grid-cols-2") ? 2 : 0,
+        minHeight: grid.props.style.minHeight,
+        timingCells: rows.length,
+      };
+    });
+    expect(geometry).toEqual([
+      { columns: 2, minHeight: `${MISSION_TIMING_RESERVED_HEIGHT_PX}px`, timingCells: 2 },
+      { columns: 2, minHeight: `${MISSION_TIMING_RESERVED_HEIGHT_PX}px`, timingCells: 2 },
+      { columns: 2, minHeight: `${MISSION_TIMING_RESERVED_HEIGHT_PX}px`, timingCells: 2 },
+    ]);
+  });
+
+  test("keeps every mission type's timing geometry independent of fleet and body validity", () => {
+    const validSummary = missionTimingSummary(600, Date.UTC(2026, 0, 1, 12, 0, 0));
+    const roundTripActions = [transportAction, deployAction, attackAction, harvestAction];
+    const singleLegActions = [colonizeAction, defenseHoldAction, acsDefendAction];
+
+    for (const action of roundTripActions) {
+      expect(missionTimingRows(action, false, null).map((row) => row.kind)).toEqual(["return", "arrival"]);
+      expect(missionTimingRows(action, false, validSummary).map((row) => row.kind)).toEqual(["return", "arrival"]);
+    }
+    for (const action of singleLegActions) {
+      const hasHoldingPeriod = action.kind === "defenseHold" || action.kind === "acsDefend";
+      expect(missionTimingRows(action, hasHoldingPeriod, null).map((row) => row.kind)).toEqual(["arrival"]);
+      expect(missionTimingRows(action, hasHoldingPeriod, validSummary).map((row) => row.kind)).toEqual(["arrival"]);
+    }
+
+    // Planet/moon switches share this same row model; only the route endpoints and travel summary
+    // change, so invalidating either body keeps the reserved grid mounted with placeholder rows.
+    expect(missionCreationSource).toContain("missionTimingRows(action, acsActive || defenseHoldActive, timingSummary)");
+    expect(missionCreationSource).toContain('data-mission-timing-state={placeholder ? "placeholder" : "calculated"}');
+    expect(missionCreationSource).toContain("truncate whitespace-nowrap");
   });
 });
 
