@@ -364,7 +364,7 @@ function MoonFact({
       <span className={mono ? "font-mono" : "font-medium"}>{value}</span>
     </>
   );
-  const className = "inline-flex min-h-8 items-center gap-2 rounded-md border border-white/10 bg-black/20 px-2.5 py-1.5 text-xs text-slate-300";
+  const className = "inline-flex items-center gap-2 rounded-md border border-white/10 bg-black/20 px-2.5 py-1.5 text-xs text-slate-300";
 
   if (href) {
     return (
@@ -383,7 +383,7 @@ function MoonFact({
     );
   }
 
-  return <span className={className}>{content}</span>;
+  return <span className={`${className} min-h-8`}>{content}</span>;
 }
 
 export function moonResourceRows(planet: Planet): Array<{ label: string; value: string }> {
