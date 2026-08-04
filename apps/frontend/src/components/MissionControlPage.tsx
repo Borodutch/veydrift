@@ -105,6 +105,7 @@ interface MissionControlPageProps {
   globalMissionArchive?: GlobalMissionArchiveResponse | undefined;
   globalMissionArchiveError?: string | undefined;
   globalMissionArchiveLoading?: boolean | undefined;
+  globalMissionArchiveTotalEntries?: number | undefined;
   // Canonical indexed alliance membership owns Alliance-tab visibility. Defaults to visible so
   // legacy callers/tests that do not model membership retain their historical tab set; the playable
   // app always passes an explicit membership-derived boolean.
@@ -156,6 +157,7 @@ export function MissionControlPage({
   globalMissionArchive,
   globalMissionArchiveError,
   globalMissionArchiveLoading = false,
+  globalMissionArchiveTotalEntries,
   hasAlliance = true,
   incomingAttackArchive,
   incomingAttackArchiveError,
@@ -399,6 +401,7 @@ export function MissionControlPage({
             allLoading={globalMissionArchiveLoading}
             allPagination={globalMissionArchive?.pagination}
             allRows={filteredGlobalPastMissionRows}
+            allTotalEntries={globalMissionArchiveTotalEntries}
             collapsedCount={pastCollapsedCount}
             error={missionArchiveError}
             incomingAttackCollapsedCount={incomingAttackPastCollapsedCount}
@@ -2284,12 +2287,14 @@ function pastDisplayTotalEntries(
   pagination: FleetMissionArchiveResponse["pagination"] | undefined,
   collapsedCount: number,
   clientFiltered = false,
+  totalEntries?: number,
 ): number {
   if (clientFiltered) return rows.length;
-  const currentPagination = pagination ?? paginationForRows(rows, 25);
-  return pagination
-    ? Math.max(rows.length, currentPagination.totalEntries - collapsedCount)
-    : currentPagination.totalEntries;
+  const serverTotalEntries = pagination?.totalEntries ?? totalEntries;
+  if (serverTotalEntries !== undefined) {
+    return Math.max(rows.length, serverTotalEntries - collapsedCount);
+  }
+  return paginationForRows(rows, 25).totalEntries;
 }
 
 type PastMissionTabData = {
@@ -2301,6 +2306,7 @@ type PastMissionTabData = {
   onPageChange?: ((page: number) => void) | undefined;
   pagination?: FleetMissionArchiveResponse["pagination"] | undefined;
   rows: PastMissionRow[];
+  totalEntries?: number | undefined;
 };
 
 function PastMissionSection({
@@ -2309,6 +2315,7 @@ function PastMissionSection({
   allLoading = false,
   allPagination,
   allRows,
+  allTotalEntries,
   collapsedCount = 0,
   error,
   incomingAttackCollapsedCount = 0,
@@ -2341,6 +2348,7 @@ function PastMissionSection({
   allLoading?: boolean | undefined;
   allPagination?: FleetMissionArchiveResponse["pagination"] | undefined;
   allRows: PastMissionRow[];
+  allTotalEntries?: number | undefined;
   collapsedCount?: number | undefined;
   error?: string | undefined;
   incomingAttackCollapsedCount?: number | undefined;
@@ -2378,6 +2386,7 @@ function PastMissionSection({
       onPageChange: onAllPageChange,
       pagination: allPagination,
       rows: allRows,
+      totalEntries: allTotalEntries,
     },
     incomingAttacks: {
       clientFiltered: missionStateFilterActive,
@@ -2409,7 +2418,18 @@ function PastMissionSection({
         <div aria-label="Past missions scope" className="flex flex-wrap gap-1.5" role="tablist">
           {PAST_MISSION_TABS.map((tab) => {
             const data = dataByTab[tab.key];
-            const count = pastDisplayTotalEntries(data.rows, data.pagination, data.collapsedCount, missionStateFilterActive);
+            const count = (
+              tab.key === "all"
+              && data.pagination === undefined
+              && data.totalEntries === undefined
+              && !missionStateFilterActive
+            ) ? "…" : pastDisplayTotalEntries(
+                data.rows,
+                data.pagination,
+                data.collapsedCount,
+                missionStateFilterActive,
+                data.totalEntries,
+              );
             return (
               <button
                 aria-selected={tab.key === pastTab}
@@ -2453,6 +2473,7 @@ function PastMissionTable({
   pagination,
   planetLookup,
   rows,
+  totalEntries,
   wallet,
   walletPlanetIds,
 }: PastMissionTabData & {
@@ -2473,7 +2494,7 @@ function PastMissionTable({
   const hasPages = !clientFiltered && currentPagination.totalPages > 1;
   const visiblePages = pagination ? [rows] : pages;
   const clientPage = pagination ? 0 : currentPagination.page - 1;
-  const displayTotalEntries = pastDisplayTotalEntries(rows, pagination, collapsedCount, clientFiltered);
+  const displayTotalEntries = pastDisplayTotalEntries(rows, pagination, collapsedCount, clientFiltered, totalEntries);
 
   return (
     <div

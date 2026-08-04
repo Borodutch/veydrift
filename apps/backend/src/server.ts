@@ -3303,7 +3303,8 @@ function globalMissionArchive(url: URL, indexer: SettlementIndexer): GlobalMissi
     missionType: url.searchParams.get("missionType"),
     page: requested.page,
     pageSize: requested.pageSize,
-    planetId: url.searchParams.get("planetId")
+    planetId: url.searchParams.get("planetId"),
+    summaryOnly: url.searchParams.get("summaryOnly") === "true"
   });
   const rows = chronologicalMissionArchiveRows(archive.completedMissions, []);
   const totalEntries = archive.totalEntries;
