@@ -2186,36 +2186,22 @@ export class SettlementIndexer {
 
   private withDefenseHoldCombatOutcome(mission: FleetMissionSummary): FleetMissionSummary {
     if (mission.missionType !== "DefenseHold") return mission;
-    const eventMission = this.decodedMissionLogs().eventMissions.find((candidate) => candidate.missionId === mission.missionId);
-    const historicalMission = eventMission?.missionType === "DefenseHold"
-      ? {
-          ...mission,
-          ...(eventMission.defenseHoldOutcome ? { defenseHoldOutcome: eventMission.defenseHoldOutcome } : {})
-        }
-      : mission;
+    // Canonical mission rows already include the event-derived DefenseHold lifecycle outcome. Do
+    // not decode the complete mission ledger here: archive pages can contain many historical
+    // holds, and rebuilding that ledger on a cold reader is both redundant and very expensive.
+    // The materialized reverse lookup below retains exact battle losses even after a hold returns.
     const directRows = this.db.query(`
       SELECT reports.report_json
-      FROM indexed_battle_report_read_models reports
+      FROM indexed_battle_report_stationed_defenders stationed
+      JOIN indexed_battle_report_read_models reports
+        ON reports.mission_id = stationed.battle_mission_id
       WHERE reports.status = 'ready'
         AND reports.report_json IS NOT NULL
-        AND EXISTS (
-          SELECT 1
-          FROM json_each(reports.report_json, '$.stationedDefenders') defenders
-          WHERE json_extract(defenders.value, '$.missionId') = ?
-      )
+        AND stationed.defender_mission_id = ?
       ORDER BY CAST(reports.block_number AS INTEGER) DESC
       LIMIT 1
     `).all(mission.missionId) as Array<Pick<BattleReportReadModelRow, "report_json">>;
-    const targetRows = directRows.length > 0 ? [] : this.db.query(`
-      SELECT report_json
-      FROM indexed_battle_report_read_models
-      WHERE status = 'ready'
-        AND report_json IS NOT NULL
-        AND json_extract(report_json, '$.targetPlanetId') = ?
-      ORDER BY CAST(block_number AS INTEGER) DESC
-      LIMIT 100
-    `).all(mission.targetPlanetId) as Array<Pick<BattleReportReadModelRow, "report_json">>;
-    for (const row of [...directRows, ...targetRows]) {
+    for (const row of directRows) {
       if (!row.report_json) continue;
       try {
         const report = parseEvent<BattleReport>(row.report_json);
@@ -2225,7 +2211,7 @@ export class SettlementIndexer {
         const defender = defenders.find((candidate) => candidate.missionId === mission.missionId);
         if (!defender) continue;
         return {
-          ...historicalMission,
+          ...mission,
           originalShips: positiveShipCounts(defender.ships),
           destroyedShips: defender.destroyedShips ?? null,
           survivingShips: defender.survivingShips ?? null,
@@ -2237,7 +2223,7 @@ export class SettlementIndexer {
         continue;
       }
     }
-    return { ...historicalMission, originalShips: positiveShipCounts(mission.ships) };
+    return { ...mission, originalShips: positiveShipCounts(mission.ships) };
   }
 
   stationedDefendersForPlanet(planetId: string, asOfSeconds = Math.floor(Date.now() / 1_000)): StationedDefenderSummary[] {
@@ -4337,6 +4323,16 @@ export class SettlementIndexer {
       );
       CREATE INDEX IF NOT EXISTS indexed_battle_report_read_models_status_idx
         ON indexed_battle_report_read_models (status, updated_at);
+      -- Battle reports contain stationed defenders in JSON. Materialize that reverse association so
+      -- completed DefenseHold history never has to scan every report with json_each on a read.
+      CREATE TABLE IF NOT EXISTS indexed_battle_report_stationed_defenders (
+        defender_mission_id TEXT NOT NULL,
+        battle_mission_id TEXT NOT NULL,
+        block_number TEXT NOT NULL,
+        PRIMARY KEY (defender_mission_id, battle_mission_id)
+      );
+      CREATE INDEX IF NOT EXISTS indexed_battle_report_stationed_defenders_battle_idx
+        ON indexed_battle_report_stationed_defenders (battle_mission_id);
       CREATE TABLE IF NOT EXISTS indexed_unit_count_event_logs (
         event_id TEXT PRIMARY KEY,
         block_number TEXT NOT NULL,
@@ -4731,6 +4727,7 @@ export class SettlementIndexer {
     this.ensureColumn("contract_alliance_diplomacy", "declared_at", "TEXT");
     this.backfillStartPriceProjection();
     this.backfillDefenseHoldEndedMissionEvents();
+    this.backfillBattleReportStationedDefenderIndex();
     if (runStartupBackfill) {
       this.backfillMissionEventLogs();
       this.backfillUnitCountEventLogs();
@@ -4929,6 +4926,38 @@ export class SettlementIndexer {
     `).run(missionId, blockNumber, new Date().toISOString());
   }
 
+  private backfillBattleReportStationedDefenderIndex(): void {
+    const migrationKey = "battleReportStationedDefenderIndexV1";
+    if (this.metadata(migrationKey) !== null) return;
+    const reports = this.db.query(`
+      SELECT report_json, block_number
+      FROM indexed_battle_report_read_models
+      WHERE status = 'ready'
+        AND report_json IS NOT NULL
+        AND mission_id = CAST(json_extract(report_json, '$.missionId') AS TEXT)
+    `).all() as Array<Pick<BattleReportReadModelRow, "report_json" | "block_number">>;
+    const insert = this.db.query(`
+      INSERT OR REPLACE INTO indexed_battle_report_stationed_defenders (
+        defender_mission_id, battle_mission_id, block_number
+      ) VALUES (?, ?, ?)
+    `);
+    this.db.transaction(() => {
+      for (const row of reports) {
+        if (!row.report_json) continue;
+        try {
+          const report = parseEvent<BattleReport>(row.report_json);
+          for (const defender of report.stationedDefenders ?? []) {
+            insert.run(defender.missionId, report.missionId, row.block_number ?? report.blockNumber);
+          }
+        } catch {
+          // Preserve existing materialization status. A malformed historical report remains
+          // unavailable for exact losses, but must not block schema startup or archive reads.
+        }
+      }
+      this.setMetadata(migrationKey, new Date().toISOString());
+    })();
+  }
+
   private materializeBattleReportReadModel(missionId: string, reason: "ingest" | "backfill" | "repair"): boolean {
     const started = performance.now();
     const previous = this.battleReportMaterializationStatus(missionId);
@@ -4976,11 +5005,24 @@ export class SettlementIndexer {
           duration_ms = excluded.duration_ms,
           block_number = excluded.block_number,
           updated_at = excluded.updated_at
+        `);
+      const clearStationedDefenders = this.db.query(`
+        DELETE FROM indexed_battle_report_stationed_defenders
+        WHERE battle_mission_id = ?
+      `);
+      const writeStationedDefender = this.db.query(`
+        INSERT OR REPLACE INTO indexed_battle_report_stationed_defenders (
+          defender_mission_id, battle_mission_id, block_number
+        ) VALUES (?, ?, ?)
       `);
       const reportJson = JSON.stringify(report);
       this.db.transaction(() => {
         for (const associatedMissionId of associatedBattleReportMissionIds(report)) {
           writeReadyReport.run(associatedMissionId, reportJson, durationMs, report.blockNumber, updatedAt);
+        }
+        clearStationedDefenders.run(report.missionId);
+        for (const defender of report.stationedDefenders ?? []) {
+          writeStationedDefender.run(defender.missionId, report.missionId, report.blockNumber);
         }
       })();
       this.touchBattleReportReadModel();

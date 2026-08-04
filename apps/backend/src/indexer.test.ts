@@ -7484,6 +7484,14 @@ describe("SettlementIndexer", () => {
         })
       ]);
     }
+    expect(database.query(`
+      SELECT defender_mission_id, battle_mission_id
+      FROM indexed_battle_report_stationed_defenders
+      ORDER BY CAST(battle_mission_id AS INTEGER) ASC
+    `).all()).toEqual(attackMissionIds.map((missionId) => ({
+      defender_mission_id: "5500",
+      battle_mission_id: missionId.toString()
+    })));
     const queryPlan = database.query(`
       EXPLAIN QUERY PLAN
       SELECT *
