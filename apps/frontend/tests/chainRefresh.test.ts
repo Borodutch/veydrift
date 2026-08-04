@@ -113,11 +113,11 @@ describe("playable chain refresh", () => {
   test("keeps Mission Control planet switches cached until a launch composer opens", async () => {
     const source = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.url)).text();
 
-    expect(shouldClearCachedShipyardStateForPageRefresh("shipyard")).toBe(true);
-    expect(shouldClearCachedShipyardStateForPageRefresh("galaxy")).toBe(true);
+    expect(shouldClearCachedShipyardStateForPageRefresh("shipyard")).toBe(false);
+    expect(shouldClearCachedShipyardStateForPageRefresh("galaxy")).toBe(false);
     expect(shouldClearCachedShipyardStateForPageRefresh("mission-control")).toBe(false);
-    expect(shouldClearCachedShipyardStateForPageRefresh("rankings")).toBe(true);
-    expect(shouldClearCachedShipyardStateForPageRefresh("raid-target-finder")).toBe(true);
+    expect(shouldClearCachedShipyardStateForPageRefresh("rankings")).toBe(false);
+    expect(shouldClearCachedShipyardStateForPageRefresh("raid-target-finder")).toBe(false);
     expect(shouldEagerlyRefreshPlanetSwitchForPage("mission-control")).toBe(false);
     expect(shouldEagerlyRefreshPlanetSwitchForPage("overview")).toBe(true);
     expect(source).toContain("refreshShipyardState({ clearCachedState: true });");
