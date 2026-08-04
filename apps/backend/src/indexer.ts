@@ -10412,7 +10412,10 @@ export class SettlementIndexer {
     return this.rows<SettledPlanetEvent>(sql, ...params).map((planet) => this.withResourceSnapshot(planet));
   }
 
-  private settledPlanetsForOwner(wallet: `0x${string}`): SettledPlanetEvent[] {
+  // Reuses the indexed owner roster without constructing the standalone wallet-planets view.
+  // Server overview/roster reads add tactical and moon detail themselves, so exposing this narrow
+  // primitive avoids a second all-planet hydration pass on cold requests.
+  settledPlanetsForOwner(wallet: `0x${string}`): SettledPlanetEvent[] {
     const normalizedWallet = wallet.toLowerCase();
     const cachedIndex = this.currentSettledPlanetIndexCache();
     if (cachedIndex) return [...(cachedIndex.byOwner.get(normalizedWallet) ?? [])];
@@ -11268,7 +11271,7 @@ function mergeCurrentPlanetSnapshots(
   });
 }
 
-function indexedManagedPlanet(
+export function indexedManagedPlanet(
   planet: SettledPlanetEvent,
   homePlanetId: string | null,
   buildings: InfrastructureState["buildings"] = [],
