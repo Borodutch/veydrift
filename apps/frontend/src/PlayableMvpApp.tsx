@@ -1067,6 +1067,24 @@ export function nextProductionQueueCompletionEventMs(
   return soonest;
 }
 
+export function productionQueueCompletionCandidates({
+  building,
+  defense,
+  moonBuilding,
+  moonDefense,
+  research,
+  shipyard,
+}: {
+  building?: QueueStateResponse | null | undefined;
+  defense?: QueueStateResponse | null | undefined;
+  moonBuilding?: QueueStateResponse | null | undefined;
+  moonDefense?: QueueStateResponse | null | undefined;
+  research?: QueueStateResponse | null | undefined;
+  shipyard?: QueueStateResponse | null | undefined;
+}): ReadonlyArray<QueueStateResponse | null | undefined> {
+  return [building, defense, shipyard, research, moonBuilding, moonDefense];
+}
+
 export function planetScopedFleetVisibility(
   fleetVisibility: FleetMissionVisibilityResponse | undefined,
   planetId: string | undefined,
@@ -6003,12 +6021,14 @@ export function PlayableMvpApp({
       return;
     }
 
-    const nextEventMs = nextProductionQueueCompletionEventMs([
-      activeBuildingQueue,
-      activeDefenseProductionQueue,
-      activeShipyardProductionQueue,
-      effectiveResearchState?.queue,
-    ], Date.now());
+    const nextEventMs = nextProductionQueueCompletionEventMs(productionQueueCompletionCandidates({
+      building: activeBuildingQueue,
+      defense: activeDefenseProductionQueue,
+      moonBuilding: moonState?.queue,
+      moonDefense: moonState?.defenseQueue,
+      research: effectiveResearchState?.queue,
+      shipyard: activeShipyardProductionQueue,
+    }), Date.now());
     if (nextEventMs === undefined) {
       return;
     }
@@ -6037,6 +6057,8 @@ export function PlayableMvpApp({
     activeShipyardProductionQueue,
     apiBaseUrl,
     effectiveResearchState?.queue,
+    moonState?.defenseQueue,
+    moonState?.queue,
     pageStateHydrationReady,
     refreshDefenseState,
     refreshInfrastructureState,
@@ -6051,12 +6073,14 @@ export function PlayableMvpApp({
       return;
     }
 
-    const nextEventMs = nextProductionQueueCompletionEventMs([
-      activeBuildingQueue,
-      activeDefenseProductionQueue,
-      activeShipyardProductionQueue,
-      effectiveResearchState?.queue,
-    ], Date.now());
+    const nextEventMs = nextProductionQueueCompletionEventMs(productionQueueCompletionCandidates({
+      building: activeBuildingQueue,
+      defense: activeDefenseProductionQueue,
+      moonBuilding: moonState?.queue,
+      moonDefense: moonState?.defenseQueue,
+      research: effectiveResearchState?.queue,
+      shipyard: activeShipyardProductionQueue,
+    }), Date.now());
     if (nextEventMs === undefined) {
       return;
     }
@@ -6072,6 +6096,8 @@ export function PlayableMvpApp({
     activeDefenseProductionQueue,
     activeShipyardProductionQueue,
     effectiveResearchState?.queue,
+    moonState?.defenseQueue,
+    moonState?.queue,
     pageStateHydrationReady,
   ]);
 
@@ -9042,11 +9068,12 @@ export function PlayableMvpApp({
           canBurnChicken={canSubmitChickenBurnTransaction}
           canTransact={canSubmitMoonTransaction}
           error={moonSection.status.error ?? moonError}
-          loading={moonLoading || moonSection.status.loading}
+          loading={moonLoading || moonSection.status.loading || (isWalletConnected && !moonState && !(moonSection.status.error ?? moonError))}
           moonActions={moonOverviewActions}
           moonState={moonState}
           onBurnChicken={handleBurnChickenForMoon}
           onJumpGate={handleJumpGate}
+          onOpenRequirement={handleOpenRequirement}
           onRefresh={moonSection.refresh ?? refreshInfrastructureState}
           onStartBuilding={handleStartMoonBuilding}
           onStartDefense={handleStartMoonDefense}

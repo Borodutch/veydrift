@@ -19,7 +19,7 @@ export type StructureCatalogItem<Key extends string> = {
   key: Key;
   label: string;
   labelTone?: "normal" | "muted" | undefined;
-  statusText: string;
+  statusText?: string | undefined;
   statusTone?: "accent" | "warning" | undefined;
 };
 
