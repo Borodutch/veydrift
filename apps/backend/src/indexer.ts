@@ -1978,75 +1978,111 @@ export class SettlementIndexer {
     );
     const targetIds = [...ownedPlanetIds].filter((planetId) => planetId.length > 0);
     const asOfSeconds = nowSeconds();
-    // Mission type ids 3/7/8 are Attack/MissileAttack/AcsAttack. Only defender-side return legs are
-    // preloaded into the archive; the attacker's own returning-flight archive payload stays unchanged.
-    const returningDefenderAttackSql = targetIds.length > 0
-      ? `OR (
-        status_id = 2
-        AND mission_type_id IN (3, 7, 8)
-        AND owner != ?
-        AND target_planet_id IN (${targetIds.map(() => "?").join(",")})
-      )`
-      : "";
-    const statusSql = `(
+    // Build the wallet archive as indexed owner/target branches rather than a single broad OR.
+    // The old shape made SQLite merge status indexes across the whole mission table and then sort
+    // the result; on production history that occasionally blocked a reader for tens of seconds.
+    // `UNION` de-duplicates self-targeted missions before the final primary-key lookup while
+    // preserving the exact completed/returned and defender-return visibility rules.
+    const completedOrReturnedSql = `(
       status_id IN (3, 4)
       OR (status_id IN (2, 5) AND CAST(return_at AS INTEGER) <= CAST(? AS INTEGER))
-      ${returningDefenderAttackSql}
     )`;
-    const params: SQLQueryBindings[] = [asOfSeconds.toString()];
-    if (targetIds.length > 0) params.push(walletLower, ...targetIds);
-    let visibilitySql: string;
+    const targetPlaceholders = targetIds.map(() => "?").join(",");
+    let visibleMissionIdsSql: string;
+    const visibleMissionParams: SQLQueryBindings[] = [];
     if (options.filter === "incomingAttacks") {
-      visibilitySql = targetIds.length > 0
-        ? `mission_type_id = 3 AND owner != ? AND target_planet_id IN (${targetIds.map(() => "?").join(",")})`
-        : "0 = 1";
-      if (targetIds.length > 0) params.push(walletLower, ...targetIds);
+      visibleMissionIdsSql = targetIds.length > 0
+        ? `
+          SELECT mission_id
+          FROM contract_fleet_missions
+          WHERE target_planet_id IN (${targetPlaceholders})
+            AND owner != ?
+            AND mission_type_id = 3
+            AND (
+              ${completedOrReturnedSql}
+              OR status_id = 2
+            )
+        `
+        : "SELECT mission_id FROM contract_fleet_missions WHERE 0 = 1";
+      if (targetIds.length > 0) {
+        visibleMissionParams.push(...targetIds, walletLower, asOfSeconds.toString());
+      }
     } else {
-      visibilitySql = targetIds.length > 0
-        ? `(owner = ? OR target_planet_id IN (${targetIds.map(() => "?").join(",")}))`
-        : "owner = ?";
-      params.push(walletLower, ...targetIds);
+      const branches = [
+        `
+          SELECT mission_id
+          FROM contract_fleet_missions
+          WHERE owner = ?
+            AND ${completedOrReturnedSql}
+        `
+      ];
+      visibleMissionParams.push(walletLower, asOfSeconds.toString());
+      if (targetIds.length > 0) {
+        branches.push(`
+          SELECT mission_id
+          FROM contract_fleet_missions
+          WHERE target_planet_id IN (${targetPlaceholders})
+            AND ${completedOrReturnedSql}
+        `);
+        visibleMissionParams.push(...targetIds, asOfSeconds.toString());
+        // Mission type ids 3/7/8 are Attack/MissileAttack/AcsAttack. Defender-side return legs
+        // are visible immediately; an attacker's own returning-flight archive stays unchanged.
+        branches.push(`
+          SELECT mission_id
+          FROM contract_fleet_missions
+          WHERE status_id = 2
+            AND mission_type_id IN (3, 7, 8)
+            AND owner != ?
+            AND target_planet_id IN (${targetPlaceholders})
+        `);
+        visibleMissionParams.push(walletLower, ...targetIds);
+      }
+      visibleMissionIdsSql = branches.join("\nUNION\n");
     }
     const missionNumber = (options.missionNumber ?? "").replace(/\D+/g, "");
     const archiveFilterSql: string[] = [];
     if (missionNumber) archiveFilterSql.push("mission_id LIKE ?");
-    if (missionNumber) params.push(`%${missionNumber}%`);
+    const archiveFilterParams: SQLQueryBindings[] = [];
+    if (missionNumber) archiveFilterParams.push(`%${missionNumber}%`);
     const missionType = (options.missionType ?? "").trim();
     const missionTypeId = missionType ? fleetMissionTypeId(missionType) : null;
     if (missionType) {
       archiveFilterSql.push(missionTypeId === null ? "0 = 1" : "mission_type_id = ?");
-      if (missionTypeId !== null) params.push(missionTypeId);
+      if (missionTypeId !== null) archiveFilterParams.push(missionTypeId);
     }
     const rawPlanetId = (options.planetId ?? "").trim();
     const planetId = rawPlanetId.replace(/\D+/g, "").replace(/^0+(?=\d)/, "");
     if (rawPlanetId) {
       archiveFilterSql.push(planetId ? "(origin_planet_id = ? OR target_planet_id = ?)" : "0 = 1");
-      if (planetId) params.push(planetId, planetId);
+      if (planetId) archiveFilterParams.push(planetId, planetId);
     }
     const archiveFilters = archiveFilterSql.map((filter) => `AND ${filter}`).join("\n        ");
 
-    const countRow = this.db.query(`
+    const visibleMissionCte = `
+      WITH visible_mission_ids AS (
+        ${visibleMissionIdsSql}
+      )
+    `;
+    const countRow = this.db.query(`${visibleMissionCte}
       SELECT COUNT(*) AS count
       FROM contract_fleet_missions
-      WHERE ${statusSql}
-        AND (${visibilitySql})
+      WHERE mission_id IN (SELECT mission_id FROM visible_mission_ids)
         ${archiveFilters}
-    `).get(...params) as CountRow | null;
+    `).get(...visibleMissionParams, ...archiveFilterParams) as CountRow | null;
     const totalEntries = Number(countRow?.count ?? 0);
     const pageSize = Math.max(1, Math.min(100, Math.trunc(options.pageSize) || 25));
     const totalPages = Math.max(1, Math.ceil(totalEntries / pageSize));
     const page = Math.min(Math.max(1, Math.trunc(options.page) || 1), totalPages);
-    const rows = this.db.query(`
+    const rows = this.db.query(`${visibleMissionCte}
       SELECT *
       FROM contract_fleet_missions
-      WHERE ${statusSql}
-        AND (${visibilitySql})
+      WHERE mission_id IN (SELECT mission_id FROM visible_mission_ids)
         ${archiveFilters}
       ORDER BY
         CAST(CASE WHEN status_id IN (2, 4, 5) THEN return_at ELSE arrival_at END AS INTEGER) DESC,
         CAST(mission_id AS INTEGER) DESC
       LIMIT ? OFFSET ?
-    `).all(...params, pageSize, (page - 1) * pageSize) as ContractFleetMissionRow[];
+    `).all(...visibleMissionParams, ...archiveFilterParams, pageSize, (page - 1) * pageSize) as ContractFleetMissionRow[];
     const stateVersion = this.indexedStateCacheVersion();
     const completedMissions = this.canonicalFleetMissionSummaries(rows).map((summary) => {
       const mission = this.withFleetMissionPlanetReferences(summary, stateVersion);
