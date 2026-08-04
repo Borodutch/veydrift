@@ -706,6 +706,13 @@ export class SettlementIndexer {
   private targetedSettledPlanetCache: TargetedSettledPlanetCache | null = null;
   private indexedLevelsByIdCache: IndexedLevelsByIdCache | null = null;
   private queueStateCache: QueueStateCache | null = null;
+  // `responseCacheVersion()` is called before every cache lookup. Production queues are time-aware,
+  // but re-scanning and re-parsing every ship/defense backlog for every request made a cache *hit*
+  // cost as much as a full queue projection under live polling. Cache the projection fingerprint until
+  // either indexed state changes or the next queue completion boundary is reached.
+  private productionQueueProjectionVersionCache:
+    | { indexedStateVersion: string; validThroughSecond: number | null; value: string }
+    | null = null;
   private technologyLevelsCache: TechnologyLevelsCache | null = null;
   private allianceIntelCache: AllianceIntelCache | null = null;
   private resolvedBattleMissionIdsCache:
@@ -2921,6 +2928,16 @@ export class SettlementIndexer {
   }
 
   private productionQueueProjectionCacheVersion(nowSec = nowSeconds()): string {
+    const indexedStateVersion = this.indexedStateCacheVersion();
+    const cached = this.productionQueueProjectionVersionCache;
+    if (
+      cached
+      && cached.indexedStateVersion === indexedStateVersion
+      && (cached.validThroughSecond === null || nowSec < cached.validThroughSecond)
+    ) {
+      return cached.value;
+    }
+
     const rows = this.db.query(`
       SELECT queue_kind, planet_id, item_id, target_level, quantity, ready_at, started_at,
         original_quantity, unit_work_seconds, production_rate,
@@ -2946,7 +2963,15 @@ export class SettlementIndexer {
       }
     }
 
-    return `pq:${completed}:${nextReadyAt ?? "none"}`;
+    const value = `pq:${completed}:${nextReadyAt ?? "none"}`;
+    this.productionQueueProjectionVersionCache = {
+      indexedStateVersion,
+      // The fingerprint can change only when a queue becomes due. A subsequent indexed mutation
+      // changes `indexedStateVersion` and invalidates this cache immediately.
+      validThroughSecond: nextReadyAt,
+      value
+    };
+    return value;
   }
 
   checkpointWal(mode: "PASSIVE" | "TRUNCATE" = "PASSIVE"): Array<{ busy: number; log: number; checkpointed: number }> {

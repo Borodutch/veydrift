@@ -19,6 +19,8 @@ const maxMissionsPerTick = 100;
 const missionResolutionConcurrency = 4;
 const promptnessTargetMs = 60_000;
 const latencySampleLimit = 1_000;
+const initialFailureRetryMs = 30_000;
+const maxFailureRetryMs = 300_000;
 
 const veydriftGameResolutionAbi = [
   {
@@ -143,6 +145,11 @@ export class MissionResolutionService {
   };
   private readonly failuresByLeg: Record<MissionLeg, number> = { arrival: 0, return: 0 };
   private readonly latencySamples: Record<MissionLeg, number[]> = { arrival: [], return: [] };
+  // A permanently unpayable resolver must not resubmit every overdue mission every five seconds.
+  // Besides wasting RPC/gas-estimation work, viem's multi-line error payloads can flood container
+  // stdout and contend with API readers. Keep the candidate visible to health checks, but retry it
+  // with bounded exponential backoff until its underlying condition changes.
+  private readonly failedCandidateRetries = new Map<string, { failures: number; retryAtMs: number }>();
 
   constructor(
     private readonly config: BackendConfig,
@@ -267,7 +274,9 @@ export class MissionResolutionService {
   }
 
   private async settleCandidates(all: MissionSettlementCandidate[]): Promise<void> {
-    const attemptable = all.slice(0, this.maxMissionsPerTick * 5);
+    const attemptable = all
+      .filter((candidate) => this.canAttempt(candidate))
+      .slice(0, this.maxMissionsPerTick * 5);
     let successful = 0;
     let cursor = 0;
     while (cursor < attemptable.length && successful < this.maxMissionsPerTick) {
@@ -296,13 +305,33 @@ export class MissionResolutionService {
       }
       this.recordLatency(candidate.leg, candidate.dueAt);
       this.pendingDueAt[candidate.leg].delete(candidate.mission.missionId);
+      this.failedCandidateRetries.delete(candidateRetryKey(candidate));
       return true;
     } catch (error) {
       this.failuresByLeg[candidate.leg] += 1;
       const method = candidate.leg === "arrival" ? "resolveFleetMission" : "completeFleetMissionReturn";
-      this.logger.warn(`[mission-resolution] ${method}(${candidate.mission.missionId}) failed: ${reasonText(error)}`);
+      const retryAfterMs = this.scheduleRetry(candidate);
+      this.logger.warn(
+        `[mission-resolution] ${method}(${candidate.mission.missionId}) failed; retry in ${Math.ceil(retryAfterMs / 1_000)}s: ${conciseReasonText(error)}`
+      );
       return false;
     }
+  }
+
+  private canAttempt(candidate: MissionSettlementCandidate): boolean {
+    const retry = this.failedCandidateRetries.get(candidateRetryKey(candidate));
+    return !retry || retry.retryAtMs <= this.now();
+  }
+
+  private scheduleRetry(candidate: MissionSettlementCandidate): number {
+    const key = candidateRetryKey(candidate);
+    const failures = (this.failedCandidateRetries.get(key)?.failures ?? 0) + 1;
+    const retryAfterMs = Math.min(maxFailureRetryMs, initialFailureRetryMs * 2 ** (failures - 1));
+    this.failedCandidateRetries.set(key, {
+      failures,
+      retryAtMs: this.now() + retryAfterMs
+    });
+    return retryAfterMs;
   }
 
   private recordLatency(leg: MissionLeg, dueAtSeconds: number): void {
@@ -478,6 +507,24 @@ function buildMissionResolutionChainClient(config: BackendConfig): MissionResolu
 
 function reasonText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function conciseReasonText(error: unknown): string {
+  const shortMessage = error && typeof error === "object" && "shortMessage" in error
+    ? (error as { shortMessage?: unknown }).shortMessage
+    : undefined;
+  const message = typeof shortMessage === "string" && shortMessage.trim().length > 0
+    ? shortMessage
+    : reasonText(error);
+  const firstParagraph = message.split(/\n\s*\n|\nRequest Arguments:|\nContract Call:/)[0] ?? "Unknown resolver failure";
+  return firstParagraph
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 500);
+}
+
+function candidateRetryKey(candidate: MissionSettlementCandidate): string {
+  return `${candidate.leg}:${candidate.mission.missionId}`;
 }
 
 function emptyDueLegSnapshot(): DueLegSnapshot {

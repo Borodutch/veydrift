@@ -201,6 +201,30 @@ describe("MissionResolutionService", () => {
     });
   });
 
+  test("backs off a repeatedly failing candidate instead of retrying it every resolution tick", async () => {
+    let nowMs = 1_000_000;
+    const calls: string[] = [];
+    const service = new MissionResolutionService(config, {
+      candidateSource: {
+        missionResolutionCandidates: () => ({
+          arrivals: [arrival("1", "Attack", "900")],
+          returns: []
+        })
+      },
+      chainClient: fakeClient({ calls, failArrivals: ["1"], resolvable: [], returnable: [] }),
+      logger: silentLogger(),
+      now: () => nowMs
+    });
+
+    await service.tick();
+    await service.tick();
+    expect(calls).toEqual(["resolve:1"]);
+
+    nowMs += 30_000;
+    await service.tick();
+    expect(calls).toEqual(["resolve:1", "resolve:1"]);
+  });
+
   test("suppresses overlapping timer runs and reports the skip", async () => {
     let release = () => {};
     let scans = 0;

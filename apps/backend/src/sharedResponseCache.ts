@@ -20,7 +20,11 @@ type CacheRow = {
 
 export class SharedResponseCache {
   private readonly db: Database;
-  private readonly maxRows = 4_096;
+  // A 4k-row shared cache churned in a few minutes under normal wallet polling, evicting valid
+  // 30–60s responses before every reader could reuse them. The larger bound is small relative to
+  // the backend disk budget but lets the cache cover the active player set.
+  private readonly maxRows = 16_384;
+  private lastPrunedAt = 0;
 
   constructor(databasePath: string) {
     mkdirSync(dirname(databasePath), { recursive: true });
@@ -92,7 +96,13 @@ export class SharedResponseCache {
         now
       );
     });
-    this.prune(now);
+    // Pruning sorted the full cache on every cold response. That made cache insertion itself a
+    // multi-second synchronous write under load. Expiry is advisory, so batched maintenance keeps
+    // the hot path cheap without serving expired entries (get() still filters by expiry).
+    if (now - this.lastPrunedAt >= 30_000) {
+      this.prune(now);
+      this.lastPrunedAt = now;
+    }
   }
 
   tryAcquireRefresh(cacheKey: string, ttlMs = 15_000, now = Date.now()): boolean {
