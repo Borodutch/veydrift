@@ -92,15 +92,15 @@ describe("shouldRefreshAllianceStateForPage", () => {
 });
 
 describe("shouldClearCachedShipyardStateForPageRefresh", () => {
-  test("forces pages with visible launch controls to replace stale shipyard inventory", () => {
-    expect(shouldClearCachedShipyardStateForPageRefresh("shipyard")).toBe(true);
-    expect(shouldClearCachedShipyardStateForPageRefresh("raid-target-finder")).toBe(true);
+  test("keeps the last confirmed inventory visible while launch pages refresh", () => {
+    expect(shouldClearCachedShipyardStateForPageRefresh("shipyard")).toBe(false);
+    expect(shouldClearCachedShipyardStateForPageRefresh("raid-target-finder")).toBe(false);
     expect(shouldClearCachedShipyardStateForPageRefresh("mission-control")).toBe(false);
-    expect(shouldClearCachedShipyardStateForPageRefresh("rankings")).toBe(true);
-    expect(shouldClearCachedShipyardStateForPageRefresh("galaxy")).toBe(true);
+    expect(shouldClearCachedShipyardStateForPageRefresh("rankings")).toBe(false);
+    expect(shouldClearCachedShipyardStateForPageRefresh("galaxy")).toBe(false);
   });
 
-  test("does not clear cached shipyard inventory on unrelated pages", () => {
+  test("also keeps cached shipyard inventory on unrelated pages", () => {
     expect(shouldClearCachedShipyardStateForPageRefresh("research")).toBe(false);
     expect(shouldClearCachedShipyardStateForPageRefresh("alliance")).toBe(false);
   });
