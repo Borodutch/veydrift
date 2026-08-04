@@ -55,7 +55,7 @@ describe("Farcaster Mini App metadata", () => {
       imageUrl: "https://test.veydrift.com/assets/miniapp/embed.png",
       aspectRatio: "3:2",
       button: {
-        title: "Join the testers",
+        title: "Play the open beta",
         action: {
           type: "launch_miniapp",
           name: "Veydrift",
