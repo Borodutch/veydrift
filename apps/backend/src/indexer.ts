@@ -4307,6 +4307,24 @@ export class SettlementIndexer {
         ON indexed_mission_event_logs (event_kind, block_number);
       CREATE INDEX IF NOT EXISTS indexed_mission_event_logs_kind_topic1_block_idx
         ON indexed_mission_event_logs (event_kind, json_extract(event_json, '$.topics[1]'), block_number);
+      -- Joining an active attack previews the exact Solidity DefenseHold storage lanes. Keep both
+      -- target-topic layouts indexed: stationed logs put the planet in topics[3], while ended logs
+      -- put it in topics[2]. Without these expression indexes each visible attack scanned the full
+      -- event ledger, multiplying a 300ms JSON scan by every joinable attack on every poll.
+      CREATE INDEX IF NOT EXISTS indexed_mission_event_logs_defense_hold_stationed_target_idx
+        ON indexed_mission_event_logs (
+          event_kind,
+          lower(json_extract(event_json, '$.topics[0]')),
+          json_extract(event_json, '$.topics[3]'),
+          block_number
+        );
+      CREATE INDEX IF NOT EXISTS indexed_mission_event_logs_defense_hold_ended_target_idx
+        ON indexed_mission_event_logs (
+          event_kind,
+          lower(json_extract(event_json, '$.topics[0]')),
+          json_extract(event_json, '$.topics[2]'),
+          block_number
+        );
       CREATE TABLE IF NOT EXISTS indexed_battle_report_read_models (
         mission_id TEXT PRIMARY KEY,
         status TEXT NOT NULL,
@@ -9988,19 +10006,21 @@ export class SettlementIndexer {
   ): { missionIds: string[]; unavailableReason?: string } {
     const targetTopic = fleetMissionIdTopic(targetPlanetId);
     const rows = this.db.query(`
+      WITH defense_hold_events AS (
+        SELECT event_json, block_number
+        FROM indexed_mission_event_logs
+        WHERE event_kind = 'fleet'
+          AND lower(json_extract(event_json, '$.topics[0]')) = lower(?)
+          AND json_extract(event_json, '$.topics[3]') = ?
+        UNION ALL
+        SELECT event_json, block_number
+        FROM indexed_mission_event_logs
+        WHERE event_kind = 'fleet'
+          AND lower(json_extract(event_json, '$.topics[0]')) = lower(?)
+          AND json_extract(event_json, '$.topics[2]') = ?
+      )
       SELECT event_json
-      FROM indexed_mission_event_logs
-      WHERE event_kind = 'fleet'
-        AND (
-          (
-            lower(json_extract(event_json, '$.topics[0]')) = lower(?)
-            AND json_extract(event_json, '$.topics[3]') = ?
-          )
-          OR (
-            lower(json_extract(event_json, '$.topics[0]')) = lower(?)
-            AND json_extract(event_json, '$.topics[2]') = ?
-          )
-        )
+      FROM defense_hold_events
       ORDER BY CAST(block_number AS INTEGER) ASC
     `).all(
       defenseHoldStationedTopic,
