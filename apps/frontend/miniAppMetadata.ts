@@ -82,7 +82,7 @@ export const productionMiniAppSurface = {
   PUBLIC_SITE_URL: "https://veydrift.com",
   ROBOTS: "index,follow",
   SITE_TITLE: "Veydrift",
-  SITE_DESCRIPTION: "Veydrift is a new onchain space project. More details are coming soon.",
+  SITE_DESCRIPTION: "Onchain space strategy on Base. Settle planets, build fleets and raid rivals in a universe where every planet, fleet and resource is public onchain state.",
   SOCIAL_IMAGE: "https://veydrift.com/assets/og-image.jpg",
   MINIAPP_IMAGE: "https://veydrift.com/assets/miniapp/embed.png",
   MINIAPP_SPLASH: "https://veydrift.com/assets/miniapp/splash.png",
@@ -125,7 +125,7 @@ export function buildMiniAppEmbed(
     imageUrl: surface.MINIAPP_IMAGE,
     aspectRatio: "3:2",
     button: {
-      title: "Join the testers",
+      title: "Play the open beta",
       action: {
         type: actionType,
         name: "Veydrift",
@@ -158,8 +158,8 @@ function buildMiniAppManifestConfig(surface: MiniAppSurface): MiniAppManifestCon
     iconUrl: `${surface.PUBLIC_SITE_URL}/assets/miniapp/icon.png`,
     splashImageUrl: surface.MINIAPP_SPLASH,
     splashBackgroundColor: "#05070d",
-    subtitle: "Onchain space awaits",
-    description: "A new onchain space project is coming soon.",
+    subtitle: "Open beta live on Base",
+    description: "Build planets, launch fleets and fight over a persistent universe where every planet, fleet and resource is public onchain state.",
     screenshotUrls: [
       `${surface.PUBLIC_SITE_URL}/assets/miniapp/screenshot-1.jpg`,
     ],
@@ -171,9 +171,9 @@ function buildMiniAppManifestConfig(surface: MiniAppSurface): MiniAppManifestCon
       "game",
     ],
     heroImageUrl: `${surface.PUBLIC_SITE_URL}/assets/miniapp/og-image.jpg`,
-    tagline: "Onchain space awaits",
+    tagline: "Space strategy, fully onchain",
     ogTitle: "Veydrift",
-    ogDescription: "A new onchain space project is coming soon.",
+    ogDescription: "Onchain space strategy on Base. Settle planets, build fleets, raid rivals.",
     ogImageUrl: `${surface.PUBLIC_SITE_URL}/assets/miniapp/og-image.jpg`,
     requiredChains: surface.requiredChains,
     requiredCapabilities: [
