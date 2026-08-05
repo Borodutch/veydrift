@@ -461,7 +461,7 @@ export function NavBar({
                 active={active === page.key || (active === "planet" && page.key === "galaxy") || (active === "alliance-inspect" && page.key === "alliance") || (active === "player-inspect" && page.key === "rankings")}
                 key={page.key}
                 icon={page.icon}
-                label={page.mobileLabel}
+                label={page.label}
                 onClick={() => handleMobileNavigate(page.key)}
               />
             ))}

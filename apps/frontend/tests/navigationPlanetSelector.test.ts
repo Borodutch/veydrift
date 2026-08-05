@@ -87,7 +87,9 @@ describe("navigation and planet selector UI source contracts", () => {
     expect(navSource).toContain("<details");
     expect(navSource).toContain("<summary");
     expect(navSource).toContain("onToggle={(event) => setMobileMenuOpen(event.currentTarget.open)}");
+    expect(navSource).toContain("label={page.label}");
     expect(navSource).not.toContain("onClick={() => setMobileMenuOpen((open) => !open)}");
+    expect(navSource).not.toContain("label={page.mobileLabel}");
     expect(navSource).not.toContain("Mobile top tabs");
   });
 

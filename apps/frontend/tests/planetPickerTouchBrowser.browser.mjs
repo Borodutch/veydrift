@@ -487,7 +487,17 @@ test("desktop selector atomically replaces an unrelated inspector with one owned
 test("mobile hamburger selector independently invokes the owned-planet transition", async () => {
   await loadInspectorFixture("/planet/9/9/9", 390);
   await waitForExpression("document.querySelector('main h2')?.textContent === 'Unrelated Gamma'");
-  await clickExpression("document.querySelector('button[aria-label=\"Open navigation menu\"]')");
+  await clickExpression("document.querySelector('summary[aria-label=\"Open navigation menu\"]')");
+  await waitForExpression(`(() => {
+    const details = document.querySelector('details:has(#mobile-navigation-menu)');
+    const menu = document.querySelector('#mobile-navigation-menu');
+    const labels = [...document.querySelectorAll('#mobile-navigation-menu nav button')]
+      .map((button) => button.textContent?.trim());
+    return details?.open === true
+      && menu?.getBoundingClientRect().height > 0
+      && ['Overview', 'Infrastructure', 'Galaxy', 'Raid Finder', 'Rankings', 'Alliance']
+        .every((label) => labels.includes(label));
+  })()`);
   await waitForExpression("document.querySelector('#mobile-navigation-menu section[aria-label=\"Select planet\"]') !== null");
   await clickExpression("document.querySelector('#mobile-navigation-menu [data-planet-selector-item=\"owned-b\"] button[data-planet-selector-long-press]')");
   await waitForExpression("location.pathname === '/planet/4/5/6' && document.querySelector('main h2')?.textContent === 'Owned Beta'");
