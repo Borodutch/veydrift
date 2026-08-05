@@ -572,6 +572,51 @@ describe("Mission Control battle reports", () => {
     expect(text).toContain("2 allied fleets stationed in defense");
   });
 
+  test("Group defense is visible from each player's independent Mission Control view", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const defender = "0x1111111111111111111111111111111111111111";
+    const defendedAlly = "0x3333333333333333333333333333333333333333";
+    const attacker = "0x2222222222222222222222222222222222222222";
+    const groupDefense: FleetMissionSummary = {
+      ...mission("90", "AcsDefend", "Outbound", defender, "7", "9", now + 120_000),
+      defendsMissionId: "55",
+      originPlanet: planetReference("7", defender, "Defender", "6:9:1", "temperate-ocean"),
+      targetPlanet: planetReference("9", defendedAlly, "Ally", "5:407:4", "frozen-ice"),
+    };
+    const attackOnAlly: FleetMissionSummary = {
+      ...mission("55", "Attack", "Outbound", attacker, "8", "9", now + 120_000),
+      counterplayDefenderMissionIds: ["90"],
+      originPlanet: planetReference("8", attacker, "Hostis", "9:1:2", "hot-desert"),
+      targetPlanet: planetReference("9", defendedAlly, "Ally", "5:407:4", "frozen-ice"),
+      stationedDefenders: [{
+        missionId: "90",
+        defender,
+        defenderDisplayName: "Defender",
+        ships: { lightFighter: "4" },
+        holdUntil: Math.floor((now + 120_000) / 1_000).toString(),
+        allianceDepotLevel: 0,
+      }],
+    };
+
+    // The defending ally sees their own outbound AcsDefend mission, independent of the
+    // attacked player's incoming-attack feed.
+    const defenderText = collectText(MissionControlPage(missionControlProps(now, {
+      outgoing: [groupDefense],
+    }))).join(" ");
+    expect(defenderText).toContain("Stationed defenses");
+    expect(defenderText).toContain("Defending");
+    expect(defenderText).toContain("Ally");
+
+    // The attacked ally receives the hostile Attack plus its indexed stationed defender.
+    const defendeeText = collectText(MissionControlPage(missionControlProps(now, {
+      incoming: [attackOnAlly],
+    }))).join(" ");
+    expect(defendeeText).toContain("Stationed defenses");
+    expect(defendeeText).toContain("Defended");
+    expect(defendeeText).toContain("Defender");
+    expect(defendeeText).toContain("Light Fighter");
+  });
+
   test("VEY-KANEO-440: stationed-defense section renders from embedded planet refs without a lookup (Defenses-page reuse)", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
     const owner = "0x1111111111111111111111111111111111111111";
