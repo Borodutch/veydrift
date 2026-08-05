@@ -3,6 +3,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import {
   buildingIds,
+  contractEnumDefinitions,
   defenseIds,
   allianceRoleIds,
   shipIds,
@@ -46,6 +47,7 @@ import {
   decodeSettledPlanetLog,
   decodeShipCountChangedLog,
   decodeDefenseCountChangedLog,
+  eventNameForTopic,
   fleetMissionNeedsResolution,
   fleetMissionLaunchedTopic,
   missionBattleRandomnessRequestId,
@@ -404,6 +406,11 @@ type QueueRow = {
   unit_work_seconds?: string | null;
 };
 
+type ActivityQueueRow = QueueRow & {
+  event_json: string;
+  wallet: string;
+};
+
 type LegacyQueueRow = {
   cost_json: string;
   event_json: string;
@@ -521,6 +528,15 @@ type PlayerActivityRow = {
   wallet: string;
 };
 
+type PlayerActivityFeedRow = {
+  activity_json: string;
+};
+
+type PlayerActivitySummaryRow = {
+  category: PlayerActivityCategory;
+  count: number;
+};
+
 type AllianceRow = {
   active: number;
   alliance_id: string;
@@ -561,6 +577,41 @@ export type IndexedRpcLog = RpcLog & {
   blockTimestamp?: string;
   logIndex?: string;
   removed?: boolean;
+};
+
+export type PlayerActivityCategory =
+  | "combat"
+  | "infrastructure"
+  | "mission"
+  | "moon"
+  | "production"
+  | "research"
+  | "rift"
+  | "system";
+
+export type PlayerActivityItem = {
+  id: string;
+  wallet: Address;
+  category: PlayerActivityCategory;
+  kind: string;
+  direction: "incoming" | "outgoing" | "personal";
+  title: string;
+  detail: string | null;
+  occurredAt: string;
+  transactionAt: string;
+  transactionHash: string | null;
+  relatedTransactionHash: string | null;
+  blockNumber: string | null;
+  logIndex: string | null;
+  reconciliation: "indexed" | "projected";
+  metadata: Record<string, boolean | number | string | null>;
+};
+
+export type PlayerActivityPage = {
+  items: PlayerActivityItem[];
+  summary: Partial<Record<PlayerActivityCategory, number>>;
+  totalEntries: number;
+  through: string;
 };
 
 export type ApplyLogResult = {
@@ -1254,6 +1305,130 @@ export class SettlementIndexer {
       }
     }
     return activity;
+  }
+
+  playerActivity(
+    wallet: Address,
+    options: { includeProjected?: boolean; page: number; pageSize: number; since?: number; through?: number }
+  ): PlayerActivityPage {
+    const normalizedWallet = wallet.toLowerCase() as Address;
+    const through = Math.max(0, Math.floor(options.through ?? nowSeconds()));
+    const since = options.since === undefined ? undefined : Math.max(0, Math.floor(options.since));
+    const where = ["wallet = lower(?)", "CAST(transaction_at AS INTEGER) <= ?"];
+    const params: SQLQueryBindings[] = [normalizedWallet, through];
+    if (since !== undefined) {
+      where.push("(CAST(occurred_at AS INTEGER) > ? OR CAST(transaction_at AS INTEGER) > ?)");
+      params.push(since, since);
+    }
+    const whereSql = where.join(" AND ");
+    const projected = options.includeProjected
+      ? this.projectedPlayerActivity(normalizedWallet, since ?? 0, through)
+      : [];
+    const indexedTotal = (this.db.query(`
+      SELECT COUNT(*) AS count
+      FROM indexed_player_activity_feed
+      WHERE ${whereSql}
+    `).get(...params) as CountRow).count;
+    const summaryRows = this.db.query(`
+      SELECT json_extract(activity_json, '$.category') AS category, COUNT(*) AS count
+      FROM indexed_player_activity_feed
+      WHERE ${whereSql}
+      GROUP BY json_extract(activity_json, '$.category')
+    `).all(...params) as PlayerActivitySummaryRow[];
+    const summary: Partial<Record<PlayerActivityCategory, number>> = Object.fromEntries(
+      summaryRows.map((row) => [row.category, row.count])
+    );
+    for (const item of projected) summary[item.category] = (summary[item.category] ?? 0) + 1;
+    const offset = Math.max(0, (options.page - 1) * options.pageSize);
+    const indexedLimit = offset + options.pageSize;
+    const rows = this.db.query(`
+      SELECT activity_json
+      FROM indexed_player_activity_feed
+      WHERE ${whereSql}
+      ORDER BY CAST(transaction_at AS INTEGER) DESC, CAST(block_number AS INTEGER) DESC,
+        length(log_index) DESC, log_index DESC
+      LIMIT ?
+    `).all(...params, indexedLimit) as PlayerActivityFeedRow[];
+    const items = [
+      ...rows.map((row) => parseEvent<PlayerActivityItem>(row.activity_json)),
+      ...projected
+    ].sort(comparePlayerActivityNewestFirst).slice(offset, offset + options.pageSize);
+
+    return {
+      items,
+      summary,
+      totalEntries: indexedTotal + projected.length,
+      through: through.toString()
+    };
+  }
+
+  private projectedPlayerActivity(wallet: Address, since: number, through: number): PlayerActivityItem[] {
+    if (through <= since) return [];
+    const rows = this.db.query(`
+      SELECT queues.queue_kind, queues.planet_id, queues.item_id, queues.target_level,
+        queues.quantity, queues.ready_at, queues.started_at, queues.original_quantity,
+        queues.unit_work_seconds, queues.production_rate, queues.metal_cost,
+        queues.crystal_cost, queues.deuterium_cost, queues.backlog_json, queues.event_json,
+        lower(COALESCE(queues.owner, planets.owner)) AS wallet
+      FROM contract_production_queues queues
+      LEFT JOIN contract_planets planets ON planets.planet_id = queues.planet_id
+      WHERE lower(COALESCE(queues.owner, planets.owner)) = lower(?)
+    `).all(wallet) as ActivityQueueRow[];
+    const items: PlayerActivityItem[] = [];
+    for (const row of rows) {
+      const queue = this.productionQueueFromRow(row);
+      if (row.backlog_json) {
+        const backlog = parseEvent<QueueState[]>(row.backlog_json);
+        if (Array.isArray(backlog) && backlog.length > 0) queue.backlog = backlog;
+      }
+      const before = settleQueueAsOfNow(queue, since).completed;
+      const after = settleQueueAsOfNow(queue, through).completed;
+      const beforeQuantities = completedQueueActivityQuantities(before);
+      let startEvent: Partial<IndexedQueueStartedEvent> = {};
+      try {
+        startEvent = parseEvent<IndexedQueueStartedEvent>(row.event_json);
+      } catch {
+        // A canonical queue snapshot can omit a decodable originating event.
+      }
+      for (const completion of after) {
+        const key = projectedQueueActivityKey(completion);
+        const previousQuantity = beforeQuantities.get(key) ?? 0;
+        const completionQuantity = completion.quantity ?? 1;
+        const quantity = Math.max(0, completionQuantity - previousQuantity);
+        if (quantity === 0) continue;
+        const label = queueActivityLabel(completion.kind ?? row.queue_kind, completion.itemId ?? row.item_id);
+        const occurredAt = projectedQueueCompletionAt(completion, through);
+        const metadata: Record<string, boolean | number | string | null> = {
+          itemId: completion.itemId ?? row.item_id,
+          planetId: completion.planetId ?? row.planet_id ?? null,
+          quantity: completion.quantity === undefined ? null : quantity,
+          readyAt: completion.readyAt,
+          targetLevel: completion.targetLevel ?? null
+        };
+        items.push({
+          id: `projected:${startEvent.transactionHash ?? row.event_json.length}:${key}:${occurredAt}`,
+          wallet,
+          category: queueActivityCategory(completion.kind ?? row.queue_kind),
+          kind: `${completion.kind ?? row.queue_kind}-completed`,
+          direction: "personal",
+          title: queueCompletedTitle(completion.kind ?? row.queue_kind, label, completion.quantity === undefined ? undefined : quantity),
+          detail: completion.targetLevel !== undefined
+            ? `Level ${completion.targetLevel}`
+            : completion.quantity !== undefined
+              ? `${quantity} completed`
+              : null,
+          occurredAt,
+          transactionAt: through.toString(),
+          transactionHash: null,
+          relatedTransactionHash: startEvent.transactionHash ?? null,
+          blockNumber: startEvent.blockNumber ?? null,
+          logIndex: null,
+          reconciliation: "projected",
+          metadata
+        });
+      }
+    }
+    return items;
   }
 
   allianceState(wallet: `0x${string}`): AllianceState {
@@ -3381,6 +3556,7 @@ export class SettlementIndexer {
       if (log.removed) {
         this.markReorgDetected();
         this.recordRemovedLog(`${eventId}:removed`, log);
+        this.removePlayerActivityFeedEvent(eventId);
         return { applied: false, duplicate: false, ignored: false, removed: true, snapshot: this.snapshot() };
       }
       const repairedDerivedRows = this.repairDerivedRowsForExistingLog(eventId, parseEvent<IndexedRpcLog>(existing.event_json));
@@ -3412,10 +3588,12 @@ export class SettlementIndexer {
     if (log.removed) {
       this.markReorgDetected();
       this.markStale("removed log/reorg");
+      this.removePlayerActivityFeedEvent(eventId);
       return { applied: false, duplicate: false, ignored: false, removed: true, snapshot: this.snapshot() };
     }
 
     this.recordPlayerActivityFromLog(eventId, log);
+    this.recordPlayerActivityFeedFromLog(eventId, log);
 
     if (isSettledPlanetLog(log)) {
       this.applyEvent(decodeSettledPlanetLog(log));
@@ -4240,6 +4418,23 @@ export class SettlementIndexer {
         last_active_at TEXT NOT NULL,
         event_id TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS indexed_player_activity_feed (
+        wallet TEXT NOT NULL,
+        event_id TEXT NOT NULL,
+        occurred_at TEXT NOT NULL,
+        transaction_at TEXT NOT NULL,
+        block_number TEXT NOT NULL,
+        log_index TEXT NOT NULL,
+        activity_json TEXT NOT NULL,
+        PRIMARY KEY (wallet, event_id)
+      );
+      CREATE INDEX IF NOT EXISTS indexed_player_activity_feed_wallet_time_idx
+        ON indexed_player_activity_feed (
+          wallet,
+          CAST(transaction_at AS INTEGER) DESC,
+          CAST(block_number AS INTEGER) DESC,
+          log_index DESC
+        );
       CREATE TABLE IF NOT EXISTS indexed_planets (
         planet_id TEXT PRIMARY KEY,
         owner TEXT NOT NULL,
@@ -4795,6 +4990,7 @@ export class SettlementIndexer {
       this.backfillMissileAttackEvents();
       this.backfillCanonicalTables();
       this.replayFleetMissionRowsFromEventLogs();
+      this.backfillPlayerActivityFeed();
     }
     this.queueDefenderLossBreakdownBackfill();
   }
@@ -4923,6 +5119,27 @@ export class SettlementIndexer {
         if (!eventKind) continue;
         insert.run(row.event_id, eventKind, blockNumberToDecimal(log.blockNumber), row.event_json);
       }
+    })();
+  }
+
+  private backfillPlayerActivityFeed(): void {
+    const migrationKey = "playerActivityFeedBackfilledV1";
+    if (this.metadata(migrationKey) !== null) return;
+    const rows = this.db.query(`
+      SELECT event_id, event_json
+      FROM indexed_event_logs
+      WHERE removed = 0
+      ORDER BY CAST(block_number AS INTEGER) ASC, length(log_index) ASC, log_index ASC
+    `).all() as Array<EventRow & { event_id: string }>;
+    this.db.transaction(() => {
+      for (const row of rows) {
+        this.recordPlayerActivityFeedFromLog(
+          row.event_id,
+          parseEvent<IndexedRpcLog>(row.event_json),
+          { useCurrentQueue: false }
+        );
+      }
+      this.setMetadata(migrationKey, new Date().toISOString());
     })();
   }
 
@@ -8723,6 +8940,313 @@ export class SettlementIndexer {
     return null;
   }
 
+  private recordPlayerActivityFeedFromLog(
+    eventId: string,
+    log: IndexedRpcLog,
+    options: { useCurrentQueue?: boolean } = {}
+  ): void {
+    const transactionAt = blockTimestampSeconds(log);
+    if (!transactionAt) return;
+    const eventName = eventNameForTopic(log.topics[0]);
+    const blockNumber = blockNumberToDecimal(log.blockNumber);
+    const logIndex = log.logIndex ?? "0x0";
+    const base = {
+      transactionAt,
+      transactionHash: log.transactionHash,
+      relatedTransactionHash: null,
+      blockNumber,
+      logIndex,
+      reconciliation: "indexed" as const
+    };
+    const activities: PlayerActivityItem[] = [];
+    const add = (
+      wallet: Address | null,
+      activity: Omit<PlayerActivityItem, "blockNumber" | "id" | "logIndex" | "reconciliation" | "relatedTransactionHash" | "transactionAt" | "transactionHash" | "wallet">
+    ) => {
+      if (!wallet) return;
+      activities.push({
+        ...base,
+        ...activity,
+        id: activity.direction === "incoming" ? `${eventId}:incoming:${wallet.toLowerCase()}` : eventId,
+        wallet: wallet.toLowerCase() as Address
+      });
+    };
+
+    try {
+      if (isSettledPlanetLog(log)) {
+        const event = decodeSettledPlanetLog(log);
+        add(event.owner, {
+          category: "system",
+          kind: event.eventName === "PlanetStarted" ? "planet-started" : "colony-created",
+          direction: "personal",
+          title: event.eventName === "PlanetStarted" ? "Home planet settled" : "Colony founded",
+          detail: `${event.galaxy}:${event.system}:${event.position}`,
+          occurredAt: transactionAt,
+          metadata: {
+            galaxy: event.galaxy,
+            planetId: event.planetId,
+            position: event.position,
+            system: event.system
+          }
+        });
+      } else if (isIndexedQueueStartedLog(log)) {
+        const event = decodeIndexedQueueStartedLog(log);
+        const owner = event.owner ?? this.ownerForPlanetActivity(event.planetId);
+        const label = queueActivityLabel(event.queueKind, event.itemId);
+        add(owner, {
+          category: queueActivityCategory(event.queueKind),
+          kind: `${event.queueKind}-started`,
+          direction: "personal",
+          title: queueStartedTitle(event.queueKind, label),
+          detail: queueActivityDetail(event),
+          occurredAt: event.startedAt ?? transactionAt,
+          metadata: queueActivityMetadata(event)
+        });
+      } else if (isIndexedQueueCompletedLog(log)) {
+        const event = decodeIndexedQueueCompletedLog(log);
+        const owner = event.owner ?? this.ownerForPlanetActivity(event.planetId);
+        const queue = options.useCurrentQueue === false ? null : this.queueState(queueKey(event));
+        const label = queueActivityLabel(event.queueKind, event.itemId);
+        add(owner, {
+          category: queueActivityCategory(event.queueKind),
+          kind: `${event.queueKind}-completed`,
+          direction: "personal",
+          title: queueCompletedTitle(event.queueKind, label, event.quantity),
+          detail: queueCompletionDetail(event),
+          occurredAt: indexedQueueCompletionAt(queue, event, transactionAt),
+          metadata: queueActivityMetadata(event)
+        });
+      } else if (isPlanetRenamedLog(log)) {
+        const event = decodePlanetRenamedLog(log);
+        add(event.owner, {
+          category: "system",
+          kind: "planet-renamed",
+          direction: "personal",
+          title: "Planet renamed",
+          detail: event.name,
+          occurredAt: transactionAt,
+          metadata: { planetId: event.planetId, name: event.name }
+        });
+      } else if (isInterplanetaryMissileAttackLog(log)) {
+        const event = decodeInterplanetaryMissileAttackLog(log);
+        const defender = this.ownerForPlanetActivity(event.targetPlanetId);
+        const detail = `${event.hits} hit${event.hits === 1 ? "" : "s"}; ${event.destroyedPrimary} target defenses destroyed`;
+        add(event.attacker, {
+          category: "combat",
+          kind: "missile-attack",
+          direction: "outgoing",
+          title: "Missile strike resolved",
+          detail,
+          occurredAt: transactionAt,
+          metadata: activityPrimitiveMetadata(event)
+        });
+        if (defender?.toLowerCase() !== event.attacker.toLowerCase()) {
+          add(defender, {
+            category: "combat",
+            kind: "missile-attack",
+            direction: "incoming",
+            title: "Incoming missile strike",
+            detail,
+            occurredAt: transactionAt,
+            metadata: activityPrimitiveMetadata(event)
+          });
+        }
+      } else if (isBattleReportLog(log)) {
+        const missionId = missionIdFromTopic(log.topics[1]);
+        const report = missionId ? decodeBattleReportLogs([log], missionId) : null;
+        if (report) {
+          const mission = this.fleetMissionSummaryFromContractRow(report.missionId);
+          const occurredAt = mission?.arrivalAt ?? transactionAt;
+          const defender = this.ownerForPlanetActivity(report.targetPlanetId);
+          add(report.attacker, {
+            category: "combat",
+            kind: "attack-resolved",
+            direction: "outgoing",
+            title: `Attack ${playerBattleOutcome(report.outcome, "attacker")}`,
+            detail: battleActivityDetail(report),
+            occurredAt,
+            metadata: battleActivityMetadata(report)
+          });
+          if (defender?.toLowerCase() !== report.attacker.toLowerCase()) {
+            add(defender, {
+              category: "combat",
+              kind: "attack-resolved",
+              direction: "incoming",
+              title: `Defense ${playerBattleOutcome(report.outcome, "defender")}`,
+              detail: battleActivityDetail(report),
+              occurredAt,
+              metadata: battleActivityMetadata(report)
+            });
+          }
+        }
+      } else if (isFleetMissionLog(log)) {
+        if (
+          eventName !== "FleetMissionLaunched"
+          && eventName !== "FleetMissionResolved"
+          && eventName !== "FleetMissionReturned"
+          && eventName !== "FleetMissionRecalled"
+        ) return;
+        const missionId = fleetMissionLogMissionId(log);
+        if (!missionId) return;
+        const partial = [...decodeFleetMissionLogs([log]).values()][0];
+        const existing = this.fleetMissionSummaryFromContractRow(missionId);
+        const mission = { ...existing, ...partial } as Partial<FleetMissionSummary>;
+        const owner = mission.owner ?? null;
+        const missionType = mission.missionType ?? "Fleet";
+        if (eventName === "FleetMissionLaunched") {
+          add(owner, {
+            category: "mission",
+            kind: "mission-launched",
+            direction: "outgoing",
+            title: `${humanizeContractName(missionType)} launched`,
+            detail: missionRouteDetail(mission),
+            occurredAt: transactionAt,
+            metadata: missionActivityMetadata(missionId, mission)
+          });
+          if ((missionType === "Attack" || missionType === "AcsAttack") && mission.targetPlanetId) {
+            const defender = this.ownerForPlanetActivity(mission.targetPlanetId);
+            if (defender?.toLowerCase() !== owner?.toLowerCase()) {
+              add(defender, {
+                category: "combat",
+                kind: "incoming-attack-launched",
+                direction: "incoming",
+                title: "Incoming attack launched",
+                detail: missionRouteDetail(mission),
+                occurredAt: transactionAt,
+                metadata: missionActivityMetadata(missionId, mission)
+              });
+            }
+          }
+        } else if (eventName === "FleetMissionResolved" && missionType !== "Attack" && missionType !== "AcsAttack") {
+          add(owner, {
+            category: "mission",
+            kind: "mission-completed",
+            direction: "personal",
+            title: `${humanizeContractName(missionType)} completed`,
+            detail: missionRouteDetail(mission),
+            occurredAt: mission.arrivalAt ?? transactionAt,
+            metadata: missionActivityMetadata(missionId, mission)
+          });
+        } else if (eventName === "FleetMissionReturned") {
+          add(owner, {
+            category: "mission",
+            kind: "mission-returned",
+            direction: "personal",
+            title: `${humanizeContractName(missionType)} fleet returned`,
+            detail: missionRouteDetail(mission),
+            occurredAt: mission.returnAt ?? transactionAt,
+            metadata: missionActivityMetadata(missionId, mission)
+          });
+        } else if (eventName === "FleetMissionRecalled") {
+          add(owner, {
+            category: "mission",
+            kind: "mission-recalled",
+            direction: "personal",
+            title: `${humanizeContractName(missionType)} recalled`,
+            detail: missionRouteDetail(mission),
+            occurredAt: transactionAt,
+            metadata: missionActivityMetadata(missionId, mission)
+          });
+        }
+      } else if (isMoonCreatedLog(log)) {
+        const event = decodeMoonCreatedLog(log);
+        add(event.owner, {
+          category: "moon",
+          kind: "moon-created",
+          direction: "personal",
+          title: "Moon created",
+          detail: `Planet #${event.planetId}`,
+          occurredAt: event.createdAt || transactionAt,
+          metadata: activityPrimitiveMetadata(event)
+        });
+      } else if (isMoonJumpGateLog(log)) {
+        const event = decodeMoonJumpGateLog(log);
+        add(event.player, {
+          category: "moon",
+          kind: "jump-gate-used",
+          direction: "personal",
+          title: "Jump Gate used",
+          detail: `${event.originMoonPlanetId} → ${event.destinationMoonPlanetId}`,
+          occurredAt: transactionAt,
+          metadata: activityPrimitiveMetadata(event)
+        });
+      } else if (isRiftResourceLog(log)) {
+        const event = decodeRiftResourceLog(log);
+        add(event.owner, {
+          category: "rift",
+          kind: event.eventName.replace(/([a-z])([A-Z])/g, "$1-$2").toLowerCase(),
+          direction: "personal",
+          title: humanizeContractName(event.eventName.replace(/^MarketResource/, "Rift ")),
+          detail: null,
+          occurredAt: transactionAt,
+          metadata: activityPrimitiveMetadata(event)
+        });
+      } else if (isRiftExtractionLog(log)) {
+        const event = decodeRiftExtractionLog(log);
+        if (event.eventName === "RiftExtractionLooted") {
+          const owner = this.ownerForPlanetActivity(event.planetId);
+          add(event.attacker, {
+            category: "rift",
+            kind: "rift-extraction-looted",
+            direction: "outgoing",
+            title: "Rift extraction looted",
+            detail: `Planet #${event.planetId}`,
+            occurredAt: transactionAt,
+            metadata: activityPrimitiveMetadata(event)
+          });
+          if (owner?.toLowerCase() !== event.attacker.toLowerCase()) {
+            add(owner, {
+              category: "rift",
+              kind: "rift-extraction-looted",
+              direction: "incoming",
+              title: "Rift extraction was looted",
+              detail: `Planet #${event.planetId}`,
+              occurredAt: transactionAt,
+              metadata: activityPrimitiveMetadata(event)
+            });
+          }
+        } else {
+          add(event.owner, {
+            category: "rift",
+            kind: event.eventName.replace(/([a-z])([A-Z])/g, "$1-$2").toLowerCase(),
+            direction: "personal",
+            title: humanizeContractName(event.eventName),
+            detail: `Planet #${event.planetId}`,
+            occurredAt: "startedAt" in event ? event.startedAt : transactionAt,
+            metadata: activityPrimitiveMetadata(event)
+          });
+        }
+      }
+    } catch {
+      return;
+    }
+
+    for (const activity of activities) this.insertPlayerActivityFeed(activity);
+  }
+
+  private insertPlayerActivityFeed(activity: PlayerActivityItem): void {
+    this.db.query(`
+      INSERT OR REPLACE INTO indexed_player_activity_feed (
+        wallet, event_id, occurred_at, transaction_at, block_number, log_index, activity_json
+      ) VALUES (lower(?), ?, ?, ?, ?, ?, ?)
+    `).run(
+      activity.wallet,
+      activity.id,
+      activity.occurredAt,
+      activity.transactionAt,
+      activity.blockNumber ?? "0",
+      activity.logIndex ?? "0x0",
+      JSON.stringify(activity)
+    );
+  }
+
+  private removePlayerActivityFeedEvent(eventId: string): void {
+    this.db.query(`
+      DELETE FROM indexed_player_activity_feed
+      WHERE event_id = ? OR event_id LIKE ?
+    `).run(eventId, `${eventId}:incoming:%`);
+  }
+
   private ownerForPlanetActivity(planetId: string | undefined): Address | null {
     if (!planetId) return null;
     return this.planet(planetId)?.owner ?? null;
@@ -10817,6 +11341,196 @@ function queueMatchesCompletion(event: IndexedQueueCompletedEvent, queue: QueueS
     return queue.quantity === event.quantity;
   }
   return true;
+}
+
+function queueActivityCategory(kind: string): PlayerActivityCategory {
+  if (kind === "building" || kind === "moon-building") return kind === "building" ? "infrastructure" : "moon";
+  if (kind === "research") return "research";
+  if (kind === "moon-defense") return "moon";
+  return "production";
+}
+
+function contractEnumName(enumName: string, id: number): string | null {
+  return contractEnumDefinitions.find((definition) => definition.name === enumName)?.values[id] ?? null;
+}
+
+function humanizeContractName(value: string): string {
+  return value
+    .replace(/[-_]+/g, " ")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^./, (character) => character.toUpperCase());
+}
+
+function queueActivityLabel(kind: string, itemId: number): string {
+  const contractName = kind === "building"
+    ? contractEnumName("Building", itemId)
+    : kind === "moon-building"
+      ? contractEnumName("MoonBuilding", itemId)
+      : kind === "research"
+        ? contractEnumName("Technology", itemId)
+        : kind === "ship"
+          ? contractEnumName("Ship", itemId)
+          : contractEnumName("Defense", itemId);
+  return contractName ? humanizeContractName(contractName) : `Item #${itemId}`;
+}
+
+function queueStartedTitle(kind: string, label: string): string {
+  if (kind === "building" || kind === "moon-building") return `${label} upgrade started`;
+  if (kind === "research") return `${label} research started`;
+  return `${label} production started`;
+}
+
+function queueCompletedTitle(kind: string, label: string, quantity?: number): string {
+  if (kind === "building" || kind === "moon-building") return `${label} completed`;
+  if (kind === "research") return `${label} research completed`;
+  return `${quantity ?? 0} ${label}${quantity === 1 ? "" : "s"} built`;
+}
+
+function queueActivityDetail(event: IndexedQueueStartedEvent): string | null {
+  if (event.targetLevel !== undefined) return `Level ${event.targetLevel}; ready ${event.readyAt}`;
+  if (event.quantity !== undefined) return `${event.quantity} queued; ready ${event.readyAt}`;
+  return null;
+}
+
+function queueCompletionDetail(event: IndexedQueueCompletedEvent): string | null {
+  if (event.level !== undefined) return `Level ${event.level}`;
+  if (event.quantity !== undefined) return `${event.quantity} completed`;
+  return null;
+}
+
+function queueActivityMetadata(
+  event: IndexedQueueStartedEvent | IndexedQueueCompletedEvent
+): Record<string, boolean | number | string | null> {
+  return {
+    itemId: event.itemId,
+    planetId: event.planetId ?? null,
+    quantity: event.quantity ?? null,
+    queueKind: event.queueKind,
+    readyAt: "readyAt" in event ? event.readyAt : null,
+    targetLevel: "targetLevel" in event ? event.targetLevel ?? null : "level" in event ? event.level ?? null : null
+  };
+}
+
+function activityPrimitiveMetadata(value: object): Record<string, boolean | number | string | null> {
+  const metadata: Record<string, boolean | number | string | null> = {};
+  for (const [key, candidate] of Object.entries(value)) {
+    if (key === "transactionHash" || key === "blockNumber" || key === "eventName") continue;
+    if (candidate === null || typeof candidate === "boolean" || typeof candidate === "number" || typeof candidate === "string") {
+      metadata[key] = candidate;
+    }
+  }
+  return metadata;
+}
+
+function missionRouteDetail(mission: Partial<FleetMissionSummary>): string | null {
+  if (!mission.originPlanetId && !mission.targetPlanetId) return null;
+  return `Planet #${mission.originPlanetId ?? "?"} → Planet #${mission.targetPlanetId ?? "?"}`;
+}
+
+function missionActivityMetadata(
+  missionId: string,
+  mission: Partial<FleetMissionSummary>
+): Record<string, boolean | number | string | null> {
+  return {
+    arrivalAt: mission.arrivalAt ?? null,
+    missionId,
+    missionType: mission.missionType ?? null,
+    originPlanetId: mission.originPlanetId ?? null,
+    returnAt: mission.returnAt ?? null,
+    targetPlanetId: mission.targetPlanetId ?? null
+  };
+}
+
+function playerBattleOutcome(outcome: BattleReport["outcome"], perspective: "attacker" | "defender"): string {
+  if (outcome === "Draw") return "ended in a draw";
+  const won = perspective === "attacker" ? outcome === "AttackerWin" : outcome === "DefenderWin";
+  return won ? "won" : "lost";
+}
+
+function battleActivityDetail(report: BattleReport): string {
+  const loot = Number(report.loot.metal) + Number(report.loot.crystal) + Number(report.loot.deuterium);
+  return loot > 0 ? `Planet #${report.targetPlanetId}; ${loot.toLocaleString("en-US")} resources looted` : `Planet #${report.targetPlanetId}`;
+}
+
+function battleActivityMetadata(report: BattleReport): Record<string, boolean | number | string | null> {
+  return {
+    attacker: report.attacker,
+    missionId: report.missionId,
+    outcome: report.outcome,
+    rounds: report.rounds,
+    targetPlanetId: report.targetPlanetId
+  };
+}
+
+function projectedQueueActivityKey(queue: QueueState): string {
+  return [queue.kind ?? "queue", queue.planetId ?? "wallet", queue.itemId ?? -1, queue.targetLevel ?? "", queue.readyAt ?? ""].join(":");
+}
+
+function completedQueueActivityQuantities(queues: readonly QueueState[]): Map<string, number> {
+  const quantities = new Map<string, number>();
+  for (const queue of queues) {
+    const key = projectedQueueActivityKey(queue);
+    quantities.set(key, (quantities.get(key) ?? 0) + (queue.quantity ?? 1));
+  }
+  return quantities;
+}
+
+function projectedQueueCompletionAt(queue: QueueState, fallback: number): string {
+  const timing = queue.productionTiming;
+  const completedTotal = queue.asOfNow?.completedQuantity;
+  if (timing && completedTotal && completedTotal > 0) {
+    try {
+      const startedAt = BigInt(timing.startedAt);
+      const work = BigInt(timing.unitWorkSeconds) * BigInt(completedTotal);
+      const rate = BigInt(timing.rate);
+      if (rate > 0n) {
+        const boundary = startedAt + (work + rate - 1n) / rate;
+        const readyAt = queue.readyAt ? BigInt(queue.readyAt) : boundary;
+        return (boundary < readyAt ? boundary : readyAt).toString();
+      }
+    } catch {
+      // Fall back to the canonical readyAt below.
+    }
+  }
+  return queue.readyAt ?? fallback.toString();
+}
+
+function indexedQueueCompletionAt(
+  queue: QueueState | null,
+  event: IndexedQueueCompletedEvent,
+  fallback: string
+): string {
+  if (!queue) return fallback;
+  const timing = queue.productionTiming;
+  if (timing && event.quantity && queue.quantity) {
+    try {
+      const alreadyCompleted = Math.max(0, timing.originalQuantity - queue.quantity);
+      const completedTotal = Math.min(timing.originalQuantity, alreadyCompleted + event.quantity);
+      const startedAt = BigInt(timing.startedAt);
+      const work = BigInt(timing.unitWorkSeconds) * BigInt(completedTotal);
+      const rate = BigInt(timing.rate);
+      if (rate > 0n) {
+        const boundary = startedAt + (work + rate - 1n) / rate;
+        const readyAt = queue.readyAt ? BigInt(queue.readyAt) : boundary;
+        return (boundary < readyAt ? boundary : readyAt).toString();
+      }
+    } catch {
+      // Fall back to the canonical queue boundary.
+    }
+  }
+  return queue.readyAt ?? fallback;
+}
+
+function comparePlayerActivityNewestFirst(left: PlayerActivityItem, right: PlayerActivityItem): number {
+  const leftTime = BigInt(left.transactionAt || left.occurredAt || "0");
+  const rightTime = BigInt(right.transactionAt || right.occurredAt || "0");
+  if (leftTime !== rightTime) return rightTime > leftTime ? 1 : -1;
+  const leftBlock = BigInt(left.blockNumber ?? "0");
+  const rightBlock = BigInt(right.blockNumber ?? "0");
+  if (leftBlock !== rightBlock) return rightBlock > leftBlock ? 1 : -1;
+  return right.id.localeCompare(left.id);
 }
 
 function isPlanetQueueKind(value: string): value is "building" | "defense" | "ship" {

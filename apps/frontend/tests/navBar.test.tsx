@@ -244,4 +244,23 @@ describe("NavBar public commander panel", () => {
     (disclosure?.props?.onClick as () => void)();
     expect(toggleCount).toBe(1);
   });
+
+  test("keeps Commander activity hidden until the account summary is expanded", () => {
+    let opened = 0;
+    const collapsed = renderCommanderSummary({
+      onOpenActivity: () => { opened += 1; },
+    });
+    expect(visibleText(collapsed)).not.toContain("Activity");
+
+    const expanded = renderCommanderSummary({
+      expanded: true,
+      onOpenActivity: () => { opened += 1; },
+    });
+    const activityButton = elementNodes(expanded).find((item) =>
+      item.type === "button" && visibleText(item.props?.children as ComponentChildren).includes("Activity")
+    );
+    expect(activityButton?.props?.["aria-haspopup"]).toBe("dialog");
+    (activityButton?.props?.onClick as () => void)();
+    expect(opened).toBe(1);
+  });
 });
