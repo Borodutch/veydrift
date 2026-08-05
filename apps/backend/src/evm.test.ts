@@ -7,12 +7,16 @@ import {
   decodeAttackMissionLaunch,
   decodeBattleReportLogs,
   decodeFleetMissionLogs,
+  decodeFirstPlanetSettledLog,
+  decodePlayerMigrationLog,
   decodePlanetRenamedLog,
   decodeMoonChanceReportLog,
   HttpJsonRpcTransport,
   isBattleReportLog,
+  isFirstPlanetSettledLog,
   isPlanetRenamedLog,
   isMoonChanceReportLog,
+  isPlayerMigrationLog,
   RpcResponseParseError,
   decodeDefenseCountChangedLog,
   isDefenseCountChangedLog,
@@ -57,6 +61,10 @@ const allianceDiplomacyUpdatedTopic = "0x3df4b2aa5708b43ef1805908826beae5c9a30fb
 const referralInviteWindowActivatedTopic = "0xd51c9643dafa95fcfa30d65f2b6576bc03873e2630d73fc523daf87a7158d589";
 const referralInviteRedeemedTopic = "0xf0e76a5aa6e423f978c7616fd6933b5d376a32654fc67c6fad0afdbc744ccce1";
 const referralRewardClaimedTopic = "0x55b0859d9094fa40dfdcbcdd82c0d785132f6a627b6083e228d6bddb5e498558";
+const gameFirstPlanetSettledTopic = "0x1f673e84fe49fdcd9930a486d10cac412437f89541987902f82b43a93d86cf1c";
+const legacyFirstPlanetSettledTopic = "0xb1abaa78f2f23a98f30148c8705b43e6c77e019acfeb9d5dc43085861dfad18e";
+const migrationStateImportedTopic = "0xdb12a7cb693ed25a5a03977074fc4225831b157cd806cfcc62a03e06988f92d9";
+const fullStateMigrationClaimedTopic = "0xc1eb9069a8811bc656d30388efd94a0e3d2c23f9783a2577482dae5dd554e793";
 
 describe("HTTP JSON-RPC transport", () => {
   test("coalesces concurrent identical cacheable RPC reads", async () => {
@@ -436,6 +444,88 @@ describe("planet rename event decoding", () => {
       planetId: "7",
       name: "New Eos"
     });
+  });
+});
+
+describe("player lifecycle event decoding", () => {
+  const player = "0x0000000000000000000000000000000000000def";
+
+  test("decodes current and legacy first-planet settlement logs", () => {
+    const current = makeLog({
+      topics: [gameFirstPlanetSettledTopic, addressTopic(player), topic(7n)],
+      data: dataWords([word(2n), word(44n), word(9n), word(0n), word(0n)])
+    });
+    const legacy = makeLog({
+      topics: [legacyFirstPlanetSettledTopic, addressTopic(player), topic(4n), topic(20n)],
+      data: dataWords([word(6n), word(0n), word(0n)])
+    });
+
+    expect(isFirstPlanetSettledLog(current)).toBe(true);
+    expect(decodeFirstPlanetSettledLog(current)).toMatchObject({
+      eventName: "FirstPlanetSettled",
+      player,
+      planetId: "7",
+      galaxy: 2,
+      system: 44,
+      position: 9
+    });
+    expect(decodeFirstPlanetSettledLog(legacy)).toMatchObject({
+      player,
+      planetId: null,
+      galaxy: 4,
+      system: 20,
+      position: 6
+    });
+  });
+
+  test("decodes game-state import and final migration claim logs", () => {
+    const imported = makeLog({
+      topics: [migrationStateImportedTopic, addressTopic(player)],
+      data: dataWords([word(7n), word(3n)])
+    });
+    const claimed = makeLog({
+      topics: [fullStateMigrationClaimedTopic, addressTopic(player), topic(123n)],
+      data: "0x"
+    });
+
+    expect(isPlayerMigrationLog(imported)).toBe(true);
+    expect(decodePlayerMigrationLog(imported)).toEqual({
+      eventName: "MigrationStateImported",
+      transactionHash: "0xtx",
+      blockNumber: "16",
+      player,
+      homePlanetId: "7",
+      planetCount: 3
+    });
+    expect(decodePlayerMigrationLog(claimed)).toEqual({
+      eventName: "FullStateMigrationClaimed",
+      transactionHash: "0xtx",
+      blockNumber: "16",
+      player,
+      stateHash: topic(123n)
+    });
+  });
+
+  test("includes settlement and migration contracts in catch-up log scans", async () => {
+    const settlementContractAddress = "0x2222222222222222222222222222222222222222" as const;
+    const migrationContractAddress = "0x3333333333333333333333333333333333333333" as const;
+    const reader = new VeydriftGameReader(
+      { ...readerConfig, settlementContractAddress, migrationContractAddress },
+      {
+        async request<T>(method: string, params: unknown[]): Promise<T> {
+          expect(method).toBe("eth_getLogs");
+          expect(params).toEqual([{
+            address: [readerConfig.gameContractAddress, settlementContractAddress, migrationContractAddress],
+            fromBlock: "0x64",
+            toBlock: "0xc8",
+            topics: []
+          }]);
+          return [] as T;
+        }
+      }
+    );
+
+    await expect(reader.listContractLogs(100n, 200n)).resolves.toEqual([]);
   });
 });
 

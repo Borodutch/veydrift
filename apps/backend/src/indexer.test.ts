@@ -14,6 +14,10 @@ const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 setSystemTime(new Date("2026-01-01T00:00:00Z"));
 afterAll(() => setSystemTime());
 const planetStartedTopic = "0xef2d7a7105128f441ebc83d8e2e87960a9b0dfdfa02cc68769872b2c52a431f3";
+const gameFirstPlanetSettledTopic = "0x1f673e84fe49fdcd9930a486d10cac412437f89541987902f82b43a93d86cf1c";
+const legacyFirstPlanetSettledTopic = "0xb1abaa78f2f23a98f30148c8705b43e6c77e019acfeb9d5dc43085861dfad18e";
+const migrationStateImportedTopic = "0xdb12a7cb693ed25a5a03977074fc4225831b157cd806cfcc62a03e06988f92d9";
+const fullStateMigrationClaimedTopic = "0xc1eb9069a8811bc656d30388efd94a0e3d2c23f9783a2577482dae5dd554e793";
 const planetSettledTopic = "0x7faee98c7c745f9c9fb2117a44185f57454dac3013383364df4c22b5f9bc4077";
 const moonResourcesSettledTopic = "0xb20fd9e652e1b740544f362fb3047c43a7bf0d6c7fbf0f5cab5f1f939aac6917";
 const planetRenamedTopic = "0x2b772c1fa271aad466ce009b6b5824b2ad6ccd942d21efc686513ffa8eb166cd";
@@ -1261,6 +1265,150 @@ describe("SettlementIndexer", () => {
       relatedTransactionHash: "0xactivity-start",
       reconciliation: "projected"
     });
+  });
+
+  test("records settlement once and collapses migrated planets into one migration action", () => {
+    const transactionAt = 1_767_100_000;
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    const settlementHash = "0xactivity-settlement";
+    indexer.applyLog({
+      blockNumber: "0x90",
+      blockTimestamp: `0x${transactionAt.toString(16)}`,
+      transactionHash: settlementHash,
+      logIndex: "0x0",
+      topics: [planetStartedTopic, addressTopic(player), topic(7n)],
+      data: abiWords(2n, 44n, 9n, 211n, signedWord(-8n))
+    });
+    indexer.applyLog({
+      blockNumber: "0x90",
+      blockTimestamp: `0x${transactionAt.toString(16)}`,
+      transactionHash: settlementHash,
+      logIndex: "0x1",
+      topics: [gameFirstPlanetSettledTopic, addressTopic(player), topic(7n)],
+      data: abiWords(2n, 44n, 9n, 0n, 0n)
+    });
+
+    const settlementActivity = indexer.playerActivity(player, { page: 1, pageSize: 25 }).items;
+    expect(settlementActivity).toHaveLength(1);
+    expect(settlementActivity[0]).toMatchObject({
+      kind: "planet-started",
+      title: "Home planet settled",
+      detail: "Planet #7 · 2:44:9",
+      transactionHash: settlementHash
+    });
+
+    const migrationHash = "0xactivity-migration";
+    indexer.applyLog({
+      blockNumber: "0x91",
+      blockTimestamp: `0x${(transactionAt + 10).toString(16)}`,
+      transactionHash: migrationHash,
+      logIndex: "0x0",
+      topics: [planetStartedTopic, addressTopic(player), topic(8n)],
+      data: abiWords(3n, 12n, 4n, 190n, signedWord(20n))
+    });
+    indexer.applyLog({
+      blockNumber: "0x91",
+      blockTimestamp: `0x${(transactionAt + 10).toString(16)}`,
+      transactionHash: migrationHash,
+      logIndex: "0x1",
+      topics: [migrationStateImportedTopic, addressTopic(player)],
+      data: abiWords(7n, 2n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x91",
+      blockTimestamp: `0x${(transactionAt + 10).toString(16)}`,
+      transactionHash: migrationHash,
+      logIndex: "0x2",
+      topics: [fullStateMigrationClaimedTopic, addressTopic(player), topic(123n)],
+      data: "0x"
+    });
+
+    const history = indexer.playerActivity(player, { page: 1, pageSize: 25 });
+    expect(history.items.filter((item) => item.transactionHash === migrationHash)).toEqual([
+      expect.objectContaining({
+        kind: "state-migrated",
+        title: "Game state migrated",
+        detail: "2 planets restored",
+        metadata: expect.objectContaining({
+          homePlanetId: "7",
+          planetCount: 2,
+          stateHash: topic(123n)
+        })
+      })
+    ]);
+  });
+
+  test("records legacy settlement activity when no PlanetStarted event exists", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyLog({
+      blockNumber: "0x92",
+      blockTimestamp: "0x6955b900",
+      transactionHash: "0xlegacy-settlement",
+      logIndex: "0x0",
+      topics: [legacyFirstPlanetSettledTopic, addressTopic(player), topic(4n), topic(20n)],
+      data: abiWords(6n, 0n, 0n)
+    });
+
+    expect(indexer.playerActivity(player, { page: 1, pageSize: 25 }).items[0]).toMatchObject({
+      kind: "planet-started",
+      title: "Home planet settled",
+      detail: "4:20:6",
+      metadata: { planetId: null }
+    });
+  });
+
+  test("runs the V2 activity reconciliation once over the durable log ledger", () => {
+    const dir = mkdtempSync(join(tmpdir(), "veydrift-activity-v2-"));
+    const databasePath = join(dir, "activity.sqlite");
+    try {
+      const firstDatabase = new Database(databasePath);
+      const first = new SettlementIndexer({
+        async listDebrisFieldEvents() { return []; },
+        async listMoonChanceReportEvents() { return []; },
+        async listSettledPlanetEvents() { return []; }
+      }, 100n, { database: firstDatabase });
+      first.applyLog({
+        blockNumber: "0x93",
+        blockTimestamp: "0x6955b900",
+        transactionHash: "0xbackfilled-settlement",
+        logIndex: "0x0",
+        topics: [legacyFirstPlanetSettledTopic, addressTopic(player), topic(5n), topic(21n)],
+        data: abiWords(7n, 0n, 0n)
+      });
+      firstDatabase.query("UPDATE indexed_player_activity_feed SET activity_json = json_set(activity_json, '$.title', 'Stale V1 title')").run();
+      firstDatabase.query("DELETE FROM indexer_metadata WHERE key = 'playerActivityFeedBackfilledV2'").run();
+      firstDatabase.query(`
+        INSERT OR REPLACE INTO indexer_metadata (key, value)
+        VALUES ('playerActivityFeedBackfilledV1', 'already-ran')
+      `).run();
+      firstDatabase.close();
+
+      const reconciledDatabase = new Database(databasePath);
+      const reconciled = new SettlementIndexer({
+        async listDebrisFieldEvents() { return []; },
+        async listMoonChanceReportEvents() { return []; },
+        async listSettledPlanetEvents() { return []; }
+      }, 100n, { database: reconciledDatabase });
+
+      expect(reconciled.playerActivity(player, { page: 1, pageSize: 25 }).items[0]).toMatchObject({
+        title: "Home planet settled",
+        detail: "5:21:7"
+      });
+      expect(reconciledDatabase.query(
+        "SELECT value FROM indexer_metadata WHERE key = 'playerActivityFeedBackfilledV2'"
+      ).get()).toEqual({ value: expect.any(String) });
+      reconciledDatabase.close();
+    } finally {
+      rmSync(dir, { force: true, recursive: true });
+    }
   });
 
   test("keeps a lazily reconciled completion's logical and transaction times distinct", () => {
