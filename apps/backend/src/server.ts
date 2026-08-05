@@ -129,6 +129,7 @@ const acceptedCacheQueryParams = new Map<string, ReadonlySet<string>>([
   // The endpoint is wallet-scoped; `planetId` is currently ignored by its handler and must not
   // fragment the shared cache for every planet picker selection.
   ["/wallet/*/fleet-visibility", new Set(["archive"])],
+  ["/wallet/*/activity", new Set(["includeProjected", "page", "pageSize", "since"])],
   ["/wallet/*/missions", new Set(["filter", "missionNumber", "missionType", "page", "pageSize", "planetId", "status"])],
   ["/wallet/*/missile-attacks", new Set(["page", "pageSize", "planetId"])],
   ["/wallet/*/referrals/history", new Set(["page", "pageSize"])],
@@ -1192,6 +1193,43 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         }
         const result = indexer.unwatchPlanet(wallet, planetId);
         return Response.json(result, { headers: corsHeaders });
+      } catch (error) {
+        return errorResponse(error, 400);
+      }
+    }
+
+    if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/activity$/)) {
+      const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
+      try {
+        assertAddress(wallet);
+        if (!indexer) return indexedReadNotReadyResponse("player activity", indexer, { wallet });
+        const page = positiveIntegerQuery(url, "page", 1, 1_000_000);
+        const pageSize = positiveIntegerQuery(url, "pageSize", 25, 100);
+        const sinceValue = url.searchParams.get("since");
+        if (sinceValue !== null && !/^\d+$/.test(sinceValue)) {
+          throw new Error("since must be a Unix timestamp in whole seconds.");
+        }
+        const activity = indexer.playerActivity(wallet, {
+          page,
+          pageSize,
+          ...(sinceValue === null ? {} : { since: Number(sinceValue) }),
+          includeProjected: url.searchParams.get("includeProjected") === "true"
+        });
+        const totalPages = Math.max(1, Math.ceil(activity.totalEntries / pageSize));
+        return indexedJsonResponse({
+          wallet,
+          items: activity.items,
+          summary: activity.summary,
+          through: activity.through,
+          pagination: {
+            page,
+            pageSize,
+            totalEntries: activity.totalEntries,
+            totalPages,
+            hasPreviousPage: page > 1,
+            hasNextPage: page < totalPages
+          }
+        }, indexer.snapshot());
       } catch (error) {
         return errorResponse(error, 400);
       }
@@ -2300,6 +2338,7 @@ function acceptedCacheParams(pathname: string): ReadonlySet<string> | undefined 
   const direct = acceptedCacheQueryParams.get(pathname);
   if (direct) return direct;
   if (pathname.match(/^\/wallet\/[^/]+\/fleet-visibility$/)) return acceptedCacheQueryParams.get("/wallet/*/fleet-visibility");
+  if (pathname.match(/^\/wallet\/[^/]+\/activity$/)) return acceptedCacheQueryParams.get("/wallet/*/activity");
   if (pathname.match(/^\/wallet\/[^/]+\/missions$/)) return acceptedCacheQueryParams.get("/wallet/*/missions");
   if (pathname.match(/^\/wallet\/[^/]+\/referrals\/history$/)) return acceptedCacheQueryParams.get("/wallet/*/referrals/history");
   if (pathname.match(/^\/wallet\/[^/]+\/overview$/)) return acceptedCacheQueryParams.get("/wallet/*/overview");

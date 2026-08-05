@@ -607,6 +607,51 @@ export type FleetMissionArchiveResponse = {
   };
 };
 
+export type PlayerActivityCategory =
+  | "combat"
+  | "infrastructure"
+  | "mission"
+  | "moon"
+  | "production"
+  | "research"
+  | "rift"
+  | "system";
+
+export type PlayerActivityItem = {
+  id: string;
+  wallet: string;
+  category: PlayerActivityCategory;
+  kind: string;
+  direction: "incoming" | "outgoing" | "personal";
+  title: string;
+  detail: string | null;
+  occurredAt: string;
+  transactionAt: string;
+  transactionHash: string | null;
+  relatedTransactionHash: string | null;
+  blockNumber: string | null;
+  logIndex: string | null;
+  reconciliation: "indexed" | "projected";
+  metadata: Record<string, boolean | number | string | null>;
+};
+
+export type PlayerActivityResponse = {
+  wallet: string;
+  items: PlayerActivityItem[];
+  summary: Partial<Record<PlayerActivityCategory, number>>;
+  through: string;
+  pagination: {
+    page: number;
+    pageSize: number;
+    totalEntries: number;
+    totalPages: number;
+    hasPreviousPage: boolean;
+    hasNextPage: boolean;
+  };
+  stale?: boolean;
+  source?: string;
+};
+
 export type IndexedMissileAttack = {
   eventId: string;
   attacker: string;
@@ -4083,6 +4128,19 @@ export async function fetchFleetMissionArchive(
   params.set("page", String(options.page ?? 1));
   params.set("pageSize", String(options.pageSize ?? 25));
   return fetchWalletJson<FleetMissionArchiveResponse>(apiUrl, wallet, `missions?${params.toString()}`, "Mission archive");
+}
+
+export async function fetchPlayerActivity(
+  apiUrl: string,
+  wallet: string,
+  options: { includeProjected?: boolean; page?: number; pageSize?: number; since?: number } = {}
+): Promise<PlayerActivityResponse> {
+  const params = new URLSearchParams();
+  params.set("page", String(options.page ?? 1));
+  params.set("pageSize", String(options.pageSize ?? 25));
+  if (options.since !== undefined) params.set("since", String(Math.max(0, Math.floor(options.since))));
+  if (options.includeProjected) params.set("includeProjected", "true");
+  return fetchWalletJson<PlayerActivityResponse>(apiUrl, wallet, `activity?${params.toString()}`, "Player activity");
 }
 
 export async function fetchMissileAttackArchive(

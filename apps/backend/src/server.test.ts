@@ -1256,6 +1256,45 @@ describe("Veydrift backend", () => {
     expect(staleKeyUsed).toBe(false);
   });
 
+  test("serves paginated player activity and away projections from the wallet endpoint", async () => {
+    const startTs = 1_770_000_000;
+    const readyAt = startTs + 3_600;
+    const indexer = testIndexer();
+    indexer.applyLog({
+      blockNumber: "0x810",
+      blockTimestamp: `0x${startTs.toString(16)}`,
+      transactionHash: "0xactivity-start",
+      logIndex: "0x0",
+      topics: [buildingStartedTopic, topic(BigInt(planet.planetId)), topic(0n)],
+      data: abiWords(8n, BigInt(readyAt), 0n, 0n, 0n)
+    });
+    const handler = createRequestHandler({
+      chainReader: new MockChainReader(),
+      config: configuredTestConfig,
+      indexer
+    });
+
+    const response = await handler(new Request(
+      `http://localhost/wallet/${player}/activity?page=1&pageSize=25&since=${startTs + 1}&includeProjected=true`
+    ));
+    const body = await response.json() as {
+      items: Array<{ kind: string; reconciliation: string; relatedTransactionHash: string | null }>;
+      pagination: { totalEntries: number };
+      summary: Record<string, number>;
+      through: string;
+    };
+
+    expect(response.status).toBe(200);
+    expect(body.items).toEqual([expect.objectContaining({
+      kind: "building-completed",
+      reconciliation: "projected",
+      relatedTransactionHash: "0xactivity-start"
+    })]);
+    expect(body.pagination.totalEntries).toBe(1);
+    expect(body.summary).toEqual({ infrastructure: 1 });
+    expect(Number(body.through)).toBeGreaterThanOrEqual(readyAt);
+  });
+
   test("briefly waits for an in-flight shared-cache refresh on cold indexed reads", async () => {
     let waitCalled = false;
     const sharedResponseCache = {

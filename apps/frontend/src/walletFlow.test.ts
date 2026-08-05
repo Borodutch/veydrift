@@ -32,6 +32,7 @@ import {
   fetchHighscores,
   fetchInfrastructureState,
   fetchMoonState,
+  fetchPlayerActivity,
   fetchPlayerProfile,
   fetchReferralDashboard,
   fetchReferralHistory,
@@ -157,6 +158,41 @@ function bytes32StringErrorData(selector: string, value: string): string {
 }
 
 describe("walletFlow", () => {
+  test("requests paginated activity with an away-window projection", async () => {
+    const originalFetch = globalThis.fetch;
+    let requestedUrl = "";
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+      requestedUrl = String(input);
+      return Response.json({
+        wallet: account,
+        items: [],
+        summary: {},
+        through: "1770007680",
+        pagination: {
+          page: 2,
+          pageSize: 50,
+          totalEntries: 0,
+          totalPages: 1,
+          hasPreviousPage: true,
+          hasNextPage: false,
+        },
+      });
+    }) as typeof fetch;
+    try {
+      await fetchPlayerActivity("https://api.example.test/", account, {
+        page: 2,
+        pageSize: 50,
+        since: 1_770_000_000,
+        includeProjected: true,
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    expect(requestedUrl).toBe(
+      `https://api.example.test/wallet/${account}/activity?page=2&pageSize=50&since=1770000000&includeProjected=true`
+    );
+  });
+
   test("encodes personal-sign messages as EIP-1193 hexadecimal bytes", () => {
     expect(personalSignPayload("Veydrift profile\nName: Karsa")).toBe("0x56657964726966742070726f66696c650a4e616d653a204b61727361");
   });
