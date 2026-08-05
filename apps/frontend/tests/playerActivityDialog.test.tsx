@@ -42,6 +42,12 @@ describe("player activity rows", () => {
     expect(history.props?.label).toBe("Loading activity");
   });
 
+  test("can preserve a populated page height while pagination loads", () => {
+    const history = PlayerActivitySkeleton({ rowCount: 25 }) as VNode;
+
+    expect(history.props?.children).toHaveLength(25);
+  });
+
   test("links only reconciled activity to its reconciliation transaction", () => {
     const reconciled = ActivityRow({ explorerUrl, item: activity() });
     const projected = ActivityRow({
