@@ -53,6 +53,7 @@ describe("frontend static server headers", () => {
       "/rift",
       "/rankings",
       "/galaxy",
+      "/raid-finder",
       "/raid-target-finder",
       "/planet",
       "/battle-reports",
