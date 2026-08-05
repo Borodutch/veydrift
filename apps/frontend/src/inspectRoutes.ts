@@ -77,6 +77,9 @@ function parseInspectPathValue(rawPath: string): InspectRoute | null {
   if (kind === "mission-control" && value === "report" && detailId) {
     return { kind: "mission-report", missionId: decodeURIComponent(detailId) };
   }
+  if (kind === "missions") {
+    return { kind: "page", page: "mission-control" };
+  }
   if (kind === "planet") {
     // Canonical path form (/planet/<galaxy>/<system>/<position>) with a
     // legacy query-string fallback (#/planet?galaxy=&system=&position=) so

@@ -47,6 +47,7 @@ describe("frontend static server headers", () => {
       "/research",
       "/shipyard",
       "/mission-control",
+      "/missions",
       "/moon",
       "/alliance",
       "/rift",
