@@ -35,8 +35,9 @@ describe("Raid Finder page header", () => {
     expect(raidFinderSource).toContain("<RaidFinderPagination");
   });
 
-  test("uses the mobile input event to apply Raid-tab sort selections", () => {
-    expect(raidFinderSource).toContain("onInput={(event) => {");
-    expect(raidFinderSource).toContain("applyMobileSortSelection(key, sort.key, onSort);");
+  test("supports input and change events for mobile sort selections", () => {
+    expect(raidFinderSource).toContain("onChange={(event) => selectSort(event.currentTarget)}");
+    expect(raidFinderSource).toContain("onInput={(event) => selectSort(event.currentTarget)}");
+    expect(raidFinderSource).toContain("applyMobileSortSelection(element.value as K, sort.key, onSelectSort);");
   });
 });

@@ -1083,7 +1083,7 @@ describe("Mission Control battle reports", () => {
     expect(findElements(neutralTrigger, "span").some((node) => node.props?.["data-mission-filter-count"] === true)).toBe(false);
   });
 
-  test("applies mission type and flight state from the mobile select input event", () => {
+  test("supports input and change events for mobile mission filter selects", () => {
     const changes: MissionControlFilters[] = [];
     const onChange = (filters: MissionControlFilters) => changes.push(filters);
     applyMissionFilterSelectInput(EMPTY_MISSION_CONTROL_FILTERS, "missionType", "Harvest", onChange);
@@ -1093,7 +1093,9 @@ describe("Mission Control battle reports", () => {
       { ...EMPTY_MISSION_CONTROL_FILTERS, missionType: "Harvest" },
       { ...EMPTY_MISSION_CONTROL_FILTERS, direction: "returning" },
     ]);
+    expect(missionControlSource).toContain('onChange={(event) => applyMissionFilterSelectInput(filters, "missionType"');
     expect(missionControlSource).toContain('onInput={(event) => applyMissionFilterSelectInput(filters, "missionType"');
+    expect(missionControlSource).toContain('onChange={(event) => applyMissionFilterSelectInput(filters, "direction"');
     expect(missionControlSource).toContain('onInput={(event) => applyMissionFilterSelectInput(filters, "direction"');
   });
 

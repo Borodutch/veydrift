@@ -276,6 +276,12 @@ export function RaidTargetFinderPage({
         : { key, direction: key === "distance" ? "asc" : "desc" },
     );
   };
+  const selectSort = (key: RaidTargetSortKey) => {
+    setPages((current) => ({ ...current, raids: 1 }));
+    setSort((current) => current.key === key
+      ? current
+      : { key, direction: key === "distance" ? "asc" : "desc" });
+  };
   const toggleDebrisSort = (key: DebrisTargetSortKey) => {
     setPages((current) => ({ ...current, debris: 1 }));
     setDebrisSort((current) =>
@@ -283,6 +289,12 @@ export function RaidTargetFinderPage({
         ? { key, direction: current.direction === "asc" ? "desc" : "asc" }
         : { key, direction: key === "distance" || key === "eta" || key === "fuel" ? "asc" : "desc" },
     );
+  };
+  const selectDebrisSort = (key: DebrisTargetSortKey) => {
+    setPages((current) => ({ ...current, debris: 1 }));
+    setDebrisSort((current) => current.key === key
+      ? current
+      : { key, direction: key === "distance" || key === "eta" || key === "fuel" ? "asc" : "desc" });
   };
   const displayedError = mode === "debris"
     ? (debrisError ?? error)
@@ -334,7 +346,11 @@ export function RaidTargetFinderPage({
       ) : null}
 
       <div className="min-w-0 max-w-full overflow-hidden rounded-md border border-white/10 bg-[#0d1422]/90">
-        {mode === "raids" ? <RaidTargetTableHeader onSort={toggleSort} sort={sort} /> : mode === "debris" ? <DebrisTargetTableHeader onSort={toggleDebrisSort} sort={debrisSort} /> : null}
+        {mode === "raids" ? (
+          <RaidTargetTableHeader onSelectSort={selectSort} onSort={toggleSort} sort={sort} />
+        ) : mode === "debris" ? (
+          <DebrisTargetTableHeader onSelectSort={selectDebrisSort} onSort={toggleDebrisSort} sort={debrisSort} />
+        ) : null}
         {loading && !hasLoaded ? (
           <RaidTargetsSkeleton />
         ) : mode === "raids" && visibleTargets.length === 0 ? (
@@ -660,14 +676,20 @@ export function applyMobileSortSelection<K extends string>(key: K, currentKey: K
 function MobileSortControls<K extends string>({
   columns,
   id,
+  onSelectSort,
   onSort,
   sort,
 }: {
   columns: ReadonlyArray<{ key: K; label: string }>;
   id: string;
+  onSelectSort: (key: K) => void;
   onSort: (key: K) => void;
   sort: { direction: "asc" | "desc"; key: K };
 }) {
+  const selectSort = (element: HTMLSelectElement) => {
+    applyMobileSortSelection(element.value as K, sort.key, onSelectSort);
+  };
+
   return (
     <div className="flex items-center gap-2 border-b border-white/10 px-2 py-2 sm:hidden">
       <label className="shrink-0 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500" htmlFor={id}>
@@ -676,10 +698,8 @@ function MobileSortControls<K extends string>({
       <select
         className="h-10 min-w-0 flex-1 rounded border border-white/10 bg-[#0d1422] px-2 text-xs font-semibold text-slate-200"
         id={id}
-        onInput={(event) => {
-          const key = event.currentTarget.value as K;
-          applyMobileSortSelection(key, sort.key, onSort);
-        }}
+        onChange={(event) => selectSort(event.currentTarget)}
+        onInput={(event) => selectSort(event.currentTarget)}
         value={sort.key}
       >
         {columns.map((column) => (
@@ -701,9 +721,11 @@ function MobileSortControls<K extends string>({
 }
 
 function RaidTargetTableHeader({
+  onSelectSort,
   onSort,
   sort,
 }: {
+  onSelectSort: (key: RaidTargetSortKey) => void;
   onSort: (key: RaidTargetSortKey) => void;
   sort: RaidTargetSort;
 }) {
@@ -734,15 +756,17 @@ function RaidTargetTableHeader({
         ))}
         <span className="text-right">Action</span>
       </div>
-      <MobileSortControls columns={sortColumns} id="raid-target-sort" onSort={onSort} sort={sort} />
+      <MobileSortControls columns={sortColumns} id="raid-target-sort" onSelectSort={onSelectSort} onSort={onSort} sort={sort} />
     </>
   );
 }
 
 function DebrisTargetTableHeader({
+  onSelectSort,
   onSort,
   sort,
 }: {
+  onSelectSort: (key: DebrisTargetSortKey) => void;
   onSort: (key: DebrisTargetSortKey) => void;
   sort: DebrisTargetSort;
 }) {
@@ -773,7 +797,7 @@ function DebrisTargetTableHeader({
         ))}
         <span className="text-right">Action</span>
       </div>
-      <MobileSortControls columns={debrisSortColumns} id="debris-target-sort" onSort={onSort} sort={sort} />
+      <MobileSortControls columns={debrisSortColumns} id="debris-target-sort" onSelectSort={onSelectSort} onSort={onSort} sort={sort} />
     </>
   );
 }
