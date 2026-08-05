@@ -47,7 +47,7 @@ type MissionControlActionState =
   | { status: "success"; label: string }
   | { status: "error"; label: string };
 
-export type MissionLifecycleActionKind = "counterplay" | "joinAttack" | "recall";
+export type MissionLifecycleActionKind = "counterplay" | "joinAttack" | "joinDefense" | "recall";
 
 export type MissionLifecycleAction = {
   kind: MissionLifecycleActionKind;
@@ -111,6 +111,14 @@ interface MissionControlPageProps {
   // legacy callers/tests that do not model membership retain their historical tab set; the playable
   // app always passes an explicit membership-derived boolean.
   hasAlliance?: boolean | undefined;
+  // The live alliance roster disambiguates the backend's active attack candidates into attacks
+  // launched by allies and attacks targeting allies. `undefined` preserves legacy fixture/feed
+  // behavior; the playable app always supplies the canonical roster (including an empty roster
+  // after leave/dissolve) so cooperative actions fail closed as membership changes.
+  allianceMemberAddresses?: readonly string[] | undefined;
+  // False only after the selected launch planet's ship inventory has loaded and is empty. This
+  // prevents a cooperative control from opening a composer that cannot possibly submit.
+  hasAvailableMissionFleet?: boolean | undefined;
   incomingAttackArchive?: FleetMissionArchiveResponse | undefined;
   incomingAttackArchiveError?: string | undefined;
   incomingAttackArchiveLoading?: boolean | undefined;
@@ -152,6 +160,7 @@ interface MissionControlPageProps {
 export function MissionControlPage({
   actionState,
   activePlanetId,
+  allianceMemberAddresses,
   allActiveMissions = [],
   canTransact,
   fleetVisibility,
@@ -160,6 +169,7 @@ export function MissionControlPage({
   globalMissionArchiveLoading = false,
   globalMissionArchiveTotalEntries,
   hasAlliance = true,
+  hasAvailableMissionFleet,
   incomingAttackArchive,
   incomingAttackArchiveError,
   incomingAttackArchiveLoading = false,
@@ -198,10 +208,16 @@ export function MissionControlPage({
   // A fleet-visibility response can race a newer alliance-membership response during dissolve,
   // leave, or removal. Fail closed on canonical membership so stale joinable rows cannot leak into
   // either the Alliance tab or the universe-wide All tab.
-  const joinableAttacks = hasAlliance ? (fleetVisibility?.joinableAttacks ?? []) : [];
+  const cooperativeRows = classifyAllianceCooperativeMissions({
+    allianceMemberAddresses,
+    candidates: fleetVisibility?.joinableAttacks ?? [],
+    wallet: fleetVisibility?.wallet,
+  });
+  const joinableAttacks = hasAlliance ? cooperativeRows.joinAttacks : [];
+  const joinableDefenses = hasAlliance ? cooperativeRows.joinDefenses : [];
   const completedMissions = fleetVisibility?.completedMissions ?? [];
   const battleReports = fleetVisibility?.battleReports ?? [];
-  const activeMissionRows = chronologicalActiveMissionRows({ incoming, joinableAttacks, outgoing, returning });
+  const activeMissionRows = chronologicalActiveMissionRows({ incoming, joinableAttacks, joinableDefenses, outgoing, returning });
   const {
     alliance: allianceMissionRows,
     incoming: incomingMissionRows,
@@ -216,7 +232,7 @@ export function MissionControlPage({
   });
   const activeFilterCount = missionControlActiveFilterCount(normalizedFilters);
   const missionFiltersActive = activeFilterCount > 0;
-  const allMissions = uniqueMissions([...incoming, ...outgoing, ...returning, ...joinableAttacks, ...completedMissions]);
+  const allMissions = uniqueMissions([...incoming, ...outgoing, ...returning, ...joinableAttacks, ...joinableDefenses, ...completedMissions]);
   // While a mission is still active (Outbound / Returning / Recalled) it must appear ONLY in the
   // active section. Its battle report — which can already exist for a fleet that fought and is flying
   // home — must not also render as a Past Missions row, duplicating the live mission. The report
@@ -352,6 +368,7 @@ export function MissionControlPage({
             allianceRows={filteredAllianceMissionRows}
             showAllianceTab={showAllianceTab}
             canTransact={canTransact}
+            hasAvailableMissionFleet={hasAvailableMissionFleet}
             lootByMissionId={lootByMissionId}
             lossesByMissionId={lossesByMissionId}
             incomingRows={filteredIncomingMissionRows}
@@ -771,6 +788,7 @@ export function missionLifecycleActions({
   activePlanetId,
   canTransact,
   context,
+  hasAvailableMissionFleet,
   mission,
   now,
   transactionUnavailableReason,
@@ -778,12 +796,20 @@ export function missionLifecycleActions({
   activePlanetId?: string | undefined;
   canTransact: boolean;
   context: ActiveMissionContext;
+  hasAvailableMissionFleet?: boolean | undefined;
   mission: FleetMissionSummary;
   now: number;
   transactionUnavailableReason?: string | undefined;
 }): MissionLifecycleAction[] {
   const actions: MissionLifecycleAction[] = [];
   const due = isMissionDue(mission, now);
+  const cooperativeJoinOpen = isCooperativeJoinOpen(mission, now);
+  const cooperativeEnabled = canTransact && hasAvailableMissionFleet !== false && cooperativeJoinOpen;
+  const cooperativeReason = !cooperativeJoinOpen
+    ? "The cooperative join cutoff has passed."
+    : hasAvailableMissionFleet === false
+      ? "No ships are available on the selected origin planet."
+      : walletReason(canTransact, transactionUnavailableReason);
 
   // Arrival/return completions reconcile automatically — deterministically on the next
   // mutating call (lazy on-chain settle) and via the backend mission resolver — so the
@@ -816,19 +842,28 @@ export function missionLifecycleActions({
     && (!activePlanetId || mission.targetPlanetId !== activePlanetId)
   ) {
     actions.push({
-      enabled: canTransact && !due,
+      enabled: cooperativeEnabled,
       kind: "counterplay",
       label: "Counterplay",
-      reason: due ? "Mission is already due for resolution." : walletReason(canTransact, transactionUnavailableReason),
+      reason: cooperativeReason,
     });
   }
 
-  if (context === "joinable" && mission.status === "Outbound" && mission.missionType === "Attack") {
+  if ((context === "joinAttack" || context === "joinable") && mission.status === "Outbound" && mission.missionType === "Attack") {
     actions.push({
-      enabled: canTransact && !due,
+      enabled: cooperativeEnabled,
       kind: "joinAttack",
-      label: "Join attack",
-      reason: due ? "Mission is already due for resolution." : walletReason(canTransact, transactionUnavailableReason),
+      label: "Join Attack",
+      reason: cooperativeReason,
+    });
+  }
+
+  if (context === "joinDefense" && mission.status === "Outbound" && mission.missionType === "Attack") {
+    actions.push({
+      enabled: cooperativeEnabled,
+      kind: "joinDefense",
+      label: "Join Defense",
+      reason: cooperativeReason,
     });
   }
 
@@ -837,13 +872,54 @@ export function missionLifecycleActions({
 
 // "observer" rows belong to other players and only appear on the universe-wide "All" tab; they
 // carry no lifecycle actions (Resolve/Recall/Join), just the read-only route + Open control.
-type ActiveMissionContext = "due" | "incoming" | "joinable" | "observer" | "outgoing" | "returning";
+type ActiveMissionContext = "due" | "incoming" | "joinable" | "joinAttack" | "joinDefense" | "observer" | "outgoing" | "returning";
 
 export type ActiveMissionRow = {
   context: ActiveMissionContext;
   direction: string;
   mission: FleetMissionSummary;
 };
+
+export function classifyAllianceCooperativeMissions({
+  allianceMemberAddresses,
+  candidates,
+  wallet,
+}: {
+  allianceMemberAddresses?: readonly string[] | undefined;
+  candidates: readonly FleetMissionSummary[];
+  wallet?: string | undefined;
+}): { joinAttacks: FleetMissionSummary[]; joinDefenses: FleetMissionSummary[] } {
+  // Older feeds already label this collection `joinableAttacks` but do not provide the roster that
+  // made it joinable. Keep that contract for legacy callers; production passes an explicit roster.
+  if (allianceMemberAddresses === undefined) {
+    return { joinAttacks: [...candidates], joinDefenses: [] };
+  }
+
+  const memberAddresses = new Set(allianceMemberAddresses.map((address) => address.toLowerCase()));
+  const walletAddress = wallet?.toLowerCase();
+  const joinAttacks: FleetMissionSummary[] = [];
+  const joinDefenses: FleetMissionSummary[] = [];
+
+  for (const mission of candidates) {
+    if (mission.status !== "Outbound" || mission.missionType !== "Attack") continue;
+    const attacker = mission.owner.toLowerCase();
+    const defender = mission.targetPlanet?.owner?.toLowerCase();
+
+    if (attacker !== walletAddress && memberAddresses.has(attacker)) {
+      joinAttacks.push(mission);
+    }
+    if (
+      defender
+      && defender !== walletAddress
+      && memberAddresses.has(defender)
+      && !memberAddresses.has(attacker)
+    ) {
+      joinDefenses.push(mission);
+    }
+  }
+
+  return { joinAttacks, joinDefenses };
+}
 
 type PastMissionRow = FleetMissionArchiveEntry;
 
@@ -852,7 +928,7 @@ const ACTIVE_MISSION_TABS = [
   // repeats it two lines above.
   { emptyLabel: "No active missions for this wallet. Use Galaxy to launch attacks, transport resources, deploy fleets, or harvest debris.", key: "mine", label: "My missions" },
   { emptyLabel: "No fleets are currently inbound to your planets.", key: "incoming", label: "Incoming" },
-  { emptyLabel: "No joinable alliance attacks.", key: "alliance", label: "Alliance" },
+  { emptyLabel: "No joinable alliance attacks or defenses.", key: "alliance", label: "Alliance" },
   { emptyLabel: "No active missions in the universe yet.", key: "all", label: "All" },
 ] as const;
 
@@ -867,6 +943,7 @@ function ActiveMissionSection({
   allRows,
   allianceRows,
   canTransact,
+  hasAvailableMissionFleet,
   incomingRows,
   lootByMissionId,
   lossesByMissionId,
@@ -891,6 +968,7 @@ function ActiveMissionSection({
   allRows: ActiveMissionRow[];
   allianceRows: ActiveMissionRow[];
   canTransact: boolean;
+  hasAvailableMissionFleet?: boolean | undefined;
   incomingRows: ActiveMissionRow[];
   lootByMissionId: ReadonlyMap<string, BattleReport["loot"]>;
   lossesByMissionId: ReadonlyMap<string, MissionLossSummary>;
@@ -919,6 +997,7 @@ function ActiveMissionSection({
   const sharedRowProps = {
     activePlanetId,
     canTransact,
+    hasAvailableMissionFleet,
     lootByMissionId,
     lossesByMissionId,
     now,
@@ -1224,6 +1303,7 @@ function missionFilterEmptyLabel(filters: MissionControlFilters): string {
 function ActiveMissionList({
   activePlanetId,
   canTransact,
+  hasAvailableMissionFleet,
   emptyLabel,
   initialPage = 0,
   lootByMissionId,
@@ -1240,6 +1320,7 @@ function ActiveMissionList({
 }: {
   activePlanetId?: string | undefined;
   canTransact: boolean;
+  hasAvailableMissionFleet?: boolean | undefined;
   emptyLabel: string;
   initialPage?: number | undefined;
   lootByMissionId: ReadonlyMap<string, BattleReport["loot"]>;
@@ -1285,6 +1366,7 @@ function ActiveMissionList({
               context={context}
               direction={direction}
               harvested={returnPhaseHarvestedResources(mission)}
+              hasAvailableMissionFleet={hasAvailableMissionFleet}
               key={`${context}:${mission.missionId}`}
               loot={returnPhaseLoot(mission, lootByMissionId)}
               losses={returnPhaseLosses(mission, lossesByMissionId)}
@@ -1312,6 +1394,7 @@ function MissionRow({
   context,
   direction,
   harvested,
+  hasAvailableMissionFleet,
   loot,
   losses,
   mission,
@@ -1329,6 +1412,7 @@ function MissionRow({
   context: ActiveMissionContext;
   direction: string;
   harvested?: FleetMissionSummary["returnCargo"] | undefined;
+  hasAvailableMissionFleet?: boolean | undefined;
   loot?: BattleReport["loot"] | undefined;
   losses?: MissionLossSummary | undefined;
   mission: FleetMissionSummary;
@@ -1342,13 +1426,13 @@ function MissionRow({
   walletPlanetIds: ReadonlySet<string>;
 }) {
   // VEY-397#11: only surface Join when it is actionable.
-  const actions = missionLifecycleActions({ activePlanetId, canTransact, context, mission, now, transactionUnavailableReason })
-    .filter((action) => action.kind !== "joinAttack" || action.enabled);
+  const actions = missionLifecycleActions({ activePlanetId, canTransact, context, hasAvailableMissionFleet, mission, now, transactionUnavailableReason })
+    .filter((action) => !["joinAttack", "joinDefense"].includes(action.kind) || action.enabled);
   const missionDirection = resolveMissionDirection({ context, mission, wallet, walletPlanetIds });
   const origin = missionEndpoint(mission, "origin", planetLookup);
   const target = missionEndpoint(mission, "target", planetLookup);
   const noFleetReturned = isNoFleetReturned(mission);
-  const directionSubtext = direction && direction !== "Joinable attack" ? direction : undefined;
+  const directionSubtext = direction && !["Joinable attack", "Joinable defense"].includes(direction) ? direction : undefined;
   const pendingMission = isPendingMissionLaunch(mission);
   // A hostile attack heading for the player's planet is the one row that must not hide its
   // counterplay behind a click: flag it red and start it expanded.
@@ -1367,16 +1451,17 @@ function MissionRow({
               onClick={() => onCounterplay(mission, "acsDefend")}
             />
           ) : action.kind === "joinAttack" ? (
-            // VEY-397#13/#14: "Join" shares the Open button style/size (hidden when disabled, VEY-399#6).
-            <button
-              className={rowActionButtonClass}
+            <ActionButton
+              action={action}
               key={action.kind}
               onClick={() => onJoinAttack(mission, target.coords)}
-              title="Join this alliance attack"
-              type="button"
-            >
-              Join
-            </button>
+            />
+          ) : action.kind === "joinDefense" ? (
+            <ActionButton
+              action={action}
+              key={action.kind}
+              onClick={() => onCounterplay(mission, "acsDefend")}
+            />
           ) : (
             <ActionButton
               action={action}
@@ -1968,11 +2053,15 @@ function FleetIcons({ ships }: { ships: Record<string, string> }) {
 }
 
 function ActionButton({ action, onClick }: { action: MissionLifecycleAction; onClick: () => void }) {
-  const Icon = action.kind === "counterplay" ? galaxyActionIcon("acsDefend") : Undo2;
+  const Icon = action.kind === "joinAttack"
+    ? galaxyActionIcon("attack")
+    : action.kind === "counterplay" || action.kind === "joinDefense"
+      ? galaxyActionIcon("acsDefend")
+      : Undo2;
   const button = (
     <button
       aria-label={action.label}
-      className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded border transition sm:h-8 sm:w-8 ${
+      className={`inline-flex h-11 w-11 shrink-0 items-center justify-center rounded border transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200/70 focus-visible:ring-offset-2 focus-visible:ring-offset-[#101624] ${
         action.enabled
           ? "border-cyan-300/35 bg-cyan-300/10 text-cyan-100 hover:bg-cyan-300/20"
           : "cursor-not-allowed border-white/10 bg-white/[0.03] text-slate-500"
@@ -2870,13 +2959,13 @@ export function partitionActiveMissionRows(rows: ActiveMissionRow[]): {
   mine: ActiveMissionRow[];
 } {
   // Keep the player's fleet-slot usage legible: own outbound/returning fleets belong to "My missions",
-  // fleets other players sent toward the wallet belong to "Incoming", and joinable attacks stay in
+  // fleets other players sent toward the wallet belong to "Incoming", and cooperative actions stay in
   // "Alliance". Rows are already deduped + chronologically sorted upstream.
   const alliance: ActiveMissionRow[] = [];
   const incoming: ActiveMissionRow[] = [];
   const mine: ActiveMissionRow[] = [];
   for (const row of rows) {
-    if (row.context === "joinable") alliance.push(row);
+    if (row.context === "joinable" || row.context === "joinAttack" || row.context === "joinDefense") alliance.push(row);
     else if (row.context === "incoming") incoming.push(row);
     else mine.push(row);
   }
@@ -3038,6 +3127,13 @@ function isMissionReadyToResolve(mission: FleetMissionSummary, now: number): boo
 // and more than that cutoff away from arrival. Both Mission Control and Mission Detail gate their
 // Recall affordances on this so the two screens stay consistent (VEY-KANEO-424).
 const FLEET_RECALL_CUTOFF_SECONDS = 60;
+export const COOPERATIVE_JOIN_CUTOFF_SECONDS = 5 * 60;
+
+export function isCooperativeJoinOpen(mission: FleetMissionSummary, now: number): boolean {
+  return mission.status === "Outbound"
+    && mission.missionType === "Attack"
+    && now < (Number(mission.arrivalAt) - COOPERATIVE_JOIN_CUTOFF_SECONDS) * 1_000;
+}
 
 export function isFleetRecallable(mission: FleetMissionSummary, now: number): boolean {
   if (mission.missionType === "DefenseHold") {
@@ -3078,11 +3174,13 @@ function isNoFleetReturned(mission: FleetMissionSummary): boolean {
 function chronologicalActiveMissionRows({
   incoming,
   joinableAttacks,
+  joinableDefenses,
   outgoing,
   returning,
 }: {
   incoming: FleetMissionSummary[];
   joinableAttacks: FleetMissionSummary[];
+  joinableDefenses: FleetMissionSummary[];
   outgoing: FleetMissionSummary[];
   returning: FleetMissionSummary[];
 }): ActiveMissionRow[] {
@@ -3094,7 +3192,8 @@ function chronologicalActiveMissionRows({
     })),
     ...outgoing.map((mission): ActiveMissionRow => ({ context: "outgoing", direction: "Outbound", mission })),
     ...returning.map((mission): ActiveMissionRow => ({ context: "returning", direction: "Returning", mission })),
-    ...joinableAttacks.map((mission): ActiveMissionRow => ({ context: "joinable", direction: "Joinable attack", mission })),
+    ...joinableAttacks.map((mission): ActiveMissionRow => ({ context: "joinAttack", direction: "Joinable attack", mission })),
+    ...joinableDefenses.map((mission): ActiveMissionRow => ({ context: "joinDefense", direction: "Joinable defense", mission })),
   ];
   return sortedUniqueActiveMissionRows(rows);
 }

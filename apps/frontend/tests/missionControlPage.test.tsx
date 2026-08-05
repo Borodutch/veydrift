@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import type { ComponentChildren, VNode } from "preact";
-import { MissionControlPage, StationedDefenseSection, formatMissionTime, missionControlRefreshButtonState, missionDisplayStatusLabel, missionLifecycleActions, missionStatusPill, returnPhaseHarvestedResources, returnPhaseLoot, returnPhaseLosses } from "../src/components/MissionControlPage";
+import { MissionControlPage, StationedDefenseSection, classifyAllianceCooperativeMissions, formatMissionTime, missionControlRefreshButtonState, missionDisplayStatusLabel, missionLifecycleActions, missionStatusPill, returnPhaseHarvestedResources, returnPhaseLoot, returnPhaseLosses } from "../src/components/MissionControlPage";
 import { encodeColonizationTargetId } from "../src/walletFlow";
 import type { BattleReport, FleetMissionSummary, ManagedPlanetResponse } from "../src/walletFlow";
 
@@ -59,7 +59,7 @@ describe("MissionControlPage", () => {
     expect(missionLifecycleActions({
       canTransact: true,
       context: "incoming",
-      mission: mission({ arrivalAt: "1770000300", missionId: "4", missionType: "Attack", status: "Outbound" }),
+      mission: mission({ arrivalAt: "1770000700", missionId: "4", missionType: "Attack", status: "Outbound" }),
       now,
     }).map((action) => [action.kind, action.enabled])).toEqual([
       ["counterplay", true],
@@ -82,7 +82,7 @@ describe("MissionControlPage", () => {
     expect(missionLifecycleActions({
       canTransact: true,
       context: "joinable",
-      mission: mission({ arrivalAt: "1770000300", missionId: "5", missionType: "Attack", status: "Outbound" }),
+      mission: mission({ arrivalAt: "1770000700", missionId: "5", missionType: "Attack", status: "Outbound" }),
       now,
     }).map((action) => [action.kind, action.enabled])).toEqual([
       ["joinAttack", true],
@@ -93,7 +93,7 @@ describe("MissionControlPage", () => {
     const actions = missionLifecycleActions({
       canTransact: false,
       context: "incoming",
-      mission: mission({ arrivalAt: "1770000300", missionId: "6", missionType: "Attack", status: "Outbound" }),
+      mission: mission({ arrivalAt: "1770000700", missionId: "6", missionType: "Attack", status: "Outbound" }),
       now: 1_770_000_100_000,
       transactionUnavailableReason: "Ship production: syncing indexed state...",
     });
@@ -104,6 +104,80 @@ describe("MissionControlPage", () => {
       label: "Counterplay",
       reason: "Ship production: syncing indexed state...",
     }]);
+  });
+
+  test("gates cooperative actions at the five-minute cutoff and without a selected fleet", () => {
+    const now = 1_770_000_100_000;
+    const atCutoff = missionLifecycleActions({
+      canTransact: true,
+      context: "joinAttack",
+      mission: mission({ arrivalAt: "1770000400", missionId: "cutoff", missionType: "Attack", status: "Outbound" }),
+      now,
+    });
+    expect(atCutoff).toEqual([{
+      enabled: false,
+      kind: "joinAttack",
+      label: "Join Attack",
+      reason: "The cooperative join cutoff has passed.",
+    }]);
+
+    const noFleet = missionLifecycleActions({
+      canTransact: true,
+      context: "joinDefense",
+      hasAvailableMissionFleet: false,
+      mission: mission({ arrivalAt: "1770000700", missionId: "fleet", missionType: "Attack", status: "Outbound" }),
+      now,
+    });
+    expect(noFleet).toEqual([{
+      enabled: false,
+      kind: "joinDefense",
+      label: "Join Defense",
+      reason: "No ships are available on the selected origin planet.",
+    }]);
+
+    expect(missionLifecycleActions({
+      canTransact: true,
+      context: "joinDefense",
+      mission: mission({ arrivalAt: "1770000700", missionId: "terminal", missionType: "Attack", status: "Returning" }),
+      now,
+    })).toEqual([]);
+  });
+
+  test("classifies only live same-alliance attack and defense candidates", () => {
+    const wallet = "0x1111111111111111111111111111111111111111";
+    const ally = "0x2222222222222222222222222222222222222222";
+    const enemy = "0x3333333333333333333333333333333333333333";
+    const outsider = "0x4444444444444444444444444444444444444444";
+    const targetPlanet = (planetId: string, owner: string) => ({
+      allianceDepotLevel: 0,
+      coordinates: `1:1:${planetId}`,
+      galaxy: 1,
+      name: `Planet ${planetId}`,
+      owner,
+      ownerDisplayName: null,
+      planetId,
+      position: Number(planetId),
+      system: 1,
+    });
+    const allyAttack = mission({ missionId: "attack", owner: ally, targetPlanet: targetPlanet("9", enemy) });
+    const allyDefense = mission({ missionId: "defense", owner: enemy, targetPlanet: targetPlanet("10", ally) });
+    const nonAlliance = mission({ missionId: "other", owner: enemy, targetPlanet: targetPlanet("11", outsider) });
+    const returning = mission({ missionId: "returning", owner: ally, status: "Returning", targetPlanet: targetPlanet("12", enemy) });
+
+    expect(classifyAllianceCooperativeMissions({
+      allianceMemberAddresses: [wallet, ally],
+      candidates: [allyAttack, allyDefense, nonAlliance, returning],
+      wallet,
+    })).toEqual({
+      joinAttacks: [allyAttack],
+      joinDefenses: [allyDefense],
+    });
+
+    expect(classifyAllianceCooperativeMissions({
+      allianceMemberAddresses: [],
+      candidates: [allyAttack, allyDefense],
+      wallet,
+    })).toEqual({ joinAttacks: [], joinDefenses: [] });
   });
 
   test("hides Recall once an outbound fleet is within the 60s recall cutoff", () => {
