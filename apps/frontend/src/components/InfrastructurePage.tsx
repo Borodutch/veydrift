@@ -1,4 +1,4 @@
-import { useState } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import type { BuildingEffectMetrics, BuildingKey, BuildingRequirement, PlanetProductionProfile, PlayableState, Resources } from "../playableMvp";
 import {
   buildingCatalog,
@@ -107,8 +107,11 @@ export function InfrastructurePage({
   transactionUnavailableReason,
   onUpgrade,
 }: InfrastructurePageProps) {
-  const [localSelectedKey, setLocalSelectedKey] = useState<BuildingKey>("metalMine");
-  const selectedKey = selectedBuildingKey ?? localSelectedKey;
+  const [localSelectedKey, setLocalSelectedKey] = useState<BuildingKey | undefined>();
+  const selectedKey = selectedInfrastructureBuildingKey({
+    localSelectedKey,
+    selectedBuildingKey,
+  });
   const selectedBuilding = buildingCatalog.find((building) => building.key === selectedKey)
     ?? buildingCatalog[0]!;
   const activeBuildingQueue = settledState.queue?.kind === "building"
@@ -123,6 +126,10 @@ export function InfrastructurePage({
     setLocalSelectedKey(key);
     onSelectBuilding?.(key);
   };
+
+  useEffect(() => {
+    setLocalSelectedKey(undefined);
+  }, [selectedBuildingKey]);
 
   if (initialLoadError) {
     return (
@@ -189,6 +196,16 @@ export function InfrastructurePage({
       />
     </div>
   );
+}
+
+export function selectedInfrastructureBuildingKey({
+  localSelectedKey,
+  selectedBuildingKey,
+}: {
+  localSelectedKey?: BuildingKey | undefined;
+  selectedBuildingKey?: BuildingKey | undefined;
+}): BuildingKey {
+  return localSelectedKey ?? selectedBuildingKey ?? "metalMine";
 }
 
 export function shouldShowInfrastructureInitialLoadError({

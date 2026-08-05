@@ -15,12 +15,24 @@ import {
   infrastructureRefreshButtonState,
   infrastructureCatalogTitleTone,
   infrastructureCatalogStatusText,
+  selectedInfrastructureBuildingKey,
   shouldShowInfrastructureInitialLoadError,
 } from "../src/components/InfrastructurePage";
 import { QueueProgressPanel } from "../src/components/QueueProgressPanel";
 import { buildingEffectMetrics, createInitialPlayableState } from "../src/playableMvp";
 
 describe("Infrastructure page display helpers", () => {
+  test("keeps a freshly clicked building authoritative over a stale parent selection", () => {
+    expect(selectedInfrastructureBuildingKey({
+      localSelectedKey: "solarPlant",
+      selectedBuildingKey: "metalMine",
+    })).toBe("solarPlant");
+    expect(selectedInfrastructureBuildingKey({
+      selectedBuildingKey: "shipyard",
+    })).toBe("shipyard");
+    expect(selectedInfrastructureBuildingKey({})).toBe("metalMine");
+  });
+
   test("renders load errors without fake infrastructure values", () => {
     const panel = InfrastructureLoadErrorPanel({
       reason: "Infrastructure request failed with 503",
