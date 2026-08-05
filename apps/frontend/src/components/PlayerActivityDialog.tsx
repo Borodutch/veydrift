@@ -12,7 +12,6 @@ import {
   History,
   Moon,
   Orbit,
-  RefreshCw,
   ShieldAlert,
   Sparkles,
   X,
@@ -30,13 +29,14 @@ import {
   readPlayerActivityLastSeen,
   writePlayerActivityLastSeen,
 } from "../playerActivityStorage";
+import { Skeleton, SkeletonRegion, skeletonList } from "./Skeleton";
 
 const HISTORY_PAGE_SIZE = 25;
 const AWAY_PAGE_SIZE = 100;
 const LAST_SEEN_HEARTBEAT_MS = 60_000;
 
 type ActivityDialogState =
-  | { mode: "away"; response: PlayerActivityResponse; since: number }
+  | { mode: "away"; response: PlayerActivityResponse | undefined; since: number }
   | { mode: "history"; response: PlayerActivityResponse | undefined };
 
 export function PlayerActivityCenter({
@@ -58,6 +58,7 @@ export function PlayerActivityCenter({
   const [historyResponse, setHistoryResponse] = useState<PlayerActivityResponse | undefined>();
   const [historyPage, setHistoryPage] = useState(1);
   const [loading, setLoading] = useState(false);
+  const [awayLoading, setAwayLoading] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [lastSeenReady, setLastSeenReady] = useState(false);
   const identityKey = apiUrl && wallet ? `${apiUrl}:${chainId}:${wallet.toLowerCase()}` : "";
@@ -68,6 +69,7 @@ export function PlayerActivityCenter({
     setHistoryPage(1);
     setError(undefined);
     setLastSeenReady(false);
+    setAwayLoading(false);
     if (!apiUrl || !wallet) return;
 
     const storage = browserPlayerActivityStorage();
@@ -80,6 +82,8 @@ export function PlayerActivityCenter({
     }
 
     let cancelled = false;
+    setAwayState({ mode: "away", response: undefined, since: previous });
+    setAwayLoading(true);
     void fetchPlayerActivity(apiUrl, wallet, {
       page: 1,
       pageSize: AWAY_PAGE_SIZE,
@@ -90,10 +94,15 @@ export function PlayerActivityCenter({
       writePlayerActivityLastSeen(storage, chainId, wallet, Number(response.through));
       setLastSeenReady(true);
       if (response.items.length > 0) {
-        setAwayState({ mode: "away", response, since: previous });
+        setAwayState((current) => current ? { mode: "away", response, since: previous } : null);
+      } else {
+        setAwayState(null);
       }
     }).catch(() => {
       // Keep the old timestamp so a transient API failure is retried next load.
+      if (!cancelled) setAwayState(null);
+    }).finally(() => {
+      if (!cancelled) setAwayLoading(false);
     });
     return () => { cancelled = true; };
   }, [identityKey]);
@@ -145,7 +154,7 @@ export function PlayerActivityCenter({
     <PlayerActivityDialog
       error={state.mode === "history" ? error : undefined}
       explorerUrl={explorerUrl}
-      loading={state.mode === "history" && loading}
+      loading={state.mode === "history" ? loading : awayLoading}
       mode={state.mode}
       onClose={close}
       onPageChange={state.mode === "history" ? setHistoryPage : undefined}
@@ -207,9 +216,9 @@ export function PlayerActivityDialog({
             <span className="grid h-9 w-9 shrink-0 place-items-center rounded border border-cyan-300/25 bg-cyan-300/10 text-cyan-200">
               {mode === "away" ? <Sparkles aria-hidden="true" size={17} /> : <History aria-hidden="true" size={17} />}
             </span>
-            <div className="min-w-0">
-              <h2 className="text-sm font-semibold text-white sm:text-base" id="player-activity-dialog-title">{title}</h2>
-              <p className="mt-0.5 text-[11px] text-slate-400 sm:text-xs">{subtitle}</p>
+            <div className="flex min-w-0 flex-col">
+              <h2 className="text-sm font-semibold leading-4 text-white sm:text-base sm:leading-5" id="player-activity-dialog-title">{title}</h2>
+              <p className="-mt-0.5 text-[11px] leading-4 text-slate-400 sm:text-xs">{subtitle}</p>
             </div>
           </div>
           <button
@@ -233,10 +242,8 @@ export function PlayerActivityDialog({
             </div>
           ) : null}
 
-          {loading && !response ? (
-            <div className="grid min-h-48 place-items-center text-sm text-slate-400">
-              <span className="inline-flex items-center gap-2"><RefreshCw className="animate-spin" size={15} /> Loading activity…</span>
-            </div>
+          {loading ? (
+            <PlayerActivitySkeleton mode={mode} />
           ) : error ? (
             <div className="rounded border border-amber-300/25 bg-amber-300/10 p-3 text-sm text-amber-100">{error}</div>
           ) : response?.items.length ? (
@@ -286,6 +293,29 @@ export function PlayerActivityDialog({
         ) : null}
       </section>
     </div>
+  );
+}
+
+export function PlayerActivitySkeleton({ mode }: { mode: "away" | "history" }) {
+  return (
+    <SkeletonRegion className="grid min-h-48 gap-2" label={mode === "away" ? "Loading away activity" : "Loading activity"}>
+      {mode === "away" ? (
+        <div className="mb-1 flex gap-1.5">
+          <Skeleton className="h-6 w-24 rounded-full" />
+          <Skeleton className="h-6 w-20 rounded-full" />
+        </div>
+      ) : null}
+      {skeletonList(3, (index) => (
+        <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-2.5 rounded border border-white/10 bg-white/[0.025] p-2.5 sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:px-3" key={index}>
+          <Skeleton className="h-8 w-8 rounded" />
+          <div className="min-w-0">
+            <Skeleton className={`h-3.5 ${index === 1 ? "w-2/5" : "w-3/5"}`} />
+            <Skeleton className={`mt-2 h-2.5 ${index === 2 ? "w-1/2" : "w-4/5"}`} />
+          </div>
+          <Skeleton className="col-span-2 ml-[2.625rem] h-3 w-24 sm:col-span-1 sm:ml-0" />
+        </div>
+      ))}
+    </SkeletonRegion>
   );
 }
 
