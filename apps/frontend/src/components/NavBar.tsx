@@ -1,7 +1,7 @@
 import type { ComponentChildren, JSX } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { LucideIcon } from "lucide-preact";
-import { ArrowLeftRight, Check, ChevronDown, ChevronUp, Crosshair, Factory, FlaskConical, Mail, Menu, Moon, Orbit, Pencil, Radar, Rocket, SatelliteDish, Shield, Trophy, Users, X } from "lucide-preact";
+import { ArrowLeftRight, Check, ChevronDown, ChevronUp, Crosshair, Factory, FlaskConical, History, Mail, Menu, Moon, Orbit, Pencil, Radar, Rocket, SatelliteDish, Shield, Trophy, Users, X } from "lucide-preact";
 
 import {
   playerDisplayLabel,
@@ -39,6 +39,7 @@ interface NavBarProps {
   account?: string | undefined;
   onNavigate: (page: Page) => void;
   onConnectWallet?: (() => void) | undefined;
+  onOpenActivity?: (() => void) | undefined;
   onUpdatePlayerProfile?: ((name: string, description: string | null) => void) | undefined;
   playerProfile?: PlayerProfile | undefined;
   playerProfileAction?: PlayerProfileActionState | undefined;
@@ -98,6 +99,7 @@ export function NavBar({
   coordinates,
   onConnectWallet,
   onNavigate,
+  onOpenActivity,
   onUpdatePlayerProfile,
   playerProfile,
   playerProfileAction = { status: "idle" },
@@ -258,6 +260,12 @@ export function NavBar({
             setPlayerDraft(playerProfile?.displayName ?? "");
             setPlayerDescriptionDraft(playerProfile?.description ?? "");
             setPlayerValidation(undefined);
+          }
+          : undefined}
+        onOpenActivity={account && onOpenActivity
+          ? () => {
+            setMobileMenuOpen(false);
+            onOpenActivity();
           }
           : undefined}
         onToggle={() => setCommanderSummaryExpanded((expanded) => !expanded)}
@@ -482,6 +490,7 @@ export function CommanderAccountSummary({
   expanded,
   onCopy,
   onEdit,
+  onOpenActivity,
   onToggle,
   playerCopyValue,
   playerLabel,
@@ -499,6 +508,7 @@ export function CommanderAccountSummary({
   expanded: boolean;
   onCopy: (key: string, value: string) => void;
   onEdit?: (() => void) | undefined;
+  onOpenActivity?: (() => void) | undefined;
   onToggle: () => void;
   playerCopyValue?: string | undefined;
   playerLabel: string;
@@ -623,6 +633,17 @@ export function CommanderAccountSummary({
               value={account ? shortAddress(account) : "Disconnected"}
             />
           </div>
+          {onOpenActivity ? (
+            <button
+              aria-haspopup="dialog"
+              className="mt-1.5 flex h-8 w-full items-center justify-between gap-2 border-t border-white/10 pt-1.5 text-left text-[10px] font-semibold uppercase text-slate-500 transition hover:text-cyan-200 focus:outline-none focus-visible:text-cyan-200"
+              onClick={onOpenActivity}
+              type="button"
+            >
+              Activity
+              <History aria-hidden="true" className="text-slate-300" size={13} strokeWidth={2} />
+            </button>
+          ) : null}
         </div>
       ) : null}
     </aside>

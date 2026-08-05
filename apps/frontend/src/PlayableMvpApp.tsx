@@ -85,6 +85,7 @@ import {
   type PlanetPickerAttackHighlights,
 } from "./planetPickerAttackHighlights";
 import { ShareDialog } from "./components/ShareDialog";
+import { PlayerActivityCenter } from "./components/PlayerActivityDialog";
 import { rankingsAttackProtectionForEntry } from "./rankingsAttackProtection";
 import {
   buildingKeyForContractId,
@@ -3844,6 +3845,7 @@ export function PlayableMvpApp({
   const [writeTransactionState, setWriteTransactionState] = useState<WriteTransactionState>({ phase: "idle" });
   // The shareable battle-report URL currently shown in the share dialog; null when it is closed.
   const [shareDialogUrl, setShareDialogUrl] = useState<string | null>(null);
+  const [playerActivityOpen, setPlayerActivityOpen] = useState(false);
   const [moonAction, setMoonAction] = useState<MoonActionState>({ status: "idle" });
   const transactionActionGate = useRef(createTransactionActionGate()).current;
   const onChainRefreshGate = useRef(0);
@@ -9629,6 +9631,7 @@ export function PlayableMvpApp({
           coordinates={homeCoordinateLabel}
           onConnectWallet={effectiveConnectWallet}
           onNavigate={handleNavigate}
+          onOpenActivity={() => setPlayerActivityOpen(true)}
           onUpdatePlayerProfile={handleUpdatePlayerProfile}
           planetPicker={mobilePlanetPicker}
           playerProfile={playerProfile}
@@ -9651,6 +9654,14 @@ export function PlayableMvpApp({
       {shareDialogUrl ? (
         <ShareDialog onClose={() => setShareDialogUrl(null)} url={shareDialogUrl} />
       ) : null}
+      <PlayerActivityCenter
+        apiUrl={apiBaseUrl}
+        chainId={gameWalletChain.chainId}
+        explorerUrl={gameWalletChain.blockExplorerUrls[0]}
+        historyOpen={playerActivityOpen}
+        onHistoryClose={() => setPlayerActivityOpen(false)}
+        wallet={account}
+      />
     </div>
   );
 }

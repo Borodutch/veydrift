@@ -1215,6 +1215,188 @@ describe("SettlementIndexer", () => {
     expect(mineIndexer.playerQueues(player, planet.planetId).building).toBeNull();
   });
 
+  test("serves indexed activity and projected lazy queue completions from one feed", () => {
+    const startTs = 1_767_000_000;
+    const readyAt = startTs + 3_600;
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent({ ...planet, lastSettledAt: startTs.toString() });
+    indexer.applyLog({
+      blockNumber: "0x81",
+      blockTimestamp: `0x${startTs.toString(16)}`,
+      transactionHash: "0xactivity-start",
+      logIndex: "0x0",
+      topics: [buildingStartedTopic, topic(7n), topic(0n)],
+      data: abiWords(8n, BigInt(readyAt), 0n, 0n, 0n)
+    });
+
+    const history = indexer.playerActivity(player, { page: 1, pageSize: 25, through: readyAt + 10 });
+    expect(history.items).toHaveLength(1);
+    expect(history.items[0]).toMatchObject({
+      kind: "building-started",
+      title: "Metal Mine upgrade started",
+      transactionHash: "0xactivity-start",
+      reconciliation: "indexed"
+    });
+
+    const away = indexer.playerActivity(player, {
+      page: 1,
+      pageSize: 25,
+      since: startTs + 1,
+      through: readyAt + 10,
+      includeProjected: true
+    });
+    expect(away.items).toHaveLength(1);
+    expect(away.summary).toEqual({ infrastructure: 1 });
+    expect(away.items[0]).toMatchObject({
+      kind: "building-completed",
+      title: "Metal Mine completed",
+      occurredAt: readyAt.toString(),
+      transactionHash: null,
+      relatedTransactionHash: "0xactivity-start",
+      reconciliation: "projected"
+    });
+  });
+
+  test("keeps a lazily reconciled completion's logical and transaction times distinct", () => {
+    const startTs = 1_767_000_000;
+    const readyAt = startTs + 3_600;
+    const reconciledAt = readyAt + 900;
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent({ ...planet, lastSettledAt: startTs.toString() });
+    indexer.applyLog({
+      blockNumber: "0x81",
+      blockTimestamp: `0x${startTs.toString(16)}`,
+      transactionHash: "0xactivity-queue",
+      logIndex: "0x0",
+      topics: [buildingStartedTopic, topic(7n), topic(0n)],
+      data: abiWords(8n, BigInt(readyAt), 0n, 0n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x82",
+      blockTimestamp: `0x${reconciledAt.toString(16)}`,
+      transactionHash: "0xactivity-reconcile",
+      logIndex: "0x0",
+      topics: [buildingCompletedTopic, topic(7n), topic(0n)],
+      data: abiWords(8n)
+    });
+
+    const completion = indexer.playerActivity(player, {
+      page: 1,
+      pageSize: 25,
+      since: startTs + 1,
+      through: reconciledAt + 1,
+      includeProjected: true
+    }).items.find((item) => item.kind === "building-completed");
+    expect(completion).toMatchObject({
+      occurredAt: readyAt.toString(),
+      transactionAt: reconciledAt.toString(),
+      transactionHash: "0xactivity-reconcile",
+      reconciliation: "indexed"
+    });
+  });
+
+  test("records mission launches and logical mission completion times", () => {
+    const launchedAt = 1_767_000_000;
+    const arrivalAt = launchedAt + 600;
+    const returnAt = launchedAt + 1_200;
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    const transactionHash = "0xactivity-mission-launch";
+    indexer.applyLog({
+      blockNumber: "0x90",
+      blockTimestamp: `0x${launchedAt.toString(16)}`,
+      transactionHash,
+      logIndex: "0x0",
+      topics: [fleetMissionLaunchedTopic, topic(42n), addressTopic(player), topic(0n)],
+      data: abiWords(7n, 8n, BigInt(arrivalAt), BigInt(returnAt))
+    });
+    indexer.applyLog({
+      blockNumber: "0x90",
+      blockTimestamp: `0x${launchedAt.toString(16)}`,
+      transactionHash,
+      logIndex: "0x1",
+      topics: [fleetMissionCargoTopic, topic(42n)],
+      data: abiWords(0n, 0n, 0n, 10n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x90",
+      blockTimestamp: `0x${launchedAt.toString(16)}`,
+      transactionHash,
+      logIndex: "0x2",
+      topics: [fleetMissionShipsTopic, topic(42n)],
+      data: abiWords(1n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x91",
+      blockTimestamp: `0x${(arrivalAt + 45).toString(16)}`,
+      transactionHash: "0xactivity-mission-resolve",
+      logIndex: "0x0",
+      topics: [fleetMissionResolvedTopic, topic(42n)],
+      data: abiWords(BigInt(returnAt))
+    });
+
+    const items = indexer.playerActivity(player, {
+      page: 1,
+      pageSize: 25,
+      through: arrivalAt + 60
+    }).items;
+    expect(items.find((item) => item.kind === "mission-launched")).toMatchObject({
+      title: "Transport launched",
+      transactionHash
+    });
+    expect(items.find((item) => item.kind === "mission-completed")).toMatchObject({
+      title: "Transport completed",
+      occurredAt: arrivalAt.toString(),
+      transactionAt: (arrivalAt + 45).toString(),
+      transactionHash: "0xactivity-mission-resolve"
+    });
+  });
+
+  test("records attack outcomes for both the attacker and defender", () => {
+    const attacker = "0x3333333333333333333333333333333333333333" as Address;
+    const target = { ...planet, planetId: "8", owner: player, galaxy: 3, system: 4, position: 5 };
+    const origin = { ...planet, planetId: "9", owner: attacker, galaxy: 3, system: 4, position: 6 };
+    const battleAt = 1_767_001_000;
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(target);
+    indexer.applyEvent(origin);
+    indexer.applyLog({
+      blockNumber: "0xa0",
+      blockTimestamp: `0x${battleAt.toString(16)}`,
+      transactionHash: "0xactivity-battle",
+      logIndex: "0x0",
+      topics: [attackBattleResolvedTopic, topic(77n), addressTopic(attacker), topic(8n)],
+      data: abiWords(1n, 3n, 123n, 1_000n, 500n, 0n)
+    });
+
+    expect(indexer.playerActivity(attacker, { page: 1, pageSize: 25, through: battleAt + 1 }).items[0]).toMatchObject({
+      direction: "outgoing",
+      kind: "attack-resolved",
+      title: "Attack won"
+    });
+    expect(indexer.playerActivity(player, { page: 1, pageSize: 25, through: battleAt + 1 }).items[0]).toMatchObject({
+      direction: "incoming",
+      kind: "attack-resolved",
+      title: "Defense lost"
+    });
+  });
+
   test("records an active queue startedAt aligned with the spend settle time (VEY-318)", () => {
     // Regression: a build start drains its cost from stored resources and
     // re-settles the planet, but the indexed queue previously exposed
