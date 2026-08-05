@@ -494,6 +494,14 @@ export type ResourceSnapshotFreshness = {
   resourcesKey?: string | null;
 };
 type ChainResourceShape = { metal: string; crystal: string; deuterium: string };
+export type BackendConfirmedResourceState = {
+  homePlanetId: string | null;
+  planetId?: string | null;
+  planetLastSettledAt?: string | null;
+  resources: OnChainResources | null;
+  resourcesAsOfNow?: OnChainResources | null;
+  resourceSnapshot?: ResourceSnapshotMetadata | null;
+};
 
 export type OnChainRefreshPlan = {
   applyQueues: boolean;
@@ -735,6 +743,47 @@ export function resourceSnapshotFreshnessForInfrastructure(
   };
 }
 
+export function resourceSnapshotFreshnessForConfirmedState(
+  state: BackendConfirmedResourceState,
+): ResourceSnapshotFreshness {
+  const resources = state.resourcesAsOfNow ?? state.resourceSnapshot?.resources ?? state.resources;
+  return {
+    planetId: state.resourceSnapshot?.planetId ?? state.planetId ?? state.homePlanetId,
+    lastSettledAt: state.resourceSnapshot?.lastSettledAt ?? state.planetLastSettledAt ?? null,
+    resourcesKey: resourceSnapshotKey(resources),
+  };
+}
+
+export function settlementWithConfirmedResourceState(
+  current: WalletSettlementResponse | undefined,
+  state: BackendConfirmedResourceState,
+): WalletSettlementResponse | undefined {
+  if (!current?.planet) return current;
+
+  const planet = planetWithConfirmedResourceState(current.planet, state);
+  return planet === current.planet ? current : { ...current, planet };
+}
+
+export function planetWithConfirmedResourceState<T extends NonNullable<WalletSettlementResponse["planet"]>>(
+  current: T,
+  state: BackendConfirmedResourceState,
+): T {
+  const freshness = resourceSnapshotFreshnessForConfirmedState(state);
+  if (freshness.planetId && freshness.planetId !== current.planetId) return current;
+
+  const settledResources = state.resourceSnapshot?.resources ?? state.resources;
+  const liveResources = state.resourcesAsOfNow ?? settledResources;
+  if (!settledResources && !liveResources) return current;
+
+  return {
+    ...current,
+    lastSettledAt: freshness.lastSettledAt ?? current.lastSettledAt,
+    resources: settledResources ?? current.resources,
+    resourcesAsOfNow: liveResources ?? current.resourcesAsOfNow,
+    resourceSnapshot: state.resourceSnapshot ?? current.resourceSnapshot,
+  } as T;
+}
+
 export function walletSettlementForManagedPlanet(
   current: WalletSettlementResponse | undefined,
   planet: ManagedPlanetResponse | undefined,
@@ -846,9 +895,8 @@ export function shouldApplyResourceSnapshot(
 
   const currentSettledAt = resourceSnapshotSettledAt(current);
   const nextSettledAt = resourceSnapshotSettledAt(next);
-  if (currentSettledAt === undefined || nextSettledAt === undefined) {
-    return true;
-  }
+  if (currentSettledAt === undefined) return true;
+  if (nextSettledAt === undefined) return false;
 
   if (nextSettledAt > currentSettledAt) return true;
   if (nextSettledAt < currentSettledAt) return false;
@@ -913,19 +961,18 @@ export function walletCurrentResourcesFor({
   );
 }
 
-// Successful backend reads are authoritative. The request-ordering gate still
-// guards against out-of-order responses upstream.
+// Successful backend reads are authoritative, but responses may resolve out of
+// order. Queue data can always advance; canonical resources only advance when
+// the backend snapshot is at least as recent as the current resource floor.
 export function planOnChainRefresh(
   current: ResourceSnapshotFreshness,
   next: ResourceSnapshotFreshness,
   options: { force?: boolean } = {},
 ): OnChainRefreshPlan {
-  void current;
-  void next;
   void options;
   return {
     applyQueues: true,
-    applyResourceState: true,
+    applyResourceState: shouldApplyResourceSnapshot(current, next),
   };
 }
 
@@ -4573,12 +4620,18 @@ export function PlayableMvpApp({
       if (infrastructureResult.status === "fulfilled") {
         const nextInfrastructure = infrastructureResult.value;
         const nextFreshness = resourceSnapshotFreshnessForInfrastructure(nextInfrastructure);
-        latestInfrastructureResourceSnapshot.current = recordedResourceSnapshotFreshness(
+        const applyResourceState = shouldApplyResourceSnapshot(
           latestInfrastructureResourceSnapshot.current,
           nextFreshness,
         );
+        if (applyResourceState) {
+          latestInfrastructureResourceSnapshot.current = recordedResourceSnapshotFreshness(
+            latestInfrastructureResourceSnapshot.current,
+            nextFreshness,
+          );
+        }
         setInfrastructureChainState((current) => infrastructureStateForRefreshApplication({
-          applyResourceState: true,
+          applyResourceState,
           current,
           next: nextInfrastructure,
         }));
@@ -4631,12 +4684,18 @@ export function PlayableMvpApp({
       const nextInfrastructure = await fetchInfrastructureState(apiBaseUrl, account, activePlanetId);
       if (!canApplyRefreshRequest(infrastructureRefreshGate, requestId)) return nextInfrastructure;
       const nextFreshness = resourceSnapshotFreshnessForInfrastructure(nextInfrastructure);
-      latestInfrastructureResourceSnapshot.current = recordedResourceSnapshotFreshness(
+      const applyResourceState = shouldApplyResourceSnapshot(
         latestInfrastructureResourceSnapshot.current,
         nextFreshness,
       );
+      if (applyResourceState) {
+        latestInfrastructureResourceSnapshot.current = recordedResourceSnapshotFreshness(
+          latestInfrastructureResourceSnapshot.current,
+          nextFreshness,
+        );
+      }
       setInfrastructureChainState((current) => infrastructureStateForRefreshApplication({
-        applyResourceState: true,
+        applyResourceState,
         current,
         next: nextInfrastructure,
       }));
@@ -4942,6 +5001,32 @@ export function PlayableMvpApp({
       });
     }
   }, [account, activePlanetId, apiBaseUrl, applyOnChainSettlementSnapshot, hydratedWalletSnapshotKey, isWalletConnected, onChainQueues, onChainSettlementState, onChainSettlementState?.homePlanetId, selectedPlanetId, walletPlanets]);
+
+  const applyBackendConfirmedResourceState = useCallback((state: BackendConfirmedResourceState) => {
+    const nextFreshness = resourceSnapshotFreshnessForConfirmedState(state);
+    if (!shouldApplyResourceSnapshot(latestOnChainResourceSnapshot.current, nextFreshness)) {
+      return false;
+    }
+
+    // This backend snapshot is proven to include the write transaction. Promote
+    // it synchronously into every canonical resource projection and invalidate
+    // any older wallet/infrastructure request that was already in flight.
+    markFreshStateWrite(onChainRefreshGate);
+    markFreshStateWrite(infrastructureRefreshGate);
+    latestOnChainResourceSnapshot.current = recordedResourceSnapshotFreshness(
+      latestOnChainResourceSnapshot.current,
+      nextFreshness,
+    );
+    if (shouldApplyResourceSnapshot(latestInfrastructureResourceSnapshot.current, nextFreshness)) {
+      latestInfrastructureResourceSnapshot.current = recordedResourceSnapshotFreshness(
+        latestInfrastructureResourceSnapshot.current,
+        nextFreshness,
+      );
+    }
+    updateOnChainSettlementSnapshot((current) => settlementWithConfirmedResourceState(current, state));
+    setWalletPlanets((current) => current.map((planet) => planetWithConfirmedResourceState(planet, state)));
+    return true;
+  }, [updateOnChainSettlementSnapshot]);
 
   const loadMissionArchive = useCallback(async (page: number) => {
     const requestId = beginRefreshRequest(missionArchiveRefreshGate);
@@ -5337,6 +5422,7 @@ export function PlayableMvpApp({
       );
 
       if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
+      applyBackendConfirmedResourceState(snapshot.defense);
       setDefenseState(snapshot.defense);
       setDefenseError(undefined);
       setOnChainQueues(snapshot.queues);
@@ -5354,7 +5440,7 @@ export function PlayableMvpApp({
         setDefenseLoading(false);
       }
     }
-  }, [account, activePlanetId, apiBaseUrl, refreshDefenseState, refreshOnChainState]);
+  }, [account, activePlanetId, apiBaseUrl, applyBackendConfirmedResourceState, refreshDefenseState, refreshOnChainState]);
 
   const refreshStartedShipProductionState = useCallback(async (expectation: StartedShipProductionExpectation) => {
     const planetSwitchRequestId = planetSwitchGate.current;
@@ -5384,6 +5470,7 @@ export function PlayableMvpApp({
       );
 
       if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
+      applyBackendConfirmedResourceState(snapshot.shipyard);
       setShipyardState(snapshot.shipyard);
       setShipyardError(undefined);
       setOnChainQueues(snapshot.queues);
@@ -5401,7 +5488,7 @@ export function PlayableMvpApp({
         setShipyardLoading(false);
       }
     }
-  }, [account, activePlanetId, apiBaseUrl, refreshOnChainState, refreshShipyardState]);
+  }, [account, activePlanetId, apiBaseUrl, applyBackendConfirmedResourceState, refreshOnChainState, refreshShipyardState]);
 
   const refreshStartedResearchState = useCallback(async (expectation: StartedResearchExpectation) => {
     const planetSwitchRequestId = planetSwitchGate.current;
@@ -5431,6 +5518,7 @@ export function PlayableMvpApp({
       );
 
       if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
+      applyBackendConfirmedResourceState(snapshot.research);
       setResearchState(snapshot.research);
       setResearchError(undefined);
       setOnChainQueues(snapshot.queues);
@@ -5448,9 +5536,10 @@ export function PlayableMvpApp({
         setResearchLoading(false);
       }
     }
-  }, [account, activePlanetId, apiBaseUrl, refreshOnChainState, refreshResearchState]);
+  }, [account, activePlanetId, apiBaseUrl, applyBackendConfirmedResourceState, refreshOnChainState, refreshResearchState]);
 
   const refreshStartedBuildingState = useCallback(async (expectation: StartedBuildingExpectation) => {
+    const planetSwitchRequestId = planetSwitchGate.current;
     if (!apiBaseUrl || !account) {
       await Promise.allSettled([
         refreshOnChainState(),
@@ -5459,7 +5548,6 @@ export function PlayableMvpApp({
       return;
     }
 
-    const requestId = beginRefreshRequest(infrastructureRefreshGate);
     setOnChainStatus(keepGlobalReadStateDuringTransaction);
     setInfrastructureLoading(true);
     setInfrastructureError(undefined);
@@ -5478,41 +5566,36 @@ export function PlayableMvpApp({
         expectation,
       );
 
-      if (!canApplyRefreshRequest(infrastructureRefreshGate, requestId)) return;
-      latestInfrastructureResourceSnapshot.current = recordedResourceSnapshotFreshness(
-        latestInfrastructureResourceSnapshot.current,
-        resourceSnapshotFreshnessForInfrastructure(snapshot.infrastructure),
-      );
+      if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
+      applyBackendConfirmedResourceState(snapshot.infrastructure);
       const walletPlanetQueue = startedBuildingQueueFromWalletPlanets(snapshot.planetsResponse, expectation);
       const visibleBuildingQueue = snapshot.infrastructure.queue?.active
         ? snapshot.infrastructure.queue
         : walletPlanetQueue ?? snapshot.queues.building;
       setInfrastructureChainState(snapshot.infrastructure);
       if (snapshot.planetsResponse) {
-        setWalletPlanets(snapshot.planetsResponse.planets);
+        setWalletPlanets(snapshot.planetsResponse.planets.map((planet) =>
+          planetWithConfirmedResourceState(planet, snapshot.infrastructure)
+        ));
       }
       setOnChainQueues(visibleBuildingQueue === snapshot.queues.building
         ? snapshot.queues
         : { ...snapshot.queues, building: visibleBuildingQueue ?? null });
       setOnChainError(undefined);
       setOnChainStatus("ready");
-      // Reconcile the settlement snapshot so the top-bar resources reflect the
-      // amount just spent on the upgrade. The queue poll above confirms the
-      // indexer has caught up; awaiting this keeps the global transaction gate
-      // closed until the forced post-spend read finishes.
-      await refreshOnChainState(undefined, { force: true });
     } catch (error) {
+      if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
       const message = error instanceof Error ? error.message : "Failed to load started building state.";
       setOnChainError(message);
       setOnChainStatus(globalReadStatusAfterTransactionRefreshFailure);
       setInfrastructureError(message);
       throw error;
     } finally {
-      if (canApplyRefreshRequest(infrastructureRefreshGate, requestId)) {
+      if (canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) {
         setInfrastructureLoading(false);
       }
     }
-  }, [account, activePlanetId, apiBaseUrl, refreshInfrastructureState, refreshOnChainState]);
+  }, [account, activePlanetId, apiBaseUrl, applyBackendConfirmedResourceState, refreshInfrastructureState, refreshOnChainState]);
 
   const refreshFinishedResearchState = useCallback(async (expectation: FinishedResearchExpectation) => {
     const planetSwitchRequestId = planetSwitchGate.current;

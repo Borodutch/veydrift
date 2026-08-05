@@ -4,11 +4,14 @@ import {
   canApplyRefreshRequest,
   markFreshStateWrite,
   missionLaunchSubmitBlocker,
+  planOnChainRefresh,
+  resourceSnapshotFreshnessForConfirmedState,
   previousMissionIndexingBlockerLabel,
   previousMissionTransactionBlockerLabel,
   recordedResourceSnapshotFreshness,
   resourceSnapshotFreshnessForInfrastructure,
   resourceSnapshotFreshnessForSettlement,
+  settlementWithConfirmedResourceState,
   shouldApplyResourceSnapshot,
   shouldClearCachedShipyardStateForPageRefresh,
   shouldEagerlyRefreshPlanetSwitchForPage,
@@ -60,6 +63,63 @@ describe("playable chain refresh", () => {
     expect(canApplyRefreshRequest(gate, newerPollRequest)).toBe(true);
   });
 
+  test("keeps a backend-confirmed transaction snapshot ahead of an older in-flight resource poll", () => {
+    const gate = { current: 0 };
+    const olderPollRequest = beginRefreshRequest(gate);
+    const confirmed = resourceSnapshotFreshnessForSettlement(
+      settlementSnapshot("7", "200", { metal: "120", crystal: "80", deuterium: "40" }),
+    );
+    const olderPoll = resourceSnapshotFreshnessForSettlement(
+      settlementSnapshot("7", "100", { metal: "500", crystal: "400", deuterium: "300" }),
+    );
+
+    markFreshStateWrite(gate);
+
+    expect(canApplyRefreshRequest(gate, olderPollRequest)).toBe(false);
+    expect(planOnChainRefresh(confirmed, olderPoll)).toEqual({
+      applyQueues: true,
+      applyResourceState: false,
+    });
+  });
+
+  test("promotes an indexed spend snapshot directly into the canonical top-bar settlement", () => {
+    const beforeSpend = settlementSnapshot("7", "100", {
+      metal: "500",
+      crystal: "400",
+      deuterium: "300",
+    });
+    const confirmedSpend = {
+      ...infrastructureSnapshot("7", "200"),
+      resources: { metal: "120", crystal: "80", deuterium: "40" },
+      resourcesAsOfNow: { metal: "121", crystal: "81", deuterium: "40" },
+      resourceSnapshot: {
+        planetId: "7",
+        transactionHash: "0xspend",
+        blockNumber: "0x20",
+        lastSettledAt: "200",
+        resources: { metal: "120", crystal: "80", deuterium: "40" },
+      },
+    };
+
+    const promoted = settlementWithConfirmedResourceState(beforeSpend, confirmedSpend);
+
+    expect(resourceSnapshotFreshnessForConfirmedState(confirmedSpend)).toEqual({
+      planetId: "7",
+      lastSettledAt: "200",
+      resourcesKey: "121:81:40",
+    });
+    expect(promoted?.planet?.resources).toEqual({ metal: "120", crystal: "80", deuterium: "40" });
+    expect(promoted?.planet?.resourcesAsOfNow).toEqual({ metal: "121", crystal: "81", deuterium: "40" });
+    expect(promoted?.planet?.resourceSnapshot?.transactionHash).toBe("0xspend");
+  });
+
+  test("uses one confirmed-resource promotion path for all shared production spends", async () => {
+    const source = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.url)).text();
+    const promotions = source.match(/applyBackendConfirmedResourceState\(snapshot\.(?:infrastructure|defense|shipyard|research)\)/g) ?? [];
+
+    expect(promotions).toHaveLength(4);
+  });
+
   test("rejects older accrued resource snapshots after newer transaction writes", () => {
     let latestSnapshot = resourceSnapshotFreshnessForSettlement(undefined);
     let topBarResources = { metal: "0", crystal: "0", deuterium: "0" };
@@ -90,6 +150,7 @@ describe("playable chain refresh", () => {
 
     expect(shouldApplyResourceSnapshot(current, older)).toBe(false);
     expect(shouldApplyResourceSnapshot(current, otherPlanet)).toBe(true);
+    expect(shouldApplyResourceSnapshot(current, markerless)).toBe(false);
     expect(recordedResourceSnapshotFreshness(current, markerless)).toBe(current);
   });
 
