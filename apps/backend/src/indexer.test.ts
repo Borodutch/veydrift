@@ -3384,7 +3384,7 @@ describe("SettlementIndexer", () => {
     expect(indexer.fleetSlots(player)).toEqual({ active: 5, limit: 5 });
   });
 
-  test("keeps served unit rows canonical while launchable ships include lazy-completed queues", () => {
+  test("keeps legacy elapsed queues out of served rows while launchable ships include them", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
       async listMoonChanceReportEvents() { return []; },
@@ -3445,6 +3445,120 @@ describe("SettlementIndexer", () => {
       count: 8
     });
     expect(indexer.technologyLevels(player)).toMatchObject({ "4": 2 });
+  });
+
+  test("projects Solar Satellites per unit at 1/N, middle, and final queue boundaries", () => {
+    const now = Math.floor(Date.now() / 1_000);
+
+    for (const completedQuantity of [1, 3, 6]) {
+      const indexer = new SettlementIndexer({
+        async listDebrisFieldEvents() { return []; },
+        async listMoonChanceReportEvents() { return []; },
+        async listSettledPlanetEvents() { return []; }
+      }, 100n);
+      indexer.applyEvent(planet);
+      indexer.applyLog({
+        blockNumber: "0x83",
+        transactionHash: `0xsat-count-${completedQuantity}`,
+        logIndex: "0x0",
+        topics: [planetShipCountChangedTopic, topic(7n), topic(9n)],
+        data: abiWords(44n)
+      });
+
+      const startedAt = BigInt(now - completedQuantity * 10);
+      const readyAt = startedAt + 60n;
+      indexer.applyLog({
+        blockNumber: "0x84",
+        transactionHash: `0xsat-queue-${completedQuantity}`,
+        logIndex: "0x0",
+        topics: [shipQueuedTopic, topic(7n), topic(9n)],
+        data: abiWords(6n, readyAt, 0n, 12_000n, 3_000n)
+      });
+      indexer.applyLog({
+        blockNumber: "0x84",
+        transactionHash: `0xsat-queue-${completedQuantity}`,
+        logIndex: "0x1",
+        topics: [shipQueueTimingSetTopic, topic(7n), topic(9n), topic(readyAt)],
+        data: abiWords(startedAt, 6n, 100n, 10n)
+      });
+
+      const expectedCount = 44 + completedQuantity;
+      const remainingQuantity = 6 - completedQuantity;
+      expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 9)?.count).toBe(expectedCount);
+      expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 9)?.count).toBe(expectedCount);
+      if (remainingQuantity === 0) {
+        expect(indexer.playerQueues(player, planet.planetId).ship).toBeNull();
+      } else {
+        expect(indexer.playerQueues(player, planet.planetId).ship).toMatchObject({
+          itemId: 9,
+          quantity: remainingQuantity,
+          asOfNow: {
+            completedQuantity,
+            remainingQuantity
+          }
+        });
+      }
+
+      const energy = deriveInfrastructureFields(
+        planet,
+        [],
+        indexer.shipRows(planet.planetId),
+        {}
+      ).energyBalance;
+      const sources = energy?.sources;
+      if (!sources) throw new Error("Expected Solar Satellite energy sources");
+      expect(sources.solarSatelliteCount).toBe(expectedCount);
+      expect(Number(sources.solarSatellites)).toBe(
+        expectedCount * Number(sources.solarSatelliteEnergy)
+      );
+    }
+  });
+
+  test("does not double-count a projected Solar Satellite when its completion event arrives", () => {
+    const now = Math.floor(Date.now() / 1_000);
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    indexer.applyLog({
+      blockNumber: "0x83",
+      transactionHash: "0xsat-count",
+      logIndex: "0x0",
+      topics: [planetShipCountChangedTopic, topic(7n), topic(9n)],
+      data: abiWords(44n)
+    });
+    const startedAt = BigInt(now - 10);
+    const readyAt = startedAt + 60n;
+    indexer.applyLog({
+      blockNumber: "0x84",
+      transactionHash: "0xsat-queue",
+      logIndex: "0x0",
+      topics: [shipQueuedTopic, topic(7n), topic(9n)],
+      data: abiWords(6n, readyAt, 0n, 12_000n, 3_000n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x84",
+      transactionHash: "0xsat-queue",
+      logIndex: "0x1",
+      topics: [shipQueueTimingSetTopic, topic(7n), topic(9n), topic(readyAt)],
+      data: abiWords(startedAt, 6n, 100n, 10n)
+    });
+
+    expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 9)?.count).toBe(45);
+    indexer.applyLog({
+      blockNumber: "0x85",
+      transactionHash: "0xsat-completed",
+      logIndex: "0x0",
+      topics: [shipCompletedTopic, topic(7n), topic(9n)],
+      data: abiWords(1n, 45n)
+    });
+    expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 9)?.count).toBe(45);
+    expect(indexer.playerQueues(player, planet.planetId).ship).toMatchObject({
+      quantity: 5,
+      asOfNow: { completedQuantity: 1, remainingQuantity: 5 }
+    });
   });
 
   test("indexes moon creation and moon building queues", () => {
