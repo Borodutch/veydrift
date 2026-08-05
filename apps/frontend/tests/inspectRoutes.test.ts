@@ -35,6 +35,8 @@ describe("inspect routes", () => {
   });
 
   test("parses clean share path routes for first-load OG URLs", () => {
+    expect(parseInspectPath("/missions")).toEqual({ kind: "page", page: "mission-control" });
+    expect(parseInspectPath("/mission-control")).toEqual({ kind: "page", page: "mission-control" });
     expect(parseInspectPath("/mission/2104")).toEqual({ kind: "mission", missionId: "2104" });
     expect(parseInspectPath("/mission-control/report/2104")).toEqual({ kind: "mission-report", missionId: "2104" });
     expect(parseInspectPath("/planet/6/9/7")).toEqual({

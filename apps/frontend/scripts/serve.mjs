@@ -131,6 +131,7 @@ const gameAppPaths = new Set([
   "/research",
   "/shipyard",
   "/mission-control",
+  "/missions",
   "/moon",
   "/alliance",
   "/rift",
