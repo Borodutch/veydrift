@@ -111,6 +111,7 @@ export function NavBar({
   const [commanderSummaryExpanded, setCommanderSummaryExpanded] = useState(commanderSummaryInitiallyExpanded);
   const [playerValidation, setPlayerValidation] = useState<string | undefined>(undefined);
   const [copiedField, setCopiedField] = useState<{ key: string; nonce: number } | undefined>(undefined);
+  const mobileNavigationDetails = useRef<HTMLDetailsElement | null>(null);
   const copiedResetTimer = useRef<number | undefined>(undefined);
   const playerLabel = commanderIdentityLabel(playerProfile, account);
   const playerCopyValue = playerProfile?.displayName?.trim()
@@ -125,11 +126,18 @@ export function NavBar({
       : "text-slate-300";
   const playerStatusLabel = playerProfileAction.status === "idle" ? undefined : playerProfileAction.label;
 
+  const closeMobileMenu = () => {
+    if (mobileNavigationDetails.current) {
+      mobileNavigationDetails.current.open = false;
+    }
+    setMobileMenuOpen(false);
+  };
+
   useEffect(() => {
     if (!mobileMenuOpen) return;
 
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setMobileMenuOpen(false);
+      if (event.key === "Escape") closeMobileMenu();
     };
 
     window.addEventListener("keydown", handleKeyDown);
@@ -144,7 +152,7 @@ export function NavBar({
 
   const handleMobileNavigate = (page: Page) => {
     onNavigate(page);
-    setMobileMenuOpen(false);
+    closeMobileMenu();
   };
 
   useEffect(() => {
@@ -223,7 +231,7 @@ export function NavBar({
           <button
             className="mt-2 inline-flex h-8 w-full items-center justify-center rounded border border-cyan-300/45 bg-cyan-300/10 px-3 text-xs font-semibold text-cyan-100 transition hover:bg-cyan-300/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/60"
             onClick={() => {
-              setMobileMenuOpen(false);
+              closeMobileMenu();
               onConnectWallet?.();
             }}
             type="button"
@@ -245,7 +253,7 @@ export function NavBar({
         onCopy={handleCopyCommanderValue}
         onEdit={onUpdatePlayerProfile
           ? () => {
-            setMobileMenuOpen(false);
+            closeMobileMenu();
             setPlayerPanelOpen(true);
             setPlayerDraft(playerProfile?.displayName ?? "");
             setPlayerDescriptionDraft(playerProfile?.description ?? "");
@@ -398,68 +406,68 @@ export function NavBar({
         <button
           aria-hidden="true"
           className="fixed inset-0 z-10 cursor-default bg-black/40 md:hidden"
-          onClick={() => setMobileMenuOpen(false)}
+          onClick={closeMobileMenu}
           tabIndex={-1}
           type="button"
         />
       )}
-      <div className="sticky top-[var(--topbar-h,2.75rem)] z-20 w-full max-w-full overflow-hidden border-b border-white/10 bg-[#0c111b]/95 backdrop-blur md:hidden">
-        <div className="flex h-12 min-w-0 items-center justify-between gap-3 px-3">
+      <details
+        className="sticky top-[var(--topbar-h,2.75rem)] z-20 w-full max-w-full overflow-hidden border-b border-white/10 bg-[#0c111b]/95 backdrop-blur md:hidden"
+        onToggle={(event) => setMobileMenuOpen(event.currentTarget.open)}
+        ref={mobileNavigationDetails}
+      >
+        <summary
+          aria-controls="mobile-navigation-menu"
+          aria-expanded={mobileMenuOpen}
+          aria-label={mobileMenuOpen ? "Close navigation menu" : "Open navigation menu"}
+          className="group flex h-12 min-w-0 cursor-pointer list-none items-center justify-between gap-3 px-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-300/60 [&::-webkit-details-marker]:hidden"
+        >
           <div className="min-w-0">
             <p className="truncate text-sm font-semibold text-white">Veydrift</p>
             <p className="font-mono text-[11px] leading-none text-slate-500">
               {coordinates ?? "--:--:--"}
             </p>
           </div>
-          <button
-            aria-controls="mobile-navigation-menu"
-            aria-expanded={mobileMenuOpen}
-            aria-label={mobileMenuOpen ? "Close navigation menu" : "Open navigation menu"}
-            className="grid h-11 w-11 shrink-0 place-items-center rounded border border-white/10 bg-white/[0.06] text-slate-100 transition hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-cyan-300/60"
-            onClick={() => setMobileMenuOpen((open) => !open)}
-            type="button"
-          >
+          <span className="grid h-11 w-11 shrink-0 place-items-center rounded border border-white/10 bg-white/[0.06] text-slate-100 transition group-hover:bg-white/10">
             {mobileMenuOpen ? <X aria-hidden="true" size={18} strokeWidth={2} /> : <Menu aria-hidden="true" size={18} strokeWidth={2} />}
-          </button>
-        </div>
+          </span>
+        </summary>
 
-        {mobileMenuOpen && (
-          <div
-            className="grid min-w-0 max-w-full gap-3 overflow-hidden border-t border-white/10 bg-[#08101d]/98 p-3 shadow-2xl shadow-black/30"
-            id="mobile-navigation-menu"
-          >
-            {accountSummary(
-              "rounded border border-white/10 bg-white/[0.03] p-2",
-              "mobile-commander-account-details",
-            )}
-            {planetPicker ? (
-              <div
-                className="min-w-0 max-w-full overflow-hidden rounded border border-white/10 bg-white/[0.03] p-2"
-                // Close the menu once a planet is picked, matching nav-item behavior.
-                onClick={(event) => {
-                  if ((event.target as HTMLElement).closest("button")) setMobileMenuOpen(false);
-                }}
-              >
-                <p className="mb-1.5 px-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
-                  Planets
-                </p>
-                {planetPicker}
-              </div>
-            ) : null}
-            <nav aria-label="Mobile app sections" className="grid min-w-0 grid-cols-[repeat(3,minmax(0,1fr))] gap-1.5 sm:grid-cols-[repeat(4,minmax(0,1fr))]">
-              {pages.map((page) => (
-                <MobileTab
-                  active={active === page.key || (active === "planet" && page.key === "galaxy") || (active === "alliance-inspect" && page.key === "alliance") || (active === "player-inspect" && page.key === "rankings")}
-                  key={page.key}
-                  icon={page.icon}
-                  label={page.mobileLabel}
-                  onClick={() => handleMobileNavigate(page.key)}
-                />
-              ))}
-            </nav>
-          </div>
-        )}
-      </div>
+        <div
+          className="grid min-w-0 max-w-full gap-3 overflow-hidden border-t border-white/10 bg-[#08101d]/98 p-3 shadow-2xl shadow-black/30"
+          id="mobile-navigation-menu"
+        >
+          {accountSummary(
+            "rounded border border-white/10 bg-white/[0.03] p-2",
+            "mobile-commander-account-details",
+          )}
+          {planetPicker ? (
+            <div
+              className="min-w-0 max-w-full overflow-hidden rounded border border-white/10 bg-white/[0.03] p-2"
+              // Close the menu once a planet is picked, matching nav-item behavior.
+              onClick={(event) => {
+                if ((event.target as HTMLElement).closest("button")) closeMobileMenu();
+              }}
+            >
+              <p className="mb-1.5 px-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                Planets
+              </p>
+              {planetPicker}
+            </div>
+          ) : null}
+          <nav aria-label="Mobile app sections" className="grid min-w-0 grid-cols-[repeat(3,minmax(0,1fr))] gap-1.5 sm:grid-cols-[repeat(4,minmax(0,1fr))]">
+            {pages.map((page) => (
+              <MobileTab
+                active={active === page.key || (active === "planet" && page.key === "galaxy") || (active === "alliance-inspect" && page.key === "alliance") || (active === "player-inspect" && page.key === "rankings")}
+                key={page.key}
+                icon={page.icon}
+                label={page.label}
+                onClick={() => handleMobileNavigate(page.key)}
+              />
+            ))}
+          </nav>
+        </div>
+      </details>
       {playerEditorDialog}
     </>
   );
