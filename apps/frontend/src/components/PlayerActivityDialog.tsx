@@ -234,7 +234,7 @@ export function PlayerActivityDialog({
           ) : null}
 
           {loading ? (
-            <PlayerActivitySkeleton />
+            <PlayerActivitySkeleton rowCount={Math.max(3, response?.items.length ?? 0)} />
           ) : error ? (
             <div className="rounded border border-amber-300/25 bg-amber-300/10 p-3 text-sm text-amber-100">{error}</div>
           ) : response?.items.length ? (
@@ -287,10 +287,10 @@ export function PlayerActivityDialog({
   );
 }
 
-export function PlayerActivitySkeleton() {
+export function PlayerActivitySkeleton({ rowCount = 3 }: { rowCount?: number } = {}) {
   return (
     <SkeletonRegion className="grid min-h-48 gap-2" label="Loading activity">
-      {skeletonList(3, (index) => (
+      {skeletonList(rowCount, (index) => (
         <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-2.5 rounded border border-white/10 bg-white/[0.025] p-2.5 sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:px-3" key={index}>
           <Skeleton className="h-8 w-8 rounded" />
           <div className="min-w-0">
