@@ -47,6 +47,7 @@ import {
   decodeShipCountChangedLog,
   decodeDefenseCountChangedLog,
   fleetMissionNeedsResolution,
+  fleetMissionLaunchedTopic,
   missionBattleRandomnessRequestId,
   isDebrisFieldLog,
   isRandomnessFulfilledLog,
@@ -4341,6 +4342,17 @@ export class SettlementIndexer {
         ON indexed_mission_event_logs (event_kind, block_number);
       CREATE INDEX IF NOT EXISTS indexed_mission_event_logs_kind_topic1_block_idx
         ON indexed_mission_event_logs (event_kind, json_extract(event_json, '$.topics[1]'), block_number);
+      -- Attack-protection previews only need Attack launches from one attacker. Without this
+      -- expression index, every personalized Rankings/Raid Finder request loaded and decoded the
+      -- entire fleet-event ledger (86k+ rows in production) just to find a few matching launches.
+      CREATE INDEX IF NOT EXISTS indexed_mission_event_logs_attack_launch_attacker_idx
+        ON indexed_mission_event_logs (
+          event_kind,
+          lower(json_extract(event_json, '$.topics[0]')),
+          lower(json_extract(event_json, '$.topics[2]')),
+          json_extract(event_json, '$.topics[3]'),
+          CAST(block_number AS INTEGER)
+        );
       -- Joining an active attack previews the exact Solidity DefenseHold storage lanes. Keep both
       -- target-topic layouts indexed: stationed logs put the planet in topics[3], while ended logs
       -- put it in topics[2]. Without these expression indexes each visible attack scanned the full
@@ -9432,12 +9444,17 @@ export class SettlementIndexer {
       return cached.launchesByTarget;
     }
 
+    const attackerTopic = `0x${normalizedAttacker.slice(2).padStart(64, "0")}`;
+    const attackMissionTypeTopic = `0x${3n.toString(16).padStart(64, "0")}`;
     const rows = this.db.query(`
       SELECT event_json
       FROM indexed_mission_event_logs
       WHERE event_kind = 'fleet'
+        AND lower(json_extract(event_json, '$.topics[0]')) = lower(?)
+        AND lower(json_extract(event_json, '$.topics[2]')) = ?
+        AND json_extract(event_json, '$.topics[3]') = ?
       ORDER BY CAST(block_number AS INTEGER) ASC
-    `).all() as EventRow[];
+    `).all(fleetMissionLaunchedTopic, attackerTopic, attackMissionTypeTopic) as EventRow[];
     const byTarget = new Map<string, number[]>();
     for (const log of sortedEventRows(rows)) {
       const launch = decodeAttackMissionLaunch(log);

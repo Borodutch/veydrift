@@ -10035,11 +10035,13 @@ describe("SettlementIndexer", () => {
 
   test("memoizes attack launch timestamps for highscore protection scans until indexed state changes", () => {
     const attacker = "0x9999999999999999999999999999999999999999" as Address;
+    const otherAttacker = "0x8888888888888888888888888888888888888888" as Address;
+    const database = new Database(":memory:");
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
       async listMoonChanceReportEvents() { return []; },
       async listSettledPlanetEvents() { return []; }
-    }, 100n);
+    }, 100n, { database });
     indexer.applyLog({
       blockNumber: "0x90",
       blockTimestamp: "0x64",
@@ -10048,12 +10050,46 @@ describe("SettlementIndexer", () => {
       topics: [fleetMissionLaunchedTopic, topic(50n), addressTopic(attacker), topic(3n)],
       data: abiWords(7n, 99n, 1770001200n, 1770002400n, 0n)
     });
+    indexer.applyLog({
+      blockNumber: "0x90",
+      blockTimestamp: "0x96",
+      transactionHash: "0xother-attack",
+      logIndex: "0x1",
+      topics: [fleetMissionLaunchedTopic, topic(52n), addressTopic(otherAttacker), topic(3n)],
+      data: abiWords(7n, 101n, 1770001200n, 1770002400n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x90",
+      blockTimestamp: "0xaf",
+      transactionHash: "0xattacker-transport",
+      logIndex: "0x2",
+      topics: [fleetMissionLaunchedTopic, topic(53n), addressTopic(attacker), topic(0n)],
+      data: abiWords(7n, 102n, 1770001200n, 1770002400n, 0n)
+    });
 
     const first = indexer.attackLaunchSecondsByTarget(attacker);
     const second = indexer.attackLaunchSecondsByTarget(attacker);
 
     expect(second).toBe(first);
     expect(first.get("99")).toEqual([100]);
+    expect(first.has("101")).toBe(false);
+    expect(first.has("102")).toBe(false);
+
+    const queryPlan = database.query(`
+      EXPLAIN QUERY PLAN
+      SELECT event_json
+      FROM indexed_mission_event_logs
+      WHERE event_kind = 'fleet'
+        AND lower(json_extract(event_json, '$.topics[0]')) = lower(?)
+        AND lower(json_extract(event_json, '$.topics[2]')) = ?
+        AND json_extract(event_json, '$.topics[3]') = ?
+      ORDER BY CAST(block_number AS INTEGER) ASC
+    `).all(
+      fleetMissionLaunchedTopic,
+      addressTopic(attacker).toLowerCase(),
+      topic(3n)
+    ) as Array<{ detail: string }>;
+    expect(queryPlan.some((step) => step.detail.includes("indexed_mission_event_logs_attack_launch_attacker_idx"))).toBe(true);
 
     indexer.applyLog({
       blockNumber: "0x91",
