@@ -4997,8 +4997,11 @@ export class SettlementIndexer {
       this.backfillMissileAttackEvents();
       this.backfillCanonicalTables();
       this.replayFleetMissionRowsFromEventLogs();
-      this.backfillPlayerActivityFeed();
     }
+    // Unlike the broad materialized-state repairs above, this versioned feed migration must run on
+    // the production writer. Production intentionally passes runStartupBackfill=false, while the
+    // activity feed still needs one bounded replay of the already-durable raw event ledger.
+    this.backfillPlayerActivityFeed();
     this.queueDefenderLossBreakdownBackfill();
   }
 

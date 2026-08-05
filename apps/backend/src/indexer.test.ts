@@ -1365,7 +1365,7 @@ describe("SettlementIndexer", () => {
     });
   });
 
-  test("runs the V2 activity reconciliation once over the durable log ledger", () => {
+  test("runs the V2 activity reconciliation in production startup mode", () => {
     const dir = mkdtempSync(join(tmpdir(), "veydrift-activity-v2-"));
     const databasePath = join(dir, "activity.sqlite");
     try {
@@ -1396,7 +1396,7 @@ describe("SettlementIndexer", () => {
         async listDebrisFieldEvents() { return []; },
         async listMoonChanceReportEvents() { return []; },
         async listSettledPlanetEvents() { return []; }
-      }, 100n, { database: reconciledDatabase });
+      }, 100n, { database: reconciledDatabase, runStartupBackfill: false });
 
       expect(reconciled.playerActivity(player, { page: 1, pageSize: 25 }).items[0]).toMatchObject({
         title: "Home planet settled",
