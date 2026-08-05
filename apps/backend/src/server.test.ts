@@ -72,6 +72,7 @@ const defenseCompletedTopic = "0xcc99fccb631bf08aef4833c0cbd43ed8d19a40eacce0fe2
 const researchCompletedTopic = "0x93dffeb1ed0a05133592cf6d82b9a200c2ac72b521497b81cef83ac57cb84b4f";
 const shipQueuedTopic = "0x2751e0f30801101b5ffa9787644ace0da334023e4c4376f1133f5608ec9e1118";
 const shipCompletedTopic = "0xd261dd8008086de5ef74708b23f5f21be1962fee33795961e03a5750c4897785";
+const shipQueueTimingSetTopic = "0x241c6a6ecff5bf5d31df2871e9d836b18f8380508d2c5514ae9532687886d6ef";
 const planetSettledTopic = "0x7faee98c7c745f9c9fb2117a44185f57454dac3013383364df4c22b5f9bc4077";
 const planetShipCountChangedTopic = "0x6a0fc6b08970eb9f7e15767e6902471ca8731c57dbe4577c76021e1f9d6762cf";
 const planetDefenseCountChangedTopic = "0xe861e6f62777a3f6ea372d2892ead2d43e27d726e0ae4a2e39e5c3b682a7bbd3";
@@ -8093,6 +8094,58 @@ describe("Veydrift backend", () => {
         solarSatelliteCount: 2,
         solarSatelliteEnergy: "22"
       }
+    });
+  });
+
+  test("keeps Shipyard, queue progress, and energy in parity after each timed Solar Satellite unit", async () => {
+    const chainReader = new MockChainReader();
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    indexer.applyEvent({
+      ...planet,
+      eventName: "PlanetStarted",
+      transactionHash: "0xabc",
+      blockNumber: "123"
+    });
+    indexer.applyLog({
+      blockNumber: "0x82",
+      transactionHash: "0xsat-count",
+      logIndex: "0x0",
+      topics: [planetShipCountChangedTopic, topic(7n), topic(9n)],
+      data: abiWords(44n)
+    });
+    const now = BigInt(Math.floor(Date.now() / 1_000));
+    const startedAt = now - 10n;
+    const readyAt = startedAt + 60n;
+    indexer.applyLog({
+      blockNumber: "0x83",
+      transactionHash: "0xsat-queue",
+      logIndex: "0x0",
+      topics: [shipQueuedTopic, topic(7n), topic(9n)],
+      data: abiWords(6n, readyAt, 0n, 12_000n, 3_000n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x83",
+      transactionHash: "0xsat-queue",
+      logIndex: "0x1",
+      topics: [shipQueueTimingSetTopic, topic(7n), topic(9n), topic(readyAt)],
+      data: abiWords(startedAt, 6n, 100n, 10n)
+    });
+    const handler = createRequestHandler({ config: configuredTestConfig, chainReader, indexer });
+
+    const shipyard = await (await handler(new Request(`http://localhost/wallet/${player}/shipyard`))).json();
+    const infrastructure = await (await handler(new Request(`http://localhost/wallet/${player}/infrastructure`))).json();
+    const satellites = shipyard.ships.find((ship: { id: number }) => ship.id === 9);
+
+    expect(satellites.count).toBe(45);
+    expect(shipyard.queue).toMatchObject({
+      itemId: 9,
+      quantity: 5,
+      asOfNow: { completedQuantity: 1, remainingQuantity: 5 }
+    });
+    expect(infrastructure.energyBalance.sources).toMatchObject({
+      solarSatelliteCount: 45,
+      solarSatellites: "990",
+      solarSatelliteEnergy: "22"
     });
   });
 

@@ -231,6 +231,12 @@ describe("MissionControlPage", () => {
         completedMissions: [],
         battleReports: [],
       },
+      allActiveMissions: [
+        mission({ missionId: "8", missionType: "Attack", owner: "0x3333333333333333333333333333333333333333" }),
+        mission({ missionId: "9", missionType: "Transport" }),
+        mission({ missionId: "10", status: "Returning" }),
+      ],
+      initialView: { activePage: 0, activeTab: "all", pastPage: 0, pastTab: "mine" },
       loading: false,
       now: 1_770_000_700_000,
       onCounterplay: () => undefined,
@@ -459,6 +465,7 @@ describe("MissionControlPage", () => {
         coordinates: "4:55:11",
         name: "Red Haven",
       })],
+      initialView: { activePage: 0, activeTab: "incoming", pastPage: 0, pastTab: "mine" },
     });
     const defenderText = visibleText(defenderPage);
 

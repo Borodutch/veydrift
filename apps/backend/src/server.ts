@@ -2402,10 +2402,10 @@ function cacheableJsonRequestTtlMs(request: Request, url: URL): number {
   if (url.pathname.match(/^\/wallet\/[^/]+\/missile-attacks$/)) return 30_000;
   if (url.pathname === "/missions") return livePublicDataRequest(url) ? 1_000 : 300_000;
   if (url.pathname.match(/^\/mission\/[^/]+$/)) return 30_000;
-  // Moon payloads include an as-of-now launchable ship projection for arrived Deploy missions. Like
-  // fleet slots, that projection changes when time crosses arrivalAt even without a new indexed log,
-  // so a TTL cache can preserve the exact stale 6/6 + zero-moon-ships state the composer is fixing.
-  if (url.pathname.match(/^\/wallet\/[^/]+\/(?:moon|shipyard|defenses)$/)) return 0;
+  // Moon/Shipyard/Infrastructure payloads include as-of-now projections that can change when time
+  // crosses a mission or per-unit production boundary without a new indexed log. A TTL cache can
+  // otherwise preserve mismatched queue, inventory, and Solar Satellite energy values after refresh.
+  if (url.pathname.match(/^\/wallet\/[^/]+\/(?:infrastructure|moon|shipyard|defenses)$/)) return 0;
   // Overview contains fleet visibility, so give its combined snapshot the same bounded freshness.
   if (url.pathname.match(/^\/wallet\/[^/]+\/overview$/)) return 5_000;
   if (cacheableWalletSnapshotPath(url.pathname)) return 15_000;
@@ -2417,7 +2417,7 @@ function cacheableJsonRequestTtlMs(request: Request, url: URL): number {
 
 function cacheableWalletSnapshotPath(pathname: string): boolean {
   if (!pathname.startsWith("/wallet/")) return false;
-  if (pathname.match(/^\/wallet\/[^/]+\/(?:shipyard|defenses)(?:$|\?)/)) return false;
+  if (pathname.match(/^\/wallet\/[^/]+\/(?:infrastructure|shipyard|defenses)(?:$|\?)/)) return false;
   return Boolean(pathname.match(
     /^\/wallet\/[^/]+\/(?:overview|infrastructure|moon|planets|settlement|queues|research|rift|alliance|profile|highscore|fleet-visibility|attack-protection)$/
   ));
@@ -3572,10 +3572,10 @@ function indexedShipyardState(
     shipyardLevel,
     naniteLevel,
     technologyLevels: indexer.technologyLevels(wallet),
-    // `ships` must mirror the committed contract count. Keep the deterministic
-    // lazy-settlement projection separate for fleet composition, so a due build
-    // never makes the Shipyard or any public inventory surface disagree with
-    // `shipCount`.
+    // `ships` is the deterministic settled-to-now inventory: canonical evented
+    // counts plus per-unit production completions. It is shared with energy and
+    // public inventory surfaces so a completed Solar Satellite cannot disappear
+    // between queue progress and the next lazy on-chain settlement transaction.
     ships: planet ? indexer.shipRows(planet.planetId, { shipyardLevel, naniteLevel }) : [],
     launchableShips: planet ? indexer.availableShipRows(planet.planetId, { shipyardLevel, naniteLevel }) : [],
     queue: planet ? indexer.planetQueue(planet.planetId, "ship") : null

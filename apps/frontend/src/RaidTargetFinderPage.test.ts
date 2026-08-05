@@ -36,7 +36,7 @@ function installWindowStorage() {
 }
 
 describe("RaidTargetFinderPage persistence", () => {
-  test("applies the mobile Raid-tab sort selection from the input event", () => {
+  test("applies mobile Raid-tab sort selection idempotently for input/change event compatibility", () => {
     const selected: string[] = [];
     applyMobileSortSelection("loot", "distance", (key) => selected.push(key));
     applyMobileSortSelection("loot", "loot", (key) => selected.push(key));

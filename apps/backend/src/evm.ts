@@ -833,9 +833,9 @@ export type ShipyardState = {
   shipyardLevel: number;
   naniteLevel: number;
   technologyLevels: Record<string, number>;
-  // Canonical on-chain inventory. This is intentionally not projected from a
-  // due production queue: `shipCount` remains the source of truth until the
-  // contract finalizes that queue.
+  // Settled-to-now inventory. Indexed responses add deterministic per-unit
+  // production completions to the canonical evented count; direct chain-reader
+  // responses may expose only the last on-chain-settled count.
   ships: Array<{
     id: number;
     count: number;
@@ -846,8 +846,7 @@ export type ShipyardState = {
     durationSeconds?: number;
   }>;
   // Inventory the next fleet-launch transaction can use after the contract's
-  // deterministic lazy production settlement prologue. This may be ahead of
-  // `ships` while a completed queue has not emitted PlanetShipCountChanged.
+  // deterministic lazy production settlement prologue.
   launchableShips?: ShipyardState["ships"];
   queue: QueueState | null;
 };
@@ -5512,7 +5511,7 @@ const planetDefenseCountChangedTopic = "0xe861e6f62777a3f6ea372d2892ead2d43e27d7
 const moonResourcesChangedTopic = "0xd1823653b6a3910ee502390b5bf01f05a3b571dc81899a6ac3af3f01fae05c26";
 const moonShipCountChangedTopic = "0xbd55c2b529f64f3a888d38432d6c54b03515f3de3f0114255cb36620f5df1257";
 const moonDefenseCountChangedTopic = "0x0bf9a31209477c6f81619cdd411e232ee9a5b64ec763c598ce43d938cc6194a2";
-const fleetMissionLaunchedTopic = "0x95e2cb506aa14052bac412e42f47fb34d9234819a960761a7bc7f1920c0ab456";
+export const fleetMissionLaunchedTopic = "0x95e2cb506aa14052bac412e42f47fb34d9234819a960761a7bc7f1920c0ab456";
 const fleetMissionCargoTopic = "0x3daa6311ecdadad6781f70e5d285e7150f9dc165db88d23be8867be4de33ff29";
 const fleetMissionShipsTopic = "0xf581cbe97357884794500d80286cfbe823fed3b5d77446e477aa694ce89fc82d";
 const fleetMissionBodiesTopic = "0xfa464e2180f08e3e4d8c4247566d0616a5e1ab845d1678c47fedae6d44e9c502";

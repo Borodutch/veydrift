@@ -47,6 +47,7 @@ import {
   decodeShipCountChangedLog,
   decodeDefenseCountChangedLog,
   fleetMissionNeedsResolution,
+  fleetMissionLaunchedTopic,
   missionBattleRandomnessRequestId,
   isDebrisFieldLog,
   isRandomnessFulfilledLog,
@@ -2590,8 +2591,18 @@ export class SettlementIndexer {
 
   shipRows(planetId: string, durationLevels?: { shipyardLevel: number; naniteLevel: number }): ShipyardState["ships"] {
     const counts = this.indexedLevelsById("contract_ship_counts", "ship_id", "count", planetId);
+    const completedQueueQuantities = this.completedQueueQuantities(`ship:${planetId}`, {
+      requireProductionTiming: true
+    });
     return deriveShipRows(
-      (id) => counts.get(id) ?? 0,
+      // Production is lazily settled on-chain by the next owner action, but the
+      // queue timing is deterministic. Serve the inventory that action will
+      // settle so At planet, public fleet counts, and Solar Satellite energy all
+      // advance at the same per-unit boundary as queue progress. The canonical
+      // contract_* mirror remains unchanged (see contractShipRows), and
+      // settleQueueAsOfNow subtracts units already reflected by completion
+      // events, preventing a later indexer update from double-counting them.
+      (id) => (counts.get(id) ?? 0) + (completedQueueQuantities.get(id) ?? 0),
       this.planet(planetId)?.temperature,
       durationLevels
     );
@@ -2768,9 +2779,17 @@ export class SettlementIndexer {
     return settleQueueAsOfNow(this.queueState(queueKeyValue), nowSec);
   }
 
-  private completedQueueQuantities(queueKeyValue: string): Map<number, number> {
+  private completedQueueQuantities(
+    queueKeyValue: string,
+    options: { requireProductionTiming?: boolean } = {}
+  ): Map<number, number> {
     const quantities = new Map<number, number>();
     for (const queue of this.queueSettlement(queueKeyValue).completed) {
+      // Legacy queues predate per-unit timing. Their elapsed readyAt only proves
+      // whole-batch readiness and historically may survive as stale artifacts;
+      // do not promote those rows into public/energy inventory. Modern timing is
+      // the canonical proof needed for 1/N and middle-unit projection.
+      if (options.requireProductionTiming && !queue.productionTiming) continue;
       if (typeof queue.itemId === "number" && typeof queue.quantity === "number") {
         quantities.set(queue.itemId, (quantities.get(queue.itemId) ?? 0) + queue.quantity);
       }
@@ -4323,6 +4342,17 @@ export class SettlementIndexer {
         ON indexed_mission_event_logs (event_kind, block_number);
       CREATE INDEX IF NOT EXISTS indexed_mission_event_logs_kind_topic1_block_idx
         ON indexed_mission_event_logs (event_kind, json_extract(event_json, '$.topics[1]'), block_number);
+      -- Attack-protection previews only need Attack launches from one attacker. Without this
+      -- expression index, every personalized Rankings/Raid Finder request loaded and decoded the
+      -- entire fleet-event ledger (86k+ rows in production) just to find a few matching launches.
+      CREATE INDEX IF NOT EXISTS indexed_mission_event_logs_attack_launch_attacker_idx
+        ON indexed_mission_event_logs (
+          event_kind,
+          lower(json_extract(event_json, '$.topics[0]')),
+          lower(json_extract(event_json, '$.topics[2]')),
+          json_extract(event_json, '$.topics[3]'),
+          CAST(block_number AS INTEGER)
+        );
       -- Joining an active attack previews the exact Solidity DefenseHold storage lanes. Keep both
       -- target-topic layouts indexed: stationed logs put the planet in topics[3], while ended logs
       -- put it in topics[2]. Without these expression indexes each visible attack scanned the full
@@ -9414,12 +9444,17 @@ export class SettlementIndexer {
       return cached.launchesByTarget;
     }
 
+    const attackerTopic = `0x${normalizedAttacker.slice(2).padStart(64, "0")}`;
+    const attackMissionTypeTopic = `0x${3n.toString(16).padStart(64, "0")}`;
     const rows = this.db.query(`
       SELECT event_json
       FROM indexed_mission_event_logs
       WHERE event_kind = 'fleet'
+        AND lower(json_extract(event_json, '$.topics[0]')) = lower(?)
+        AND lower(json_extract(event_json, '$.topics[2]')) = ?
+        AND json_extract(event_json, '$.topics[3]') = ?
       ORDER BY CAST(block_number AS INTEGER) ASC
-    `).all() as EventRow[];
+    `).all(fleetMissionLaunchedTopic, attackerTopic, attackMissionTypeTopic) as EventRow[];
     const byTarget = new Map<string, number[]>();
     for (const log of sortedEventRows(rows)) {
       const launch = decodeAttackMissionLaunch(log);
