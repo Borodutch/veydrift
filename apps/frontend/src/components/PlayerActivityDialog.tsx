@@ -25,10 +25,11 @@ import {
   type PlayerActivityResponse,
 } from "../walletFlow";
 import {
+  beginPlayerActivitySession,
   browserPlayerActivityStorage,
-  readPlayerActivityLastSeen,
   writePlayerActivityLastSeen,
 } from "../playerActivityStorage";
+import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import { Skeleton, SkeletonRegion, skeletonList } from "./Skeleton";
 
 const HISTORY_PAGE_SIZE = 25;
@@ -71,10 +72,9 @@ export function PlayerActivityCenter({
     if (!apiUrl || !wallet) return;
 
     const storage = browserPlayerActivityStorage();
-    const previous = readPlayerActivityLastSeen(storage, chainId, wallet);
     const now = Math.floor(Date.now() / 1_000);
+    const previous = beginPlayerActivitySession(storage, chainId, wallet, now);
     if (previous === null) {
-      writePlayerActivityLastSeen(storage, chainId, wallet, now);
       setLastSeenReady(true);
       return;
     }
@@ -207,9 +207,9 @@ export function PlayerActivityDialog({
             <span className="grid h-9 w-9 shrink-0 place-items-center rounded border border-cyan-300/25 bg-cyan-300/10 text-cyan-200">
               {mode === "away" ? <Sparkles aria-hidden="true" size={17} /> : <History aria-hidden="true" size={17} />}
             </span>
-            <div className="flex min-w-0 flex-col">
-              <h2 className="text-sm font-semibold leading-5 text-white sm:text-base" id="player-activity-dialog-title">{title}</h2>
-              <p className="-translate-y-1 text-[11px] leading-4 text-slate-400 sm:text-xs">{subtitle}</p>
+            <div className="flex min-w-0 flex-col gap-0.5 pt-0.5">
+              <h2 className="text-sm font-semibold leading-4 text-white sm:text-base" id="player-activity-dialog-title">{title}</h2>
+              <p className="text-[11px] leading-3 text-slate-400 sm:text-xs">{subtitle}</p>
             </div>
           </div>
           <button
@@ -307,6 +307,7 @@ export function PlayerActivitySkeleton() {
 export function ActivityRow({ explorerUrl, item }: { explorerUrl: string; item: PlayerActivityItem }) {
   const Icon = activityCategoryIcon(item.category);
   const transactionDelayed = item.transactionHash && Math.abs(Number(item.transactionAt) - Number(item.occurredAt)) > 60;
+  const detail = activityDetail(item);
   return (
     <article className="grid grid-cols-[auto_minmax(0,1fr)] gap-2.5 rounded border border-white/10 bg-white/[0.025] p-2.5 sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:items-center sm:px-3">
       <span className={`grid h-8 w-8 place-items-center rounded border ${activityIconTone(item)}`}>
@@ -325,7 +326,7 @@ export function ActivityRow({ explorerUrl, item }: { explorerUrl: string; item: 
             </span>
           ) : null}
         </div>
-        {item.detail ? <p className="mt-1 truncate text-[11px] text-slate-400 sm:text-xs">{item.detail}</p> : null}
+        {detail ? <p className="mt-1 truncate text-[11px] text-slate-400 sm:text-xs">{detail}</p> : null}
       </div>
       <div className="col-span-2 flex min-w-0 items-center justify-between gap-3 pl-[2.625rem] sm:col-span-1 sm:block sm:pl-0 sm:text-right">
         <div>
@@ -399,15 +400,26 @@ function activityIconTone(item: PlayerActivityItem): string {
 }
 
 function activityIsoTime(timestamp: string): string {
-  const milliseconds = Number(timestamp) * 1_000;
-  return Number.isFinite(milliseconds) ? new Date(milliseconds).toISOString() : "";
+  const milliseconds = timestampToMs(timestamp);
+  return milliseconds === undefined ? "" : new Date(milliseconds).toISOString();
 }
 
 function formatActivityTime(timestamp: string): string {
-  const milliseconds = Number(timestamp) * 1_000;
-  if (!Number.isFinite(milliseconds)) return "Unknown time";
-  return new Intl.DateTimeFormat(undefined, {
+  return formatUserTimestamp(timestamp, {
     dateStyle: "medium",
+    fallback: "Unknown time",
     timeStyle: "short",
-  }).format(new Date(milliseconds));
+  });
+}
+
+export function activityDetail(item: PlayerActivityItem): string | null {
+  if (!item.kind.endsWith("-started")) return item.detail;
+  const readyAtValue = item.metadata.readyAt;
+  const readyAt = typeof readyAtValue === "number" || typeof readyAtValue === "string" ? readyAtValue : null;
+  const readyAtMs = timestampToMs(readyAt);
+  if (readyAtMs === undefined) return item.detail;
+
+  const base = item.detail?.replace(/; ready \d+$/, "") ?? null;
+  const ready = formatUserTimestamp(readyAtMs);
+  return base ? `${base}; ready ${ready}` : `Ready ${ready}`;
 }

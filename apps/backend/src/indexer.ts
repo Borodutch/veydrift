@@ -11496,8 +11496,8 @@ function queueCompletedTitle(kind: string, label: string, quantity?: number): st
 }
 
 function queueActivityDetail(event: IndexedQueueStartedEvent): string | null {
-  if (event.targetLevel !== undefined) return `Level ${event.targetLevel}; ready ${event.readyAt}`;
-  if (event.quantity !== undefined) return `${event.quantity} queued; ready ${event.readyAt}`;
+  if (event.targetLevel !== undefined) return `Level ${event.targetLevel}`;
+  if (event.quantity !== undefined) return `${event.quantity} queued`;
   return null;
 }
 

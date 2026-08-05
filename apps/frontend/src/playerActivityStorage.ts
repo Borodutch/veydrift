@@ -36,6 +36,17 @@ export function writePlayerActivityLastSeen(
   }
 }
 
+export function beginPlayerActivitySession(
+  storage: PlayerActivityTimestampStorage | null | undefined,
+  chainId: number,
+  wallet: string,
+  now: number
+): number | null {
+  const previous = readPlayerActivityLastSeen(storage, chainId, wallet);
+  if (previous === null) writePlayerActivityLastSeen(storage, chainId, wallet, now);
+  return previous;
+}
+
 export function browserPlayerActivityStorage(): PlayerActivityTimestampStorage | null {
   if (typeof window === "undefined") return null;
   try {

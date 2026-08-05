@@ -1242,7 +1242,7 @@ describe("SettlementIndexer", () => {
     expect(history.items[0]).toMatchObject({
       kind: "building-started",
       title: "Metal Mine upgrade started",
-      detail: "Planet #7 · 2:44:9 · Level 8; ready 1767003600",
+      detail: "Planet #7 · 2:44:9 · Level 8",
       transactionHash: "0xactivity-start",
       reconciliation: "indexed"
     });
