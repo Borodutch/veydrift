@@ -1330,6 +1330,16 @@ export function missionShipInventoryBlocker({
   return `${overSelected.join(", ")} on the origin ${originBody}; refresh fleet state or reduce selected ships before launching.`;
 }
 
+export function missionCooperativeActionAvailable(
+  shipyardState: Pick<ChainShipyardState, "fleetLaunchAvailable" | "fleetSlots" | "ships"> | null | undefined,
+): boolean | undefined {
+  if (!shipyardState) return undefined;
+  if (shipyardState.fleetLaunchAvailable === false) return false;
+  if (!shipyardState.fleetSlots || shipyardState.fleetSlots.limit <= 0) return false;
+  if (shipyardState.fleetSlots.active >= shipyardState.fleetSlots.limit) return false;
+  return shipyardState.ships.some((ship) => ship.count > 0);
+}
+
 function resourceSnapshotSettledAt(snapshot: ResourceSnapshotFreshness): bigint | undefined {
   if (!snapshot.lastSettledAt) return undefined;
   try {
@@ -9292,10 +9302,12 @@ export function PlayableMvpApp({
         <MissionControlPage
           actionState={missionAction}
           activePlanetId={activePlanetId}
+          allianceMemberAddresses={allianceState?.members.map((member) => member.address) ?? []}
           allActiveMissions={displayAllActiveMissions}
           canTransact={canSubmitMissionTransaction}
           fleetVisibility={displayFleetVisibility}
           hasAlliance={hasAllianceMembership(allianceState)}
+          hasAvailableMissionFleet={missionCooperativeActionAvailable(missionActionShipyardState)}
           globalMissionArchive={globalMissionArchive}
           globalMissionArchiveError={globalMissionArchiveSection.status.error ?? globalMissionArchiveError}
           globalMissionArchiveLoading={globalMissionArchiveLoading || globalMissionArchiveSection.status.loading}

@@ -62,6 +62,7 @@ import {
   highscorePlanetForMission,
   raidTargetPlanetForMission,
   missionOriginResources,
+  missionCooperativeActionAvailable,
   missionShipInventoryBlocker,
   nextProductionQueueCompletionEventMs,
   selectedPlanetIdForWalletRead,
@@ -1017,6 +1018,27 @@ describe("Playable MVP app display helpers", () => {
     expect(blocker).toBe(
       "Need 4 Small Cargo, only 3 available on the origin planet; refresh fleet state or reduce selected ships before launching."
     );
+  });
+
+  test("shows cooperative mission actions only with ships and an open fleet slot", () => {
+    expect(missionCooperativeActionAvailable(undefined)).toBeUndefined();
+    expect(missionCooperativeActionAvailable({
+      fleetSlots: { active: 0, limit: 5 },
+      ships: [{ id: 0, count: 3 }],
+    })).toBe(true);
+    expect(missionCooperativeActionAvailable({
+      fleetSlots: { active: 5, limit: 5 },
+      ships: [{ id: 0, count: 3 }],
+    })).toBe(false);
+    expect(missionCooperativeActionAvailable({
+      fleetSlots: { active: 0, limit: 5 },
+      ships: [],
+    })).toBe(false);
+    expect(missionCooperativeActionAvailable({
+      fleetLaunchAvailable: false,
+      fleetSlots: { active: 0, limit: 5 },
+      ships: [{ id: 0, count: 3 }],
+    })).toBe(false);
   });
 
   test("validates Moon-origin manifests against moon ships while retaining global fleet slots", () => {

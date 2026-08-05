@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import type { ComponentChildren } from "preact";
 
 import { MissionDetailPage } from "./components/MissionDetailPage";
 import { EMPTY_MISSION_CONTROL_FILTERS, MissionControlPage, StationedDefenseSection, activeMissionRowMatchesFilters, allActiveMissionRows, applyMissionFilterSelectInput, buildMissionControlViewQuery, initializeMissionRowDisclosure, missionControlActiveFilterCount, missionIdMatchesMissionNumberSearch, missionPlanetCoordinateKey, missionReport, missionRowsDisclosureState, missionStatusPill, normalizeMissionControlFilters, normalizeMissionNumberSearch, parseMissionControlViewParams, persistMissionControlView, resolveMissionControlView, setMissionRowsExpanded, partitionActiveMissionRows, type ActiveMissionRow, type MissionControlFilters, type MissionControlView } from "./components/MissionControlPage";
@@ -786,21 +787,19 @@ describe("Mission Control battle reports", () => {
       incoming: [mission("31", "Attack", "Outbound", "0x2222222222222222222222222222222222222222", "8", "7", now + 60_000)],
       outgoing: [mission("32", "Transport", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now + 120_000)],
       returning: [mission("33", "Deploy", "Returning", "0x1111111111111111111111111111111111111111", "9", "7", now - 60_000)],
-      joinableAttacks: [mission("34", "Attack", "Outbound", "0x3333333333333333333333333333333333333333", "5", "6", now + 180_000)],
+      joinableAttacks: [mission("34", "Attack", "Outbound", "0x3333333333333333333333333333333333333333", "5", "6", now + 600_000)],
     }), initialView: { activePage: 0, activeTab: "alliance", pastPage: 0, pastTab: "mine" } })).join(" ");
 
     expect(text).toContain("My missions (2)");
     expect(text).toContain("Incoming (1)");
     expect(text).toContain("Alliance (1)");
-    // VEY-397#13: join actions stay available on the Alliance tab, now labelled "Join".
-    expect(text).toContain("Join");
-    expect(text).not.toContain("Join attack");
+    expect(text).toContain("Join Attack");
   });
 
   test("VEY-KANEO-431: Join forwards the target coordinates so it can open the Attack fleet picker", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
     const joinable = {
-      ...mission("34", "Attack", "Outbound", "0x3333333333333333333333333333333333333333", "5", "6", now + 180_000),
+      ...mission("34", "Attack", "Outbound", "0x3333333333333333333333333333333333333333", "5", "6", now + 600_000),
       targetPlanet: planetReference("6", "0x3333333333333333333333333333333333333333", "Bastion", "4:5:6"),
     };
     const joinCalls: Array<[FleetMissionSummary, { galaxy: number; system: number; position: number } | null]> = [];
@@ -813,7 +812,7 @@ describe("Mission Control battle reports", () => {
     });
 
     const joinButton = findElements(tree, "button").find(
-      (element) => element.props?.title === "Join this alliance attack",
+      (element) => element.props?.title === "Join Attack",
     );
     expect(joinButton).toBeDefined();
     (joinButton?.props?.onClick as (() => void) | undefined)?.();
@@ -822,6 +821,82 @@ describe("Mission Control battle reports", () => {
     // full lead mission and resolved target coordinates up so the parent can
     // open the same fleet picker with every indexed attack participant.
     expect(joinCalls).toEqual([[joinable, { galaxy: 4, system: 5, position: 6 }]]);
+  });
+
+  test("VEY-KANEO-805: renders icon-only Join Attack and Join Defense for the live alliance roster", () => {
+    const now = Date.parse("2026-08-05T19:30:00.000Z");
+    const wallet = "0x1111111111111111111111111111111111111111";
+    const ally = "0x2222222222222222222222222222222222222222";
+    const enemy = "0x3333333333333333333333333333333333333333";
+    const joinAttack = {
+      ...mission("8051", "Attack", "Outbound", ally, "5", "6", now + 900_000),
+      targetPlanet: planetReference("6", enemy, "Enemy", "4:5:6"),
+    };
+    const joinDefense = {
+      ...mission("8052", "Attack", "Outbound", enemy, "7", "8", now + 900_000),
+      targetPlanet: planetReference("8", ally, "Alliance Bastion", "4:5:8"),
+    };
+    const joinCalls: string[] = [];
+    const defenseCalls: string[] = [];
+    const tree = MissionControlPage({
+      ...missionControlProps(now, { joinableAttacks: [joinAttack, joinDefense] }),
+      allianceMemberAddresses: [wallet, ally],
+      initialView: { activePage: 0, activeTab: "alliance", pastPage: 0, pastTab: "mine" },
+      onCounterplay: (mission) => defenseCalls.push(mission.missionId),
+      onJoinAttack: (mission) => joinCalls.push(mission.missionId),
+    });
+
+    const buttons = findElements(tree, "button");
+    const attackButton = buttons.find((element) => element.props?.["aria-label"] === "Join Attack");
+    const defenseButton = buttons.find((element) => element.props?.["aria-label"] === "Join Defense");
+    expect(attackButton?.props?.title).toBe("Join Attack");
+    expect(defenseButton?.props?.title).toBe("Join Defense");
+    expect(String(attackButton?.props?.className)).toContain("h-11 w-11");
+    expect(String(defenseButton?.props?.className)).toContain("focus-visible:ring-2");
+    expect((attackButton?.props?.children as unknown[]).every((child) => typeof child !== "string")).toBe(true);
+    expect((defenseButton?.props?.children as unknown[]).every((child) => typeof child !== "string")).toBe(true);
+
+    (attackButton?.props?.onClick as (() => void) | undefined)?.();
+    (defenseButton?.props?.onClick as (() => void) | undefined)?.();
+    expect(joinCalls).toEqual(["8051"]);
+    expect(defenseCalls).toEqual(["8052"]);
+  });
+
+  test("VEY-KANEO-805: hides cooperative icons after cutoff, without fleets, and after alliance loss", () => {
+    const now = Date.parse("2026-08-05T19:30:00.000Z");
+    const wallet = "0x1111111111111111111111111111111111111111";
+    const ally = "0x2222222222222222222222222222222222222222";
+    const enemy = "0x3333333333333333333333333333333333333333";
+    const cutoffAttack = {
+      ...mission("8053", "Attack", "Outbound", ally, "5", "6", now + 300_000),
+      targetPlanet: planetReference("6", enemy, "Enemy", "4:5:6"),
+    };
+    const candidate = {
+      ...mission("8054", "Attack", "Outbound", enemy, "7", "8", now + 900_000),
+      targetPlanet: planetReference("8", ally, "Alliance Bastion", "4:5:8"),
+    };
+    const actionLabels = (tree: ComponentChildren) => findElements(tree, "button")
+      .map((element) => element.props?.["aria-label"])
+      .filter(Boolean);
+
+    expect(actionLabels(MissionControlPage({
+      ...missionControlProps(now, { joinableAttacks: [cutoffAttack] }),
+      allianceMemberAddresses: [wallet, ally],
+      initialView: { activePage: 0, activeTab: "alliance", pastPage: 0, pastTab: "mine" },
+    }))).not.toContain("Join Attack");
+
+    expect(actionLabels(MissionControlPage({
+      ...missionControlProps(now, { joinableAttacks: [candidate] }),
+      allianceMemberAddresses: [wallet, ally],
+      hasAvailableMissionFleet: false,
+      initialView: { activePage: 0, activeTab: "alliance", pastPage: 0, pastTab: "mine" },
+    }))).not.toContain("Join Defense");
+
+    expect(actionLabels(MissionControlPage({
+      ...missionControlProps(now, { joinableAttacks: [candidate] }),
+      allianceMemberAddresses: [],
+      hasAlliance: false,
+    }))).not.toContain("Join Defense");
   });
 
   test("allActiveMissionRows keeps the player's classification and renders other players as observers (VEY-KANEO-402)", () => {
@@ -1221,7 +1296,7 @@ describe("Mission Control battle reports", () => {
 
     expect(text).toContain("My missions (1)");
     expect(text).toContain("Alliance (0)");
-    expect(text).toContain("No joinable alliance attacks.");
+    expect(text).toContain("No joinable alliance attacks or defenses.");
   });
 
   test("VEY-KANEO-783: canonical membership alone controls Alliance visibility across loss, stale rows, and rejoin", () => {
