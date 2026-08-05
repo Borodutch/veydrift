@@ -1352,7 +1352,10 @@ export class SettlementIndexer {
     const items = [
       ...rows.map((row) => parseEvent<PlayerActivityItem>(row.activity_json)),
       ...projected
-    ].sort(comparePlayerActivityNewestFirst).slice(offset, offset + options.pageSize);
+    ]
+      .map((item) => this.withPlayerActivityPlanetContext(item))
+      .sort(comparePlayerActivityNewestFirst)
+      .slice(offset, offset + options.pageSize);
 
     return {
       items,
@@ -9250,6 +9253,46 @@ export class SettlementIndexer {
   private ownerForPlanetActivity(planetId: string | undefined): Address | null {
     if (!planetId) return null;
     return this.planet(planetId)?.owner ?? null;
+  }
+
+  private withPlayerActivityPlanetContext(item: PlayerActivityItem): PlayerActivityItem {
+    const metadataString = (key: string): string | null => {
+      const value = item.metadata[key];
+      return typeof value === "string" && value.length > 0 ? value : null;
+    };
+    const originPlanetId = metadataString("originPlanetId") ?? metadataString("originMoonPlanetId");
+    const targetPlanetId = metadataString("targetPlanetId") ?? metadataString("destinationMoonPlanetId");
+
+    if (originPlanetId && targetPlanetId) {
+      const route = `${this.playerActivityPlanetLabel(originPlanetId)} → ${this.playerActivityPlanetLabel(targetPlanetId)}`;
+      const detail = item.category === "mission" || item.kind === "incoming-attack-launched"
+        ? route
+        : item.detail
+          ? `${route} · ${item.detail}`
+          : route;
+      return { ...item, detail };
+    }
+
+    const planetId = metadataString("planetId") ?? targetPlanetId ?? originPlanetId;
+    if (!planetId) return item;
+    const planet = this.playerActivityPlanetLabel(planetId);
+    if (!item.detail || item.kind === "planet-started" || item.kind === "colony-created"
+      || item.kind === "planet-renamed" || item.kind === "moon-created") {
+      return { ...item, detail: planet };
+    }
+    const planetPrefix = `Planet #${planetId}`;
+    if (item.detail === planetPrefix) return { ...item, detail: planet };
+    if (item.detail.startsWith(`${planetPrefix};`)) {
+      return { ...item, detail: `${planet} ·${item.detail.slice(planetPrefix.length + 1)}` };
+    }
+    return { ...item, detail: `${planet} · ${item.detail}` };
+  }
+
+  private playerActivityPlanetLabel(planetId: string): string {
+    const planet = this.planet(planetId);
+    if (!planet) return `Planet #${planetId}`;
+    const name = planet.name?.trim() || `Planet #${planetId}`;
+    return `${name} · ${planet.galaxy}:${planet.system}:${planet.position}`;
   }
 
   private recordRemovedLog(eventId: string, log: IndexedRpcLog): void {

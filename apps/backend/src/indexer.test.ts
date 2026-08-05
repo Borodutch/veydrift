@@ -1238,6 +1238,7 @@ describe("SettlementIndexer", () => {
     expect(history.items[0]).toMatchObject({
       kind: "building-started",
       title: "Metal Mine upgrade started",
+      detail: "Planet #7 · 2:44:9 · Level 8; ready 1767003600",
       transactionHash: "0xactivity-start",
       reconciliation: "indexed"
     });
@@ -1254,6 +1255,7 @@ describe("SettlementIndexer", () => {
     expect(away.items[0]).toMatchObject({
       kind: "building-completed",
       title: "Metal Mine completed",
+      detail: "Planet #7 · 2:44:9 · Level 8",
       occurredAt: readyAt.toString(),
       transactionHash: null,
       relatedTransactionHash: "0xactivity-start",

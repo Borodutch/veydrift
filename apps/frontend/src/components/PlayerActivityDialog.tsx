@@ -261,9 +261,8 @@ export function PlayerActivityDialog({
           )}
         </div>
 
-        <footer className="flex min-h-12 items-center justify-between gap-3 border-t border-white/10 px-3 py-2 sm:px-4">
-          {mode === "history" && response ? (
-            <>
+        {mode === "history" && response ? (
+          <footer className="flex min-h-12 items-center justify-between gap-3 border-t border-white/10 px-3 py-2 sm:px-4">
               <p className="text-[11px] text-slate-500">
                 {response.pagination.totalEntries.toLocaleString()} actions · Page {response.pagination.page} of {response.pagination.totalPages}
               </p>
@@ -283,11 +282,8 @@ export function PlayerActivityDialog({
                   <ChevronRight aria-hidden="true" size={15} />
                 </PageButton>
               </div>
-            </>
-          ) : (
-            <p className="text-[11px] text-slate-500">Projected completions are marked until the chain reconciles them.</p>
-          )}
-        </footer>
+          </footer>
+        ) : null}
       </section>
     </div>
   );
@@ -312,9 +308,6 @@ export function ActivityRow({ explorerUrl, item }: { explorerUrl: string; item: 
             <span className="inline-flex items-center gap-1 rounded-full border border-cyan-300/20 bg-cyan-300/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-cyan-200">
               <ArrowUpRight size={10} /> Outgoing
             </span>
-          ) : null}
-          {item.reconciliation === "projected" ? (
-            <span className="rounded-full border border-amber-300/25 bg-amber-300/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-amber-100">Awaiting reconciliation</span>
           ) : null}
         </div>
         {item.detail ? <p className="mt-1 truncate text-[11px] text-slate-400 sm:text-xs">{item.detail}</p> : null}

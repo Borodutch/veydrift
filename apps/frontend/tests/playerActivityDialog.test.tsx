@@ -48,5 +48,6 @@ describe("player activity rows", () => {
     expect(nodes(reconciled).find((node) => node.type === "a")?.props?.href)
       .toBe("https://basescan.org/tx/0xreconciliation");
     expect(nodes(projected).some((node) => node.type === "a")).toBe(false);
+    expect(nodes(projected).some((node) => node.props?.children === "Awaiting reconciliation")).toBe(false);
   });
 });
