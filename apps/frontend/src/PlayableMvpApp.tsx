@@ -119,7 +119,6 @@ import {
   buildingContractIds,
   canAfford,
   progress,
-  queueProgress,
   researchCatalog,
   researchRequirementsFor,
   type BuildingKey,
@@ -132,6 +131,15 @@ import {
   type Resources,
   type ShipKey,
 } from "./playableMvp";
+import {
+  constructionProgressKey,
+  projectConstructionProgress,
+  reconcileConstructionQueues,
+  selectActiveConstructionQueue,
+  type ConstructionProgress,
+  type ConstructionProgressState,
+  type ConstructionQueueObservation,
+} from "./constructionProgress";
 import { activeProductionQueue } from "./productionQueueFallback";
 import { allianceContractAddress, apiBaseUrlForRuntimeConfig, burningChickenConfig, gameContractAddress, moonContractAddress, runtimeConfigUrl, type RuntimeConfigState } from "./runtimeConfig";
 import {
@@ -3890,8 +3898,12 @@ export function PlayableMvpApp({
     shipyardLoading,
     shipyardState,
   ]);
-  const activeShipyardProductionQueue = activeProductionQueue(shipyardState?.queue, onChainQueues?.ship, "ship");
-  const activeDefenseProductionQueue = activeProductionQueue(defenseState?.queue, onChainQueues?.defense, "defense");
+  const activeShipyardProductionQueue = shipyardState
+    ? activeProductionQueue(shipyardState.queue, undefined, "ship")
+    : activeProductionQueue(undefined, onChainQueues?.ship, "ship");
+  const activeDefenseProductionQueue = defenseState
+    ? activeProductionQueue(defenseState.queue, undefined, "defense")
+    : activeProductionQueue(undefined, onChainQueues?.defense, "defense");
   const displayFleetVisibility = useMemo(
     () => mergePendingFleetVisibility(fleetVisibility, pendingMissionLaunches, account, onChainSettlement?.homePlanetId),
     [account, fleetVisibility, onChainSettlement?.homePlanetId, pendingMissionLaunches]
@@ -5937,7 +5949,9 @@ export function PlayableMvpApp({
     [missionResourcesForOrigin, selectedManagedPlanet]
   );
   const activeBuildingQueue = useMemo(
-    () => activeBuildingQueueResponse(onChainQueues, infrastructureChainState),
+    () => infrastructureChainState
+      ? (infrastructureChainState.queue?.active ? infrastructureChainState.queue : null)
+      : activeBuildingQueueResponse(onChainQueues, infrastructureChainState),
     [infrastructureChainState, onChainQueues],
   );
   useEffect(() => {
@@ -5962,12 +5976,6 @@ export function PlayableMvpApp({
     activeBuildingQueue?.targetLevel,
     refreshFinishedBuildingState,
   ]);
-  const overviewOnChainQueues = useMemo<PlayerQueuesResponse | undefined>(() => {
-    if (!onChainQueues) return undefined;
-    return onChainQueues.building === activeBuildingQueue
-      ? onChainQueues
-      : { ...onChainQueues, building: activeBuildingQueue };
-  }, [activeBuildingQueue, onChainQueues]);
   const isDisplayedBuildingQueueReady = useMemo(() => {
     return isBuildingQueueReadyToFinish(activeBuildingQueue, now);
   }, [activeBuildingQueue, now]);
@@ -6014,7 +6022,119 @@ export function PlayableMvpApp({
 
     return settledState.queue?.kind === "building" ? settledState.queue : undefined;
   }, [activeBuildingQueue, now, settledState.queue]);
-  const effectiveResearchState = researchState;
+  const attributedResearchQueue = researchQueueWithPlanetAttribution(
+    activeResearchQueue(researchState?.queue) ?? activeResearchQueue(onChainQueues?.research) ?? null,
+    researchState?.planetId ?? activePlanetId,
+  );
+  const constructionQueueObservations = useMemo<ConstructionQueueObservation[]>(() => {
+    const observations: ConstructionQueueObservation[] = [];
+    for (const managedPlanet of walletPlanets) {
+      const section = planetSectionForPlanet(planetSectionStore, managedPlanet.planetId);
+      const queuesResearch = researchQueueWithPlanetAttribution(
+        activeResearchQueue(section.queuesState?.research) ?? null,
+        managedPlanet.planetId,
+      );
+      const sectionResearchQueue = researchQueueWithPlanetAttribution(
+        activeResearchQueue(section.researchState?.queue) ?? null,
+        section.researchState?.planetId ?? managedPlanet.planetId,
+      );
+      observations.push(
+        {
+          bodyKind: "planet",
+          kind: "building",
+          planetId: managedPlanet.planetId,
+          queue: selectActiveConstructionQueue([
+            section.infrastructureChainState?.queue,
+            section.queuesState?.building,
+            managedPlanet.queues.building,
+          ]),
+        },
+        {
+          bodyKind: "planet",
+          kind: "defense",
+          planetId: managedPlanet.planetId,
+          queue: selectActiveConstructionQueue([
+            section.defenseState?.queue,
+            section.queuesState?.defense,
+            managedPlanet.queues.defense,
+          ]),
+        },
+        {
+          bodyKind: "planet",
+          kind: "ship",
+          planetId: managedPlanet.planetId,
+          queue: selectActiveConstructionQueue([
+            section.shipyardState?.queue,
+            section.queuesState?.ship,
+            managedPlanet.queues.ship,
+          ]),
+        },
+        {
+          bodyKind: "planet",
+          kind: "research",
+          planetId: managedPlanet.planetId,
+          queue: selectActiveConstructionQueue([
+            researchQueueForPlanet(sectionResearchQueue, managedPlanet.planetId),
+            researchQueueForPlanet(queuesResearch, managedPlanet.planetId),
+            researchQueueForPlanet(attributedResearchQueue, managedPlanet.planetId),
+          ]),
+        },
+      );
+      if (section.moonState) {
+        observations.push(
+          {
+            bodyKind: "moon",
+            kind: "moon-building",
+            planetId: managedPlanet.planetId,
+            queue: section.moonState.queue?.active ? section.moonState.queue : null,
+          },
+          {
+            bodyKind: "moon",
+            kind: "defense",
+            planetId: managedPlanet.planetId,
+            queue: section.moonState.defenseQueue?.active ? section.moonState.defenseQueue : null,
+          },
+        );
+      }
+    }
+    return observations;
+  }, [
+    attributedResearchQueue,
+    planetSectionStore,
+    walletPlanets,
+  ]);
+  const confirmedConstructionQueuesRef = useRef(new Map<string, QueueStateResponse | null>());
+  const confirmedConstructionQueues = useMemo(() => {
+    const next = reconcileConstructionQueues(confirmedConstructionQueuesRef.current, constructionQueueObservations);
+    confirmedConstructionQueuesRef.current = next;
+    return next;
+  }, [constructionQueueObservations]);
+  const constructionProgressState = useMemo(() => projectConstructionProgress(
+    confirmedConstructionQueues,
+    constructionQueueObservations,
+    now,
+  ), [confirmedConstructionQueues, constructionQueueObservations, now]);
+  const progressFor = useCallback((
+    planetId: string | undefined,
+    bodyKind: "moon" | "planet",
+    kind: "building" | "defense" | "moon-building" | "research" | "ship",
+  ): ConstructionProgress | undefined => planetId
+    ? constructionProgressState.get(constructionProgressKey(planetId, bodyKind, kind))
+    : undefined, [constructionProgressState]);
+  const centralizedResearchQueue = progressFor(activePlanetId, "planet", "research")?.queue ?? null;
+  const effectiveResearchState = researchState && centralizedResearchQueue?.active
+    ? { ...researchState, queue: centralizedResearchQueue }
+    : researchState;
+  const overviewOnChainQueues = useMemo<PlayerQueuesResponse | undefined>(() => {
+    if (!onChainQueues || !activePlanetId) return onChainQueues;
+    return {
+      ...onChainQueues,
+      building: progressFor(activePlanetId, "planet", "building")?.queue ?? null,
+      defense: progressFor(activePlanetId, "planet", "defense")?.queue ?? null,
+      research: progressFor(activePlanetId, "planet", "research")?.queue ?? null,
+      ship: progressFor(activePlanetId, "planet", "ship")?.queue ?? null,
+    };
+  }, [activePlanetId, onChainQueues, progressFor]);
 
   useEffect(() => {
     if (!apiBaseUrl || !account || !pageStateHydrationReady) {
@@ -8662,19 +8782,14 @@ export function PlayableMvpApp({
   );
 
   const showPlanetSelector = hasPlanetSelectorChoice(walletPlanets);
-  const selectorResearchQueue = researchQueueWithPlanetAttribution(
-    activeResearchQueue(effectiveResearchState?.queue) ?? activeResearchQueue(onChainQueues?.research) ?? null,
-    effectiveResearchState?.planetId ?? activePlanetId,
-  );
   const mobilePlanetPicker = showPlanetSelector ? (
     <PlanetSelector
       attackHighlights={planetPickerAttackHighlights}
       layout="mobile"
-      now={now}
       onOrderChange={handlePlanetPickerOrderChange}
       onSelect={handleSelectManagedPlanet}
       planets={orderedWalletPlanets}
-      researchQueue={selectorResearchQueue}
+      progressState={constructionProgressState}
       selectedBodyKind={activeBodyKind}
       selectedPlanetId={activePlanetId}
     />
@@ -8692,11 +8807,10 @@ export function PlayableMvpApp({
     <PlanetSelector
       attackHighlights={planetPickerAttackHighlights}
       layout="sidebar"
-      now={now}
       onOrderChange={handlePlanetPickerOrderChange}
       onSelect={handleSelectManagedPlanet}
       planets={orderedWalletPlanets}
-      researchQueue={selectorResearchQueue}
+      progressState={constructionProgressState}
       selectedBodyKind={activeBodyKind}
       selectedPlanetId={activePlanetId}
     />
@@ -9028,6 +9142,7 @@ export function PlayableMvpApp({
           actionUnavailableReason={infrastructureUnavailableReason}
           chainCosts={chainBuildingCosts}
           chainDurations={chainBuildingDurations}
+          constructionProgress={progressFor(activePlanetId, "planet", "building")}
           hasLoadedInfrastructureState={hasInfrastructureDisplayState({
             activeBuildingQueue,
             homePlanetId: onChainSettlement?.homePlanetId,
@@ -9067,10 +9182,13 @@ export function PlayableMvpApp({
           }}
           canBurnChicken={canSubmitChickenBurnTransaction}
           canTransact={canSubmitMoonTransaction}
+          constructionProgress={progressFor(activePlanetId, "moon", "moon-building")}
+          defenseProgress={progressFor(activePlanetId, "moon", "defense")}
           error={moonSection.status.error ?? moonError}
           loading={moonLoading || moonSection.status.loading || (isWalletConnected && !moonState && !(moonSection.status.error ?? moonError))}
           moonActions={moonOverviewActions}
           moonState={moonState}
+          now={now}
           onBurnChicken={handleBurnChickenForMoon}
           onJumpGate={handleJumpGate}
           onOpenRequirement={handleOpenRequirement}
@@ -9145,6 +9263,7 @@ export function PlayableMvpApp({
           onResearch={handleResearch}
           onSelectResearch={setSelectedResearchKey}
           productionRates={productionRatesForEta}
+          progressState={progressFor(activePlanetId, "planet", "research")}
           researchState={effectiveResearchState}
           selectedResearchKey={selectedResearchKey}
           spendableResources={spendableResources}
@@ -9169,8 +9288,9 @@ export function PlayableMvpApp({
           onOpenRequirement={handleOpenRequirement}
           onRefresh={defenseSection.refresh ?? refreshDefenseState}
           onSelectDefense={setSelectedDefenseKey}
-          overviewQueue={onChainQueues?.defense}
+          overviewQueue={progressFor(activePlanetId, "planet", "defense")?.queue ?? undefined}
           productionRates={productionRatesForEta}
+          progressState={progressFor(activePlanetId, "planet", "defense")}
           selectedDefenseKey={selectedDefenseKey}
           spendableResources={spendableResources}
           transactionUnavailableReason={gameTransactionUnavailableReason}
@@ -9274,8 +9394,9 @@ export function PlayableMvpApp({
           onOpenRequirement={handleOpenRequirement}
           onRefresh={shipyardSection.refresh ?? refreshShipyardState}
           onSelectShip={setSelectedShipKey}
-          overviewQueue={onChainQueues?.ship}
+          overviewQueue={progressFor(activePlanetId, "planet", "ship")?.queue ?? undefined}
           productionRates={productionRatesForEta}
+          progressState={progressFor(activePlanetId, "planet", "ship")}
           selectedShipKey={selectedShipKey}
           shipyardState={shipyardState}
           spendableResources={spendableResources}
@@ -9350,6 +9471,12 @@ export function PlayableMvpApp({
     return (
       <OverviewPage
         caps={caps}
+        constructionProgress={{
+          building: progressFor(activePlanetId, "planet", "building"),
+          defense: progressFor(activePlanetId, "planet", "defense"),
+          research: progressFor(activePlanetId, "planet", "research"),
+          ship: progressFor(activePlanetId, "planet", "ship"),
+        }}
         isWalletConnected={isWalletConnected}
         now={now}
         onChainError={onChainError}
@@ -9448,21 +9575,19 @@ export function PlayableMvpApp({
 function PlanetSelector({
   attackHighlights,
   layout,
-  now,
   onOrderChange,
   onSelect,
   planets,
-  researchQueue,
+  progressState,
   selectedBodyKind,
   selectedPlanetId,
 }: {
   attackHighlights: PlanetPickerAttackHighlights;
   layout: "mobile" | "sidebar";
-  now: number;
   onOrderChange: (planetIds: string[]) => void;
   onSelect: (planetId: string, bodyKind?: OrbitBodyKind) => void;
   planets: ManagedPlanetResponse[];
-  researchQueue: QueueStateResponse | null | undefined;
+  progressState: ConstructionProgressState;
   selectedBodyKind: OrbitBodyKind;
   selectedPlanetId: string | undefined;
 }) {
@@ -9654,7 +9779,6 @@ function PlanetSelector({
       dragging={draggingPlanetId === planet.planetId}
       key={planet.planetId}
       layout={layout}
-      now={now}
       onBeforePlanetSelect={handlePlanetSelectClick}
       onPlanetContextMenu={handlePlanetContextMenu}
       onPlanetKeyDown={handleReorderKeyDown}
@@ -9665,7 +9789,7 @@ function PlanetSelector({
       onPlanetPointerUp={finishPointerDrag}
       onSelect={onSelect}
       planet={planet}
-      researchQueue={researchQueue}
+      progressState={progressState}
       selectedBodyKind={selectedBodyKind}
       selectedPlanet={selectedPlanet}
       shouldPreventPlanetTouchMove={shouldPreventPlanetTouchMove}
@@ -9697,7 +9821,6 @@ function PlanetSelectorItem({
   attackHighlights,
   dragging,
   layout,
-  now,
   onBeforePlanetSelect,
   onPlanetContextMenu,
   onPlanetKeyDown,
@@ -9708,7 +9831,7 @@ function PlanetSelectorItem({
   onPlanetPointerUp,
   onSelect,
   planet,
-  researchQueue,
+  progressState,
   selectedBodyKind,
   selectedPlanet,
   shouldPreventPlanetTouchMove,
@@ -9716,7 +9839,6 @@ function PlanetSelectorItem({
   attackHighlights: PlanetPickerAttackHighlights;
   dragging: boolean;
   layout: "mobile" | "sidebar";
-  now: number;
   onBeforePlanetSelect: (planetId: string, event: JSX.TargetedMouseEvent<HTMLButtonElement>) => boolean;
   onPlanetContextMenu: (planetId: string, event: JSX.TargetedMouseEvent<HTMLButtonElement>) => void;
   onPlanetKeyDown: (planetId: string, event: JSX.TargetedKeyboardEvent<HTMLButtonElement>) => void;
@@ -9727,7 +9849,7 @@ function PlanetSelectorItem({
   onPlanetPointerUp: (event: JSX.TargetedPointerEvent<HTMLButtonElement>) => void;
   onSelect: (planetId: string, bodyKind?: OrbitBodyKind) => void;
   planet: ManagedPlanetResponse;
-  researchQueue: QueueStateResponse | null | undefined;
+  progressState: ConstructionProgressState;
   selectedBodyKind: OrbitBodyKind;
   selectedPlanet: ManagedPlanetResponse;
   shouldPreventPlanetTouchMove: (planetId: string) => boolean;
@@ -9772,7 +9894,6 @@ function PlanetSelectorItem({
         ariaDescribedBy={reorderInstructionsId}
         bodyKind="planet"
         hasIncomingAttack={hasIncomingPlanetAttack}
-        now={now}
         onBeforeSelect={onBeforePlanetSelect}
         onContextMenu={(event) => onPlanetContextMenu(planet.planetId, event)}
         onKeyDown={(event) => onPlanetKeyDown(planet.planetId, event)}
@@ -9783,8 +9904,8 @@ function PlanetSelectorItem({
         onPointerUp={onPlanetPointerUp}
         onSelect={onSelect}
         planet={planet}
+        progressState={progressState}
         reordering={dragging}
-        researchQueue={researchQueue}
         selected={selectedPlanetBody}
         shouldPreventTouchMove={() => shouldPreventPlanetTouchMove(planet.planetId)}
         showMoonIndicator={planet.moon?.exists === true && !hasDedicatedMoonSelector}
@@ -9794,6 +9915,7 @@ function PlanetSelectorItem({
           hasIncomingAttack={hasIncomingMoonAttack}
           onSelect={onSelect}
           planet={planet}
+          progressState={progressState}
           selected={selectedMoonBody}
         />
       ) : null}
@@ -9805,7 +9927,6 @@ function PlanetSelectorButton({
   ariaDescribedBy,
   bodyKind,
   hasIncomingAttack,
-  now,
   onBeforeSelect,
   onContextMenu,
   onKeyDown,
@@ -9816,8 +9937,8 @@ function PlanetSelectorButton({
   onPointerUp,
   onSelect,
   planet,
+  progressState,
   reordering,
-  researchQueue,
   selected,
   shouldPreventTouchMove,
   showMoonIndicator,
@@ -9825,7 +9946,6 @@ function PlanetSelectorButton({
   ariaDescribedBy?: string;
   bodyKind: OrbitBodyKind;
   hasIncomingAttack: boolean;
-  now: number;
   onBeforeSelect?: (planetId: string, event: JSX.TargetedMouseEvent<HTMLButtonElement>) => boolean;
   onContextMenu?: (event: JSX.TargetedMouseEvent<HTMLButtonElement>) => void;
   onKeyDown?: (event: JSX.TargetedKeyboardEvent<HTMLButtonElement>) => void;
@@ -9836,8 +9956,8 @@ function PlanetSelectorButton({
   onPointerUp?: (event: JSX.TargetedPointerEvent<HTMLButtonElement>) => void;
   onSelect: (planetId: string, bodyKind?: OrbitBodyKind) => void;
   planet: ManagedPlanetResponse;
+  progressState: ConstructionProgressState;
   reordering?: boolean;
-  researchQueue: QueueStateResponse | null | undefined;
   selected: boolean;
   shouldPreventTouchMove?: () => boolean;
   showMoonIndicator: boolean;
@@ -9913,21 +10033,21 @@ function PlanetSelectorButton({
       <span className="block max-w-full truncate font-mono text-[0.6rem] leading-3 text-slate-400">
         {planet.coordinates}
       </span>
-      <PlanetSelectorProgressBars now={now} planet={planet} researchQueue={researchQueue} />
+      <PlanetSelectorProgressBars bodyKind="planet" planet={planet} progressState={progressState} />
     </button>
   );
 }
 
 function PlanetSelectorProgressBars({
-  now,
+  bodyKind,
   planet,
-  researchQueue,
+  progressState,
 }: {
-  now: number;
+  bodyKind: "moon" | "planet";
   planet: ManagedPlanetResponse;
-  researchQueue: QueueStateResponse | null | undefined;
+  progressState: ConstructionProgressState;
 }) {
-  const bars = planetSelectorQueueProgressBars(planet, now, researchQueue).filter((bar) => bar.active);
+  const bars = planetSelectorQueueProgressBars(planet, bodyKind, progressState).filter((bar) => bar.active);
   if (bars.length === 0) return null;
 
   const summary = bars.map((bar) => bar.title).join(". ");
@@ -9962,7 +10082,7 @@ type PlanetSelectorProgressBar = {
   active: boolean;
   color: string;
   indeterminate: boolean;
-  kind: "building" | "defense" | "research" | "ship";
+  kind: "building" | "defense" | "moon-building" | "research" | "ship";
   progress: number;
   remaining: string;
   title: string;
@@ -9977,42 +10097,55 @@ function researchQueuePreview(queue: QueueStateResponse | null | undefined): { l
 
 function planetSelectorQueueProgressBars(
   planet: ManagedPlanetResponse,
-  now: number,
-  researchQueue?: QueueStateResponse | null | undefined,
+  bodyKind: "moon" | "planet",
+  progressState: ConstructionProgressState,
 ): PlanetSelectorProgressBar[] {
-  const attributedResearchQueue = researchQueueForPlanet(researchQueue, planet.planetId);
+  if (bodyKind === "moon") {
+    return [
+      planetSelectorQueueProgressBar({
+        color: "bg-amber-300",
+        kind: "moon-building",
+        label: "Moon construction",
+        preview: { label: "Structure" },
+        progressState: progressState.get(constructionProgressKey(planet.planetId, "moon", "moon-building")),
+      }),
+      planetSelectorQueueProgressBar({
+        color: "bg-rose-300",
+        kind: "defense",
+        label: "Moon defense",
+        preview: defenseQueuePreview(progressState.get(constructionProgressKey(planet.planetId, "moon", "defense"))?.queue),
+        progressState: progressState.get(constructionProgressKey(planet.planetId, "moon", "defense")),
+      }),
+    ];
+  }
   return [
     planetSelectorQueueProgressBar({
       color: "bg-amber-300",
       kind: "building",
       label: "Building",
-      now,
-      preview: buildingQueuePreview(planet.queues.building),
-      queue: planet.queues.building,
+      preview: buildingQueuePreview(progressState.get(constructionProgressKey(planet.planetId, "planet", "building"))?.queue),
+      progressState: progressState.get(constructionProgressKey(planet.planetId, "planet", "building")),
     }),
     planetSelectorQueueProgressBar({
       color: "bg-rose-300",
       kind: "defense",
       label: "Defense",
-      now,
-      preview: defenseQueuePreview(planet.queues.defense),
-      queue: planet.queues.defense,
+      preview: defenseQueuePreview(progressState.get(constructionProgressKey(planet.planetId, "planet", "defense"))?.queue),
+      progressState: progressState.get(constructionProgressKey(planet.planetId, "planet", "defense")),
     }),
     planetSelectorQueueProgressBar({
       color: "bg-sky-300",
       kind: "ship",
       label: "Shipyard",
-      now,
-      preview: shipQueuePreview(planet.queues.ship),
-      queue: planet.queues.ship,
+      preview: shipQueuePreview(progressState.get(constructionProgressKey(planet.planetId, "planet", "ship"))?.queue),
+      progressState: progressState.get(constructionProgressKey(planet.planetId, "planet", "ship")),
     }),
     planetSelectorQueueProgressBar({
       color: "bg-violet-300",
       kind: "research",
       label: "Research",
-      now,
-      preview: researchQueuePreview(attributedResearchQueue),
-      queue: attributedResearchQueue,
+      preview: researchQueuePreview(progressState.get(constructionProgressKey(planet.planetId, "planet", "research"))?.queue),
+      progressState: progressState.get(constructionProgressKey(planet.planetId, "planet", "research")),
     }),
   ];
 }
@@ -10055,18 +10188,16 @@ function planetSelectorQueueProgressBar({
   color,
   kind,
   label,
-  now,
   preview,
-  queue,
+  progressState,
 }: {
   color: string;
   kind: PlanetSelectorProgressBar["kind"];
   label: string;
-  now: number;
   preview: { label: string };
-  queue: QueueStateResponse | null | undefined;
+  progressState: ConstructionProgress | undefined;
 }): PlanetSelectorProgressBar {
-  if (!queue?.active) {
+  if (!progressState?.active) {
     return {
       active: false,
       color,
@@ -10078,23 +10209,14 @@ function planetSelectorQueueProgressBar({
     };
   }
 
-  const readyAt = timestampToMs(queue.readyAt);
-  const startedAt = timestampToMs(queue.startedAt);
-  const complete = queue.asOfNow?.complete === true;
-  const remaining = complete
-    ? "Ready"
-    : readyAt === undefined
-    ? "syncing"
-    : formatDurationUntil(readyAt, now);
-  const hasTimeline = readyAt !== undefined && startedAt !== undefined && startedAt < readyAt;
   return {
     active: true,
     color,
-    indeterminate: !complete && !hasTimeline,
+    indeterminate: progressState.indeterminate,
     kind,
-    progress: complete ? 1 : hasTimeline ? queueProgress({ readyAt, startedAt }, now) : 0,
-    remaining,
-    title: `${label}: ${preview.label}, ${remaining}`,
+    progress: progressState.progress,
+    remaining: progressState.remaining,
+    title: `${label}: ${preview.label}, ${progressState.remaining}`,
   };
 }
 
@@ -10102,11 +10224,13 @@ function PlanetSelectorMoonButton({
   hasIncomingAttack,
   onSelect,
   planet,
+  progressState,
   selected,
 }: {
   hasIncomingAttack: boolean;
   onSelect: (planetId: string, bodyKind?: OrbitBodyKind) => void;
   planet: ManagedPlanetResponse;
+  progressState: ConstructionProgressState;
   selected: boolean;
 }) {
   const label = `${hasIncomingAttack ? "Incoming attack warning. " : ""}Select ${planetDisplayName(planet)} moon at ${planet.coordinates}`;
@@ -10144,6 +10268,9 @@ function PlanetSelectorMoonButton({
       <span className="min-w-0">
         <span className="block truncate text-[0.62rem] font-semibold leading-3">Moon</span>
         <span className="block truncate font-mono text-[0.55rem] leading-3 text-slate-500">{planet.coordinates}</span>
+      </span>
+      <span className="col-span-2 w-full">
+        <PlanetSelectorProgressBars bodyKind="moon" planet={planet} progressState={progressState} />
       </span>
     </button>
   );

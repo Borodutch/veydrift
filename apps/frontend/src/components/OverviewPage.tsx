@@ -55,6 +55,7 @@ import {
   type WatchedPlanetsResponse,
   type WalletSettlementResponse
 } from "../walletFlow";
+import type { ConstructionProgress } from "../constructionProgress";
 import type { GalaxyAction } from "../galaxyActions";
 import { formatDurationUntil } from "../durationFormat";
 import { timestampToMs, type TimestampInput } from "../timestampFormat";
@@ -115,6 +116,7 @@ interface OverviewPageProps {
   settledState: PlayableState;
   rates: Resources;
   caps: Resources;
+  constructionProgress?: Partial<Record<"building" | "defense" | "research" | "ship", ConstructionProgress | undefined>> | undefined;
   queueProgress: number;
   researchProgress: number;
   shipProgress: number;
@@ -169,6 +171,7 @@ export function OverviewPage({
   settledState,
   rates,
   caps,
+  constructionProgress,
   queueProgress,
   researchProgress,
   shipProgress,
@@ -252,7 +255,8 @@ export function OverviewPage({
   const settledResearchAsset = settledState.researchQueue
     ? researchCatalog.find((research) => research.key === settledState.researchQueue?.key)?.asset
     : undefined;
-  const activeResearchProgress = onChainResearchQueue ? queueProgressValue(onChainResearchQueue, now) : researchProgress;
+  const activeResearchProgress = constructionProgress?.research?.progress
+    ?? (onChainResearchQueue ? queueProgressValue(onChainResearchQueue, now) : researchProgress);
   const onChainDefenseQueue = productionQueueViewModel(onChainQueues?.defense, defenseCatalog);
   const onChainShipQueue = productionQueueViewModel(onChainQueues?.ship, shipCatalog);
   const buildingNoticeKey = buildingQueue?.key ?? buildingKeyForContractId(onChainQueues?.building?.itemId);
@@ -638,6 +642,7 @@ export function OverviewPage({
                   startedAt={buildingQueue.startedAt}
                   thumbnailSrc={onChainBuildingQueue.asset}
                   now={now}
+                  progressState={constructionProgress?.building}
                 />
               ) : (
                 <QueueItemDisplay
@@ -661,6 +666,7 @@ export function OverviewPage({
                 startedAt={buildingQueue.startedAt}
                 thumbnailSrc={localBuildingAsset}
                 now={now}
+                progressState={constructionProgress?.building}
               />
               <OverviewBuildingActionNotice notice={overviewBuildingNoticeToRender} />
             </QueuePanelContent>
@@ -678,6 +684,7 @@ export function OverviewPage({
               <ProductionQueuePanel
                 embedded
                 now={now}
+                progressState={constructionProgress?.defense}
                 queue={onChainDefenseQueue}
                 showBacklogEta={false}
                 tone="rose"
@@ -703,6 +710,7 @@ export function OverviewPage({
                 thumbnailSrc={onChainResearchAsset}
                 color="bg-violet-300"
                 now={now}
+                progressState={constructionProgress?.research}
               />
               <OverviewResearchActionNotice actionState={researchAction} />
             </QueuePanelContent>
@@ -728,6 +736,7 @@ export function OverviewPage({
                 thumbnailSrc={settledResearchAsset}
                 color="bg-violet-300"
                 now={now}
+                progressState={constructionProgress?.research}
               />
               <OverviewResearchActionNotice actionState={researchAction} />
             </QueuePanelContent>
@@ -748,6 +757,7 @@ export function OverviewPage({
               <ProductionQueuePanel
                 embedded
                 now={now}
+                progressState={constructionProgress?.ship}
                 queue={onChainShipQueue}
                 showBacklogEta={false}
                 tone="sky"
@@ -763,6 +773,7 @@ export function OverviewPage({
                 startedAt={settledState.queue.startedAt}
                 color="bg-sky-300"
                 now={now}
+                progressState={constructionProgress?.ship}
               />
             </QueuePanelContent>
           ) : (
@@ -1636,6 +1647,7 @@ function QueueItemDisplay({
   label,
   remaining,
   progress,
+  progressState,
   readyAt,
   indeterminate,
   color = "bg-signal",
@@ -1647,6 +1659,7 @@ function QueueItemDisplay({
   label: string;
   remaining: string;
   progress?: number | undefined;
+  progressState?: ConstructionProgress | undefined;
   readyAt?: number | undefined;
   indeterminate?: boolean | undefined;
   color?: string;
@@ -1656,20 +1669,24 @@ function QueueItemDisplay({
 }) {
   const hasCanonicalTimeline =
     typeof readyAt === "number" && typeof startedAt === "number" && startedAt < readyAt;
-  const shouldIndeterminate = indeterminate ?? (!hasCanonicalTimeline && progress === undefined);
+  const resolvedProgress = progressState?.progress ?? progress;
+  const resolvedRemaining = progressState?.remaining ?? remaining;
+  const shouldIndeterminate = progressState?.indeterminate ?? indeterminate ?? (!hasCanonicalTimeline && resolvedProgress === undefined);
   const progressBar = queueProgressBarState({
     indeterminate: shouldIndeterminate,
-    progress,
-    remaining,
+    progress: resolvedProgress,
+    remaining: resolvedRemaining,
   });
-  const progressFill = queueProgressFillState({
-    indeterminate: shouldIndeterminate,
-    now: now ?? Date.now(),
-    progress,
-    readyAt,
-    remaining,
-    startedAt,
-  });
+  const progressFill = progressState
+    ? { animated: false, durationMs: 0, elapsedMs: 0, progress: progressState.progress }
+    : queueProgressFillState({
+      indeterminate: shouldIndeterminate,
+      now: now ?? Date.now(),
+      progress: resolvedProgress,
+      readyAt,
+      remaining: resolvedRemaining,
+      startedAt,
+    });
   return (
     <div className={thumbnailSrc ? "flex min-w-0 items-center gap-3" : undefined}>
       {thumbnailSrc ? (
@@ -1686,7 +1703,7 @@ function QueueItemDisplay({
       <div className="min-w-0 flex-1">
         <div className="grid min-w-0 gap-1">
           <p className={overviewQueueItemLabelClassName}>{label}</p>
-          <p className={overviewQueueItemRemainingClassName}>{remaining}</p>
+          <p className={overviewQueueItemRemainingClassName}>{resolvedRemaining}</p>
           {detail ? <p className="truncate text-[11px] text-slate-400">{detail}</p> : null}
         </div>
         <AnimatedProgressBar

@@ -32,6 +32,7 @@ import {
 } from "./InspectProgressLayout";
 import { refreshButtonState } from "./PageHeader";
 import { QueueProgressPanel } from "./QueueProgressPanel";
+import type { ConstructionProgress } from "../constructionProgress";
 import { RequirementFlairs, type RequirementFlair, type RequirementTarget } from "./RequirementFlairs";
 import { CatalogSkeleton } from "./LoadingSkeletons";
 import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailableNotice";
@@ -78,6 +79,7 @@ interface ResearchPageProps {
   onResearch: (technologyId: number, key: ResearchKey) => void;
   onSelectResearch?: ((key: ResearchKey) => void) | undefined;
   productionRates?: Resources | undefined;
+  progressState?: ConstructionProgress | undefined;
   researchState: ChainResearchState | null;
   selectedResearchKey?: ResearchKey | undefined;
   spendableResources?: Resources | undefined;
@@ -97,6 +99,7 @@ export function ResearchPage({
   onResearch,
   onSelectResearch,
   productionRates,
+  progressState,
   researchState,
   selectedResearchKey,
   spendableResources,
@@ -137,7 +140,7 @@ export function ResearchPage({
         />
       ) : (
         <>
-      {queue ? <ActiveResearchQueuePanel now={now} queue={queue} /> : null}
+      {queue ? <ActiveResearchQueuePanel now={now} progressState={progressState} queue={queue} /> : null}
 
       {viewState.buildings.researchLab === 0 ? (
         <div className="rounded border border-amber-300/30 bg-amber-300/10 px-3 py-2 text-sm text-amber-100">
@@ -879,9 +882,11 @@ function researchUnlockLevel(row: string): number {
 
 export function ActiveResearchQueuePanel({
   now,
+  progressState,
   queue,
 }: {
   now: number;
+  progressState?: ConstructionProgress | undefined;
   queue: NonNullable<ReturnType<typeof researchQueueForDisplay>>;
 }) {
   const queueLabel = `${queue.label} ${queue.targetLevel}`;
@@ -893,6 +898,7 @@ export function ActiveResearchQueuePanel({
       itemText={queueLabel}
       label={queueLabel}
       now={now}
+      progressState={progressState}
       readyAt={queue.readyAt}
       startedAt={queue.startedAt}
       title="Research"

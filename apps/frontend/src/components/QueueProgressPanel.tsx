@@ -1,4 +1,5 @@
 import type { ComponentChildren } from "preact";
+import type { ConstructionProgress } from "../constructionProgress";
 import { queueProgressBarState, queueProgressFillState } from "../overviewData";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import { AnimatedProgressBar } from "./AnimatedProgressBar";
@@ -26,6 +27,7 @@ export interface QueueProgressPanelProps {
   itemText?: string | undefined;
   now?: number | undefined;
   progress?: number | undefined;
+  progressState?: ConstructionProgress | undefined;
   quantity?: number | undefined;
   readyAt: QueueTimestamp;
   remainingQuantity?: number | undefined;
@@ -78,6 +80,7 @@ export function QueueProgressPanel({
   label,
   now = Date.now(),
   progress,
+  progressState,
   quantity,
   readyAt,
   remainingQuantity,
@@ -86,23 +89,27 @@ export function QueueProgressPanel({
   tone = "amber",
 }: QueueProgressPanelProps) {
   const classes = toneClasses[tone];
-  const readyAtMs = queueTimestampToMs(readyAt);
-  const startedAtMs = queueTimestampToMs(startedAt);
+  const readyAtMs = progressState?.readyAtMs ?? queueTimestampToMs(readyAt);
+  const startedAtMs = progressState?.startedAtMs ?? queueTimestampToMs(startedAt);
   const hasCanonicalTimeline = readyAtMs !== undefined && startedAtMs !== undefined && startedAtMs < readyAtMs;
-  const shouldIndeterminate = indeterminate ?? (!hasCanonicalTimeline && progress === undefined);
+  const resolvedProgress = progressState?.progress ?? progress;
+  const remaining = progressState?.remaining ?? (readyAtMs !== undefined && readyAtMs <= now ? "Ready" : "");
+  const shouldIndeterminate = progressState?.indeterminate ?? indeterminate ?? (!hasCanonicalTimeline && resolvedProgress === undefined);
   const progressBar = queueProgressBarState({
     indeterminate: shouldIndeterminate,
-    progress,
-    remaining: readyAtMs !== undefined && readyAtMs <= now ? "Ready" : "",
+    progress: resolvedProgress,
+    remaining,
   });
-  const progressFill = queueProgressFillState({
-    indeterminate: shouldIndeterminate,
-    now,
-    progress,
-    readyAt: readyAtMs,
-    remaining: readyAtMs !== undefined && readyAtMs <= now ? "Ready" : "",
-    startedAt: hasCanonicalTimeline ? startedAtMs : undefined,
-  });
+  const progressFill = progressState
+    ? { animated: false, durationMs: 0, elapsedMs: 0, progress: progressState.progress }
+    : queueProgressFillState({
+      indeterminate: shouldIndeterminate,
+      now,
+      progress: resolvedProgress,
+      readyAt: readyAtMs,
+      remaining,
+      startedAt: hasCanonicalTimeline ? startedAtMs : undefined,
+    });
   const percent = Math.round(progressFill.progress * 100);
   const totalQuantity = completedQuantity === undefined
     ? undefined

@@ -19,6 +19,7 @@ import { refreshButtonState } from "./PageHeader";
 import type { RequirementTarget } from "./RequirementFlairs";
 import { ProductionCatalogSkeleton } from "./LoadingSkeletons";
 import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailableNotice";
+import type { ConstructionProgress } from "../constructionProgress";
 
 type DefenseActionState =
   | { status: "idle" }
@@ -39,6 +40,7 @@ interface DefensePageProps {
   onSelectDefense?: ((key: DefenseKey) => void) | undefined;
   overviewQueue?: ChainDefenseState["queue"] | undefined;
   productionRates?: Resources | undefined;
+  progressState?: ConstructionProgress | undefined;
   selectedDefenseKey?: DefenseKey | undefined;
   spendableResources?: Resources | undefined;
   transactionUnavailableReason?: string | undefined;
@@ -77,6 +79,7 @@ export function DefensePage({
   onSelectDefense,
   overviewQueue,
   productionRates,
+  progressState,
   selectedDefenseKey,
   spendableResources,
   transactionUnavailableReason,
@@ -126,6 +129,7 @@ export function DefensePage({
             onSelectDefense?.(key);
           }}
           queue={productionQueueViewModel(queue, defenseCatalog)}
+          queueProgress={progressState}
           queueTone="rose"
           selectedKey={selectedKey}
         />

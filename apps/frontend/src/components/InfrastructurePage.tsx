@@ -26,6 +26,7 @@ import { actionNoticeForBuilding, type InfrastructureActionNotice } from "../bui
 import { InspectInfoBlock } from "./InspectProgressLayout";
 import { refreshButtonState } from "./PageHeader";
 import { QueueProgressPanel } from "./QueueProgressPanel";
+import type { ConstructionProgress } from "../constructionProgress";
 import { RequirementFlairs, type RequirementFlair, type RequirementTarget } from "./RequirementFlairs";
 import { LevelInfoButton, LevelInfoModal, type LevelInfoColumn, type LevelInfoRow } from "./LevelInfoModal";
 import { StructureCatalog, StructureDetail, type StructureLevelInfo } from "./StructureCatalog";
@@ -69,6 +70,7 @@ interface InfrastructurePageProps {
   actionUnavailableReason?: string | undefined;
   chainCosts?: Partial<Record<BuildingKey, Resources>> | undefined;
   chainDurations?: Partial<Record<BuildingKey, number>> | undefined;
+  constructionProgress?: ConstructionProgress | undefined;
   hasLoadedInfrastructureState?: boolean | undefined;
   loading?: boolean | undefined;
   loadError?: string | undefined;
@@ -93,6 +95,7 @@ export function InfrastructurePage({
   actionUnavailableReason,
   chainCosts,
   chainDurations,
+  constructionProgress,
   hasLoadedInfrastructureState = false,
   loadError,
   now = Date.now(),
@@ -135,7 +138,7 @@ export function InfrastructurePage({
   return (
     <div className="grid gap-4">
       {activeBuildingQueue ? (
-        <ActiveBuildingQueuePanel now={now} queue={activeBuildingQueue} />
+        <ActiveBuildingQueuePanel now={now} progressState={constructionProgress} queue={activeBuildingQueue} />
       ) : null}
 
       {loadError ? <InfrastructureRefreshErrorPanel reason={loadError} /> : null}
@@ -418,9 +421,11 @@ function normalizeInfrastructureNotice(label: string | undefined): string | unde
 
 export function ActiveBuildingQueuePanel({
   now,
+  progressState,
   queue,
 }: {
   now: number;
+  progressState?: ConstructionProgress | undefined;
   queue: BuildingQueueItem;
 }) {
   const queueLabel = `${queue.label} ${queue.targetLevel}`;
@@ -432,6 +437,7 @@ export function ActiveBuildingQueuePanel({
       itemText={queueLabel}
       label={queueLabel}
       now={now}
+      progressState={progressState}
       readyAt={queue.readyAt}
       startedAt={queue.startedAt}
       title="Construction"

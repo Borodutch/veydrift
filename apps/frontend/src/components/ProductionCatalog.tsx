@@ -4,6 +4,7 @@ import { formatCost } from "../buildingDetails";
 import { formatDuration } from "../durationFormat";
 import type { Resources } from "../playableMvp";
 import type { QueueStateResponse } from "../walletFlow";
+import type { ConstructionProgress } from "../constructionProgress";
 import { OptimizedImage } from "./OptimizedImage";
 import {
   formatQueueEta,
@@ -176,6 +177,7 @@ export type ProductionCatalogProps<Key extends string> = {
   onRefreshQueue?: (() => void) | undefined;
   onSelect: (key: Key) => void;
   queue?: ProductionQueue | undefined;
+  queueProgress?: ConstructionProgress | undefined;
   queueTone?: QueueProgressTone | undefined;
   selectedKey: Key | undefined;
 };
@@ -215,6 +217,7 @@ export function ProductionCatalog<Key extends string>({
   onQuantity,
   onSelect,
   queue,
+  queueProgress,
   queueTone = "cyan",
   selectedKey,
 }: ProductionCatalogProps<Key>) {
@@ -234,6 +237,7 @@ export function ProductionCatalog<Key extends string>({
       {queue && (
         <ProductionQueuePanel
           now={now}
+          progressState={queueProgress}
           queue={queue}
           tone={queueTone}
         />
@@ -278,12 +282,14 @@ export function ProductionCatalog<Key extends string>({
 export function ProductionQueuePanel({
   embedded = false,
   now,
+  progressState,
   queue,
   showBacklogEta = true,
   tone = "cyan",
 }: {
   embedded?: boolean | undefined;
   now: number;
+  progressState?: ConstructionProgress | undefined;
   queue: ProductionQueue;
   showBacklogEta?: boolean | undefined;
   tone?: QueueProgressTone | undefined;
@@ -293,6 +299,7 @@ export function ProductionQueuePanel({
       asset={queue.asset}
       label={queue.label}
       now={now}
+      progressState={progressState}
       completedQuantity={queue.completedQuantity}
       currentUnitProgressBps={queue.currentUnitProgressBps}
       currentUnitSecondsRemaining={queue.currentUnitSecondsRemaining}
