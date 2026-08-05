@@ -730,6 +730,61 @@ describe("Shipyard page display helpers", () => {
       status: "ready",
     });
   });
+
+  test("shows a per-unit settled Solar Satellite at planet while only unfinished units stay queued", () => {
+    const queue: NonNullable<ChainShipyardState["queue"]> = {
+      active: true,
+      kind: "ship",
+      itemId: 9,
+      quantity: 5,
+      readyAt: "1770000060",
+      startedAt: "1770000000",
+      cost: { metal: "0", crystal: "10000", deuterium: "2500" },
+      asOfNow: {
+        complete: false,
+        secondsRemaining: 50,
+        completedQuantity: 1,
+        remainingQuantity: 5,
+      },
+    };
+    const items = shipProductionItems({
+      actionPending: false,
+      canTransact: true,
+      productionAvailable: true,
+      quantities: {},
+      queue,
+      resources: { metal: 100000, crystal: 100000, deuterium: 100000 },
+      shipyardLevel: 5,
+      shipyardState: shipyardState({
+        queue,
+        ships: [
+          ...shipyardState().ships,
+          {
+            id: 9,
+            count: 45,
+            cost: { metal: "0", crystal: "2000", deuterium: "500" },
+            energyPerUnit: "22",
+          },
+        ],
+      }),
+    });
+
+    expect(items.find((item) => item.key === "solarSatellite")).toMatchObject({
+      countLabel: "At planet",
+      countValue: 45,
+      queued: 5,
+      status: "queued",
+      detailSections: expect.arrayContaining([
+        expect.objectContaining({
+          title: "Build",
+          stats: expect.arrayContaining([
+            { label: "At planet", value: "45" },
+            { label: "Energy output", value: "+22 energy/unit", wide: true },
+          ]),
+        }),
+      ]),
+    });
+  });
 });
 
 function shipyardState(overrides: Partial<ChainShipyardState> = {}): ChainShipyardState {

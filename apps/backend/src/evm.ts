@@ -833,9 +833,9 @@ export type ShipyardState = {
   shipyardLevel: number;
   naniteLevel: number;
   technologyLevels: Record<string, number>;
-  // Canonical on-chain inventory. This is intentionally not projected from a
-  // due production queue: `shipCount` remains the source of truth until the
-  // contract finalizes that queue.
+  // Settled-to-now inventory. Indexed responses add deterministic per-unit
+  // production completions to the canonical evented count; direct chain-reader
+  // responses may expose only the last on-chain-settled count.
   ships: Array<{
     id: number;
     count: number;
@@ -846,8 +846,7 @@ export type ShipyardState = {
     durationSeconds?: number;
   }>;
   // Inventory the next fleet-launch transaction can use after the contract's
-  // deterministic lazy production settlement prologue. This may be ahead of
-  // `ships` while a completed queue has not emitted PlanetShipCountChanged.
+  // deterministic lazy production settlement prologue.
   launchableShips?: ShipyardState["ships"];
   queue: QueueState | null;
 };

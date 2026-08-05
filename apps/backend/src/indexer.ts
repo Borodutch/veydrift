@@ -2590,8 +2590,18 @@ export class SettlementIndexer {
 
   shipRows(planetId: string, durationLevels?: { shipyardLevel: number; naniteLevel: number }): ShipyardState["ships"] {
     const counts = this.indexedLevelsById("contract_ship_counts", "ship_id", "count", planetId);
+    const completedQueueQuantities = this.completedQueueQuantities(`ship:${planetId}`, {
+      requireProductionTiming: true
+    });
     return deriveShipRows(
-      (id) => counts.get(id) ?? 0,
+      // Production is lazily settled on-chain by the next owner action, but the
+      // queue timing is deterministic. Serve the inventory that action will
+      // settle so At planet, public fleet counts, and Solar Satellite energy all
+      // advance at the same per-unit boundary as queue progress. The canonical
+      // contract_* mirror remains unchanged (see contractShipRows), and
+      // settleQueueAsOfNow subtracts units already reflected by completion
+      // events, preventing a later indexer update from double-counting them.
+      (id) => (counts.get(id) ?? 0) + (completedQueueQuantities.get(id) ?? 0),
       this.planet(planetId)?.temperature,
       durationLevels
     );
@@ -2768,9 +2778,17 @@ export class SettlementIndexer {
     return settleQueueAsOfNow(this.queueState(queueKeyValue), nowSec);
   }
 
-  private completedQueueQuantities(queueKeyValue: string): Map<number, number> {
+  private completedQueueQuantities(
+    queueKeyValue: string,
+    options: { requireProductionTiming?: boolean } = {}
+  ): Map<number, number> {
     const quantities = new Map<number, number>();
     for (const queue of this.queueSettlement(queueKeyValue).completed) {
+      // Legacy queues predate per-unit timing. Their elapsed readyAt only proves
+      // whole-batch readiness and historically may survive as stale artifacts;
+      // do not promote those rows into public/energy inventory. Modern timing is
+      // the canonical proof needed for 1/N and middle-unit projection.
+      if (options.requireProductionTiming && !queue.productionTiming) continue;
       if (typeof queue.itemId === "number" && typeof queue.quantity === "number") {
         quantities.set(queue.itemId, (quantities.get(queue.itemId) ?? 0) + queue.quantity);
       }
