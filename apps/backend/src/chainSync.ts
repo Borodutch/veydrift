@@ -804,9 +804,10 @@ export class ChainSyncService {
   }
 
   private subscribedAddresses(): `0x${string}`[] {
-    return [
+    const addresses = [
       this.config.gameContractAddress,
       this.config.moonContractAddress,
+      this.config.settlementContractAddress,
       this.config.migrationContractAddress,
       this.config.allianceContractAddress,
       this.config.resourceTokenAddresses.metal,
@@ -816,6 +817,7 @@ export class ChainSyncService {
       this.config.randomnessEngineAddress,
       this.config.referralSystemAddress
     ].filter((address): address is `0x${string}` => Boolean(address));
+    return [...new Set(addresses)];
   }
 }
 

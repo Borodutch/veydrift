@@ -194,6 +194,21 @@ function referralMigrationLogs(): TestLog[] {
 }
 
 describe("ChainSyncService (polling)", () => {
+  test("subscribes to settlement and migration contract activity", () => {
+    const settlementContractAddress = "0x5555555555555555555555555555555555555555" as const;
+    const migrationContractAddress = "0x6666666666666666666666666666666666666666" as const;
+    const service = new ChainSyncService(
+      { ...config, settlementContractAddress, migrationContractAddress },
+      makeIndexer()
+    );
+
+    expect(service.snapshot().subscribedAddresses).toEqual([
+      config.gameContractAddress!,
+      settlementContractAddress,
+      migrationContractAddress
+    ]);
+  });
+
   test("closes an event stream when the request signal aborts", async () => {
     const service = new ChainSyncService(config, makeIndexer());
     const abortController = new AbortController();

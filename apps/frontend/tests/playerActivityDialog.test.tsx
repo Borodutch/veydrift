@@ -35,12 +35,10 @@ function nodes(node: ComponentChildren): VNode[] {
 }
 
 describe("player activity rows", () => {
-  test("uses dedicated skeleton regions for history and away loading", () => {
-    const history = PlayerActivitySkeleton({ mode: "history" }) as VNode;
-    const away = PlayerActivitySkeleton({ mode: "away" }) as VNode;
+  test("uses a dedicated skeleton region for activity loading", () => {
+    const history = PlayerActivitySkeleton() as VNode;
 
     expect(history.props?.label).toBe("Loading activity");
-    expect(away.props?.label).toBe("Loading away activity");
   });
 
   test("links only reconciled activity to its reconciliation transaction", () => {

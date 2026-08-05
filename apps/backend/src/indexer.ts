@@ -37,6 +37,8 @@ import {
   decodePlanetSettledLog,
   decodePlanetRenamedLog,
   decodeFleetMissionLogs,
+  decodeFirstPlanetSettledLog,
+  decodePlayerMigrationLog,
   decodeRandomnessFulfilledRequestId,
   decodeReferralClaimLog,
   decodeReferralRedemptionLog,
@@ -55,6 +57,7 @@ import {
   isRandomnessFulfilledLog,
   isBattleReportLog,
   isFleetMissionLog,
+  isFirstPlanetSettledLog,
   isIndexedQueueCompletedLog,
   isIndexedQueueStartedLog,
   isProductionQueueTimingLog,
@@ -69,6 +72,7 @@ import {
   isMoonShipCountChangedLog,
   isPlanetSettledLog,
   isPlanetRenamedLog,
+  isPlayerMigrationLog,
   isReferralClaimLog,
   isReferralRedemptionLog,
   isReferralRewardClaimLog,
@@ -5126,7 +5130,7 @@ export class SettlementIndexer {
   }
 
   private backfillPlayerActivityFeed(): void {
-    const migrationKey = "playerActivityFeedBackfilledV1";
+    const migrationKey = "playerActivityFeedBackfilledV2";
     if (this.metadata(migrationKey) !== null) return;
     const rows = this.db.query(`
       SELECT event_id, event_json
@@ -5135,6 +5139,9 @@ export class SettlementIndexer {
       ORDER BY CAST(block_number AS INTEGER) ASC, length(log_index) ASC, log_index ASC
     `).all() as Array<EventRow & { event_id: string }>;
     this.db.transaction(() => {
+      // The feed is a pure projection of the durable raw log ledger. Rebuilding it once lets new
+      // lifecycle rules remove old duplicates and backfill events introduced after V1 shipped.
+      this.db.query("DELETE FROM indexed_player_activity_feed").run();
       for (const row of rows) {
         this.recordPlayerActivityFeedFromLog(
           row.event_id,
@@ -8911,6 +8918,8 @@ export class SettlementIndexer {
   private playerActivityOwnerForLog(log: IndexedRpcLog): Address | null {
     try {
       if (isSettledPlanetLog(log)) return decodeSettledPlanetLog(log).owner;
+      if (isFirstPlanetSettledLog(log)) return decodeFirstPlanetSettledLog(log).player;
+      if (isPlayerMigrationLog(log)) return decodePlayerMigrationLog(log).player;
       if (isPlanetRenamedLog(log)) return decodePlanetRenamedLog(log).owner;
       if (isRiftResourceLog(log)) return decodeRiftResourceLog(log).owner;
 
@@ -8990,6 +8999,49 @@ export class SettlementIndexer {
             planetId: event.planetId,
             position: event.position,
             system: event.system
+          }
+        });
+      } else if (isFirstPlanetSettledLog(log)) {
+        // The current game emits PlanetStarted in the same transaction, which already provides the
+        // richer canonical row. The legacy settlement contract only emitted FirstPlanetSettled.
+        if (this.indexedLogsForTransaction(log.transactionHash).some(isSettledPlanetLog)) return;
+        const event = decodeFirstPlanetSettledLog(log);
+        add(event.player, {
+          category: "system",
+          kind: "planet-started",
+          direction: "personal",
+          title: "Home planet settled",
+          detail: `${event.galaxy}:${event.system}:${event.position}`,
+          occurredAt: transactionAt,
+          metadata: {
+            galaxy: event.galaxy,
+            planetId: event.planetId,
+            position: event.position,
+            system: event.system
+          }
+        });
+      } else if (isPlayerMigrationLog(log)) {
+        const event = decodePlayerMigrationLog(log);
+        const transactionLogs = this.indexedLogsForTransaction(log.transactionHash);
+        const imported = event.eventName === "MigrationStateImported"
+          ? event
+          : transactionLogs
+            .filter(isPlayerMigrationLog)
+            .map(decodePlayerMigrationLog)
+            .find((candidate) => candidate.eventName === "MigrationStateImported");
+        this.removePlayerLifecycleActivityForTransaction(event.player, log.transactionHash);
+        add(event.player, {
+          category: "system",
+          kind: "state-migrated",
+          direction: "personal",
+          title: "Game state migrated",
+          detail: imported
+            ? `${imported.planetCount} planet${imported.planetCount === 1 ? "" : "s"} restored`
+            : null,
+          occurredAt: transactionAt,
+          metadata: {
+            ...(imported ? { homePlanetId: imported.homePlanetId, planetCount: imported.planetCount } : {}),
+            ...(event.eventName === "FullStateMigrationClaimed" ? { stateHash: event.stateHash } : {})
           }
         });
       } else if (isIndexedQueueStartedLog(log)) {
@@ -9248,6 +9300,15 @@ export class SettlementIndexer {
       DELETE FROM indexed_player_activity_feed
       WHERE event_id = ? OR event_id LIKE ?
     `).run(eventId, `${eventId}:incoming:%`);
+  }
+
+  private removePlayerLifecycleActivityForTransaction(wallet: Address, transactionHash: string): void {
+    this.db.query(`
+      DELETE FROM indexed_player_activity_feed
+      WHERE wallet = lower(?)
+        AND lower(json_extract(activity_json, '$.transactionHash')) = lower(?)
+        AND json_extract(activity_json, '$.kind') IN ('planet-started', 'state-migrated')
+    `).run(wallet, transactionHash);
   }
 
   private ownerForPlanetActivity(planetId: string | undefined): Address | null {

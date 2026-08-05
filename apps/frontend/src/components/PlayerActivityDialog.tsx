@@ -36,7 +36,7 @@ const AWAY_PAGE_SIZE = 100;
 const LAST_SEEN_HEARTBEAT_MS = 60_000;
 
 type ActivityDialogState =
-  | { mode: "away"; response: PlayerActivityResponse | undefined; since: number }
+  | { mode: "away"; response: PlayerActivityResponse; since: number }
   | { mode: "history"; response: PlayerActivityResponse | undefined };
 
 export function PlayerActivityCenter({
@@ -58,7 +58,6 @@ export function PlayerActivityCenter({
   const [historyResponse, setHistoryResponse] = useState<PlayerActivityResponse | undefined>();
   const [historyPage, setHistoryPage] = useState(1);
   const [loading, setLoading] = useState(false);
-  const [awayLoading, setAwayLoading] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [lastSeenReady, setLastSeenReady] = useState(false);
   const identityKey = apiUrl && wallet ? `${apiUrl}:${chainId}:${wallet.toLowerCase()}` : "";
@@ -69,7 +68,6 @@ export function PlayerActivityCenter({
     setHistoryPage(1);
     setError(undefined);
     setLastSeenReady(false);
-    setAwayLoading(false);
     if (!apiUrl || !wallet) return;
 
     const storage = browserPlayerActivityStorage();
@@ -82,8 +80,6 @@ export function PlayerActivityCenter({
     }
 
     let cancelled = false;
-    setAwayState({ mode: "away", response: undefined, since: previous });
-    setAwayLoading(true);
     void fetchPlayerActivity(apiUrl, wallet, {
       page: 1,
       pageSize: AWAY_PAGE_SIZE,
@@ -94,15 +90,10 @@ export function PlayerActivityCenter({
       writePlayerActivityLastSeen(storage, chainId, wallet, Number(response.through));
       setLastSeenReady(true);
       if (response.items.length > 0) {
-        setAwayState((current) => current ? { mode: "away", response, since: previous } : null);
-      } else {
-        setAwayState(null);
+        setAwayState({ mode: "away", response, since: previous });
       }
     }).catch(() => {
       // Keep the old timestamp so a transient API failure is retried next load.
-      if (!cancelled) setAwayState(null);
-    }).finally(() => {
-      if (!cancelled) setAwayLoading(false);
     });
     return () => { cancelled = true; };
   }, [identityKey]);
@@ -154,7 +145,7 @@ export function PlayerActivityCenter({
     <PlayerActivityDialog
       error={state.mode === "history" ? error : undefined}
       explorerUrl={explorerUrl}
-      loading={state.mode === "history" ? loading : awayLoading}
+      loading={state.mode === "history" && loading}
       mode={state.mode}
       onClose={close}
       onPageChange={state.mode === "history" ? setHistoryPage : undefined}
@@ -217,8 +208,8 @@ export function PlayerActivityDialog({
               {mode === "away" ? <Sparkles aria-hidden="true" size={17} /> : <History aria-hidden="true" size={17} />}
             </span>
             <div className="flex min-w-0 flex-col">
-              <h2 className="text-sm font-semibold leading-4 text-white sm:text-base sm:leading-5" id="player-activity-dialog-title">{title}</h2>
-              <p className="-mt-0.5 text-[11px] leading-4 text-slate-400 sm:text-xs">{subtitle}</p>
+              <h2 className="text-sm font-semibold leading-5 text-white sm:text-base" id="player-activity-dialog-title">{title}</h2>
+              <p className="-translate-y-1 text-[11px] leading-4 text-slate-400 sm:text-xs">{subtitle}</p>
             </div>
           </div>
           <button
@@ -243,7 +234,7 @@ export function PlayerActivityDialog({
           ) : null}
 
           {loading ? (
-            <PlayerActivitySkeleton mode={mode} />
+            <PlayerActivitySkeleton />
           ) : error ? (
             <div className="rounded border border-amber-300/25 bg-amber-300/10 p-3 text-sm text-amber-100">{error}</div>
           ) : response?.items.length ? (
@@ -296,15 +287,9 @@ export function PlayerActivityDialog({
   );
 }
 
-export function PlayerActivitySkeleton({ mode }: { mode: "away" | "history" }) {
+export function PlayerActivitySkeleton() {
   return (
-    <SkeletonRegion className="grid min-h-48 gap-2" label={mode === "away" ? "Loading away activity" : "Loading activity"}>
-      {mode === "away" ? (
-        <div className="mb-1 flex gap-1.5">
-          <Skeleton className="h-6 w-24 rounded-full" />
-          <Skeleton className="h-6 w-20 rounded-full" />
-        </div>
-      ) : null}
+    <SkeletonRegion className="grid min-h-48 gap-2" label="Loading activity">
       {skeletonList(3, (index) => (
         <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-2.5 rounded border border-white/10 bg-white/[0.025] p-2.5 sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:px-3" key={index}>
           <Skeleton className="h-8 w-8 rounded" />

@@ -1197,6 +1197,34 @@ export type SettledPlanetEvent = PlanetState & {
   blockNumber: string;
 };
 
+export type FirstPlanetSettledEvent = {
+  eventName: "FirstPlanetSettled";
+  transactionHash: string;
+  blockNumber: string;
+  player: Address;
+  planetId: string | null;
+  galaxy: number;
+  system: number;
+  position: number;
+};
+
+export type PlayerMigrationEvent =
+  | {
+      eventName: "MigrationStateImported";
+      transactionHash: string;
+      blockNumber: string;
+      player: Address;
+      homePlanetId: string;
+      planetCount: number;
+    }
+  | {
+      eventName: "FullStateMigrationClaimed";
+      transactionHash: string;
+      blockNumber: string;
+      player: Address;
+      stateHash: string;
+    };
+
 export type PlanetSettledEvent = {
   eventName: "PlanetSettled";
   transactionHash: string;
@@ -1861,6 +1889,7 @@ export class VeydriftGameReader implements ChainReader {
   private readonly logChunkSpan: bigint;
   private readonly resourceTokenAddresses: Partial<Record<RiftResourceKey, Address>>;
   private readonly settlementContractAddress: Address | undefined;
+  private readonly migrationContractAddress: Address | undefined;
   private readonly randomnessEngineAddress: Address | undefined;
   private readonly referralSystemAddress: Address | undefined;
   private readonly hydrateQueueStartedAt: boolean;
@@ -1902,6 +1931,7 @@ export class VeydriftGameReader implements ChainReader {
     this.logChunkSpan = config.logChunkSpan && config.logChunkSpan > 0n ? config.logChunkSpan : 90_000n;
     this.resourceTokenAddresses = config.resourceTokenAddresses ?? {};
     this.settlementContractAddress = config.settlementContractAddress;
+    this.migrationContractAddress = config.migrationContractAddress;
     this.randomnessEngineAddress = config.randomnessEngineAddress;
     this.referralSystemAddress = config.referralSystemAddress;
     this.hydrateQueueStartedAt = options.hydrateQueueStartedAt ?? true;
@@ -3599,10 +3629,12 @@ export class VeydriftGameReader implements ChainReader {
   }
 
   private indexedContractAddresses(): Address[] {
-    return [
+    const addresses = [
       this.gameContractAddress,
       this.moonContractAddress,
       this.allianceContractAddress,
+      this.settlementContractAddress,
+      this.migrationContractAddress,
       this.resourceTokenAddresses.metal,
       this.resourceTokenAddresses.crystal,
       this.resourceTokenAddresses.deuterium,
@@ -3611,6 +3643,7 @@ export class VeydriftGameReader implements ChainReader {
       this.randomnessEngineAddress,
       this.referralSystemAddress
     ].filter((address): address is Address => Boolean(address));
+    return [...new Set(addresses)];
   }
 
   private async getGameSettlement(wallet: Address): Promise<WalletSettlement> {
@@ -5491,6 +5524,10 @@ const moonBuildingCatalog: Array<Pick<MoonState["buildings"][number], "id" | "ke
 ];
 const planetStartedTopic = "0xef2d7a7105128f441ebc83d8e2e87960a9b0dfdfa02cc68769872b2c52a431f3";
 const colonyCreatedTopic = "0xd7d717f6607ff051c7f2247d5c490eb9ece607b9ee7c7eee946898025815cfc0";
+const gameFirstPlanetSettledTopic = "0x1f673e84fe49fdcd9930a486d10cac412437f89541987902f82b43a93d86cf1c";
+const legacyFirstPlanetSettledTopic = "0xb1abaa78f2f23a98f30148c8705b43e6c77e019acfeb9d5dc43085861dfad18e";
+const migrationStateImportedTopic = "0xdb12a7cb693ed25a5a03977074fc4225831b157cd806cfcc62a03e06988f92d9";
+const fullStateMigrationClaimedTopic = "0xc1eb9069a8811bc656d30388efd94a0e3d2c23f9783a2577482dae5dd554e793";
 const planetSettledTopic = "0x7faee98c7c745f9c9fb2117a44185f57454dac3013383364df4c22b5f9bc4077";
 const moonResourcesSettledTopic = "0xb20fd9e652e1b740544f362fb3047c43a7bf0d6c7fbf0f5cab5f1f939aac6917";
 const planetRenamedTopic = "0x2b772c1fa271aad466ce009b6b5824b2ad6ccd942d21efc686513ffa8eb166cd";
@@ -5574,6 +5611,10 @@ const riftExtractionFinalizedTopic = "0x31186e4a61fef32b3f8d7dcad582f862fbf906a3
 const eventNamesByTopic = new Map<string, string>([
   [planetStartedTopic, "PlanetStarted"],
   [colonyCreatedTopic, "ColonyCreated"],
+  [gameFirstPlanetSettledTopic, "FirstPlanetSettled"],
+  [legacyFirstPlanetSettledTopic, "FirstPlanetSettled"],
+  [migrationStateImportedTopic, "MigrationStateImported"],
+  [fullStateMigrationClaimedTopic, "FullStateMigrationClaimed"],
   [planetSettledTopic, "PlanetSettled"],
   [moonResourcesSettledTopic, "MoonResourcesSettled"],
   [planetRenamedTopic, "PlanetRenamed"],
@@ -5754,6 +5795,16 @@ export function riftRequirements(
 export function isSettledPlanetLog(log: RpcLog): boolean {
   const topic = topicAt(log.topics, 0);
   return topic === planetStartedTopic || topic === colonyCreatedTopic;
+}
+
+export function isFirstPlanetSettledLog(log: RpcLog): boolean {
+  const topic = topicAt(log.topics, 0);
+  return topic === gameFirstPlanetSettledTopic || topic === legacyFirstPlanetSettledTopic;
+}
+
+export function isPlayerMigrationLog(log: RpcLog): boolean {
+  const topic = topicAt(log.topics, 0);
+  return topic === migrationStateImportedTopic || topic === fullStateMigrationClaimedTopic;
 }
 
 export function isPlanetSettledLog(log: RpcLog): boolean {
@@ -5986,6 +6037,49 @@ export function decodeSettledPlanetLog(log: RpcLog): SettledPlanetEvent {
       crystal: "0",
       deuterium: "0"
     }
+  };
+}
+
+export function decodeFirstPlanetSettledLog(log: RpcLog): FirstPlanetSettledEvent {
+  const topic = topicAt(log.topics, 0);
+  const words = splitWords(log.data);
+  const currentGameEvent = topic === gameFirstPlanetSettledTopic;
+
+  return {
+    eventName: "FirstPlanetSettled",
+    transactionHash: log.transactionHash,
+    blockNumber: BigInt(log.blockNumber).toString(),
+    player: decodeAddressWord(topicAt(log.topics, 1)),
+    planetId: currentGameEvent ? decodeUint(topicAt(log.topics, 2)).toString() : null,
+    galaxy: Number(currentGameEvent ? decodeUintWord(wordAt(words, 0)) : decodeUint(topicAt(log.topics, 2))),
+    system: Number(currentGameEvent ? decodeUintWord(wordAt(words, 1)) : decodeUint(topicAt(log.topics, 3))),
+    position: Number(decodeUintWord(wordAt(words, currentGameEvent ? 2 : 0)))
+  };
+}
+
+export function decodePlayerMigrationLog(log: RpcLog): PlayerMigrationEvent {
+  const topic = topicAt(log.topics, 0);
+  const base = {
+    transactionHash: log.transactionHash,
+    blockNumber: BigInt(log.blockNumber).toString(),
+    player: decodeAddressWord(topicAt(log.topics, 1))
+  };
+  if (topic === migrationStateImportedTopic) {
+    const words = splitWords(log.data);
+    return {
+      ...base,
+      eventName: "MigrationStateImported",
+      homePlanetId: decodeUintWord(wordAt(words, 0)).toString(),
+      planetCount: Number(decodeUintWord(wordAt(words, 1)))
+    };
+  }
+  if (topic !== fullStateMigrationClaimedTopic) {
+    throw new Error("Not a player migration log.");
+  }
+  return {
+    ...base,
+    eventName: "FullStateMigrationClaimed",
+    stateHash: topicAt(log.topics, 2)
   };
 }
 
