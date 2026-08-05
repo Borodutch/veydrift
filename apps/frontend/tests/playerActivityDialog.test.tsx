@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import type { ComponentChildren, VNode } from "preact";
 
-import { ActivityRow, PlayerActivitySkeleton } from "../src/components/PlayerActivityDialog";
+import { ActivityRow, activityDetail, PlayerActivitySkeleton } from "../src/components/PlayerActivityDialog";
+import { formatUserTimestamp } from "../src/timestampFormat";
 import type { PlayerActivityItem } from "../src/walletFlow";
 
 const explorerUrl = "https://basescan.org";
@@ -55,5 +56,18 @@ describe("player activity rows", () => {
       .toBe("https://basescan.org/tx/0xreconciliation");
     expect(nodes(projected).some((node) => node.type === "a")).toBe(false);
     expect(nodes(projected).some((node) => node.props?.children === "Awaiting reconciliation")).toBe(false);
+  });
+
+  test("renders queue ready times as localized dates instead of raw chain timestamps", () => {
+    const item = activity({
+      kind: "building-started",
+      detail: "New Toronto · 6:9:7 · Level 20; ready 1785986329",
+      metadata: { readyAt: "1785986329" },
+    });
+
+    expect(activityDetail(item)).toBe(
+      `New Toronto · 6:9:7 · Level 20; ready ${formatUserTimestamp("1785986329")}`
+    );
+    expect(activityDetail(item)).not.toContain("1785986329");
   });
 });
