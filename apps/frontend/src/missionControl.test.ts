@@ -202,6 +202,7 @@ describe("Mission Control battle reports", () => {
         battleReports: [battleReport("31")],
       },
       loading: false,
+      initialView: { activePage: 0, activeTab: "incoming", pastPage: 0, pastTab: "mine" },
       now,      onCounterplay: () => undefined,
       onJoinAttack: () => undefined,
       onOpenReport: () => undefined,
@@ -328,6 +329,7 @@ describe("Mission Control battle reports", () => {
         ...missionControlProps(now, { incoming }).fleetVisibility!,
         battleReports,
       },
+      initialView: { activePage: 0, activeTab: "incoming", pastPage: 0, pastTab: "mine" },
       missionArchive,
     });
 
@@ -678,19 +680,22 @@ describe("Mission Control battle reports", () => {
 
   test("labels non-offensive inbound missions as friendly in Mission Control", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
-    const text = collectText(MissionControlPage(missionControlProps(now, {
-      incoming: [
-        mission(
-          "35",
-          "Transport",
-          "Outbound",
-          "0x2222222222222222222222222222222222222222",
-          "8",
-          "7",
-          now + 60_000,
-        ),
-      ],
-    }))).join(" ");
+    const text = collectText(MissionControlPage({
+      ...missionControlProps(now, {
+        incoming: [
+          mission(
+            "35",
+            "Transport",
+            "Outbound",
+            "0x2222222222222222222222222222222222222222",
+            "8",
+            "7",
+            now + 60_000,
+          ),
+        ],
+      }),
+      initialView: { activePage: 0, activeTab: "incoming", pastPage: 0, pastTab: "mine" },
+    })).join(" ");
 
     expect(text).toContain("Friendly inbound");
     expect(text).toContain("Incoming transport");
@@ -711,7 +716,7 @@ describe("Mission Control battle reports", () => {
     expect(text).not.toContain("Join");
   });
 
-  test("partitions active rows into My missions (own fleets) and Alliance (joinable attacks)", () => {
+  test("partitions own, incoming, and joinable active missions so My missions reflects fleet-slot usage", () => {
     const rows: ActiveMissionRow[] = [
       { context: "incoming", direction: "Hostile inbound", mission: mission("1") },
       { context: "outgoing", direction: "Outbound", mission: mission("2") },
@@ -720,15 +725,17 @@ describe("Mission Control battle reports", () => {
       { context: "joinable", direction: "Joinable attack", mission: mission("5") },
     ];
 
-    const { alliance, mine } = partitionActiveMissionRows(rows);
+    const { alliance, incoming, mine } = partitionActiveMissionRows(rows);
 
-    expect(mine.map((row) => row.mission.missionId)).toEqual(["1", "2", "3"]);
-    expect(mine.every((row) => row.context !== "joinable")).toBe(true);
+    expect(mine.map((row) => row.mission.missionId)).toEqual(["2", "3"]);
+    expect(mine.every((row) => row.context === "outgoing" || row.context === "returning")).toBe(true);
+    expect(incoming.map((row) => row.mission.missionId)).toEqual(["1"]);
+    expect(incoming.every((row) => row.context === "incoming")).toBe(true);
     expect(alliance.map((row) => row.mission.missionId)).toEqual(["4", "5"]);
     expect(alliance.every((row) => row.context === "joinable")).toBe(true);
   });
 
-  test("renders My missions / Alliance tabs with counts, join action, and per-tab empty state", () => {
+  test("renders separate My missions, Incoming, and Alliance counts", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
     const text = collectText(MissionControlPage({ ...missionControlProps(now, {
       incoming: [mission("31", "Attack", "Outbound", "0x2222222222222222222222222222222222222222", "8", "7", now + 60_000)],
@@ -737,7 +744,8 @@ describe("Mission Control battle reports", () => {
       joinableAttacks: [mission("34", "Attack", "Outbound", "0x3333333333333333333333333333333333333333", "5", "6", now + 180_000)],
     }), initialView: { activePage: 0, activeTab: "alliance", pastPage: 0, pastTab: "mine" } })).join(" ");
 
-    expect(text).toContain("My missions (3)");
+    expect(text).toContain("My missions (2)");
+    expect(text).toContain("Incoming (1)");
     expect(text).toContain("Alliance (1)");
     // VEY-397#13: join actions stay available on the Alliance tab, now labelled "Join".
     expect(text).toContain("Join");
@@ -868,6 +876,7 @@ describe("Mission Control battle reports", () => {
         ],
         pagination: { page: 1, pageSize: 25, totalEntries: 2, totalPages: 1, hasPreviousPage: false, hasNextPage: false },
       },
+      initialView: { activePage: 0, activeTab: "incoming", pastPage: 0, pastTab: "mine" },
       missionNumberSearch: "#123",
     })).join(" ");
 
@@ -891,11 +900,12 @@ describe("Mission Control battle reports", () => {
         ],
         pagination: { page: 1, pageSize: 25, totalEntries: 2, totalPages: 1, hasPreviousPage: false, hasNextPage: false },
       },
+      initialView: { activePage: 0, activeTab: "incoming", pastPage: 0, pastTab: "mine" },
       missionNumberSearch: "",
     })).join(" ");
 
     expect(cleared).toContain("#123");
-    expect(cleared).toContain("#45");
+    expect(cleared).not.toContain("#45");
     expect(cleared).toContain("#9123");
     expect(cleared).toContain("#77");
   });
@@ -1016,15 +1026,20 @@ describe("Mission Control battle reports", () => {
     });
     const filterDetails = findElements(tree, "details").find((node) => node.props?.["data-mission-filters"] === true);
     const trigger = findElements(filterDetails, "summary")[0];
+    const filterCount = findElements(trigger, "span").find((node) => node.props?.["data-mission-filter-count"] === true);
     const dialog = findElements(filterDetails, "div").find((node) => node.props?.role === "dialog");
     const clearButton = findElements(filterDetails, "button").find((node) => collectText(node).includes("Clear all"));
     const inputs = findElements(filterDetails, "input");
     const selects = findElements(filterDetails, "select");
+    const toolbar = findElements(tree, "div").find((node) => node.props?.["data-mission-toolbar"] === true);
 
     expect(filterDetails?.props?.["data-active-filter-count"]).toBe(4);
     expect(trigger?.props?.["aria-label"]).toBe("Mission filters, 4 active");
+    expect(collectText(filterCount)).toContain("4");
     expect(trigger?.props?.["aria-haspopup"]).toBe("dialog");
     expect(trigger?.props?.["aria-controls"]).toBe("mission-control-filter-popover");
+    expect(findElements(toolbar, "details").some((node) => node.props?.["data-mission-filters"] === true)).toBe(true);
+    expect(findElements(toolbar, "button").some((node) => node.props?.["data-mission-disclosure-toggle"] === true)).toBe(true);
     expect(dialog?.props?.["aria-label"]).toBe("Mission filters");
     expect(String(dialog?.props?.className)).toContain("calc(100vw-1.5rem)");
     expect(inputs.map((input) => input.props?.["aria-label"])).toEqual([
@@ -1065,6 +1080,7 @@ describe("Mission Control battle reports", () => {
     const neutralTrigger = findElements(neutralDetails, "summary")[0];
     expect(neutralDetails?.props?.["data-active-filter-count"]).toBe(0);
     expect(neutralTrigger?.props?.["aria-label"]).toBe("Mission filters");
+    expect(findElements(neutralTrigger, "span").some((node) => node.props?.["data-mission-filter-count"] === true)).toBe(false);
   });
 
   test("applies mission type and flight state from the mobile select input event", () => {
@@ -2309,7 +2325,10 @@ describe("Mission Control battle reports", () => {
       "7",
       now + 60_000,
     );
-    const tree = MissionControlPage(missionControlProps(now, { incoming: [hostile] }));
+    const tree = MissionControlPage({
+      ...missionControlProps(now, { incoming: [hostile] }),
+      initialView: { activePage: 0, activeTab: "incoming", pastPage: 0, pastTab: "mine" },
+    });
     const row = findElements(tree, "details").find((node) => node.props?.["data-mission-row"] !== undefined);
     expect(row?.props?.["data-default-open"]).toBe("true");
 
@@ -2543,7 +2562,7 @@ describe("Mission Control battle reports", () => {
   });
 
   test("round-trips a selected view through query encode/decode (VEY-412)", () => {
-    const view: MissionControlView = { activePage: 1, activeTab: "all", pastPage: 4, pastTab: "all" };
+    const view: MissionControlView = { activePage: 1, activeTab: "incoming", pastPage: 4, pastTab: "all" };
     const restored = { ...view, ...parseMissionControlViewParams(buildMissionControlViewQuery(view)) };
     expect(restored).toEqual(view);
   });

@@ -1,4 +1,5 @@
-import { ChevronDown, ChevronLeft, ChevronRight, Clipboard, ExternalLink, Filter, List, Undo2 } from "lucide-preact";
+import { ChevronDown, ChevronLeft, ChevronRight, ChevronsDownUp, ChevronsUpDown, Clipboard, ExternalLink, Filter, List, Undo2 } from "lucide-preact";
+import type { ComponentChildren } from "preact";
 
 import { ActionReasonNote } from "./ActionReasonNote";
 import { galaxyActionIcon } from "./GalaxyActionIcon";
@@ -36,7 +37,7 @@ import {
   missionRouteLeg,
   shortAddress,
 } from "./missionRoute";
-import { PageHeader, refreshButtonState } from "./PageHeader";
+import { refreshButtonState } from "./PageHeader";
 import { MissionControlSkeleton } from "./LoadingSkeletons";
 import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailableNotice";
 
@@ -201,7 +202,11 @@ export function MissionControlPage({
   const completedMissions = fleetVisibility?.completedMissions ?? [];
   const battleReports = fleetVisibility?.battleReports ?? [];
   const activeMissionRows = chronologicalActiveMissionRows({ incoming, joinableAttacks, outgoing, returning });
-  const { alliance: allianceMissionRows, mine: myMissionRows } = partitionActiveMissionRows(activeMissionRows);
+  const {
+    alliance: allianceMissionRows,
+    incoming: incomingMissionRows,
+    mine: myMissionRows,
+  } = partitionActiveMissionRows(activeMissionRows);
   // Universe-wide active rows for the "All" tab: the player's own/alliance missions keep their exact
   // classification (direction + lifecycle actions); every other active mission renders read-only.
   const allActiveRows = allActiveMissionRows(allActiveMissions, activeMissionRows);
@@ -263,6 +268,7 @@ export function MissionControlPage({
   const rawIncomingAttackPastRows = rawIncomingAttackArchiveRows ?? incomingAttackPastMissionRows(pastMissionRows, walletAddress, walletPlanetIds);
   const incomingAttackRows = dedupePastMissionRows(rawIncomingAttackPastRows, activeMissionIds);
   const filteredMyMissionRows = filterActiveMissionRows(myMissionRows, normalizedFilters);
+  const filteredIncomingMissionRows = filterActiveMissionRows(incomingMissionRows, normalizedFilters);
   const filteredAllianceMissionRows = filterActiveMissionRows(allianceMissionRows, normalizedFilters);
   const filteredAllActiveRows = filterActiveMissionRows(allActiveRows, normalizedFilters);
   const filteredStationedIncoming = incoming.filter((mission) =>
@@ -297,7 +303,9 @@ export function MissionControlPage({
     ? filteredAllActiveRows
     : activeTab === "alliance"
       ? filteredAllianceMissionRows
-      : filteredMyMissionRows;
+      : activeTab === "incoming"
+        ? filteredIncomingMissionRows
+        : filteredMyMissionRows;
   const selectedPastRows = view.pastTab === "all"
     ? filteredGlobalPastMissionRows
     : view.pastTab === "incomingAttacks"
@@ -317,24 +325,6 @@ export function MissionControlPage({
 
   return (
     <section className="grid gap-3" data-mission-control-page ref={scheduleMissionRowsDisclosureSync}>
-      <PageHeader
-        actions={(
-          <>
-            <MissionFilterPopover
-              filters={normalizedFilters}
-              onChange={(filters) => {
-                onMissionFiltersChange?.(filters);
-                if (filters.missionNumber !== normalizedFilters.missionNumber) {
-                  onMissionNumberSearchChange?.(filters.missionNumber);
-                }
-              }}
-            />
-            <MissionRowsDisclosureControl hidden={!hasVisibleExpandableRows} />
-          </>
-        )}
-        title="Mission Control"
-      />
-
       {actionState.status !== "idle" && (
         <Notice tone={actionState.status === "error" ? "danger" : actionState.status === "success" ? "success" : "info"}>
           {actionState.label}
@@ -364,6 +354,7 @@ export function MissionControlPage({
             canTransact={canTransact}
             lootByMissionId={lootByMissionId}
             lossesByMissionId={lossesByMissionId}
+            incomingRows={filteredIncomingMissionRows}
             missionFiltersActive={missionFiltersActive}
             missionFilterEmptyLabel={filterEmptyLabel}
             myRows={filteredMyMissionRows}
@@ -375,6 +366,20 @@ export function MissionControlPage({
             onRecall={onRecall}
             planetLookup={planetLookup}
             transactionUnavailableReason={transactionUnavailableReason}
+            toolbarActions={(
+              <>
+                <MissionFilterPopover
+                  filters={normalizedFilters}
+                  onChange={(filters) => {
+                    onMissionFiltersChange?.(filters);
+                    if (filters.missionNumber !== normalizedFilters.missionNumber) {
+                      onMissionNumberSearchChange?.(filters.missionNumber);
+                    }
+                  }}
+                />
+                <MissionRowsDisclosureControl hidden={!hasVisibleExpandableRows} />
+              </>
+            )}
             wallet={walletAddress}
             walletPlanetIds={walletPlanetIds}
           />
@@ -846,6 +851,7 @@ const ACTIVE_MISSION_TABS = [
   // The one active-section empty state: the tab panel says it, so no separate page-level notice
   // repeats it two lines above.
   { emptyLabel: "No active missions for this wallet. Use Galaxy to launch attacks, transport resources, deploy fleets, or harvest debris.", key: "mine", label: "My missions" },
+  { emptyLabel: "No fleets are currently inbound to your planets.", key: "incoming", label: "Incoming" },
   { emptyLabel: "No joinable alliance attacks.", key: "alliance", label: "Alliance" },
   { emptyLabel: "No active missions in the universe yet.", key: "all", label: "All" },
 ] as const;
@@ -861,6 +867,7 @@ function ActiveMissionSection({
   allRows,
   allianceRows,
   canTransact,
+  incomingRows,
   lootByMissionId,
   lossesByMissionId,
   missionFilterEmptyLabel,
@@ -873,6 +880,7 @@ function ActiveMissionSection({
   onTabChange,
   planetLookup,
   showAllianceTab = true,
+  toolbarActions,
   transactionUnavailableReason,
   wallet,
   walletPlanetIds,
@@ -883,6 +891,7 @@ function ActiveMissionSection({
   allRows: ActiveMissionRow[];
   allianceRows: ActiveMissionRow[];
   canTransact: boolean;
+  incomingRows: ActiveMissionRow[];
   lootByMissionId: ReadonlyMap<string, BattleReport["loot"]>;
   lossesByMissionId: ReadonlyMap<string, MissionLossSummary>;
   missionFilterEmptyLabel: string;
@@ -895,11 +904,17 @@ function ActiveMissionSection({
   onTabChange?: ((tab: ActiveMissionTabKey) => void) | undefined;
   planetLookup: ReadonlyMap<string, MissionPlanetIdentity>;
   showAllianceTab?: boolean | undefined;
+  toolbarActions?: ComponentChildren | undefined;
   transactionUnavailableReason?: string | undefined;
   wallet?: string | undefined;
   walletPlanetIds: ReadonlySet<string>;
 }) {
-  const rowsByTab: Record<ActiveMissionTabKey, ActiveMissionRow[]> = { all: allRows, alliance: allianceRows, mine: myRows };
+  const rowsByTab: Record<ActiveMissionTabKey, ActiveMissionRow[]> = {
+    all: allRows,
+    alliance: allianceRows,
+    incoming: incomingRows,
+    mine: myRows,
+  };
   const visibleTabs = ACTIVE_MISSION_TABS.filter((tab) => tab.key !== "alliance" || showAllianceTab);
   const sharedRowProps = {
     activePlanetId,
@@ -917,8 +932,8 @@ function ActiveMissionSection({
     walletPlanetIds,
   };
   return (
-    <section className="min-w-0 overflow-hidden rounded-lg border border-white/10 bg-[#101624]" data-active-tab={activeTab}>
-      <div className="flex flex-col gap-2 border-b border-white/10 bg-black/20 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
+    <section className="min-w-0 rounded-lg border border-white/10 bg-[#101624]" data-active-tab={activeTab}>
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-t-lg border-b border-white/10 bg-black/20 px-3 py-2">
         <div aria-label="Active missions" className="flex flex-wrap gap-1.5" role="tablist">
           {visibleTabs.map((tab) => (
             <button
@@ -937,6 +952,11 @@ function ActiveMissionSection({
             </button>
           ))}
         </div>
+        {toolbarActions ? (
+          <div className="ml-auto flex shrink-0 items-center gap-1.5" data-mission-toolbar>
+            {toolbarActions}
+          </div>
+        ) : null}
       </div>
       {visibleTabs.filter((tab) => tab.key === activeTab).map((tab) => (
         <div data-active-tab-panel={tab.key} key={tab.key} role="tabpanel">
@@ -977,7 +997,7 @@ function MissionRowsDisclosureControl({ hidden }: { hidden: boolean }) {
   return (
     <button
       aria-label="Expand all visible mission cards"
-      className="h-9 rounded-md border border-white/10 bg-white/5 px-3 text-xs font-semibold text-slate-200 transition hover:bg-white/10"
+      className="inline-flex size-8 items-center justify-center rounded-md border border-white/10 bg-white/5 text-slate-300 transition hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/50"
       data-mission-disclosure-toggle
       hidden={hidden}
       onClick={(event) => {
@@ -990,7 +1010,9 @@ function MissionRowsDisclosureControl({ hidden }: { hidden: boolean }) {
       title="Expand all visible mission cards"
       type="button"
     >
-      Expand all
+      <ChevronsUpDown aria-hidden="true" data-mission-disclosure-expand-icon size={15} />
+      <ChevronsDownUp aria-hidden="true" data-mission-disclosure-collapse-icon hidden size={15} />
+      <span className="sr-only" data-mission-disclosure-label>Expand all</span>
     </button>
   );
 }
@@ -1019,7 +1041,13 @@ function syncMissionRowsDisclosureControl(source: Element): void {
   const rows = visibleMissionRows(root);
   const state = missionRowsDisclosureState(rows);
   button.hidden = rows.length === 0;
-  button.textContent = state.label;
+  button.dataset.expanded = String(state.allExpanded);
+  const label = button.querySelector<HTMLElement>("[data-mission-disclosure-label]");
+  if (label) label.textContent = state.label;
+  const expandIcon = button.querySelector("[data-mission-disclosure-expand-icon]");
+  const collapseIcon = button.querySelector("[data-mission-disclosure-collapse-icon]");
+  expandIcon?.toggleAttribute("hidden", state.allExpanded);
+  collapseIcon?.toggleAttribute("hidden", !state.allExpanded);
   const accessibleLabel = `${state.label} visible mission cards`;
   button.setAttribute("aria-label", accessibleLabel);
   button.title = accessibleLabel;
@@ -1065,18 +1093,23 @@ function MissionFilterPopover({
         aria-controls="mission-control-filter-popover"
         aria-haspopup="dialog"
         aria-label={triggerLabel}
-        className={`flex h-9 cursor-pointer list-none items-center gap-2 rounded-md border px-3 text-xs font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/50 [&::-webkit-details-marker]:hidden ${
+        className={`relative flex size-8 cursor-pointer list-none items-center justify-center rounded-md border transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/50 [&::-webkit-details-marker]:hidden ${
           active
             ? "border-cyan-300/40 bg-cyan-300/10 text-cyan-100 hover:bg-cyan-300/15"
             : "border-white/10 bg-white/5 text-slate-200 hover:bg-white/10"
         }`}
         title={triggerLabel}
       >
-        {/* No count badge: the trigger's cyan active styling already signals filters are applied
-            (the exact count lives in the aria-label + title). */}
-        <Filter aria-hidden="true" size={14} />
-        <span>Filters</span>
-        <ChevronDown aria-hidden="true" className="text-slate-500 transition-transform group-open/filters:rotate-180" size={13} />
+        <Filter aria-hidden="true" size={15} />
+        {active ? (
+          <span
+            aria-hidden="true"
+            className="absolute -right-1 -top-1 flex size-4 items-center justify-center rounded-full bg-cyan-300 text-[9px] font-bold leading-none text-slate-950 ring-2 ring-[#0b111d]"
+            data-mission-filter-count
+          >
+            {activeFilterCount}
+          </span>
+        ) : null}
       </summary>
 
       {/* Same visual system as the rest of the screen: the one uppercase-tracked label style for
@@ -2829,16 +2862,23 @@ function showPastMissionPage(event: Event, target: number | "next" | "previous")
   syncMissionRowsDisclosureControl(section);
 }
 
-export function partitionActiveMissionRows(rows: ActiveMissionRow[]): { alliance: ActiveMissionRow[]; mine: ActiveMissionRow[] } {
-  // "Alliance" holds joinable alliance attacks; "My missions" holds the player's own outbound,
-  // incoming hostile, and returning fleets. Rows are already deduped + chronologically sorted upstream.
+export function partitionActiveMissionRows(rows: ActiveMissionRow[]): {
+  alliance: ActiveMissionRow[];
+  incoming: ActiveMissionRow[];
+  mine: ActiveMissionRow[];
+} {
+  // Keep the player's fleet-slot usage legible: own outbound/returning fleets belong to "My missions",
+  // fleets other players sent toward the wallet belong to "Incoming", and joinable attacks stay in
+  // "Alliance". Rows are already deduped + chronologically sorted upstream.
   const alliance: ActiveMissionRow[] = [];
+  const incoming: ActiveMissionRow[] = [];
   const mine: ActiveMissionRow[] = [];
   for (const row of rows) {
     if (row.context === "joinable") alliance.push(row);
+    else if (row.context === "incoming") incoming.push(row);
     else mine.push(row);
   }
-  return { alliance, mine };
+  return { alliance, incoming, mine };
 }
 
 function showActiveMissionTab(event: Event, key: string) {
