@@ -82,6 +82,12 @@ describe("navigation and planet selector UI source contracts", () => {
     expect(navSource).toContain("Open navigation menu");
     expect(navSource).toContain("Close navigation menu");
     expect(navSource).toContain("mobile-navigation-menu");
+    // The disclosure is browser-native so opening the menu does not depend on
+    // a Preact click handler successfully committing local state first.
+    expect(navSource).toContain("<details");
+    expect(navSource).toContain("<summary");
+    expect(navSource).toContain("onToggle={(event) => setMobileMenuOpen(event.currentTarget.open)}");
+    expect(navSource).not.toContain("onClick={() => setMobileMenuOpen((open) => !open)}");
     expect(navSource).not.toContain("Mobile top tabs");
   });
 
