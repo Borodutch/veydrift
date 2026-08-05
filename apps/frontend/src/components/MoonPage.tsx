@@ -33,6 +33,7 @@ import { RequirementFlairs, type RequirementFlair, type RequirementTarget } from
 import { LevelInfoModal, type LevelInfoColumn } from "./LevelInfoModal";
 import { QueueProgressPanel } from "./QueueProgressPanel";
 import { StructureCatalog, StructureDetail, type StructureLevelInfo } from "./StructureCatalog";
+import type { ConstructionProgress } from "../constructionProgress";
 
 const burningChickensOpenSeaCollectionUrl = "https://opensea.io/collection/chickens-by-eggs";
 
@@ -43,10 +44,13 @@ interface MoonPageProps {
   } | undefined;
   canTransact?: boolean | undefined;
   canBurnChicken?: boolean | undefined;
+  constructionProgress?: ConstructionProgress | undefined;
+  defenseProgress?: ConstructionProgress | undefined;
   error?: string | undefined;
   loading?: boolean | undefined;
   moonActions?: MoonOverviewAction[] | undefined;
   moonState?: ChainMoonState | null | undefined;
+  now?: number | undefined;
   onBurnChicken?: ((tokenId: string) => void) | undefined;
   onJumpGate?: ((destinationPlanetId: string, ships?: Partial<MissionShips>) => void) | undefined;
   onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
@@ -70,10 +74,13 @@ export function MoonPage({
   burningChicken,
   canTransact,
   canBurnChicken,
+  constructionProgress,
+  defenseProgress,
   error,
   loading,
   moonActions,
   moonState,
+  now = Date.now(),
   onBurnChicken,
   onJumpGate,
   onOpenRequirement,
@@ -108,9 +115,12 @@ export function MoonPage({
           <MoonSystemsPanel
             action={action}
             canTransact={canTransact}
+            constructionProgress={constructionProgress}
+            defenseProgress={defenseProgress}
             moon={moon}
             moonActions={moonActions}
             moonState={moonState}
+            now={now}
             onJumpGate={onJumpGate}
             onOpenRequirement={onOpenRequirement}
             onStartBuilding={onStartBuilding}
@@ -316,9 +326,12 @@ function MoonStatusPanel({
 function MoonSystemsPanel({
   action,
   canTransact,
+  constructionProgress,
+  defenseProgress,
   moon,
   moonActions,
   moonState,
+  now,
   onJumpGate,
   onOpenRequirement,
   onStartBuilding,
@@ -329,9 +342,12 @@ function MoonSystemsPanel({
 }: {
   action?: MoonPageProps["action"];
   canTransact?: boolean | undefined;
+  constructionProgress?: ConstructionProgress | undefined;
+  defenseProgress?: ConstructionProgress | undefined;
   moon: NonNullable<ChainMoonState["moon"]>;
   moonActions?: MoonOverviewAction[] | undefined;
   moonState?: ChainMoonState | null | undefined;
+  now: number;
   onJumpGate?: MoonPageProps["onJumpGate"];
   onOpenRequirement?: MoonPageProps["onOpenRequirement"];
   onStartBuilding?: MoonPageProps["onStartBuilding"];
@@ -412,8 +428,10 @@ function MoonSystemsPanel({
       <MoonStructuresSection
         action={action}
         canTransact={canTransact}
+        constructionProgress={constructionProgress}
         moon={moon}
         moonState={moonState}
+        now={now}
         onSelectBuilding={setSelectedBuildingKey}
         onStartBuilding={onStartBuilding}
         pending={pending}
@@ -424,6 +442,7 @@ function MoonSystemsPanel({
       <MoonDefenseSection
         actionPending={pending}
         canTransact={Boolean(canTransact)}
+        progressState={defenseProgress}
         moonState={moonState}
         onOpenRequirement={openMoonRequirement}
         onSelectDefense={setSelectedDefenseKey}
@@ -546,8 +565,10 @@ function moonActionIcon(kind: MoonOverviewAction["kind"]): LucideIcon {
 function MoonStructuresSection({
   action,
   canTransact,
+  constructionProgress,
   moon,
   moonState,
+  now,
   onSelectBuilding,
   onStartBuilding,
   pending,
@@ -556,8 +577,10 @@ function MoonStructuresSection({
 }: {
   action?: MoonPageProps["action"];
   canTransact?: boolean | undefined;
+  constructionProgress?: ConstructionProgress | undefined;
   moon: NonNullable<ChainMoonState["moon"]>;
   moonState?: ChainMoonState | null | undefined;
+  now: number;
   onSelectBuilding: (key: MoonBuilding["key"]) => void;
   onStartBuilding?: MoonPageProps["onStartBuilding"];
   pending: boolean;
@@ -580,6 +603,8 @@ function MoonStructuresSection({
           asset={moonBuildingAssetForId(constructionQueue.itemId)}
           itemText={constructionLabel}
           label={constructionLabel}
+          now={now}
+          progressState={constructionProgress}
           readyAt={constructionQueue.readyAt}
           startedAt={constructionQueue.startedAt}
           title="Construction"
@@ -823,6 +848,7 @@ function MoonDefenseSection({
   onOpenRequirement,
   onSelectDefense,
   onStartDefense,
+  progressState,
   selectedDefenseKey,
   transactionUnavailableReason,
 }: {
@@ -832,6 +858,7 @@ function MoonDefenseSection({
   onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
   onSelectDefense: (key: DefenseKey) => void;
   onStartDefense?: MoonPageProps["onStartDefense"];
+  progressState?: ConstructionProgress | undefined;
   selectedDefenseKey: DefenseKey;
   transactionUnavailableReason?: string | undefined;
 }) {
@@ -851,6 +878,7 @@ function MoonDefenseSection({
       onOpenRequirement={onOpenRequirement}
       onSelect={onSelectDefense}
       queue={productionQueueViewModel(moonState?.defenseQueue, defenseCatalog)}
+      queueProgress={progressState}
       queueTone="rose"
       selectedKey={selectedDefenseKey}
       title="Defenses"

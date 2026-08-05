@@ -22,6 +22,7 @@ import { refreshButtonState } from "./PageHeader";
 import type { RequirementTarget } from "./RequirementFlairs";
 import { ProductionCatalogSkeleton } from "./LoadingSkeletons";
 import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailableNotice";
+import type { ConstructionProgress } from "../constructionProgress";
 
 type ShipyardActionState =
   | { status: "idle" }
@@ -42,6 +43,7 @@ interface ShipyardPageProps {
   onSelectShip?: ((key: ShipKey) => void) | undefined;
   overviewQueue?: ChainShipyardState["queue"] | undefined;
   productionRates?: Resources | undefined;
+  progressState?: ConstructionProgress | undefined;
   selectedShipKey?: ShipKey | undefined;
   shipyardState: ChainShipyardState | null;
   spendableResources?: Resources | undefined;
@@ -80,6 +82,7 @@ export function ShipyardPage({
   onSelectShip,
   overviewQueue,
   productionRates,
+  progressState,
   selectedShipKey,
   shipyardState,
   spendableResources,
@@ -133,6 +136,7 @@ export function ShipyardPage({
             onSelectShip?.(key);
           }}
           queue={productionQueueViewModel(queue, shipCatalog)}
+          queueProgress={progressState}
           queueTone="sky"
           selectedKey={selectedKey}
         />
