@@ -1016,15 +1016,20 @@ describe("Mission Control battle reports", () => {
     });
     const filterDetails = findElements(tree, "details").find((node) => node.props?.["data-mission-filters"] === true);
     const trigger = findElements(filterDetails, "summary")[0];
+    const filterCount = findElements(trigger, "span").find((node) => node.props?.["data-mission-filter-count"] === true);
     const dialog = findElements(filterDetails, "div").find((node) => node.props?.role === "dialog");
     const clearButton = findElements(filterDetails, "button").find((node) => collectText(node).includes("Clear all"));
     const inputs = findElements(filterDetails, "input");
     const selects = findElements(filterDetails, "select");
+    const toolbar = findElements(tree, "div").find((node) => node.props?.["data-mission-toolbar"] === true);
 
     expect(filterDetails?.props?.["data-active-filter-count"]).toBe(4);
     expect(trigger?.props?.["aria-label"]).toBe("Mission filters, 4 active");
+    expect(collectText(filterCount)).toContain("4");
     expect(trigger?.props?.["aria-haspopup"]).toBe("dialog");
     expect(trigger?.props?.["aria-controls"]).toBe("mission-control-filter-popover");
+    expect(findElements(toolbar, "details").some((node) => node.props?.["data-mission-filters"] === true)).toBe(true);
+    expect(findElements(toolbar, "button").some((node) => node.props?.["data-mission-disclosure-toggle"] === true)).toBe(true);
     expect(dialog?.props?.["aria-label"]).toBe("Mission filters");
     expect(String(dialog?.props?.className)).toContain("calc(100vw-1.5rem)");
     expect(inputs.map((input) => input.props?.["aria-label"])).toEqual([
@@ -1065,6 +1070,7 @@ describe("Mission Control battle reports", () => {
     const neutralTrigger = findElements(neutralDetails, "summary")[0];
     expect(neutralDetails?.props?.["data-active-filter-count"]).toBe(0);
     expect(neutralTrigger?.props?.["aria-label"]).toBe("Mission filters");
+    expect(findElements(neutralTrigger, "span").some((node) => node.props?.["data-mission-filter-count"] === true)).toBe(false);
   });
 
   test("applies mission type and flight state from the mobile select input event", () => {

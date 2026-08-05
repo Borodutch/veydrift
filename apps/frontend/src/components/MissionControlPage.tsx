@@ -1,4 +1,5 @@
-import { ChevronDown, ChevronLeft, ChevronRight, Clipboard, ExternalLink, Filter, List, Undo2 } from "lucide-preact";
+import { ChevronDown, ChevronLeft, ChevronRight, ChevronsDownUp, ChevronsUpDown, Clipboard, ExternalLink, Filter, List, Undo2 } from "lucide-preact";
+import type { ComponentChildren } from "preact";
 
 import { ActionReasonNote } from "./ActionReasonNote";
 import { galaxyActionIcon } from "./GalaxyActionIcon";
@@ -36,7 +37,7 @@ import {
   missionRouteLeg,
   shortAddress,
 } from "./missionRoute";
-import { PageHeader, refreshButtonState } from "./PageHeader";
+import { refreshButtonState } from "./PageHeader";
 import { MissionControlSkeleton } from "./LoadingSkeletons";
 import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailableNotice";
 
@@ -317,24 +318,6 @@ export function MissionControlPage({
 
   return (
     <section className="grid gap-3" data-mission-control-page ref={scheduleMissionRowsDisclosureSync}>
-      <PageHeader
-        actions={(
-          <>
-            <MissionFilterPopover
-              filters={normalizedFilters}
-              onChange={(filters) => {
-                onMissionFiltersChange?.(filters);
-                if (filters.missionNumber !== normalizedFilters.missionNumber) {
-                  onMissionNumberSearchChange?.(filters.missionNumber);
-                }
-              }}
-            />
-            <MissionRowsDisclosureControl hidden={!hasVisibleExpandableRows} />
-          </>
-        )}
-        title="Mission Control"
-      />
-
       {actionState.status !== "idle" && (
         <Notice tone={actionState.status === "error" ? "danger" : actionState.status === "success" ? "success" : "info"}>
           {actionState.label}
@@ -375,6 +358,20 @@ export function MissionControlPage({
             onRecall={onRecall}
             planetLookup={planetLookup}
             transactionUnavailableReason={transactionUnavailableReason}
+            toolbarActions={(
+              <>
+                <MissionFilterPopover
+                  filters={normalizedFilters}
+                  onChange={(filters) => {
+                    onMissionFiltersChange?.(filters);
+                    if (filters.missionNumber !== normalizedFilters.missionNumber) {
+                      onMissionNumberSearchChange?.(filters.missionNumber);
+                    }
+                  }}
+                />
+                <MissionRowsDisclosureControl hidden={!hasVisibleExpandableRows} />
+              </>
+            )}
             wallet={walletAddress}
             walletPlanetIds={walletPlanetIds}
           />
@@ -873,6 +870,7 @@ function ActiveMissionSection({
   onTabChange,
   planetLookup,
   showAllianceTab = true,
+  toolbarActions,
   transactionUnavailableReason,
   wallet,
   walletPlanetIds,
@@ -895,6 +893,7 @@ function ActiveMissionSection({
   onTabChange?: ((tab: ActiveMissionTabKey) => void) | undefined;
   planetLookup: ReadonlyMap<string, MissionPlanetIdentity>;
   showAllianceTab?: boolean | undefined;
+  toolbarActions?: ComponentChildren | undefined;
   transactionUnavailableReason?: string | undefined;
   wallet?: string | undefined;
   walletPlanetIds: ReadonlySet<string>;
@@ -917,8 +916,8 @@ function ActiveMissionSection({
     walletPlanetIds,
   };
   return (
-    <section className="min-w-0 overflow-hidden rounded-lg border border-white/10 bg-[#101624]" data-active-tab={activeTab}>
-      <div className="flex flex-col gap-2 border-b border-white/10 bg-black/20 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
+    <section className="min-w-0 rounded-lg border border-white/10 bg-[#101624]" data-active-tab={activeTab}>
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-t-lg border-b border-white/10 bg-black/20 px-3 py-2">
         <div aria-label="Active missions" className="flex flex-wrap gap-1.5" role="tablist">
           {visibleTabs.map((tab) => (
             <button
@@ -937,6 +936,11 @@ function ActiveMissionSection({
             </button>
           ))}
         </div>
+        {toolbarActions ? (
+          <div className="ml-auto flex shrink-0 items-center gap-1.5" data-mission-toolbar>
+            {toolbarActions}
+          </div>
+        ) : null}
       </div>
       {visibleTabs.filter((tab) => tab.key === activeTab).map((tab) => (
         <div data-active-tab-panel={tab.key} key={tab.key} role="tabpanel">
@@ -977,7 +981,7 @@ function MissionRowsDisclosureControl({ hidden }: { hidden: boolean }) {
   return (
     <button
       aria-label="Expand all visible mission cards"
-      className="h-9 rounded-md border border-white/10 bg-white/5 px-3 text-xs font-semibold text-slate-200 transition hover:bg-white/10"
+      className="inline-flex size-8 items-center justify-center rounded-md border border-white/10 bg-white/5 text-slate-300 transition hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/50"
       data-mission-disclosure-toggle
       hidden={hidden}
       onClick={(event) => {
@@ -990,7 +994,9 @@ function MissionRowsDisclosureControl({ hidden }: { hidden: boolean }) {
       title="Expand all visible mission cards"
       type="button"
     >
-      Expand all
+      <ChevronsUpDown aria-hidden="true" data-mission-disclosure-expand-icon size={15} />
+      <ChevronsDownUp aria-hidden="true" data-mission-disclosure-collapse-icon hidden size={15} />
+      <span className="sr-only" data-mission-disclosure-label>Expand all</span>
     </button>
   );
 }
@@ -1019,7 +1025,13 @@ function syncMissionRowsDisclosureControl(source: Element): void {
   const rows = visibleMissionRows(root);
   const state = missionRowsDisclosureState(rows);
   button.hidden = rows.length === 0;
-  button.textContent = state.label;
+  button.dataset.expanded = String(state.allExpanded);
+  const label = button.querySelector<HTMLElement>("[data-mission-disclosure-label]");
+  if (label) label.textContent = state.label;
+  const expandIcon = button.querySelector("[data-mission-disclosure-expand-icon]");
+  const collapseIcon = button.querySelector("[data-mission-disclosure-collapse-icon]");
+  expandIcon?.toggleAttribute("hidden", state.allExpanded);
+  collapseIcon?.toggleAttribute("hidden", !state.allExpanded);
   const accessibleLabel = `${state.label} visible mission cards`;
   button.setAttribute("aria-label", accessibleLabel);
   button.title = accessibleLabel;
@@ -1065,18 +1077,23 @@ function MissionFilterPopover({
         aria-controls="mission-control-filter-popover"
         aria-haspopup="dialog"
         aria-label={triggerLabel}
-        className={`flex h-9 cursor-pointer list-none items-center gap-2 rounded-md border px-3 text-xs font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/50 [&::-webkit-details-marker]:hidden ${
+        className={`relative flex size-8 cursor-pointer list-none items-center justify-center rounded-md border transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/50 [&::-webkit-details-marker]:hidden ${
           active
             ? "border-cyan-300/40 bg-cyan-300/10 text-cyan-100 hover:bg-cyan-300/15"
             : "border-white/10 bg-white/5 text-slate-200 hover:bg-white/10"
         }`}
         title={triggerLabel}
       >
-        {/* No count badge: the trigger's cyan active styling already signals filters are applied
-            (the exact count lives in the aria-label + title). */}
-        <Filter aria-hidden="true" size={14} />
-        <span>Filters</span>
-        <ChevronDown aria-hidden="true" className="text-slate-500 transition-transform group-open/filters:rotate-180" size={13} />
+        <Filter aria-hidden="true" size={15} />
+        {active ? (
+          <span
+            aria-hidden="true"
+            className="absolute -right-1 -top-1 flex size-4 items-center justify-center rounded-full bg-cyan-300 text-[9px] font-bold leading-none text-slate-950 ring-2 ring-[#0b111d]"
+            data-mission-filter-count
+          >
+            {activeFilterCount}
+          </span>
+        ) : null}
       </summary>
 
       {/* Same visual system as the rest of the screen: the one uppercase-tracked label style for
