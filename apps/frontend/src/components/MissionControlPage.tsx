@@ -202,7 +202,11 @@ export function MissionControlPage({
   const completedMissions = fleetVisibility?.completedMissions ?? [];
   const battleReports = fleetVisibility?.battleReports ?? [];
   const activeMissionRows = chronologicalActiveMissionRows({ incoming, joinableAttacks, outgoing, returning });
-  const { alliance: allianceMissionRows, mine: myMissionRows } = partitionActiveMissionRows(activeMissionRows);
+  const {
+    alliance: allianceMissionRows,
+    incoming: incomingMissionRows,
+    mine: myMissionRows,
+  } = partitionActiveMissionRows(activeMissionRows);
   // Universe-wide active rows for the "All" tab: the player's own/alliance missions keep their exact
   // classification (direction + lifecycle actions); every other active mission renders read-only.
   const allActiveRows = allActiveMissionRows(allActiveMissions, activeMissionRows);
@@ -264,6 +268,7 @@ export function MissionControlPage({
   const rawIncomingAttackPastRows = rawIncomingAttackArchiveRows ?? incomingAttackPastMissionRows(pastMissionRows, walletAddress, walletPlanetIds);
   const incomingAttackRows = dedupePastMissionRows(rawIncomingAttackPastRows, activeMissionIds);
   const filteredMyMissionRows = filterActiveMissionRows(myMissionRows, normalizedFilters);
+  const filteredIncomingMissionRows = filterActiveMissionRows(incomingMissionRows, normalizedFilters);
   const filteredAllianceMissionRows = filterActiveMissionRows(allianceMissionRows, normalizedFilters);
   const filteredAllActiveRows = filterActiveMissionRows(allActiveRows, normalizedFilters);
   const filteredStationedIncoming = incoming.filter((mission) =>
@@ -298,7 +303,9 @@ export function MissionControlPage({
     ? filteredAllActiveRows
     : activeTab === "alliance"
       ? filteredAllianceMissionRows
-      : filteredMyMissionRows;
+      : activeTab === "incoming"
+        ? filteredIncomingMissionRows
+        : filteredMyMissionRows;
   const selectedPastRows = view.pastTab === "all"
     ? filteredGlobalPastMissionRows
     : view.pastTab === "incomingAttacks"
@@ -347,6 +354,7 @@ export function MissionControlPage({
             canTransact={canTransact}
             lootByMissionId={lootByMissionId}
             lossesByMissionId={lossesByMissionId}
+            incomingRows={filteredIncomingMissionRows}
             missionFiltersActive={missionFiltersActive}
             missionFilterEmptyLabel={filterEmptyLabel}
             myRows={filteredMyMissionRows}
@@ -843,6 +851,7 @@ const ACTIVE_MISSION_TABS = [
   // The one active-section empty state: the tab panel says it, so no separate page-level notice
   // repeats it two lines above.
   { emptyLabel: "No active missions for this wallet. Use Galaxy to launch attacks, transport resources, deploy fleets, or harvest debris.", key: "mine", label: "My missions" },
+  { emptyLabel: "No fleets are currently inbound to your planets.", key: "incoming", label: "Incoming" },
   { emptyLabel: "No joinable alliance attacks.", key: "alliance", label: "Alliance" },
   { emptyLabel: "No active missions in the universe yet.", key: "all", label: "All" },
 ] as const;
@@ -858,6 +867,7 @@ function ActiveMissionSection({
   allRows,
   allianceRows,
   canTransact,
+  incomingRows,
   lootByMissionId,
   lossesByMissionId,
   missionFilterEmptyLabel,
@@ -881,6 +891,7 @@ function ActiveMissionSection({
   allRows: ActiveMissionRow[];
   allianceRows: ActiveMissionRow[];
   canTransact: boolean;
+  incomingRows: ActiveMissionRow[];
   lootByMissionId: ReadonlyMap<string, BattleReport["loot"]>;
   lossesByMissionId: ReadonlyMap<string, MissionLossSummary>;
   missionFilterEmptyLabel: string;
@@ -898,7 +909,12 @@ function ActiveMissionSection({
   wallet?: string | undefined;
   walletPlanetIds: ReadonlySet<string>;
 }) {
-  const rowsByTab: Record<ActiveMissionTabKey, ActiveMissionRow[]> = { all: allRows, alliance: allianceRows, mine: myRows };
+  const rowsByTab: Record<ActiveMissionTabKey, ActiveMissionRow[]> = {
+    all: allRows,
+    alliance: allianceRows,
+    incoming: incomingRows,
+    mine: myRows,
+  };
   const visibleTabs = ACTIVE_MISSION_TABS.filter((tab) => tab.key !== "alliance" || showAllianceTab);
   const sharedRowProps = {
     activePlanetId,
@@ -2846,16 +2862,23 @@ function showPastMissionPage(event: Event, target: number | "next" | "previous")
   syncMissionRowsDisclosureControl(section);
 }
 
-export function partitionActiveMissionRows(rows: ActiveMissionRow[]): { alliance: ActiveMissionRow[]; mine: ActiveMissionRow[] } {
-  // "Alliance" holds joinable alliance attacks; "My missions" holds the player's own outbound,
-  // incoming hostile, and returning fleets. Rows are already deduped + chronologically sorted upstream.
+export function partitionActiveMissionRows(rows: ActiveMissionRow[]): {
+  alliance: ActiveMissionRow[];
+  incoming: ActiveMissionRow[];
+  mine: ActiveMissionRow[];
+} {
+  // Keep the player's fleet-slot usage legible: own outbound/returning fleets belong to "My missions",
+  // fleets other players sent toward the wallet belong to "Incoming", and joinable attacks stay in
+  // "Alliance". Rows are already deduped + chronologically sorted upstream.
   const alliance: ActiveMissionRow[] = [];
+  const incoming: ActiveMissionRow[] = [];
   const mine: ActiveMissionRow[] = [];
   for (const row of rows) {
     if (row.context === "joinable") alliance.push(row);
+    else if (row.context === "incoming") incoming.push(row);
     else mine.push(row);
   }
-  return { alliance, mine };
+  return { alliance, incoming, mine };
 }
 
 function showActiveMissionTab(event: Event, key: string) {
