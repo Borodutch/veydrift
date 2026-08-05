@@ -107,6 +107,9 @@ function parseInspectPathValue(rawPath: string): InspectRoute | null {
   if (kind === "invite" || kind === "alliance-invites") {
     return { kind: "page", page: "alliance-invites" };
   }
+  if (kind === "raid-finder") {
+    return { kind: "page", page: "raid-target-finder" };
+  }
   if (pageNames.has(kind as Page)) {
     return { kind: "page", page: kind as Page };
   }
@@ -162,6 +165,7 @@ export function buildInspectPath(route: InspectRoute): string {
   if (route.kind === "mission") return `/mission/${encodeURIComponent(route.missionId)}`;
   if (route.kind === "mission-report") return `/mission-control/report/${encodeURIComponent(route.missionId)}`;
   if (route.page === "alliance-invites") return "/invite";
+  if (route.page === "raid-target-finder") return "/raid-finder";
   return route.page === "overview" ? "/" : `/${route.page}`;
 }
 

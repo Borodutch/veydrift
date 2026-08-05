@@ -137,6 +137,7 @@ const gameAppPaths = new Set([
   "/rift",
   "/rankings",
   "/galaxy",
+  "/raid-finder",
   "/raid-target-finder",
   "/planet",
   "/battle-reports",
