@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import {IVeydriftAllianceGame, VeydriftAllianceSystem} from "../src/VeydriftAllianceSystem.sol";
 import {RandomnessEngine} from "../src/RandomnessEngine.sol";
 import {VeydriftAttackProtectionModule} from "../src/VeydriftAttackProtectionModule.sol";
@@ -15,8 +16,12 @@ import {VeydriftGame} from "../src/VeydriftGame.sol";
 import {VeydriftGameStorage} from "../src/VeydriftGameStorage.sol";
 import {VeydriftGameplayModule} from "../src/VeydriftGameplayModule.sol";
 import {VeydriftPlanetManagementModule} from "../src/VeydriftPlanetManagementModule.sol";
+import {
+    IVeydriftPaidInviteAlliance,
+    VeydriftPaidAllianceInvites
+} from "../src/VeydriftPaidAllianceInvites.sol";
 import {VeydriftStateMigrationModule} from "../src/VeydriftStateMigrationModule.sol";
-import {Resource, Ship} from "../src/libraries/VeydriftTypes.sol";
+import {Building, Resource, Ship} from "../src/libraries/VeydriftTypes.sol";
 
 contract AllianceMockResourceToken {
     mapping(address account => uint256 balance) public balanceOf;
@@ -103,9 +108,12 @@ contract VeydriftAllianceSystemTest is Test {
     address internal enemy = address(0xE11A);
     address internal recruit = address(0xBEEF);
     address internal fulfiller = address(0xF17F);
+    address internal newCommander = address(0x818);
+    uint256 internal inviteSignerKey = 0x818818;
 
     VeydriftGame internal game;
     VeydriftAllianceSystem internal alliances;
+    VeydriftPaidAllianceInvites internal paidInvites;
     AllianceMockResourceToken internal metalToken;
     AllianceMockResourceToken internal crystalToken;
     AllianceMockResourceToken internal deuteriumToken;
@@ -137,11 +145,16 @@ contract VeydriftAllianceSystemTest is Test {
         vm.prank(admin);
         randomness.setPrecommitRequired(false);
         alliances = new VeydriftAllianceSystem(IVeydriftAllianceGame(address(game)));
+        paidInvites = new VeydriftPaidAllianceInvites(
+            IVeydriftPaidInviteAlliance(address(alliances)), admin, vm.addr(inviteSignerKey)
+        );
         metalToken = new AllianceMockResourceToken();
         crystalToken = new AllianceMockResourceToken();
         deuteriumToken = new AllianceMockResourceToken();
         _fundGameReserves(1_000_000_000);
+        alliances.setPaidInviteSystem(address(paidInvites));
         vm.startPrank(admin);
+        game.setAllianceSystem(address(alliances));
         game.setRandomnessEngine(address(randomness));
         randomness.setRequesterAuthorization(address(game), true);
         vm.stopPrank();
@@ -149,10 +162,188 @@ contract VeydriftAllianceSystemTest is Test {
         vm.deal(member, 1 ether);
         vm.deal(enemy, 1 ether);
         vm.deal(recruit, 1 ether);
+        vm.deal(newCommander, 1 ether);
         _start(leader);
         _start(member);
         _start(enemy);
         _start(recruit);
+    }
+
+    function testPaidInvitePrepaysSettlementAutoJoinsAndReusesStarterBonus() public {
+        vm.prank(leader);
+        uint256 allianceId = alliances.createAlliance("VDFT", "Veydrift Union", "");
+        bytes32 secret = keccak256("high entropy secret kept in private link");
+        bytes32 commitment = keccak256(abi.encode(secret));
+        uint256 price = paidInvites.INVITE_PRICE();
+        uint256 gameFeeBalanceBefore = address(game).balance;
+
+        vm.prank(leader);
+        paidInvites.buy{value: price}(commitment);
+        VeydriftPaidAllianceInvites.PaidInvite memory purchased = paidInvites.invite(commitment);
+        assertEq(purchased.allianceId, allianceId);
+        assertEq(purchased.settlementPrice, price);
+        assertEq(address(paidInvites).balance, 0);
+        assertEq(address(game).balance, gameFeeBalanceBefore + price, "fee enters game treasury");
+
+        uint64 expiresAt = uint64(block.timestamp + 10 minutes);
+        (uint8 v, bytes32 r, bytes32 s) = _signPaidInvite(commitment, newCommander, expiresAt);
+        vm.prank(newCommander);
+        uint256 planetId = game.startPlanetWithAllianceInvite(commitment, expiresAt, v, r, s);
+
+        assertEq(game.homePlanetOf(newCommander), planetId);
+        VeydriftAllianceSystem.Membership memory membership = alliances.allianceOf(newCommander);
+        assertEq(membership.allianceId, allianceId);
+        assertEq(uint8(membership.role), uint8(VeydriftAllianceSystem.AllianceRole.Member));
+        VeydriftGameStorage.Planet memory planet = game.planet(planetId);
+        assertEq(planet.resources.metal, 1_000, "must reuse referral starter bonus");
+        assertEq(planet.resources.crystal, 1_000, "must reuse referral starter bonus");
+
+        vm.prank(newCommander);
+        vm.expectRevert();
+        game.startPlanetWithAllianceInvite(commitment, expiresAt, v, r, s);
+    }
+
+    function testPaidInviteAuthorizationIsRecipientBoundExpiringAndSingleUse() public {
+        vm.prank(leader);
+        alliances.createAlliance("VDFT", "Veydrift Union", "");
+        bytes32 commitment = keccak256("private-link-2");
+        uint256 price = paidInvites.INVITE_PRICE();
+        vm.prank(leader);
+        paidInvites.buy{value: price}(commitment);
+        uint64 expiresAt = uint64(block.timestamp + 5 minutes);
+        (uint8 v, bytes32 r, bytes32 s) = _signPaidInvite(commitment, newCommander, expiresAt);
+
+        address frontRunner = address(0xF00D);
+        vm.deal(frontRunner, 1 ether);
+        vm.prank(frontRunner);
+        vm.expectRevert(VeydriftPaidAllianceInvites.InvalidAuthorization.selector);
+        game.startPlanetWithAllianceInvite(commitment, expiresAt, v, r, s);
+
+        vm.warp(expiresAt);
+        vm.prank(newCommander);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftPaidAllianceInvites.InvalidAuthorizationExpiry.selector,
+                expiresAt,
+                uint64(1 + paidInvites.INVITE_LIFETIME())
+            )
+        );
+        game.startPlanetWithAllianceInvite(commitment, expiresAt, v, r, s);
+    }
+
+    function testAnyCurrentMemberCanBuyButNonMembersCannot() public {
+        vm.prank(leader);
+        uint256 allianceId = alliances.createAlliance("VDFT", "Veydrift Union", "");
+        _inviteAndAccept(allianceId, member);
+        uint256 price = paidInvites.INVITE_PRICE();
+
+        bytes32 memberCommitment = keccak256("member-paid-invite");
+        vm.prank(member);
+        paidInvites.buy{value: price}(memberCommitment);
+        assertEq(paidInvites.invite(memberCommitment).purchaser, member);
+
+        vm.prank(address(0xF00D));
+        vm.expectRevert();
+        paidInvites.buy{value: price}(keccak256("outsider-paid-invite"));
+    }
+
+    function testProductionBonusCarriesDustPausesAndResumesOnSameAllianceRejoin() public {
+        vm.prank(leader);
+        uint256 allianceId = alliances.createAlliance("VDFT", "Veydrift Union", "");
+        bytes32 commitment = keccak256("private-link-3");
+        uint256 price = paidInvites.INVITE_PRICE();
+        vm.prank(leader);
+        paidInvites.buy{value: price}(commitment);
+        uint64 expiresAt = uint64(block.timestamp + 10 minutes);
+        (uint8 v, bytes32 r, bytes32 s) = _signPaidInvite(commitment, newCommander, expiresAt);
+        vm.prank(newCommander);
+        game.startPlanetWithAllianceInvite(commitment, expiresAt, v, r, s);
+
+        VeydriftGameStorage.Resources memory produced =
+            VeydriftGameStorage.Resources({metal: 49, crystal: 149, deuterium: 249});
+        vm.prank(address(game));
+        alliances.creditPaidInviteProduction(
+            newCommander, produced.metal, produced.crystal, produced.deuterium
+        );
+        vm.prank(address(game));
+        alliances.creditPaidInviteProduction(
+            newCommander, produced.metal, produced.crystal, produced.deuterium
+        );
+        VeydriftGameStorage.Resources memory balance = paidInvites.bonusBalance(allianceId);
+        assertEq(balance.metal, 1, "fractional 2% must carry across settlements");
+        assertEq(balance.crystal, 5);
+        assertEq(balance.deuterium, 9);
+
+        vm.prank(newCommander);
+        alliances.leaveAlliance();
+        vm.prank(address(game));
+        alliances.creditPaidInviteProduction(newCommander, 1_000, 1_000, 1_000);
+        assertEq(paidInvites.bonusBalance(allianceId).metal, 1, "leaving must pause credit");
+
+        vm.prank(leader);
+        alliances.inviteMember(allianceId, newCommander);
+        vm.prank(newCommander);
+        alliances.acceptInvite(allianceId);
+        vm.prank(address(game));
+        alliances.creditPaidInviteProduction(newCommander, 1_000, 1_000, 1_000);
+        balance = paidInvites.bonusBalance(allianceId);
+        assertEq(balance.metal, 21, "rejoining issuing alliance must resume credit");
+    }
+
+    function testOfficerCreditsCanonicalProductionBonusToOwnedPlanetBeforeRift() public {
+        vm.prank(leader);
+        uint256 allianceId = alliances.createAlliance("VDFT", "Veydrift Union", "");
+        _inviteAndAccept(allianceId, member);
+        vm.prank(leader);
+        alliances.setMemberRole(allianceId, member, VeydriftAllianceSystem.AllianceRole.Officer);
+
+        bytes32 commitment = keccak256("private-link-4");
+        uint256 price = paidInvites.INVITE_PRICE();
+        vm.prank(leader);
+        paidInvites.buy{value: price}(commitment);
+        uint64 expiresAt = uint64(block.timestamp + 10 minutes);
+        (uint8 v, bytes32 r, bytes32 s) = _signPaidInvite(commitment, newCommander, expiresAt);
+        vm.prank(newCommander);
+        uint256 planetId = game.startPlanetWithAllianceInvite(commitment, expiresAt, v, r, s);
+
+        vm.prank(newCommander);
+        game.startBuildingUpgrade(planetId, Building.SolarPlant);
+        vm.warp(block.timestamp + 365 days);
+        vm.prank(newCommander);
+        game.collectResources(planetId);
+        vm.prank(newCommander);
+        game.startBuildingUpgrade(planetId, Building.MetalMine);
+        vm.warp(block.timestamp + 365 days);
+        vm.prank(newCommander);
+        game.collectResources(planetId);
+        vm.warp(block.timestamp + 100 hours);
+        vm.prank(newCommander);
+        game.collectResources(planetId);
+
+        VeydriftGameStorage.Resources memory balance = paidInvites.bonusBalance(allianceId);
+        assertGt(balance.metal, 0, "canonical settled mine output must accrue a 2% bonus");
+        uint256 destinationPlanetId = game.homePlanetOf(member);
+        VeydriftGameStorage.Resources memory destinationBefore =
+        game.planet(destinationPlanetId).resources;
+        uint256 walletTokenBalanceBefore = metalToken.balanceOf(member);
+        uint256 leaderPlanetId = game.homePlanetOf(leader);
+        vm.prank(member);
+        vm.expectRevert();
+        paidInvites.withdraw(allianceId, leaderPlanetId);
+        vm.prank(member);
+        paidInvites.withdraw(allianceId, destinationPlanetId);
+        VeydriftGameStorage.Resources memory destinationAfter =
+        game.planet(destinationPlanetId).resources;
+        assertEq(destinationAfter.metal, destinationBefore.metal + balance.metal);
+        assertEq(
+            metalToken.balanceOf(member),
+            walletTokenBalanceBefore,
+            "treasury credit must not bypass ordinary Rift extraction"
+        );
+        VeydriftGameStorage.Resources memory afterBalance = paidInvites.bonusBalance(allianceId);
+        assertEq(afterBalance.metal, 0);
+        assertEq(afterBalance.crystal, 0);
+        assertEq(afterBalance.deuterium, 0);
     }
 
     function testAllianceCreationInvitesRolesAndPublicMembers() public {
@@ -1336,6 +1527,17 @@ contract VeydriftAllianceSystemTest is Test {
     function _start(address player) internal {
         vm.prank(player);
         game.startPlanet{value: 0.05 ether}();
+    }
+
+    function _signPaidInvite(bytes32 commitment, address invitee, uint64 expiresAt)
+        internal
+        view
+        returns (uint8 v, bytes32 r, bytes32 s)
+    {
+        bytes32 digest = MessageHashUtils.toEthSignedMessageHash(
+            paidInvites.authorizationHash(commitment, invitee, expiresAt)
+        );
+        return vm.sign(inviteSignerKey, digest);
     }
 
     function _inviteAndAccept(uint256 allianceId, address player) internal {

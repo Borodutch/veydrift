@@ -79,6 +79,7 @@ export type SettlementConfig = {
   legacyAddress?: string;
   migrationAddress?: string;
   referralSystemAddress?: string;
+  paidAllianceInviteAddress?: string;
   resourceTokensConfigured?: boolean;
 };
 
@@ -109,10 +110,25 @@ export type MigrationClaimPayload = {
 };
 
 export type SettlementTransactionOptions = {
+  allianceInvite?: PaidAllianceInviteRedemption | null;
   migrationClaim?: MigrationClaimPayload | null;
   migrationContractAddress?: string;
   referral?: ReferralRedemption | null;
   startPriceWei?: bigint | null;
+};
+
+export type PaidAllianceInviteRedemption = {
+  commitment: string;
+  expiresAt: string;
+  signature: string;
+};
+
+export type PaidAllianceInviteResolution = {
+  commitment: string;
+  allianceId: string | null;
+  validUntil: string | null;
+  status: "active" | "expired" | "invalid" | "redeemed";
+  valid: boolean;
 };
 
 export type ReferralInviteSummary = {
@@ -1077,6 +1093,7 @@ export type ChainAllianceState = {
     createdAt: string;
     memberCount: number;
     totalMemberScore?: string;
+    bonusBalance?: { metal: string; crystal: string; deuterium: string } | null;
   } | null;
   directory: Array<{
     allianceId: string;
@@ -1089,6 +1106,7 @@ export type ChainAllianceState = {
     createdAt: string;
     memberCount: number;
     totalMemberScore?: string;
+    bonusBalance?: { metal: string; crystal: string; deuterium: string } | null;
     members?: Array<{
       address: string;
       displayName?: string | null;
@@ -1396,6 +1414,10 @@ const MIGRATION_CLAIM_WITH_REFERRAL_SELECTOR = "0x98bf164a";
 const MIGRATION_RESERVATION_SELECTOR = "0xcd48c907";
 const CLAIM_REFERRAL_CODE_SELECTOR = "0x03b52c94";
 const START_PLANET_WITH_REFERRAL_SELECTOR = "0xdad57ff9";
+const START_PLANET_WITH_ALLIANCE_INVITE_SELECTOR = "0x042fec83";
+const BUY_PAID_ALLIANCE_INVITE_SELECTOR = "0x9c9a1061";
+const WITHDRAW_PAID_ALLIANCE_BONUS_SELECTOR = "0x441a3e70";
+export const PAID_ALLIANCE_INVITE_PRICE_WEI = 6_000_000_000_000_000n;
 const GAME_SELECTORS = {
   abandonPlanet: "0xfa16dddc",
   completeFleetMissionReturn: "0xc2472852",
@@ -2974,6 +2996,13 @@ export async function sendSettlementTransaction(
       });
     }
 
+    if (options.allianceInvite) {
+      return sendWalletTransaction(provider, account, {
+        from: account,
+        to: config.address,
+        data: encodePaidAllianceInviteSettlement(options.allianceInvite),
+      });
+    }
     return sendWalletTransaction(provider, account, {
       from: account,
       to: config.address,
@@ -2991,6 +3020,100 @@ export async function sendSettlementTransaction(
       ? encodeReferralSettlementData(SETTLE_FIRST_PLANET_WITH_REFERRAL_SELECTOR, options.referral)
       : settlementTransactionData()
   });
+}
+
+export function generatePaidAllianceInviteSecret(random = crypto): `0x${string}` {
+  const bytes = new Uint8Array(32);
+  random.getRandomValues(bytes);
+  return `0x${Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("")}`;
+}
+
+export function paidAllianceInviteCommitment(secret: string): `0x${string}` {
+  if (!/^0x[0-9a-fA-F]{64}$/.test(secret)) throw new Error("Alliance invite secret must be 32 bytes.");
+  return keccak256(secret as `0x${string}`);
+}
+
+export function paidAllianceInviteLink(secret: string, origin = "https://veydrift.com"): string {
+  paidAllianceInviteCommitment(secret);
+  const url = new URL(origin);
+  url.searchParams.set("allianceInvite", secret);
+  return url.toString();
+}
+
+export function paidAllianceInviteSecretFromSearch(search: string): string {
+  const secret = new URLSearchParams(search).get("allianceInvite")?.trim() ?? "";
+  return /^0x[0-9a-fA-F]{64}$/.test(secret) ? secret.toLowerCase() : "";
+}
+
+export async function resolvePaidAllianceInvite(apiUrl: string, secret: string): Promise<PaidAllianceInviteResolution> {
+  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/alliance-invites/resolve?secret=${encodeURIComponent(secret)}`);
+  if (!response.ok) throw new Error(`Alliance invite validation failed (${response.status}).`);
+  return response.json() as Promise<PaidAllianceInviteResolution>;
+}
+
+export async function redeemPaidAllianceInvite(
+  apiUrl: string,
+  secret: string,
+  invitee: string,
+): Promise<PaidAllianceInviteRedemption> {
+  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/alliance-invites/redeem`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ secret, invitee }),
+  });
+  if (!response.ok) throw new Error(`Alliance invite redemption failed (${response.status}).`);
+  return response.json() as Promise<PaidAllianceInviteRedemption>;
+}
+
+export async function sendBuyPaidAllianceInviteTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  commitment: string,
+  priceWei: bigint,
+): Promise<string> {
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: `${BUY_PAID_ALLIANCE_INVITE_SELECTOR}${paidAllianceInviteCommitmentWord(commitment)}`,
+    value: encodeQuantity(priceWei),
+  });
+}
+
+export async function sendWithdrawPaidAllianceBonusTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  allianceId: string,
+  planetId: string,
+): Promise<string> {
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: `${WITHDRAW_PAID_ALLIANCE_BONUS_SELECTOR}${BigInt(allianceId).toString(16).padStart(64, "0")}${BigInt(planetId).toString(16).padStart(64, "0")}`,
+  });
+}
+
+function encodePaidAllianceInviteSettlement(redemption: PaidAllianceInviteRedemption): string {
+  const signature = redemption.signature.replace(/^0x/, "");
+  if (!/^[0-9a-fA-F]{130}$/.test(signature)) throw new Error("Alliance invite authorization signature is invalid.");
+  let v = Number.parseInt(signature.slice(128, 130), 16);
+  if (v < 27) v += 27;
+  return `${START_PLANET_WITH_ALLIANCE_INVITE_SELECTOR}${encodeAbiParameters(
+    parseAbiParameters("bytes32,uint64,uint8,bytes32,bytes32"),
+    [
+      redemption.commitment as `0x${string}`,
+      BigInt(redemption.expiresAt),
+      v,
+      `0x${signature.slice(0, 64)}`,
+      `0x${signature.slice(64, 128)}`,
+    ],
+  ).slice(2)}`;
+}
+
+function paidAllianceInviteCommitmentWord(commitment: string): string {
+  if (!/^0x[0-9a-fA-F]{64}$/.test(commitment)) throw new Error("Alliance invite commitment must be 32 bytes.");
+  return commitment.slice(2).toLowerCase();
 }
 
 export async function sendReferralClaimTransaction(

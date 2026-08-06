@@ -90,6 +90,33 @@ abstract contract VeydriftResourceReserves is VeydriftGameStorage {
             .completeAttackTargetSnapshotQueues(planetId, type(uint64).max);
     }
 
+    /// @dev Credits only the actual canonical production delta accepted for the commander. The
+    /// alliance system decides whether the invitee currently belongs to the issuing alliance and
+    /// carries fractional bps dust. The additional treasury amount is a separate reserve liability;
+    /// it never reduces the commander's planet balance.
+    function _creditAllianceProductionBonus(uint256 planetId, Resources memory produced) internal {
+        address allianceSystem = _allianceSystem;
+        if (
+            allianceSystem == address(0)
+                || (produced.metal == 0 && produced.crystal == 0 && produced.deuterium == 0)
+        ) return;
+        address invitee = _planets[planetId].owner;
+        Resources memory bonus;
+        assembly ("memory-safe") {
+            let pointer := mload(0x40)
+            mstore(pointer, shl(224, 0xdb6161f8))
+            mstore(add(pointer, 4), invitee)
+            mstore(add(pointer, 36), mload(produced))
+            mstore(add(pointer, 68), mload(add(produced, 32)))
+            mstore(add(pointer, 100), mload(add(produced, 64)))
+            if iszero(call(gas(), allianceSystem, 0, pointer, 132, bonus, 96)) {
+                returndatacopy(pointer, 0, returndatasize())
+                revert(pointer, returndatasize())
+            }
+        }
+        _increaseInternalResources(bonus);
+    }
+
     function _recordShipQueueTiming(
         uint256 planetId,
         ShipQueue memory queue,

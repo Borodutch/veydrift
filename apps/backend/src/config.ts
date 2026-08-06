@@ -48,6 +48,8 @@ export type BackendConfig = {
   referralIndexFromBlock?: bigint;
   referralSystemAddress?: `0x${string}`;
   referralSignerPrivateKey?: `0x${string}`;
+  paidAllianceInviteAddress?: `0x${string}`;
+  paidAllianceInviteSignerPrivateKey?: `0x${string}`;
   resourceTokenAddresses: ResourceTokenAddresses;
   rpcUrl?: string;
   rpcFallbackUrls?: string[];
@@ -241,6 +243,16 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
     "VEYDRIFT_REFERRAL_SYSTEM_ADDRESS",
     problems
   );
+  const paidAllianceInviteAddress = parseAddress(
+    env.VEYDRIFT_PAID_ALLIANCE_INVITE_ADDRESS,
+    "VEYDRIFT_PAID_ALLIANCE_INVITE_ADDRESS",
+    problems
+  );
+  const paidAllianceInviteSignerPrivateKey = parsePrivateKey(
+    env.VEYDRIFT_PAID_ALLIANCE_INVITE_SIGNER_PRIVATE_KEY,
+    "VEYDRIFT_PAID_ALLIANCE_INVITE_SIGNER_PRIVATE_KEY",
+    problems
+  );
   const metalTokenAddress = parseAddress(env.VEYDRIFT_METAL_TOKEN_ADDRESS, "VEYDRIFT_METAL_TOKEN_ADDRESS", problems);
   const crystalTokenAddress = parseAddress(
     env.VEYDRIFT_CRYSTAL_TOKEN_ADDRESS,
@@ -293,6 +305,20 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
       });
     }
   }
+  if (env.VEYDRIFT_PAID_ALLIANCE_INVITE_ADDRESS || env.VEYDRIFT_PAID_ALLIANCE_INVITE_SIGNER_PRIVATE_KEY) {
+    if (!paidAllianceInviteAddress) {
+      problems.push({
+        field: "VEYDRIFT_PAID_ALLIANCE_INVITE_ADDRESS",
+        message: "Paid alliance invite configuration requires the deployed invite contract address."
+      });
+    }
+    if (!paidAllianceInviteSignerPrivateKey) {
+      problems.push({
+        field: "VEYDRIFT_PAID_ALLIANCE_INVITE_SIGNER_PRIVATE_KEY",
+        message: "Paid alliance invite configuration requires the backend redemption signer key."
+      });
+    }
+  }
 
   return {
     config: {
@@ -322,6 +348,8 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
       referralIndexFromBlock,
       ...(referralSystemAddress ? { referralSystemAddress } : {}),
       ...(referralSignerPrivateKey ? { referralSignerPrivateKey } : {}),
+      ...(paidAllianceInviteAddress ? { paidAllianceInviteAddress } : {}),
+      ...(paidAllianceInviteSignerPrivateKey ? { paidAllianceInviteSignerPrivateKey } : {}),
       resourceTokenAddresses,
       rpcSource,
       ...(rpcUrl ? { rpcUrl } : {}),

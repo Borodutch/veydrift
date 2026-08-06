@@ -78,6 +78,14 @@ import {
   type ReferralResolveResult
 } from "./referrals";
 import { deriveInfrastructureFields, isCombatShipId, zeroResources } from "./readModels";
+import {
+  buildPaidAllianceInviteAuthorization,
+  createPaidAllianceInviteReader,
+  paidAllianceInviteCommitment,
+  PaidAllianceInviteRateLimiter,
+  resolvePaidAllianceInvite,
+  type PaidAllianceInviteReader,
+} from "./allianceInvites";
 import { planetArchetypeForTemperature, planetMetadata, planetMultipliers, systemSnapshot, type PlanetMetadata, type SystemSnapshot } from "./universe";
 import { responseCachePath, SharedResponseCache } from "./sharedResponseCache";
 import { normalizeStatsUtcOffsetMinutes } from "./stats";
@@ -271,6 +279,8 @@ type RuntimeConfig = {
   referralSignerAddress: string | null;
   referralStartPriceWei: string | null;
   referralSystemAddress: string | null;
+  paidAllianceInviteAddress: string | null;
+  paidAllianceInviteSignerAddress: string | null;
   resourceTokenAddresses: {
     crystal: string | null;
     deuterium: string | null;
@@ -335,6 +345,7 @@ export type ServerDependencies = {
   logRequests?: boolean;
   sharedResponseCache?: SharedResponseCache | null;
   referralStore?: ReferralInviteStore;
+  paidAllianceInviteReader?: PaidAllianceInviteReader;
 };
 
 const defaultUniverseSeed = "veydrift-mainnet-preview";
@@ -502,6 +513,9 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       ? sharedResponseCacheForIndex(loaded.config.indexDbPath)
       : null;
   const referralStore = dependencies.referralStore ?? createReferralStore(loaded.config);
+  const paidAllianceInviteReader = dependencies.paidAllianceInviteReader
+    ?? createPaidAllianceInviteReader(loaded.config);
+  const paidAllianceInviteRateLimiter = new PaidAllianceInviteRateLimiter();
   // A whole-universe prewarm performs every wallet/planet projection back-to-back. On a busy live
   // index that competes with public reads for SQLite and creates the very latency it is intended to
   // avoid. Keep it opt-in for controlled maintenance windows; active routes warm their shared cache
@@ -1026,6 +1040,48 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       }
     }
 
+    if (request.method === "GET" && url.pathname === "/alliance-invites/resolve") {
+      try {
+        if (!paidAllianceInviteReader) {
+          return Response.json({ error: "paid_alliance_invites_unavailable" }, { headers: corsHeaders, status: 503 });
+        }
+        const secret = url.searchParams.get("secret");
+        const commitment = paidAllianceInviteCommitment(secret);
+        const state = await paidAllianceInviteReader.invite(commitment);
+        return Response.json(resolvePaidAllianceInvite(secret, state), { headers: corsHeaders });
+      } catch (error) {
+        return errorResponse(error, 400);
+      }
+    }
+
+    if (request.method === "POST" && url.pathname === "/alliance-invites/redeem") {
+      try {
+        const remote = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
+        if (!paidAllianceInviteRateLimiter.consume(remote)) {
+          return Response.json({ error: "paid_alliance_invite_rate_limited" }, { headers: corsHeaders, status: 429 });
+        }
+        if (!paidAllianceInviteReader) {
+          return Response.json({ error: "paid_alliance_invites_unavailable" }, { headers: corsHeaders, status: 503 });
+        }
+        const body = await readJsonBody(request);
+        const invitee = String(body?.invitee ?? "");
+        assertAddress(invitee);
+        const commitment = paidAllianceInviteCommitment(body?.secret);
+        const state = await paidAllianceInviteReader.invite(commitment);
+        return Response.json(
+          await buildPaidAllianceInviteAuthorization(
+            loaded.config,
+            body?.secret,
+            invitee as ViemAddress,
+            state,
+          ),
+          { headers: corsHeaders },
+        );
+      } catch (error) {
+        return errorResponse(error, 400);
+      }
+    }
+
     if (request.method === "POST" && url.pathname === "/referrals/redeem") {
       try {
         const body = await readJsonBody(request);
@@ -1484,7 +1540,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
       try {
         assertAddress(wallet);
-        return indexedAllianceResponse(wallet, indexer);
+        return await indexedAllianceResponse(wallet, indexer, paidAllianceInviteReader);
       } catch (error) {
         return errorResponse(error, 400);
       }
@@ -1506,9 +1562,15 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
             { headers: indexedStateHeaders(indexedStateLabel(snapshot)), status: 404 }
           );
         }
+        const bonusBalance = paidAllianceInviteReader?.bonusBalance
+          ? await paidAllianceInviteReader.bonusBalance(BigInt(allianceId))
+          : null;
         return Response.json(
           {
-            alliance,
+            alliance: {
+              ...alliance,
+              bonusBalance: serializeAllianceBonusBalance(bonusBalance),
+            },
             source: indexedSource
           },
           { headers: indexedStateHeaders(indexedStateLabel(snapshot)) }
@@ -2190,6 +2252,7 @@ function statsContractDescriptors(config: BackendConfig): Array<{ address: strin
     [config.moonContractAddress, "Moons"],
     [config.migrationContractAddress, "Migration"],
     [config.referralSystemAddress, "Referrals"],
+    [config.paidAllianceInviteAddress, "Paid Alliance Invites"],
     [config.resourceTokenAddresses.metal, "vMETAL"],
     [config.resourceTokenAddresses.crystal, "vCRYSTAL"],
     [config.resourceTokenAddresses.deuterium, "vDEUTERIUM"]
@@ -4385,6 +4448,12 @@ function getRuntimeConfig(workerRole: WorkerRole = envWorkerRole()): RuntimeConf
   const referralSignerAddress = referralSignerPrivateKey && /^0x[a-fA-F0-9]{64}$/.test(referralSignerPrivateKey)
     ? privateKeyToAccount(referralSignerPrivateKey as `0x${string}`).address
     : null;
+  const paidAllianceInviteAddress = process.env.VEYDRIFT_PAID_ALLIANCE_INVITE_ADDRESS ?? null;
+  const paidAllianceInviteSignerPrivateKey = process.env.VEYDRIFT_PAID_ALLIANCE_INVITE_SIGNER_PRIVATE_KEY;
+  const paidAllianceInviteSignerAddress = paidAllianceInviteSignerPrivateKey
+    && /^0x[a-fA-F0-9]{64}$/.test(paidAllianceInviteSignerPrivateKey)
+      ? privateKeyToAccount(paidAllianceInviteSignerPrivateKey as `0x${string}`).address
+      : null;
   const referralStartPriceWei = /^\d+$/.test(process.env.VEYDRIFT_SETTLEMENT_START_PRICE_WEI ?? "")
     ? process.env.VEYDRIFT_SETTLEMENT_START_PRICE_WEI ?? null
     : null;
@@ -4448,6 +4517,8 @@ function getRuntimeConfig(workerRole: WorkerRole = envWorkerRole()): RuntimeConf
     referralSignerAddress,
     referralStartPriceWei,
     referralSystemAddress,
+    paidAllianceInviteAddress,
+    paidAllianceInviteSignerAddress,
     resourceTokenAddresses,
     rpcProvider: rpcUrl.includes("alchemy") ? "alchemy" : "unknown"
   };
@@ -5522,15 +5593,40 @@ function indexedRiftTargetsResponse(indexer: SettlementIndexer | undefined, url:
   );
 }
 
-function indexedAllianceResponse(wallet: `0x${string}`, indexer: SettlementIndexer | undefined): Response {
+async function indexedAllianceResponse(
+  wallet: `0x${string}`,
+  indexer: SettlementIndexer | undefined,
+  paidInviteReader?: PaidAllianceInviteReader,
+): Promise<Response> {
   if (!hasWarmAllianceIndex(indexer)) {
     return indexedReadNotReadyResponse("alliance", indexer, { wallet });
   }
 
   const snapshot = indexer.snapshot();
+  const state = indexer.allianceState(wallet);
+  const balances = new Map<string, ReturnType<typeof serializeAllianceBonusBalance>>();
+  if (paidInviteReader?.bonusBalance) {
+    await Promise.all(state.directory.map(async ({ allianceId }) => {
+      try {
+        const balance = await paidInviteReader.bonusBalance!(BigInt(allianceId));
+        balances.set(allianceId, serializeAllianceBonusBalance(balance));
+      } catch {
+        balances.set(allianceId, null);
+      }
+    }));
+  }
+  const directory = state.directory.map((alliance) => ({
+    ...alliance,
+    bonusBalance: balances.get(alliance.allianceId) ?? null,
+  }));
+  const profile = state.profile
+    ? { ...state.profile, bonusBalance: balances.get(state.membership.allianceId) ?? null }
+    : null;
   return indexedJsonResponse(
     {
-      ...indexer.allianceState(wallet),
+      ...state,
+      profile,
+      directory,
       detail: indexedWarmDetail("Alliance state"),
       stale: !snapshot.safeToServeAllianceState || !snapshot.safeToServeIndexedState
     },
@@ -5539,6 +5635,18 @@ function indexedAllianceResponse(wallet: `0x${string}`, indexer: SettlementIndex
       ? (snapshot.safeToServeIndexedState ? "healthy" : "alliance-healthy")
       : "stale"
   );
+}
+
+function serializeAllianceBonusBalance(
+  balance: { metal: bigint; crystal: bigint; deuterium: bigint } | null | undefined,
+) {
+  return balance
+    ? {
+        metal: balance.metal.toString(),
+        crystal: balance.crystal.toString(),
+        deuterium: balance.deuterium.toString(),
+      }
+    : null;
 }
 
 function indexedAttackProtectionResponse(

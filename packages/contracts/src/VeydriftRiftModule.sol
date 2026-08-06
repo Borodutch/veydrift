@@ -9,6 +9,22 @@ import {Building, Resource} from "./libraries/VeydriftTypes.sol";
 contract VeydriftRiftModule is VeydriftResourceReserves {
     constructor() VeydriftResourceReserves(address(0)) {}
 
+    /// @notice Moves the alliance treasury liability onto a manager-owned planet. External
+    /// withdrawal still uses the ordinary delayed, raidable Rift extraction lifecycle.
+    function creditAllianceBonusToPlanet(
+        uint256 planetId,
+        address manager,
+        Resources calldata amount
+    ) external {
+        if (msg.sender != _allianceSystem) revert Unauthorized(msg.sender);
+        if (_planets[planetId].owner != manager) revert Unauthorized(manager);
+        _planets[planetId].resources = _add(_planets[planetId].resources, amount);
+        _emitPlanetSettled(planetId);
+        emit AllianceBonusCreditedToPlanet(
+            manager, planetId, amount.metal, amount.crystal, amount.deuterium
+        );
+    }
+
     function startRiftExtraction(uint256 planetId, Resource resource, uint128 amount) external {
         _touchPlayer(msg.sender);
         _requirePlanetOwner(planetId);
