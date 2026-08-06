@@ -6,6 +6,7 @@ import { productionQueueViewModel } from "../src/components/ProductionCatalog";
 import {
   isOverviewResearchReadyToFinish,
   compactOverviewLevelLabel,
+  compactOverviewResearchLabel,
   overviewBuildingActionNoticeFor,
   overviewResearchActionNoticeFor,
 } from "../src/components/OverviewPage";
@@ -18,7 +19,13 @@ import {
   queueProgressFillState,
   shipQueuePreview,
 } from "../src/overviewData";
-import { createInitialPlayableState, defenseCatalog, queueProgressPercent, shipCatalog } from "../src/playableMvp";
+import {
+  createInitialPlayableState,
+  defenseCatalog,
+  queueProgressPercent,
+  researchCatalog,
+  shipCatalog,
+} from "../src/playableMvp";
 import { timestampToMs } from "../src/timestampFormat";
 import type { Planet } from "../src/types";
 
@@ -120,6 +127,21 @@ describe("overview queue progress display", () => {
     expect(compactOverviewLevelLabel("Shipyard Level 9")).toBe("Shipyard 9");
     expect(compactOverviewLevelLabel("Plasma Technology level 7")).toBe("Plasma Technology 7");
     expect(compactOverviewLevelLabel("Rift Stabilizer")).toBe("Rift Stabilizer");
+  });
+
+  test("uses concise technology names only inside Overview research queue cards", () => {
+    expect(compactOverviewResearchLabel("Hyperspace Technology 6")).toBe("Hyperspace 6");
+
+    for (const research of researchCatalog) {
+      const expected = research.label.endsWith(" Technology")
+        ? research.label.slice(0, -" Technology".length)
+        : research.label;
+      expect(compactOverviewResearchLabel(research.label)).toBe(expected);
+    }
+
+    expect(compactOverviewResearchLabel("Hyperspace Drive 4")).toBe("Hyperspace Drive 4");
+    expect(compactOverviewResearchLabel("Intergalactic Research Network 3")).toBe("Intergalactic Research Network 3");
+    expect(compactOverviewResearchLabel("Research Lab 9")).toBe("Research Lab 9");
   });
 
   test("renders compact planet stats and effects behind the info control", () => {

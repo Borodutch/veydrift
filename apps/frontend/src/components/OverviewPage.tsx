@@ -85,6 +85,10 @@ export function compactOverviewLevelLabel(label: string): string {
   return label.replace(/\s+[Ll]evel\s+(\d+)$/, " $1");
 }
 
+export function compactOverviewResearchLabel(label: string): string {
+  return label.replace(/\s+Technology(?=(?:\s+\d+)?$)/, "");
+}
+
 function queueRemaining(readyAt: string | null, now: number): string {
   if (!readyAt) return "Pending";
   return formatDurationUntil(Number(readyAt) * 1_000, now);
@@ -702,7 +706,7 @@ export function OverviewPage({
           {onChainResearchQueue ? (
             <QueuePanelContent>
               <QueueItemDisplay
-                label={`${onChainResearchQueue.label} ${onChainResearchQueue.targetLevel}`}
+                label={`${compactOverviewResearchLabel(onChainResearchQueue.label)} ${onChainResearchQueue.targetLevel}`}
                 remaining={formatDurationUntil(onChainResearchQueue.readyAt, now)}
                 progress={activeResearchProgress}
                 readyAt={onChainResearchQueue.readyAt}
@@ -728,7 +732,7 @@ export function OverviewPage({
           ) : settledState.researchQueue ? (
             <QueuePanelContent>
               <QueueItemDisplay
-                label={settledState.researchQueue.label}
+                label={compactOverviewResearchLabel(settledState.researchQueue.label)}
                 remaining={formatDurationUntil(settledState.researchQueue.readyAt, now)}
                 progress={activeResearchProgress}
                 readyAt={settledState.researchQueue.readyAt}
