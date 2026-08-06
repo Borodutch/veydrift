@@ -165,6 +165,8 @@ contract VeydriftPaidAllianceInvites {
         _invites[commitment] = PaidInvite({
             allianceId: allianceId,
             purchaser: msg.sender,
+            // INVITE_PRICE is the fixed 0.006 ether constant, well below uint128 max.
+            // forge-lint: disable-next-line(unsafe-typecast)
             settlementPrice: uint128(price),
             purchasedAt: purchasedAt,
             validUntil: validUntil,
@@ -229,12 +231,24 @@ contract VeydriftPaidAllianceInvites {
         uint256 deuteriumScaled =
             uint256(produced.deuterium) * PRODUCTION_BONUS_BPS + remainder.deuterium;
         VeydriftGameStorage.Resources memory newlyOwed = VeydriftGameStorage.Resources({
+            // A uint128 input scaled by 200 / 10_000, plus sub-BPS carry, fits uint128.
+            // forge-lint: disable-next-line(unsafe-typecast)
             metal: uint128(metalScaled / BPS),
+            // A uint128 input scaled by 200 / 10_000, plus sub-BPS carry, fits uint128.
+            // forge-lint: disable-next-line(unsafe-typecast)
             crystal: uint128(crystalScaled / BPS),
+            // A uint128 input scaled by 200 / 10_000, plus sub-BPS carry, fits uint128.
+            // forge-lint: disable-next-line(unsafe-typecast)
             deuterium: uint128(deuteriumScaled / BPS)
         });
+        // Modulo BPS is below 10_000 and therefore fits uint16.
+        // forge-lint: disable-next-line(unsafe-typecast)
         remainder.metal = uint16(metalScaled % BPS);
+        // Modulo BPS is below 10_000 and therefore fits uint16.
+        // forge-lint: disable-next-line(unsafe-typecast)
         remainder.crystal = uint16(crystalScaled % BPS);
+        // Modulo BPS is below 10_000 and therefore fits uint16.
+        // forge-lint: disable-next-line(unsafe-typecast)
         remainder.deuterium = uint16(deuteriumScaled % BPS);
 
         VeydriftGameStorage.Resources storage pending = _pendingBalances[allianceId];
