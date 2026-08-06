@@ -3,8 +3,9 @@ import {
   generatePaidAllianceInviteSecret,
   paidAllianceInviteCommitment,
   paidAllianceInviteLink,
-  paidAllianceInviteSecretFromSearch,
+  paidAllianceInviteSecretFromHash,
   PAID_ALLIANCE_INVITE_PRICE_WEI,
+  resolvePaidAllianceInvite,
   sendBuyPaidAllianceInviteTransaction,
   sendSettlementTransaction,
   sendWithdrawPaidAllianceBonusTransaction,
@@ -34,7 +35,10 @@ describe("paid alliance invite frontend flow", () => {
     const commitment = paidAllianceInviteCommitment(secret);
     expect(commitment).not.toBe(secret);
     const link = paidAllianceInviteLink(secret, "https://veydrift.com/game");
-    expect(paidAllianceInviteSecretFromSearch(new URL(link).search)).toBe(secret);
+    const parsed = new URL(link);
+    expect(parsed.search).toBe("");
+    expect(paidAllianceInviteSecretFromHash(parsed.hash)).toBe(secret);
+    expect(link.split("#")[0]).not.toContain(secret);
   });
 
   test("buys for exactly 0.006 ETH and credits the selected planet", async () => {
@@ -49,7 +53,27 @@ describe("paid alliance invite frontend flow", () => {
     expect((requests[1] as any).params[0].data.slice(0, 10)).toBe("0x441a3e70");
   });
 
-  test("settles a prepaid invite with zero value and recipient-bound authorization", async () => {
+  test("sends bearer secrets only in POST bodies, never request URLs", async () => {
+    const originalFetch = globalThis.fetch;
+    let requestUrl = "";
+    let requestBody = "";
+    globalThis.fetch = (async (input, init) => {
+      requestUrl = String(input);
+      requestBody = String(init?.body ?? "");
+      return Response.json({ status: "active", valid: true, commitment: `0x${"12".repeat(32)}`, allianceId: "7", validUntil: "99" });
+    }) as typeof fetch;
+    try {
+      const secret = `0x${"ef".repeat(32)}`;
+      await resolvePaidAllianceInvite("https://api.veydrift.com", secret);
+      expect(requestUrl).toBe("https://api.veydrift.com/alliance-invites/resolve");
+      expect(requestUrl).not.toContain(secret);
+      expect(requestBody).toContain(secret);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("settles an invite for the normal start price with recipient-bound authorization", async () => {
     const requests: unknown[] = [];
     const provider = providerRecording(requests);
     await sendSettlementTransaction(provider, account, { address: game }, {
@@ -62,7 +86,7 @@ describe("paid alliance invite frontend flow", () => {
     });
     const transaction = (requests[0] as any).params[0];
     expect(transaction.data.slice(0, 10)).toBe("0x042fec83");
-    expect(transaction.value).toBeUndefined();
+    expect(transaction.value).toBe("0xa");
   });
 });
 

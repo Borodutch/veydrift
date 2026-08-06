@@ -169,7 +169,7 @@ contract VeydriftAllianceSystemTest is Test {
         _start(recruit);
     }
 
-    function testPaidInvitePrepaysSettlementAutoJoinsAndReusesStarterBonus() public {
+    function testPaidInviteChargesSeparateSettlementAutoJoinsAndReusesStarterBonus() public {
         vm.prank(leader);
         uint256 allianceId = alliances.createAlliance("VDFT", "Veydrift Union", "");
         bytes32 secret = keccak256("high entropy secret kept in private link");
@@ -187,8 +187,10 @@ contract VeydriftAllianceSystemTest is Test {
 
         uint64 expiresAt = uint64(block.timestamp + 10 minutes);
         (uint8 v, bytes32 r, bytes32 s) = _signPaidInvite(commitment, newCommander, expiresAt);
+        uint256 settlementPrice = game.startPrice();
         vm.prank(newCommander);
-        uint256 planetId = game.startPlanetWithAllianceInvite(commitment, expiresAt, v, r, s);
+        uint256 planetId = game.startPlanetWithAllianceInvite{value: settlementPrice}(commitment, expiresAt, v, r, s);
+        assertEq(address(game).balance, gameFeeBalanceBefore + price + settlementPrice, "invite and settlement payments are independent");
 
         assertEq(game.homePlanetOf(newCommander), planetId);
         VeydriftAllianceSystem.Membership memory membership = alliances.allianceOf(newCommander);
@@ -200,7 +202,7 @@ contract VeydriftAllianceSystemTest is Test {
 
         vm.prank(newCommander);
         vm.expectRevert();
-        game.startPlanetWithAllianceInvite(commitment, expiresAt, v, r, s);
+        game.startPlanetWithAllianceInvite{value: settlementPrice}(commitment, expiresAt, v, r, s);
     }
 
     function testPaidInviteAuthorizationIsRecipientBoundExpiringAndSingleUse() public {
@@ -217,7 +219,7 @@ contract VeydriftAllianceSystemTest is Test {
         vm.deal(frontRunner, 1 ether);
         vm.prank(frontRunner);
         vm.expectRevert(VeydriftPaidAllianceInvites.InvalidAuthorization.selector);
-        game.startPlanetWithAllianceInvite(commitment, expiresAt, v, r, s);
+        game.startPlanetWithAllianceInvite{value: game.startPrice()}(commitment, expiresAt, v, r, s);
 
         vm.warp(expiresAt);
         vm.prank(newCommander);
@@ -228,7 +230,7 @@ contract VeydriftAllianceSystemTest is Test {
                 uint64(1 + paidInvites.INVITE_LIFETIME())
             )
         );
-        game.startPlanetWithAllianceInvite(commitment, expiresAt, v, r, s);
+        game.startPlanetWithAllianceInvite{value: game.startPrice()}(commitment, expiresAt, v, r, s);
     }
 
     function testAnyCurrentMemberCanBuyButNonMembersCannot() public {
@@ -258,7 +260,7 @@ contract VeydriftAllianceSystemTest is Test {
         (uint8 v, bytes32 r, bytes32 s) = _signPaidInvite(commitment, newCommander, expiresAt);
         vm.prank(newCommander);
         uint256 homePlanetId =
-            game.startPlanetWithAllianceInvite(commitment, expiresAt, v, r, s);
+            game.startPlanetWithAllianceInvite{value: game.startPrice()}(commitment, expiresAt, v, r, s);
         _enableMetalProduction(homePlanetId);
         uint256 colonyPlanetId = 10_818;
         _cloneOwnedPlanet(newCommander, homePlanetId, colonyPlanetId);
@@ -424,7 +426,7 @@ contract VeydriftAllianceSystemTest is Test {
         uint64 expiresAt = uint64(block.timestamp + 10 minutes);
         (uint8 v, bytes32 r, bytes32 s) = _signPaidInvite(commitment, newCommander, expiresAt);
         vm.prank(newCommander);
-        uint256 planetId = game.startPlanetWithAllianceInvite(commitment, expiresAt, v, r, s);
+        uint256 planetId = game.startPlanetWithAllianceInvite{value: game.startPrice()}(commitment, expiresAt, v, r, s);
 
         vm.prank(newCommander);
         game.startBuildingUpgrade(planetId, Building.SolarPlant);
@@ -1677,7 +1679,7 @@ contract VeydriftAllianceSystemTest is Test {
         uint64 expiresAt = uint64(block.timestamp + 10 minutes);
         (uint8 v, bytes32 r, bytes32 s) = _signPaidInvite(commitment, newCommander, expiresAt);
         vm.prank(newCommander);
-        return game.startPlanetWithAllianceInvite(commitment, expiresAt, v, r, s);
+        return game.startPlanetWithAllianceInvite{value: game.startPrice()}(commitment, expiresAt, v, r, s);
     }
 
     function _enableMetalProduction(uint256 planetId) internal {

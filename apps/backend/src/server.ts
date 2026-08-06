@@ -81,8 +81,10 @@ import { deriveInfrastructureFields, isCombatShipId, zeroResources } from "./rea
 import {
   buildPaidAllianceInviteAuthorization,
   createPaidAllianceInviteReader,
+  createPaidAllianceInviteSecretStore,
   paidAllianceInviteCommitment,
   PaidAllianceInviteRateLimiter,
+  type PaidAllianceInviteSecretStore,
   resolvePaidAllianceInvite,
   type PaidAllianceInviteReader,
 } from "./allianceInvites";
@@ -346,6 +348,7 @@ export type ServerDependencies = {
   sharedResponseCache?: SharedResponseCache | null;
   referralStore?: ReferralInviteStore;
   paidAllianceInviteReader?: PaidAllianceInviteReader;
+  paidAllianceInviteSecretStore?: PaidAllianceInviteSecretStore;
 };
 
 const defaultUniverseSeed = "veydrift-mainnet-preview";
@@ -515,6 +518,8 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
   const referralStore = dependencies.referralStore ?? createReferralStore(loaded.config);
   const paidAllianceInviteReader = dependencies.paidAllianceInviteReader
     ?? createPaidAllianceInviteReader(loaded.config);
+  const paidAllianceInviteSecretStore = dependencies.paidAllianceInviteSecretStore
+    ?? createPaidAllianceInviteSecretStore(loaded.config);
   const paidAllianceInviteRateLimiter = new PaidAllianceInviteRateLimiter();
   // A whole-universe prewarm performs every wallet/planet projection back-to-back. On a busy live
   // index that competes with public reads for SQLite and creates the very latency it is intended to
@@ -1040,12 +1045,13 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       }
     }
 
-    if (request.method === "GET" && url.pathname === "/alliance-invites/resolve") {
+    if (request.method === "POST" && url.pathname === "/alliance-invites/resolve") {
       try {
         if (!paidAllianceInviteReader) {
           return Response.json({ error: "paid_alliance_invites_unavailable" }, { headers: corsHeaders, status: 503 });
         }
-        const secret = url.searchParams.get("secret");
+        const body = await readJsonBody(request);
+        const secret = body?.secret;
         const commitment = paidAllianceInviteCommitment(secret);
         const state = await paidAllianceInviteReader.invite(commitment);
         return Response.json(resolvePaidAllianceInvite(secret, state), { headers: corsHeaders });
@@ -1077,6 +1083,46 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           ),
           { headers: corsHeaders },
         );
+      } catch (error) {
+        return errorResponse(error, 400);
+      }
+    }
+
+    if (request.method === "POST" && url.pathname === "/alliance-invites/store") {
+      try {
+        if (!paidAllianceInviteReader || !paidAllianceInviteSecretStore) {
+          return Response.json({ error: "paid_alliance_invite_recovery_unavailable" }, { headers: corsHeaders, status: 503 });
+        }
+        const body = await readJsonBody(request);
+        const purchaser = String(body?.purchaser ?? "");
+        assertAddress(purchaser);
+        const commitment = paidAllianceInviteCommitment(body?.secret);
+        const state = await paidAllianceInviteReader.invite(commitment);
+        const resolution = resolvePaidAllianceInvite(body?.secret, state);
+        if (!resolution.valid) throw new Error(`Alliance invite is ${resolution.status}.`);
+        await paidAllianceInviteSecretStore.store(body?.secret, purchaser, body?.signature, state);
+        return Response.json({ commitment, stored: true }, { headers: corsHeaders });
+      } catch (error) {
+        return errorResponse(error, 400);
+      }
+    }
+
+    if (request.method === "POST" && url.pathname === "/alliance-invites/recover") {
+      try {
+        if (!paidAllianceInviteReader || !paidAllianceInviteSecretStore) {
+          return Response.json({ error: "paid_alliance_invite_recovery_unavailable" }, { headers: corsHeaders, status: 503 });
+        }
+        const body = await readJsonBody(request);
+        const purchaser = String(body?.purchaser ?? "");
+        assertAddress(purchaser);
+        const recovered = await paidAllianceInviteSecretStore.recover(purchaser, body?.signature);
+        const invites = [];
+        for (const record of recovered) {
+          const state = await paidAllianceInviteReader.invite(record.commitment);
+          const resolution = resolvePaidAllianceInvite(record.secret, state);
+          if (resolution.valid) invites.push({ ...resolution, secret: record.secret });
+        }
+        return Response.json({ invites }, { headers: corsHeaders });
       } catch (error) {
         return errorResponse(error, 400);
       }

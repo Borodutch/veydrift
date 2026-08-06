@@ -1,13 +1,19 @@
 import {
   createPublicClient,
   encodeAbiParameters,
+  getAddress,
   http,
   keccak256,
   parseAbiParameters,
+  verifyMessage,
   type Address,
   type Hex,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
+import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
+import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
+import { Database } from "bun:sqlite";
 import type { BackendConfig } from "./config";
 
 export const paidAllianceInviteSecretPattern = /^0x[0-9a-fA-F]{64}$/;
@@ -66,6 +72,128 @@ export type PaidAllianceInviteResolution = {
 export interface PaidAllianceInviteReader {
   invite(commitment: Hex): Promise<PaidAllianceInviteState>;
   bonusBalance?(allianceId: bigint): Promise<{ metal: bigint; crystal: bigint; deuterium: bigint }>;
+}
+
+type EncryptedInviteRecord = {
+  commitment: Hex;
+  purchaser: Address;
+  ciphertext: string;
+  iv: string;
+  tag: string;
+  storedAt: string;
+};
+
+export function paidAllianceInviteStoreMessage(purchaser: Address, commitment: Hex): string {
+  return `Veydrift paid alliance invite store\nPurchaser: ${purchaser.toLowerCase()}\nCommitment: ${commitment}`;
+}
+
+export function paidAllianceInviteRecoveryMessage(purchaser: Address): string {
+  return `Veydrift paid alliance invite recovery\nPurchaser: ${purchaser.toLowerCase()}`;
+}
+
+export class PaidAllianceInviteSecretStore {
+  private readonly keys: Buffer[];
+  private readonly database: Database;
+
+  constructor(private readonly path: string, keyHex: string, previousKeyHexes: string[] = []) {
+    const keyRing = [keyHex, ...previousKeyHexes];
+    if (keyRing.some((key) => !/^0x[0-9a-fA-F]{64}$/.test(key))) throw new Error("Paid invite encryption key must be 32 bytes.");
+    this.keys = keyRing.map((key) => Buffer.from(key.slice(2), "hex"));
+    mkdirSync(dirname(path), { recursive: true });
+    this.database = new Database(path, { create: true });
+    this.database.exec("PRAGMA journal_mode = WAL");
+    this.database.exec(`
+      CREATE TABLE IF NOT EXISTS paid_alliance_invite_secrets (
+        commitment TEXT PRIMARY KEY,
+        purchaser TEXT NOT NULL,
+        ciphertext TEXT NOT NULL,
+        iv TEXT NOT NULL,
+        tag TEXT NOT NULL,
+        stored_at TEXT NOT NULL
+      )
+    `);
+  }
+
+  async store(secretInput: unknown, purchaserInput: string, signature: unknown, state: PaidAllianceInviteState): Promise<Hex> {
+    const secret = normalizePaidAllianceInviteSecret(secretInput);
+    const commitment = paidAllianceInviteCommitment(secret);
+    const purchaser = getAddress(purchaserInput) as Address;
+    if (purchaser !== getAddress(state.purchaser)) throw new Error("Only the invite purchaser can store this link.");
+    if (typeof signature !== "string" || !await verifyMessage({
+      address: purchaser,
+      message: paidAllianceInviteStoreMessage(purchaser, commitment),
+      signature: signature as Hex,
+    })) throw new Error("Invalid purchaser authorization.");
+    const iv = randomBytes(12);
+    const cipher = createCipheriv("aes-256-gcm", this.keys[0]!, iv);
+    const ciphertext = Buffer.concat([cipher.update(secret, "utf8"), cipher.final()]);
+    const record: EncryptedInviteRecord = {
+      commitment,
+      purchaser,
+      ciphertext: ciphertext.toString("base64"),
+      iv: iv.toString("base64"),
+      tag: cipher.getAuthTag().toString("base64"),
+      storedAt: new Date().toISOString(),
+    };
+    this.database.query(`
+      INSERT INTO paid_alliance_invite_secrets (commitment, purchaser, ciphertext, iv, tag, stored_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(commitment) DO UPDATE SET
+        purchaser = excluded.purchaser,
+        ciphertext = excluded.ciphertext,
+        iv = excluded.iv,
+        tag = excluded.tag,
+        stored_at = excluded.stored_at
+    `).run(record.commitment, record.purchaser, record.ciphertext, record.iv, record.tag, record.storedAt);
+    return commitment;
+  }
+
+  async recover(purchaserInput: string, signature: unknown): Promise<Array<{ commitment: Hex; secret: Hex }>> {
+    const purchaser = getAddress(purchaserInput) as Address;
+    if (typeof signature !== "string" || !await verifyMessage({
+      address: purchaser,
+      message: paidAllianceInviteRecoveryMessage(purchaser),
+      signature: signature as Hex,
+    })) throw new Error("Invalid purchaser authorization.");
+    const records = this.database.query(`
+      SELECT commitment, purchaser, ciphertext, iv, tag, stored_at AS storedAt
+      FROM paid_alliance_invite_secrets WHERE lower(purchaser) = lower(?)
+      ORDER BY stored_at DESC
+    `).all(purchaser) as EncryptedInviteRecord[];
+    return records.map((item) => ({
+      commitment: item.commitment,
+      secret: this.decrypt(item),
+    }));
+  }
+
+  private decrypt(record: EncryptedInviteRecord): Hex {
+    for (const key of this.keys) {
+      try {
+        const decipher = createDecipheriv("aes-256-gcm", key, Buffer.from(record.iv, "base64"));
+        decipher.setAuthTag(Buffer.from(record.tag, "base64"));
+        return Buffer.concat([
+          decipher.update(Buffer.from(record.ciphertext, "base64")),
+          decipher.final(),
+        ]).toString("utf8") as Hex;
+      } catch {
+        // Continue through explicitly configured previous keys during rotation.
+      }
+    }
+    throw new Error("Paid invite secret cannot be decrypted with the configured key ring.");
+  }
+
+  close(): void {
+    this.database.close();
+  }
+}
+
+export function createPaidAllianceInviteSecretStore(config: BackendConfig): PaidAllianceInviteSecretStore | undefined {
+  if (!config.paidAllianceInviteSecretStorePath || !config.paidAllianceInviteEncryptionKey) return undefined;
+  return new PaidAllianceInviteSecretStore(
+    config.paidAllianceInviteSecretStorePath,
+    config.paidAllianceInviteEncryptionKey,
+    config.paidAllianceInvitePreviousEncryptionKeys,
+  );
 }
 
 export function normalizePaidAllianceInviteSecret(secret: unknown): Hex {

@@ -275,6 +275,9 @@ import {
   sendBuyPaidAllianceInviteTransaction,
   sendWithdrawPaidAllianceBonusTransaction,
   paidAllianceInviteCommitment,
+  paidAllianceInviteLink,
+  recoverPaidAllianceInvites,
+  storePaidAllianceInvite,
   PAID_ALLIANCE_INVITE_PRICE_WEI,
   sendBurningChickenMoonTransaction,
   defaultVeydriftChainForLocation,
@@ -7286,7 +7289,7 @@ export function PlayableMvpApp({
   }, [account, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction]);
 
   const handleBuyPaidAllianceInvite = useCallback((secret: string) => {
-    if (!provider || !account || !paidAllianceInviteContract) {
+    if (!provider || !account || !paidAllianceInviteContract || !apiBaseUrl) {
       setAllianceAction({ status: "error", label: "Paid alliance invites are not configured." });
       return;
     }
@@ -7296,8 +7299,18 @@ export function PlayableMvpApp({
       paidAllianceInviteContract,
       paidAllianceInviteCommitment(secret),
       PAID_ALLIANCE_INVITE_PRICE_WEI,
-    ));
-  }, [account, paidAllianceInviteContract, provider, runAllianceTransaction]);
+    ), async () => {
+      await storePaidAllianceInvite(apiBaseUrl, provider, account, secret);
+      return refreshAllianceState();
+    });
+  }, [account, apiBaseUrl, paidAllianceInviteContract, provider, refreshAllianceState, runAllianceTransaction]);
+
+  const handleRecoverPaidAllianceInvites = useCallback(async () => {
+    if (!provider || !account || !apiBaseUrl) return null;
+    const invites = await recoverPaidAllianceInvites(apiBaseUrl, provider, account);
+    const links = invites.map((invite) => paidAllianceInviteLink(invite.secret, window.location.origin));
+    return links.length ? links.join("\n") : null;
+  }, [account, apiBaseUrl, provider]);
 
   const handleWithdrawPaidAllianceBonus = useCallback(() => {
     if (!provider || !account || !paidAllianceInviteContract || !allianceState?.membership.allianceId || !activePlanetId) {
@@ -9661,6 +9674,7 @@ export function PlayableMvpApp({
           onKick={handleKickAllianceMember}
           onInvite={handleInviteAllianceMember}
           onBuyPaidInvite={handleBuyPaidAllianceInvite}
+          onRecoverPaidInvites={handleRecoverPaidAllianceInvites}
           onWithdrawPaidInviteBonus={handleWithdrawPaidAllianceBonus}
           onLeaveAlliance={handleLeaveAlliance}
           onOpenAlliance={handleSelectAlliance}

@@ -3001,6 +3001,7 @@ export async function sendSettlementTransaction(
         from: account,
         to: config.address,
         data: encodePaidAllianceInviteSettlement(options.allianceInvite),
+        value: encodeQuantity(options.startPriceWei),
       });
     }
     return sendWalletTransaction(provider, account, {
@@ -3036,17 +3037,21 @@ export function paidAllianceInviteCommitment(secret: string): `0x${string}` {
 export function paidAllianceInviteLink(secret: string, origin = "https://veydrift.com"): string {
   paidAllianceInviteCommitment(secret);
   const url = new URL(origin);
-  url.searchParams.set("allianceInvite", secret);
+  url.hash = `allianceInvite=${encodeURIComponent(secret)}`;
   return url.toString();
 }
 
-export function paidAllianceInviteSecretFromSearch(search: string): string {
-  const secret = new URLSearchParams(search).get("allianceInvite")?.trim() ?? "";
+export function paidAllianceInviteSecretFromHash(hash: string): string {
+  const secret = new URLSearchParams(hash.replace(/^#/, "")).get("allianceInvite")?.trim() ?? "";
   return /^0x[0-9a-fA-F]{64}$/.test(secret) ? secret.toLowerCase() : "";
 }
 
 export async function resolvePaidAllianceInvite(apiUrl: string, secret: string): Promise<PaidAllianceInviteResolution> {
-  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/alliance-invites/resolve?secret=${encodeURIComponent(secret)}`);
+  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/alliance-invites/resolve`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ secret }),
+  });
   if (!response.ok) throw new Error(`Alliance invite validation failed (${response.status}).`);
   return response.json() as Promise<PaidAllianceInviteResolution>;
 }
@@ -3063,6 +3068,37 @@ export async function redeemPaidAllianceInvite(
   });
   if (!response.ok) throw new Error(`Alliance invite redemption failed (${response.status}).`);
   return response.json() as Promise<PaidAllianceInviteRedemption>;
+}
+
+export function paidAllianceInviteStoreMessage(purchaser: string, commitment: string): string {
+  return `Veydrift paid alliance invite store\nPurchaser: ${purchaser.toLowerCase()}\nCommitment: ${commitment.toLowerCase()}`;
+}
+
+export function paidAllianceInviteRecoveryMessage(purchaser: string): string {
+  return `Veydrift paid alliance invite recovery\nPurchaser: ${purchaser.toLowerCase()}`;
+}
+
+export async function storePaidAllianceInvite(apiUrl: string, provider: Eip1193Provider, purchaser: string, secret: string): Promise<void> {
+  const commitment = paidAllianceInviteCommitment(secret);
+  const signature = await requestPersonalSignature(provider, purchaser, paidAllianceInviteStoreMessage(purchaser, commitment));
+  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/alliance-invites/store`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ purchaser, secret, signature }),
+  });
+  if (!response.ok) throw new Error(`Alliance invite recovery storage failed (${response.status}).`);
+}
+
+export async function recoverPaidAllianceInvites(apiUrl: string, provider: Eip1193Provider, purchaser: string): Promise<Array<{ commitment: string; secret: string; validUntil: string }>> {
+  const signature = await requestPersonalSignature(provider, purchaser, paidAllianceInviteRecoveryMessage(purchaser));
+  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/alliance-invites/recover`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ purchaser, signature }),
+  });
+  if (!response.ok) throw new Error(`Alliance invite recovery failed (${response.status}).`);
+  const body = await response.json() as { invites?: Array<{ commitment: string; secret: string; validUntil: string }> };
+  return body.invites ?? [];
 }
 
 export async function sendBuyPaidAllianceInviteTransaction(

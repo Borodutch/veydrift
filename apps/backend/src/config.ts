@@ -50,6 +50,9 @@ export type BackendConfig = {
   referralSignerPrivateKey?: `0x${string}`;
   paidAllianceInviteAddress?: `0x${string}`;
   paidAllianceInviteSignerPrivateKey?: `0x${string}`;
+  paidAllianceInviteEncryptionKey?: `0x${string}`;
+  paidAllianceInvitePreviousEncryptionKeys?: `0x${string}`[];
+  paidAllianceInviteSecretStorePath?: string;
   resourceTokenAddresses: ResourceTokenAddresses;
   rpcUrl?: string;
   rpcFallbackUrls?: string[];
@@ -253,6 +256,21 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
     "VEYDRIFT_PAID_ALLIANCE_INVITE_SIGNER_PRIVATE_KEY",
     problems
   );
+  const paidAllianceInviteEncryptionKey = parsePrivateKey(
+    env.VEYDRIFT_PAID_ALLIANCE_INVITE_ENCRYPTION_KEY,
+    "VEYDRIFT_PAID_ALLIANCE_INVITE_ENCRYPTION_KEY",
+    problems
+  );
+  const paidAllianceInviteSecretStorePath = env.VEYDRIFT_PAID_ALLIANCE_INVITE_SECRET_STORE_PATH
+    ?? ".data/paid-alliance-invites.sqlite";
+  const paidAllianceInvitePreviousEncryptionKeys = (env.VEYDRIFT_PAID_ALLIANCE_INVITE_PREVIOUS_ENCRYPTION_KEYS ?? "")
+    .split(",").map((value) => value.trim()).filter(Boolean);
+  if (paidAllianceInvitePreviousEncryptionKeys.some((key) => !/^0x[0-9a-fA-F]{64}$/.test(key))) {
+    problems.push({
+      field: "VEYDRIFT_PAID_ALLIANCE_INVITE_PREVIOUS_ENCRYPTION_KEYS",
+      message: "Previous paid invite encryption keys must be comma-separated 32-byte hex values."
+    });
+  }
   const metalTokenAddress = parseAddress(env.VEYDRIFT_METAL_TOKEN_ADDRESS, "VEYDRIFT_METAL_TOKEN_ADDRESS", problems);
   const crystalTokenAddress = parseAddress(
     env.VEYDRIFT_CRYSTAL_TOKEN_ADDRESS,
@@ -305,7 +323,12 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
       });
     }
   }
-  if (env.VEYDRIFT_PAID_ALLIANCE_INVITE_ADDRESS || env.VEYDRIFT_PAID_ALLIANCE_INVITE_SIGNER_PRIVATE_KEY) {
+  if (
+    env.VEYDRIFT_PAID_ALLIANCE_INVITE_ADDRESS
+    || env.VEYDRIFT_PAID_ALLIANCE_INVITE_SIGNER_PRIVATE_KEY
+    || env.VEYDRIFT_PAID_ALLIANCE_INVITE_ENCRYPTION_KEY
+    || env.VEYDRIFT_PAID_ALLIANCE_INVITE_PREVIOUS_ENCRYPTION_KEYS
+  ) {
     if (!paidAllianceInviteAddress) {
       problems.push({
         field: "VEYDRIFT_PAID_ALLIANCE_INVITE_ADDRESS",
@@ -316,6 +339,12 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
       problems.push({
         field: "VEYDRIFT_PAID_ALLIANCE_INVITE_SIGNER_PRIVATE_KEY",
         message: "Paid alliance invite configuration requires the backend redemption signer key."
+      });
+    }
+    if (!paidAllianceInviteEncryptionKey) {
+      problems.push({
+        field: "VEYDRIFT_PAID_ALLIANCE_INVITE_ENCRYPTION_KEY",
+        message: "Paid alliance invite configuration requires a 32-byte encrypted secret-store key."
       });
     }
   }
@@ -350,6 +379,11 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
       ...(referralSignerPrivateKey ? { referralSignerPrivateKey } : {}),
       ...(paidAllianceInviteAddress ? { paidAllianceInviteAddress } : {}),
       ...(paidAllianceInviteSignerPrivateKey ? { paidAllianceInviteSignerPrivateKey } : {}),
+      ...(paidAllianceInviteEncryptionKey ? { paidAllianceInviteEncryptionKey } : {}),
+      ...(paidAllianceInvitePreviousEncryptionKeys.length ? {
+        paidAllianceInvitePreviousEncryptionKeys: paidAllianceInvitePreviousEncryptionKeys as `0x${string}`[]
+      } : {}),
+      paidAllianceInviteSecretStorePath,
       resourceTokenAddresses,
       rpcSource,
       ...(rpcUrl ? { rpcUrl } : {}),

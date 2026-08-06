@@ -1,12 +1,18 @@
 import { describe, expect, test } from "bun:test";
 import { recoverMessageAddress } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { BackendConfig } from "./config";
 import {
   buildPaidAllianceInviteAuthorization,
   paidAllianceAuthorizationHash,
   paidAllianceInviteCommitment,
   PaidAllianceInviteRateLimiter,
+  PaidAllianceInviteSecretStore,
+  paidAllianceInviteRecoveryMessage,
+  paidAllianceInviteStoreMessage,
   resolvePaidAllianceInvite,
   type PaidAllianceInviteState,
 } from "./allianceInvites";
@@ -76,7 +82,11 @@ describe("paid alliance invites", () => {
       paidAllianceInviteReader: { invite: async () => state },
       role: "writer",
     });
-    const resolution = await handler(new Request(`http://test/alliance-invites/resolve?secret=${secret}`));
+    const resolution = await handler(new Request("http://test/alliance-invites/resolve", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ secret }),
+    }));
     expect(resolution.status).toBe(200);
     expect((await resolution.json()).status).toBe("active");
 
@@ -89,5 +99,37 @@ describe("paid alliance invites", () => {
     const body = await redemption.json();
     expect(body.signature).toMatch(/^0x[0-9a-f]{130}$/);
     expect(JSON.stringify(body)).not.toContain(secret);
+  });
+
+  test("encrypts recoverable secrets at rest and authorizes only the purchaser", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "veydrift-paid-invite-"));
+    try {
+      const path = join(directory, "invites.json");
+      const purchaserAccount = privateKeyToAccount("0x2222222222222222222222222222222222222222222222222222222222222222");
+      const purchaserState = { ...state, purchaser: purchaserAccount.address };
+      const commitment = paidAllianceInviteCommitment(secret);
+      const storeSignature = await purchaserAccount.signMessage({
+        message: paidAllianceInviteStoreMessage(purchaserAccount.address, commitment),
+      });
+      const store = new PaidAllianceInviteSecretStore(path, `0x${"44".repeat(32)}`);
+      await store.store(secret, purchaserAccount.address, storeSignature, purchaserState);
+      expect(readFileSync(path, "utf8")).not.toContain(secret);
+      store.close();
+
+      const recoverySignature = await purchaserAccount.signMessage({
+        message: paidAllianceInviteRecoveryMessage(purchaserAccount.address),
+      });
+      const restarted = new PaidAllianceInviteSecretStore(path, `0x${"55".repeat(32)}`, [`0x${"44".repeat(32)}`]);
+      expect(await restarted.recover(purchaserAccount.address, recoverySignature)).toEqual([{ commitment, secret }]);
+
+      const attacker = privateKeyToAccount("0x3333333333333333333333333333333333333333333333333333333333333333");
+      const attackerSignature = await attacker.signMessage({
+        message: paidAllianceInviteRecoveryMessage(purchaserAccount.address),
+      });
+      await expect(restarted.recover(purchaserAccount.address, attackerSignature)).rejects.toThrow("Invalid purchaser authorization");
+      restarted.close();
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 });
