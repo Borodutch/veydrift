@@ -210,19 +210,24 @@ function scheduleNoise(context: AudioContext, destination: AudioNode, spec: Nois
 
 export function playSfx(name: SfxName): void {
   if (muted) return;
-  const context = ensureContext();
-  if (!context || !masterGain) return;
-  if (context.state === "suspended") {
-    void context.resume();
-    return;
-  }
-  const definition = SFX[name];
-  const startAt = context.currentTime + 0.005;
-  for (const tone of definition.tones ?? []) {
-    scheduleTone(context, masterGain, tone, startAt);
-  }
-  for (const noise of definition.noise ?? []) {
-    scheduleNoise(context, masterGain, noise, startAt);
+  try {
+    const context = ensureContext();
+    if (!context || !masterGain) return;
+    if (context.state === "suspended") {
+      void context.resume().catch(() => undefined);
+      return;
+    }
+    const definition = SFX[name];
+    const startAt = context.currentTime + 0.005;
+    for (const tone of definition.tones ?? []) {
+      scheduleTone(context, masterGain, tone, startAt);
+    }
+    for (const noise of definition.noise ?? []) {
+      scheduleNoise(context, masterGain, noise, startAt);
+    }
+  } catch {
+    // Sound is optional feedback. Browser audio startup/scheduling failures must
+    // never abort the UI action that requested the effect.
   }
 }
 

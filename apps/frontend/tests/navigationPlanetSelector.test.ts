@@ -78,6 +78,25 @@ describe("navigation and planet selector UI source contracts", () => {
     });
   });
 
+  test("commits sidebar page and URL navigation before optional feedback", () => {
+    const handlerStart = playableSource.indexOf("const handleNavigate = useCallback((target: Page) => {");
+    const handlerEnd = playableSource.indexOf("\n  }, []);", handlerStart);
+    const handlerSource = playableSource.slice(handlerStart, handlerEnd);
+
+    expect(handlerStart).toBeGreaterThan(0);
+    expect(handlerEnd).toBeGreaterThan(handlerStart);
+    expect(handlerSource.indexOf("setPage(target);")).toBeGreaterThan(0);
+    expect(handlerSource.indexOf('writeInspectRoute({ kind: "page", page: target });')).toBeGreaterThan(
+      handlerSource.indexOf("setPage(target);"),
+    );
+    expect(handlerSource.indexOf('playSfx("tab");')).toBeGreaterThan(
+      handlerSource.indexOf('writeInspectRoute({ kind: "page", page: target });'),
+    );
+    expect(navSource).toContain("onClick={() => onNavigate(page.key)}");
+    expect(navSource).toContain('{ key: "infrastructure", label: "Infrastructure"');
+    expect(navSource).toContain('{ key: "raid-target-finder", label: "Raid Finder"');
+  });
+
   test("uses a mobile hamburger menu instead of always-visible mobile tabs", () => {
     expect(navSource).toContain("Open navigation menu");
     expect(navSource).toContain("Close navigation menu");

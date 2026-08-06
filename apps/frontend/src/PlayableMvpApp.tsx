@@ -8640,8 +8640,6 @@ export function PlayableMvpApp({
   }, [account, gameContract, onChainSettlement?.homePlanetId, pendingJoinAttack, provider, runGalaxyTransaction, selectedManagedPlanet, shipyardState?.technologyLevels]);
 
   const handleNavigate = useCallback((target: Page) => {
-    playSfx("tab");
-    haptic("tick");
     setPlanetBackRoute(null);
     setPendingGalaxyMission(null);
     setPendingJoinAttack(null);
@@ -8656,6 +8654,11 @@ export function PlayableMvpApp({
     setPage(target);
     setSelectedCoords(undefined);
     writeInspectRoute({ kind: "page", page: target });
+    // Navigation is the primary action. Optional device feedback must happen
+    // after page and route state are committed so a browser API failure cannot
+    // leave the previous screen rendered under the old URL.
+    playSfx("tab");
+    haptic("tick");
   }, []);
 
   const handleOpenMissionReport = useCallback((missionId: string) => {
