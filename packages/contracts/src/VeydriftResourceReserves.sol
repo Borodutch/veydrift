@@ -93,7 +93,8 @@ abstract contract VeydriftResourceReserves is VeydriftGameStorage {
     /// @dev Credits only the actual canonical production delta accepted for the commander. The
     /// alliance system decides whether the invitee currently belongs to the issuing alliance and
     /// carries fractional bps dust. The additional treasury amount is a separate reserve liability;
-    /// it never reduces the commander's planet balance.
+    /// it never reduces the commander's planet balance. If player-first settlement exhausts a
+    /// reserve, the invite system returns only the newly backed portion and defers the remainder.
     function _creditAllianceProductionBonus(uint256 planetId, Resources memory produced) internal {
         address allianceSystem = _allianceSystem;
         if (

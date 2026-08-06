@@ -7,6 +7,10 @@ import {VeydriftGameStorage} from "./VeydriftGameStorage.sol";
 
 interface IVeydriftPaidInviteGame {
     function depositPaidAllianceInviteFee() external payable;
+    function resourceReserveAvailable()
+        external
+        view
+        returns (VeydriftGameStorage.Resources memory);
 }
 
 interface IVeydriftPaidInviteAlliance {
@@ -54,6 +58,7 @@ contract VeydriftPaidAllianceInvites {
     mapping(bytes32 commitment => PaidInvite invite) private _invites;
     mapping(address invitee => uint256 allianceId) public issuingAllianceOf;
     mapping(uint256 allianceId => VeydriftGameStorage.Resources balance) private _balances;
+    mapping(uint256 allianceId => VeydriftGameStorage.Resources balance) private _pendingBalances;
     mapping(address invitee => ProductionRemainder remainder) private _remainders;
     bool private _withdrawing;
 
@@ -93,6 +98,13 @@ contract VeydriftPaidAllianceInvites {
         uint128 metal,
         uint128 crystal,
         uint128 deuterium
+    );
+    event AllianceProductionBonusDeferred(
+        uint256 indexed allianceId,
+        address indexed invitee,
+        uint128 pendingMetal,
+        uint128 pendingCrystal,
+        uint128 pendingDeuterium
     );
     event AllianceBonusWithdrawn(
         uint256 indexed allianceId,
@@ -219,7 +231,7 @@ contract VeydriftPaidAllianceInvites {
         uint256 crystalScaled = uint256(produced.crystal) * PRODUCTION_BONUS_BPS + remainder.crystal;
         uint256 deuteriumScaled =
             uint256(produced.deuterium) * PRODUCTION_BONUS_BPS + remainder.deuterium;
-        bonus = VeydriftGameStorage.Resources({
+        VeydriftGameStorage.Resources memory newlyOwed = VeydriftGameStorage.Resources({
             metal: uint128(metalScaled / BPS),
             crystal: uint128(crystalScaled / BPS),
             deuterium: uint128(deuteriumScaled / BPS)
@@ -227,6 +239,21 @@ contract VeydriftPaidAllianceInvites {
         remainder.metal = uint16(metalScaled % BPS);
         remainder.crystal = uint16(crystalScaled % BPS);
         remainder.deuterium = uint16(deuteriumScaled % BPS);
+
+        VeydriftGameStorage.Resources storage pending = _pendingBalances[allianceId];
+        uint128 totalMetal = pending.metal + newlyOwed.metal;
+        uint128 totalCrystal = pending.crystal + newlyOwed.crystal;
+        uint128 totalDeuterium = pending.deuterium + newlyOwed.deuterium;
+        VeydriftGameStorage.Resources memory available = alliance.game().resourceReserveAvailable();
+        bonus = VeydriftGameStorage.Resources({
+            metal: _min(totalMetal, available.metal),
+            crystal: _min(totalCrystal, available.crystal),
+            deuterium: _min(totalDeuterium, available.deuterium)
+        });
+        pending.metal = totalMetal - bonus.metal;
+        pending.crystal = totalCrystal - bonus.crystal;
+        pending.deuterium = totalDeuterium - bonus.deuterium;
+
         VeydriftGameStorage.Resources storage balance = _balances[allianceId];
         balance.metal += bonus.metal;
         balance.crystal += bonus.crystal;
@@ -234,6 +261,11 @@ contract VeydriftPaidAllianceInvites {
         if (bonus.metal != 0 || bonus.crystal != 0 || bonus.deuterium != 0) {
             emit AllianceProductionBonusAccrued(
                 allianceId, invitee, bonus.metal, bonus.crystal, bonus.deuterium
+            );
+        }
+        if (pending.metal != 0 || pending.crystal != 0 || pending.deuterium != 0) {
+            emit AllianceProductionBonusDeferred(
+                allianceId, invitee, pending.metal, pending.crystal, pending.deuterium
             );
         }
     }
@@ -267,6 +299,16 @@ contract VeydriftPaidAllianceInvites {
         return _balances[allianceId];
     }
 
+    /// @notice Exact whole-resource 2% entitlement awaiting ERC-20 reserve backing. Pending amounts
+    /// are excluded from the withdrawable balance until a later eligible settlement can fund them.
+    function pendingBonusBalance(uint256 allianceId)
+        external
+        view
+        returns (VeydriftGameStorage.Resources memory)
+    {
+        return _pendingBalances[allianceId];
+    }
+
     function authorizationHash(bytes32 commitment, address invitee, uint64 expiresAt)
         public
         view
@@ -282,5 +324,9 @@ contract VeydriftPaidAllianceInvites {
                 expiresAt
             )
         );
+    }
+
+    function _min(uint128 a, uint128 b) private pure returns (uint128) {
+        return a < b ? a : b;
     }
 }

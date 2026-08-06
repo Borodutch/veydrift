@@ -10,6 +10,7 @@ import {Building} from "./libraries/VeydriftTypes.sol";
 interface IVeydriftAllianceGame {
     function buildingLevel(uint256 planetId, Building building) external view returns (uint16);
     function homePlanetOf(address player) external view returns (uint256);
+    function settleAllianceMembershipBoundary(address player) external;
     function creditAllianceBonusToPlanet(
         uint256 planetId,
         address manager,
@@ -954,6 +955,7 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
     }
 
     function _addMember(uint256 allianceId, address player, AllianceRole role) private {
+        game.settleAllianceMembershipBoundary(player);
         _memberships[player] = Membership({allianceId: allianceId, role: role, joinedAt: _now()});
         _memberIndexes[allianceId][player] = _memberLists[allianceId].length + 1;
         _memberLists[allianceId].push(player);
@@ -987,6 +989,8 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
     function _removeMember(uint256 allianceId, address player) private {
         uint256 indexPlusOne = _memberIndexes[allianceId][player];
         if (indexPlusOne == 0) revert NotAllianceMember(player, allianceId);
+
+        game.settleAllianceMembershipBoundary(player);
 
         uint256 index = indexPlusOne - 1;
         address[] storage members = _memberLists[allianceId];

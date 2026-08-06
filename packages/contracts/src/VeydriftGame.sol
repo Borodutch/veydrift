@@ -195,6 +195,21 @@ contract VeydriftGame is VeydriftResourceReserves {
         _settleResourcesUntil(planetId, settledAt);
     }
 
+    /// @notice Cuts every owned planet's canonical production interval immediately before an
+    /// alliance roster transition, so paid-invite bonuses follow actual membership time rather
+    /// than membership at a later lazy collection.
+    function settleAllianceMembershipBoundary(address player) external {
+        if (msg.sender != _allianceSystem) revert Unauthorized(msg.sender);
+        uint256[] storage planetIds = _ownedPlanetIds[player];
+        uint64 settledAt = uint64(block.timestamp);
+        for (uint256 i = 0; i < planetIds.length;) {
+            _settleResourcesUpTo(planetIds[i], settledAt);
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
     function settleDuePlayerColonizeArrivals(address) external {
         if (msg.sender != address(this)) revert Unauthorized(msg.sender);
         _delegateToColonizationModule();
