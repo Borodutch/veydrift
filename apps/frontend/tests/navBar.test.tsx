@@ -3,6 +3,8 @@ import { ChevronDown, ChevronUp } from "lucide-preact";
 import type { ComponentChildren, VNode } from "preact";
 import {
   CommanderAccountSummary,
+  MobileTab,
+  NavItem,
   commanderIdentityLabel,
   commanderJoinCta,
   commanderSummaryInitiallyExpanded,
@@ -11,6 +13,59 @@ import {
 import { shortAddress, type PlayerProfile } from "../src/walletFlow";
 
 const wallet = "0x1111111111111111111111111111111111111111";
+
+describe("NavBar section navigation", () => {
+  test.each([
+    ["desktop", NavItem],
+    ["mobile", MobileTab],
+  ] as const)("renders the %s section control as a progressively enhanced link", (_layout, Component) => {
+    let navigations = 0;
+    const link = Component({
+      active: false,
+      href: "/infrastructure",
+      icon: ChevronDown,
+      label: "Infrastructure",
+      onClick: () => { navigations += 1; },
+    });
+    const event = {
+      altKey: false,
+      button: 0,
+      ctrlKey: false,
+      metaKey: false,
+      preventDefaultCalls: 0,
+      preventDefault() { this.preventDefaultCalls += 1; },
+      shiftKey: false,
+    };
+
+    expect(link.type).toBe("a");
+    expect(link.props.href).toBe("/infrastructure");
+    (link.props.onClick as (event: typeof event) => void)(event);
+    expect(navigations).toBe(1);
+    expect(event.preventDefaultCalls).toBe(1);
+  });
+
+  test("leaves the native link fallback available when SPA navigation fails", () => {
+    const link = NavItem({
+      active: false,
+      href: "/raid-finder",
+      icon: ChevronDown,
+      label: "Raid Finder",
+      onClick: () => { throw new Error("navigation handler failed"); },
+    });
+    const event = {
+      altKey: false,
+      button: 0,
+      ctrlKey: false,
+      metaKey: false,
+      preventDefaultCalls: 0,
+      preventDefault() { this.preventDefaultCalls += 1; },
+      shiftKey: false,
+    };
+
+    expect(() => (link.props.onClick as (event: typeof event) => void)(event)).toThrow("navigation handler failed");
+    expect(event.preventDefaultCalls).toBe(0);
+  });
+});
 
 function playerProfile(displayName: string | null): PlayerProfile {
   return {

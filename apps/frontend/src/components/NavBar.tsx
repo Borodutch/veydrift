@@ -12,6 +12,7 @@ import {
   validatePlayerDisplayName,
   type PlayerProfile,
 } from "../walletFlow";
+import { buildInspectPath } from "../inspectRoutes";
 
 export type Page =
   | "overview"
@@ -394,6 +395,7 @@ export function NavBar({
             {pages.map((page) => (
               <NavItem
                 active={active === page.key || (active === "planet" && page.key === "galaxy") || (active === "alliance-inspect" && page.key === "alliance") || (active === "player-inspect" && page.key === "rankings")}
+                href={buildInspectPath({ kind: "page", page: page.key })}
                 icon={page.icon}
                 key={page.key}
                 label={page.label}
@@ -467,6 +469,7 @@ export function NavBar({
             {pages.map((page) => (
               <MobileTab
                 active={active === page.key || (active === "planet" && page.key === "galaxy") || (active === "alliance-inspect" && page.key === "alliance") || (active === "player-inspect" && page.key === "rankings")}
+                href={buildInspectPath({ kind: "page", page: page.key })}
                 key={page.key}
                 icon={page.icon}
                 label={page.label}
@@ -709,60 +712,77 @@ function CopyableCommanderValue({
   );
 }
 
-function NavItem({
+function handleSectionLinkClick(
+  event: JSX.TargetedMouseEvent<HTMLAnchorElement>,
+  onClick: () => void,
+): void {
+  if (event.button !== 0 || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+
+  // Run the SPA transition before suppressing the anchor's native behavior. If
+  // the app handler is unavailable or throws, the browser can still follow the
+  // canonical href instead of leaving the visible section inert.
+  onClick();
+  event.preventDefault();
+}
+
+export function NavItem({
   active,
+  href,
   icon: Icon,
   label,
   onClick,
 }: {
   active: boolean;
+  href: string;
   icon: LucideIcon;
   label: string;
   onClick: () => void;
 }) {
   return (
-    <button
+    <a
       className={`flex w-full items-center gap-2.5 rounded px-2.5 py-2 text-left text-sm transition ${
         active
           ? "bg-white/10 font-medium text-white"
           : "text-slate-400 hover:bg-white/5 hover:text-slate-200"
       }`}
-      onClick={onClick}
-      type="button"
+      href={href}
+      onClick={(event) => handleSectionLinkClick(event, onClick)}
       aria-current={active ? "page" : undefined}
     >
       <span className="grid h-7 w-7 shrink-0 place-items-center rounded border border-white/10 bg-black/20 text-slate-300 opacity-90">
         <Icon aria-hidden="true" size={15} strokeWidth={1.9} />
       </span>
       <span className="min-w-0 truncate">{label}</span>
-    </button>
+    </a>
   );
 }
 
-function MobileTab({
+export function MobileTab({
   active,
+  href,
   icon: Icon,
   label,
   onClick,
 }: {
   active: boolean;
+  href: string;
   icon: LucideIcon;
   label: string;
   onClick: () => void;
 }) {
   return (
-    <button
+    <a
       className={`flex h-12 min-w-0 max-w-full flex-col items-center justify-center gap-0.5 overflow-hidden rounded border px-1 text-[11px] font-medium transition ${
         active
           ? "border-cyan-300/45 bg-cyan-300/10 text-cyan-200"
           : "border-white/10 bg-white/[0.04] text-slate-400 hover:bg-white/[0.075] hover:text-slate-200"
       }`}
-      onClick={onClick}
-      type="button"
+      href={href}
+      onClick={(event) => handleSectionLinkClick(event, onClick)}
       aria-current={active ? "page" : undefined}
     >
       <Icon aria-hidden="true" size={15} strokeWidth={1.9} />
       <span className="max-w-full truncate leading-none">{label}</span>
-    </button>
+    </a>
   );
 }

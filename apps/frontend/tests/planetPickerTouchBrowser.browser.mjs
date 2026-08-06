@@ -491,8 +491,8 @@ test("mobile hamburger selector independently invokes the owned-planet transitio
   await waitForExpression(`(() => {
     const details = document.querySelector('details:has(#mobile-navigation-menu)');
     const menu = document.querySelector('#mobile-navigation-menu');
-    const labels = [...document.querySelectorAll('#mobile-navigation-menu nav button')]
-      .map((button) => button.textContent?.trim());
+    const labels = [...document.querySelectorAll('#mobile-navigation-menu nav a')]
+      .map((link) => link.textContent?.trim());
     return details?.open === true
       && menu?.getBoundingClientRect().height > 0
       && ['Overview', 'Infrastructure', 'Galaxy', 'Raid Finder', 'Rankings', 'Alliance']
