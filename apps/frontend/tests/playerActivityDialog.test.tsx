@@ -1,9 +1,17 @@
 import { describe, expect, test } from "bun:test";
 import type { ComponentChildren, VNode } from "preact";
 
-import { ActivityRow, activityDetail, PlayerActivitySkeleton } from "../src/components/PlayerActivityDialog";
+import {
+  ActivityCategoryFilters,
+  ActivityRow,
+  activityCategoryCounts,
+  activityCategoryFilterReducer,
+  activityDetail,
+  filterPlayerActivityItems,
+  PlayerActivitySkeleton,
+} from "../src/components/PlayerActivityDialog";
 import { formatUserTimestamp } from "../src/timestampFormat";
-import type { PlayerActivityItem } from "../src/walletFlow";
+import type { PlayerActivityCategory, PlayerActivityItem } from "../src/walletFlow";
 
 const explorerUrl = "https://basescan.org";
 
@@ -75,5 +83,75 @@ describe("player activity rows", () => {
       `New Toronto · 6:9:7 · Level 20; ready ${formatUserTimestamp("1785986329")}`
     );
     expect(activityDetail(item)).not.toContain("1785986329");
+  });
+});
+
+describe("away activity category filters", () => {
+  test("keeps full-period totals while filtering matching events in their original order", () => {
+    const items = [
+      activity({ id: "combat:new", category: "combat", occurredAt: "1770000030" }),
+      activity({ id: "infrastructure", category: "infrastructure", occurredAt: "1770000020" }),
+      activity({ id: "combat:old", category: "combat", occurredAt: "1770000010" }),
+    ];
+    const counts = activityCategoryCounts(items, { combat: 22, infrastructure: 1, research: 0 });
+    const filtered = filterPlayerActivityItems(items, "combat");
+
+    expect(counts).toEqual([
+      { category: "combat", count: 22 },
+      { category: "infrastructure", count: 1 },
+    ]);
+    expect(filtered.map(({ id }) => id)).toEqual(["combat:new", "combat:old"]);
+    expect(filterPlayerActivityItems(items, null).map(({ id }) => id)).toEqual([
+      "combat:new",
+      "infrastructure",
+      "combat:old",
+    ]);
+    expect(filtered[0]).toBe(items[0]);
+    expect(filtered[0]?.transactionHash).toBe("0xreconciliation");
+  });
+
+  test("derives reusable category counts from loaded events when the summary is absent", () => {
+    const counts = activityCategoryCounts([
+      activity({ category: "mission" }),
+      activity({ category: "production", id: "production:2" }),
+      activity({ category: "mission", id: "mission:2" }),
+    ], {});
+
+    expect(counts).toEqual([
+      { category: "mission", count: 2 },
+      { category: "production", count: 1 },
+    ]);
+  });
+
+  test("renders All and non-zero categories as touch-sized semantic pressed buttons", () => {
+    const selected: Array<PlayerActivityCategory | null> = [];
+    const filters = ActivityCategoryFilters({
+      counts: [
+        { category: "combat", count: 22 },
+        { category: "infrastructure", count: 1 },
+      ],
+      onSelect: (category) => selected.push(category),
+      selectedCategory: "combat",
+    });
+    const buttons = nodes(filters).filter((node) => node.type === "button");
+
+    expect(filters.props?.role).toBe("group");
+    expect(filters.props?.["aria-label"]).toBe("Filter activity by category");
+    expect(buttons).toHaveLength(3);
+    expect(buttons.map((button) => button.props?.children?.join?.(""))).toEqual(["All 23", "Combat 22", "Infrastructure 1"]);
+    expect(buttons.map((button) => button.props?.["aria-pressed"])).toEqual([false, true, false]);
+    expect(buttons.every((button) => button.props?.className.includes("min-h-11"))).toBe(true);
+
+    buttons[2]?.props?.onClick();
+    buttons[0]?.props?.onClick();
+    expect(selected).toEqual(["infrastructure", null]);
+  });
+
+  test("supports selected-pill deselection, All reset, and a clean reopened dialog state", () => {
+    const selected = activityCategoryFilterReducer(null, { category: "combat", type: "toggle" });
+    expect(selected).toBe("combat");
+    expect(activityCategoryFilterReducer(selected, { category: "combat", type: "toggle" })).toBeNull();
+    expect(activityCategoryFilterReducer("infrastructure", { type: "reset" })).toBeNull();
+    expect(activityCategoryFilterReducer(null, { type: "reset" })).toBeNull();
   });
 });
