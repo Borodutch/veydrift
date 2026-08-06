@@ -41,10 +41,6 @@ import {
 import {
   defaultVeydriftChainForLocation,
   ensureVeydriftNetwork,
-  fetchReferralDashboard,
-  fetchReferralHistory,
-  fetchSettlementFundingState,
-  fetchWalletSettlement,
   farcasterChainFor,
   generateReferralClaimCode,
   getChainId,
@@ -88,6 +84,9 @@ import {
   type VeydriftWalletChain,
   type WalletSettlementResponse
 } from "./walletFlow";
+import { backendDataStoreFor } from "./backendDataStore";
+
+type FetchWalletSettlement = typeof import("./walletFlow").fetchWalletSettlement;
 
 const POST_SETTLEMENT_READ_ATTEMPTS = 8;
 const POST_SETTLEMENT_READ_INTERVAL_MS = 2_000;
@@ -470,24 +469,17 @@ export function FirstPlanetSettlementApp() {
   }, [miniAppMode]);
 
   useEffect(() => {
-    const abortController = new AbortController();
+    let cancelled = false;
     let retryTimeout: ReturnType<typeof setTimeout> | undefined;
 
     const loadRuntimeConfig = () => {
-      fetch(runtimeConfigUrl(), {
-        headers: { accept: "application/json" },
-        signal: abortController.signal
-      })
-        .then((response) => {
-          if (!response.ok) throw new Error(`Runtime config failed with ${response.status}`);
-          return response.json() as Promise<RuntimeConfig>;
-        })
+      backendDataStoreFor("").runtimeConfig<RuntimeConfig>(runtimeConfigUrl())
         .then((runtimeConfig) => {
-          if (abortController.signal.aborted) return;
+          if (cancelled) return;
           applyRuntimeConfig(runtimeConfig, settlementConfig);
         })
         .catch((error) => {
-          if (abortController.signal.aborted) return;
+          if (cancelled) return;
           console.error(error);
           setSettlementConfigState({
             status: "ready",
@@ -501,12 +493,12 @@ export function FirstPlanetSettlementApp() {
     loadRuntimeConfig();
 
     return () => {
-      abortController.abort();
+      cancelled = true;
       if (retryTimeout !== undefined) clearTimeout(retryTimeout);
     };
 
     function applyRuntimeConfig(runtimeConfig: RuntimeConfig, fallbackConfig: SettlementConfig) {
-        if (abortController.signal.aborted) return;
+        if (cancelled) return;
         const address = gameContractAddress(runtimeConfig) ?? fallbackConfig.address;
         const legacyAddress = runtimeConfig.contractAddress && runtimeConfig.contractAddress !== address
           ? runtimeConfig.contractAddress
@@ -541,7 +533,7 @@ export function FirstPlanetSettlementApp() {
 
     let disposed = false;
     setReferralProgram({ status: "loading" });
-    void fetchReferralDashboard(settlementConfigState.apiUrl, account)
+    void backendDataStoreFor(settlementConfigState.apiUrl).referralDashboard(account)
       .then((dashboard) => {
         if (!disposed) setReferralProgram({ status: "ready", dashboard });
       })
@@ -1314,7 +1306,7 @@ export function FirstPlanetSettlementApp() {
     try {
       setReferralProgram({
         status: "ready",
-        dashboard: await fetchReferralDashboard(settlementConfigState.apiUrl, connectedAccount)
+        dashboard: await backendDataStoreFor(settlementConfigState.apiUrl).referralDashboard(connectedAccount)
       });
     } catch (error) {
       setReferralProgram({
@@ -1441,7 +1433,7 @@ export function FirstPlanetSettlementApp() {
     walletProvider: Eip1193Provider | undefined,
     connectedAccount: string,
   ): Promise<SettlementFundingState> {
-    const funding = await fetchSettlementFundingState(settlementConfigState.apiUrl!, connectedAccount);
+    const funding = await backendDataStoreFor(settlementConfigState.apiUrl!).settlementFunding(connectedAccount);
     const chainMigrationReservation = walletProvider
       ? await readMigrationReservation(walletProvider, settlementConfig.migrationAddress, connectedAccount)
       : null;
@@ -1607,7 +1599,7 @@ function ReferralProgramPanel({
 
     setHistoryLoading(true);
     setHistoryError(false);
-    void fetchReferralHistory(apiBaseUrl, wallet, historyPage, 25)
+    void backendDataStoreFor(apiBaseUrl).referralHistory(wallet, historyPage, 25)
       .then((response) => {
         if (cancelled) return;
         setHistory(response);
@@ -2385,7 +2377,7 @@ async function readIndexedSettlementState(
 ): Promise<IndexedSettlementState | undefined> {
   if (!apiUrl) return undefined;
 
-  return indexedSettlementState(await fetchWalletSettlement(apiUrl, account));
+  return indexedSettlementState(await backendDataStoreFor(apiUrl).settlement(account));
 }
 
 export function indexedSettlementState(settlement: WalletSettlementResponse): IndexedSettlementState {
@@ -2554,7 +2546,7 @@ function buildSettlementConfig(): SettlementConfig {
 type WaitForIndexedSettledPlanetOptions = {
   attempts?: number;
   delay?: (ms: number) => Promise<void>;
-  fetchSettlement?: typeof fetchWalletSettlement;
+  fetchSettlement?: FetchWalletSettlement;
   intervalMs?: number;
 };
 
@@ -2569,7 +2561,8 @@ export async function waitForIndexedSettledPlanet(
 
   const attempts = options.attempts ?? POST_SETTLEMENT_READ_ATTEMPTS;
   const intervalMs = options.intervalMs ?? POST_SETTLEMENT_READ_INTERVAL_MS;
-  const fetchSettlement = options.fetchSettlement ?? fetchWalletSettlement;
+  const fetchSettlement: FetchWalletSettlement = options.fetchSettlement
+    ?? ((baseUrl, wallet, readOptions) => backendDataStoreFor(baseUrl).settlement(wallet, readOptions));
   const wait = options.delay ?? delay;
 
   for (let attempt = 0; attempt < attempts; attempt += 1) {

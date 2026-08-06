@@ -1,196 +1,122 @@
 # Veydrift
 
-Veydrift is an onchain space project targeting Base. The public surface is
-intentionally quiet for now: the website should signal that something is coming
-without describing gameplay mechanics, economy details, factions, resources, or
-release promises before those systems are approved.
+Veydrift is a persistent onchain space strategy game on Base. Players settle planets, produce Metal, Crystal, and Deuterium, research technology, build fleets and defenses, form alliances, fight, and move resources through the Rift.
 
-## Repository Layout
+The contracts are the source of truth. The backend indexes public contract events into fast read models, and the Preact frontend reads those models through one shared data store.
+
+- Production: [veydrift.com](https://veydrift.com)
+- Test environment: [test.veydrift.com](https://test.veydrift.com)
+- Player guide: [veydrift.com/docs](https://veydrift.com/docs)
+- Repository documentation: [docs/README.md](docs/README.md)
+
+## Repository layout
 
 ```text
 apps/
-  backend/       Bun + TypeScript HTTP service with health and GraphQL endpoints
-  frontend/      Preact + TypeScript + Tailwind public coming-soon app
+  backend/                 Bun HTTP API and event-sourced SQLite indexer
+  frontend/                Preact, Vite, and Tailwind web app
+  battle-keeper/           Due-mission resolution worker
+  chicken-burn-listener/   Burning Chicken moon-grant listener
+  stats/                   Public statistics service
 packages/
-  contracts/     Foundry Solidity playable smart-contract MVP for Base deployments
-  circuits/      Retired circuit placeholder workspace; no zk gameplay roadmap
+  contracts/               Foundry Solidity contracts and deploy scripts
+  universe/                Shared deterministic universe data and formulas
+  circuits/                Retired circuit placeholder; no private-gameplay roadmap
+docs/                      Architecture decisions, runbooks, and historical audits
 ```
 
 ## Requirements
 
-- Bun 1.1 or newer
-- Node.js 20 or newer for frontend tooling launched by Bun
-- Foundry for contract checks
+- [Bun](https://bun.sh/) 1.1 or newer
+- Node.js 20 or newer
+- [Foundry](https://book.getfoundry.sh/getting-started/installation) for Solidity work
 
-## Setup
+## Quick start
+
+Install dependencies:
 
 ```sh
 bun install
 ```
 
-## Commands
-
-Run all available checks:
+Start the frontend against the API selected in `apps/frontend/.env.development` (currently the production API through Vite's local proxy):
 
 ```sh
-bun run check
-```
-
-Run all tests:
-
-```sh
-bun run test
-```
-
-Build all packages:
-
-```sh
-bun run build
-```
-
-Start local development servers:
-
-```sh
-bun run dev:backend
 bun run dev:frontend
 ```
 
-## Package Notes
+Vite prints the local URL, normally `http://localhost:5173`. Local API requests use the proxy configured in `apps/frontend/.env.development`, so browser CORS setup is not required.
 
-### Backend
-
-`apps/backend` exposes:
-
-- `GET /health`
-- `GET /debug/config`
-- `GET /wallet/:address/settlement`
-- `GET /wallet/:address/queues`
-- `GET /planets/:planetId`
-- `GET /universe/galaxies/:galaxy/systems/:system`
-- `GET /universe/systems?galaxy=1&center=250&radius=2`
-- `POST /webhooks/alchemy`
-- `GET /graphql` / `POST /graphql` for the existing minimal service status response
-
-Index DB alignment is an explicit operator action through backend package scripts, not an HTTP
-route. Use the canonical sync when historical DB state must be repaired against on-chain truth:
+To run the backend locally, copy its environment template, fill in the required contract and RPC values, then start it:
 
 ```sh
+cp apps/backend/.env.example apps/backend/.env
+bun run dev:backend
+```
+
+See [docs/development.md](docs/development.md) for environment choices and focused commands.
+
+## Validate changes
+
+Run the checks closest to the code you changed first:
+
+```sh
+bun run test:frontend
+bun run check:frontend
+
+bun run test:backend
+bun run check:backend
+
+bun run test:contracts
+bun run check:contracts
+```
+
+Run the complete repository suites before a broad release:
+
+```sh
+bun run test
+bun run check
+bun run build
+```
+
+## How data moves
+
+```text
+wallet transaction
+  -> Base contract and authoritative events
+  -> backend event indexer and SQLite read models
+  -> typed API client
+  -> shared frontend BackendDataStore
+  -> every screen that renders that data
+```
+
+Frontend components do not issue backend reads directly. They call refresh methods on `BackendDataStore`, which stores the latest response and reuses an existing promise when the same request is already running. Per-planet UI snapshots project that shared data into Overview, Infrastructure, planet details, the planet selector, and other surfaces without creating another network path.
+
+After a wallet transaction confirms, the app waits for the exact indexed transaction or expected state transition before reporting success. Chain-event notifications trigger the same centralized refresh path. See [docs/frontend-data-store.md](docs/frontend-data-store.md).
+
+## Backend and indexer
+
+Normal API reads come from the SQLite index. They must not perform request-time canonical RPC reads. `GET /health` reports index progress and reconciliation health; `GET /chain/events` streams indexed event notifications to frontend refresh triggers.
+
+Use explicit operator commands when an index needs repair:
+
+```sh
+# Fetch logs, rematerialize them, then seed canonical current state.
 cd apps/backend
 bun run index:sync -- --from-block <block>
-```
 
-The sync command first fetches/stores raw contract logs for the requested range, rebuilds
-materialized event-derived DB tables from the full stored `indexed_event_logs` ledger, then runs the
-explicit canonical rebuild that reads current on-chain resources, buildings, ships, defenses, queues,
-research, moons, and alliance snapshots. This is the operator-only repair path for historical drift
-that cannot be reconstructed from old event logs alone. Unlike startup cold rebuilds, the canonical
-sync does not apply `VEYDRIFT_REBUILD_DEADLINE_MS` by default; pass
-`--sync-deadline-ms <milliseconds>` only when an operator intentionally wants to cap a manual run.
-
-For a log-only rematerialization that performs no canonical state reads, use:
-
-```sh
-cd apps/backend
+# Rematerialize stored logs without canonical RPC reads.
 bun run index:replay -- --from-block <block>
-```
 
-For a narrow alliance-state repair that only refreshes alliance directory/member counts, join
-requests, and directed diplomacy from the alliance contract, use:
-
-```sh
-cd apps/backend
+# Repair only alliance directory, membership, requests, and diplomacy.
 bun run index:sync -- --alliance-state-seed
 ```
 
-Both commands are explicit operator tools and do not add request-time, startup, or periodic
-canonical RPC self-heal.
+Configuration is documented in `apps/backend/.env.example`. Never commit `.env` files, RPC credentials, private keys, or webhook signing keys.
 
-Copy `apps/backend/.env.example` to `apps/backend/.env` and provide the Base
-Sepolia RPC configuration before using chain-backed routes:
+## Contracts and state safety
 
-```sh
-VEYDRIFT_DEPLOYMENT_MODE=local
-VEYDRIFT_CHAIN_ID=84532
-VEYDRIFT_CONTRACT_ADDRESS=0x...
-VEYDRIFT_SETTLEMENT_CONTRACT_ADDRESS=0x...
-VEYDRIFT_GAME_CONTRACT_ADDRESS=0x...
-VEYDRIFT_METAL_TOKEN_ADDRESS=0x...
-VEYDRIFT_CRYSTAL_TOKEN_ADDRESS=0x...
-VEYDRIFT_DEUTERIUM_TOKEN_ADDRESS=0x...
-VEYDRIFT_INDEX_DB_PATH=.data/contract-state.sqlite
-VEYDRIFT_INDEX_FROM_BLOCK=0
-VEYDRIFT_MISSION_RESOLVER_PRIVATE_KEY=0x...
-# Optional alternative when the RPC node has an unlocked funded resolver account.
-VEYDRIFT_MISSION_RESOLVER_ADDRESS=0x...
-VEYDRIFT_ALCHEMY_WEBHOOK_SIGNING_KEY=...
-ALCHEMY_BASE_SEPOLIA_API_KEY=...
-# Optional explicit websocket overrides; otherwise the Alchemy key derives the Base Sepolia WS URL.
-VEYDRIFT_WS_RPC_URL=
-ALCHEMY_BASE_SEPOLIA_WS_URL=
-```
-
-The backend accepts `ALCHEMY_BASE_SEPOLIA_API_KEY`,
-`ALCHEMY_BASE_SEPOLIA_RPC_URL`, `BASE_SEPOLIA_RPC_URL`, or `VEYDRIFT_RPC_URL`.
-For websocket chain sync it accepts `VEYDRIFT_WS_RPC_URL` or
-`ALCHEMY_BASE_SEPOLIA_WS_URL`, and falls back to
-`wss://base-sepolia.g.alchemy.com/v2/<key>` when only
-`ALCHEMY_BASE_SEPOLIA_API_KEY` is set. HTTP RPC is for writer-side event replay,
-explicit operator sync, and mutating/on-chain workers; frontend/API read
-requests must be served from the SQLite index.
-`VEYDRIFT_GAME_CONTRACT_ADDRESS` or the legacy `VEYDRIFT_CONTRACT_ADDRESS` must
-point at the deployed `VeydriftGame` proxy for game-state APIs and runtime
-Shipyard transactions.
-`VEYDRIFT_SETTLEMENT_CONTRACT_ADDRESS` is the compact first-planet settlement
-contract used for settlement/universe context and must not be used as the game
-contract.
-`VEYDRIFT_SETTLEMENT_START_PRICE_WEI` seeds the SQLite price projection at cold
-start and must match the deployed game's `startPrice`; the post-deploy smoke
-check enforces that bootstrap invariant. `StartPriceUpdated` events then become
-canonical for settlement funding and referral reward responses, and explicit
-rebuilds seed the current contract value. Divergence remains visible in indexer
-health metadata. Read endpoints deliberately do not call RPC for each request.
-`VEYDRIFT_METAL_TOKEN_ADDRESS`, `VEYDRIFT_CRYSTAL_TOKEN_ADDRESS`, and
-`VEYDRIFT_DEUTERIUM_TOKEN_ADDRESS` expose the upgradeable ERC-20 resource token
-proxies deployed for the game.
-On test deployments, `VEYDRIFT_MISSION_RESOLVER_PRIVATE_KEY` enables the
-writer-only fleet settlement keeper that submits due `resolveFleetMission` and
-`completeFleetMissionReturn` transactions. `VEYDRIFT_MISSION_RESOLVER_ADDRESS`
-is supported for RPC nodes with an unlocked funded resolver account.
-Health/debug responses only report safe configuration metadata and never echo
-RPC URLs or API keys. Ownership remains canonical onchain; the normal backend
-serves frontend/API reads from the SQLite-backed contract state index and mutates
-that DB through contract event replay/listeners only. `GET /health` reports the
-last reconciled block, latest indexed block, in-progress state, reorg detection,
-and last reconciliation error. `GET /chain/events` streams backend chain-event
-notifications to the frontend. Manual DB alignment is intentionally separated
-from HTTP routes and runs through `bun run index:sync -- --from-block <block>`
-when canonical on-chain repair is required, or `bun run index:replay -- --from-block <block>`
-when only stored-log rematerialization is intended. For alliance-only drift, use
-`bun run index:sync -- --alliance-state-seed` to avoid reseeding planet/resource tables.
-`POST /webhooks/alchemy` accepts Alchemy contract log webhook payloads, verifies
-`X-Alchemy-Signature` when `VEYDRIFT_ALCHEMY_WEBHOOK_SIGNING_KEY` is configured,
-and applies duplicate-safe indexed event updates.
-
-### Frontend
-
-`apps/frontend` is a Vite Preact app with Tailwind CSS. The current production
-surface is a space-themed coming-soon page for `https://veydrift.com` with no
-game-specific details.
-
-### Contracts
-
-`packages/contracts` contains the first playable Solidity MVP. `VeydriftGame`
-is an OpenZeppelin UUPS upgradeable contract behind an ERC1967 proxy with one
-home planet per wallet, deterministic coordinates, lazy resource settlement,
-building upgrades, defense and ship production, technology research, and
-deployment/upgrade scripts.
-
-Veydrift is in open alpha as of 2026-05-29. Contract-affecting work must
-preserve existing player state. Prefer proxy upgrades when the deployed contract
-supports them; if a full redeploy is unavoidable, follow
-`docs/open-alpha-state-preservation.md` and
-`docs/veydrift-contract-redeploy-runbook.md` before broadcasting or marking the
-task done.
+The contracts use upgradeable proxies and public event-reconstructable gameplay state. Run contract checks from the workspace root or directly with Foundry:
 
 ```sh
 cd packages/contracts
@@ -199,450 +125,22 @@ forge build
 forge test
 ```
 
-Resource ERC-20 deployment for an already deployed game contract:
+Veydrift is in open alpha as of 2026-05-29. Contract-affecting work must preserve existing player state. Prefer a compatible proxy upgrade. If a full redeploy is unavoidable, follow [docs/open-alpha-state-preservation.md](docs/open-alpha-state-preservation.md) and [docs/veydrift-contract-redeploy-runbook.md](docs/veydrift-contract-redeploy-runbook.md) before broadcasting anything.
 
-```sh
-PRIVATE_KEY=... ADMIN_ADDRESS=0xAdmin VEYDRIFT_GAME_CONTRACT_ADDRESS=0xGame \
-  forge script script/DeployResourceTokens.s.sol:DeployResourceTokens \
-  --rpc-url "$BASE_SEPOLIA_RPC_URL" --broadcast --verify
-```
+## Documentation
 
-The token deploy script emits and returns the Metal, Crystal, and Deuterium
-proxy addresses. Configure those addresses as backend/runtime environment
-variables after deployment.
+Start with [docs/README.md](docs/README.md). It separates current architecture and runbooks from historical issue investigations so it is clear which documents describe active behavior.
 
-Referral system deployment for an already deployed game contract:
+Important references:
 
-```sh
-cd packages/contracts
-export REFERRAL_SIGNER_ADDRESS="$(cast wallet address --private-key "$VEYDRIFT_REFERRAL_SIGNER_PRIVATE_KEY")"
+- [Local development](docs/development.md)
+- [Frontend data store](docs/frontend-data-store.md)
+- [Public onchain state](docs/public-onchain-state-architecture.md)
+- [Indexer architecture](docs/event-sourced-indexer-VEY-KANEO-475.md)
+- [Combat reference](docs/combat-reference.md)
+- [Randomness engine](docs/randomness-engine.md)
+- [Deployment and state preservation](docs/open-alpha-state-preservation.md)
 
-GAME_PROXY_ADDRESS=<VeydriftGame proxy> \
-REFERRAL_SIGNER_ADDRESS="$REFERRAL_SIGNER_ADDRESS" \
-PRIVATE_KEY=<referral-owner-key> \
-  forge script script/DeployReferralSystem.s.sol:DeployReferralSystem --rpc-url "$VEYDRIFT_RPC_URL"
+## Security
 
-GAME_PROXY_ADDRESS=<VeydriftGame proxy> \
-REFERRAL_SIGNER_ADDRESS="$REFERRAL_SIGNER_ADDRESS" \
-PRIVATE_KEY=<referral-owner-key> \
-  forge script script/DeployReferralSystem.s.sol:DeployReferralSystem --rpc-url "$VEYDRIFT_RPC_URL" --broadcast
-```
-
-Use the emitted `VeydriftReferralSystem` address as
-`VEYDRIFT_REFERRAL_SYSTEM_ADDRESS` before running the game proxy upgrade script
-that wires `VeydriftFirstPlanetSettlementModule(referralSystem)`. Deployment is
-ordered and atomic at the release boundary:
-
-1. Deploy the new referral system and verify its `game()` and `referralSigner()`.
-2. Follow `docs/referral-code-migration-VEY-KANEO-714.md`: normalize and collision-audit
-   the legacy code export, import permanent ownership/last activation timestamps, verify
-   every imported row, then finalize migration. Public claims remain disabled until finalization.
-3. Set `VEYDRIFT_REFERRAL_SYSTEM_ADDRESS`, run `UpgradeGame.s.sol`, and verify the
-   game proxy still has the expected implementation/storage state and exact
-   `startPrice()`.
-4. Configure the backend with the same referral address, signer private key, and
-   exact bootstrap `VEYDRIFT_SETTLEMENT_START_PRICE_WEI`; rebuild its referral
-   index from the new referral deployment block so current price and later
-   `StartPriceUpdated`, permanent ownership, activation-window, and redemption events
-   are canonical before exposing referral traffic.
-5. Deploy backend first, then frontend. Run `veydrift-postdeploy-smoke.mjs` with
-   the RPC, expected signer address, and start price before live QA.
-
-Keep the referral owner key, backend signer key, and full RPC URL in secret
-storage. Normalized invite codes and ownership are public chain events so the backend
-can derive availability, ownership, active-window, and quota truth without a JSON side file.
-
-### Circuits
-
-Veydrift gameplay state is public onchain state. There is no privacy, zk,
-hidden-state backend, committed-root, or espionage roadmap for gameplay. See
-`docs/public-onchain-state-architecture.md` for the canonical state model and
-backend/indexer boundary, and
-`docs/espionage-hidden-intel-decision-VEY-KANEO-196.md` for the explicit
-classic-espionage exclusion decision.
-
-`packages/circuits` contains retired placeholder files only. It remains in the
-workspace so existing scripts keep passing until a cleanup task removes or
-repurposes it; it must not be used as product guidance for zk gameplay.
-`docs/ogame-parity-scope-VEY-KANEO-198.md` is the current scope record for
-Veydrift-only mechanics versus classic OGame parity work.
-
-```sh
-cd packages/circuits
-bun run check
-```
-
-## Deployment
-
-The initial production target is the existing Hetzner Easypanel instance. The
-contract deployment path is state-preserving by policy: do not redeploy alpha
-contracts as a reset, and do not update backend runtime addresses without a
-proxy-upgrade, no-state, or migrated-redeploy note in the Kaneo/PR handoff.
-For the approved Base Sepolia `VeydriftGame` replacement path, follow
-`docs/veydriftgame-replacement-plan-VEY-KANEO-313.md` before any broadcast or
-runtime address change.
-`veydrift/frontend` service is sourced from this GitHub repository on `main`.
-Use the repository root as the EasyPanel source/build path and configure
-Nixpacks with frontend-scoped commands so Bun can install the whole monorepo
-workspace, including `@veydrift/universe`:
-
-```sh
-bun install --frozen-lockfile && rm -rf /root/.cache/nix
-cd apps/frontend
-bun run build
-rm -rf /root/.bun/install/cache /tmp/*
-bun run serve
-```
-
-Deploy only the frontend package until backend, contract, circuit, indexing, and
-game-specific systems have separate implementation scopes.
-
-The frontend also publishes Farcaster Mini App metadata at
-`/.well-known/farcaster.json`. Before submitting it to Farcaster/Base discovery,
-generate the signed `accountAssociation` for `veydrift.com` with the owning
-Farcaster/Base account and replace the manifest values. The production build
-emits `veydrift.com` manifest URLs, while the test build emits
-`test.veydrift.com` manifest URLs with the signed test-domain association.
-Share card image and button metadata live in the page-level `fc:miniapp` and
-backward-compatible `fc:frame` tags; do not re-add the deprecated manifest
-`imageUrl` or `buttonTitle` fields.
-If the test-domain signature rotates, set
-`VEYDRIFT_TEST_FARCASTER_ACCOUNT_ASSOCIATION` or the split
-`VEYDRIFT_TEST_FARCASTER_ACCOUNT_ASSOCIATION_HEADER` /
-`VEYDRIFT_TEST_FARCASTER_ACCOUNT_ASSOCIATION_PAYLOAD` /
-`VEYDRIFT_TEST_FARCASTER_ACCOUNT_ASSOCIATION_SIGNATURE` values in the
-`veydrift/frontend-test` deploy environment.
-
-### Test App
-
-The separate EasyPanel app for `test.veydrift.com` uses two services in the
-existing `veydrift` EasyPanel project:
-
-- `veydrift/frontend` remains the production coming-soon service for
-  `https://veydrift.com`.
-- `veydrift/frontend-test` serves the injected-wallet settlement test frontend at
-  `https://test.veydrift.com`.
-- `veydrift/backend-test` serves the test API at
-  `https://api-test.veydrift.com`.
-
-The test frontend must also use the repository root as the EasyPanel
-source/build path. Do not set the source/build path to `/apps/frontend`, because
-that excludes the root `workspaces` metadata and makes `workspace:*`
-dependencies such as `@veydrift/universe` unavailable. Configure
-`veydrift/frontend-test` with:
-
-```text
-Source path: /
-Build type: Nixpacks
-Nixpacks version: 1.34.1
-Install command: bun install --frozen-lockfile && cd apps/frontend && NODE_ENV=development bun install --frozen-lockfile --force && rm -rf /root/.cache/nix
-Build command: cd apps/frontend && node scripts/generate-image-variants.mjs && ../../node_modules/.bin/vite build --mode settlement && rm -rf /root/.bun/install/cache /tmp/*
-Start command: cd apps/frontend && bun run serve
-```
-
-Those commands are equivalent to running:
-
-```sh
-bun install --frozen-lockfile && cd apps/frontend
-NODE_ENV=development bun install --frozen-lockfile --force && rm -rf /root/.cache/nix
-node scripts/generate-image-variants.mjs
-../../node_modules/.bin/vite build --mode settlement
-rm -rf /root/.bun/install/cache /tmp/*
-bun run serve
-```
-
-The test build sets `VITE_VEYDRIFT_SURFACE=settlement`, uses
-`https://test.veydrift.com` for canonical/social URLs, and emits `noindex`
-robots metadata so the injected-wallet first-planet flow can be reviewed separately from the quiet
-production `veydrift.com` surface. Configure the frontend test service with:
-
-```text
-VITE_VEYDRIFT_API_URL=https://api-test.veydrift.com
-VITE_VEYDRIFT_SETTLEMENT_ADDRESS=0x8bA1807073ac642A55596A4934c49115E400cD2f
-VEYDRIFT_TEST_FARCASTER_ACCOUNT_ASSOCIATION={"header":"...","payload":"...","signature":"..."}
-PORT=80
-```
-
-`VEYDRIFT_TEST_FARCASTER_ACCOUNT_ASSOCIATION` must be generated by the
-Farcaster Mini App Manifest Tool for the exact domain `test.veydrift.com`. As
-an alternative, set the three split variables
-`VEYDRIFT_TEST_FARCASTER_ACCOUNT_ASSOCIATION_HEADER`,
-`VEYDRIFT_TEST_FARCASTER_ACCOUNT_ASSOCIATION_PAYLOAD`, and
-`VEYDRIFT_TEST_FARCASTER_ACCOUNT_ASSOCIATION_SIGNATURE`. The settlement build
-intentionally rejects a missing or wrong-domain association so the test app does
-not ship a `veydrift.com` account association.
-
-If the Nixpacks deploy needs to be rolled back, keep the same environment
-variables and switch only `veydrift/frontend-test` back to Dockerfile build with
-Dockerfile path `apps/frontend/Dockerfile.test` from the repository root. Do not
-repoint or modify the production `veydrift/frontend` service while rolling back
-the test frontend.
-
-The backend test service must also use the repository root as the EasyPanel
-source/build path so Bun can install the monorepo workspace and resolve
-`@veydrift/universe`. Do not set the source/build path to `/apps/backend`.
-Configure `veydrift/backend-test` with:
-
-```text
-Source path: /
-Build type: Nixpacks
-Nixpacks version: 1.34.1
-Nixpacks config path: apps/backend/nixpacks.test.toml
-Install command: bun install --frozen-lockfile && rm -rf /root/.cache/nix
-Build command: sh apps/backend/scripts/write-build-sha.sh && cd apps/backend && \
-  bun run build && rm -rf /root/.bun/install/cache /tmp/*
-Start command: cd apps/backend && bun run start
-```
-
-The committed `apps/backend/nixpacks.test.toml` build command also writes
-`.veydrift-backend-build-sha` at both the repository root and `apps/backend/`.
-It uses Easypanel's provider-injected, full-length `GIT_SHA` in the `.git`-free
-Nixpacks context, falls back to `git rev-parse HEAD` for local builds, and fails
-the build if neither source provides a valid commit SHA. The backend reads that
-artifact for `backend.build.gitSha` so `/health` and `/runtime-config` identify the actual
-source image even when contract deployment manifest variables such as
-`VEYDRIFT_DEPLOYMENT_COMMIT` point at an older contract redeploy commit.
-The image artifact is authoritative over provider and custom service environment
-SHA values because EasyPanel preserves custom environment entries across source
-deploys. Do not configure `GIT_SHA` or `VEYDRIFT_BUILD_GIT_SHA` as custom
-EasyPanel variables; remove stale copies from the service configuration. The
-`VEYDRIFT_DEPLOYMENT_COMMIT`, `VEYDRIFT_DEPLOYMENT_ABI_HASH`, and
-`VEYDRIFT_DEPLOYMENT_TIMESTAMP` variables belong to the contract deployment
-manifest and remain intentionally independent from the application source SHA.
-
-Configure it with:
-
-```text
-VEYDRIFT_ALLOWED_ORIGIN=https://test.veydrift.com
-VEYDRIFT_CHAIN_ID=84532
-VEYDRIFT_CONTRACT_ADDRESS=<Base Sepolia VeydriftGame proxy address>
-VEYDRIFT_SETTLEMENT_CONTRACT_ADDRESS=<Base Sepolia compact settlement address>
-VEYDRIFT_GAME_CONTRACT_ADDRESS=<Base Sepolia VeydriftGame proxy address>
-VEYDRIFT_SETTLEMENT_START_PRICE_WEI=<VeydriftGame startPrice in wei, for example 50000000000000000>
-VEYDRIFT_ALLIANCE_CONTRACT_ADDRESS=<Base Sepolia VeydriftAllianceSystem proxy address>
-VEYDRIFT_MOON_CONTRACT_ADDRESS=<Base Sepolia VeydriftMoonSystem proxy address>
-VEYDRIFT_RANDOMNESS_ENGINE_ADDRESS=<Base Sepolia RandomnessEngine proxy address>
-VEYDRIFT_REFERRAL_SYSTEM_ADDRESS=<Base Sepolia VeydriftReferralSystem address, when referrals are deployed>
-VEYDRIFT_REFERRAL_SIGNER_PRIVATE_KEY=<backend referral payload signer key, from secret storage>
-VEYDRIFT_METAL_TOKEN_ADDRESS=<Base Sepolia VeydriftMetal ERC-20 proxy address>
-VEYDRIFT_CRYSTAL_TOKEN_ADDRESS=<Base Sepolia VeydriftCrystal ERC-20 proxy address>
-VEYDRIFT_DEUTERIUM_TOKEN_ADDRESS=<Base Sepolia VeydriftDeuterium ERC-20 proxy address>
-VEYDRIFT_BURNING_CHICKEN_NFT_CONTRACT_ADDRESS=<Base mainnet Burning Chicken NFT address>
-VEYDRIFT_BURNING_CHICKEN_BURN_CONTRACT_ADDRESS=<Base mainnet Burning Chicken burn contract address>
-VEYDRIFT_BURNING_CHICKEN_BURN_SELECTOR=<4-byte burnForMoon(uint256,uint256,uint16,uint16,uint8) selector, set to 0x6364233d>
-VEYDRIFT_BASE_MAINNET_RPC_URL=<Base mainnet public or redacted provider RPC URL>
-VEYDRIFT_NETWORK_NAME=Base Sepolia
-VEYDRIFT_PUBLIC_API_URL=https://api-test.veydrift.com
-VEYDRIFT_PUBLIC_GRAPHQL_URL=https://api-test.veydrift.com/graphql
-VEYDRIFT_RPC_URL=<Alchemy Base Sepolia RPC URL>
-VEYDRIFT_WS_RPC_URL=<Alchemy Base Sepolia websocket RPC URL>
-PORT=4000
-```
-
-`VEYDRIFT_RPC_URL`, `VEYDRIFT_WS_RPC_URL`, and deployer keys must come from
-Vaultwarden or EasyPanel secret storage and must not be committed. When the
-shared `ALCHEMY_BASE_SEPOLIA_API_KEY` is used, the backend derives both HTTPS
-and websocket Alchemy RPC URLs.
-
-`VEYDRIFT_BURNING_CHICKEN_NFT_CONTRACT_ADDRESS`,
-`VEYDRIFT_BURNING_CHICKEN_BURN_CONTRACT_ADDRESS`, and
-`VEYDRIFT_BURNING_CHICKEN_BURN_SELECTOR` must be set on the backend test service
-before `/runtime-config` reports `featureSupport.chickenBurnConfigured: true`.
-The Base mainnet RPC URL is public runtime metadata for frontend reads; prefer a
-redacted/proxy provider URL if the deploy uses a paid key.
-
-The Chicken burn listener is a separate EasyPanel service in the same `veydrift`
-project. Deploy this after the planet-id-only Chicken burn surface is in the
-image. The listener then consumes
-`ChickenBurned(address indexed burner,uint256 indexed tokenId,uint256 planetId)`;
-the Veydrift moon system resolves coordinates from current Veydrift planet state
-before granting the moon. Configure it from the repository root with:
-
-```text
-Source path: /
-Build type: Nixpacks
-Nixpacks version: 1.34.1
-Nixpacks config path: apps/chicken-burn-listener/nixpacks.toml
-Install command: bun install --frozen-lockfile
-Build command: cd apps/chicken-burn-listener && bun run check
-Start command: cd apps/chicken-burn-listener && bun run start
-```
-
-Configure `veydrift/chicken-burn-listener-test` with these deploy secrets and
-runtime values:
-
-```text
-BASE_MAINNET_HTTP_RPC_URL=<Base mainnet Alchemy HTTPS URL from secret storage>
-BASE_MAINNET_WS_RPC_URL=<Base mainnet Alchemy WSS URL from secret storage>
-CHICKEN_CONTRACT_ADDRESS=<Base mainnet Burning Chicken burn/NFT contract address>
-CHICKEN_BURN_EVENT_SIGNATURE=<optional deployed event signature override>
-CHICKEN_BURN_START_BLOCK=<first block to scan, or 0 for full configured backfill window>
-VEYDRIFT_RPC_URL=<self-hosted Base Sepolia RPC URL>
-VEYDRIFT_CHAIN_ID=84532
-VEYDRIFT_MOON_SYSTEM_ADDRESS=<Base Sepolia VeydriftMoonSystem proxy address>
-VEYDRIFT_GRANT_PRIVATE_KEY=<moon proxy owner/admin key from secret storage>
-STATE_FILE=/data/chicken-burn-listener-state.json
-BACKFILL_INTERVAL_MS=15000
-BACKFILL_BLOCKS=2000
-MAX_RANGE_BLOCKS=90000
-PORT=8080
-```
-
-Mount `/data` as durable service storage so replayed Base mainnet logs do not
-resubmit already processed burn ids after a restart. The moon contract also
-keeps `chickenBurnMoonGranted(bytes32)` as the on-chain replay guard.
-
-To upgrade the live Base Sepolia moon proxy after a merge, run a dry run first
-and then broadcast from the current moon proxy owner:
-
-```sh
-cd packages/contracts
-MOON_PROXY_ADDRESS=<Base Sepolia VeydriftMoonSystem proxy> PRIVATE_KEY=<owner-key> \
-  forge script script/UpgradeMoonSystem.s.sol:UpgradeMoonSystem --rpc-url "$VEYDRIFT_RPC_URL"
-
-MOON_PROXY_ADDRESS=<Base Sepolia VeydriftMoonSystem proxy> PRIVATE_KEY=<owner-key> \
-  forge script script/UpgradeMoonSystem.s.sol:UpgradeMoonSystem --rpc-url "$VEYDRIFT_RPC_URL" --broadcast
-```
-
-Record the old proxy, new implementation, upgrade transaction, backend
-`/runtime-config`, and listener `/health` evidence in the Kaneo handoff. Do not
-paste full RPC URLs or private keys into Kaneo, GitHub, or source control.
-
-#### Backend redeploy health gate
-
-`veydrift/backend-test` redeploys with the start-first (zero-downtime) strategy:
-EasyPanel starts the new container before stopping the old one. Without a health
-gate the proxy cuts traffic to the new container the instant the process starts —
-before Bun has bound the port — so a redeploy drops requests for a second or two.
-Configure EasyPanel's **Health Check** on `veydrift/backend-test` so the new
-container only receives traffic once `GET /health` answers `200` and
-`{ "ok": true }`:
-
-```text
-Health check path: /health
-Health check port: 4000
-Interval: 5s
-Timeout: 3s
-Retries: 3
-Start period: 30s
-```
-
-`GET /health` returns `503` with `{ "ok": false }` until configuration is valid,
-the chain-sync poller has completed a healthy head/log pass, and the SQLite
-index snapshot is safe to serve. It returns `200` with `{ "ok": true }` only
-after those public-read prerequisites are ready, so EasyPanel/Swarm start-first
-deploys keep the old container in rotation until the replacement can serve real
-requests. This is intentionally still fast: the SQLite index DB is opened
-synchronously during request-handler construction (before Bun binds the port),
-and the poller kicks an immediate first pass. Heavy event replay and explicit
-operator DB alignment continue in the background and must not block readiness.
-Operator-run DB alignment is explicit (`bun run index:sync -- --from-block <block>`) rather than
-a backend startup self-heal; it replays missing RPC logs, rebuilds materialized tables from the
-stored event ledger, and runs the explicit canonical repair read without the startup rebuild deadline
-unless `--sync-deadline-ms <milliseconds>` is supplied. Use
-`bun run index:replay -- --from-block <block>` only for log-only rematerialization. The same
-readiness gate is embedded as a Docker `HEALTHCHECK` in
-`apps/backend/Dockerfile.test`, so the Dockerfile rollback build path carries it
-automatically; Nixpacks builds cannot embed a `HEALTHCHECK`, so the EasyPanel
-Health Check above is required for the primary Nixpacks deploy.
-
-Before and after any backend deploy configuration change, run the continuous
-probe from a terminal outside the container and keep the JSON output as
-handoff evidence:
-
-```sh
-node scripts/veydrift-redeploy-readiness-probe.mjs \
-  --api-url https://api-test.veydrift.com \
-  --duration-seconds 180
-```
-
-During a normal redeploy, the summary should show no multi-minute 5xx or network
-error window; target perceived downtime is under one second.
-
-If the backend Nixpacks deploy needs to be rolled back, keep the same
-environment variables and switch only
-`veydrift/backend-test` back to Dockerfile build with Dockerfile path
-`apps/backend/Dockerfile.test` from the repository root. Broader rollback is
-service-local: remove the `test.veydrift.com` and `api-test.veydrift.com`
-domains from the test services, or scale/delete `frontend-test` and
-`backend-test`. Do not repoint or delete the production `veydrift/frontend`
-service while rolling back the test app.
-
-#### Backend multi-worker model
-
-`bun run start` (`apps/backend/src/index.ts`) launches a supervisor that spawns
-`N = CPU count` worker processes, all binding the same `PORT` with
-`SO_REUSEPORT` (Bun.serve `reusePort: true`). The kernel load-balances incoming
-connections across the workers, so a slow request handled by one worker no
-longer blocks the others (VEY-KANEO-466).
-
-- **Worker 0 is the single writer.** It runs chain-sync ingestion, the
-  websocket/polling event replay, mission resolution, and the randomness
-  committer. The committers submit on-chain transactions, so they must run on
-  exactly one worker. Explicit operator syncs such as `bun run index:replay`
-  are run outside frontend request handling.
-- **The remaining workers are readers.** They serve read requests
-  (`GET`/`HEAD`/`OPTIONS`) from the shared SQLite index database, which is opened
-  in WAL mode (`PRAGMA journal_mode = WAL`) so many readers run concurrently with
-  the single writer. Readers skip every background loop. Every remaining
-  **mutating** request (display-name and `/webhooks/alchemy`) is forwarded over
-  loopback to the writer's private listener, so the writer stays the sole
-  request-time mutator of the index and the only holder of the in-memory indexer
-  state. The writer binds that private listener on
-  `127.0.0.1:<PORT+1>` (override with `VEYDRIFT_WRITER_INTERNAL_PORT`) in
-  addition to the shared reusePort socket.
-- The supervisor respawns a worker that exits unexpectedly and forwards
-  SIGTERM/SIGINT so a redeploy or Ctrl-C tears the whole pool down cleanly
-  (each worker still answers `GET /health` the instant it binds the port, so the
-  EasyPanel health gate above is unchanged).
-
-Tuning env vars:
-
-```text
-VEYDRIFT_WORKER_COUNT=<N>          # target worker count (default: min(host CPU count, 2); set 1 to force
-                                  # the original single-process behavior). Values above 2 are clamped
-                                  # to the deploy-safe cap.
-VEYDRIFT_MAX_WORKER_COUNT=<N>      # hard deployment cap retained for legacy service configs; this can
-                                  # lower the built-in cap but cannot raise it.
-VEYDRIFT_WRITER_INTERNAL_PORT=<P> # override the writer's private loopback write listener (default
-                                  # PORT+1); only relevant when the pool has more than one worker.
-                                  # VEYDRIFT_WORKER_ROLE / VEYDRIFT_WORKER_INDEX are managed internally
-                                  # by the supervisor and should not be set by hand.
-VEYDRIFT_MISSION_REPORT_GENERATOR_CONCURRENCY=<N>
-                                  # report-materializer process count (default 1). SQLite permits one
-                                  # writer, so raising this requires measured evidence and can increase
-                                  # lock contention rather than throughput.
-```
-
-#### API latency reporting and benchmark
-
-Backend request logs contain structured `api_request` events with normalized route families. Generate
-the slow-route report from one or more captured log files (or stdin) with:
-
-```sh
-bun run report:api-latency -- --json backend.log
-```
-
-The report excludes streaming `GET /chain/events`, ranks route families by p95, and includes p50,
-p95, p99, max, and counts over 300 ms. After deployment, exercise the same ten normal route families
-against a representative wallet, completed mission, and target planet with:
-
-```sh
-bun run performance:api -- \
-  --base-url https://api-test.veydrift.com \
-  --wallet 0x0000000000000000000000000000000000000000 \
-  --mission-id 1 \
-  --target-planet-id 1
-```
-
-The benchmark consumes every response body, runs concurrent samples, and exits non-zero if any route
-family has p95 greater than or equal to 300 ms. Use real indexed identifiers for deployment evidence;
-the placeholder values above document argument shape only.
-
-## Operating Rules
-
-- Keep public copy non-specific until the game direction is approved.
-- Do not commit secrets, credentials, generated proving artifacts, or deployment
-  tokens.
-- Keep implementation PRs small and include validation evidence.
-- Track work through the Veydrift Kaneo project and Symphony.
+Do not post private keys, API keys, deployment manifests with secrets, or unredacted production configuration in issues or pull requests. Treat builds and tests as bounded evidence; deployment-sensitive changes still require the relevant runbook, live configuration checks, and post-deploy smoke tests.

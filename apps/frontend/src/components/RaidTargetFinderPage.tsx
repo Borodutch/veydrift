@@ -4,7 +4,8 @@ import { planetImageForType } from "../data/mockUniverse";
 import { formatDurationUntil } from "../durationFormat";
 import { activeMissionsByPlanetId, planetMissionSubtext } from "../planetMissionSubtext";
 import type { Coordinates } from "../types";
-import { fetchHighscores, fetchRaidFinderDebrisTargets, fetchRaidFinderRifters, shortAddress, type ChainShipyardState, type DebrisTargetResponse, type FleetMissionSummary, type HighscoreEntry, type RiftFinderTargetResponse } from "../walletFlow";
+import { shortAddress, type ChainShipyardState, type DebrisTargetResponse, type FleetMissionSummary, type HighscoreEntry, type RiftFinderTargetResponse } from "../walletFlow";
+import { backendDataStoreFor } from "../backendDataStore";
 import type { FleetMissionVisibilityResponse } from "../walletFlow";
 import {
   DEFAULT_DEBRIS_TARGET_SORT,
@@ -167,14 +168,15 @@ export function RaidTargetFinderPage({
     setDebrisError(undefined);
     setRifterError(undefined);
     setPages({ raids: 1, debris: 1, rifters: 1 });
-    const highscoresRequest = fetchHighscores(apiBaseUrl, {
+    const backendData = backendDataStoreFor(apiBaseUrl);
+    const highscoresRequest = backendData.highscores({
       category: "total",
       ...(currentWallet ? { currentWallet } : {}),
       page: 1,
       pageSize: raidTargetFinderPageSize,
     });
-    const debrisRequest = fetchRaidFinderDebrisTargets(apiBaseUrl, { limit: raidTargetFinderPageSize });
-    const riftersRequest = fetchRaidFinderRifters(apiBaseUrl, { limit: raidTargetFinderPageSize });
+    const debrisRequest = backendData.raidFinderDebris({ limit: raidTargetFinderPageSize });
+    const riftersRequest = backendData.raidFinderRifters({ limit: raidTargetFinderPageSize });
 
     highscoresRequest
       .then((response) => {

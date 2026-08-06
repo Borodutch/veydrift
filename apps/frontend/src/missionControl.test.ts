@@ -748,18 +748,41 @@ describe("Mission Control battle reports", () => {
     expect(text).not.toContain("Hostile inbound");
   });
 
-  test("hides the disabled Join action and renders no manual Resolve order (VEY-KANEO-468)", () => {
+  test("hides Join and Resolve until the overdue-resolution grace period passes", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
-    // Own outbound attack already arrived: arrival now reconciles lazily on-chain, so there is no
-    // manual "Resolve" order anymore. A joinable alliance attack that already arrived -> Join is
-    // disabled, so it is hidden.
+    // These attacks arrived 59 seconds ago. Automatic resolution still owns the grace period, and
+    // the join cutoff has passed, so neither emergency Resolve nor Join is shown yet.
     const text = collectText(MissionControlPage(missionControlProps(now, {
-      outgoing: [mission("32", "Attack", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now - 60_000)],
-      joinableAttacks: [mission("34", "Attack", "Outbound", "0x3333333333333333333333333333333333333333", "5", "6", now - 60_000)],
+      outgoing: [mission("32", "Attack", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now - 59_000)],
+      joinableAttacks: [mission("34", "Attack", "Outbound", "0x3333333333333333333333333333333333333333", "5", "6", now - 59_000)],
     }))).join(" ");
 
     expect(text).not.toContain("Resolve");
     expect(text).not.toContain("Join");
+  });
+
+  test("submits the correct permissionless resolution phase from the status control", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const requests: Array<[string, "arrival" | "return"]> = [];
+    const page = MissionControlPage({
+      ...missionControlProps(now, {
+        outgoing: [mission("32", "Transport", "Outbound", undefined, "7", "9", now - 60_000)],
+      }),
+      onResolve: (missionId, kind) => requests.push([missionId, kind]),
+    });
+    const resolve = findElements(page, "button").find((button) => collectText(button).includes("Resolve"));
+    let prevented = false;
+    let stopped = false;
+
+    expect(resolve).toBeDefined();
+    (resolve?.props?.onClick as ((event: { preventDefault: () => void; stopPropagation: () => void }) => void) | undefined)?.({
+      preventDefault: () => { prevented = true; },
+      stopPropagation: () => { stopped = true; },
+    });
+
+    expect(requests).toEqual([["32", "arrival"]]);
+    expect(prevented).toBe(true);
+    expect(stopped).toBe(true);
   });
 
   test("partitions own, incoming, and joinable active missions so My missions reflects fleet-slot usage", () => {
@@ -912,11 +935,15 @@ describe("Mission Control battle reports", () => {
     expect(contextById["2"]).toBe("observer");
   });
 
-  test("adds an All active tab listing universe-wide active missions; other players' rows are read-only (VEY-KANEO-402)", () => {
+  test("offers permissionless overdue resolution for other players in All active", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
     const mine = mission("32", "Transport", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now + 120_000);
-    // Another player's attack that has already arrived (would be "due" -> Resolve if it were mine).
-    const other = mission("90", "Attack", "Outbound", "0x9999999999999999999999999999999999999999", "5", "6", now - 60_000);
+    // The contract resolution entrypoint is permissionless, so another player's mission gets the
+    // same emergency fallback after the funded resolver misses its grace period.
+    const other = {
+      ...mission("90", "Attack", "Outbound", "0x9999999999999999999999999999999999999999", "5", "6", now - 60_000),
+      needsResolution: true,
+    };
     const text = collectText(MissionControlPage({
       ...missionControlProps(now, { outgoing: [mine] }),
       allActiveMissions: [mine, other],
@@ -927,9 +954,8 @@ describe("Mission Control battle reports", () => {
     expect(text).toContain("All (2)");
     // The other player's mission appears on the universe-wide All tab...
     expect(text).toContain("#90");
-    // ...but observer rows never expose the Resolve lifecycle action even when the mission is due,
-    // and neither of these missions is a due mission the player can resolve.
-    expect(text).not.toContain("Resolve");
+    expect(text).toContain("Resolving");
+    expect(text).toContain("Resolve");
   });
 
   test("adds My missions / All past tabs; All lists the paginated universe-wide completed archive (VEY-KANEO-402)", () => {
@@ -1439,9 +1465,10 @@ describe("Mission Control battle reports", () => {
 
     expect(text).not.toContain("Mission #42");
     expect(text).not.toContain("Mission Detail");
-    // VEY-KANEO-468: arrival/return completions reconcile lazily on-chain, so the former manual
-    // "Resolve" order is gone from the detail screen; an arrived outbound attack shows no order.
-    expect(text).not.toContain("Resolve");
+    // The funded resolver has been late for a full minute, so mission detail exposes the same
+    // permissionless fallback beside its Resolving pill.
+    expect(text).toContain("Resolving");
+    expect(text).toContain("Resolve");
     // VEY-395 rework: the mission-detail page subtitle was removed.
     expect(text).not.toContain("Shareable mission state");
     // VEY-KANEO-339: the report header control is a share affordance (native share dialog + clipboard
@@ -2741,6 +2768,7 @@ function missionControlProps(
     onOpenReport: () => undefined,
     onOpenReportList: () => undefined,
     onRecall: () => undefined,
+    onResolve: () => undefined,
     onRefresh: () => undefined,
   };
 }
@@ -2776,6 +2804,7 @@ function missionDetailProps(
     onBack: () => undefined,    onShareReport: () => undefined,
     onCounterplay: () => undefined,
     onRecall: () => undefined,
+    onResolve: () => undefined,
     onRetry: () => undefined,
     onSelectCoordinates: () => undefined,
     onSelectPlayer: () => undefined,

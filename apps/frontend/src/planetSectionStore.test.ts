@@ -108,6 +108,18 @@ describe("planetSectionStore", () => {
       loading: true,
       lastSuccessfulRefreshAt: 1234,
     });
+
+    const failed = setPlanetSectionStatus(loading, "planet-1", "fleetVisibilityState", {
+      loading: false,
+      error: "backend restarting",
+    });
+    const failedSection = planetSectionForPlanet(failed, "planet-1");
+    expect(failedSection.fleetVisibilityState).toBe(fleetVisibility);
+    expect(failedSection.sectionStatus.fleetVisibilityState).toEqual({
+      loading: false,
+      error: "backend restarting",
+      lastSuccessfulRefreshAt: 1234,
+    });
   });
 
   test("exposes section data, refresh status, and refresh functions through one access object", async () => {

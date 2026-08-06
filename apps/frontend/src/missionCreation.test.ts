@@ -641,7 +641,7 @@ describe("mission creation", () => {
       "validateShipInventory: { originIsMoon, originPlanetId, ships: draft.ships }",
     );
     expect(playableMvpAppSource).toContain(
-      "fetchMoonState(apiBaseUrl, account, options.validateShipInventory.originPlanetId)",
+      "backendData!.moon(account, options.validateShipInventory.originPlanetId)",
     );
   });
 

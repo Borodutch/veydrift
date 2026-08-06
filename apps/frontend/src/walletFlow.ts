@@ -3660,6 +3660,32 @@ export async function sendRecallFleetMissionTransaction(
   });
 }
 
+export async function sendResolveFleetMissionTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  missionId: string
+): Promise<string> {
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodeGameCall(GAME_SELECTORS.resolveFleetMission, [missionId])
+  });
+}
+
+export async function sendCompleteFleetMissionReturnTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  missionId: string
+): Promise<string> {
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodeGameCall(GAME_SELECTORS.completeFleetMissionReturn, [missionId])
+  });
+}
+
 export async function sendCreateColonyTransaction(
   provider: Eip1193Provider,
   account: string,
@@ -4440,6 +4466,14 @@ export async function fetchHighscores(
   return response.json();
 }
 
+export async function fetchPlayerHighscore(apiUrl: string, wallet: string): Promise<HighscoreEntry | null> {
+  const response = await fetchGameApiJson<{ entry?: HighscoreEntry | null }>(
+    `${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(wallet)}/highscore`,
+    "Player highscore",
+  );
+  return response.entry ?? null;
+}
+
 export async function fetchRaidFinderDebrisTargets(
   apiUrl: string,
   options: { limit?: number } = {},
@@ -4530,8 +4564,14 @@ function highscoreNetworkFailureMessage(error: unknown): string {
   return message || "Rankings could not be loaded.";
 }
 
-export async function fetchSystemData(apiUrl: string, galaxy: number, system: number): Promise<unknown> {
-  const url = `${apiUrl.replace(/\/+$/, "")}/universe/galaxies/${galaxy}/systems/${system}`;
+export async function fetchSystemData(
+  apiUrl: string,
+  galaxy: number,
+  system: number,
+  options: { detail?: "full" } = {},
+): Promise<unknown> {
+  const detail = options.detail ? `?detail=${options.detail}` : "";
+  const url = `${apiUrl.replace(/\/+$/, "")}/universe/galaxies/${galaxy}/systems/${system}${detail}`;
   return fetchGameApiJson<unknown>(url, "System", {
     httpErrorMessage: async (response) => `System API failed: ${response.status}`
   });

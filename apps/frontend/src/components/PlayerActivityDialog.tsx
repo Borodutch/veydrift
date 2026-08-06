@@ -19,11 +19,11 @@ import {
 } from "lucide-preact";
 
 import {
-  fetchPlayerActivity,
   type PlayerActivityCategory,
   type PlayerActivityItem,
   type PlayerActivityResponse,
 } from "../walletFlow";
+import { backendDataStoreFor } from "../backendDataStore";
 import {
   beginPlayerActivitySession,
   browserPlayerActivityStorage,
@@ -92,7 +92,7 @@ export function PlayerActivityCenter({
     }
 
     let cancelled = false;
-    void fetchPlayerActivity(apiUrl, wallet, {
+    void backendDataStoreFor(apiUrl).playerActivity(wallet, {
       page: 1,
       pageSize: AWAY_PAGE_SIZE,
       since: previous,
@@ -133,7 +133,7 @@ export function PlayerActivityCenter({
     setAwayState(null);
     setLoading(true);
     setError(undefined);
-    void fetchPlayerActivity(apiUrl, wallet, { page: historyPage, pageSize: HISTORY_PAGE_SIZE })
+    void backendDataStoreFor(apiUrl).playerActivity(wallet, { page: historyPage, pageSize: HISTORY_PAGE_SIZE })
       .then((response) => {
         if (!cancelled) setHistoryResponse(response);
       })
