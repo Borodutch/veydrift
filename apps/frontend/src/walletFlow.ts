@@ -3660,6 +3660,32 @@ export async function sendRecallFleetMissionTransaction(
   });
 }
 
+export async function sendResolveFleetMissionTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  missionId: string
+): Promise<string> {
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodeGameCall(GAME_SELECTORS.resolveFleetMission, [missionId])
+  });
+}
+
+export async function sendCompleteFleetMissionReturnTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  missionId: string
+): Promise<string> {
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodeGameCall(GAME_SELECTORS.completeFleetMissionReturn, [missionId])
+  });
+}
+
 export async function sendCreateColonyTransaction(
   provider: Eip1193Provider,
   account: string,

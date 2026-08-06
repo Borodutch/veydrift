@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import type { ComponentChildren, VNode } from "preact";
-import { MissionControlPage, StationedDefenseSection, classifyAllianceCooperativeMissions, formatMissionTime, missionControlRefreshButtonState, missionDisplayStatusLabel, missionLifecycleActions, missionStatusPill, returnPhaseHarvestedResources, returnPhaseLoot, returnPhaseLosses } from "../src/components/MissionControlPage";
+import { MissionControlPage, StationedDefenseSection, classifyAllianceCooperativeMissions, formatMissionTime, manualMissionResolutionKind, missionControlRefreshButtonState, missionDisplayStatusLabel, missionLifecycleActions, missionStatusPill, returnPhaseHarvestedResources, returnPhaseLoot, returnPhaseLosses } from "../src/components/MissionControlPage";
 import { encodeColonizationTargetId } from "../src/walletFlow";
 import type { BattleReport, FleetMissionSummary, ManagedPlanetResponse } from "../src/walletFlow";
 
@@ -664,7 +664,7 @@ describe("MissionControlPage", () => {
         wallet: "0x1111111111111111111111111111111111111111",
         homePlanetId: "7",
         incoming: [],
-        outgoing: [mission({ arrivalAt: "1770000000", missionId: "12", missionType: "Attack" })],
+        outgoing: [mission({ arrivalAt: "1770000000", missionId: "12", missionType: "Attack", needsResolution: true })],
         returning: [],
         joinableAttacks: [],
         completedMissions: [],
@@ -677,8 +677,8 @@ describe("MissionControlPage", () => {
     expect(text).not.toContain("Due resolvers");
     expect(text).not.toContain("Needs orders now");
     expect(text).toContain("Resolving");
-    // VEY-KANEO-468: a due mission settles automatically on-chain, so no manual "Resolve" order renders.
-    expect(text).not.toContain("Resolve");
+    // The funded resolver missed the one-minute grace period, so the permissionless fallback appears.
+    expect(text).toContain("Resolve");
   });
 
   test("paginates past missions inline without a separate list action", () => {
@@ -1535,6 +1535,29 @@ describe("VEY-KANEO-433 time-aware mission status", () => {
     // VEY-KANEO-468: mid-settlement legs read "resolving" in report/text surfaces too.
     expect(missionDisplayStatusLabel(fleet, afterArrival)).toBe("resolving");
     expect(missionDisplayStatusLabel(mission({ status: "Returning" }), afterReturn)).toBe("resolving");
+  });
+});
+
+describe("manual mission resolution fallback", () => {
+  test("appears only after a mission leg has been overdue for 60 seconds", () => {
+    const outbound = mission({ arrivalAt: "1770000300", missionType: "Transport", status: "Outbound" });
+    const returning = mission({ returnAt: "1770000600", status: "Returning" });
+
+    expect(manualMissionResolutionKind(outbound, 1_770_000_359_999)).toBeUndefined();
+    expect(manualMissionResolutionKind(outbound, 1_770_000_360_000)).toBe("arrival");
+    expect(manualMissionResolutionKind(returning, 1_770_000_659_999)).toBeUndefined();
+    expect(manualMissionResolutionKind(returning, 1_770_000_660_000)).toBe("return");
+  });
+
+  test("stays hidden while combat randomness is pending and after terminal settlement", () => {
+    expect(manualMissionResolutionKind(
+      mission({ arrivalAt: "1770000300", needsResolution: true, resolutionBlocker: "randomness_pending", status: "Outbound" }),
+      1_770_001_000_000,
+    )).toBeUndefined();
+    expect(manualMissionResolutionKind(
+      mission({ arrivalAt: "1770000300", status: "Returned" }),
+      1_770_001_000_000,
+    )).toBeUndefined();
   });
 });
 

@@ -71,7 +71,9 @@ import {
   sendLaunchInterplanetaryMissileAttackTransaction,
   sendLaunchFleetMissionTransaction,
   sendJumpGateJumpTransaction,
+  sendCompleteFleetMissionReturnTransaction,
   sendRecallFleetMissionTransaction,
+  sendResolveFleetMissionTransaction,
   sendAcceptAllianceInviteTransaction,
   sendAllianceBatchKickTransaction,
   sendAllianceBatchRoleTransaction,
@@ -1658,6 +1660,36 @@ describe("walletFlow", () => {
           from: account,
           to: contract,
           data: encodeGameCall("0x1cbc460c", ["11"]),
+        }],
+      },
+    ]);
+  });
+
+  test("encodes permissionless mission arrival and return resolution transactions", async () => {
+    const requests: unknown[] = [];
+    const provider = mockProvider(async ({ method, params }) => {
+      requests.push({ method, params });
+      return `0xfleet${requests.length}`;
+    });
+
+    await expect(sendResolveFleetMissionTransaction(provider, account, contract, "11")).resolves.toBe("0xfleet1");
+    await expect(sendCompleteFleetMissionReturnTransaction(provider, account, contract, "12")).resolves.toBe("0xfleet2");
+
+    expect(requests).toEqual([
+      {
+        method: "eth_sendTransaction",
+        params: [{
+          from: account,
+          to: contract,
+          data: encodeGameCall("0xde09e7cf", ["11"]),
+        }],
+      },
+      {
+        method: "eth_sendTransaction",
+        params: [{
+          from: account,
+          to: contract,
+          data: encodeGameCall("0xc2472852", ["12"]),
         }],
       },
     ]);
