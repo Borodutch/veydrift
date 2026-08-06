@@ -718,11 +718,16 @@ function handleSectionLinkClick(
 ): void {
   if (event.button !== 0 || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
 
-  // Run the SPA transition before suppressing the anchor's native behavior. If
-  // the app handler is unavailable or throws, the browser can still follow the
-  // canonical href instead of leaving the visible section inert.
+  const link = event.currentTarget;
+  const view = link.ownerDocument.defaultView;
+  const targetUrl = link.href;
+
+  // Suppress native navigation only after the SPA handler has synchronously
+  // committed the canonical URL. Hydrated handlers can return without
+  // navigating, so callback completion alone is not proof that the link worked.
+  // In that case the browser follows the href and the control cannot stay inert.
   onClick();
-  event.preventDefault();
+  if (view?.location.href === targetUrl) event.preventDefault();
 }
 
 export function NavItem({

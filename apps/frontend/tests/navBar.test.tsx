@@ -20,17 +20,25 @@ describe("NavBar section navigation", () => {
     ["mobile", MobileTab],
   ] as const)("renders the %s section control as a progressively enhanced link", (_layout, Component) => {
     let navigations = 0;
+    const location = { href: "https://veydrift.test/defenses" };
     const link = Component({
       active: false,
       href: "/infrastructure",
       icon: ChevronDown,
       label: "Infrastructure",
-      onClick: () => { navigations += 1; },
+      onClick: () => {
+        navigations += 1;
+        location.href = "https://veydrift.test/infrastructure";
+      },
     });
     const event = {
       altKey: false,
       button: 0,
       ctrlKey: false,
+      currentTarget: {
+        href: "https://veydrift.test/infrastructure",
+        ownerDocument: { defaultView: { location } },
+      },
       metaKey: false,
       preventDefaultCalls: 0,
       preventDefault() { this.preventDefaultCalls += 1; },
@@ -44,7 +52,39 @@ describe("NavBar section navigation", () => {
     expect(event.preventDefaultCalls).toBe(1);
   });
 
+  test.each([
+    ["desktop", NavItem, "/galaxy", "Galaxy"],
+    ["mobile", MobileTab, "/raid-finder", "Raid Finder"],
+  ] as const)("keeps native %s navigation when a hydrated SPA handler returns without changing the route", (_layout, Component, href, label) => {
+    const location = { href: "https://veydrift.test/defenses" };
+    const link = Component({
+      active: false,
+      href,
+      icon: ChevronDown,
+      label,
+      onClick: () => undefined,
+    });
+    const event = {
+      altKey: false,
+      button: 0,
+      ctrlKey: false,
+      currentTarget: {
+        href: `https://veydrift.test${href}`,
+        ownerDocument: { defaultView: { location } },
+      },
+      metaKey: false,
+      preventDefaultCalls: 0,
+      preventDefault() { this.preventDefaultCalls += 1; },
+      shiftKey: false,
+    };
+
+    (link.props.onClick as (event: typeof event) => void)(event);
+    expect(location.href).toBe("https://veydrift.test/defenses");
+    expect(event.preventDefaultCalls).toBe(0);
+  });
+
   test("leaves the native link fallback available when SPA navigation fails", () => {
+    const location = { href: "https://veydrift.test/defenses" };
     const link = NavItem({
       active: false,
       href: "/raid-finder",
@@ -56,6 +96,10 @@ describe("NavBar section navigation", () => {
       altKey: false,
       button: 0,
       ctrlKey: false,
+      currentTarget: {
+        href: "https://veydrift.test/raid-finder",
+        ownerDocument: { defaultView: { location } },
+      },
       metaKey: false,
       preventDefaultCalls: 0,
       preventDefault() { this.preventDefaultCalls += 1; },
