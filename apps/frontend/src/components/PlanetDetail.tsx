@@ -345,6 +345,7 @@ export function PlanetDetail({
 
   const planetCoords = `[${planet.galaxy}:${planet.system}:${planet.position}]`;
   const planetStatusRows = publicPlanetStatusRows(planet);
+  const settled = isPublicPlanetSettled(planet);
   const commanderLabel = planet.occupiedBy?.ownerDisplayName
     ?? (planet.occupiedBy?.owner ? shortAddress(planet.occupiedBy.owner) : null);
   const planetIdLabel = planet.occupiedBy?.planetId ?? (isHome ? homePlanetId : null);
@@ -385,10 +386,13 @@ export function PlanetDetail({
           </div>
 
           <div className="flex min-w-0 flex-col justify-center p-3 sm:p-4 lg:p-5" data-celestial-summary>
-            {isHome || source === "loading" ? (
+            {isHome || !settled || source === "loading" ? (
               <div className="flex flex-wrap items-center gap-2">
                 {isHome ? (
                   <span className="inline-flex h-7 items-center rounded-full border border-emerald-300/25 bg-emerald-300/10 px-2.5 pt-px text-[11px] font-bold uppercase leading-none tracking-[0.14em] text-emerald-100">Home world</span>
+                ) : null}
+                {!settled ? (
+                  <span className="inline-flex h-7 items-center rounded-full border border-slate-300/20 bg-slate-300/[0.07] px-2.5 pt-px text-[11px] font-bold uppercase leading-none tracking-[0.14em] text-slate-300">Unsettled</span>
                 ) : null}
                 {source === "loading" ? (
                   <SkeletonRegion label="Loading planet data">
@@ -398,7 +402,7 @@ export function PlanetDetail({
               </div>
             ) : null}
 
-            <div className={`${isHome || source === "loading" ? "mt-3" : ""} flex min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-2`}>
+            <div className={`${isHome || !settled || source === "loading" ? "mt-3" : ""} flex min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-2`}>
               <h2 className="min-w-0 break-words text-2xl font-semibold tracking-tight text-white sm:text-3xl lg:text-4xl">{planet.name}</h2>
               {visibleMissionActions.length > 0 ? (
                 <PlanetMissionControls
@@ -465,26 +469,6 @@ export function PlanetDetail({
         </button>
       ) : null}
 
-      <PlanetFleetActivityPanel
-        loading={activeMissions === null}
-        rows={planetFleetActivityRows(planet.occupiedBy?.planetId, activeMissions ?? [])}
-      />
-
-      {planet.occupiedBy?.planetId ? (
-        <EntityMediaPanel
-          account={account}
-          apiBaseUrl={apiBaseUrl}
-          canEdit={canEditEntityMedia({
-            entityKind: "planet",
-            ownerWallet: planet.occupiedBy.owner,
-            viewerWallet: account,
-          })}
-          entityId={planet.occupiedBy.planetId}
-          entityKind="planet"
-          provider={provider}
-        />
-      ) : null}
-
       {planetStatusRows.length > 0 ? (
         <section className="overflow-hidden rounded-lg border border-white/10 bg-[#101624]">
           <SectionHeading icon={<Orbit aria-hidden="true" size={16} />} title="Planet status" />
@@ -494,46 +478,81 @@ export function PlanetDetail({
         </section>
       ) : null}
 
-      <div className="grid gap-3 xl:grid-cols-2">
-        <PublicAssetStatePanel
-          icon={<Building2 aria-hidden="true" size={17} />}
-          loading={publicStateLoading && planet.publicState?.buildings == null}
-          rows={publicStateAssetRows(planet.publicState?.buildings, buildingCatalog, "level")}
-          title="Buildings"
-        />
-        <PublicAssetStatePanel
-          icon={<FlaskConical aria-hidden="true" size={17} />}
-          loading={publicStateLoading && planet.publicState?.research == null}
-          rows={compactResearchRows(publicStateAssetRows(planet.publicState?.research, researchCatalog, "level"))}
-          title="Research"
-        />
-        <PublicAssetStatePanel
-          icon={<Rocket aria-hidden="true" size={17} />}
-          loading={publicStateLoading && planet.publicState?.fleet == null}
-          rows={publicStateAssetRows(planet.publicState?.fleet, shipCatalog, "count")}
-          title="Fleet"
-        />
-        <PublicAssetStatePanel
-          icon={<Shield aria-hidden="true" size={17} />}
-          loading={publicStateLoading && planet.publicState?.defenses == null}
-          rows={publicStateAssetRows(planet.publicState?.defenses, defenseCatalog, "count")}
-          title="Defenses"
-        />
-      </div>
+      {!settled ? (
+        <section className="overflow-hidden rounded-lg border border-white/10 bg-[#101624]">
+          <SectionHeading icon={<Globe2 aria-hidden="true" size={17} />} title="Unsettled planet" />
+          <p className="p-4 text-sm leading-6 text-slate-400">
+            No commander has settled this planet yet.
+          </p>
+        </section>
+      ) : (
+        <>
+          <PlanetFleetActivityPanel
+            loading={activeMissions === null}
+            rows={planetFleetActivityRows(planet.occupiedBy?.planetId, activeMissions ?? [])}
+          />
 
-      <PublicStatePanel
-        icon={<UserRound aria-hidden="true" size={17} />}
-        loading={publicStateLoading && planet.publicState?.stationedDefenders == null}
-        title="Stationed defenders"
-        rows={publicStationedDefenderRows(planet.publicState)}
-      />
+          {planet.occupiedBy?.planetId ? (
+            <EntityMediaPanel
+              account={account}
+              apiBaseUrl={apiBaseUrl}
+              canEdit={canEditEntityMedia({
+                entityKind: "planet",
+                ownerWallet: planet.occupiedBy.owner,
+                viewerWallet: account,
+              })}
+              entityId={planet.occupiedBy.planetId}
+              entityKind="planet"
+              provider={provider}
+            />
+          ) : null}
 
-      <PublicQueuesPanel
-        loading={publicStateLoading && planet.publicState?.queues == null}
-        queues={publicQueueViews(planet)}
-      />
+          <div className="grid gap-3 xl:grid-cols-2">
+            <PublicAssetStatePanel
+              icon={<Building2 aria-hidden="true" size={17} />}
+              loading={publicStateLoading && planet.publicState?.buildings == null}
+              rows={publicStateAssetRows(planet.publicState?.buildings, buildingCatalog, "level")}
+              title="Buildings"
+            />
+            <PublicAssetStatePanel
+              icon={<FlaskConical aria-hidden="true" size={17} />}
+              loading={publicStateLoading && planet.publicState?.research == null}
+              rows={compactResearchRows(publicStateAssetRows(planet.publicState?.research, researchCatalog, "level"))}
+              title="Research"
+            />
+            <PublicAssetStatePanel
+              icon={<Rocket aria-hidden="true" size={17} />}
+              loading={publicStateLoading && planet.publicState?.fleet == null}
+              rows={publicStateAssetRows(planet.publicState?.fleet, shipCatalog, "count")}
+              title="Fleet"
+            />
+            <PublicAssetStatePanel
+              icon={<Shield aria-hidden="true" size={17} />}
+              loading={publicStateLoading && planet.publicState?.defenses == null}
+              rows={publicStateAssetRows(planet.publicState?.defenses, defenseCatalog, "count")}
+              title="Defenses"
+            />
+          </div>
+
+          <PublicStatePanel
+            icon={<UserRound aria-hidden="true" size={17} />}
+            loading={publicStateLoading && planet.publicState?.stationedDefenders == null}
+            title="Stationed defenders"
+            rows={publicStationedDefenderRows(planet.publicState)}
+          />
+
+          <PublicQueuesPanel
+            loading={publicStateLoading && planet.publicState?.queues == null}
+            queues={publicQueueViews(planet)}
+          />
+        </>
+      )}
     </div>
   );
+}
+
+export function isPublicPlanetSettled(planet: Planet): boolean {
+  return Boolean(planet.occupiedBy?.planetId);
 }
 
 export function planetDetailGalaxyActions({
@@ -844,17 +863,19 @@ function PublicRecordRows({
 export type PlanetEconomyPillRow = {
   label: string;
   modifier?: string | undefined;
-  value: string;
+  value?: string | undefined;
 };
 
 export function planetEconomyPillRows(planet: Planet): PlanetEconomyPillRow[] {
-  const resources = publicResourceRows(planet.publicState?.resources) ?? [];
+  const resources = new Map(
+    (publicResourceRows(planet.publicState?.resources) ?? []).map((row) => [row.label, row.value]),
+  );
   const production = new Map(publicProductionRows(planet).map((row) => [row.label, row.value]));
   return [
-    ...resources.map((row) => ({
-      label: row.label,
-      modifier: production.get(row.label),
-      value: row.value,
+    ...["Metal", "Crystal", "Deuterium"].map((label) => ({
+      label,
+      modifier: production.get(label),
+      ...(resources.has(label) ? { value: resources.get(label) } : {}),
     })),
     { label: "Solar satellite", value: production.get("Solar satellite") ?? "Unknown" },
   ];
@@ -881,7 +902,8 @@ function PlanetEconomyPills({
         <div className="inline-flex h-9 w-fit shrink-0 items-center justify-center rounded-md border border-white/10 bg-black/20 px-2.5 text-xs leading-none" key={row.label}>
           <dt className="sr-only">{row.label}</dt>
           <dd className="whitespace-nowrap text-center leading-none text-slate-400 tabular-nums">
-            {row.label} <span className="font-semibold text-slate-100">{row.value}</span>
+            {row.label}
+            {row.value ? <> <span className="font-semibold text-slate-100">{row.value}</span></> : null}
             {row.modifier ? (
               <> <span className="text-slate-600">at</span> <span className="font-semibold text-cyan-100">{row.modifier}</span></>
             ) : null}
