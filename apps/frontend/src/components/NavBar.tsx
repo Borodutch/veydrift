@@ -722,12 +722,24 @@ function handleSectionLinkClick(
   const view = link.ownerDocument.defaultView;
   const targetUrl = link.href;
 
-  // Suppress native navigation only after the SPA handler has synchronously
-  // committed the canonical URL. Hydrated handlers can return without
-  // navigating, so callback completion alone is not proof that the link worked.
-  // In that case the browser follows the href and the control cannot stay inert.
-  onClick();
-  if (view?.location.href === targetUrl) event.preventDefault();
+  // Keep the SPA transition fast, but do not delegate its failure recovery to
+  // the browser's post-handler default action. A hydrated callback can return
+  // without committing the route, and production has intermittently dropped
+  // that native follow-up. Explicitly assign the canonical URL in that case so
+  // one activation always has a navigation outcome. If assign itself fails,
+  // preventDefault is never reached and the native link fallback remains.
+  try {
+    onClick();
+  } catch (error) {
+    if (!view) throw error;
+    if (view.location.href !== targetUrl) view.location.assign(targetUrl);
+    event.preventDefault();
+    throw error;
+  }
+
+  if (!view) return;
+  if (view.location.href !== targetUrl) view.location.assign(targetUrl);
+  event.preventDefault();
 }
 
 export function NavItem({
