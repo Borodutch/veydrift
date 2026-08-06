@@ -1,5 +1,5 @@
 import type { ComponentChildren } from "preact";
-import { useEffect, useMemo, useState } from "preact/hooks";
+import { useEffect, useMemo, useReducer, useState } from "preact/hooks";
 import {
   ArrowDownLeft,
   ArrowUpRight,
@@ -39,6 +39,18 @@ const LAST_SEEN_HEARTBEAT_MS = 60_000;
 type ActivityDialogState =
   | { mode: "away"; response: PlayerActivityResponse; since: number }
   | { mode: "history"; response: PlayerActivityResponse | undefined };
+
+export type ActivityCategoryFilterAction =
+  | { type: "reset" }
+  | { category: PlayerActivityCategory; type: "toggle" };
+
+export function activityCategoryFilterReducer(
+  current: PlayerActivityCategory | null,
+  action: ActivityCategoryFilterAction
+): PlayerActivityCategory | null {
+  if (action.type === "reset") return null;
+  return current === action.category ? null : action.category;
+}
 
 export function PlayerActivityCenter({
   apiUrl,
@@ -174,6 +186,8 @@ export function PlayerActivityDialog({
   response?: PlayerActivityResponse | undefined;
   since?: number | undefined;
 }) {
+  const [selectedCategory, dispatchCategoryFilter] = useReducer(activityCategoryFilterReducer, null);
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
@@ -182,10 +196,21 @@ export function PlayerActivityDialog({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [onClose]);
 
+  useEffect(() => {
+    dispatchCategoryFilter({ type: "reset" });
+  }, [mode, response]);
+
   const counts = useMemo(
     () => response ? activityCategoryCounts(response.items, response.summary) : [],
     [response]
   );
+  const visibleItems = useMemo(
+    () => filterPlayerActivityItems(response?.items ?? [], mode === "away" ? selectedCategory : null),
+    [mode, response, selectedCategory]
+  );
+  const selectedCategoryCount = selectedCategory
+    ? counts.find(({ category }) => category === selectedCategory)?.count ?? 0
+    : 0;
   const title = mode === "away" ? "While you were away" : "Commander activity";
   const subtitle = mode === "away" && since
     ? `Updates since ${formatActivityTime(String(since))}`
@@ -224,25 +249,30 @@ export function PlayerActivityDialog({
 
         <div className="min-h-0 overflow-y-auto overscroll-contain p-3 sm:p-4">
           {mode === "away" && counts.length > 0 ? (
-            <div className="mb-3 flex flex-wrap gap-1.5">
-              {counts.map(({ category, count }) => (
-                <span className="rounded-full border border-white/10 bg-white/[0.04] px-2 py-1 text-[10px] font-medium text-slate-300" key={category}>
-                  {activityCategoryLabel(category)} {count}
-                </span>
-              ))}
-            </div>
+            <ActivityCategoryFilters
+              counts={counts}
+              onSelect={(category) => {
+                if (category === null) dispatchCategoryFilter({ type: "reset" });
+                else dispatchCategoryFilter({ category, type: "toggle" });
+              }}
+              selectedCategory={selectedCategory}
+            />
           ) : null}
 
           {loading ? (
             <PlayerActivitySkeleton rowCount={Math.max(3, response?.items.length ?? 0)} />
           ) : error ? (
             <div className="rounded border border-amber-300/25 bg-amber-300/10 p-3 text-sm text-amber-100">{error}</div>
-          ) : response?.items.length ? (
+          ) : visibleItems.length ? (
             <div className="grid gap-2">
-              {response.items.map((item) => (
+              {visibleItems.map((item) => (
                 <ActivityRow explorerUrl={explorerUrl} item={item} key={item.id} />
               ))}
-              {mode === "away" && response.pagination.totalEntries > response.items.length ? (
+              {mode === "away" && selectedCategory && selectedCategoryCount > visibleItems.length ? (
+                <p className="px-1 pt-1 text-xs text-slate-400">
+                  Showing {visibleItems.length} of {selectedCategoryCount} {activityCategoryLabel(selectedCategory)} events. Open Commander activity for the complete history.
+                </p>
+              ) : mode === "away" && !selectedCategory && response && response.pagination.totalEntries > response.items.length ? (
                 <p className="px-1 pt-1 text-xs text-slate-400">
                   And {response.pagination.totalEntries - response.items.length} more. Open Commander activity for the complete history.
                 </p>
@@ -252,8 +282,12 @@ export function PlayerActivityDialog({
             <div className="grid min-h-48 place-items-center text-center">
               <div>
                 <Clock3 className="mx-auto text-slate-600" size={24} />
-                <p className="mt-2 text-sm font-medium text-slate-300">No activity yet</p>
-                <p className="mt-1 text-xs text-slate-500">Indexed transactions will appear here.</p>
+                <p className="mt-2 text-sm font-medium text-slate-300">
+                  {mode === "away" && selectedCategory ? `No loaded ${activityCategoryLabel(selectedCategory)} activity` : "No activity yet"}
+                </p>
+                <p className="mt-1 text-xs text-slate-500">
+                  {mode === "away" && selectedCategory ? "Choose All to restore the complete loaded list." : "Indexed transactions will appear here."}
+                </p>
               </div>
             </div>
           )}
@@ -283,6 +317,46 @@ export function PlayerActivityDialog({
           </footer>
         ) : null}
       </section>
+    </div>
+  );
+}
+
+export function ActivityCategoryFilters({
+  counts,
+  onSelect,
+  selectedCategory,
+}: {
+  counts: readonly { category: PlayerActivityCategory; count: number }[];
+  onSelect: (category: PlayerActivityCategory | null) => void;
+  selectedCategory: PlayerActivityCategory | null;
+}) {
+  const total = counts.reduce((sum, { count }) => sum + count, 0);
+  const options: Array<{ category: PlayerActivityCategory | null; count: number; label: string }> = [
+    { category: null, count: total, label: "All" },
+    ...counts.map(({ category, count }) => ({ category, count, label: activityCategoryLabel(category) })),
+  ];
+
+  return (
+    <div aria-label="Filter activity by category" className="mb-3 flex flex-wrap gap-1.5" role="group">
+      {options.map(({ category, count, label }) => {
+        const selected = selectedCategory === category;
+        return (
+          <button
+            aria-label={`Show ${label.toLowerCase()} activity (${count})`}
+            aria-pressed={selected}
+            className={`min-h-11 min-w-11 rounded-full border px-3 py-2 text-[11px] font-semibold transition sm:min-h-9 sm:py-1.5 ${
+              selected
+                ? "border-cyan-300/70 bg-cyan-300/15 text-cyan-50 shadow-sm shadow-cyan-950/50"
+                : "border-white/10 bg-white/[0.04] text-slate-300 hover:border-white/20 hover:bg-white/[0.08] hover:text-white"
+            }`}
+            key={category ?? "all"}
+            onClick={() => onSelect(category)}
+            type="button"
+          >
+            {label} {count}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -364,17 +438,26 @@ function PageButton({ children, disabled, label, onClick }: { children: Componen
   );
 }
 
-function activityCategoryCounts(
+export function activityCategoryCounts(
   items: readonly PlayerActivityItem[],
   summary: Partial<Record<PlayerActivityCategory, number>>
 ) {
   const counts = new Map<PlayerActivityCategory, number>(
-    Object.entries(summary).filter((entry): entry is [PlayerActivityCategory, number] => typeof entry[1] === "number")
+    Object.entries(summary).filter(
+      (entry): entry is [PlayerActivityCategory, number] => typeof entry[1] === "number" && Number.isFinite(entry[1]) && entry[1] > 0
+    )
   );
   if (counts.size === 0) {
     for (const item of items) counts.set(item.category, (counts.get(item.category) ?? 0) + 1);
   }
   return [...counts].map(([category, count]) => ({ category, count })).sort((left, right) => right.count - left.count);
+}
+
+export function filterPlayerActivityItems(
+  items: readonly PlayerActivityItem[],
+  category: PlayerActivityCategory | null
+): PlayerActivityItem[] {
+  return category === null ? [...items] : items.filter((item) => item.category === category);
 }
 
 function activityCategoryLabel(category: PlayerActivityCategory): string {
