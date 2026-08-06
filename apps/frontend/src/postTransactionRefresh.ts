@@ -148,6 +148,10 @@ type WaitOptions = {
   delay?: (ms: number) => Promise<void>;
 };
 
+type ResourceSnapshotState = {
+  resourceSnapshot?: ResourceSnapshotMetadata | null | undefined;
+};
+
 // Keep transaction flows as light-client reads: after a receipt, wait for the
 // backend-indexed event to become visible instead of fabricating local state.
 // Base Sepolia indexing can lag past the old ~12s window under deploy/load.
@@ -726,6 +730,36 @@ export async function waitForStartedBuildingState(
   }
 
   throw new Error(startedBuildingTimeoutMessage(latest, expectation, lastError));
+}
+
+export async function waitForIndexedResourceState<State extends ResourceSnapshotState>(
+  load: () => Promise<State>,
+  expectation: ResourceIndexingExpectation,
+  options: WaitOptions = {},
+): Promise<State> {
+  const attempts = options.attempts ?? DEFAULT_POST_TRANSACTION_REFRESH_ATTEMPTS;
+  const intervalMs = options.intervalMs ?? DEFAULT_POST_TRANSACTION_REFRESH_INTERVAL_MS;
+  const delay = options.delay ?? defaultDelay;
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      const state = await load();
+      lastError = undefined;
+      if (isResourceSnapshotIndexedAfterTransaction(state.resourceSnapshot, expectation)) {
+        return state;
+      }
+    } catch (error) {
+      lastError = error;
+    }
+
+    if (attempt < attempts - 1) {
+      await delay(intervalMs);
+    }
+  }
+
+  const reason = lastError instanceof Error ? ` Last read failed: ${lastError.message}` : "";
+  throw new Error(`The confirmed resource change is still syncing with the game API.${reason}`);
 }
 
 export async function waitForStartedDefenseProductionState(

@@ -3973,6 +3973,17 @@ describe("SettlementIndexer", () => {
         crystal: "456",
         deuterium: "789"
       },
+      resourceSnapshot: {
+        planetId: "7",
+        transactionHash: "0xmoonresources",
+        blockNumber: "135",
+        lastSettledAt: "1770000300",
+        resources: {
+          metal: "123",
+          crystal: "456",
+          deuterium: "789"
+        }
+      },
       ships: expect.arrayContaining([
         expect.objectContaining({ id: 1, count: 5 })
       ]),

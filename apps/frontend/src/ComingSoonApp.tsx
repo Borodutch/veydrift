@@ -17,6 +17,7 @@ import {
 import { RetroCdBoxHero, type CdView } from "./components/RetroCdBoxHero";
 import { TELEGRAM_SUPPORT_URL, WHITEPAPER_URL } from "./supportLinks";
 import { playableApiUrl } from "./runtimeConfig";
+import { backendDataStoreFor } from "./backendDataStore";
 
 const alphaUrl = "https://test.veydrift.com";
 const claimUrl = "#claim";
@@ -808,32 +809,12 @@ function useTopAlliances(refreshToken: number): { items: LandingAlliance[]; stat
   return alliances;
 }
 
-async function fetchLandingActiveMissions(signal?: AbortSignal): Promise<LandingFleetMission[]> {
-  const response = await fetch(`${playableApiUrl}/missions?status=active&live=1`, {
-    cache: "no-store",
-    headers: { accept: "application/json" },
-    ...(signal ? { signal } : {}),
-  });
-  if (!response.ok) throw new Error("Failed to load landing missions");
-  const data = await response.json() as { missions?: LandingFleetMission[] };
-  return data.missions ?? [];
+async function fetchLandingActiveMissions(_signal?: AbortSignal): Promise<LandingFleetMission[]> {
+  return backendDataStoreFor(playableApiUrl).landingActiveMissions<LandingFleetMission>();
 }
 
-async function fetchLandingHighscores(signal?: AbortSignal): Promise<LandingHighscoreEntry[]> {
-  const params = new URLSearchParams({
-    category: "total",
-    live: "1",
-    page: "1",
-    pageSize: "250",
-  });
-  const response = await fetch(`${playableApiUrl}/highscores?${params.toString()}`, {
-    cache: "no-store",
-    headers: { accept: "application/json" },
-    ...(signal ? { signal } : {}),
-  });
-  if (!response.ok) throw new Error("Failed to load landing highscores");
-  const data = await response.json() as { rankings?: { total?: LandingHighscoreEntry[] } };
-  return data.rankings?.total ?? [];
+async function fetchLandingHighscores(_signal?: AbortSignal): Promise<LandingHighscoreEntry[]> {
+  return backendDataStoreFor(playableApiUrl).landingHighscores<LandingHighscoreEntry>();
 }
 
 export function landingFeedFromMissions(missions: readonly LandingFleetMission[], now = Date.now()): LandingFeedItem[] {

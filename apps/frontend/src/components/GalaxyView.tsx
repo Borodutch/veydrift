@@ -40,6 +40,7 @@ import { GalaxyRowsSkeleton } from "./LoadingSkeletons";
 import { InlineStateNotice } from "./InlineStateNotice";
 import { WatchablePlanetRow, type PlanetMetaItem } from "./WatchablePlanetRow";
 import { galaxyActionIcon } from "./GalaxyActionIcon";
+import { backendDataStoreFor } from "../backendDataStore";
 
 const SMALL_CARGO_SHIP_ID = 0;
 const GALAXY_SYSTEM_CACHE_TTL_MS = 2 * 60 * 1_000;
@@ -203,17 +204,12 @@ export function GalaxyView({
     () => withOwnedPlanetNames(withHomePlanet(systemPlanets, homePlanetOverride), ownedPlanetsInSystem),
     [homePlanetOverride, ownedPlanetsInSystem, systemPlanets]
   );
-  const galaxySystemUrl = useMemo(
-    () => galaxySystemRequestUrl(apiBaseUrl, galaxy, system),
-    [apiBaseUrl, galaxy, system]
-  );
-
   useEffect(() => {
     loadedSystemKeyRef.current = loadedSystemKey;
   }, [loadedSystemKey]);
 
   useEffect(() => {
-    const abortController = new AbortController();
+    let cancelled = false;
     const canPreserveCurrentSystem = loadedSystemKeyRef.current === currentSystemKey;
     const cachedPlanets = cachedGalaxySystemPlanets(apiBaseUrl, galaxy, system);
 
@@ -225,21 +221,15 @@ export function GalaxyView({
     setLoading(true);
     setLoadError(undefined);
 
-    fetch(galaxySystemUrl, {
-      headers: { accept: "application/json" },
-      signal: abortController.signal,
-    })
-      .then((response) => {
-        if (!response.ok) throw new Error(`Universe request failed with ${response.status}`);
-        return response.json();
-      })
+    backendDataStoreFor(apiBaseUrl).system<ApiSystemResponse>(galaxy, system)
       .then((payload) => {
+        if (cancelled) return;
         const nextPlanets = rememberGalaxySystemPayload(apiBaseUrl, galaxy, system, payload);
         setSystemPlanets(nextPlanets);
         setLoadedSystemKey(currentSystemKey);
       })
       .catch((error) => {
-        if (!abortController.signal.aborted) {
+        if (!cancelled) {
           console.error(error);
           if (!canPreserveCurrentSystem) {
             setSystemPlanets(planetsForFailedGalaxyLoad());
@@ -249,11 +239,13 @@ export function GalaxyView({
         }
       })
       .finally(() => {
-        if (!abortController.signal.aborted) setLoading(false);
+        if (!cancelled) setLoading(false);
       });
 
-    return () => abortController.abort();
-  }, [apiBaseUrl, currentSystemKey, galaxy, galaxySystemUrl, reloadNonce, system]);
+    return () => {
+      cancelled = true;
+    };
+  }, [apiBaseUrl, currentSystemKey, galaxy, reloadNonce, system]);
 
   useEffect(() => {
     const occupiedTargets = planets
@@ -266,32 +258,27 @@ export function GalaxyView({
       return;
     }
 
-    const abortController = new AbortController();
-    const apiRoot = apiBaseUrl.replace(/\/+$/, "");
+    let cancelled = false;
     Promise.all(
       occupiedTargets.map((planetId) =>
-        fetch(`${apiRoot}/wallet/${account}/attack-protection?targetPlanetId=${planetId}`, {
-          headers: { accept: "application/json" },
-          signal: abortController.signal,
-        }).then((response) => {
-          if (!response.ok) throw new Error(`Attack protection request failed with ${response.status}`);
-          return response.json() as Promise<AttackProtectionStatus>;
-        })
+        backendDataStoreFor(apiBaseUrl).attackProtection(account!, planetId)
       )
     )
       .then((statuses) => {
-        if (!abortController.signal.aborted) {
+        if (!cancelled) {
           setAttackProtection(Object.fromEntries(statuses.map((status) => [status.targetPlanetId, status])));
         }
       })
       .catch((error) => {
-        if (!abortController.signal.aborted) {
+        if (!cancelled) {
           console.error(error);
           setAttackProtection({});
         }
       });
 
-    return () => abortController.abort();
+    return () => {
+      cancelled = true;
+    };
   }, [account, apiBaseUrl, homeCoords?.galaxy, homeCoords?.position, homeCoords?.system, planets]);
 
   const handlePrevSystem = () => {

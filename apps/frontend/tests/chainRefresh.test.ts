@@ -120,6 +120,18 @@ describe("playable chain refresh", () => {
     expect(promotions).toHaveLength(4);
   });
 
+  test("promotes every indexed planet or moon resource transaction from the chain event stream", async () => {
+    const source = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.url)).text();
+
+    expect(source).toContain("chainEventResourceChanges(event)");
+    expect(source).toContain("refreshConfirmedResourceChangeFromEvent(change)");
+    expect(source).toContain("waitForIndexedResourceState(");
+    expect(source).toContain("applyBackendConfirmedMoonResourceState(state)");
+    expect(source).toContain("resourceChange: {\n        bodyKind: originIsMoon ?");
+    expect(source).toContain('), { bodyKind: "planet", planetId: homePlanetId });');
+    expect(source).toContain('), { bodyKind: "moon", planetId: moonState.homePlanetId });');
+  });
+
   test("rejects older accrued resource snapshots after newer transaction writes", () => {
     let latestSnapshot = resourceSnapshotFreshnessForSettlement(undefined);
     let topBarResources = { metal: "0", crystal: "0", deuterium: "0" };
@@ -301,7 +313,8 @@ describe("playable chain refresh", () => {
 
     expect(source).toContain("): Promise<boolean> => {\n    let completed = false;");
     expect(source).toContain("confirm: confirmSubmittedTransaction");
-    expect(source).toContain("await waitForMissionLaunchState(loadMissionLaunchSnapshot, submittedTxHash");
+    expect(source).toContain("const [missionSnapshot] = await Promise.all([");
+    expect(source).toContain("waitForMissionLaunchState(loadMissionLaunchSnapshot, submittedTxHash");
     expect(source).toContain("if (state.phase === \"success\") setGalaxyAction({ status: \"success\", label: `${label} confirmed.` });");
     expect(source).toContain("completed = result;");
     expect(source).toContain("const closeMissionCreationWhenComplete = (transaction: Promise<boolean>) => {");

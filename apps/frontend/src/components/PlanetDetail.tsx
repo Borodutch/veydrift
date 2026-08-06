@@ -17,7 +17,7 @@ import {
 import type { ComponentChildren } from "preact";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { Planet, Coordinates, PublicPlanetState, PublicQueueState } from "../types";
-import { formatPlanetType, planetsFromSystemResponse } from "../data/mockUniverse";
+import { formatPlanetType, planetsFromSystemResponse, type ApiSystemResponse } from "../data/mockUniverse";
 import { galaxyActionsForSlot, type GalaxyAction } from "../galaxyActions";
 import { playableApiUrl } from "../runtimeConfig";
 import {
@@ -43,6 +43,7 @@ import { QueueProgressPanel, type QueueProgressTone } from "./QueueProgressPanel
 import { Skeleton, SkeletonRegion, skeletonList } from "./Skeleton";
 import { missionTypeLabel } from "./MissionControlPage";
 import { buildInspectPath } from "../inspectRoutes";
+import { backendDataStoreFor } from "../backendDataStore";
 
 interface Props {
   account?: string | undefined;
@@ -175,7 +176,7 @@ export function PlanetDetail({
   const isHome = planet ? sameCoordinates(homeCoords, planet) : false;
 
   useEffect(() => {
-    const abortController = new AbortController();
+    let cancelled = false;
     const requestKey = planetDetailRequestKey(coords);
     setPlanet((current) => planetDetailRefreshStartPlanet({
       coords,
@@ -184,16 +185,9 @@ export function PlanetDetail({
     }));
     setSource("loading");
 
-    fetch(`${apiBaseUrl.replace(/\/+$/, "")}/universe/galaxies/${coords.galaxy}/systems/${coords.system}?detail=full`, {
-      headers: { accept: "application/json" },
-      signal: abortController.signal,
-    })
-      .then((response) => {
-        if (!response.ok) throw new Error(`Universe request failed with ${response.status}`);
-        return response.json();
-      })
+    backendDataStoreFor(apiBaseUrl).system<ApiSystemResponse>(coords.galaxy, coords.system, { detail: "full" })
       .then((payload) => {
-        if (!canApplyPlanetDetailResponse(requestKey, coords, abortController.signal.aborted)
+        if (!canApplyPlanetDetailResponse(requestKey, coords, cancelled)
           || currentRequestKey.current !== requestKey) return;
         const apiPlanet = planetsFromSystemResponse(payload).find((item) => item.position === coords.position) ?? null;
         setPlanet((current) => planetDetailRefreshResultPlanet({
@@ -205,13 +199,15 @@ export function PlanetDetail({
         setSource("api");
       })
       .catch((error) => {
-        if (!abortController.signal.aborted) {
+        if (!cancelled) {
           console.error(error);
           setSource("error");
         }
       });
 
-    return () => abortController.abort();
+    return () => {
+      cancelled = true;
+    };
   }, [
     apiBaseUrl,
     coords.galaxy,
@@ -227,26 +223,21 @@ export function PlanetDetail({
       return;
     }
 
-    const abortController = new AbortController();
-    fetch(`${apiBaseUrl.replace(/\/+$/, "")}/wallet/${account}/attack-protection?targetPlanetId=${targetPlanetId}`, {
-      headers: { accept: "application/json" },
-      signal: abortController.signal,
-    })
-      .then((response) => {
-        if (!response.ok) throw new Error(`Attack protection request failed with ${response.status}`);
-        return response.json() as Promise<AttackProtectionStatus>;
-      })
+    let cancelled = false;
+    backendDataStoreFor(apiBaseUrl).attackProtection(account, targetPlanetId)
       .then((status) => {
-        if (!abortController.signal.aborted) setAttackProtection(status);
+        if (!cancelled) setAttackProtection(status);
       })
       .catch((error) => {
-        if (!abortController.signal.aborted) {
+        if (!cancelled) {
           console.error(error);
           setAttackProtection(null);
         }
       });
 
-    return () => abortController.abort();
+    return () => {
+      cancelled = true;
+    };
   }, [account, apiBaseUrl, isHome, planet?.occupiedBy?.planetId]);
 
   useEffect(() => {
@@ -256,30 +247,25 @@ export function PlanetDetail({
       return;
     }
 
-    const abortController = new AbortController();
+    let cancelled = false;
     setActiveMissions(null);
-    fetch(`${apiBaseUrl.replace(/\/+$/, "")}/missions?status=active`, {
-      headers: { accept: "application/json" },
-      signal: abortController.signal,
-    })
-      .then((response) => {
-        if (!response.ok) throw new Error(`Active missions request failed with ${response.status}`);
-        return response.json() as Promise<GlobalActiveMissionsResponse>;
-      })
+    backendDataStoreFor(apiBaseUrl).globalActiveMissions()
       .then((payload) => {
-        if (abortController.signal.aborted) return;
+        if (cancelled) return;
         setActiveMissions(payload.missions.filter((mission) => (
           mission.originPlanetId === planetId || mission.targetPlanetId === planetId
         )));
       })
       .catch((error) => {
-        if (!abortController.signal.aborted) {
+        if (!cancelled) {
           console.error(error);
           setActiveMissions([]);
         }
       });
 
-    return () => abortController.abort();
+    return () => {
+      cancelled = true;
+    };
   }, [apiBaseUrl, planet?.occupiedBy?.planetId]);
 
   useEffect(() => {

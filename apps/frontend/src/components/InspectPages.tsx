@@ -9,9 +9,6 @@ import { formatUserTimestamp } from "../timestampFormat";
 import { formatScore as formatCanonicalScore } from "../attackProtectionLabels";
 import { PlanetMoonIndicator, PlanetMoonSubsection } from "./PlanetMoonIndicator";
 import {
-  fetchHighscores,
-  fetchPlayerProfile,
-  fetchWalletPlanets,
   shortAddress,
   type ChainAllianceState,
   type Eip1193Provider,
@@ -21,6 +18,7 @@ import {
   type PlayerProfile,
   type WalletPlanetsResponse,
 } from "../walletFlow";
+import { backendDataStoreFor } from "../backendDataStore";
 import {
   AllianceMemberActions,
   AllianceDescription,
@@ -84,10 +82,11 @@ export function PlayerInspectPage({
 
     let disposed = false;
     setState({ status: "loading" });
+    const backendData = backendDataStoreFor(apiBaseUrl);
     Promise.allSettled([
-      fetchWalletPlanets(apiBaseUrl, wallet),
-      fetchHighscores(apiBaseUrl),
-      fetchPlayerProfile(apiBaseUrl, wallet),
+      backendData.planets(wallet),
+      backendData.highscores(),
+      backendData.profile(wallet),
     ]).then(([planetsResult, highscoresResult, profileResult]) => {
       if (disposed) return;
       const planets = planetsResult.status === "fulfilled" ? planetsResult.value : null;
