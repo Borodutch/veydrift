@@ -340,6 +340,11 @@ async function clickExpression(expression) {
   assert.equal(clicked, true, `could not click ${expression}`);
 }
 
+async function accessibilityNode(name) {
+  const { nodes } = await cdp.send("Accessibility.getFullAXTree");
+  return nodes.find((node) => node.name?.value === name && !node.ignored);
+}
+
 async function inspectorSnapshot() {
   return evaluate(`({
     heading: document.querySelector('main h2')?.textContent?.trim() ?? null,
@@ -482,6 +487,21 @@ test("desktop selector atomically replaces an unrelated inspector with one owned
   assert.ok(snapshot.topBarTitles.some((title) => title.startsWith("Crystal: 201")));
   assert.ok(snapshot.topBarTitles.some((title) => title.startsWith("Deuterium: 202")));
   assert.doesNotMatch(snapshot.text, /Unrelated Gamma|9,909/);
+});
+
+test("mobile hamburger is exposed as a button with a clickable hit region", async () => {
+  await loadInspectorFixture("/planet/9/9/9", 390);
+
+  const toggle = await accessibilityNode("Open navigation menu");
+  assert.ok(toggle, "expected the mobile navigation toggle in the accessibility tree");
+  assert.equal(toggle.role?.value, "button");
+
+  const bounds = await evaluate(`(() => {
+    const box = document.querySelector('[aria-label="Open navigation menu"]')?.getBoundingClientRect();
+    return box ? { height: box.height, width: box.width } : null;
+  })()`);
+  assert.ok(bounds, "expected the mobile navigation toggle in the document");
+  assert.ok(bounds.height >= 44 && bounds.width >= 44, `expected a 44px mobile menu hit region: ${JSON.stringify(bounds)}`);
 });
 
 test("mobile hamburger selector independently invokes the owned-planet transition", async () => {
