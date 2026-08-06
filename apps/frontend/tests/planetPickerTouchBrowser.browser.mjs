@@ -510,6 +510,32 @@ test("mobile hamburger selector independently invokes the owned-planet transitio
   assert.doesNotMatch(snapshot.text, /Unrelated Gamma|9,909/);
 });
 
+test("desktop sidebar first clicks commit Infrastructure and Shipyard routes", async () => {
+  await loadInspectorFixture("/planet/9/9/9", 1280);
+  await waitForExpression("document.querySelector('main h2')?.textContent === 'Unrelated Gamma'");
+
+  await clickExpression("document.querySelector('nav.hidden a[href=\"/infrastructure\"]')");
+  await waitForExpression("location.pathname === '/infrastructure' && document.querySelector('nav.hidden a[href=\"/infrastructure\"][aria-current=\"page\"]') !== null");
+
+  await clickExpression("document.querySelector('nav.hidden a[href=\"/shipyard\"]')");
+  await waitForExpression("location.pathname === '/shipyard' && document.querySelector('nav.hidden a[href=\"/shipyard\"][aria-current=\"page\"]') !== null");
+});
+
+test("mobile sidebar first clicks commit routes and close the menu", async () => {
+  await loadInspectorFixture("/planet/9/9/9", 390);
+  await waitForExpression("document.querySelector('main h2')?.textContent === 'Unrelated Gamma'");
+
+  await clickExpression("document.querySelector('summary[aria-label=\"Open navigation menu\"]')");
+  await waitForExpression("document.querySelector('details:has(#mobile-navigation-menu)')?.open === true");
+  await clickExpression("document.querySelector('#mobile-navigation-menu a[href=\"/infrastructure\"]')");
+  await waitForExpression("location.pathname === '/infrastructure' && document.querySelector('#mobile-navigation-menu a[href=\"/infrastructure\"][aria-current=\"page\"]') !== null && document.querySelector('details:has(#mobile-navigation-menu)')?.open === false");
+
+  await clickExpression("document.querySelector('summary[aria-label=\"Open navigation menu\"]')");
+  await waitForExpression("document.querySelector('details:has(#mobile-navigation-menu)')?.open === true");
+  await clickExpression("document.querySelector('#mobile-navigation-menu a[href=\"/shipyard\"]')");
+  await waitForExpression("location.pathname === '/shipyard' && document.querySelector('#mobile-navigation-menu a[href=\"/shipyard\"][aria-current=\"page\"]') !== null && document.querySelector('details:has(#mobile-navigation-menu)')?.open === false");
+});
+
 test("owned deep links and real back-forward events never expose owned controls under an unrelated identity", async () => {
   await loadInspectorFixture("/planet/1/2/3", 1280);
   await waitForExpression("document.querySelector('main h2')?.textContent === 'Owned Alpha'");

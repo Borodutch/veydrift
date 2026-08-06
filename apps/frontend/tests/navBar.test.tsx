@@ -20,7 +20,14 @@ describe("NavBar section navigation", () => {
     ["mobile", MobileTab],
   ] as const)("renders the %s section control as a progressively enhanced link", (_layout, Component) => {
     let navigations = 0;
-    const location = { href: "https://veydrift.test/defenses" };
+    const assignedUrls: string[] = [];
+    const location = {
+      href: "https://veydrift.test/defenses",
+      assign(url: string) {
+        assignedUrls.push(url);
+        this.href = url;
+      },
+    };
     const link = Component({
       active: false,
       href: "/infrastructure",
@@ -50,13 +57,21 @@ describe("NavBar section navigation", () => {
     (link.props.onClick as (event: typeof event) => void)(event);
     expect(navigations).toBe(1);
     expect(event.preventDefaultCalls).toBe(1);
+    expect(assignedUrls).toEqual([]);
   });
 
   test.each([
     ["desktop", NavItem, "/galaxy", "Galaxy"],
     ["mobile", MobileTab, "/raid-finder", "Raid Finder"],
-  ] as const)("keeps native %s navigation when a hydrated SPA handler returns without changing the route", (_layout, Component, href, label) => {
-    const location = { href: "https://veydrift.test/defenses" };
+  ] as const)("explicitly navigates the %s canonical URL when a hydrated SPA handler leaves the route unchanged", (_layout, Component, href, label) => {
+    const assignedUrls: string[] = [];
+    const location = {
+      href: "https://veydrift.test/defenses",
+      assign(url: string) {
+        assignedUrls.push(url);
+        this.href = url;
+      },
+    };
     const link = Component({
       active: false,
       href,
@@ -79,12 +94,20 @@ describe("NavBar section navigation", () => {
     };
 
     (link.props.onClick as (event: typeof event) => void)(event);
-    expect(location.href).toBe("https://veydrift.test/defenses");
-    expect(event.preventDefaultCalls).toBe(0);
+    expect(location.href).toBe(`https://veydrift.test${href}`);
+    expect(assignedUrls).toEqual([`https://veydrift.test${href}`]);
+    expect(event.preventDefaultCalls).toBe(1);
   });
 
-  test("leaves the native link fallback available when SPA navigation fails", () => {
-    const location = { href: "https://veydrift.test/defenses" };
+  test("commits the canonical fallback before surfacing an SPA navigation error", () => {
+    const assignedUrls: string[] = [];
+    const location = {
+      href: "https://veydrift.test/defenses",
+      assign(url: string) {
+        assignedUrls.push(url);
+        this.href = url;
+      },
+    };
     const link = NavItem({
       active: false,
       href: "/raid-finder",
@@ -107,6 +130,45 @@ describe("NavBar section navigation", () => {
     };
 
     expect(() => (link.props.onClick as (event: typeof event) => void)(event)).toThrow("navigation handler failed");
+    expect(location.href).toBe("https://veydrift.test/raid-finder");
+    expect(assignedUrls).toEqual(["https://veydrift.test/raid-finder"]);
+    expect(event.preventDefaultCalls).toBe(1);
+  });
+
+  test("preserves modified-click browser behavior without invoking SPA navigation", () => {
+    let navigations = 0;
+    const assignedUrls: string[] = [];
+    const location = {
+      href: "https://veydrift.test/shipyard",
+      assign(url: string) {
+        assignedUrls.push(url);
+        this.href = url;
+      },
+    };
+    const link = NavItem({
+      active: false,
+      href: "/infrastructure",
+      icon: ChevronDown,
+      label: "Infrastructure",
+      onClick: () => { navigations += 1; },
+    });
+    const event = {
+      altKey: false,
+      button: 0,
+      ctrlKey: false,
+      currentTarget: {
+        href: "https://veydrift.test/infrastructure",
+        ownerDocument: { defaultView: { location } },
+      },
+      metaKey: true,
+      preventDefaultCalls: 0,
+      preventDefault() { this.preventDefaultCalls += 1; },
+      shiftKey: false,
+    };
+
+    (link.props.onClick as (event: typeof event) => void)(event);
+    expect(navigations).toBe(0);
+    expect(assignedUrls).toEqual([]);
     expect(event.preventDefaultCalls).toBe(0);
   });
 });
