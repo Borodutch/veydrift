@@ -27,6 +27,7 @@ import {
   waitForAllianceApplicationCleared,
   waitForAllianceProfileState,
   waitForMissionLaunchState,
+  waitForIndexedResourceState,
   waitForRenamedWalletPlanet,
   type FinishedResearchSnapshot,
   type MissionLaunchSnapshot,
@@ -42,6 +43,21 @@ import type { ChainAllianceState, FleetMissionSummary, WalletPlanetsResponse } f
 const wallet = "0x2222222222222222222222222222222222222222";
 
 describe("post-transaction refresh reconciliation", () => {
+  test("waits for the exact indexed resource transaction before promoting state", async () => {
+    const snapshots = [
+      { resourceSnapshot: { planetId: "7", transactionHash: "0xold", blockNumber: "10", lastSettledAt: "100", resources: { metal: "10", crystal: "20", deuterium: "30" } } },
+      { resourceSnapshot: { planetId: "7", transactionHash: "0xcredit", blockNumber: "11", lastSettledAt: "101", resources: { metal: "110", crystal: "220", deuterium: "330" } } },
+    ];
+
+    const result = await waitForIndexedResourceState(
+      async () => snapshots.shift() ?? snapshots[0]!,
+      { transactionHash: "0xcredit", receiptBlockNumber: "11" },
+      { attempts: 2, intervalMs: 1, delay: async () => undefined },
+    );
+
+    expect(result.resourceSnapshot?.transactionHash).toBe("0xcredit");
+  });
+
   test("polls until a launched mission appears in mission state by transaction hash", async () => {
     const txHash = "0xlaunch";
     const launched = mission("51", { transactionHash: txHash });

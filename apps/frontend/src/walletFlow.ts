@@ -340,6 +340,7 @@ export type ManagedPlanetResponse = NonNullable<WalletSettlementResponse["planet
     coordinates?: string;
     resources?: OnChainResources;
     resourcesAsOfNow?: OnChainResources;
+    resourceSnapshot?: ResourceSnapshotMetadata | null;
     ships?: ChainShipyardState["ships"];
     defenses?: ChainDefenseState["defenses"];
   } | null;
@@ -922,6 +923,7 @@ export type ChainMoonState = {
   unavailableReason?: string;
   resources?: OnChainResources | null;
   resourcesAsOfNow?: OnChainResources | null;
+  resourceSnapshot?: ResourceSnapshotMetadata | null;
   ships?: ChainShipyardState["ships"];
   launchableShips?: ChainShipyardState["ships"];
   moon: {

@@ -15,6 +15,8 @@ const defenseCompletedTopic = "0xcc99fccb631bf08aef4833c0cbd43ed8d19a40eacce0fe2
 // including combat losses (overwrite-to-total).
 const planetShipCountChangedTopic = "0x6a0fc6b08970eb9f7e15767e6902471ca8731c57dbe4577c76021e1f9d6762cf";
 const planetDefenseCountChangedTopic = "0xe861e6f62777a3f6ea372d2892ead2d43e27d726e0ae4a2e39e5c3b682a7bbd3";
+const planetSettledTopic = "0x7faee98c7c745f9c9fb2117a44185f57454dac3013383364df4c22b5f9bc4077";
+const moonResourcesChangedTopic = "0xd1823653b6a3910ee502390b5bf01f05a3b571dc81899a6ac3af3f01fae05c26";
 const attackBattleResolvedTopic = "0xc0d98d89682d12d3fe90cd0786b9320015ab3950de5f4ae3f54ca0fe9b660d1b";
 const fleetMissionReturnExposedTopic = "0x27a083519451f4434cd1f93497fb93689a906d3b982a3f127cb236aa24356afa";
 const fleetMissionReturnedTopic = "0xbb4a50257c10524783e403a4e0db9c4c3e9378c2e398ec5de34281be1aa97b06";
@@ -606,6 +608,37 @@ describe("ChainSyncService (polling)", () => {
 
     expect(text).toContain("event: chain-event");
     expect(text).toContain("\"walletPlanetsChanged\":true");
+    await reader.cancel();
+    service.stop();
+  });
+
+  test("publishes exact planet and moon resource transactions for receipt-backed frontend refreshes", async () => {
+    const indexer = makeIndexer();
+    const backfiller = new MockBackfiller(0x181n, () => [
+      {
+        blockNumber: "0x181",
+        transactionHash: "0xresource-credit",
+        logIndex: "0x2",
+        topics: [planetSettledTopic, topicWord(7n)],
+        data: abiWords(1_000n, 2_000n, 3_000n, 1_770_000_300n)
+      },
+      {
+        blockNumber: "0x181",
+        transactionHash: "0xmoon-credit",
+        logIndex: "0x3",
+        topics: [moonResourcesChangedTopic, topicWord(7n)],
+        data: abiWords(4_000n, 5_000n, 6_000n)
+      }
+    ]);
+    const service = new ChainSyncService(config, indexer, { logBackfiller: backfiller });
+    const reader = service.eventStream().getReader();
+
+    await expect(reader.read()).resolves.toMatchObject({ done: false });
+    await service.poll();
+    const event = await reader.read();
+    const text = new TextDecoder().decode(event.value);
+
+    expect(text).toContain('"resourceChanges":[{"bodyKind":"planet","blockNumber":"385","planetId":"7","transactionHash":"0xresource-credit"},{"bodyKind":"moon","blockNumber":"385","planetId":"7","transactionHash":"0xmoon-credit"}]');
     await reader.cancel();
     service.stop();
   });

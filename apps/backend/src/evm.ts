@@ -928,6 +928,7 @@ export type MoonState = {
   unavailableReason?: string;
   resources: Resources;
   resourcesAsOfNow?: Resources;
+  resourceSnapshot?: ResourceSnapshotMetadata | null;
   ships: ShipyardState["ships"];
   // Ships the next body-aware launch can use after the contract's deterministic lazy-arrival
   // settlement prologue runs. This can be ahead of `ships` while an arrived Deploy is still stored

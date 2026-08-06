@@ -1,5 +1,14 @@
 import type { BackendConfig } from "./config";
-import { eventNameForTopic, isSettledPlanetLog } from "./evm";
+import {
+  decodeMoonResourcesChangedLog,
+  decodeMoonResourcesSettledLog,
+  decodePlanetSettledLog,
+  eventNameForTopic,
+  isMoonResourcesChangedLog,
+  isMoonResourcesSettledLog,
+  isPlanetSettledLog,
+  isSettledPlanetLog
+} from "./evm";
 import type { RpcLog } from "./evm";
 import type { SettlementIndexer } from "./indexer";
 import { emitObservabilityEvent } from "./observability";
@@ -100,11 +109,50 @@ export type ChainSyncSnapshot = {
 export type ChainSyncEvent = {
   blockNumber: string | null;
   kind: "chain-event" | "sync-status";
+  resourceChanges?: ChainResourceChange[];
   transactionHash?: string;
   walletPlanetsChanged?: boolean;
 };
 
+export type ChainResourceChange = {
+  bodyKind: "moon" | "planet";
+  blockNumber: string;
+  planetId: string;
+  transactionHash: string;
+};
+
 type ChainSyncListener = (event: ChainSyncEvent) => void;
+
+function resourceChangeForLog(log: RpcLog): ChainResourceChange | undefined {
+  if (isPlanetSettledLog(log)) {
+    const event = decodePlanetSettledLog(log);
+    return {
+      bodyKind: "planet",
+      blockNumber: event.blockNumber,
+      planetId: event.planetId,
+      transactionHash: event.transactionHash
+    };
+  }
+  if (isMoonResourcesChangedLog(log)) {
+    const event = decodeMoonResourcesChangedLog(log);
+    return {
+      bodyKind: "moon",
+      blockNumber: event.blockNumber,
+      planetId: event.planetId,
+      transactionHash: event.transactionHash
+    };
+  }
+  if (isMoonResourcesSettledLog(log)) {
+    const event = decodeMoonResourcesSettledLog(log);
+    return {
+      bodyKind: "moon",
+      blockNumber: event.blockNumber,
+      planetId: event.planetId,
+      transactionHash: event.transactionHash
+    };
+  }
+  return undefined;
+}
 
 // Consecutive failed polls before /health readiness is downgraded. A single transient getLogs /
 // eth_blockNumber blip must not flap the backend out of "ready" (and trip the redeploy health gate);
@@ -359,7 +407,7 @@ export class ChainSyncService {
       } finally {
         this.lastGetLogsDurationMs = Date.now() - getLogsStartedAt;
       }
-      const { applied, lastHash, walletPlanetsChanged } = await this.applyLogs(logs, applyLog);
+      const { applied, lastHash, resourceChanges, walletPlanetsChanged } = await this.applyLogs(logs, applyLog);
       // Advance the cursor to the scanned head ONLY after a clean ingest — a throw skips this and the
       // next pass retries the same range. Events are absolute-state SETs + txHash:logIndex deduped, so
       // the retried overlap is idempotent.
@@ -370,6 +418,7 @@ export class ChainSyncService {
           kind: "chain-event",
           blockNumber: this.latestSyncedBlock,
           ...(lastHash ? { transactionHash: lastHash } : {}),
+          ...(resourceChanges.length > 0 ? { resourceChanges } : {}),
           ...(walletPlanetsChanged ? { walletPlanetsChanged } : {})
         });
       }
@@ -527,7 +576,7 @@ export class ChainSyncService {
       if (this.cursor !== null && block > this.cursor + 1n) {
         await this.catchUpRange(this.cursor + 1n, block - 1n);
       }
-      const { applied, lastHash, walletPlanetsChanged } = await this.applyLogs([log], applyLog, "viem_ws");
+      const { applied, lastHash, resourceChanges, walletPlanetsChanged } = await this.applyLogs([log], applyLog, "viem_ws");
       this.cursor = maxBigInt(this.cursor, block);
       this.latestHeadBlock = maxBlockString(this.latestHeadBlock, block);
       this.latestSyncedBlock = maxBlockString(this.latestSyncedBlock, block);
@@ -537,6 +586,7 @@ export class ChainSyncService {
           kind: "chain-event",
           blockNumber: this.latestSyncedBlock,
           ...(lastHash ? { transactionHash: lastHash } : {}),
+          ...(resourceChanges.length > 0 ? { resourceChanges } : {}),
           ...(walletPlanetsChanged ? { walletPlanetsChanged } : {})
         });
       }
@@ -567,9 +617,15 @@ export class ChainSyncService {
     logs: RpcLog[],
     applyLog: NonNullable<SettlementIndexer["applyLog"]>,
     source: ChainSyncLiveSource = "fallback_poll"
-  ): Promise<{ applied: number; lastHash: string | undefined; walletPlanetsChanged: boolean }> {
+  ): Promise<{
+    applied: number;
+    lastHash: string | undefined;
+    resourceChanges: ChainResourceChange[];
+    walletPlanetsChanged: boolean;
+  }> {
     let applied = 0;
     let lastHash: string | undefined;
+    const resourceChanges = new Map<string, ChainResourceChange>();
     let walletPlanetsChanged = false;
     for (const log of sortRpcLogs(logs)) {
       if (!isRpcLog(log)) continue;
@@ -585,6 +641,10 @@ export class ChainSyncService {
           this.lastEventAt = new Date().toISOString();
           applied += 1;
           lastHash = log.transactionHash;
+          const resourceChange = resourceChangeForLog(log);
+          if (resourceChange) {
+            resourceChanges.set(`${resourceChange.bodyKind}:${resourceChange.planetId}`, resourceChange);
+          }
           walletPlanetsChanged ||= isSettledPlanetLog(log);
         }
         if (result.removed) {
@@ -600,7 +660,7 @@ export class ChainSyncService {
         this.recordHandlerCompletion(log, source, Date.now() - handlerStartedAt, result);
       }
     }
-    return { applied, lastHash, walletPlanetsChanged };
+    return { applied, lastHash, resourceChanges: [...resourceChanges.values()], walletPlanetsChanged };
   }
 
   private markConnected(): void {

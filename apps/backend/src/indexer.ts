@@ -131,6 +131,7 @@ import {
   type PlayerQueues,
   type QueueState,
   type ResearchState,
+  type ResourceSnapshotMetadata,
   type Resources,
   riftRequirements,
   type RiftState,
@@ -2879,6 +2880,23 @@ export class SettlementIndexer {
       : zeroResources();
   }
 
+  private moonResourceSnapshotMetadata(planetId: string | null): ResourceSnapshotMetadata | null {
+    if (!planetId) return null;
+    const row = this.moonResourceSnapshot(planetId);
+    if (!row) return null;
+    return {
+      planetId,
+      transactionHash: row.transaction_hash,
+      blockNumber: row.block_number,
+      lastSettledAt: row.last_settled_at,
+      resources: {
+        metal: row.metal,
+        crystal: row.crystal,
+        deuterium: row.deuterium
+      }
+    };
+  }
+
   availableShipRows(planetId: string, durationLevels?: { shipyardLevel: number; naniteLevel: number }): ShipyardState["ships"] {
     const counts = this.indexedLevelsById("contract_ship_counts", "ship_id", "count", planetId);
     const completedQueueQuantities = this.completedQueueQuantities(`ship:${planetId}`);
@@ -3375,6 +3393,7 @@ export class SettlementIndexer {
       ...(moon ? {} : { unavailableReason: "No moon exists for this home planet yet." }),
       resources,
       resourcesAsOfNow: resources,
+      resourceSnapshot: this.moonResourceSnapshotMetadata(planetId),
       ships: planetId ? this.moonShipRows(planetId) : [],
       launchableShips: planetId ? this.launchableMoonShipRows(planetId) : [],
       moon: moon
