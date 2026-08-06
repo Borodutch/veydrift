@@ -83,9 +83,12 @@ describe("navigation and planet selector UI source contracts", () => {
     expect(navSource).toContain("Close navigation menu");
     expect(navSource).toContain("mobile-navigation-menu");
     // The disclosure is browser-native so opening the menu does not depend on
-    // a Preact click handler successfully committing local state first.
+    // a Preact click handler successfully committing local state first. Its
+    // explicit button role keeps the visible hamburger discoverable to
+    // assistive technology and semantic click automation.
     expect(navSource).toContain("<details");
     expect(navSource).toContain("<summary");
+    expect(navSource).toContain('role="button"');
     expect(navSource).toContain("onToggle={(event) => setMobileMenuOpen(event.currentTarget.open)}");
     expect(navSource).toContain("label={page.label}");
     expect(navSource).not.toContain("onClick={() => setMobileMenuOpen((open) => !open)}");

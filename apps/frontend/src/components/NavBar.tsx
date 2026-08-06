@@ -431,6 +431,7 @@ export function NavBar({
           aria-expanded={mobileMenuOpen}
           aria-label={mobileMenuOpen ? "Close navigation menu" : "Open navigation menu"}
           className="group flex h-12 min-w-0 cursor-pointer list-none items-center justify-between gap-3 px-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-300/60 [&::-webkit-details-marker]:hidden"
+          role="button"
         >
           <div className="min-w-0">
             <p className="truncate text-sm font-semibold text-white">Veydrift</p>
