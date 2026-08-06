@@ -70,15 +70,6 @@ import {
 } from "./entityMedia";
 import type { Eip1193Provider } from "./walletFlow";
 
-export type BackendDataStatus = "error" | "idle" | "loading" | "ready";
-
-export type BackendDataEntry<T> = {
-  data: T | undefined;
-  error: Error | undefined;
-  status: BackendDataStatus;
-  updatedAt: number | undefined;
-};
-
 type WalletReadOptions = {
   source?: "indexed";
   timeoutMs?: number;
@@ -106,8 +97,6 @@ type GlobalMissionArchiveOptions = {
   summaryOnly?: boolean;
 };
 
-type BackendDataListener = () => void;
-
 function cacheKey(kind: string, ...parts: unknown[]): string {
   return `${kind}:${JSON.stringify(parts)}`;
 }
@@ -115,100 +104,31 @@ function cacheKey(kind: string, ...parts: unknown[]): string {
 /**
  * The single read-side boundary for the playable frontend.
  *
- * It owns the latest response, loading/error metadata, and every in-flight
- * request. Calling the same refresh trigger again while it is running returns
- * the existing promise. UI code never needs its own request mutex or a second
- * backend call for data another surface already requested.
+ * It owns only in-flight backend requests. Calling the same read again while
+ * it is running returns the existing promise, so UI code never needs a
+ * component-local request mutex or a second backend call for the same key.
+ *
+ * Consumer-visible data, loading/error status, and freshness belong to the
+ * view projection that renders them. Planet surfaces use planetSectionStore;
+ * other screens keep their existing local projections.
  */
 export class BackendDataStore {
-  private readonly entries = new Map<string, BackendDataEntry<unknown>>();
   private readonly inFlight = new Map<string, Promise<unknown>>();
-  private readonly listeners = new Set<BackendDataListener>();
-  private generation = 0;
 
   constructor(readonly apiBaseUrl: string) {}
-
-  subscribe(listener: BackendDataListener): () => void {
-    this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
-  }
-
-  entry<T>(key: string): BackendDataEntry<T> {
-    return (this.entries.get(key) as BackendDataEntry<T> | undefined) ?? {
-      data: undefined,
-      error: undefined,
-      status: "idle",
-      updatedAt: undefined,
-    };
-  }
-
-  value<T>(key: string): T | undefined {
-    return this.entry<T>(key).data;
-  }
-
-  write<T>(key: string, data: T): void {
-    this.entries.set(key, {
-      data,
-      error: undefined,
-      status: "ready",
-      updatedAt: Date.now(),
-    });
-    this.emit();
-  }
-
-  clear(): void {
-    this.generation += 1;
-    this.entries.clear();
-    this.inFlight.clear();
-    this.emit();
-  }
 
   refresh<T>(key: string, load: () => Promise<T>): Promise<T> {
     const running = this.inFlight.get(key);
     if (running) return running as Promise<T>;
 
-    const previous = this.entry<T>(key);
-    const requestGeneration = this.generation;
-    this.entries.set(key, {
-      data: previous.data,
-      error: undefined,
-      status: "loading",
-      updatedAt: previous.updatedAt,
-    });
-
     let request!: Promise<T>;
     request = Promise.resolve()
       .then(load)
-      .then((data) => {
-        if (requestGeneration === this.generation) {
-          this.entries.set(key, {
-            data,
-            error: undefined,
-            status: "ready",
-            updatedAt: Date.now(),
-          });
-          this.emit();
-        }
-        return data;
-      })
-      .catch((error: unknown) => {
-        if (requestGeneration === this.generation) {
-          this.entries.set(key, {
-            data: previous.data,
-            error: error instanceof Error ? error : new Error(String(error)),
-            status: "error",
-            updatedAt: previous.updatedAt,
-          });
-          this.emit();
-        }
-        throw error;
-      })
       .finally(() => {
         if (this.inFlight.get(key) === request) this.inFlight.delete(key);
       });
 
     this.inFlight.set(key, request);
-    this.emit();
     return request;
   }
 
@@ -438,7 +358,7 @@ export class BackendDataStore {
     entityId: string,
     mediaUrl: string,
   ): Promise<EntityMediaResponse> {
-    const response = await updateEntityMedia(
+    return updateEntityMedia(
       this.apiBaseUrl,
       provider,
       wallet,
@@ -446,8 +366,6 @@ export class BackendDataStore {
       entityId,
       mediaUrl,
     );
-    this.write(cacheKey("entity-media", entityKind, entityId), response);
-    return response;
   }
 
   burningChicken(owner: string, tokenId: string, config: BurningChickenConfig): Promise<unknown> {
@@ -455,9 +373,6 @@ export class BackendDataStore {
     return this.refresh(key, () => fetchBurningChickenForOwner(owner, tokenId, config));
   }
 
-  private emit(): void {
-    for (const listener of this.listeners) listener();
-  }
 }
 
 export function createBackendDataStore(apiBaseUrl: string): BackendDataStore {

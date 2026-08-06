@@ -25,4 +25,17 @@ describe("frontend backend-data boundary", () => {
     expect(storeSource).toContain("const running = this.inFlight.get(key)");
     expect(storeSource).toContain("if (running) return running as Promise<T>");
   });
+
+  test("keeps consumer-visible state in explicit view projections", async () => {
+    const storeSource = await Bun.file(new URL("./backendDataStore.ts", import.meta.url)).text();
+    const planetStoreSource = await Bun.file(new URL("./planetSectionStore.ts", import.meta.url)).text();
+    const guide = await Bun.file(new URL("../../../docs/frontend-data-store.md", import.meta.url)).text();
+
+    expect(storeSource).toContain("private readonly inFlight");
+    expect(storeSource).not.toContain("private readonly entries");
+    expect(storeSource).not.toContain("subscribe(listener");
+    expect(planetStoreSource).toContain("export type PlanetSectionRefreshStatus");
+    expect(planetStoreSource).toContain("export function setPlanetSectionData");
+    expect(guide).toContain("a request coordinator, not a second UI state store");
+  });
 });

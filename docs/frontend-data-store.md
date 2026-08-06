@@ -1,22 +1,22 @@
-# Frontend backend-data store
+# Frontend backend-read boundary
 
 ## Purpose
 
-`apps/frontend/src/backendDataStore.ts` is the only read-side boundary between UI code and the Veydrift backend. Components and app shells request data through a shared `BackendDataStore` for the active API base URL.
+`apps/frontend/src/backendDataStore.ts` is the typed read-side boundary between UI code and the Veydrift backend. Despite the legacy filename and class name, it is a request coordinator, not a second UI state store: it owns stable request keys and in-flight promises only.
 
-Low-level request encoding and response validation remain in `walletFlow.ts` and `entityMedia.ts`. Those modules are transport clients, not UI state stores, and UI components must not call their read functions directly.
+Low-level request encoding and response validation remain in `walletFlow.ts` and `entityMedia.ts`. Those modules are transport clients, and UI components must not call their read functions directly.
 
 ## Invariants
 
-1. Every backend read has a typed store method and stable cache key.
-2. The store keeps the latest confirmed response, loading state, error, and update time.
-3. If a request for the same key is already running, another refresh returns that exact promise. It does not start a second request.
-4. A refresh error keeps the last confirmed response available.
-5. UI components contain no raw `fetch()` calls.
-6. A wallet transaction is successful in the UI only after its exact transaction or expected state transition is visible in indexed data.
-7. Event-stream, polling, navigation, and post-transaction triggers all call the same store methods.
+1. Every covered backend read has a typed boundary method and stable request key.
+2. If a request for the same key is already running, another caller receives that exact promise instead of starting a second request.
+3. A call made after the request settles starts a fresh request; the coordinator does not cache response data, loading/error status, or freshness metadata.
+4. UI components contain no raw `fetch()` calls.
+5. Consumer-visible data and refresh status have one explicit owner: `planetSectionStore` for shared planet projections, or the screen's existing local projection for screen-specific data.
+6. A failed refresh must not clear the last confirmed view projection. The projection owner records the error while retaining its previous data.
+7. A wallet transaction is successful in the UI only after its exact transaction or expected state transition is visible in indexed data.
 
-These rules are enforced by `backendDataStore.test.ts` and `backendDataBoundary.test.ts`.
+The request-coalescing rules are enforced by `backendDataStore.test.ts` and `backendDataBoundary.test.ts`. Shared planet data/status behavior is enforced by `planetSectionStore.test.ts`; screen-specific stale-data behavior remains covered by the relevant feature tests.
 
 ## Data flow
 
@@ -25,44 +25,41 @@ refresh trigger
   -> BackendDataStore typed method
   -> stable request key
   -> existing in-flight promise, or one transport request
-  -> store response and notify subscribers
-  -> project into the relevant UI view state
+  -> caller applies the result to its explicit view projection
 ```
 
-`backendDataStoreFor(apiBaseUrl)` returns the shared store for a normalized API URL. Do not construct a component-local store.
+`backendDataStoreFor(apiBaseUrl)` returns the shared request coordinator for a normalized API URL. Do not construct a component-local coordinator or request mutex.
+
+Coalescing does not itself propagate a completed response into other screens. Concurrent callers receive the same promise and each applies the result to its declared projection. Cross-screen response, status, and freshness propagation exists only where callers consume the same shared view projection.
 
 ## Planet state
 
-Planet views also use `planetSectionStore.ts`. Its job is narrower: it projects shared backend responses into per-planet presentation snapshots so the selected planet can change without clearing already rendered state.
+`planetSectionStore.ts` is the consumer-visible shared state layer for planet surfaces. It owns per-planet presentation snapshots, section loading/error status, and the last successful refresh time so the selected planet can change without clearing already rendered state.
 
-For example, Infrastructure data follows one path:
+For example, Infrastructure data follows this path:
 
 ```text
 BackendDataStore.infrastructure(wallet, planetId)
-  -> planet section snapshot for planetId
-  -> Overview
-  -> Infrastructure
-  -> planet detail and selector progress consumers
+  -> apply the confirmed response to the planet section for planetId
+  -> Overview, Infrastructure, planet detail, and selector consumers
 ```
 
-The planet section store must never become a second network client.
+The planet section store never performs network requests. Starting or failing a refresh changes section status but does not discard its last confirmed data; only a confirmed response replaces the projection.
 
 ## Adding a backend read
 
 1. Add or reuse the typed transport function in `walletFlow.ts`.
 2. Add a typed method and stable key in `BackendDataStore`.
 3. Call that method from refresh triggers and post-transaction reconciliation.
-4. Feed every surface from the stored result or its shared view projection.
-5. Add a coalescing or boundary test when the data category or transport path is new.
-
-Do not add a component-local request mutex. Coalescing belongs in `BackendDataStore`.
+4. Apply the result to the existing shared or screen-local view projection; do not add another hidden cache.
+5. Add a coalescing or boundary test when the data category or transport path is new, plus a projection test when shared view behavior changes.
 
 ## Refresh behavior
 
-Calling a store method always means “refresh this key.” The latest response remains readable while the request is in progress. Concurrent calls coalesce; a later call after completion starts a new request.
+Calling a boundary method means “read this key now.” Concurrent same-key calls coalesce; a later call after completion starts a new request. The boundary rejects failed requests so the projection owner can expose the error while retaining already confirmed data.
 
-The underlying wallet API client has a very short recent-response window to collapse immediate duplicate HTTP work. Post-transaction reconciliation still polls until it observes the exact indexed change, so a receipt alone never promotes stale balances or queue state.
+The underlying wallet API client also has a very short recent-response window to collapse immediate duplicate HTTP work. Post-transaction reconciliation still polls until it observes the exact indexed change, so a receipt alone never promotes stale balances or queue state.
 
 ## Mutations
 
-Wallet transactions remain in the transaction helpers because the wallet provider, receipt confirmation, and chain switching are not backend reads. Signed backend mutations may use their existing transport helpers, but any response that becomes shared UI data must be written to or refreshed through `BackendDataStore`.
+Wallet transactions remain in the transaction helpers because the wallet provider, receipt confirmation, and chain switching are not backend reads. Signed backend mutations may use their existing transport helpers. Their confirmed result must be applied to an explicit view projection or followed by a boundary refresh; the request coordinator does not retain mutation results.
