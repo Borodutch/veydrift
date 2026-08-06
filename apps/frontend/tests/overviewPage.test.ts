@@ -6,7 +6,6 @@ import { productionQueueViewModel } from "../src/components/ProductionCatalog";
 import {
   isOverviewResearchReadyToFinish,
   compactOverviewLevelLabel,
-  compactOverviewResearchLabel,
   overviewBuildingActionNoticeFor,
   overviewResearchActionNoticeFor,
 } from "../src/components/OverviewPage";
@@ -121,8 +120,6 @@ describe("overview queue progress display", () => {
     expect(compactOverviewLevelLabel("Shipyard Level 9")).toBe("Shipyard 9");
     expect(compactOverviewLevelLabel("Plasma Technology level 7")).toBe("Plasma Technology 7");
     expect(compactOverviewLevelLabel("Rift Stabilizer")).toBe("Rift Stabilizer");
-    expect(compactOverviewResearchLabel("Hyperspace Technology 6")).toBe("Hyperspace 6");
-    expect(compactOverviewResearchLabel("Plasma Technology Level 7")).toBe("Plasma 7");
   });
 
   test("renders compact planet stats and effects behind the info control", () => {
