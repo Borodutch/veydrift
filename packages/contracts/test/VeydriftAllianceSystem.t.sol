@@ -189,8 +189,14 @@ contract VeydriftAllianceSystemTest is Test {
         (uint8 v, bytes32 r, bytes32 s) = _signPaidInvite(commitment, newCommander, expiresAt);
         uint256 settlementPrice = game.startPrice();
         vm.prank(newCommander);
-        uint256 planetId = game.startPlanetWithAllianceInvite{value: settlementPrice}(commitment, expiresAt, v, r, s);
-        assertEq(address(game).balance, gameFeeBalanceBefore + price + settlementPrice, "invite and settlement payments are independent");
+        uint256 planetId = game.startPlanetWithAllianceInvite{value: settlementPrice}(
+            commitment, expiresAt, v, r, s
+        );
+        assertEq(
+            address(game).balance,
+            gameFeeBalanceBefore + price + settlementPrice,
+            "invite and settlement payments are independent"
+        );
 
         assertEq(game.homePlanetOf(newCommander), planetId);
         VeydriftAllianceSystem.Membership memory membership = alliances.allianceOf(newCommander);
@@ -217,12 +223,12 @@ contract VeydriftAllianceSystemTest is Test {
 
         address frontRunner = address(0xF00D);
         vm.deal(frontRunner, 1 ether);
-        vm.prank(frontRunner);
+        uint256 settlementPrice = game.startPrice();
         vm.expectRevert(VeydriftPaidAllianceInvites.InvalidAuthorization.selector);
-        game.startPlanetWithAllianceInvite{value: game.startPrice()}(commitment, expiresAt, v, r, s);
+        vm.prank(frontRunner);
+        game.startPlanetWithAllianceInvite{value: settlementPrice}(commitment, expiresAt, v, r, s);
 
         vm.warp(expiresAt);
-        vm.prank(newCommander);
         vm.expectRevert(
             abi.encodeWithSelector(
                 VeydriftPaidAllianceInvites.InvalidAuthorizationExpiry.selector,
@@ -230,7 +236,8 @@ contract VeydriftAllianceSystemTest is Test {
                 uint64(1 + paidInvites.INVITE_LIFETIME())
             )
         );
-        game.startPlanetWithAllianceInvite{value: game.startPrice()}(commitment, expiresAt, v, r, s);
+        vm.prank(newCommander);
+        game.startPlanetWithAllianceInvite{value: settlementPrice}(commitment, expiresAt, v, r, s);
     }
 
     function testAnyCurrentMemberCanBuyButNonMembersCannot() public {
@@ -258,9 +265,11 @@ contract VeydriftAllianceSystemTest is Test {
         paidInvites.buy{value: price}(commitment);
         uint64 expiresAt = uint64(block.timestamp + 10 minutes);
         (uint8 v, bytes32 r, bytes32 s) = _signPaidInvite(commitment, newCommander, expiresAt);
+        uint256 settlementPrice = game.startPrice();
         vm.prank(newCommander);
-        uint256 homePlanetId =
-            game.startPlanetWithAllianceInvite{value: game.startPrice()}(commitment, expiresAt, v, r, s);
+        uint256 homePlanetId = game.startPlanetWithAllianceInvite{value: settlementPrice}(
+            commitment, expiresAt, v, r, s
+        );
         _enableMetalProduction(homePlanetId);
         uint256 colonyPlanetId = 10_818;
         _cloneOwnedPlanet(newCommander, homePlanetId, colonyPlanetId);
@@ -273,12 +282,12 @@ contract VeydriftAllianceSystemTest is Test {
         vm.prank(newCommander);
         alliances.leaveAlliance();
         VeydriftGameStorage.Resources memory homeAfterLeave = game.planet(homePlanetId).resources;
-        VeydriftGameStorage.Resources memory colonyAfterLeave = game.planet(colonyPlanetId).resources;
-        VeydriftGameStorage.Resources memory balanceAfterLeave = paidInvites.bonusBalance(allianceId);
+        VeydriftGameStorage.Resources memory colonyAfterLeave =
+        game.planet(colonyPlanetId).resources;
+        VeydriftGameStorage.Resources memory balanceAfterLeave =
+            paidInvites.bonusBalance(allianceId);
         assertGt(homeAfterLeave.metal, homeBefore.metal, "leave must settle the home planet");
-        assertGt(
-            colonyAfterLeave.metal, colonyBefore.metal, "leave must settle every owned planet"
-        );
+        assertGt(colonyAfterLeave.metal, colonyBefore.metal, "leave must settle every owned planet");
         uint256 eligibleMetal = uint256(homeAfterLeave.metal - homeBefore.metal)
             + uint256(colonyAfterLeave.metal - colonyBefore.metal);
         assertEq(
@@ -293,7 +302,8 @@ contract VeydriftAllianceSystemTest is Test {
         vm.prank(newCommander);
         alliances.acceptInvite(allianceId);
         VeydriftGameStorage.Resources memory homeAfterRejoin = game.planet(homePlanetId).resources;
-        VeydriftGameStorage.Resources memory colonyAfterRejoin = game.planet(colonyPlanetId).resources;
+        VeydriftGameStorage.Resources memory colonyAfterRejoin =
+        game.planet(colonyPlanetId).resources;
         assertGt(homeAfterRejoin.metal, homeAfterLeave.metal, "away production stays with player");
         assertGt(
             colonyAfterRejoin.metal,
@@ -315,7 +325,7 @@ contract VeydriftAllianceSystemTest is Test {
             paidInvites.bonusBalance(allianceId);
         VeydriftGameStorage.Resources memory homeAfterResume = game.planet(homePlanetId).resources;
         VeydriftGameStorage.Resources memory colonyAfterResume =
-            game.planet(colonyPlanetId).resources;
+        game.planet(colonyPlanetId).resources;
         uint256 resumedMetal = uint256(homeAfterResume.metal - homeAfterRejoin.metal)
             + uint256(colonyAfterResume.metal - colonyAfterRejoin.metal);
         assertEq(
@@ -377,7 +387,7 @@ contract VeydriftAllianceSystemTest is Test {
         vm.prank(newCommander);
         game.collectResources(planetId);
         VeydriftGameStorage.Resources memory afterConstrainedSettlement =
-            game.planet(planetId).resources;
+        game.planet(planetId).resources;
         assertEq(afterConstrainedSettlement.metal, preview.metal, "player output must be unchanged");
         assertEq(
             paidInvites.bonusBalance(allianceId).metal,
@@ -425,8 +435,11 @@ contract VeydriftAllianceSystemTest is Test {
         paidInvites.buy{value: price}(commitment);
         uint64 expiresAt = uint64(block.timestamp + 10 minutes);
         (uint8 v, bytes32 r, bytes32 s) = _signPaidInvite(commitment, newCommander, expiresAt);
+        uint256 settlementPrice = game.startPrice();
         vm.prank(newCommander);
-        uint256 planetId = game.startPlanetWithAllianceInvite{value: game.startPrice()}(commitment, expiresAt, v, r, s);
+        uint256 planetId = game.startPlanetWithAllianceInvite{value: settlementPrice}(
+            commitment, expiresAt, v, r, s
+        );
 
         vm.prank(newCommander);
         game.startBuildingUpgrade(planetId, Building.SolarPlant);
@@ -1678,8 +1691,12 @@ contract VeydriftAllianceSystemTest is Test {
         paidInvites.buy{value: price}(commitment);
         uint64 expiresAt = uint64(block.timestamp + 10 minutes);
         (uint8 v, bytes32 r, bytes32 s) = _signPaidInvite(commitment, newCommander, expiresAt);
+        uint256 settlementPrice = game.startPrice();
         vm.prank(newCommander);
-        return game.startPlanetWithAllianceInvite{value: game.startPrice()}(commitment, expiresAt, v, r, s);
+        return
+            game.startPlanetWithAllianceInvite{value: settlementPrice}(
+                commitment, expiresAt, v, r, s
+            );
     }
 
     function _enableMetalProduction(uint256 planetId) internal {
@@ -1711,17 +1728,13 @@ contract VeydriftAllianceSystemTest is Test {
         vm.store(address(game), bytes32(uint256(ownedListData) + ownedCount), bytes32(planetId));
         vm.store(address(game), ownedListSlot, bytes32(ownedCount + 1));
         vm.store(
-            address(game),
-            keccak256(abi.encode(planetId, uint256(37))),
-            bytes32(ownedCount + 1)
+            address(game), keccak256(abi.encode(planetId, uint256(37))), bytes32(ownedCount + 1)
         );
     }
 
     function _setGameReserveBalances(uint256 metal, uint256 crystal, uint256 deuterium) internal {
         vm.store(
-            address(metalToken),
-            keccak256(abi.encode(address(game), uint256(0))),
-            bytes32(metal)
+            address(metalToken), keccak256(abi.encode(address(game), uint256(0))), bytes32(metal)
         );
         vm.store(
             address(crystalToken),

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
 import { recoverMessageAddress } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -12,6 +13,7 @@ import {
   PaidAllianceInviteRateLimiter,
   PaidAllianceInviteSecretStore,
   paidAllianceInviteRecoveryMessage,
+  paidAllianceInviteSecretRecordAad,
   paidAllianceInviteStoreMessage,
   resolvePaidAllianceInvite,
   type PaidAllianceInviteState,
@@ -128,6 +130,150 @@ describe("paid alliance invites", () => {
       });
       await expect(restarted.recover(purchaserAccount.address, attackerSignature)).rejects.toThrow("Invalid purchaser authorization");
       restarted.close();
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects cross-purchaser encrypted-row substitution through recovery", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "veydrift-paid-invite-swap-"));
+    try {
+      const path = join(directory, "invites.sqlite");
+      const encryptionKey = `0x${"44".repeat(32)}`;
+      const victim = privateKeyToAccount("0x2222222222222222222222222222222222222222222222222222222222222222");
+      const attacker = privateKeyToAccount("0x3333333333333333333333333333333333333333333333333333333333333333");
+      const attackerSecret = `0x${"bb".repeat(32)}` as const;
+      const victimCommitment = paidAllianceInviteCommitment(secret);
+      const attackerCommitment = paidAllianceInviteCommitment(attackerSecret);
+      const store = new PaidAllianceInviteSecretStore(path, encryptionKey);
+      await store.store(secret, victim.address, await victim.signMessage({
+        message: paidAllianceInviteStoreMessage(victim.address, victimCommitment),
+      }), { ...state, purchaser: victim.address });
+      await store.store(attackerSecret, attacker.address, await attacker.signMessage({
+        message: paidAllianceInviteStoreMessage(attacker.address, attackerCommitment),
+      }), { ...state, purchaser: attacker.address });
+      store.close();
+
+      const database = new Database(path);
+      const victimCiphertext = database.query(`
+        SELECT ciphertext, iv, tag FROM paid_alliance_invite_secrets WHERE commitment = ?
+      `).get(victimCommitment) as { ciphertext: string; iv: string; tag: string };
+      database.query(`
+        UPDATE paid_alliance_invite_secrets SET ciphertext = ?, iv = ?, tag = ? WHERE commitment = ?
+      `).run(victimCiphertext.ciphertext, victimCiphertext.iv, victimCiphertext.tag, attackerCommitment);
+      database.close();
+
+      const restarted = new PaidAllianceInviteSecretStore(path, encryptionKey);
+      const handler = createRequestHandler({
+        config: config(),
+        paidAllianceInviteReader: { invite: async () => ({ ...state, purchaser: attacker.address }) },
+        paidAllianceInviteSecretStore: restarted,
+        role: "writer",
+      });
+      const response = await handler(new Request("http://test/alliance-invites/recover", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          purchaser: attacker.address,
+          signature: await attacker.signMessage({
+            message: paidAllianceInviteRecoveryMessage(attacker.address),
+          }),
+        }),
+      }));
+      const body = await response.text();
+      expect(response.status).toBe(400);
+      expect(body).not.toContain(secret);
+      restarted.close();
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects authenticated plaintext that does not match its row commitment", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "veydrift-paid-invite-commitment-"));
+    try {
+      const path = join(directory, "invites.sqlite");
+      const keyHex = `0x${"44".repeat(32)}`;
+      const purchaser = privateKeyToAccount("0x2222222222222222222222222222222222222222222222222222222222222222");
+      const commitment = paidAllianceInviteCommitment(secret);
+      const store = new PaidAllianceInviteSecretStore(path, keyHex);
+      await store.store(secret, purchaser.address, await purchaser.signMessage({
+        message: paidAllianceInviteStoreMessage(purchaser.address, commitment),
+      }), { ...state, purchaser: purchaser.address });
+      store.close();
+
+      const { createCipheriv, randomBytes } = await import("node:crypto");
+      const wrongSecret = `0x${"bb".repeat(32)}`;
+      const iv = randomBytes(12);
+      const cipher = createCipheriv("aes-256-gcm", Buffer.from(keyHex.slice(2), "hex"), iv);
+      cipher.setAAD(paidAllianceInviteSecretRecordAad(commitment, purchaser.address));
+      const ciphertext = Buffer.concat([cipher.update(wrongSecret, "utf8"), cipher.final()]);
+      const database = new Database(path);
+      database.query(`
+        UPDATE paid_alliance_invite_secrets SET ciphertext = ?, iv = ?, tag = ? WHERE commitment = ?
+      `).run(
+        ciphertext.toString("base64"),
+        iv.toString("base64"),
+        cipher.getAuthTag().toString("base64"),
+        commitment,
+      );
+      database.close();
+
+      const restarted = new PaidAllianceInviteSecretStore(path, keyHex);
+      await expect(restarted.recover(purchaser.address, await purchaser.signMessage({
+        message: paidAllianceInviteRecoveryMessage(purchaser.address),
+      }))).rejects.toThrow("cannot be decrypted");
+      restarted.close();
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("recovery returns only active purchaser links", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "veydrift-paid-invite-filter-"));
+    try {
+      const path = join(directory, "invites.sqlite");
+      const purchaser = privateKeyToAccount("0x2222222222222222222222222222222222222222222222222222222222222222");
+      const secrets = [secret, `0x${"bb".repeat(32)}`, `0x${"cc".repeat(32)}`] as const;
+      const commitments = secrets.map(paidAllianceInviteCommitment);
+      const states = new Map([
+        [commitments[0], { ...state, purchaser: purchaser.address }],
+        [commitments[1], { ...state, purchaser: purchaser.address, redeemed: true }],
+        [commitments[2], { ...state, purchaser: purchaser.address, validUntil: 1n }],
+      ]);
+      const store = new PaidAllianceInviteSecretStore(path, `0x${"44".repeat(32)}`);
+      for (const [index, inviteSecret] of secrets.entries()) {
+        const commitment = commitments[index]!;
+        await store.store(inviteSecret, purchaser.address, await purchaser.signMessage({
+          message: paidAllianceInviteStoreMessage(purchaser.address, commitment),
+        }), states.get(commitment)!);
+      }
+      const handler = createRequestHandler({
+        config: config(),
+        paidAllianceInviteReader: { invite: async (commitment) => states.get(commitment)! },
+        paidAllianceInviteSecretStore: store,
+        role: "writer",
+      });
+      const response = await handler(new Request("http://test/alliance-invites/recover", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          purchaser: purchaser.address,
+          signature: await purchaser.signMessage({
+            message: paidAllianceInviteRecoveryMessage(purchaser.address),
+          }),
+        }),
+      }));
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.invites).toEqual([expect.objectContaining({
+        commitment: commitments[0],
+        secret: secrets[0],
+        status: "active",
+      })]);
+      expect(JSON.stringify(body)).not.toContain(secrets[1]);
+      expect(JSON.stringify(body)).not.toContain(secrets[2]);
+      store.close();
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }

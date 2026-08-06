@@ -7,10 +7,7 @@ import {VeydriftGameStorage} from "./VeydriftGameStorage.sol";
 
 interface IVeydriftPaidInviteGame {
     function depositPaidAllianceInviteFee() external payable;
-    function resourceReserveAvailable()
-        external
-        view
-        returns (VeydriftGameStorage.Resources memory);
+    function resourceReserveAvailable() external view returns (VeydriftGameStorage.Resources memory);
 }
 
 interface IVeydriftPaidInviteAlliance {

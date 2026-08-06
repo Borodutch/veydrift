@@ -18,6 +18,7 @@ import type { BackendConfig } from "./config";
 
 export const paidAllianceInviteSecretPattern = /^0x[0-9a-fA-F]{64}$/;
 export const paidAllianceAuthorizationLifetimeSeconds = 10 * 60;
+const paidAllianceInviteSecretRecordVersion = "Veydrift paid alliance invite secret v1";
 
 const inviteAbi = [{
   type: "function",
@@ -91,6 +92,15 @@ export function paidAllianceInviteRecoveryMessage(purchaser: Address): string {
   return `Veydrift paid alliance invite recovery\nPurchaser: ${purchaser.toLowerCase()}`;
 }
 
+export function paidAllianceInviteSecretRecordAad(commitmentInput: string, purchaserInput: string): Buffer {
+  const commitment = normalizePaidAllianceInviteCommitment(commitmentInput);
+  const purchaser = getAddress(purchaserInput).toLowerCase();
+  return Buffer.from(
+    `${paidAllianceInviteSecretRecordVersion}\nCommitment: ${commitment}\nPurchaser: ${purchaser}`,
+    "utf8",
+  );
+}
+
 export class PaidAllianceInviteSecretStore {
   private readonly keys: Buffer[];
   private readonly database: Database;
@@ -126,6 +136,7 @@ export class PaidAllianceInviteSecretStore {
     })) throw new Error("Invalid purchaser authorization.");
     const iv = randomBytes(12);
     const cipher = createCipheriv("aes-256-gcm", this.keys[0]!, iv);
+    cipher.setAAD(paidAllianceInviteSecretRecordAad(commitment, purchaser));
     const ciphertext = Buffer.concat([cipher.update(secret, "utf8"), cipher.final()]);
     const record: EncryptedInviteRecord = {
       commitment,
@@ -167,14 +178,21 @@ export class PaidAllianceInviteSecretStore {
   }
 
   private decrypt(record: EncryptedInviteRecord): Hex {
+    const commitment = normalizePaidAllianceInviteCommitment(record.commitment);
+    const aad = paidAllianceInviteSecretRecordAad(commitment, record.purchaser);
     for (const key of this.keys) {
       try {
         const decipher = createDecipheriv("aes-256-gcm", key, Buffer.from(record.iv, "base64"));
+        decipher.setAAD(aad);
         decipher.setAuthTag(Buffer.from(record.tag, "base64"));
-        return Buffer.concat([
+        const secret = normalizePaidAllianceInviteSecret(Buffer.concat([
           decipher.update(Buffer.from(record.ciphertext, "base64")),
           decipher.final(),
-        ]).toString("utf8") as Hex;
+        ]).toString("utf8"));
+        if (paidAllianceInviteCommitment(secret) !== commitment) {
+          throw new Error("Paid invite secret does not match its stored commitment.");
+        }
+        return secret;
       } catch {
         // Continue through explicitly configured previous keys during rotation.
       }
@@ -200,6 +218,14 @@ export function normalizePaidAllianceInviteSecret(secret: unknown): Hex {
   const normalized = String(secret ?? "").trim();
   if (!paidAllianceInviteSecretPattern.test(normalized)) {
     throw new Error("Alliance invite links require a 32-byte high-entropy secret.");
+  }
+  return normalized.toLowerCase() as Hex;
+}
+
+function normalizePaidAllianceInviteCommitment(commitment: unknown): Hex {
+  const normalized = String(commitment ?? "").trim();
+  if (!paidAllianceInviteSecretPattern.test(normalized)) {
+    throw new Error("Paid invite commitment must be 32 bytes.");
   }
   return normalized.toLowerCase() as Hex;
 }

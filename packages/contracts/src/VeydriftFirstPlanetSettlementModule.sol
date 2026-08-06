@@ -99,7 +99,9 @@ contract VeydriftFirstPlanetSettlementModule is VeydriftResourceReserves {
         bytes32 r,
         bytes32 s
     ) external payable returns (uint256 planetId) {
-        if (msg.value != startPrice || _allianceSystem == address(0)) revert BadStartPayment();
+        if (msg.value != startPrice || _allianceSystem == address(0)) {
+            revert BadStartPayment();
+        }
         (address purchaser,) = IVeydriftPaidAllianceInviteSystem(_allianceSystem)
             .redeemPaidInvite(msg.sender, commitment, expiresAt, v, r, s);
         planetId = _startPlanet(msg.sender, msg.value, purchaser);
