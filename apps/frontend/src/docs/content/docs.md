@@ -74,6 +74,8 @@ Open Galaxy or Raid Finder to choose a target. The mission composer previews rou
 | ACS Attack | Lets allied fleets join an attack group when available. |
 | ACS Defend | Stations allied defense at a target until the hostile attack lands or the hold expires. |
 
+Mission arrivals and returns normally settle automatically. If a mission stays **Resolving** for at least 60 seconds, a **Resolve** button appears beside that status. Any connected player can submit this permissionless fallback, which keeps missions moving if the funded resolver wallet is unavailable. Combat missions waiting for randomness show **Awaiting randomness** instead and cannot be resolved yet.
+
 ### Common Mistakes
 
 - Do not send all cargo capacity as resources. Fuel is deducted from available cargo.

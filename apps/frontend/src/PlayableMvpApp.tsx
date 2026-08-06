@@ -38,6 +38,7 @@ import {
   missionSystemKeysMissingUniverseArchetypes,
   normalizeMissionControlFilters,
   resolveMissionControlView,
+  type ManualMissionResolutionKind,
   type MissionControlFilters,
 } from "./components/MissionControlPage";
 import {
@@ -244,7 +245,9 @@ import {
   sendJoinAttackMissionTransaction,
   encodeColonizationTargetId,
   sendJumpGateJumpTransaction,
+  sendCompleteFleetMissionReturnTransaction,
   sendRecallFleetMissionTransaction,
+  sendResolveFleetMissionTransaction,
   sendDepositResourceTransaction,
   sendRenamePlanetTransaction,
   sendStartRiftExtractionTransaction,
@@ -8637,6 +8640,41 @@ export function PlayableMvpApp({
     );
   }, [account, displayFleetVisibility, gameContract, provider, runMissionTransaction]);
 
+  const handleResolveMission = useCallback((missionId: string, kind: ManualMissionResolutionKind) => {
+    if (!provider || !account || !gameContract) {
+      setMissionAction({ status: "error", label: "Wallet or game contract is unavailable." });
+      return;
+    }
+
+    const mission = missionDetail?.mission?.missionId === missionId
+      ? missionDetail.mission
+      : [
+          ...(displayFleetVisibility?.incoming ?? []),
+          ...(displayFleetVisibility?.outgoing ?? []),
+          ...(displayFleetVisibility?.returning ?? []),
+          ...displayAllActiveMissions,
+        ].find((candidate) => candidate.missionId === missionId);
+    const destinationOwned = mission
+      ? mission.targetPlanet?.owner?.toLowerCase() === account.toLowerCase()
+        || walletPlanets.some((planet) => planet.planetId === mission.targetPlanetId)
+      : false;
+    const originOwned = mission?.owner.toLowerCase() === account.toLowerCase();
+    const changedBody = mission && ((kind === "arrival" && destinationOwned) || (kind === "return" && originOwned))
+      ? {
+          bodyKind: (kind === "arrival" ? mission.targetIsMoon : mission.originIsMoon) ? "moon" as const : "planet" as const,
+          planetId: kind === "arrival" ? mission.targetPlanetId : mission.originPlanetId,
+        }
+      : undefined;
+
+    runMissionTransaction(
+      `Resolve mission #${missionId}`,
+      () => kind === "arrival"
+        ? sendResolveFleetMissionTransaction(provider, account, gameContract, missionId)
+        : sendCompleteFleetMissionReturnTransaction(provider, account, gameContract, missionId),
+      changedBody,
+    );
+  }, [account, displayAllActiveMissions, displayFleetVisibility, gameContract, missionDetail, provider, runMissionTransaction, walletPlanets]);
+
   // VEY-KANEO-440: ACS Defend ("Defend planet") opens the full compose picker (fleet + speed +
   // hold/holding-fuel + Alliance Depot preview) instead of firing a default fleet. Intercept was
   // removed from the frontend (VEY-KANEO-439), so this is the only remaining counterplay path.
@@ -9201,6 +9239,7 @@ export function PlayableMvpApp({
           onShareReport={() => handleShareMissionReport(missionDetailShareUrl)}
           onCounterplay={handleMissionCounterplay}
           onRecall={handleRecallMission}
+          onResolve={handleResolveMission}
           onRetry={loadMissionDetail}
           onSelectCoordinates={handleSelectPlanet}
           onSelectMoon={handleSelectMoon}
@@ -9502,6 +9541,7 @@ export function PlayableMvpApp({
           onOpenReport={handleOpenMissionReport}
           onOpenReportList={handleOpenMissionReportList}
           onRecall={handleRecallMission}
+          onResolve={handleResolveMission}
           onGlobalMissionArchivePageChange={(page) => void loadGlobalMissionArchive(page)}
           onIncomingAttackArchivePageChange={(page) => void loadIncomingAttackArchive(page)}
           onPastMissionTabChange={requestMissionControlTabLoad}

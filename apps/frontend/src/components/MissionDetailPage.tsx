@@ -8,7 +8,15 @@ import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import { defenseCatalog, shipCatalog, type ShipKey } from "../playableMvp";
 import type { Coordinates } from "../types";
 import { type BattleReport, type BattleReportParticipant, type DefenderPlanetState, type FleetMissionSummary, type FleetMissionVisibilityResponse, type MissionDetailResponse, type QueueStateResponse, type TargetCombatIntel } from "../walletFlow";
-import { isFleetRecallable, missionLifecycleActions, missionWasRecalled, type MissionLifecycleAction } from "./MissionControlPage";
+import {
+  isFleetRecallable,
+  manualMissionResolutionKind,
+  missionLifecycleActions,
+  missionStatusPill,
+  missionWasRecalled,
+  type ManualMissionResolutionKind,
+  type MissionLifecycleAction,
+} from "./MissionControlPage";
 import {
   MissionRouteCell,
   type MissionPlanetIdentity,
@@ -45,6 +53,7 @@ interface MissionDetailPageProps {
   onShareReport: () => void;
   onCounterplay: (mission: FleetMissionSummary, mode: "acsDefend") => void;
   onRecall: (missionId: string) => void;
+  onResolve?: ((missionId: string, kind: ManualMissionResolutionKind) => void) | undefined;
   onRetry: () => void;
   onSelectCoordinates: (coords: Coordinates) => void;
   onSelectMoon?: ((coords: Coordinates) => void) | undefined;
@@ -65,12 +74,15 @@ export function MissionDetailPage({
   onShareReport,
   onCounterplay,
   onRecall,
+  onResolve = () => undefined,
   onSelectCoordinates,
   onSelectMoon,
   onSelectPlayer,
 }: MissionDetailPageProps) {
   const mission = detail?.mission;
   const report = detail?.battleReport ?? undefined;
+  const resolutionKind = mission ? manualMissionResolutionKind(mission, now) : undefined;
+  const statusPill = mission ? missionStatusPill(mission, now) : undefined;
 
   return (
     <section className="grid gap-4">
@@ -109,6 +121,27 @@ export function MissionDetailPage({
           </span>
         )}
       />
+
+      {mission && resolutionKind && statusPill ? (
+        <div className="flex justify-end">
+          <span className="inline-flex items-center gap-1.5">
+            <span
+              className={`inline-flex rounded-full border px-2 py-1 text-xs font-medium ${statusPill.tone}`}
+              data-mission-status={statusPill.label}
+            >
+              {statusPill.label}
+            </span>
+            <button
+              className="inline-flex h-8 items-center justify-center rounded border border-amber-300/30 bg-amber-300/10 px-2.5 text-xs font-semibold text-amber-100 transition hover:bg-amber-300/20 disabled:cursor-not-allowed disabled:text-slate-500"
+              disabled={!canTransact}
+              onClick={() => onResolve(mission.missionId, resolutionKind)}
+              type="button"
+            >
+              Resolve
+            </button>
+          </span>
+        </div>
+      ) : null}
 
       {loading ? (
         <Notice>Loading mission...</Notice>
