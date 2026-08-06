@@ -30,6 +30,7 @@ describe("frontend backend-data boundary", () => {
     const storeSource = await Bun.file(new URL("./backendDataStore.ts", import.meta.url)).text();
     const planetStoreSource = await Bun.file(new URL("./planetSectionStore.ts", import.meta.url)).text();
     const guide = await Bun.file(new URL("../../../docs/frontend-data-store.md", import.meta.url)).text();
+    const playerGuide = await Bun.file(new URL("./docs/content/docs.md", import.meta.url)).text();
 
     expect(storeSource).toContain("private readonly inFlight");
     expect(storeSource).not.toContain("private readonly entries");
@@ -37,5 +38,10 @@ describe("frontend backend-data boundary", () => {
     expect(planetStoreSource).toContain("export type PlanetSectionRefreshStatus");
     expect(planetStoreSource).toContain("export function setPlanetSectionData");
     expect(guide).toContain("a request coordinator, not a second UI state store");
+    expect(playerGuide).toContain("routes backend reads through a shared request coordinator");
+    expect(playerGuide).toContain("does not cache completed responses or automatically copy them between screens");
+    expect(playerGuide).toContain("use a shared planet projection");
+    expect(playerGuide).not.toContain("one shared frontend data store");
+    expect(playerGuide).not.toContain("the same stored responses");
   });
 });

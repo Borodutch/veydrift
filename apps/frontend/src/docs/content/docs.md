@@ -35,9 +35,9 @@ Energy is not a stored spendable resource. Mines need energy to operate at full 
 
 The blockchain is authoritative, while the app reads a fast event-sourced index. A confirmed wallet receipt can appear before the corresponding indexed balance, queue, fleet, or report.
 
-Veydrift uses one shared frontend data store for backend reads. Overview, Infrastructure, planet details, the planet selector, Mission Control, and other screens refresh the same stored responses instead of keeping separate copies. Repeated refreshes for the same data reuse the request already in progress.
+Veydrift routes backend reads through a shared request coordinator. If two screens request the same data at the same time, they reuse the request already in progress. The coordinator does not cache completed responses or automatically copy them between screens: each screen owns its displayed view state, while planet surfaces that need cross-screen updates use a shared planet projection.
 
-Resource-changing transactions include their final authoritative balances in contract events. This includes building and production spending, transport or deploy arrival, fleet-return cargo, raid loot, deposits, colonies, settlement, and Rift resource movement. When the backend indexes one of those events, the shared state refreshes immediately; periodic polling remains a recovery path.
+Resource-changing transactions include their final authoritative balances in contract events. This includes building and production spending, transport or deploy arrival, fleet-return cargo, raid loot, deposits, colonies, settlement, and Rift resource movement. When the backend indexes one of those events, the affected view projections refresh immediately; periodic polling remains a recovery path.
 
 If a transaction is confirmed but the app still says it is indexing, do not assume the displayed old balance is spendable. Check the backend health or retry the refresh. The app deliberately does not invent optimistic resource balances.
 
