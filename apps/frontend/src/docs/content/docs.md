@@ -2,17 +2,19 @@
 
 GitHub: https://github.com/Borodutch/veydrift
 
+Use this guide in order if you are new: **Beginner Tutorial**, **Concepts And Mechanics**, **Action Mechanics**, then **Formulas**. The in-app catalogs remain the quickest source for your current levels, costs, prerequisites, and availability.
+
 ## Beginner Tutorial
 
 ### What Veydrift Is
 
 Veydrift is an onchain space strategy game. You grow planets, manage resources, unlock research, build fleets and defenses, and use missions to expand, raid, defend, transport, deploy, harvest debris, and colonize.
 
-Every important game action is a transaction. The frontend reads indexed backend state after transactions land, so wait for the app to confirm synced state before sending another dependent action.
+Every important game action is a transaction. The frontend waits for the receipt and then for the exact indexed transaction or expected state change. Wait for the app to report success before sending another action that depends on the result.
 
 ### Connect And Settle
 
-1. Open the app and connect a Base Sepolia wallet.
+1. Open the app and connect a wallet on Base.
 2. If the wallet has no planet, use the settlement flow to claim a home planet.
 3. Wait for the app to show your planet coordinates, resources, and starting infrastructure.
 4. Use the planet selector when you own multiple planets or switch between planet and moon bodies.
@@ -28,6 +30,16 @@ Resources are Metal, Crystal, and Deuterium. The top bar and page panels show ba
 | Deuterium | Research, fleet fuel, advanced builds | Medium |
 
 Energy is not a stored spendable resource. Mines need energy to operate at full output. If production needs more energy than you produce, mine output is scaled down.
+
+### Data Freshness
+
+The blockchain is authoritative, while the app reads a fast event-sourced index. A confirmed wallet receipt can appear before the corresponding indexed balance, queue, fleet, or report.
+
+Veydrift uses one shared frontend data store for backend reads. Overview, Infrastructure, planet details, the planet selector, Mission Control, and other screens refresh the same stored responses instead of keeping separate copies. Repeated refreshes for the same data reuse the request already in progress.
+
+Resource-changing transactions include their final authoritative balances in contract events. This includes building and production spending, transport or deploy arrival, fleet-return cargo, raid loot, deposits, colonies, settlement, and Rift resource movement. When the backend indexes one of those events, the shared state refreshes immediately; periodic polling remains a recovery path.
+
+If a transaction is confirmed but the app still says it is indexing, do not assume the displayed old balance is spendable. Check the backend health or retry the refresh. The app deliberately does not invent optimistic resource balances.
 
 ### First Infrastructure
 
@@ -65,7 +77,7 @@ Open Galaxy or Raid Finder to choose a target. The mission composer previews rou
 ### Common Mistakes
 
 - Do not send all cargo capacity as resources. Fuel is deducted from available cargo.
-- Do not assume a transaction updated the page until indexed state refreshes.
+- Do not start a dependent action until the app reports that the confirmed transaction is indexed.
 - Do not build only mines without energy. Underpowered mines produce less.
 
 ## Concepts And Mechanics

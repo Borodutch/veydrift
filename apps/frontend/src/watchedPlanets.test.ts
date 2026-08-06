@@ -95,7 +95,7 @@ describe("watched planets UI", () => {
   test("wires Galaxy and Overview through the same watchable row and refresh path", () => {
     expect(galaxySource).toContain("WatchablePlanetRow");
     expect(overviewSource).toContain("WatchablePlanetRow");
-    expect(appSource).toContain("fetchWatchedPlanets(apiBaseUrl, account, { page, pageSize: 25 })");
+    expect(appSource).toContain("backendData!.watchedPlanets(account, { page, pageSize: 25 })");
     expect(appSource).toContain("onRefreshWatchedPlanets={() => void refreshWatchedPlanets(watchedPlanetsPage)}");
     expect(appSource).toContain("nextWatchedPlanetsPageAfterToggle");
     expect(appSource).toContain("watchPlanet(apiBaseUrl, provider, account, planetId)");

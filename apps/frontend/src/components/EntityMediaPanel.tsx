@@ -1,13 +1,12 @@
 import { useEffect, useMemo, useState } from "preact/hooks";
 import {
   entityMediaEmbedUrl,
-  fetchEntityMedia,
   nextEntityMediaPlaybackState,
-  updateEntityMedia,
   type EntityMediaKind,
   type EntityMediaRecord,
   type EntityMediaPlaybackState,
 } from "../entityMedia";
+import { backendDataStoreFor } from "../backendDataStore";
 import { playableApiUrl } from "../runtimeConfig";
 import type { Eip1193Provider } from "../walletFlow";
 import { Skeleton, SkeletonRegion } from "./Skeleton";
@@ -42,22 +41,24 @@ export function EntityMediaPanel({
     setPlayback((current) => nextEntityMediaPlaybackState(current, entityKey, "sync-entity"));
     setLoading(true);
     setLoadError(null);
-    const abortController = new AbortController();
-    void fetchEntityMedia(normalizedApiUrl, entityKind, entityId, abortController.signal)
+    let cancelled = false;
+    void backendDataStoreFor(normalizedApiUrl).entityMedia(entityKind, entityId)
       .then((response) => {
-        if (abortController.signal.aborted) return;
+        if (cancelled) return;
         setRecord(response.media);
         setMediaUrl(response.media?.media.canonicalUrl ?? "");
       })
       .catch((error) => {
-        if (!abortController.signal.aborted) {
+        if (!cancelled) {
           setLoadError(error instanceof Error ? error.message : "Media could not be loaded.");
         }
       })
       .finally(() => {
-        if (!abortController.signal.aborted) setLoading(false);
+        if (!cancelled) setLoading(false);
       });
-    return () => abortController.abort();
+    return () => {
+      cancelled = true;
+    };
   }, [entityId, entityKey, entityKind, normalizedApiUrl]);
 
   const embedUrl = useMemo(
@@ -72,8 +73,7 @@ export function EntityMediaPanel({
     }
     setAction({ status: "pending", label: "Waiting for wallet signature" });
     try {
-      const response = await updateEntityMedia(
-        normalizedApiUrl,
+      const response = await backendDataStoreFor(normalizedApiUrl).saveEntityMedia(
         provider,
         account,
         entityKind,

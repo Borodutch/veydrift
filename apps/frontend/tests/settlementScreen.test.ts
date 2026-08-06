@@ -586,7 +586,7 @@ describe("settlement screen mode", () => {
     const source = await Bun.file(new URL("../src/FirstPlanetSettlementApp.tsx", import.meta.url)).text();
 
     expect(source).toContain("readIndexedSettlementState");
-    expect(source).toContain("fetchSettlementFundingState");
+    expect(source).toContain("backendDataStoreFor(settlementConfigState.apiUrl!).settlementFunding(connectedAccount)");
     expect(source).toContain("settlementTransactionOptions(funding, referral)");
     expect(source).not.toContain("readSettlementStateWithMiniAppFallback");
     expect(source).not.toContain("readSettlementFundingWithMiniAppFallback");

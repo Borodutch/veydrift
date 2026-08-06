@@ -6,7 +6,8 @@ import { fleetMissionDistance } from "../fleetMissionRules";
 import { activeMissionsByPlanetId, planetMissionSubtext } from "../planetMissionSubtext";
 import type { GalaxyAction } from "../galaxyActions";
 import type { Coordinates } from "../types";
-import { fetchHighscores, shortAddress, type FleetMissionSummary, type HighscoreCategory, type HighscoreEntry, type HighscorePlanet, type HighscoreResponse } from "../walletFlow";
+import { shortAddress, type FleetMissionSummary, type HighscoreCategory, type HighscoreEntry, type HighscorePlanet, type HighscoreResponse } from "../walletFlow";
+import { backendDataStoreFor } from "../backendDataStore";
 import { OptimizedImage } from "./OptimizedImage";
 import { refreshButtonState } from "./PageHeader";
 import { PlanetMoonSubsection } from "./PlanetMoonIndicator";
@@ -177,7 +178,7 @@ export function RankingsPage({ activeMissions, apiBaseUrl, currentAllianceId, cu
 
     setLoading(true);
     setError(undefined);
-    fetchHighscores(apiBaseUrl, {
+    backendDataStoreFor(apiBaseUrl).highscores({
       category: active,
       ...(currentWallet ? { currentWallet } : {}),
       page: targetPage,

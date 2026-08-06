@@ -6,7 +6,8 @@ import { descriptionLinkParts } from "../descriptionLinks";
 import { formatDurationUntil } from "../durationFormat";
 import { formatUserTimestamp } from "../timestampFormat";
 import type { AllianceDiplomacyStatus, AllianceRole, ChainAllianceState, HighscoreEntry, WalletPlanetsResponse } from "../walletFlow";
-import { fetchWalletPlanets, shortAddress } from "../walletFlow";
+import { shortAddress } from "../walletFlow";
+import { backendDataStoreFor } from "../backendDataStore";
 import { refreshButtonState } from "./PageHeader";
 import { VeydriftLoader } from "./VeydriftLoader";
 import { AllianceSkeleton } from "./LoadingSkeletons";
@@ -166,9 +167,10 @@ export function AlliancePage({
 
     let disposed = false;
     setPlayerProfile({ status: "loading", wallet: selectedPlayer });
+    const backendData = backendDataStoreFor(apiBaseUrl);
     Promise.allSettled([
-      fetchWalletPlanets(apiBaseUrl, selectedPlayer),
-      fetchPlayerHighscore(apiBaseUrl, selectedPlayer),
+      backendData.planets(selectedPlayer),
+      backendData.playerHighscore(selectedPlayer),
     ]).then(([planetsResult, highscoreResult]) => {
       if (disposed) return;
       const planets = planetsResult.status === "fulfilled" ? planetsResult.value : null;
@@ -2218,14 +2220,4 @@ function compareNumericStrings(left: string, right: string): number {
   } catch {
     return left.localeCompare(right);
   }
-}
-
-async function fetchPlayerHighscore(apiBaseUrl: string, wallet: string): Promise<HighscoreEntry | null> {
-  const response = await fetch(`${apiBaseUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(wallet)}/highscore`, {
-    cache: "no-store",
-    headers: { accept: "application/json" },
-  });
-  if (!response.ok) throw new Error(`Highscore request failed with ${response.status}`);
-  const body = await response.json() as { entry?: HighscoreEntry | null };
-  return body.entry ?? null;
 }

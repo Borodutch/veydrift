@@ -37,6 +37,7 @@ import {
   planetDetailRequestKey,
   planetDetailVisiblePlanet,
   planetEconomyPillRows,
+  isPublicPlanetSettled,
   planetFleetActivityRows,
   planetRecordStatusLabel,
   publicCommanderRows,
@@ -282,6 +283,7 @@ describe("tester universe display data", () => {
         value: publicProductionRows(planet).find((row) => row.label === "Solar satellite")?.value,
       },
     ]);
+    expect(isPublicPlanetSettled(planet)).toBe(true);
     expect(publicStateRows(planet.publicState?.buildings, buildingCatalog, "level")).toContainEqual({
       label: "Metal Mine",
       value: "Level 12",
@@ -344,6 +346,32 @@ describe("tester universe display data", () => {
     ]);
 
     expect(publicResourceRows(undefined)).toBeNull();
+  });
+
+  test("public planet detail keeps resource modifiers visible without resource balances", () => {
+    const [planet] = planetsFromSystemResponse({
+      galaxy: 2,
+      system: 83,
+      planets: [{
+        fields: 184,
+        galaxy: 2,
+        metalMultiplierBps: 10_000,
+        crystalMultiplierBps: 10_000,
+        deuteriumMultiplierBps: 13_100,
+        position: 9,
+        publicState: null,
+        system: 83,
+        temperature: -15,
+      }],
+    });
+
+    expect(planetEconomyPillRows(planet)).toEqual([
+      { label: "Metal", modifier: "100%" },
+      { label: "Crystal", modifier: "100%" },
+      { label: "Deuterium", modifier: "131%" },
+      { label: "Solar satellite", value: "20 E" },
+    ]);
+    expect(isPublicPlanetSettled(planet)).toBe(false);
   });
 
   test("planet fleet activity shows inbound and outbound traffic with ship art", () => {

@@ -10,6 +10,7 @@ import {
 } from "../src/ComingSoonApp";
 
 const landingSource = await Bun.file(new URL("../src/ComingSoonApp.tsx", import.meta.url)).text();
+const backendDataStoreSource = await Bun.file(new URL("../src/backendDataStore.ts", import.meta.url)).text();
 
 describe("landing backend data", () => {
   test("offers a copyable agent prompt that connects docs, production, and safe approvals", () => {
@@ -36,9 +37,9 @@ describe("landing backend data", () => {
     expect(landingSource).toContain('addEventListener("chain-event", refreshFromChainEvent)');
     expect(landingSource).toContain("removeEventListener(\"chain-event\", refreshFromChainEvent)");
     expect(landingSource).toContain("setRefreshToken((current) => current + 1)");
-    expect(landingSource).toContain("/missions?status=active&live=1");
-    expect(landingSource).toContain('live: "1"');
-    expect(landingSource.match(/cache: "no-store"/g)).toHaveLength(2);
+    expect(backendDataStoreSource).toContain("/missions?status=active&live=1");
+    expect(backendDataStoreSource).toContain('live: "1"');
+    expect(backendDataStoreSource.match(/cache: "no-store"/g)).toHaveLength(3);
   });
 
   test("points production visitors at the on-page settlement hero", () => {
