@@ -12,7 +12,7 @@ Low-level request encoding and response validation remain in `walletFlow.ts` and
 2. If a request for the same key is already running, another caller receives that exact promise instead of starting a second request.
 3. A call made after the request settles starts a fresh request; the coordinator does not cache response data, loading/error status, or freshness metadata.
 4. UI components contain no raw `fetch()` calls.
-5. Consumer-visible data and refresh status have one explicit owner: `planetSectionStore` for shared planet projections, or the screen's existing local projection for screen-specific data.
+5. Consumer-visible data and refresh status have one explicit owner: `planetSectionStore` for shared planet projections, `planetResourceStore` for wallet-scoped per-planet balances, or the screen's existing local projection for screen-specific non-resource data.
 6. A failed refresh must not clear the last confirmed view projection. The projection owner records the error while retaining its previous data.
 7. A wallet transaction is successful in the UI only after its exact transaction or expected state transition is visible in indexed data.
 
@@ -45,6 +45,14 @@ BackendDataStore.infrastructure(wallet, planetId)
 ```
 
 The planet section store never performs network requests. Starting or failing a refresh changes section status but does not discard its last confirmed data; only a confirmed response replaces the projection.
+
+## Canonical planet resources
+
+`planetResourceStore.ts` is the only frontend owner of connected-wallet resource balances. It is keyed by wallet, orbit-body kind, and planet ID. Wallet settlement, the planet roster/navigation cache, Infrastructure, Research, Shipyard, Defenses, Rift, moons, the top bar, and mission affordability all overlay resource values from this store instead of retaining competing balance projections.
+
+Every value promoted into the store comes from a backend-indexed response. Receipt confirmation starts a bounded aggressive convergence read; it does not debit, credit, or roll back a balance in the browser. The indexed response must prove inclusion with the transaction hash or receipt block. Poll, EventSource, navigation, and in-flight responses are ordered by indexed block and settlement metadata, and an older response cannot replace the confirmed floor. Same-version responses may only advance backend-computed production accrual; a same-version decrease is rejected.
+
+Resource-affecting action UIs remain in the explicit `indexing` phase until shared convergence promotes the proven backend snapshot. A bounded timeout becomes a visible retryable action error while the last confirmed balance stays rendered.
 
 ## Adding a backend read
 

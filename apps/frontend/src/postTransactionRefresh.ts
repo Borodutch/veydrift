@@ -615,6 +615,7 @@ function resourceSnapshotKey(snapshot: ResourceSnapshotMetadata): string {
     snapshot.planetId ?? "",
     snapshot.transactionHash ?? "",
     snapshot.blockNumber?.toString() ?? "",
+    snapshot.logIndex?.toString() ?? "",
     snapshot.lastSettledAt ?? "",
     resources?.metal ?? "",
     resources?.crystal ?? "",

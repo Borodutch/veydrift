@@ -252,6 +252,7 @@ export type ResourceSnapshotMetadata = {
   planetId?: string | null;
   transactionHash?: string | null;
   blockNumber?: string | number | bigint | null;
+  logIndex?: string | number | bigint | null;
   lastSettledAt?: string | null;
   resources?: OnChainResources | null;
 };

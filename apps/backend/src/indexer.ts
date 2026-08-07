@@ -2888,6 +2888,7 @@ export class SettlementIndexer {
       planetId,
       transactionHash: row.transaction_hash,
       blockNumber: row.block_number,
+      logIndex: row.log_index,
       lastSettledAt: row.last_settled_at,
       resources: {
         metal: row.metal,
@@ -6642,7 +6643,8 @@ export class SettlementIndexer {
       planetEvent.resources,
       planetEvent.lastSettledAt,
       planetEvent.transactionHash,
-      planetEvent.blockNumber
+      planetEvent.blockNumber,
+      planetEvent.logIndex
     );
     this.clearPlanetResourcePendingIfResolved();
   }
@@ -6771,6 +6773,7 @@ export class SettlementIndexer {
     return {
       ...event,
       blockNumber: resources.block_number,
+      logIndex: resources.log_index,
       lastSettledAt: resources.last_settled_at,
       resources: {
         metal: resources.metal,
@@ -6790,6 +6793,7 @@ export class SettlementIndexer {
     return resources ? {
       ...planet,
       blockNumber: resources.block_number,
+      logIndex: resources.log_index,
       lastSettledAt: resources.last_settled_at,
       resources: {
         metal: resources.metal,

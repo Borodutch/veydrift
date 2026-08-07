@@ -18,6 +18,7 @@ export type ResourceSnapshotMetadata = {
   planetId: string | null;
   transactionHash: string | null;
   blockNumber: string | null;
+  logIndex?: string | null;
   lastSettledAt: string | null;
   resources: Resources | null;
 };
@@ -1196,6 +1197,7 @@ export type SettledPlanetEvent = PlanetState & {
   eventName: "PlanetStarted" | "ColonyCreated";
   transactionHash: string;
   blockNumber: string;
+  logIndex?: string;
 };
 
 export type FirstPlanetSettledEvent = {

@@ -4,15 +4,8 @@ import {
   canApplyRefreshRequest,
   markFreshStateWrite,
   missionLaunchSubmitBlocker,
-  planOnChainRefresh,
-  resourceSnapshotFreshnessForConfirmedState,
   previousMissionIndexingBlockerLabel,
   previousMissionTransactionBlockerLabel,
-  recordedResourceSnapshotFreshness,
-  resourceSnapshotFreshnessForInfrastructure,
-  resourceSnapshotFreshnessForSettlement,
-  settlementWithConfirmedResourceState,
-  shouldApplyResourceSnapshot,
   shouldClearCachedShipyardStateForPageRefresh,
   shouldEagerlyRefreshPlanetSwitchForPage,
   shouldRefreshPlanetStateForIdentityChange,
@@ -20,6 +13,11 @@ import {
   shouldRefreshMissionActionStateForPage,
   shouldRefreshShipyardStateForPage,
 } from "../src/PlayableMvpApp";
+import {
+  backendResourceSnapshot,
+  promoteCanonicalPlanetResources,
+  walletSettlementWithCanonicalPlanetResources,
+} from "../src/planetResourceStore";
 import type { ChainInfrastructureState, WalletSettlementResponse } from "../src/walletFlow";
 
 describe("playable chain refresh", () => {
@@ -63,23 +61,13 @@ describe("playable chain refresh", () => {
     expect(canApplyRefreshRequest(gate, newerPollRequest)).toBe(true);
   });
 
-  test("keeps a backend-confirmed transaction snapshot ahead of an older in-flight resource poll", () => {
+  test("invalidates an older in-flight resource poll after a confirmed write", () => {
     const gate = { current: 0 };
     const olderPollRequest = beginRefreshRequest(gate);
-    const confirmed = resourceSnapshotFreshnessForSettlement(
-      settlementSnapshot("7", "200", { metal: "120", crystal: "80", deuterium: "40" }),
-    );
-    const olderPoll = resourceSnapshotFreshnessForSettlement(
-      settlementSnapshot("7", "100", { metal: "500", crystal: "400", deuterium: "300" }),
-    );
 
     markFreshStateWrite(gate);
 
     expect(canApplyRefreshRequest(gate, olderPollRequest)).toBe(false);
-    expect(planOnChainRefresh(confirmed, olderPoll)).toEqual({
-      applyQueues: true,
-      applyResourceState: false,
-    });
   });
 
   test("promotes an indexed spend snapshot directly into the canonical top-bar settlement", () => {
@@ -101,13 +89,12 @@ describe("playable chain refresh", () => {
       },
     };
 
-    const promoted = settlementWithConfirmedResourceState(beforeSpend, confirmedSpend);
-
-    expect(resourceSnapshotFreshnessForConfirmedState(confirmedSpend)).toEqual({
+    const store = promoteCanonicalPlanetResources({}, backendResourceSnapshot(confirmedSpend, {
       planetId: "7",
-      lastSettledAt: "200",
-      resourcesKey: "121:81:40",
-    });
+      wallet: beforeSpend.wallet,
+    }), { confirmedTransaction: true });
+    const promoted = walletSettlementWithCanonicalPlanetResources(beforeSpend, store, beforeSpend.wallet);
+
     expect(promoted?.planet?.resources).toEqual({ metal: "120", crystal: "80", deuterium: "40" });
     expect(promoted?.planet?.resourcesAsOfNow).toEqual({ metal: "121", crystal: "81", deuterium: "40" });
     expect(promoted?.planet?.resourceSnapshot?.transactionHash).toBe("0xspend");
@@ -115,9 +102,10 @@ describe("playable chain refresh", () => {
 
   test("uses one confirmed-resource promotion path for all shared production spends", async () => {
     const source = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.url)).text();
-    const promotions = source.match(/applyBackendConfirmedResourceState\(snapshot\.(?:infrastructure|defense|shipyard|research)\)/g) ?? [];
-
-    expect(promotions).toHaveLength(4);
+    for (const endpoint of ["infrastructure", "defenses", "shipyard", "research"]) {
+      expect(source).toContain(`await convergeBackendIndexedResourceState(\n          () => backendData!.${endpoint}`);
+    }
+    expect(source).toContain("promoteBackendResourceState(state, { confirmedTransaction: true })");
   });
 
   test("promotes every indexed planet or moon resource transaction from the chain event stream", async () => {
@@ -125,45 +113,23 @@ describe("playable chain refresh", () => {
 
     expect(source).toContain("chainEventResourceChanges(event)");
     expect(source).toContain("refreshConfirmedResourceChangeFromEvent(change)");
-    expect(source).toContain("waitForIndexedResourceState(");
-    expect(source).toContain("applyBackendConfirmedMoonResourceState(state)");
+    expect(source).toContain("convergeBackendIndexedResourceState(");
+    expect(source).toContain("applyBackendConfirmedMoonResourceState(state as unknown as ChainMoonState)");
     expect(source).toContain("resourceChange: {\n        bodyKind: originIsMoon ?");
     expect(source).toContain('), { bodyKind: "planet", planetId: homePlanetId });');
     expect(source).toContain('), { bodyKind: "moon", planetId: moonState.homePlanetId });');
   });
 
-  test("rejects older accrued resource snapshots after newer transaction writes", () => {
-    let latestSnapshot = resourceSnapshotFreshnessForSettlement(undefined);
-    let topBarResources = { metal: "0", crystal: "0", deuterium: "0" };
-    const applySettlementResources = (settlement: WalletSettlementResponse): boolean => {
-      const nextSnapshot = resourceSnapshotFreshnessForSettlement(settlement);
-      if (!shouldApplyResourceSnapshot(latestSnapshot, nextSnapshot)) {
-        return false;
-      }
+  test("uses the wallet-scoped canonical resource store instead of component-local balance mutation", async () => {
+    const source = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.url)).text();
 
-      latestSnapshot = recordedResourceSnapshotFreshness(latestSnapshot, nextSnapshot);
-      topBarResources = settlement.planet?.resources ?? topBarResources;
-      return true;
-    };
-
-    expect(applySettlementResources(settlementSnapshot("7", "200", { metal: "120", crystal: "80", deuterium: "40" }))).toBe(true);
-    expect(applySettlementResources(settlementSnapshot("7", "100", { metal: "20", crystal: "10", deuterium: "5" }))).toBe(false);
-    expect(topBarResources).toEqual({ metal: "120", crystal: "80", deuterium: "40" });
-  });
-
-  test("uses infrastructure last-settled markers to reject older resource polls", () => {
-    const current = resourceSnapshotFreshnessForInfrastructure(infrastructureSnapshot("7", "200"));
-    const older = resourceSnapshotFreshnessForInfrastructure(infrastructureSnapshot("7", "100"));
-    const otherPlanet = resourceSnapshotFreshnessForInfrastructure(infrastructureSnapshot("8", "50"));
-    const markerless = resourceSnapshotFreshnessForInfrastructure({
-      ...infrastructureSnapshot("7", "300"),
-      planetLastSettledAt: undefined,
-    });
-
-    expect(shouldApplyResourceSnapshot(current, older)).toBe(false);
-    expect(shouldApplyResourceSnapshot(current, otherPlanet)).toBe(true);
-    expect(shouldApplyResourceSnapshot(current, markerless)).toBe(false);
-    expect(recordedResourceSnapshotFreshness(current, markerless)).toBe(current);
+    expect(source).toContain("canonicalPlanetResourcesRef");
+    expect(source).toContain("walletPlanetsWithCanonicalPlanetResources");
+    expect(source).toContain("walletSettlementWithCanonicalPlanetResources");
+    expect(source).toContain("resourceStateWithCanonicalPlanetResources");
+    expect(source).toContain("riftStateWithCanonicalPlanetResources");
+    expect(source).not.toContain("Client-side ledger of submitted-but-not-yet-settled resource spends");
+    expect(source).not.toMatch(/set(?:OnChain|Infrastructure|Defense|Shipyard|Research).*Resources/);
   });
 
   test("refreshes alliance state for Mission Control membership and rankings highlights", () => {
