@@ -135,26 +135,38 @@ export function constructionProgressForQueue({
       : backendProgress === undefined
         ? 0
         : Math.min(1, Math.max(0, backendProgress / 10_000));
+  const displayedQueue = complete ? null : activeQueue;
 
   return {
-    active: activeQueue !== null,
+    active: displayedQueue !== null,
     bodyKind,
     complete,
-    indeterminate: activeQueue !== null && !complete && !hasTimeline && backendProgress === undefined,
+    indeterminate: displayedQueue !== null && !hasTimeline && backendProgress === undefined,
     kind,
     planetId,
     progress,
-    queue: activeQueue,
+    queue: displayedQueue,
     ...(readyAtMs === undefined ? {} : { readyAtMs }),
-    remaining: activeQueue === null
+    remaining: displayedQueue === null
       ? "Idle"
-      : complete
-        ? "Ready"
-        : readyAtMs === undefined
-          ? "syncing"
-          : formatDurationUntil(readyAtMs, now),
+      : readyAtMs === undefined
+        ? "syncing"
+        : formatDurationUntil(readyAtMs, now),
     ...(startedAtMs === undefined ? {} : { startedAtMs }),
   };
+}
+
+/**
+ * A raw page snapshot can remain active while the body is off-screen and its
+ * indexed completion refresh is still in flight. Progress visibility follows
+ * the shared projection so every surface drops that stale completed queue at
+ * the same instant.
+ */
+export function constructionQueueForDisplay<T>(
+  queue: T | undefined,
+  progress: ConstructionProgress | undefined,
+): T | undefined {
+  return progress?.active === false ? undefined : queue;
 }
 
 function sameConstructionQueue(left: QueueStateResponse, right: QueueStateResponse): boolean {

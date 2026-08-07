@@ -33,7 +33,7 @@ import { RequirementFlairs, type RequirementFlair, type RequirementTarget } from
 import { LevelInfoModal, type LevelInfoColumn } from "./LevelInfoModal";
 import { QueueProgressPanel } from "./QueueProgressPanel";
 import { StructureCatalog, StructureDetail, type StructureLevelInfo } from "./StructureCatalog";
-import type { ConstructionProgress } from "../constructionProgress";
+import { constructionQueueForDisplay, type ConstructionProgress } from "../constructionProgress";
 
 const burningChickensOpenSeaCollectionUrl = "https://opensea.io/collection/chickens-by-eggs";
 
@@ -590,7 +590,10 @@ function MoonStructuresSection({
   const buildings = moonState?.buildings ?? [];
   const selectedBuilding = buildings.find((building) => building.key === selectedBuildingKey)
     ?? buildings[0];
-  const constructionQueue = moonState?.queue?.active ? moonState.queue : undefined;
+  const constructionQueue = constructionQueueForDisplay(
+    moonState?.queue?.active ? moonState.queue : undefined,
+    constructionProgress,
+  );
   const constructionLabel = constructionQueue
     ? `${moonBuildingLabel(constructionQueue.itemId)}${constructionQueue.targetLevel ? ` Level ${constructionQueue.targetLevel}` : ""}`
     : undefined;

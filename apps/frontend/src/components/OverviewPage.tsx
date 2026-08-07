@@ -55,7 +55,7 @@ import {
   type WatchedPlanetsResponse,
   type WalletSettlementResponse
 } from "../walletFlow";
-import type { ConstructionProgress } from "../constructionProgress";
+import { constructionQueueForDisplay, type ConstructionProgress } from "../constructionProgress";
 import type { GalaxyAction } from "../galaxyActions";
 import { formatDurationUntil } from "../durationFormat";
 import { timestampToMs, type TimestampInput } from "../timestampFormat";
@@ -660,25 +660,32 @@ export function OverviewPage({
               )}
               <OverviewBuildingActionNotice notice={overviewBuildingNoticeToRender} />
             </QueuePanelContent>
-          ) : buildingQueue ? (
-            <QueuePanelContent>
-              <QueueItemDisplay
-                color="bg-amber-300"
-                label={localBuildingLabel ?? buildingQueue.label}
-                remaining={formatDurationUntil(buildingQueue.readyAt, now)}
-                progress={queueProgress}
-                readyAt={buildingQueue.readyAt}
-                startedAt={buildingQueue.startedAt}
-                thumbnailSrc={localBuildingAsset}
-                now={now}
-                progressState={constructionProgress?.building}
-              />
-              <OverviewBuildingActionNotice notice={overviewBuildingNoticeToRender} />
-            </QueuePanelContent>
           ) : (
-            <EmptyQueue actionLabel="Build" onAction={() => onNavigate("infrastructure")}>
-              No active construction.
-            </EmptyQueue>
+            <OverviewQueueFallback
+              progressState={constructionProgress?.building}
+              queue={buildingQueue}
+              renderEmpty={() => (
+                <EmptyQueue actionLabel="Build" onAction={() => onNavigate("infrastructure")}>
+                  No active construction.
+                </EmptyQueue>
+              )}
+              renderQueue={(fallbackBuildingQueue) => (
+                <QueuePanelContent>
+                  <QueueItemDisplay
+                    color="bg-amber-300"
+                    label={localBuildingLabel ?? fallbackBuildingQueue.label}
+                    remaining={formatDurationUntil(fallbackBuildingQueue.readyAt, now)}
+                    progress={queueProgress}
+                    readyAt={fallbackBuildingQueue.readyAt}
+                    startedAt={fallbackBuildingQueue.startedAt}
+                    thumbnailSrc={localBuildingAsset}
+                    now={now}
+                    progressState={constructionProgress?.building}
+                  />
+                  <OverviewBuildingActionNotice notice={overviewBuildingNoticeToRender} />
+                </QueuePanelContent>
+              )}
+            />
           )}
         </QueuePanel>
 
@@ -730,28 +737,35 @@ export function OverviewPage({
               />
               <OverviewResearchActionNotice actionState={researchAction} />
             </QueuePanelContent>
-          ) : settledState.researchQueue ? (
-            <QueuePanelContent>
-              <QueueItemDisplay
-                label={compactOverviewResearchLabel(settledState.researchQueue.label)}
-                remaining={formatDurationUntil(settledState.researchQueue.readyAt, now)}
-                progress={activeResearchProgress}
-                readyAt={settledState.researchQueue.readyAt}
-                startedAt={settledState.researchQueue.startedAt}
-                thumbnailSrc={settledResearchAsset}
-                color="bg-violet-300"
-                now={now}
-                progressState={constructionProgress?.research}
-              />
-              <OverviewResearchActionNotice actionState={researchAction} />
-            </QueuePanelContent>
           ) : (
-            <QueuePanelContent>
-              <EmptyQueue actionLabel="Research" onAction={() => onNavigate("research")}>
-                No active research.
-              </EmptyQueue>
-              <OverviewResearchActionNotice actionState={researchAction} />
-            </QueuePanelContent>
+            <OverviewQueueFallback
+              progressState={constructionProgress?.research}
+              queue={settledState.researchQueue}
+              renderEmpty={() => (
+                <QueuePanelContent>
+                  <EmptyQueue actionLabel="Research" onAction={() => onNavigate("research")}>
+                    No active research.
+                  </EmptyQueue>
+                  <OverviewResearchActionNotice actionState={researchAction} />
+                </QueuePanelContent>
+              )}
+              renderQueue={(fallbackResearchQueue) => (
+                <QueuePanelContent>
+                  <QueueItemDisplay
+                    label={compactOverviewResearchLabel(fallbackResearchQueue.label)}
+                    remaining={formatDurationUntil(fallbackResearchQueue.readyAt, now)}
+                    progress={activeResearchProgress}
+                    readyAt={fallbackResearchQueue.readyAt}
+                    startedAt={fallbackResearchQueue.startedAt}
+                    thumbnailSrc={settledResearchAsset}
+                    color="bg-violet-300"
+                    now={now}
+                    progressState={constructionProgress?.research}
+                  />
+                  <OverviewResearchActionNotice actionState={researchAction} />
+                </QueuePanelContent>
+              )}
+            />
           )}
         </QueuePanel>
 
@@ -768,23 +782,30 @@ export function OverviewPage({
                 tone="sky"
               />
             </QueuePanelContent>
-          ) : settledState.queue?.kind === "ship" ? (
-            <QueuePanelContent>
-              <QueueItemDisplay
-                label={settledState.queue.label}
-                remaining={formatDurationUntil(settledState.queue.readyAt, now)}
-                progress={shipProgress}
-                readyAt={settledState.queue.readyAt}
-                startedAt={settledState.queue.startedAt}
-                color="bg-sky-300"
-                now={now}
-                progressState={constructionProgress?.ship}
-              />
-            </QueuePanelContent>
           ) : (
-            <EmptyQueue actionLabel="Shipyard" onAction={() => onNavigate("shipyard")}>
-              No active ship production.
-            </EmptyQueue>
+            <OverviewQueueFallback
+              progressState={constructionProgress?.ship}
+              queue={settledState.queue?.kind === "ship" ? settledState.queue : undefined}
+              renderEmpty={() => (
+                <EmptyQueue actionLabel="Shipyard" onAction={() => onNavigate("shipyard")}>
+                  No active ship production.
+                </EmptyQueue>
+              )}
+              renderQueue={(fallbackShipQueue) => (
+                <QueuePanelContent>
+                  <QueueItemDisplay
+                    label={fallbackShipQueue.label}
+                    remaining={formatDurationUntil(fallbackShipQueue.readyAt, now)}
+                    progress={shipProgress}
+                    readyAt={fallbackShipQueue.readyAt}
+                    startedAt={fallbackShipQueue.startedAt}
+                    color="bg-sky-300"
+                    now={now}
+                    progressState={constructionProgress?.ship}
+                  />
+                </QueuePanelContent>
+              )}
+            />
           )}
         </QueuePanel>
       </div>
@@ -1647,6 +1668,21 @@ function QueuePanelContent({ children }: { children: preact.ComponentChildren })
   );
 }
 
+export function OverviewQueueFallback<T>({
+  progressState,
+  queue,
+  renderEmpty,
+  renderQueue,
+}: {
+  progressState?: ConstructionProgress | undefined;
+  queue: T | undefined;
+  renderEmpty: () => preact.ComponentChild;
+  renderQueue: (queue: T) => preact.ComponentChild;
+}): preact.ComponentChild {
+  const displayedQueue = constructionQueueForDisplay(queue, progressState);
+  return displayedQueue === undefined ? renderEmpty() : renderQueue(displayedQueue);
+}
+
 function QueueItemDisplay({
   detail,
   label,
@@ -1723,7 +1759,7 @@ function QueueItemDisplay({
   );
 }
 
-function EmptyQueue({
+export function EmptyQueue({
   actionLabel,
   children,
   onAction,

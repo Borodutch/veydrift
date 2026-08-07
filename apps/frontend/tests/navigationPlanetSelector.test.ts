@@ -226,6 +226,16 @@ describe("navigation and planet selector UI source contracts", () => {
     expect(playableSource).not.toContain('className="grid w-full grid-cols-3 gap-1 min-h-');
   });
 
+  test("reconciles completed queues for unselected planets and background tabs", () => {
+    const completionRefreshSource = playableSource.slice(
+      playableSource.indexOf("Array.from(confirmedConstructionQueues.values())"),
+      playableSource.indexOf("// Chime when an active production queue reaches completion."),
+    );
+    expect(completionRefreshSource).toContain("Array.from(confirmedConstructionQueues.values())");
+    expect(completionRefreshSource).toContain("refreshOnChainState(undefined, { force: true, forceWalletPlanets: true })");
+    expect(completionRefreshSource).not.toContain('document.visibilityState === "hidden"');
+  });
+
   test("renders research as the fourth progress bar only on its owning planet", () => {
     expect(playableSource).toContain("const attributedResearchQueue = researchQueueWithPlanetAttribution(");
     expect(playableSource).toContain("progressState={constructionProgressState}");

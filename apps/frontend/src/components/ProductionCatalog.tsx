@@ -4,7 +4,7 @@ import { formatCost } from "../buildingDetails";
 import { formatDuration } from "../durationFormat";
 import type { Resources } from "../playableMvp";
 import type { QueueStateResponse } from "../walletFlow";
-import type { ConstructionProgress } from "../constructionProgress";
+import { constructionQueueForDisplay, type ConstructionProgress } from "../constructionProgress";
 import { OptimizedImage } from "./OptimizedImage";
 import {
   formatQueueEta,
@@ -224,6 +224,7 @@ export function ProductionCatalog<Key extends string>({
   const selected = selectedProductionItem(items, selectedKey);
   const groups = Array.from(new Map(items.map((item) => [item.group, item.groupLabel])).entries());
   const selectedPanelId = `production-detail-${items[0]?.key ?? "item"}`;
+  const displayedQueue = constructionQueueForDisplay(queue, queueProgress);
 
   if (items.length === 0) {
     return (
@@ -235,11 +236,11 @@ export function ProductionCatalog<Key extends string>({
 
   return (
     <div className="grid gap-4" data-production-catalog>
-      {queue && (
+      {displayedQueue && (
         <ProductionQueuePanel
           now={now}
           progressState={queueProgress}
-          queue={queue}
+          queue={displayedQueue}
           tone={queueTone}
         />
       )}
