@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import {
   allianceDisplayName,
   buildAllianceRoster,
+  currentAllianceEntry,
   findAllianceEntry,
 } from "../src/components/AlliancePage";
 
@@ -96,6 +97,46 @@ describe("AlliancePage helpers", () => {
     expect(findAllianceEntry([], "999", currentAlliance)).toBeNull();
   });
 
+  test("currentAllianceEntry preserves treasury balances from the member profile or directory", () => {
+    const balance = { metal: "100", crystal: "200", deuterium: "300" };
+    const privateInviteStats = { remaining: 2, used: 3 };
+    const state = {
+      wallet: owner,
+      allianceAvailable: true,
+      membership: { allianceId: "1", role: "owner" as const, joinedAt: "100" },
+      profile: {
+        active: true,
+        tag: "HOM",
+        name: "Home",
+        description: "",
+        owner,
+        createdAt: "100",
+        memberCount: 1,
+      },
+      directory: [{
+        allianceId: "1",
+        active: true,
+        tag: "HOM",
+        name: "Home",
+        description: "",
+        owner,
+        createdAt: "100",
+        memberCount: 1,
+        bonusBalance: balance,
+        privateInviteStats,
+      }],
+      pendingInvites: [],
+      pendingJoinRequests: [],
+      allianceJoinRequests: [],
+      diplomacy: [],
+      activeWars: [],
+      members: [],
+    };
+
+    expect(currentAllianceEntry(state, 1)?.bonusBalance).toEqual(balance);
+    expect(currentAllianceEntry(state, 1)?.privateInviteStats).toEqual(privateInviteStats);
+  });
+
   test("allianceDisplayName keeps tag and name compact", () => {
     expect(allianceDisplayName({ tag: "VDFT", name: "Veydrift Union" })).toBe("VDFT - Veydrift Union");
   });
@@ -108,6 +149,6 @@ describe("AlliancePage helpers", () => {
     expect(alliancePageSource).toContain("<AllianceDescription description={alliance.description}");
     expect(alliancePageSource).toContain('target="_blank"');
     expect(alliancePageSource).toContain('rel="noreferrer noopener"');
-    expect(inspectPagesSource).toContain("<AllianceDescription description={alliance.description}");
+    expect(inspectPagesSource).toContain("<AllianceSummary alliance={alliance} onOpenPlayer={onOpenPlayer} />");
   });
 });

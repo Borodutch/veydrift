@@ -1618,14 +1618,22 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
             { headers: indexedStateHeaders(indexedStateLabel(snapshot)), status: 404 }
           );
         }
-        const bonusBalance = paidAllianceInviteReader?.bonusBalance
-          ? await paidAllianceInviteReader.bonusBalance(BigInt(allianceId))
-          : null;
+        const [bonusBalance, inviteCounts] = await Promise.all([
+          paidAllianceInviteReader?.bonusBalance
+            ? paidAllianceInviteReader.bonusBalance(BigInt(allianceId))
+            : null,
+          paidAllianceInviteReader?.inviteCounts
+            ? paidAllianceInviteReader.inviteCounts()
+            : null,
+        ]);
         return Response.json(
           {
             alliance: {
               ...alliance,
               bonusBalance: serializeAllianceBonusBalance(bonusBalance),
+              privateInviteStats: inviteCounts
+                ? inviteCounts.get(allianceId) ?? { remaining: 0, used: 0 }
+                : null,
             },
             source: indexedSource
           },
@@ -5662,6 +5670,9 @@ async function indexedAllianceResponse(
   const snapshot = indexer.snapshot();
   const state = indexer.allianceState(wallet);
   const balances = new Map<string, ReturnType<typeof serializeAllianceBonusBalance>>();
+  const inviteCounts = paidInviteReader?.inviteCounts
+    ? await paidInviteReader.inviteCounts().catch(() => null)
+    : null;
   if (paidInviteReader?.bonusBalance) {
     await Promise.all(state.directory.map(async ({ allianceId }) => {
       try {
@@ -5675,9 +5686,18 @@ async function indexedAllianceResponse(
   const directory = state.directory.map((alliance) => ({
     ...alliance,
     bonusBalance: balances.get(alliance.allianceId) ?? null,
+    privateInviteStats: inviteCounts
+      ? inviteCounts.get(alliance.allianceId) ?? { remaining: 0, used: 0 }
+      : null,
   }));
   const profile = state.profile
-    ? { ...state.profile, bonusBalance: balances.get(state.membership.allianceId) ?? null }
+    ? {
+        ...state.profile,
+        bonusBalance: balances.get(state.membership.allianceId) ?? null,
+        privateInviteStats: inviteCounts
+          ? inviteCounts.get(state.membership.allianceId) ?? { remaining: 0, used: 0 }
+          : null,
+      }
     : null;
   return indexedJsonResponse(
     {

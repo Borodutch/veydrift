@@ -20,6 +20,30 @@ export const paidAllianceInviteSecretPattern = /^0x[0-9a-fA-F]{64}$/;
 export const paidAllianceAuthorizationLifetimeSeconds = 10 * 60;
 const paidAllianceInviteSecretRecordVersion = "Veydrift paid alliance invite secret v1";
 
+const paidAllianceInvitePurchasedEvent = {
+  type: "event",
+  name: "PaidAllianceInvitePurchased",
+  inputs: [
+    { name: "commitment", type: "bytes32", indexed: true },
+    { name: "allianceId", type: "uint256", indexed: true },
+    { name: "purchaser", type: "address", indexed: true },
+    { name: "settlementPrice", type: "uint256", indexed: false },
+    { name: "purchasedAt", type: "uint64", indexed: false },
+  ],
+} as const;
+
+const paidAllianceInviteRedeemedEvent = {
+  type: "event",
+  name: "PaidAllianceInviteRedeemed",
+  inputs: [
+    { name: "commitment", type: "bytes32", indexed: true },
+    { name: "allianceId", type: "uint256", indexed: true },
+    { name: "invitee", type: "address", indexed: true },
+    { name: "purchaser", type: "address", indexed: false },
+    { name: "redeemedAt", type: "uint64", indexed: false },
+  ],
+} as const;
+
 const inviteAbi = [{
   type: "function",
   name: "invite",
@@ -87,6 +111,37 @@ export interface PaidAllianceInviteReader {
   invite(commitment: Hex): Promise<PaidAllianceInviteState>;
   canRecoverAllianceInvites(viewer: Address, allianceId: bigint): Promise<boolean>;
   bonusBalance?(allianceId: bigint): Promise<{ metal: bigint; crystal: bigint; deuterium: bigint }>;
+  inviteCounts?(): Promise<Map<string, PaidAllianceInviteCounts>>;
+}
+
+export type PaidAllianceInviteCounts = {
+  remaining: number;
+  used: number;
+};
+
+export function aggregatePaidAllianceInviteCounts(
+  purchasedAllianceIds: readonly bigint[],
+  redeemedAllianceIds: readonly bigint[],
+): Map<string, PaidAllianceInviteCounts> {
+  const purchased = new Map<string, number>();
+  const used = new Map<string, number>();
+  for (const allianceId of purchasedAllianceIds) {
+    const key = allianceId.toString();
+    purchased.set(key, (purchased.get(key) ?? 0) + 1);
+  }
+  for (const allianceId of redeemedAllianceIds) {
+    const key = allianceId.toString();
+    used.set(key, (used.get(key) ?? 0) + 1);
+  }
+  const counts = new Map<string, PaidAllianceInviteCounts>();
+  for (const allianceId of new Set([...purchased.keys(), ...used.keys()])) {
+    const redeemed = used.get(allianceId) ?? 0;
+    counts.set(allianceId, {
+      remaining: Math.max(0, (purchased.get(allianceId) ?? 0) - redeemed),
+      used: redeemed,
+    });
+  }
+  return counts;
 }
 
 type EncryptedInviteRecord = {
@@ -319,6 +374,7 @@ export async function buildPaidAllianceInviteAuthorization(
 export function createPaidAllianceInviteReader(config: BackendConfig): PaidAllianceInviteReader | undefined {
   if (!config.rpcUrl || !config.paidAllianceInviteAddress) return undefined;
   const client = createPublicClient({ transport: http(config.rpcUrl) });
+  let inviteCountsCache: { expiresAt: number; value: Map<string, PaidAllianceInviteCounts> } | null = null;
   return {
     async invite(commitment) {
       return await client.readContract({
@@ -335,6 +391,30 @@ export function createPaidAllianceInviteReader(config: BackendConfig): PaidAllia
         functionName: "bonusBalance",
         args: [allianceId],
       }) as { metal: bigint; crystal: bigint; deuterium: bigint };
+    },
+    async inviteCounts() {
+      const now = Date.now();
+      if (inviteCountsCache && inviteCountsCache.expiresAt > now) return inviteCountsCache.value;
+      const [purchasedLogs, redeemedLogs] = await Promise.all([
+        client.getLogs({
+          address: config.paidAllianceInviteAddress!,
+          event: paidAllianceInvitePurchasedEvent,
+          fromBlock: config.indexFromBlock,
+          toBlock: "latest",
+        }),
+        client.getLogs({
+          address: config.paidAllianceInviteAddress!,
+          event: paidAllianceInviteRedeemedEvent,
+          fromBlock: config.indexFromBlock,
+          toBlock: "latest",
+        }),
+      ]);
+      const value = aggregatePaidAllianceInviteCounts(
+        purchasedLogs.flatMap((log) => log.args.allianceId === undefined ? [] : [log.args.allianceId]),
+        redeemedLogs.flatMap((log) => log.args.allianceId === undefined ? [] : [log.args.allianceId]),
+      );
+      inviteCountsCache = { expiresAt: now + 15_000, value };
+      return value;
     },
     async canRecoverAllianceInvites(viewer, allianceId) {
       if (!config.allianceContractAddress) return false;
