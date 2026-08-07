@@ -80,7 +80,10 @@ describe("paid alliance invites", () => {
   test("serves resolution and redemption without persisting the secret", async () => {
     const handler = createRequestHandler({
       config: config(),
-      paidAllianceInviteReader: { invite: async () => state },
+      paidAllianceInviteReader: {
+        invite: async () => state,
+        canRecoverAllianceInvites: async () => true,
+      },
       role: "writer",
     });
     const resolution = await handler(new Request("http://test/alliance-invites/resolve", {
@@ -102,7 +105,7 @@ describe("paid alliance invites", () => {
     expect(JSON.stringify(body)).not.toContain(secret);
   });
 
-  test("encrypts recoverable secrets at rest and authorizes only the purchaser", async () => {
+  test("encrypts recoverable secrets at rest and requires a signed officer/owner viewer", async () => {
     const directory = mkdtempSync(join(tmpdir(), "veydrift-paid-invite-"));
     try {
       const path = join(directory, "invites.json");
@@ -121,15 +124,15 @@ describe("paid alliance invites", () => {
         message: paidAllianceInviteRecoveryMessage(purchaserAccount.address),
       });
       const restarted = new PaidAllianceInviteSecretStore(path, `0x${"55".repeat(32)}`, [`0x${"44".repeat(32)}`]);
-      expect(await restarted.recover(purchaserAccount.address, recoverySignature))
+      expect(await restarted.recoverForViewer(purchaserAccount.address, recoverySignature, async () => true))
         .toEqual([{ commitment, secret }]);
 
       const attacker = privateKeyToAccount("0x3333333333333333333333333333333333333333333333333333333333333333");
       const attackerSignature = await attacker.signMessage({
         message: paidAllianceInviteRecoveryMessage(purchaserAccount.address),
       });
-      await expect(restarted.recover(purchaserAccount.address, attackerSignature))
-        .rejects.toThrow("Invalid purchaser authorization");
+      await expect(restarted.recoverForViewer(purchaserAccount.address, attackerSignature, async () => true))
+        .rejects.toThrow("Invalid alliance officer authorization");
       restarted.close();
     } finally {
       rmSync(directory, { recursive: true, force: true });
@@ -167,7 +170,10 @@ describe("paid alliance invites", () => {
       const restarted = new PaidAllianceInviteSecretStore(path, encryptionKey);
       const handler = createRequestHandler({
         config: config(),
-        paidAllianceInviteReader: { invite: async () => ({ ...state, purchaser: attacker.address }) },
+        paidAllianceInviteReader: {
+          invite: async () => ({ ...state, purchaser: attacker.address }),
+          canRecoverAllianceInvites: async () => true,
+        },
         paidAllianceInviteSecretStore: restarted,
         role: "writer",
       });
@@ -175,7 +181,7 @@ describe("paid alliance invites", () => {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          purchaser: attacker.address,
+          viewer: attacker.address,
           signature: await attacker.signMessage({
             message: paidAllianceInviteRecoveryMessage(attacker.address),
           }),
@@ -221,39 +227,42 @@ describe("paid alliance invites", () => {
       database.close();
 
       const restarted = new PaidAllianceInviteSecretStore(path, keyHex);
-      await expect(restarted.recover(purchaser.address, await purchaser.signMessage({
+      await expect(restarted.recoverForViewer(purchaser.address, await purchaser.signMessage({
         message: paidAllianceInviteRecoveryMessage(purchaser.address),
-      }))).rejects.toThrow("cannot be decrypted");
+      }), async () => true)).rejects.toThrow("cannot be decrypted");
       restarted.close();
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
   });
 
-  test("recovery returns only the purchaser's active links, regardless of alliance role", async () => {
+  test("recovery returns active links only to current officers/owners", async () => {
     const directory = mkdtempSync(join(tmpdir(), "veydrift-paid-invite-filter-"));
     try {
       const path = join(directory, "invites.sqlite");
       const purchaser = privateKeyToAccount("0x2222222222222222222222222222222222222222222222222222222222222222");
-      const officerPurchaser = privateKeyToAccount("0x4444444444444444444444444444444444444444444444444444444444444444");
+      const otherPurchaser = privateKeyToAccount("0x4444444444444444444444444444444444444444444444444444444444444444");
       const secrets = [secret, `0x${"bb".repeat(32)}`, `0x${"cc".repeat(32)}`] as const;
       const commitments = secrets.map(paidAllianceInviteCommitment);
       const states = new Map([
         [commitments[0], { ...state, purchaser: purchaser.address }],
         [commitments[1], { ...state, purchaser: purchaser.address, redeemed: true }],
-        [commitments[2], { ...state, purchaser: officerPurchaser.address }],
+        [commitments[2], { ...state, purchaser: otherPurchaser.address }],
       ]);
       const store = new PaidAllianceInviteSecretStore(path, `0x${"44".repeat(32)}`);
       for (const [index, inviteSecret] of secrets.entries()) {
         const commitment = commitments[index]!;
-        const recordPurchaser = index === 2 ? officerPurchaser : purchaser;
+        const recordPurchaser = index === 2 ? otherPurchaser : purchaser;
         await store.store(inviteSecret, recordPurchaser.address, await recordPurchaser.signMessage({
           message: paidAllianceInviteStoreMessage(recordPurchaser.address, commitment),
         }), states.get(commitment)!);
       }
       const handler = createRequestHandler({
         config: config(),
-        paidAllianceInviteReader: { invite: async (commitment) => states.get(commitment)! },
+        paidAllianceInviteReader: {
+          invite: async (commitment) => states.get(commitment)!,
+          canRecoverAllianceInvites: async (_viewer, allianceId) => allianceId === state.allianceId,
+        },
         paidAllianceInviteSecretStore: store,
         role: "writer",
       });
@@ -261,7 +270,7 @@ describe("paid alliance invites", () => {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          purchaser: purchaser.address,
+          viewer: purchaser.address,
           signature: await purchaser.signMessage({
             message: paidAllianceInviteRecoveryMessage(purchaser.address),
           }),
@@ -269,35 +278,35 @@ describe("paid alliance invites", () => {
       }));
       expect(response.status).toBe(200);
       const body = await response.json();
-      expect(body.invites).toEqual([
+      expect(body.invites).toEqual(expect.arrayContaining([
         expect.objectContaining({ commitment: commitments[0], secret: secrets[0], status: "active" }),
-      ]);
+        expect.objectContaining({ commitment: commitments[2], secret: secrets[2], status: "active" }),
+      ]));
+      expect(body.invites).toHaveLength(2);
       expect(JSON.stringify(body)).not.toContain(secrets[1]);
-      expect(JSON.stringify(body)).not.toContain(secrets[2]);
 
-      const officerHandler = createRequestHandler({
+      const member = privateKeyToAccount("0x3333333333333333333333333333333333333333333333333333333333333333");
+      const memberHandler = createRequestHandler({
         config: config(),
-        paidAllianceInviteReader: { invite: async (commitment) => states.get(commitment)! },
+        paidAllianceInviteReader: {
+          invite: async (commitment) => states.get(commitment)!,
+          canRecoverAllianceInvites: async () => false,
+        },
         paidAllianceInviteSecretStore: store,
         role: "writer",
       });
-      const officerResponse = await officerHandler(new Request("http://test/alliance-invites/recover", {
+      const denied = await memberHandler(new Request("http://test/alliance-invites/recover", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          purchaser: officerPurchaser.address,
-          signature: await officerPurchaser.signMessage({
-            message: paidAllianceInviteRecoveryMessage(officerPurchaser.address),
+          viewer: member.address,
+          signature: await member.signMessage({
+            message: paidAllianceInviteRecoveryMessage(member.address),
           }),
         }),
       }));
-      expect(officerResponse.status).toBe(200);
-      const officerBody = await officerResponse.json();
-      expect(officerBody.invites).toEqual([
-        expect.objectContaining({ commitment: commitments[2], secret: secrets[2], status: "active" }),
-      ]);
-      expect(JSON.stringify(officerBody)).not.toContain(secrets[0]);
-      expect(JSON.stringify(officerBody)).not.toContain(secrets[1]);
+      expect(denied.status).toBe(200);
+      expect((await denied.json()).invites).toEqual([]);
       store.close();
     } finally {
       rmSync(directory, { recursive: true, force: true });
