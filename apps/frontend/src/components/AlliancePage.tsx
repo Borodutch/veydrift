@@ -591,22 +591,6 @@ function MyAllianceSection({
             <p className="mt-2 text-sm text-slate-400">
               Browse public alliances below, open details, then request to join from the directory row.
             </p>
-            <button
-              className="mt-3 rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-100 disabled:opacity-50"
-              disabled={disabled || !onRecoverPaidInvites}
-              onClick={() => void onRecoverPaidInvites?.().then(onSetPaidInviteLink)}
-              type="button"
-            >
-              Recover purchased invite links
-            </button>
-            {paidInviteLink ? (
-              <textarea
-                className="mt-2 w-full rounded border border-white/10 bg-black/30 px-3 py-2 font-mono text-xs text-slate-200"
-                readOnly
-                rows={Math.min(4, paidInviteLink.split("\n").length)}
-                value={paidInviteLink}
-              />
-            ) : null}
           </div>
         </div>
       </Panel>
@@ -648,14 +632,16 @@ function MyAllianceSection({
               >
                 Buy private invite · 0.006 ETH (~$10)
               </button>
-              <button
-                className="rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-100 disabled:opacity-50"
-                disabled={disabled || !onRecoverPaidInvites}
-                onClick={() => void onRecoverPaidInvites?.().then(onSetPaidInviteLink)}
-                type="button"
-              >
-                Recover purchased invite links
-              </button>
+              {canManageMembers ? (
+                <button
+                  className="rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-100 disabled:opacity-50"
+                  disabled={disabled || !onRecoverPaidInvites}
+                  onClick={() => void onRecoverPaidInvites?.().then(onSetPaidInviteLink)}
+                  type="button"
+                >
+                  Recover alliance invite links
+                </button>
+              ) : null}
             </div>
             {paidInviteLink ? (
               <div className="mt-2">

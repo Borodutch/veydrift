@@ -24,11 +24,11 @@ describe("paid alliance invite frontend flow", () => {
     expect(source).toContain("Buy private invite · 0.006 ETH (~$10)");
     expect(source).toContain("Credit selected resources to active Rift planet");
     expect(source).toContain("Interdimensional Rift Stabilizer");
-    expect(source.match(/Recover purchased invite links/g)).toHaveLength(2);
-    expect(source).not.toContain("Recover alliance invite links");
+    expect(source).toContain("Recover alliance invite links");
+    expect(source).not.toContain("Recover purchased invite links");
   });
 
-  test("binds recovery to the purchaser wallet and payload", async () => {
+  test("binds recovery to the officer or owner viewer wallet", async () => {
     const originalFetch = globalThis.fetch;
     const requests: unknown[] = [];
     let requestBody = "";
@@ -44,8 +44,8 @@ describe("paid alliance invite frontend flow", () => {
       );
       expect((requests[0] as any).method).toBe("personal_sign");
       expect((requests[0] as any).params[1]).toBe(account);
-      expect(JSON.parse(requestBody)).toEqual({ purchaser: account, signature: "0xabc" });
-      expect(requestBody).not.toContain("viewer");
+      expect(JSON.parse(requestBody)).toEqual({ viewer: account, signature: "0xabc" });
+      expect(requestBody).not.toContain("purchaser");
     } finally {
       globalThis.fetch = originalFetch;
     }
