@@ -1054,14 +1054,14 @@ contract VeydriftAllianceSystemTest is Test {
         alliances.setWarProtection(address(misbound));
 
         vm.expectRevert(
-            abi.encodeWithSelector(VeydriftAllianceWarProtection.NotAlliance.selector, address(this))
+            abi.encodeWithSelector(
+                VeydriftAllianceWarProtection.NotAlliance.selector, address(this)
+            )
         );
         warProtection.capture(1, 2, uint64(block.timestamp));
     }
 
-    function testWarSnapshotRestrictsLateAndRejoinedMembersAndProtectsOutmatchedDeclaree()
-        public
-    {
+    function testWarSnapshotRestrictsLateAndRejoinedMembersAndProtectsOutmatchedDeclaree() public {
         vm.prank(leader);
         uint256 declarerAllianceId = alliances.createAlliance("ALLY", "Alliance", "");
         _inviteAndAccept(declarerAllianceId, member);

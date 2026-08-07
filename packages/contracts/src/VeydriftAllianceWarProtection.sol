@@ -44,7 +44,8 @@ contract VeydriftAllianceWarProtection {
     mapping(bytes32 warKey => uint64 nextSnapshotId) private _snapshotNonces;
     mapping(bytes32 warKey => WarSnapshot snapshot) private _snapshots;
     mapping(bytes32 warKey => mapping(address member => uint64 snapshotId)) private _memberIds;
-    mapping(bytes32 warKey => mapping(address member => uint64 membershipEpoch)) private _memberEpochs;
+    mapping(bytes32 warKey => mapping(address member => uint64 membershipEpoch)) private
+        _memberEpochs;
 
     error NotAlliance(address caller);
     error WarSnapshotTooLarge(uint256 allianceId, uint256 count, uint256 maximum);
@@ -72,8 +73,10 @@ contract VeydriftAllianceWarProtection {
     {
         if (msg.sender != alliance) revert NotAlliance(msg.sender);
 
-        address[] memory declarerMembers = IVeydriftWarAlliance(alliance).allianceMembers(declarerAllianceId);
-        address[] memory declareeMembers = IVeydriftWarAlliance(alliance).allianceMembers(declareeAllianceId);
+        address[] memory declarerMembers =
+            IVeydriftWarAlliance(alliance).allianceMembers(declarerAllianceId);
+        address[] memory declareeMembers =
+            IVeydriftWarAlliance(alliance).allianceMembers(declareeAllianceId);
         if (declarerMembers.length > MAX_WAR_SNAPSHOT_MEMBERS) {
             revert WarSnapshotTooLarge(
                 declarerAllianceId, declarerMembers.length, MAX_WAR_SNAPSHOT_MEMBERS
@@ -90,8 +93,12 @@ contract VeydriftAllianceWarProtection {
         _snapshotNonces[key] = snapshotId;
         uint256 declarerScore = _recordMembers(key, snapshotId, declarerMembers);
         uint256 declareeScore = _recordMembers(key, snapshotId, declareeMembers);
-        if (declarerScore > type(uint128).max) revert WarScoreTooLarge(declarerAllianceId, declarerScore);
-        if (declareeScore > type(uint128).max) revert WarScoreTooLarge(declareeAllianceId, declareeScore);
+        if (declarerScore > type(uint128).max) {
+            revert WarScoreTooLarge(declarerAllianceId, declarerScore);
+        }
+        if (declareeScore > type(uint128).max) {
+            revert WarScoreTooLarge(declareeAllianceId, declareeScore);
+        }
 
         snapshot = WarSnapshot({
             snapshotId: snapshotId,
@@ -115,7 +122,11 @@ contract VeydriftAllianceWarProtection {
         );
     }
 
-    function warSnapshot(uint256 allianceA, uint256 allianceB) external view returns (WarSnapshot memory) {
+    function warSnapshot(uint256 allianceA, uint256 allianceB)
+        external
+        view
+        returns (WarSnapshot memory)
+    {
         return _snapshots[_warKey(allianceA, allianceB)];
     }
 
@@ -175,19 +186,25 @@ contract VeydriftAllianceWarProtection {
         }
     }
 
-    function _isCurrentOriginalMember(bytes32 key, uint64 snapshotId, address player, uint256 allianceId)
-        private
-        view
-        returns (bool)
-    {
+    function _isCurrentOriginalMember(
+        bytes32 key,
+        uint64 snapshotId,
+        address player,
+        uint256 allianceId
+    ) private view returns (bool) {
         if (_memberIds[key][player] != snapshotId) return false;
         IVeydriftWarAlliance allianceSystem = IVeydriftWarAlliance(alliance);
         return allianceSystem.allianceOf(player).allianceId == allianceId
             && allianceSystem.membershipEpoch(player) == _memberEpochs[key][player];
     }
 
-    function _withinRatio(uint256 attackerScore, uint256 defenderScore) private pure returns (bool) {
-        return defenderScore != 0 && attackerScore * BPS <= defenderScore * WAR_SCORE_PROTECTION_RATIO_BPS;
+    function _withinRatio(uint256 attackerScore, uint256 defenderScore)
+        private
+        pure
+        returns (bool)
+    {
+        return defenderScore != 0
+            && attackerScore * BPS <= defenderScore * WAR_SCORE_PROTECTION_RATIO_BPS;
     }
 
     function _warKey(uint256 allianceA, uint256 allianceB) private pure returns (bytes32) {
