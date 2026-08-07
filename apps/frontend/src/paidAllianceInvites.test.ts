@@ -5,6 +5,7 @@ import {
   paidAllianceInviteLink,
   paidAllianceInviteSecretFromHash,
   PAID_ALLIANCE_INVITE_PRICE_WEI,
+  recoverPaidAllianceInvites,
   resolvePaidAllianceInvite,
   sendBuyPaidAllianceInviteTransaction,
   sendSettlementTransaction,
@@ -23,7 +24,31 @@ describe("paid alliance invite frontend flow", () => {
     expect(source).toContain("Buy private invite · 0.006 ETH (~$10)");
     expect(source).toContain("Credit selected resources to active Rift planet");
     expect(source).toContain("Interdimensional Rift Stabilizer");
-    expect(source).toContain("Recover alliance invite links");
+    expect(source.match(/Recover purchased invite links/g)).toHaveLength(2);
+    expect(source).not.toContain("Recover alliance invite links");
+  });
+
+  test("binds recovery to the purchaser wallet and payload", async () => {
+    const originalFetch = globalThis.fetch;
+    const requests: unknown[] = [];
+    let requestBody = "";
+    globalThis.fetch = (async (_input, init) => {
+      requestBody = String(init?.body ?? "");
+      return Response.json({ invites: [] });
+    }) as typeof fetch;
+    try {
+      await recoverPaidAllianceInvites(
+        "https://api.veydrift.com",
+        providerRecording(requests),
+        account,
+      );
+      expect((requests[0] as any).method).toBe("personal_sign");
+      expect((requests[0] as any).params[1]).toBe(account);
+      expect(JSON.parse(requestBody)).toEqual({ purchaser: account, signature: "0xabc" });
+      expect(requestBody).not.toContain("viewer");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   test("creates unique private links whose secret is not the on-chain commitment", () => {

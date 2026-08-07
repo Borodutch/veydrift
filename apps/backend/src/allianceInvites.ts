@@ -52,22 +52,6 @@ const inviteAbi = [{
   }],
 }] as const;
 
-const allianceAbi = [{
-  type: "function",
-  name: "allianceOf",
-  stateMutability: "view",
-  inputs: [{ name: "player", type: "address" }],
-  outputs: [{
-    name: "",
-    type: "tuple",
-    components: [
-      { name: "allianceId", type: "uint256" },
-      { name: "role", type: "uint8" },
-      { name: "joinedAt", type: "uint64" },
-    ],
-  }],
-}] as const;
-
 export type PaidAllianceInviteState = {
   allianceId: bigint;
   purchaser: Address;
@@ -85,7 +69,6 @@ export type PaidAllianceInviteResolution = {
 
 export interface PaidAllianceInviteReader {
   invite(commitment: Hex): Promise<PaidAllianceInviteState>;
-  canRecoverAllianceInvites(viewer: Address, allianceId: bigint): Promise<boolean>;
   bonusBalance?(allianceId: bigint): Promise<{ metal: bigint; crystal: bigint; deuterium: bigint }>;
 }
 
@@ -102,8 +85,8 @@ export function paidAllianceInviteStoreMessage(purchaser: Address, commitment: H
   return `Veydrift paid alliance invite store\nPurchaser: ${purchaser.toLowerCase()}\nCommitment: ${commitment}`;
 }
 
-export function paidAllianceInviteRecoveryMessage(viewer: Address): string {
-  return `Veydrift paid alliance invite recovery\nViewer: ${viewer.toLowerCase()}`;
+export function paidAllianceInviteRecoveryMessage(purchaser: Address): string {
+  return `Veydrift paid alliance invite recovery\nPurchaser: ${purchaser.toLowerCase()}`;
 }
 
 export function paidAllianceInviteSecretRecordAad(commitmentInput: string, purchaserInput: string): Buffer {
@@ -173,29 +156,22 @@ export class PaidAllianceInviteSecretStore {
     return commitment;
   }
 
-  async recoverForViewer(
-    viewerInput: string,
-    signature: unknown,
-    canRecover: (commitment: Hex) => Promise<boolean>,
-  ): Promise<Array<{ commitment: Hex; secret: Hex }>> {
-    const viewer = getAddress(viewerInput) as Address;
+  async recover(purchaserInput: string, signature: unknown): Promise<Array<{ commitment: Hex; secret: Hex }>> {
+    const purchaser = getAddress(purchaserInput) as Address;
     if (typeof signature !== "string" || !await verifyMessage({
-      address: viewer,
-      message: paidAllianceInviteRecoveryMessage(viewer),
+      address: purchaser,
+      message: paidAllianceInviteRecoveryMessage(purchaser),
       signature: signature as Hex,
-    })) throw new Error("Invalid alliance officer authorization.");
+    })) throw new Error("Invalid purchaser authorization.");
     const records = this.database.query(`
       SELECT commitment, purchaser, ciphertext, iv, tag, stored_at AS storedAt
-      FROM paid_alliance_invite_secrets
+      FROM paid_alliance_invite_secrets WHERE lower(purchaser) = lower(?)
       ORDER BY stored_at DESC
-    `).all() as EncryptedInviteRecord[];
-    const recovered: Array<{ commitment: Hex; secret: Hex }> = [];
-    for (const record of records) {
-      const commitment = normalizePaidAllianceInviteCommitment(record.commitment);
-      if (!await canRecover(commitment)) continue;
-      recovered.push({ commitment, secret: this.decrypt(record) });
-    }
-    return recovered;
+    `).all(purchaser) as EncryptedInviteRecord[];
+    return records.map((record) => ({
+      commitment: normalizePaidAllianceInviteCommitment(record.commitment),
+      secret: this.decrypt(record),
+    }));
   }
 
   private decrypt(record: EncryptedInviteRecord): Hex {
@@ -335,16 +311,6 @@ export function createPaidAllianceInviteReader(config: BackendConfig): PaidAllia
         functionName: "bonusBalance",
         args: [allianceId],
       }) as { metal: bigint; crystal: bigint; deuterium: bigint };
-    },
-    async canRecoverAllianceInvites(viewer, allianceId) {
-      if (!config.allianceContractAddress) return false;
-      const membership = await client.readContract({
-        address: config.allianceContractAddress,
-        abi: allianceAbi,
-        functionName: "allianceOf",
-        args: [viewer],
-      }) as { allianceId: bigint; role: number; joinedAt: bigint };
-      return membership.allianceId === allianceId && membership.role >= 2;
     },
   };
 }
