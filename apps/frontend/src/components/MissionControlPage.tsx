@@ -1510,7 +1510,8 @@ function MissionRow({
       statusPill={missionStatusPill(mission, now)}
       statusAction={resolutionKind ? (
         <button
-          className="inline-flex h-7 items-center justify-center rounded border border-amber-300/30 bg-amber-300/10 px-2 text-[11px] font-semibold text-amber-100 transition hover:bg-amber-300/20 disabled:cursor-not-allowed disabled:text-slate-500"
+          className="inline-flex h-6 w-full items-center justify-center rounded border border-amber-300/30 bg-amber-300/10 px-2 text-[11px] font-semibold text-amber-100 transition hover:bg-amber-300/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300/50 disabled:cursor-not-allowed disabled:text-slate-500"
+          data-mission-status-action="resolve"
           disabled={!canTransact}
           onClick={(event) => {
             event.preventDefault();
@@ -1897,7 +1898,10 @@ function MissionCard({
             </span>
           ) : null}
           {statusPill || statusAction ? (
-            <span className="inline-flex items-center gap-1.5">
+            <span
+              className={`inline-flex min-w-[3.75rem] max-w-full ${statusAction ? "flex-col items-center gap-1" : "items-center justify-end gap-1.5"}`}
+              data-mission-status-layout={statusAction ? "stacked" : "status-only"}
+            >
               {statusPill ? (
                 statusPill.variant === "text" ? (
                   <span className={`whitespace-nowrap text-[11px] font-medium ${statusPill.tone}`} data-mission-status={statusPill.label}>{statusPill.label}</span>
