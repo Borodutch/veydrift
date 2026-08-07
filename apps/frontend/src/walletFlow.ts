@@ -1121,6 +1121,9 @@ export type ChainAllianceState = {
       role: AllianceRole;
       joinedAt: string;
       totalScore?: string;
+      invitedBy?: string | null;
+      invitedByDisplayName?: string | null;
+      invitedAt?: string | null;
     }>;
   }>;
   pendingInvites: Array<{
@@ -1155,6 +1158,9 @@ export type ChainAllianceState = {
     role: AllianceRole;
     joinedAt: string;
     totalScore?: string;
+    invitedBy?: string | null;
+    invitedByDisplayName?: string | null;
+    invitedAt?: string | null;
   }>;
 };
 
@@ -3016,7 +3022,8 @@ export async function sendSettlementTransaction(
         from: account,
         to: config.address,
         data: encodePaidAllianceInviteSettlement(options.allianceInvite),
-        value: encodeQuantity(options.startPriceWei),
+        // The separate alliance-invite purchase covers this start. The invitee submits gas only.
+        value: encodeQuantity(0n),
       });
     }
     return sendWalletTransaction(provider, account, {

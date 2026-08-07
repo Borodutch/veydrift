@@ -115,12 +115,26 @@ contract VeydriftFirstPlanetSettlementModule is VeydriftResourceReserves {
         bytes32 r,
         bytes32 s
     ) external payable returns (uint256 planetId) {
-        if (msg.value != startPrice || _allianceSystem == address(0)) {
+        // The alliance paid the separate recruitment fee when it bought this single-use invite.
+        // A valid redemption therefore starts the invitee for free; accepting ETH here would be an
+        // accidental second settlement charge.
+        if (msg.value != 0 || _allianceSystem == address(0)) {
             revert BadStartPayment();
         }
         (address purchaser,) = IVeydriftPaidAllianceInviteSystem(_allianceSystem)
             .redeemPaidInvite(msg.sender, commitment, expiresAt, v, r, s);
-        planetId = _startPlanet(msg.sender, msg.value, purchaser);
+        planetId = _startPlanetFromPaidAllianceInvite(msg.sender, purchaser);
+    }
+
+    function _startPlanetFromPaidAllianceInvite(address player, address inviter)
+        private
+        returns (uint256 planetId)
+    {
+        // `_startPlanet`'s payment argument is an authorization invariant for the regular paid
+        // settlement entrypoints. The paid-invite entrypoint has already authenticated its separate
+        // purchase through `redeemPaidInvite`, so it intentionally supplies the canonical price
+        // without receiving a second payment from the invited wallet.
+        planetId = _startPlanet(player, startPrice, inviter);
     }
 
     function _startPlanet(address player, uint256 payment, address inviter)

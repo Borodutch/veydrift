@@ -1448,7 +1448,11 @@ export function FirstPlanetSettlementApp() {
       };
       setSettlementFunding(nextFunding);
 
-      return settlementLaunchBlocker(settlementContractConfigured(settlementConfig), nextFunding) === undefined
+      return settlementLaunchBlocker(
+        settlementContractConfigured(settlementConfig),
+        nextFunding,
+        Boolean(paidAllianceInviteSecret),
+      ) === undefined
         ? nextFunding.funding
         : undefined;
     } catch (error) {
@@ -1533,7 +1537,7 @@ export function FirstPlanetSettlementApp() {
           {paidAllianceInviteSecret ? (
             <div className="referral-code-field" role="status">
               <strong>Alliance invite ready</strong>
-              <span>You will pay the normal first-planet settlement price, receive starter resources, and automatically join the issuing alliance.</span>
+              <span>Your first planet is free with this invite. You only need a little Base ETH for gas, receive 2× starter resources, and join the issuing alliance automatically.</span>
             </div>
           ) : (
             <ReferralCodeField
@@ -2260,9 +2264,13 @@ function FlowBody({
     );
   }
 
-  const balanceRecheckAvailable = settlementBalanceRecheckAvailable(settlementReady, settlementFunding);
+  const balanceRecheckAvailable = settlementBalanceRecheckAvailable(
+    settlementReady,
+    settlementFunding,
+    prepaidAllianceInvite,
+  );
   const actionBlocked = (
-    settlementLaunchBlocker(settlementReady, settlementFunding) !== undefined
+    settlementLaunchBlocker(settlementReady, settlementFunding, prepaidAllianceInvite) !== undefined
     && !balanceRecheckAvailable
   )
     || (!prepaidAllianceInvite && referralSettlementBlocker(referralCodeInput, referralValidation) !== undefined);
@@ -2273,12 +2281,14 @@ function FlowBody({
     ? "Checking balance"
     : migrationReservation
       ? "Migrate planet"
+      : prepaidAllianceInvite
+        ? "Launch free settlement"
       : "Launch settlement";
   const title = settlementFunding.status === "error"
     ? "Settlement info unavailable"
     : settlementFunding.status === "ready" && settlementFunding.funding.unavailableReason
     ? "Settlement setup incomplete"
-    : settlementFunding.status === "ready" && !settlementFunding.funding.affordable
+    : settlementFunding.status === "ready" && !prepaidAllianceInvite && !settlementFunding.funding.affordable
     ? `More ${networkName} ETH required`
     : migrationReservation
       ? "Reserved planet found"
@@ -2305,6 +2315,7 @@ export function noWalletDetectedMessage(miniAppMode: boolean): string {
 export function settlementLaunchBlocker(
   settlementReady: boolean,
   settlementFunding: SettlementFunding,
+  prepaidAllianceInvite = false,
 ): string | undefined {
   if (!settlementReady) return "Settlement contract address is not configured.";
   if (settlementFunding.status === "idle" || settlementFunding.status === "loading") {
@@ -2316,7 +2327,7 @@ export function settlementLaunchBlocker(
   if (settlementFunding.funding.unavailableReason) {
     return settlementFunding.funding.unavailableReason;
   }
-  if (!settlementFunding.funding.affordable) {
+  if (!prepaidAllianceInvite && !settlementFunding.funding.affordable) {
     const shortfallWei = settlementFundingShortfallWei(settlementFunding.funding);
     return shortfallWei !== null && shortfallWei > 0n
       ? `This wallet needs at least ${formatEth(shortfallWei)} more ETH on Base, plus gas, before launching settlement.`
@@ -2329,7 +2340,9 @@ export function settlementLaunchBlocker(
 export function settlementBalanceRecheckAvailable(
   settlementReady: boolean,
   settlementFunding: SettlementFunding,
+  prepaidAllianceInvite = false,
 ): boolean {
+  if (prepaidAllianceInvite) return false;
   if (!settlementReady || settlementFunding.status !== "ready") return false;
   if (settlementFunding.funding.unavailableReason || settlementFunding.funding.affordable) return false;
   const shortfallWei = settlementFundingShortfallWei(settlementFunding.funding);
@@ -2403,7 +2416,7 @@ function settlementBody(
     : "";
 
   if (prepaidAllianceInvite) {
-    return `${prefix} The invite purchaser paid a separate 0.006 ETH recruitment fee. This wallet still pays the normal first-planet settlement price, receives the referral starter bonus, and joins the issuing alliance automatically.`;
+    return `${prefix} This alliance invite starts your first planet for free. You pay no settlement fee—only Base gas. You receive 2× starter resources and join the issuing alliance automatically.`;
   }
 
   if (settlementFunding.status === "idle" || settlementFunding.status === "loading") {
