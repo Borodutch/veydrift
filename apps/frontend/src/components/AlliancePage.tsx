@@ -286,6 +286,8 @@ export function AlliancePage({
               activeWars={allianceState?.activeWars ?? []}
               canDeclareWar={isOwner}
               currentAllianceId={isMember ? currentAllianceId : null}
+              currentAllianceScore={profile?.totalMemberScore ?? null}
+              currentAllianceMemberCount={profile?.memberCount ?? null}
               disabled={disabled}
               pendingJoinRequests={allianceState?.pendingJoinRequests ?? []}
               selectedAllianceId={selectedAlliance?.allianceId ?? null}
@@ -805,6 +807,8 @@ function DirectorySection({
   alliances,
   canDeclareWar,
   currentAllianceId,
+  currentAllianceScore,
+  currentAllianceMemberCount,
   disabled,
   pendingJoinRequests,
   selectedAllianceId,
@@ -818,6 +822,8 @@ function DirectorySection({
   alliances: DirectoryEntry[];
   canDeclareWar: boolean;
   currentAllianceId: string | null;
+  currentAllianceScore: string | null;
+  currentAllianceMemberCount: number | null;
   disabled: boolean;
   pendingJoinRequests: ChainAllianceState["pendingJoinRequests"];
   selectedAllianceId: string | null;
@@ -931,6 +937,8 @@ function DirectorySection({
           {warDeclarationTarget ? (
             <WarDeclarationDialog
               alliance={warDeclarationTarget}
+              declarerScore={currentAllianceScore}
+              declarerMemberCount={currentAllianceMemberCount}
               disabled={disabled}
               onCancel={() => setWarDeclarationTarget(null)}
               onConfirm={() => {
@@ -949,15 +957,20 @@ function DirectorySection({
 
 function WarDeclarationDialog({
   alliance,
+  declarerScore,
+  declarerMemberCount,
   disabled,
   onCancel,
   onConfirm,
 }: {
-  alliance: Pick<DirectoryEntry, "name" | "tag">;
+  alliance: Pick<DirectoryEntry, "memberCount" | "name" | "tag" | "totalMemberScore">;
+  declarerScore: string | null;
+  declarerMemberCount: number | null;
   disabled: boolean;
   onCancel: () => void;
   onConfirm: () => void;
 }) {
+  const snapshotTooLarge = (declarerMemberCount ?? 0) > 64 || alliance.memberCount > 64;
   return (
     <div
       aria-modal="true"
@@ -971,23 +984,58 @@ function WarDeclarationDialog({
       <div className="modal-panel-enter w-full max-w-md rounded border border-rose-300/30 bg-slate-950 p-4 shadow-2xl">
         <h3 className="text-lg font-semibold text-white">Declare war on {alliance.tag}</h3>
         <p className="mt-2 text-sm text-slate-300">
-          This removes attack score protection and bashing limits between your alliances.
+          This snapshots both alliances’ canonical on-chain score and current members. Late joins and members who leave/rejoin receive no war exceptions.
         </p>
         <p className="mt-2 rounded border border-rose-300/25 bg-rose-300/[0.08] p-2 text-sm font-semibold text-rose-100">
           {warMinimumDurationCopy}
+        </p>
+        <WarDeclarationProtectionWarning declarerScore={declarerScore} declareeScore={alliance.totalMemberScore ?? null} />
+        {snapshotTooLarge ? (
+          <p className="mt-2 rounded border border-amber-300/25 bg-amber-300/[0.08] p-2 text-sm font-semibold text-amber-100">
+            War declaration is unavailable: each alliance may snapshot at most 64 current members. Split or reduce the roster before declaring.
+          </p>
+        ) : null}
+        <p className="mt-2 rounded border border-amber-300/25 bg-amber-300/[0.08] p-2 text-sm font-semibold text-amber-100">
+          Your declarer alliance receives no war score-protection exception when {alliance.name} attacks you.
         </p>
         <p className="mt-2 text-xs text-slate-400">Confirm only if your alliance is ready to remain at war with {alliance.name}.</p>
         <div className="mt-4 flex justify-end gap-2">
           <button className="rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-100 hover:bg-white/10" disabled={disabled} onClick={onCancel} type="button">
             Cancel
           </button>
-          <button className="rounded border border-rose-300/40 bg-rose-300/10 px-3 py-2 text-sm font-semibold text-rose-100 hover:bg-rose-300/20 disabled:cursor-not-allowed disabled:opacity-50" disabled={disabled} onClick={onConfirm} type="button">
+          <button className="rounded border border-rose-300/40 bg-rose-300/10 px-3 py-2 text-sm font-semibold text-rose-100 hover:bg-rose-300/20 disabled:cursor-not-allowed disabled:opacity-50" disabled={disabled || snapshotTooLarge} onClick={onConfirm} type="button">
             Confirm War Declaration
           </button>
         </div>
       </div>
     </div>
   );
+}
+
+export function WarDeclarationProtectionWarning({
+  declarerScore,
+  declareeScore,
+}: {
+  declarerScore: string | null;
+  declareeScore: string | null;
+}) {
+  try {
+    if (declarerScore === null || declareeScore === null) throw new Error("missing score");
+    const declarer = BigInt(declarerScore);
+    const declaree = BigInt(declareeScore);
+    if (declaree === 0n || declarer * 10_000n > declaree * 15_000n) {
+      return <p className="mt-2 rounded border border-amber-300/25 bg-amber-300/[0.08] p-2 text-sm font-semibold text-amber-100">
+        Defender score protection will remain enabled: your current alliance score is over the 1.5× war threshold. The on-chain snapshot at confirmation is final.
+      </p>;
+    }
+    return <p className="mt-2 rounded border border-cyan-300/25 bg-cyan-300/[0.08] p-2 text-sm font-semibold text-cyan-100">
+      Current alliance scores are within the 1.5× threshold. Original members may receive a score-protection bypass, subject to the on-chain snapshot and individual 1.5× target check.
+    </p>;
+  } catch {
+    return <p className="mt-2 rounded border border-amber-300/25 bg-amber-300/[0.08] p-2 text-sm font-semibold text-amber-100">
+      Score-protection eligibility will be calculated from the authoritative on-chain snapshot when you confirm this declaration.
+    </p>;
+  }
 }
 
 export function allianceDirectoryWarActionState({
@@ -1095,7 +1143,14 @@ function WarSection({
                     </span>
                     <span className="truncate text-sm font-semibold text-white">{alliance?.name ?? `Alliance #${war.otherAllianceId}`}</span>
                   </div>
-                  <p className="mt-1 text-xs text-slate-400">Reciprocal war: attack score protection and bashing limits are bypassed for both alliances. {warMinimumDurationCopy}</p>
+                  <p className="mt-1 text-xs text-slate-400">War is restricted to its declaration snapshot: late joins receive no exceptions. The declarer has no score protection against this alliance; declarer attacks use the 1.5× score checks. {warMinimumDurationCopy}</p>
+                  {war.warSnapshot ? (
+                    <p className="mt-1 text-xs text-slate-500">
+                      Snapshot — declarer score {formatScore(war.warSnapshot.declarerScore)} ({war.warSnapshot.declarerMemberCount} members), declaree score {formatScore(war.warSnapshot.declareeScore)} ({war.warSnapshot.declareeMemberCount} members).
+                    </p>
+                  ) : (
+                    <p className="mt-1 text-xs text-amber-200">Legacy war: no protection snapshot exists, so normal score protection applies.</p>
+                  )}
                 </div>
                 {endAction.visible ? (
                   <div className="justify-self-start sm:justify-self-end">

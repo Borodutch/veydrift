@@ -488,6 +488,18 @@ export type IndexedAllianceEvent =
       allianceId: string;
       otherAllianceId: string;
       statusId: number;
+    }
+  | {
+      eventName: "AllianceWarSnapshotCaptured";
+      transactionHash: string;
+      blockNumber: string;
+      declarerAllianceId: string;
+      declareeAllianceId: string;
+      snapshotId: string;
+      declarerScore: string;
+      declareeScore: string;
+      declarerMemberCount: number;
+      declareeMemberCount: number;
     };
 
 export type FleetMissionVisibility = {
@@ -1152,6 +1164,13 @@ export type AllianceDiplomacySnapshot = {
   statusId: number;
   initiatedByAllianceId?: string | null;
   declaredAt?: string | null;
+  warSnapshot?: {
+    snapshotId: string;
+    declarerScore: string;
+    declareeScore: string;
+    declarerMemberCount: number;
+    declareeMemberCount: number;
+  } | null;
 };
 
 export type AttackBlockReason = "none" | "bashing_limit" | "score_protection" | "same_alliance";
@@ -2972,6 +2991,38 @@ export class VeydriftGameReader implements ChainReader {
       // warDeclarer(uint256,uint256). Event metadata remains the fallback until upgrade.
       warDeclarerResults = pairs.map(() => "0x");
     }
+    const warPairs = pairs.filter((_, index) =>
+      Number(decodeUintWord(wordAt(splitWords(statusResults[index] ?? "0x"), 0))) === 3
+    );
+    const warProtectionAddress = await this.warProtectionAddress();
+    let warSnapshotResults: string[] = [];
+    if (warProtectionAddress) {
+      try {
+        warSnapshotResults = await this.batchCallContract(
+          warProtectionAddress,
+          warPairs.map((pair) => ({ selector: "0x150bbb6c", args: [encodeUint(pair.allianceId), encodeUint(pair.otherAllianceId)] }))
+        );
+      } catch {
+        // Rolling-upgrade compatibility: the Alliance proxy may be upgraded before its module is
+        // configured. Treat that as no snapshot/no war exception, matching contract behavior.
+        warSnapshotResults = warPairs.map(() => "0x");
+      }
+    } else {
+      warSnapshotResults = warPairs.map(() => "0x");
+    }
+    const warSnapshotsByPair = new Map(warPairs.map((pair, index) => {
+      const raw = warSnapshotResults[index] ?? "0x";
+      if (raw === "0x") return [`${pair.allianceId}:${pair.otherAllianceId}`, null] as const;
+      const words = splitWords(raw);
+      const snapshotId = decodeUintWord(wordAt(words, 0));
+      return [`${pair.allianceId}:${pair.otherAllianceId}`, snapshotId === 0n ? null : {
+        snapshotId: snapshotId.toString(),
+        declarerScore: decodeUintWord(wordAt(words, 2)).toString(),
+        declareeScore: decodeUintWord(wordAt(words, 3)).toString(),
+        declarerMemberCount: Number(decodeUintWord(wordAt(words, 4))),
+        declareeMemberCount: Number(decodeUintWord(wordAt(words, 5)))
+      }] as const;
+    }));
     return pairs.flatMap((pair, index) => {
       const statusId = Number(decodeUintWord(wordAt(splitWords(statusResults[index] ?? "0x"), 0)));
       if (statusId === 0) return [];
@@ -2982,7 +3033,8 @@ export class VeydriftGameReader implements ChainReader {
         otherAllianceId: pair.otherAllianceId.toString(),
         statusId,
         initiatedByAllianceId: declarerAllianceId === 0n ? null : declarerAllianceId.toString(),
-        declaredAt: declaredAt === 0n ? null : declaredAt.toString()
+        declaredAt: declaredAt === 0n ? null : declaredAt.toString(),
+        warSnapshot: warSnapshotsByPair.get(`${pair.allianceId}:${pair.otherAllianceId}`) ?? null
       }];
     });
   }
@@ -3563,7 +3615,7 @@ export class VeydriftGameReader implements ChainReader {
   async listAllianceLogs(fromBlock: bigint, toBlock: bigint | "latest" = "latest"): Promise<RpcLog[]> {
     if (!this.allianceContractAddress) return [];
 
-    return this.getLogs(
+    const allianceLogs = await this.getLogs(
       {
         address: this.allianceContractAddress,
         fromBlock: toQuantity(fromBlock),
@@ -3585,6 +3637,15 @@ export class VeydriftGameReader implements ChainReader {
         ]]
       }
     );
+    const warProtectionAddress = await this.warProtectionAddress();
+    if (!warProtectionAddress) return allianceLogs;
+    const warSnapshotLogs = await this.getLogs({
+      address: warProtectionAddress,
+      fromBlock: toQuantity(fromBlock),
+      toBlock: toBlock === "latest" ? "latest" : toQuantity(toBlock),
+      topics: [[allianceWarSnapshotCapturedTopic]]
+    });
+    return [...allianceLogs, ...warSnapshotLogs];
   }
 
   /**
@@ -3598,7 +3659,7 @@ export class VeydriftGameReader implements ChainReader {
   }
 
   async listContractLogs(fromBlock: bigint, toBlock: bigint | "latest" = "latest"): Promise<RpcLog[]> {
-    const addresses = this.indexedContractAddresses();
+    const addresses = await this.indexedContractAddresses();
     if (addresses.length === 0) return [];
 
     return this.getLogs(
@@ -3631,7 +3692,7 @@ export class VeydriftGameReader implements ChainReader {
     });
   }
 
-  private indexedContractAddresses(): Address[] {
+  private async indexedContractAddresses(): Promise<Address[]> {
     const addresses = [
       this.gameContractAddress,
       this.moonContractAddress,
@@ -3644,9 +3705,22 @@ export class VeydriftGameReader implements ChainReader {
       // VEY-KANEO-479: include the RandomnessEngine so RandomnessFulfilled logs are backfilled/ingested,
       // letting the read model gate an arrived Attack's readiness on its battle randomness.
       this.randomnessEngineAddress,
-      this.referralSystemAddress
+      this.referralSystemAddress,
+      await this.warProtectionAddress()
     ].filter((address): address is Address => Boolean(address));
     return [...new Set(addresses)];
+  }
+
+  private async warProtectionAddress(): Promise<Address | undefined> {
+    if (!this.allianceContractAddress) return undefined;
+    try {
+      const raw = await this.callContract(this.allianceContractAddress, "0xb1a4a472", []);
+      const decoded = decodeAddressWord(wordAt(splitWords(raw), 0));
+      return decoded === "0x0000000000000000000000000000000000000000" ? undefined : decoded;
+    } catch {
+      // Pre-upgrade Alliance implementations do not expose warProtection().
+      return undefined;
+    }
   }
 
   private async getGameSettlement(wallet: Address): Promise<WalletSettlement> {
@@ -5604,6 +5678,9 @@ const allianceLeftTopic = "0x65b0be45688803f341e315da7be3de9dd83ebf51eb3cccb3788
 const allianceRoleUpdatedTopic = "0xe4ba1cf47cfd4ff05de8585bf5cb06e7b0856932c0d81ef64a3458e26877f30d";
 const allianceOwnershipTransferredTopic = "0x68f6446f7a86cbeefdd42de0fd5fe8291d2183c90343d9a43c0cdc976e5a1617";
 const allianceDiplomacyUpdatedTopic = "0x3df4b2aa5708b43ef1805908826beae5c9a30fb60b1952ad99ce3444b2eec6da";
+// VeydriftAllianceWarProtection.WarSnapshotCaptured(...). The war module is discovered from
+// Alliance.warProtection() so the size-constrained Alliance proxy does not need a mirror event.
+const allianceWarSnapshotCapturedTopic = "0xaf7a44ebc296bed36b4a4227fcb39ea17aa1bf658f29f81ee820fbe8d204fed4";
 const marketResourceDepositedTopic = "0xb241f95d5e925b76c75fd1e811b497abfdc0984105f5b3feb7bee1a75f0a2643";
 const marketResourceWithdrawalRequestedTopic = "0xc4694dfe978480c576eacc57b2b09e69c8b8f50c49739ca4c4515295be589eab";
 const marketResourceWithdrawalFinishedTopic = "0x2b254e656a481b3978a707e6846146a1d7a3144e414cb803bbc7adc97d7587ee";
@@ -5683,6 +5760,7 @@ const eventNamesByTopic = new Map<string, string>([
   [allianceRoleUpdatedTopic, "AllianceRoleUpdated"],
   [allianceOwnershipTransferredTopic, "AllianceOwnershipTransferred"],
   [allianceDiplomacyUpdatedTopic, "AllianceDiplomacyUpdated"],
+  [allianceWarSnapshotCapturedTopic, "AllianceWarSnapshotCaptured"],
   [marketResourceDepositedTopic, "MarketResourceDeposited"],
   [marketResourceWithdrawalRequestedTopic, "MarketResourceWithdrawalRequested"],
   [marketResourceWithdrawalFinishedTopic, "MarketResourceWithdrawalFinished"],
@@ -5928,7 +6006,8 @@ export function isAllianceLog(log: RpcLog): boolean {
     || topic === allianceLeftTopic
     || topic === allianceRoleUpdatedTopic
     || topic === allianceOwnershipTransferredTopic
-    || topic === allianceDiplomacyUpdatedTopic;
+    || topic === allianceDiplomacyUpdatedTopic
+    || topic === allianceWarSnapshotCapturedTopic;
 }
 
 export function isFleetMissionLog(log: RpcLog): boolean {
@@ -6681,6 +6760,20 @@ export function decodeAllianceLog(log: RpcLog): IndexedAllianceEvent {
       allianceId: decodeUint(topicAt(log.topics, 1)).toString(),
       otherAllianceId: decodeUint(topicAt(log.topics, 2)).toString(),
       statusId: Number(decodeUintWord(wordAt(splitWords(log.data), 0)))
+    };
+  }
+  if (topic === allianceWarSnapshotCapturedTopic) {
+    const words = splitWords(log.data);
+    return {
+      ...base,
+      eventName: "AllianceWarSnapshotCaptured",
+      declarerAllianceId: decodeUint(topicAt(log.topics, 1)).toString(),
+      declareeAllianceId: decodeUint(topicAt(log.topics, 2)).toString(),
+      snapshotId: decodeUint(topicAt(log.topics, 3)).toString(),
+      declarerScore: decodeUintWord(wordAt(words, 0)).toString(),
+      declareeScore: decodeUintWord(wordAt(words, 1)).toString(),
+      declarerMemberCount: Number(decodeUintWord(wordAt(words, 2))),
+      declareeMemberCount: Number(decodeUintWord(wordAt(words, 3)))
     };
   }
 

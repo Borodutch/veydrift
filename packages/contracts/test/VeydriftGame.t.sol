@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {IVeydriftAllianceGame, VeydriftAllianceSystem} from "../src/VeydriftAllianceSystem.sol";
+import {VeydriftAllianceWarProtection} from "../src/VeydriftAllianceWarProtection.sol";
 import {RandomnessEngine} from "../src/RandomnessEngine.sol";
 import {VeydriftAttackProtectionModule} from "../src/VeydriftAttackProtectionModule.sol";
 import {VeydriftCombatModule, VeydriftCombatRapidfire} from "../src/VeydriftCombatModule.sol";
@@ -239,6 +240,7 @@ contract VeydriftGameTest is Test {
     VeydriftReferralSystem internal referralSystem;
     VeydriftEffectiveStateLens internal effectiveStateLens;
     VeydriftAllianceSystem internal allianceSystem;
+    VeydriftAllianceWarProtection internal warProtection;
     RandomnessEngine internal randomness;
     VeydriftMoonSystem internal moons;
     MockResourceToken internal metalToken;
@@ -371,6 +373,7 @@ contract VeydriftGameTest is Test {
         game = _newGame(admin);
         effectiveStateLens = new VeydriftEffectiveStateLens();
         allianceSystem = new VeydriftAllianceSystem(IVeydriftAllianceGame(address(game)));
+        warProtection = new VeydriftAllianceWarProtection(address(allianceSystem), address(game));
         randomness = new RandomnessEngine(admin, fulfiller);
         vm.prank(admin);
         randomness.setPrecommitRequired(false);
@@ -381,6 +384,7 @@ contract VeydriftGameTest is Test {
         _fundGameReserves(RESERVE_FUNDING);
         vm.prank(admin);
         game.setAllianceSystem(address(allianceSystem));
+        allianceSystem.setWarProtection(address(warProtection));
         vm.prank(admin);
         game.setMoonSystem(address(moons));
         vm.prank(admin);
@@ -5832,15 +5836,16 @@ contract VeydriftGameTest is Test {
 
     function testWarDiplomacyBypassesAttackBashingLimit() public {
         (uint256 originPlanetId, uint256 targetPlanetId, address defender) = _seedAttackPlanets();
+        _setTechnologyLevel(player, Technology.Computer, 7);
+        _setTechnologyLevel(defender, Technology.Computer, 7);
+        _setShipCount(originPlanetId, Ship.SmallCargo, 7);
+        _setShipCount(targetPlanetId, Ship.SmallCargo, 7);
         uint256 attackerAllianceId = _createAlliance(player);
         uint256 defenderAllianceId = _createAlliance(defender);
         vm.prank(player);
         allianceSystem.setDiplomacy(
             attackerAllianceId, defenderAllianceId, VeydriftAllianceSystem.DiplomacyStatus.War
         );
-
-        _setTechnologyLevel(player, Technology.Computer, 7);
-        _setShipCount(originPlanetId, Ship.SmallCargo, 7);
         _setResources(originPlanetId, 10_000, 10_000, 10_000);
 
         for (uint256 index = 0; index < 7; index++) {
@@ -5863,15 +5868,15 @@ contract VeydriftGameTest is Test {
 
     function testWarDiplomacyBypassesAttackScoreProtection() public {
         (uint256 originPlanetId, uint256 targetPlanetId, address defender) = _seedAttackPlanets();
+        _setShipCount(originPlanetId, Ship.SmallCargo, 1);
+        _setShipCount(originPlanetId, Ship.Deathstar, 2_000);
+        _setShipCount(targetPlanetId, Ship.Deathstar, 2_000);
         uint256 attackerAllianceId = _createAlliance(player);
         uint256 defenderAllianceId = _createAlliance(defender);
         vm.prank(player);
         allianceSystem.setDiplomacy(
             attackerAllianceId, defenderAllianceId, VeydriftAllianceSystem.DiplomacyStatus.War
         );
-
-        _setShipCount(originPlanetId, Ship.SmallCargo, 1);
-        _setShipCount(originPlanetId, Ship.Deathstar, 2_000);
         _setResources(originPlanetId, 10_000, 10_000, 10_000);
 
         vm.prank(player);

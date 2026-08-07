@@ -1166,6 +1166,13 @@ export type AllianceDiplomacyEntry = {
   updatedAt: string | null;
   initiatedByAllianceId: string | null;
   declaredAt?: string | null;
+  warSnapshot?: {
+    snapshotId: string;
+    declarerScore: string;
+    declareeScore: string;
+    declarerMemberCount: number;
+    declareeMemberCount: number;
+  } | null;
   alliance: ChainAllianceState["directory"][number] | null;
 };
 

@@ -89,7 +89,9 @@ async function launchChrome() {
   });
 
   const browserWebSocketUrl = await new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error("Chrome DevTools endpoint timed out.")), 10_000);
+    // GitHub-hosted runners occasionally take longer than the local cold-start path
+    // to initialize headless Chrome after dependency installation.
+    const timeout = setTimeout(() => reject(new Error("Chrome DevTools endpoint timed out.")), 30_000);
     let stderr = "";
     chrome.stderr.setEncoding("utf8");
     chrome.stderr.on("data", (chunk) => {
