@@ -99,7 +99,10 @@ import {
   recordReferralClaimTransaction,
   requestWatchedPlanetSignature,
   readMigrationReservation,
+  readWalletNativeBalance,
   sendSettlementTransaction,
+  settlementFundingShortfallWei,
+  settlementFundingWithWalletBalance,
   sendStartBuildingUpgradeTransaction,
   sendStartMoonBuildingUpgradeTransaction,
   sendStartDefenseProductionTransaction,
@@ -2295,6 +2298,66 @@ describe("walletFlow", () => {
         address: contract
       })
     ).rejects.toThrow("Settlement funding information is required");
+  });
+
+  test("reads the connected wallet's live Base ETH balance", async () => {
+    const requests: unknown[] = [];
+    const provider = mockProvider(async ({ method, params }) => {
+      requests.push({ method, params });
+      return "0x16caa75b00b73d";
+    });
+
+    await expect(readWalletNativeBalance(provider, account)).resolves.toBe(6_415_269_622_757_181n);
+    expect(requests).toEqual([{
+      method: "eth_getBalance",
+      params: [account, "latest"],
+    }]);
+  });
+
+  test("fails closed when the wallet returns an invalid Base ETH balance", async () => {
+    const provider = mockProvider(async () => "6415269622757181");
+
+    await expect(readWalletNativeBalance(provider, account)).rejects.toThrow(
+      "Wallet returned an invalid Base ETH balance",
+    );
+  });
+
+  test("overrides the backend affordability hint with the live wallet balance", () => {
+    const funding = settlementFundingWithWalletBalance({
+      affordable: true,
+      balanceWei: null,
+      contractKind: "game",
+      startPriceWei: 12_000_000_000_000_000n,
+    }, 6_415_269_622_757_181n);
+
+    expect(funding).toEqual({
+      affordable: false,
+      balanceWei: 6_415_269_622_757_181n,
+      contractKind: "game",
+      startPriceWei: 12_000_000_000_000_000n,
+    });
+    expect(settlementFundingShortfallWei(funding)).toBe(5_584_730_377_242_819n);
+  });
+
+  test("keeps funded wallets affordable without overriding backend launch blockers", () => {
+    const funded = settlementFundingWithWalletBalance({
+      affordable: true,
+      balanceWei: null,
+      contractKind: "game",
+      startPriceWei: 12_000_000_000_000_000n,
+    }, 13_000_000_000_000_000n);
+    const unavailable = settlementFundingWithWalletBalance({
+      affordable: false,
+      balanceWei: null,
+      contractKind: "game",
+      startPriceWei: 12_000_000_000_000_000n,
+      unavailableReason: "Resource token reserves are not configured.",
+    }, 13_000_000_000_000_000n);
+
+    expect(funded.affordable).toBe(true);
+    expect(settlementFundingShortfallWei(funded)).toBe(0n);
+    expect(unavailable.affordable).toBe(false);
+    expect(unavailable.unavailableReason).toContain("Resource token reserves");
   });
 
   test("submits legacy settleFirstPlanet when backend reports no game start price", async () => {

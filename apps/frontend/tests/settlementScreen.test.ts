@@ -8,6 +8,7 @@ import {
   POST_SETTLEMENT_INDEXING_TIMEOUT_MESSAGE,
   settlementErrorStateMessage,
   settlementLaunchBlocker,
+  settlementBalanceRecheckAvailable,
   shouldAttemptFarcasterNetworkSetup,
   shouldAutoConnectFarcasterWallet,
   shouldRefreshWalletOnProviderReady,
@@ -328,16 +329,37 @@ describe("settlement screen mode", () => {
     } })).toBe("Resource token reserves are not configured.");
     expect(settlementLaunchBlocker(true, { status: "ready", funding: {
       affordable: false,
-      balanceWei: 0n,
+      balanceWei: 6_415_269_622_757_181n,
       contractKind: "game",
-      startPriceWei: 1n,
-    } })).toContain("more ETH");
+      startPriceWei: 12_000_000_000_000_000n,
+    } })).toBe("This wallet needs at least 0.005584730377242819 more ETH on Base, plus gas, before launching settlement.");
     expect(settlementLaunchBlocker(true, { status: "ready", funding: {
       affordable: true,
       balanceWei: 1n,
       contractKind: "game",
       startPriceWei: 1n,
     } })).toBeUndefined();
+  });
+
+  test("lets an underfunded wallet recheck without bypassing other launch blockers", () => {
+    const underfunded = { status: "ready", funding: {
+      affordable: false,
+      balanceWei: 6_415_269_622_757_181n,
+      contractKind: "game" as const,
+      startPriceWei: 12_000_000_000_000_000n,
+    } };
+
+    expect(settlementBalanceRecheckAvailable(true, underfunded)).toBe(true);
+    expect(settlementBalanceRecheckAvailable(false, underfunded)).toBe(false);
+    expect(settlementBalanceRecheckAvailable(true, { status: "ready", funding: {
+      ...underfunded.funding,
+      unavailableReason: "Resource token reserves are not configured.",
+    } })).toBe(false);
+    expect(settlementBalanceRecheckAvailable(true, { status: "ready", funding: {
+      ...underfunded.funding,
+      affordable: true,
+      balanceWei: 13_000_000_000_000_000n,
+    } })).toBe(false);
   });
 
   test("keeps backend migration reservation when Mini App contract reads are unavailable", () => {

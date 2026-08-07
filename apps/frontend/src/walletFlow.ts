@@ -4070,6 +4070,45 @@ export async function fetchSettlementFundingState(apiUrl: string, wallet: string
   };
 }
 
+export async function readWalletNativeBalance(
+  provider: Eip1193Provider,
+  wallet: string,
+): Promise<bigint> {
+  if (!/^0x[0-9a-fA-F]{40}$/.test(wallet)) {
+    throw new Error("Wallet address is invalid.");
+  }
+
+  const balance = await readWalletRequest<unknown>(provider, {
+    method: "eth_getBalance",
+    params: [wallet, "latest"],
+  }, "wallet Base ETH balance", WALLET_API_READ_TIMEOUT_MS);
+
+  if (typeof balance !== "string" || !/^0x[0-9a-fA-F]+$/.test(balance)) {
+    throw new Error("Wallet returned an invalid Base ETH balance.");
+  }
+
+  return BigInt(balance);
+}
+
+export function settlementFundingWithWalletBalance(
+  funding: SettlementFundingState,
+  balanceWei: bigint,
+): SettlementFundingState {
+  const hasSettlementValue = funding.startPriceWei === null || balanceWei >= funding.startPriceWei;
+  return {
+    ...funding,
+    affordable: funding.affordable && hasSettlementValue,
+    balanceWei,
+  };
+}
+
+export function settlementFundingShortfallWei(funding: SettlementFundingState): bigint | null {
+  if (funding.balanceWei === null || funding.startPriceWei === null) return null;
+  return funding.startPriceWei > funding.balanceWei
+    ? funding.startPriceWei - funding.balanceWei
+    : 0n;
+}
+
 export function referralWalletMessage(wallet: string, action: ReferralWalletAction, commitment?: string): string {
   const lines = [
     "Veydrift referral invites",
