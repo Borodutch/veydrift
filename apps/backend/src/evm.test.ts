@@ -684,6 +684,13 @@ describe("moon chance report event decoding", () => {
       },
       {
         async request<T>(method: string, params: unknown[]): Promise<T> {
+          if (method === "eth_call") {
+            expect(params).toEqual([{
+              to: allianceContractAddress,
+              data: "0xb1a4a472"
+            }, "latest"]);
+            return dataWords([word(0n)]) as T;
+          }
           expect(method).toBe("eth_getLogs");
           expect(params).toEqual([
             {
@@ -1123,14 +1130,55 @@ describe("moon chance report event decoding", () => {
           }
           if (selector === "0x3e6a6710") return dataWords([word(1779816700n)]) as T;
           if (selector === "0x901a1242") return dataWords([word(1n)]) as T;
+          // No module configured yet: pre-upgrade/rolling-upgrade state has no snapshot.
+          if (selector === "0xb1a4a472") return dataWords([word(0n)]) as T;
+          throw new Error(`Unexpected selector ${selector}`);
+        }
+      }
+    );
+
+    const diplomacyState = await reader.listAllianceDiplomacyState();
+    expect(diplomacyState).toEqual([
+      { allianceId: "1", otherAllianceId: "2", statusId: 3, initiatedByAllianceId: "1", declaredAt: "1779816700", warSnapshot: null },
+      { allianceId: "2", otherAllianceId: "1", statusId: 3, initiatedByAllianceId: "1", declaredAt: "1779816700", warSnapshot: null }
+    ]);
+  });
+
+  test("reads frozen war snapshots from the configured protection module", async () => {
+    const allianceContractAddress = "0x2222222222222222222222222222222222222222" as Address;
+    const protectionAddress = "0x3333333333333333333333333333333333333333" as Address;
+    const reader = new VeydriftGameReader(
+      { ...readerConfig, allianceContractAddress },
+      {
+        async request<T>(_method: string, params: unknown[]): Promise<T> {
+          const [call] = params as [{ to: Address; data: string }];
+          const selector = call.data.slice(0, 10);
+          if (selector === "0xf0bab901") return uintArrayResult([1n, 2n]) as T;
+          if (selector === "0xbeddf2fb") return dataWords([word(3n)]) as T;
+          if (selector === "0x3e6a6710") return dataWords([word(1779816700n)]) as T;
+          if (selector === "0x901a1242") return dataWords([word(1n)]) as T;
+          if (selector === "0xb1a4a472") {
+            expect(call.to).toBe(allianceContractAddress);
+            return dataWords([addressWord(protectionAddress)]) as T;
+          }
+          if (selector === "0x150bbb6c") {
+            expect(call.to).toBe(protectionAddress);
+            return dataWords([word(7n), word(1779816700n), word(2400n), word(2000n), word(2n), word(1n)]) as T;
+          }
           throw new Error(`Unexpected selector ${selector}`);
         }
       }
     );
 
     await expect(reader.listAllianceDiplomacyState()).resolves.toEqual([
-      { allianceId: "1", otherAllianceId: "2", statusId: 3, initiatedByAllianceId: "1", declaredAt: "1779816700" },
-      { allianceId: "2", otherAllianceId: "1", statusId: 3, initiatedByAllianceId: "1", declaredAt: "1779816700" }
+      {
+        allianceId: "1", otherAllianceId: "2", statusId: 3, initiatedByAllianceId: "1", declaredAt: "1779816700",
+        warSnapshot: { snapshotId: "7", declarerScore: "2400", declareeScore: "2000", declarerMemberCount: 2, declareeMemberCount: 1 }
+      },
+      {
+        allianceId: "2", otherAllianceId: "1", statusId: 3, initiatedByAllianceId: "1", declaredAt: "1779816700",
+        warSnapshot: { snapshotId: "7", declarerScore: "2400", declareeScore: "2000", declarerMemberCount: 2, declareeMemberCount: 1 }
+      }
     ]);
   });
 

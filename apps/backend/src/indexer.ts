@@ -364,6 +364,11 @@ type AllianceDiplomacyRow = {
   updated_at: string | null;
   initiated_by_alliance_id: string | null;
   declared_at: string | null;
+  snapshot_id: string | null;
+  declarer_score: string | null;
+  declaree_score: string | null;
+  declarer_member_count: number | null;
+  declaree_member_count: number | null;
 };
 
 type LegacyUnitMutation = {
@@ -1749,7 +1754,8 @@ export class SettlementIndexer {
     directoryById: ReadonlyMap<string, AllianceState["directory"][number]>
   ): AllianceState["diplomacy"] {
     const rows = this.db.query(`
-      SELECT alliance_id, other_alliance_id, status_id, updated_at, initiated_by_alliance_id, declared_at
+      SELECT alliance_id, other_alliance_id, status_id, updated_at, initiated_by_alliance_id, declared_at,
+        snapshot_id, declarer_score, declaree_score, declarer_member_count, declaree_member_count
       FROM contract_alliance_diplomacy
       WHERE (alliance_id = ? OR other_alliance_id = ?) AND status_id != 0
     `).all(allianceId, allianceId) as AllianceDiplomacyRow[];
@@ -1770,6 +1776,13 @@ export class SettlementIndexer {
         updatedAt: selected.updated_at,
         initiatedByAllianceId: pairRows.find((row) => row.initiated_by_alliance_id)?.initiated_by_alliance_id ?? null,
         declaredAt: pairRows.find((row) => row.declared_at)?.declared_at ?? null,
+        warSnapshot: selected.snapshot_id === null ? null : {
+          snapshotId: selected.snapshot_id,
+          declarerScore: selected.declarer_score ?? "0",
+          declareeScore: selected.declaree_score ?? "0",
+          declarerMemberCount: selected.declarer_member_count ?? 0,
+          declareeMemberCount: selected.declaree_member_count ?? 0,
+        },
         alliance: directoryById.get(otherAllianceId) ?? null
       };
     }).sort((left, right) => right.statusId - left.statusId || Number(left.otherAllianceId) - Number(right.otherAllianceId));
@@ -4976,6 +4989,11 @@ export class SettlementIndexer {
         updated_at TEXT,
         initiated_by_alliance_id TEXT,
         declared_at TEXT,
+        snapshot_id TEXT,
+        declarer_score TEXT,
+        declaree_score TEXT,
+        declarer_member_count INTEGER,
+        declaree_member_count INTEGER,
         PRIMARY KEY (alliance_id, other_alliance_id)
       );
       CREATE TABLE IF NOT EXISTS contract_highscore_inputs (
@@ -5007,6 +5025,11 @@ export class SettlementIndexer {
     this.ensureColumn("contract_planet_resources", "log_index", "TEXT NOT NULL DEFAULT '0x0'");
     this.ensureColumn("contract_alliance_diplomacy", "initiated_by_alliance_id", "TEXT");
     this.ensureColumn("contract_alliance_diplomacy", "declared_at", "TEXT");
+    this.ensureColumn("contract_alliance_diplomacy", "snapshot_id", "TEXT");
+    this.ensureColumn("contract_alliance_diplomacy", "declarer_score", "TEXT");
+    this.ensureColumn("contract_alliance_diplomacy", "declaree_score", "TEXT");
+    this.ensureColumn("contract_alliance_diplomacy", "declarer_member_count", "INTEGER");
+    this.ensureColumn("contract_alliance_diplomacy", "declaree_member_count", "INTEGER");
     this.backfillStartPriceProjection();
     this.backfillDefenseHoldEndedMissionEvents();
     this.backfillBattleReportStationedDefenderIndex();
@@ -8383,6 +8406,32 @@ export class SettlementIndexer {
         SET owner = lower(?)
         WHERE alliance_id = ?
       `).run(event.newOwner, event.allianceId);
+    } else if (event.eventName === "AllianceWarSnapshotCaptured") {
+      const snapshot = {
+        snapshotId: event.snapshotId,
+        declarerScore: event.declarerScore,
+        declareeScore: event.declareeScore,
+        declarerMemberCount: event.declarerMemberCount,
+        declareeMemberCount: event.declareeMemberCount,
+      };
+      this.upsertAllianceDiplomacyDirection(
+        event.declarerAllianceId,
+        event.declareeAllianceId,
+        3,
+        event.blockNumber,
+        event.declarerAllianceId,
+        null,
+        snapshot
+      );
+      this.upsertAllianceDiplomacyDirection(
+        event.declareeAllianceId,
+        event.declarerAllianceId,
+        3,
+        event.blockNumber,
+        event.declarerAllianceId,
+        null,
+        snapshot
+      );
     } else if (event.eventName === "AllianceDiplomacyUpdated") {
       if (diplomacyStatusName(event.statusId) === "none") {
         this.db.query(`
@@ -8500,7 +8549,8 @@ export class SettlementIndexer {
     if (snapshot === null) return;
     const existingInitiators = new Map(
       (this.db.query(`
-        SELECT alliance_id, other_alliance_id, initiated_by_alliance_id, declared_at
+        SELECT alliance_id, other_alliance_id, initiated_by_alliance_id, declared_at,
+          snapshot_id, declarer_score, declaree_score, declarer_member_count, declaree_member_count
         FROM contract_alliance_diplomacy
         WHERE initiated_by_alliance_id IS NOT NULL
       `).all() as Pick<AllianceDiplomacyRow, "alliance_id" | "other_alliance_id" | "initiated_by_alliance_id" | "declared_at">[])
@@ -8521,18 +8571,30 @@ export class SettlementIndexer {
         ? relation.allianceId
         : null;
       this.db.query(`
-        INSERT INTO contract_alliance_diplomacy (alliance_id, other_alliance_id, status_id, updated_at, initiated_by_alliance_id, declared_at)
-        VALUES (?, ?, ?, NULL, ?, ?)
+        INSERT INTO contract_alliance_diplomacy (
+          alliance_id, other_alliance_id, status_id, updated_at, initiated_by_alliance_id, declared_at,
+          snapshot_id, declarer_score, declaree_score, declarer_member_count, declaree_member_count
+        ) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(alliance_id, other_alliance_id) DO UPDATE SET
           status_id = excluded.status_id,
           initiated_by_alliance_id = excluded.initiated_by_alliance_id,
-          declared_at = excluded.declared_at
+          declared_at = excluded.declared_at,
+          snapshot_id = excluded.snapshot_id,
+          declarer_score = excluded.declarer_score,
+          declaree_score = excluded.declaree_score,
+          declarer_member_count = excluded.declarer_member_count,
+          declaree_member_count = excluded.declaree_member_count
       `).run(
         relation.allianceId,
         relation.otherAllianceId,
         relation.statusId,
         status === "war" ? (relation.initiatedByAllianceId ?? existingMetadata?.initiated_by_alliance_id ?? inferredInitiator) : null,
-        status === "war" ? (relation.declaredAt ?? existingMetadata?.declared_at ?? null) : null
+        status === "war" ? (relation.declaredAt ?? existingMetadata?.declared_at ?? null) : null,
+        relation.warSnapshot?.snapshotId ?? null,
+        relation.warSnapshot?.declarerScore ?? null,
+        relation.warSnapshot?.declareeScore ?? null,
+        relation.warSnapshot?.declarerMemberCount ?? null,
+        relation.warSnapshot?.declareeMemberCount ?? null
       );
     }
     this.touch();
@@ -8544,18 +8606,43 @@ export class SettlementIndexer {
     statusId: number,
     updatedAt: string | null,
     initiatedByAllianceId: string | null,
-    declaredAt: string | null
+    declaredAt: string | null,
+    warSnapshot?: {
+      snapshotId: string;
+      declarerScore: string;
+      declareeScore: string;
+      declarerMemberCount: number;
+      declareeMemberCount: number;
+    } | null
   ): void {
     this.db.query(`
       INSERT INTO contract_alliance_diplomacy (
-        alliance_id, other_alliance_id, status_id, updated_at, initiated_by_alliance_id, declared_at
-      ) VALUES (?, ?, ?, ?, ?, ?)
+        alliance_id, other_alliance_id, status_id, updated_at, initiated_by_alliance_id, declared_at,
+        snapshot_id, declarer_score, declaree_score, declarer_member_count, declaree_member_count
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(alliance_id, other_alliance_id) DO UPDATE SET
         status_id = excluded.status_id,
         updated_at = excluded.updated_at,
         initiated_by_alliance_id = excluded.initiated_by_alliance_id,
-        declared_at = excluded.declared_at
-    `).run(allianceId, otherAllianceId, statusId, updatedAt, initiatedByAllianceId, declaredAt);
+        declared_at = excluded.declared_at,
+        snapshot_id = COALESCE(excluded.snapshot_id, snapshot_id),
+        declarer_score = COALESCE(excluded.declarer_score, declarer_score),
+        declaree_score = COALESCE(excluded.declaree_score, declaree_score),
+        declarer_member_count = COALESCE(excluded.declarer_member_count, declarer_member_count),
+        declaree_member_count = COALESCE(excluded.declaree_member_count, declaree_member_count)
+    `).run(
+      allianceId,
+      otherAllianceId,
+      statusId,
+      updatedAt,
+      initiatedByAllianceId,
+      declaredAt,
+      warSnapshot?.snapshotId ?? null,
+      warSnapshot?.declarerScore ?? null,
+      warSnapshot?.declareeScore ?? null,
+      warSnapshot?.declarerMemberCount ?? null,
+      warSnapshot?.declareeMemberCount ?? null
+    );
   }
 
   private touch(): void {

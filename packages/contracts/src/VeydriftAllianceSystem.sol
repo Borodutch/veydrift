@@ -6,6 +6,7 @@ import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Ini
 import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
 import {VeydriftAntiRaidPrimitives} from "./libraries/VeydriftAntiRaidPrimitives.sol";
 import {Building} from "./libraries/VeydriftTypes.sol";
+import {VeydriftAllianceWarProtection} from "./VeydriftAllianceWarProtection.sol";
 
 interface IVeydriftAllianceGame {
     function buildingLevel(uint256 planetId, Building building) external view returns (uint16);
@@ -142,6 +143,10 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
     ) internal _warDeclarers;
     // VEY-KANEO-818 append-only bridge to the independently deployable paid-invite treasury.
     address public paidInviteSystem;
+    // Append-only directional-war protection bridge. The module owns the bounded roster state so
+    // this already size-constrained proxy only coordinates the canonical diplomacy lifecycle.
+    VeydriftAllianceWarProtection public warProtection;
+    mapping(address member => uint64 membershipEpoch) internal _membershipEpochs;
 
     error AllianceInactive(uint256 allianceId);
     error AlreadyInAlliance(address player, uint256 allianceId);
@@ -163,6 +168,8 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
     error WarDeclarerAlreadyRecorded(uint256 allianceId, uint256 otherAllianceId);
     error WarDeclarerUnknown(uint256 allianceId, uint256 otherAllianceId);
     error WarEndLocked(uint64 unlocksAt);
+    error InvalidWarProtectionModule(address module);
+    error WarProtectionUnset();
     error InvalidWarMigration(
         uint256 allianceId, uint256 otherAllianceId, uint256 declarerAllianceId, uint64 declaredAt
     );
@@ -209,6 +216,7 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
         uint256 indexed declarerAllianceId,
         uint64 declaredAt
     );
+    event WarProtectionUpdated(address indexed previousModule, address indexed nextModule);
     event AllianceDefenseIntentOpened(
         uint256 indexed intentId,
         uint256 indexed allianceId,
@@ -296,6 +304,20 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
         address oldSystem = paidInviteSystem;
         paidInviteSystem = nextSystem;
         emit PaidInviteSystemUpdated(oldSystem, nextSystem);
+    }
+
+    /// @notice Configures the dedicated, Alliance-only war snapshot module after an upgrade.
+    /// @dev Setting this to zero is intentionally forbidden: an unconfigured module makes active
+    ///      wars retain normal protections rather than silently recreating blanket exemptions.
+    function setWarProtection(address nextModule) external onlyOwner {
+        if (nextModule == address(0)) revert ZeroAddress();
+        VeydriftAllianceWarProtection candidate = VeydriftAllianceWarProtection(nextModule);
+        if (candidate.alliance() != address(this) || address(candidate.game()) != address(game)) {
+            revert InvalidWarProtectionModule(nextModule);
+        }
+        address oldModule = address(warProtection);
+        warProtection = candidate;
+        emit WarProtectionUpdated(oldModule, nextModule);
     }
 
     /// @dev Small trusted bridge: the game remains wired to this canonical alliance system while
@@ -624,12 +646,15 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
         DiplomacyStatus reciprocalStatus = _diplomacy[otherAllianceId][allianceId];
         if (status == DiplomacyStatus.War) {
             _requireOwner(allianceId, msg.sender);
+            if (address(warProtection) == address(0)) revert WarProtectionUnset();
             if (currentStatus == DiplomacyStatus.War || reciprocalStatus == DiplomacyStatus.War) {
                 revert WarAlreadyActive(allianceId, otherAllianceId);
             }
             _clearDiplomacyPair(allianceId, otherAllianceId);
             _diplomacy[allianceId][otherAllianceId] = DiplomacyStatus.War;
-            _setWarMetadata(allianceId, otherAllianceId, allianceId, _now());
+            uint64 declaredAt = _now();
+            _setWarMetadata(allianceId, otherAllianceId, allianceId, declaredAt);
+            warProtection.capture(allianceId, otherAllianceId, declaredAt);
             emit AllianceDiplomacyUpdated(allianceId, otherAllianceId, DiplomacyStatus.War);
             return;
         }
@@ -783,6 +808,12 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
         return _warDeclarer(allianceId, otherAllianceId);
     }
 
+    /// @notice Monotonic membership identity used by the war module to make leave/rejoin revoke a
+    ///         snapshot privilege even if it happens in the same timestamp.
+    function membershipEpoch(address member) external view returns (uint64) {
+        return _membershipEpochs[member];
+    }
+
     function defenseIntent(uint256 intentId) external view returns (DefenseIntent memory) {
         return _defenseIntents[intentId];
     }
@@ -803,8 +834,32 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
         defenderAllianceId = _memberships[defender].allianceId;
         sameAlliance = attackerAllianceId != 0 && attackerAllianceId == defenderAllianceId;
         atWar = _relationship(attackerAllianceId, defenderAllianceId) == DiplomacyStatus.War;
-        bashingWarException = atWar;
-        scoreProtectionException = sameAlliance || atWar;
+        if (!atWar) {
+            scoreProtectionException = sameAlliance;
+            return (
+                attackerAllianceId,
+                defenderAllianceId,
+                sameAlliance,
+                false,
+                false,
+                scoreProtectionException
+            );
+        }
+
+        uint256 declarerAllianceId = _warDeclarer(attackerAllianceId, defenderAllianceId);
+        if (address(warProtection) != address(0) && declarerAllianceId != 0) {
+            uint256 declareeAllianceId =
+                declarerAllianceId == attackerAllianceId ? defenderAllianceId : attackerAllianceId;
+            (bashingWarException, scoreProtectionException) = warProtection.attackExceptions(
+                declarerAllianceId,
+                declareeAllianceId,
+                attacker,
+                defender,
+                attackerAllianceId,
+                defenderAllianceId
+            );
+        }
+        scoreProtectionException = sameAlliance || scoreProtectionException;
     }
 
     function attackProtectionFlags(address attacker, address defender)
@@ -960,6 +1015,7 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
 
     function _addMember(uint256 allianceId, address player, AllianceRole role) private {
         game.settleAllianceMembershipBoundary(player);
+        _membershipEpochs[player] += 1;
         _memberships[player] = Membership({allianceId: allianceId, role: role, joinedAt: _now()});
         _memberIndexes[allianceId][player] = _memberLists[allianceId].length + 1;
         _memberLists[allianceId].push(player);
@@ -970,6 +1026,7 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
     function _importMember(uint256 allianceId, address player, AllianceRole role, uint64 joinedAt)
         private
     {
+        _membershipEpochs[player] += 1;
         _memberships[player] = Membership({allianceId: allianceId, role: role, joinedAt: joinedAt});
         _memberIndexes[allianceId][player] = _memberLists[allianceId].length + 1;
         _memberLists[allianceId].push(player);

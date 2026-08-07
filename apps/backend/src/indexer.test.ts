@@ -58,6 +58,7 @@ const allianceLeftTopic = "0x65b0be45688803f341e315da7be3de9dd83ebf51eb3cccb3788
 const allianceRoleUpdatedTopic = "0xe4ba1cf47cfd4ff05de8585bf5cb06e7b0856932c0d81ef64a3458e26877f30d";
 const allianceOwnershipTransferredTopic = "0x68f6446f7a86cbeefdd42de0fd5fe8291d2183c90343d9a43c0cdc976e5a1617";
 const allianceDiplomacyUpdatedTopic = "0x3df4b2aa5708b43ef1805908826beae5c9a30fb60b1952ad99ce3444b2eec6da";
+const allianceWarSnapshotCapturedTopic = "0xaf7a44ebc296bed36b4a4227fcb39ea17aa1bf658f29f81ee820fbe8d204fed4";
 const fleetMissionLaunchedTopic = "0x95e2cb506aa14052bac412e42f47fb34d9234819a960761a7bc7f1920c0ab456";
 const fleetMissionCargoTopic = "0x3daa6311ecdadad6781f70e5d285e7150f9dc165db88d23be8867be4de33ff29";
 const fleetMissionShipsTopic = "0xf581cbe97357884794500d80286cfbe823fed3b5d77446e477aa694ce89fc82d";
@@ -5320,8 +5321,16 @@ describe("SettlementIndexer", () => {
     indexer.applyLog({
       blockNumber: "0x94",
       blockTimestamp: "0x69801c84",
-      transactionHash: "0xalliance-diplomacy",
+      transactionHash: "0xwar-snapshot",
       logIndex: "0x0",
+      topics: [allianceWarSnapshotCapturedTopic, topic(2n), topic(1n), topic(7n)],
+      data: abiWords(2_400n, 2_000n, 2n, 1n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x94",
+      blockTimestamp: "0x69801c84",
+      transactionHash: "0xalliance-diplomacy",
+      logIndex: "0x1",
       topics: [allianceDiplomacyUpdatedTopic, topic(2n), topic(1n)],
       data: abiWords(3n)
     });
@@ -5332,7 +5341,14 @@ describe("SettlementIndexer", () => {
         otherAllianceId: "2",
         status: "war",
         initiatedByAllianceId: "2",
-        declaredAt: String(0x69801c84)
+        declaredAt: String(0x69801c84),
+        warSnapshot: {
+          snapshotId: "7",
+          declarerScore: "2400",
+          declareeScore: "2000",
+          declarerMemberCount: 2,
+          declareeMemberCount: 1
+        }
       }
     ]);
     expect(indexer.allianceRelationship("1", "2")).toBe("war");

@@ -34,6 +34,22 @@ contract VeydriftFirstPlanetSettlementModule is VeydriftResourceReserves {
         _referralSystem = referralSystemAddress;
     }
 
+    /// @dev Kept on the Game proxy ABI but delegated here to leave upgrade bytecode headroom.
+    ///      UpgradeGame deploys this module together with each new Game implementation.
+    function setRandomnessEngine(address nextRandomnessEngine) external onlyOwner {
+        address oldRandomnessEngine = _randomnessEngine;
+        _randomnessEngine = nextRandomnessEngine;
+        emit RandomnessEngineUpdated(oldRandomnessEngine, nextRandomnessEngine);
+    }
+
+    function setMigrationSettlement(address nextMigrationSettlement) external onlyOwner {
+        _migrationSettlement = nextMigrationSettlement;
+    }
+
+    function setGamePaused(bool paused) external onlyOwner {
+        _gamePaused = paused ? 1 : 0;
+    }
+
     function startPlanet() external payable returns (uint256 planetId) {
         planetId = _startPlanet(msg.sender, msg.value, address(0));
     }

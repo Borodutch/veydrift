@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import {IVeydriftAllianceGame, VeydriftAllianceSystem} from "../src/VeydriftAllianceSystem.sol";
+import {VeydriftAllianceWarProtection} from "../src/VeydriftAllianceWarProtection.sol";
 import {RandomnessEngine} from "../src/RandomnessEngine.sol";
 import {VeydriftAttackProtectionModule} from "../src/VeydriftAttackProtectionModule.sol";
 import {VeydriftCombatModule, VeydriftCombatRapidfire} from "../src/VeydriftCombatModule.sol";
@@ -113,6 +114,7 @@ contract VeydriftAllianceSystemTest is Test {
 
     VeydriftGame internal game;
     VeydriftAllianceSystem internal alliances;
+    VeydriftAllianceWarProtection internal warProtection;
     VeydriftPaidAllianceInvites internal paidInvites;
     AllianceMockResourceToken internal metalToken;
     AllianceMockResourceToken internal crystalToken;
@@ -145,6 +147,7 @@ contract VeydriftAllianceSystemTest is Test {
         vm.prank(admin);
         randomness.setPrecommitRequired(false);
         alliances = new VeydriftAllianceSystem(IVeydriftAllianceGame(address(game)));
+        warProtection = new VeydriftAllianceWarProtection(address(alliances), address(game));
         paidInvites = new VeydriftPaidAllianceInvites(
             IVeydriftPaidInviteAlliance(address(alliances)), admin, vm.addr(inviteSignerKey)
         );
@@ -153,6 +156,7 @@ contract VeydriftAllianceSystemTest is Test {
         deuteriumToken = new AllianceMockResourceToken();
         _fundGameReserves(1_000_000_000);
         alliances.setPaidInviteSystem(address(paidInvites));
+        alliances.setWarProtection(address(warProtection));
         vm.startPrank(admin);
         game.setAllianceSystem(address(alliances));
         game.setRandomnessEngine(address(randomness));
@@ -1037,6 +1041,72 @@ contract VeydriftAllianceSystemTest is Test {
             uint8(alliances.diplomacyStatus(enemyAllianceId, allianceId)),
             uint8(VeydriftAllianceSystem.DiplomacyStatus.War)
         );
+    }
+
+    function testWarProtectionRequiresCorrectBindingAndAllianceWriter() public {
+        VeydriftAllianceWarProtection misbound =
+            new VeydriftAllianceWarProtection(address(0xBEEF), address(game));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftAllianceSystem.InvalidWarProtectionModule.selector, address(misbound)
+            )
+        );
+        alliances.setWarProtection(address(misbound));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftAllianceWarProtection.NotAlliance.selector, address(this))
+        );
+        warProtection.capture(1, 2, uint64(block.timestamp));
+    }
+
+    function testWarSnapshotRestrictsLateAndRejoinedMembersAndProtectsOutmatchedDeclaree()
+        public
+    {
+        vm.prank(leader);
+        uint256 declarerAllianceId = alliances.createAlliance("ALLY", "Alliance", "");
+        _inviteAndAccept(declarerAllianceId, member);
+        vm.prank(enemy);
+        uint256 declareeAllianceId = alliances.createAlliance("WAR", "War Target", "");
+
+        // Every new commander starts at score 1,000. Twenty Deathstars raise the declarer's
+        // snapshot above the 1.5x band, so it must not receive a score-protection bypass.
+        _setShipCount(game.homePlanetOf(member), Ship.Deathstar, 20);
+        vm.prank(leader);
+        alliances.setDiplomacy(
+            declarerAllianceId, declareeAllianceId, VeydriftAllianceSystem.DiplomacyStatus.War
+        );
+
+        VeydriftAllianceWarProtection.WarSnapshot memory snapshot =
+            warProtection.warSnapshot(declarerAllianceId, declareeAllianceId);
+        assertGt(snapshot.snapshotId, 0);
+        assertEq(snapshot.declarerMemberCount, 2);
+        assertEq(snapshot.declareeMemberCount, 1);
+        assertTrue(warProtection.memberAtStart(declarerAllianceId, declareeAllianceId, member));
+
+        (,,, bool atWar, bool bashingWarException, bool scoreProtectionException) =
+            alliances.attackLimitAllianceContext(member, enemy);
+        assertTrue(atWar);
+        assertTrue(bashingWarException);
+        assertFalse(scoreProtectionException, "outmatched declarer cannot bypass score protection");
+
+        (,,,,, scoreProtectionException) = alliances.attackLimitAllianceContext(enemy, leader);
+        assertTrue(scoreProtectionException, "declarer receives no score protection from declaree");
+
+        _inviteAndAccept(declarerAllianceId, recruit);
+        (,,, atWar, bashingWarException, scoreProtectionException) =
+            alliances.attackLimitAllianceContext(recruit, enemy);
+        assertTrue(atWar);
+        assertFalse(bashingWarException, "late join gets no bashing exception");
+        assertFalse(scoreProtectionException, "late join gets no score exception");
+
+        vm.prank(member);
+        alliances.leaveAlliance();
+        _inviteAndAccept(declarerAllianceId, member);
+        (,,, atWar, bashingWarException, scoreProtectionException) =
+            alliances.attackLimitAllianceContext(member, enemy);
+        assertTrue(atWar);
+        assertFalse(bashingWarException, "rejoin cannot restore the original war privilege");
+        assertFalse(scoreProtectionException, "rejoin cannot restore score exception");
     }
 
     function testWarCannotEndUntilFortyEightHoursAfterDeclaration() public {
