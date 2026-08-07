@@ -6974,6 +6974,7 @@ describe("Veydrift backend", () => {
       planetId: "7",
       transactionHash: "0xabc",
       blockNumber: "123",
+      logIndex: "0x0",
       lastSettledAt: settlementBody.planet.lastSettledAt,
       resources: { metal: "5000", crystal: "4900", deuterium: "4800" }
     });

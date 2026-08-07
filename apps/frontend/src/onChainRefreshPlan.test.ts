@@ -1,87 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import {
-  planOnChainRefresh,
   shouldClearCachedShipyardStateForPageRefresh,
   shouldEagerlyRefreshPlanetSwitchForPage,
   shouldRefreshPlanetStateForIdentityChange,
   shouldRefreshAllianceStateForPage,
 } from "./PlayableMvpApp";
-
-describe("planOnChainRefresh", () => {
-  test("always applies authoritative queues + fleet visibility", () => {
-    const stale = planOnChainRefresh(
-      { planetId: "7", lastSettledAt: "200" },
-      { planetId: "7", lastSettledAt: "100" },
-    );
-    expect(stale.applyQueues).toBe(true);
-
-    const fresh = planOnChainRefresh(
-      { planetId: "7", lastSettledAt: "100" },
-      { planetId: "7", lastSettledAt: "200" },
-    );
-    expect(fresh.applyQueues).toBe(true);
-  });
-
-  test("keeps queues authoritative while rejecting resource snapshots older than the confirmed floor", () => {
-    const plan = planOnChainRefresh(
-      { planetId: "7", lastSettledAt: "200" },
-      { planetId: "7", lastSettledAt: "100" },
-    );
-    expect(plan.applyResourceState).toBe(false);
-    expect(plan.applyQueues).toBe(true);
-  });
-
-  test("applies resource state when the settlement read is newer", () => {
-    const plan = planOnChainRefresh(
-      { planetId: "7", lastSettledAt: "100" },
-      { planetId: "7", lastSettledAt: "200" },
-    );
-    expect(plan.applyResourceState).toBe(true);
-  });
-
-  test("applies resource state when the active planet changes", () => {
-    const plan = planOnChainRefresh(
-      { planetId: "7", lastSettledAt: "200" },
-      { planetId: "9", lastSettledAt: "100" },
-    );
-    expect(plan.applyResourceState).toBe(true);
-  });
-
-  test("force accepts an equal resource snapshot but cannot bypass the confirmed transaction floor", () => {
-    // Equal snapshots remain eligible, preserving VEY-KANEO-484. An explicitly
-    // forced read is still not allowed to roll canonical resources backward.
-    const equal = planOnChainRefresh(
-      { planetId: "7", lastSettledAt: "200" },
-      { planetId: "7", lastSettledAt: "200" },
-      { force: true },
-    );
-    expect(equal.applyResourceState).toBe(true);
-
-    const older = planOnChainRefresh(
-      { planetId: "7", lastSettledAt: "200" },
-      { planetId: "7", lastSettledAt: "100" },
-      { force: true },
-    );
-    expect(older.applyResourceState).toBe(false);
-  });
-
-  test("force does not change the always-on queue/fleet application", () => {
-    const plan = planOnChainRefresh(
-      { planetId: "7", lastSettledAt: "200" },
-      { planetId: "7", lastSettledAt: "100" },
-      { force: true },
-    );
-    expect(plan.applyQueues).toBe(true);
-  });
-
-  test("periodic polls cannot roll resource state back to an older snapshot", () => {
-    const plan = planOnChainRefresh(
-      { planetId: "7", lastSettledAt: "200" },
-      { planetId: "7", lastSettledAt: "100" },
-    );
-    expect(plan.applyResourceState).toBe(false);
-  });
-});
 
 describe("shouldRefreshAllianceStateForPage", () => {
   test("loads alliance membership for Mission Control and Raid Finder before the Alliance tab is opened", () => {

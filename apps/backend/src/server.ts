@@ -3360,11 +3360,12 @@ function indexedWalletPlanetState(
 
 function resourceSnapshotMetadataForPlanet(planet: PlanetState | null): ResourceSnapshotMetadata | null {
   if (!planet) return null;
-  const resourceEvent = planet as PlanetState & Partial<Pick<SettledPlanetEvent, "blockNumber" | "transactionHash">>;
+  const resourceEvent = planet as PlanetState & Partial<Pick<SettledPlanetEvent, "blockNumber" | "logIndex" | "transactionHash">>;
   return {
     planetId: planet.planetId,
     transactionHash: resourceEvent.transactionHash ?? null,
     blockNumber: resourceEvent.blockNumber ?? null,
+    logIndex: resourceEvent.logIndex ?? null,
     lastSettledAt: planet.lastSettledAt ?? null,
     resources: planet.resources ?? null
   };

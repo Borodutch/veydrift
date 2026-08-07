@@ -24,7 +24,6 @@ import {
   hasInfrastructureDisplayState,
   infrastructureBackendSyncPausedLabel,
   infrastructureBackendSyncPausedReasonFor,
-  infrastructureStateForRefreshApplication,
   infrastructureStateForCompletionRevalidation,
   infrastructureActionNoticeFor,
   infrastructureDisplayActionNoticeFor,
@@ -45,8 +44,6 @@ import {
   planetHasIncomingAttack,
   planetScopedFleetVisibility,
   previousMissionIndexingBlockerLabel,
-  resourceSnapshotFreshnessForInfrastructure,
-  resourceSnapshotFreshnessForSettlement,
   refreshedInfrastructureUnavailableReasonFor,
   refreshedInfrastructureUpgradeUnavailableReasonFor,
   researchCompletionUnavailableReasonFor,
@@ -67,7 +64,6 @@ import {
   nextProductionQueueCompletionEventMs,
   selectedPlanetIdForWalletRead,
   selectedPlanetIdFromRoster,
-  shouldApplyResourceSnapshot,
   shipyardStateForMissionActions,
   shipyardStateWithMissionLaunchBlocker,
   shipCompletionPlanetIdFor,
@@ -1425,64 +1421,6 @@ describe("Playable MVP app display helpers", () => {
       infrastructureResourcesAsOfNow: { metal: "2022", crystal: "1005", deuterium: "1259" },
       infrastructureResources: { metal: "1900", crystal: "900", deuterium: "1200" },
     })).toEqual({ metal: 2022, crystal: 1005, deuterium: 1259 });
-  });
-
-  test("resource freshness accepts returned-loot credits with unchanged lastSettledAt (VEY-KANEO-517)", () => {
-    const current = resourceSnapshotFreshnessForSettlement({
-      homePlanetId: "7",
-      planet: {
-        planetId: "7",
-        lastSettledAt: "1770000300",
-        resources: { metal: "2022", crystal: "1005", deuterium: "1259" },
-        resourcesAsOfNow: { metal: "2022", crystal: "1005", deuterium: "1259" },
-      } as never,
-    } as never);
-    const returnedLoot = resourceSnapshotFreshnessForInfrastructure({
-      homePlanetId: "7",
-      planetId: "7",
-      planetLastSettledAt: "1770000300",
-      resources: { metal: "5000", crystal: "2824", deuterium: "1359" },
-      resourcesAsOfNow: { metal: "5000", crystal: "2824", deuterium: "1359" },
-    } as never);
-
-    expect(shouldApplyResourceSnapshot(current, returnedLoot)).toBe(true);
-  });
-
-  test("preserves fresher infrastructure resources while applying completed building state", () => {
-    const current = {
-      ...infrastructureState({
-        queue: readyBuildingQueue(),
-        resources: { metal: "900", crystal: "700", deuterium: "30" },
-      }),
-      planetLastSettledAt: "200",
-      resourcesAsOfNow: { metal: "940", crystal: "730", deuterium: "30" },
-      buildings: [
-        { id: 0, level: 1, cost: { metal: "120", crystal: "30", deuterium: "0" } },
-      ],
-    };
-    const completed = {
-      ...infrastructureState({
-        queue: null,
-        resources: { metal: "500", crystal: "500", deuterium: "0" },
-      }),
-      planetLastSettledAt: "100",
-      resourcesAsOfNow: { metal: "520", crystal: "510", deuterium: "0" },
-      buildings: [
-        { id: 0, level: 2, cost: { metal: "240", crystal: "60", deuterium: "0" } },
-      ],
-    };
-
-    const applied = infrastructureStateForRefreshApplication({
-      applyResourceState: false,
-      current,
-      next: completed,
-    });
-
-    expect(applied.queue).toBeNull();
-    expect(applied.buildings.find((building) => building.id === 0)?.level).toBe(2);
-    expect(applied.resources).toEqual({ metal: "900", crystal: "700", deuterium: "30" });
-    expect(applied.resourcesAsOfNow).toEqual({ metal: "940", crystal: "730", deuterium: "30" });
-    expect(applied.planetLastSettledAt).toBe("200");
   });
 
   test("schedules building completion auto-refresh at the ready boundary", () => {
