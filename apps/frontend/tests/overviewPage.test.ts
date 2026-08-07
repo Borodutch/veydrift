@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import type { ComponentChildren, VNode } from "preact";
 import {
   overviewHeroImage,
 } from "../src/overviewHeroImage";
@@ -7,9 +8,12 @@ import {
   isOverviewResearchReadyToFinish,
   compactOverviewLevelLabel,
   compactOverviewResearchLabel,
+  EmptyQueue,
+  OverviewQueueFallback,
   overviewBuildingActionNoticeFor,
   overviewResearchActionNoticeFor,
 } from "../src/components/OverviewPage";
+import type { ConstructionProgress, ConstructionQueueKind } from "../src/constructionProgress";
 import {
   overviewQueueItemLabelClassName,
   overviewQueueItemRemainingClassName,
@@ -123,6 +127,63 @@ describe("overview planet hero image", () => {
 });
 
 describe("overview queue progress display", () => {
+  test("renders empty queue states when completed centralized progress outlives stale Overview fallbacks", () => {
+    expect(overviewSource.match(/<OverviewQueueFallback/g)?.length).toBe(3);
+    expect(overviewSource).toContain("progressState={constructionProgress?.building}");
+    expect(overviewSource).toContain("progressState={constructionProgress?.research}");
+    expect(overviewSource).toContain("progressState={constructionProgress?.ship}");
+
+    const cases = [
+      {
+        actionLabel: "Build",
+        emptyLabel: "No active construction.",
+        kind: "building" as const,
+        staleLabel: "Metal Mine 12",
+      },
+      {
+        actionLabel: "Research",
+        emptyLabel: "No active research.",
+        kind: "research" as const,
+        staleLabel: "Energy Technology 9",
+      },
+      {
+        actionLabel: "Shipyard",
+        emptyLabel: "No active ship production.",
+        kind: "ship" as const,
+        staleLabel: "Small Cargo",
+      },
+    ];
+
+    for (const queueCase of cases) {
+      const rendered = OverviewQueueFallback({
+        progressState: completedProgress(queueCase.kind),
+        queue: { label: queueCase.staleLabel },
+        renderEmpty: () => EmptyQueue({
+          actionLabel: queueCase.actionLabel,
+          children: queueCase.emptyLabel,
+          onAction: () => undefined,
+        }),
+        renderQueue: (queue) => queue.label,
+      });
+      const text = visibleText(rendered);
+
+      expect(text).toContain(queueCase.emptyLabel);
+      expect(text).toContain(queueCase.actionLabel);
+      expect(text).not.toContain(queueCase.staleLabel);
+    }
+  });
+
+  test("retains local queue fallbacks when centralized progress is absent", () => {
+    const rendered = OverviewQueueFallback({
+      progressState: undefined,
+      queue: { label: "Local Metal Mine 2" },
+      renderEmpty: () => "No active construction.",
+      renderQueue: (queue) => queue.label,
+    });
+
+    expect(visibleText(rendered)).toBe("Local Metal Mine 2");
+  });
+
   test("uses compact level labels inside overview queue cards", () => {
     expect(compactOverviewLevelLabel("Shipyard Level 9")).toBe("Shipyard 9");
     expect(compactOverviewLevelLabel("Plasma Technology level 7")).toBe("Plasma Technology 7");
@@ -530,3 +591,28 @@ describe("overview queue progress display", () => {
     expect(isOverviewResearchReadyToFinish(queue, 1_699_999_000_000)).toBe(false);
   });
 });
+
+function completedProgress(kind: ConstructionQueueKind): ConstructionProgress {
+  return {
+    active: false,
+    bodyKind: "planet",
+    complete: true,
+    indeterminate: false,
+    kind,
+    planetId: "7",
+    progress: 1,
+    queue: null,
+    remaining: "Idle",
+  };
+}
+
+function visibleText(node: ComponentChildren): string {
+  return textParts(node).join(" ").replace(/\s+/g, " ").trim();
+}
+
+function textParts(node: ComponentChildren): string[] {
+  if (node === null || node === undefined || typeof node === "boolean") return [];
+  if (typeof node === "string" || typeof node === "number") return [String(node)];
+  if (Array.isArray(node)) return node.flatMap(textParts);
+  return textParts((node as VNode).props?.children);
+}
