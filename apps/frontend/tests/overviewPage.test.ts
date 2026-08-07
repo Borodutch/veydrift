@@ -3,6 +3,7 @@ import {
   overviewHeroImage,
 } from "../src/overviewHeroImage";
 import { productionQueueViewModel } from "../src/components/ProductionCatalog";
+import { planetMoonIndicatorSizeClasses } from "../src/components/PlanetMoonIndicator";
 import {
   isOverviewResearchReadyToFinish,
   compactOverviewLevelLabel,
@@ -61,6 +62,18 @@ const homePlanet: Planet = {
 };
 
 describe("overview planet hero image", () => {
+  test("makes only the desktop Overview moon 150% larger while preserving mobile sizing", () => {
+    expect(planetMoonIndicatorSizeClasses({ overviewHero: true })).toBe(
+      "h-11 w-11 xl:h-[30px] xl:w-[30px]",
+    );
+    expect(planetMoonIndicatorSizeClasses()).toBe("h-11 w-11 xl:h-5 xl:w-5");
+    expect(30 / 20).toBe(1.5);
+    expect(overviewSource).toContain("<PlanetMoonIndicator");
+    expect(overviewSource).toContain("overviewHero");
+    expect(overviewSource).toContain('className="right-3 top-3"');
+    expect(overviewSource).toContain("onSelectMoon({ galaxy: homePlanet.galaxy, system: homePlanet.system, position: homePlanet.position })");
+  });
+
   test("does not render commander identity in the Overview banner", () => {
     const commanderIndex = overviewSource.indexOf(">Commander<");
     const planetHeroIndex = overviewSource.indexOf("Planet hero");

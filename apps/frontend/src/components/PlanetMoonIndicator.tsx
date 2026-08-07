@@ -40,6 +40,7 @@ export function PlanetMoonIndicator({
   href,
   label = "Moon present",
   onClick,
+  overviewHero = false,
   planetType,
   title,
 }: {
@@ -48,10 +49,11 @@ export function PlanetMoonIndicator({
   href?: string | undefined;
   label?: string | undefined;
   onClick?: (() => void) | undefined;
+  overviewHero?: boolean | undefined;
   planetType?: PlanetType | null | undefined;
   title?: string | undefined;
 }) {
-  const sizeClass = compact ? "h-8 w-8 xl:h-4 xl:w-4" : "h-11 w-11 xl:h-5 xl:w-5";
+  const sizeClass = planetMoonIndicatorSizeClasses({ compact, overviewHero });
   const indicatorClass = `absolute right-1 top-1 inline-flex ${sizeClass} items-center justify-center overflow-hidden rounded-full border border-cyan-100/70 bg-slate-950/85 shadow-[0_0_10px_rgba(103,232,249,0.35)] ${className}`;
 
   if (href) {
@@ -93,6 +95,18 @@ export function PlanetMoonIndicator({
       <MoonImage className="h-full w-full object-cover" planetType={planetType} />
     </span>
   );
+}
+
+export function planetMoonIndicatorSizeClasses({
+  compact = false,
+  overviewHero = false,
+}: {
+  compact?: boolean | undefined;
+  overviewHero?: boolean | undefined;
+} = {}): string {
+  if (compact) return "h-8 w-8 xl:h-4 xl:w-4";
+  if (overviewHero) return "h-11 w-11 xl:h-[30px] xl:w-[30px]";
+  return "h-11 w-11 xl:h-5 xl:w-5";
 }
 
 export function PlanetMoonSubsection({
