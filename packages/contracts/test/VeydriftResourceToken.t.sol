@@ -13,6 +13,8 @@ import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeab
 import {Deploy} from "../script/Deploy.s.sol";
 import {DeployResourceTokens} from "../script/DeployResourceTokens.s.sol";
 import {VeydriftAttackProtectionModule} from "../src/VeydriftAttackProtectionModule.sol";
+import {VeydriftAllianceSystem} from "../src/VeydriftAllianceSystem.sol";
+import {VeydriftPaidAllianceInvites} from "../src/VeydriftPaidAllianceInvites.sol";
 import {VeydriftCombatModule, VeydriftCombatRapidfire} from "../src/VeydriftCombatModule.sol";
 import {VeydriftColonizationModule} from "../src/VeydriftColonizationModule.sol";
 import {VeydriftShipProductionModule} from "../src/VeydriftShipProductionModule.sol";
@@ -211,6 +213,9 @@ contract VeydriftResourceTokenTest is Test {
         assertEq(VeydriftSettlement(settlementAddress).owner(), deployer);
         assertTrue(settlementAddress.code.length > 0);
         assertTrue(allianceSystemAddress.code.length > 0);
+        address paidInviteSystem = VeydriftAllianceSystem(allianceSystemAddress).paidInviteSystem();
+        assertTrue(paidInviteSystem.code.length > 0);
+        assertEq(VeydriftPaidAllianceInvites(paidInviteSystem).INVITE_PRICE(), 0.006 ether);
         assertTrue(moonSystemAddress.code.length > 0);
         assertTrue(randomnessEngineAddress.code.length > 0);
         assertEq(deployedGame.resourceToken(Resource.Metal), metalToken);
@@ -353,5 +358,6 @@ contract VeydriftResourceTokenTest is Test {
         deployer = vm.addr(deployerPrivateKey);
         vm.setEnv("PRIVATE_KEY", vm.toString(deployerPrivateKey));
         vm.setEnv("ADMIN_ADDRESS", vm.toString(deployer));
+        vm.setEnv("PAID_ALLIANCE_INVITE_SIGNER_ADDRESS", vm.toString(address(0x51A9E7)));
     }
 }

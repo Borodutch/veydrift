@@ -272,6 +272,13 @@ import {
   sendStartResearchTransaction,
   sendStartShipProductionTransaction,
   sendCreateAllianceTransaction,
+  sendBuyPaidAllianceInviteTransaction,
+  sendWithdrawPaidAllianceBonusTransaction,
+  paidAllianceInviteCommitment,
+  paidAllianceInviteLink,
+  recoverPaidAllianceInvites,
+  storePaidAllianceInvite,
+  PAID_ALLIANCE_INVITE_PRICE_WEI,
   sendBurningChickenMoonTransaction,
   defaultVeydriftChainForLocation,
   ensureVeydriftNetwork,
@@ -314,6 +321,7 @@ import {
   type WalletPlanetsResponse,
   type WatchedPlanetsResponse,
   type WalletSettlementResponse,
+  type PaidAllianceBonusAmount,
   type ResourceSnapshotMetadata,
   type TransactionReceipt,
 } from "./walletFlow";
@@ -4557,6 +4565,9 @@ export function PlayableMvpApp({
   const allianceContract = useMemo(() => {
     return runtimeConfig.status === "ready" ? allianceContractAddress(runtimeConfig.config) : undefined;
   }, [runtimeConfig]);
+  const paidAllianceInviteContract = runtimeConfig.status === "ready"
+    ? runtimeConfig.config.paidAllianceInviteAddress ?? undefined
+    : undefined;
   const moonContract = useMemo(() => {
     return runtimeConfig.status === "ready" ? moonContractAddress(runtimeConfig.config) : undefined;
   }, [runtimeConfig]);
@@ -7278,6 +7289,52 @@ export function PlayableMvpApp({
     ));
   }, [account, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction]);
 
+  const handleBuyPaidAllianceInvite = useCallback((secret: string) => {
+    if (!provider || !account || !paidAllianceInviteContract || !apiBaseUrl) {
+      setAllianceAction({ status: "error", label: "Paid alliance invites are not configured." });
+      return;
+    }
+    void runAllianceTransaction("Paid alliance invite purchase", () => sendBuyPaidAllianceInviteTransaction(
+      provider,
+      account,
+      paidAllianceInviteContract,
+      paidAllianceInviteCommitment(secret),
+      PAID_ALLIANCE_INVITE_PRICE_WEI,
+    ), async () => {
+      await storePaidAllianceInvite(apiBaseUrl, provider, account, secret);
+      return refreshAllianceState();
+    });
+  }, [account, apiBaseUrl, paidAllianceInviteContract, provider, refreshAllianceState, runAllianceTransaction]);
+
+  const handleRecoverPaidAllianceInvites = useCallback(async () => {
+    if (!provider || !account || !apiBaseUrl) return null;
+    const invites = await recoverPaidAllianceInvites(apiBaseUrl, provider, account);
+    const links = invites.map((invite) => paidAllianceInviteLink(invite.secret, window.location.origin));
+    return links.length ? links.join("\n") : null;
+  }, [account, apiBaseUrl, provider]);
+
+  const handleWithdrawPaidAllianceBonus = useCallback((amount: PaidAllianceBonusAmount) => {
+    if (!provider || !account || !paidAllianceInviteContract || !allianceState?.membership.allianceId || !activePlanetId) {
+      setAllianceAction({ status: "error", label: "Alliance production treasury is not configured." });
+      return;
+    }
+    const activePlanetHasRift = infrastructureChainState?.buildings.some((building) => (
+      building.id === buildingContractIds.interdimensionalRiftStabilizer && building.level > 0
+    ));
+    if (!activePlanetHasRift) {
+      setAllianceAction({ status: "error", label: "Build an Interdimensional Rift Stabilizer on the active planet first." });
+      return;
+    }
+    void runAllianceTransaction("Alliance production treasury withdrawal", () => sendWithdrawPaidAllianceBonusTransaction(
+      provider,
+      account,
+      paidAllianceInviteContract,
+      allianceState.membership.allianceId,
+      activePlanetId,
+      amount,
+    ));
+  }, [account, activePlanetId, allianceState?.membership.allianceId, infrastructureChainState?.buildings, paidAllianceInviteContract, provider, runAllianceTransaction]);
+
   const handleUpdateAllianceProfile = useCallback((tag: string, name: string, description: string) => {
     if (!provider || !account || !apiBaseUrl || !allianceContract || !allianceState?.membership.allianceId) {
       setAllianceAction({ status: "error", label: "Alliance contract unavailable." });
@@ -9625,6 +9682,9 @@ export function PlayableMvpApp({
           onJoinRequest={handleRequestAllianceJoin}
           onKick={handleKickAllianceMember}
           onInvite={handleInviteAllianceMember}
+          onBuyPaidInvite={handleBuyPaidAllianceInvite}
+          onRecoverPaidInvites={handleRecoverPaidAllianceInvites}
+          onWithdrawPaidInviteBonus={handleWithdrawPaidAllianceBonus}
           onLeaveAlliance={handleLeaveAlliance}
           onOpenAlliance={handleSelectAlliance}
           onOpenPlayer={handleSelectPlayer}

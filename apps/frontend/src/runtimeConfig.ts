@@ -28,6 +28,9 @@ export type RuntimeConfig = {
   moonContractAddress: string | null;
   network: string;
   referralSystemAddress?: string | null;
+  referralStartPriceWei?: string | null;
+  paidAllianceInviteAddress?: string | null;
+  paidAllianceInviteSignerAddress?: string | null;
   resourceTokenAddresses: {
     crystal: string | null;
     deuterium: string | null;

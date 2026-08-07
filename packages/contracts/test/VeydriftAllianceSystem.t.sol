@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import {IVeydriftAllianceGame, VeydriftAllianceSystem} from "../src/VeydriftAllianceSystem.sol";
 import {RandomnessEngine} from "../src/RandomnessEngine.sol";
 import {VeydriftAttackProtectionModule} from "../src/VeydriftAttackProtectionModule.sol";
@@ -15,8 +16,12 @@ import {VeydriftGame} from "../src/VeydriftGame.sol";
 import {VeydriftGameStorage} from "../src/VeydriftGameStorage.sol";
 import {VeydriftGameplayModule} from "../src/VeydriftGameplayModule.sol";
 import {VeydriftPlanetManagementModule} from "../src/VeydriftPlanetManagementModule.sol";
+import {
+    IVeydriftPaidInviteAlliance,
+    VeydriftPaidAllianceInvites
+} from "../src/VeydriftPaidAllianceInvites.sol";
 import {VeydriftStateMigrationModule} from "../src/VeydriftStateMigrationModule.sol";
-import {Resource, Ship} from "../src/libraries/VeydriftTypes.sol";
+import {Building, Resource, Ship} from "../src/libraries/VeydriftTypes.sol";
 
 contract AllianceMockResourceToken {
     mapping(address account => uint256 balance) public balanceOf;
@@ -103,9 +108,12 @@ contract VeydriftAllianceSystemTest is Test {
     address internal enemy = address(0xE11A);
     address internal recruit = address(0xBEEF);
     address internal fulfiller = address(0xF17F);
+    address internal newCommander = address(0x818);
+    uint256 internal inviteSignerKey = 0x818818;
 
     VeydriftGame internal game;
     VeydriftAllianceSystem internal alliances;
+    VeydriftPaidAllianceInvites internal paidInvites;
     AllianceMockResourceToken internal metalToken;
     AllianceMockResourceToken internal crystalToken;
     AllianceMockResourceToken internal deuteriumToken;
@@ -137,11 +145,16 @@ contract VeydriftAllianceSystemTest is Test {
         vm.prank(admin);
         randomness.setPrecommitRequired(false);
         alliances = new VeydriftAllianceSystem(IVeydriftAllianceGame(address(game)));
+        paidInvites = new VeydriftPaidAllianceInvites(
+            IVeydriftPaidInviteAlliance(address(alliances)), admin, vm.addr(inviteSignerKey)
+        );
         metalToken = new AllianceMockResourceToken();
         crystalToken = new AllianceMockResourceToken();
         deuteriumToken = new AllianceMockResourceToken();
         _fundGameReserves(1_000_000_000);
+        alliances.setPaidInviteSystem(address(paidInvites));
         vm.startPrank(admin);
+        game.setAllianceSystem(address(alliances));
         game.setRandomnessEngine(address(randomness));
         randomness.setRequesterAuthorization(address(game), true);
         vm.stopPrank();
@@ -149,10 +162,356 @@ contract VeydriftAllianceSystemTest is Test {
         vm.deal(member, 1 ether);
         vm.deal(enemy, 1 ether);
         vm.deal(recruit, 1 ether);
+        vm.deal(newCommander, 1 ether);
         _start(leader);
         _start(member);
         _start(enemy);
         _start(recruit);
+    }
+
+    function testPaidInviteChargesSeparateSettlementAutoJoinsAndReusesStarterBonus() public {
+        vm.prank(leader);
+        uint256 allianceId = alliances.createAlliance("VDFT", "Veydrift Union", "");
+        bytes32 secret = keccak256("high entropy secret kept in private link");
+        bytes32 commitment = keccak256(abi.encode(secret));
+        uint256 price = paidInvites.INVITE_PRICE();
+        uint256 gameFeeBalanceBefore = address(game).balance;
+
+        vm.prank(leader);
+        paidInvites.buy{value: price}(commitment);
+        VeydriftPaidAllianceInvites.PaidInvite memory purchased = paidInvites.invite(commitment);
+        assertEq(purchased.allianceId, allianceId);
+        assertEq(purchased.settlementPrice, price);
+        assertEq(address(paidInvites).balance, 0);
+        assertEq(address(game).balance, gameFeeBalanceBefore + price, "fee enters game treasury");
+
+        uint64 expiresAt = uint64(block.timestamp + 10 minutes);
+        (uint8 v, bytes32 r, bytes32 s) = _signPaidInvite(commitment, newCommander, expiresAt);
+        uint256 settlementPrice = game.startPrice();
+        vm.prank(newCommander);
+        uint256 planetId = game.startPlanetWithAllianceInvite{value: settlementPrice}(
+            commitment, expiresAt, v, r, s
+        );
+        assertEq(
+            address(game).balance,
+            gameFeeBalanceBefore + price + settlementPrice,
+            "invite and settlement payments are independent"
+        );
+
+        assertEq(game.homePlanetOf(newCommander), planetId);
+        VeydriftAllianceSystem.Membership memory membership = alliances.allianceOf(newCommander);
+        assertEq(membership.allianceId, allianceId);
+        assertEq(uint8(membership.role), uint8(VeydriftAllianceSystem.AllianceRole.Member));
+        VeydriftGameStorage.Planet memory planet = game.planet(planetId);
+        assertEq(planet.resources.metal, 1_000, "must reuse referral starter bonus");
+        assertEq(planet.resources.crystal, 1_000, "must reuse referral starter bonus");
+
+        vm.prank(newCommander);
+        vm.expectRevert();
+        game.startPlanetWithAllianceInvite{value: settlementPrice}(commitment, expiresAt, v, r, s);
+    }
+
+    function testPaidInviteAuthorizationIsRecipientBoundExpiringAndSingleUse() public {
+        vm.prank(leader);
+        alliances.createAlliance("VDFT", "Veydrift Union", "");
+        bytes32 commitment = keccak256("private-link-2");
+        uint256 price = paidInvites.INVITE_PRICE();
+        vm.prank(leader);
+        paidInvites.buy{value: price}(commitment);
+        uint64 expiresAt = uint64(block.timestamp + 5 minutes);
+        (uint8 v, bytes32 r, bytes32 s) = _signPaidInvite(commitment, newCommander, expiresAt);
+
+        address frontRunner = address(0xF00D);
+        vm.deal(frontRunner, 1 ether);
+        uint256 settlementPrice = game.startPrice();
+        vm.expectRevert(VeydriftPaidAllianceInvites.InvalidAuthorization.selector);
+        vm.prank(frontRunner);
+        game.startPlanetWithAllianceInvite{value: settlementPrice}(commitment, expiresAt, v, r, s);
+
+        vm.warp(expiresAt);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftPaidAllianceInvites.InvalidAuthorizationExpiry.selector, expiresAt
+            )
+        );
+        vm.prank(newCommander);
+        game.startPlanetWithAllianceInvite{value: settlementPrice}(commitment, expiresAt, v, r, s);
+    }
+
+    function testPaidInviteRemainsRedeemableUntilUsed() public {
+        vm.prank(leader);
+        alliances.createAlliance("VDFT", "Veydrift Union", "");
+        bytes32 commitment = keccak256("private-link-without-invite-expiry");
+        uint256 price = paidInvites.INVITE_PRICE();
+        vm.prank(leader);
+        paidInvites.buy{value: price}(commitment);
+
+        vm.warp(block.timestamp + 366 days);
+        uint64 expiresAt = uint64(block.timestamp + 10 minutes);
+        (uint8 v, bytes32 r, bytes32 s) = _signPaidInvite(commitment, newCommander, expiresAt);
+        uint256 settlementPrice = game.startPrice();
+        vm.prank(newCommander);
+        game.startPlanetWithAllianceInvite{value: settlementPrice}(commitment, expiresAt, v, r, s);
+        assertTrue(paidInvites.invite(commitment).redeemed);
+    }
+
+    function testAnyCurrentMemberCanBuyButNonMembersCannot() public {
+        vm.prank(leader);
+        uint256 allianceId = alliances.createAlliance("VDFT", "Veydrift Union", "");
+        _inviteAndAccept(allianceId, member);
+        uint256 price = paidInvites.INVITE_PRICE();
+
+        bytes32 memberCommitment = keccak256("member-paid-invite");
+        vm.prank(member);
+        paidInvites.buy{value: price}(memberCommitment);
+        assertEq(paidInvites.invite(memberCommitment).purchaser, member);
+
+        vm.prank(address(0xF00D));
+        vm.expectRevert();
+        paidInvites.buy{value: price}(keccak256("outsider-paid-invite"));
+    }
+
+    function testCanonicalProductionBonusCutsLeaveAndRejoinBoundariesAcrossOwnedPlanets() public {
+        vm.prank(leader);
+        uint256 allianceId = alliances.createAlliance("VDFT", "Veydrift Union", "");
+        bytes32 commitment = keccak256("private-link-3");
+        uint256 price = paidInvites.INVITE_PRICE();
+        vm.prank(leader);
+        paidInvites.buy{value: price}(commitment);
+        uint64 expiresAt = uint64(block.timestamp + 10 minutes);
+        (uint8 v, bytes32 r, bytes32 s) = _signPaidInvite(commitment, newCommander, expiresAt);
+        uint256 settlementPrice = game.startPrice();
+        vm.prank(newCommander);
+        uint256 homePlanetId = game.startPlanetWithAllianceInvite{value: settlementPrice}(
+            commitment, expiresAt, v, r, s
+        );
+        _enableMetalProduction(homePlanetId);
+        uint256 colonyPlanetId = 10_818;
+        _cloneOwnedPlanet(newCommander, homePlanetId, colonyPlanetId);
+        _enableMetalProduction(colonyPlanetId);
+
+        VeydriftGameStorage.Resources memory homeBefore = game.planet(homePlanetId).resources;
+        VeydriftGameStorage.Resources memory colonyBefore = game.planet(colonyPlanetId).resources;
+        vm.warp(vm.getBlockTimestamp() + 10 hours);
+
+        vm.prank(newCommander);
+        alliances.leaveAlliance();
+        VeydriftGameStorage.Resources memory homeAfterLeave = game.planet(homePlanetId).resources;
+        VeydriftGameStorage.Resources memory colonyAfterLeave =
+        game.planet(colonyPlanetId).resources;
+        VeydriftGameStorage.Resources memory balanceAfterLeave =
+            paidInvites.bonusBalance(allianceId);
+        assertGt(homeAfterLeave.metal, homeBefore.metal, "leave must settle the home planet");
+        assertGt(colonyAfterLeave.metal, colonyBefore.metal, "leave must settle every owned planet");
+        uint256 eligibleMetal = uint256(homeAfterLeave.metal - homeBefore.metal)
+            + uint256(colonyAfterLeave.metal - colonyBefore.metal);
+        assertEq(
+            balanceAfterLeave.metal,
+            eligibleMetal * paidInvites.PRODUCTION_BONUS_BPS() / 10_000,
+            "pre-leave production must receive the exact canonical 2%"
+        );
+
+        vm.warp(vm.getBlockTimestamp() + 10 hours);
+        vm.prank(leader);
+        alliances.inviteMember(allianceId, newCommander);
+        vm.prank(newCommander);
+        alliances.acceptInvite(allianceId);
+        VeydriftGameStorage.Resources memory homeAfterRejoin = game.planet(homePlanetId).resources;
+        VeydriftGameStorage.Resources memory colonyAfterRejoin =
+        game.planet(colonyPlanetId).resources;
+        assertGt(homeAfterRejoin.metal, homeAfterLeave.metal, "away production stays with player");
+        assertGt(
+            colonyAfterRejoin.metal,
+            colonyAfterLeave.metal,
+            "away production on every planet stays with player"
+        );
+        assertEq(
+            paidInvites.bonusBalance(allianceId).metal,
+            balanceAfterLeave.metal,
+            "production while away must not be credited after rejoin"
+        );
+
+        vm.warp(vm.getBlockTimestamp() + 10 hours);
+        vm.prank(newCommander);
+        game.collectResources(homePlanetId);
+        vm.prank(newCommander);
+        game.collectResources(colonyPlanetId);
+        VeydriftGameStorage.Resources memory balanceAfterResume =
+            paidInvites.bonusBalance(allianceId);
+        VeydriftGameStorage.Resources memory homeAfterResume = game.planet(homePlanetId).resources;
+        VeydriftGameStorage.Resources memory colonyAfterResume =
+        game.planet(colonyPlanetId).resources;
+        uint256 resumedMetal = uint256(homeAfterResume.metal - homeAfterRejoin.metal)
+            + uint256(colonyAfterResume.metal - colonyAfterRejoin.metal);
+        assertEq(
+            balanceAfterResume.metal,
+            (eligibleMetal + resumedMetal) * paidInvites.PRODUCTION_BONUS_BPS() / 10_000,
+            "same issuing-alliance rejoin must resume exact canonical 2% credit"
+        );
+    }
+
+    function testKickCutsCanonicalProductionBeforeSameAllianceRejoin() public {
+        vm.prank(leader);
+        uint256 allianceId = alliances.createAlliance("VDFT", "Veydrift Union", "");
+        uint256 planetId = _startPaidInvitee(allianceId, keccak256("kick-boundary"));
+        _enableMetalProduction(planetId);
+
+        vm.warp(vm.getBlockTimestamp() + 10 hours);
+        vm.prank(leader);
+        alliances.kickMember(allianceId, newCommander);
+        uint128 balanceAfterKick = paidInvites.bonusBalance(allianceId).metal;
+        assertGt(balanceAfterKick, 0, "kick must credit eligible production first");
+
+        vm.warp(vm.getBlockTimestamp() + 10 hours);
+        vm.prank(leader);
+        alliances.inviteMember(allianceId, newCommander);
+        vm.prank(newCommander);
+        alliances.acceptInvite(allianceId);
+        assertEq(
+            paidInvites.bonusBalance(allianceId).metal,
+            balanceAfterKick,
+            "production while kicked must not be credited"
+        );
+
+        vm.warp(vm.getBlockTimestamp() + 10 hours);
+        vm.prank(newCommander);
+        game.collectResources(planetId);
+        assertGt(
+            paidInvites.bonusBalance(allianceId).metal,
+            balanceAfterKick,
+            "credit must resume from the rejoin boundary"
+        );
+    }
+
+    function testBonusReserveShortfallDefersWithoutRevertingPlayerSettlement() public {
+        vm.prank(leader);
+        uint256 allianceId = alliances.createAlliance("VDFT", "Veydrift Union", "");
+        uint256 planetId = _startPaidInvitee(allianceId, keccak256("reserve-boundary"));
+        _enableMetalProduction(planetId);
+
+        VeydriftGameStorage.Resources memory beforeResources = game.planet(planetId).resources;
+        vm.warp(vm.getBlockTimestamp() + 10 hours);
+        VeydriftGameStorage.Resources memory preview = game.previewResources(planetId);
+        VeydriftGameStorage.Resources memory required = game.resourceReserveRequirement();
+        _setGameReserveBalances(
+            required.metal + preview.metal - beforeResources.metal,
+            required.crystal + preview.crystal - beforeResources.crystal,
+            required.deuterium + preview.deuterium - beforeResources.deuterium
+        );
+
+        vm.prank(newCommander);
+        game.collectResources(planetId);
+        VeydriftGameStorage.Resources memory afterConstrainedSettlement =
+        game.planet(planetId).resources;
+        assertEq(afterConstrainedSettlement.metal, preview.metal, "player output must be unchanged");
+        assertEq(
+            paidInvites.bonusBalance(allianceId).metal,
+            0,
+            "unbacked bonus must not enter the withdrawable balance"
+        );
+        VeydriftGameStorage.Resources memory pending = paidInvites.pendingBonusBalance(allianceId);
+        uint256 constrainedMetal = preview.metal - beforeResources.metal;
+        assertEq(
+            pending.metal,
+            constrainedMetal * paidInvites.PRODUCTION_BONUS_BPS() / 10_000,
+            "the exact 2% entitlement must be deferred, not discarded"
+        );
+
+        metalToken.mint(address(game), 10_000);
+        crystalToken.mint(address(game), 10_000);
+        deuteriumToken.mint(address(game), 10_000);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
+        VeydriftGameStorage.Resources memory secondPreview = game.previewResources(planetId);
+        vm.prank(newCommander);
+        game.collectResources(planetId);
+        assertEq(
+            paidInvites.pendingBonusBalance(allianceId).metal,
+            0,
+            "later reserve capacity must fund the deferred entitlement"
+        );
+        assertEq(
+            paidInvites.bonusBalance(allianceId).metal,
+            (constrainedMetal + secondPreview.metal - afterConstrainedSettlement.metal)
+                * paidInvites.PRODUCTION_BONUS_BPS() / 10_000,
+            "funded balance must include the exact deferred and current 2% production"
+        );
+    }
+
+    function testOfficerCreditsCanonicalProductionBonusToOwnedPlanetBeforeRift() public {
+        vm.prank(leader);
+        uint256 allianceId = alliances.createAlliance("VDFT", "Veydrift Union", "");
+        _inviteAndAccept(allianceId, member);
+        vm.prank(leader);
+        alliances.setMemberRole(allianceId, member, VeydriftAllianceSystem.AllianceRole.Officer);
+
+        bytes32 commitment = keccak256("private-link-4");
+        uint256 price = paidInvites.INVITE_PRICE();
+        vm.prank(leader);
+        paidInvites.buy{value: price}(commitment);
+        uint64 expiresAt = uint64(block.timestamp + 10 minutes);
+        (uint8 v, bytes32 r, bytes32 s) = _signPaidInvite(commitment, newCommander, expiresAt);
+        uint256 settlementPrice = game.startPrice();
+        vm.prank(newCommander);
+        uint256 planetId = game.startPlanetWithAllianceInvite{value: settlementPrice}(
+            commitment, expiresAt, v, r, s
+        );
+
+        vm.prank(newCommander);
+        game.startBuildingUpgrade(planetId, Building.SolarPlant);
+        vm.warp(block.timestamp + 365 days);
+        vm.prank(newCommander);
+        game.collectResources(planetId);
+        vm.prank(newCommander);
+        game.startBuildingUpgrade(planetId, Building.MetalMine);
+        vm.warp(block.timestamp + 365 days);
+        vm.prank(newCommander);
+        game.collectResources(planetId);
+        vm.warp(block.timestamp + 100 hours);
+        vm.prank(newCommander);
+        game.collectResources(planetId);
+
+        VeydriftGameStorage.Resources memory balance = paidInvites.bonusBalance(allianceId);
+        assertGt(balance.metal, 0, "canonical settled mine output must accrue a 2% bonus");
+        uint256 destinationPlanetId = game.homePlanetOf(member);
+        VeydriftGameStorage.Resources memory destinationBefore =
+        game.planet(destinationPlanetId).resources;
+        uint256 walletTokenBalanceBefore = metalToken.balanceOf(member);
+        uint256 leaderPlanetId = game.homePlanetOf(leader);
+        vm.prank(member);
+        vm.expectRevert();
+        paidInvites.withdraw(allianceId, leaderPlanetId, balance);
+        vm.prank(member);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftAllianceSystem.RiftStabilizerRequiredForPaidInviteWithdrawal.selector,
+                destinationPlanetId
+            )
+        );
+        paidInvites.withdraw(allianceId, destinationPlanetId, balance);
+        _setBuildingLevel(destinationPlanetId, Building.InterdimensionalRiftStabilizer, 1);
+        VeydriftGameStorage.Resources memory withdrawalAmount = VeydriftGameStorage.Resources({
+            metal: balance.metal / 2, crystal: balance.crystal / 2, deuterium: balance.deuterium / 2
+        });
+        if (
+            withdrawalAmount.metal == 0 && withdrawalAmount.crystal == 0
+                && withdrawalAmount.deuterium == 0
+        ) {
+            withdrawalAmount.metal = balance.metal;
+        }
+        vm.prank(member);
+        paidInvites.withdraw(allianceId, destinationPlanetId, withdrawalAmount);
+        VeydriftGameStorage.Resources memory destinationAfter =
+        game.planet(destinationPlanetId).resources;
+        assertEq(destinationAfter.metal, destinationBefore.metal + withdrawalAmount.metal);
+        assertEq(
+            metalToken.balanceOf(member),
+            walletTokenBalanceBefore,
+            "treasury credit must not bypass ordinary Rift extraction"
+        );
+        VeydriftGameStorage.Resources memory afterBalance = paidInvites.bonusBalance(allianceId);
+        assertEq(afterBalance.metal, balance.metal - withdrawalAmount.metal);
+        assertEq(afterBalance.crystal, balance.crystal - withdrawalAmount.crystal);
+        assertEq(afterBalance.deuterium, balance.deuterium - withdrawalAmount.deuterium);
     }
 
     function testAllianceCreationInvitesRolesAndPublicMembers() public {
@@ -1098,6 +1457,8 @@ contract VeydriftAllianceSystemTest is Test {
                 )
             )
         );
+        vm.prank(admin);
+        game.setAllianceSystem(address(proxied));
 
         vm.prank(leader);
         uint256 allianceId = proxied.createAlliance("VDFT", "Veydrift Union", "discord.gg/vdft");
@@ -1156,6 +1517,8 @@ contract VeydriftAllianceSystemTest is Test {
             )
         );
         VeydriftAllianceSystem proxied = VeydriftAllianceSystem(address(stateful));
+        vm.prank(admin);
+        game.setAllianceSystem(address(proxied));
 
         vm.prank(leader);
         uint256 allianceId = proxied.createAlliance("ALLY", "Alliance", "");
@@ -1271,6 +1634,8 @@ contract VeydriftAllianceSystemTest is Test {
             )
         );
         VeydriftAllianceSystem proxied = VeydriftAllianceSystem(address(stateful));
+        vm.prank(admin);
+        game.setAllianceSystem(address(proxied));
 
         vm.prank(leader);
         uint256 allianceId = proxied.createAlliance("ALLY", "Alliance", "");
@@ -1336,6 +1701,84 @@ contract VeydriftAllianceSystemTest is Test {
     function _start(address player) internal {
         vm.prank(player);
         game.startPlanet{value: 0.05 ether}();
+    }
+
+    function _signPaidInvite(bytes32 commitment, address invitee, uint64 expiresAt)
+        internal
+        view
+        returns (uint8 v, bytes32 r, bytes32 s)
+    {
+        bytes32 digest = MessageHashUtils.toEthSignedMessageHash(
+            paidInvites.authorizationHash(commitment, invitee, expiresAt)
+        );
+        return vm.sign(inviteSignerKey, digest);
+    }
+
+    function _startPaidInvitee(uint256 allianceId, bytes32 commitment)
+        internal
+        returns (uint256 planetId)
+    {
+        assertEq(alliances.allianceOf(leader).allianceId, allianceId);
+        uint256 price = paidInvites.INVITE_PRICE();
+        vm.prank(leader);
+        paidInvites.buy{value: price}(commitment);
+        uint64 expiresAt = uint64(block.timestamp + 10 minutes);
+        (uint8 v, bytes32 r, bytes32 s) = _signPaidInvite(commitment, newCommander, expiresAt);
+        uint256 settlementPrice = game.startPrice();
+        vm.prank(newCommander);
+        return
+            game.startPlanetWithAllianceInvite{value: settlementPrice}(
+                commitment, expiresAt, v, r, s
+            );
+    }
+
+    function _enableMetalProduction(uint256 planetId) internal {
+        _setBuildingLevel(planetId, Building.MetalMine, 1);
+        _setBuildingLevel(planetId, Building.SolarPlant, 10);
+        _setBuildingLevel(planetId, Building.MetalStorage, 10);
+    }
+
+    function _setBuildingLevel(uint256 planetId, Building building, uint16 level) internal {
+        bytes32 outerSlot = keccak256(abi.encode(planetId, uint256(6)));
+        bytes32 slot = keccak256(abi.encode(uint256(uint8(building)), outerSlot));
+        vm.store(address(game), slot, bytes32(uint256(level)));
+    }
+
+    function _cloneOwnedPlanet(address player, uint256 sourcePlanetId, uint256 planetId) internal {
+        uint256 sourceBase = uint256(keccak256(abi.encode(sourcePlanetId, uint256(4))));
+        uint256 targetBase = uint256(keccak256(abi.encode(planetId, uint256(4))));
+        for (uint256 i = 0; i < 4; i++) {
+            vm.store(
+                address(game),
+                bytes32(targetBase + i),
+                vm.load(address(game), bytes32(sourceBase + i))
+            );
+        }
+
+        bytes32 ownedListSlot = keccak256(abi.encode(player, uint256(36)));
+        uint256 ownedCount = uint256(vm.load(address(game), ownedListSlot));
+        bytes32 ownedListData = keccak256(abi.encode(ownedListSlot));
+        vm.store(address(game), bytes32(uint256(ownedListData) + ownedCount), bytes32(planetId));
+        vm.store(address(game), ownedListSlot, bytes32(ownedCount + 1));
+        vm.store(
+            address(game), keccak256(abi.encode(planetId, uint256(37))), bytes32(ownedCount + 1)
+        );
+    }
+
+    function _setGameReserveBalances(uint256 metal, uint256 crystal, uint256 deuterium) internal {
+        vm.store(
+            address(metalToken), keccak256(abi.encode(address(game), uint256(0))), bytes32(metal)
+        );
+        vm.store(
+            address(crystalToken),
+            keccak256(abi.encode(address(game), uint256(0))),
+            bytes32(crystal)
+        );
+        vm.store(
+            address(deuteriumToken),
+            keccak256(abi.encode(address(game), uint256(0))),
+            bytes32(deuterium)
+        );
     }
 
     function _inviteAndAccept(uint256 allianceId, address player) internal {

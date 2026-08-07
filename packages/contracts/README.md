@@ -400,6 +400,21 @@ The script reads the linked game contract from the live proxy, deploys the new
 implementation, and calls `upgradeToAndCall`. The broadcasting account must be
 the proxy `owner()` because `_authorizeUpgrade` is owner-gated.
 
+For paid alliance invites, upgrade the alliance proxy first, deploy/register the
+treasury, then upgrade the game proxy so production settlement begins crediting
+the configured treasury immediately. Each invite costs exactly `0.006 ether`;
+the paid system forwards that fee into the game proxy's existing fee balance.
+Owner/officer treasury withdrawals credit a selected planet they own, after
+which the normal delayed and raidable Rift extraction rules apply:
+
+```bash
+PRIVATE_KEY=... ALLIANCE_PROXY_ADDRESS=0xAllianceProxy \
+PAID_ALLIANCE_INVITE_SIGNER_ADDRESS=0xSigner \
+PAID_ALLIANCE_INVITE_OWNER_ADDRESS=0xOwner \
+forge script script/DeployPaidAllianceInvites.s.sol:DeployPaidAllianceInvites \
+  --rpc-url "$BASE_SEPOLIA_RPC_URL" --broadcast --verify
+```
+
 ## MVP Simplifications
 
 This ticket intentionally leaves these systems for later work:

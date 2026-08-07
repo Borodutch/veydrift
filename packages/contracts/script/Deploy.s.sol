@@ -20,6 +20,10 @@ import {VeydriftMigrationSettlement} from "../src/VeydriftMigrationSettlement.so
 import {VeydriftMoonSystem} from "../src/VeydriftMoonSystem.sol";
 import {VeydriftPlanetManagementModule} from "../src/VeydriftPlanetManagementModule.sol";
 import {VeydriftReferralSystem} from "../src/VeydriftReferralSystem.sol";
+import {
+    IVeydriftPaidInviteAlliance,
+    VeydriftPaidAllianceInvites
+} from "../src/VeydriftPaidAllianceInvites.sol";
 import {VeydriftSettlement} from "../src/VeydriftSettlement.sol";
 import {VeydriftStateMigrationModule} from "../src/VeydriftStateMigrationModule.sol";
 
@@ -63,6 +67,7 @@ contract Deploy is ResourceTokenDeployment {
         address gameOwner = vm.envOr("GAME_OWNER_ADDRESS", gameProxyAdmin);
         address settlementAdmin = vm.envOr("SETTLEMENT_UPGRADE_ADMIN_ADDRESS", admin);
         address allianceAdmin = vm.envOr("ALLIANCE_UPGRADE_ADMIN_ADDRESS", admin);
+        address paidAllianceInviteSigner = vm.envAddress("PAID_ALLIANCE_INVITE_SIGNER_ADDRESS");
         address moonAdmin = vm.envOr("MOON_UPGRADE_ADMIN_ADDRESS", admin);
         address migrationAdmin = vm.envOr("MIGRATION_UPGRADE_ADMIN_ADDRESS", admin);
         address randomnessAdmin = vm.envOr("RANDOMNESS_UPGRADE_ADMIN_ADDRESS", admin);
@@ -128,6 +133,16 @@ contract Deploy is ResourceTokenDeployment {
         );
         emit VeydriftAuxiliaryProxyDeployed(
             "alliance", allianceSystemAddress, address(allianceImplementation)
+        );
+        VeydriftPaidAllianceInvites paidAllianceInvites = new VeydriftPaidAllianceInvites(
+            IVeydriftPaidInviteAlliance(allianceSystemAddress),
+            allianceAdmin,
+            paidAllianceInviteSigner
+        );
+        VeydriftAllianceSystem(allianceSystemAddress)
+            .setPaidInviteSystem(address(paidAllianceInvites));
+        emit VeydriftAuxiliaryProxyDeployed(
+            "paid-alliance-invites", address(paidAllianceInvites), address(paidAllianceInvites)
         );
 
         RandomnessEngine randomnessImplementation = new RandomnessEngine(admin, randomnessFulfiller);

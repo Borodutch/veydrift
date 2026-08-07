@@ -10,6 +10,12 @@ import {Building} from "./libraries/VeydriftTypes.sol";
 interface IVeydriftAllianceGame {
     function buildingLevel(uint256 planetId, Building building) external view returns (uint16);
     function homePlanetOf(address player) external view returns (uint256);
+    function settleAllianceMembershipBoundary(address player) external;
+    function creditAllianceBonusToPlanet(
+        uint256 planetId,
+        address manager,
+        VeydriftGameStorage.Resources calldata amount
+    ) external;
     function planet(uint256 planetId) external view returns (VeydriftGameStorage.Planet memory);
     function fleetMission(uint256 missionId)
         external
@@ -27,6 +33,21 @@ interface IVeydriftAllianceGame {
             VeydriftGameStorage.Resources memory cargo,
             uint256 randomnessRequestId
         );
+}
+
+interface IVeydriftPaidAllianceInvites {
+    function redeem(
+        address invitee,
+        bytes32 commitment,
+        uint64 expiresAt,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external returns (address purchaser, uint256 allianceId);
+
+    function creditProduction(address invitee, VeydriftGameStorage.Resources calldata produced)
+        external
+        returns (VeydriftGameStorage.Resources memory bonus);
 }
 
 /// @notice Canonical on-chain alliance roster and public profile authority.
@@ -119,6 +140,8 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
     mapping(
         uint256 allianceId => mapping(uint256 otherAllianceId => uint256 declarerAllianceId)
     ) internal _warDeclarers;
+    // VEY-KANEO-818 append-only bridge to the independently deployable paid-invite treasury.
+    address public paidInviteSystem;
 
     error AllianceInactive(uint256 allianceId);
     error AlreadyInAlliance(address player, uint256 allianceId);
@@ -144,6 +167,10 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
         uint256 allianceId, uint256 otherAllianceId, uint256 declarerAllianceId, uint64 declaredAt
     );
     error ZeroAddress();
+    error NotGame(address caller);
+    error NotPaidInviteSystem(address caller);
+    error PaidInviteSystemUnset();
+    error RiftStabilizerRequiredForPaidInviteWithdrawal(uint256 planetId);
 
     event AllianceCreated(
         uint256 indexed allianceId, address indexed owner, string tag, string name
@@ -192,6 +219,7 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
     );
     event AllianceSnapshotImported(uint256 indexed allianceId, uint32 memberCount);
     event OwnershipTransferred(address indexed oldOwner, address indexed newOwner);
+    event PaidInviteSystemUpdated(address indexed oldSystem, address indexed newSystem);
 
     constructor(IVeydriftAllianceGame gameContract) {
         _initializeAllianceSystem(gameContract, msg.sender);
@@ -261,6 +289,66 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
         address oldOwner = owner;
         owner = nextOwner;
         emit OwnershipTransferred(oldOwner, nextOwner);
+    }
+
+    function setPaidInviteSystem(address nextSystem) external onlyOwner {
+        if (nextSystem == address(0)) revert ZeroAddress();
+        address oldSystem = paidInviteSystem;
+        paidInviteSystem = nextSystem;
+        emit PaidInviteSystemUpdated(oldSystem, nextSystem);
+    }
+
+    /// @dev Small trusted bridge: the game remains wired to this canonical alliance system while
+    /// feature-heavy invite accounting lives in its own EIP-170-safe contract.
+    function creditPaidInviteProduction(
+        address invitee,
+        uint128 metal,
+        uint128 crystal,
+        uint128 deuterium
+    ) external returns (VeydriftGameStorage.Resources memory bonus) {
+        if (msg.sender != address(game)) revert NotGame(msg.sender);
+        address system = paidInviteSystem;
+        if (system == address(0)) return bonus;
+        VeydriftGameStorage.Resources memory produced =
+            VeydriftGameStorage.Resources({metal: metal, crystal: crystal, deuterium: deuterium});
+        return IVeydriftPaidAllianceInvites(system).creditProduction(invitee, produced);
+    }
+
+    function redeemPaidInvite(
+        address invitee,
+        bytes32 commitment,
+        uint64 expiresAt,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external returns (address purchaser, uint256 allianceId) {
+        if (msg.sender != address(game)) revert NotGame(msg.sender);
+        address system = paidInviteSystem;
+        if (system == address(0)) revert PaidInviteSystemUnset();
+        return IVeydriftPaidAllianceInvites(system).redeem(invitee, commitment, expiresAt, v, r, s);
+    }
+
+    function joinFromPaidInvite(uint256 allianceId, address invitee) external {
+        if (msg.sender != paidInviteSystem) revert NotPaidInviteSystem(msg.sender);
+        _requireAlliance(allianceId);
+        if (game.homePlanetOf(invitee) != 0 || _memberships[invitee].allianceId != 0) {
+            revert AlreadyInAlliance(invitee, _memberships[invitee].allianceId);
+        }
+        _addMember(allianceId, invitee, AllianceRole.Member);
+    }
+
+    function creditPaidInviteBonusToPlanet(
+        uint256 planetId,
+        address manager,
+        VeydriftGameStorage.Resources calldata amount
+    ) external {
+        if (msg.sender != paidInviteSystem) {
+            revert NotPaidInviteSystem(msg.sender);
+        }
+        if (game.buildingLevel(planetId, Building.InterdimensionalRiftStabilizer) == 0) {
+            revert RiftStabilizerRequiredForPaidInviteWithdrawal(planetId);
+        }
+        game.creditAllianceBonusToPlanet(planetId, manager, amount);
     }
 
     function importAllianceSnapshot(
@@ -871,6 +959,7 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
     }
 
     function _addMember(uint256 allianceId, address player, AllianceRole role) private {
+        game.settleAllianceMembershipBoundary(player);
         _memberships[player] = Membership({allianceId: allianceId, role: role, joinedAt: _now()});
         _memberIndexes[allianceId][player] = _memberLists[allianceId].length + 1;
         _memberLists[allianceId].push(player);
@@ -904,6 +993,8 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
     function _removeMember(uint256 allianceId, address player) private {
         uint256 indexPlusOne = _memberIndexes[allianceId][player];
         if (indexPlusOne == 0) revert NotAllianceMember(player, allianceId);
+
+        game.settleAllianceMembershipBoundary(player);
 
         uint256 index = indexPlusOne - 1;
         address[] storage members = _memberLists[allianceId];

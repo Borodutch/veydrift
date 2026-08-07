@@ -22,6 +22,9 @@ contract VeydriftGame is VeydriftResourceReserves {
 
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
 
+    /// @dev Paid alliance invite fees enter the same proxy balance as first-planet fees.
+    function depositPaidAllianceInviteFee() external payable {}
+
     constructor(
         address admin,
         address firstPlanetSettlementModule,
@@ -83,39 +86,24 @@ contract VeydriftGame is VeydriftResourceReserves {
         _delegateToFirstPlanetSettlementModule();
     }
 
+    function startPlanetWithAllianceInvite(bytes32, uint64, uint8, bytes32, bytes32)
+        external
+        payable
+        returns (uint256)
+    {
+        _delegateToFirstPlanetSettlementModule();
+    }
+
     function hasFirstPlanet(address player) external view returns (bool) {
         return homePlanetOf[player] != 0;
     }
 
-    function firstPlanetOf(address player)
-        external
-        view
-        returns (FirstPlanet memory settledPlanet)
-    {
-        uint256 planetId = homePlanetOf[player];
-        if (planetId == 0) revert NoFirstPlanet(player);
-        return _firstPlanetFrom(planetId);
+    function firstPlanetOf(address) external returns (FirstPlanet memory) {
+        _delegateToFirstPlanetSettlementModule();
     }
 
-    function previewFirstPlanet(address player)
-        external
-        view
-        returns (FirstPlanet memory planetPreview)
-    {
-        uint256 planetId = homePlanetOf[player];
-        if (planetId != 0) return _firstPlanetFrom(planetId);
-
-        (uint16 galaxy, uint16 system, uint8 position, uint16 fields, int16 temperature) =
-            _previewFirstPlanet(player);
-        return FirstPlanet({
-            galaxy: galaxy,
-            system: system,
-            position: position,
-            fields: fields,
-            temperature: temperature,
-            settledAt: 0,
-            settledBlock: 0
-        });
+    function previewFirstPlanet(address) external returns (FirstPlanet memory) {
+        _delegateToFirstPlanetSettlementModule();
     }
 
     function settlePlanet(uint256 planetId) external {
@@ -199,6 +187,26 @@ contract VeydriftGame is VeydriftResourceReserves {
             _settleResources(planetId);
         } else {
             _delegateToColonizationModule();
+        }
+    }
+
+    function settleProductionUntil(uint256 planetId, uint64 settledAt) external {
+        if (msg.sender != address(this)) revert Unauthorized(msg.sender);
+        _settleResourcesUntil(planetId, settledAt);
+    }
+
+    /// @notice Cuts every owned planet's canonical production interval immediately before an
+    /// alliance roster transition, so paid-invite bonuses follow actual membership time rather
+    /// than membership at a later lazy collection.
+    function settleAllianceMembershipBoundary(address player) external {
+        if (msg.sender != _allianceSystem) revert Unauthorized(msg.sender);
+        uint256[] storage planetIds = _ownedPlanetIds[player];
+        uint64 settledAt = uint64(block.timestamp);
+        for (uint256 i = 0; i < planetIds.length;) {
+            _settleResourcesUpTo(planetIds[i], settledAt);
+            unchecked {
+                ++i;
+            }
         }
     }
 
@@ -751,45 +759,6 @@ contract VeydriftGame is VeydriftResourceReserves {
         return 0;
     }
 
-    function _firstPlanetFrom(uint256 planetId) private view returns (FirstPlanet memory) {
-        Planet storage planetRef = _planets[planetId];
-        return FirstPlanet({
-            galaxy: planetRef.galaxy,
-            system: planetRef.system,
-            position: planetRef.position,
-            fields: planetRef.fields,
-            temperature: planetRef.temperature,
-            settledAt: planetRef.lastSettledAt,
-            settledBlock: 0
-        });
-    }
-
-    function _previewFirstPlanet(address player)
-        private
-        view
-        returns (uint16 galaxy, uint16 system, uint8 position, uint16 fields, int16 temperature)
-    {
-        for (uint256 attempt = 0; attempt < 64; attempt++) {
-            (galaxy, system, position, fields, temperature) =
-                VeydriftPlanetGeneration.firstPlanetCandidate(
-                    FIRST_PLANET_DOMAIN,
-                    block.chainid,
-                    player,
-                    block.number,
-                    block.timestamp,
-                    block.prevrandao,
-                    attempt,
-                    MAX_GALAXY,
-                    MAX_SYSTEM,
-                    MAX_POSITION
-                );
-            if (!occupiedCoordinates[coordinateKey(galaxy, system, position)]) {
-                return (galaxy, system, position, fields, temperature);
-            }
-        }
-        revert CoordinatesExhausted();
-    }
-
     function _requirePlanetOwner(uint256 planetId) private view {
         Planet storage planetRef = _planets[planetId];
         if (planetRef.owner == address(0)) revert NoPlanet();
@@ -859,6 +828,7 @@ contract VeydriftGame is VeydriftResourceReserves {
             added = _reserveLimitedIncrease(added);
             _increaseInternalResources(added);
             planetRef.resources = _add(planetRef.resources, added);
+            _creditAllianceProductionBonus(planetId, added);
             if (
                 planetRef.resources.metal > capped.metal
                     || planetRef.resources.crystal > capped.crystal

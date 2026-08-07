@@ -25,6 +25,15 @@ interface IVeydriftAttackProtectionAllianceSystem {
         );
 }
 
+interface IVeydriftProductionBonusAllianceSystem {
+    function creditPaidInviteProduction(
+        address invitee,
+        uint128 metal,
+        uint128 crystal,
+        uint128 deuterium
+    ) external returns (VeydriftGameStorage.Resources memory bonus);
+}
+
 /// @notice Shared storage, ABI structs, events, and owner controls for VeydriftGame modules.
 abstract contract VeydriftGameStorage is Initializable {
     uint256 public constant DEFAULT_START_PRICE = 0.05 ether;
@@ -773,6 +782,13 @@ abstract contract VeydriftGameStorage is Initializable {
     );
     event RiftExtractionFinalized(
         address indexed player, uint256 indexed planetId, Resource indexed resource, uint128 amount
+    );
+    event AllianceBonusCreditedToPlanet(
+        address indexed manager,
+        uint256 indexed planetId,
+        uint128 metal,
+        uint128 crystal,
+        uint128 deuterium
     );
     event PlanetRenamed(address indexed player, uint256 indexed planetId, string name);
     event PlanetAbandoned(

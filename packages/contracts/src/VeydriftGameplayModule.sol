@@ -11,6 +11,10 @@ import {VeydriftFormulas} from "./libraries/VeydriftFormulas.sol";
 import {IVeydriftAttackRandomnessEngine} from "./interfaces/IVeydriftAttackRandomnessEngine.sol";
 import {Building, Ship, Technology} from "./libraries/VeydriftTypes.sol";
 
+interface IVeydriftProductionSettler {
+    function settleProductionUntil(uint256 planetId, uint64 settledAt) external;
+}
+
 interface IVeydriftCounterplayAllianceSystem {
     function counterplayDefenseFuelContext(
         address viewer,
@@ -593,25 +597,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
     }
 
     function _settleResourcesUntil(uint256 planetId, uint64 settledAt) private {
-        Planet storage planetRef = _planets[planetId];
-        if (settledAt <= planetRef.lastSettledAt) {
-            return;
-        }
-
-        uint256 elapsed = uint256(settledAt) - planetRef.lastSettledAt;
-        (uint256 metalPerHour, uint256 crystalPerHour, uint256 deutPerHour) =
-            _productionPerHour(planetId);
-        Resources memory produced = Resources({
-            metal: _toUint128((metalPerHour * elapsed) / 1 hours),
-            crystal: _toUint128((crystalPerHour * elapsed) / 1 hours),
-            deuterium: _toUint128((deutPerHour * elapsed) / 1 hours)
-        });
-        (, Resources memory added) =
-            _cappedResourceIncrease(planetId, planetRef.resources, produced);
-        added = _reserveLimitedIncrease(added);
-        _increaseInternalResources(added);
-        planetRef.resources = _add(planetRef.resources, added);
-        planetRef.lastSettledAt = settledAt;
+        IVeydriftProductionSettler(address(this)).settleProductionUntil(planetId, settledAt);
     }
 
     function _productionPerHour(uint256 planetId)

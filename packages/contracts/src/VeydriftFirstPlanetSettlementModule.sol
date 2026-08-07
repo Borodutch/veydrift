@@ -15,6 +15,17 @@ interface IVeydriftReferralSystem {
     ) external payable returns (address inviter);
 }
 
+interface IVeydriftPaidAllianceInviteSystem {
+    function redeemPaidInvite(
+        address invitee,
+        bytes32 commitment,
+        uint64 expiresAt,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external returns (address purchaser, uint256 allianceId);
+}
+
 /// @notice Delegatecall target for first-planet settlement and referral settlement.
 contract VeydriftFirstPlanetSettlementModule is VeydriftResourceReserves {
     address private immutable _referralSystem;
@@ -57,6 +68,43 @@ contract VeydriftFirstPlanetSettlementModule is VeydriftResourceReserves {
         );
         uint256 planetId = _startPlanet(msg.sender, msg.value, inviter);
         return _firstPlanetFrom(planetId);
+    }
+
+    function firstPlanetOf(address player) external view returns (FirstPlanet memory) {
+        uint256 planetId = homePlanetOf[player];
+        if (planetId == 0) revert NoFirstPlanet(player);
+        return _firstPlanetFrom(planetId);
+    }
+
+    function previewFirstPlanet(address player) external view returns (FirstPlanet memory) {
+        uint256 planetId = homePlanetOf[player];
+        if (planetId != 0) return _firstPlanetFrom(planetId);
+        (uint16 galaxy, uint16 system, uint8 position, uint16 fields, int16 temperature) =
+            _previewFirstPlanet(player);
+        return FirstPlanet({
+            galaxy: galaxy,
+            system: system,
+            position: position,
+            fields: fields,
+            temperature: temperature,
+            settledAt: 0,
+            settledBlock: 0
+        });
+    }
+
+    function startPlanetWithAllianceInvite(
+        bytes32 commitment,
+        uint64 expiresAt,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external payable returns (uint256 planetId) {
+        if (msg.value != startPrice || _allianceSystem == address(0)) {
+            revert BadStartPayment();
+        }
+        (address purchaser,) = IVeydriftPaidAllianceInviteSystem(_allianceSystem)
+            .redeemPaidInvite(msg.sender, commitment, expiresAt, v, r, s);
+        planetId = _startPlanet(msg.sender, msg.value, purchaser);
     }
 
     function _startPlanet(address player, uint256 payment, address inviter)

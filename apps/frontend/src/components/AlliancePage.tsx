@@ -5,7 +5,8 @@ import { useEffect, useMemo, useState } from "preact/hooks";
 import { descriptionLinkParts } from "../descriptionLinks";
 import { formatDurationUntil } from "../durationFormat";
 import { formatUserTimestamp } from "../timestampFormat";
-import type { AllianceDiplomacyStatus, AllianceRole, ChainAllianceState, HighscoreEntry, WalletPlanetsResponse } from "../walletFlow";
+import type { AllianceDiplomacyStatus, AllianceRole, ChainAllianceState, HighscoreEntry, PaidAllianceBonusAmount, WalletPlanetsResponse } from "../walletFlow";
+import { generatePaidAllianceInviteSecret, paidAllianceInviteLink } from "../walletFlow";
 import { shortAddress } from "../walletFlow";
 import { backendDataStoreFor } from "../backendDataStore";
 import { refreshButtonState } from "./PageHeader";
@@ -66,6 +67,9 @@ interface AlliancePageProps {
   onCreate: (tag: string, name: string, description: string) => void;
   onDismissJoinRequest: (playerAddress: string) => void;
   onInvite: (playerAddress: string) => void;
+  onBuyPaidInvite?: ((secret: string) => void) | undefined;
+  onRecoverPaidInvites?: (() => Promise<string | null>) | undefined;
+  onWithdrawPaidInviteBonus?: ((amount: PaidAllianceBonusAmount) => void) | undefined;
   onJoinRequest: (allianceId: string) => void;
   onKick: (playerAddress: string) => void;
   onLeaveAlliance: () => void;
@@ -98,6 +102,9 @@ export function AlliancePage({
   onCreate,
   onDismissJoinRequest,
   onInvite,
+  onBuyPaidInvite,
+  onRecoverPaidInvites,
+  onWithdrawPaidInviteBonus,
   onJoinRequest,
   onKick,
   onLeaveAlliance,
@@ -120,6 +127,7 @@ export function AlliancePage({
   const [activeAllianceId, setActiveAllianceId] = useState<string | null>(selectedAllianceId ?? null);
   const [selectedPlayer, setSelectedPlayer] = useState<string | null>(null);
   const [playerProfile, setPlayerProfile] = useState<PlayerProfileState>({ status: "idle" });
+  const [paidInviteLink, setPaidInviteLink] = useState<string | null>(null);
 
   const profile = allianceState?.profile;
   const role = allianceState?.membership.role ?? "none";
@@ -231,6 +239,11 @@ export function AlliancePage({
               onBatchKick={onBatchKick}
               onBatchSetRole={onBatchSetRole}
               onInvite={onInvite}
+              onBuyPaidInvite={onBuyPaidInvite}
+              onRecoverPaidInvites={onRecoverPaidInvites}
+              onWithdrawPaidInviteBonus={onWithdrawPaidInviteBonus}
+              paidInviteLink={paidInviteLink}
+              onSetPaidInviteLink={setPaidInviteLink}
               onKick={onKick}
               onLeaveAlliance={onLeaveAlliance}
               onOpenAlliance={onOpenAlliance}
@@ -472,6 +485,11 @@ function MyAllianceSection({
   onBatchKick,
   onBatchSetRole,
   onInvite,
+  onBuyPaidInvite,
+  onRecoverPaidInvites,
+  onWithdrawPaidInviteBonus,
+  paidInviteLink,
+  onSetPaidInviteLink,
   onKick,
   onLeaveAlliance,
   onOpenAlliance,
@@ -514,6 +532,11 @@ function MyAllianceSection({
   onBatchKick: (playerAddresses: string[]) => void;
   onBatchSetRole: (playerAddresses: string[], role: "member" | "officer") => void;
   onInvite: (playerAddress: string) => void;
+  onBuyPaidInvite?: ((secret: string) => void) | undefined;
+  onRecoverPaidInvites?: (() => Promise<string | null>) | undefined;
+  onWithdrawPaidInviteBonus?: ((amount: PaidAllianceBonusAmount) => void) | undefined;
+  paidInviteLink: string | null;
+  onSetPaidInviteLink: (link: string | null) => void;
   onKick: (playerAddress: string) => void;
   onLeaveAlliance: () => void;
   onOpenAlliance?: ((allianceId: string) => void) | undefined;
@@ -532,6 +555,15 @@ function MyAllianceSection({
   onTransferOwnership: (playerAddress: string) => void;
   onUpdateProfile: (tag: string, name: string, description: string) => void;
 }) {
+  const [withdrawAmount, setWithdrawAmount] = useState<PaidAllianceBonusAmount>({
+    metal: "",
+    crystal: "",
+    deuterium: "",
+  });
+  const hasWithdrawalAmount = Boolean(
+    withdrawAmount.metal || withdrawAmount.crystal || withdrawAmount.deuterium,
+  );
+
   if (!isMember || !currentAlliance) {
     return (
       <Panel title="My Alliance" action={<SectionIcon icon={Users} />}>
@@ -559,6 +591,22 @@ function MyAllianceSection({
             <p className="mt-2 text-sm text-slate-400">
               Browse public alliances below, open details, then request to join from the directory row.
             </p>
+            <button
+              className="mt-3 rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-100 disabled:opacity-50"
+              disabled={disabled || !onRecoverPaidInvites}
+              onClick={() => void onRecoverPaidInvites?.().then(onSetPaidInviteLink)}
+              type="button"
+            >
+              Recover purchased invite links
+            </button>
+            {paidInviteLink ? (
+              <textarea
+                className="mt-2 w-full rounded border border-white/10 bg-black/30 px-3 py-2 font-mono text-xs text-slate-200"
+                readOnly
+                rows={Math.min(4, paidInviteLink.split("\n").length)}
+                value={paidInviteLink}
+              />
+            ) : null}
           </div>
         </div>
       </Panel>
@@ -585,6 +633,76 @@ function MyAllianceSection({
             <p className="mt-2 max-w-3xl whitespace-pre-wrap break-words text-sm text-slate-400">
               <AllianceDescription description={currentAlliance.description} fallback="No public alliance description." />
             </p>
+            <AllianceBonusBalance balance={currentAlliance.bonusBalance} />
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <button
+                className="rounded border border-cyan-300/30 px-3 py-2 text-sm font-semibold text-cyan-100 disabled:opacity-50"
+                disabled={disabled || !onBuyPaidInvite}
+                onClick={() => {
+                  const secret = generatePaidAllianceInviteSecret();
+                  const link = paidAllianceInviteLink(secret, typeof window === "undefined" ? "https://veydrift.com" : window.location.origin);
+                  onSetPaidInviteLink(link);
+                  onBuyPaidInvite?.(secret);
+                }}
+                type="button"
+              >
+                Buy private invite · 0.006 ETH (~$10)
+              </button>
+              <button
+                className="rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-100 disabled:opacity-50"
+                disabled={disabled || !onRecoverPaidInvites}
+                onClick={() => void onRecoverPaidInvites?.().then(onSetPaidInviteLink)}
+                type="button"
+              >
+                Recover purchased invite links
+              </button>
+            </div>
+            {paidInviteLink ? (
+              <div className="mt-2">
+                <p className="mb-2 text-xs text-amber-100">Share only after purchase confirmation. Each bearer link is unique and single-use.</p>
+                <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+                  <textarea className="min-w-0 rounded border border-white/10 bg-black/30 px-3 py-2 font-mono text-xs text-slate-200" readOnly rows={Math.min(4, paidInviteLink.split("\n").length)} value={paidInviteLink} />
+                  <button className="rounded border border-white/10 px-3 py-2 text-sm" onClick={() => void navigator.clipboard.writeText(paidInviteLink)} type="button">Copy private link(s)</button>
+                </div>
+              </div>
+            ) : null}
+            {canManageMembers ? (
+              <div className="mt-3 rounded border border-cyan-300/15 bg-cyan-300/[0.04] p-3">
+                <p className="text-sm font-semibold text-cyan-100">Alliance production treasury</p>
+                <p className="mt-1 text-xs text-slate-400">
+                  Credit selected whole resources to the active planet. It must have an Interdimensional Rift Stabilizer; external withdrawal still uses that planet&apos;s ordinary delayed, raidable Rift extraction.
+                </p>
+                <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                  {(["metal", "crystal", "deuterium"] as const).map((resource) => (
+                    <label className="grid gap-1 text-xs text-slate-300" key={resource}>
+                      <span className="capitalize">{resource}</span>
+                      <input
+                        className="w-full rounded border border-white/10 bg-black/30 px-2 py-2 font-mono text-sm text-white outline-none focus:border-cyan-300/60"
+                        inputMode="numeric"
+                        onInput={(event) => setWithdrawAmount((current) => ({
+                          ...current,
+                          [resource]: event.currentTarget.value.replace(/\D/g, ""),
+                        }))}
+                        placeholder={currentAlliance.bonusBalance?.[resource] ?? "0"}
+                        value={withdrawAmount[resource]}
+                      />
+                    </label>
+                  ))}
+                </div>
+                <button
+                  className="mt-3 rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-100 disabled:opacity-50"
+                  disabled={disabled || !onWithdrawPaidInviteBonus || !hasWithdrawalAmount}
+                  onClick={() => onWithdrawPaidInviteBonus?.({
+                    metal: withdrawAmount.metal || "0",
+                    crystal: withdrawAmount.crystal || "0",
+                    deuterium: withdrawAmount.deuterium || "0",
+                  })}
+                  type="button"
+                >
+                  Credit selected resources to active Rift planet
+                </button>
+              </div>
+            ) : null}
           </div>
         </div>
 
@@ -918,6 +1036,32 @@ function PublicAllianceSection({
   );
 }
 
+function AllianceBonusBalance({
+  balance,
+}: {
+  balance: { metal: string; crystal: string; deuterium: string } | null | undefined;
+}) {
+  return (
+    <div className="mt-3 rounded border border-cyan-300/20 bg-cyan-300/[0.05] p-3" aria-label="Alliance production bonus balance">
+      <h4 className="text-xs font-semibold uppercase tracking-[0.14em] text-cyan-100">Production bonus treasury</h4>
+      <div className="mt-2 grid grid-cols-3 gap-2 text-sm text-slate-200">
+        <span><small className="block text-slate-500">Metal</small>{formatAllianceResource(balance?.metal)}</span>
+        <span><small className="block text-slate-500">Crystal</small>{formatAllianceResource(balance?.crystal)}</span>
+        <span><small className="block text-slate-500">Deuterium</small>{formatAllianceResource(balance?.deuterium)}</span>
+      </div>
+    </div>
+  );
+}
+
+function formatAllianceResource(value: string | undefined): string {
+  if (value === undefined) return "Unavailable";
+  try {
+    return BigInt(value).toLocaleString();
+  } catch {
+    return value;
+  }
+}
+
 function WarSection({
   activeWars,
   canEndWar,
@@ -1036,7 +1180,7 @@ export function AllianceSummary({
   alliance,
   onOpenPlayer,
 }: {
-  alliance: Pick<AllianceEntry, "allianceId" | "createdAt" | "description" | "memberCount" | "name" | "owner" | "ownerDisplayName" | "tag" | "totalMemberScore">;
+  alliance: Pick<AllianceEntry, "allianceId" | "bonusBalance" | "createdAt" | "description" | "memberCount" | "name" | "owner" | "ownerDisplayName" | "tag" | "totalMemberScore">;
   onOpenPlayer: (playerAddress: string) => void;
 }) {
   return (
@@ -1058,6 +1202,7 @@ export function AllianceSummary({
         <MiniStat label="Score" value={formatScore(alliance.totalMemberScore)} />
         <MiniStat label="Created" value={formatUserTimestamp(alliance.createdAt)} />
       </div>
+      <AllianceBonusBalance balance={alliance.bonusBalance} />
       <button
         className="rounded border border-white/10 bg-black/20 px-3 py-2 text-left text-sm text-slate-200 hover:bg-white/10"
         onClick={() => onOpenPlayer(alliance.owner)}

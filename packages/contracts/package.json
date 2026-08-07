@@ -8,7 +8,7 @@
     "fmt:check": "forge fmt --check",
     "check": "bun run check:fast && bun run check:storage && bun run manifest:check",
     "check:fast": "forge fmt --check && forge build --sizes && forge build",
-    "check:storage": "forge build --extra-output storageLayout && node scripts/check-storage-layout.mjs",
+    "check:storage": "forge build --force --extra-output storageLayout && node scripts/check-storage-layout.mjs",
     "storage:check": "bun run check:storage",
     "test": "forge test",
     "manifest:generate": "VEYDRIFT_SOURCE_COMMIT=$(git log -1 --format=%H -- . ':(exclude)manifests/vey-741-base-fork-dry-run.json') VEYDRIFT_MANIFEST_PATH=manifests/vey-741-base-fork-dry-run.json forge test --match-path test/VeydriftUniswapLaunchMainnetFork.t.sol -vv",
