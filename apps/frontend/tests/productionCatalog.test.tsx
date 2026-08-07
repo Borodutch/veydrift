@@ -4,6 +4,7 @@ import {
   parseProductionQuantity,
   ProductionCatalog,
   productionQuantityValidationMessage,
+  revealProductionPanelAfterSelection,
   type ProductionCatalogItem,
   type ProductionQuantityInput,
 } from "../src/components/ProductionCatalog";
@@ -14,6 +15,56 @@ const productionCatalogSource = await Bun.file(
 ).text();
 
 describe("ProductionCatalog selected panel", () => {
+  test("exposes every catalog row as an explicit selection control", () => {
+    const selected: string[] = [];
+    const solarSatellite: ProductionCatalogItem<"solarSatellite"> = {
+      ...catalogItem(),
+      id: 9,
+      key: "solarSatellite",
+      label: "Solar Satellite",
+    };
+    const catalog = ProductionCatalog({
+      actionPending: false,
+      canTransact: true,
+      emptyLabel: "Select an item.",
+      items: [
+        catalogItem(),
+        solarSatellite,
+      ],
+      onBuild: () => undefined,
+      onQuantity: () => undefined,
+      onSelect: (key) => selected.push(key),
+      selectedKey: "rocketLauncher",
+    });
+    const catalogButtons = elementNodes(catalog)
+      .filter((node) => node.type === "button" && node.props["data-production-catalog-key"]);
+    const solarSatelliteButton = catalogButtons
+      .find((node) => node.props["data-production-catalog-key"] === "solarSatellite");
+
+    solarSatelliteButton?.props.onClick({ currentTarget: { closest: () => null } });
+
+    expect(catalogButtons.map((button) => button.props["aria-label"])).toEqual([
+      "Select Rocket Launcher",
+      "Select Solar Satellite",
+    ]);
+    expect(catalogButtons.every((button) => button.props["aria-controls"] === "production-detail-rocketLauncher")).toBe(true);
+    expect(selected).toEqual(["solarSatellite"]);
+  });
+
+  test("brings the selected build controls back into view only on narrow screens", () => {
+    const scrollOptions: ScrollIntoViewOptions[] = [];
+    const panel = { scrollIntoView: (options: ScrollIntoViewOptions) => scrollOptions.push(options) };
+    const trigger = {
+      closest: () => ({ querySelector: () => panel }),
+    };
+    const schedule = (callback: () => void) => callback();
+
+    revealProductionPanelAfterSelection(trigger, 390, schedule);
+    revealProductionPanelAfterSelection(trigger, 1280, schedule);
+
+    expect(scrollOptions).toEqual([{ behavior: "auto", block: "start" }]);
+  });
+
   test("allows the selected quantity input to be cleared while editing and restores it on blur", () => {
     const item: ProductionCatalogItem<"rocketLauncher"> = catalogItem({
       quantity: 7,

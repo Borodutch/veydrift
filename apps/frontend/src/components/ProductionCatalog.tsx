@@ -223,6 +223,7 @@ export function ProductionCatalog<Key extends string>({
 }: ProductionCatalogProps<Key>) {
   const selected = selectedProductionItem(items, selectedKey);
   const groups = Array.from(new Map(items.map((item) => [item.group, item.groupLabel])).entries());
+  const selectedPanelId = `production-detail-${items[0]?.key ?? "item"}`;
 
   if (items.length === 0) {
     return (
@@ -233,7 +234,7 @@ export function ProductionCatalog<Key extends string>({
   }
 
   return (
-    <div className="grid gap-4">
+    <div className="grid gap-4" data-production-catalog>
       {queue && (
         <ProductionQueuePanel
           now={now}
@@ -246,6 +247,7 @@ export function ProductionCatalog<Key extends string>({
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(320px,380px)] xl:items-start">
         <SelectedProductionPanel
           emptyLabel={emptyLabel}
+          id={selectedPanelId}
           item={selected}
           onBuild={onBuild}
           onOpenRequirement={onOpenRequirement}
@@ -264,6 +266,7 @@ export function ProductionCatalog<Key extends string>({
               <div className="grid gap-2 sm:grid-cols-2 2xl:grid-cols-3">
                 {items.filter((item) => item.group === group).map((item) => (
                   <CatalogButton
+                    controls={selectedPanelId}
                     item={item}
                     key={item.key}
                     onSelect={onSelect}
@@ -352,10 +355,12 @@ export function ProductionQueuePanel({
 }
 
 function CatalogButton<Key extends string>({
+  controls,
   item,
   onSelect,
   selected,
 }: {
+  controls: string;
   item: ProductionCatalogItem<Key>;
   onSelect: (key: Key) => void;
   selected: boolean;
@@ -370,13 +375,25 @@ function CatalogButton<Key extends string>({
 
   return (
     <button
+      aria-controls={controls}
+      aria-label={`Select ${item.label}`}
       aria-pressed={selected}
       className={`grid min-h-16 grid-cols-[44px_minmax(0,1fr)_auto] items-center gap-2 rounded border p-2 text-left transition focus:outline-none focus:ring-2 focus:ring-cyan-300/50 ${
         selected
           ? "border-cyan-300/50 bg-cyan-300/10"
           : "border-white/10 bg-[#101624] hover:border-white/20 hover:bg-white/5"
       }`}
-      onClick={() => onSelect(item.key)}
+      data-production-catalog-key={item.key}
+      onClick={(event) => {
+        onSelect(item.key);
+        if (!selected && typeof window !== "undefined") {
+          revealProductionPanelAfterSelection(
+            event.currentTarget,
+            window.innerWidth,
+            (callback) => window.requestAnimationFrame(callback),
+          );
+        }
+      }}
       type="button"
     >
       <div className="h-11 w-11 overflow-hidden rounded border border-white/10 bg-black/20">
@@ -402,12 +419,14 @@ function CatalogButton<Key extends string>({
 
 function SelectedProductionPanel<Key extends string>({
   emptyLabel,
+  id,
   item,
   onBuild,
   onOpenRequirement,
   onQuantity,
 }: {
   emptyLabel: string;
+  id: string;
   item: ProductionCatalogItem<Key> | undefined;
   onBuild: (item: ProductionCatalogItem<Key>) => void;
   onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
@@ -415,7 +434,7 @@ function SelectedProductionPanel<Key extends string>({
 }) {
   if (!item) {
     return (
-      <aside className="rounded border border-white/10 bg-[#101624] p-4 text-sm text-slate-400">
+      <aside className="rounded border border-white/10 bg-[#101624] p-4 text-sm text-slate-400" id={id}>
         {emptyLabel}
       </aside>
     );
@@ -426,7 +445,11 @@ function SelectedProductionPanel<Key extends string>({
   const quantityDigits = Math.max(1, String(quantityInput).length);
 
   return (
-    <aside className="grid min-w-0 max-w-full gap-3 overflow-hidden rounded border border-white/10 bg-[#101624] p-4 xl:sticky xl:top-4 xl:order-2">
+    <aside
+      className="grid min-w-0 max-w-full gap-3 overflow-hidden rounded border border-white/10 bg-[#101624] p-4 xl:sticky xl:top-4 xl:order-2"
+      data-selected-production-panel
+      id={id}
+    >
       <div
         className="grid grid-cols-[84px_minmax(0,1fr)] gap-3 xl:grid-cols-1 xl:gap-4"
         data-selected-production-layout="featured"
@@ -540,6 +563,26 @@ function SelectedProductionPanel<Key extends string>({
       </div> : null}
     </aside>
   );
+}
+
+type ProductionSelectionTrigger = {
+  closest: (selector: string) => {
+    querySelector: (selector: string) => {
+      scrollIntoView: (options: ScrollIntoViewOptions) => void;
+    } | null;
+  } | null;
+};
+
+export function revealProductionPanelAfterSelection(
+  trigger: ProductionSelectionTrigger,
+  viewportWidth: number,
+  schedule: (callback: () => void) => void,
+): void {
+  if (viewportWidth >= 1280) return;
+  const panel = trigger.closest("[data-production-catalog]")
+    ?.querySelector("[data-selected-production-panel]");
+  if (!panel) return;
+  schedule(() => panel.scrollIntoView({ behavior: "auto", block: "start" }));
 }
 
 function SelectedProductionDetails<Key extends string>({
