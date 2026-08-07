@@ -29,7 +29,7 @@ import type { RequirementTarget } from "./components/RequirementFlairs";
 import { RiftPage } from "./components/RiftPage";
 import { MoonPage } from "./components/MoonPage";
 import { PublicMoonDetail } from "./components/PublicMoonDetail";
-import { MoonImage, PlanetMoonIndicator } from "./components/PlanetMoonIndicator";
+import { PlanetMoonIndicator } from "./components/PlanetMoonIndicator";
 import { MissionDetailPage } from "./components/MissionDetailPage";
 import {
   EMPTY_MISSION_CONTROL_FILTERS,
@@ -68,7 +68,7 @@ import {
   type PlanetDetailBackRoute,
 } from "./inspectRoutes";
 import { resetDocumentTitle } from "./pageTitle";
-import { hasPlanetSelectorChoice } from "./planetSelectorChoice";
+import { hasPlanetSelectorChoice, isPlanetSelectorParentSelected } from "./planetSelectorChoice";
 import {
   browserPlanetPickerOrderStorage,
   createPlanetPickerInteractionController,
@@ -9044,7 +9044,6 @@ export function PlayableMvpApp({
       onSelect={handleSelectManagedPlanet}
       planets={orderedWalletPlanets}
       progressState={constructionProgressState}
-      selectedBodyKind={activeBodyKind}
       selectedPlanetId={activePlanetId}
     />
   ) : null;
@@ -9065,7 +9064,6 @@ export function PlayableMvpApp({
       onSelect={handleSelectManagedPlanet}
       planets={orderedWalletPlanets}
       progressState={constructionProgressState}
-      selectedBodyKind={activeBodyKind}
       selectedPlanetId={activePlanetId}
     />
   ) : null;
@@ -9849,7 +9847,6 @@ function PlanetSelector({
   onSelect,
   planets,
   progressState,
-  selectedBodyKind,
   selectedPlanetId,
 }: {
   attackHighlights: PlanetPickerAttackHighlights;
@@ -9858,7 +9855,6 @@ function PlanetSelector({
   onSelect: (planetId: string, bodyKind?: OrbitBodyKind) => void;
   planets: ManagedPlanetResponse[];
   progressState: ConstructionProgressState;
-  selectedBodyKind: OrbitBodyKind;
   selectedPlanetId: string | undefined;
 }) {
   const [draggingPlanetId, setDraggingPlanetId] = useState<string | undefined>();
@@ -10060,7 +10056,6 @@ function PlanetSelector({
       onSelect={onSelect}
       planet={planet}
       progressState={progressState}
-      selectedBodyKind={selectedBodyKind}
       selectedPlanet={selectedPlanet}
       shouldPreventPlanetTouchMove={shouldPreventPlanetTouchMove}
     />
@@ -10102,7 +10097,6 @@ function PlanetSelectorItem({
   onSelect,
   planet,
   progressState,
-  selectedBodyKind,
   selectedPlanet,
   shouldPreventPlanetTouchMove,
 }: {
@@ -10120,15 +10114,12 @@ function PlanetSelectorItem({
   onSelect: (planetId: string, bodyKind?: OrbitBodyKind) => void;
   planet: ManagedPlanetResponse;
   progressState: ConstructionProgressState;
-  selectedBodyKind: OrbitBodyKind;
   selectedPlanet: ManagedPlanetResponse;
   shouldPreventPlanetTouchMove: (planetId: string) => boolean;
 }) {
-  const selectedPlanetBody = planet.planetId === selectedPlanet.planetId && selectedBodyKind === "planet";
-  const selectedMoonBody = planet.planetId === selectedPlanet.planetId && selectedBodyKind === "moon";
+  const selected = isPlanetSelectorParentSelected(planet.planetId, selectedPlanet.planetId);
   const hasIncomingPlanetAttack = planetPickerHasIncomingAttack(attackHighlights, planet.planetId, "planet");
   const hasIncomingMoonAttack = planetPickerHasIncomingAttack(attackHighlights, planet.planetId, "moon");
-  const hasDedicatedMoonSelector = Boolean(planet.moon?.exists);
   const reorderInstructionsId = `planet-picker-reorder-${layout}-${planet.planetId}`;
   return (
     <div
@@ -10176,19 +10167,10 @@ function PlanetSelectorItem({
         planet={planet}
         progressState={progressState}
         reordering={dragging}
-        selected={selectedPlanetBody}
+        selected={selected}
         shouldPreventTouchMove={() => shouldPreventPlanetTouchMove(planet.planetId)}
-        showMoonIndicator={planet.moon?.exists === true && !hasDedicatedMoonSelector}
+        showMoonIndicator={planet.moon?.exists === true}
       />
-      {planet.moon?.exists ? (
-        <PlanetSelectorMoonButton
-          hasIncomingAttack={hasIncomingMoonAttack}
-          onSelect={onSelect}
-          planet={planet}
-          progressState={progressState}
-          selected={selectedMoonBody}
-        />
-      ) : null}
     </div>
   );
 }
@@ -10285,12 +10267,20 @@ function PlanetSelectorButton({
             loading="lazy"
             src={planetImage(planet)}
           />
-          {showMoonIndicator ? <PlanetMoonIndicator compact planetType={planetTypeFromTemperature(planet.temperature)} /> : null}
         </span>
+        {showMoonIndicator ? (
+          <PlanetMoonIndicator
+            className="!-right-1 !-top-1 !h-5 !w-5 xl:!h-5 xl:!w-5"
+            compact
+            planetType={planetTypeFromTemperature(planet.temperature)}
+          />
+        ) : null}
         {hasIncomingAttack ? (
           <span
             aria-hidden="true"
-            className="absolute -right-1 -top-1 z-10 grid h-5 w-5 place-items-center rounded-full border border-red-300/60 bg-red-500/85 text-white shadow shadow-red-950/40"
+            className={`absolute -top-1 z-10 grid h-5 w-5 place-items-center rounded-full border border-red-300/60 bg-red-500/85 text-white shadow shadow-red-950/40 ${
+              showMoonIndicator ? "-left-1" : "-right-1"
+            }`}
             title="Incoming attack"
           >
             <AlertTriangle className="block h-3 w-3" strokeWidth={2.4} />
@@ -10303,21 +10293,19 @@ function PlanetSelectorButton({
       <span className="block max-w-full truncate font-mono text-[0.6rem] leading-3 text-slate-400">
         {planet.coordinates}
       </span>
-      <PlanetSelectorProgressBars bodyKind="planet" planet={planet} progressState={progressState} />
+      <PlanetSelectorProgressBars planet={planet} progressState={progressState} />
     </button>
   );
 }
 
 function PlanetSelectorProgressBars({
-  bodyKind,
   planet,
   progressState,
 }: {
-  bodyKind: "moon" | "planet";
   planet: ManagedPlanetResponse;
   progressState: ConstructionProgressState;
 }) {
-  const bars = planetSelectorQueueProgressBars(planet, bodyKind, progressState).filter((bar) => bar.active);
+  const bars = planetSelectorQueueProgressBars(planet, progressState).filter((bar) => bar.active);
   if (bars.length === 0) return null;
 
   const summary = bars.map((bar) => bar.title).join(". ");
@@ -10352,7 +10340,7 @@ type PlanetSelectorProgressBar = {
   active: boolean;
   color: string;
   indeterminate: boolean;
-  kind: "building" | "defense" | "moon-building" | "research" | "ship";
+  kind: "building" | "defense" | "research" | "ship";
   progress: number;
   remaining: string;
   title: string;
@@ -10367,27 +10355,8 @@ function researchQueuePreview(queue: QueueStateResponse | null | undefined): { l
 
 function planetSelectorQueueProgressBars(
   planet: ManagedPlanetResponse,
-  bodyKind: "moon" | "planet",
   progressState: ConstructionProgressState,
 ): PlanetSelectorProgressBar[] {
-  if (bodyKind === "moon") {
-    return [
-      planetSelectorQueueProgressBar({
-        color: "bg-amber-300",
-        kind: "moon-building",
-        label: "Moon construction",
-        preview: { label: "Structure" },
-        progressState: progressState.get(constructionProgressKey(planet.planetId, "moon", "moon-building")),
-      }),
-      planetSelectorQueueProgressBar({
-        color: "bg-rose-300",
-        kind: "defense",
-        label: "Moon defense",
-        preview: defenseQueuePreview(progressState.get(constructionProgressKey(planet.planetId, "moon", "defense"))?.queue),
-        progressState: progressState.get(constructionProgressKey(planet.planetId, "moon", "defense")),
-      }),
-    ];
-  }
   return [
     planetSelectorQueueProgressBar({
       color: "bg-amber-300",
@@ -10488,62 +10457,6 @@ function planetSelectorQueueProgressBar({
     remaining: progressState.remaining,
     title: `${label}: ${preview.label}, ${progressState.remaining}`,
   };
-}
-
-function PlanetSelectorMoonButton({
-  hasIncomingAttack,
-  onSelect,
-  planet,
-  progressState,
-  selected,
-}: {
-  hasIncomingAttack: boolean;
-  onSelect: (planetId: string, bodyKind?: OrbitBodyKind) => void;
-  planet: ManagedPlanetResponse;
-  progressState: ConstructionProgressState;
-  selected: boolean;
-}) {
-  const label = `${hasIncomingAttack ? "Incoming attack warning. " : ""}Select ${planetDisplayName(planet)} moon at ${planet.coordinates}`;
-  const selectionStateClass = selected
-    ? "bg-cyan-200/[0.10] text-cyan-100"
-    : hasIncomingAttack
-      ? "bg-red-500/15 text-red-100"
-      : "bg-cyan-200/[0.055] text-slate-300 hover:bg-cyan-200/[0.09]";
-  const borderStateClass = hasIncomingAttack
-    ? "border-red-400/70 ring-1 ring-red-400/25"
-    : selected
-      ? "border-cyan-200/45"
-      : "border-cyan-200/15 hover:border-cyan-200/35";
-  return (
-    <button
-      aria-current={selected ? "true" : undefined}
-      aria-label={label}
-      className={`grid w-full min-w-0 grid-cols-[1.25rem_minmax(0,1fr)] items-center gap-1 overflow-hidden rounded border px-1 py-1 text-left transition focus:outline-none ${selectionStateClass} ${borderStateClass}`}
-      data-planet-selector-incoming-attack={hasIncomingAttack ? "moon" : undefined}
-      data-planet-selector-moon="true"
-      onClick={() => onSelect(planet.planetId, "moon")}
-      title={label}
-      type="button"
-    >
-      <span className="relative h-5 w-5 rounded-full border border-cyan-100/30 bg-black/40">
-        <span className="block h-full w-full overflow-hidden rounded-full">
-          <MoonImage className="h-full w-full object-cover" planetType={planetTypeFromTemperature(planet.temperature)} />
-        </span>
-        {hasIncomingAttack ? (
-          <span aria-hidden="true" className="absolute -right-1.5 -top-1.5 grid h-3.5 w-3.5 place-items-center rounded-full bg-red-500 text-white">
-            <AlertTriangle className="h-2.5 w-2.5" strokeWidth={2.4} />
-          </span>
-        ) : null}
-      </span>
-      <span className="min-w-0">
-        <span className="block truncate text-[0.62rem] font-semibold leading-3">Moon</span>
-        <span className="block truncate font-mono text-[0.55rem] leading-3 text-slate-500">{planet.coordinates}</span>
-      </span>
-      <span className="col-span-2 w-full">
-        <PlanetSelectorProgressBars bodyKind="moon" planet={planet} progressState={progressState} />
-      </span>
-    </button>
-  );
 }
 
 function planetDisplayName(planet: ManagedPlanetResponse): string {

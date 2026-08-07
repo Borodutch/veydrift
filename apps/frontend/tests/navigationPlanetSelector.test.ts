@@ -6,7 +6,7 @@ import {
   parseInspectRoute,
   planetDetailBackRouteForCurrentScreen,
 } from "../src/inspectRoutes";
-import { hasPlanetSelectorChoice } from "../src/planetSelectorChoice";
+import { hasPlanetSelectorChoice, isPlanetSelectorParentSelected } from "../src/planetSelectorChoice";
 
 const playableSource = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.url)).text();
 const navSource = await Bun.file(new URL("../src/components/NavBar.tsx", import.meta.url)).text();
@@ -59,6 +59,8 @@ describe("navigation and planet selector UI source contracts", () => {
       ownedMoon.kind === "moon" ? ownedMoon : null,
       ownedPlanets,
     )).toEqual({ bodyKind: "moon", planetId: "owned-a" });
+    expect(isPlanetSelectorParentSelected("owned-a", "owned-a")).toBe(true);
+    expect(isPlanetSelectorParentSelected("owned-b", "owned-a")).toBe(false);
 
     // Back/forward applies the location route in either ordering rather than
     // retaining the selection inferred for the previously visited body.
@@ -187,7 +189,8 @@ describe("navigation and planet selector UI source contracts", () => {
   });
 
   test("anchors incoming attack warnings to the planet thumbnail", () => {
-    expect(playableSource).toContain('className="absolute -right-1 -top-1 z-10 grid h-5 w-5 place-items-center rounded-full');
+    expect(playableSource).toContain('className={`absolute -top-1 z-10 grid h-5 w-5 place-items-center rounded-full');
+    expect(playableSource).toContain('showMoonIndicator ? "-left-1" : "-right-1"');
     expect(playableSource).toContain('<AlertTriangle className="block h-3 w-3"');
     expect(playableSource).not.toContain('<AlertTriangle className="block translate-y-px"');
   });
@@ -197,16 +200,16 @@ describe("navigation and planet selector UI source contracts", () => {
     expect(playableSource).toContain("hydrated: Boolean(expectedWalletSnapshotKey && hydratedWalletSnapshotKey === expectedWalletSnapshotKey)");
     expect(playableSource).toContain("planetPickerHasIncomingAttack(attackHighlights, planet.planetId, \"planet\")");
     expect(playableSource).toContain("planetPickerHasIncomingAttack(attackHighlights, planet.planetId, \"moon\")");
-    expect(playableSource).toContain("hasIncomingAttack={hasIncomingMoonAttack}");
-    expect(playableSource).toContain("data-planet-selector-incoming-attack={hasIncomingAttack ? \"moon\" : undefined}");
+    expect(playableSource).toContain('hasIncomingPlanetAttack && hasIncomingMoonAttack');
+    expect(playableSource).toContain('? "planet-and-moon"');
     expect(playableSource).not.toContain("hasIncomingAttack={planetHasIncomingAttack(fleetVisibility, planet.planetId)}");
   });
 
   test("shows per-planet queue progress bars in the selector", () => {
-    expect(playableSource).toContain('<PlanetSelectorProgressBars bodyKind="planet" planet={planet} progressState={progressState} />');
+    expect(playableSource).toContain('<PlanetSelectorProgressBars planet={planet} progressState={progressState} />');
     expect(playableSource).toContain("data-planet-selector-progress-bars={planet.planetId}");
     expect(playableSource).toContain("data-planet-selector-progress={bar.kind}");
-    expect(playableSource).toContain("const bars = planetSelectorQueueProgressBars(planet, bodyKind, progressState).filter((bar) => bar.active);");
+    expect(playableSource).toContain("const bars = planetSelectorQueueProgressBars(planet, progressState).filter((bar) => bar.active);");
     expect(playableSource).toContain('className="grid w-full gap-1"');
     expect(playableSource).toContain('constructionProgressKey(planet.planetId, "planet", "building")');
     expect(playableSource).toContain('constructionProgressKey(planet.planetId, "planet", "defense")');
@@ -236,13 +239,17 @@ describe("navigation and planet selector UI source contracts", () => {
     expect(playableSource).not.toContain("planet.queues.research");
   });
 
-  test("nests moon picker controls under parent planet items with generated moon imagery", () => {
+  test("renders one selector tile per planet and represents moons only as unclipped overlays", () => {
     expect(playableSource).toContain("data-planet-selector-item={planet.planetId}");
-    expect(playableSource).toContain('data-planet-selector-moon="true"');
-    expect(playableSource).toContain("<PlanetSelectorMoonButton");
+    expect(playableSource).toContain("const selectorItems = planets.map((planet) => (");
+    expect(playableSource).toContain("showMoonIndicator={planet.moon?.exists === true}");
+    expect(playableSource).toContain("<PlanetMoonIndicator");
+    expect(playableSource).toContain('className="!-right-1 !-top-1 !h-5 !w-5 xl:!h-5 xl:!w-5"');
     expect(playableSource).toContain("relative grid w-24 min-w-0 shrink-0 gap-1");
-    expect(playableSource).toContain("grid w-full min-w-0 grid-cols-[1.25rem_minmax(0,1fr)] items-center gap-1 overflow-hidden");
-    expect(playableSource).not.toContain("planets.flatMap((planet) => planetSelectorButtons");
+    expect(playableSource).not.toContain("PlanetSelectorMoonButton");
+    expect(playableSource).not.toContain('data-planet-selector-moon="true"');
+    expect(playableSource).not.toContain('onSelect(planet.planetId, "moon")');
+    expect(playableSource).not.toContain('constructionProgressKey(planet.planetId, "moon"');
     expect(gameAssetsSource).toContain("frozen-ice.webp");
     expect(moonIndicatorSource).toContain('data-planet-moon-subsection="true"');
     expect(moonIndicatorSource).not.toContain("Child moon body");
@@ -275,7 +282,15 @@ describe("navigation and planet selector UI source contracts", () => {
     expect(playableSource).toContain('<span aria-live="polite" className="sr-only">{reorderAnnouncement}</span>');
     expect(playableSource).toContain("if (onBeforeSelect && !onBeforeSelect(planet.planetId, event)) return;");
     expect(playableSource).toContain("onSelect(planet.planetId, bodyKind);");
-    expect(playableSource).toContain('onClick={() => onSelect(planet.planetId, "moon")}');
+  });
+
+  test("keeps a current moon mapped to its selected parent while moon navigation remains active", () => {
+    expect(playableSource).toContain("const selected = isPlanetSelectorParentSelected(planet.planetId, selectedPlanet.planetId);");
+    expect(playableSource).toContain("selected={selected}");
+    expect(playableSource).not.toContain('selectedBodyKind={activeBodyKind}');
+    expect(playableSource).toContain('setSelectedBodyKind(nextBodyKind)');
+    expect(playableSource).toContain('setPage("moon")');
+    expect(playableSource).toContain('if (target !== "moon")');
   });
 
   test("normal navigation from a selected moon returns to the parent planet context", () => {

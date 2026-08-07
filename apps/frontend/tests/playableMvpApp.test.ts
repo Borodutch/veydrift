@@ -858,7 +858,7 @@ describe("Playable MVP app display helpers", () => {
     expect(planetHasIncomingAttack(applied, "7")).toBe(false);
   });
 
-  test("conditions planet picker moon indicators on the nested moon selector", () => {
+  test("shows planet picker moon overlays without standalone moon selector buttons", () => {
     const itemSource = sourceBetween(
       playableMvpSource,
       "function PlanetSelectorItem",
@@ -870,13 +870,15 @@ describe("Playable MVP app display helpers", () => {
       "function planetDisplayName"
     );
 
-    expect(itemSource).toContain("hasDedicatedMoonSelector");
-    expect(itemSource).toContain("PlanetSelectorMoonButton");
-    expect(itemSource).toContain("showMoonIndicator={planet.moon?.exists === true && !hasDedicatedMoonSelector}");
+    expect(itemSource).toContain("isPlanetSelectorParentSelected(planet.planetId, selectedPlanet.planetId)");
+    expect(itemSource).toContain("showMoonIndicator={planet.moon?.exists === true}");
+    expect(itemSource).not.toContain("PlanetSelectorMoonButton");
+    expect(itemSource).not.toContain("selectedMoonBody");
     expect(buttonSource).toContain("veydrift-planet-selector-button");
     expect(buttonSource).toContain("planetImage(planet)");
     expect(buttonSource).toContain("showMoonIndicator");
     expect(buttonSource).toContain("PlanetMoonIndicator");
+    expect(buttonSource).toContain('className="!-right-1 !-top-1 !h-5 !w-5 xl:!h-5 xl:!w-5"');
   });
 
   test("keys galaxy home sync by coordinates instead of background snapshot identity", () => {
