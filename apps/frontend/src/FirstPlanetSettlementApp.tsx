@@ -53,6 +53,7 @@ import {
   normalizeReferralClaimCode,
   persistReferralClaimIntent,
   readMigrationReservation,
+  readWalletNativeBalance,
   miniAppUnsupportedChainMessage,
   WALLET_BOOTSTRAP_READ_TIMEOUT_MS,
   requestAccounts,
@@ -68,6 +69,8 @@ import {
   paidAllianceInviteSecretFromHash,
   sendReferralClaimTransaction,
   sendSettlementTransaction,
+  settlementFundingShortfallWei,
+  settlementFundingWithWalletBalance,
   settlementContractConfigured,
   switchVeydriftNetwork,
   validateReferralCode,
@@ -1462,10 +1465,16 @@ export function FirstPlanetSettlementApp() {
     walletProvider: Eip1193Provider | undefined,
     connectedAccount: string,
   ): Promise<SettlementFundingState> {
-    const funding = await backendDataStoreFor(settlementConfigState.apiUrl!).settlementFunding(connectedAccount);
-    const chainMigrationReservation = walletProvider
-      ? await readMigrationReservation(walletProvider, settlementConfig.migrationAddress, connectedAccount)
-      : null;
+    if (!walletProvider) {
+      throw new Error("Wallet provider is unavailable. Reconnect your wallet, then retry.");
+    }
+
+    const [backendFunding, walletBalanceWei, chainMigrationReservation] = await Promise.all([
+      backendDataStoreFor(settlementConfigState.apiUrl!).settlementFunding(connectedAccount),
+      readWalletNativeBalance(walletProvider, connectedAccount),
+      readMigrationReservation(walletProvider, settlementConfig.migrationAddress, connectedAccount),
+    ]);
+    const funding = settlementFundingWithWalletBalance(backendFunding, walletBalanceWei);
     const migrationReservation = migrationReservationForSettlementFunding(
       chainMigrationReservation,
       funding.migrationReservation
@@ -2251,10 +2260,16 @@ function FlowBody({
     );
   }
 
-  const actionBlocked = settlementLaunchBlocker(settlementReady, settlementFunding) !== undefined
+  const balanceRecheckAvailable = settlementBalanceRecheckAvailable(settlementReady, settlementFunding);
+  const actionBlocked = (
+    settlementLaunchBlocker(settlementReady, settlementFunding) !== undefined
+    && !balanceRecheckAvailable
+  )
     || (!prepaidAllianceInvite && referralSettlementBlocker(referralCodeInput, referralValidation) !== undefined);
   const migrationReservation = activeMigrationReservation(settlementFunding);
-  const actionLabel = settlementFunding.status === "idle" || settlementFunding.status === "loading"
+  const actionLabel = balanceRecheckAvailable
+    ? "Recheck balance & launch"
+    : settlementFunding.status === "idle" || settlementFunding.status === "loading"
     ? "Checking balance"
     : migrationReservation
       ? "Migrate planet"
@@ -2302,10 +2317,23 @@ export function settlementLaunchBlocker(
     return settlementFunding.funding.unavailableReason;
   }
   if (!settlementFunding.funding.affordable) {
-    return "This wallet needs more ETH before launching settlement.";
+    const shortfallWei = settlementFundingShortfallWei(settlementFunding.funding);
+    return shortfallWei !== null && shortfallWei > 0n
+      ? `This wallet needs at least ${formatEth(shortfallWei)} more ETH on Base, plus gas, before launching settlement.`
+      : "This wallet needs more ETH before launching settlement.";
   }
 
   return undefined;
+}
+
+export function settlementBalanceRecheckAvailable(
+  settlementReady: boolean,
+  settlementFunding: SettlementFunding,
+): boolean {
+  if (!settlementReady || settlementFunding.status !== "ready") return false;
+  if (settlementFunding.funding.unavailableReason || settlementFunding.funding.affordable) return false;
+  const shortfallWei = settlementFundingShortfallWei(settlementFunding.funding);
+  return shortfallWei !== null && shortfallWei > 0n;
 }
 
 export function referralSettlementBlocker(
@@ -2397,7 +2425,11 @@ function settlementBody(
     }
 
     const balance = formatEth(settlementFunding.funding.balanceWei);
-    return `${prefix} Settlement costs ${startPrice} ETH; this wallet has ${balance} ETH on ${networkName}.${referralPreview}`;
+    const shortfallWei = settlementFundingShortfallWei(settlementFunding.funding);
+    const shortfall = shortfallWei !== null && shortfallWei > 0n
+      ? ` It needs at least ${formatEth(shortfallWei)} more ETH, plus gas, before settlement can launch.`
+      : " Keep a little extra ETH available for gas.";
+    return `${prefix} Settlement costs ${startPrice} ETH; this wallet has ${balance} ETH on ${networkName}.${shortfall}${referralPreview}`;
   }
 
   return `${prefix}${referralPreview}`;
