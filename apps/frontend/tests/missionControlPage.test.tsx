@@ -681,6 +681,53 @@ describe("MissionControlPage", () => {
     expect(text).toContain("Resolve");
   });
 
+  test("stacks the overdue Resolve action below Resolving without changing disabled or terminal states", () => {
+    const overdue = mission({ arrivalAt: "1770000000", missionId: "12", missionType: "Transport", needsResolution: true });
+    const visibility = {
+      wallet: "0x1111111111111111111111111111111111111111",
+      homePlanetId: "7",
+      incoming: [],
+      outgoing: [overdue],
+      returning: [],
+      joinableAttacks: [],
+      completedMissions: [],
+      battleReports: [],
+    };
+    const enabledPage = missionControlPage({
+      fleetVisibility: visibility,
+      now: 1_770_000_700_000,
+    });
+
+    expect(visibleAttributeValues(enabledPage, "data-mission-status")).toEqual(["Resolving"]);
+    expect(visibleAttributeValues(enabledPage, "data-mission-status-layout")).toEqual(["stacked"]);
+    expect(visibleAttributeValues(enabledPage, "data-mission-status-action")).toEqual(["resolve"]);
+    expect(visibleAttributeValues(enabledPage, "title")).toContain("Resolve this overdue mission");
+
+    const unavailableReason = "Wallet transaction is already indexing.";
+    const disabledPage = missionControlPage({
+      canTransact: false,
+      fleetVisibility: visibility,
+      now: 1_770_000_700_000,
+      transactionUnavailableReason: unavailableReason,
+    });
+
+    expect(visibleAttributeValues(disabledPage, "data-mission-status-layout")).toEqual(["stacked"]);
+    expect(visibleAttributeValues(disabledPage, "title")).toContain(unavailableReason);
+
+    const resolvedPage = missionControlPage({
+      fleetVisibility: {
+        ...visibility,
+        completedMissions: [mission({ ...overdue, status: "Resolved" })],
+        outgoing: [],
+      },
+      now: 1_770_000_700_000,
+    });
+
+    expect(visibleAttributeValues(resolvedPage, "data-mission-status-layout")).toEqual(["status-only"]);
+    expect(visibleAttributeValues(resolvedPage, "data-mission-status-action")).toEqual([]);
+    expect(visibleAttributeValues(resolvedPage, "title")).not.toContain("Resolve this overdue mission");
+  });
+
   test("paginates past missions inline without a separate list action", () => {
     const page = missionControlPage({
       fleetVisibility: {
