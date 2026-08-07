@@ -23,6 +23,7 @@ describe("paid alliance invite frontend flow", () => {
     expect(source).toContain("Buy private invite · 0.006 ETH (~$10)");
     expect(source).toContain("Credit selected resources to active Rift planet");
     expect(source).toContain("Interdimensional Rift Stabilizer");
+    expect(source).toContain("Recover alliance invite links");
   });
 
   test("creates unique private links whose secret is not the on-chain commitment", () => {

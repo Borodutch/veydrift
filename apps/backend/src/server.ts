@@ -1113,9 +1113,19 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           return Response.json({ error: "paid_alliance_invite_recovery_unavailable" }, { headers: corsHeaders, status: 503 });
         }
         const body = await readJsonBody(request);
-        const purchaser = String(body?.purchaser ?? "");
-        assertAddress(purchaser);
-        const recovered = await paidAllianceInviteSecretStore.recover(purchaser, body?.signature);
+        const viewer = String(body?.viewer ?? "");
+        assertAddress(viewer);
+        const recovered = await paidAllianceInviteSecretStore.recoverForViewer(
+          viewer,
+          body?.signature,
+          async (commitment) => {
+            const state = await paidAllianceInviteReader.invite(commitment);
+            return paidAllianceInviteReader.canRecoverAllianceInvites(
+              viewer as ViemAddress,
+              state.allianceId,
+            );
+          },
+        );
         const invites = [];
         for (const record of recovered) {
           const state = await paidAllianceInviteReader.invite(record.commitment);

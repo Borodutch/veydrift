@@ -3079,8 +3079,8 @@ export function paidAllianceInviteStoreMessage(purchaser: string, commitment: st
   return `Veydrift paid alliance invite store\nPurchaser: ${purchaser.toLowerCase()}\nCommitment: ${commitment.toLowerCase()}`;
 }
 
-export function paidAllianceInviteRecoveryMessage(purchaser: string): string {
-  return `Veydrift paid alliance invite recovery\nPurchaser: ${purchaser.toLowerCase()}`;
+export function paidAllianceInviteRecoveryMessage(viewer: string): string {
+  return `Veydrift paid alliance invite recovery\nViewer: ${viewer.toLowerCase()}`;
 }
 
 export async function storePaidAllianceInvite(apiUrl: string, provider: Eip1193Provider, purchaser: string, secret: string): Promise<void> {
@@ -3094,12 +3094,12 @@ export async function storePaidAllianceInvite(apiUrl: string, provider: Eip1193P
   if (!response.ok) throw new Error(`Alliance invite recovery storage failed (${response.status}).`);
 }
 
-export async function recoverPaidAllianceInvites(apiUrl: string, provider: Eip1193Provider, purchaser: string): Promise<Array<{ commitment: string; secret: string }>> {
-  const signature = await requestPersonalSignature(provider, purchaser, paidAllianceInviteRecoveryMessage(purchaser));
+export async function recoverPaidAllianceInvites(apiUrl: string, provider: Eip1193Provider, viewer: string): Promise<Array<{ commitment: string; secret: string }>> {
+  const signature = await requestPersonalSignature(provider, viewer, paidAllianceInviteRecoveryMessage(viewer));
   const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/alliance-invites/recover`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ purchaser, signature }),
+    body: JSON.stringify({ viewer, signature }),
   });
   if (!response.ok) throw new Error(`Alliance invite recovery failed (${response.status}).`);
   const body = await response.json() as { invites?: Array<{ commitment: string; secret: string }> };
