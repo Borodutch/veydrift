@@ -440,6 +440,7 @@ export function OverviewPage({
             className="right-3 top-3"
             label={`Open ${homePlanet.moonName ?? "Moon"}`}
             onClick={onSelectMoon ? () => onSelectMoon({ galaxy: homePlanet.galaxy, system: homePlanet.system, position: homePlanet.position }) : undefined}
+            overviewHero
             planetType={homePlanet.type}
             title={`Open ${homePlanet.moonName ?? "Moon"} at [${homePlanet.galaxy}:${homePlanet.system}:${homePlanet.position}]`}
           />
