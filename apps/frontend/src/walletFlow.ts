@@ -126,9 +126,14 @@ export type PaidAllianceInviteRedemption = {
 export type PaidAllianceInviteResolution = {
   commitment: string;
   allianceId: string | null;
-  validUntil: string | null;
-  status: "active" | "expired" | "invalid" | "redeemed";
+  status: "active" | "invalid" | "redeemed";
   valid: boolean;
+};
+
+export type PaidAllianceBonusAmount = {
+  metal: string;
+  crystal: string;
+  deuterium: string;
 };
 
 export type ReferralInviteSummary = {
@@ -1416,7 +1421,7 @@ const CLAIM_REFERRAL_CODE_SELECTOR = "0x03b52c94";
 const START_PLANET_WITH_REFERRAL_SELECTOR = "0xdad57ff9";
 const START_PLANET_WITH_ALLIANCE_INVITE_SELECTOR = "0x042fec83";
 const BUY_PAID_ALLIANCE_INVITE_SELECTOR = "0x9c9a1061";
-const WITHDRAW_PAID_ALLIANCE_BONUS_SELECTOR = "0x441a3e70";
+const WITHDRAW_PAID_ALLIANCE_BONUS_SELECTOR = "0x2d20f511";
 export const PAID_ALLIANCE_INVITE_PRICE_WEI = 6_000_000_000_000_000n;
 const GAME_SELECTORS = {
   abandonPlanet: "0xfa16dddc",
@@ -3089,7 +3094,7 @@ export async function storePaidAllianceInvite(apiUrl: string, provider: Eip1193P
   if (!response.ok) throw new Error(`Alliance invite recovery storage failed (${response.status}).`);
 }
 
-export async function recoverPaidAllianceInvites(apiUrl: string, provider: Eip1193Provider, purchaser: string): Promise<Array<{ commitment: string; secret: string; validUntil: string }>> {
+export async function recoverPaidAllianceInvites(apiUrl: string, provider: Eip1193Provider, purchaser: string): Promise<Array<{ commitment: string; secret: string }>> {
   const signature = await requestPersonalSignature(provider, purchaser, paidAllianceInviteRecoveryMessage(purchaser));
   const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/alliance-invites/recover`, {
     method: "POST",
@@ -3097,7 +3102,7 @@ export async function recoverPaidAllianceInvites(apiUrl: string, provider: Eip11
     body: JSON.stringify({ purchaser, signature }),
   });
   if (!response.ok) throw new Error(`Alliance invite recovery failed (${response.status}).`);
-  const body = await response.json() as { invites?: Array<{ commitment: string; secret: string; validUntil: string }> };
+  const body = await response.json() as { invites?: Array<{ commitment: string; secret: string }> };
   return body.invites ?? [];
 }
 
@@ -3122,12 +3127,29 @@ export async function sendWithdrawPaidAllianceBonusTransaction(
   contractAddress: string,
   allianceId: string,
   planetId: string,
+  amount: PaidAllianceBonusAmount,
 ): Promise<string> {
+  const metal = paidAllianceBonusAmountValue(amount.metal, "Metal");
+  const crystal = paidAllianceBonusAmountValue(amount.crystal, "Crystal");
+  const deuterium = paidAllianceBonusAmountValue(amount.deuterium, "Deuterium");
+  if (metal === 0n && crystal === 0n && deuterium === 0n) {
+    throw new Error("Choose at least one treasury resource to credit.");
+  }
   return sendWalletTransaction(provider, account, {
     from: account,
     to: contractAddress,
-    data: `${WITHDRAW_PAID_ALLIANCE_BONUS_SELECTOR}${BigInt(allianceId).toString(16).padStart(64, "0")}${BigInt(planetId).toString(16).padStart(64, "0")}`,
+    data: `${WITHDRAW_PAID_ALLIANCE_BONUS_SELECTOR}${encodeAbiParameters(
+      parseAbiParameters("uint256,uint256,(uint128,uint128,uint128)"),
+      [BigInt(allianceId), BigInt(planetId), [metal, crystal, deuterium]],
+    ).slice(2)}`,
   });
+}
+
+function paidAllianceBonusAmountValue(value: string, label: string): bigint {
+  if (!/^\d+$/.test(value)) throw new Error(`${label} amount must be a whole resource amount.`);
+  const amount = BigInt(value);
+  if (amount > (1n << 128n) - 1n) throw new Error(`${label} amount is too large.`);
+  return amount;
 }
 
 function encodePaidAllianceInviteSettlement(redemption: PaidAllianceInviteRedemption): string {

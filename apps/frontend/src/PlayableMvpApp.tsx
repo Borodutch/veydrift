@@ -321,6 +321,7 @@ import {
   type WalletPlanetsResponse,
   type WatchedPlanetsResponse,
   type WalletSettlementResponse,
+  type PaidAllianceBonusAmount,
   type ResourceSnapshotMetadata,
   type TransactionReceipt,
 } from "./walletFlow";
@@ -7312,9 +7313,16 @@ export function PlayableMvpApp({
     return links.length ? links.join("\n") : null;
   }, [account, apiBaseUrl, provider]);
 
-  const handleWithdrawPaidAllianceBonus = useCallback(() => {
+  const handleWithdrawPaidAllianceBonus = useCallback((amount: PaidAllianceBonusAmount) => {
     if (!provider || !account || !paidAllianceInviteContract || !allianceState?.membership.allianceId || !activePlanetId) {
       setAllianceAction({ status: "error", label: "Alliance production treasury is not configured." });
+      return;
+    }
+    const activePlanetHasRift = infrastructureChainState?.buildings.some((building) => (
+      building.id === buildingContractIds.interdimensionalRiftStabilizer && building.level > 0
+    ));
+    if (!activePlanetHasRift) {
+      setAllianceAction({ status: "error", label: "Build an Interdimensional Rift Stabilizer on the active planet first." });
       return;
     }
     void runAllianceTransaction("Alliance production treasury withdrawal", () => sendWithdrawPaidAllianceBonusTransaction(
@@ -7323,8 +7331,9 @@ export function PlayableMvpApp({
       paidAllianceInviteContract,
       allianceState.membership.allianceId,
       activePlanetId,
+      amount,
     ));
-  }, [account, activePlanetId, allianceState?.membership.allianceId, paidAllianceInviteContract, provider, runAllianceTransaction]);
+  }, [account, activePlanetId, allianceState?.membership.allianceId, infrastructureChainState?.buildings, paidAllianceInviteContract, provider, runAllianceTransaction]);
 
   const handleUpdateAllianceProfile = useCallback((tag: string, name: string, description: string) => {
     if (!provider || !account || !apiBaseUrl || !allianceContract || !allianceState?.membership.allianceId) {

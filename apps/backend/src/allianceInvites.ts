@@ -33,7 +33,6 @@ const inviteAbi = [{
       { name: "purchaser", type: "address" },
       { name: "settlementPrice", type: "uint128" },
       { name: "purchasedAt", type: "uint64" },
-      { name: "validUntil", type: "uint64" },
       { name: "redeemed", type: "bool" },
     ],
   }],
@@ -58,15 +57,13 @@ export type PaidAllianceInviteState = {
   purchaser: Address;
   settlementPrice: bigint;
   purchasedAt: bigint;
-  validUntil: bigint;
   redeemed: boolean;
 };
 
 export type PaidAllianceInviteResolution = {
   commitment: Hex;
   allianceId: string | null;
-  validUntil: string | null;
-  status: "active" | "expired" | "invalid" | "redeemed";
+  status: "active" | "invalid" | "redeemed";
   valid: boolean;
 };
 
@@ -237,19 +234,16 @@ export function paidAllianceInviteCommitment(secret: unknown): Hex {
 export function resolvePaidAllianceInvite(
   secret: unknown,
   state: PaidAllianceInviteState,
-  nowSeconds = BigInt(Math.floor(Date.now() / 1000)),
 ): PaidAllianceInviteResolution {
   const commitment = paidAllianceInviteCommitment(secret);
   if (state.allianceId === 0n) {
-    return { commitment, allianceId: null, validUntil: null, status: "invalid", valid: false };
+    return { commitment, allianceId: null, status: "invalid", valid: false };
   }
   const base = {
     commitment,
     allianceId: state.allianceId.toString(),
-    validUntil: state.validUntil.toString(),
   };
   if (state.redeemed) return { ...base, status: "redeemed", valid: false };
-  if (nowSeconds >= state.validUntil) return { ...base, status: "expired", valid: false };
   return { ...base, status: "active", valid: true };
 }
 
@@ -283,10 +277,9 @@ export async function buildPaidAllianceInviteAuthorization(
   if (!config.paidAllianceInviteAddress || !config.paidAllianceInviteSignerPrivateKey) {
     throw new Error("Paid alliance invite redemption is not configured.");
   }
-  const resolution = resolvePaidAllianceInvite(secret, state, nowSeconds);
+  const resolution = resolvePaidAllianceInvite(secret, state);
   if (!resolution.valid) throw new Error(`Alliance invite is ${resolution.status}.`);
-  const expiresAt = minBigInt(nowSeconds + BigInt(paidAllianceAuthorizationLifetimeSeconds), state.validUntil - 1n);
-  if (expiresAt <= nowSeconds) throw new Error("Alliance invite is expired.");
+  const expiresAt = nowSeconds + BigInt(paidAllianceAuthorizationLifetimeSeconds);
   const hash = paidAllianceAuthorizationHash(
     config.chainId,
     config.paidAllianceInviteAddress,
@@ -337,8 +330,4 @@ export class PaidAllianceInviteRateLimiter {
     current.count += 1;
     return true;
   }
-}
-
-function minBigInt(left: bigint, right: bigint): bigint {
-  return left < right ? left : right;
 }

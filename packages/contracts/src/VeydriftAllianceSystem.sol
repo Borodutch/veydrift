@@ -170,6 +170,7 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
     error NotGame(address caller);
     error NotPaidInviteSystem(address caller);
     error PaidInviteSystemUnset();
+    error RiftStabilizerRequiredForPaidInviteWithdrawal(uint256 planetId);
 
     event AllianceCreated(
         uint256 indexed allianceId, address indexed owner, string tag, string name
@@ -343,6 +344,9 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
     ) external {
         if (msg.sender != paidInviteSystem) {
             revert NotPaidInviteSystem(msg.sender);
+        }
+        if (game.buildingLevel(planetId, Building.InterdimensionalRiftStabilizer) == 0) {
+            revert RiftStabilizerRequiredForPaidInviteWithdrawal(planetId);
         }
         game.creditAllianceBonusToPlanet(planetId, manager, amount);
     }

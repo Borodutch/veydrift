@@ -29,7 +29,6 @@ const state: PaidAllianceInviteState = {
   purchaser: "0x2222222222222222222222222222222222222222",
   settlementPrice: 10n,
   purchasedAt: 100n,
-  validUntil: 9_999_999_999n,
   redeemed: false,
 };
 
@@ -63,11 +62,11 @@ describe("paid alliance invites", () => {
     expect(JSON.stringify(authorization)).not.toContain(secret);
   });
 
-  test("rejects invalid, expired, and redeemed states", () => {
+  test("rejects invalid and redeemed states without expiring unused links", () => {
     expect(() => paidAllianceInviteCommitment("guessable")).toThrow("32-byte high-entropy");
-    expect(resolvePaidAllianceInvite(secret, { ...state, allianceId: 0n }, 1_000n).status).toBe("invalid");
-    expect(resolvePaidAllianceInvite(secret, { ...state, validUntil: 1_000n }, 1_000n).status).toBe("expired");
-    expect(resolvePaidAllianceInvite(secret, { ...state, redeemed: true }, 1_000n).status).toBe("redeemed");
+    expect(resolvePaidAllianceInvite(secret, { ...state, allianceId: 0n }).status).toBe("invalid");
+    expect(resolvePaidAllianceInvite(secret, { ...state, redeemed: true }).status).toBe("redeemed");
+    expect(resolvePaidAllianceInvite(secret, state).status).toBe("active");
   });
 
   test("bounds repeated redemption attempts", () => {
@@ -239,7 +238,7 @@ describe("paid alliance invites", () => {
       const states = new Map([
         [commitments[0], { ...state, purchaser: purchaser.address }],
         [commitments[1], { ...state, purchaser: purchaser.address, redeemed: true }],
-        [commitments[2], { ...state, purchaser: purchaser.address, validUntil: 1n }],
+        [commitments[2], { ...state, purchaser: purchaser.address }],
       ]);
       const store = new PaidAllianceInviteSecretStore(path, `0x${"44".repeat(32)}`);
       for (const [index, inviteSecret] of secrets.entries()) {
@@ -266,13 +265,12 @@ describe("paid alliance invites", () => {
       }));
       expect(response.status).toBe(200);
       const body = await response.json();
-      expect(body.invites).toEqual([expect.objectContaining({
-        commitment: commitments[0],
-        secret: secrets[0],
-        status: "active",
-      })]);
+      expect(body.invites).toEqual(expect.arrayContaining([
+        expect.objectContaining({ commitment: commitments[0], secret: secrets[0], status: "active" }),
+        expect.objectContaining({ commitment: commitments[2], secret: secrets[2], status: "active" }),
+      ]));
+      expect(body.invites).toHaveLength(2);
       expect(JSON.stringify(body)).not.toContain(secrets[1]);
-      expect(JSON.stringify(body)).not.toContain(secrets[2]);
       store.close();
     } finally {
       rmSync(directory, { recursive: true, force: true });

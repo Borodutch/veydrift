@@ -29,7 +29,6 @@ interface IVeydriftPaidInviteAlliance {
 /// stay below EIP-170. Only commitments are public; the high-entropy secret remains in the link and
 /// is exchanged with the backend for a short-lived authorization bound to the recipient wallet.
 contract VeydriftPaidAllianceInvites {
-    uint64 public constant INVITE_LIFETIME = 30 days;
     uint128 public constant INVITE_PRICE = 0.006 ether;
     uint16 public constant PRODUCTION_BONUS_BPS = 200;
     uint16 private constant BPS = 10_000;
@@ -39,7 +38,6 @@ contract VeydriftPaidAllianceInvites {
         address purchaser;
         uint128 settlementPrice;
         uint64 purchasedAt;
-        uint64 validUntil;
         bool redeemed;
     }
 
@@ -63,10 +61,9 @@ contract VeydriftPaidAllianceInvites {
     error InvalidCommitment(bytes32 commitment);
     error InviteAlreadyExists(bytes32 commitment);
     error InvalidPayment(uint256 expected, uint256 received);
-    error InviteExpired(bytes32 commitment, uint64 validUntil);
     error InviteAlreadyRedeemed(bytes32 commitment);
     error InvalidAuthorization();
-    error InvalidAuthorizationExpiry(uint64 expiresAt, uint64 validUntil);
+    error InvalidAuthorizationExpiry(uint64 expiresAt);
     error SignerUnset();
     error BonusUnavailable(uint256 allianceId);
     error WithdrawalReentered();
@@ -79,8 +76,7 @@ contract VeydriftPaidAllianceInvites {
         uint256 indexed allianceId,
         address indexed purchaser,
         uint256 settlementPrice,
-        uint64 purchasedAt,
-        uint64 validUntil
+        uint64 purchasedAt
     );
     event PaidAllianceInviteRedeemed(
         bytes32 indexed commitment,
@@ -161,7 +157,6 @@ contract VeydriftPaidAllianceInvites {
         }
         alliance.game().depositPaidAllianceInviteFee{value: msg.value}();
         uint64 purchasedAt = uint64(block.timestamp);
-        uint64 validUntil = purchasedAt + INVITE_LIFETIME;
         _invites[commitment] = PaidInvite({
             allianceId: allianceId,
             purchaser: msg.sender,
@@ -169,12 +164,9 @@ contract VeydriftPaidAllianceInvites {
             // forge-lint: disable-next-line(unsafe-typecast)
             settlementPrice: uint128(price),
             purchasedAt: purchasedAt,
-            validUntil: validUntil,
             redeemed: false
         });
-        emit PaidAllianceInvitePurchased(
-            commitment, allianceId, msg.sender, price, purchasedAt, validUntil
-        );
+        emit PaidAllianceInvitePurchased(commitment, allianceId, msg.sender, price, purchasedAt);
     }
 
     function redeem(
@@ -190,11 +182,8 @@ contract VeydriftPaidAllianceInvites {
         if (allianceId == 0) revert InvalidCommitment(commitment);
         if (paidInvite.redeemed) revert InviteAlreadyRedeemed(commitment);
         uint64 currentTime = uint64(block.timestamp);
-        if (currentTime >= paidInvite.validUntil) {
-            revert InviteExpired(commitment, paidInvite.validUntil);
-        }
-        if (expiresAt <= currentTime || expiresAt > paidInvite.validUntil) {
-            revert InvalidAuthorizationExpiry(expiresAt, paidInvite.validUntil);
+        if (expiresAt <= currentTime) {
+            revert InvalidAuthorizationExpiry(expiresAt);
         }
         address expectedSigner = signer;
         if (expectedSigner == address(0)) revert SignerUnset();
@@ -281,16 +270,26 @@ contract VeydriftPaidAllianceInvites {
         }
     }
 
-    function withdraw(uint256 allianceId, uint256 planetId) external {
+    function withdraw(
+        uint256 allianceId,
+        uint256 planetId,
+        VeydriftGameStorage.Resources calldata amount
+    ) external {
         if (_withdrawing) revert WithdrawalReentered();
         (uint256 managerAllianceId, uint8 role,) = alliance.allianceOf(msg.sender);
         if (managerAllianceId != allianceId || role < 2) revert Unauthorized(msg.sender);
-        VeydriftGameStorage.Resources memory amount = _balances[allianceId];
         if (amount.metal == 0 && amount.crystal == 0 && amount.deuterium == 0) {
             revert BonusUnavailable(allianceId);
         }
+        VeydriftGameStorage.Resources storage balance = _balances[allianceId];
+        if (
+            amount.metal > balance.metal || amount.crystal > balance.crystal
+                || amount.deuterium > balance.deuterium
+        ) revert BonusUnavailable(allianceId);
         _withdrawing = true;
-        delete _balances[allianceId];
+        balance.metal -= amount.metal;
+        balance.crystal -= amount.crystal;
+        balance.deuterium -= amount.deuterium;
         alliance.creditPaidInviteBonusToPlanet(planetId, msg.sender, amount);
         _withdrawing = false;
         emit AllianceBonusWithdrawn(

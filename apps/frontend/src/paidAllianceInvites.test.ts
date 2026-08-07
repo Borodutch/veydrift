@@ -21,7 +21,8 @@ describe("paid alliance invite frontend flow", () => {
     const source = await Bun.file(new URL("./components/AlliancePage.tsx", import.meta.url)).text();
     expect(source).toContain("Production bonus treasury");
     expect(source).toContain("Buy private invite · 0.006 ETH (~$10)");
-    expect(source).toContain("Credit treasury to active planet");
+    expect(source).toContain("Credit selected resources to active Rift planet");
+    expect(source).toContain("Interdimensional Rift Stabilizer");
   });
 
   test("creates unique private links whose secret is not the on-chain commitment", () => {
@@ -41,16 +42,20 @@ describe("paid alliance invite frontend flow", () => {
     expect(link.split("#")[0]).not.toContain(secret);
   });
 
-  test("buys for exactly 0.006 ETH and credits the selected planet", async () => {
+  test("buys for exactly 0.006 ETH and supports a partial Rift-planet credit", async () => {
     const requests: unknown[] = [];
     const provider = providerRecording(requests);
     const secret = `0x${"ab".repeat(32)}`;
     await sendBuyPaidAllianceInviteTransaction(provider, account, inviteContract, paidAllianceInviteCommitment(secret), PAID_ALLIANCE_INVITE_PRICE_WEI);
-    await sendWithdrawPaidAllianceBonusTransaction(provider, account, inviteContract, "7", "42");
+    await sendWithdrawPaidAllianceBonusTransaction(provider, account, inviteContract, "7", "42", {
+      metal: "100",
+      crystal: "0",
+      deuterium: "7",
+    });
     expect(requests).toHaveLength(2);
     expect((requests[0] as any).params[0].data.slice(0, 10)).toBe("0x9c9a1061");
     expect((requests[0] as any).params[0].value).toBe("0x1550f7dca70000");
-    expect((requests[1] as any).params[0].data.slice(0, 10)).toBe("0x441a3e70");
+    expect((requests[1] as any).params[0].data.slice(0, 10)).toBe("0x2d20f511");
   });
 
   test("sends bearer secrets only in POST bodies, never request URLs", async () => {
@@ -60,7 +65,7 @@ describe("paid alliance invite frontend flow", () => {
     globalThis.fetch = (async (input, init) => {
       requestUrl = String(input);
       requestBody = String(init?.body ?? "");
-      return Response.json({ status: "active", valid: true, commitment: `0x${"12".repeat(32)}`, allianceId: "7", validUntil: "99" });
+      return Response.json({ status: "active", valid: true, commitment: `0x${"12".repeat(32)}`, allianceId: "7" });
     }) as typeof fetch;
     try {
       const secret = `0x${"ef".repeat(32)}`;

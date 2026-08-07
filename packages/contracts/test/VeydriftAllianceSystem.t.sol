@@ -231,13 +231,28 @@ contract VeydriftAllianceSystemTest is Test {
         vm.warp(expiresAt);
         vm.expectRevert(
             abi.encodeWithSelector(
-                VeydriftPaidAllianceInvites.InvalidAuthorizationExpiry.selector,
-                expiresAt,
-                uint64(1 + paidInvites.INVITE_LIFETIME())
+                VeydriftPaidAllianceInvites.InvalidAuthorizationExpiry.selector, expiresAt
             )
         );
         vm.prank(newCommander);
         game.startPlanetWithAllianceInvite{value: settlementPrice}(commitment, expiresAt, v, r, s);
+    }
+
+    function testPaidInviteRemainsRedeemableUntilUsed() public {
+        vm.prank(leader);
+        alliances.createAlliance("VDFT", "Veydrift Union", "");
+        bytes32 commitment = keccak256("private-link-without-invite-expiry");
+        uint256 price = paidInvites.INVITE_PRICE();
+        vm.prank(leader);
+        paidInvites.buy{value: price}(commitment);
+
+        vm.warp(block.timestamp + 366 days);
+        uint64 expiresAt = uint64(block.timestamp + 10 minutes);
+        (uint8 v, bytes32 r, bytes32 s) = _signPaidInvite(commitment, newCommander, expiresAt);
+        uint256 settlementPrice = game.startPrice();
+        vm.prank(newCommander);
+        game.startPlanetWithAllianceInvite{value: settlementPrice}(commitment, expiresAt, v, r, s);
+        assertTrue(paidInvites.invite(commitment).redeemed);
     }
 
     function testAnyCurrentMemberCanBuyButNonMembersCannot() public {
@@ -464,21 +479,39 @@ contract VeydriftAllianceSystemTest is Test {
         uint256 leaderPlanetId = game.homePlanetOf(leader);
         vm.prank(member);
         vm.expectRevert();
-        paidInvites.withdraw(allianceId, leaderPlanetId);
+        paidInvites.withdraw(allianceId, leaderPlanetId, balance);
         vm.prank(member);
-        paidInvites.withdraw(allianceId, destinationPlanetId);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftAllianceSystem.RiftStabilizerRequiredForPaidInviteWithdrawal.selector,
+                destinationPlanetId
+            )
+        );
+        paidInvites.withdraw(allianceId, destinationPlanetId, balance);
+        _setBuildingLevel(destinationPlanetId, Building.InterdimensionalRiftStabilizer, 1);
+        VeydriftGameStorage.Resources memory withdrawalAmount = VeydriftGameStorage.Resources({
+            metal: balance.metal / 2, crystal: balance.crystal / 2, deuterium: balance.deuterium / 2
+        });
+        if (
+            withdrawalAmount.metal == 0 && withdrawalAmount.crystal == 0
+                && withdrawalAmount.deuterium == 0
+        ) {
+            withdrawalAmount.metal = balance.metal;
+        }
+        vm.prank(member);
+        paidInvites.withdraw(allianceId, destinationPlanetId, withdrawalAmount);
         VeydriftGameStorage.Resources memory destinationAfter =
         game.planet(destinationPlanetId).resources;
-        assertEq(destinationAfter.metal, destinationBefore.metal + balance.metal);
+        assertEq(destinationAfter.metal, destinationBefore.metal + withdrawalAmount.metal);
         assertEq(
             metalToken.balanceOf(member),
             walletTokenBalanceBefore,
             "treasury credit must not bypass ordinary Rift extraction"
         );
         VeydriftGameStorage.Resources memory afterBalance = paidInvites.bonusBalance(allianceId);
-        assertEq(afterBalance.metal, 0);
-        assertEq(afterBalance.crystal, 0);
-        assertEq(afterBalance.deuterium, 0);
+        assertEq(afterBalance.metal, balance.metal - withdrawalAmount.metal);
+        assertEq(afterBalance.crystal, balance.crystal - withdrawalAmount.crystal);
+        assertEq(afterBalance.deuterium, balance.deuterium - withdrawalAmount.deuterium);
     }
 
     function testAllianceCreationInvitesRolesAndPublicMembers() public {

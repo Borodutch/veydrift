@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from "preact/hooks";
 import { descriptionLinkParts } from "../descriptionLinks";
 import { formatDurationUntil } from "../durationFormat";
 import { formatUserTimestamp } from "../timestampFormat";
-import type { AllianceDiplomacyStatus, AllianceRole, ChainAllianceState, HighscoreEntry, WalletPlanetsResponse } from "../walletFlow";
+import type { AllianceDiplomacyStatus, AllianceRole, ChainAllianceState, HighscoreEntry, PaidAllianceBonusAmount, WalletPlanetsResponse } from "../walletFlow";
 import { generatePaidAllianceInviteSecret, paidAllianceInviteLink } from "../walletFlow";
 import { shortAddress } from "../walletFlow";
 import { backendDataStoreFor } from "../backendDataStore";
@@ -69,7 +69,7 @@ interface AlliancePageProps {
   onInvite: (playerAddress: string) => void;
   onBuyPaidInvite?: ((secret: string) => void) | undefined;
   onRecoverPaidInvites?: (() => Promise<string | null>) | undefined;
-  onWithdrawPaidInviteBonus?: (() => void) | undefined;
+  onWithdrawPaidInviteBonus?: ((amount: PaidAllianceBonusAmount) => void) | undefined;
   onJoinRequest: (allianceId: string) => void;
   onKick: (playerAddress: string) => void;
   onLeaveAlliance: () => void;
@@ -534,7 +534,7 @@ function MyAllianceSection({
   onInvite: (playerAddress: string) => void;
   onBuyPaidInvite?: ((secret: string) => void) | undefined;
   onRecoverPaidInvites?: (() => Promise<string | null>) | undefined;
-  onWithdrawPaidInviteBonus?: (() => void) | undefined;
+  onWithdrawPaidInviteBonus?: ((amount: PaidAllianceBonusAmount) => void) | undefined;
   paidInviteLink: string | null;
   onSetPaidInviteLink: (link: string | null) => void;
   onKick: (playerAddress: string) => void;
@@ -555,6 +555,15 @@ function MyAllianceSection({
   onTransferOwnership: (playerAddress: string) => void;
   onUpdateProfile: (tag: string, name: string, description: string) => void;
 }) {
+  const [withdrawAmount, setWithdrawAmount] = useState<PaidAllianceBonusAmount>({
+    metal: "",
+    crystal: "",
+    deuterium: "",
+  });
+  const hasWithdrawalAmount = Boolean(
+    withdrawAmount.metal || withdrawAmount.crystal || withdrawAmount.deuterium,
+  );
+
   if (!isMember || !currentAlliance) {
     return (
       <Panel title="My Alliance" action={<SectionIcon icon={Users} />}>
@@ -647,16 +656,6 @@ function MyAllianceSection({
               >
                 Recover active invite
               </button>
-              {canManageMembers ? (
-                <button
-                  className="rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-100 disabled:opacity-50"
-                  disabled={disabled || !onWithdrawPaidInviteBonus}
-                  onClick={onWithdrawPaidInviteBonus}
-                  type="button"
-                >
-                  Credit treasury to active planet
-                </button>
-              ) : null}
             </div>
             {paidInviteLink ? (
               <div className="mt-2">
@@ -668,7 +667,41 @@ function MyAllianceSection({
               </div>
             ) : null}
             {canManageMembers ? (
-              <p className="mt-2 text-xs text-slate-500">Treasury resources stay in-game; external withdrawal uses that planet&apos;s ordinary delayed, raidable Rift extraction.</p>
+              <div className="mt-3 rounded border border-cyan-300/15 bg-cyan-300/[0.04] p-3">
+                <p className="text-sm font-semibold text-cyan-100">Alliance production treasury</p>
+                <p className="mt-1 text-xs text-slate-400">
+                  Credit selected whole resources to the active planet. It must have an Interdimensional Rift Stabilizer; external withdrawal still uses that planet&apos;s ordinary delayed, raidable Rift extraction.
+                </p>
+                <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                  {(["metal", "crystal", "deuterium"] as const).map((resource) => (
+                    <label className="grid gap-1 text-xs text-slate-300" key={resource}>
+                      <span className="capitalize">{resource}</span>
+                      <input
+                        className="w-full rounded border border-white/10 bg-black/30 px-2 py-2 font-mono text-sm text-white outline-none focus:border-cyan-300/60"
+                        inputMode="numeric"
+                        onInput={(event) => setWithdrawAmount((current) => ({
+                          ...current,
+                          [resource]: event.currentTarget.value.replace(/\D/g, ""),
+                        }))}
+                        placeholder={currentAlliance.bonusBalance?.[resource] ?? "0"}
+                        value={withdrawAmount[resource]}
+                      />
+                    </label>
+                  ))}
+                </div>
+                <button
+                  className="mt-3 rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-100 disabled:opacity-50"
+                  disabled={disabled || !onWithdrawPaidInviteBonus || !hasWithdrawalAmount}
+                  onClick={() => onWithdrawPaidInviteBonus?.({
+                    metal: withdrawAmount.metal || "0",
+                    crystal: withdrawAmount.crystal || "0",
+                    deuterium: withdrawAmount.deuterium || "0",
+                  })}
+                  type="button"
+                >
+                  Credit selected resources to active Rift planet
+                </button>
+              </div>
             ) : null}
           </div>
         </div>
