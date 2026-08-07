@@ -26,7 +26,7 @@ import { actionNoticeForBuilding, type InfrastructureActionNotice } from "../bui
 import { InspectInfoBlock } from "./InspectProgressLayout";
 import { refreshButtonState } from "./PageHeader";
 import { QueueProgressPanel } from "./QueueProgressPanel";
-import type { ConstructionProgress } from "../constructionProgress";
+import { constructionQueueForDisplay, type ConstructionProgress } from "../constructionProgress";
 import { RequirementFlairs, type RequirementFlair, type RequirementTarget } from "./RequirementFlairs";
 import { LevelInfoButton, LevelInfoModal, type LevelInfoColumn, type LevelInfoRow } from "./LevelInfoModal";
 import { StructureCatalog, StructureDetail, type StructureLevelInfo } from "./StructureCatalog";
@@ -117,9 +117,9 @@ export function InfrastructurePage({
   });
   const selectedBuilding = buildingCatalog.find((building) => building.key === selectedKey)
     ?? buildingCatalog[0]!;
-  const activeBuildingQueue = settledState.queue?.kind === "building"
+  const activeBuildingQueue = constructionQueueForDisplay(settledState.queue?.kind === "building"
     ? settledState.queue
-    : undefined;
+    : undefined, constructionProgress);
   const showInitialLoadError = shouldShowInfrastructureInitialLoadError({
     hasLoadedInfrastructureState,
     loadError,

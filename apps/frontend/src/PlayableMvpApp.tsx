@@ -6247,7 +6247,7 @@ export function PlayableMvpApp({
     ? constructionProgressState.get(constructionProgressKey(planetId, bodyKind, kind))
     : undefined, [constructionProgressState]);
   const centralizedResearchQueue = progressFor(activePlanetId, "planet", "research")?.queue ?? null;
-  const effectiveResearchState = researchState && centralizedResearchQueue?.active
+  const effectiveResearchState = researchState
     ? { ...researchState, queue: centralizedResearchQueue }
     : researchState;
   const overviewOnChainQueues = useMemo<PlayerQueuesResponse | undefined>(() => {
@@ -6266,26 +6266,18 @@ export function PlayableMvpApp({
       return;
     }
 
-    const nextEventMs = nextProductionQueueCompletionEventMs(productionQueueCompletionCandidates({
-      building: activeBuildingQueue,
-      defense: activeDefenseProductionQueue,
-      moonBuilding: moonState?.queue,
-      moonDefense: moonState?.defenseQueue,
-      research: effectiveResearchState?.queue,
-      shipyard: activeShipyardProductionQueue,
-    }), Date.now());
+    const nextEventMs = nextProductionQueueCompletionEventMs(
+      Array.from(confirmedConstructionQueues.values()),
+      Date.now(),
+    );
     if (nextEventMs === undefined) {
       return;
     }
 
     const delay = Math.max(0, nextEventMs - Date.now()) + PRODUCTION_QUEUE_COMPLETION_REFRESH_BUFFER_MS;
     const timer = window.setTimeout(() => {
-      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
-        return;
-      }
-
       const refreshes: Array<Promise<unknown> | unknown> = [
-        refreshOnChainState(undefined, { force: true }),
+        refreshOnChainState(undefined, { force: true, forceWalletPlanets: true }),
         refreshInfrastructureState(),
       ];
       if (activeDefenseProductionQueue?.active) refreshes.push(refreshDefenseState());
@@ -6301,6 +6293,7 @@ export function PlayableMvpApp({
     activeDefenseProductionQueue,
     activeShipyardProductionQueue,
     apiBaseUrl,
+    confirmedConstructionQueues,
     effectiveResearchState?.queue,
     moonState?.defenseQueue,
     moonState?.queue,

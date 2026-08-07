@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   constructionProgressKey,
+  constructionQueueForDisplay,
   projectConstructionProgress,
   reconcileConstructionQueues,
   retainConfirmedConstructionQueue,
@@ -111,17 +112,41 @@ describe("central construction progress", () => {
     expect(state.get(constructionProgressKey("7", "moon", "moon-building"))?.queue?.itemId).toBe(2);
   });
 
-  test("moves partial progress to ready from canonical timestamps without a stale flash", () => {
+  test("moves an off-screen queue from partial progress to idle at its canonical completion", () => {
     const observation = planetBuilding(activeQueue());
     const queues = reconcileConstructionQueues(new Map(), [observation]);
     const partial = projectConstructionProgress(queues, [observation], (readyAtSeconds - 1) * 1_000);
     const ready = projectConstructionProgress(queues, [observation], readyAtSeconds * 1_000);
+    const offScreenRawQueue = activeQueue();
 
     expect(partial.get(constructionProgressKey("7", "planet", "building"))?.progress).toBe(0.99);
     expect(ready.get(constructionProgressKey("7", "planet", "building"))).toMatchObject({
+      active: false,
       complete: true,
       progress: 1,
-      remaining: "Ready",
+      queue: null,
+      remaining: "Idle",
+    });
+    expect(constructionQueueForDisplay(
+      offScreenRawQueue,
+      ready.get(constructionProgressKey("7", "planet", "building")),
+    )).toBeUndefined();
+  });
+
+  test("clears a backend-confirmed completed queue without waiting for body selection", () => {
+    const observation = planetBuilding(activeQueue({
+      asOfNow: { complete: true, overallProgressBps: 10_000, secondsRemaining: 0 },
+      readyAt: null,
+      startedAt: undefined,
+    }));
+    const queues = reconcileConstructionQueues(new Map(), [observation]);
+    const state = projectConstructionProgress(queues, [observation], startedAtSeconds * 1_000);
+
+    expect(state.get(constructionProgressKey("7", "planet", "building"))).toMatchObject({
+      active: false,
+      complete: true,
+      queue: null,
+      remaining: "Idle",
     });
   });
 });

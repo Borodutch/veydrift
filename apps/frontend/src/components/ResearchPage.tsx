@@ -32,7 +32,7 @@ import {
 } from "./InspectProgressLayout";
 import { refreshButtonState } from "./PageHeader";
 import { QueueProgressPanel } from "./QueueProgressPanel";
-import type { ConstructionProgress } from "../constructionProgress";
+import { constructionQueueForDisplay, type ConstructionProgress } from "../constructionProgress";
 import { RequirementFlairs, type RequirementFlair, type RequirementTarget } from "./RequirementFlairs";
 import { CatalogSkeleton } from "./LoadingSkeletons";
 import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailableNotice";
@@ -118,7 +118,10 @@ export function ResearchPage({
     useLocalStateFallback,
   });
   const viewState = researchViewState(settledState, researchState, useLocalStateFallback, now);
-  const queue = hideLiveValues ? undefined : researchQueueForDisplay(researchState, viewState, now);
+  const queue = constructionQueueForDisplay(
+    hideLiveValues ? undefined : researchQueueForDisplay(researchState, viewState, now),
+    progressState,
+  );
   const { detailPanelRef, selectInspectItem: handleSelectResearch } = useInspectDetailSelection<ResearchKey>((key) => {
     setLocalSelectedKey(key);
     onSelectResearch?.(key);
