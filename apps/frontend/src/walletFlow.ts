@@ -1100,6 +1100,7 @@ export type ChainAllianceState = {
     memberCount: number;
     totalMemberScore?: string;
     bonusBalance?: { metal: string; crystal: string; deuterium: string } | null;
+    privateInviteStats?: { remaining: number; used: number } | null;
   } | null;
   directory: Array<{
     allianceId: string;
@@ -1113,6 +1114,7 @@ export type ChainAllianceState = {
     memberCount: number;
     totalMemberScore?: string;
     bonusBalance?: { metal: string; crystal: string; deuterium: string } | null;
+    privateInviteStats?: { remaining: number; used: number } | null;
     members?: Array<{
       address: string;
       displayName?: string | null;

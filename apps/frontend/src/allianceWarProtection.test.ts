@@ -5,11 +5,13 @@ describe("alliance war protection UI", () => {
     const source = await Bun.file(new URL("./components/AlliancePage.tsx", import.meta.url)).text();
 
     expect(source).toContain("Once declared, a war cannot be ended for 48 hours.");
-    expect(source).toContain("This snapshots both alliances’ canonical on-chain score and current members.");
-    expect(source).toContain("Defender score protection will remain enabled");
-    expect(source).toContain("1.5× war threshold");
-    expect(source).toContain("Your declarer alliance receives no war score-protection exception");
-    expect(source).toContain("Late joins and members who leave/rejoin receive no war exceptions.");
-    expect(source).toContain("each alliance may snapshot at most 64 current members");
+    expect(source).toContain("War scores and rosters are locked on-chain at declaration.");
+    expect(source).toContain("Alliance score check failed:");
+    expect(source).toContain("Two score checks apply when you attack");
+    expect(source).toContain("each attacker must be no more than 1.5× their target");
+    expect(source).toContain("Defender advantage:");
+    expect(source).toContain("Late joins and members who leave or rejoin get no war exceptions.");
+    expect(source).toContain("each alliance can snapshot at most 64 members");
+    expect(source).toContain("<WarDeclarationRule icon={Scale}");
   });
 });

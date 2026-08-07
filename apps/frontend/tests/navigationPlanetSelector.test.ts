@@ -369,7 +369,7 @@ describe("navigation and planet selector UI source contracts", () => {
     expect(playableSource).toContain("<AllianceInvitesPage");
     expect(playableSource).toContain('page === "alliance-invites"');
     expect(playableSource).toContain("referralProgramPanel={referralProgramPanel}");
-    expect(playableSource).not.toContain("onAcceptInvite={handleAcceptAllianceInvite}");
+    expect(playableSource).toContain("onAcceptInvite={handleAcceptAllianceInvite}");
   });
 
   test("makes Commander card value fields copy full values with local fade-up feedback", () => {

@@ -21,7 +21,6 @@ import {
 import { backendDataStoreFor } from "../backendDataStore";
 import {
   AllianceMemberActions,
-  AllianceDescription,
   AllianceSummary,
   RosterBatchActions,
   allianceRosterPageSize,
@@ -33,6 +32,7 @@ import {
   canRemoveAllianceRosterMember,
   canSelectAllianceRosterMember,
   canTransferAllianceOwnership,
+  currentAllianceEntry,
   findAllianceEntry,
   rosterPageCount,
   rosterPageRows,
@@ -344,18 +344,7 @@ export function AllianceInspectPage({
     () => buildAllianceRoster(isCurrentAlliance ? allianceState?.members ?? [] : [], profile?.owner),
     [allianceState?.members, isCurrentAlliance, profile?.owner]
   );
-  const currentAlliance = isCurrentAlliance && profile ? {
-    active: profile.active,
-    allianceId,
-    createdAt: profile.createdAt,
-    description: profile.description,
-    memberCount: Math.max(profile.memberCount, roster.all.length),
-    name: profile.name,
-    owner: profile.owner,
-    ownerDisplayName: profile.ownerDisplayName ?? null,
-    rosterAvailable: true,
-    tag: profile.tag,
-  } : null;
+  const currentAlliance = isCurrentAlliance ? currentAllianceEntry(allianceState, roster.all.length) : null;
   const alliance = findAllianceEntry(allianceState?.directory ?? [], allianceId, currentAlliance);
   const publicRoster = useMemo(
     () => buildAllianceRoster(!isCurrentAlliance ? alliance?.members ?? [] : [], alliance?.owner),
@@ -391,11 +380,7 @@ export function AllianceInspectPage({
           />
 
           <Panel title={isCurrentAlliance ? "My Alliance" : "Alliance"}>
-            {isCurrentAlliance ? (
-              <AllianceSummary alliance={alliance} onOpenPlayer={onOpenPlayer} />
-            ) : (
-              <PublicAllianceInspectSummary alliance={alliance} />
-            )}
+            <AllianceSummary alliance={alliance} onOpenPlayer={onOpenPlayer} />
           </Panel>
 
           {isCurrentAlliance ? (
@@ -476,31 +461,6 @@ export function AllianceInspectPage({
         </div>
       ) : null}
     </InspectShell>
-  );
-}
-
-function PublicAllianceInspectSummary({
-  alliance,
-}: {
-  alliance: Pick<ChainAllianceState["directory"][number], "description" | "name" | "tag" | "totalMemberScore">;
-}) {
-  return (
-    <div className="grid gap-3">
-      <div className="min-w-0">
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <span className="inline-flex items-center rounded border border-cyan-300/35 bg-cyan-300/10 px-2 py-1 font-mono text-xs font-semibold leading-none text-cyan-100">
-            {alliance.tag}
-          </span>
-          <h3 className="min-w-0 text-base font-semibold text-white">{alliance.name}</h3>
-        </div>
-        <p className="mt-2 max-w-3xl whitespace-pre-wrap break-words text-sm text-slate-400">
-          <AllianceDescription description={alliance.description} fallback="No public alliance description." />
-        </p>
-      </div>
-      <div className="grid gap-2 sm:grid-cols-3">
-        <CompactStat label="Score" value={formatScore(alliance.totalMemberScore)} />
-      </div>
-    </div>
   );
 }
 

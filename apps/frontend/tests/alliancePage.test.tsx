@@ -106,6 +106,18 @@ describe("AlliancePage loading display", () => {
     expect(allianceRefreshButtonState(false)).toEqual({ disabled: false, label: "Refresh" });
   });
 
+  test("keeps unaffiliated creation in a directory action and preserves visible invitations", () => {
+    expect(alliancePageSource).not.toContain('title="Find your alliance"');
+    expect(alliancePageSource).not.toContain("Browse alliances");
+    expect(alliancePageSource).toContain('aria-label="Create alliance"');
+    expect(alliancePageSource).toContain("<CreateAllianceDialog");
+    expect(alliancePageSource).toContain('aria-labelledby="create-alliance-title"');
+    expect(alliancePageSource).toContain('label="Description"');
+    expect(alliancePageSource).toContain("pendingInvites.map((invite)");
+    expect(alliancePageSource).toContain("onAcceptInvite(invite.allianceId)");
+    expect(alliancePageSource).not.toContain("Discover Alliances");
+  });
+
   test("keeps loaded member state distinct from loading", () => {
     expect(shouldShowAllianceInitialLoader({
       allianceState: memberAllianceState(),
@@ -408,7 +420,7 @@ describe("AlliancePage loading display", () => {
   });
 
   test("uses all-alliance directory copy and keeps inspected alliances out of a separate details panel", () => {
-    expect(alliancePageSource).toContain('<Panel title="Alliances">');
+    expect(alliancePageSource).toContain('title="Alliance directory"');
     expect(alliancePageSource).not.toContain('<Panel title="Other Alliances">');
     expect(alliancePageSource).not.toContain('filter((alliance) => alliance.allianceId !== currentAllianceId)');
     expect(alliancePageSource).not.toContain("Alliance Details");
@@ -533,17 +545,30 @@ describe("AlliancePage loading display", () => {
     expect(alliancePageSource).not.toContain('role="tooltip"');
     expect(alliancePageSource).toContain('title={endAction.reason ?? "End war"}');
     expect(alliancePageSource).toContain("Only the alliance that declared this war can end it.");
-    expect(alliancePageSource).toContain("Reciprocal war: attack score protection and bashing limits are bypassed for both alliances.");
+    expect(alliancePageSource).toContain("War is restricted to its declaration snapshot: late joins receive no exceptions.");
   });
 
-  test("polishes alliance edit invite and delete controls with explicit labels", () => {
+  test("keeps member administration compact behind explicit controls", () => {
     expect(alliancePageSource).toContain("profileFormOpen");
-    expect(alliancePageSource).toContain("Alliance controls");
-    expect(alliancePageSource).toContain("Edit Profile");
+    expect(alliancePageSource).toContain("activeControlPanel");
+    expect(alliancePageSource).toContain("activeControlPanel === panel ? null : panel");
+    expect(alliancePageSource).not.toContain("controlsOpen");
+    expect(alliancePageSource).toContain("<AllianceControlTab");
+    expect(alliancePageSource).not.toContain("Alliance controls");
+    expect(alliancePageSource).toContain('role="tablist"');
+    expect(alliancePageSource).toContain('role="tab"');
+    expect(alliancePageSource).not.toContain('label="Manage"');
+    expect(alliancePageSource).toContain('label="Edit"');
     expect(alliancePageSource).toContain("Save Profile");
     expect(alliancePageSource).not.toContain("<h3 className=\"text-sm font-semibold text-white\">Profile</h3>");
-    expect(alliancePageSource).toContain("Invite Member");
-    expect(alliancePageSource).toContain("Close Invite");
+    expect(alliancePageSource).toContain('label="Invite Member"');
+    expect(alliancePageSource).toContain('label="Private Invites"');
+    expect(alliancePageSource).toContain('label="Treasury"');
+    expect(alliancePageSource.match(/<AllianceManagementPanel/g)?.length).toBe(4);
+    expect(alliancePageSource).toContain("allianceManagementPrimaryActionClass");
+    expect(alliancePageSource).toContain('activeWars.length ? (');
+    expect(alliancePageSource).toContain("canManageMembers && selectableRows.length > 0");
+    expect(alliancePageSource).toContain("canManageMembers && (allianceState?.allianceJoinRequests.length ?? 0) > 0");
     expect(alliancePageSource).toContain("Confirm Delete");
     expect(alliancePageSource).toContain("Trash2 size={15}");
     expect(alliancePageSource).toContain('const showExit = exitAction.label !== "Delete Alliance";');
@@ -569,8 +594,10 @@ describe("AlliancePage loading display", () => {
   });
 
   test("keeps inspected alliance summaries player-facing instead of backend-detail heavy", () => {
-    expect(inspectPagesSource).toContain("<PublicAllianceInspectSummary alliance={alliance} />");
-    expect(inspectPagesSource).toContain('Pick<ChainAllianceState["directory"][number], "description" | "name" | "tag" | "totalMemberScore">');
+    expect(inspectPagesSource).toContain("<AllianceSummary alliance={alliance} onOpenPlayer={onOpenPlayer} />");
+    expect(alliancePageSource).toContain('label="Invites left"');
+    expect(alliancePageSource).toContain('label="Invites used"');
+    expect(alliancePageSource).toContain("Alliance treasury");
     expect(inspectPagesSource).not.toContain("#{alliance.allianceId}");
   });
 

@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BackendConfig } from "./config";
 import {
+  aggregatePaidAllianceInviteCounts,
   buildPaidAllianceInviteAuthorization,
   paidAllianceAuthorizationHash,
   paidAllianceInviteCommitment,
@@ -52,6 +53,13 @@ function config(): BackendConfig {
 }
 
 describe("paid alliance invites", () => {
+  test("counts remaining and redeemed private invites by alliance", () => {
+    expect(aggregatePaidAllianceInviteCounts([1n, 1n, 1n, 2n], [1n, 2n])).toEqual(new Map([
+      ["1", { remaining: 2, used: 1 }],
+      ["2", { remaining: 0, used: 1 }],
+    ]));
+  });
+
   test("keeps the secret off chain and signs a recipient- and expiry-bound commitment", async () => {
     const authorization = await buildPaidAllianceInviteAuthorization(config(), secret, invitee, state, 1_000n);
     expect(authorization.commitment).toBe(paidAllianceInviteCommitment(secret));

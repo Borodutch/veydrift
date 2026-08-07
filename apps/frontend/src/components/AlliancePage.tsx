@@ -1,9 +1,10 @@
-import { Check, Crown, LogOut, Pencil, Shield, Trash2, UserPlus, UserRound, Users, X } from "lucide-preact";
+import { Check, Clock, Copy, Crown, ExternalLink, LogOut, Mail, Pencil, Plus, Scale, Shield, ShieldOff, Trash2, UserPlus, UserRound, Users, X } from "lucide-preact";
 import type { LucideIcon } from "lucide-preact";
 import type { ComponentChildren } from "preact";
 import { useEffect, useMemo, useState } from "preact/hooks";
 import { descriptionLinkParts } from "../descriptionLinks";
 import { formatDurationUntil } from "../durationFormat";
+import { copyReferralText } from "../referralClipboard";
 import { formatUserTimestamp } from "../timestampFormat";
 import type { AllianceDiplomacyStatus, AllianceRole, ChainAllianceState, HighscoreEntry, PaidAllianceBonusAmount, WalletPlanetsResponse } from "../walletFlow";
 import { generatePaidAllianceInviteSecret, paidAllianceInviteLink } from "../walletFlow";
@@ -45,6 +46,8 @@ type RosterGroups = {
   members: RosterMember[];
 };
 
+type AllianceControlPanel = "invite" | "paid-invites" | "profile" | "treasury";
+
 type PlayerProfileState =
   | { status: "idle" }
   | { status: "loading"; wallet: string }
@@ -53,6 +56,8 @@ type PlayerProfileState =
 
 interface AlliancePageProps {
   actionState: AllianceActionState;
+  activePlanetHasRift?: boolean | null | undefined;
+  activePlanetName?: string | null | undefined;
   allianceState: ChainAllianceState | null;
   apiBaseUrl?: string | undefined;
   canTransact: boolean;
@@ -61,6 +66,7 @@ interface AlliancePageProps {
   selectedAllianceId?: string | null | undefined;
   transactionUnavailableReason?: string | undefined;
   onApproveJoinRequest: (playerAddress: string) => void;
+  onAcceptInvite: (allianceId: string) => void;
   onBatchKick: (playerAddresses: string[]) => void;
   onBatchSetRole: (playerAddresses: string[], role: "member" | "officer") => void;
   onCancelJoinRequest: (allianceId: string) => void;
@@ -88,6 +94,8 @@ interface AllianceInvitesPageProps {
 
 export function AlliancePage({
   actionState,
+  activePlanetHasRift = null,
+  activePlanetName,
   allianceState,
   apiBaseUrl,
   canTransact,
@@ -95,6 +103,7 @@ export function AlliancePage({
   loading,
   selectedAllianceId,
   transactionUnavailableReason,
+  onAcceptInvite,
   onApproveJoinRequest,
   onBatchKick,
   onBatchSetRole,
@@ -128,6 +137,7 @@ export function AlliancePage({
   const [selectedPlayer, setSelectedPlayer] = useState<string | null>(null);
   const [playerProfile, setPlayerProfile] = useState<PlayerProfileState>({ status: "idle" });
   const [paidInviteLink, setPaidInviteLink] = useState<string | null>(null);
+  const [createAllianceDialogOpen, setCreateAllianceDialogOpen] = useState(false);
 
   const profile = allianceState?.profile;
   const role = allianceState?.membership.role ?? "none";
@@ -215,6 +225,8 @@ export function AlliancePage({
         <div className={`grid min-w-0 gap-4 ${!onOpenPlayer && playerProfile.status !== "idle" ? "xl:grid-cols-[minmax(0,1fr)_360px]" : ""}`}>
           <div className="grid gap-4">
             <MyAllianceSection
+              activePlanetHasRift={activePlanetHasRift}
+              activePlanetName={activePlanetName}
               canManageMembers={canManageMembers}
               currentAlliance={currentAlliance}
               disabled={disabled}
@@ -231,11 +243,10 @@ export function AlliancePage({
               roster={roster}
               activeWars={allianceState?.activeWars ?? []}
               currentAllianceId={currentAllianceId}
-              tag={tag}
-              name={name}
-              description={description}
+              directory={directory}
+              pendingInvites={allianceState?.pendingInvites ?? []}
               viewer={allianceState?.wallet}
-              onCreate={onCreate}
+              onAcceptInvite={onAcceptInvite}
               onBatchKick={onBatchKick}
               onBatchSetRole={onBatchSetRole}
               onInvite={onInvite}
@@ -248,16 +259,13 @@ export function AlliancePage({
               onLeaveAlliance={onLeaveAlliance}
               onOpenAlliance={onOpenAlliance}
               onOpenPlayer={openPlayer}
-              onSetDescription={setDescription}
               onSetProfileFormOpen={setProfileFormOpen}
               onSetInviteAddress={setInviteAddress}
               onSetInviteFormOpen={setInviteFormOpen}
-              onSetName={setName}
               onSetProfileDescription={setProfileDescription}
               onSetProfileName={setProfileName}
               onSetProfileTag={setProfileTag}
               onSetRole={onSetRole}
-              onSetTag={setTag}
               onSetDiplomacy={onSetDiplomacy}
               onTransferOwnership={onTransferOwnership}
               onUpdateProfile={onUpdateProfile}
@@ -270,7 +278,7 @@ export function AlliancePage({
               />
             ) : null}
 
-            {canManageMembers ? (
+            {canManageMembers && (allianceState?.allianceJoinRequests.length ?? 0) > 0 ? (
               <JoinRequests
                 allianceState={allianceState}
                 disabled={disabled}
@@ -296,6 +304,21 @@ export function AlliancePage({
               onOpenAlliance={openAlliance}
               onSelectAlliance={setActiveAllianceId}
               onSetDiplomacy={onSetDiplomacy}
+              createAlliance={!isMember ? {
+                description,
+                name,
+                open: createAllianceDialogOpen,
+                tag,
+                onClose: () => setCreateAllianceDialogOpen(false),
+                onOpen: () => setCreateAllianceDialogOpen(true),
+                onSetDescription: setDescription,
+                onSetName: setName,
+                onSetTag: setTag,
+                onSubmit: () => {
+                  onCreate(tag.trim(), name.trim(), description.trim());
+                  setCreateAllianceDialogOpen(false);
+                },
+              } : undefined}
             />
           </div>
 
@@ -463,6 +486,8 @@ export function canTransferAllianceOwnership(
 }
 
 function MyAllianceSection({
+  activePlanetHasRift,
+  activePlanetName,
   canManageMembers,
   currentAlliance,
   disabled,
@@ -479,11 +504,10 @@ function MyAllianceSection({
   roster,
   activeWars,
   currentAllianceId,
-  tag,
-  name,
-  description,
+  directory,
+  pendingInvites,
   viewer,
-  onCreate,
+  onAcceptInvite,
   onBatchKick,
   onBatchSetRole,
   onInvite,
@@ -496,20 +520,19 @@ function MyAllianceSection({
   onLeaveAlliance,
   onOpenAlliance,
   onOpenPlayer,
-  onSetDescription,
   onSetProfileFormOpen,
   onSetInviteAddress,
   onSetInviteFormOpen,
-  onSetName,
   onSetProfileDescription,
   onSetProfileName,
   onSetProfileTag,
   onSetRole,
-  onSetTag,
   onSetDiplomacy,
   onTransferOwnership,
   onUpdateProfile,
 }: {
+  activePlanetHasRift: boolean | null;
+  activePlanetName?: string | null | undefined;
   canManageMembers: boolean;
   currentAlliance: AllianceEntry | null;
   disabled: boolean;
@@ -526,11 +549,10 @@ function MyAllianceSection({
   roster: RosterGroups;
   activeWars: ChainAllianceState["activeWars"];
   currentAllianceId: string | null;
-  tag: string;
-  name: string;
-  description: string;
+  directory: DirectoryEntry[];
+  pendingInvites: InviteEntry[];
   viewer?: string | undefined;
-  onCreate: (tag: string, name: string, description: string) => void;
+  onAcceptInvite: (allianceId: string) => void;
   onBatchKick: (playerAddresses: string[]) => void;
   onBatchSetRole: (playerAddresses: string[], role: "member" | "officer") => void;
   onInvite: (playerAddress: string) => void;
@@ -543,16 +565,13 @@ function MyAllianceSection({
   onLeaveAlliance: () => void;
   onOpenAlliance?: ((allianceId: string) => void) | undefined;
   onOpenPlayer: (playerAddress: string) => void;
-  onSetDescription: (value: string) => void;
   onSetProfileFormOpen: (value: boolean) => void;
   onSetInviteAddress: (value: string) => void;
   onSetInviteFormOpen: (value: boolean) => void;
-  onSetName: (value: string) => void;
   onSetProfileDescription: (value: string) => void;
   onSetProfileName: (value: string) => void;
   onSetProfileTag: (value: string) => void;
   onSetRole: (playerAddress: string, role: "member" | "officer") => void;
-  onSetTag: (value: string) => void;
   onSetDiplomacy: (otherAllianceId: string, status: AllianceDiplomacyStatus) => void;
   onTransferOwnership: (playerAddress: string) => void;
   onUpdateProfile: (tag: string, name: string, description: string) => void;
@@ -562,38 +581,82 @@ function MyAllianceSection({
     crystal: "",
     deuterium: "",
   });
+  const [activeControlPanel, setActiveControlPanel] = useState<AllianceControlPanel | null>(
+    profileFormOpen ? "profile" : inviteFormOpen ? "invite" : null,
+  );
+  const [paidInviteCopyState, setPaidInviteCopyState] = useState<{ link: string; status: "copied" | "error" } | null>(null);
+  const paidInviteLinks = paidInviteLink?.split("\n").map((link) => link.trim()).filter(Boolean) ?? [];
   const hasWithdrawalAmount = Boolean(
     withdrawAmount.metal || withdrawAmount.crystal || withdrawAmount.deuterium,
   );
+  const withdrawalActionLabel = activePlanetHasRift === null
+    ? "Checking Rift..."
+    : activePlanetHasRift
+      ? `Rift resources to ${activePlanetName?.trim() || "active planet"}`
+      : "No rift built";
+  const toggleControlPanel = (panel: AllianceControlPanel) => {
+    const next = activeControlPanel === panel ? null : panel;
+    setActiveControlPanel(next);
+    onSetProfileFormOpen(next === "profile");
+    onSetInviteFormOpen(next === "invite");
+  };
+
+  useEffect(() => {
+    if (!paidInviteCopyState || typeof window === "undefined") return;
+    const timer = window.setTimeout(() => setPaidInviteCopyState(null), 2_000);
+    return () => window.clearTimeout(timer);
+  }, [paidInviteCopyState]);
 
   if (!isMember || !currentAlliance) {
+    if (!pendingInvites.length) return null;
+
     return (
-      <Panel title="My Alliance" action={<SectionIcon icon={Users} />}>
-        <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,360px)]">
-          <div className="min-w-0 rounded border border-white/10 bg-black/20 p-3">
-            <h3 className="text-sm font-semibold text-white">Create Alliance</h3>
-            <div className="mt-3 grid gap-3 sm:grid-cols-2">
-              <TextField label="Tag" value={tag} onInput={onSetTag} placeholder="VDFT" />
-              <TextField label="Name" value={name} onInput={onSetName} placeholder="Veydrift Union" />
-            </div>
-            <div className="mt-3">
-              <TextArea label="Description" value={description} onInput={onSetDescription} placeholder="Public charter, coordination notes, or Discord link" />
-            </div>
-            <button
-              className="mt-3 rounded bg-cyan-300 px-3 py-2 text-sm font-semibold text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
-              disabled={disabled || !tag.trim() || !name.trim()}
-              onClick={() => onCreate(tag.trim(), name.trim(), description.trim())}
-              type="button"
-            >
-              Create Alliance
-            </button>
-          </div>
-          <div className="min-w-0 break-words rounded border border-white/10 bg-white/[0.03] p-3">
-            <h3 className="text-sm font-semibold text-white">Discover Alliances</h3>
-            <p className="mt-2 text-sm text-slate-400">
-              Browse public alliances below, open details, then request to join from the directory row.
-            </p>
-          </div>
+      <Panel
+        title={pendingInvites.length === 1 ? "Alliance invitation" : "Alliance invitations"}
+        action={<SectionIcon icon={Mail} />}
+      >
+        <div className="grid gap-2">
+          {pendingInvites.map((invite) => {
+            const alliance = directory.find((entry) => entry.allianceId === invite.allianceId);
+            return (
+              <div className="grid gap-3 rounded border border-cyan-200/20 bg-cyan-200/[0.05] p-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center" key={invite.allianceId}>
+                <div className="min-w-0">
+                  <div className="flex min-w-0 flex-wrap items-center gap-2">
+                    {alliance ? (
+                      <>
+                        <span className="rounded border border-cyan-300/25 bg-cyan-300/10 px-2 py-1 font-mono text-xs font-semibold text-cyan-100">{alliance.tag}</span>
+                        <span className="truncate text-sm font-semibold text-white">{alliance.name}</span>
+                      </>
+                    ) : (
+                      <span className="text-sm font-semibold text-white">Alliance #{invite.allianceId}</span>
+                    )}
+                  </div>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Invited by {playerLabel(invite.inviterDisplayName, invite.inviter)} · {formatUserTimestamp(invite.invitedAt)}
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2 sm:justify-end">
+                  {alliance && onOpenAlliance ? (
+                    <button
+                      className="h-10 rounded border border-white/10 px-3 text-sm font-semibold text-slate-200 hover:bg-white/10"
+                      onClick={() => onOpenAlliance(alliance.allianceId)}
+                      type="button"
+                    >
+                      Details
+                    </button>
+                  ) : null}
+                  <button
+                    className="h-10 rounded bg-cyan-300 px-3 text-sm font-semibold text-slate-950 hover:bg-cyan-200 disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={disabled}
+                    onClick={() => onAcceptInvite(invite.allianceId)}
+                    type="button"
+                  >
+                    Accept Invite
+                  </button>
+                </div>
+              </div>
+            );
+          })}
         </div>
       </Panel>
     );
@@ -601,28 +664,78 @@ function MyAllianceSection({
 
   return (
     <Panel title="My Alliance" action={<RolePill role={role} />}>
-      <div className="grid gap-4">
-        <div className="grid gap-3">
+      <div className="grid gap-3">
+        <div className="min-w-0">
           <div className="min-w-0">
-            <button
-              className="flex min-w-0 flex-wrap items-center gap-2 text-left disabled:cursor-default"
-              disabled={!onOpenAlliance}
-              onClick={() => onOpenAlliance?.(currentAlliance.allianceId)}
-              title="Open dedicated alliance page"
-              type="button"
-            >
-              <span className="rounded border border-cyan-300/35 bg-cyan-300/10 px-2 py-1 font-mono text-xs font-semibold text-cyan-100">
-                {currentAlliance.tag}
-              </span>
-              <h3 className="min-w-0 text-base font-semibold text-white">{currentAlliance.name}</h3>
-            </button>
-            <p className="mt-2 max-w-3xl whitespace-pre-wrap break-words text-sm text-slate-400">
-              <AllianceDescription description={currentAlliance.description} fallback="No public alliance description." />
-            </p>
-            <AllianceBonusBalance balance={currentAlliance.bonusBalance} />
-            <div className="mt-3 flex flex-wrap items-center gap-2">
+            <div className="min-w-0">
               <button
-                className="rounded border border-cyan-300/30 px-3 py-2 text-sm font-semibold text-cyan-100 disabled:opacity-50"
+                className="flex min-w-0 flex-wrap items-center gap-2 text-left disabled:cursor-default"
+                disabled={!onOpenAlliance}
+                onClick={() => onOpenAlliance?.(currentAlliance.allianceId)}
+                title="Open dedicated alliance page"
+                type="button"
+              >
+                <span className="rounded border border-cyan-300/35 bg-cyan-300/10 px-2 py-1 font-mono text-xs font-semibold text-cyan-100">
+                  {currentAlliance.tag}
+                </span>
+                <h3 className="min-w-0 text-base font-semibold text-white">{currentAlliance.name}</h3>
+              </button>
+              <p className="mt-1 max-w-3xl whitespace-pre-wrap break-words text-sm text-slate-400">
+                <AllianceDescription description={currentAlliance.description} fallback="No public alliance description." />
+              </p>
+              <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500">
+                <span>{formatScore(currentAlliance.totalMemberScore)} score</span>
+                <span aria-hidden="true">·</span>
+                <span>Created {formatUserTimestamp(currentAlliance.createdAt)}</span>
+                {activeWars.length ? (
+                  <>
+                    <span aria-hidden="true">·</span>
+                    <span className="text-rose-200">{activeWars.length} active {activeWars.length === 1 ? "war" : "wars"}</span>
+                  </>
+                ) : null}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div aria-label="Alliance management" className="flex flex-wrap border-b border-white/10" role="tablist">
+              {canManageMembers ? (
+                <AllianceControlTab
+                  active={activeControlPanel === "invite"}
+                  icon={UserPlus}
+                  label="Invite Member"
+                  onClick={() => toggleControlPanel("invite")}
+                />
+              ) : null}
+              <AllianceControlTab
+                active={activeControlPanel === "paid-invites"}
+                icon={Mail}
+                label="Private Invites"
+                onClick={() => toggleControlPanel("paid-invites")}
+              />
+              {canManageMembers ? (
+                <AllianceControlTab
+                  active={activeControlPanel === "treasury"}
+                  icon={Shield}
+                  label="Treasury"
+                  onClick={() => toggleControlPanel("treasury")}
+                />
+              ) : null}
+              {isOwner ? (
+                <AllianceControlTab
+                  active={activeControlPanel === "profile"}
+                  icon={Pencil}
+                  label="Edit"
+                  onClick={() => toggleControlPanel("profile")}
+                />
+              ) : null}
+        </div>
+
+        {activeControlPanel === "paid-invites" ? (
+          <AllianceManagementPanel description={<AlliancePrivateInviteExplanation />}>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                className={allianceManagementPrimaryActionClass}
                 disabled={disabled || !onBuyPaidInvite}
                 onClick={() => {
                   const secret = generatePaidAllianceInviteSecret();
@@ -636,7 +749,7 @@ function MyAllianceSection({
               </button>
               {canManageMembers ? (
                 <button
-                  className="rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-100 disabled:opacity-50"
+                  className={allianceManagementSecondaryActionClass}
                   disabled={disabled || !onRecoverPaidInvites}
                   onClick={() => void onRecoverPaidInvites?.().then(onSetPaidInviteLink)}
                   type="button"
@@ -645,142 +758,129 @@ function MyAllianceSection({
                 </button>
               ) : null}
             </div>
-            {paidInviteLink ? (
-              <div className="mt-2">
-                <p className="mb-2 text-xs text-amber-100">Share only after purchase confirmation. Each bearer link is unique and single-use.</p>
-                <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
-                  <textarea className="min-w-0 rounded border border-white/10 bg-black/30 px-3 py-2 font-mono text-xs text-slate-200" readOnly rows={Math.min(4, paidInviteLink.split("\n").length)} value={paidInviteLink} />
-                  <button className="rounded border border-white/10 px-3 py-2 text-sm" onClick={() => void navigator.clipboard.writeText(paidInviteLink)} type="button">Copy private link(s)</button>
-                </div>
-              </div>
-            ) : null}
-            {canManageMembers ? (
-              <div className="mt-3 rounded border border-cyan-300/15 bg-cyan-300/[0.04] p-3">
-                <p className="text-sm font-semibold text-cyan-100">Alliance production treasury</p>
-                <p className="mt-1 text-xs text-slate-400">
-                  Credit selected whole resources to the active planet. It must have an Interdimensional Rift Stabilizer; external withdrawal still uses that planet&apos;s ordinary delayed, raidable Rift extraction.
-                </p>
-                <div className="mt-3 grid gap-2 sm:grid-cols-3">
-                  {(["metal", "crystal", "deuterium"] as const).map((resource) => (
-                    <label className="grid gap-1 text-xs text-slate-300" key={resource}>
-                      <span className="capitalize">{resource}</span>
-                      <input
-                        className="w-full rounded border border-white/10 bg-black/30 px-2 py-2 font-mono text-sm text-white outline-none focus:border-cyan-300/60"
-                        inputMode="numeric"
-                        onInput={(event) => setWithdrawAmount((current) => ({
-                          ...current,
-                          [resource]: event.currentTarget.value.replace(/\D/g, ""),
-                        }))}
-                        placeholder={currentAlliance.bonusBalance?.[resource] ?? "0"}
-                        value={withdrawAmount[resource]}
-                      />
-                    </label>
-                  ))}
-                </div>
-                <button
-                  className="mt-3 rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-100 disabled:opacity-50"
-                  disabled={disabled || !onWithdrawPaidInviteBonus || !hasWithdrawalAmount}
-                  onClick={() => onWithdrawPaidInviteBonus?.({
-                    metal: withdrawAmount.metal || "0",
-                    crystal: withdrawAmount.crystal || "0",
-                    deuterium: withdrawAmount.deuterium || "0",
-                  })}
-                  type="button"
-                >
-                  Credit selected resources to active Rift planet
-                </button>
-              </div>
-            ) : null}
-          </div>
-        </div>
-
-        {isOwner || canManageMembers ? (
-          <div className="rounded border border-white/10 bg-black/20 p-3">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-              <div className="min-w-0">
-                <h3 className="text-sm font-semibold text-white">Alliance controls</h3>
-                <p className="mt-1 text-sm text-slate-400">
-                  Update public alliance details or invite another commander.
-                </p>
-              </div>
-              <div className="flex flex-wrap gap-2 sm:justify-end">
-                {isOwner ? (
-                  <button
-                    className="inline-flex items-center justify-center gap-2 rounded border border-cyan-300/25 px-3 py-2 text-sm font-semibold text-cyan-100 hover:bg-cyan-300/10 disabled:cursor-not-allowed disabled:opacity-50"
-                    disabled={disabled}
-                    onClick={() => onSetProfileFormOpen(!profileFormOpen)}
-                    title={profileFormOpen ? "Close alliance profile editor" : "Edit alliance profile"}
-                    type="button"
-                  >
-                    {profileFormOpen ? <X size={15} /> : <Pencil size={15} />}
-                    {profileFormOpen ? "Close Edit" : "Edit Profile"}
-                  </button>
-                ) : null}
-                {canManageMembers ? (
-                  <button
-                    className="inline-flex items-center justify-center gap-2 rounded border border-cyan-300/25 px-3 py-2 text-sm font-semibold text-cyan-100 hover:bg-cyan-300/10 disabled:cursor-not-allowed disabled:opacity-50"
-                    disabled={disabled}
-                    onClick={() => onSetInviteFormOpen(!inviteFormOpen)}
-                    title={inviteFormOpen ? "Close member invite form" : "Invite alliance member"}
-                    type="button"
-                  >
-                    {inviteFormOpen ? <X size={15} /> : <UserPlus size={15} />}
-                    {inviteFormOpen ? "Close Invite" : "Invite Member"}
-                  </button>
-                ) : null}
-              </div>
-            </div>
-            {inviteFormOpen && canManageMembers ? (
-              <div className="mt-3 grid gap-2 border-t border-white/10 pt-3 sm:grid-cols-[minmax(0,1fr)_auto]">
-                <TextField label="Wallet" value={inviteAddress} onInput={onSetInviteAddress} placeholder="0x..." />
-                <button
-                  className="inline-flex items-center justify-center gap-2 self-end rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-100 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
-                  disabled={disabled || !inviteAddress.trim()}
-                  onClick={() => onInvite(inviteAddress.trim())}
-                  type="button"
-                >
-                  <UserPlus size={15} />
-                  Send Invite
-                </button>
-              </div>
-            ) : null}
-            {profileFormOpen ? (
+            {canManageMembers && paidInviteLinks.length ? (
               <div className="mt-3 border-t border-white/10 pt-3">
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <TextField label="Tag" value={profileTag} onInput={onSetProfileTag} placeholder="VDFT" />
-                  <TextField label="Name" value={profileName} onInput={onSetProfileName} placeholder="Veydrift Union" />
-                </div>
-                <div className="mt-3">
-                  <TextArea label="Description" value={profileDescription} onInput={onSetProfileDescription} placeholder="Public alliance description" />
-                </div>
-                <button
-                  className="mt-3 inline-flex items-center justify-center gap-2 rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-100 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
-                  disabled={disabled || !profileTag.trim() || !profileName.trim()}
-                  onClick={() => onUpdateProfile(profileTag.trim(), profileName.trim(), profileDescription.trim())}
-                  type="button"
-                >
-                  <Check size={15} />
-                  Save Profile
-                </button>
-                <div className="mt-3 border-t border-white/10 pt-3">
-                  <AllianceExitActionButton
-                    disabled={disabled}
-                    exitAction={exitAction}
-                    onSubmit={onLeaveAlliance}
-                  />
+                <p className="mb-2 text-xs text-amber-100">Share only after purchase confirmation.</p>
+                <div className="grid gap-2">
+                  {paidInviteLinks.map((link, index) => {
+                    const copyStatus = paidInviteCopyState?.link === link ? paidInviteCopyState.status : null;
+                    return (
+                      <div className="flex flex-wrap items-center justify-between gap-2 rounded border border-white/10 bg-black/20 px-3 py-2" key={link}>
+                        <div className="flex min-w-0 items-center gap-2">
+                          <Mail className="shrink-0 text-cyan-200" size={15} />
+                          <div className="min-w-0">
+                            <p className="text-sm font-semibold text-slate-200">{paidInviteLinks.length === 1 ? "Private invite ready" : `Private invite ${index + 1}`}</p>
+                            <p className="text-xs text-slate-500">Unique · single-use</p>
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <a className={allianceManagementSecondaryActionClass} href={link} rel="noopener noreferrer" target="_blank">
+                            <ExternalLink size={14} />
+                            Open invite
+                          </a>
+                          <button
+                            className={allianceManagementPrimaryActionClass}
+                            onClick={() => void copyReferralText(link).then((outcome) => setPaidInviteCopyState({
+                              link,
+                              status: outcome === "copied" ? "copied" : "error",
+                            }))}
+                            type="button"
+                          >
+                            {copyStatus === "copied" ? <Check size={14} /> : <Copy size={14} />}
+                            {copyStatus === "copied" ? "Link copied" : copyStatus === "error" ? "Copy failed" : "Copy link"}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             ) : null}
-          </div>
+          </AllianceManagementPanel>
         ) : null}
 
-        <WarSection
-          activeWars={activeWars}
-          disabled={disabled}
-          canEndWar={canManageMembers}
-          currentAllianceId={currentAllianceId}
-          onSetDiplomacy={onSetDiplomacy}
-        />
+        {activeControlPanel === "treasury" && canManageMembers ? (
+          <AllianceManagementPanel description={<AllianceTreasuryExplanation />}>
+            <div className="grid gap-2 sm:grid-cols-3 sm:items-end 2xl:grid-cols-[repeat(3,minmax(0,1fr))_auto]">
+              {(["metal", "crystal", "deuterium"] as const).map((resource) => (
+                <AllianceTreasuryResourceField
+                  key={resource}
+                  label={resource}
+                  max={currentAlliance.bonusBalance?.[resource]}
+                  value={withdrawAmount[resource]}
+                  onChange={(value) => setWithdrawAmount((current) => ({ ...current, [resource]: value }))}
+                />
+              ))}
+              <button
+                className={`${allianceManagementPrimaryActionClass} sm:col-span-3 2xl:col-span-1`}
+                disabled={disabled || !onWithdrawPaidInviteBonus || !hasWithdrawalAmount || activePlanetHasRift !== true}
+                onClick={() => onWithdrawPaidInviteBonus?.({
+                  metal: withdrawAmount.metal || "0",
+                  crystal: withdrawAmount.crystal || "0",
+                  deuterium: withdrawAmount.deuterium || "0",
+                })}
+                type="button"
+              >
+                {withdrawalActionLabel}
+              </button>
+            </div>
+          </AllianceManagementPanel>
+        ) : null}
+
+        {activeControlPanel === "invite" && canManageMembers ? (
+          <AllianceManagementPanel description="Invite an existing settled commander directly by wallet address.">
+            <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+              <TextField label="Member wallet" value={inviteAddress} onInput={onSetInviteAddress} placeholder="0x..." />
+              <button
+                className={`${allianceManagementPrimaryActionClass} self-end`}
+                disabled={disabled || !inviteAddress.trim()}
+                onClick={() => onInvite(inviteAddress.trim())}
+                type="button"
+              >
+                <UserPlus size={15} />
+                Send Invite
+              </button>
+            </div>
+          </AllianceManagementPanel>
+        ) : null}
+
+        {activeControlPanel === "profile" && isOwner ? (
+          <AllianceManagementPanel description="Update the public identity shown in the alliance directory.">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <TextField label="Tag" value={profileTag} onInput={onSetProfileTag} placeholder="VDFT" />
+              <TextField label="Name" value={profileName} onInput={onSetProfileName} placeholder="Veydrift Union" />
+            </div>
+            <div className="mt-3">
+              <TextArea label="Description" value={profileDescription} onInput={onSetProfileDescription} placeholder="Public alliance description" />
+            </div>
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-white/10 pt-3">
+              <AllianceExitActionButton
+                disabled={disabled}
+                exitAction={exitAction}
+                onSubmit={onLeaveAlliance}
+              />
+              <button
+                className={allianceManagementPrimaryActionClass}
+                disabled={disabled || !profileTag.trim() || !profileName.trim()}
+                onClick={() => onUpdateProfile(profileTag.trim(), profileName.trim(), profileDescription.trim())}
+                type="button"
+              >
+                <Check size={15} />
+                Save Profile
+              </button>
+            </div>
+          </AllianceManagementPanel>
+        ) : null}
+
+        {activeWars.length ? (
+          <WarSection
+            activeWars={activeWars}
+            disabled={disabled}
+            canEndWar={canManageMembers}
+            currentAllianceId={currentAllianceId}
+            onSetDiplomacy={onSetDiplomacy}
+          />
+        ) : null}
 
         <RosterSection
           canManageMembers={canManageMembers}
@@ -802,10 +902,24 @@ function MyAllianceSection({
   );
 }
 
+type CreateAllianceControl = {
+  description: string;
+  name: string;
+  open: boolean;
+  tag: string;
+  onClose: () => void;
+  onOpen: () => void;
+  onSetDescription: (value: string) => void;
+  onSetName: (value: string) => void;
+  onSetTag: (value: string) => void;
+  onSubmit: () => void;
+};
+
 function DirectorySection({
   activeWars,
   alliances,
   canDeclareWar,
+  createAlliance,
   currentAllianceId,
   currentAllianceScore,
   currentAllianceMemberCount,
@@ -821,6 +935,7 @@ function DirectorySection({
   activeWars: ChainAllianceState["activeWars"];
   alliances: DirectoryEntry[];
   canDeclareWar: boolean;
+  createAlliance?: CreateAllianceControl | undefined;
   currentAllianceId: string | null;
   currentAllianceScore: string | null;
   currentAllianceMemberCount: number | null;
@@ -847,10 +962,34 @@ function DirectorySection({
   }, [visibleAlliances.length]);
 
   return (
-    <Panel title="Alliances">
-      {visibleAlliances.length ? (
-        <div className="grid gap-2">
-          {pageRows.map((alliance) => {
+    <div className="scroll-mt-4" id="alliance-directory">
+      <Panel
+        title="Alliance directory"
+        action={(visibleAlliances.length || createAlliance) ? (
+          <div className="flex items-center gap-2">
+            {visibleAlliances.length ? (
+              <span className="rounded border border-white/10 bg-black/20 px-2 py-1 text-xs font-semibold text-slate-400">
+                {visibleAlliances.length} {visibleAlliances.length === 1 ? "alliance" : "alliances"}
+              </span>
+            ) : null}
+            {createAlliance ? (
+              <button
+                aria-label="Create alliance"
+                className="inline-flex h-8 w-8 items-center justify-center rounded border border-cyan-300/25 bg-cyan-300/[0.08] text-cyan-100 hover:bg-cyan-300/15"
+                onClick={createAlliance.onOpen}
+                title="Create alliance"
+                type="button"
+              >
+                <Plus size={16} />
+              </button>
+            ) : null}
+          </div>
+        ) : undefined}
+      >
+        {visibleAlliances.length ? (
+          <div className="grid gap-2">
+            {pageRows.map((alliance, index) => {
+              const rank = (clampedPage - 1) * allianceDirectoryPageSize + index + 1;
             const pending = pendingIds.has(alliance.allianceId);
             const selected = selectedAllianceId === alliance.allianceId;
             const warAction = allianceDirectoryWarActionState({
@@ -861,11 +1000,12 @@ function DirectorySection({
             });
             return (
               <div
-                className={`grid gap-3 rounded border p-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center ${
+                className={`grid gap-3 rounded border p-3 md:grid-cols-[2.25rem_minmax(0,1fr)_auto] md:items-center ${
                   selected ? "border-cyan-300/35 bg-cyan-300/[0.08]" : "border-white/10 bg-black/20"
                 }`}
                 key={alliance.allianceId}
               >
+                <span className="hidden text-center font-mono text-xs font-semibold tabular-nums text-slate-500 md:block">#{rank}</span>
                 <div className="min-w-0">
                   <button
                     className="flex min-w-0 flex-wrap items-center gap-2 text-left"
@@ -876,7 +1016,7 @@ function DirectorySection({
                       {alliance.tag}
                     </span>
                     <span className="truncate text-sm font-semibold text-white">{alliance.name}</span>
-                    <span className="text-xs text-slate-500">#{alliance.allianceId}</span>
+                    <span className="font-mono text-xs text-slate-500">ID {alliance.allianceId}</span>
                   </button>
                   <p className="mt-2 line-clamp-2 break-words text-sm text-slate-400">
                     <AllianceDescription description={alliance.description} fallback="No public description." />
@@ -924,34 +1064,130 @@ function DirectorySection({
                 </div>
               </div>
             );
-          })}
-          {pageCount > 1 ? (
-            <DirectoryPagination
-              page={clampedPage}
-              pageCount={pageCount}
-              total={visibleAlliances.length}
-              onNext={() => setPage((current) => Math.min(pageCount, current + 1))}
-              onPrevious={() => setPage((current) => Math.max(1, current - 1))}
-            />
-          ) : null}
-          {warDeclarationTarget ? (
-            <WarDeclarationDialog
-              alliance={warDeclarationTarget}
-              declarerScore={currentAllianceScore}
-              declarerMemberCount={currentAllianceMemberCount}
-              disabled={disabled}
-              onCancel={() => setWarDeclarationTarget(null)}
-              onConfirm={() => {
-                onSetDiplomacy(warDeclarationTarget.allianceId, "war");
-                setWarDeclarationTarget(null);
-              }}
-            />
-          ) : null}
+            })}
+            {pageCount > 1 ? (
+              <DirectoryPagination
+                page={clampedPage}
+                pageCount={pageCount}
+                total={visibleAlliances.length}
+                onNext={() => setPage((current) => Math.min(pageCount, current + 1))}
+                onPrevious={() => setPage((current) => Math.max(1, current - 1))}
+              />
+            ) : null}
+            {warDeclarationTarget ? (
+              <WarDeclarationDialog
+                alliance={warDeclarationTarget}
+                declarerScore={currentAllianceScore}
+                declarerMemberCount={currentAllianceMemberCount}
+                disabled={disabled}
+                onCancel={() => setWarDeclarationTarget(null)}
+                onConfirm={() => {
+                  onSetDiplomacy(warDeclarationTarget.allianceId, "war");
+                  setWarDeclarationTarget(null);
+                }}
+              />
+            ) : null}
+          </div>
+        ) : (
+          <div className="rounded border border-dashed border-white/10 bg-black/10 px-4 py-8 text-center">
+            <Users className="mx-auto text-slate-600" size={22} />
+            <p className="mt-3 text-sm font-semibold text-slate-300">No public alliances yet</p>
+            <p className="mt-1 text-xs text-slate-500">Create the first alliance and start recruiting commanders.</p>
+          </div>
+        )}
+      </Panel>
+      {createAlliance?.open ? (
+        <CreateAllianceDialog
+          description={createAlliance.description}
+          disabled={disabled}
+          name={createAlliance.name}
+          tag={createAlliance.tag}
+          onCancel={createAlliance.onClose}
+          onSetDescription={createAlliance.onSetDescription}
+          onSetName={createAlliance.onSetName}
+          onSetTag={createAlliance.onSetTag}
+          onSubmit={createAlliance.onSubmit}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function CreateAllianceDialog({
+  description,
+  disabled,
+  name,
+  tag,
+  onCancel,
+  onSetDescription,
+  onSetName,
+  onSetTag,
+  onSubmit,
+}: {
+  description: string;
+  disabled: boolean;
+  name: string;
+  tag: string;
+  onCancel: () => void;
+  onSetDescription: (value: string) => void;
+  onSetName: (value: string) => void;
+  onSetTag: (value: string) => void;
+  onSubmit: () => void;
+}) {
+  return (
+    <div
+      aria-labelledby="create-alliance-title"
+      aria-modal="true"
+      className="modal-backdrop-enter fixed inset-0 z-50 grid place-items-center bg-slate-950/80 p-4"
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onCancel();
+      }}
+      ref={escapeCloseRef(onCancel)}
+      role="dialog"
+    >
+      <div className="modal-panel-enter w-full max-w-xl rounded border border-white/15 bg-slate-950 p-4 shadow-2xl">
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="text-lg font-semibold text-white" id="create-alliance-title">Create Alliance</h3>
+          <button
+            aria-label="Close create alliance dialog"
+            className="inline-flex h-8 w-8 items-center justify-center rounded border border-white/10 text-slate-300 hover:bg-white/10"
+            onClick={onCancel}
+            type="button"
+          >
+            <X size={16} />
+          </button>
         </div>
-      ) : (
-        <p className="text-sm text-slate-400">No public alliances found yet.</p>
-      )}
-    </Panel>
+        <div className="mt-4 grid gap-3 sm:grid-cols-[9rem_minmax(0,1fr)]">
+          <TextField label="Tag" value={tag} onInput={onSetTag} placeholder="VDFT" />
+          <TextField label="Name" value={name} onInput={onSetName} placeholder="Veydrift Union" />
+        </div>
+        <div className="mt-3">
+          <TextArea
+            label="Description"
+            value={description}
+            onInput={onSetDescription}
+            placeholder="Public charter, coordination notes, or Discord link"
+          />
+        </div>
+        <div className="mt-4 flex justify-end gap-2">
+          <button
+            className="rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-200 hover:bg-white/10"
+            onClick={onCancel}
+            type="button"
+          >
+            Cancel
+          </button>
+          <button
+            className="rounded bg-cyan-300 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-cyan-200 disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={disabled || !tag.trim() || !name.trim()}
+            onClick={onSubmit}
+            type="button"
+          >
+            Create Alliance
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -983,22 +1219,23 @@ function WarDeclarationDialog({
     >
       <div className="modal-panel-enter w-full max-w-md rounded border border-rose-300/30 bg-slate-950 p-4 shadow-2xl">
         <h3 className="text-lg font-semibold text-white">Declare war on {alliance.tag}</h3>
-        <p className="mt-2 text-sm text-slate-300">
-          This snapshots both alliances’ canonical on-chain score and current members. Late joins and members who leave/rejoin receive no war exceptions.
-        </p>
-        <p className="mt-2 rounded border border-rose-300/25 bg-rose-300/[0.08] p-2 text-sm font-semibold text-rose-100">
-          {warMinimumDurationCopy}
-        </p>
-        <WarDeclarationProtectionWarning declarerScore={declarerScore} declareeScore={alliance.totalMemberScore ?? null} />
-        {snapshotTooLarge ? (
-          <p className="mt-2 rounded border border-amber-300/25 bg-amber-300/[0.08] p-2 text-sm font-semibold text-amber-100">
-            War declaration is unavailable: each alliance may snapshot at most 64 current members. Split or reduce the roster before declaring.
-          </p>
-        ) : null}
-        <p className="mt-2 rounded border border-amber-300/25 bg-amber-300/[0.08] p-2 text-sm font-semibold text-amber-100">
-          Your declarer alliance receives no war score-protection exception when {alliance.name} attacks you.
-        </p>
-        <p className="mt-2 text-xs text-slate-400">Confirm only if your alliance is ready to remain at war with {alliance.name}.</p>
+        <ul className="mt-3 grid gap-2">
+          <WarDeclarationRule icon={Users}>
+            War scores and rosters are locked on-chain at declaration. Late joins and members who leave or rejoin get no war exceptions.
+          </WarDeclarationRule>
+          <WarDeclarationRule icon={Clock} tone="rose">
+            {warMinimumDurationCopy}
+          </WarDeclarationRule>
+          <WarDeclarationProtectionWarning allianceName={alliance.tag} declarerScore={declarerScore} declareeScore={alliance.totalMemberScore ?? null} />
+          <WarDeclarationRule icon={ShieldOff} tone="amber">
+            Defender advantage: {alliance.tag}&apos;s original members bypass score protection when attacking your original members. Your alliance does not receive this protection as the declarer.
+          </WarDeclarationRule>
+          {snapshotTooLarge ? (
+            <WarDeclarationRule icon={X} tone="rose">
+              War unavailable: each alliance can snapshot at most 64 members.
+            </WarDeclarationRule>
+          ) : null}
+        </ul>
         <div className="mt-4 flex justify-end gap-2">
           <button className="rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-100 hover:bg-white/10" disabled={disabled} onClick={onCancel} type="button">
             Cancel
@@ -1013,9 +1250,11 @@ function WarDeclarationDialog({
 }
 
 export function WarDeclarationProtectionWarning({
+  allianceName,
   declarerScore,
   declareeScore,
 }: {
+  allianceName: string;
   declarerScore: string | null;
   declareeScore: string | null;
 }) {
@@ -1024,18 +1263,42 @@ export function WarDeclarationProtectionWarning({
     const declarer = BigInt(declarerScore);
     const declaree = BigInt(declareeScore);
     if (declaree === 0n || declarer * 10_000n > declaree * 15_000n) {
-      return <p className="mt-2 rounded border border-amber-300/25 bg-amber-300/[0.08] p-2 text-sm font-semibold text-amber-100">
-        Defender score protection will remain enabled: your current alliance score is over the 1.5× war threshold. The on-chain snapshot at confirmation is final.
-      </p>;
+      return <WarDeclarationRule icon={Scale} tone="amber">
+        Alliance score check failed: your total is more than 1.5× {allianceName}&apos;s, so war will not bypass score protection when you attack.
+      </WarDeclarationRule>;
     }
-    return <p className="mt-2 rounded border border-cyan-300/25 bg-cyan-300/[0.08] p-2 text-sm font-semibold text-cyan-100">
-      Current alliance scores are within the 1.5× threshold. Original members may receive a score-protection bypass, subject to the on-chain snapshot and individual 1.5× target check.
-    </p>;
+    return <WarDeclarationRule icon={Scale} tone="cyan">
+      Two score checks apply when you attack {allianceName}: your alliance total must be no more than 1.5× theirs, and each attacker must be no more than 1.5× their target.
+    </WarDeclarationRule>;
   } catch {
-    return <p className="mt-2 rounded border border-amber-300/25 bg-amber-300/[0.08] p-2 text-sm font-semibold text-amber-100">
-      Score-protection eligibility will be calculated from the authoritative on-chain snapshot when you confirm this declaration.
-    </p>;
+    return <WarDeclarationRule icon={Scale} tone="amber">
+      Two score checks apply: your alliance total must be within 1.5× of the defender, and each attacker must be no more than 1.5× their target.
+    </WarDeclarationRule>;
   }
+}
+
+function WarDeclarationRule({
+  children,
+  icon: Icon,
+  tone = "neutral",
+}: {
+  children: ComponentChildren;
+  icon: LucideIcon;
+  tone?: "amber" | "cyan" | "neutral" | "rose";
+}) {
+  const toneClass = tone === "rose"
+    ? "text-rose-100"
+    : tone === "amber"
+      ? "text-amber-100"
+      : tone === "cyan"
+        ? "text-cyan-100"
+        : "text-slate-300";
+  return (
+    <li className={`flex items-start gap-2 text-sm leading-relaxed ${toneClass}`}>
+      <Icon className="mt-0.5 shrink-0" size={15} />
+      <span>{children}</span>
+    </li>
+  );
 }
 
 export function allianceDirectoryWarActionState({
@@ -1077,7 +1340,7 @@ function AllianceBonusBalance({
 }) {
   return (
     <div className="mt-3 rounded border border-cyan-300/20 bg-cyan-300/[0.05] p-3" aria-label="Alliance production bonus balance">
-      <h4 className="text-xs font-semibold uppercase tracking-[0.14em] text-cyan-100">Production bonus treasury</h4>
+      <h4 className="text-xs font-semibold uppercase tracking-[0.14em] text-cyan-100">Alliance treasury</h4>
       <div className="mt-2 grid grid-cols-3 gap-2 text-sm text-slate-200">
         <span><small className="block text-slate-500">Metal</small>{formatAllianceResource(balance?.metal)}</span>
         <span><small className="block text-slate-500">Crystal</small>{formatAllianceResource(balance?.crystal)}</span>
@@ -1221,7 +1484,7 @@ export function AllianceSummary({
   alliance,
   onOpenPlayer,
 }: {
-  alliance: Pick<AllianceEntry, "allianceId" | "bonusBalance" | "createdAt" | "description" | "memberCount" | "name" | "owner" | "ownerDisplayName" | "tag" | "totalMemberScore">;
+  alliance: Pick<AllianceEntry, "bonusBalance" | "createdAt" | "description" | "memberCount" | "name" | "owner" | "ownerDisplayName" | "privateInviteStats" | "tag" | "totalMemberScore">;
   onOpenPlayer: (playerAddress: string) => void;
 }) {
   return (
@@ -1232,16 +1495,17 @@ export function AllianceSummary({
             {alliance.tag}
           </span>
           <h3 className="min-w-0 text-base font-semibold text-white">{alliance.name}</h3>
-          <span className="text-xs text-slate-500">#{alliance.allianceId}</span>
         </div>
         <p className="mt-2 max-w-3xl whitespace-pre-wrap break-words text-sm text-slate-400">
           <AllianceDescription description={alliance.description} fallback="No public alliance description." />
         </p>
       </div>
-      <div className="grid gap-2 sm:grid-cols-3">
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
         <MiniStat label="Members" value={memberCountLabel(alliance.memberCount)} />
         <MiniStat label="Score" value={formatScore(alliance.totalMemberScore)} />
         <MiniStat label="Created" value={formatUserTimestamp(alliance.createdAt)} />
+        <MiniStat label="Invites left" value={formatAllianceInviteCount(alliance.privateInviteStats?.remaining)} />
+        <MiniStat label="Invites used" value={formatAllianceInviteCount(alliance.privateInviteStats?.used)} />
       </div>
       <AllianceBonusBalance balance={alliance.bonusBalance} />
       <button
@@ -1253,6 +1517,10 @@ export function AllianceSummary({
       </button>
     </div>
   );
+}
+
+function formatAllianceInviteCount(value: number | null | undefined): string {
+  return value === null || value === undefined ? "Unavailable" : value.toLocaleString();
 }
 
 export function AllianceDescription({
@@ -1615,7 +1883,7 @@ function RosterList({
       </div>
       {sortedRows.length ? (
         <div className="mt-2 grid gap-1.5">
-          {canManageMembers ? (
+          {canManageMembers && selectableRows.length > 0 ? (
             <RosterBatchActions
               disabled={disabled}
               pageSelectableCount={visibleSelectableAddresses.length}
@@ -1635,7 +1903,7 @@ function RosterList({
           ) : null}
           {visibleRows.map((member) => (
             <MemberRow
-              canManageMembers={canManageMembers}
+              canManageMembers={canManageMembers && selectableRows.length > 0}
               disabled={disabled}
               isOwner={isOwner}
               key={member.address}
@@ -2229,6 +2497,151 @@ function RolePill({ role }: { role: AllianceRole }) {
   );
 }
 
+function AllianceControlTab({
+  active,
+  icon: Icon,
+  label,
+  onClick,
+}: {
+  active: boolean;
+  icon: LucideIcon;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      aria-selected={active}
+      className={`-mb-px inline-flex h-9 items-center justify-center gap-2 border-b-2 px-3 text-xs font-semibold transition ${
+        active
+          ? "border-cyan-300 bg-cyan-300/[0.06] text-cyan-100"
+          : "border-transparent text-slate-400 hover:border-white/20 hover:text-slate-200"
+      }`}
+      onClick={onClick}
+      role="tab"
+      type="button"
+    >
+      <Icon size={14} />
+      {label}
+    </button>
+  );
+}
+
+const allianceManagementPrimaryActionClass = "inline-flex h-10 items-center justify-center gap-2 rounded border border-cyan-300/30 bg-cyan-300/10 px-3 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-300/15 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/[0.03] disabled:text-slate-500";
+const allianceManagementSecondaryActionClass = "inline-flex h-10 items-center justify-center gap-2 rounded border border-white/10 bg-black/20 px-3 text-sm font-semibold text-slate-200 transition hover:border-white/20 hover:bg-white/[0.04] disabled:cursor-not-allowed disabled:text-slate-500";
+
+function AllianceManagementPanel({
+  children,
+  description,
+}: {
+  children: ComponentChildren;
+  description: ComponentChildren;
+}) {
+  return (
+    <div className="rounded border border-cyan-300/15 bg-cyan-300/[0.04] p-3">
+      <div className="text-xs text-slate-400">{description}</div>
+      <div className="mt-3">{children}</div>
+    </div>
+  );
+}
+
+function AllianceTreasuryExplanation() {
+  return (
+    <div className="grid gap-1.5">
+      <p className="flex items-start gap-2 leading-relaxed text-slate-400">
+        <Mail className="mt-0.5 shrink-0 text-cyan-200" size={14} />
+        <span>Redeemed private invites add 2% of that commander&apos;s production to the alliance.</span>
+      </p>
+      <p className="flex items-start gap-2 leading-relaxed text-slate-400">
+        <Shield className="mt-0.5 shrink-0 text-cyan-200" size={14} />
+        <span>Officers and owners can move resources instantly to a planet with a built Rift.</span>
+      </p>
+    </div>
+  );
+}
+
+function AlliancePrivateInviteExplanation() {
+  return (
+    <ul className="grid gap-1.5 text-slate-400">
+      <li className="flex items-start gap-2 leading-relaxed">
+        <Users className="mt-0.5 shrink-0 text-cyan-200" size={14} />
+        <span>A redeemed invite adds 2% of the invitee&apos;s production to the alliance while they are a member; the invitee loses nothing.</span>
+      </li>
+      <li className="flex items-start gap-2 leading-relaxed">
+        <UserPlus className="mt-0.5 shrink-0 text-cyan-200" size={14} />
+        <span>If an invitee leaves and rejoins the alliance, their production contribution resumes.</span>
+      </li>
+      <li className="flex items-start gap-2 leading-relaxed">
+        <Crown className="mt-0.5 shrink-0 text-cyan-200" size={14} />
+        <span>Any alliance member can buy a private invite for 0.006 ETH.</span>
+      </li>
+      <li className="flex items-start gap-2 leading-relaxed">
+        <Shield className="mt-0.5 shrink-0 text-cyan-200" size={14} />
+        <span>Only alliance officers and owners can view or recover invite links.</span>
+      </li>
+      <li className="flex items-start gap-2 leading-relaxed">
+        <Mail className="mt-0.5 shrink-0 text-cyan-200" size={14} />
+        <span>Each link is unique and single-use; share it only with its intended invitee.</span>
+      </li>
+      <li className="flex items-start gap-2 leading-relaxed">
+        <Check className="mt-0.5 shrink-0 text-cyan-200" size={14} />
+        <span>The invited commander joins the game for free and starts with 2× resources.</span>
+      </li>
+    </ul>
+  );
+}
+
+function AllianceTreasuryResourceField({
+  label,
+  max,
+  onChange,
+  value,
+}: {
+  label: "metal" | "crystal" | "deuterium";
+  max?: string | undefined;
+  onChange: (value: string) => void;
+  value: string;
+}) {
+  const maxAvailable = (() => {
+    if (max === undefined) return false;
+    try {
+      return BigInt(max) > 0n;
+    } catch {
+      return false;
+    }
+  })();
+  const normalizedValue = value || "0";
+  const availableLabel = max === undefined ? "Unavailable" : formatAllianceResource(max);
+  return (
+    <label className="grid min-w-0 gap-1 text-xs text-slate-300">
+      <span className="flex min-h-6 items-center justify-between gap-2">
+        <span className="min-w-0">
+          <span className="capitalize">{label}</span>
+          <span className="ml-2 font-mono text-[11px] text-slate-500">{availableLabel}</span>
+        </span>
+        <button
+          aria-label={`Set ${label} withdrawal to maximum (${formatAllianceResource(max)})`}
+          className="rounded border border-cyan-300/30 bg-cyan-300/10 px-2 py-0.5 text-[11px] font-semibold text-cyan-100 transition hover:border-cyan-300/50 hover:bg-cyan-300/15 disabled:cursor-default disabled:opacity-40"
+          disabled={!maxAvailable || normalizedValue === max}
+          onClick={(event) => {
+            event.preventDefault();
+            if (maxAvailable && max !== undefined) onChange(max);
+          }}
+          type="button"
+        >
+          Max
+        </button>
+      </span>
+      <input
+        className="h-10 w-full rounded border border-white/10 bg-black/30 px-2 text-right font-mono text-sm text-white outline-none focus:border-cyan-300/60"
+        inputMode="numeric"
+        onInput={(event) => onChange(event.currentTarget.value.replace(/\D/g, ""))}
+        placeholder="0"
+        value={value}
+      />
+    </label>
+  );
+}
+
 function MiniStat({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded border border-white/10 bg-black/20 px-3 py-2">
@@ -2332,10 +2745,11 @@ export function findAllianceEntry(
   return entry ? { ...entry, rosterAvailable: false } : null;
 }
 
-function currentAllianceEntry(allianceState: ChainAllianceState | null, rosterCount: number): AllianceEntry | null {
+export function currentAllianceEntry(allianceState: ChainAllianceState | null, rosterCount: number): AllianceEntry | null {
   const profile = allianceState?.profile;
   const allianceId = allianceState?.membership.allianceId;
   if (!profile || !allianceId || allianceId === "0") return null;
+  const directoryEntry = allianceState.directory.find((alliance) => alliance.allianceId === allianceId);
   return {
     active: profile.active,
     allianceId,
@@ -2347,6 +2761,8 @@ function currentAllianceEntry(allianceState: ChainAllianceState | null, rosterCo
     ownerDisplayName: profile.ownerDisplayName ?? null,
     rosterAvailable: true,
     tag: profile.tag,
+    bonusBalance: profile.bonusBalance ?? directoryEntry?.bonusBalance ?? null,
+    privateInviteStats: profile.privateInviteStats ?? directoryEntry?.privateInviteStats ?? null,
     ...(profile.totalMemberScore ? { totalMemberScore: profile.totalMemberScore } : {}),
   };
 }

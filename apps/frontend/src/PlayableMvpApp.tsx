@@ -9551,6 +9551,12 @@ export function PlayableMvpApp({
       return (
         <AlliancePage
           actionState={allianceAction}
+          activePlanetHasRift={infrastructureChainState
+            ? infrastructureChainState.buildings.some((building) => (
+              building.id === buildingContractIds.interdimensionalRiftStabilizer && building.level > 0
+            ))
+            : null}
+          activePlanetName={selectedManagedPlanet?.name}
           allianceState={allianceState}
           apiBaseUrl={apiBaseUrl}
           canTransact={canSubmitAllianceTransaction}
@@ -9558,6 +9564,7 @@ export function PlayableMvpApp({
           loading={allianceLoading}
           selectedAllianceId={selectedAllianceId}
           transactionUnavailableReason={allianceTransactionUnavailableReason}
+          onAcceptInvite={handleAcceptAllianceInvite}
           onApproveJoinRequest={handleApproveAllianceJoinRequest}
           onBatchKick={handleBatchKickAllianceMembers}
           onBatchSetRole={handleBatchSetAllianceRole}

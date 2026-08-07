@@ -151,4 +151,16 @@ describe("Pages render skeleton loaders, not text loaders, during initial load",
     expect(classes).toContain("xl:aspect-[4/3]");
     expect(classes).toContain("border-cyan-300/20");
   });
+
+  test("alliance loading mirrors the directory header and ranked row footprint", () => {
+    const skeleton = AllianceSkeleton({});
+    const classes = classNames(skeleton).join(" ");
+
+    expect(classes).toContain("md:grid-cols-[2.25rem_minmax(0,1fr)_auto]");
+    expect(classes).toContain("h-7 w-20");
+    expect(classes).toContain("h-8 w-8");
+    expect(classes).toContain("h-10 w-20");
+    expect(classes).toContain("h-10 w-28");
+    expect(classes).not.toContain("sm:grid-cols-3");
+  });
 });

@@ -338,29 +338,43 @@ export function RiftSkeleton(): JSX.Element {
   );
 }
 
-/** Alliance page skeleton: a header panel plus a directory list. */
+/** Alliance page skeleton matching the directory-first unaffiliated layout. */
 export function AllianceSkeleton(): JSX.Element {
   return (
-    <SkeletonRegion className="grid gap-4" label="Loading alliance data">
-      <section className={CARD}>
-        <Skeleton className="h-5 w-40" />
-        <Skeleton className="mt-2 h-3.5 w-3/4" />
-        <div className="mt-4 grid gap-2 sm:grid-cols-3">
-          {skeletonList(3, (index) => (
-            <div className="rounded border border-white/10 bg-black/15 p-3" key={index}>
-              <Skeleton className="h-2.5 w-16" />
-              <Skeleton className="mt-2 h-4 w-12" />
-            </div>
-          ))}
+    <SkeletonRegion label="Loading alliance data">
+      <section className="min-w-0 rounded border border-white/10 bg-white/[0.03] p-4">
+        <div className="flex items-center justify-between gap-3">
+          <Skeleton className="h-4 w-32" />
+          <div className="flex items-center gap-2">
+            <Skeleton className="h-7 w-20 rounded" />
+            <Skeleton className="h-8 w-8 rounded" />
+          </div>
         </div>
-      </section>
-      <section className={CARD}>
-        <Skeleton className="h-4 w-32" />
         <div className="mt-3 grid gap-2">
-          {skeletonList(4, (index) => (
-            <div className="flex items-center justify-between gap-3 rounded border border-white/10 bg-black/15 p-3" key={index}>
-              <Skeleton className="h-3.5 w-40" />
-              <Skeleton className="h-3.5 w-16" />
+          {skeletonList(6, (index) => (
+            <div
+              className="grid gap-3 rounded border border-white/10 bg-black/20 p-3 md:grid-cols-[2.25rem_minmax(0,1fr)_auto] md:items-center"
+              key={index}
+            >
+              <Skeleton className="mx-auto hidden h-3 w-5 md:block" />
+              <div className="min-w-0">
+                <div className="flex min-w-0 items-center gap-2">
+                  <Skeleton className="h-7 w-14 rounded" />
+                  <Skeleton className={`h-4 ${index % 2 === 0 ? "w-36" : "w-28"}`} />
+                  <Skeleton className="h-3 w-10" />
+                </div>
+                <Skeleton className={`mt-2 h-3.5 ${index % 3 === 0 ? "w-44" : "w-36"}`} />
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <Skeleton className="h-3 w-16" />
+                  <Skeleton className="h-3 w-20" />
+                  <Skeleton className="h-3 w-24" />
+                  <Skeleton className="h-3 w-36" />
+                </div>
+              </div>
+              <div className="flex gap-2 md:justify-end">
+                <Skeleton className="h-10 w-20 rounded" />
+                <Skeleton className="h-10 w-28 rounded" />
+              </div>
             </div>
           ))}
         </div>
