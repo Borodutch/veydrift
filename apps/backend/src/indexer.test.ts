@@ -5293,6 +5293,99 @@ describe("SettlementIndexer", () => {
     }
   });
 
+  test("repairs pre-upgrade paid invite ledger rows before completing history backfill idempotently", () => {
+    const database = new Database(":memory:");
+    const chainReader = {
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    };
+    const paidInviteAddress = "0x5555555555555555555555555555555555555555" as const;
+    const purchaser = "0x3333333333333333333333333333333333333333" as Address;
+    const invitee = "0x4444444444444444444444444444444444444444" as Address;
+    const logs = [
+      {
+        blockNumber: "0x96", transactionHash: "0xlegacy-buy-1", logIndex: "0x0", removed: false,
+        topics: [paidAllianceInvitePurchasedTopic, topic(11n), topic(7n), addressTopic(purchaser)],
+        data: abiWords(6_000_000_000_000_000n, 1_770_000_000n)
+      },
+      {
+        blockNumber: "0x97", transactionHash: "0xlegacy-buy-2", logIndex: "0x0", removed: false,
+        topics: [paidAllianceInvitePurchasedTopic, topic(12n), topic(7n), addressTopic(purchaser)],
+        data: abiWords(6_000_000_000_000_000n, 1_770_000_001n)
+      },
+      {
+        blockNumber: "0x98", transactionHash: "0xlegacy-redeem", logIndex: "0x0", removed: false,
+        topics: [paidAllianceInviteRedeemedTopic, topic(11n), topic(7n), addressTopic(invitee)],
+        data: `${addressTopic(purchaser)}${1_770_000_100n.toString(16).padStart(64, "0")}`
+      },
+      {
+        blockNumber: "0x99", transactionHash: "0xlegacy-accrue", logIndex: "0x0", removed: false,
+        topics: [allianceProductionBonusAccruedTopic, topic(7n), addressTopic(invitee)],
+        data: abiWords(100n, 50n, 25n)
+      },
+      {
+        blockNumber: "0x9a", transactionHash: "0xlegacy-defer", logIndex: "0x0", removed: false,
+        topics: [allianceProductionBonusDeferredTopic, topic(7n), addressTopic(invitee)],
+        data: abiWords(7n, 8n, 9n)
+      },
+      {
+        blockNumber: "0x9b", transactionHash: "0xlegacy-withdraw", logIndex: "0x0", removed: false,
+        topics: [allianceBonusWithdrawnTopic, topic(7n), addressTopic(purchaser), topic(99n)],
+        data: abiWords(40n, 10n, 5n)
+      }
+    ];
+
+    const preUpgrade = new SettlementIndexer(chainReader, 100n, { database, runStartupBackfill: false });
+    const insert = database.query(`
+      INSERT INTO indexed_event_logs
+        (event_id, transaction_hash, log_index, block_number, removed, event_json, received_at)
+      VALUES (?, ?, ?, ?, 0, ?, ?)
+    `);
+    logs.forEach((log, index) => insert.run(
+      `legacy-paid-invite-${index}`,
+      log.transactionHash,
+      log.logIndex,
+      BigInt(log.blockNumber).toString(),
+      JSON.stringify(log),
+      new Date().toISOString()
+    ));
+    database.query(`
+      INSERT OR REPLACE INTO indexer_metadata (key, value)
+      VALUES ('paidAllianceInviteHistoryBackfillV1', ?)
+    `).run(JSON.stringify({
+      completedAt: "2026-08-08T00:00:00.000Z",
+      contractAddress: paidInviteAddress,
+      fromBlock: "150",
+      throughBlock: "182"
+    }));
+    database.query("DELETE FROM indexer_metadata WHERE key = 'paidAllianceInviteProjectionBackfillV1'").run();
+
+    // Rollout must repair a database that already carries the bad completion marker from the first
+    // VEY-KANEO-829 build; chain sync would otherwise trust it and skip the duplicate historical logs.
+    const rollout = new SettlementIndexer(chainReader, 100n, { database, runStartupBackfill: false });
+    const expected = {
+      bonusBalance: { metal: "60", crystal: "40", deuterium: "20" },
+      pendingBonusBalance: { metal: "7", crystal: "8", deuterium: "9" },
+      privateInviteStats: { remaining: 1, used: 1 }
+    };
+    expect(rollout.paidAllianceInviteSummaries().get("7")).toEqual(expected);
+    expect(rollout.paidAllianceInviteHistoryBackfillStatus(paidInviteAddress, 150n)).toMatchObject({
+      required: false,
+      marker: { fromBlock: "150", throughBlock: "182" }
+    });
+
+    // The marker write is also a safety boundary for a fresh/retried history backfill: force the
+    // projection repair to retry and prove it completes before updating the marker. Restarting with
+    // both markers then stays a no-op. Additive events must never double.
+    database.query("DELETE FROM indexer_metadata WHERE key = 'paidAllianceInviteProjectionBackfillV1'").run();
+    rollout.recordPaidAllianceInviteHistoryBackfill(paidInviteAddress, 150n, 190n);
+    expect(rollout.paidAllianceInviteSummaries().get("7")).toEqual(expected);
+    expect(rollout.paidAllianceInviteHistoryBackfillStatus(paidInviteAddress, 150n).marker?.throughBlock).toBe("190");
+    const restarted = new SettlementIndexer(chainReader, 100n, { database, runStartupBackfill: false });
+    expect(restarted.paidAllianceInviteSummaries().get("7")).toEqual(expected);
+  });
+
   test("VEY-KANEO-783: removes a dissolved zero-member alliance from canonical directory reads", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },

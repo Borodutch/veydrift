@@ -140,6 +140,11 @@ import {
   type ShipyardState,
   type WalletPlanets,
   diplomacyStatusName,
+  allianceBonusWithdrawnTopic,
+  allianceProductionBonusAccruedTopic,
+  allianceProductionBonusDeferredTopic,
+  paidAllianceInvitePurchasedTopic,
+  paidAllianceInviteRedeemedTopic,
   startPriceUpdatedEventTopic,
   interplanetaryMissileAttackTopic
 } from "./evm";
@@ -270,6 +275,7 @@ const startPriceBlockMetadataKey = "canonicalStartPriceBlock";
 const startPriceLogIndexMetadataKey = "canonicalStartPriceLogIndex";
 const referralHistoryBackfillMetadataKey = "referralHistoryBackfillV1";
 const paidAllianceInviteHistoryBackfillMetadataKey = "paidAllianceInviteHistoryBackfillV1";
+const paidAllianceInviteProjectionBackfillMetadataKey = "paidAllianceInviteProjectionBackfillV1";
 
 export type ReferralHistoryBackfillMarker = {
   completedAt: string;
@@ -1051,7 +1057,14 @@ export class SettlementIndexer {
       fromBlock: fromBlock.toString(),
       throughBlock: throughBlock.toString()
     };
-    this.setMetadata(paidAllianceInviteHistoryBackfillMetadataKey, JSON.stringify(marker));
+    this.db.transaction(() => {
+      // A pre-VEY-KANEO-829 writer may already have recorded these raw logs while ignoring their
+      // projection side effects. Repair that durable ledger before allowing the history marker to
+      // claim completion. Keeping both operations in one transaction means a decode/write failure
+      // leaves the backfill retryable rather than publishing zero or partially rebuilt balances.
+      this.repairPaidAllianceInviteProjectionsFromEventLogs();
+      this.setMetadata(paidAllianceInviteHistoryBackfillMetadataKey, JSON.stringify(marker));
+    })();
     return marker;
   }
 
@@ -5201,8 +5214,43 @@ export class SettlementIndexer {
     // Unlike the broad materialized-state repairs above, this versioned feed migration must run on
     // the production writer. Production intentionally passes runStartupBackfill=false, while the
     // activity feed still needs one bounded replay of the already-durable raw event ledger.
+    // The paid-invite repair follows the same rule. In particular, it must run even when an earlier
+    // VEY-KANEO-829 build already wrote the history marker after duplicate logs skipped projection.
+    this.repairPaidAllianceInviteProjectionsFromEventLogs();
     this.backfillPlayerActivityFeed();
     this.queueDefenderLossBreakdownBackfill();
+  }
+
+  private repairPaidAllianceInviteProjectionsFromEventLogs(): void {
+    if (this.metadata(paidAllianceInviteProjectionBackfillMetadataKey) !== null) return;
+
+    this.db.transaction(() => {
+      const rows = this.db.query(`
+        SELECT event_json
+        FROM indexed_event_logs
+        WHERE removed = 0
+          AND lower(json_extract(event_json, '$.topics[0]')) IN (?, ?, ?, ?, ?)
+      `).all(
+        paidAllianceInvitePurchasedTopic,
+        paidAllianceInviteRedeemedTopic,
+        allianceProductionBonusAccruedTopic,
+        allianceProductionBonusDeferredTopic,
+        allianceBonusWithdrawnTopic
+      ) as EventRow[];
+
+      // Purchase/use rows are naturally upserts, but bonus accrual and withdrawal are additive. A
+      // clear-and-replay projection makes the migration deterministic across a crash, explicit retry,
+      // or cold restart instead of trying to infer which additive events were applied by an older build.
+      this.db.query("DELETE FROM contract_paid_alliance_invite_purchases").run();
+      this.db.query("DELETE FROM contract_paid_alliance_invite_redemptions").run();
+      this.db.query("DELETE FROM contract_paid_alliance_invite_uses").run();
+      this.db.query("DELETE FROM contract_paid_alliance_invite_balances").run();
+      for (const log of sortedEventRows(rows)) {
+        this.applyAllianceEvent(decodeAllianceLog(log));
+      }
+      this.setMetadata(paidAllianceInviteProjectionBackfillMetadataKey, new Date().toISOString());
+      if (rows.length > 0) this.touch();
+    })();
   }
 
   private backfillStartPriceProjection(): void {
