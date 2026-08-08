@@ -2,8 +2,10 @@ import { describe, expect, test } from "bun:test";
 import {
   generatePaidAllianceInviteSecret,
   paidAllianceInviteCommitment,
+  paidAllianceInviteCommitmentFromPathname,
   paidAllianceInviteLink,
   paidAllianceInviteSecretFromHash,
+  paidAllianceInviteSecretFromLocation,
   PAID_ALLIANCE_INVITE_PRICE_WEI,
   recoverPaidAllianceInvites,
   resolvePaidAllianceInvite,
@@ -70,7 +72,7 @@ describe("paid alliance invite frontend flow", () => {
     }
   });
 
-  test("creates unique private links whose secret is not the on-chain commitment", () => {
+  test("creates canonical public-commitment paths while keeping the private secret in the fragment", () => {
     const values = Array.from({ length: 32 }, (_, index) => index);
     const secret = generatePaidAllianceInviteSecret({
       getRandomValues(target: Uint8Array) {
@@ -80,11 +82,39 @@ describe("paid alliance invite frontend flow", () => {
     } as Crypto);
     const commitment = paidAllianceInviteCommitment(secret);
     expect(commitment).not.toBe(secret);
-    const link = paidAllianceInviteLink(secret, "https://veydrift.com/game");
+    const link = paidAllianceInviteLink(secret, "https://veydrift.com/game?tracking=old");
     const parsed = new URL(link);
+    expect(parsed.pathname).toBe(`/alliance-invite/${commitment}`);
     expect(parsed.search).toBe("");
+    expect(parsed.hash).toBe(`#allianceInvite=${secret}`);
+    expect(paidAllianceInviteCommitmentFromPathname(parsed.pathname)).toBe(commitment);
+    expect(paidAllianceInviteSecretFromLocation(parsed)).toBe(secret);
     expect(paidAllianceInviteSecretFromHash(parsed.hash)).toBe(secret);
-    expect(link.split("#")[0]).not.toContain(secret);
+    expect(`${parsed.origin}${parsed.pathname}`).not.toContain(secret);
+  });
+
+  test("preserves legacy hash invites and safely rejects malformed or mismatched canonical paths", () => {
+    const secret = `0x${"ef".repeat(32)}`;
+    const otherSecret = `0x${"ab".repeat(32)}`;
+    const commitment = paidAllianceInviteCommitment(secret);
+
+    expect(paidAllianceInviteSecretFromLocation({
+      pathname: "/",
+      hash: `#allianceInvite=${secret}`,
+    })).toBe(secret);
+    expect(paidAllianceInviteSecretFromLocation({
+      pathname: "/game",
+      hash: `#allianceInvite=${secret}`,
+    })).toBe(secret);
+    expect(paidAllianceInviteSecretFromLocation({
+      pathname: `/alliance-invite/${commitment}`,
+      hash: `#allianceInvite=${otherSecret}`,
+    })).toBe("");
+    expect(paidAllianceInviteSecretFromLocation({
+      pathname: "/alliance-invite/not-a-commitment",
+      hash: `#allianceInvite=${secret}`,
+    })).toBe("");
+    expect(paidAllianceInviteCommitmentFromPathname("/alliance-invite/0x1234")).toBe("");
   });
 
   test("buys for exactly 0.006 ETH and supports a partial Rift-planet credit", async () => {

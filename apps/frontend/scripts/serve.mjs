@@ -12,6 +12,9 @@ const assetDataCache = new Map();
 let sharpModule;
 const defaultMetadataTimeoutMs = 1_500;
 export const referralXCardImageVersion = "2";
+export const allianceInviteOgImagePath = "/assets/alliance-invite-og-v3.jpg";
+export const allianceInviteOgTitle = "Alliance Invite — Play Veydrift for Free";
+export const allianceInviteOgDescription = "Accept this alliance invite to play Veydrift for free and start with 2× resources.";
 
 export const referralOgLayout = Object.freeze({
   titleX: 58,
@@ -121,7 +124,9 @@ function playAppRouteForPathname(pathname) {
 }
 
 export function inviteAppRouteForPathname(pathname) {
-  return pathname === "/invite" || pathname === "/alliance-invites";
+  return pathname === "/invite"
+    || pathname === "/alliance-invites"
+    || Boolean(allianceInviteCommitmentForCanonical(pathname));
 }
 
 const gameAppPaths = new Set([
@@ -158,6 +163,11 @@ export function shareRouteForUrl(url) {
 }
 
 function shareRouteForPathname(pathname) {
+  const allianceInviteCommitment = allianceInviteCommitmentForCanonical(pathname);
+  if (allianceInviteCommitment) {
+    return { kind: "alliance-invite", commitment: allianceInviteCommitment };
+  }
+
   const mission = pathname.match(/^\/mission\/([0-9]+)$/);
   if (mission) return { kind: "mission", id: mission[1] };
 
@@ -191,6 +201,11 @@ function shareRouteForPathname(pathname) {
   if (alliance) return { kind: "alliance", allianceId: decodeURIComponent(alliance[1]) };
 
   return null;
+}
+
+export function allianceInviteCommitmentForCanonical(pathname) {
+  const match = pathname.match(/^\/alliance-invite\/(0x[0-9a-fA-F]{64})\/?$/);
+  return match?.[1]?.toLowerCase() ?? "";
 }
 
 export function imageRouteForPathname(pathname) {
@@ -233,6 +248,9 @@ export function imageRouteForPathname(pathname) {
 
 function sharePathForRoute(route) {
   if (route.kind === "referral") return "/";
+  if (route.kind === "alliance-invite") {
+    return `/alliance-invite/${encodeURIComponent(route.commitment)}`;
+  }
   if (route.kind === "mission") return `/mission/${encodeURIComponent(route.id)}`;
   if (route.kind === "planet") return `/planet/${route.galaxy}/${route.system}/${route.position}`;
   if (route.kind === "moon") return `/moon/${route.galaxy}/${route.system}/${route.position}`;
@@ -241,6 +259,7 @@ function sharePathForRoute(route) {
 }
 
 function imagePathForRoute(route) {
+  if (route.kind === "alliance-invite") return allianceInviteOgImagePath;
   if (route.kind === "referral") {
     return route.code
       ? `/og/referral/${encodeURIComponent(route.code)}.png`
@@ -265,11 +284,20 @@ export async function routeMeta(route) {
 
 async function buildRouteMeta(route) {
   if (route.kind === "referral") return referralMeta(route.code);
+  if (route.kind === "alliance-invite") return allianceInviteMeta();
   if (route.kind === "mission") return missionMeta(route.id);
   if (route.kind === "planet") return planetMeta(route);
   if (route.kind === "moon") return moonMeta(route);
   if (route.kind === "player") return playerMeta(route.wallet);
   return allianceMeta(route.allianceId);
+}
+
+function allianceInviteMeta() {
+  return {
+    kind: "alliance-invite",
+    title: allianceInviteOgTitle,
+    description: allianceInviteOgDescription,
+  };
 }
 
 function referralMeta(code = "") {
@@ -397,6 +425,7 @@ async function allianceMeta(allianceId) {
 
 function fallbackMeta(route) {
   if (route.kind === "referral") return referralMeta(route.code);
+  if (route.kind === "alliance-invite") return allianceInviteMeta();
 
   if (route.kind === "mission") {
     return {
@@ -530,6 +559,18 @@ function shortAddress(value) {
 }
 
 async function shareHtmlResponse(request, route) {
+  const appHtml = await readFile(staticFileUrl("/index.html"), "utf8");
+  const html = await renderShareHtml(request, route, appHtml);
+
+  return new Response(html, {
+    headers: {
+      "cache-control": "public, max-age=60",
+      "content-type": "text/html; charset=utf-8",
+    },
+  });
+}
+
+export async function renderShareHtml(request, route, appHtml) {
   const url = new URL(request.url);
   const origin = publicOrigin(request, url);
   const meta = await routeMeta(route);
@@ -540,20 +581,13 @@ async function shareHtmlResponse(request, route) {
     ? `${origin}${imagePath}?v=${encodeURIComponent(referralXCardImageVersion)}`
     : `${origin}${imagePath}`;
   const launchUrl = route.kind === "referral" ? miniAppLaunchUrl(canonicalUrl) : null;
-  const appHtml = await readFile(staticFileUrl("/index.html"), "utf8");
-  const html = injectShareMeta(appHtml, {
+  return injectShareMeta(appHtml, {
     canonicalUrl,
     description: meta.description,
+    imageType: route.kind === "alliance-invite" ? "image/jpeg" : "image/png",
     imageUrl,
     launchUrl,
     title: meta.title,
-  });
-
-  return new Response(html, {
-    headers: {
-      "cache-control": "public, max-age=60",
-      "content-type": "text/html; charset=utf-8",
-    },
   });
 }
 
@@ -595,7 +629,7 @@ export function buildReferralMiniAppEmbed({ imageUrl, launchUrl, actionType = "l
   };
 }
 
-export function injectShareMeta(html, { canonicalUrl, description, imageUrl, launchUrl, title }) {
+export function injectShareMeta(html, { canonicalUrl, description, imageType = "image/png", imageUrl, launchUrl, title }) {
   let nextHtml = html;
   nextHtml = replaceHeadTag(nextHtml, /<title>.*?<\/title>/s, `<title>${escapeHtml(title)}</title>`);
   nextHtml = replaceHeadTag(
@@ -636,7 +670,7 @@ export function injectShareMeta(html, { canonicalUrl, description, imageUrl, lau
   nextHtml = replaceHeadTag(
     nextHtml,
     /<meta\s+property="og:image:type"\s+content="[^"]*"\s*\/>/s,
-    `<meta property="og:image:type" content="image/png" />`,
+    `<meta property="og:image:type" content="${escapeHtml(imageType)}" />`,
   );
   nextHtml = replaceHeadTag(
     nextHtml,
