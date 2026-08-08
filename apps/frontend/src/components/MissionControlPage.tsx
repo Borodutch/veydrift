@@ -51,7 +51,10 @@ export type MissionLifecycleActionKind = "counterplay" | "joinAttack" | "joinDef
 
 export type ManualMissionResolutionKind = "arrival" | "return";
 
-export const MANUAL_MISSION_RESOLUTION_DELAY_MS = 60_000;
+// Give the funded resolver three full minutes after a leg becomes due before
+// surfacing the permissionless fallback. This avoids presenting a transaction
+// that can race the keeper's in-flight settlement.
+export const MANUAL_MISSION_RESOLUTION_DELAY_MS = 3 * 60_000;
 
 export type MissionLifecycleAction = {
   kind: MissionLifecycleActionKind;
@@ -820,7 +823,7 @@ export function missionLifecycleActions({
 
   // Arrival/return completions normally reconcile through lazy on-chain settlement and the backend
   // resolver. A separate emergency Resolve control appears beside the status pill only after that
-  // automation has been overdue for a full minute; it is intentionally not a general lifecycle order.
+  // automation has been overdue for three minutes; it is intentionally not a general lifecycle order.
 
   if (context === "outgoing" && mission.status === "Outbound") {
     // Recall is only useful while the contract still accepts it. Once the cutoff closes, omit the

@@ -750,11 +750,11 @@ describe("Mission Control battle reports", () => {
 
   test("hides Join and Resolve until the overdue-resolution grace period passes", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
-    // These attacks arrived 59 seconds ago. Automatic resolution still owns the grace period, and
+    // These attacks arrived just under three minutes ago. Automatic resolution still owns the grace period, and
     // the join cutoff has passed, so neither emergency Resolve nor Join is shown yet.
     const text = collectText(MissionControlPage(missionControlProps(now, {
-      outgoing: [mission("32", "Attack", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now - 59_000)],
-      joinableAttacks: [mission("34", "Attack", "Outbound", "0x3333333333333333333333333333333333333333", "5", "6", now - 59_000)],
+      outgoing: [mission("32", "Attack", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now - 179_000)],
+      joinableAttacks: [mission("34", "Attack", "Outbound", "0x3333333333333333333333333333333333333333", "5", "6", now - 179_000)],
     }))).join(" ");
 
     expect(text).not.toContain("Resolve");
@@ -766,7 +766,7 @@ describe("Mission Control battle reports", () => {
     const requests: Array<[string, "arrival" | "return"]> = [];
     const page = MissionControlPage({
       ...missionControlProps(now, {
-        outgoing: [mission("32", "Transport", "Outbound", undefined, "7", "9", now - 60_000)],
+        outgoing: [mission("32", "Transport", "Outbound", undefined, "7", "9", now - 180_000)],
       }),
       onResolve: (missionId, kind) => requests.push([missionId, kind]),
     });
@@ -941,7 +941,7 @@ describe("Mission Control battle reports", () => {
     // The contract resolution entrypoint is permissionless, so another player's mission gets the
     // same emergency fallback after the funded resolver misses its grace period.
     const other = {
-      ...mission("90", "Attack", "Outbound", "0x9999999999999999999999999999999999999999", "5", "6", now - 60_000),
+      ...mission("90", "Attack", "Outbound", "0x9999999999999999999999999999999999999999", "5", "6", now - 180_000),
       needsResolution: true,
     };
     const text = collectText(MissionControlPage({
@@ -1445,7 +1445,7 @@ describe("Mission Control battle reports", () => {
       canTransact: true,
       detail: {
         mission: {
-          ...mission("42", "Attack", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now - 60_000),
+          ...mission("42", "Attack", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now - 180_000),
           needsResolution: true,
           originPlanet: planetReference("7", "0x1111111111111111111111111111111111111111", "Aggressor", "1:2:3"),
           targetPlanet: planetReference("9", "0x3333333333333333333333333333333333333333", "Bastion", "4:5:6"),
@@ -1465,7 +1465,7 @@ describe("Mission Control battle reports", () => {
 
     expect(text).not.toContain("Mission #42");
     expect(text).not.toContain("Mission Detail");
-    // The funded resolver has been late for a full minute, so mission detail exposes the same
+    // The funded resolver has been late for three full minutes, so mission detail exposes the same
     // permissionless fallback beside its Resolving pill.
     expect(text).toContain("Resolving");
     expect(text).toContain("Resolve");
