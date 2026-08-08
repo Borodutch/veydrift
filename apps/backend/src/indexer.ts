@@ -276,6 +276,13 @@ const startPriceLogIndexMetadataKey = "canonicalStartPriceLogIndex";
 const referralHistoryBackfillMetadataKey = "referralHistoryBackfillV1";
 const paidAllianceInviteHistoryBackfillMetadataKey = "paidAllianceInviteHistoryBackfillV1";
 const paidAllianceInviteProjectionBackfillMetadataKey = "paidAllianceInviteProjectionBackfillV1";
+const paidAllianceInviteProjectionTopics = [
+  paidAllianceInvitePurchasedTopic,
+  paidAllianceInviteRedeemedTopic,
+  allianceProductionBonusAccruedTopic,
+  allianceProductionBonusDeferredTopic,
+  allianceBonusWithdrawnTopic
+] as const;
 
 export type ReferralHistoryBackfillMarker = {
   completedAt: string;
@@ -1049,7 +1056,8 @@ export class SettlementIndexer {
   recordPaidAllianceInviteHistoryBackfill(
     contractAddress: `0x${string}`,
     fromBlock: bigint,
-    throughBlock: bigint
+    throughBlock: bigint,
+    rebuildProjection = true
   ): PaidAllianceInviteHistoryBackfillMarker {
     const marker: PaidAllianceInviteHistoryBackfillMarker = {
       completedAt: new Date().toISOString(),
@@ -1062,10 +1070,66 @@ export class SettlementIndexer {
       // projection side effects. Repair that durable ledger before allowing the history marker to
       // claim completion. Keeping both operations in one transaction means a decode/write failure
       // leaves the backfill retryable rather than publishing zero or partially rebuilt balances.
-      this.repairPaidAllianceInviteProjectionsFromEventLogs();
+      if (rebuildProjection) {
+        this.repairPaidAllianceInviteProjectionsFromEventLogs(contractAddress, true);
+      }
       this.setMetadata(paidAllianceInviteHistoryBackfillMetadataKey, JSON.stringify(marker));
     })();
     return marker;
+  }
+
+  reconcilePaidAllianceInviteHistory(
+    contractAddress: `0x${string}`,
+    canonicalLogs: readonly IndexedRpcLog[],
+    fromBlock: bigint,
+    throughBlock: bigint
+  ): boolean {
+    return this.db.transaction(() => {
+      const canonicalById = new Map(canonicalLogs.map((log) => [indexedLogKey(log), log]));
+      const placeholders = paidAllianceInviteProjectionTopics.map(() => "?").join(", ");
+      const stored = this.db.query(`
+        SELECT event_id, event_json
+        FROM indexed_event_logs
+        WHERE removed = 0
+          AND CAST(block_number AS INTEGER) BETWEEN ? AND ?
+          AND lower(json_extract(event_json, '$.address')) = lower(?)
+          AND lower(json_extract(event_json, '$.topics[0]')) IN (${placeholders})
+      `).all(
+        fromBlock.toString(),
+        throughBlock.toString(),
+        contractAddress,
+        ...paidAllianceInviteProjectionTopics
+      ) as Array<{ event_id: string; event_json: string }>;
+
+      let changed = false;
+      for (const row of stored) {
+        const canonical = canonicalById.get(row.event_id);
+        if (!canonical) {
+          this.db.query("UPDATE indexed_event_logs SET removed = 1 WHERE event_id = ?").run(row.event_id);
+          this.removePlayerActivityFeedEvent(row.event_id);
+          changed = true;
+          continue;
+        }
+        const storedLog = parseEvent<IndexedRpcLog>(row.event_json);
+        if (paidAllianceInviteLogFingerprint(storedLog) === paidAllianceInviteLogFingerprint(canonical)) continue;
+        this.db.query(`
+          UPDATE indexed_event_logs
+          SET removed = 0, event_json = ?, block_number = ?, received_at = ?
+          WHERE event_id = ?
+        `).run(
+          JSON.stringify(canonical),
+          blockNumberToDecimal(canonical.blockNumber),
+          new Date().toISOString(),
+          row.event_id
+        );
+        changed = true;
+      }
+      if (changed) {
+        this.markReorgDetected();
+        this.repairPaidAllianceInviteProjectionsFromEventLogs(contractAddress, true);
+      }
+      return changed;
+    })();
   }
 
   recordWriterChainSyncDiagnostics(diagnostics: Pick<WriterChainSyncDiagnostics, "chainSync" | "chainSyncRpc">): void {
@@ -3728,13 +3792,30 @@ export class SettlementIndexer {
 
   private applyLogAtomic(log: IndexedRpcLog): ApplyLogResult {
     const eventId = indexedLogKey(log);
-    const existing = this.db.query("SELECT event_json FROM indexed_event_logs WHERE event_id = ?").get(eventId) as EventRow | null;
+    const existing = this.db.query("SELECT event_json, removed FROM indexed_event_logs WHERE event_id = ?").get(eventId) as (EventRow & { removed: number }) | null;
     if (existing) {
       if (log.removed) {
         this.markReorgDetected();
+        this.db.query("UPDATE indexed_event_logs SET removed = 1 WHERE event_id = ?").run(eventId);
         this.recordRemovedLog(`${eventId}:removed`, log);
         this.removePlayerActivityFeedEvent(eventId);
+        if (isPaidAllianceInviteProjectionLog(log)) {
+          this.repairPaidAllianceInviteProjectionsFromEventLogs(
+            this.currentPaidAllianceInviteContractAddress() ?? log.address,
+            true
+          );
+        }
         return { applied: false, duplicate: false, ignored: false, removed: true, snapshot: this.snapshot() };
+      }
+      if (existing.removed && isPaidAllianceInviteProjectionLog(log)) {
+        this.db.query(`
+          UPDATE indexed_event_logs
+          SET removed = 0, event_json = ?, block_number = ?, received_at = ?
+          WHERE event_id = ?
+        `).run(JSON.stringify(log), blockNumberToDecimal(log.blockNumber), new Date().toISOString(), eventId);
+        this.applyAllianceEvent(decodeAllianceLog(log));
+        this.recordLatestBlock(log.blockNumber);
+        return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
       }
       const repairedDerivedRows = this.repairDerivedRowsForExistingLog(eventId, parseEvent<IndexedRpcLog>(existing.event_json));
       if (repairedDerivedRows > 0) {
@@ -3766,6 +3847,12 @@ export class SettlementIndexer {
       this.markReorgDetected();
       this.markStale("removed log/reorg");
       this.removePlayerActivityFeedEvent(eventId);
+      if (isPaidAllianceInviteProjectionLog(log)) {
+        this.repairPaidAllianceInviteProjectionsFromEventLogs(
+          this.currentPaidAllianceInviteContractAddress() ?? log.address,
+          true
+        );
+      }
       return { applied: false, duplicate: false, ignored: false, removed: true, snapshot: this.snapshot() };
     }
 
@@ -5216,21 +5303,32 @@ export class SettlementIndexer {
     // activity feed still needs one bounded replay of the already-durable raw event ledger.
     // The paid-invite repair follows the same rule. In particular, it must run even when an earlier
     // VEY-KANEO-829 build already wrote the history marker after duplicate logs skipped projection.
-    this.repairPaidAllianceInviteProjectionsFromEventLogs();
+    const paidAllianceInviteContractAddress = this.currentPaidAllianceInviteContractAddress();
+    if (paidAllianceInviteContractAddress) {
+      this.repairPaidAllianceInviteProjectionsFromEventLogs(paidAllianceInviteContractAddress);
+    }
     this.backfillPlayerActivityFeed();
     this.queueDefenderLossBreakdownBackfill();
   }
 
-  private repairPaidAllianceInviteProjectionsFromEventLogs(): void {
-    if (this.metadata(paidAllianceInviteProjectionBackfillMetadataKey) !== null) return;
+  private repairPaidAllianceInviteProjectionsFromEventLogs(
+    contractAddress?: string,
+    force = false
+  ): void {
+    if (!force && this.metadata(paidAllianceInviteProjectionBackfillMetadataKey) !== null) return;
 
     this.db.transaction(() => {
+      const addressClause = contractAddress
+        ? "AND lower(json_extract(event_json, '$.address')) = lower(?)"
+        : "";
       const rows = this.db.query(`
         SELECT event_json
         FROM indexed_event_logs
         WHERE removed = 0
+          ${addressClause}
           AND lower(json_extract(event_json, '$.topics[0]')) IN (?, ?, ?, ?, ?)
       `).all(
+        ...(contractAddress ? [contractAddress] : []),
         paidAllianceInvitePurchasedTopic,
         paidAllianceInviteRedeemedTopic,
         allianceProductionBonusAccruedTopic,
@@ -5249,8 +5347,22 @@ export class SettlementIndexer {
         this.applyAllianceEvent(decodeAllianceLog(log));
       }
       this.setMetadata(paidAllianceInviteProjectionBackfillMetadataKey, new Date().toISOString());
-      if (rows.length > 0) this.touch();
+      // A reorg can remove the only paid-invite row, leaving no canonical rows to replay. The
+      // projection tables still changed (to empty), so always advance the shared response-cache
+      // generation whenever this repair runs.
+      this.touch();
     })();
+  }
+
+  private currentPaidAllianceInviteContractAddress(): string | null {
+    const raw = this.metadata(paidAllianceInviteHistoryBackfillMetadataKey);
+    if (!raw) return null;
+    try {
+      const marker = JSON.parse(raw) as Partial<PaidAllianceInviteHistoryBackfillMarker>;
+      return typeof marker.contractAddress === "string" ? marker.contractAddress : null;
+    } catch {
+      return null;
+    }
   }
 
   private backfillStartPriceProjection(): void {
@@ -12908,6 +13020,17 @@ function indexedLogKey(log: IndexedRpcLog): string {
   return `${log.transactionHash.toLowerCase()}:${log.logIndex ?? fallbackLogIndex(log)}`;
 }
 
+function paidAllianceInviteLogFingerprint(log: IndexedRpcLog): string {
+  return JSON.stringify({
+    address: log.address?.toLowerCase() ?? null,
+    blockNumber: blockNumberToDecimal(log.blockNumber),
+    transactionHash: log.transactionHash.toLowerCase(),
+    logIndex: (log.logIndex ?? fallbackLogIndex(log)).toLowerCase(),
+    topics: log.topics.map((topic) => topic.toLowerCase()),
+    data: log.data.toLowerCase()
+  });
+}
+
 function fallbackLogIndex(log: RpcLog): string {
   return `${log.blockNumber}:${log.topics.join(",")}:${log.data}`;
 }
@@ -13226,6 +13349,11 @@ function isSqliteBusyError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   const message = error.message.toLowerCase();
   return message.includes("database is locked") || message.includes("sqlite_busy") || message.includes("sqlite_locked");
+}
+
+function isPaidAllianceInviteProjectionLog(log: IndexedRpcLog): boolean {
+  const topic = log.topics[0]?.toLowerCase();
+  return paidAllianceInviteProjectionTopics.some((candidate) => candidate === topic);
 }
 
 function delay(milliseconds: number): Promise<void> {

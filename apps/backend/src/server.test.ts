@@ -5791,6 +5791,29 @@ describe("Veydrift backend", () => {
     });
   });
 
+  test("fails Alliance GETs closed until paid invite history is complete", async () => {
+    const chainReader = new MockChainReader();
+    const database = new Database(":memory:");
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock, { database });
+    await indexer.rebuild();
+    const paidAddress = "0x5555555555555555555555555555555555555555" as const;
+    indexer.recordPaidAllianceInviteHistoryBackfill(paidAddress, 140n, 140n);
+    const handler = createRequestHandler({
+      config: {
+        ...configuredTestConfig,
+        paidAllianceInviteAddress: paidAddress,
+        paidAllianceInviteIndexFromBlock: 140n
+      },
+      chainReader,
+      indexer
+    });
+
+    expect((await handler(new Request(`http://localhost/wallet/${player}/alliance`))).status).toBe(200);
+    database.query("DELETE FROM indexer_metadata WHERE key = 'paidAllianceInviteHistoryBackfillV1'").run();
+    expect((await handler(new Request(`http://localhost/wallet/${player}/alliance`))).status).toBe(503);
+    expect((await handler(new Request("http://localhost/alliance/1"))).status).toBe(503);
+  });
+
   test("serves 10-worker-equivalent Alliance GET bursts from SQLite across former cache expiry", async () => {
     const chainReader = new class extends MockChainReader {
       override async getAllianceState(): Promise<AllianceState> {
@@ -5816,6 +5839,7 @@ describe("Veydrift backend", () => {
       data: abiWords(3n)
     });
     indexer.applyLog({
+      address: "0x5555555555555555555555555555555555555555",
       blockNumber: "0x92",
       transactionHash: "0xpaid-buy",
       logIndex: "0x0",
@@ -5823,12 +5847,18 @@ describe("Veydrift backend", () => {
       data: abiWords(6_000_000_000_000_000n, 1_770_000_000n)
     });
     indexer.applyLog({
+      address: "0x5555555555555555555555555555555555555555",
       blockNumber: "0x93",
       transactionHash: "0xpaid-accrue",
       logIndex: "0x0",
       topics: [allianceProductionBonusAccruedTopic, topic(1n), addressTopic(player)],
       data: abiWords(100n, 50n, 25n)
     });
+    indexer.recordPaidAllianceInviteHistoryBackfill(
+      "0x5555555555555555555555555555555555555555",
+      140n,
+      147n
+    );
     let explicitPostReads = 0;
     const handler = createRequestHandler({
       config: {

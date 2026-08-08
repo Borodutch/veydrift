@@ -5305,31 +5305,37 @@ describe("SettlementIndexer", () => {
     const invitee = "0x4444444444444444444444444444444444444444" as Address;
     const logs = [
       {
+        address: paidInviteAddress,
         blockNumber: "0x96", transactionHash: "0xlegacy-buy-1", logIndex: "0x0", removed: false,
         topics: [paidAllianceInvitePurchasedTopic, topic(11n), topic(7n), addressTopic(purchaser)],
         data: abiWords(6_000_000_000_000_000n, 1_770_000_000n)
       },
       {
+        address: paidInviteAddress,
         blockNumber: "0x97", transactionHash: "0xlegacy-buy-2", logIndex: "0x0", removed: false,
         topics: [paidAllianceInvitePurchasedTopic, topic(12n), topic(7n), addressTopic(purchaser)],
         data: abiWords(6_000_000_000_000_000n, 1_770_000_001n)
       },
       {
+        address: paidInviteAddress,
         blockNumber: "0x98", transactionHash: "0xlegacy-redeem", logIndex: "0x0", removed: false,
         topics: [paidAllianceInviteRedeemedTopic, topic(11n), topic(7n), addressTopic(invitee)],
         data: `${addressTopic(purchaser)}${1_770_000_100n.toString(16).padStart(64, "0")}`
       },
       {
+        address: paidInviteAddress,
         blockNumber: "0x99", transactionHash: "0xlegacy-accrue", logIndex: "0x0", removed: false,
         topics: [allianceProductionBonusAccruedTopic, topic(7n), addressTopic(invitee)],
         data: abiWords(100n, 50n, 25n)
       },
       {
+        address: paidInviteAddress,
         blockNumber: "0x9a", transactionHash: "0xlegacy-defer", logIndex: "0x0", removed: false,
         topics: [allianceProductionBonusDeferredTopic, topic(7n), addressTopic(invitee)],
         data: abiWords(7n, 8n, 9n)
       },
       {
+        address: paidInviteAddress,
         blockNumber: "0x9b", transactionHash: "0xlegacy-withdraw", logIndex: "0x0", removed: false,
         topics: [allianceBonusWithdrawnTopic, topic(7n), addressTopic(purchaser), topic(99n)],
         data: abiWords(40n, 10n, 5n)
@@ -5382,8 +5388,127 @@ describe("SettlementIndexer", () => {
     rollout.recordPaidAllianceInviteHistoryBackfill(paidInviteAddress, 150n, 190n);
     expect(rollout.paidAllianceInviteSummaries().get("7")).toEqual(expected);
     expect(rollout.paidAllianceInviteHistoryBackfillStatus(paidInviteAddress, 150n).marker?.throughBlock).toBe("190");
+    database.query(`
+      UPDATE indexer_metadata SET value = 'periodic-sentinel'
+      WHERE key = 'paidAllianceInviteProjectionBackfillV1'
+    `).run();
+    rollout.recordPaidAllianceInviteHistoryBackfill(paidInviteAddress, 150n, 206n, false);
+    expect((database.query(`
+      SELECT value FROM indexer_metadata WHERE key = 'paidAllianceInviteProjectionBackfillV1'
+    `).get() as { value: string }).value).toBe("periodic-sentinel");
     const restarted = new SettlementIndexer(chainReader, 100n, { database, runStartupBackfill: false });
     expect(restarted.paidAllianceInviteSummaries().get("7")).toEqual(expected);
+  });
+
+  test("reverses and re-applies paid invite projections across a removed log", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    const paidInviteAddress = "0x5555555555555555555555555555555555555555" as const;
+    const log = {
+      address: paidInviteAddress,
+      blockNumber: "0x96",
+      transactionHash: "0xpaid-reorg",
+      logIndex: "0x0",
+      topics: [paidAllianceInvitePurchasedTopic, topic(11n), topic(7n), addressTopic(player)],
+      data: abiWords(6_000_000_000_000_000n, 1_770_000_000n)
+    };
+
+    indexer.applyLog(log);
+    indexer.recordPaidAllianceInviteHistoryBackfill(paidInviteAddress, 150n, 150n);
+    expect(indexer.paidAllianceInviteSummaries().get("7")?.privateInviteStats.remaining).toBe(1);
+
+    const beforeRemovalVersion = indexer.indexedStateCacheVersion();
+    indexer.applyLog({ ...log, removed: true });
+    expect(indexer.paidAllianceInviteSummaries().get("7")).toBeUndefined();
+    expect(indexer.indexedStateCacheVersion()).not.toBe(beforeRemovalVersion);
+
+    indexer.applyLog({ ...log, removed: false });
+    expect(indexer.paidAllianceInviteSummaries().get("7")?.privateInviteStats.remaining).toBe(1);
+  });
+
+  test("rebuilds paid invite projections only from the configured replacement contract", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    const oldAddress = "0x5555555555555555555555555555555555555555" as const;
+    const replacementAddress = "0x6666666666666666666666666666666666666666" as const;
+    const purchase = (address: `0x${string}`, transactionHash: string, allianceId: bigint) => ({
+      address,
+      blockNumber: "0x96",
+      transactionHash,
+      logIndex: "0x0",
+      topics: [paidAllianceInvitePurchasedTopic, topic(11n), topic(allianceId), addressTopic(player)],
+      data: abiWords(6_000_000_000_000_000n, 1_770_000_000n)
+    });
+
+    indexer.applyLog(purchase(oldAddress, "0xold-paid", 7n));
+    indexer.applyLog(purchase(replacementAddress, "0xnew-paid", 8n));
+    indexer.recordPaidAllianceInviteHistoryBackfill(replacementAddress, 150n, 150n);
+
+    expect(indexer.paidAllianceInviteSummaries().get("7")).toBeUndefined();
+    expect(indexer.paidAllianceInviteSummaries().get("8")?.privateInviteStats.remaining).toBe(1);
+  });
+
+  test("cold-start repair filters paid invite projections by the durable replacement marker", () => {
+    const database = new Database(":memory:");
+    const reader = {
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    };
+    const oldAddress = "0x5555555555555555555555555555555555555555" as const;
+    const replacementAddress = "0x6666666666666666666666666666666666666666" as const;
+    const purchase = (address: `0x${string}`, transactionHash: string, allianceId: bigint) => ({
+      address,
+      blockNumber: "0x96",
+      transactionHash,
+      logIndex: "0x0",
+      topics: [paidAllianceInvitePurchasedTopic, topic(11n), topic(allianceId), addressTopic(player)],
+      data: abiWords(6_000_000_000_000_000n, 1_770_000_000n)
+    });
+    const original = new SettlementIndexer(reader, 100n, { database, runStartupBackfill: false });
+    original.applyLog(purchase(oldAddress, "0xold-cold-start", 7n));
+    original.applyLog(purchase(replacementAddress, "0xnew-cold-start", 8n));
+    original.recordPaidAllianceInviteHistoryBackfill(replacementAddress, 150n, 150n);
+    database.query("DELETE FROM contract_paid_alliance_invite_purchases").run();
+    database.query("DELETE FROM indexer_metadata WHERE key = 'paidAllianceInviteProjectionBackfillV1'").run();
+
+    const restarted = new SettlementIndexer(reader, 100n, { database, runStartupBackfill: false });
+    expect(restarted.paidAllianceInviteSummaries().get("7")).toBeUndefined();
+    expect(restarted.paidAllianceInviteSummaries().get("8")?.privateInviteStats.remaining).toBe(1);
+  });
+
+  test("reconciles same-id paid invite logs whose canonical contents changed", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    const paidInviteAddress = "0x5555555555555555555555555555555555555555" as const;
+    const original = {
+      address: paidInviteAddress,
+      blockNumber: "0x96",
+      transactionHash: "0xsame-id-accrual",
+      logIndex: "0x0",
+      topics: [allianceProductionBonusAccruedTopic, topic(7n), addressTopic(player)],
+      data: abiWords(10n, 20n, 30n)
+    };
+    indexer.applyLog(original);
+    indexer.recordPaidAllianceInviteHistoryBackfill(paidInviteAddress, 150n, 150n);
+    expect(indexer.paidAllianceInviteSummaries().get("7")?.bonusBalance).toEqual({
+      metal: "10", crystal: "20", deuterium: "30"
+    });
+
+    const canonical = { ...original, data: abiWords(40n, 50n, 60n) };
+    expect(indexer.reconcilePaidAllianceInviteHistory(paidInviteAddress, [canonical], 150n, 150n)).toBe(true);
+    expect(indexer.paidAllianceInviteSummaries().get("7")?.bonusBalance).toEqual({
+      metal: "40", crystal: "50", deuterium: "60"
+    });
   });
 
   test("VEY-KANEO-783: removes a dissolved zero-member alliance from canonical directory reads", () => {
