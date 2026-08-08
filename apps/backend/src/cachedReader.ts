@@ -238,6 +238,13 @@ export class CachedChainReader implements ChainReader {
     return this.inner.listAllianceLogs(fromBlock, toBlock);
   }
 
+  listPaidAllianceInviteLogs(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]> {
+    if (!this.inner.listPaidAllianceInviteLogs) {
+      return Promise.resolve([]);
+    }
+    return this.inner.listPaidAllianceInviteLogs(fromBlock, toBlock);
+  }
+
   listContractLogs(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]> {
     if (!this.inner.listContractLogs) {
       return Promise.resolve([]);
@@ -251,11 +258,17 @@ export class CachedChainReader implements ChainReader {
       activeRpcUrl: null,
       batchRequests: 0,
       callsByMethod: {},
+      callsBySource: {},
       failoverCount: 0,
       httpRequests: 0,
       lastFailoverReason: null,
       rpcUrls: [],
-      timeouts: 0
+      timeouts: 0,
+      requestSource: "unavailable",
+      startedHttpRequests: 0,
+      finishedHttpRequests: 0,
+      unfinishedHttpRequests: 0,
+      oldestUnfinishedRequestAgeMs: null
     };
   }
 

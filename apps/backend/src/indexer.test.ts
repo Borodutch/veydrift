@@ -60,6 +60,10 @@ const allianceOwnershipTransferredTopic = "0x68f6446f7a86cbeefdd42de0fd5fe8291d2
 const allianceDiplomacyUpdatedTopic = "0x3df4b2aa5708b43ef1805908826beae5c9a30fb60b1952ad99ce3444b2eec6da";
 const allianceWarSnapshotCapturedTopic = "0xaf7a44ebc296bed36b4a4227fcb39ea17aa1bf658f29f81ee820fbe8d204fed4";
 const paidAllianceInviteRedeemedTopic = "0xc3eee853f2f234eb03ddcf83a4cb7e1704a5eb0cdb1ca01e9918b0a50632f8c9";
+const paidAllianceInvitePurchasedTopic = "0x044d47943b4c703fffb74230521077d9baeb2977f8c12a23c79e60169ba20b41";
+const allianceProductionBonusAccruedTopic = "0xc5911d6b2b795502459a9b1187d319db5d0d697f8278617b8f9b240c8892108b";
+const allianceProductionBonusDeferredTopic = "0xe82def1976a6ab42c25df00bb3785db8815a556342aa738c1302f4da975c54c1";
+const allianceBonusWithdrawnTopic = "0x369bd7e76fd86a155ec571e2d405665938d7c74cc9b7fd3f5a6bef80d7b0cccb";
 const fleetMissionLaunchedTopic = "0x95e2cb506aa14052bac412e42f47fb34d9234819a960761a7bc7f1920c0ab456";
 const fleetMissionCargoTopic = "0x3daa6311ecdadad6781f70e5d285e7150f9dc165db88d23be8867be4de33ff29";
 const fleetMissionShipsTopic = "0xf581cbe97357884794500d80286cfbe823fed3b5d77446e477aa694ce89fc82d";
@@ -5240,6 +5244,53 @@ describe("SettlementIndexer", () => {
     expect(indexer.allianceIntelForPlayers([player, applicant])).toEqual(new Map([
       [player, { allianceId: "1", tag: "VEY", name: "Veydrift Command" }]
     ]));
+  });
+
+  test("indexes paid invite counts and treasury balances durably from events", () => {
+    const dir = mkdtempSync(join(tmpdir(), "veydrift-paid-alliance-index-"));
+    const databasePath = join(dir, "contract-state.sqlite");
+    try {
+      const chainReader = {
+        async listDebrisFieldEvents() { return []; },
+        async listMoonChanceReportEvents() { return []; },
+        async listSettledPlanetEvents() { return []; }
+      };
+      const indexer = new SettlementIndexer(chainReader, 100n, { databasePath });
+      const purchaser = "0x3333333333333333333333333333333333333333" as Address;
+      const invitee = "0x4444444444444444444444444444444444444444" as Address;
+      const paidLog = (
+        transactionHash: string,
+        logIndex: string,
+        topics: string[],
+        data: string
+      ) => indexer.applyLog({ blockNumber: "0x120", transactionHash, logIndex, topics, data });
+
+      paidLog("0xbuy-1", "0x0", [paidAllianceInvitePurchasedTopic, topic(11n), topic(7n), addressTopic(purchaser)], abiWords(6_000_000_000_000_000n, 1_770_000_000n));
+      paidLog("0xbuy-2", "0x0", [paidAllianceInvitePurchasedTopic, topic(12n), topic(7n), addressTopic(purchaser)], abiWords(6_000_000_000_000_000n, 1_770_000_001n));
+      paidLog("0xredeem", "0x0", [paidAllianceInviteRedeemedTopic, topic(11n), topic(7n), addressTopic(invitee)], `${addressTopic(purchaser)}${1_770_000_100n.toString(16).padStart(64, "0")}`);
+      paidLog("0xaccrue", "0x0", [allianceProductionBonusAccruedTopic, topic(7n), addressTopic(invitee)], abiWords(100n, 50n, 25n));
+      paidLog("0xdefer", "0x0", [allianceProductionBonusDeferredTopic, topic(7n), addressTopic(invitee)], abiWords(7n, 8n, 9n));
+      paidLog("0xwithdraw", "0x0", [allianceBonusWithdrawnTopic, topic(7n), addressTopic(purchaser), topic(99n)], abiWords(40n, 10n, 5n));
+
+      expect(indexer.paidAllianceInviteSummaries().get("7")).toEqual({
+        bonusBalance: { metal: "60", crystal: "40", deuterium: "20" },
+        pendingBonusBalance: { metal: "7", crystal: "8", deuterium: "9" },
+        privateInviteStats: { remaining: 1, used: 1 }
+      });
+
+      const restarted = new SettlementIndexer(chainReader, 100n, {
+        databasePath,
+        assumeSchemaReady: true,
+        readOnly: true
+      });
+      expect(restarted.paidAllianceInviteSummaries().get("7")).toEqual({
+        bonusBalance: { metal: "60", crystal: "40", deuterium: "20" },
+        pendingBonusBalance: { metal: "7", crystal: "8", deuterium: "9" },
+        privateInviteStats: { remaining: 1, used: 1 }
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   test("VEY-KANEO-783: removes a dissolved zero-member alliance from canonical directory reads", () => {

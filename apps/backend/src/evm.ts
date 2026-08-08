@@ -502,13 +502,41 @@ export type IndexedAllianceEvent =
       declareeMemberCount: number;
     }
   | {
+      eventName: "PaidAllianceInvitePurchased";
+      transactionHash: string;
+      blockNumber: string;
+      commitment: string;
+      allianceId: string;
+      purchaser: Address;
+      settlementPrice: string;
+      purchasedAt: string;
+    }
+  | {
       eventName: "PaidAllianceInviteRedeemed";
       transactionHash: string;
       blockNumber: string;
+      commitment: string;
       allianceId: string;
       player: Address;
       inviter: Address;
       redeemedAt: string;
+    }
+  | {
+      eventName: "AllianceProductionBonusAccrued" | "AllianceProductionBonusDeferred";
+      transactionHash: string;
+      blockNumber: string;
+      allianceId: string;
+      player: Address;
+      resources: Resources;
+    }
+  | {
+      eventName: "AllianceBonusWithdrawn";
+      transactionHash: string;
+      blockNumber: string;
+      allianceId: string;
+      manager: Address;
+      planetId: string;
+      resources: Resources;
     };
 
 export type FleetMissionVisibility = {
@@ -1418,6 +1446,7 @@ export interface ChainReader {
   listMoonChanceReportEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<MoonChanceReportEvent[]>;
   listDebrisFieldEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<DebrisFieldEvent[]>;
   listAllianceLogs?(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
+  listPaidAllianceInviteLogs?(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
   listContractLogs?(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
   listReferralLogs?(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
   failoverRpc?(reason: string): boolean;
@@ -1429,6 +1458,7 @@ export type RpcMetrics = {
   activeRpcUrl: string | null;
   batchRequests: number;
   callsByMethod: Record<string, number>;
+  callsBySource: Record<string, Record<string, number>>;
   failoverCount: number;
   httpRequests: number;
   lastFailoverReason: string | null;
@@ -1437,6 +1467,11 @@ export type RpcMetrics = {
   // and /health so an RPC live-read timeout storm is visible before it escalates to a crash
   // (VEY-KANEO-459).
   timeouts: number;
+  requestSource: string;
+  startedHttpRequests: number;
+  finishedHttpRequests: number;
+  unfinishedHttpRequests: number;
+  oldestUnfinishedRequestAgeMs: number | null;
 };
 
 export type VeydriftGameReaderOptions = {
@@ -1444,6 +1479,7 @@ export type VeydriftGameReaderOptions = {
   hydrateQueueStartedAt?: boolean;
   minRequestIntervalMs?: number;
   requestTimeoutMs?: number;
+  rpcCallSource?: string;
 };
 
 type RpcCacheEntry<T> = {
@@ -1492,11 +1528,17 @@ export class HttpJsonRpcTransport {
     activeRpcUrl: null,
     batchRequests: 0,
     callsByMethod: {},
+    callsBySource: {},
     failoverCount: 0,
     httpRequests: 0,
     lastFailoverReason: null,
     rpcUrls: [],
-    timeouts: 0
+    timeouts: 0,
+    requestSource: "unspecified",
+    startedHttpRequests: 0,
+    finishedHttpRequests: 0,
+    unfinishedHttpRequests: 0,
+    oldestUnfinishedRequestAgeMs: null
   };
   private readonly cache = new Map<string, RpcCacheEntry<unknown>>();
   private readonly cacheTtlMs: number;
@@ -1506,10 +1548,13 @@ export class HttpJsonRpcTransport {
   private requestQueue: Promise<void> = Promise.resolve();
   private readonly rpcUrls: string[];
   private activeRpcIndex = 0;
+  private nextActiveRequestId = 0;
+  private readonly activeRequestStartedAt = new Map<number, number>();
+  private readonly requestSource: string;
 
   constructor(
     rpcUrl: string | readonly string[],
-    options: { cacheTtlMs?: number; minRequestIntervalMs?: number; requestTimeoutMs?: number } = {}
+    options: { cacheTtlMs?: number; minRequestIntervalMs?: number; requestTimeoutMs?: number; source?: string } = {}
   ) {
     this.rpcUrls = (Array.isArray(rpcUrl) ? rpcUrl : [rpcUrl]).filter((url) => url.trim().length > 0);
     if (this.rpcUrls.length === 0) {
@@ -1520,6 +1565,8 @@ export class HttpJsonRpcTransport {
     this.cacheTtlMs = options.cacheTtlMs ?? 2_000;
     this.minRequestIntervalMs = options.minRequestIntervalMs ?? 300;
     this.requestTimeoutMs = options.requestTimeoutMs ?? defaultRpcRequestTimeoutMs();
+    this.requestSource = options.source?.trim() || "unspecified";
+    this.metrics.requestSource = this.requestSource;
   }
 
   async request<T>(method: string, params: unknown[]): Promise<T> {
@@ -1786,15 +1833,27 @@ export class HttpJsonRpcTransport {
   }
 
   snapshot(): RpcMetrics {
+    const now = Date.now();
+    const oldestStartedAt = this.activeRequestStartedAt.size > 0
+      ? Math.min(...this.activeRequestStartedAt.values())
+      : null;
     return {
       activeRpcUrl: this.activeRpcUrl(),
       batchRequests: this.metrics.batchRequests,
       callsByMethod: { ...this.metrics.callsByMethod },
+      callsBySource: Object.fromEntries(
+        Object.entries(this.metrics.callsBySource).map(([source, methods]) => [source, { ...methods }])
+      ),
       failoverCount: this.metrics.failoverCount,
       httpRequests: this.metrics.httpRequests,
       lastFailoverReason: this.metrics.lastFailoverReason,
       rpcUrls: [...this.rpcUrls],
-      timeouts: this.metrics.timeouts
+      timeouts: this.metrics.timeouts,
+      requestSource: this.requestSource,
+      startedHttpRequests: this.metrics.startedHttpRequests,
+      finishedHttpRequests: this.metrics.finishedHttpRequests,
+      unfinishedHttpRequests: this.metrics.startedHttpRequests - this.metrics.finishedHttpRequests,
+      oldestUnfinishedRequestAgeMs: oldestStartedAt === null ? null : Math.max(0, now - oldestStartedAt)
     };
   }
 
@@ -1810,9 +1869,15 @@ export class HttpJsonRpcTransport {
 
   private countRpc(method: string): void {
     this.metrics.callsByMethod[method] = (this.metrics.callsByMethod[method] ?? 0) + 1;
+    const sourceMethods = this.metrics.callsBySource[this.requestSource] ?? {};
+    sourceMethods[method] = (sourceMethods[method] ?? 0) + 1;
+    this.metrics.callsBySource[this.requestSource] = sourceMethods;
   }
 
   private fetchRpc(init: RequestInit): Promise<Response> {
+    const requestId = this.nextActiveRequestId++;
+    this.metrics.startedHttpRequests += 1;
+    this.activeRequestStartedAt.set(requestId, Date.now());
     const scheduled = this.requestQueue.then(async () => {
       const waitMs = Math.max(0, this.nextRequestAt - Date.now());
       if (waitMs > 0) {
@@ -1821,11 +1886,15 @@ export class HttpJsonRpcTransport {
       this.nextRequestAt = Date.now() + this.minRequestIntervalMs;
       return this.fetchWithTimeout(init);
     });
-    this.requestQueue = scheduled.then(
+    const tracked = scheduled.finally(() => {
+      this.metrics.finishedHttpRequests += 1;
+      this.activeRequestStartedAt.delete(requestId);
+    });
+    this.requestQueue = tracked.then(
       () => undefined,
       () => undefined
     );
-    return scheduled;
+    return tracked;
   }
 
   // Bound every upstream RPC fetch with an AbortController-backed deadline. Without this, a slow or
@@ -1942,6 +2011,7 @@ export class VeydriftGameReader implements ChainReader {
       cacheTtlMs?: number;
       minRequestIntervalMs?: number;
       requestTimeoutMs?: number;
+      source?: string;
     } = {};
     if (options.cacheTtlMs !== undefined) transportOptions.cacheTtlMs = options.cacheTtlMs;
     if (options.minRequestIntervalMs !== undefined) {
@@ -1950,6 +2020,7 @@ export class VeydriftGameReader implements ChainReader {
     if (options.requestTimeoutMs !== undefined) {
       transportOptions.requestTimeoutMs = options.requestTimeoutMs;
     }
+    if (options.rpcCallSource !== undefined) transportOptions.source = options.rpcCallSource;
 
     this.transport = transport ?? new HttpJsonRpcTransport([
       config.rpcUrl,
@@ -1974,12 +2045,18 @@ export class VeydriftGameReader implements ChainReader {
     return this.transport.snapshot?.() ?? {
       batchRequests: 0,
       callsByMethod: {},
+      callsBySource: {},
       activeRpcUrl: null,
       failoverCount: 0,
       httpRequests: 0,
       lastFailoverReason: null,
       rpcUrls: [],
-      timeouts: 0
+      timeouts: 0,
+      requestSource: "unavailable",
+      startedHttpRequests: 0,
+      finishedHttpRequests: 0,
+      unfinishedHttpRequests: 0,
+      oldestUnfinishedRequestAgeMs: null
     };
   }
 
@@ -3658,15 +3735,26 @@ export class VeydriftGameReader implements ChainReader {
         topics: [[allianceWarSnapshotCapturedTopic]]
       }));
     }
-    if (this.paidAllianceInviteAddress) {
-      extraLogs.push(...await this.getLogs({
-        address: this.paidAllianceInviteAddress,
-        fromBlock: toQuantity(fromBlock),
-        toBlock: toBlock === "latest" ? "latest" : toQuantity(toBlock),
-        topics: [[paidAllianceInviteRedeemedTopic]]
-      }));
-    }
     return [...allianceLogs, ...extraLogs].sort(compareRpcLogs);
+  }
+
+  async listPaidAllianceInviteLogs(
+    fromBlock: bigint,
+    toBlock: bigint | "latest" = "latest"
+  ): Promise<RpcLog[]> {
+    if (!this.paidAllianceInviteAddress) return [];
+    return this.getLogs({
+      address: this.paidAllianceInviteAddress,
+      fromBlock: toQuantity(fromBlock),
+      toBlock: toBlock === "latest" ? "latest" : toQuantity(toBlock),
+      topics: [[
+        paidAllianceInvitePurchasedTopic,
+        paidAllianceInviteRedeemedTopic,
+        allianceProductionBonusAccruedTopic,
+        allianceProductionBonusDeferredTopic,
+        allianceBonusWithdrawnTopic
+      ]]
+    });
   }
 
   /**
@@ -5703,7 +5791,11 @@ const allianceDiplomacyUpdatedTopic = "0x3df4b2aa5708b43ef1805908826beae5c9a30fb
 // VeydriftAllianceWarProtection.WarSnapshotCaptured(...). The war module is discovered from
 // Alliance.warProtection() so the size-constrained Alliance proxy does not need a mirror event.
 const allianceWarSnapshotCapturedTopic = "0xaf7a44ebc296bed36b4a4227fcb39ea17aa1bf658f29f81ee820fbe8d204fed4";
-const paidAllianceInviteRedeemedTopic = "0xc3eee853f2f234eb03ddcf83a4cb7e1704a5eb0cdb1ca01e9918b0a50632f8c9";
+export const paidAllianceInvitePurchasedTopic = "0x044d47943b4c703fffb74230521077d9baeb2977f8c12a23c79e60169ba20b41";
+export const paidAllianceInviteRedeemedTopic = "0xc3eee853f2f234eb03ddcf83a4cb7e1704a5eb0cdb1ca01e9918b0a50632f8c9";
+export const allianceProductionBonusAccruedTopic = "0xc5911d6b2b795502459a9b1187d319db5d0d697f8278617b8f9b240c8892108b";
+export const allianceProductionBonusDeferredTopic = "0xe82def1976a6ab42c25df00bb3785db8815a556342aa738c1302f4da975c54c1";
+export const allianceBonusWithdrawnTopic = "0x369bd7e76fd86a155ec571e2d405665938d7c74cc9b7fd3f5a6bef80d7b0cccb";
 const marketResourceDepositedTopic = "0xb241f95d5e925b76c75fd1e811b497abfdc0984105f5b3feb7bee1a75f0a2643";
 const marketResourceWithdrawalRequestedTopic = "0xc4694dfe978480c576eacc57b2b09e69c8b8f50c49739ca4c4515295be589eab";
 const marketResourceWithdrawalFinishedTopic = "0x2b254e656a481b3978a707e6846146a1d7a3144e414cb803bbc7adc97d7587ee";
@@ -5784,7 +5876,11 @@ const eventNamesByTopic = new Map<string, string>([
   [allianceOwnershipTransferredTopic, "AllianceOwnershipTransferred"],
   [allianceDiplomacyUpdatedTopic, "AllianceDiplomacyUpdated"],
   [allianceWarSnapshotCapturedTopic, "AllianceWarSnapshotCaptured"],
+  [paidAllianceInvitePurchasedTopic, "PaidAllianceInvitePurchased"],
   [paidAllianceInviteRedeemedTopic, "PaidAllianceInviteRedeemed"],
+  [allianceProductionBonusAccruedTopic, "AllianceProductionBonusAccrued"],
+  [allianceProductionBonusDeferredTopic, "AllianceProductionBonusDeferred"],
+  [allianceBonusWithdrawnTopic, "AllianceBonusWithdrawn"],
   [marketResourceDepositedTopic, "MarketResourceDeposited"],
   [marketResourceWithdrawalRequestedTopic, "MarketResourceWithdrawalRequested"],
   [marketResourceWithdrawalFinishedTopic, "MarketResourceWithdrawalFinished"],
@@ -6032,7 +6128,11 @@ export function isAllianceLog(log: RpcLog): boolean {
     || topic === allianceOwnershipTransferredTopic
     || topic === allianceDiplomacyUpdatedTopic
     || topic === allianceWarSnapshotCapturedTopic
-    || topic === paidAllianceInviteRedeemedTopic;
+    || topic === paidAllianceInvitePurchasedTopic
+    || topic === paidAllianceInviteRedeemedTopic
+    || topic === allianceProductionBonusAccruedTopic
+    || topic === allianceProductionBonusDeferredTopic
+    || topic === allianceBonusWithdrawnTopic;
 }
 
 export function isFleetMissionLog(log: RpcLog): boolean {
@@ -6801,15 +6901,51 @@ export function decodeAllianceLog(log: RpcLog): IndexedAllianceEvent {
       declareeMemberCount: Number(decodeUintWord(wordAt(words, 3)))
     };
   }
+  if (topic === paidAllianceInvitePurchasedTopic) {
+    const words = splitWords(log.data);
+    return {
+      ...base,
+      eventName: "PaidAllianceInvitePurchased",
+      commitment: topicAt(log.topics, 1),
+      allianceId: decodeUint(topicAt(log.topics, 2)).toString(),
+      purchaser: decodeAddressWord(topicAt(log.topics, 3)),
+      settlementPrice: decodeUintWord(wordAt(words, 0)).toString(),
+      purchasedAt: decodeUintWord(wordAt(words, 1)).toString()
+    };
+  }
   if (topic === paidAllianceInviteRedeemedTopic) {
     const words = splitWords(log.data);
     return {
       ...base,
       eventName: "PaidAllianceInviteRedeemed",
+      commitment: topicAt(log.topics, 1),
       allianceId: decodeUint(topicAt(log.topics, 2)).toString(),
       player: decodeAddressWord(topicAt(log.topics, 3)),
       inviter: decodeAddressWord(wordAt(words, 0)),
       redeemedAt: decodeUintWord(wordAt(words, 1)).toString()
+    };
+  }
+  if (topic === allianceProductionBonusAccruedTopic || topic === allianceProductionBonusDeferredTopic) {
+    const words = splitWords(log.data);
+    return {
+      ...base,
+      eventName: topic === allianceProductionBonusAccruedTopic
+        ? "AllianceProductionBonusAccrued"
+        : "AllianceProductionBonusDeferred",
+      allianceId: decodeUint(topicAt(log.topics, 1)).toString(),
+      player: decodeAddressWord(topicAt(log.topics, 2)),
+      resources: decodeResources(words.slice(0, 3))
+    };
+  }
+  if (topic === allianceBonusWithdrawnTopic) {
+    const words = splitWords(log.data);
+    return {
+      ...base,
+      eventName: "AllianceBonusWithdrawn",
+      allianceId: decodeUint(topicAt(log.topics, 1)).toString(),
+      manager: decodeAddressWord(topicAt(log.topics, 2)),
+      planetId: decodeUint(topicAt(log.topics, 3)).toString(),
+      resources: decodeResources(words.slice(0, 3))
     };
   }
 

@@ -269,12 +269,29 @@ const startPriceBootstrapDivergenceMetadataKey = "startPriceBootstrapDivergence"
 const startPriceBlockMetadataKey = "canonicalStartPriceBlock";
 const startPriceLogIndexMetadataKey = "canonicalStartPriceLogIndex";
 const referralHistoryBackfillMetadataKey = "referralHistoryBackfillV1";
+const paidAllianceInviteHistoryBackfillMetadataKey = "paidAllianceInviteHistoryBackfillV1";
 
 export type ReferralHistoryBackfillMarker = {
   completedAt: string;
   contractAddress: string;
   fromBlock: string;
   throughBlock: string;
+};
+
+export type PaidAllianceInviteHistoryBackfillMarker = {
+  completedAt: string;
+  contractAddress: string;
+  fromBlock: string;
+  throughBlock: string;
+};
+
+export type IndexedPaidAllianceInviteSummary = {
+  bonusBalance: Resources;
+  pendingBonusBalance: Resources;
+  privateInviteStats: {
+    remaining: number;
+    used: number;
+  };
 };
 
 export type WriterChainSyncDiagnostics = {
@@ -998,6 +1015,46 @@ export class SettlementIndexer {
     return marker;
   }
 
+  paidAllianceInviteHistoryBackfillStatus(
+    contractAddress: `0x${string}`,
+    fromBlock: bigint
+  ): { marker: PaidAllianceInviteHistoryBackfillMarker | null; required: boolean } {
+    const raw = this.metadata(paidAllianceInviteHistoryBackfillMetadataKey);
+    let marker: PaidAllianceInviteHistoryBackfillMarker | null = null;
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw) as Partial<PaidAllianceInviteHistoryBackfillMarker>;
+        if (
+          typeof parsed.completedAt === "string"
+          && typeof parsed.contractAddress === "string"
+          && typeof parsed.fromBlock === "string"
+          && typeof parsed.throughBlock === "string"
+        ) marker = parsed as PaidAllianceInviteHistoryBackfillMarker;
+      } catch {
+        // A malformed marker is untrusted; the idempotent writer backfill repairs it.
+      }
+    }
+    const required = marker === null
+      || marker.contractAddress.toLowerCase() !== contractAddress.toLowerCase()
+      || marker.fromBlock !== fromBlock.toString();
+    return { marker, required };
+  }
+
+  recordPaidAllianceInviteHistoryBackfill(
+    contractAddress: `0x${string}`,
+    fromBlock: bigint,
+    throughBlock: bigint
+  ): PaidAllianceInviteHistoryBackfillMarker {
+    const marker: PaidAllianceInviteHistoryBackfillMarker = {
+      completedAt: new Date().toISOString(),
+      contractAddress: contractAddress.toLowerCase(),
+      fromBlock: fromBlock.toString(),
+      throughBlock: throughBlock.toString()
+    };
+    this.setMetadata(paidAllianceInviteHistoryBackfillMetadataKey, JSON.stringify(marker));
+    return marker;
+  }
+
   recordWriterChainSyncDiagnostics(diagnostics: Pick<WriterChainSyncDiagnostics, "chainSync" | "chainSyncRpc">): void {
     this.setMetadata(
       writerChainSyncDiagnosticsMetadataKey,
@@ -1484,6 +1541,60 @@ export class SettlementIndexer {
 
   allianceProfile(allianceId: string): AllianceState["directory"][number] | null {
     return this.allianceDirectory().find((alliance) => alliance.allianceId === allianceId) ?? null;
+  }
+
+  paidAllianceInviteSummaries(): Map<string, IndexedPaidAllianceInviteSummary> {
+    const summaries = new Map<string, IndexedPaidAllianceInviteSummary>();
+    const ensure = (allianceId: string) => {
+      let summary = summaries.get(allianceId);
+      if (!summary) {
+        summary = {
+          bonusBalance: { metal: "0", crystal: "0", deuterium: "0" },
+          pendingBonusBalance: { metal: "0", crystal: "0", deuterium: "0" },
+          privateInviteStats: { remaining: 0, used: 0 }
+        };
+        summaries.set(allianceId, summary);
+      }
+      return summary;
+    };
+    const purchases = this.db.query(`
+      SELECT alliance_id, COUNT(*) AS count
+      FROM contract_paid_alliance_invite_purchases
+      GROUP BY alliance_id
+    `).all() as Array<{ alliance_id: string; count: number }>;
+    const redemptions = this.db.query(`
+      SELECT alliance_id, COUNT(*) AS count
+      FROM contract_paid_alliance_invite_uses
+      GROUP BY alliance_id
+    `).all() as Array<{ alliance_id: string; count: number }>;
+    for (const row of purchases) ensure(row.alliance_id).privateInviteStats.remaining = row.count;
+    for (const row of redemptions) {
+      const stats = ensure(row.alliance_id).privateInviteStats;
+      stats.used = row.count;
+      stats.remaining = Math.max(0, stats.remaining - row.count);
+    }
+    const balances = this.db.query(`
+      SELECT alliance_id, metal, crystal, deuterium, pending_metal, pending_crystal, pending_deuterium
+      FROM contract_paid_alliance_invite_balances
+    `).all() as Array<{
+      alliance_id: string;
+      metal: string;
+      crystal: string;
+      deuterium: string;
+      pending_metal: string;
+      pending_crystal: string;
+      pending_deuterium: string;
+    }>;
+    for (const row of balances) {
+      const summary = ensure(row.alliance_id);
+      summary.bonusBalance = { metal: row.metal, crystal: row.crystal, deuterium: row.deuterium };
+      summary.pendingBonusBalance = {
+        metal: row.pending_metal,
+        crystal: row.pending_crystal,
+        deuterium: row.pending_deuterium
+      };
+    }
+    return summaries;
   }
 
   allianceIntelForPlayers(wallets: readonly string[]): Map<string, AllianceIdentity> {
@@ -4987,6 +5098,15 @@ export class SettlementIndexer {
       );
       CREATE INDEX IF NOT EXISTS contract_alliance_invites_player_idx
         ON contract_alliance_invites (player);
+      CREATE TABLE IF NOT EXISTS contract_paid_alliance_invite_purchases (
+        commitment TEXT PRIMARY KEY,
+        alliance_id TEXT NOT NULL,
+        purchaser TEXT NOT NULL,
+        settlement_price TEXT NOT NULL,
+        purchased_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS contract_paid_alliance_invite_purchases_alliance_idx
+        ON contract_paid_alliance_invite_purchases (alliance_id);
       CREATE TABLE IF NOT EXISTS contract_paid_alliance_invite_redemptions (
         alliance_id TEXT NOT NULL,
         player TEXT NOT NULL,
@@ -4996,6 +5116,21 @@ export class SettlementIndexer {
       );
       CREATE INDEX IF NOT EXISTS contract_paid_alliance_invite_redemptions_player_idx
         ON contract_paid_alliance_invite_redemptions (player);
+      CREATE TABLE IF NOT EXISTS contract_paid_alliance_invite_uses (
+        commitment TEXT PRIMARY KEY,
+        alliance_id TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS contract_paid_alliance_invite_uses_alliance_idx
+        ON contract_paid_alliance_invite_uses (alliance_id);
+      CREATE TABLE IF NOT EXISTS contract_paid_alliance_invite_balances (
+        alliance_id TEXT PRIMARY KEY,
+        metal TEXT NOT NULL DEFAULT '0',
+        crystal TEXT NOT NULL DEFAULT '0',
+        deuterium TEXT NOT NULL DEFAULT '0',
+        pending_metal TEXT NOT NULL DEFAULT '0',
+        pending_crystal TEXT NOT NULL DEFAULT '0',
+        pending_deuterium TEXT NOT NULL DEFAULT '0'
+      );
       CREATE TABLE IF NOT EXISTS contract_alliance_join_requests (
         alliance_id TEXT NOT NULL,
         requester TEXT NOT NULL,
@@ -5692,7 +5827,10 @@ export class SettlementIndexer {
     this.db.query("DELETE FROM contract_alliances").run();
     this.db.query("DELETE FROM contract_alliance_members").run();
     this.db.query("DELETE FROM contract_alliance_invites").run();
+    this.db.query("DELETE FROM contract_paid_alliance_invite_purchases").run();
     this.db.query("DELETE FROM contract_paid_alliance_invite_redemptions").run();
+    this.db.query("DELETE FROM contract_paid_alliance_invite_uses").run();
+    this.db.query("DELETE FROM contract_paid_alliance_invite_balances").run();
     this.db.query("DELETE FROM contract_alliance_join_requests").run();
     this.db.query("DELETE FROM contract_alliance_diplomacy").run();
   }
@@ -6226,7 +6364,6 @@ export class SettlementIndexer {
     this.db.query("DELETE FROM contract_alliances").run();
     this.db.query("DELETE FROM contract_alliance_members").run();
     this.db.query("DELETE FROM contract_alliance_invites").run();
-    this.db.query("DELETE FROM contract_paid_alliance_invite_redemptions").run();
     this.db.query("DELETE FROM contract_alliance_join_requests").run();
     this.db.query("DELETE FROM contract_alliance_diplomacy").run();
   }
@@ -8357,7 +8494,24 @@ export class SettlementIndexer {
           inviter = excluded.inviter,
           invited_at = excluded.invited_at
       `).run(event.allianceId, event.player, event.inviter, event.invitedAt);
+    } else if (event.eventName === "PaidAllianceInvitePurchased") {
+      this.db.query(`
+        INSERT INTO contract_paid_alliance_invite_purchases (
+          commitment, alliance_id, purchaser, settlement_price, purchased_at
+        )
+        VALUES (lower(?), ?, lower(?), ?, ?)
+        ON CONFLICT(commitment) DO UPDATE SET
+          alliance_id = excluded.alliance_id,
+          purchaser = excluded.purchaser,
+          settlement_price = excluded.settlement_price,
+          purchased_at = excluded.purchased_at
+      `).run(event.commitment, event.allianceId, event.purchaser, event.settlementPrice, event.purchasedAt);
     } else if (event.eventName === "PaidAllianceInviteRedeemed") {
+      this.db.query(`
+        INSERT INTO contract_paid_alliance_invite_uses (commitment, alliance_id)
+        VALUES (lower(?), ?)
+        ON CONFLICT(commitment) DO UPDATE SET alliance_id = excluded.alliance_id
+      `).run(event.commitment, event.allianceId);
       this.db.query(`
         INSERT INTO contract_paid_alliance_invite_redemptions (alliance_id, player, inviter, redeemed_at)
         VALUES (?, lower(?), lower(?), ?)
@@ -8365,6 +8519,12 @@ export class SettlementIndexer {
           inviter = excluded.inviter,
           redeemed_at = excluded.redeemed_at
       `).run(event.allianceId, event.player, event.inviter, event.redeemedAt);
+    } else if (event.eventName === "AllianceProductionBonusAccrued") {
+      this.updatePaidAllianceInviteBalance(event.allianceId, event.resources, "accrue");
+    } else if (event.eventName === "AllianceProductionBonusDeferred") {
+      this.updatePaidAllianceInviteBalance(event.allianceId, event.resources, "defer");
+    } else if (event.eventName === "AllianceBonusWithdrawn") {
+      this.updatePaidAllianceInviteBalance(event.allianceId, event.resources, "withdraw");
     } else if (event.eventName === "AllianceInviteCancelled") {
       this.db.query(`
         DELETE FROM contract_alliance_invites
@@ -8556,6 +8716,70 @@ export class SettlementIndexer {
       `).run(request.allianceId, request.requester, request.requestedAt);
     }
     this.touch();
+  }
+
+  private updatePaidAllianceInviteBalance(
+    allianceId: string,
+    resources: Resources,
+    operation: "accrue" | "defer" | "withdraw"
+  ): void {
+    const row = this.db.query(`
+      SELECT metal, crystal, deuterium, pending_metal, pending_crystal, pending_deuterium
+      FROM contract_paid_alliance_invite_balances
+      WHERE alliance_id = ?
+    `).get(allianceId) as {
+      metal: string;
+      crystal: string;
+      deuterium: string;
+      pending_metal: string;
+      pending_crystal: string;
+      pending_deuterium: string;
+    } | null;
+    const current = {
+      metal: BigInt(row?.metal ?? "0"),
+      crystal: BigInt(row?.crystal ?? "0"),
+      deuterium: BigInt(row?.deuterium ?? "0")
+    };
+    const pending = {
+      metal: BigInt(row?.pending_metal ?? "0"),
+      crystal: BigInt(row?.pending_crystal ?? "0"),
+      deuterium: BigInt(row?.pending_deuterium ?? "0")
+    };
+    if (operation === "defer") {
+      pending.metal = BigInt(resources.metal);
+      pending.crystal = BigInt(resources.crystal);
+      pending.deuterium = BigInt(resources.deuterium);
+    } else {
+      if (operation === "accrue") {
+        current.metal += BigInt(resources.metal);
+        current.crystal += BigInt(resources.crystal);
+        current.deuterium += BigInt(resources.deuterium);
+      } else {
+        current.metal = subtractNonNegative(current.metal, BigInt(resources.metal));
+        current.crystal = subtractNonNegative(current.crystal, BigInt(resources.crystal));
+        current.deuterium = subtractNonNegative(current.deuterium, BigInt(resources.deuterium));
+      }
+    }
+    this.db.query(`
+      INSERT INTO contract_paid_alliance_invite_balances (
+        alliance_id, metal, crystal, deuterium, pending_metal, pending_crystal, pending_deuterium
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(alliance_id) DO UPDATE SET
+        metal = excluded.metal,
+        crystal = excluded.crystal,
+        deuterium = excluded.deuterium,
+        pending_metal = excluded.pending_metal,
+        pending_crystal = excluded.pending_crystal,
+        pending_deuterium = excluded.pending_deuterium
+    `).run(
+      allianceId,
+      current.metal.toString(),
+      current.crystal.toString(),
+      current.deuterium.toString(),
+      pending.metal.toString(),
+      pending.crystal.toString(),
+      pending.deuterium.toString()
+    );
   }
 
   // Canonical-mirror seed for contract_alliance_invites. See applyAllianceJoinRequestSnapshot for the

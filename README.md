@@ -119,6 +119,8 @@ VEYDRIFT_CRYSTAL_TOKEN_ADDRESS=0x...
 VEYDRIFT_DEUTERIUM_TOKEN_ADDRESS=0x...
 VEYDRIFT_INDEX_DB_PATH=.data/contract-state.sqlite
 VEYDRIFT_INDEX_FROM_BLOCK=0
+# Required when VEYDRIFT_PAID_ALLIANCE_INVITE_ADDRESS is set; use the treasury deployment block.
+VEYDRIFT_PAID_ALLIANCE_INVITE_INDEX_FROM_BLOCK=
 VEYDRIFT_MISSION_RESOLVER_PRIVATE_KEY=0x...
 # Optional alternative when the RPC node has an unlocked funded resolver account.
 VEYDRIFT_MISSION_RESOLVER_ADDRESS=0x...
@@ -137,6 +139,11 @@ For websocket chain sync it accepts `VEYDRIFT_WS_RPC_URL` or
 `ALCHEMY_BASE_SEPOLIA_API_KEY` is set. HTTP RPC is for writer-side event replay,
 explicit operator sync, and mutating/on-chain workers; frontend/API read
 requests must be served from the SQLite index.
+
+Alliance GET routes are SQLite-only. The writer performs one idempotent paid-invite history backfill
+from `VEYDRIFT_PAID_ALLIANCE_INVITE_INDEX_FROM_BLOCK`, then advances purchases, redemptions, bonus
+accrual/defer, and withdrawals from new contract logs. `/health` exposes RPC method/source counters and
+started-minus-finished request gauges; stale or growing unfinished RPC work fails readiness closed.
 `VEYDRIFT_GAME_CONTRACT_ADDRESS` or the legacy `VEYDRIFT_CONTRACT_ADDRESS` must
 point at the deployed `VeydriftGame` proxy for game-state APIs and runtime
 Shipyard transactions.

@@ -49,6 +49,9 @@ export type BackendConfig = {
   referralSystemAddress?: `0x${string}`;
   referralSignerPrivateKey?: `0x${string}`;
   paidAllianceInviteAddress?: `0x${string}`;
+  // Paid-invite history has its own deployment boundary because the contract was added after the
+  // game-wide index cursor. The writer performs one idempotent backfill from this exact block.
+  paidAllianceInviteIndexFromBlock?: bigint;
   paidAllianceInviteSignerPrivateKey?: `0x${string}`;
   paidAllianceInviteEncryptionKey?: `0x${string}`;
   paidAllianceInvitePreviousEncryptionKeys?: `0x${string}`[];
@@ -96,6 +99,7 @@ export type SafeConfigSummary = {
   randomnessCommitterConfigured: boolean;
   referralSignerConfigured: boolean;
   referralIndexFromBlock: string;
+  paidAllianceInviteIndexFromBlock: string | null;
   resourceTokensConfigured: {
     crystal: boolean;
     deuterium: boolean;
@@ -161,6 +165,11 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
     "VEYDRIFT_REFERRAL_INDEX_FROM_BLOCK",
     problems
   ) ?? indexFromBlock;
+  const paidAllianceInviteIndexFromBlock = parseBigInt(
+    env.VEYDRIFT_PAID_ALLIANCE_INVITE_INDEX_FROM_BLOCK,
+    "VEYDRIFT_PAID_ALLIANCE_INVITE_INDEX_FROM_BLOCK",
+    problems
+  );
   const parsedLogChunkSpan = parseBigInt(env.VEYDRIFT_LOG_CHUNK_SPAN, "VEYDRIFT_LOG_CHUNK_SPAN", problems);
   const logChunkSpan = parsedLogChunkSpan && parsedLogChunkSpan > 0n ? parsedLogChunkSpan : defaultLogChunkSpan;
   const settlementStartPriceWei = parseBigInt(
@@ -335,6 +344,12 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
         message: "Paid alliance invite configuration requires the deployed invite contract address."
       });
     }
+    if (paidAllianceInviteIndexFromBlock === undefined) {
+      problems.push({
+        field: "VEYDRIFT_PAID_ALLIANCE_INVITE_INDEX_FROM_BLOCK",
+        message: "Paid alliance invite configuration requires the invite contract deployment block."
+      });
+    }
     if (!paidAllianceInviteSignerPrivateKey) {
       problems.push({
         field: "VEYDRIFT_PAID_ALLIANCE_INVITE_SIGNER_PRIVATE_KEY",
@@ -378,6 +393,7 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
       ...(referralSystemAddress ? { referralSystemAddress } : {}),
       ...(referralSignerPrivateKey ? { referralSignerPrivateKey } : {}),
       ...(paidAllianceInviteAddress ? { paidAllianceInviteAddress } : {}),
+      ...(paidAllianceInviteIndexFromBlock !== undefined ? { paidAllianceInviteIndexFromBlock } : {}),
       ...(paidAllianceInviteSignerPrivateKey ? { paidAllianceInviteSignerPrivateKey } : {}),
       ...(paidAllianceInviteEncryptionKey ? { paidAllianceInviteEncryptionKey } : {}),
       ...(paidAllianceInvitePreviousEncryptionKeys.length ? {
@@ -414,6 +430,7 @@ export function safeConfigSummary(config: BackendConfig): SafeConfigSummary {
     ),
     referralSignerConfigured: Boolean(config.referralSignerPrivateKey),
     referralIndexFromBlock: (config.referralIndexFromBlock ?? config.indexFromBlock).toString(),
+    paidAllianceInviteIndexFromBlock: config.paidAllianceInviteIndexFromBlock?.toString() ?? null,
     resourceTokensConfigured: {
       crystal: Boolean(config.resourceTokenAddresses.crystal),
       deuterium: Boolean(config.resourceTokenAddresses.deuterium),

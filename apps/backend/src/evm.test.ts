@@ -58,6 +58,11 @@ const allianceLeftTopic = "0x65b0be45688803f341e315da7be3de9dd83ebf51eb3cccb3788
 const allianceRoleUpdatedTopic = "0xe4ba1cf47cfd4ff05de8585bf5cb06e7b0856932c0d81ef64a3458e26877f30d";
 const allianceOwnershipTransferredTopic = "0x68f6446f7a86cbeefdd42de0fd5fe8291d2183c90343d9a43c0cdc976e5a1617";
 const allianceDiplomacyUpdatedTopic = "0x3df4b2aa5708b43ef1805908826beae5c9a30fb60b1952ad99ce3444b2eec6da";
+const paidAllianceInvitePurchasedTopic = "0x044d47943b4c703fffb74230521077d9baeb2977f8c12a23c79e60169ba20b41";
+const paidAllianceInviteRedeemedTopic = "0xc3eee853f2f234eb03ddcf83a4cb7e1704a5eb0cdb1ca01e9918b0a50632f8c9";
+const allianceProductionBonusAccruedTopic = "0xc5911d6b2b795502459a9b1187d319db5d0d697f8278617b8f9b240c8892108b";
+const allianceProductionBonusDeferredTopic = "0xe82def1976a6ab42c25df00bb3785db8815a556342aa738c1302f4da975c54c1";
+const allianceBonusWithdrawnTopic = "0x369bd7e76fd86a155ec571e2d405665938d7c74cc9b7fd3f5a6bef80d7b0cccb";
 const referralInviteWindowActivatedTopic = "0xd51c9643dafa95fcfa30d65f2b6576bc03873e2630d73fc523daf87a7158d589";
 const referralInviteRedeemedTopic = "0xf0e76a5aa6e423f978c7616fd6933b5d376a32654fc67c6fad0afdbc744ccce1";
 const referralRewardClaimedTopic = "0x55b0859d9094fa40dfdcbcdd82c0d785132f6a627b6083e228d6bddb5e498558";
@@ -107,6 +112,44 @@ describe("HTTP JSON-RPC transport", () => {
         lastFailoverReason: null,
         rpcUrls: ["https://rpc.example"],
         timeouts: 0
+      });
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
+  });
+
+  test("reports RPC method, call source, and started-minus-finished request growth", async () => {
+    const previousFetch = globalThis.fetch;
+    let releaseFetch!: () => void;
+    const fetchGate = new Promise<void>((resolve) => { releaseFetch = resolve; });
+    globalThis.fetch = (async () => {
+      await fetchGate;
+      return Response.json({ jsonrpc: "2.0", id: 1, result: "0x1234" });
+    }) as unknown as typeof fetch;
+
+    try {
+      const transport = new HttpJsonRpcTransport("https://rpc.example", {
+        cacheTtlMs: 0,
+        minRequestIntervalMs: 0,
+        source: "chain-sync"
+      });
+      const request = transport.request<string>("eth_getLogs", [{ fromBlock: "0x1", toBlock: "0x2" }]);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(transport.snapshot()).toMatchObject({
+        callsByMethod: { eth_getLogs: 1 },
+        callsBySource: { "chain-sync": { eth_getLogs: 1 } },
+        requestSource: "chain-sync",
+        startedHttpRequests: 1,
+        finishedHttpRequests: 0,
+        unfinishedHttpRequests: 1
+      });
+      releaseFetch();
+      await request;
+      expect(transport.snapshot()).toMatchObject({
+        startedHttpRequests: 1,
+        finishedHttpRequests: 1,
+        unfinishedHttpRequests: 0,
+        oldestUnfinishedRequestAgeMs: null
       });
     } finally {
       globalThis.fetch = previousFetch;
@@ -750,6 +793,33 @@ describe("moon chance report event decoding", () => {
     );
 
     await expect(reader.listReferralLogs(100n, 200n)).resolves.toEqual([]);
+  });
+
+  test("lists paid alliance invite history with one narrow contract-scoped filter", async () => {
+    const paidAllianceInviteAddress = "0x4444444444444444444444444444444444444444";
+    const reader = new VeydriftGameReader(
+      { ...readerConfig, paidAllianceInviteAddress },
+      {
+        async request<T>(method: string, params: unknown[]): Promise<T> {
+          expect(method).toBe("eth_getLogs");
+          expect(params).toEqual([{
+            address: paidAllianceInviteAddress,
+            fromBlock: "0x96",
+            toBlock: "0xc8",
+            topics: [[
+              paidAllianceInvitePurchasedTopic,
+              paidAllianceInviteRedeemedTopic,
+              allianceProductionBonusAccruedTopic,
+              allianceProductionBonusDeferredTopic,
+              allianceBonusWithdrawnTopic
+            ]]
+          }]);
+          return [] as T;
+        }
+      }
+    );
+
+    await expect(reader.listPaidAllianceInviteLogs(150n, 200n)).resolves.toEqual([]);
   });
 
   test("pages a 'latest' range in <=span windows without a doomed full-range call first", async () => {

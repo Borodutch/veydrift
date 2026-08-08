@@ -24,6 +24,7 @@ type LogBackfiller = {
   getHeadBlock(): Promise<bigint>;
   listContractLogs(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
   listReferralLogs?(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
+  listPaidAllianceInviteLogs?(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
   rpcMetrics?(): unknown;
 };
 
@@ -43,6 +44,8 @@ type ChainSyncIndexer = Partial<Pick<SettlementIndexer,
   | "markStale"
   | "recordReferralHistoryBackfill"
   | "referralHistoryBackfillStatus"
+  | "recordPaidAllianceInviteHistoryBackfill"
+  | "paidAllianceInviteHistoryBackfillStatus"
   | "snapshot"
 >>;
 
@@ -104,6 +107,7 @@ export type ChainSyncSnapshot = {
   subscribedToLogs: boolean;
   pollingEnabled: boolean;
   referralHistoryBackfill: ReferralHistoryBackfillSnapshot;
+  paidAllianceInviteHistoryBackfill: ReferralHistoryBackfillSnapshot;
 };
 
 export type ChainSyncEvent = {
@@ -193,6 +197,14 @@ export class ChainSyncService {
     lastError: null,
     throughBlock: null
   };
+  private paidAllianceInviteHistoryBackfill: ReferralHistoryBackfillSnapshot = {
+    completedAt: null,
+    contractAddress: null,
+    fromBlock: null,
+    inProgress: false,
+    lastError: null,
+    throughBlock: null
+  };
   private liveListenerConnected = false;
   private liveListenerErrorCount = 0;
   private liveListenerLastError: string | null = null;
@@ -261,7 +273,8 @@ export class ChainSyncService {
       subscribedToHeads: this.connected,
       subscribedToLogs: this.liveListenerConnected || this.connected,
       pollingEnabled: Boolean(this.options.logBackfiller) && Boolean(this.pollTimer),
-      referralHistoryBackfill: { ...this.referralHistoryBackfill }
+      referralHistoryBackfill: { ...this.referralHistoryBackfill },
+      paidAllianceInviteHistoryBackfill: { ...this.paidAllianceInviteHistoryBackfill }
     };
   }
 
@@ -386,6 +399,7 @@ export class ChainSyncService {
       this.markConnected();
 
       await this.ensureReferralHistoryBackfilled(head, backfiller, applyLog);
+      await this.ensurePaidAllianceInviteHistoryBackfilled(head, backfiller, applyLog);
 
       if (this.cursor === null) {
         this.cursor = this.initialCursor();
@@ -492,6 +506,54 @@ export class ChainSyncService {
       // A configured referral contract whose history has not reconciled is not safe/ready: public and
       // private dashboards could otherwise serve a false null invite until the generic five-poll RPC
       // failure threshold trips.
+      this.connected = false;
+      throw error;
+    }
+  }
+
+  private async ensurePaidAllianceInviteHistoryBackfilled(
+    head: bigint,
+    backfiller: LogBackfiller,
+    applyLog: NonNullable<SettlementIndexer["applyLog"]>
+  ): Promise<void> {
+    const contractAddress = this.config.paidAllianceInviteAddress;
+    const fromBlock = this.config.paidAllianceInviteIndexFromBlock;
+    const listLogs = backfiller.listPaidAllianceInviteLogs;
+    const status = this.indexer?.paidAllianceInviteHistoryBackfillStatus;
+    const record = this.indexer?.recordPaidAllianceInviteHistoryBackfill;
+    if (!contractAddress || fromBlock === undefined || !listLogs || !status || !record) return;
+
+    const current = status.call(this.indexer, contractAddress, fromBlock);
+    this.paidAllianceInviteHistoryBackfill = {
+      completedAt: current.marker?.completedAt ?? null,
+      contractAddress,
+      fromBlock: fromBlock.toString(),
+      inProgress: false,
+      lastError: null,
+      throughBlock: current.marker?.throughBlock ?? null
+    };
+    if (!current.required) return;
+
+    this.paidAllianceInviteHistoryBackfill.inProgress = true;
+    this.connected = false;
+    try {
+      const logs = await listLogs.call(backfiller, fromBlock, head);
+      await this.applyLogs(logs, applyLog);
+      const marker = record.call(this.indexer, contractAddress, fromBlock, head);
+      this.paidAllianceInviteHistoryBackfill = {
+        completedAt: marker.completedAt,
+        contractAddress: marker.contractAddress,
+        fromBlock: marker.fromBlock,
+        inProgress: false,
+        lastError: null,
+        throughBlock: marker.throughBlock
+      };
+      this.markConnected();
+    } catch (error) {
+      this.paidAllianceInviteHistoryBackfill.inProgress = false;
+      this.paidAllianceInviteHistoryBackfill.lastError = error instanceof Error
+        ? error.message
+        : "Paid alliance invite history backfill failed.";
       this.connected = false;
       throw error;
     }
@@ -875,7 +937,8 @@ export class ChainSyncService {
       this.config.resourceTokenAddresses.deuterium,
       // VEY-KANEO-479: the RandomnessEngine feeds RandomnessFulfilled into the index.
       this.config.randomnessEngineAddress,
-      this.config.referralSystemAddress
+      this.config.referralSystemAddress,
+      this.config.paidAllianceInviteAddress
     ].filter((address): address is `0x${string}` => Boolean(address));
     return [...new Set(addresses)];
   }
