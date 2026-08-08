@@ -9,6 +9,7 @@ import type { BackendConfig } from "./config";
 import {
   aggregatePaidAllianceInviteCounts,
   buildPaidAllianceInviteAuthorization,
+  paidAllianceInviteLogRanges,
   paidAllianceAuthorizationHash,
   paidAllianceInviteCommitment,
   PaidAllianceInviteRateLimiter,
@@ -58,6 +59,13 @@ describe("paid alliance invites", () => {
       ["1", { remaining: 2, used: 1 }],
       ["2", { remaining: 0, used: 1 }],
     ]));
+  });
+
+  test("pages paid-invite logs within the self-hosted RPC range", () => {
+    expect(paidAllianceInviteLogRanges(100n, 100_100n, 90_000n)).toEqual([
+      { fromBlock: 100n, toBlock: 90_100n },
+      { fromBlock: 90_101n, toBlock: 100_100n },
+    ]);
   });
 
   test("keeps the secret off chain and signs a recipient- and expiry-bound commitment", async () => {
