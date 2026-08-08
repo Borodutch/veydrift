@@ -3075,18 +3075,33 @@ export function paidAllianceInviteSecretFromHash(hash: string): string {
   return /^0x[0-9a-fA-F]{64}$/.test(secret) ? secret.toLowerCase() : "";
 }
 
+export type PaidAllianceInviteLocationState =
+  | { kind: "none" }
+  | { canonical: boolean; kind: "valid"; secret: string }
+  | { kind: "invalid" };
+
+export function paidAllianceInviteLocationState(
+  location: Pick<Location, "hash" | "pathname">,
+): PaidAllianceInviteLocationState {
+  const secret = paidAllianceInviteSecretFromHash(location.hash);
+  const isCanonicalPath = location.pathname.startsWith("/alliance-invite/");
+  if (!isCanonicalPath) {
+    return secret ? { canonical: false, kind: "valid", secret } : { kind: "none" };
+  }
+
+  const commitment = paidAllianceInviteCommitmentFromPathname(location.pathname);
+  if (!commitment || !secret || paidAllianceInviteCommitment(secret) !== commitment) {
+    return { kind: "invalid" };
+  }
+
+  return { canonical: true, kind: "valid", secret };
+}
+
 export function paidAllianceInviteSecretFromLocation(
   location: Pick<Location, "hash" | "pathname">,
 ): string {
-  const secret = paidAllianceInviteSecretFromHash(location.hash);
-  if (!secret) return "";
-
-  const commitment = paidAllianceInviteCommitmentFromPathname(location.pathname);
-  if (commitment) {
-    return paidAllianceInviteCommitment(secret) === commitment ? secret : "";
-  }
-
-  return location.pathname.startsWith("/alliance-invite/") ? "" : secret;
+  const state = paidAllianceInviteLocationState(location);
+  return state.kind === "valid" ? state.secret : "";
 }
 
 export async function resolvePaidAllianceInvite(apiUrl: string, secret: string): Promise<PaidAllianceInviteResolution> {

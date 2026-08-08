@@ -80,6 +80,18 @@ describe("settlement screen mode", () => {
     expect(stylesSource).toContain(".retro-cd-back");
   });
 
+  test("fails closed when a canonical alliance invite is incomplete or mismatched", async () => {
+    const settlementSource = await Bun.file(new URL("../src/FirstPlanetSettlementApp.tsx", import.meta.url)).text();
+
+    expect(settlementSource).toContain('const invalidPaidAllianceInvite = paidAllianceInviteLocation.kind === "invalid";');
+    expect(settlementSource).toContain("invalidPaidAllianceInvite ? (");
+    expect(settlementSource).toContain('title="Invalid alliance invite"');
+    expect(settlementSource).toContain("This link is incomplete or does not match its private invite key.");
+    expect(settlementSource.indexOf('title="Invalid alliance invite"')).toBeLessThan(
+      settlementSource.indexOf("<FlowBody", settlementSource.indexOf('title="Invalid alliance invite"')),
+    );
+  });
+
   test("uses the beta cover badge without the retired CD cover labels", async () => {
     const settlementSource = await Bun.file(new URL("../src/FirstPlanetSettlementApp.tsx", import.meta.url)).text();
     const heroSource = await Bun.file(new URL("../src/components/RetroCdBoxHero.tsx", import.meta.url)).text();
