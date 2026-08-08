@@ -1,4 +1,5 @@
 import type { ComponentChildren, JSX } from "preact";
+import { flushSync } from "preact/compat";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { LucideIcon } from "lucide-preact";
 import { ArrowLeftRight, Check, ChevronDown, ChevronUp, Crosshair, Factory, FlaskConical, History, Mail, Menu, Moon, Orbit, Pencil, Radar, Rocket, SatelliteDish, Shield, Trophy, Users, X } from "lucide-preact";
@@ -723,14 +724,18 @@ function handleSectionLinkClick(
   const view = link.ownerDocument.defaultView;
   const targetUrl = link.href;
 
-  // Keep the SPA transition fast, but do not delegate its failure recovery to
-  // the browser's post-handler default action. A hydrated callback can return
-  // without committing the route, and production has intermittently dropped
-  // that native follow-up. Explicitly assign the canonical URL in that case so
-  // one activation always has a navigation outcome. If assign itself fails,
-  // preventDefault is never reached and the native link fallback remains.
+  // Commit the selected page before the handler returns. pushState updates the
+  // URL synchronously, while Preact normally defers the corresponding render;
+  // that briefly leaves the previous page visible at the new URL and can be
+  // observed by browser automation (or a screenshot in the same frame). Keep
+  // the canonical URL and rendered page atomic for section navigation.
+  //
+  // Do not delegate failure recovery to the browser's post-handler default
+  // action. A hydrated callback can still return without changing routes, and
+  // production has intermittently dropped that native follow-up. Explicitly
+  // assign the canonical URL in that case so one activation always navigates.
   try {
-    onClick();
+    flushSync(onClick);
   } catch (error) {
     if (!view) throw error;
     if (view.location.href !== targetUrl) view.location.assign(targetUrl);
