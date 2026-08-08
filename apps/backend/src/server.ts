@@ -1610,7 +1610,12 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
       try {
         assertAddress(wallet);
-        return indexedAllianceResponse(wallet, indexer, Boolean(loaded.config.paidAllianceInviteAddress));
+        return indexedAllianceResponse(
+          wallet,
+          indexer,
+          loaded.config.paidAllianceInviteAddress,
+          loaded.config.paidAllianceInviteIndexFromBlock
+        );
       } catch (error) {
         return errorResponse(error, 400);
       }
@@ -1620,6 +1625,16 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       const allianceId = decodeURIComponent(url.pathname.split("/")[2] ?? "");
       try {
         if (!indexer) return indexedReadNotReadyResponse("alliance", indexer, { allianceId });
+        if (
+          loaded.config.paidAllianceInviteAddress
+          && loaded.config.paidAllianceInviteIndexFromBlock !== undefined
+          && indexer.paidAllianceInviteHistoryBackfillStatus(
+            loaded.config.paidAllianceInviteAddress,
+            loaded.config.paidAllianceInviteIndexFromBlock
+          ).required
+        ) {
+          return indexedReadNotReadyResponse("paid alliance history", indexer, { allianceId });
+        }
         const snapshot = indexer.snapshot();
         const alliance = indexer.allianceProfile(allianceId);
         if (!alliance) {
@@ -1925,7 +1940,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
       const cacheTtlMs = enableResponseCache ? cacheableJsonRequestTtlMs(request, url) : 0;
       if (cacheTtlMs > 0) {
-        const cacheKey = cacheableJsonRequestKey(request, url, indexer);
+        const cacheKey = cacheableJsonRequestKey(request, url, indexer, loaded.config);
         const staleCacheKey = cacheableJsonRequestStaleKey(request, url, cacheKey);
         const cached = responseCache.get(cacheKey);
         const now = Date.now();
@@ -2600,9 +2615,30 @@ function cacheableWalletSnapshotPath(pathname: string): boolean {
   ));
 }
 
-function cacheableJsonRequestKey(request: Request, url: URL, indexer: SettlementIndexer | undefined): string {
+function cacheableJsonRequestKey(
+  request: Request,
+  url: URL,
+  indexer: SettlementIndexer | undefined,
+  config?: BackendConfig
+): string {
   const indexerVersion = indexer ? cacheableJsonRequestVersion(url, indexer) : "none";
-  return `${request.method} ${url.pathname}${normalizedCacheSearch(url)} indexer=${indexerVersion}`;
+  const paidAllianceHistoryIdentity = allianceHistoryCacheIdentity(url, indexer, config);
+  return `${request.method} ${url.pathname}${normalizedCacheSearch(url)} indexer=${indexerVersion}${paidAllianceHistoryIdentity}`;
+}
+
+function allianceHistoryCacheIdentity(
+  url: URL,
+  indexer: SettlementIndexer | undefined,
+  config?: BackendConfig
+): string {
+  if (!url.pathname.match(/^(?:\/wallet\/[^/]+\/alliance|\/alliance\/[0-9]+)$/)) return "";
+  const contractAddress = config?.paidAllianceInviteAddress;
+  const fromBlock = config?.paidAllianceInviteIndexFromBlock;
+  if (!contractAddress || fromBlock === undefined) return " paid-alliance=disabled";
+  const status = indexer?.paidAllianceInviteHistoryBackfillStatus(contractAddress, fromBlock);
+  const marker = status?.marker;
+  const readiness = status?.required || !marker ? "pending" : marker.throughBlock;
+  return ` paid-alliance=${contractAddress.toLowerCase()}:${fromBlock}:${readiness}`;
 }
 
 function cacheableJsonRequestStaleKey(request: Request, url: URL, cacheKey: string): string {
@@ -5672,15 +5708,26 @@ function indexedRiftTargetsResponse(indexer: SettlementIndexer | undefined, url:
 function indexedAllianceResponse(
   wallet: `0x${string}`,
   indexer: SettlementIndexer | undefined,
-  paidAllianceInvitesConfigured = false,
+  paidAllianceInviteAddress?: `0x${string}`,
+  paidAllianceInviteIndexFromBlock?: bigint,
 ): Response {
   if (!hasWarmAllianceIndex(indexer)) {
     return indexedReadNotReadyResponse("alliance", indexer, { wallet });
   }
+  if (
+    paidAllianceInviteAddress
+    && paidAllianceInviteIndexFromBlock !== undefined
+    && indexer.paidAllianceInviteHistoryBackfillStatus(
+      paidAllianceInviteAddress,
+      paidAllianceInviteIndexFromBlock
+    ).required
+  ) {
+    return indexedReadNotReadyResponse("paid alliance history", indexer, { wallet });
+  }
 
   const snapshot = indexer.snapshot();
   const state = indexer.allianceState(wallet);
-  const paidInviteSummaries = paidAllianceInvitesConfigured
+  const paidInviteSummaries = paidAllianceInviteAddress
     ? indexer.paidAllianceInviteSummaries()
     : null;
   const directory = state.directory.map((alliance) => ({

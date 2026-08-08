@@ -86,7 +86,9 @@ class MockBackfiller {
   head: bigint;
   headError: Error | null = null;
   logsError: Error | null = null;
+  referralLogsError: Error | null = null;
   failoverReasons: string[] = [];
+  calls: string[] = [];
   ranges: Array<{ from: bigint; to: bigint | "latest" }> = [];
   referralRanges: Array<{ from: bigint; to: bigint | "latest" }> = [];
   paidAllianceInviteRanges: Array<{ from: bigint; to: bigint | "latest" }> = [];
@@ -107,18 +109,22 @@ class MockBackfiller {
   }
 
   async listContractLogs(from: bigint, to: bigint | "latest" = "latest"): Promise<RpcLog[]> {
+    this.calls.push("generic");
     this.ranges.push({ from, to });
     if (this.logsError) throw this.logsError;
     return this.logsFor(from, to);
   }
 
   async listReferralLogs(from: bigint, to: bigint | "latest" = "latest"): Promise<RpcLog[]> {
+    this.calls.push("referral");
     this.referralRanges.push({ from, to });
+    if (this.referralLogsError) throw this.referralLogsError;
     if (this.logsError) throw this.logsError;
     return this.referralLogsFor(from, to);
   }
 
   async listPaidAllianceInviteLogs(from: bigint, to: bigint | "latest" = "latest"): Promise<RpcLog[]> {
+    this.calls.push("paid-alliance");
     this.paidAllianceInviteRanges.push({ from, to });
     if (this.logsError) throw this.logsError;
     return this.paidAllianceInviteLogsFor(from, to);
@@ -839,6 +845,8 @@ describe("ChainSyncService (polling)", () => {
     await Promise.all(Array.from({ length: 10 }, () => service.poll()));
 
     expect(backfiller.paidAllianceInviteRanges).toEqual([{ from: 150n, to: 182n }]);
+    expect(backfiller.ranges).toEqual([{ from: 100n, to: 182n }]);
+    expect(backfiller.calls.slice(0, 2)).toEqual(["generic", "paid-alliance"]);
     expect(indexer.paidAllianceInviteSummaries().get("7")).toEqual({
       bonusBalance: { metal: "10", crystal: "20", deuterium: "30" },
       pendingBonusBalance: { metal: "0", crystal: "0", deuterium: "0" },
@@ -869,6 +877,37 @@ describe("ChainSyncService (polling)", () => {
     restarted.stop();
   });
 
+  test("periodically reconciles paid alliance overlap and removes orphaned projections", async () => {
+    const indexer = makeIndexer();
+    const paidConfig: BackendConfig = {
+      ...config,
+      paidAllianceInviteAddress,
+      paidAllianceInviteIndexFromBlock: 150n
+    };
+    const backfiller = new MockBackfiller(182n);
+    const purchase = {
+      address: paidAllianceInviteAddress,
+      blockNumber: "0xb4",
+      transactionHash: "0xpaid-reorg",
+      logIndex: "0x0",
+      topics: [paidAllianceInvitePurchasedTopic, topicWord(1n), topicWord(7n), ownerTopic(player)],
+      data: abiWords(6_000_000_000_000_000n, 1_770_000_000n)
+    };
+    backfiller.paidAllianceInviteLogsFor = () => [purchase];
+    const service = new ChainSyncService(paidConfig, indexer, { logBackfiller: backfiller });
+
+    await service.poll();
+    expect(indexer.paidAllianceInviteSummaries().get("7")?.privateInviteStats.remaining).toBe(1);
+
+    backfiller.head = 198n;
+    backfiller.paidAllianceInviteLogsFor = () => [];
+    await service.poll();
+
+    expect(backfiller.paidAllianceInviteRanges.at(-1)).toEqual({ from: 150n, to: 198n });
+    expect(indexer.paidAllianceInviteSummaries().get("7")).toBeUndefined();
+    service.stop();
+  });
+
   test("keeps readiness disconnected and retries when referral history backfill fails", async () => {
     const indexer = makeIndexer();
     const referralConfig: BackendConfig = {
@@ -877,7 +916,7 @@ describe("ChainSyncService (polling)", () => {
       referralSystemAddress: referralAddress
     };
     const backfiller = new MockBackfiller(182n);
-    backfiller.logsError = new Error("replacement referral history unavailable");
+    backfiller.referralLogsError = new Error("replacement referral history unavailable");
     const service = new ChainSyncService(referralConfig, indexer, { logBackfiller: backfiller });
 
     await service.poll();
@@ -893,7 +932,7 @@ describe("ChainSyncService (polling)", () => {
     });
     expect(indexer.referralHistoryBackfillStatus(referralAddress, 112n).required).toBe(true);
 
-    backfiller.logsError = null;
+    backfiller.referralLogsError = null;
     backfiller.referralLogsFor = () => referralMigrationLogs();
     await service.poll();
 

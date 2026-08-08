@@ -46,8 +46,12 @@ type ChainSyncIndexer = Partial<Pick<SettlementIndexer,
   | "referralHistoryBackfillStatus"
   | "recordPaidAllianceInviteHistoryBackfill"
   | "paidAllianceInviteHistoryBackfillStatus"
+  | "reconcilePaidAllianceInviteHistory"
   | "snapshot"
 >>;
+
+const PAID_ALLIANCE_REORG_OVERLAP_BLOCKS = 64n;
+const PAID_ALLIANCE_REORG_CHECK_INTERVAL_BLOCKS = 16n;
 
 export type ReferralHistoryBackfillSnapshot = {
   completedAt: string | null;
@@ -396,46 +400,44 @@ export class ChainSyncService {
         return;
       }
       this.latestHeadBlock = head.toString();
-      this.markConnected();
 
-      await this.ensureReferralHistoryBackfilled(head, backfiller, applyLog);
-      await this.ensurePaidAllianceInviteHistoryBackfilled(head, backfiller, applyLog);
-
+      // Capture the generic durable cursor before any specialized history scan applies logs. Those
+      // logs share the same ledger and advance latestIndexedBlock; capturing afterwards can skip
+      // unrelated game/alliance logs from the same downtime window.
       if (this.cursor === null) {
         this.cursor = this.initialCursor();
       }
 
-      if (head <= this.cursor) {
-        // No new blocks since the last pass; nothing to ingest. Still a healthy poll.
-        this.clearRecoveredHeadStall();
-        this.notify({ kind: "sync-status", blockNumber: this.latestSyncedBlock });
-        return;
+      if (head > this.cursor) {
+        const fromBlock = this.cursor < 0n ? 0n : this.cursor + 1n;
+        this.lastGetLogsRange = { fromBlock: fromBlock.toString(), toBlock: head.toString() };
+        const getLogsStartedAt = Date.now();
+        let logs: RpcLog[];
+        try {
+          logs = await backfiller.listContractLogs(fromBlock, head);
+        } finally {
+          this.lastGetLogsDurationMs = Date.now() - getLogsStartedAt;
+        }
+        const { applied, lastHash, resourceChanges, walletPlanetsChanged } = await this.applyLogs(logs, applyLog);
+        // Advance the generic cursor before specialized history scans. Both share the raw ledger, so
+        // a process crash after a specialized scan must never leave latestIndexedBlock ahead of a
+        // generic range that was not durably ingested.
+        this.cursor = maxBigInt(this.cursor, head);
+        this.latestSyncedBlock = maxBlockString(this.latestSyncedBlock, head);
+        if (applied > 0) {
+          this.notify({
+            kind: "chain-event",
+            blockNumber: this.latestSyncedBlock,
+            ...(lastHash ? { transactionHash: lastHash } : {}),
+            ...(resourceChanges.length > 0 ? { resourceChanges } : {}),
+            ...(walletPlanetsChanged ? { walletPlanetsChanged } : {})
+          });
+        }
       }
 
-      const fromBlock = this.cursor < 0n ? 0n : this.cursor + 1n;
-      this.lastGetLogsRange = { fromBlock: fromBlock.toString(), toBlock: head.toString() };
-      const getLogsStartedAt = Date.now();
-      let logs: RpcLog[];
-      try {
-        logs = await backfiller.listContractLogs(fromBlock, head);
-      } finally {
-        this.lastGetLogsDurationMs = Date.now() - getLogsStartedAt;
-      }
-      const { applied, lastHash, resourceChanges, walletPlanetsChanged } = await this.applyLogs(logs, applyLog);
-      // Advance the cursor to the scanned head ONLY after a clean ingest — a throw skips this and the
-      // next pass retries the same range. Events are absolute-state SETs + txHash:logIndex deduped, so
-      // the retried overlap is idempotent.
-      this.cursor = maxBigInt(this.cursor, head);
-      this.latestSyncedBlock = maxBlockString(this.latestSyncedBlock, head);
-      if (applied > 0) {
-        this.notify({
-          kind: "chain-event",
-          blockNumber: this.latestSyncedBlock,
-          ...(lastHash ? { transactionHash: lastHash } : {}),
-          ...(resourceChanges.length > 0 ? { resourceChanges } : {}),
-          ...(walletPlanetsChanged ? { walletPlanetsChanged } : {})
-        });
-      }
+      await this.ensureReferralHistoryBackfilled(head, backfiller, applyLog);
+      await this.ensurePaidAllianceInviteHistoryBackfilled(head, backfiller, applyLog);
+      this.markConnected();
       this.clearRecoveredHeadStall();
       this.notify({ kind: "sync-status", blockNumber: this.latestSyncedBlock });
     } catch (error) {
@@ -521,7 +523,8 @@ export class ChainSyncService {
     const listLogs = backfiller.listPaidAllianceInviteLogs;
     const status = this.indexer?.paidAllianceInviteHistoryBackfillStatus;
     const record = this.indexer?.recordPaidAllianceInviteHistoryBackfill;
-    if (!contractAddress || fromBlock === undefined || !listLogs || !status || !record) return;
+    const reconcile = this.indexer?.reconcilePaidAllianceInviteHistory;
+    if (!contractAddress || fromBlock === undefined || !listLogs || !status || !record || !reconcile) return;
 
     const current = status.call(this.indexer, contractAddress, fromBlock);
     this.paidAllianceInviteHistoryBackfill = {
@@ -532,14 +535,29 @@ export class ChainSyncService {
       lastError: null,
       throughBlock: current.marker?.throughBlock ?? null
     };
-    if (!current.required) return;
+    const markerThroughBlock = current.marker ? BigInt(current.marker.throughBlock) : null;
+    if (
+      !current.required
+      && markerThroughBlock !== null
+      && head < markerThroughBlock + PAID_ALLIANCE_REORG_CHECK_INTERVAL_BLOCKS
+    ) {
+      return;
+    }
+
+    const scanFrom = current.required || markerThroughBlock === null
+      ? fromBlock
+      : (() => {
+          const overlapStart = markerThroughBlock - PAID_ALLIANCE_REORG_OVERLAP_BLOCKS;
+          return overlapStart > fromBlock ? overlapStart : fromBlock;
+        })();
 
     this.paidAllianceInviteHistoryBackfill.inProgress = true;
-    this.connected = false;
+    if (current.required) this.connected = false;
     try {
-      const logs = await listLogs.call(backfiller, fromBlock, head);
+      const logs = await listLogs.call(backfiller, scanFrom, head);
       await this.applyLogs(logs, applyLog);
-      const marker = record.call(this.indexer, contractAddress, fromBlock, head);
+      reconcile.call(this.indexer, contractAddress, logs, scanFrom, head);
+      const marker = record.call(this.indexer, contractAddress, fromBlock, head, current.required);
       this.paidAllianceInviteHistoryBackfill = {
         completedAt: marker.completedAt,
         contractAddress: marker.contractAddress,
@@ -548,7 +566,6 @@ export class ChainSyncService {
         lastError: null,
         throughBlock: marker.throughBlock
       };
-      this.markConnected();
     } catch (error) {
       this.paidAllianceInviteHistoryBackfill.inProgress = false;
       this.paidAllianceInviteHistoryBackfill.lastError = error instanceof Error
@@ -590,8 +607,10 @@ export class ChainSyncService {
           }
           this.liveUnsubscribe = resolvedUnsubscribe;
           this.liveListenerConnected = true;
-          this.connected = true;
-          this.lastConnectedAt ??= new Date().toISOString();
+          if (this.paidAllianceInviteHistoryReady()) {
+            this.connected = true;
+            this.lastConnectedAt ??= new Date().toISOString();
+          }
           this.liveListenerLastError = null;
           this.lastError = null;
           this.publishDiagnostics();
@@ -642,7 +661,7 @@ export class ChainSyncService {
       this.cursor = maxBigInt(this.cursor, block);
       this.latestHeadBlock = maxBlockString(this.latestHeadBlock, block);
       this.latestSyncedBlock = maxBlockString(this.latestSyncedBlock, block);
-      this.markConnected();
+      if (this.paidAllianceInviteHistoryReady()) this.markConnected();
       if (applied > 0) {
         this.notify({
           kind: "chain-event",
@@ -655,6 +674,15 @@ export class ChainSyncService {
     }
     this.notify({ kind: "sync-status", blockNumber: this.latestSyncedBlock });
     this.publishDiagnostics();
+  }
+
+  private paidAllianceInviteHistoryReady(): boolean {
+    const contractAddress = this.config.paidAllianceInviteAddress;
+    const fromBlock = this.config.paidAllianceInviteIndexFromBlock;
+    const status = this.indexer?.paidAllianceInviteHistoryBackfillStatus;
+    if (!contractAddress || fromBlock === undefined) return true;
+    if (!status) return false;
+    return !status.call(this.indexer, contractAddress, fromBlock).required;
   }
 
   private async catchUpRange(fromBlock: bigint, toBlock: bigint): Promise<void> {
