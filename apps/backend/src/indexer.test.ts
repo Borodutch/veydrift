@@ -5420,8 +5420,10 @@ describe("SettlementIndexer", () => {
     indexer.recordPaidAllianceInviteHistoryBackfill(paidInviteAddress, 150n, 150n);
     expect(indexer.paidAllianceInviteSummaries().get("7")?.privateInviteStats.remaining).toBe(1);
 
+    const beforeRemovalVersion = indexer.indexedStateCacheVersion();
     indexer.applyLog({ ...log, removed: true });
     expect(indexer.paidAllianceInviteSummaries().get("7")).toBeUndefined();
+    expect(indexer.indexedStateCacheVersion()).not.toBe(beforeRemovalVersion);
 
     indexer.applyLog({ ...log, removed: false });
     expect(indexer.paidAllianceInviteSummaries().get("7")?.privateInviteStats.remaining).toBe(1);

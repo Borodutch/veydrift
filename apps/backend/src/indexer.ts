@@ -5347,7 +5347,10 @@ export class SettlementIndexer {
         this.applyAllianceEvent(decodeAllianceLog(log));
       }
       this.setMetadata(paidAllianceInviteProjectionBackfillMetadataKey, new Date().toISOString());
-      if (rows.length > 0) this.touch();
+      // A reorg can remove the only paid-invite row, leaving no canonical rows to replay. The
+      // projection tables still changed (to empty), so always advance the shared response-cache
+      // generation whenever this repair runs.
+      this.touch();
     })();
   }
 
