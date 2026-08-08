@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import sharp from "sharp";
+import { paidAllianceInviteCommitment, paidAllianceInviteLink } from "../src/walletFlow";
 import {
+  allianceInviteCommitmentForCanonical,
+  allianceInviteOgDescription,
+  allianceInviteOgImagePath,
+  allianceInviteOgTitle,
   buildReferralMiniAppEmbed,
   cacheControl,
   canonicalSharePathForRoute,
@@ -11,6 +16,7 @@ import {
   ogPng,
   ogSvg,
   referralOgLayout,
+  renderShareHtml,
   responseHeadersFor,
   routeMeta,
   shareRouteForUrl,
@@ -36,7 +42,56 @@ describe("frontend static server headers", () => {
   test("treats clean invite URLs as app routes", () => {
     expect(inviteAppRouteForPathname("/invite")).toBe(true);
     expect(inviteAppRouteForPathname("/alliance-invites")).toBe(true);
+    expect(inviteAppRouteForPathname(`/alliance-invite/0x${"ab".repeat(32)}`)).toBe(true);
+    expect(inviteAppRouteForPathname("/alliance-invite/not-a-commitment")).toBe(false);
     expect(inviteAppRouteForPathname("/alliance")).toBe(false);
+  });
+
+  test("serves canonical alliance-invite metadata without exposing the private secret", async () => {
+    const secret = `0x${"cd".repeat(32)}`;
+    const commitment = paidAllianceInviteCommitment(secret);
+    const generatedLink = new URL(paidAllianceInviteLink(secret));
+    const serverVisibleUrl = new URL(`${generatedLink.origin}${generatedLink.pathname}`);
+    serverVisibleUrl.searchParams.set("utm_source", "share");
+    const pathname = generatedLink.pathname;
+    const route = shareRouteForUrl(serverVisibleUrl);
+
+    expect(generatedLink.hash).toBe(`#allianceInvite=${secret}`);
+    expect(serverVisibleUrl.toString()).not.toContain(secret);
+    expect(route).toEqual({ kind: "alliance-invite", commitment });
+    expect(allianceInviteCommitmentForCanonical(`${pathname}/`)).toBe(commitment);
+    expect(shareRouteForUrl(new URL(`https://veydrift.com/#allianceInvite=${secret}`))).toBeNull();
+    expect(shareRouteForUrl(new URL("https://veydrift.com/alliance-invite/not-a-commitment"))).toBeNull();
+    expect(canonicalSharePathForRoute(route!, serverVisibleUrl))
+      .toBe(pathname);
+    await expect(routeMeta(route!)).resolves.toEqual({
+      kind: "alliance-invite",
+      title: allianceInviteOgTitle,
+      description: allianceInviteOgDescription,
+    });
+
+    const html = await renderShareHtml(
+      new Request(serverVisibleUrl),
+      route!,
+      shareHtmlFixture(),
+    );
+
+    expect(html).toContain(`<title>${allianceInviteOgTitle}</title>`);
+    expect(html).toContain(`<link rel="canonical" href="https://veydrift.com${pathname}" />`);
+    expect(html).toContain(`<meta property="og:title" content="${allianceInviteOgTitle}" />`);
+    expect(html).toContain(`<meta property="og:description" content="${allianceInviteOgDescription}" />`);
+    expect(html).toContain(`<meta property="og:url" content="https://veydrift.com${pathname}" />`);
+    expect(html).toContain(`<meta property="og:image" content="https://veydrift.com${allianceInviteOgImagePath}" />`);
+    expect(html).toContain('<meta property="og:image:type" content="image/jpeg" />');
+    expect(html).toContain('<meta property="og:image:width" content="1200" />');
+    expect(html).toContain('<meta property="og:image:height" content="630" />');
+    expect(html).toContain('<meta name="twitter:card" content="summary_large_image" />');
+    expect(html).toContain(`<meta name="twitter:title" content="${allianceInviteOgTitle}" />`);
+    expect(html).toContain(`<meta name="twitter:description" content="${allianceInviteOgDescription}" />`);
+    expect(html).toContain(`<meta name="twitter:image" content="https://veydrift.com${allianceInviteOgImagePath}" />`);
+    expect(html).not.toContain(secret);
+    expect(html).not.toContain("allianceInvite=");
+    expect(html).not.toContain("utm_source");
   });
 
   test("serves every clean page URL through the frontend app", () => {
@@ -287,6 +342,34 @@ async function referralTitlePixels(png: Buffer) {
   }
 
   return { minX, maxX, minY, maxY, count };
+}
+
+function shareHtmlFixture(): string {
+  return `
+    <html>
+      <head>
+        <title>Veydrift</title>
+        <meta name="description" content="Default" />
+        <link rel="canonical" href="https://veydrift.com" />
+        <meta property="og:title" content="Veydrift" />
+        <meta property="og:description" content="Default" />
+        <meta property="og:url" content="https://veydrift.com" />
+        <meta property="og:image" content="https://veydrift.com/assets/og-image.jpg" />
+        <meta property="og:image:secure_url" content="https://veydrift.com/assets/og-image.jpg" />
+        <meta property="og:image:type" content="image/jpeg" />
+        <meta property="og:image:alt" content="Veydrift" />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta name="twitter:card" content="summary_large_image" />
+        <meta name="twitter:title" content="Veydrift" />
+        <meta name="twitter:description" content="Default" />
+        <meta name="twitter:image" content="https://veydrift.com/assets/og-image.jpg" />
+        <meta name="twitter:image:alt" content="Veydrift" />
+        <meta name="fc:miniapp" content='{}' />
+        <meta name="fc:frame" content='{}' />
+      </head>
+    </html>
+  `;
 }
 
 async function referralTextPixels(png: Buffer, bounds: { top: number; bottom: number }) {

@@ -66,7 +66,8 @@ import {
   recordReferralRedemptionTransaction,
   redeemReferralCode,
   redeemPaidAllianceInvite,
-  paidAllianceInviteSecretFromHash,
+  paidAllianceInviteCommitmentFromPathname,
+  paidAllianceInviteSecretFromLocation,
   sendReferralClaimTransaction,
   sendSettlementTransaction,
   settlementFundingShortfallWei,
@@ -369,8 +370,11 @@ export function FirstPlanetSettlementApp() {
   const [referralCodeInput, setReferralCodeInput] = useState(() => referralCodeFromCurrentUrl());
   const [paidAllianceInviteSecret] = useState(() => {
     if (typeof window === "undefined") return "";
-    const secret = paidAllianceInviteSecretFromHash(window.location.hash);
-    if (secret) window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+    const secret = paidAllianceInviteSecretFromLocation(window.location);
+    const canonicalCommitment = paidAllianceInviteCommitmentFromPathname(window.location.pathname);
+    if (secret && !canonicalCommitment) {
+      window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+    }
     return secret;
   });
   const [referralClaimCodeInput, setReferralClaimCodeInput] = useState(() => (

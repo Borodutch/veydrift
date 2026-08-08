@@ -3057,15 +3057,36 @@ export function paidAllianceInviteCommitment(secret: string): `0x${string}` {
 }
 
 export function paidAllianceInviteLink(secret: string, origin = "https://veydrift.com"): string {
-  paidAllianceInviteCommitment(secret);
+  const commitment = paidAllianceInviteCommitment(secret);
   const url = new URL(origin);
+  url.pathname = `/alliance-invite/${commitment}`;
+  url.search = "";
   url.hash = `allianceInvite=${encodeURIComponent(secret)}`;
   return url.toString();
+}
+
+export function paidAllianceInviteCommitmentFromPathname(pathname: string): string {
+  const match = pathname.match(/^\/alliance-invite\/(0x[0-9a-fA-F]{64})\/?$/);
+  return match?.[1]?.toLowerCase() ?? "";
 }
 
 export function paidAllianceInviteSecretFromHash(hash: string): string {
   const secret = new URLSearchParams(hash.replace(/^#/, "")).get("allianceInvite")?.trim() ?? "";
   return /^0x[0-9a-fA-F]{64}$/.test(secret) ? secret.toLowerCase() : "";
+}
+
+export function paidAllianceInviteSecretFromLocation(
+  location: Pick<Location, "hash" | "pathname">,
+): string {
+  const secret = paidAllianceInviteSecretFromHash(location.hash);
+  if (!secret) return "";
+
+  const commitment = paidAllianceInviteCommitmentFromPathname(location.pathname);
+  if (commitment) {
+    return paidAllianceInviteCommitment(secret) === commitment ? secret : "";
+  }
+
+  return location.pathname.startsWith("/alliance-invite/") ? "" : secret;
 }
 
 export async function resolvePaidAllianceInvite(apiUrl: string, secret: string): Promise<PaidAllianceInviteResolution> {
