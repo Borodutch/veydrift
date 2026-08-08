@@ -27,7 +27,8 @@ describe("paid alliance invite frontend flow", () => {
     expect(source).toContain("Any alliance member can buy a private invite for 0.006 ETH.");
     expect(source).toContain("Only alliance officers and owners can view or recover invite links.");
     expect(source).toContain("Each link is unique and single-use; share it only with its intended invitee.");
-    expect(source).toContain("The invited commander joins the game for free and starts with 2× resources.");
+    expect(source).toContain("The invited commander joins the game for free (Base gas only) and starts with 2× resources.");
+    expect(source).toContain("Invited by {playerLabel(member.invitedByDisplayName, member.invitedBy)}");
     expect(source).toContain("canManageMembers && paidInviteLinks.length");
     expect(source).toContain("Private invite ready");
     expect(source).toContain("Open invite");
@@ -122,7 +123,7 @@ describe("paid alliance invite frontend flow", () => {
     }
   });
 
-  test("settles an invite for the normal start price with recipient-bound authorization", async () => {
+  test("settles a paid alliance invite for free with recipient-bound authorization", async () => {
     const requests: unknown[] = [];
     const provider = providerRecording(requests);
     await sendSettlementTransaction(provider, account, { address: game }, {
@@ -135,7 +136,7 @@ describe("paid alliance invite frontend flow", () => {
     });
     const transaction = (requests[0] as any).params[0];
     expect(transaction.data.slice(0, 10)).toBe("0x042fec83");
-    expect(transaction.value).toBe("0xa");
+    expect(transaction.value).toBe("0x0");
   });
 });
 

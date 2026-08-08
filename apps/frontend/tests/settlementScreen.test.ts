@@ -339,6 +339,12 @@ describe("settlement screen mode", () => {
       contractKind: "game",
       startPriceWei: 1n,
     } })).toBeUndefined();
+    expect(settlementLaunchBlocker(true, { status: "ready", funding: {
+      affordable: false,
+      balanceWei: 0n,
+      contractKind: "game",
+      startPriceWei: 12_000_000_000_000_000n,
+    } }, true)).toBeUndefined();
   });
 
   test("lets an underfunded wallet recheck without bypassing other launch blockers", () => {
@@ -350,6 +356,7 @@ describe("settlement screen mode", () => {
     } };
 
     expect(settlementBalanceRecheckAvailable(true, underfunded)).toBe(true);
+    expect(settlementBalanceRecheckAvailable(true, underfunded, true)).toBe(false);
     expect(settlementBalanceRecheckAvailable(false, underfunded)).toBe(false);
     expect(settlementBalanceRecheckAvailable(true, { status: "ready", funding: {
       ...underfunded.funding,

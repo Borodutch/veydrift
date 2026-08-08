@@ -2353,6 +2353,11 @@ function MemberRow({
         totalScore={member.totalScore}
         onOpenPlayer={onOpenPlayer}
       />
+      {member.invitedBy ? (
+        <p className="-mt-1 text-xs text-cyan-100/80 md:col-start-2">
+          Invited by {playerLabel(member.invitedByDisplayName, member.invitedBy)}
+        </p>
+      ) : null}
       {canManageMembers ? (
         <div className="flex flex-wrap gap-2 md:justify-end">
           {ownerCanChangeRole && member.role === "member" ? (
@@ -2584,7 +2589,7 @@ function AlliancePrivateInviteExplanation() {
       </li>
       <li className="flex items-start gap-2 leading-relaxed">
         <Check className="mt-0.5 shrink-0 text-cyan-200" size={14} />
-        <span>The invited commander joins the game for free and starts with 2× resources.</span>
+        <span>The invited commander joins the game for free (Base gas only) and starts with 2× resources.</span>
       </li>
     </ul>
   );

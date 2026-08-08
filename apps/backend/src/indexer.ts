@@ -1685,19 +1685,32 @@ export class SettlementIndexer {
 
   private allianceMembers(allianceId: string): NonNullable<AllianceState["directory"][number]["members"]> {
     const rows = this.db.query(`
-      SELECT alliance_id, wallet, role_id, joined_at
-      FROM contract_alliance_members
-      WHERE alliance_id = ?
-      ORDER BY CASE role_id WHEN 3 THEN 0 WHEN 2 THEN 1 WHEN 1 THEN 2 ELSE 3 END, joined_at ASC, wallet ASC
-    `).all(allianceId) as AllianceMemberRow[];
+      SELECT member.alliance_id, member.wallet, member.role_id, member.joined_at,
+             redemption.inviter AS invited_by, redemption.redeemed_at AS invited_at
+      FROM contract_alliance_members member
+      LEFT JOIN contract_paid_alliance_invite_redemptions redemption
+        ON redemption.alliance_id = member.alliance_id AND redemption.player = member.wallet
+      WHERE member.alliance_id = ?
+      ORDER BY CASE member.role_id WHEN 3 THEN 0 WHEN 2 THEN 1 WHEN 1 THEN 2 ELSE 3 END,
+               member.joined_at ASC, member.wallet ASC
+    `).all(allianceId) as Array<AllianceMemberRow & {
+      invited_by: string | null;
+      invited_at: string | null;
+    }>;
     return rows.map((row) => {
       const address = row.wallet.toLowerCase() as Address;
+      const invitedBy = row.invited_by?.toLowerCase() as Address | undefined;
       return {
         address,
         displayName: this.playerProfile(address).displayName,
         role: allianceRoleName(row.role_id),
         joinedAt: row.joined_at,
-        totalScore: this.walletTotalScore(address)
+        totalScore: this.walletTotalScore(address),
+        ...(invitedBy ? {
+          invitedBy,
+          invitedByDisplayName: this.playerProfile(invitedBy).displayName,
+          invitedAt: row.invited_at
+        } : {})
       };
     });
   }
@@ -4974,6 +4987,15 @@ export class SettlementIndexer {
       );
       CREATE INDEX IF NOT EXISTS contract_alliance_invites_player_idx
         ON contract_alliance_invites (player);
+      CREATE TABLE IF NOT EXISTS contract_paid_alliance_invite_redemptions (
+        alliance_id TEXT NOT NULL,
+        player TEXT NOT NULL,
+        inviter TEXT NOT NULL,
+        redeemed_at TEXT NOT NULL,
+        PRIMARY KEY (alliance_id, player)
+      );
+      CREATE INDEX IF NOT EXISTS contract_paid_alliance_invite_redemptions_player_idx
+        ON contract_paid_alliance_invite_redemptions (player);
       CREATE TABLE IF NOT EXISTS contract_alliance_join_requests (
         alliance_id TEXT NOT NULL,
         requester TEXT NOT NULL,
@@ -5670,6 +5692,7 @@ export class SettlementIndexer {
     this.db.query("DELETE FROM contract_alliances").run();
     this.db.query("DELETE FROM contract_alliance_members").run();
     this.db.query("DELETE FROM contract_alliance_invites").run();
+    this.db.query("DELETE FROM contract_paid_alliance_invite_redemptions").run();
     this.db.query("DELETE FROM contract_alliance_join_requests").run();
     this.db.query("DELETE FROM contract_alliance_diplomacy").run();
   }
@@ -6203,6 +6226,7 @@ export class SettlementIndexer {
     this.db.query("DELETE FROM contract_alliances").run();
     this.db.query("DELETE FROM contract_alliance_members").run();
     this.db.query("DELETE FROM contract_alliance_invites").run();
+    this.db.query("DELETE FROM contract_paid_alliance_invite_redemptions").run();
     this.db.query("DELETE FROM contract_alliance_join_requests").run();
     this.db.query("DELETE FROM contract_alliance_diplomacy").run();
   }
@@ -8333,6 +8357,14 @@ export class SettlementIndexer {
           inviter = excluded.inviter,
           invited_at = excluded.invited_at
       `).run(event.allianceId, event.player, event.inviter, event.invitedAt);
+    } else if (event.eventName === "PaidAllianceInviteRedeemed") {
+      this.db.query(`
+        INSERT INTO contract_paid_alliance_invite_redemptions (alliance_id, player, inviter, redeemed_at)
+        VALUES (?, lower(?), lower(?), ?)
+        ON CONFLICT(alliance_id, player) DO UPDATE SET
+          inviter = excluded.inviter,
+          redeemed_at = excluded.redeemed_at
+      `).run(event.allianceId, event.player, event.inviter, event.redeemedAt);
     } else if (event.eventName === "AllianceInviteCancelled") {
       this.db.query(`
         DELETE FROM contract_alliance_invites

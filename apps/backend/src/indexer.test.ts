@@ -59,6 +59,7 @@ const allianceRoleUpdatedTopic = "0xe4ba1cf47cfd4ff05de8585bf5cb06e7b0856932c0d8
 const allianceOwnershipTransferredTopic = "0x68f6446f7a86cbeefdd42de0fd5fe8291d2183c90343d9a43c0cdc976e5a1617";
 const allianceDiplomacyUpdatedTopic = "0x3df4b2aa5708b43ef1805908826beae5c9a30fb60b1952ad99ce3444b2eec6da";
 const allianceWarSnapshotCapturedTopic = "0xaf7a44ebc296bed36b4a4227fcb39ea17aa1bf658f29f81ee820fbe8d204fed4";
+const paidAllianceInviteRedeemedTopic = "0xc3eee853f2f234eb03ddcf83a4cb7e1704a5eb0cdb1ca01e9918b0a50632f8c9";
 const fleetMissionLaunchedTopic = "0x95e2cb506aa14052bac412e42f47fb34d9234819a960761a7bc7f1920c0ab456";
 const fleetMissionCargoTopic = "0x3daa6311ecdadad6781f70e5d285e7150f9dc165db88d23be8867be4de33ff29";
 const fleetMissionShipsTopic = "0xf581cbe97357884794500d80286cfbe823fed3b5d77446e477aa694ce89fc82d";
@@ -5172,6 +5173,22 @@ describe("SettlementIndexer", () => {
       data: abiWords(2n)
     });
     indexer.applyLog({
+      blockNumber: "0x94",
+      blockTimestamp: "0x69801c84",
+      transactionHash: "0xalliance-invited-member",
+      logIndex: "0x1",
+      topics: [allianceJoinedTopic, topic(1n), addressTopic(invitee)],
+      data: abiWords(1n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x94",
+      blockTimestamp: "0x69801c84",
+      transactionHash: "0xpaid-invite-redeemed",
+      logIndex: "0x2",
+      topics: [paidAllianceInviteRedeemedTopic, topic(123n), topic(1n), addressTopic(invitee)],
+      data: `0x${officer.slice(2).padStart(64, "0")}${1770002500n.toString(16).padStart(64, "0")}`
+    });
+    indexer.applyLog({
       blockNumber: "0x95",
       blockTimestamp: "0x69801c85",
       transactionHash: "0xalliance-invite",
@@ -5195,11 +5212,18 @@ describe("SettlementIndexer", () => {
         name: "Veydrift Command",
         description: "Indexed alliance",
         owner: player,
-        memberCount: 2
+        memberCount: 3
       },
       members: [
         { address: player, role: "owner", joinedAt: String(0x69801c81) },
-        { address: officer, role: "officer", joinedAt: String(0x69801c83) }
+        { address: officer, role: "officer", joinedAt: String(0x69801c83) },
+        {
+          address: invitee,
+          role: "member",
+          joinedAt: String(0x69801c84),
+          invitedBy: officer,
+          invitedAt: "1770002500"
+        }
       ],
       allianceJoinRequests: [
         { allianceId: "1", requester: applicant, requesterTotalScore: "0", requestedAt: "1770003000" }

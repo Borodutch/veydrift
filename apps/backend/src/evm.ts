@@ -500,6 +500,15 @@ export type IndexedAllianceEvent =
       declareeScore: string;
       declarerMemberCount: number;
       declareeMemberCount: number;
+    }
+  | {
+      eventName: "PaidAllianceInviteRedeemed";
+      transactionHash: string;
+      blockNumber: string;
+      allianceId: string;
+      player: Address;
+      inviter: Address;
+      redeemedAt: string;
     };
 
 export type FleetMissionVisibility = {
@@ -1914,6 +1923,7 @@ export class VeydriftGameReader implements ChainReader {
   private readonly migrationContractAddress: Address | undefined;
   private readonly randomnessEngineAddress: Address | undefined;
   private readonly referralSystemAddress: Address | undefined;
+  private readonly paidAllianceInviteAddress: Address | undefined;
   private readonly hydrateQueueStartedAt: boolean;
 
   constructor(
@@ -1956,6 +1966,7 @@ export class VeydriftGameReader implements ChainReader {
     this.migrationContractAddress = config.migrationContractAddress;
     this.randomnessEngineAddress = config.randomnessEngineAddress;
     this.referralSystemAddress = config.referralSystemAddress;
+    this.paidAllianceInviteAddress = config.paidAllianceInviteAddress;
     this.hydrateQueueStartedAt = options.hydrateQueueStartedAt ?? true;
   }
 
@@ -3637,15 +3648,25 @@ export class VeydriftGameReader implements ChainReader {
         ]]
       }
     );
+    const extraLogs: RpcLog[] = [];
     const warProtectionAddress = await this.warProtectionAddress();
-    if (!warProtectionAddress) return allianceLogs;
-    const warSnapshotLogs = await this.getLogs({
-      address: warProtectionAddress,
-      fromBlock: toQuantity(fromBlock),
-      toBlock: toBlock === "latest" ? "latest" : toQuantity(toBlock),
-      topics: [[allianceWarSnapshotCapturedTopic]]
-    });
-    return [...allianceLogs, ...warSnapshotLogs];
+    if (warProtectionAddress) {
+      extraLogs.push(...await this.getLogs({
+        address: warProtectionAddress,
+        fromBlock: toQuantity(fromBlock),
+        toBlock: toBlock === "latest" ? "latest" : toQuantity(toBlock),
+        topics: [[allianceWarSnapshotCapturedTopic]]
+      }));
+    }
+    if (this.paidAllianceInviteAddress) {
+      extraLogs.push(...await this.getLogs({
+        address: this.paidAllianceInviteAddress,
+        fromBlock: toQuantity(fromBlock),
+        toBlock: toBlock === "latest" ? "latest" : toQuantity(toBlock),
+        topics: [[paidAllianceInviteRedeemedTopic]]
+      }));
+    }
+    return [...allianceLogs, ...extraLogs].sort(compareRpcLogs);
   }
 
   /**
@@ -3706,6 +3727,7 @@ export class VeydriftGameReader implements ChainReader {
       // letting the read model gate an arrived Attack's readiness on its battle randomness.
       this.randomnessEngineAddress,
       this.referralSystemAddress,
+      this.paidAllianceInviteAddress,
       await this.warProtectionAddress()
     ].filter((address): address is Address => Boolean(address));
     return [...new Set(addresses)];
@@ -5681,6 +5703,7 @@ const allianceDiplomacyUpdatedTopic = "0x3df4b2aa5708b43ef1805908826beae5c9a30fb
 // VeydriftAllianceWarProtection.WarSnapshotCaptured(...). The war module is discovered from
 // Alliance.warProtection() so the size-constrained Alliance proxy does not need a mirror event.
 const allianceWarSnapshotCapturedTopic = "0xaf7a44ebc296bed36b4a4227fcb39ea17aa1bf658f29f81ee820fbe8d204fed4";
+const paidAllianceInviteRedeemedTopic = "0xc3eee853f2f234eb03ddcf83a4cb7e1704a5eb0cdb1ca01e9918b0a50632f8c9";
 const marketResourceDepositedTopic = "0xb241f95d5e925b76c75fd1e811b497abfdc0984105f5b3feb7bee1a75f0a2643";
 const marketResourceWithdrawalRequestedTopic = "0xc4694dfe978480c576eacc57b2b09e69c8b8f50c49739ca4c4515295be589eab";
 const marketResourceWithdrawalFinishedTopic = "0x2b254e656a481b3978a707e6846146a1d7a3144e414cb803bbc7adc97d7587ee";
@@ -5761,6 +5784,7 @@ const eventNamesByTopic = new Map<string, string>([
   [allianceOwnershipTransferredTopic, "AllianceOwnershipTransferred"],
   [allianceDiplomacyUpdatedTopic, "AllianceDiplomacyUpdated"],
   [allianceWarSnapshotCapturedTopic, "AllianceWarSnapshotCaptured"],
+  [paidAllianceInviteRedeemedTopic, "PaidAllianceInviteRedeemed"],
   [marketResourceDepositedTopic, "MarketResourceDeposited"],
   [marketResourceWithdrawalRequestedTopic, "MarketResourceWithdrawalRequested"],
   [marketResourceWithdrawalFinishedTopic, "MarketResourceWithdrawalFinished"],
@@ -6007,7 +6031,8 @@ export function isAllianceLog(log: RpcLog): boolean {
     || topic === allianceRoleUpdatedTopic
     || topic === allianceOwnershipTransferredTopic
     || topic === allianceDiplomacyUpdatedTopic
-    || topic === allianceWarSnapshotCapturedTopic;
+    || topic === allianceWarSnapshotCapturedTopic
+    || topic === paidAllianceInviteRedeemedTopic;
 }
 
 export function isFleetMissionLog(log: RpcLog): boolean {
@@ -6776,6 +6801,17 @@ export function decodeAllianceLog(log: RpcLog): IndexedAllianceEvent {
       declareeMemberCount: Number(decodeUintWord(wordAt(words, 3)))
     };
   }
+  if (topic === paidAllianceInviteRedeemedTopic) {
+    const words = splitWords(log.data);
+    return {
+      ...base,
+      eventName: "PaidAllianceInviteRedeemed",
+      allianceId: decodeUint(topicAt(log.topics, 2)).toString(),
+      player: decodeAddressWord(topicAt(log.topics, 3)),
+      inviter: decodeAddressWord(wordAt(words, 0)),
+      redeemedAt: decodeUintWord(wordAt(words, 1)).toString()
+    };
+  }
 
   throw new Error(`Unsupported alliance log topic: ${topic}`);
 }
@@ -6946,6 +6982,16 @@ function encodeUint(value: bigint): string {
 
 function toQuantity(value: bigint): string {
   return `0x${value.toString(16)}`;
+}
+
+function compareRpcLogs(left: RpcLog, right: RpcLog): number {
+  const leftBlock = BigInt(left.blockNumber);
+  const rightBlock = BigInt(right.blockNumber);
+  if (leftBlock !== rightBlock) return leftBlock < rightBlock ? -1 : 1;
+  const leftIndex = BigInt(left.logIndex ?? "0x0");
+  const rightIndex = BigInt(right.logIndex ?? "0x0");
+  if (leftIndex !== rightIndex) return leftIndex < rightIndex ? -1 : 1;
+  return left.transactionHash.localeCompare(right.transactionHash);
 }
 
 // VeydriftGameStorage layout: `_fleetMissions` follows `_fleets` at slot 24.
