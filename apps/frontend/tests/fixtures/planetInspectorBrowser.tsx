@@ -1,4 +1,5 @@
 import { h, render } from "preact";
+import { FirstPlanetSettlementApp } from "../../src/FirstPlanetSettlementApp";
 import { PlayableMvpApp } from "../../src/PlayableMvpApp";
 import { PlanetDetail } from "../../src/components/PlanetDetail";
 import { PublicMoonDetail } from "../../src/components/PublicMoonDetail";
@@ -12,7 +13,9 @@ declare global {
       account: string;
       appReady: boolean;
       errors: string[];
+      interactions: Array<{ isTrusted: boolean; pointerType?: string; target: string; type: string }>;
       requests: string[];
+      walletRequests: Array<{ method: string; params?: unknown[] }>;
       beginDetailRace(kind: "moon" | "planet"): void;
       pendingDetailRequests(): string[];
       resolveDetailRequest(key: string): void;
@@ -23,7 +26,10 @@ declare global {
 const account = "0x1111111111111111111111111111111111111111";
 const unrelatedOwner = "0x9999999999999999999999999999999999999999";
 const appRoot = document.querySelector("#app") as HTMLElement;
-const route = new URLSearchParams(window.location.search).get("route") ?? "/planet/9/9/9";
+const fixtureParams = new URLSearchParams(window.location.search);
+const route = fixtureParams.get("route") ?? "/planet/9/9/9";
+const settlementShell = fixtureParams.get("shell") === "settlement";
+const walletEventOnPointerDown = fixtureParams.get("walletEventOnPointerDown");
 
 const ownedPlanets = [
   managedPlanet({
@@ -32,7 +38,7 @@ const ownedPlanets = [
     name: "Owned Alpha",
     planetId: "owned-a",
     position: 3,
-    resources: { crystal: "101", deuterium: "102", metal: "103" },
+    resources: { crystal: "3873", deuterium: "102", metal: "10313" },
     system: 2,
   }),
   managedPlanet({
@@ -55,7 +61,10 @@ const publicSystems = new Map([
 const pendingDetailRequests = new Map<string, (response: Response) => void>();
 let detailRaceKind: "moon" | "planet" | null = null;
 const fixtureErrors: string[] = [];
+const fixtureInteractions: Array<{ isTrusted: boolean; pointerType?: string; target: string; type: string }> = [];
 const fixtureRequests: string[] = [];
+const walletRequests: Array<{ method: string; params?: unknown[] }> = [];
+const providerListeners = new Map<string, Set<(...args: unknown[]) => void>>();
 const originalConsoleError = console.error;
 console.error = (...values) => {
   fixtureErrors.push(values.map(String).join(" "));
@@ -63,6 +72,19 @@ console.error = (...values) => {
 };
 window.addEventListener("error", (event) => fixtureErrors.push(`window-error:${event.message}`));
 window.addEventListener("unhandledrejection", (event) => fixtureErrors.push(`unhandled:${event.reason?.stack ?? String(event.reason)}`));
+for (const type of ["pointerdown", "click"] as const) {
+  window.addEventListener(type, (event) => {
+    const target = event.target instanceof Element
+      ? `${event.target.tagName.toLowerCase()}:${event.target.textContent?.trim() ?? ""}`
+      : "unknown";
+    fixtureInteractions.push({
+      isTrusted: event.isTrusted,
+      ...(event instanceof PointerEvent ? { pointerType: event.pointerType } : {}),
+      target,
+      type,
+    });
+  }, { capture: true });
+}
 
 class FixtureEventSource extends EventTarget {
   close() {}
@@ -73,9 +95,23 @@ Object.defineProperty(window, "EventSource", { configurable: true, value: Fixtur
 Object.defineProperty(globalThis, "EventSource", { configurable: true, value: FixtureEventSource });
 
 const provider: Eip1193Provider = {
-  request: async ({ method }) => {
-    if (method === "eth_chainId") return "0x14a34";
+  on(event, listener) {
+    const listeners = providerListeners.get(event) ?? new Set();
+    listeners.add(listener);
+    providerListeners.set(event, listeners);
+  },
+  removeListener(event, listener) {
+    providerListeners.get(event)?.delete(listener);
+  },
+  request: async ({ method, params }) => {
+    walletRequests.push({ method, ...(params ? { params } : {}) });
+    if (method === "eth_chainId") return settlementShell ? "0x2105" : "0x14a34";
     if (method === "eth_accounts" || method === "eth_requestAccounts") return [account];
+    if (method === "eth_sendTransaction") {
+      // Keep the request pending like an open wallet confirmation. Browser tests
+      // can prove the Build click reached the wallet without confirming/broadcasting.
+      return new Promise<string>(() => undefined);
+    }
     return null;
   },
 };
@@ -95,7 +131,7 @@ globalThis.fetch = (async (input) => {
     return Response.json({
       allianceContractAddress: null,
       apiUrl: `${window.location.origin}/api`,
-      chainId: 84532,
+      chainId: settlementShell ? 8453 : 84532,
       contractAddress: "0x2222222222222222222222222222222222222222",
       featureSupport: {
         allianceConfigured: false,
@@ -110,7 +146,7 @@ globalThis.fetch = (async (input) => {
       gameContractAddress: "0x2222222222222222222222222222222222222222",
       graphqlUrl: `${window.location.origin}/graphql`,
       moonContractAddress: null,
-      network: "base-sepolia",
+      network: settlementShell ? "base" : "base-sepolia",
       resourceTokenAddresses: { crystal: null, deuterium: null, metal: null },
       rpcProvider: "unknown",
     });
@@ -120,6 +156,10 @@ globalThis.fetch = (async (input) => {
     return Response.json(walletOverview());
   }
 
+  if (url.pathname.endsWith(`/wallet/${account}/settlement`)) {
+    return Response.json(walletOverview().settlement);
+  }
+
   if (url.pathname.endsWith(`/wallet/${account}/profile`)) {
     return Response.json({
       description: null,
@@ -127,6 +167,28 @@ globalThis.fetch = (async (input) => {
       fallbackName: "Fixture Commander",
       updatedAt: null,
       wallet: account,
+    });
+  }
+
+  if (url.pathname.endsWith(`/wallet/${account}/shipyard`)) {
+    return Response.json({
+      wallet: account,
+      homePlanetId: "1",
+      planetId: "1",
+      productionAvailable: true,
+      resources: { crystal: "3873", deuterium: "0", metal: "10313" },
+      resourcesAsOfNow: { crystal: "3873", deuterium: "0", metal: "10313" },
+      fleetSlots: { active: 0, limit: 1 },
+      shipyardLevel: 5,
+      naniteLevel: 0,
+      technologyLevels: { "3": 6, "6": 2 },
+      ships: [{
+        id: 0,
+        count: 5,
+        cost: { crystal: "2000", deuterium: "0", metal: "2000" },
+        durationSeconds: 60,
+      }],
+      queue: null,
     });
   }
 
@@ -151,11 +213,20 @@ globalThis.fetch = (async (input) => {
   return Response.json({ error: `Fixture endpoint not implemented: ${url.pathname}` }, { status: 404 });
 }) as typeof fetch;
 
+document.addEventListener("pointerdown", (event) => {
+  const target = event.target instanceof HTMLButtonElement ? event.target : undefined;
+  if (walletEventOnPointerDown === "accountsChanged" && target?.textContent?.trim() === "Build") {
+    for (const listener of providerListeners.get("accountsChanged") ?? []) listener([account]);
+  }
+}, { capture: true });
+
 window.inspectorProof = {
   account,
   appReady: false,
   errors: fixtureErrors,
+  interactions: fixtureInteractions,
   requests: fixtureRequests,
+  walletRequests,
   beginDetailRace(kind) {
     detailRaceKind = kind;
     pendingDetailRequests.clear();
@@ -186,7 +257,12 @@ window.inspectorProof = {
 };
 
 history.replaceState({ fixture: true }, "", route);
-render(<PlayableMvpApp account={account} provider={provider} />, appRoot);
+if (settlementShell) {
+  Object.defineProperty(window, "ethereum", { configurable: true, value: provider });
+  render(<FirstPlanetSettlementApp />, appRoot);
+} else {
+  render(<PlayableMvpApp account={account} provider={provider} />, appRoot);
+}
 window.inspectorProof.appReady = true;
 
 function renderDetail(kind: "moon" | "planet", coords: Coordinates) {
