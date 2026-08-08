@@ -342,6 +342,20 @@ async function clickExpression(expression) {
   assert.equal(clicked, true, `could not click ${expression}`);
 }
 
+async function clickSectionAndReadRender(expression) {
+  return evaluate(`(() => {
+    const target = ${expression};
+    if (!target) return null;
+    target.click();
+    return {
+      activeHref: document.querySelector('nav.hidden a[aria-current="page"]')?.getAttribute('href') ?? null,
+      hasOverviewFleets: document.querySelector('main section[aria-label="Fleets"]') !== null,
+      hasShipyardSurface: document.querySelector('main [data-production-catalog], main [aria-label="Loading shipyard"]') !== null,
+      path: location.pathname,
+    };
+  })()`);
+}
+
 async function accessibilityNode(name) {
   const { nodes } = await cdp.send("Accessibility.getFullAXTree");
   return nodes.find((node) => node.name?.value === name && !node.ignored);
@@ -539,8 +553,17 @@ test("desktop sidebar first clicks commit Infrastructure and Shipyard routes", a
   await clickExpression("document.querySelector('nav.hidden a[href=\"/infrastructure\"]')");
   await waitForExpression("location.pathname === '/infrastructure' && document.querySelector('nav.hidden a[href=\"/infrastructure\"][aria-current=\"page\"]') !== null");
 
-  await clickExpression("document.querySelector('nav.hidden a[href=\"/shipyard\"]')");
-  await waitForExpression("location.pathname === '/shipyard' && document.querySelector('nav.hidden a[href=\"/shipyard\"][aria-current=\"page\"]') !== null");
+  const shipyardRender = await clickSectionAndReadRender("document.querySelector('nav.hidden a[href=\"/shipyard\"]')");
+  assert.deepEqual(shipyardRender, {
+    activeHref: "/shipyard",
+    hasOverviewFleets: false,
+    hasShipyardSurface: true,
+    path: "/shipyard",
+  });
+  await waitForExpression(`location.pathname === '/shipyard'
+    && document.querySelector('nav.hidden a[href="/shipyard"][aria-current="page"]') !== null
+    && document.querySelector('main [data-production-catalog]') !== null
+    && document.querySelector('main section[aria-label="Fleets"]') === null`);
 });
 
 test("desktop sidebar commits the reported Overview to Raid Finder and Shipyard to Mission Control routes", async () => {
@@ -550,11 +573,35 @@ test("desktop sidebar commits the reported Overview to Raid Finder and Shipyard 
   await clickExpression("document.querySelector('nav.hidden a[href=\"/raid-finder\"]')");
   await waitForExpression("location.pathname === '/raid-finder' && document.querySelector('nav.hidden a[href=\"/raid-finder\"][aria-current=\"page\"]') !== null");
 
-  await clickExpression("document.querySelector('nav.hidden a[href=\"/shipyard\"]')");
-  await waitForExpression("location.pathname === '/shipyard' && document.querySelector('nav.hidden a[href=\"/shipyard\"][aria-current=\"page\"]') !== null");
+  const shipyardRender = await clickSectionAndReadRender("document.querySelector('nav.hidden a[href=\"/shipyard\"]')");
+  assert.deepEqual(shipyardRender, {
+    activeHref: "/shipyard",
+    hasOverviewFleets: false,
+    hasShipyardSurface: true,
+    path: "/shipyard",
+  });
+  await waitForExpression(`location.pathname === '/shipyard'
+    && document.querySelector('nav.hidden a[href="/shipyard"][aria-current="page"]') !== null
+    && document.querySelector('main [data-production-catalog]') !== null
+    && document.querySelector('main section[aria-label="Fleets"]') === null`);
 
   await clickExpression("document.querySelector('nav.hidden a[href=\"/mission-control\"]')");
   await waitForExpression("location.pathname === '/mission-control' && document.querySelector('nav.hidden a[href=\"/mission-control\"][aria-current=\"page\"]') !== null");
+});
+
+test("desktop Overview to Shipyard click atomically replaces the rendered page", async () => {
+  await loadInspectorFixture("/", 1280);
+  await waitForExpression("location.pathname === '/' && document.querySelector('main section[aria-label=\"Fleets\"]') !== null");
+
+  const shipyardRender = await clickSectionAndReadRender("document.querySelector('nav.hidden a[href=\"/shipyard\"]')");
+  assert.deepEqual(shipyardRender, {
+    activeHref: "/shipyard",
+    hasOverviewFleets: false,
+    hasShipyardSurface: true,
+    path: "/shipyard",
+  });
+  await waitForExpression(`document.querySelector('main [data-production-catalog]') !== null
+    && document.querySelector('main section[aria-label="Fleets"]') === null`);
 });
 
 test("mobile sidebar first clicks commit routes and close the menu", async () => {
@@ -568,8 +615,18 @@ test("mobile sidebar first clicks commit routes and close the menu", async () =>
 
   await clickExpression("document.querySelector('summary[aria-label=\"Open navigation menu\"]')");
   await waitForExpression("document.querySelector('details:has(#mobile-navigation-menu)')?.open === true");
-  await clickExpression("document.querySelector('#mobile-navigation-menu a[href=\"/shipyard\"]')");
-  await waitForExpression("location.pathname === '/shipyard' && document.querySelector('#mobile-navigation-menu a[href=\"/shipyard\"][aria-current=\"page\"]') !== null && document.querySelector('details:has(#mobile-navigation-menu)')?.open === false");
+  const shipyardRender = await clickSectionAndReadRender("document.querySelector('#mobile-navigation-menu a[href=\"/shipyard\"]')");
+  assert.deepEqual(shipyardRender, {
+    activeHref: "/shipyard",
+    hasOverviewFleets: false,
+    hasShipyardSurface: true,
+    path: "/shipyard",
+  });
+  await waitForExpression(`location.pathname === '/shipyard'
+    && document.querySelector('#mobile-navigation-menu a[href="/shipyard"][aria-current="page"]') !== null
+    && document.querySelector('details:has(#mobile-navigation-menu)')?.open === false
+    && document.querySelector('main [data-production-catalog]') !== null
+    && document.querySelector('main section[aria-label="Fleets"]') === null`);
 });
 
 test("owned deep links and real back-forward events never expose owned controls under an unrelated identity", async () => {
