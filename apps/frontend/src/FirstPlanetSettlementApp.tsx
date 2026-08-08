@@ -395,6 +395,13 @@ export function FirstPlanetSettlementApp() {
   const hasOverview = planet.kind === "success" || planet.kind === "already-settled";
   const settlementConfig = settlementConfigState.config;
   const requiredChain = defaultVeydriftChainForLocation();
+  const currentAccount = useRef(account);
+  // Provider listeners are installed by the one-time bootstrap effect. Route
+  // later account changes through the current render instead of its mount-time
+  // wallet/config closure.
+  const refreshWalletHandler = useRef(refreshWallet);
+  currentAccount.current = account;
+  refreshWalletHandler.current = refreshWallet;
   const [successHoldElapsed, setSuccessHoldElapsed] = useState(false);
   const previousPlanetKind = useRef<PlanetState["kind"]>();
   const previousWalletKind = useRef<WalletState["kind"]>();
@@ -844,9 +851,16 @@ export function FirstPlanetSettlementApp() {
 
     const handleAccountsChanged = (...args: unknown[]) => {
       const nextAccounts = Array.isArray(args[0]) ? args[0] as string[] : [];
+      const nextAccount = nextAccounts[0];
 
-      if (nextAccounts[0]) {
-        void refreshWallet(injected, nextAccounts[0], providerContext);
+      if (nextAccount) {
+        // A provider can repeat its exposed account while the user is starting
+        // a wallet action. That is not a connection change and must not remount
+        // the game between pointerdown and click.
+        if (currentAccount.current?.toLowerCase() === nextAccount.toLowerCase()) {
+          return;
+        }
+        void refreshWalletHandler.current(injected, nextAccount);
       } else {
         setWallet({
           kind: "disconnected"

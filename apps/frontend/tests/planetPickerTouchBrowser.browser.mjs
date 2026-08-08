@@ -306,15 +306,16 @@ test("native two-axis touch scroll works before the hold and post-hold movement 
   assert.equal(reorderState.scrollTop, 0);
 });
 
-async function loadInspectorFixture(route, width) {
+async function loadInspectorFixture(route, width, options = {}) {
   await cdp.send("Emulation.setDeviceMetricsOverride", {
     deviceScaleFactor: 1,
     height: 900,
     mobile: width < 768,
     width,
   });
+  const params = new URLSearchParams({ route, ...options });
   await cdp.send("Page.navigate", {
-    url: `${inspectorFixtureUrl}?route=${encodeURIComponent(route)}`,
+    url: `${inspectorFixtureUrl}?${params}`,
   });
   await waitForExpression("window.inspectorProof?.appReady === true", 10_000);
   try {
@@ -620,6 +621,33 @@ test("desktop Overview to Shipyard click atomically replaces the rendered page",
   });
   await waitForExpression(`document.querySelector('main [data-production-catalog]') !== null
     && document.querySelector('main section[aria-label="Fleets"]') === null`);
+});
+
+test("wallet shell does not let a repeated account event interrupt the Build gesture", async () => {
+  await loadInspectorFixture("/", 1280, {
+    shell: "settlement",
+    walletEventOnPointerDown: "accountsChanged",
+  });
+  await clickExpression("document.querySelector('nav.hidden a[href=\"/shipyard\"]')");
+  await waitForExpression(`location.pathname === '/shipyard'
+    && [...document.querySelectorAll('main button')].some((button) => button.textContent?.trim() === 'Build' && !button.disabled)`);
+
+  await clickExpressionWithTrustedPointer(
+    "[...document.querySelectorAll('main button')].find((button) => button.textContent?.trim() === 'Build' && !button.disabled)",
+  );
+  await waitForExpression("window.inspectorProof.walletRequests.some((request) => request.method === 'eth_sendTransaction')");
+  await delay(100);
+
+  const result = await evaluate(`({
+    buildVisible: [...document.querySelectorAll('main button')].some((button) => button.textContent?.trim() === 'Build'),
+    path: location.pathname,
+    syncingPlanetfall: document.body.textContent?.includes('Syncing planetfall') ?? false,
+  })`);
+  assert.deepEqual(result, {
+    buildVisible: true,
+    path: "/shipyard",
+    syncingPlanetfall: false,
+  });
 });
 
 for (const width of [1280, 390]) {

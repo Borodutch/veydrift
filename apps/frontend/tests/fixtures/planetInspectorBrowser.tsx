@@ -1,4 +1,5 @@
 import { h, render } from "preact";
+import { FirstPlanetSettlementApp } from "../../src/FirstPlanetSettlementApp";
 import { PlayableMvpApp } from "../../src/PlayableMvpApp";
 import { PlanetDetail } from "../../src/components/PlanetDetail";
 import { PublicMoonDetail } from "../../src/components/PublicMoonDetail";
@@ -25,7 +26,10 @@ declare global {
 const account = "0x1111111111111111111111111111111111111111";
 const unrelatedOwner = "0x9999999999999999999999999999999999999999";
 const appRoot = document.querySelector("#app") as HTMLElement;
-const route = new URLSearchParams(window.location.search).get("route") ?? "/planet/9/9/9";
+const fixtureParams = new URLSearchParams(window.location.search);
+const route = fixtureParams.get("route") ?? "/planet/9/9/9";
+const settlementShell = fixtureParams.get("shell") === "settlement";
+const walletEventOnPointerDown = fixtureParams.get("walletEventOnPointerDown");
 
 const ownedPlanets = [
   managedPlanet({
@@ -60,6 +64,7 @@ const fixtureErrors: string[] = [];
 const fixtureInteractions: Array<{ isTrusted: boolean; pointerType?: string; target: string; type: string }> = [];
 const fixtureRequests: string[] = [];
 const walletRequests: Array<{ method: string; params?: unknown[] }> = [];
+const providerListeners = new Map<string, Set<(...args: unknown[]) => void>>();
 const originalConsoleError = console.error;
 console.error = (...values) => {
   fixtureErrors.push(values.map(String).join(" "));
@@ -90,9 +95,17 @@ Object.defineProperty(window, "EventSource", { configurable: true, value: Fixtur
 Object.defineProperty(globalThis, "EventSource", { configurable: true, value: FixtureEventSource });
 
 const provider: Eip1193Provider = {
+  on(event, listener) {
+    const listeners = providerListeners.get(event) ?? new Set();
+    listeners.add(listener);
+    providerListeners.set(event, listeners);
+  },
+  removeListener(event, listener) {
+    providerListeners.get(event)?.delete(listener);
+  },
   request: async ({ method, params }) => {
     walletRequests.push({ method, ...(params ? { params } : {}) });
-    if (method === "eth_chainId") return "0x14a34";
+    if (method === "eth_chainId") return settlementShell ? "0x2105" : "0x14a34";
     if (method === "eth_accounts" || method === "eth_requestAccounts") return [account];
     if (method === "eth_sendTransaction") {
       // Keep the request pending like an open wallet confirmation. Browser tests
@@ -118,7 +131,7 @@ globalThis.fetch = (async (input) => {
     return Response.json({
       allianceContractAddress: null,
       apiUrl: `${window.location.origin}/api`,
-      chainId: 84532,
+      chainId: settlementShell ? 8453 : 84532,
       contractAddress: "0x2222222222222222222222222222222222222222",
       featureSupport: {
         allianceConfigured: false,
@@ -133,7 +146,7 @@ globalThis.fetch = (async (input) => {
       gameContractAddress: "0x2222222222222222222222222222222222222222",
       graphqlUrl: `${window.location.origin}/graphql`,
       moonContractAddress: null,
-      network: "base-sepolia",
+      network: settlementShell ? "base" : "base-sepolia",
       resourceTokenAddresses: { crystal: null, deuterium: null, metal: null },
       rpcProvider: "unknown",
     });
@@ -141,6 +154,10 @@ globalThis.fetch = (async (input) => {
 
   if (url.pathname.endsWith(`/wallet/${account}/overview`)) {
     return Response.json(walletOverview());
+  }
+
+  if (url.pathname.endsWith(`/wallet/${account}/settlement`)) {
+    return Response.json(walletOverview().settlement);
   }
 
   if (url.pathname.endsWith(`/wallet/${account}/profile`)) {
@@ -196,6 +213,13 @@ globalThis.fetch = (async (input) => {
   return Response.json({ error: `Fixture endpoint not implemented: ${url.pathname}` }, { status: 404 });
 }) as typeof fetch;
 
+document.addEventListener("pointerdown", (event) => {
+  const target = event.target instanceof HTMLButtonElement ? event.target : undefined;
+  if (walletEventOnPointerDown === "accountsChanged" && target?.textContent?.trim() === "Build") {
+    for (const listener of providerListeners.get("accountsChanged") ?? []) listener([account]);
+  }
+}, { capture: true });
+
 window.inspectorProof = {
   account,
   appReady: false,
@@ -233,7 +257,12 @@ window.inspectorProof = {
 };
 
 history.replaceState({ fixture: true }, "", route);
-render(<PlayableMvpApp account={account} provider={provider} />, appRoot);
+if (settlementShell) {
+  Object.defineProperty(window, "ethereum", { configurable: true, value: provider });
+  render(<FirstPlanetSettlementApp />, appRoot);
+} else {
+  render(<PlayableMvpApp account={account} provider={provider} />, appRoot);
+}
 window.inspectorProof.appReady = true;
 
 function renderDetail(kind: "moon" | "planet", coords: Coordinates) {
