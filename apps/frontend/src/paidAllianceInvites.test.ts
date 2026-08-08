@@ -4,6 +4,7 @@ import {
   paidAllianceInviteCommitment,
   paidAllianceInviteCommitmentFromPathname,
   paidAllianceInviteLink,
+  paidAllianceInviteLocationState,
   paidAllianceInviteSecretFromHash,
   paidAllianceInviteSecretFromLocation,
   PAID_ALLIANCE_INVITE_PRICE_WEI,
@@ -102,6 +103,10 @@ describe("paid alliance invite frontend flow", () => {
       pathname: "/",
       hash: `#allianceInvite=${secret}`,
     })).toBe(secret);
+    expect(paidAllianceInviteLocationState({
+      pathname: "/",
+      hash: `#allianceInvite=${secret}`,
+    })).toEqual({ canonical: false, kind: "valid", secret });
     expect(paidAllianceInviteSecretFromLocation({
       pathname: "/game",
       hash: `#allianceInvite=${secret}`,
@@ -110,10 +115,26 @@ describe("paid alliance invite frontend flow", () => {
       pathname: `/alliance-invite/${commitment}`,
       hash: `#allianceInvite=${otherSecret}`,
     })).toBe("");
+    expect(paidAllianceInviteLocationState({
+      pathname: `/alliance-invite/${commitment}`,
+      hash: `#allianceInvite=${secret}`,
+    })).toEqual({ canonical: true, kind: "valid", secret });
+    expect(paidAllianceInviteLocationState({
+      pathname: `/alliance-invite/${commitment}`,
+      hash: "",
+    })).toEqual({ kind: "invalid" });
+    expect(paidAllianceInviteLocationState({
+      pathname: `/alliance-invite/${commitment}`,
+      hash: `#allianceInvite=${otherSecret}`,
+    })).toEqual({ kind: "invalid" });
     expect(paidAllianceInviteSecretFromLocation({
       pathname: "/alliance-invite/not-a-commitment",
       hash: `#allianceInvite=${secret}`,
     })).toBe("");
+    expect(paidAllianceInviteLocationState({
+      pathname: "/alliance-invite/not-a-commitment",
+      hash: `#allianceInvite=${secret}`,
+    })).toEqual({ kind: "invalid" });
     expect(paidAllianceInviteCommitmentFromPathname("/alliance-invite/0x1234")).toBe("");
   });
 

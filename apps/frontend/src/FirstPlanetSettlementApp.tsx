@@ -66,8 +66,7 @@ import {
   recordReferralRedemptionTransaction,
   redeemReferralCode,
   redeemPaidAllianceInvite,
-  paidAllianceInviteCommitmentFromPathname,
-  paidAllianceInviteSecretFromLocation,
+  paidAllianceInviteLocationState,
   sendReferralClaimTransaction,
   sendSettlementTransaction,
   settlementFundingShortfallWei,
@@ -368,15 +367,18 @@ export function FirstPlanetSettlementApp() {
   const [settlementFunding, setSettlementFunding] = useState<SettlementFunding>({ status: "idle" });
   const [referralProgram, setReferralProgram] = useState<ReferralProgramState>({ status: "idle" });
   const [referralCodeInput, setReferralCodeInput] = useState(() => referralCodeFromCurrentUrl());
-  const [paidAllianceInviteSecret] = useState(() => {
-    if (typeof window === "undefined") return "";
-    const secret = paidAllianceInviteSecretFromLocation(window.location);
-    const canonicalCommitment = paidAllianceInviteCommitmentFromPathname(window.location.pathname);
-    if (secret && !canonicalCommitment) {
+  const [paidAllianceInviteLocation] = useState(() => {
+    if (typeof window === "undefined") return { kind: "none" } as const;
+    const state = paidAllianceInviteLocationState(window.location);
+    if (state.kind === "valid" && !state.canonical) {
       window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
     }
-    return secret;
+    return state;
   });
+  const paidAllianceInviteSecret = paidAllianceInviteLocation.kind === "valid"
+    ? paidAllianceInviteLocation.secret
+    : "";
+  const invalidPaidAllianceInvite = paidAllianceInviteLocation.kind === "invalid";
   const [referralClaimCodeInput, setReferralClaimCodeInput] = useState(() => (
     readReferralStorage(REFERRAL_CLAIM_CODE_STORAGE_KEY) || generateReferralClaimCode()
   ));
@@ -1537,37 +1539,45 @@ export function FirstPlanetSettlementApp() {
     <ComingSoonApp
       heroViewSignal={planet.kind === "success" ? "open" : undefined}
       hero={(
-        <>
-          {paidAllianceInviteSecret ? (
-            <div className="referral-code-field" role="status">
-              <strong>Alliance invite ready</strong>
-              <span>Your first planet is free with this invite. You only need a little Base ETH for gas, receive 2× starter resources, and join the issuing alliance automatically.</span>
-            </div>
-          ) : (
-            <ReferralCodeField
-              disabled={planet.kind === "pending"}
-              onChange={setReferralCodeInput}
-              validation={referralValidation}
-              value={referralCodeInput}
-            />
-          )}
-          <FlowBody
-            mode={mode}
-            referralCodeInput={referralCodeInput}
-            referralValidation={referralValidation}
-            prepaidAllianceInvite={Boolean(paidAllianceInviteSecret)}
-            onConnect={connectWallet}
-            onSettle={settlePlanet}
-            onSwitchNetwork={switchNetwork}
-            planet={planet}
-            settlementFunding={settlementFunding}
-            settlementReady={settlementContractConfigured(settlementConfig)}
-            wallet={wallet}
-            networkSwitchPending={networkSwitchPending}
-            miniAppMode={miniAppMode}
-            requiredChain={requiredChain}
+        invalidPaidAllianceInvite ? (
+          <StateMessage
+            title="Invalid alliance invite"
+            body="This link is incomplete or does not match its private invite key. Ask the alliance member for a fresh invite link."
+            tone="warning"
           />
-        </>
+        ) : (
+          <>
+            {paidAllianceInviteSecret ? (
+              <div className="referral-code-field" role="status">
+                <strong>Alliance invite ready</strong>
+                <span>Your first planet is free with this invite. You only need a little Base ETH for gas, receive 2× starter resources, and join the issuing alliance automatically.</span>
+              </div>
+            ) : (
+              <ReferralCodeField
+                disabled={planet.kind === "pending"}
+                onChange={setReferralCodeInput}
+                validation={referralValidation}
+                value={referralCodeInput}
+              />
+            )}
+            <FlowBody
+              mode={mode}
+              referralCodeInput={referralCodeInput}
+              referralValidation={referralValidation}
+              prepaidAllianceInvite={Boolean(paidAllianceInviteSecret)}
+              onConnect={connectWallet}
+              onSettle={settlePlanet}
+              onSwitchNetwork={switchNetwork}
+              planet={planet}
+              settlementFunding={settlementFunding}
+              settlementReady={settlementContractConfigured(settlementConfig)}
+              wallet={wallet}
+              networkSwitchPending={networkSwitchPending}
+              miniAppMode={miniAppMode}
+              requiredChain={requiredChain}
+            />
+          </>
+        )
       )}
       heroSupport={<SettlementSupportLinks />}
     />
