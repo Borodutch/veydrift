@@ -342,7 +342,7 @@ async function clickExpression(expression) {
   assert.equal(clicked, true, `could not click ${expression}`);
 }
 
-async function clickExpressionWithTrustedPointer(expression) {
+async function clickExpressionWithTrustedPointer(expression, pointerType = "mouse") {
   await evaluate(`(() => {
     const target = ${expression};
     target?.scrollIntoView({ block: 'center', inline: 'center' });
@@ -355,6 +355,11 @@ async function clickExpressionWithTrustedPointer(expression) {
     return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
   })()`);
   assert.ok(center, `could not find ${expression}`);
+  if (pointerType === "touch") {
+    await dispatchTouch("touchStart", center.x, center.y);
+    await dispatchTouch("touchEnd", center.x, center.y);
+    return;
+  }
   await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", button: "left", clickCount: 1, x: center.x, y: center.y });
   await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", button: "left", clickCount: 1, x: center.x, y: center.y });
 }
@@ -632,6 +637,7 @@ for (const width of [1280, 390]) {
 
     await clickExpressionWithTrustedPointer(
       "[...document.querySelectorAll('main button')].find((button) => button.textContent?.trim() === 'Build' && !button.disabled)",
+      width < 768 ? "touch" : "mouse",
     );
     try {
       await waitForExpression("window.inspectorProof.walletRequests.some((request) => request.method === 'eth_sendTransaction')");
@@ -654,6 +660,7 @@ for (const width of [1280, 390]) {
       return {
         data: request?.params?.[0]?.data ?? null,
         from: request?.params?.[0]?.from ?? null,
+        interaction: window.inspectorProof.interactions.findLast((event) => event.type === 'pointerdown' && event.target === 'button:Build') ?? null,
         path: location.pathname,
         syncingPlanetfall: document.querySelector('main')?.textContent?.includes('Syncing planetfall') ?? false,
         to: request?.params?.[0]?.to ?? null,
@@ -662,6 +669,12 @@ for (const width of [1280, 390]) {
     assert.deepEqual(result, {
       data: "0x13aed9a2" + "0".repeat(63) + "1" + "0".repeat(64) + "0".repeat(63) + "1",
       from: "0x1111111111111111111111111111111111111111",
+      interaction: {
+        isTrusted: true,
+        pointerType: width < 768 ? "touch" : "mouse",
+        target: "button:Build",
+        type: "pointerdown",
+      },
       path: "/shipyard",
       syncingPlanetfall: false,
       to: "0x2222222222222222222222222222222222222222",

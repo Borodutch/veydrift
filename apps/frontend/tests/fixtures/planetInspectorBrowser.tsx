@@ -12,6 +12,7 @@ declare global {
       account: string;
       appReady: boolean;
       errors: string[];
+      interactions: Array<{ isTrusted: boolean; pointerType?: string; target: string; type: string }>;
       requests: string[];
       walletRequests: Array<{ method: string; params?: unknown[] }>;
       beginDetailRace(kind: "moon" | "planet"): void;
@@ -56,6 +57,7 @@ const publicSystems = new Map([
 const pendingDetailRequests = new Map<string, (response: Response) => void>();
 let detailRaceKind: "moon" | "planet" | null = null;
 const fixtureErrors: string[] = [];
+const fixtureInteractions: Array<{ isTrusted: boolean; pointerType?: string; target: string; type: string }> = [];
 const fixtureRequests: string[] = [];
 const walletRequests: Array<{ method: string; params?: unknown[] }> = [];
 const originalConsoleError = console.error;
@@ -65,6 +67,19 @@ console.error = (...values) => {
 };
 window.addEventListener("error", (event) => fixtureErrors.push(`window-error:${event.message}`));
 window.addEventListener("unhandledrejection", (event) => fixtureErrors.push(`unhandled:${event.reason?.stack ?? String(event.reason)}`));
+for (const type of ["pointerdown", "click"] as const) {
+  window.addEventListener(type, (event) => {
+    const target = event.target instanceof Element
+      ? `${event.target.tagName.toLowerCase()}:${event.target.textContent?.trim() ?? ""}`
+      : "unknown";
+    fixtureInteractions.push({
+      isTrusted: event.isTrusted,
+      ...(event instanceof PointerEvent ? { pointerType: event.pointerType } : {}),
+      target,
+      type,
+    });
+  }, { capture: true });
+}
 
 class FixtureEventSource extends EventTarget {
   close() {}
@@ -185,6 +200,7 @@ window.inspectorProof = {
   account,
   appReady: false,
   errors: fixtureErrors,
+  interactions: fixtureInteractions,
   requests: fixtureRequests,
   walletRequests,
   beginDetailRace(kind) {
