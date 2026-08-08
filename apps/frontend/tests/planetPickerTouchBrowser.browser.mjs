@@ -543,6 +543,20 @@ test("desktop sidebar first clicks commit Infrastructure and Shipyard routes", a
   await waitForExpression("location.pathname === '/shipyard' && document.querySelector('nav.hidden a[href=\"/shipyard\"][aria-current=\"page\"]') !== null");
 });
 
+test("desktop sidebar commits the reported Overview to Raid Finder and Shipyard to Mission Control routes", async () => {
+  await loadInspectorFixture("/", 1280);
+  await waitForExpression("location.pathname === '/' && document.querySelector('nav.hidden a[href=\"/\"][aria-current=\"page\"]') !== null");
+
+  await clickExpression("document.querySelector('nav.hidden a[href=\"/raid-finder\"]')");
+  await waitForExpression("location.pathname === '/raid-finder' && document.querySelector('nav.hidden a[href=\"/raid-finder\"][aria-current=\"page\"]') !== null");
+
+  await clickExpression("document.querySelector('nav.hidden a[href=\"/shipyard\"]')");
+  await waitForExpression("location.pathname === '/shipyard' && document.querySelector('nav.hidden a[href=\"/shipyard\"][aria-current=\"page\"]') !== null");
+
+  await clickExpression("document.querySelector('nav.hidden a[href=\"/mission-control\"]')");
+  await waitForExpression("location.pathname === '/mission-control' && document.querySelector('nav.hidden a[href=\"/mission-control\"][aria-current=\"page\"]') !== null");
+});
+
 test("mobile sidebar first clicks commit routes and close the menu", async () => {
   await loadInspectorFixture("/planet/9/9/9", 390);
   await waitForExpression("document.querySelector('main h2')?.textContent === 'Unrelated Gamma'");
