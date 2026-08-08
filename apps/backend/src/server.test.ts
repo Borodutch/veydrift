@@ -35,7 +35,7 @@ import { SettlementIndexer, type IndexedRpcLog } from "./indexer";
 import { MissionResolutionService } from "./missionResolution";
 import { watchedPlanetMessage } from "./playerProfiles";
 import { deriveInfrastructureFields } from "./readModels";
-import { backendBuildMetadata, ccaBidOwnerTopic, createRequestHandler, decodeCcaSubmittedBid, deriveLogBackfiller, readerBootstrapHealthResponse, runtimeConfigResponse, shouldRecoverFailedReconciliation } from "./server";
+import { backendBuildMetadata, ccaBidOwnerTopic, createRequestHandler, decodeCcaSubmittedBid, deriveLogBackfiller, readerBootstrapHealthResponse, rpcUnfinishedRequestReadiness, runtimeConfigResponse, shouldRecoverFailedReconciliation } from "./server";
 import { DEFAULT_MAX_WORKER_COUNT } from "./workerPool";
 
 setSystemTime(new Date(1_770_007_680_000));
@@ -111,6 +111,19 @@ test("decodes confirmed Uniswap CCA BidSubmitted logs", () => {
 test("uses the indexed bid owner topic when reading a connected wallet's CCA bids", () => {
   expect(ccaBidOwnerTopic(player)).toBe(`0x${"0".repeat(24)}${player.slice(2)}`);
 });
+
+test("RPC readiness fails closed on growing or stale unfinished requests", () => {
+  expect(rpcUnfinishedRequestReadiness([
+    { unfinishedHttpRequests: 2, oldestUnfinishedRequestAgeMs: 5_000 },
+    { unfinishedHttpRequests: 2, oldestUnfinishedRequestAgeMs: 2_000 }
+  ])).toEqual({ ready: false, unfinishedRequests: 4, oldestAgeMs: 5_000 });
+  expect(rpcUnfinishedRequestReadiness([
+    { unfinishedHttpRequests: 1, oldestUnfinishedRequestAgeMs: 30_001 }
+  ])).toEqual({ ready: false, unfinishedRequests: 1, oldestAgeMs: 30_001 });
+  expect(rpcUnfinishedRequestReadiness([
+    { unfinishedHttpRequests: 1, oldestUnfinishedRequestAgeMs: 500 }
+  ])).toEqual({ ready: true, unfinishedRequests: 1, oldestAgeMs: 500 });
+});
 const fleetMissionReturnedTopic = "0xbb4a50257c10524783e403a4e0db9c4c3e9378c2e398ec5de34281be1aa97b06";
 const attackBattleResolvedTopic = "0xc0d98d89682d12d3fe90cd0786b9320015ab3950de5f4ae3f54ca0fe9b660d1b";
 const combatLossesTopic = "0xe31518e93e94d23864fa76375f560d4ef2b4288dca5a5f1204f71d1d363d3704";
@@ -124,6 +137,8 @@ const allianceProfileUpdatedTopic = "0x6cd70a2e9b3cebb75f35ae8c618b15036c7b0c425
 const allianceJoinRequestedTopic = "0x57dc0d6d966259dfce732817e0ad98a199174482159ce86fec64334a407ed2b5";
 const allianceJoinedTopic = "0x966912f1fd05e1765f8d822e0db01e534676a830ea4b161fc254f4e63f0324eb";
 const allianceDiplomacyUpdatedTopic = "0x3df4b2aa5708b43ef1805908826beae5c9a30fb60b1952ad99ce3444b2eec6da";
+const paidAllianceInvitePurchasedTopic = "0x044d47943b4c703fffb74230521077d9baeb2977f8c12a23c79e60169ba20b41";
+const allianceProductionBonusAccruedTopic = "0xc5911d6b2b795502459a9b1187d319db5d0d697f8278617b8f9b240c8892108b";
 
 function expectedBackendGitSha(): string | null {
   return process.env.SOURCE_VERSION?.trim()
@@ -859,6 +874,7 @@ describe("Veydrift backend", () => {
         migrationContractConfigured: false,
         randomnessEngineConfigured: false,
         randomnessCommitterConfigured: false,
+        paidAllianceInviteIndexFromBlock: null,
         referralIndexFromBlock: "0",
         referralSignerConfigured: false,
         gameContractConfigured: false,
@@ -884,7 +900,10 @@ describe("Veydrift backend", () => {
         subscribedToLogs: null,
         indexedState: null,
         safeToServeIndexedState: null,
-        missionResolutionStatus: null
+        missionResolutionStatus: null,
+        rpcOldestUnfinishedRequestAgeMs: null,
+        rpcUnfinishedRequestGrowthDetected: false,
+        rpcUnfinishedRequests: 0
       },
       chainSync: null,
       indexer: null,
@@ -897,6 +916,7 @@ describe("Veydrift backend", () => {
       },
       rpc: null,
       chainSyncRpc: null,
+      paidAllianceRpc: null,
       ok: false,
       service: "veydrift-backend"
     });
@@ -5769,6 +5789,94 @@ describe("Veydrift backend", () => {
         { allianceId: "1", requester: applicant, requesterTotalScore: "0", requestedAt: "1770003000" }
       ]
     });
+  });
+
+  test("serves 10-worker-equivalent Alliance GET bursts from SQLite across former cache expiry", async () => {
+    const chainReader = new class extends MockChainReader {
+      override async getAllianceState(): Promise<AllianceState> {
+        throw new Error("Alliance GET must not call the chain reader");
+      }
+    }();
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    indexer.applyLog({
+      blockNumber: "0x90",
+      blockTimestamp: "0x69801c80",
+      transactionHash: "0xalliance-create",
+      logIndex: "0x0",
+      topics: [allianceCreatedTopic, topic(1n), addressTopic(player)],
+      data: abiStrings("VEY", "Veydrift Command")
+    });
+    indexer.applyLog({
+      blockNumber: "0x91",
+      blockTimestamp: "0x69801c81",
+      transactionHash: "0xalliance-owner",
+      logIndex: "0x0",
+      topics: [allianceJoinedTopic, topic(1n), addressTopic(player)],
+      data: abiWords(3n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x92",
+      transactionHash: "0xpaid-buy",
+      logIndex: "0x0",
+      topics: [paidAllianceInvitePurchasedTopic, topic(11n), topic(1n), addressTopic(player)],
+      data: abiWords(6_000_000_000_000_000n, 1_770_000_000n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x93",
+      transactionHash: "0xpaid-accrue",
+      logIndex: "0x0",
+      topics: [allianceProductionBonusAccruedTopic, topic(1n), addressTopic(player)],
+      data: abiWords(100n, 50n, 25n)
+    });
+    let explicitPostReads = 0;
+    const handler = createRequestHandler({
+      config: {
+        ...configuredTestConfig,
+        paidAllianceInviteAddress: "0x5555555555555555555555555555555555555555",
+        paidAllianceInviteIndexFromBlock: 140n
+      },
+      chainReader,
+      indexer,
+      paidAllianceInviteReader: {
+        async invite() {
+          explicitPostReads += 1;
+          throw new Error("GET must not read invite(commitment)");
+        },
+        async canRecoverAllianceInvites() {
+          explicitPostReads += 1;
+          throw new Error("GET must not read alliance membership");
+        }
+      }
+    });
+    const exerciseBurst = async () => Promise.all(Array.from({ length: 10 }, async () => {
+      const [walletResponse, profileResponse] = await Promise.all([
+        handler(new Request(`http://localhost/wallet/${player}/alliance`)),
+        handler(new Request("http://localhost/alliance/1"))
+      ]);
+      expect(walletResponse.status).toBe(200);
+      expect(profileResponse.status).toBe(200);
+      return [await walletResponse.json(), await profileResponse.json()];
+    }));
+
+    try {
+      const first = await exerciseBurst();
+      setSystemTime(new Date(1_770_007_700_000));
+      const afterFormerCacheExpiry = await exerciseBurst();
+      for (const [walletBody, profileBody] of [...first, ...afterFormerCacheExpiry]) {
+        expect(walletBody.profile).toMatchObject({
+          bonusBalance: { metal: "100", crystal: "50", deuterium: "25" },
+          privateInviteStats: { remaining: 1, used: 0 }
+        });
+        expect(profileBody.alliance).toMatchObject({
+          bonusBalance: { metal: "100", crystal: "50", deuterium: "25" },
+          privateInviteStats: { remaining: 1, used: 0 }
+        });
+      }
+      expect(explicitPostReads).toBe(0);
+    } finally {
+      setSystemTime(new Date(1_770_007_680_000));
+    }
   });
 
   test("serves reconciled Alliance state while unrelated indexed state is stale", async () => {

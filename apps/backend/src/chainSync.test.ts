@@ -23,7 +23,10 @@ const fleetMissionReturnedTopic = "0xbb4a50257c10524783e403a4e0db9c4c3e9378c2e39
 const referralInviteWindowActivatedTopic = "0xd51c9643dafa95fcfa30d65f2b6576bc03873e2630d73fc523daf87a7158d589";
 const referralInviteRedeemedTopic = "0xf0e76a5aa6e423f978c7616fd6933b5d376a32654fc67c6fad0afdbc744ccce1";
 const referralRewardClaimedTopic = "0x55b0859d9094fa40dfdcbcdd82c0d785132f6a627b6083e228d6bddb5e498558";
+const paidAllianceInvitePurchasedTopic = "0x044d47943b4c703fffb74230521077d9baeb2977f8c12a23c79e60169ba20b41";
+const allianceProductionBonusAccruedTopic = "0xc5911d6b2b795502459a9b1187d319db5d0d697f8278617b8f9b240c8892108b";
 const referralAddress = "0x4444444444444444444444444444444444444444" as const;
+const paidAllianceInviteAddress = "0x5555555555555555555555555555555555555555" as const;
 
 function topicWord(value: bigint): string {
   return `0x${value.toString(16).padStart(64, "0")}`;
@@ -86,9 +89,11 @@ class MockBackfiller {
   failoverReasons: string[] = [];
   ranges: Array<{ from: bigint; to: bigint | "latest" }> = [];
   referralRanges: Array<{ from: bigint; to: bigint | "latest" }> = [];
+  paidAllianceInviteRanges: Array<{ from: bigint; to: bigint | "latest" }> = [];
   headCalls = 0;
   logsFor: (from: bigint, to: bigint | "latest") => TestLog[];
   referralLogsFor: (from: bigint, to: bigint | "latest") => TestLog[] = () => [];
+  paidAllianceInviteLogsFor: (from: bigint, to: bigint | "latest") => TestLog[] = () => [];
 
   constructor(head: bigint, logsFor: (from: bigint, to: bigint | "latest") => TestLog[] = () => []) {
     this.head = head;
@@ -111,6 +116,12 @@ class MockBackfiller {
     this.referralRanges.push({ from, to });
     if (this.logsError) throw this.logsError;
     return this.referralLogsFor(from, to);
+  }
+
+  async listPaidAllianceInviteLogs(from: bigint, to: bigint | "latest" = "latest"): Promise<RpcLog[]> {
+    this.paidAllianceInviteRanges.push({ from, to });
+    if (this.logsError) throw this.logsError;
+    return this.paidAllianceInviteLogsFor(from, to);
   }
 
   failoverRpc(reason: string): boolean {
@@ -789,6 +800,73 @@ describe("ChainSyncService (polling)", () => {
       marker: { contractAddress: replacementAddress, fromBlock: "140", throughBlock: "182" }
     });
     service.stop();
+  });
+
+  test("single-flights paid alliance invite history from its deployment block and persists completion", async () => {
+    const database = new Database(":memory:");
+    const reader = {
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents(): Promise<SettledPlanetEvent[]> { return []; }
+    };
+    const indexer = new SettlementIndexer(reader, 100n, { database });
+    const paidConfig: BackendConfig = {
+      ...config,
+      paidAllianceInviteAddress,
+      paidAllianceInviteIndexFromBlock: 150n
+    };
+    const backfiller = new MockBackfiller(182n);
+    backfiller.paidAllianceInviteLogsFor = () => [
+      {
+        address: paidAllianceInviteAddress,
+        blockNumber: "0x98",
+        transactionHash: "0xpaid-buy",
+        logIndex: "0x0",
+        topics: [paidAllianceInvitePurchasedTopic, topicWord(1n), topicWord(7n), ownerTopic(player)],
+        data: abiWords(6_000_000_000_000_000n, 1_770_000_000n)
+      },
+      {
+        address: paidAllianceInviteAddress,
+        blockNumber: "0x99",
+        transactionHash: "0xpaid-accrue",
+        logIndex: "0x0",
+        topics: [allianceProductionBonusAccruedTopic, topicWord(7n), ownerTopic(player)],
+        data: abiWords(10n, 20n, 30n)
+      }
+    ];
+    const service = new ChainSyncService(paidConfig, indexer, { logBackfiller: backfiller });
+
+    await Promise.all(Array.from({ length: 10 }, () => service.poll()));
+
+    expect(backfiller.paidAllianceInviteRanges).toEqual([{ from: 150n, to: 182n }]);
+    expect(indexer.paidAllianceInviteSummaries().get("7")).toEqual({
+      bonusBalance: { metal: "10", crystal: "20", deuterium: "30" },
+      pendingBonusBalance: { metal: "0", crystal: "0", deuterium: "0" },
+      privateInviteStats: { remaining: 1, used: 0 }
+    });
+    expect(service.snapshot()).toMatchObject({
+      connected: true,
+      paidAllianceInviteHistoryBackfill: {
+        contractAddress: paidAllianceInviteAddress,
+        fromBlock: "150",
+        inProgress: false,
+        lastError: null,
+        throughBlock: "182"
+      }
+    });
+    service.stop();
+
+    const restartedIndexer = new SettlementIndexer(reader, 100n, { database, runStartupBackfill: false });
+    const restartBackfiller = new MockBackfiller(182n);
+    const restarted = new ChainSyncService(paidConfig, restartedIndexer, { logBackfiller: restartBackfiller });
+    await restarted.poll();
+    expect(restartBackfiller.paidAllianceInviteRanges).toEqual([]);
+    expect(restartedIndexer.paidAllianceInviteSummaries().get("7")?.bonusBalance).toEqual({
+      metal: "10",
+      crystal: "20",
+      deuterium: "30"
+    });
+    restarted.stop();
   });
 
   test("keeps readiness disconnected and retries when referral history backfill fails", async () => {

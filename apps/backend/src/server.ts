@@ -363,7 +363,10 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
   const loaded = dependencies.config ? { config: dependencies.config, problems: dependencies.configProblems ?? [] } : loadBackendConfig();
   const rawChainReader =
     dependencies.chainReader ??
-    (loaded.problems.length === 0 ? new VeydriftGameReader(loaded.config, undefined, { hydrateQueueStartedAt: false }) : undefined);
+    (loaded.problems.length === 0 ? new VeydriftGameReader(loaded.config, undefined, {
+      hydrateQueueStartedAt: false,
+      rpcCallSource: "api-explicit-live-read"
+    }) : undefined);
   const cacheReader = rawChainReader && !dependencies.chainReader ? new CachedChainReader(rawChainReader) : undefined;
   const chainReader = cacheReader ?? rawChainReader;
   // Public CCA state is intentionally served from the backend's configured Base
@@ -373,14 +376,18 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
   const ccaRpc = loaded.problems.length === 0 && rpcUrlsForConfig(loaded.config).length > 0
     ? new HttpJsonRpcTransport(rpcUrlsForConfig(loaded.config), {
       cacheTtlMs: 4_000,
-      minRequestIntervalMs: 0
+      minRequestIntervalMs: 0,
+      source: "cca-public-read"
     })
     : undefined;
   const indexerChainReader =
     dependencies.chainReader
       ? chainReader
       : loaded.problems.length === 0
-        ? new VeydriftGameReader(loaded.config, undefined, { hydrateQueueStartedAt: false })
+        ? new VeydriftGameReader(loaded.config, undefined, {
+          hydrateQueueStartedAt: false,
+          rpcCallSource: "indexer-explicit-rebuild"
+        })
         : undefined;
   const logBackfillChainReader =
     dependencies.chainReader
@@ -390,7 +397,8 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           loaded.config,
           new HttpJsonRpcTransport(rpcUrlsForConfig(loaded.config), {
             cacheTtlMs: 0,
-            minRequestIntervalMs: 0
+            minRequestIntervalMs: 0,
+            source: "chain-sync"
           }),
           { hydrateQueueStartedAt: false }
         )
@@ -547,7 +555,12 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         loaded.problems,
         chainSyncSnapshot,
         indexerSnapshot,
-        missionResolutionSnapshot
+        missionResolutionSnapshot,
+        [
+          chainReader?.rpcMetrics?.(),
+          logBackfiller?.rpcMetrics?.(),
+          paidAllianceInviteReader?.rpcMetrics?.()
+        ]
       );
       const randomnessReadiness = currentRandomnessReadiness(
         loaded.config.randomnessCommitmentStorePath,
@@ -568,6 +581,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           indexer: indexerSnapshot,
           rpc: chainReader?.rpcMetrics?.() ?? null,
           chainSyncRpc: logBackfiller?.rpcMetrics?.() ?? null,
+          paidAllianceRpc: paidAllianceInviteReader?.rpcMetrics?.() ?? null,
           randomnessReadiness
         } satisfies HealthPayload & Record<string, unknown>,
         {
@@ -1596,7 +1610,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
       try {
         assertAddress(wallet);
-        return await indexedAllianceResponse(wallet, indexer, paidAllianceInviteReader);
+        return indexedAllianceResponse(wallet, indexer, Boolean(loaded.config.paidAllianceInviteAddress));
       } catch (error) {
         return errorResponse(error, 400);
       }
@@ -1618,22 +1632,15 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
             { headers: indexedStateHeaders(indexedStateLabel(snapshot)), status: 404 }
           );
         }
-        const [bonusBalance, inviteCounts] = await Promise.all([
-          paidAllianceInviteReader?.bonusBalance
-            ? paidAllianceInviteReader.bonusBalance(BigInt(allianceId))
-            : null,
-          paidAllianceInviteReader?.inviteCounts
-            ? paidAllianceInviteReader.inviteCounts()
-            : null,
-        ]);
+        const paidInviteSummary = loaded.config.paidAllianceInviteAddress
+          ? indexer.paidAllianceInviteSummaries().get(allianceId) ?? emptyPaidAllianceInviteSummary()
+          : null;
         return Response.json(
           {
             alliance: {
               ...alliance,
-              bonusBalance: serializeAllianceBonusBalance(bonusBalance),
-              privateInviteStats: inviteCounts
-                ? inviteCounts.get(allianceId) ?? { remaining: 0, used: 0 }
-                : null,
+              bonusBalance: paidInviteSummary?.bonusBalance ?? null,
+              privateInviteStats: paidInviteSummary?.privateInviteStats ?? null,
             },
             source: indexedSource
           },
@@ -2055,6 +2062,7 @@ export function deriveLogBackfiller(
       getHeadBlock: () => Promise<bigint>;
       listContractLogs: (fromBlock: bigint, toBlock?: bigint | "latest") => Promise<RpcLog[]>;
       listReferralLogs?: (fromBlock: bigint, toBlock?: bigint | "latest") => Promise<RpcLog[]>;
+      listPaidAllianceInviteLogs?: (fromBlock: bigint, toBlock?: bigint | "latest") => Promise<RpcLog[]>;
       rpcMetrics?: () => unknown;
     }
   | undefined {
@@ -2069,6 +2077,9 @@ export function deriveLogBackfiller(
       listContractLogs: reader.listContractLogs.bind(reader),
       ...(typeof reader.listReferralLogs === "function"
         ? { listReferralLogs: reader.listReferralLogs.bind(reader) }
+        : {}),
+      ...(typeof reader.listPaidAllianceInviteLogs === "function"
+        ? { listPaidAllianceInviteLogs: reader.listPaidAllianceInviteLogs.bind(reader) }
         : {}),
       ...(typeof reader.rpcMetrics === "function" ? { rpcMetrics: reader.rpcMetrics.bind(reader) } : {})
     };
@@ -5658,44 +5669,37 @@ function indexedRiftTargetsResponse(indexer: SettlementIndexer | undefined, url:
   );
 }
 
-async function indexedAllianceResponse(
+function indexedAllianceResponse(
   wallet: `0x${string}`,
   indexer: SettlementIndexer | undefined,
-  paidInviteReader?: PaidAllianceInviteReader,
-): Promise<Response> {
+  paidAllianceInvitesConfigured = false,
+): Response {
   if (!hasWarmAllianceIndex(indexer)) {
     return indexedReadNotReadyResponse("alliance", indexer, { wallet });
   }
 
   const snapshot = indexer.snapshot();
   const state = indexer.allianceState(wallet);
-  const balances = new Map<string, ReturnType<typeof serializeAllianceBonusBalance>>();
-  const inviteCounts = paidInviteReader?.inviteCounts
-    ? await paidInviteReader.inviteCounts().catch(() => null)
+  const paidInviteSummaries = paidAllianceInvitesConfigured
+    ? indexer.paidAllianceInviteSummaries()
     : null;
-  if (paidInviteReader?.bonusBalance) {
-    await Promise.all(state.directory.map(async ({ allianceId }) => {
-      try {
-        const balance = await paidInviteReader.bonusBalance!(BigInt(allianceId));
-        balances.set(allianceId, serializeAllianceBonusBalance(balance));
-      } catch {
-        balances.set(allianceId, null);
-      }
-    }));
-  }
   const directory = state.directory.map((alliance) => ({
     ...alliance,
-    bonusBalance: balances.get(alliance.allianceId) ?? null,
-    privateInviteStats: inviteCounts
-      ? inviteCounts.get(alliance.allianceId) ?? { remaining: 0, used: 0 }
+    bonusBalance: paidInviteSummaries
+      ? (paidInviteSummaries.get(alliance.allianceId) ?? emptyPaidAllianceInviteSummary()).bonusBalance
+      : null,
+    privateInviteStats: paidInviteSummaries
+      ? (paidInviteSummaries.get(alliance.allianceId) ?? emptyPaidAllianceInviteSummary()).privateInviteStats
       : null,
   }));
   const profile = state.profile
     ? {
         ...state.profile,
-        bonusBalance: balances.get(state.membership.allianceId) ?? null,
-        privateInviteStats: inviteCounts
-          ? inviteCounts.get(state.membership.allianceId) ?? { remaining: 0, used: 0 }
+        bonusBalance: paidInviteSummaries
+          ? (paidInviteSummaries.get(state.membership.allianceId) ?? emptyPaidAllianceInviteSummary()).bonusBalance
+          : null,
+        privateInviteStats: paidInviteSummaries
+          ? (paidInviteSummaries.get(state.membership.allianceId) ?? emptyPaidAllianceInviteSummary()).privateInviteStats
           : null,
       }
     : null;
@@ -5714,16 +5718,12 @@ async function indexedAllianceResponse(
   );
 }
 
-function serializeAllianceBonusBalance(
-  balance: { metal: bigint; crystal: bigint; deuterium: bigint } | null | undefined,
-) {
-  return balance
-    ? {
-        metal: balance.metal.toString(),
-        crystal: balance.crystal.toString(),
-        deuterium: balance.deuterium.toString(),
-      }
-    : null;
+function emptyPaidAllianceInviteSummary() {
+  return {
+    bonusBalance: { metal: "0", crystal: "0", deuterium: "0" },
+    pendingBonusBalance: { metal: "0", crystal: "0", deuterium: "0" },
+    privateInviteStats: { remaining: 0, used: 0 }
+  };
 }
 
 function indexedAttackProtectionResponse(
@@ -5869,6 +5869,7 @@ function backendReadiness(
   chainSyncSnapshot: unknown,
   indexerSnapshot: unknown,
   missionResolutionSnapshot: unknown,
+  rpcSnapshots: unknown[] = [],
 ): {
   ready: boolean;
   degraded: boolean;
@@ -5880,6 +5881,9 @@ function backendReadiness(
   indexedState: string | null;
   safeToServeIndexedState: boolean | null;
   missionResolutionStatus: string | null;
+  rpcUnfinishedRequests: number;
+  rpcOldestUnfinishedRequestAgeMs: number | null;
+  rpcUnfinishedRequestGrowthDetected: boolean;
 } {
   const chainSyncConnected = booleanSnapshotField(chainSyncSnapshot, "connected");
   const subscribedToHeads = booleanSnapshotField(chainSyncSnapshot, "subscribedToHeads");
@@ -5889,15 +5893,19 @@ function backendReadiness(
   const missionResolutionStatus = stringSnapshotField(missionResolutionSnapshot, "healthStatus");
   const missionResolutionWarnings = stringArraySnapshotField(missionResolutionSnapshot, "healthWarnings");
   const configurationReady = problems.length === 0;
+  const rpcReadiness = rpcUnfinishedRequestReadiness(rpcSnapshots);
+  const degradationReasons = [...missionResolutionWarnings];
+  if (!rpcReadiness.ready) degradationReasons.push("Upstream RPC unfinished requests are growing or stale.");
 
   return {
     ready: configurationReady
       && chainSyncConnected !== false
       && subscribedToHeads !== false
       && subscribedToLogs !== false
-      && safeToServeIndexedState !== false,
-    degraded: missionResolutionStatus === "degraded",
-    degradationReasons: missionResolutionWarnings,
+      && safeToServeIndexedState !== false
+      && rpcReadiness.ready,
+    degraded: missionResolutionStatus === "degraded" || !rpcReadiness.ready,
+    degradationReasons,
     configurationReady,
     chainSyncConnected,
     subscribedToHeads,
@@ -5905,6 +5913,36 @@ function backendReadiness(
     indexedState,
     safeToServeIndexedState,
     missionResolutionStatus,
+    rpcUnfinishedRequests: rpcReadiness.unfinishedRequests,
+    rpcOldestUnfinishedRequestAgeMs: rpcReadiness.oldestAgeMs,
+    rpcUnfinishedRequestGrowthDetected: !rpcReadiness.ready,
+  };
+}
+
+export function rpcUnfinishedRequestReadiness(
+  snapshots: unknown[],
+  options: { maxUnfinished?: number; maxAgeMs?: number } = {}
+): { ready: boolean; unfinishedRequests: number; oldestAgeMs: number | null } {
+  const maxUnfinished = options.maxUnfinished ?? 3;
+  const maxAgeMs = options.maxAgeMs ?? 30_000;
+  let unfinishedRequests = 0;
+  let oldestAgeMs: number | null = null;
+  for (const snapshot of snapshots) {
+    if (!snapshot || typeof snapshot !== "object") continue;
+    const record = snapshot as Record<string, unknown>;
+    const unfinished = typeof record.unfinishedHttpRequests === "number"
+      ? Math.max(0, record.unfinishedHttpRequests)
+      : 0;
+    const age = typeof record.oldestUnfinishedRequestAgeMs === "number"
+      ? Math.max(0, record.oldestUnfinishedRequestAgeMs)
+      : null;
+    unfinishedRequests += unfinished;
+    if (age !== null) oldestAgeMs = oldestAgeMs === null ? age : Math.max(oldestAgeMs, age);
+  }
+  return {
+    ready: unfinishedRequests <= maxUnfinished && (oldestAgeMs === null || oldestAgeMs <= maxAgeMs),
+    unfinishedRequests,
+    oldestAgeMs
   };
 }
 

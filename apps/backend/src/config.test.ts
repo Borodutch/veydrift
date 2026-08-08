@@ -119,6 +119,29 @@ describe("backend config", () => {
     expect(safeConfigSummary(replacement.config).referralIndexFromBlock).toBe("48689000");
   });
 
+  test("requires and exposes the paid alliance invite deployment block", () => {
+    const paidInviteEnv = {
+      VEYDRIFT_GAME_CONTRACT_ADDRESS: "0x3333333333333333333333333333333333333333",
+      VEYDRIFT_RPC_URL: "https://example.invalid/rpc",
+      VEYDRIFT_PAID_ALLIANCE_INVITE_ADDRESS: "0x5555555555555555555555555555555555555555",
+      VEYDRIFT_PAID_ALLIANCE_INVITE_SIGNER_PRIVATE_KEY: `0x${"11".repeat(32)}`,
+      VEYDRIFT_PAID_ALLIANCE_INVITE_ENCRYPTION_KEY: `0x${"22".repeat(32)}`
+    };
+    const missingBoundary = loadBackendConfig(paidInviteEnv);
+    expect(missingBoundary.problems).toContainEqual({
+      field: "VEYDRIFT_PAID_ALLIANCE_INVITE_INDEX_FROM_BLOCK",
+      message: "Paid alliance invite configuration requires the invite contract deployment block."
+    });
+
+    const configured = loadBackendConfig({
+      ...paidInviteEnv,
+      VEYDRIFT_PAID_ALLIANCE_INVITE_INDEX_FROM_BLOCK: "48900000"
+    });
+    expect(configured.problems).toEqual([]);
+    expect(configured.config.paidAllianceInviteIndexFromBlock).toBe(48_900_000n);
+    expect(safeConfigSummary(configured.config).paidAllianceInviteIndexFromBlock).toBe("48900000");
+  });
+
   test("accepts a static settlement start price for RPC-free funding reads", () => {
     const result = loadBackendConfig({
       VEYDRIFT_GAME_CONTRACT_ADDRESS: "0x3333333333333333333333333333333333333333",
