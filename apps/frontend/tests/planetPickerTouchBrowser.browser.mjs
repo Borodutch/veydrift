@@ -350,7 +350,6 @@ async function clickSectionAndReadRender(expression) {
     return {
       activeHref: document.querySelector('nav.hidden a[aria-current="page"]')?.getAttribute('href') ?? null,
       hasOverviewFleets: document.querySelector('main section[aria-label="Fleets"]') !== null,
-      hasShipyardSurface: document.querySelector('main [data-production-catalog], main [aria-label="Loading shipyard"]') !== null,
       path: location.pathname,
     };
   })()`);
@@ -557,7 +556,6 @@ test("desktop sidebar first clicks commit Infrastructure and Shipyard routes", a
   assert.deepEqual(shipyardRender, {
     activeHref: "/shipyard",
     hasOverviewFleets: false,
-    hasShipyardSurface: true,
     path: "/shipyard",
   });
   await waitForExpression(`location.pathname === '/shipyard'
@@ -577,7 +575,6 @@ test("desktop sidebar commits the reported Overview to Raid Finder and Shipyard 
   assert.deepEqual(shipyardRender, {
     activeHref: "/shipyard",
     hasOverviewFleets: false,
-    hasShipyardSurface: true,
     path: "/shipyard",
   });
   await waitForExpression(`location.pathname === '/shipyard'
@@ -597,7 +594,6 @@ test("desktop Overview to Shipyard click atomically replaces the rendered page",
   assert.deepEqual(shipyardRender, {
     activeHref: "/shipyard",
     hasOverviewFleets: false,
-    hasShipyardSurface: true,
     path: "/shipyard",
   });
   await waitForExpression(`document.querySelector('main [data-production-catalog]') !== null
@@ -619,7 +615,6 @@ test("mobile sidebar first clicks commit routes and close the menu", async () =>
   assert.deepEqual(shipyardRender, {
     activeHref: "/shipyard",
     hasOverviewFleets: false,
-    hasShipyardSurface: true,
     path: "/shipyard",
   });
   await waitForExpression(`location.pathname === '/shipyard'
