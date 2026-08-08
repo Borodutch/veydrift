@@ -19,6 +19,7 @@ import type { BackendConfig } from "./config";
 export const paidAllianceInviteSecretPattern = /^0x[0-9a-fA-F]{64}$/;
 export const paidAllianceAuthorizationLifetimeSeconds = 10 * 60;
 const paidAllianceInviteSecretRecordVersion = "Veydrift paid alliance invite secret v1";
+const paidAllianceInviteLogChunkSpan = 90_000n;
 
 const paidAllianceInvitePurchasedEvent = {
   type: "event",
@@ -142,6 +143,22 @@ export function aggregatePaidAllianceInviteCounts(
     });
   }
   return counts;
+}
+
+export function paidAllianceInviteLogRanges(
+  fromBlock: bigint,
+  toBlock: bigint,
+  maxSpan = paidAllianceInviteLogChunkSpan,
+): Array<{ fromBlock: bigint; toBlock: bigint }> {
+  if (toBlock < fromBlock) return [];
+  const ranges: Array<{ fromBlock: bigint; toBlock: bigint }> = [];
+  for (let start = fromBlock; start <= toBlock; start += maxSpan + 1n) {
+    ranges.push({
+      fromBlock: start,
+      toBlock: start + maxSpan > toBlock ? toBlock : start + maxSpan,
+    });
+  }
+  return ranges;
 }
 
 type EncryptedInviteRecord = {
@@ -395,19 +412,19 @@ export function createPaidAllianceInviteReader(config: BackendConfig): PaidAllia
     async inviteCounts() {
       const now = Date.now();
       if (inviteCountsCache && inviteCountsCache.expiresAt > now) return inviteCountsCache.value;
+      const head = await client.getBlockNumber();
+      const ranges = paidAllianceInviteLogRanges(config.indexFromBlock, head);
       const [purchasedLogs, redeemedLogs] = await Promise.all([
-        client.getLogs({
+        Promise.all(ranges.map((range) => client.getLogs({
           address: config.paidAllianceInviteAddress!,
           event: paidAllianceInvitePurchasedEvent,
-          fromBlock: config.indexFromBlock,
-          toBlock: "latest",
-        }),
-        client.getLogs({
+          ...range,
+        }))).then((chunks) => chunks.flat()),
+        Promise.all(ranges.map((range) => client.getLogs({
           address: config.paidAllianceInviteAddress!,
           event: paidAllianceInviteRedeemedEvent,
-          fromBlock: config.indexFromBlock,
-          toBlock: "latest",
-        }),
+          ...range,
+        }))).then((chunks) => chunks.flat()),
       ]);
       const value = aggregatePaidAllianceInviteCounts(
         purchasedLogs.flatMap((log) => log.args.allianceId === undefined ? [] : [log.args.allianceId]),
