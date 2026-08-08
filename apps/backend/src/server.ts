@@ -1596,7 +1596,12 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
       try {
         assertAddress(wallet);
-        return await indexedAllianceResponse(wallet, indexer, paidAllianceInviteReader);
+        return indexedAllianceResponse(
+          wallet,
+          indexer,
+          loaded.config.paidAllianceInviteAddress,
+          loaded.config.indexFromBlock
+        );
       } catch (error) {
         return errorResponse(error, 400);
       }
@@ -1606,6 +1611,13 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       const allianceId = decodeURIComponent(url.pathname.split("/")[2] ?? "");
       try {
         if (!indexer) return indexedReadNotReadyResponse("alliance", indexer, { allianceId });
+        if (
+          loaded.config.paidAllianceInviteAddress
+          && indexer.paidAllianceHistoryBackfillStatus(
+            loaded.config.paidAllianceInviteAddress,
+            loaded.config.indexFromBlock
+          ).required
+        ) return indexedReadNotReadyResponse("paid alliance history", indexer, { allianceId });
         const snapshot = indexer.snapshot();
         const alliance = indexer.allianceProfile(allianceId);
         if (!alliance) {
@@ -1618,14 +1630,8 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
             { headers: indexedStateHeaders(indexedStateLabel(snapshot)), status: 404 }
           );
         }
-        const [bonusBalance, inviteCounts] = await Promise.all([
-          paidAllianceInviteReader?.bonusBalance
-            ? paidAllianceInviteReader.bonusBalance(BigInt(allianceId))
-            : null,
-          paidAllianceInviteReader?.inviteCounts
-            ? paidAllianceInviteReader.inviteCounts()
-            : null,
-        ]);
+        const bonusBalance = indexer.paidAllianceBonusBalance(allianceId);
+        const inviteCounts = indexer.paidAllianceInviteCounts();
         return Response.json(
           {
             alliance: {
@@ -2055,6 +2061,7 @@ export function deriveLogBackfiller(
       getHeadBlock: () => Promise<bigint>;
       listContractLogs: (fromBlock: bigint, toBlock?: bigint | "latest") => Promise<RpcLog[]>;
       listReferralLogs?: (fromBlock: bigint, toBlock?: bigint | "latest") => Promise<RpcLog[]>;
+      listPaidAllianceLogs?: (fromBlock: bigint, toBlock?: bigint | "latest") => Promise<RpcLog[]>;
       rpcMetrics?: () => unknown;
     }
   | undefined {
@@ -2069,6 +2076,9 @@ export function deriveLogBackfiller(
       listContractLogs: reader.listContractLogs.bind(reader),
       ...(typeof reader.listReferralLogs === "function"
         ? { listReferralLogs: reader.listReferralLogs.bind(reader) }
+        : {}),
+      ...(typeof reader.listPaidAllianceLogs === "function"
+        ? { listPaidAllianceLogs: reader.listPaidAllianceLogs.bind(reader) }
         : {}),
       ...(typeof reader.rpcMetrics === "function" ? { rpcMetrics: reader.rpcMetrics.bind(reader) } : {})
     };
@@ -5658,45 +5668,37 @@ function indexedRiftTargetsResponse(indexer: SettlementIndexer | undefined, url:
   );
 }
 
-async function indexedAllianceResponse(
+function indexedAllianceResponse(
   wallet: `0x${string}`,
   indexer: SettlementIndexer | undefined,
-  paidInviteReader?: PaidAllianceInviteReader,
-): Promise<Response> {
+  paidAllianceInviteAddress?: `0x${string}`,
+  paidAllianceIndexFromBlock?: bigint,
+): Response {
   if (!hasWarmAllianceIndex(indexer)) {
     return indexedReadNotReadyResponse("alliance", indexer, { wallet });
   }
+  if (
+    paidAllianceInviteAddress
+    && paidAllianceIndexFromBlock !== undefined
+    && indexer.paidAllianceHistoryBackfillStatus(
+      paidAllianceInviteAddress,
+      paidAllianceIndexFromBlock
+    ).required
+  ) return indexedReadNotReadyResponse("paid alliance history", indexer, { wallet });
 
   const snapshot = indexer.snapshot();
   const state = indexer.allianceState(wallet);
-  const balances = new Map<string, ReturnType<typeof serializeAllianceBonusBalance>>();
-  const inviteCounts = paidInviteReader?.inviteCounts
-    ? await paidInviteReader.inviteCounts().catch(() => null)
-    : null;
-  if (paidInviteReader?.bonusBalance) {
-    await Promise.all(state.directory.map(async ({ allianceId }) => {
-      try {
-        const balance = await paidInviteReader.bonusBalance!(BigInt(allianceId));
-        balances.set(allianceId, serializeAllianceBonusBalance(balance));
-      } catch {
-        balances.set(allianceId, null);
-      }
-    }));
-  }
+  const inviteCounts = indexer.paidAllianceInviteCounts();
   const directory = state.directory.map((alliance) => ({
     ...alliance,
-    bonusBalance: balances.get(alliance.allianceId) ?? null,
-    privateInviteStats: inviteCounts
-      ? inviteCounts.get(alliance.allianceId) ?? { remaining: 0, used: 0 }
-      : null,
+    bonusBalance: serializeAllianceBonusBalance(indexer.paidAllianceBonusBalance(alliance.allianceId)),
+    privateInviteStats: inviteCounts.get(alliance.allianceId) ?? { remaining: 0, used: 0 },
   }));
   const profile = state.profile
     ? {
         ...state.profile,
-        bonusBalance: balances.get(state.membership.allianceId) ?? null,
-        privateInviteStats: inviteCounts
-          ? inviteCounts.get(state.membership.allianceId) ?? { remaining: 0, used: 0 }
-          : null,
+        bonusBalance: serializeAllianceBonusBalance(indexer.paidAllianceBonusBalance(state.membership.allianceId)),
+        privateInviteStats: inviteCounts.get(state.membership.allianceId) ?? { remaining: 0, used: 0 },
       }
     : null;
   return indexedJsonResponse(

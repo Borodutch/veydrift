@@ -24,6 +24,8 @@ const referralInviteWindowActivatedTopic = "0xd51c9643dafa95fcfa30d65f2b6576bc03
 const referralInviteRedeemedTopic = "0xf0e76a5aa6e423f978c7616fd6933b5d376a32654fc67c6fad0afdbc744ccce1";
 const referralRewardClaimedTopic = "0x55b0859d9094fa40dfdcbcdd82c0d785132f6a627b6083e228d6bddb5e498558";
 const referralAddress = "0x4444444444444444444444444444444444444444" as const;
+const paidAllianceInvitePurchasedTopic = "0x044d47943b4c703fffb74230521077d9baeb2977f8c12a23c79e60169ba20b41";
+const paidAllianceInviteAddress = "0x7777777777777777777777777777777777777777" as const;
 
 function topicWord(value: bigint): string {
   return `0x${value.toString(16).padStart(64, "0")}`;
@@ -86,9 +88,11 @@ class MockBackfiller {
   failoverReasons: string[] = [];
   ranges: Array<{ from: bigint; to: bigint | "latest" }> = [];
   referralRanges: Array<{ from: bigint; to: bigint | "latest" }> = [];
+  paidAllianceRanges: Array<{ from: bigint; to: bigint | "latest" }> = [];
   headCalls = 0;
   logsFor: (from: bigint, to: bigint | "latest") => TestLog[];
   referralLogsFor: (from: bigint, to: bigint | "latest") => TestLog[] = () => [];
+  paidAllianceLogsFor: (from: bigint, to: bigint | "latest") => TestLog[] = () => [];
 
   constructor(head: bigint, logsFor: (from: bigint, to: bigint | "latest") => TestLog[] = () => []) {
     this.head = head;
@@ -111,6 +115,12 @@ class MockBackfiller {
     this.referralRanges.push({ from, to });
     if (this.logsError) throw this.logsError;
     return this.referralLogsFor(from, to);
+  }
+
+  async listPaidAllianceLogs(from: bigint, to: bigint | "latest" = "latest"): Promise<RpcLog[]> {
+    this.paidAllianceRanges.push({ from, to });
+    if (this.logsError) throw this.logsError;
+    return this.paidAllianceLogsFor(from, to);
   }
 
   failoverRpc(reason: string): boolean {
@@ -209,6 +219,138 @@ describe("ChainSyncService (polling)", () => {
       settlementContractAddress,
       migrationContractAddress
     ]);
+  });
+
+  test("subscribes to paid alliance invite logs", () => {
+    const service = new ChainSyncService(
+      { ...config, paidAllianceInviteAddress },
+      makeIndexer()
+    );
+
+    expect(service.snapshot().subscribedAddresses).toContain(paidAllianceInviteAddress);
+  });
+
+  test("backfills paid alliance history once even when the shared cursor is already ahead", async () => {
+    const database = new Database(":memory:");
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n, { database });
+    database.query("INSERT OR REPLACE INTO indexer_metadata (key, value) VALUES ('latestIndexedBlock', '180')").run();
+    const backfiller = new MockBackfiller(200n);
+    backfiller.paidAllianceLogsFor = () => [{
+      address: paidAllianceInviteAddress,
+      blockNumber: "0x96",
+      transactionHash: `0x${"77".repeat(32)}`,
+      logIndex: "0x0",
+      topics: [paidAllianceInvitePurchasedTopic, topicWord(123n), topicWord(4n), ownerTopic(player)],
+      data: abiWords(12_000_000_000_000_000n, 1_770_002_400n)
+    }];
+    const service = new ChainSyncService(
+      { ...config, paidAllianceInviteAddress },
+      indexer,
+      { logBackfiller: backfiller }
+    );
+
+    await service.poll();
+    await service.poll();
+
+    expect(backfiller.paidAllianceRanges).toEqual([{ from: 100n, to: 200n }]);
+    expect(indexer.paidAllianceInviteCounts().get("4")).toEqual({ remaining: 1, used: 0 });
+    expect(indexer.paidAllianceHistoryBackfillStatus(paidAllianceInviteAddress, 100n).required).toBe(false);
+    service.stop();
+    database.close();
+  });
+
+  test("removes a stored paid log that is absent from the canonical startup scan", async () => {
+    const indexer = makeIndexer();
+    indexer.applyLog({
+      address: paidAllianceInviteAddress,
+      blockNumber: "0x96",
+      transactionHash: `0x${"77".repeat(32)}`,
+      logIndex: "0x0",
+      topics: [paidAllianceInvitePurchasedTopic, topicWord(123n), topicWord(4n), ownerTopic(player)],
+      data: abiWords(12_000_000_000_000_000n, 1_770_002_400n)
+    });
+    expect(indexer.paidAllianceInviteCounts().get("4")).toEqual({ remaining: 1, used: 0 });
+    const backfiller = new MockBackfiller(200n);
+    const service = new ChainSyncService(
+      { ...config, paidAllianceInviteAddress },
+      indexer,
+      { logBackfiller: backfiller }
+    );
+
+    await service.poll();
+
+    expect(indexer.paidAllianceInviteCounts().get("4")).toBeUndefined();
+    service.stop();
+  });
+
+  test("periodically reconciles the paid history overlap to remove missed reorg logs", async () => {
+    const indexer = makeIndexer();
+    const purchase = {
+      address: paidAllianceInviteAddress,
+      blockNumber: "0x96",
+      transactionHash: `0x${"77".repeat(32)}`,
+      logIndex: "0x0",
+      topics: [paidAllianceInvitePurchasedTopic, topicWord(123n), topicWord(4n), ownerTopic(player)],
+      data: abiWords(12_000_000_000_000_000n, 1_770_002_400n)
+    };
+    const backfiller = new MockBackfiller(200n);
+    backfiller.paidAllianceLogsFor = () => [purchase];
+    const service = new ChainSyncService(
+      { ...config, paidAllianceInviteAddress },
+      indexer,
+      { logBackfiller: backfiller }
+    );
+
+    await service.poll();
+    expect(indexer.paidAllianceInviteCounts().get("4")).toEqual({ remaining: 1, used: 0 });
+
+    backfiller.head = 216n;
+    backfiller.paidAllianceLogsFor = () => [];
+    await service.poll();
+
+    expect(backfiller.paidAllianceRanges).toEqual([
+      { from: 100n, to: 200n },
+      { from: 136n, to: 216n }
+    ]);
+    expect(indexer.paidAllianceInviteCounts().get("4")).toBeUndefined();
+    service.stop();
+  });
+
+  test("keeps websocket readiness disconnected until paid history verification finishes", async () => {
+    const indexer = makeIndexer();
+    const backfiller = new MockBackfiller(0x180n);
+    let releasePaidHistory!: (logs: RpcLog[]) => void;
+    const paidHistoryBlocked = new Promise<RpcLog[]>((resolve) => {
+      releasePaidHistory = resolve;
+    });
+    backfiller.listPaidAllianceLogs = async (from, to = "latest") => {
+      backfiller.paidAllianceRanges.push({ from, to });
+      return await paidHistoryBlocked;
+    };
+    const liveLogs = new MockLiveLogSubscriber();
+    const service = new ChainSyncService(
+      { ...config, paidAllianceInviteAddress },
+      indexer,
+      { liveLogSubscriber: liveLogs, logBackfiller: backfiller }
+    );
+
+    service.start();
+    await waitFor(() => liveLogs.subscription !== null && service.snapshot().liveListenerConnected);
+    liveLogs.emit([{
+      ...planetStartedLog("0x181", 7n, "0xlive-before-paid-history"),
+      address: config.gameContractAddress!,
+      logIndex: "0x0"
+    }]);
+    await waitFor(() => indexer.snapshot().indexedPlanets === 1);
+    expect(service.snapshot().connected).toBe(false);
+
+    releasePaidHistory([]);
+    await waitFor(() => service.snapshot().connected);
+    service.stop();
   });
 
   test("closes an event stream when the request signal aborts", async () => {

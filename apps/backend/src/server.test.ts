@@ -5673,11 +5673,21 @@ describe("Veydrift backend", () => {
       data: abiWords(1n)
     });
 
-    const response = await createRequestHandler({
+    const paidAllianceInviteReader = {
+      async invite() {
+        throw new Error("Alliance GET routes must not read paid invite state from RPC");
+      },
+      async canRecoverAllianceInvites() {
+        throw new Error("Alliance GET routes must not read membership from RPC");
+      }
+    };
+    const handler = createRequestHandler({
       config: configuredTestConfig,
       chainReader,
-      indexer
-    })(new Request(`http://localhost/wallet/${player}/alliance`));
+      indexer,
+      paidAllianceInviteReader
+    });
+    const response = await handler(new Request(`http://localhost/wallet/${player}/alliance`));
     const body = await response.json();
 
     expect(response.status).toBe(200);
@@ -5740,11 +5750,20 @@ describe("Veydrift backend", () => {
       data: abiWords(1770003000n)
     });
 
-    const response = await createRequestHandler({
+    const handler = createRequestHandler({
       config: configuredTestConfig,
       chainReader,
-      indexer
-    })(new Request(`http://localhost/wallet/${player}/alliance`));
+      indexer,
+      paidAllianceInviteReader: {
+        async invite() {
+          throw new Error("Alliance GET routes must not read paid invite state from RPC");
+        },
+        async canRecoverAllianceInvites() {
+          throw new Error("Alliance GET routes must not read membership from RPC");
+        }
+      }
+    });
+    const response = await handler(new Request(`http://localhost/wallet/${player}/alliance`));
     const body = await response.json();
 
     expect(response.status).toBe(200);
@@ -5760,7 +5779,9 @@ describe("Veydrift backend", () => {
         name: "Veydrift Command",
         description: "Indexed alliance",
         owner: player,
-        memberCount: 1
+        memberCount: 1,
+        bonusBalance: { metal: "0", crystal: "0", deuterium: "0" },
+        privateInviteStats: { remaining: 0, used: 0 }
       },
       members: [
         { address: player, role: "owner", joinedAt: String(0x69801c81) }
@@ -5768,6 +5789,16 @@ describe("Veydrift backend", () => {
       allianceJoinRequests: [
         { allianceId: "1", requester: applicant, requesterTotalScore: "0", requestedAt: "1770003000" }
       ]
+    });
+
+    const directResponse = await handler(new Request("http://localhost/alliance/1"));
+    expect(directResponse.status).toBe(200);
+    expect(await directResponse.json()).toMatchObject({
+      alliance: {
+        allianceId: "1",
+        bonusBalance: { metal: "0", crystal: "0", deuterium: "0" },
+        privateInviteStats: { remaining: 0, used: 0 }
+      }
     });
   });
 

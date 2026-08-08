@@ -59,7 +59,11 @@ const allianceRoleUpdatedTopic = "0xe4ba1cf47cfd4ff05de8585bf5cb06e7b0856932c0d8
 const allianceOwnershipTransferredTopic = "0x68f6446f7a86cbeefdd42de0fd5fe8291d2183c90343d9a43c0cdc976e5a1617";
 const allianceDiplomacyUpdatedTopic = "0x3df4b2aa5708b43ef1805908826beae5c9a30fb60b1952ad99ce3444b2eec6da";
 const allianceWarSnapshotCapturedTopic = "0xaf7a44ebc296bed36b4a4227fcb39ea17aa1bf658f29f81ee820fbe8d204fed4";
+const paidAllianceInvitePurchasedTopic = "0x044d47943b4c703fffb74230521077d9baeb2977f8c12a23c79e60169ba20b41";
 const paidAllianceInviteRedeemedTopic = "0xc3eee853f2f234eb03ddcf83a4cb7e1704a5eb0cdb1ca01e9918b0a50632f8c9";
+const allianceProductionBonusAccruedTopic = "0xc5911d6b2b795502459a9b1187d319db5d0d697f8278617b8f9b240c8892108b";
+const allianceProductionBonusDeferredTopic = "0xe82def1976a6ab42c25df00bb3785db8815a556342aa738c1302f4da975c54c1";
+const allianceBonusWithdrawnTopic = "0x369bd7e76fd86a155ec571e2d405665938d7c74cc9b7fd3f5a6bef80d7b0cccb";
 const fleetMissionLaunchedTopic = "0x95e2cb506aa14052bac412e42f47fb34d9234819a960761a7bc7f1920c0ab456";
 const fleetMissionCargoTopic = "0x3daa6311ecdadad6781f70e5d285e7150f9dc165db88d23be8867be4de33ff29";
 const fleetMissionShipsTopic = "0xf581cbe97357884794500d80286cfbe823fed3b5d77446e477aa694ce89fc82d";
@@ -5175,6 +5179,14 @@ describe("SettlementIndexer", () => {
     indexer.applyLog({
       blockNumber: "0x94",
       blockTimestamp: "0x69801c84",
+      transactionHash: "0xpaid-invite-purchased",
+      logIndex: "0x0",
+      topics: [paidAllianceInvitePurchasedTopic, topic(123n), topic(1n), addressTopic(officer)],
+      data: abiWords(12_000_000_000_000_000n, 1770002400n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x94",
+      blockTimestamp: "0x69801c84",
       transactionHash: "0xalliance-invited-member",
       logIndex: "0x1",
       topics: [allianceJoinedTopic, topic(1n), addressTopic(invitee)],
@@ -5187,6 +5199,20 @@ describe("SettlementIndexer", () => {
       logIndex: "0x2",
       topics: [paidAllianceInviteRedeemedTopic, topic(123n), topic(1n), addressTopic(invitee)],
       data: `0x${officer.slice(2).padStart(64, "0")}${1770002500n.toString(16).padStart(64, "0")}`
+    });
+    indexer.applyLog({
+      blockNumber: "0x94",
+      transactionHash: "0xpaid-bonus-accrued",
+      logIndex: "0x3",
+      topics: [allianceProductionBonusAccruedTopic, topic(1n), addressTopic(invitee)],
+      data: abiWords(100n, 50n, 25n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x94",
+      transactionHash: "0xpaid-bonus-withdrawn",
+      logIndex: "0x4",
+      topics: [allianceBonusWithdrawnTopic, topic(1n), addressTopic(officer), topic(7n)],
+      data: abiWords(20n, 10n, 5n)
     });
     indexer.applyLog({
       blockNumber: "0x95",
@@ -5240,6 +5266,8 @@ describe("SettlementIndexer", () => {
     expect(indexer.allianceIntelForPlayers([player, applicant])).toEqual(new Map([
       [player, { allianceId: "1", tag: "VEY", name: "Veydrift Command" }]
     ]));
+    expect(indexer.paidAllianceInviteCounts().get("1")).toEqual({ remaining: 0, used: 1 });
+    expect(indexer.paidAllianceBonusBalance("1")).toEqual({ metal: 80n, crystal: 40n, deuterium: 20n });
   });
 
   test("VEY-KANEO-783: removes a dissolved zero-member alliance from canonical directory reads", () => {
@@ -5299,6 +5327,119 @@ describe("SettlementIndexer", () => {
       membership: { allianceId: "1", role: "owner" },
       directory: [{ allianceId: "1", tag: "SETO", memberCount: 1 }]
     });
+  });
+
+  test("backfills paid alliance invite and bonus projections from durable raw logs on production startup", () => {
+    const database = new Database(":memory:");
+    const reader = {
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    };
+    const first = new SettlementIndexer(reader, 100n, { database });
+    first.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xpaid-invite-purchased",
+      logIndex: "0x0",
+      topics: [paidAllianceInvitePurchasedTopic, topic(321n), topic(4n), addressTopic(player)],
+      data: abiWords(12_000_000_000_000_000n, 1770002400n)
+    });
+    first.applyLog({
+      blockNumber: "0x91",
+      transactionHash: "0xpaid-bonus-accrued",
+      logIndex: "0x0",
+      topics: [allianceProductionBonusAccruedTopic, topic(4n), addressTopic(player)],
+      data: abiWords(100n, 50n, 25n)
+    });
+
+    database.query("DELETE FROM contract_paid_alliance_invite_purchases").run();
+    database.query("DELETE FROM contract_paid_alliance_bonus_balances").run();
+    database.query("DELETE FROM indexer_metadata WHERE key = 'paidAllianceProjectionVersion'").run();
+
+    const restarted = new SettlementIndexer(reader, 100n, {
+      database,
+      runStartupBackfill: false
+    });
+    expect(restarted.paidAllianceInviteCounts().get("4")).toEqual({ remaining: 1, used: 0 });
+    expect(restarted.paidAllianceBonusBalance("4")).toEqual({ metal: 100n, crystal: 50n, deuterium: 25n });
+    database.close();
+  });
+
+  test("removes orphaned paid invite projections on a reorg", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    const purchase = {
+      blockNumber: "0x90",
+      transactionHash: "0xpaid-invite-reorg",
+      logIndex: "0x0",
+      topics: [paidAllianceInvitePurchasedTopic, topic(321n), topic(4n), addressTopic(player)],
+      data: abiWords(12_000_000_000_000_000n, 1770002400n)
+    };
+
+    indexer.applyLog(purchase);
+    expect(indexer.paidAllianceInviteCounts().get("4")).toEqual({ remaining: 1, used: 0 });
+
+    indexer.applyLog({ ...purchase, removed: true });
+    expect(indexer.paidAllianceInviteCounts().get("4")).toBeUndefined();
+
+    indexer.applyLog(purchase);
+    expect(indexer.paidAllianceInviteCounts().get("4")).toEqual({ remaining: 1, used: 0 });
+  });
+
+  test("clears a fully funded deferred paid-alliance bonus when no new deferred event follows", () => {
+    const database = new Database(":memory:");
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n, { database });
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xpaid-bonus-deferred",
+      logIndex: "0x0",
+      topics: [allianceProductionBonusDeferredTopic, topic(4n), addressTopic(player)],
+      data: abiWords(100n, 50n, 25n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x91",
+      transactionHash: "0xpaid-bonus-funded",
+      logIndex: "0x0",
+      topics: [allianceProductionBonusAccruedTopic, topic(4n), addressTopic(player)],
+      data: abiWords(100n, 50n, 25n)
+    });
+
+    expect(database.query(`
+      SELECT metal, crystal, deuterium
+      FROM contract_paid_alliance_pending_bonus_balances
+      WHERE alliance_id = '4'
+    `).get()).toEqual({ metal: "0", crystal: "0", deuterium: "0" });
+    database.close();
+  });
+
+  test("keeps the shared indexed-state cache version monotonic across paid projection startup replay", () => {
+    const database = new Database(":memory:");
+    const reader = {
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    };
+    const first = new SettlementIndexer(reader, 100n, { database });
+    first.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xpaid-cache-version",
+      logIndex: "0x0",
+      topics: [paidAllianceInvitePurchasedTopic, topic(321n), topic(4n), addressTopic(player)],
+      data: abiWords(12_000_000_000_000_000n, 1770002400n)
+    });
+    database.query("UPDATE indexer_metadata SET value = '1000' WHERE key = 'indexedStateVersion'").run();
+
+    const restarted = new SettlementIndexer(reader, 100n, { database, runStartupBackfill: false });
+
+    expect(BigInt(restarted.indexedStateCacheVersion())).toBeGreaterThan(1000n);
+    database.close();
   });
 
   test("projects one war declaration reciprocally with shared declarer metadata", () => {

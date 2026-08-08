@@ -53,6 +53,7 @@ import {
   fleetMissionNeedsResolution,
   fleetMissionLaunchedTopic,
   missionBattleRandomnessRequestId,
+  paidAllianceProjectionTopics,
   isDebrisFieldLog,
   isRandomnessFulfilledLog,
   isBattleReportLog,
@@ -269,6 +270,7 @@ const startPriceBootstrapDivergenceMetadataKey = "startPriceBootstrapDivergence"
 const startPriceBlockMetadataKey = "canonicalStartPriceBlock";
 const startPriceLogIndexMetadataKey = "canonicalStartPriceLogIndex";
 const referralHistoryBackfillMetadataKey = "referralHistoryBackfillV1";
+const paidAllianceHistoryBackfillMetadataKey = "paidAllianceHistoryBackfillV1";
 
 export type ReferralHistoryBackfillMarker = {
   completedAt: string;
@@ -276,6 +278,8 @@ export type ReferralHistoryBackfillMarker = {
   fromBlock: string;
   throughBlock: string;
 };
+
+export type PaidAllianceHistoryBackfillMarker = ReferralHistoryBackfillMarker;
 
 export type WriterChainSyncDiagnostics = {
   chainSync: unknown | null;
@@ -576,6 +580,15 @@ type AllianceJoinRequestRow = {
   alliance_id: string;
   requested_at: string;
   requester: string;
+};
+
+type PaidAllianceInviteCount = {
+  remaining: number;
+  used: number;
+};
+
+type PaidAllianceBonusBalanceRow = ResourceColumns & {
+  alliance_id: string;
 };
 
 type QueueUpsertEvent = IndexedQueueStartedEvent & {
@@ -996,6 +1009,74 @@ export class SettlementIndexer {
     };
     this.setMetadata(referralHistoryBackfillMetadataKey, JSON.stringify(marker));
     return marker;
+  }
+
+  paidAllianceHistoryBackfillStatus(
+    contractAddress: `0x${string}`,
+    fromBlock: bigint
+  ): { marker: PaidAllianceHistoryBackfillMarker | null; required: boolean } {
+    const raw = this.metadata(paidAllianceHistoryBackfillMetadataKey);
+    let marker: PaidAllianceHistoryBackfillMarker | null = null;
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw) as Partial<PaidAllianceHistoryBackfillMarker>;
+        if (
+          typeof parsed.completedAt === "string"
+          && typeof parsed.contractAddress === "string"
+          && typeof parsed.fromBlock === "string"
+          && typeof parsed.throughBlock === "string"
+        ) marker = parsed as PaidAllianceHistoryBackfillMarker;
+      } catch {
+        // A malformed marker is never trusted; canonical replay repairs it.
+      }
+    }
+    const required = marker === null
+      || marker.contractAddress.toLowerCase() !== contractAddress.toLowerCase()
+      || marker.fromBlock !== fromBlock.toString();
+    return { marker, required };
+  }
+
+  recordPaidAllianceHistoryBackfill(
+    contractAddress: `0x${string}`,
+    fromBlock: bigint,
+    throughBlock: bigint
+  ): PaidAllianceHistoryBackfillMarker {
+    const marker: PaidAllianceHistoryBackfillMarker = {
+      completedAt: new Date().toISOString(),
+      contractAddress: contractAddress.toLowerCase(),
+      fromBlock: fromBlock.toString(),
+      throughBlock: throughBlock.toString()
+    };
+    this.setMetadata(paidAllianceHistoryBackfillMetadataKey, JSON.stringify(marker));
+    return marker;
+  }
+
+  reconcilePaidAllianceHistory(
+    canonicalLogs: readonly IndexedRpcLog[],
+    fromBlock: bigint,
+    throughBlock: bigint
+  ): void {
+    const canonicalIds = new Set(canonicalLogs.map(indexedLogKey));
+    const placeholders = paidAllianceProjectionTopics.map(() => "?").join(", ");
+    const stored = this.db.query(`
+      SELECT event_id
+      FROM indexed_event_logs
+      WHERE removed = 0
+        AND CAST(block_number AS INTEGER) BETWEEN ? AND ?
+        AND lower(json_extract(event_json, '$.topics[0]')) IN (${placeholders})
+    `).all(fromBlock.toString(), throughBlock.toString(), ...paidAllianceProjectionTopics) as Array<{ event_id: string }>;
+
+    let removed = false;
+    for (const row of stored) {
+      if (canonicalIds.has(row.event_id)) continue;
+      this.db.query("UPDATE indexed_event_logs SET removed = 1 WHERE event_id = ?").run(row.event_id);
+      this.removePlayerActivityFeedEvent(row.event_id);
+      removed = true;
+    }
+    if (removed) {
+      this.markReorgDetected();
+      this.backfillPaidAllianceProjections();
+    }
   }
 
   recordWriterChainSyncDiagnostics(diagnostics: Pick<WriterChainSyncDiagnostics, "chainSync" | "chainSyncRpc">): void {
@@ -1484,6 +1565,43 @@ export class SettlementIndexer {
 
   allianceProfile(allianceId: string): AllianceState["directory"][number] | null {
     return this.allianceDirectory().find((alliance) => alliance.allianceId === allianceId) ?? null;
+  }
+
+  paidAllianceInviteCounts(): Map<string, PaidAllianceInviteCount> {
+    const purchasedRows = this.db.query(`
+      SELECT alliance_id, COUNT(*) AS count
+      FROM contract_paid_alliance_invite_purchases
+      GROUP BY alliance_id
+    `).all() as Array<{ alliance_id: string; count: number }>;
+    const redeemedRows = this.db.query(`
+      SELECT alliance_id, COUNT(*) AS count
+      FROM contract_paid_alliance_invite_redemptions
+      GROUP BY alliance_id
+    `).all() as Array<{ alliance_id: string; count: number }>;
+    const purchased = new Map(purchasedRows.map((row) => [row.alliance_id, row.count]));
+    const redeemed = new Map(redeemedRows.map((row) => [row.alliance_id, row.count]));
+    const counts = new Map<string, PaidAllianceInviteCount>();
+    for (const allianceId of new Set([...purchased.keys(), ...redeemed.keys()])) {
+      const used = redeemed.get(allianceId) ?? 0;
+      counts.set(allianceId, {
+        remaining: Math.max(0, (purchased.get(allianceId) ?? 0) - used),
+        used
+      });
+    }
+    return counts;
+  }
+
+  paidAllianceBonusBalance(allianceId: string): { metal: bigint; crystal: bigint; deuterium: bigint } {
+    const row = this.db.query(`
+      SELECT alliance_id, metal, crystal, deuterium
+      FROM contract_paid_alliance_bonus_balances
+      WHERE alliance_id = ?
+    `).get(allianceId) as PaidAllianceBonusBalanceRow | null;
+    return {
+      metal: BigInt(row?.metal ?? "0"),
+      crystal: BigInt(row?.crystal ?? "0"),
+      deuterium: BigInt(row?.deuterium ?? "0")
+    };
   }
 
   allianceIntelForPlayers(wallets: readonly string[]): Map<string, AllianceIdentity> {
@@ -3604,13 +3722,27 @@ export class SettlementIndexer {
 
   private applyLogAtomic(log: IndexedRpcLog): ApplyLogResult {
     const eventId = indexedLogKey(log);
-    const existing = this.db.query("SELECT event_json FROM indexed_event_logs WHERE event_id = ?").get(eventId) as EventRow | null;
+    const existing = this.db.query("SELECT event_json, removed FROM indexed_event_logs WHERE event_id = ?").get(eventId) as (EventRow & { removed: number }) | null;
     if (existing) {
       if (log.removed) {
         this.markReorgDetected();
+        this.db.query("UPDATE indexed_event_logs SET removed = 1 WHERE event_id = ?").run(eventId);
         this.recordRemovedLog(`${eventId}:removed`, log);
         this.removePlayerActivityFeedEvent(eventId);
+        // Paid-invite projections contain additive deltas, so removing an orphaned log must replay
+        // their canonical ledger rather than leaving the old delta materialized.
+        this.backfillPaidAllianceProjections();
         return { applied: false, duplicate: false, ignored: false, removed: true, snapshot: this.snapshot() };
+      }
+      if (existing.removed && isPaidAllianceProjectionLog(log)) {
+        this.db.query(`
+          UPDATE indexed_event_logs
+          SET removed = 0, event_json = ?, block_number = ?, received_at = ?
+          WHERE event_id = ?
+        `).run(JSON.stringify(log), blockNumberToDecimal(log.blockNumber), new Date().toISOString(), eventId);
+        this.applyAllianceEvent(decodeAllianceLog(log));
+        this.recordLatestBlock(log.blockNumber);
+        return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
       }
       const repairedDerivedRows = this.repairDerivedRowsForExistingLog(eventId, parseEvent<IndexedRpcLog>(existing.event_json));
       if (repairedDerivedRows > 0) {
@@ -4996,6 +5128,27 @@ export class SettlementIndexer {
       );
       CREATE INDEX IF NOT EXISTS contract_paid_alliance_invite_redemptions_player_idx
         ON contract_paid_alliance_invite_redemptions (player);
+      CREATE TABLE IF NOT EXISTS contract_paid_alliance_invite_purchases (
+        commitment TEXT PRIMARY KEY,
+        alliance_id TEXT NOT NULL,
+        purchaser TEXT NOT NULL,
+        settlement_price TEXT NOT NULL,
+        purchased_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS contract_paid_alliance_invite_purchases_alliance_idx
+        ON contract_paid_alliance_invite_purchases (alliance_id);
+      CREATE TABLE IF NOT EXISTS contract_paid_alliance_bonus_balances (
+        alliance_id TEXT PRIMARY KEY,
+        metal TEXT NOT NULL,
+        crystal TEXT NOT NULL,
+        deuterium TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS contract_paid_alliance_pending_bonus_balances (
+        alliance_id TEXT PRIMARY KEY,
+        metal TEXT NOT NULL,
+        crystal TEXT NOT NULL,
+        deuterium TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS contract_alliance_join_requests (
         alliance_id TEXT NOT NULL,
         requester TEXT NOT NULL,
@@ -5053,6 +5206,7 @@ export class SettlementIndexer {
     this.ensureColumn("contract_alliance_diplomacy", "declarer_member_count", "INTEGER");
     this.ensureColumn("contract_alliance_diplomacy", "declaree_member_count", "INTEGER");
     this.backfillStartPriceProjection();
+    this.backfillPaidAllianceProjections();
     this.backfillDefenseHoldEndedMissionEvents();
     this.backfillBattleReportStationedDefenderIndex();
     if (runStartupBackfill) {
@@ -5084,6 +5238,33 @@ export class SettlementIndexer {
     if (!row) return;
     const log = parseEvent<IndexedRpcLog>(row.event_json);
     this.applyStartPriceUpdatedEvent(indexedLogKey(log), decodeStartPriceUpdatedLog(log));
+  }
+
+  private backfillPaidAllianceProjections(): void {
+    const placeholders = paidAllianceProjectionTopics.map(() => "?").join(", ");
+    const rows = this.db.query(`
+      SELECT event_json
+      FROM indexed_event_logs
+      WHERE removed = 0
+        AND lower(json_extract(event_json, '$.topics[0]')) IN (${placeholders})
+    `).all(...paidAllianceProjectionTopics) as EventRow[];
+    const existingProjectionCount = this.db.query(`
+      SELECT
+        (SELECT COUNT(*) FROM contract_paid_alliance_invite_purchases) +
+        (SELECT COUNT(*) FROM contract_paid_alliance_invite_redemptions) +
+        (SELECT COUNT(*) FROM contract_paid_alliance_bonus_balances) +
+        (SELECT COUNT(*) FROM contract_paid_alliance_pending_bonus_balances) AS count
+    `).get() as { count: number };
+    this.db.transaction(() => {
+      this.db.query("DELETE FROM contract_paid_alliance_invite_purchases").run();
+      this.db.query("DELETE FROM contract_paid_alliance_invite_redemptions").run();
+      this.db.query("DELETE FROM contract_paid_alliance_bonus_balances").run();
+      this.db.query("DELETE FROM contract_paid_alliance_pending_bonus_balances").run();
+      for (const log of sortedEventRows(rows)) {
+        this.applyAllianceEvent(decodeAllianceLog(log), false);
+      }
+      if (rows.length > 0 || existingProjectionCount.count > 0) this.touch();
+    })();
   }
 
   private ensureColumn(table: string, column: string, definition: string): void {
@@ -5692,7 +5873,10 @@ export class SettlementIndexer {
     this.db.query("DELETE FROM contract_alliances").run();
     this.db.query("DELETE FROM contract_alliance_members").run();
     this.db.query("DELETE FROM contract_alliance_invites").run();
+    this.db.query("DELETE FROM contract_paid_alliance_invite_purchases").run();
     this.db.query("DELETE FROM contract_paid_alliance_invite_redemptions").run();
+    this.db.query("DELETE FROM contract_paid_alliance_bonus_balances").run();
+    this.db.query("DELETE FROM contract_paid_alliance_pending_bonus_balances").run();
     this.db.query("DELETE FROM contract_alliance_join_requests").run();
     this.db.query("DELETE FROM contract_alliance_diplomacy").run();
   }
@@ -6226,7 +6410,10 @@ export class SettlementIndexer {
     this.db.query("DELETE FROM contract_alliances").run();
     this.db.query("DELETE FROM contract_alliance_members").run();
     this.db.query("DELETE FROM contract_alliance_invites").run();
+    this.db.query("DELETE FROM contract_paid_alliance_invite_purchases").run();
     this.db.query("DELETE FROM contract_paid_alliance_invite_redemptions").run();
+    this.db.query("DELETE FROM contract_paid_alliance_bonus_balances").run();
+    this.db.query("DELETE FROM contract_paid_alliance_pending_bonus_balances").run();
     this.db.query("DELETE FROM contract_alliance_join_requests").run();
     this.db.query("DELETE FROM contract_alliance_diplomacy").run();
   }
@@ -8328,7 +8515,39 @@ export class SettlementIndexer {
     this.touch();
   }
 
-  private applyAllianceEvent(event: IndexedAllianceEvent): void {
+  private setPaidAllianceResourceBalance(
+    table: "contract_paid_alliance_bonus_balances" | "contract_paid_alliance_pending_bonus_balances",
+    allianceId: string,
+    resources: ResourceColumns
+  ): void {
+    this.db.query(`
+      INSERT INTO ${table} (alliance_id, metal, crystal, deuterium)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(alliance_id) DO UPDATE SET
+        metal = excluded.metal,
+        crystal = excluded.crystal,
+        deuterium = excluded.deuterium
+    `).run(allianceId, resources.metal, resources.crystal, resources.deuterium);
+  }
+
+  private adjustPaidAllianceBonusBalance(
+    allianceId: string,
+    resources: ResourceColumns,
+    direction: 1 | -1
+  ): void {
+    const current = this.paidAllianceBonusBalance(allianceId);
+    const adjust = (value: bigint, delta: string) => {
+      const next = value + BigInt(delta) * BigInt(direction);
+      return (next > 0n ? next : 0n).toString();
+    };
+    this.setPaidAllianceResourceBalance("contract_paid_alliance_bonus_balances", allianceId, {
+      metal: adjust(current.metal, resources.metal),
+      crystal: adjust(current.crystal, resources.crystal),
+      deuterium: adjust(current.deuterium, resources.deuterium)
+    });
+  }
+
+  private applyAllianceEvent(event: IndexedAllianceEvent, touchState = true): void {
     if (event.eventName === "AllianceCreated") {
       this.db.query(`
         INSERT INTO contract_alliances (
@@ -8357,6 +8576,17 @@ export class SettlementIndexer {
           inviter = excluded.inviter,
           invited_at = excluded.invited_at
       `).run(event.allianceId, event.player, event.inviter, event.invitedAt);
+    } else if (event.eventName === "PaidAllianceInvitePurchased") {
+      this.db.query(`
+        INSERT INTO contract_paid_alliance_invite_purchases (
+          commitment, alliance_id, purchaser, settlement_price, purchased_at
+        ) VALUES (lower(?), ?, lower(?), ?, ?)
+        ON CONFLICT(commitment) DO UPDATE SET
+          alliance_id = excluded.alliance_id,
+          purchaser = excluded.purchaser,
+          settlement_price = excluded.settlement_price,
+          purchased_at = excluded.purchased_at
+      `).run(event.commitment, event.allianceId, event.purchaser, event.settlementPrice, event.purchasedAt);
     } else if (event.eventName === "PaidAllianceInviteRedeemed") {
       this.db.query(`
         INSERT INTO contract_paid_alliance_invite_redemptions (alliance_id, player, inviter, redeemed_at)
@@ -8365,6 +8595,23 @@ export class SettlementIndexer {
           inviter = excluded.inviter,
           redeemed_at = excluded.redeemed_at
       `).run(event.allianceId, event.player, event.inviter, event.redeemedAt);
+    } else if (event.eventName === "AllianceProductionBonusAccrued") {
+      this.adjustPaidAllianceBonusBalance(event.allianceId, event.resources, 1);
+      // Accrued is emitted before Deferred. Clear the old pending snapshot first; if any amount
+      // remains pending, the following Deferred log in the same transaction overwrites it.
+      this.setPaidAllianceResourceBalance(
+        "contract_paid_alliance_pending_bonus_balances",
+        event.allianceId,
+        { metal: "0", crystal: "0", deuterium: "0" }
+      );
+    } else if (event.eventName === "AllianceProductionBonusDeferred") {
+      this.setPaidAllianceResourceBalance(
+        "contract_paid_alliance_pending_bonus_balances",
+        event.allianceId,
+        event.resources
+      );
+    } else if (event.eventName === "AllianceBonusWithdrawn") {
+      this.adjustPaidAllianceBonusBalance(event.allianceId, event.resources, -1);
     } else if (event.eventName === "AllianceInviteCancelled") {
       this.db.query(`
         DELETE FROM contract_alliance_invites
@@ -8479,7 +8726,7 @@ export class SettlementIndexer {
       }
     }
 
-    this.touch();
+    if (touchState) this.touch();
   }
 
   private applyAllianceDirectorySnapshot(directory: readonly AllianceState["directory"][number][]): void {
@@ -8680,7 +8927,17 @@ export class SettlementIndexer {
   private touch(): void {
     this.stateGeneration += 1;
     this.snapshotCache = null;
-    this.setMetadata(indexedStateVersionMetadataKey, this.stateGeneration.toString());
+    const persisted = this.metadata(indexedStateVersionMetadataKey);
+    let nextVersion = BigInt(this.stateGeneration);
+    if (persisted !== null) {
+      try {
+        const persistedVersion = BigInt(persisted);
+        if (persistedVersion >= nextVersion) nextVersion = persistedVersion + 1n;
+      } catch {
+        // Repair malformed legacy metadata with the local monotonic generation.
+      }
+    }
+    this.setMetadata(indexedStateVersionMetadataKey, nextVersion.toString());
     this.setMetadata("lastRebuiltAt", new Date().toISOString());
   }
 
@@ -12634,6 +12891,11 @@ const riftResourceRows = [
 
 function indexedLogKey(log: IndexedRpcLog): string {
   return `${log.transactionHash.toLowerCase()}:${log.logIndex ?? fallbackLogIndex(log)}`;
+}
+
+function isPaidAllianceProjectionLog(log: IndexedRpcLog): boolean {
+  const topic = log.topics[0]?.toLowerCase();
+  return Boolean(topic && paidAllianceProjectionTopics.includes(topic as (typeof paidAllianceProjectionTopics)[number]));
 }
 
 function fallbackLogIndex(log: RpcLog): string {

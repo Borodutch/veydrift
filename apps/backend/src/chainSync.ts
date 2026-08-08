@@ -24,6 +24,7 @@ type LogBackfiller = {
   getHeadBlock(): Promise<bigint>;
   listContractLogs(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
   listReferralLogs?(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
+  listPaidAllianceLogs?(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
   rpcMetrics?(): unknown;
 };
 
@@ -43,6 +44,9 @@ type ChainSyncIndexer = Partial<Pick<SettlementIndexer,
   | "markStale"
   | "recordReferralHistoryBackfill"
   | "referralHistoryBackfillStatus"
+  | "recordPaidAllianceHistoryBackfill"
+  | "paidAllianceHistoryBackfillStatus"
+  | "reconcilePaidAllianceHistory"
   | "snapshot"
 >>;
 
@@ -160,6 +164,7 @@ function resourceChangeForLog(log: RpcLog): ChainResourceChange | undefined {
 const CONNECTED_FAILURE_THRESHOLD = 5;
 const HEAD_STALL_FAILURE_THRESHOLD = 30;
 const HANDLER_DIAGNOSTICS_WINDOW_MS = 60_000;
+const PAID_ALLIANCE_REORG_CHECK_INTERVAL_BLOCKS = 16n;
 
 export class ChainSyncService {
   private connected = false;
@@ -193,6 +198,8 @@ export class ChainSyncService {
     lastError: null,
     throughBlock: null
   };
+  private paidAllianceHistoryVerified = false;
+  private paidAllianceHistoryVerifiedThroughBlock: bigint | null = null;
   private liveListenerConnected = false;
   private liveListenerErrorCount = 0;
   private liveListenerLastError: string | null = null;
@@ -383,9 +390,10 @@ export class ChainSyncService {
         return;
       }
       this.latestHeadBlock = head.toString();
-      this.markConnected();
 
       await this.ensureReferralHistoryBackfilled(head, backfiller, applyLog);
+      await this.ensurePaidAllianceHistoryBackfilled(head, backfiller, applyLog);
+      this.markConnected();
 
       if (this.cursor === null) {
         this.cursor = this.initialCursor();
@@ -497,6 +505,47 @@ export class ChainSyncService {
     }
   }
 
+  private async ensurePaidAllianceHistoryBackfilled(
+    head: bigint,
+    backfiller: LogBackfiller,
+    applyLog: NonNullable<SettlementIndexer["applyLog"]>
+  ): Promise<void> {
+    if (
+      this.paidAllianceHistoryVerified
+      && this.paidAllianceHistoryVerifiedThroughBlock !== null
+      && head >= this.paidAllianceHistoryVerifiedThroughBlock
+      && head < this.paidAllianceHistoryVerifiedThroughBlock + PAID_ALLIANCE_REORG_CHECK_INTERVAL_BLOCKS
+    ) return;
+    const contractAddress = this.config.paidAllianceInviteAddress;
+    const listPaidAllianceLogs = backfiller.listPaidAllianceLogs;
+    const status = this.indexer?.paidAllianceHistoryBackfillStatus;
+    const record = this.indexer?.recordPaidAllianceHistoryBackfill;
+    const reconcile = this.indexer?.reconcilePaidAllianceHistory;
+    if (!contractAddress || !listPaidAllianceLogs || !status || !record || !reconcile) return;
+
+    const fromBlock = this.config.indexFromBlock;
+    const current = status.call(this.indexer, contractAddress, fromBlock);
+    const reorgOverlapBlocks = 64n;
+    const scanFrom = current.required || !current.marker
+      ? fromBlock
+      : (() => {
+          const overlapStart = BigInt(current.marker.throughBlock) - reorgOverlapBlocks;
+          return overlapStart > fromBlock ? overlapStart : fromBlock;
+        })();
+
+    try {
+      const logs = await listPaidAllianceLogs.call(backfiller, scanFrom, head);
+      await this.applyLogs(logs, applyLog);
+      reconcile.call(this.indexer, logs, scanFrom, head);
+      record.call(this.indexer, contractAddress, fromBlock, head);
+      this.paidAllianceHistoryVerified = true;
+      this.paidAllianceHistoryVerifiedThroughBlock = head;
+    } catch (error) {
+      this.connected = false;
+      throw error;
+    }
+  }
+
   private startFallbackPolling(): void {
     this.activeSource = "fallback_poll";
     this.startPollingLoop();
@@ -528,8 +577,10 @@ export class ChainSyncService {
           }
           this.liveUnsubscribe = resolvedUnsubscribe;
           this.liveListenerConnected = true;
-          this.connected = true;
-          this.lastConnectedAt ??= new Date().toISOString();
+          if (!this.config.paidAllianceInviteAddress || this.paidAllianceHistoryVerified) {
+            this.connected = true;
+            this.lastConnectedAt ??= new Date().toISOString();
+          }
           this.liveListenerLastError = null;
           this.lastError = null;
           this.publishDiagnostics();
@@ -580,7 +631,9 @@ export class ChainSyncService {
       this.cursor = maxBigInt(this.cursor, block);
       this.latestHeadBlock = maxBlockString(this.latestHeadBlock, block);
       this.latestSyncedBlock = maxBlockString(this.latestSyncedBlock, block);
-      this.markConnected();
+      if (!this.config.paidAllianceInviteAddress || this.paidAllianceHistoryVerified) {
+        this.markConnected();
+      }
       if (applied > 0) {
         this.notify({
           kind: "chain-event",
@@ -875,7 +928,8 @@ export class ChainSyncService {
       this.config.resourceTokenAddresses.deuterium,
       // VEY-KANEO-479: the RandomnessEngine feeds RandomnessFulfilled into the index.
       this.config.randomnessEngineAddress,
-      this.config.referralSystemAddress
+      this.config.referralSystemAddress,
+      this.config.paidAllianceInviteAddress
     ].filter((address): address is `0x${string}` => Boolean(address));
     return [...new Set(addresses)];
   }
