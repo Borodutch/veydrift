@@ -342,6 +342,23 @@ async function clickExpression(expression) {
   assert.equal(clicked, true, `could not click ${expression}`);
 }
 
+async function clickExpressionWithTrustedPointer(expression) {
+  await evaluate(`(() => {
+    const target = ${expression};
+    target?.scrollIntoView({ block: 'center', inline: 'center' });
+  })()`);
+  await delay(50);
+  const center = await evaluate(`(() => {
+    const target = ${expression};
+    if (!target) return null;
+    const rect = target.getBoundingClientRect();
+    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+  })()`);
+  assert.ok(center, `could not find ${expression}`);
+  await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", button: "left", clickCount: 1, x: center.x, y: center.y });
+  await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", button: "left", clickCount: 1, x: center.x, y: center.y });
+}
+
 async function clickSectionAndReadRender(expression) {
   return evaluate(`(() => {
     const target = ${expression};
@@ -599,6 +616,58 @@ test("desktop Overview to Shipyard click atomically replaces the rendered page",
   await waitForExpression(`document.querySelector('main [data-production-catalog]') !== null
     && document.querySelector('main section[aria-label="Fleets"]') === null`);
 });
+
+for (const width of [1280, 390]) {
+  test(`${width < 768 ? "mobile" : "desktop"} Small Cargo Build reaches the wallet after Shipyard navigation`, async () => {
+    await loadInspectorFixture("/", width);
+    if (width < 768) {
+      await clickExpression("document.querySelector('summary[aria-label=\"Open navigation menu\"]')");
+      await waitForExpression("document.querySelector('details:has(#mobile-navigation-menu)')?.open === true");
+      await clickExpression("document.querySelector('#mobile-navigation-menu a[href=\"/shipyard\"]')");
+    } else {
+      await clickExpression("document.querySelector('nav.hidden a[href=\"/shipyard\"]')");
+    }
+    await waitForExpression(`location.pathname === '/shipyard'
+      && [...document.querySelectorAll('main button')].some((button) => button.textContent?.trim() === 'Build' && !button.disabled)`);
+
+    await clickExpressionWithTrustedPointer(
+      "[...document.querySelectorAll('main button')].find((button) => button.textContent?.trim() === 'Build' && !button.disabled)",
+    );
+    try {
+      await waitForExpression("window.inspectorProof.walletRequests.some((request) => request.method === 'eth_sendTransaction')");
+    } catch (error) {
+      const diagnostics = await evaluate(`({
+        buildButtons: [...document.querySelectorAll('main button')]
+          .filter((button) => button.textContent?.trim() === 'Build')
+          .map((button) => ({ disabled: button.disabled, outerHTML: button.outerHTML })),
+        errors: window.inspectorProof.errors,
+        mainText: document.querySelector('main')?.textContent?.replace(/\\s+/g, ' ').trim().slice(0, 3000),
+        path: location.pathname,
+        requests: window.inspectorProof.requests.slice(-20),
+        walletRequests: window.inspectorProof.walletRequests,
+      })`);
+      throw new Error(`${error.message}\nBuild diagnostics: ${JSON.stringify(diagnostics)}`);
+    }
+
+    const result = await evaluate(`(() => {
+      const request = window.inspectorProof.walletRequests.find((candidate) => candidate.method === 'eth_sendTransaction');
+      return {
+        data: request?.params?.[0]?.data ?? null,
+        from: request?.params?.[0]?.from ?? null,
+        path: location.pathname,
+        syncingPlanetfall: document.querySelector('main')?.textContent?.includes('Syncing planetfall') ?? false,
+        to: request?.params?.[0]?.to ?? null,
+      };
+    })()`);
+    assert.deepEqual(result, {
+      data: "0x13aed9a2" + "0".repeat(63) + "1" + "0".repeat(64) + "0".repeat(63) + "1",
+      from: "0x1111111111111111111111111111111111111111",
+      path: "/shipyard",
+      syncingPlanetfall: false,
+      to: "0x2222222222222222222222222222222222222222",
+    });
+  });
+}
 
 test("mobile sidebar first clicks commit routes and close the menu", async () => {
   await loadInspectorFixture("/planet/9/9/9", 390);
