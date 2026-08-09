@@ -622,6 +622,36 @@ test("desktop sidebar commits the reported Overview to Raid Finder and Shipyard 
   await waitForExpression("location.pathname === '/mission-control' && document.querySelector('nav.hidden a[href=\"/mission-control\"][aria-current=\"page\"]') !== null");
 });
 
+for (const width of [390, 1280]) {
+  test(`Mission Control Raid Finder navigation commits the route and content at ${width}px`, async () => {
+    await loadInspectorFixture("/mission-control", width);
+    await waitForExpression(`location.pathname === '/mission-control'
+      && document.querySelector('main [data-mission-control-page]') !== null`);
+
+    if (width < 768) {
+      await clickExpressionWithTrustedPointer("document.querySelector('summary[aria-label=\"Open navigation menu\"]')", "touch");
+      await waitForExpression("document.querySelector('details:has(#mobile-navigation-menu)')?.open === true");
+      await clickExpressionWithTrustedPointer("document.querySelector('#mobile-navigation-menu a[href=\"/raid-finder\"]')", "touch");
+    } else {
+      await clickExpressionWithTrustedPointer("document.querySelector('nav.hidden a[href=\"/raid-finder\"]')");
+    }
+
+    await waitForExpression(`location.pathname === '/raid-finder'
+      && document.querySelector('a[href="/raid-finder"][aria-current="page"]') !== null
+      && document.querySelector('main [data-raid-target-finder-page]') !== null
+      && document.querySelector('main [data-mission-control-page]') === null`);
+    assert.deepEqual(await evaluate(`({
+      missionControlVisible: document.querySelector('main [data-mission-control-page]') !== null,
+      path: location.pathname,
+      raidFinderVisible: document.querySelector('main [data-raid-target-finder-page]') !== null,
+    })`), {
+      missionControlVisible: false,
+      path: "/raid-finder",
+      raidFinderVisible: true,
+    });
+  });
+}
+
 test("direct Mission Control load hydrates before stalled history reads occupy the API pool", async () => {
   await loadInspectorFixture("/mission-control", 390, { stallMissionBackgroundReads: "true" });
   await waitForExpression(`location.pathname === '/mission-control'

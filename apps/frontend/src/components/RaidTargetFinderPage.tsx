@@ -305,7 +305,7 @@ export function RaidTargetFinderPage({
       : error;
 
   return (
-    <section className="space-y-3">
+    <section className="space-y-3" data-raid-target-finder-page>
       {!currentWallet ? (
         <div className="rounded border border-amber-300/20 bg-amber-300/10 p-3 text-sm text-amber-100">
           Connect your wallet to compute distances from your active planet and hide protected or allied targets.
