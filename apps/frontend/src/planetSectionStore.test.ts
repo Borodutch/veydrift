@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import {
+  defenseSnapshotPlanetId,
   emptyPlanetSectionState,
   hasPlanetSectionData,
+  indexedDefensePlanetId,
   indexedInfrastructurePlanetId,
   infrastructureSnapshotPlanetId,
   planetSectionAccessForPlanet,
@@ -50,6 +52,20 @@ describe("planetSectionStore", () => {
     expect(planetId).toBe("planet-83");
     expect(indexedInfrastructurePlanetId(store, "0xaaaa")).toBe("planet-83");
     expect(indexedInfrastructurePlanetId(store, "0xbbbb")).toBeUndefined();
+  });
+
+  test("keys an early Defense snapshot by its indexed home planet identity", () => {
+    const earlyDefense = {
+      ...defense,
+      homePlanetId: "planet-84",
+      wallet: "0xCcCc",
+    } as ChainDefenseState;
+    const planetId = defenseSnapshotPlanetId(earlyDefense, undefined);
+    const store = setPlanetSectionValue({}, planetId, "defenseState", earlyDefense);
+
+    expect(planetId).toBe("planet-84");
+    expect(indexedDefensePlanetId(store, "0xcccc")).toBe("planet-84");
+    expect(indexedDefensePlanetId(store, "0xdddd")).toBeUndefined();
   });
 
   test("hydrates initial singleton section state under the active planet id", () => {

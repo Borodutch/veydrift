@@ -165,7 +165,9 @@ import {
 } from "./overviewData";
 import { formatDurationUntil } from "./durationFormat";
 import {
+  defenseSnapshotPlanetId,
   hasPlanetSectionData,
+  indexedDefensePlanetId,
   indexedInfrastructurePlanetId,
   infrastructureSnapshotPlanetId,
   planetSectionAccessForPlanet,
@@ -3600,7 +3602,8 @@ export function PlayableMvpApp({
   );
   const activePlanetId = selectedManagedPlanet?.planetId
     ?? onChainSettlementState?.homePlanetId
-    ?? indexedInfrastructurePlanetId(planetSectionStore, account);
+    ?? indexedInfrastructurePlanetId(planetSectionStore, account)
+    ?? indexedDefensePlanetId(planetSectionStore, account);
   const selectedMoonBody = selectedManagedPlanet?.moon?.exists ? selectedManagedPlanet.moon : null;
   const activeBodyKind = resolvedOrbitBodyKind(selectedBodyKind, selectedManagedPlanet);
   const activePlanetSection = useMemo(
@@ -3783,7 +3786,12 @@ export function PlayableMvpApp({
     activePlanetResourceSnapshot,
   );
   const setDefenseState = useCallback((value: ChainDefenseState | null) => {
-    setPlanetSectionStore((current) => setPlanetSectionValue(current, activePlanetId, "defenseState", value));
+    setPlanetSectionStore((current) => setPlanetSectionValue(
+      current,
+      defenseSnapshotPlanetId(value, activePlanetId),
+      "defenseState",
+      value,
+    ));
   }, [activePlanetId]);
   const [defenseLoading, setDefenseLoading] = useState(false);
   const [defenseError, setDefenseError] = useState<string | undefined>();
@@ -6054,7 +6062,10 @@ export function PlayableMvpApp({
       activeBodyKind,
       moonResourcesAsOfNow: moonState?.resourcesAsOfNow ?? selectedMoonBody?.resourcesAsOfNow,
       moonResources: moonState?.resources ?? selectedMoonBody?.resources,
-      planetResources: onChainSettlement?.planet?.resourcesAsOfNow ?? onChainSettlement?.planet?.resources,
+      planetResources: onChainSettlement?.planet?.resourcesAsOfNow
+        ?? onChainSettlement?.planet?.resources
+        ?? defenseState?.resourcesAsOfNow
+        ?? defenseState?.resources,
       infrastructureResourcesAsOfNow: infrastructureChainState?.resourcesAsOfNow,
       infrastructureResources: infrastructureChainState?.resources,
     });
@@ -6066,6 +6077,8 @@ export function PlayableMvpApp({
     selectedMoonBody?.resources,
     onChainSettlement?.planet?.resourcesAsOfNow,
     onChainSettlement?.planet?.resources,
+    defenseState?.resourcesAsOfNow,
+    defenseState?.resources,
     infrastructureChainState?.resourcesAsOfNow,
     infrastructureChainState?.resources,
   ]);
@@ -6477,6 +6490,19 @@ export function PlayableMvpApp({
       refreshDefenseState();
     }
   }, [page, pageStateHydrationReady, refreshDefenseState]);
+
+  useEffect(() => {
+    if (
+      page !== "defenses"
+      || pageStateHydrationReady
+      || !apiBaseUrl
+      || !account
+      || defenseState
+    ) {
+      return;
+    }
+    void refreshDefenseState();
+  }, [account, apiBaseUrl, defenseState, page, pageStateHydrationReady, refreshDefenseState]);
 
   useEffect(() => {
     if (!pageStateHydrationReady) return;
@@ -9217,8 +9243,11 @@ export function PlayableMvpApp({
       );
     }
 
-    const infrastructureCanRenderFromIndexedState = page === "infrastructure" && Boolean(infrastructureChainState);
-    if (!walletPlanetHydrated && !infrastructureCanRenderFromIndexedState) {
+    const indexedPageStateCanRender = (
+      (page === "infrastructure" && Boolean(infrastructureChainState))
+      || (page === "defenses" && Boolean(defenseState))
+    );
+    if (!walletPlanetHydrated && !indexedPageStateCanRender) {
       return (
         <HydratingPlanetState
           error={onChainError}

@@ -687,6 +687,39 @@ test("Infrastructure renders its indexed planet snapshot while wallet overview h
   assert.deepEqual(rendered.errors, []);
 });
 
+test("mobile Defenses renders its indexed planet snapshot while wallet overview hydration is incomplete", async () => {
+  await loadInspectorFixture("/defenses", 390, {
+    incompleteOverview: "true",
+    shell: "settlement",
+    waitForPlanetSelectors: "false",
+  });
+  try {
+    await waitForExpression(`location.pathname === '/defenses'
+      && document.querySelector('main')?.textContent?.includes('Rocket Launcher') === true
+      && document.querySelector('main')?.textContent?.includes('Syncing planetfall') === false
+      && document.querySelector('summary[title^="Metal:"]') !== null
+      && document.querySelector('[data-production-catalog-key="rocketLauncher"]')?.textContent?.includes('Deployed: 3') === true
+      && [...document.querySelectorAll('main button')].some((button) => button.textContent?.trim() === 'Build')`);
+  } catch (error) {
+    const diagnostics = await evaluate(`({
+      bodyText: document.body.textContent?.replace(/\\s+/g, ' ').trim(),
+      errors: window.inspectorProof.errors,
+      mainText: document.querySelector('main')?.textContent?.replace(/\\s+/g, ' ').trim(),
+      requests: window.inspectorProof.requests,
+    })`);
+    throw new Error(`${error.message}\nDefenses diagnostics: ${JSON.stringify(diagnostics)}`);
+  }
+
+  const rendered = await evaluate(`({
+    bodyText: document.body.textContent?.replace(/\\s+/g, ' ').trim(),
+    errors: window.inspectorProof.errors,
+    requests: window.inspectorProof.requests,
+  })`);
+  assert.ok(rendered.requests.some((request) => request.includes('/defenses')), JSON.stringify(rendered.requests));
+  assert.doesNotMatch(rendered.bodyText ?? "", /Resources loading|Syncing planetfall/);
+  assert.deepEqual(rendered.errors, []);
+});
+
 test("desktop Overview to Shipyard click atomically replaces the rendered page", async () => {
   await loadInspectorFixture("/", 1280);
   await waitForExpression("location.pathname === '/' && document.querySelector('main section[aria-label=\"Fleets\"]') !== null");
