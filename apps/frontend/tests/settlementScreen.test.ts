@@ -3,6 +3,7 @@ import {
   farcasterMiniAppReportableWalletError,
   farcasterMiniAppSupportErrorMessage,
   indexedSettlementState,
+  isSameWalletChainId,
   migrationReservationForSettlementFunding,
   noWalletDetectedMessage,
   POST_SETTLEMENT_INDEXING_TIMEOUT_MESSAGE,
@@ -502,6 +503,13 @@ describe("settlement screen mode", () => {
     expect(shouldRetryRejectedRequestWithSettlement({ kind: "disconnected" })).toBe(false);
     expect(shouldRetryRejectedRequestWithSettlement({ kind: "connecting" })).toBe(false);
     expect(shouldRetryRejectedRequestWithSettlement(connected)).toBe(true);
+  });
+
+  test("recognizes repeated wallet chain events across hex and decimal encodings", () => {
+    expect(isSameWalletChainId("0x2105", "8453")).toBe(true);
+    expect(isSameWalletChainId("0x14a34", "84532")).toBe(true);
+    expect(isSameWalletChainId("0x2105", "0x14a34")).toBe(false);
+    expect(isSameWalletChainId(undefined, "0x2105")).toBe(false);
   });
 
   test("actively requests wallet account binding for Farcaster desktop Mini App", async () => {

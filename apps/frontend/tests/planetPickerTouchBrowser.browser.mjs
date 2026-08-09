@@ -768,6 +768,33 @@ test("wallet shell does not let a repeated account event interrupt the Build ges
   });
 });
 
+test("wallet shell does not let a repeated chain event interrupt the Build gesture", async () => {
+  await loadInspectorFixture("/", 1280, {
+    shell: "settlement",
+    walletEventOnPointerDown: "chainChanged",
+  });
+  await clickExpression("document.querySelector('nav.hidden a[href=\"/shipyard\"]')");
+  await waitForExpression(`location.pathname === '/shipyard'
+    && [...document.querySelectorAll('main button')].some((button) => button.textContent?.trim() === 'Build' && !button.disabled)`);
+
+  await clickExpressionWithTrustedPointer(
+    "[...document.querySelectorAll('main button')].find((button) => button.textContent?.trim() === 'Build' && !button.disabled)",
+  );
+  await waitForExpression("window.inspectorProof.walletRequests.some((request) => request.method === 'eth_sendTransaction')");
+  await delay(100);
+
+  const result = await evaluate(`({
+    buildVisible: [...document.querySelectorAll('main button')].some((button) => button.textContent?.trim() === 'Build'),
+    path: location.pathname,
+    syncingPlanetfall: document.body.textContent?.includes('Syncing planetfall') ?? false,
+  })`);
+  assert.deepEqual(result, {
+    buildVisible: true,
+    path: "/shipyard",
+    syncingPlanetfall: false,
+  });
+});
+
 for (const width of [1280, 390]) {
   test(`${width < 768 ? "mobile" : "desktop"} Small Cargo Build reaches the wallet after Shipyard navigation`, async () => {
     await loadInspectorFixture("/", width);

@@ -151,6 +151,19 @@ export function shouldRetryRejectedRequestWithSettlement(wallet: WalletState): b
   return wallet.kind === "connected";
 }
 
+export function isSameWalletChainId(
+  currentChainId: string | undefined,
+  nextChainId: string | undefined,
+): boolean {
+  if (!currentChainId || !nextChainId) return false;
+
+  try {
+    return BigInt(currentChainId) === BigInt(nextChainId);
+  } catch {
+    return currentChainId.trim().toLowerCase() === nextChainId.trim().toLowerCase();
+  }
+}
+
 export function shouldShowMiniAppWalletError(miniAppMode: boolean, planet: PlanetState): boolean {
   return miniAppMode && (planet.kind === "error" || planet.kind === "rejected");
 }
@@ -390,6 +403,7 @@ export function FirstPlanetSettlementApp() {
   const walletProviderCleanup = useRef<(() => void) | undefined>();
   const walletBootstrapAttempts = useRef(0);
   const walletBootstrapRetryTimer = useRef<ReturnType<typeof setTimeout> | undefined>();
+  const currentChainId = useRef<string>();
 
   const account = "account" in wallet ? wallet.account : undefined;
   const hasOverview = planet.kind === "success" || planet.kind === "already-settled";
@@ -835,7 +849,6 @@ export function FirstPlanetSettlementApp() {
     walletProvider: WalletProviderDetails,
   ) {
     const injected = walletProvider?.provider;
-    const providerContext = walletProviderContext(walletProvider?.source);
     setProvider(injected);
     setWalletProviderSource(walletProvider?.source);
     if (walletProvider?.source === "farcaster") {
@@ -872,8 +885,15 @@ export function FirstPlanetSettlementApp() {
       }
     };
 
-    const handleChainChanged = () => {
-      void refreshWallet(injected, undefined, providerContext);
+    const handleChainChanged = (...args: unknown[]) => {
+      const nextChainId = typeof args[0] === "string" ? args[0] : undefined;
+      // MetaMask can repeat the already-active chain while a wallet action is
+      // starting. Remounting the hydrated game between pointerdown and click
+      // destroys the Build handler before it can submit the transaction.
+      if (isSameWalletChainId(currentChainId.current, nextChainId)) {
+        return;
+      }
+      void refreshWalletHandler.current(injected);
     };
 
     injected.on?.("accountsChanged", handleAccountsChanged);
@@ -934,6 +954,7 @@ export function FirstPlanetSettlementApp() {
       }
 
       const chainId = await getChainId(injected, WALLET_BOOTSTRAP_READ_TIMEOUT_MS);
+      currentChainId.current = chainId;
       // The flaky wallet reads (accounts + chain) both succeeded; stop counting
       // bootstrap retries.
       walletBootstrapAttempts.current = 0;
