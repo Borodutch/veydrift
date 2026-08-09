@@ -5257,16 +5257,16 @@ export function PlayableMvpApp({
   }, [apiBaseUrl, normalizedMissionFilters.missionNumber, normalizedMissionFilters.missionType, normalizedMissionFilters.planetId]);
 
   useEffect(() => {
-    if (page !== "mission-control") return;
+    if (!pageStateHydrationReady || page !== "mission-control") return;
     // The default visible scope. These are wallet-sized reads and make the initial screen useful
     // without waiting for the two universe/incoming archives behind hidden tabs.
     void loadMissionArchive(1);
     void loadMissileAttackArchive();
     void loadGlobalMissionArchiveSummary();
-  }, [account, apiBaseUrl, loadGlobalMissionArchiveSummary, loadMissionArchive, loadMissileAttackArchive, page]);
+  }, [account, apiBaseUrl, loadGlobalMissionArchiveSummary, loadMissionArchive, loadMissileAttackArchive, page, pageStateHydrationReady]);
 
   useEffect(() => {
-    if (page !== "mission-control") return;
+    if (!pageStateHydrationReady || page !== "mission-control") return;
     // Load expensive scopes only when their persisted deep-link tab is selected or the user
     // switches to it. The active tab widgets increment missionControlTabRevision after persisting
     // selection, so resolveMissionControlView above is already authoritative here.
@@ -5278,7 +5278,7 @@ export function PlayableMvpApp({
     } else if (missionControlInitialView?.pastTab === "incomingAttacks") {
       void loadIncomingAttackArchive(1);
     }
-  }, [apiBaseUrl, loadAllActiveMissions, loadGlobalMissionArchive, loadIncomingAttackArchive, missionControlInitialView?.activeTab, missionControlInitialView?.pastTab, missionControlTabRevision, page]);
+  }, [apiBaseUrl, loadAllActiveMissions, loadGlobalMissionArchive, loadIncomingAttackArchive, missionControlInitialView?.activeTab, missionControlInitialView?.pastTab, missionControlTabRevision, page, pageStateHydrationReady]);
 
   // VEY-KANEO-445: the Rankings page shows each planet's active inbound/outbound fleet missions as
   // subtext. Load the universe-wide active feed when Rankings opens and poll it on the shared cadence
@@ -5780,7 +5780,7 @@ export function PlayableMvpApp({
   };
 
   useEffect(() => {
-    if (!apiBaseUrl || !account || typeof window.EventSource === "undefined") {
+    if (!apiBaseUrl || !account || !pageStateHydrationReady || typeof window.EventSource === "undefined") {
       setChainSyncHealthy(false);
       return;
     }
@@ -5869,6 +5869,7 @@ export function PlayableMvpApp({
   }, [
     account,
     apiBaseUrl,
+    pageStateHydrationReady,
   ]);
 
   useEffect(() => {
@@ -5922,7 +5923,7 @@ export function PlayableMvpApp({
   // same work the Refresh button does (fleet visibility + the past-mission archives + the universe
   // active feed), guarded against overlapping refreshes and paused while the tab is hidden.
   useEffect(() => {
-    if (!apiBaseUrl || !account || !shouldAutoPollMissionControlForPage(page)) {
+    if (!apiBaseUrl || !account || !pageStateHydrationReady || !shouldAutoPollMissionControlForPage(page)) {
       return;
     }
 
@@ -5944,14 +5945,14 @@ export function PlayableMvpApp({
 
     const interval = window.setInterval(pollMissionControl, TOP_BAR_RESOURCE_POLL_INTERVAL_MS);
     return () => window.clearInterval(interval);
-  }, [account, apiBaseUrl, page, refreshMissionControl, refreshOpenMissionDetailSilently]);
+  }, [account, apiBaseUrl, page, pageStateHydrationReady, refreshMissionControl, refreshOpenMissionDetailSilently]);
 
   // VEY-KANEO-433: tighten the poll around resolution — schedule a one-shot refresh just after the
   // soonest active mission is due to arrive (or a returning fleet to land) so the new status, loot,
   // and battle report appear promptly instead of waiting for the next full poll tick. Re-derived
   // whenever fleet visibility changes; only active while Mission Control is open.
   useEffect(() => {
-    if (!apiBaseUrl || !account || !shouldAutoPollMissionControlForPage(page)) {
+    if (!apiBaseUrl || !account || !pageStateHydrationReady || !shouldAutoPollMissionControlForPage(page)) {
       return;
     }
     const nextEventMs = nextMissionResolutionEventMs(fleetVisibility, Date.now());
@@ -5968,7 +5969,7 @@ export function PlayableMvpApp({
       void refreshOpenMissionDetailSilently();
     }, delay);
     return () => window.clearTimeout(timer);
-  }, [account, apiBaseUrl, fleetVisibility, page, refreshMissionControl, refreshOpenMissionDetailSilently]);
+  }, [account, apiBaseUrl, fleetVisibility, page, pageStateHydrationReady, refreshMissionControl, refreshOpenMissionDetailSilently]);
 
   const state = useMemo<PlayableState>(() => infrastructurePlayableState(infrastructureChainState, now), [infrastructureChainState, now]);
   const settledState = state;

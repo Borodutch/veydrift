@@ -609,6 +609,30 @@ test("desktop sidebar commits the reported Overview to Raid Finder and Shipyard 
   await waitForExpression("location.pathname === '/mission-control' && document.querySelector('nav.hidden a[href=\"/mission-control\"][aria-current=\"page\"]') !== null");
 });
 
+test("direct Mission Control load hydrates before stalled history reads occupy the API pool", async () => {
+  await loadInspectorFixture("/mission-control", 390, { stallMissionBackgroundReads: "true" });
+  await waitForExpression(`location.pathname === '/mission-control'
+    && document.querySelector('main')?.textContent?.includes('Syncing planetfall') === false
+    && document.querySelector('main [data-mission-control-page]') !== null`);
+
+  const requests = await evaluate("window.inspectorProof.requests");
+  const overviewIndex = requests.findIndex((request) => request.includes('/overview'));
+  const firstHistoryIndex = requests.findIndex((request) => (
+    request.includes('/missions?') || request.includes('/missile-attacks?')
+  ));
+  assert.ok(overviewIndex >= 0, JSON.stringify(requests));
+  assert.ok(firstHistoryIndex > overviewIndex, JSON.stringify(requests));
+});
+
+for (const width of [390, 1280]) {
+  test(`direct Shipyard load hydrates game content at ${width}px`, async () => {
+    await loadInspectorFixture("/shipyard", width);
+    await waitForExpression(`location.pathname === '/shipyard'
+      && document.querySelector('main')?.textContent?.includes('Syncing planetfall') === false
+      && document.querySelector('main [data-production-catalog]') !== null`);
+  });
+}
+
 test("desktop Overview to Shipyard click atomically replaces the rendered page", async () => {
   await loadInspectorFixture("/", 1280);
   await waitForExpression("location.pathname === '/' && document.querySelector('main section[aria-label=\"Fleets\"]') !== null");
