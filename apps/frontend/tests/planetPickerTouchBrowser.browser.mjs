@@ -587,6 +587,17 @@ test("desktop sidebar first clicks commit Infrastructure and Shipyard routes", a
     && document.querySelector('main section[aria-label="Fleets"]') === null`);
 });
 
+test("Galaxy sidebar click commits the Infrastructure game route", async () => {
+  await loadInspectorFixture("/galaxy", 1280);
+  await waitForExpression("location.pathname === '/galaxy' && document.querySelector('nav.hidden a[href=\"/galaxy\"][aria-current=\"page\"]') !== null");
+
+  await clickExpression("document.querySelector('nav.hidden a[href=\"/infrastructure\"]')");
+  await waitForExpression(`location.pathname === '/infrastructure'
+    && document.querySelector('nav.hidden a[href="/infrastructure"][aria-current="page"]') !== null
+    && document.querySelector('main')?.textContent?.includes('Metal Mine') === true
+    && document.querySelector('main')?.textContent?.includes('Galaxy') === false`);
+});
+
 test("desktop sidebar commits the reported Overview to Raid Finder and Shipyard to Mission Control routes", async () => {
   await loadInspectorFixture("/", 1280);
   await waitForExpression("location.pathname === '/' && document.querySelector('nav.hidden a[href=\"/\"][aria-current=\"page\"]') !== null");
@@ -631,6 +642,17 @@ for (const width of [390, 1280]) {
       && document.querySelector('main')?.textContent?.includes('Syncing planetfall') === false
       && document.querySelector('main [data-production-catalog]') !== null`);
   });
+
+  for (const route of ["infrastructure", "defenses"]) {
+    test(`direct ${route} load hydrates game content at ${width}px`, async () => {
+      await loadInspectorFixture(`/${route}`, width, { shell: "settlement" });
+      await waitForExpression(`location.pathname === '/${route}'
+        && document.querySelector('main')?.textContent?.includes('Syncing planetfall') === false
+        && document.querySelector('a[href="/${route}"][aria-current="page"]') !== null
+        && document.querySelector('main')?.textContent?.includes('${route === "infrastructure" ? "Metal Mine" : "Rocket Launcher"}') === true
+        && document.querySelector('main')?.textContent?.includes('OPEN THE BOX') === false`);
+    });
+  }
 }
 
 test("desktop Overview to Shipyard click atomically replaces the rendered page", async () => {

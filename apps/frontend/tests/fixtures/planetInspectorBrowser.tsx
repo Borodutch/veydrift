@@ -201,6 +201,46 @@ globalThis.fetch = (async (input) => {
     });
   }
 
+  if (url.pathname.endsWith(`/wallet/${account}/infrastructure`)) {
+    return Response.json({
+      buildings: [
+        { id: 0, level: 4, cost: { crystal: "30", deuterium: "0", metal: "120" }, durationSeconds: 60 },
+        { id: 3, level: 5, cost: { crystal: "60", deuterium: "0", metal: "150" }, durationSeconds: 90 },
+      ],
+      energyBalance: { available: "20", consumed: "80", produced: "100" },
+      homePlanetId: "owned-a",
+      infrastructureAvailable: true,
+      planetId: "owned-a",
+      productionPerHour: { crystal: "238", deuterium: "71", metal: "620" },
+      queue: null,
+      resources: { crystal: "3873", deuterium: "102", metal: "10313" },
+      resourcesAsOfNow: { crystal: "3873", deuterium: "102", metal: "10313" },
+      storageCaps: { crystal: "10000", deuterium: "10000", metal: "10000" },
+      wallet: account,
+    });
+  }
+
+  if (url.pathname.endsWith(`/wallet/${account}/defenses`)) {
+    return Response.json({
+      defenses: [{
+        cost: { crystal: "0", deuterium: "0", metal: "2000" },
+        count: 3,
+        durationSeconds: 60,
+        id: 0,
+      }],
+      homePlanetId: "owned-a",
+      missileSiloLevel: 0,
+      naniteLevel: 0,
+      productionAvailable: true,
+      queue: null,
+      resources: { crystal: "3873", deuterium: "102", metal: "10313" },
+      resourcesAsOfNow: { crystal: "3873", deuterium: "102", metal: "10313" },
+      shipyardLevel: 5,
+      technologyLevels: { "3": 6, "6": 2 },
+      wallet: account,
+    });
+  }
+
   if (url.pathname.endsWith(`/wallet/${account}/watched-planets`)) {
     return Response.json({
       pagination: { page: 1, pageSize: 25, total: 0, totalPages: 1 },
