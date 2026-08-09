@@ -280,6 +280,9 @@ document.addEventListener("pointerdown", (event) => {
   if (walletEventOnPointerDown === "accountsChanged" && target?.textContent?.trim() === "Build") {
     for (const listener of providerListeners.get("accountsChanged") ?? []) listener([account]);
   }
+  if (walletEventOnPointerDown === "chainChanged" && target?.textContent?.trim() === "Build") {
+    for (const listener of providerListeners.get("chainChanged") ?? []) listener("0x2105");
+  }
 }, { capture: true });
 
 window.inspectorProof = {
