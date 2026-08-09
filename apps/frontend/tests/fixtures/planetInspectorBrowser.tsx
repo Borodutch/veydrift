@@ -29,6 +29,7 @@ const appRoot = document.querySelector("#app") as HTMLElement;
 const fixtureParams = new URLSearchParams(window.location.search);
 const route = fixtureParams.get("route") ?? "/planet/9/9/9";
 const settlementShell = fixtureParams.get("shell") === "settlement";
+const incompleteOverview = fixtureParams.get("incompleteOverview") === "true";
 const stallMissionBackgroundReads = fixtureParams.get("stallMissionBackgroundReads") === "true";
 const walletEventOnPointerDown = fixtureParams.get("walletEventOnPointerDown");
 
@@ -162,7 +163,7 @@ globalThis.fetch = (async (input) => {
   }
 
   if (url.pathname.endsWith(`/wallet/${account}/overview`)) {
-    return Response.json(walletOverview());
+    return Response.json(incompleteOverview ? incompleteWalletOverview() : walletOverview());
   }
 
   if (url.pathname.endsWith(`/wallet/${account}/settlement`)) {
@@ -216,6 +217,18 @@ globalThis.fetch = (async (input) => {
       resources: { crystal: "3873", deuterium: "102", metal: "10313" },
       resourcesAsOfNow: { crystal: "3873", deuterium: "102", metal: "10313" },
       storageCaps: { crystal: "10000", deuterium: "10000", metal: "10000" },
+      wallet: account,
+    });
+  }
+
+  if (url.pathname.endsWith(`/wallet/${account}/moon`)) {
+    return Response.json({
+      buildings: [],
+      defenseQueue: null,
+      defenses: [],
+      homePlanetId: "owned-a",
+      moon: null,
+      queue: null,
       wallet: account,
     });
   }
@@ -394,6 +407,21 @@ function walletOverview() {
       homePlanetId: selected.planetId,
       planet: selected,
       wallet: account,
+    },
+  };
+}
+
+function incompleteWalletOverview() {
+  const overview = walletOverview();
+  return {
+    ...overview,
+    planetsResponse: {
+      ...overview.planetsResponse,
+      planets: [],
+    },
+    settlement: {
+      ...overview.settlement,
+      planet: null,
     },
   };
 }
