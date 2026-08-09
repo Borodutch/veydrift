@@ -106,11 +106,29 @@ export function indexedInfrastructurePlanetId(
   ))?.[0];
 }
 
+export function indexedDefensePlanetId(
+  store: PlanetSectionStore,
+  wallet: string | null | undefined,
+): string | undefined {
+  if (!wallet) return undefined;
+  const normalizedWallet = wallet.toLowerCase();
+  return Object.entries(store).find(([, section]) => (
+    section.defenseState?.wallet?.toLowerCase() === normalizedWallet
+  ))?.[0];
+}
+
 export function infrastructureSnapshotPlanetId(
   snapshot: ChainInfrastructureState | null | undefined,
   fallbackPlanetId: string | null | undefined,
 ): string | undefined {
   return snapshot?.planetId ?? snapshot?.homePlanetId ?? fallbackPlanetId ?? undefined;
+}
+
+export function defenseSnapshotPlanetId(
+  snapshot: ChainDefenseState | null | undefined,
+  fallbackPlanetId: string | null | undefined,
+): string | undefined {
+  return snapshot?.homePlanetId ?? fallbackPlanetId ?? undefined;
 }
 
 export function planetSectionStatus(
