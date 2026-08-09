@@ -620,6 +620,13 @@ test("desktop sidebar commits the reported Overview to Raid Finder and Shipyard 
 
   await clickExpression("document.querySelector('nav.hidden a[href=\"/mission-control\"]')");
   await waitForExpression("location.pathname === '/mission-control' && document.querySelector('nav.hidden a[href=\"/mission-control\"][aria-current=\"page\"]') !== null");
+  await waitForExpression("document.querySelector('main [data-mission-control-page]') !== null");
+
+  await clickExpressionWithTrustedPointer("document.querySelector('nav.hidden a[href=\"/raid-finder\"]')");
+  await waitForExpression(`location.pathname === '/raid-finder'
+    && document.querySelector('nav.hidden a[href="/raid-finder"][aria-current="page"]') !== null
+    && document.querySelector('main [data-raid-target-finder-page]') !== null
+    && document.querySelector('main [data-mission-control-page]') === null`);
 });
 
 test("direct Mission Control load hydrates before stalled history reads occupy the API pool", async () => {
@@ -843,6 +850,22 @@ test("mobile sidebar first clicks commit routes and close the menu", async () =>
     && document.querySelector('details:has(#mobile-navigation-menu)')?.open === false
     && document.querySelector('main [data-production-catalog]') !== null
     && document.querySelector('main section[aria-label="Fleets"]') === null`);
+
+  await clickExpressionWithTrustedPointer("document.querySelector('summary[aria-label=\"Open navigation menu\"]')", "touch");
+  await waitForExpression("document.querySelector('details:has(#mobile-navigation-menu)')?.open === true");
+  await clickExpressionWithTrustedPointer("document.querySelector('#mobile-navigation-menu a[href=\"/mission-control\"]')", "touch");
+  await waitForExpression(`location.pathname === '/mission-control'
+    && document.querySelector('main [data-mission-control-page]') !== null
+    && document.querySelector('details:has(#mobile-navigation-menu)')?.open === false`);
+
+  await clickExpressionWithTrustedPointer("document.querySelector('summary[aria-label=\"Open navigation menu\"]')", "touch");
+  await waitForExpression("document.querySelector('details:has(#mobile-navigation-menu)')?.open === true");
+  await clickExpressionWithTrustedPointer("document.querySelector('#mobile-navigation-menu a[href=\"/raid-finder\"]')", "touch");
+  await waitForExpression(`location.pathname === '/raid-finder'
+    && document.querySelector('#mobile-navigation-menu a[href="/raid-finder"][aria-current="page"]') !== null
+    && document.querySelector('details:has(#mobile-navigation-menu)')?.open === false
+    && document.querySelector('main [data-raid-target-finder-page]') !== null
+    && document.querySelector('main [data-mission-control-page]') === null`);
 });
 
 test("owned deep links and real back-forward events never expose owned controls under an unrelated identity", async () => {
