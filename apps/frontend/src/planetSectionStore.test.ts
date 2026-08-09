@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import {
   emptyPlanetSectionState,
   hasPlanetSectionData,
+  indexedInfrastructurePlanetId,
+  infrastructureSnapshotPlanetId,
   planetSectionAccessForPlanet,
   planetSectionForPlanet,
   planetSectionStoreFromInitialState,
@@ -35,6 +37,21 @@ const fleetVisibility = {
 } as unknown as FleetMissionVisibilityResponse;
 
 describe("planetSectionStore", () => {
+  test("keys an early Infrastructure snapshot by its indexed planet identity", () => {
+    const earlyInfrastructure = {
+      ...infrastructure,
+      homePlanetId: "planet-83",
+      planetId: "planet-83",
+      wallet: "0xAaAa",
+    } as ChainInfrastructureState;
+    const planetId = infrastructureSnapshotPlanetId(earlyInfrastructure, undefined);
+    const store = setPlanetSectionValue({}, planetId, "infrastructureChainState", earlyInfrastructure);
+
+    expect(planetId).toBe("planet-83");
+    expect(indexedInfrastructurePlanetId(store, "0xaaaa")).toBe("planet-83");
+    expect(indexedInfrastructurePlanetId(store, "0xbbbb")).toBeUndefined();
+  });
+
   test("hydrates initial singleton section state under the active planet id", () => {
     const store = planetSectionStoreFromInitialState("planet-1", {
       infrastructureChainState: infrastructure,

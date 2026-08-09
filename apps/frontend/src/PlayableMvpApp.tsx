@@ -166,6 +166,8 @@ import {
 import { formatDurationUntil } from "./durationFormat";
 import {
   hasPlanetSectionData,
+  indexedInfrastructurePlanetId,
+  infrastructureSnapshotPlanetId,
   planetSectionAccessForPlanet,
   planetSectionForPlanet,
   setPlanetSectionData,
@@ -3585,6 +3587,7 @@ export function PlayableMvpApp({
   const [watchBusyPlanetId, setWatchBusyPlanetId] = useState<string | undefined>();
   const [selectedPlanetId, setSelectedPlanetId] = useState<string | undefined>();
   const [selectedBodyKind, setSelectedBodyKind] = useState<OrbitBodyKind>("planet");
+  const [planetSectionStore, setPlanetSectionStore] = useState<PlanetSectionStore>({});
   const resolvedSelectedPlanetId = useMemo(() => selectedPlanetIdFromRoster({
     homePlanetId: onChainSettlementState?.homePlanetId,
     planets: walletPlanets,
@@ -3595,10 +3598,11 @@ export function PlayableMvpApp({
       ?? walletPlanets[0],
     [resolvedSelectedPlanetId, walletPlanets]
   );
-  const activePlanetId = selectedManagedPlanet?.planetId ?? onChainSettlementState?.homePlanetId ?? undefined;
+  const activePlanetId = selectedManagedPlanet?.planetId
+    ?? onChainSettlementState?.homePlanetId
+    ?? indexedInfrastructurePlanetId(planetSectionStore, account);
   const selectedMoonBody = selectedManagedPlanet?.moon?.exists ? selectedManagedPlanet.moon : null;
   const activeBodyKind = resolvedOrbitBodyKind(selectedBodyKind, selectedManagedPlanet);
-  const [planetSectionStore, setPlanetSectionStore] = useState<PlanetSectionStore>({});
   const activePlanetSection = useMemo(
     () => planetSectionForPlanet(planetSectionStore, activePlanetId),
     [activePlanetId, planetSectionStore]
@@ -3752,7 +3756,16 @@ export function PlayableMvpApp({
   const setInfrastructureChainState = useCallback((
     value: ChainInfrastructureState | null | ((current: ChainInfrastructureState | null) => ChainInfrastructureState | null),
   ) => {
-    setPlanetSectionStore((current) => setPlanetSectionValue(current, activePlanetId, "infrastructureChainState", value));
+    setPlanetSectionStore((current) => {
+      const currentValue = planetSectionForPlanet(current, activePlanetId).infrastructureChainState;
+      const nextValue = typeof value === "function" ? value(currentValue) : value;
+      return setPlanetSectionValue(
+        current,
+        infrastructureSnapshotPlanetId(nextValue, activePlanetId),
+        "infrastructureChainState",
+        nextValue,
+      );
+    });
   }, [activePlanetId]);
   const [infrastructureLoading, setInfrastructureLoading] = useState(false);
   const [infrastructureError, setInfrastructureError] = useState<string | undefined>();
@@ -6493,6 +6506,19 @@ export function PlayableMvpApp({
     }
   }, [page, pageStateHydrationReady, refreshInfrastructureState]);
 
+  useEffect(() => {
+    if (
+      page !== "infrastructure"
+      || pageStateHydrationReady
+      || !apiBaseUrl
+      || !account
+      || infrastructureChainState
+    ) {
+      return;
+    }
+    void refreshInfrastructureState();
+  }, [account, apiBaseUrl, infrastructureChainState, page, pageStateHydrationReady, refreshInfrastructureState]);
+
   const previousInfrastructurePageRef = useRef(page);
   useEffect(() => {
     const previousPage = previousInfrastructurePageRef.current;
@@ -9191,7 +9217,8 @@ export function PlayableMvpApp({
       );
     }
 
-    if (!walletPlanetHydrated) {
+    const infrastructureCanRenderFromIndexedState = page === "infrastructure" && Boolean(infrastructureChainState);
+    if (!walletPlanetHydrated && !infrastructureCanRenderFromIndexedState) {
       return (
         <HydratingPlanetState
           error={onChainError}

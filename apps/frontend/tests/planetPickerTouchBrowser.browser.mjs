@@ -313,11 +313,13 @@ async function loadInspectorFixture(route, width, options = {}) {
     mobile: width < 768,
     width,
   });
-  const params = new URLSearchParams({ route, ...options });
+  const { waitForPlanetSelectors = "true", ...fixtureOptions } = options;
+  const params = new URLSearchParams({ route, ...fixtureOptions });
   await cdp.send("Page.navigate", {
     url: `${inspectorFixtureUrl}?${params}`,
   });
   await waitForExpression("window.inspectorProof?.appReady === true", 10_000);
+  if (waitForPlanetSelectors === "false") return;
   try {
     await waitForExpression("document.querySelectorAll('[data-planet-selector-item]').length >= 2");
   } catch (error) {
@@ -651,9 +653,39 @@ for (const width of [390, 1280]) {
         && document.querySelector('a[href="/${route}"][aria-current="page"]') !== null
         && document.querySelector('main')?.textContent?.includes('${route === "infrastructure" ? "Metal Mine" : "Rocket Launcher"}') === true
         && document.querySelector('main')?.textContent?.includes('OPEN THE BOX') === false`);
+      if (route === "infrastructure") {
+        const rendered = await evaluate(`({
+          bodyText: document.body.textContent?.replace(/\\s+/g, ' ').trim(),
+          errors: window.inspectorProof.errors,
+          mainText: document.querySelector('main')?.textContent?.replace(/\\s+/g, ' ').trim(),
+          requests: window.inspectorProof.requests,
+        })`);
+        assert.match(rendered.mainText ?? "", /Level 4/);
+        assert.match(rendered.bodyText ?? "", /\+620\/h/);
+        assert.deepEqual(rendered.errors, []);
+      }
     });
   }
 }
+
+test("Infrastructure renders its indexed planet snapshot while wallet overview hydration is incomplete", async () => {
+  await loadInspectorFixture("/infrastructure", 1280, {
+    incompleteOverview: "true",
+    shell: "settlement",
+    waitForPlanetSelectors: "false",
+  });
+  await waitForExpression(`location.pathname === '/infrastructure'
+    && document.querySelector('main')?.textContent?.includes('Level 4') === true
+    && document.querySelector('main')?.textContent?.includes('Infrastructure state unavailable') === false
+    && document.querySelector('main')?.textContent?.includes('Syncing planetfall') === false`);
+
+  const rendered = await evaluate(`({
+    errors: window.inspectorProof.errors,
+    requests: window.inspectorProof.requests,
+  })`);
+  assert.ok(rendered.requests.some((request) => request.includes('/infrastructure')), JSON.stringify(rendered.requests));
+  assert.deepEqual(rendered.errors, []);
+});
 
 test("desktop Overview to Shipyard click atomically replaces the rendered page", async () => {
   await loadInspectorFixture("/", 1280);
