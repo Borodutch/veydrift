@@ -29,6 +29,7 @@ const appRoot = document.querySelector("#app") as HTMLElement;
 const fixtureParams = new URLSearchParams(window.location.search);
 const route = fixtureParams.get("route") ?? "/planet/9/9/9";
 const settlementShell = fixtureParams.get("shell") === "settlement";
+const stallMissionBackgroundReads = fixtureParams.get("stallMissionBackgroundReads") === "true";
 const walletEventOnPointerDown = fixtureParams.get("walletEventOnPointerDown");
 
 const ownedPlanets = [
@@ -120,6 +121,14 @@ globalThis.fetch = (async (input) => {
   const url = new URL(String(input), window.location.origin);
   fixtureRequests.push(`${url.pathname}${url.search}`);
   const systemMatch = url.pathname.match(/\/universe\/galaxies\/(\d+)\/systems\/(\d+)/);
+
+  if (stallMissionBackgroundReads && (
+    url.pathname.endsWith(`/wallet/${account}/missions`)
+    || url.pathname.endsWith(`/wallet/${account}/missile-attacks`)
+    || (url.pathname.endsWith("/missions") && url.searchParams.get("status") === "completed")
+  )) {
+    return new Promise<Response>(() => undefined);
+  }
 
   if (detailRaceKind && systemMatch) {
     const key = `${systemMatch[1]}:${systemMatch[2]}`;
