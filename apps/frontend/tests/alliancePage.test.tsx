@@ -32,7 +32,7 @@ const walletFlowSource = await Bun.file(new URL("../src/walletFlow.ts", import.m
 
 describe("AlliancePage loading display", () => {
   test("uses the shared app shell instead of an extra Alliance page wrapper", () => {
-    expect(alliancePageSource).toContain('<section className="grid min-h-0 gap-4">');
+    expect(alliancePageSource).toContain('<section className="grid min-h-0 gap-4" data-alliance-page>');
     expect(alliancePageSource).not.toContain('className="min-h-0 overflow-auto bg-[#080d16]"');
     expect(alliancePageSource).not.toContain('className="mx-auto grid w-full max-w-7xl gap-4 p-4"');
   });
