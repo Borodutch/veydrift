@@ -2079,11 +2079,44 @@ h4 {
 
 .retro-cd-copy-panel .settlement-state p {
   max-width: 100%;
+  color: #cbc8d0;
+  line-height: 1.52;
 }
 
 .retro-cd-copy-panel .settlement-action {
   display: flex;
   flex-wrap: wrap;
+}
+
+.retro-cd-copy-panel .referral-code-field {
+  gap: 9px;
+  margin-bottom: 6px;
+}
+
+.retro-cd-copy-panel .referral-code-field > span:first-child {
+  color: #d8d1c7;
+  font-size: 0.82rem;
+  font-weight: 720;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.retro-cd-copy-panel .referral-code-field input {
+  min-height: 46px;
+  border-color: rgba(216, 180, 254, 0.22);
+  border-radius: 12px;
+  background: rgba(10, 12, 19, 0.68);
+}
+
+.retro-cd-copy-panel .referral-code-field input:focus {
+  border-color: rgba(246, 179, 92, 0.64);
+  box-shadow: 0 0 0 3px rgba(246, 179, 92, 0.08);
+}
+
+.retro-cd-copy-panel .settlement-primary {
+  border-color: rgba(255, 245, 230, 0.5);
+  background: linear-gradient(135deg, #fff8ed, #f6c47f 62%, #d8b4fe);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.26), 0 0 24px rgba(246, 179, 92, 0.14), inset 0 1px rgba(255, 255, 255, 0.7);
 }
 
 .retro-cd-showcase {
@@ -3257,11 +3290,83 @@ h4 {
 }
 
 .landing-cd-eyebrow {
+  width: fit-content;
   margin: 0;
-  color: #80f1ff;
-  font-size: 0.78rem;
-  font-weight: 900;
-  text-transform: uppercase;
+  border: 1px solid rgba(246, 179, 92, 0.24);
+  border-radius: 999px;
+  background: rgba(246, 179, 92, 0.08);
+  color: #f8d8aa;
+  font-size: 0.76rem;
+  font-weight: 760;
+  letter-spacing: 0.025em;
+  padding: 7px 11px;
+}
+
+.landing-invite-welcome {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 3px 12px;
+  width: min(100%, 560px);
+  border: 1px solid rgba(216, 180, 254, 0.24);
+  border-radius: 16px;
+  background:
+    radial-gradient(circle at 0 0, rgba(216, 180, 254, 0.16), transparent 46%),
+    linear-gradient(135deg, rgba(22, 18, 31, 0.88), rgba(11, 16, 24, 0.78));
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.26), inset 0 1px rgba(255, 255, 255, 0.06);
+  padding: 14px 15px;
+}
+
+.landing-invite-icon {
+  display: inline-grid;
+  width: 40px;
+  height: 40px;
+  grid-row: 1 / span 2;
+  place-items: center;
+  border-radius: 12px;
+  background: linear-gradient(145deg, rgba(246, 179, 92, 0.22), rgba(216, 180, 254, 0.2));
+  color: #f8d8aa;
+}
+
+.landing-invite-icon svg {
+  width: 19px;
+  height: 19px;
+}
+
+.landing-invite-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.landing-invite-copy strong {
+  color: #fffaf3;
+  font-size: 0.96rem;
+  font-weight: 780;
+}
+
+.landing-invite-copy > span {
+  color: #cfc9d8;
+  font-size: 0.84rem;
+  line-height: 1.4;
+}
+
+.landing-invite-benefits {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  grid-column: 2;
+  margin-top: 8px;
+}
+
+.landing-invite-benefits span {
+  border: 1px solid rgba(246, 179, 92, 0.18);
+  border-radius: 999px;
+  background: rgba(246, 179, 92, 0.07);
+  color: #eadfce;
+  font-size: 0.71rem;
+  font-weight: 680;
+  line-height: 1;
+  padding: 6px 8px;
 }
 
 
@@ -3711,6 +3816,14 @@ h4 {
     font-size: 0.95rem;
   }
 
+  .landing-invite-welcome {
+    padding: 12px;
+  }
+
+  .landing-invite-benefits {
+    grid-column: 1 / -1;
+  }
+
   
 
   
@@ -3956,32 +4069,6 @@ h4 {
   animation: settle-burst-fly var(--burst-duration, 900ms) cubic-bezier(0.12, 0.8, 0.32, 1) var(--burst-delay, 0ms) both;
 }
 
-@keyframes scanner-site-ping {
-  0% {
-    box-shadow: 0 0 0 0 rgba(128, 241, 255, 0.65);
-  }
-  100% {
-    box-shadow: 0 0 0 14px rgba(128, 241, 255, 0);
-  }
-}
-
-.scanner-site-ping {
-  animation: scanner-site-ping 1.4s ease-out infinite;
-}
-
-@keyframes scanner-reticle-sweep {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-.scanner-reticle-sweep {
-  animation: scanner-reticle-sweep 3.2s linear infinite;
-}
-
 /* Inputs below 16px font-size trigger iOS auto-zoom on focus. Force 16px on
  * small screens; !important beats Tailwind text-sm utilities. */
 @media (max-width: 640px) {
@@ -4063,131 +4150,4 @@ h4 {
 
 :root[data-sfx-muted="1"] .sound-toggle-icon-off {
   display: block;
-}
-
-/* Compact settlement scanner HUD shown in the copy panel during wallet and
- * colony-drop scanning states. Revives the orphaned scanner scene at panel size. */
-.settle-scanner {
-  position: relative;
-  overflow: hidden;
-  width: 100%;
-  aspect-ratio: 16 / 8;
-  max-height: 190px;
-  border: 1px solid rgba(128, 241, 255, 0.16);
-  border-radius: 10px;
-  background:
-    radial-gradient(ellipse at 72% 58%, rgba(128, 241, 255, 0.14), transparent 55%),
-    linear-gradient(180deg, rgba(10, 25, 35, 0.7), rgba(4, 10, 18, 0.92)),
-    #05070d;
-}
-
-.settle-scanner::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: repeating-linear-gradient(0deg, rgba(128, 241, 255, 0.045) 0 1px, transparent 1px 3px);
-  pointer-events: none;
-}
-
-.settle-scanner-planet {
-  position: absolute;
-  right: 6%;
-  bottom: -34%;
-  width: 52%;
-  aspect-ratio: 1;
-  border: 1px solid rgba(128, 241, 255, 0.22);
-  border-radius: 50%;
-  object-fit: cover;
-  box-shadow:
-    inset 22px -16px 34px rgba(0, 0, 0, 0.5),
-    0 0 42px rgba(128, 241, 255, 0.24),
-    0 24px 60px rgba(0, 0, 0, 0.42);
-}
-
-.settle-scanner-orbit {
-  position: absolute;
-  right: -4%;
-  bottom: -72%;
-  width: 74%;
-  aspect-ratio: 1;
-  border: 1px solid rgba(128, 241, 255, 0.2);
-  border-radius: 50%;
-  transform: rotate(-18deg);
-}
-
-.settle-scanner-orbit-b {
-  right: -14%;
-  bottom: -88%;
-  width: 92%;
-  border-color: rgba(246, 179, 92, 0.18);
-}
-
-.settle-scanner-reticle {
-  position: absolute;
-  right: 22%;
-  bottom: 26%;
-  width: 64px;
-  aspect-ratio: 1;
-  border: 1px solid rgba(246, 179, 92, 0.58);
-  border-radius: 50%;
-  box-shadow: 0 0 24px rgba(246, 179, 92, 0.25);
-}
-
-.settle-scanner-reticle::before,
-.settle-scanner-reticle::after {
-  position: absolute;
-  inset: 50% auto auto 50%;
-  background: rgba(246, 179, 92, 0.72);
-  content: "";
-  transform: translate(-50%, -50%);
-}
-
-.settle-scanner-reticle::before {
-  width: 120%;
-  height: 1px;
-}
-
-.settle-scanner-reticle::after {
-  width: 1px;
-  height: 120%;
-}
-
-.settle-scanner-site {
-  position: absolute;
-  z-index: 1;
-  width: 10px;
-  aspect-ratio: 1;
-  border: 1px solid rgba(246, 179, 92, 0.7);
-  border-radius: 50%;
-  background: #f6b35c;
-  box-shadow: 0 0 18px rgba(246, 179, 92, 0.5);
-}
-
-.settle-scanner-site-a {
-  left: 22%;
-  top: 34%;
-}
-
-.settle-scanner-site-b {
-  left: 34%;
-  top: 58%;
-  width: 8px;
-  opacity: 0.78;
-}
-
-.settle-scanner-site-c {
-  left: 16%;
-  top: 64%;
-  width: 6px;
-  opacity: 0.62;
-}
-
-.settle-scanner-hud {
-  position: absolute;
-  left: 10px;
-  top: 8px;
-  color: rgba(128, 241, 255, 0.78);
-  font-size: 0.6rem;
-  font-weight: 900;
-  letter-spacing: 0.22em;
 }
