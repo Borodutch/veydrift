@@ -516,6 +516,14 @@ export type FleetMissionSummary = {
   randomnessRequestId?: string;
   defenseHoldUntil?: string;
   defenseHoldOutcome?: "Expired" | "Recalled";
+  // Server-derived timing state. Mission lifecycle labels must use this indexed API value rather
+  // than inventing transitions from the browser clock.
+  asOfNow?: {
+    secondsUntilArrival: number;
+    secondsUntilReturn: number;
+    arrived: boolean;
+    returned: boolean;
+  };
 };
 
 // VEY-KANEO-456: one allied fleet stationed (AcsDefend) to defend a planet under attack. `holdUntil` is
@@ -566,6 +574,9 @@ export type FleetMissionPlanetReference = {
 export type FleetMissionVisibilityResponse = {
   wallet: string;
   homePlanetId: string | null;
+  indexedRevision?: string;
+  indexedBlock?: string | null;
+  generatedAt?: string;
   incoming: FleetMissionSummary[];
   outgoing: FleetMissionSummary[];
   returning: FleetMissionSummary[];
@@ -4356,6 +4367,7 @@ export async function requestWatchedPlanetSignature(
 type WalletReadOptions = {
   source?: "indexed";
   timeoutMs?: number;
+  fresh?: boolean;
 };
 
 type FleetMissionVisibilityOptions = WalletReadOptions & {
@@ -4392,7 +4404,10 @@ export async function fetchWalletOverviewSnapshot(
     wallet,
     withWalletReadOptions("overview", planetId, options),
     "Overview snapshot",
-    options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }
+    {
+      ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+      ...(options.fresh === undefined ? {} : { fresh: options.fresh }),
+    }
   );
 }
 
@@ -4404,7 +4419,10 @@ export async function fetchFleetMissionVisibility(apiUrl: string, wallet: string
     wallet,
     withWalletReadOptions("fleet-visibility", undefined, options, params),
     "Fleet visibility",
-    options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }
+    {
+      ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+      ...(options.fresh === undefined ? {} : { fresh: options.fresh }),
+    }
   );
 }
 
@@ -4428,7 +4446,13 @@ export async function fetchFleetMissionArchive(
   if (options.planetId) params.set("planetId", options.planetId);
   params.set("page", String(options.page ?? 1));
   params.set("pageSize", String(options.pageSize ?? 25));
-  return fetchWalletJson<FleetMissionArchiveResponse>(apiUrl, wallet, `missions?${params.toString()}`, "Mission archive");
+  return fetchWalletJson<FleetMissionArchiveResponse>(
+    apiUrl,
+    wallet,
+    `missions?${params.toString()}`,
+    "Mission archive",
+    { fresh: true },
+  );
 }
 
 export async function fetchPlayerActivity(
@@ -4453,13 +4477,20 @@ export async function fetchMissileAttackArchive(
   if (options.planetId) params.set("planetId", options.planetId);
   params.set("page", String(options.page ?? 1));
   params.set("pageSize", String(options.pageSize ?? 25));
-  return fetchWalletJson<MissileAttackArchiveResponse>(apiUrl, wallet, `missile-attacks?${params.toString()}`, "Missile strike archive");
+  return fetchWalletJson<MissileAttackArchiveResponse>(
+    apiUrl,
+    wallet,
+    `missile-attacks?${params.toString()}`,
+    "Missile strike archive",
+    { fresh: true },
+  );
 }
 
 export async function fetchGlobalActiveMissions(apiUrl: string): Promise<GlobalActiveMissionsResponse> {
   return fetchGameApiJson<GlobalActiveMissionsResponse>(
-    `${apiUrl.replace(/\/+$/, "")}/missions?status=active`,
-    "Active missions"
+    `${apiUrl.replace(/\/+$/, "")}/missions?status=active&live=1`,
+    "Active missions",
+    { cache: "no-store", recentReadTtlMs: 0 },
   );
 }
 
@@ -4476,6 +4507,7 @@ export async function fetchGlobalMissionArchive(
 ): Promise<GlobalMissionArchiveResponse> {
   const params = new URLSearchParams();
   params.set("status", "completed");
+  params.set("live", "1");
   if (options.missionNumber) params.set("missionNumber", options.missionNumber);
   if (options.missionType) params.set("missionType", options.missionType);
   if (options.planetId) params.set("planetId", options.planetId);
@@ -4484,14 +4516,16 @@ export async function fetchGlobalMissionArchive(
   params.set("pageSize", String(options.pageSize ?? 25));
   return fetchGameApiJson<GlobalMissionArchiveResponse>(
     `${apiUrl.replace(/\/+$/, "")}/missions?${params.toString()}`,
-    "Mission archive"
+    "Mission archive",
+    { cache: "no-store", recentReadTtlMs: 0 },
   );
 }
 
 export async function fetchMission(apiUrl: string, missionId: string): Promise<MissionDetailResponse> {
   return fetchGameApiJson<MissionDetailResponse>(
     `${apiUrl.replace(/\/+$/, "")}/mission/${encodeURIComponent(missionId)}`,
-    "Mission"
+    "Mission",
+    { cache: "no-store", recentReadTtlMs: 0 },
   );
 }
 
@@ -4905,12 +4939,13 @@ async function fetchWalletJson<T>(
   wallet: string,
   path: string,
   label: string,
-  options: { timeoutMs?: number } = {}
+  options: { fresh?: boolean; timeoutMs?: number } = {}
 ): Promise<T> {
   const timeoutMs = options.timeoutMs ?? WALLET_API_READ_TIMEOUT_MS;
   const url = `${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(wallet)}/${path}`;
   return fetchGameApiJson<T>(url, label, {
     cache: "no-store",
+    ...(options.fresh ? { recentReadTtlMs: 0 } : {}),
     timeoutMs,
     networkFailureMessage: (error) => walletApiNetworkFailureMessage(label, error)
   });
@@ -4923,30 +4958,39 @@ async function fetchGameApiJson<T>(
     cache?: RequestCache;
     httpErrorMessage?: (response: Response) => Promise<string>;
     networkFailureMessage?: (error: unknown) => string;
+    recentReadTtlMs?: number;
     timeoutMs?: number;
   } = {}
 ): Promise<T> {
   const cacheKey = `GET ${url}`;
   const now = Date.now();
-  const recent = gameApiRecentReads.get(cacheKey);
-  if (recent && recent.expiresAt > now) return recent.value as T;
-  if (recent) gameApiRecentReads.delete(cacheKey);
+  const freshQuery = /(?:[?&])fresh=1(?:&|$)/.test(url);
+  const recentReadTtlMs = options.recentReadTtlMs ?? (freshQuery ? 0 : GAME_API_RECENT_READ_TTL_MS);
+  if (recentReadTtlMs > 0) {
+    const recent = gameApiRecentReads.get(cacheKey);
+    if (recent && recent.expiresAt > now) return recent.value as T;
+    if (recent) gameApiRecentReads.delete(cacheKey);
+  }
 
-  const inflight = gameApiInflightReads.get(cacheKey);
-  if (inflight) return inflight as Promise<T>;
+  if (recentReadTtlMs > 0) {
+    const inflight = gameApiInflightReads.get(cacheKey);
+    if (inflight) return inflight as Promise<T>;
+  }
 
   const request = fetchGameApiJsonUnpooled<T>(url, label, options);
-  gameApiInflightReads.set(cacheKey, request);
+  if (recentReadTtlMs > 0) gameApiInflightReads.set(cacheKey, request);
   try {
     const value = await request;
-    gameApiRecentReads.set(cacheKey, {
-      expiresAt: Date.now() + GAME_API_RECENT_READ_TTL_MS,
-      value
-    });
-    pruneRecentGameApiReads();
+    if (recentReadTtlMs > 0) {
+      gameApiRecentReads.set(cacheKey, {
+        expiresAt: Date.now() + recentReadTtlMs,
+        value
+      });
+      pruneRecentGameApiReads();
+    }
     return value;
   } finally {
-    gameApiInflightReads.delete(cacheKey);
+    if (recentReadTtlMs > 0) gameApiInflightReads.delete(cacheKey);
   }
 }
 
@@ -5065,6 +5109,7 @@ function withWalletReadOptions(path: string, planetId: string | undefined, optio
   if (planetId && isContractPlanetId(planetId)) {
     params.set("planetId", planetId);
   }
+  if (options.fresh) params.set("fresh", "1");
 
   const query = params.toString();
   return query ? `${path}?${query}` : path;

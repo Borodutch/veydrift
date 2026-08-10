@@ -1302,7 +1302,7 @@ export function summarizeFleets(
     const hostile = !self && isOffensiveFleetMission(mission.missionType);
     const relation = self ? "self" : hostile ? "hostile" : "friendly";
     const endpoint = missionEndpointLabel(mission.originPlanet, mission.originPlanetId, planetNames);
-    const state = eventMs !== undefined && eventMs <= now ? "Resolving" : overviewMissionStatus(mission, now);
+    const state = overviewMissionStatus(mission);
     const timingLabel = isReturning ? "Lands" : "ETA";
     const timingValue = overviewMissionTimingValue(eventMs, now);
     const directionLabel = isReturning ? "Returning to" : "Inbound from";
@@ -1332,17 +1332,10 @@ export function summarizeFleets(
       ? timestampToMs(mission.defenseHoldUntil ?? mission.returnAt)
       : undefined;
     const isHolding = mission.missionType === "DefenseHold"
-      && arrivalMs !== undefined
-      && arrivalMs <= now
-      && defenseHoldUntilMs !== undefined
-      && defenseHoldUntilMs > now;
+      && mission.asOfNow?.arrived === true
+      && mission.asOfNow.returned !== true;
     const eventMs = isHolding ? defenseHoldUntilMs : arrivalMs;
-    // Lazy on-chain reconciliation (VEY-KANEO-468): once the arrival time passes, the mission is
-    // settled lazily on the next mutating call (combat is resolved by the battle keeper), so until
-    // the chain reflects it the honest state is "Resolving", not a finished "Arrived".
-    const state = !isHolding && arrivalMs !== undefined && arrivalMs <= now
-      ? "Resolving"
-      : overviewMissionStatus(mission, now);
+    const state = overviewMissionStatus(mission);
     const timingLabel = isHolding ? "Ends" : "ETA";
     const timingValue = overviewMissionTimingValue(eventMs, now);
     const endpoint = missionEndpointLabel(mission.targetPlanet, mission.targetPlanetId, planetNames);
@@ -1368,9 +1361,7 @@ export function summarizeFleets(
     if (seen.has(mission.missionId)) continue;
     seen.add(mission.missionId);
     const returnMs = timestampToMs(mission.returnAt);
-    // VEY-KANEO-468: a returned-by-time leg settles lazily on the next mutating call, so show
-    // "Resolving" until the chain lands it rather than a misleading ready-to-land action.
-    const state = returnMs !== undefined && returnMs <= now ? "Resolving" : mission.status;
+    const state = overviewMissionStatus(mission);
     const timingValue = overviewMissionTimingValue(returnMs, now);
     const endpoint = missionEndpointLabel(mission.targetPlanet, mission.targetPlanetId, planetNames);
     const isAttack = isOffensiveFleetMission(mission.missionType);
@@ -1414,19 +1405,19 @@ function isOffensiveFleetMission(missionType: string): boolean {
 
 function overviewMissionStatus(
   mission: FleetMissionVisibilityResponse["outgoing"][number],
-  now: number,
 ): string {
-  const arrivalMs = timestampToMs(mission.arrivalAt);
-  const holdUntilMs = timestampToMs(mission.defenseHoldUntil ?? mission.returnAt);
+  if (mission.resolutionBlocker === "randomness_pending") return "Awaiting randomness";
+  if (mission.needsResolution === true) return "Resolving";
   if (
     mission.missionType === "DefenseHold"
     && mission.status === "Outbound"
-    && arrivalMs !== undefined
-    && arrivalMs <= now
-    && holdUntilMs !== undefined
-    && holdUntilMs > now
+    && mission.asOfNow?.arrived === true
+    && mission.asOfNow.returned !== true
   ) {
     return "Stationed";
+  }
+  if ((mission.status === "Returning" || mission.status === "Recalled") && mission.asOfNow?.returned === true) {
+    return "Resolving";
   }
   return mission.status;
 }

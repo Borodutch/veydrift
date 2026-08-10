@@ -299,16 +299,16 @@ describe("MissionControlPage", () => {
         wallet: "0x1111111111111111111111111111111111111111",
         homePlanetId: "7",
         incoming: [mission({ missionId: "8", missionType: "Attack", owner: "0x3333333333333333333333333333333333333333" })],
-        outgoing: [mission({ missionId: "9", missionType: "Transport" })],
-        returning: [mission({ missionId: "10", status: "Returning" })],
+        outgoing: [mission({ missionId: "9", missionType: "Transport", needsResolution: true })],
+        returning: [mission({ missionId: "10", status: "Returning", asOfNow: { secondsUntilArrival: 0, secondsUntilReturn: 0, arrived: true, returned: true } })],
         joinableAttacks: [],
         completedMissions: [],
         battleReports: [],
       },
       allActiveMissions: [
         mission({ missionId: "8", missionType: "Attack", owner: "0x3333333333333333333333333333333333333333" }),
-        mission({ missionId: "9", missionType: "Transport" }),
-        mission({ missionId: "10", status: "Returning" }),
+        mission({ missionId: "9", missionType: "Transport", needsResolution: true }),
+        mission({ missionId: "10", status: "Returning", asOfNow: { secondsUntilArrival: 0, secondsUntilReturn: 0, arrived: true, returned: true } }),
       ],
       initialView: { activePage: 0, activeTab: "all", pastPage: 0, pastTab: "mine" },
       loading: false,
@@ -338,10 +338,7 @@ describe("MissionControlPage", () => {
     // VEY-400: cards drop the MISSION / ROUTE / FLEET / Orders table headers entirely.
     expect(text).not.toContain("Mission Route Fleet");
     expect(text).not.toContain("Origin -> Target");
-    // Status reads as a header pill with the live ETA (outbound) / return (returning) countdown.
-    // VEY-KANEO-433/468: the pill tracks the live clock — this fixture's `now` (…700_000) is past the
-    // outbound arrival (…300) and the return landing (…600). Under lazy reconciliation both legs are
-    // mid-settlement, so they read "Resolving" rather than the stale backend "Outbound"/"Returning".
+    // Status comes from the backend lifecycle fields; the browser clock only renders countdowns.
     expect(text).toContain("Resolving");
     // One phase-relevant time per collapsed row (ETA outbound / Returns returning); the full
     // Arrived/Returned pair renders in the expanded panel.
@@ -1549,26 +1546,27 @@ describe("MissionControlPage", () => {
   });
 });
 
-describe("VEY-KANEO-433 time-aware mission status", () => {
+describe("backend-authoritative mission status", () => {
   // arrivalAt 1770000300 (ms 1_770_000_300_000), returnAt 1770000600 (ms 1_770_000_600_000).
   const beforeArrival = 1_770_000_200_000;
   const afterArrival = 1_770_000_400_000;
   const afterReturn = 1_770_000_700_000;
 
-  test("Outbound pill flips from En route to Arrived once arrival passes", () => {
+  test("does not manufacture an Outbound transition from the browser clock", () => {
     const fleet = mission({ status: "Outbound" });
     expect(missionStatusPill(fleet, beforeArrival).label).toBe("En route");
-    // VEY-KANEO-468: an arrived-but-unsettled outbound leg is mid-settlement -> "Resolving".
-    expect(missionStatusPill(fleet, afterArrival).label).toBe("Resolving");
+    expect(missionStatusPill(fleet, afterArrival).label).toBe("En route");
+    expect(missionStatusPill(mission({ status: "Outbound", needsResolution: true }), beforeArrival).label).toBe("Resolving");
   });
 
-  test("Returning/Recalled pill flips to Resolving once the fleet's landing time passes", () => {
+  test("uses backend return freshness instead of the browser clock", () => {
     const returning = mission({ status: "Returning" });
     const recalled = mission({ status: "Recalled" });
     expect(missionStatusPill(returning, afterArrival).label).toBe("Returning");
-    expect(missionStatusPill(returning, afterReturn).label).toBe("Resolving");
+    expect(missionStatusPill(returning, afterReturn).label).toBe("Returning");
     expect(missionStatusPill(recalled, afterArrival).label).toBe("Recalled");
-    expect(missionStatusPill(recalled, afterReturn).label).toBe("Resolving");
+    expect(missionStatusPill(recalled, afterReturn).label).toBe("Recalled");
+    expect(missionStatusPill(mission({ status: "Returning", asOfNow: { secondsUntilArrival: 0, secondsUntilReturn: 0, arrived: true, returned: true } }), beforeArrival).label).toBe("Resolving");
   });
 
   test("terminal backend statuses pass through unchanged", () => {
@@ -1579,21 +1577,21 @@ describe("VEY-KANEO-433 time-aware mission status", () => {
   test("the text label mirrors the pill for the report card and shared report", () => {
     const fleet = mission({ status: "Outbound" });
     expect(missionDisplayStatusLabel(fleet, beforeArrival)).toBe("en route");
-    // VEY-KANEO-468: mid-settlement legs read "resolving" in report/text surfaces too.
-    expect(missionDisplayStatusLabel(fleet, afterArrival)).toBe("resolving");
-    expect(missionDisplayStatusLabel(mission({ status: "Returning" }), afterReturn)).toBe("resolving");
+    expect(missionDisplayStatusLabel(fleet, afterArrival)).toBe("en route");
+    expect(missionDisplayStatusLabel(mission({ status: "Outbound", needsResolution: true }), beforeArrival)).toBe("resolving");
+    expect(missionDisplayStatusLabel(mission({ status: "Returning", asOfNow: { secondsUntilArrival: 0, secondsUntilReturn: 0, arrived: true, returned: true } }), beforeArrival)).toBe("resolving");
   });
 });
 
 describe("manual mission resolution fallback", () => {
-  test("appears only after a mission leg has been overdue for 60 seconds", () => {
-    const outbound = mission({ arrivalAt: "1770000300", missionType: "Transport", status: "Outbound" });
-    const returning = mission({ returnAt: "1770000600", status: "Returning" });
+  test("appears only after a backend-confirmed mission leg has exceeded the grace period", () => {
+    const outbound = mission({ arrivalAt: "1770000300", missionType: "Transport", needsResolution: true, status: "Outbound" });
+    const returning = mission({ asOfNow: { secondsUntilArrival: 0, secondsUntilReturn: 0, arrived: true, returned: true }, returnAt: "1770000600", status: "Returning" });
 
-    expect(manualMissionResolutionKind(outbound, 1_770_000_359_999)).toBeUndefined();
-    expect(manualMissionResolutionKind(outbound, 1_770_000_360_000)).toBe("arrival");
-    expect(manualMissionResolutionKind(returning, 1_770_000_659_999)).toBeUndefined();
-    expect(manualMissionResolutionKind(returning, 1_770_000_660_000)).toBe("return");
+    expect(manualMissionResolutionKind(outbound, 1_770_000_479_999)).toBeUndefined();
+    expect(manualMissionResolutionKind(outbound, 1_770_000_480_000)).toBe("arrival");
+    expect(manualMissionResolutionKind(returning, 1_770_000_779_999)).toBeUndefined();
+    expect(manualMissionResolutionKind(returning, 1_770_000_780_000)).toBe("return");
   });
 
   test("stays hidden while combat randomness is pending and after terminal settlement", () => {

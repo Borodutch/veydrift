@@ -101,7 +101,7 @@ export type MissionLaunchSnapshot = {
   fleetVisibility: FleetMissionVisibilityResponse;
 };
 
-export type PendingMissionLaunchInput = {
+export type ExpectedMissionLaunchInput = {
   txHash: string;
   owner: string;
   originPlanetId: string;
@@ -117,8 +117,6 @@ export type PendingMissionLaunchInput = {
   submittedAtMs?: number | undefined;
   travelSeconds?: number | undefined;
 };
-
-export const PENDING_MISSION_LAUNCH_ID_PREFIX = "pending:";
 
 export type AllianceApplicationExpectation = {
   allianceId: string;
@@ -151,6 +149,15 @@ type WaitOptions = {
 type ResourceSnapshotState = {
   resourceSnapshot?: ResourceSnapshotMetadata | null | undefined;
 };
+
+export function isFleetVisibilityIndexedThrough(
+  visibility: Pick<FleetMissionVisibilityResponse, "indexedBlock">,
+  receiptBlockNumber: string | number | bigint | null | undefined,
+): boolean {
+  const indexedBlock = parseBlockNumber(visibility.indexedBlock);
+  const receiptBlock = parseBlockNumber(receiptBlockNumber);
+  return indexedBlock !== undefined && receiptBlock !== undefined && indexedBlock >= receiptBlock;
+}
 
 // Keep transaction flows as light-client reads: after a receipt, wait for the
 // backend-indexed event to become visible instead of fabricating local state.
@@ -398,22 +405,14 @@ export function isMissionLaunchStateVisible(
   return missionLaunchMissionsForTransaction(snapshot, txHash, expectedMission).length > 0;
 }
 
-export function pendingMissionLaunchId(txHash: string): string {
-  return `${PENDING_MISSION_LAUNCH_ID_PREFIX}${normalizeTxHash(txHash).replace(/^0x/, "").slice(0, 12)}`;
-}
-
-export function isPendingMissionLaunch(mission: Pick<FleetMissionSummary, "missionId">): boolean {
-  return mission.missionId.startsWith(PENDING_MISSION_LAUNCH_ID_PREFIX);
-}
-
-export function pendingMissionLaunch(input: PendingMissionLaunchInput): FleetMissionSummary {
+export function expectedMissionLaunch(input: ExpectedMissionLaunchInput): FleetMissionSummary {
   const submittedAtMs = input.submittedAtMs ?? Date.now();
   const travelSeconds = Math.max(1, Math.ceil(Number(input.travelSeconds) || 60));
   const arrivalSeconds = Math.floor(submittedAtMs / 1_000) + travelSeconds;
   const returnSeconds = arrivalSeconds + travelSeconds;
 
   return {
-    missionId: pendingMissionLaunchId(input.txHash),
+    missionId: "",
     status: "Outbound",
     missionType: input.missionType,
     owner: input.owner,
@@ -437,49 +436,6 @@ export function pendingMissionLaunch(input: PendingMissionLaunchInput): FleetMis
   };
 }
 
-export function mergePendingMissionLaunches(
-  current: readonly FleetMissionSummary[] | undefined,
-  pending: readonly FleetMissionSummary[],
-): FleetMissionSummary[] {
-  const rows = current ?? [];
-  const canonicalTxHashes = canonicalMissionTransactionHashes(rows);
-  const seen = new Set<string>();
-  return [
-    ...pending.filter((mission) =>
-      !canonicalTxHashes.has(normalizeTxHash(mission.transactionHash))
-        && missionLaunchMissionsFromList(rows, mission.transactionHash, mission).length === 0
-    ),
-    ...rows,
-  ].filter((mission) => {
-    if (seen.has(mission.missionId)) return false;
-    seen.add(mission.missionId);
-    return true;
-  });
-}
-
-export function reconcilePendingMissionLaunches(
-  pending: readonly FleetMissionSummary[],
-  snapshot: MissionLaunchSnapshot,
-): FleetMissionSummary[] {
-  const missions = [
-    ...activeWalletMissions(snapshot.fleetVisibility),
-    ...snapshot.allActiveMissions,
-  ];
-  const canonicalTxHashes = canonicalMissionTransactionHashes(missions);
-  return pending.filter((mission) =>
-    !canonicalTxHashes.has(normalizeTxHash(mission.transactionHash))
-      && missionLaunchMissionsFromList(missions, mission.transactionHash, mission).length === 0
-  );
-}
-
-export function removePendingMissionLaunchForTransaction(
-  pending: readonly FleetMissionSummary[],
-  txHash: string,
-): FleetMissionSummary[] {
-  const normalized = normalizeTxHash(txHash);
-  return pending.filter((mission) => normalizeTxHash(mission.transactionHash) !== normalized);
-}
-
 function activeWalletMissions(fleetVisibility: FleetMissionVisibilityResponse): FleetMissionSummary[] {
   return [
     ...fleetVisibility.incoming,
@@ -489,30 +445,14 @@ function activeWalletMissions(fleetVisibility: FleetMissionVisibilityResponse): 
   ];
 }
 
-function canonicalMissionTransactionHashes(missions: readonly FleetMissionSummary[]): Set<string> {
-  const hashes = new Set<string>();
-  for (const mission of missions) {
-    if (isPendingMissionLaunch(mission) || !mission.transactionHash) continue;
-    const normalized = normalizeTxHash(mission.transactionHash);
-    if (isPlaceholderTransactionHash(normalized)) continue;
-    hashes.add(normalized);
-  }
-  return hashes;
-}
-
 function normalizeTxHash(txHash: string): string {
   return txHash.trim().toLowerCase();
-}
-
-function isPlaceholderTransactionHash(txHash: string): boolean {
-  return txHash === "" || txHash === "0x";
 }
 
 function missionMatchesExpectedLaunch(
   mission: FleetMissionSummary,
   expected: FleetMissionSummary,
 ): boolean {
-  if (isPendingMissionLaunch(mission)) return false;
   if (mission.owner.toLowerCase() !== expected.owner.toLowerCase()) return false;
   if (mission.originPlanetId !== expected.originPlanetId) return false;
   if (mission.targetPlanetId !== expected.targetPlanetId) return false;
@@ -761,6 +701,32 @@ export async function waitForIndexedResourceState<State extends ResourceSnapshot
 
   const reason = lastError instanceof Error ? ` Last read failed: ${lastError.message}` : "";
   throw new Error(`The confirmed resource change is still syncing with the game API.${reason}`);
+}
+
+export async function waitForFleetVisibilityIndexedThrough(
+  load: () => Promise<FleetMissionVisibilityResponse>,
+  receiptBlockNumber: string | number | bigint | null | undefined,
+  options: WaitOptions = {},
+): Promise<FleetMissionVisibilityResponse> {
+  const attempts = options.attempts ?? DEFAULT_POST_TRANSACTION_REFRESH_ATTEMPTS;
+  const intervalMs = options.intervalMs ?? DEFAULT_POST_TRANSACTION_REFRESH_INTERVAL_MS;
+  const delay = options.delay ?? defaultDelay;
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      const visibility = await load();
+      lastError = undefined;
+      if (isFleetVisibilityIndexedThrough(visibility, receiptBlockNumber)) return visibility;
+    } catch (error) {
+      lastError = error;
+    }
+
+    if (attempt < attempts - 1) await delay(intervalMs);
+  }
+
+  const reason = lastError instanceof Error ? ` Last read failed: ${lastError.message}` : "";
+  throw new Error(`The confirmed mission change is still syncing with the game API.${reason}`);
 }
 
 export async function waitForStartedDefenseProductionState(

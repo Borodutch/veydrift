@@ -191,11 +191,8 @@ import {
 } from "./planetResourceStore";
 import {
   isTransientGameStateReadFailure,
-  mergePendingMissionLaunches,
+  expectedMissionLaunch,
   missionLaunchMissionsForTransaction,
-  pendingMissionLaunch,
-  reconcilePendingMissionLaunches,
-  removePendingMissionLaunchForTransaction,
   waitForFinishedResearchState,
   waitForStartedResearchState,
   waitForStartedDefenseProductionState,
@@ -207,6 +204,7 @@ import {
   waitForAllianceApplicationCleared,
   waitForAllianceProfileState,
   waitForMissionLaunchState,
+  waitForFleetVisibilityIndexedThrough,
   waitForIndexedResourceState,
   waitForRenamedWalletPlanet,
   resourceIndexingExpectationForTransaction,
@@ -492,6 +490,7 @@ const buildingWalletConfirmationLabel = (label: string) =>
 const TOP_BAR_RESOURCE_POLL_INTERVAL_MS = 10_000;
 export const MISSION_REPORT_PENDING_POLL_INTERVAL_MS = 3_000;
 const CHAIN_EVENT_REFRESH_DEBOUNCE_MS = 3_000;
+const MISSION_CONTROL_CHAIN_EVENT_REFRESH_DEBOUNCE_MS = 250;
 const BUILDING_COMPLETION_AUTO_REFRESH_BUFFER_MS = 1_500;
 // VEY-KANEO-433: after an active mission's ETA passes, wait a short beat before the tightened Mission
 // Control refresh so the backend indexer has settled the arrival/resolution before we re-read it.
@@ -1115,12 +1114,9 @@ export function shipyardStateForMissionActions({
 
 export function missionLaunchSubmitBlocker({
   actionState,
-  pendingMissionLaunchCount,
 }: {
   actionState: Pick<GalaxyActionState, "status">;
-  pendingMissionLaunchCount: number;
 }): string | undefined {
-  if (pendingMissionLaunchCount > 0) return previousMissionIndexingBlockerLabel;
   if (actionState.status === "pending") return previousMissionTransactionBlockerLabel;
   return undefined;
 }
@@ -2666,7 +2662,7 @@ export async function loadWalletPlanetSyncSnapshot(
   apiBaseUrl: string,
   account: string,
   activePlanetId: string | undefined,
-  options: { forceHomePlanet?: boolean; forceWalletPlanets?: boolean } = {},
+  options: { forceHomePlanet?: boolean; forceWalletPlanets?: boolean; fresh?: boolean } = {},
   loaders: {
     fetchWalletOverviewSnapshot?: FetchWalletOverviewSnapshot;
     fetchWalletPlanets?: FetchWalletPlanets;
@@ -2680,7 +2676,7 @@ export async function loadWalletPlanetSyncSnapshot(
   const loadOverviewSnapshot: FetchWalletOverviewSnapshot = loaders.fetchWalletOverviewSnapshot
     ?? ((_apiUrl, wallet, planetId, readOptions) => store.overview(wallet, planetId, readOptions));
   const loadWalletPlanets: FetchWalletPlanets = loaders.fetchWalletPlanets
-    ?? ((_apiUrl, wallet) => store.planets(wallet));
+    ?? ((_apiUrl, wallet, readOptions) => store.planets(wallet, readOptions));
   const loadWalletQueues: FetchWalletQueues = loaders.fetchWalletQueues
     ?? ((_apiUrl, wallet, planetId, readOptions) => store.queues(wallet, planetId, readOptions));
   const loadFleetMissionVisibility: FetchFleetMissionVisibility = loaders.fetchFleetMissionVisibility
@@ -2689,9 +2685,11 @@ export async function loadWalletPlanetSyncSnapshot(
     ?? ((_apiUrl, wallet, readOptions) => store.settlement(wallet, readOptions));
   const readPlanetId = options.forceHomePlanet || options.forceWalletPlanets ? undefined : activePlanetId;
   const overviewPlanetId = options.forceHomePlanet ? undefined : activePlanetId;
+  const freshReadOptions = options.fresh === undefined ? {} : { fresh: options.fresh };
   if (!options.forceWalletPlanets) {
     try {
       return await loadOverviewSnapshot(apiBaseUrl, account, overviewPlanetId, {
+        ...freshReadOptions,
         timeoutMs: INITIAL_OVERVIEW_SNAPSHOT_TIMEOUT_MS,
       });
     } catch (error) {
@@ -2704,7 +2702,7 @@ export async function loadWalletPlanetSyncSnapshot(
     }
   }
 
-  const planetsResult = await settlePromise(loadWalletPlanets(apiBaseUrl, account));
+  const planetsResult = await settlePromise(loadWalletPlanets(apiBaseUrl, account, freshReadOptions));
   const indexedSettlement = settlementFromIndexedPlanets(
     account,
     planetsResult.status === "fulfilled" ? planetsResult.value : undefined,
@@ -2718,9 +2716,10 @@ export async function loadWalletPlanetSyncSnapshot(
     );
     const queuesResultPromise = indexedPlanetsExposeResearchQueue(planetsResult)
       ? Promise.resolve({ status: "fulfilled", value: indexedQueues } satisfies PromiseSettledResult<PlayerQueuesResponse>)
-      : settlePromise(loadWalletQueues(apiBaseUrl, account, readPlanetId));
+      : settlePromise(loadWalletQueues(apiBaseUrl, account, readPlanetId, freshReadOptions));
     const visibilityResultPromise = settlePromise(loadFleetMissionVisibility(apiBaseUrl, account, {
       includeArchive: false,
+      ...freshReadOptions,
       timeoutMs: INITIAL_FLEET_VISIBILITY_TIMEOUT_MS,
     }));
     const [queuesResult, visibilityResult] = await Promise.all([queuesResultPromise, visibilityResultPromise]);
@@ -2736,10 +2735,11 @@ export async function loadWalletPlanetSyncSnapshot(
   }
 
   const [settlementResult, queuesResult, visibilityResult] = await Promise.allSettled([
-    loadWalletSettlement(apiBaseUrl, account),
-    loadWalletQueues(apiBaseUrl, account, readPlanetId),
+    loadWalletSettlement(apiBaseUrl, account, freshReadOptions),
+    loadWalletQueues(apiBaseUrl, account, readPlanetId, freshReadOptions),
     loadFleetMissionVisibility(apiBaseUrl, account, {
       includeArchive: false,
+      ...freshReadOptions,
       timeoutMs: INITIAL_FLEET_VISIBILITY_TIMEOUT_MS,
     }),
   ]);
@@ -2874,21 +2874,61 @@ export function mergeActiveMissionList(
   });
 }
 
-export function mergePendingFleetVisibility(
+export function newestFleetVisibility(
   current: FleetMissionVisibilityResponse | undefined,
-  pending: readonly FleetMissionSummary[],
-  account: string | undefined,
-  homePlanetId: string | null | undefined,
-): FleetMissionVisibilityResponse | undefined {
-  if (!current && pending.length === 0) return undefined;
-  const base = current ?? emptyFleetVisibility(account ?? "", homePlanetId ?? null);
-  return {
-    ...base,
-    outgoing: mergePendingMissionLaunches(base.outgoing, pending),
-  };
+  next: FleetMissionVisibilityResponse,
+): FleetMissionVisibilityResponse {
+  if (!current) return next;
+  const revisionOrder = compareIndexedRevision(next.indexedRevision, current.indexedRevision);
+  if (revisionOrder !== undefined && revisionOrder !== 0) return revisionOrder > 0 ? next : current;
+
+  const nextBlock = parseIndexedOrderValue(next.indexedBlock);
+  const currentBlock = parseIndexedOrderValue(current.indexedBlock);
+  if (nextBlock !== undefined && currentBlock !== undefined && nextBlock !== currentBlock) {
+    return nextBlock > currentBlock ? next : current;
+  }
+
+  const nextGeneratedAt = parseGeneratedAt(next.generatedAt);
+  const currentGeneratedAt = parseGeneratedAt(current.generatedAt);
+  if (nextGeneratedAt !== undefined && currentGeneratedAt !== undefined && nextGeneratedAt < currentGeneratedAt) {
+    return current;
+  }
+  return next;
 }
 
-type PendingMissionLaunchContext = {
+function compareIndexedRevision(left: string | undefined, right: string | undefined): number | undefined {
+  if (!left || !right) return undefined;
+  const leftParts = left.split(":").map(parseIndexedOrderValue);
+  const rightParts = right.split(":").map(parseIndexedOrderValue);
+  if (leftParts.some((value) => value === undefined) || rightParts.some((value) => value === undefined)) {
+    return undefined;
+  }
+  const length = Math.max(leftParts.length, rightParts.length);
+  for (let index = 0; index < length; index += 1) {
+    const leftValue = leftParts[index] ?? 0n;
+    const rightValue = rightParts[index] ?? 0n;
+    if (leftValue < rightValue) return -1;
+    if (leftValue > rightValue) return 1;
+  }
+  return 0;
+}
+
+function parseIndexedOrderValue(value: string | null | undefined): bigint | undefined {
+  if (value === null || value === undefined || !/^\d+$/.test(value)) return undefined;
+  try {
+    return BigInt(value);
+  } catch {
+    return undefined;
+  }
+}
+
+function parseGeneratedAt(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : undefined;
+}
+
+type ExpectedMissionLaunchContext = {
   account: string;
   originPlanet: ManagedPlanetResponse | undefined;
   originPlanetId: string;
@@ -2904,9 +2944,9 @@ type PendingMissionLaunchContext = {
   targetIsMoon?: boolean | undefined;
 };
 
-function pendingMissionLaunchForDraft(
+function expectedMissionLaunchForDraft(
   txHash: string,
-  context: PendingMissionLaunchContext,
+  context: ExpectedMissionLaunchContext,
 ): FleetMissionSummary {
   const originCoords = managedPlanetCoordinates(context.originPlanet);
   const distance = originCoords
@@ -2924,7 +2964,7 @@ function pendingMissionLaunchForDraft(
   const fuelCost = context.fuelCost
     ?? fleetMissionFuelCost(context.draft.ships, distance, context.driveLevels, context.draft.speedPercent);
 
-  return pendingMissionLaunch({
+  return expectedMissionLaunch({
     txHash,
     owner: context.account,
     originPlanetId: context.originPlanetId,
@@ -2997,10 +3037,6 @@ function missionReferenceFromGalaxyPlanet(planet: Planet | undefined, planetId: 
     archetype: planet.type,
     allianceDepotLevel: allianceDepotLevelFromPlanet(planet),
   };
-}
-
-function sameMissionIds(left: readonly FleetMissionSummary[], right: readonly FleetMissionSummary[]): boolean {
-  return left.length === right.length && left.every((mission, index) => mission.missionId === right[index]?.missionId);
 }
 
 function backendMissionTypeLabel(kind: string): string {
@@ -3174,19 +3210,6 @@ function playerQueuesFromIndexedPlanet(
     defense: selectedPlanet?.queues.defense ?? null,
     ship: selectedPlanet?.queues.ship ?? null,
     research: planetsResponse?.queues?.research ?? null,
-  };
-}
-
-function emptyFleetVisibility(wallet: string, homePlanetId: string | null): FleetMissionVisibilityResponse {
-  return {
-    wallet,
-    homePlanetId,
-    incoming: [],
-    outgoing: [],
-    returning: [],
-    joinableAttacks: [],
-    completedMissions: [],
-    battleReports: [],
   };
 }
 
@@ -3649,7 +3672,6 @@ export function PlayableMvpApp({
   const [incomingAttackArchiveLoading, setIncomingAttackArchiveLoading] = useState(false);
   const [incomingAttackArchiveError, setIncomingAttackArchiveError] = useState<string | undefined>();
   const [allActiveMissions, setAllActiveMissions] = useState<FleetMissionSummary[] | undefined>();
-  const [pendingMissionLaunches, setPendingMissionLaunches] = useState<FleetMissionSummary[]>([]);
   const [globalMissionArchive, setGlobalMissionArchive] = useState<GlobalMissionArchiveResponse | undefined>();
   const [globalMissionArchivePage, setGlobalMissionArchivePage] = useState(1);
   const [globalMissionArchiveLoading, setGlobalMissionArchiveLoading] = useState(false);
@@ -3903,7 +3925,6 @@ export function PlayableMvpApp({
   }, [fallbackHomeCoords, onChainSettlement?.planet]);
   const missionLaunchStateBlocker = missionLaunchSubmitBlocker({
     actionState: galaxyAction,
-    pendingMissionLaunchCount: pendingMissionLaunches.length,
   });
   const missionActionShipyardState = useMemo(() => shipyardStateWithMissionLaunchBlocker({
     account,
@@ -3933,24 +3954,8 @@ export function PlayableMvpApp({
   const activeDefenseProductionQueue = defenseState
     ? activeProductionQueue(defenseState.queue, undefined, "defense")
     : activeProductionQueue(undefined, onChainQueues?.defense, "defense");
-  const displayFleetVisibility = useMemo(
-    () => mergePendingFleetVisibility(fleetVisibility, pendingMissionLaunches, account, onChainSettlement?.homePlanetId),
-    [account, fleetVisibility, onChainSettlement?.homePlanetId, pendingMissionLaunches]
-  );
-  const displayAllActiveMissions = useMemo(
-    () => mergePendingMissionLaunches(allActiveMissions, pendingMissionLaunches),
-    [allActiveMissions, pendingMissionLaunches]
-  );
-  useEffect(() => {
-    if (pendingMissionLaunches.length === 0 || !fleetVisibility) return;
-    const next = reconcilePendingMissionLaunches(pendingMissionLaunches, {
-      allActiveMissions: allActiveMissions ?? [],
-      fleetVisibility,
-    });
-    if (!sameMissionIds(next, pendingMissionLaunches)) {
-      setPendingMissionLaunches(next);
-    }
-  }, [allActiveMissions, fleetVisibility, pendingMissionLaunches]);
+  const displayFleetVisibility = fleetVisibility;
+  const displayAllActiveMissions = allActiveMissions ?? [];
   const overviewFleetVisibility = useMemo(
     () => planetScopedFleetVisibility(
       displayFleetVisibility,
@@ -4879,6 +4884,7 @@ export function PlayableMvpApp({
         account,
         readPlanetId,
         {
+          fresh: true,
           ...(options.forceHomePlanet === undefined ? {} : { forceHomePlanet: options.forceHomePlanet }),
           ...(options.forceWalletPlanets === undefined ? {} : { forceWalletPlanets: options.forceWalletPlanets }),
         },
@@ -4903,7 +4909,7 @@ export function PlayableMvpApp({
       // Successful wallet sync reads are authoritative for queues and fleet visibility.
       setOnChainQueues(queues);
       if (fleetVisibility) {
-        setFleetVisibility(fleetVisibility);
+        setFleetVisibility((current) => newestFleetVisibility(current, fleetVisibility));
       }
       setOnChainError(undefined);
       setOnChainStatus("ready");
@@ -5122,7 +5128,7 @@ export function PlayableMvpApp({
       throw new Error("Wallet or game API is unavailable while syncing the launched mission.");
     }
     const [fleetVisibility, allActiveMissionsResult] = await Promise.all([
-      backendData!.fleetVisibility(account, { includeArchive: false }),
+      backendData!.fleetVisibility(account, { includeArchive: false, fresh: true }),
       settlePromise(backendData!.globalActiveMissions()),
     ]);
     return {
@@ -5694,6 +5700,7 @@ export function PlayableMvpApp({
     refreshAllianceState,
     refreshDefenseState,
     refreshInfrastructureState,
+    refreshMissionControl,
     refreshOnChainState,
     refreshResearchState,
     refreshRiftState,
@@ -5706,6 +5713,7 @@ export function PlayableMvpApp({
     refreshAllianceState,
     refreshDefenseState,
     refreshInfrastructureState,
+    refreshMissionControl,
     refreshOnChainState,
     refreshResearchState,
     refreshRiftState,
@@ -5733,6 +5741,7 @@ export function PlayableMvpApp({
         refreshAllianceState: refreshAllianceStateFromEvent,
         refreshDefenseState: refreshDefenseStateFromEvent,
         refreshInfrastructureState: refreshInfrastructureStateFromEvent,
+        refreshMissionControl: refreshMissionControlFromEvent,
         refreshOnChainState: refreshOnChainStateFromEvent,
         refreshResearchState: refreshResearchStateFromEvent,
         refreshRiftState: refreshRiftStateFromEvent,
@@ -5748,9 +5757,11 @@ export function PlayableMvpApp({
       forceWalletPlanetsRefreshQueued = false;
       resourceChangesQueued.clear();
       const refreshes: Array<Promise<unknown>> = [
-        refreshOnChainStateFromEvent(undefined, forceWalletPlanetsRefresh
-          ? { force: true, forceWalletPlanets: true }
-          : undefined),
+        currentPage === "mission-control"
+          ? refreshMissionControlFromEvent()
+          : refreshOnChainStateFromEvent(undefined, forceWalletPlanetsRefresh
+              ? { force: true, forceWalletPlanets: true }
+              : undefined),
         refreshInfrastructureStateFromEvent(),
         ...confirmedResourceChanges.map((change) => refreshConfirmedResourceChangeFromEvent(change)),
       ];
@@ -5777,7 +5788,9 @@ export function PlayableMvpApp({
       refreshTimer = window.setTimeout(() => {
         refreshTimer = undefined;
         runChainEventRefresh();
-      }, CHAIN_EVENT_REFRESH_DEBOUNCE_MS);
+      }, chainEventRefreshRef.current.page === "mission-control"
+        ? MISSION_CONTROL_CHAIN_EVENT_REFRESH_DEBOUNCE_MS
+        : CHAIN_EVENT_REFRESH_DEBOUNCE_MS);
     };
     const updateSyncStatus = (event: MessageEvent) => {
       try {
@@ -6801,7 +6814,7 @@ export function PlayableMvpApp({
     send: () => Promise<string>,
     options: {
       validateAttackProtection?: { targetPlanetId: string } | undefined;
-      pendingMissionLaunch?: ((txHash: string) => FleetMissionSummary);
+      expectedMissionLaunch?: ((txHash: string) => FleetMissionSummary);
       resourceChange?: Pick<ChainResourceChange, "bodyKind" | "planetId">;
       syncMissionLaunch?: boolean;
       validateShipInventory?: { originIsMoon?: boolean | undefined; originPlanetId: string; ships: MissionShips } | undefined;
@@ -6810,8 +6823,6 @@ export function PlayableMvpApp({
     let completed = false;
     const planetSwitchRequestId = planetSwitchGate.current;
     setGalaxyAction({ status: "pending", label: transactionAwaitingWalletLabel(label) });
-    let txHash: string | undefined;
-
     try {
         if (options.validateShipInventory) {
           setGalaxyAction({ status: "pending", label: `${label}: refreshing fleet inventory.` });
@@ -6855,13 +6866,8 @@ export function PlayableMvpApp({
           label,
           send,
           waitForIndexed: async (_receipt, submittedTxHash) => {
-            txHash = submittedTxHash;
             if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
-            const pendingMission = options.pendingMissionLaunch?.(submittedTxHash);
-            if (pendingMission) {
-              setPendingMissionLaunches((current) => mergePendingMissionLaunches(current, [pendingMission]));
-            }
-            const confirmedTxHash = submittedTxHash;
+            const expectedMission = options.expectedMissionLaunch?.(submittedTxHash);
             const confirmedResourcePromise = options.resourceChange
               ? refreshConfirmedResourceChange({
                   ...options.resourceChange,
@@ -6878,16 +6884,15 @@ export function PlayableMvpApp({
             if (options.syncMissionLaunch) {
               const [missionSnapshot] = await Promise.all([
                 waitForMissionLaunchState(loadMissionLaunchSnapshot, submittedTxHash, {
-                  expectedMission: pendingMission,
+                  expectedMission,
                 }),
                 confirmedResourcePromise,
               ]);
               if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
               markFreshStateWrite(onChainRefreshGate);
-              const launchedMissions = missionLaunchMissionsForTransaction(missionSnapshot, submittedTxHash, pendingMission);
-              setFleetVisibility(missionSnapshot.fleetVisibility);
+              const launchedMissions = missionLaunchMissionsForTransaction(missionSnapshot, submittedTxHash, expectedMission);
+              setFleetVisibility((current) => newestFleetVisibility(current, missionSnapshot.fleetVisibility));
               setAllActiveMissions(mergeActiveMissionList(missionSnapshot.allActiveMissions, launchedMissions));
-              setPendingMissionLaunches((current) => removePendingMissionLaunchForTransaction(current, confirmedTxHash));
               if (options.validateShipInventory && apiBaseUrl && account) {
                 try {
                   const [nextShipyardState, nextMoonState] = await Promise.all([
@@ -6918,10 +6923,6 @@ export function PlayableMvpApp({
         completed = result;
     } catch (error) {
         console.error(error);
-        if (txHash) {
-          const failedTxHash = txHash;
-          setPendingMissionLaunches((current) => removePendingMissionLaunchForTransaction(current, failedTxHash));
-        }
         if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return false;
         setGalaxyAction({
           status: "error",
@@ -8249,7 +8250,7 @@ export function PlayableMvpApp({
       validateShipInventory?: { originIsMoon?: boolean | undefined; originPlanetId: string; ships: MissionShips } | undefined;
     }) => ({
       validateAttackProtection,
-      pendingMissionLaunch: (txHash: string) => pendingMissionLaunchForDraft(txHash, {
+      expectedMissionLaunch: (txHash: string) => expectedMissionLaunchForDraft(txHash, {
         account,
         originPlanet: missionOriginPlanet,
         originPlanetId,
@@ -8510,8 +8511,11 @@ export function PlayableMvpApp({
       label,
       send: request,
       waitForIndexed: async (receipt, txHash) => {
-        await Promise.all([
-          refreshOnChainState(undefined, { force: true }),
+        const [visibility] = await Promise.all([
+          waitForFleetVisibilityIndexedThrough(
+            () => backendData!.fleetVisibility(account, { includeArchive: false, fresh: true }),
+            receipt.blockNumber,
+          ),
           resourceChange
             ? refreshConfirmedResourceChange({
                 ...resourceChange,
@@ -8520,6 +8524,8 @@ export function PlayableMvpApp({
               })
             : Promise.resolve(null),
         ]);
+        setFleetVisibility((current) => newestFleetVisibility(current, visibility));
+        await refreshOnChainState(undefined, { force: true });
       },
       errorLabel: (error) => error instanceof Error ? error.message : `${label} transaction failed.`,
       onStateChange: (state) => {
@@ -8649,7 +8655,7 @@ export function PlayableMvpApp({
         speedPercent: draft.speedPercent,
       },
     ), {
-      pendingMissionLaunch: (txHash) => pendingMissionLaunchForDraft(txHash, {
+      expectedMissionLaunch: (txHash) => expectedMissionLaunchForDraft(txHash, {
         account,
         originPlanet: selectedManagedPlanet,
         originPlanetId,
@@ -8736,7 +8742,7 @@ export function PlayableMvpApp({
           ships: draft.ships,
         },
       ), {
-        pendingMissionLaunch: (txHash) => pendingMissionLaunchForDraft(txHash, {
+        expectedMissionLaunch: (txHash) => expectedMissionLaunchForDraft(txHash, {
           account,
           originPlanet: selectedManagedPlanet,
           originPlanetId: onChainSettlement.homePlanetId ?? "0",

@@ -4,7 +4,7 @@ import {
   canApplyRefreshRequest,
   markFreshStateWrite,
   missionLaunchSubmitBlocker,
-  previousMissionIndexingBlockerLabel,
+  newestFleetVisibility,
   previousMissionTransactionBlockerLabel,
   shouldClearCachedShipyardStateForPageRefresh,
   shouldEagerlyRefreshPlanetSwitchForPage,
@@ -18,7 +18,7 @@ import {
   promoteCanonicalPlanetResources,
   walletSettlementWithCanonicalPlanetResources,
 } from "../src/planetResourceStore";
-import type { ChainInfrastructureState, WalletSettlementResponse } from "../src/walletFlow";
+import type { ChainInfrastructureState, FleetMissionVisibilityResponse, WalletSettlementResponse } from "../src/walletFlow";
 
 describe("playable chain refresh", () => {
   test("uses backend chain events instead of the old fast unconditional polling loops", async () => {
@@ -68,6 +68,29 @@ describe("playable chain refresh", () => {
     markFreshStateWrite(gate);
 
     expect(canApplyRefreshRequest(gate, olderPollRequest)).toBe(false);
+  });
+
+  test("rejects a slower Mission Control response from an older indexed revision", () => {
+    const current = fleetVisibilitySnapshot("12:4", "900");
+    const olderRevision = fleetVisibilitySnapshot("12:3", "901");
+    const currentWithoutRevision = fleetVisibilitySnapshot(undefined, "900");
+    const olderBlock = fleetVisibilitySnapshot(undefined, "899");
+    const currentGeneratedAt = fleetVisibilitySnapshot("12:4", "900", "2026-08-10T00:00:02.000Z");
+    const olderGeneratedAt = fleetVisibilitySnapshot("12:4", "900", "2026-08-10T00:00:01.000Z");
+
+    expect(newestFleetVisibility(current, olderRevision)).toBe(current);
+    expect(newestFleetVisibility(currentWithoutRevision, olderBlock)).toBe(currentWithoutRevision);
+    expect(newestFleetVisibility(currentGeneratedAt, olderGeneratedAt)).toBe(currentGeneratedAt);
+    expect(newestFleetVisibility(current, fleetVisibilitySnapshot("12:5", "901")).indexedRevision).toBe("12:5");
+  });
+
+  test("renders only backend-confirmed missions and waits for the indexer after mission transactions", async () => {
+    const source = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.url)).text();
+
+    expect(source).toContain("waitForFleetVisibilityIndexedThrough");
+    expect(source).toContain("refreshMissionControl");
+    expect(source).not.toContain("setPendingMissionLaunches");
+    expect(source).not.toContain("mergePendingMissionLaunches");
   });
 
   test("promotes an indexed spend snapshot directly into the canonical top-bar settlement", () => {
@@ -203,18 +226,11 @@ describe("playable chain refresh", () => {
   test("blocks follow-up mission submits while a previous mission is settling", () => {
     expect(missionLaunchSubmitBlocker({
       actionState: { status: "idle" },
-      pendingMissionLaunchCount: 0,
     })).toBeUndefined();
 
     expect(missionLaunchSubmitBlocker({
       actionState: { status: "pending" },
-      pendingMissionLaunchCount: 0,
     })).toBe(previousMissionTransactionBlockerLabel);
-
-    expect(missionLaunchSubmitBlocker({
-      actionState: { status: "success" },
-      pendingMissionLaunchCount: 1,
-    })).toBe(previousMissionIndexingBlockerLabel);
   });
 
   test("does not create browser-side gameplay read providers for transaction preflights", async () => {
@@ -328,6 +344,26 @@ function settlementSnapshot(
       lastSettledAt,
       resources,
     },
+  };
+}
+
+function fleetVisibilitySnapshot(
+  indexedRevision: string | undefined,
+  indexedBlock: string,
+  generatedAt = "2026-08-10T00:00:00.000Z",
+): FleetMissionVisibilityResponse {
+  return {
+    generatedAt,
+    wallet: "0x2222222222222222222222222222222222222222",
+    homePlanetId: "7",
+    incoming: [],
+    outgoing: [],
+    returning: [],
+    joinableAttacks: [],
+    completedMissions: [],
+    battleReports: [],
+    indexedBlock,
+    ...(indexedRevision === undefined ? {} : { indexedRevision }),
   };
 }
 

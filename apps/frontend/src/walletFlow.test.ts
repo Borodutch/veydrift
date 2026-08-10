@@ -3009,6 +3009,76 @@ describe("walletFlow", () => {
     expect(calls.map((call) => new URL(call.url).searchParams.has("source"))).not.toContain(true);
   });
 
+  test("fresh mission reads never reuse an older in-flight response", async () => {
+    const originalFetch = globalThis.fetch;
+    const responses: Array<(response: Response) => void> = [];
+    let calls = 0;
+    globalThis.fetch = (() => {
+      calls += 1;
+      return new Promise<Response>((resolve) => responses.push(resolve));
+    }) as unknown as typeof fetch;
+
+    try {
+      const first = fetchFleetMissionVisibility("https://api.example.test", account, { fresh: true });
+      const second = fetchFleetMissionVisibility("https://api.example.test", account, { fresh: true });
+
+      for (let attempt = 0; attempt < 20 && calls < 2; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      expect(calls).toBe(2);
+      for (const resolve of responses) {
+        resolve(new Response(JSON.stringify({ wallet: account }), {
+          headers: { "content-type": "application/json" },
+          status: 200,
+        }));
+      }
+      await Promise.all([first, second]);
+    } finally {
+      for (const resolve of responses) {
+        resolve(new Response(JSON.stringify({ wallet: account }), {
+          headers: { "content-type": "application/json" },
+          status: 200,
+        }));
+      }
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("fresh relative API reads bypass completed and in-flight browser reuse", async () => {
+    const originalFetch = globalThis.fetch;
+    const responses: Array<(response: Response) => void> = [];
+    let calls = 0;
+    globalThis.fetch = (() => {
+      calls += 1;
+      return new Promise<Response>((resolve) => responses.push(resolve));
+    }) as unknown as typeof fetch;
+
+    try {
+      const first = fetchWalletPlanets("/prod-api", account, { fresh: true });
+      const second = fetchWalletPlanets("/prod-api", account, { fresh: true });
+      for (let attempt = 0; attempt < 20 && calls < 2; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+
+      expect(calls).toBe(2);
+      for (const resolve of responses) {
+        resolve(new Response(JSON.stringify({ wallet: account, planets: [] }), {
+          headers: { "content-type": "application/json" },
+          status: 200,
+        }));
+      }
+      await Promise.all([first, second]);
+    } finally {
+      for (const resolve of responses) {
+        resolve(new Response(JSON.stringify({ wallet: account, planets: [] }), {
+          headers: { "content-type": "application/json" },
+          status: 200,
+        }));
+      }
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   test("limits distinct game API reads while still pooling duplicate URLs", async () => {
     const originalFetch = globalThis.fetch;
     let active = 0;

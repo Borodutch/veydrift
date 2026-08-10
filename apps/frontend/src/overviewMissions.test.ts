@@ -392,6 +392,7 @@ describe("Overview fleets summary", () => {
           targetPlanetId: "23",
           arrivalMs: now - 2 * 60_000,
           returnMs: now + 45 * 60_000,
+          asOfNow: { secondsUntilArrival: 0, secondsUntilReturn: 45 * 60, arrived: true, returned: false },
           targetPlanet: planetRef("23", PLAYER_WALLET, "Bastion", 7, 14, 2),
         }),
       ],
@@ -401,7 +402,7 @@ describe("Overview fleets summary", () => {
     expect(summary.lines[0]?.text).not.toContain("Resolving");
   });
 
-  test("recomputes lifecycle and countdown fields as the next event passes", () => {
+  test("updates countdowns locally but lifecycle only from backend fields", () => {
     const now = Date.parse("2026-06-07T22:00:00.000Z");
     const outbound = mission({
       missionId: "clocked",
@@ -419,9 +420,12 @@ describe("Overview fleets summary", () => {
       timingValue: "1m",
     });
     expect(summarizeFleets(visibility({ outgoing: [outbound] }), now + 2 * 60_000).lines[0]).toMatchObject({
-      state: "Resolving",
+      state: "Outbound",
       timingLabel: "ETA",
       timingValue: "Now",
+    });
+    expect(summarizeFleets(visibility({ outgoing: [{ ...outbound, needsResolution: true }] }), now).lines[0]).toMatchObject({
+      state: "Resolving",
     });
 
     const returning = { ...outbound, status: "Returning", returnAt: Math.floor((now + 5 * 60_000) / 1_000).toString() };
@@ -591,6 +595,8 @@ function mission(input: {
   returnMs?: number;
   originPlanet?: FleetMissionPlanetReference | null;
   targetPlanet?: FleetMissionPlanetReference | null;
+  asOfNow?: FleetMissionSummary["asOfNow"];
+  needsResolution?: boolean;
 }): FleetMissionSummary {
   return {
     missionId: input.missionId,
@@ -601,6 +607,8 @@ function mission(input: {
     targetPlanetId: input.targetPlanetId,
     originPlanet: input.originPlanet ?? null,
     targetPlanet: input.targetPlanet ?? null,
+    ...(input.asOfNow === undefined ? {} : { asOfNow: input.asOfNow }),
+    ...(input.needsResolution === undefined ? {} : { needsResolution: input.needsResolution }),
     arrivalAt: Math.floor(input.arrivalMs / 1_000).toString(),
     returnAt: Math.floor((input.returnMs ?? input.arrivalMs + 60_000) / 1_000).toString(),
     fuelCost: "100",

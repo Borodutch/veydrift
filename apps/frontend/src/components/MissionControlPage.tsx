@@ -11,7 +11,6 @@ import { defenseCatalog, type ShipKey } from "../playableMvp";
 import type { Coordinates, PlanetType } from "../types";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import { shouldRenderMissileStrikeHistory } from "../missionVisibilityRefresh";
-import { isPendingMissionLaunch } from "../postTransactionRefresh";
 import {
   type BattleReport,
   type BattleReportParticipant,
@@ -812,7 +811,6 @@ export function missionLifecycleActions({
   transactionUnavailableReason?: string | undefined;
 }): MissionLifecycleAction[] {
   const actions: MissionLifecycleAction[] = [];
-  const due = isMissionDue(mission, now);
   const cooperativeJoinOpen = isCooperativeJoinOpen(mission, now);
   const cooperativeEnabled = canTransact && hasAvailableMissionFleet !== false && cooperativeJoinOpen;
   const cooperativeReason = !cooperativeJoinOpen
@@ -829,7 +827,7 @@ export function missionLifecycleActions({
     // Recall is only useful while the contract still accepts it. Once the cutoff closes, omit the
     // dead-end control entirely; the mission card's remaining lifecycle state is enough explanation.
     const recallable = isFleetRecallable(mission, now);
-    if (recallable && !(mission.missionType === "Deploy" && mission.targetIsMoon === true && due)) {
+    if (recallable) {
       actions.push({
         enabled: canTransact,
         kind: "recall",
@@ -1452,7 +1450,6 @@ function MissionRow({
   const target = missionEndpoint(mission, "target", planetLookup);
   const noFleetReturned = isNoFleetReturned(mission);
   const directionSubtext = direction && !["Joinable attack", "Joinable defense"].includes(direction) ? direction : undefined;
-  const pendingMission = isPendingMissionLaunch(mission);
   const resolutionKind = manualMissionResolutionKind(mission, now);
   // A hostile attack heading for the player's planet is the one row that must not hide its
   // counterplay behind a click: flag it red and start it expanded.
@@ -1464,7 +1461,7 @@ function MissionRow({
       hostile={hostileInbound}
       actions={
         <>
-          {!pendingMission && actions.map((action) => action.kind === "counterplay" ? (
+          {actions.map((action) => action.kind === "counterplay" ? (
             <ActionButton
               action={{ ...action, label: "Defend planet" }}
               key={action.kind}
@@ -1491,13 +1488,7 @@ function MissionRow({
               }}
             />
           ))}
-          {pendingMission ? (
-            <span className="inline-flex h-8 items-center justify-center rounded border border-cyan-300/20 bg-cyan-300/10 px-2 text-xs font-medium text-cyan-100">
-              Indexing
-            </span>
-          ) : (
-            <OpenMissionButton onClick={() => onOpenReport(mission.missionId)} />
-          )}
+          <OpenMissionButton onClick={() => onOpenReport(mission.missionId)} />
         </>
       }
       badgeLabel={directionalMissionTypeLabel(mission.missionType, missionDirection)}
@@ -1709,37 +1700,27 @@ export function returnPhaseLosses(
 // Status pill shown in every card header (VEY-400): "En route" for outbound fleets, "Returning"/
 // "Recalled" while a fleet heads home, and the terminal status ("Returned"/"Resolved"/…) for past
 // missions. This folds in the VEY-399 rework intent — status reads as a pill, never a raw timestamp.
-// VEY-KANEO-433: the status pill reflects a mission's progress against the live clock, not only the
-// indexed backend status. Mission resolution can lag well behind arrival (and on some deployments the
-// resolver runs only on demand), so an arrived fleet keeps a stale "Outbound" backend status; showing
-// "En route" then contradicts both the live ETA (already at zero) and the mission-detail timeline,
-// which derives "Arrived"/"Returned" from the timestamps. Flipping the pill once the matching moment
-// passes keeps Mission Control consistent with reality and updates on the 1s `now` tick — no manual
-// refresh — which is the heart of this ticket. The auto-poll (#744) then folds in loot/battle reports
-// once the backend actually resolves the mission.
-export function missionStatusPill(mission: FleetMissionSummary, now: number): MissionStatusPill {
-  if (isPendingMissionLaunch(mission)) {
-    return { label: "Indexing", tone: "border-cyan-300/25 bg-cyan-300/10 text-cyan-100" };
-  }
+// Lifecycle state is backend-authoritative. The browser may render countdowns, but it must never
+// manufacture a mission transition from its own clock. `needsResolution` and `asOfNow` are computed
+// by the indexed backend; live chain events refetch those fields after the index transaction commits.
+export function missionStatusPill(mission: FleetMissionSummary, _now: number): MissionStatusPill {
   if (mission.resolutionBlocker === "randomness_pending") {
     return { label: "Awaiting randomness", tone: "border-amber-300/25 bg-amber-300/10 text-amber-100" };
   }
   if (mission.missionType === "DefenseHold" && mission.defenseHoldOutcome === "Recalled") {
     return { label: "Recalled", tone: "border-amber-300/25 bg-amber-300/10 text-amber-100" };
   }
-  // VEY-KANEO-468: completions settle lazily on-chain (the next mutating call; combat via the battle
-  // keeper). A leg whose clock has passed but whose backend status has not advanced is mid-settlement,
-  // so the pill reads "Resolving" until the chain reflects it — not a finished "Arrived"/"Returned".
+  if (mission.needsResolution === true) {
+    return { label: "Resolving", tone: "border-amber-300/25 bg-amber-300/10 text-amber-100" };
+  }
   if (mission.status === "Outbound") {
-    if (mission.missionType === "DefenseHold" && isDefenseHoldStationed(mission, now)) {
+    if (mission.missionType === "DefenseHold" && mission.asOfNow?.arrived && !mission.asOfNow.returned) {
       return { label: "Stationed", tone: "border-violet-300/25 bg-violet-300/10 text-violet-100" };
     }
-    return isMissionDue(mission, now)
-      ? { label: "Resolving", tone: "border-amber-300/25 bg-amber-300/10 text-amber-100" }
-      : { label: "En route", tone: "border-cyan-300/25 bg-cyan-300/10 text-cyan-100" };
+    return { label: "En route", tone: "border-cyan-300/25 bg-cyan-300/10 text-cyan-100" };
   }
   if (mission.status === "Returning" || mission.status === "Recalled") {
-    if (isMissionReturned(mission, now)) {
+    if (mission.asOfNow?.returned === true) {
       return { label: "Resolving", tone: "border-amber-300/25 bg-amber-300/10 text-amber-100" };
     }
     return mission.status === "Returning"
@@ -3147,24 +3128,14 @@ function Notice({ children, tone }: { children: preact.ComponentChildren; tone: 
   return <div className={`notice-enter rounded-lg border p-3 text-sm ${className}`}>{children}</div>;
 }
 
-function isMissionDue(mission: FleetMissionSummary, now: number): boolean {
-  return mission.status === "Outbound" && missionDueAtMs(mission) <= now;
-}
-
 // VEY-KANEO-479: an Attack/Harvest fleet's resolution is keeper-driven and, for attacks, gated on the
 // battle randomness being committed on-chain — so its arrival clock passing does NOT mean it can be
 // settled yet. Rely solely on the backend's `needsResolution` (which already encodes that gate) for
 // combat missions instead of inferring "Ready to resolve" from the local clock, which would surface a
 // phantom CTA in the window between arrival and the randomness commitment the keeper waits on. Other
 // mission types stay on the existing clock fallback, where arrival is sufficient to resolve.
-function isMissionReadyToResolve(mission: FleetMissionSummary, now: number): boolean {
-  if (mission.needsResolution) {
-    return true;
-  }
-  if (mission.missionType === "Attack" || mission.missionType === "Harvest") {
-    return false;
-  }
-  return isMissionDue(mission, now);
+function isMissionReadyToResolve(mission: FleetMissionSummary): boolean {
+  return mission.needsResolution === true;
 }
 
 // The contract refuses a recall once a fleet is within FLEET_RECALL_CUTOFF_SECONDS of arrival (and
@@ -3202,13 +3173,13 @@ export function manualMissionResolutionKind(
   mission: FleetMissionSummary,
   now: number,
 ): ManualMissionResolutionKind | undefined {
-  if (isPendingMissionLaunch(mission) || mission.resolutionBlocker === "randomness_pending") {
+  if (mission.resolutionBlocker === "randomness_pending") {
     return undefined;
   }
 
   if (mission.status === "Outbound") {
     const dueAt = missionDueAtMs(mission);
-    return isMissionReadyToResolve(mission, now)
+    return isMissionReadyToResolve(mission)
       && Number.isFinite(dueAt)
       && now >= dueAt + MANUAL_MISSION_RESOLUTION_DELAY_MS
       ? "arrival"
@@ -3217,7 +3188,8 @@ export function manualMissionResolutionKind(
 
   if (mission.status === "Returning" || mission.status === "Recalled") {
     const returnAt = Number(mission.returnAt) * 1_000;
-    return Number.isFinite(returnAt) && now >= returnAt + MANUAL_MISSION_RESOLUTION_DELAY_MS
+    return mission.asOfNow?.returned === true
+      && Number.isFinite(returnAt) && now >= returnAt + MANUAL_MISSION_RESOLUTION_DELAY_MS
       ? "return"
       : undefined;
   }
@@ -3237,10 +3209,6 @@ function isDefenseHoldStationed(mission: FleetMissionSummary, now: number): bool
   return mission.status === "Outbound"
     && Number(mission.arrivalAt) * 1_000 <= now
     && now < defenseHoldRecallUntilMs(mission);
-}
-
-function isMissionReturned(mission: FleetMissionSummary, now: number): boolean {
-  return Number(mission.returnAt) * 1_000 <= now;
 }
 
 function isNoFleetReturned(mission: FleetMissionSummary): boolean {
@@ -3542,18 +3510,16 @@ function missionStatusLabel(status: string): string {
 // live clock so the mission report card and shared battle-report text never read "en route" for a
 // fleet that has already arrived (or "returning" for one that has already landed). Keeps the report
 // surfaces consistent with the time-aware list pills and the mission-detail timeline.
-export function missionDisplayStatusLabel(mission: FleetMissionSummary, now: number): string {
-  if (mission.status === "Outbound" && mission.missionType === "DefenseHold" && isDefenseHoldStationed(mission, now)) {
-    return "stationed";
-  }
-  // VEY-KANEO-468: a leg whose clock has passed but whose on-chain status has not advanced is
-  // mid-settlement (lazy reconcile / battle keeper), so it reads "resolving" until the chain
-  // reflects it — mirroring the "Resolving" list pill.
-  if (mission.status === "Outbound" && isMissionDue(mission, now)) {
-    if (mission.resolutionBlocker === "randomness_pending") return "awaiting randomness";
-    return "resolving";
-  }
-  if ((mission.status === "Returning" || mission.status === "Recalled") && isMissionReturned(mission, now)) {
+export function missionDisplayStatusLabel(mission: FleetMissionSummary, _now: number): string {
+  if (mission.resolutionBlocker === "randomness_pending") return "awaiting randomness";
+  if (mission.needsResolution === true) return "resolving";
+  if (
+    mission.status === "Outbound"
+    && mission.missionType === "DefenseHold"
+    && mission.asOfNow?.arrived === true
+    && mission.asOfNow.returned !== true
+  ) return "stationed";
+  if ((mission.status === "Returning" || mission.status === "Recalled") && mission.asOfNow?.returned === true) {
     return "resolving";
   }
   return missionStatusLabel(mission.status);
@@ -3795,7 +3761,7 @@ export function missionReport(
       : "External commander unavailable",
     losses: mission.status === "Resolved" ? "Resolved combat losses are not exposed in this mission feed." : "Pending battle resolution.",
     origin,
-    outcome: isMissionReadyToResolve(mission, now) ? "Ready to resolve." : missionDisplayStatusLabel(mission, now),
+    outcome: isMissionReadyToResolve(mission) ? "Ready to resolve." : missionDisplayStatusLabel(mission, now),
     routeSummary: `${origin} -> ${target}`,
     target,
     title: `${missionTypeLabel(mission.missionType)} #${mission.missionId}`,
