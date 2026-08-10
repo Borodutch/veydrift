@@ -55,7 +55,7 @@ jobs:
         uses: foundry-rs/foundry-toolchain@v1
 
       - name: Cache Foundry build artifacts
-        if: steps.scope.outputs.contracts == 'true' && runner.name != 'veydrift-mac-backmeupplz-ci'
+        if: steps.scope.outputs.contracts == 'true'
         uses: actions/cache@v4
         with:
           path: |
