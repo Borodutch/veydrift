@@ -3631,26 +3631,11 @@ export function PlayableMvpApp({
       lastSuccessfulRefreshAt: Date.now(),
     }));
   }, [activePlanetId, activePlanetSection.queuesState, onChainQueuesState]);
-  const [fleetVisibilityState, setFleetVisibilityState] = useState<FleetMissionVisibilityResponse | undefined>();
-  const fleetVisibility = activePlanetSection.fleetVisibilityState ?? fleetVisibilityState;
-  const setFleetVisibility = useCallback((value: FleetMissionVisibilityResponse | undefined) => {
-    setFleetVisibilityState(value);
-    setPlanetSectionStore((current) => setPlanetSectionData(current, activePlanetId, "fleetVisibilityState", value, {
-      loading: false,
-      error: undefined,
-      lastSuccessfulRefreshAt: Date.now(),
-    }));
-  }, [activePlanetId]);
-  const [missionArchiveState, setMissionArchiveState] = useState<FleetMissionArchiveResponse | undefined>();
-  const missionArchive = activePlanetSection.missionArchiveState ?? missionArchiveState;
-  const setMissionArchive = useCallback((value: FleetMissionArchiveResponse | undefined) => {
-    setMissionArchiveState(value);
-    setPlanetSectionStore((current) => setPlanetSectionData(current, activePlanetId, "missionArchiveState", value, {
-      loading: false,
-      error: undefined,
-      lastSuccessfulRefreshAt: value ? Date.now() : undefined,
-    }));
-  }, [activePlanetId]);
+  // Mission Control is a commander-level surface. Keep its canonical mission feeds outside the
+  // selected-planet section cache so changing launch origin cannot replace active or past rows with
+  // a snapshot captured while another planet happened to be selected (VEY-KANEO-836).
+  const [fleetVisibility, setFleetVisibility] = useState<FleetMissionVisibilityResponse | undefined>();
+  const [missionArchive, setMissionArchive] = useState<FleetMissionArchiveResponse | undefined>();
   const [missionArchivePage, setMissionArchivePage] = useState(1);
   const [missionArchiveLoading, setMissionArchiveLoading] = useState(false);
   const [missionArchiveError, setMissionArchiveError] = useState<string | undefined>();
@@ -3663,45 +3648,16 @@ export function PlayableMvpApp({
   const [incomingAttackArchivePage, setIncomingAttackArchivePage] = useState(1);
   const [incomingAttackArchiveLoading, setIncomingAttackArchiveLoading] = useState(false);
   const [incomingAttackArchiveError, setIncomingAttackArchiveError] = useState<string | undefined>();
-  const [allActiveMissionsState, setAllActiveMissionsState] = useState<FleetMissionSummary[] | undefined>();
-  const allActiveMissions = activePlanetSection.allActiveMissionsState ?? allActiveMissionsState;
-  const setAllActiveMissions = useCallback((value: FleetMissionSummary[] | undefined) => {
-    setAllActiveMissionsState(value);
-    setPlanetSectionStore((current) => setPlanetSectionData(current, activePlanetId, "allActiveMissionsState", value, {
-      loading: false,
-      error: undefined,
-      lastSuccessfulRefreshAt: value ? Date.now() : undefined,
-    }));
-  }, [activePlanetId]);
+  const [allActiveMissions, setAllActiveMissions] = useState<FleetMissionSummary[] | undefined>();
   const [pendingMissionLaunches, setPendingMissionLaunches] = useState<FleetMissionSummary[]>([]);
-  const [globalMissionArchiveState, setGlobalMissionArchiveState] = useState<GlobalMissionArchiveResponse | undefined>();
-  const globalMissionArchive = activePlanetSection.globalMissionArchiveState ?? globalMissionArchiveState;
-  const setGlobalMissionArchive = useCallback((value: GlobalMissionArchiveResponse | undefined) => {
-    setGlobalMissionArchiveState(value);
-    setPlanetSectionStore((current) => setPlanetSectionData(current, activePlanetId, "globalMissionArchiveState", value, {
-      loading: false,
-      error: undefined,
-      lastSuccessfulRefreshAt: value ? Date.now() : undefined,
-    }));
-  }, [activePlanetId]);
+  const [globalMissionArchive, setGlobalMissionArchive] = useState<GlobalMissionArchiveResponse | undefined>();
   const [globalMissionArchivePage, setGlobalMissionArchivePage] = useState(1);
   const [globalMissionArchiveLoading, setGlobalMissionArchiveLoading] = useState(false);
   const [globalMissionArchiveError, setGlobalMissionArchiveError] = useState<string | undefined>();
   const [globalMissionArchiveTotalEntries, setGlobalMissionArchiveTotalEntries] = useState<number | undefined>();
-  const [missionPlanetArchetypesByCoordinateState, setMissionPlanetArchetypesByCoordinateState] = useState<Map<string, PlanetType>>(
+  const [missionPlanetArchetypesByCoordinate, setMissionPlanetArchetypesByCoordinate] = useState<Map<string, PlanetType>>(
     () => new Map()
   );
-  const missionPlanetArchetypesByCoordinate = activePlanetSection.missionArchetypesByCoordinate ?? missionPlanetArchetypesByCoordinateState;
-  const setMissionPlanetArchetypesByCoordinate = useCallback((value: Map<string, PlanetType> | ((current: Map<string, PlanetType>) => Map<string, PlanetType>)) => {
-    const currentValue = activePlanetSection.missionArchetypesByCoordinate ?? missionPlanetArchetypesByCoordinateState;
-    const next = typeof value === "function" ? value(currentValue) : value;
-    setMissionPlanetArchetypesByCoordinateState(next);
-    setPlanetSectionStore((current) => setPlanetSectionData(current, activePlanetId, "missionArchetypesByCoordinate", next, {
-      loading: false,
-      error: undefined,
-      lastSuccessfulRefreshAt: next.size > 0 ? Date.now() : undefined,
-    }));
-  }, [activePlanetId, activePlanetSection.missionArchetypesByCoordinate, missionPlanetArchetypesByCoordinateState]);
   const [publicBattleReports, setPublicBattleReports] = useState<BattleReport[]>([]);
   const [publicBattleReportsLoading, setPublicBattleReportsLoading] = useState(false);
   const [publicBattleReportsError, setPublicBattleReportsError] = useState<string | undefined>();
@@ -4905,9 +4861,8 @@ export function PlayableMvpApp({
     const hasUsableOnChainState = Boolean(onChainSettlementState || walletPlanets.length > 0 || onChainQueues);
     setOnChainStatus((current) => globalReadStatusDuringRefresh(current, hasUsableOnChainState));
     setPlanetSectionStore((current) => {
-      let next = setPlanetSectionStatus(current, activePlanetId, "settlementState", { loading: true, error: undefined });
-      next = setPlanetSectionStatus(next, activePlanetId, "queuesState", { loading: true, error: undefined });
-      return setPlanetSectionStatus(next, activePlanetId, "fleetVisibilityState", { loading: true, error: undefined });
+      const next = setPlanetSectionStatus(current, activePlanetId, "settlementState", { loading: true, error: undefined });
+      return setPlanetSectionStatus(next, activePlanetId, "queuesState", { loading: true, error: undefined });
     });
     try {
       const canUseCachedWalletPlanets =
@@ -4949,11 +4904,6 @@ export function PlayableMvpApp({
       setOnChainQueues(queues);
       if (fleetVisibility) {
         setFleetVisibility(fleetVisibility);
-      } else {
-        setPlanetSectionStore((current) => setPlanetSectionStatus(current, activePlanetId, "fleetVisibilityState", {
-          loading: false,
-          error: undefined,
-        }));
       }
       setOnChainError(undefined);
       setOnChainStatus("ready");
@@ -4979,9 +4929,8 @@ export function PlayableMvpApp({
       setOnChainError(message);
       setOnChainStatus((current) => hasUsableOnChainState && current !== "local" ? current : "error");
       setPlanetSectionStore((current) => {
-        let next = setPlanetSectionStatus(current, activePlanetId, "settlementState", { loading: false, error: message });
-        next = setPlanetSectionStatus(next, activePlanetId, "queuesState", { loading: false, error: message });
-        return setPlanetSectionStatus(next, activePlanetId, "fleetVisibilityState", { loading: false, error: message });
+        const next = setPlanetSectionStatus(current, activePlanetId, "settlementState", { loading: false, error: message });
+        return setPlanetSectionStatus(next, activePlanetId, "queuesState", { loading: false, error: message });
       });
     }
   }, [account, activePlanetId, apiBaseUrl, applyOnChainSettlementSnapshot, hydratedWalletSnapshotKey, isWalletConnected, onChainQueues, onChainSettlementState, onChainSettlementState?.homePlanetId, promoteBackendResourceState, promoteWalletPlanetResourceStates, selectedPlanetId, walletPlanets]);
@@ -5066,19 +5015,11 @@ export function PlayableMvpApp({
       setMissionArchive(undefined);
       setMissionArchiveError(undefined);
       setMissionArchiveLoading(false);
-      setPlanetSectionStore((current) => setPlanetSectionStatus(current, activePlanetId, "missionArchiveState", {
-        loading: false,
-        error: undefined,
-      }));
       return;
     }
 
     setMissionArchiveLoading(true);
     setMissionArchiveError(undefined);
-    setPlanetSectionStore((current) => setPlanetSectionStatus(current, activePlanetId, "missionArchiveState", {
-      loading: true,
-      error: undefined,
-    }));
     try {
       const nextArchive = await backendData!.fleetArchive(account, {
         missionNumber: normalizedMissionFilters.missionNumber,
@@ -5095,16 +5036,12 @@ export function PlayableMvpApp({
       console.error(error);
       const message = error instanceof Error ? error.message : "Mission archive could not be loaded.";
       setMissionArchiveError(message);
-      setPlanetSectionStore((current) => setPlanetSectionStatus(current, activePlanetId, "missionArchiveState", {
-        loading: false,
-        error: message,
-      }));
     } finally {
       if (canApplyRefreshRequest(missionArchiveRefreshGate, requestId)) {
         setMissionArchiveLoading(false);
       }
     }
-  }, [account, activePlanetId, apiBaseUrl, normalizedMissionFilters.missionNumber, normalizedMissionFilters.missionType, normalizedMissionFilters.planetId, setMissionArchive]);
+  }, [account, apiBaseUrl, normalizedMissionFilters.missionNumber, normalizedMissionFilters.missionType, normalizedMissionFilters.planetId]);
 
   const loadMissileAttackArchive = useCallback(async () => {
     const requestId = beginRefreshRequest(missileAttackArchiveRefreshGate);
@@ -5166,16 +5103,8 @@ export function PlayableMvpApp({
     const requestId = beginRefreshRequest(allActiveMissionsRefreshGate);
     if (!apiBaseUrl) {
       setAllActiveMissions(undefined);
-      setPlanetSectionStore((current) => setPlanetSectionStatus(current, activePlanetId, "allActiveMissionsState", {
-        loading: false,
-        error: undefined,
-      }));
       return;
     }
-    setPlanetSectionStore((current) => setPlanetSectionStatus(current, activePlanetId, "allActiveMissionsState", {
-      loading: true,
-      error: undefined,
-    }));
     try {
       const response = await backendData!.globalActiveMissions();
       if (!canApplyRefreshRequest(allActiveMissionsRefreshGate, requestId)) return;
@@ -5185,12 +5114,8 @@ export function PlayableMvpApp({
       console.error(error);
       // The "All" active tab is supplementary. Keep its last confirmed rows when a background
       // request fails; replacing them with [] produces a visible disappear/reappear cycle.
-      setPlanetSectionStore((current) => setPlanetSectionStatus(current, activePlanetId, "allActiveMissionsState", {
-        loading: false,
-        error: error instanceof Error ? error.message : "Active missions could not be loaded.",
-      }));
     }
-  }, [activePlanetId, apiBaseUrl, setAllActiveMissions]);
+  }, [apiBaseUrl]);
 
   const loadMissionLaunchSnapshot = useCallback(async (): Promise<MissionLaunchSnapshot> => {
     if (!apiBaseUrl || !account) {
@@ -5212,19 +5137,11 @@ export function PlayableMvpApp({
       setGlobalMissionArchive(undefined);
       setGlobalMissionArchiveError(undefined);
       setGlobalMissionArchiveLoading(false);
-      setPlanetSectionStore((current) => setPlanetSectionStatus(current, activePlanetId, "globalMissionArchiveState", {
-        loading: false,
-        error: undefined,
-      }));
       return;
     }
 
     setGlobalMissionArchiveLoading(true);
     setGlobalMissionArchiveError(undefined);
-    setPlanetSectionStore((current) => setPlanetSectionStatus(current, activePlanetId, "globalMissionArchiveState", {
-      loading: true,
-      error: undefined,
-    }));
     try {
       const nextArchive = await backendData!.globalMissionArchive({
         missionNumber: normalizedMissionFilters.missionNumber,
@@ -5242,16 +5159,12 @@ export function PlayableMvpApp({
       console.error(error);
       const message = error instanceof Error ? error.message : "Universe mission archive could not be loaded.";
       setGlobalMissionArchiveError(message);
-      setPlanetSectionStore((current) => setPlanetSectionStatus(current, activePlanetId, "globalMissionArchiveState", {
-        loading: false,
-        error: message,
-      }));
     } finally {
       if (canApplyRefreshRequest(globalMissionArchiveRefreshGate, requestId)) {
         setGlobalMissionArchiveLoading(false);
       }
     }
-  }, [activePlanetId, apiBaseUrl, normalizedMissionFilters.missionNumber, normalizedMissionFilters.missionType, normalizedMissionFilters.planetId, setGlobalMissionArchive]);
+  }, [apiBaseUrl, normalizedMissionFilters.missionNumber, normalizedMissionFilters.missionType, normalizedMissionFilters.planetId]);
 
   const loadGlobalMissionArchiveSummary = useCallback(async () => {
     const requestId = beginRefreshRequest(globalMissionArchiveSummaryRefreshGate);
@@ -9172,17 +9085,12 @@ export function PlayableMvpApp({
   const activePlanetSections = planetSectionAccessForPlanet(planetSectionStore, activePlanetId, {
     settlementState: () => refreshOnChainState(),
     queuesState: () => refreshOnChainState(),
-    fleetVisibilityState: refreshMissionControl,
     infrastructureChainState: refreshInfrastructureState,
     moonState: refreshInfrastructureState,
     defenseState: refreshDefenseState,
     shipyardState: refreshShipyardState,
     researchState: refreshResearchState,
     riftState: refreshRiftState,
-    missionArchiveState: () => loadMissionArchive(missionArchivePage),
-    allActiveMissionsState: loadAllActiveMissions,
-    globalMissionArchiveState: () => loadGlobalMissionArchive(globalMissionArchivePage),
-    missionArchetypesByCoordinate: refreshMissionUniverseSystems,
     galaxySystemDataByKey: refreshMissionUniverseSystems,
   });
   const infrastructureSection = activePlanetSections.read("infrastructureChainState");
@@ -9191,8 +9099,6 @@ export function PlayableMvpApp({
   const shipyardSection = activePlanetSections.read("shipyardState");
   const researchSection = activePlanetSections.read("researchState");
   const riftSection = activePlanetSections.read("riftState");
-  const missionArchiveSection = activePlanetSections.read("missionArchiveState");
-  const globalMissionArchiveSection = activePlanetSections.read("globalMissionArchiveState");
 
   const content = (() => {
     if (miniAppMode && miniAppWalletError && !isWalletConnected) {
@@ -9517,8 +9423,8 @@ export function PlayableMvpApp({
           hasAlliance={hasAllianceMembership(allianceState)}
           hasAvailableMissionFleet={missionCooperativeActionAvailable(missionActionShipyardState)}
           globalMissionArchive={globalMissionArchive}
-          globalMissionArchiveError={globalMissionArchiveSection.status.error ?? globalMissionArchiveError}
-          globalMissionArchiveLoading={globalMissionArchiveLoading || globalMissionArchiveSection.status.loading}
+          globalMissionArchiveError={globalMissionArchiveError}
+          globalMissionArchiveLoading={globalMissionArchiveLoading}
           globalMissionArchiveTotalEntries={globalMissionArchiveTotalEntries}
           incomingAttackArchive={incomingAttackArchive}
           incomingAttackArchiveError={incomingAttackArchiveError}
@@ -9526,8 +9432,8 @@ export function PlayableMvpApp({
           loading={isWalletConnected && onChainStatus === "loading"}
           initialView={missionControlInitialView}
           missionArchive={missionArchive}
-          missionArchiveError={missionArchiveSection.status.error ?? missionArchiveError}
-          missionArchiveLoading={missionArchiveLoading || missionArchiveSection.status.loading}
+          missionArchiveError={missionArchiveError}
+          missionArchiveLoading={missionArchiveLoading}
           missileAttackArchive={missileAttackArchive}
           missileAttackArchiveError={missileAttackArchiveError}
           missileAttackArchiveLoading={missileAttackArchiveLoading}
@@ -9546,7 +9452,7 @@ export function PlayableMvpApp({
           onPastMissionTabChange={requestMissionControlTabLoad}
           onMissionArchivePageChange={(page) => void loadMissionArchive(page)}
           onMissionFiltersChange={setMissionFilters}
-          onRefresh={() => void activePlanetSections.refresh("fleetVisibilityState")}
+          onRefresh={() => void refreshMissionControl()}
           planetArchetypesByCoordinate={missionPlanetArchetypesByCoordinate}
           reportMissionId={missionReportId ?? undefined}
           reportUrlForMission={missionReportUrlForMission}

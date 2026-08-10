@@ -17,7 +17,6 @@ import type {
   ChainDefenseState,
   ChainInfrastructureState,
   ChainShipyardState,
-  FleetMissionVisibilityResponse,
   WalletSettlementResponse,
 } from "./walletFlow";
 
@@ -32,11 +31,6 @@ const settlement = {
   homePlanetId: "planet-1",
   planet: { planetId: "planet-1", resources: { metal: "100", crystal: "50", deuterium: "25" } },
 } as unknown as WalletSettlementResponse;
-const fleetVisibility = {
-  incoming: [],
-  outgoing: [{ missionId: "mission-1", originPlanetId: "planet-1" }],
-  returning: [],
-} as unknown as FleetMissionVisibilityResponse;
 
 describe("planetSectionStore", () => {
   test("keys an early Infrastructure snapshot by its indexed planet identity", () => {
@@ -115,40 +109,40 @@ describe("planetSectionStore", () => {
     expect(hasPlanetSectionData(section, "shipyardState")).toBe(false);
   });
 
-  test("stores resource and mission sections independently per planet", () => {
+  test("stores only planet-scoped read models independently per planet", () => {
     const withResources = setPlanetSectionValue({}, "planet-1", "settlementState", settlement);
-    const withMissions = setPlanetSectionValue(withResources, "planet-2", "fleetVisibilityState", fleetVisibility);
+    const withShipyard = setPlanetSectionValue(withResources, "planet-2", "shipyardState", shipyard(4));
 
-    expect(planetSectionForPlanet(withMissions, "planet-1").settlementState).toBe(settlement);
-    expect(planetSectionForPlanet(withMissions, "planet-1").fleetVisibilityState).toBeUndefined();
-    expect(planetSectionForPlanet(withMissions, "planet-2").fleetVisibilityState).toBe(fleetVisibility);
-    expect(planetSectionForPlanet(withMissions, "planet-2").settlementState).toBeUndefined();
+    expect(planetSectionForPlanet(withShipyard, "planet-1").settlementState).toBe(settlement);
+    expect(planetSectionForPlanet(withShipyard, "planet-1").shipyardState).toBeNull();
+    expect(planetSectionForPlanet(withShipyard, "planet-2").shipyardState?.ships[0]?.count).toBe(4);
+    expect(planetSectionForPlanet(withShipyard, "planet-2").settlementState).toBeUndefined();
   });
 
   test("tracks refresh status next to section data", () => {
-    const store = setPlanetSectionData({}, "planet-1", "fleetVisibilityState", fleetVisibility, {
+    const store = setPlanetSectionData({}, "planet-1", "shipyardState", shipyard(2), {
       loading: false,
       lastSuccessfulRefreshAt: 1234,
     });
-    const loading = setPlanetSectionStatus(store, "planet-1", "fleetVisibilityState", {
+    const loading = setPlanetSectionStatus(store, "planet-1", "shipyardState", {
       loading: true,
       error: undefined,
     });
     const section = planetSectionForPlanet(loading, "planet-1");
 
-    expect(section.fleetVisibilityState).toBe(fleetVisibility);
-    expect(section.sectionStatus.fleetVisibilityState).toEqual({
+    expect(section.shipyardState?.ships[0]?.count).toBe(2);
+    expect(section.sectionStatus.shipyardState).toEqual({
       loading: true,
       lastSuccessfulRefreshAt: 1234,
     });
 
-    const failed = setPlanetSectionStatus(loading, "planet-1", "fleetVisibilityState", {
+    const failed = setPlanetSectionStatus(loading, "planet-1", "shipyardState", {
       loading: false,
       error: "backend restarting",
     });
     const failedSection = planetSectionForPlanet(failed, "planet-1");
-    expect(failedSection.fleetVisibilityState).toBe(fleetVisibility);
-    expect(failedSection.sectionStatus.fleetVisibilityState).toEqual({
+    expect(failedSection.shipyardState?.ships[0]?.count).toBe(2);
+    expect(failedSection.sectionStatus.shipyardState).toEqual({
       loading: false,
       error: "backend restarting",
       lastSuccessfulRefreshAt: 1234,

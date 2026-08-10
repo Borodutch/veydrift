@@ -150,7 +150,7 @@ describe("VEY-KANEO-433 Mission Control auto-poll wiring", () => {
     expect(source).toContain("nextMissionResolutionEventMs(fleetVisibility, Date.now())");
     expect(source).toContain("MISSION_RESOLUTION_REFRESH_BUFFER_MS");
     // The manual Refresh button stays wired to the same refresher (no regression).
-    expect(source).toContain("onRefresh={() => void activePlanetSections.refresh(\"fleetVisibilityState\")}");
+    expect(source).toContain("onRefresh={() => void refreshMissionControl()}");
   });
 
   test("the open mission-detail report is refreshed silently by the auto-poll (no loading flicker)", async () => {
