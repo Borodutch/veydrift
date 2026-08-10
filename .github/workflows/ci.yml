@@ -20,6 +20,11 @@ jobs:
         with:
           fetch-depth: 2
 
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
       - name: Determine changed areas
         id: scope
         env:
