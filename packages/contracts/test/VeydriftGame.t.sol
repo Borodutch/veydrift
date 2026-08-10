@@ -63,6 +63,15 @@ interface IRiftLifecycleEntrypoints {
     function finalizeRiftExtraction(uint256 planetId, Resource resource) external;
 }
 
+interface ITransportBatchEntrypoints {
+    function hasFirstPlanet(address player) external view returns (bool);
+
+    function launchTransportBatch(
+        uint256 targetPlanetId,
+        VeydriftGameStorage.TransportBatchOrder[] calldata orders
+    ) external returns (uint256[] memory missionIds);
+}
+
 contract MockResourceToken {
     mapping(address account => uint256 balance) public balanceOf;
     mapping(address owner => mapping(address spender => uint256 amount)) public allowance;
@@ -5297,6 +5306,108 @@ contract VeydriftGameTest is Test {
             VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
             0
         );
+    }
+
+    function testLaunchTransportBatchCreatesAtomicOwnedTransports() public {
+        vm.prank(player);
+        uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
+        _setTechnologyLevel(player, Technology.Astrophysics, 5);
+        _setTechnologyLevel(player, Technology.Computer, 5);
+
+        _setShipCount(originPlanetId, Ship.ColonyShip, 1);
+        uint256 targetPlanetId = _createResolvedColony(player, originPlanetId, 211);
+        _setShipCount(originPlanetId, Ship.ColonyShip, 1);
+        uint256 secondOriginPlanetId = _createResolvedColony(player, originPlanetId, 212);
+
+        _setShipCount(originPlanetId, Ship.SmallCargo, 1);
+        _setShipCount(secondOriginPlanetId, Ship.SmallCargo, 1);
+        _setResources(originPlanetId, 10_000, 0, 10_000);
+        _setResources(secondOriginPlanetId, 0, 10_000, 10_000);
+        // The fixture helper writes the aggregate reserve snapshot for one planet at a time. This
+        // batch spends from two origins, so restore a combined reserve balance for the test.
+        vm.store(address(game), bytes32(uint256(14)), _packResourcesHead(10_000, 10_000));
+        vm.store(address(game), bytes32(uint256(15)), bytes32(uint256(20_000)));
+
+        VeydriftGameStorage.TransportBatchOrder[] memory orders =
+            new VeydriftGameStorage.TransportBatchOrder[](2);
+        orders[0] = VeydriftGameStorage.TransportBatchOrder({
+            originPlanetId: originPlanetId,
+            ships: _smallCargoManifest(),
+            cargo: VeydriftGameStorage.Resources({metal: 1_000, crystal: 0, deuterium: 0}),
+            speedPercent: 100
+        });
+        orders[1] = VeydriftGameStorage.TransportBatchOrder({
+            originPlanetId: secondOriginPlanetId,
+            ships: _smallCargoManifest(),
+            cargo: VeydriftGameStorage.Resources({metal: 0, crystal: 1_000, deuterium: 0}),
+            speedPercent: 100
+        });
+
+        uint256 nextFleetId = game.nextFleetId();
+        vm.prank(player);
+        uint256[] memory missionIds =
+            ITransportBatchEntrypoints(address(game)).launchTransportBatch(targetPlanetId, orders);
+
+        assertEq(missionIds.length, 2);
+        assertEq(missionIds[0], nextFleetId);
+        assertEq(missionIds[1], nextFleetId + 1);
+        assertEq(game.activeFleetMissionCount(player), 2);
+        assertEq(game.shipCount(originPlanetId, Ship.SmallCargo), 0);
+        assertEq(game.shipCount(secondOriginPlanetId, Ship.SmallCargo), 0);
+
+        (VeydriftGameStorage.FleetMissionStatus firstStatus,,,) = _fleetMission(missionIds[0]);
+        (VeydriftGameStorage.FleetMissionStatus secondStatus,,,) = _fleetMission(missionIds[1]);
+        assertEq(uint8(firstStatus), uint8(VeydriftGameStorage.FleetMissionStatus.Outbound));
+        assertEq(uint8(secondStatus), uint8(VeydriftGameStorage.FleetMissionStatus.Outbound));
+    }
+
+    function testLaunchTransportBatchRejectsDuplicateOriginsAtomically() public {
+        vm.prank(player);
+        uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
+        _setTechnologyLevel(player, Technology.Astrophysics, 2);
+        _setTechnologyLevel(player, Technology.Computer, 5);
+        _setShipCount(originPlanetId, Ship.ColonyShip, 1);
+        uint256 targetPlanetId = _createResolvedColony(player, originPlanetId, 213);
+        _setShipCount(originPlanetId, Ship.SmallCargo, 2);
+        _setResources(originPlanetId, 10_000, 0, 10_000);
+
+        VeydriftGameStorage.TransportBatchOrder[] memory orders =
+            new VeydriftGameStorage.TransportBatchOrder[](2);
+        for (uint256 i = 0; i < orders.length; ++i) {
+            orders[i] = VeydriftGameStorage.TransportBatchOrder({
+                originPlanetId: originPlanetId,
+                ships: _smallCargoManifest(),
+                cargo: VeydriftGameStorage.Resources({metal: 1_000, crystal: 0, deuterium: 0}),
+                speedPercent: 100
+            });
+        }
+
+        uint256 nextFleetId = game.nextFleetId();
+        vm.prank(player);
+        vm.expectRevert(VeydriftGameStorage.InvalidQuantity.selector);
+        ITransportBatchEntrypoints(address(game)).launchTransportBatch(targetPlanetId, orders);
+
+        assertEq(game.nextFleetId(), nextFleetId);
+        assertEq(game.activeFleetMissionCount(player), 0);
+        assertEq(game.shipCount(originPlanetId, Ship.SmallCargo), 2);
+    }
+
+    function testLaunchTransportBatchRejectsMoreThanEightOrders() public {
+        VeydriftGameStorage.TransportBatchOrder[] memory orders =
+            new VeydriftGameStorage.TransportBatchOrder[](9);
+
+        vm.prank(player);
+        vm.expectRevert(VeydriftGameStorage.InvalidQuantity.selector);
+        ITransportBatchEntrypoints(address(game)).launchTransportBatch(1, orders);
+    }
+
+    function testHasFirstPlanetRemainsAvailableThroughFacadeFallback() public {
+        assertFalse(ITransportBatchEntrypoints(address(game)).hasFirstPlanet(player));
+
+        vm.prank(player);
+        game.startPlanet{value: 0.05 ether}();
+
+        assertTrue(ITransportBatchEntrypoints(address(game)).hasFirstPlanet(player));
     }
 
     function testTransportRejectsSameAlliancePlanet() public {

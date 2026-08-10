@@ -108,6 +108,11 @@ contract VeydriftFirstPlanetSettlementModule is VeydriftResourceReserves {
         });
     }
 
+    /// @dev Kept behind the Game facade fallback to conserve its EIP-170-limited runtime size.
+    function hasFirstPlanet(address player) external view returns (bool) {
+        return homePlanetOf[player] != 0;
+    }
+
     function startPlanetWithAllianceInvite(
         bytes32 commitment,
         uint64 expiresAt,
