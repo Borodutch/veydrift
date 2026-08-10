@@ -11,6 +11,9 @@ const chromeCandidates = [
   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
   "/usr/bin/google-chrome",
   "/usr/bin/google-chrome-stable",
+  // Arch's /usr/bin/chromium launcher applies the user's chromium-flags.conf.
+  // Prefer the real binary so headless tests are isolated from desktop flags.
+  "/usr/lib/chromium/chromium",
   "/usr/bin/chromium",
   "/usr/bin/chromium-browser",
 ].filter(Boolean);
@@ -19,8 +22,10 @@ let cdp;
 let browserCdp;
 let chrome;
 let chromeProfile;
+let devToolsTargetsUrl;
 let fixtureUrl;
 let inspectorFixtureUrl;
+let pageTargetId;
 let server;
 
 function delay(milliseconds) {
@@ -69,6 +74,52 @@ function connectCdp(webSocketUrl) {
   });
 }
 
+async function waitForPageTarget(expectedTargetId, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const targets = await (await fetch(devToolsTargetsUrl)).json();
+      const pageTarget = targets.find((target) => (
+        target.type === "page"
+        && (!expectedTargetId || target.id === expectedTargetId)
+        && target.webSocketDebuggerUrl
+      ));
+      if (pageTarget) return pageTarget;
+    } catch {
+      // DevTools can advertise its browser socket just before the target list is ready.
+    }
+    await delay(25);
+  }
+  throw new Error(expectedTargetId
+    ? `Chrome did not expose page target ${expectedTargetId}.`
+    : "Chrome did not expose a page target.");
+}
+
+async function configurePageTarget(connection) {
+  await connection.send("Page.enable");
+  await connection.send("Runtime.enable");
+  await connection.send("Emulation.setTouchEmulationEnabled", {
+    enabled: true,
+    maxTouchPoints: 1,
+  });
+}
+
+async function replacePageTarget() {
+  const previousCdp = cdp;
+  const previousTargetId = pageTargetId;
+  const { targetId } = await browserCdp.send("Target.createTarget", { url: "about:blank" });
+  const pageTarget = await waitForPageTarget(targetId);
+  const nextCdp = await connectCdp(pageTarget.webSocketDebuggerUrl);
+  await configurePageTarget(nextCdp);
+
+  cdp = nextCdp;
+  pageTargetId = targetId;
+  previousCdp?.close();
+  if (previousTargetId) {
+    await browserCdp.send("Target.closeTarget", { targetId: previousTargetId }).catch(() => undefined);
+  }
+}
+
 async function launchChrome() {
   const executable = chromeCandidates.find((candidate) => existsSync(candidate));
   if (!executable) {
@@ -78,6 +129,7 @@ async function launchChrome() {
   chromeProfile = mkdtempSync(join(tmpdir(), "veydrift-touch-browser-"));
   chrome = spawn(executable, [
     "--headless=new",
+    "--disable-dev-shm-usage",
     "--no-first-run",
     "--no-default-browser-check",
     "--no-sandbox",
@@ -108,14 +160,11 @@ async function launchChrome() {
   });
 
   browserCdp = await connectCdp(browserWebSocketUrl);
-  const targetsUrl = browserWebSocketUrl
+  devToolsTargetsUrl = browserWebSocketUrl
     .replace(/^ws:/, "http:")
     .replace(/\/devtools\/browser\/.*$/, "/json/list");
-  const targets = await (await fetch(targetsUrl)).json();
-  const pageTarget = targets.find((target) => target.type === "page");
-  if (!pageTarget?.webSocketDebuggerUrl) {
-    throw new Error("Chrome did not expose a page target.");
-  }
+  const pageTarget = await waitForPageTarget();
+  pageTargetId = pageTarget.id;
   return connectCdp(pageTarget.webSocketDebuggerUrl);
 }
 
@@ -164,17 +213,12 @@ before(async () => {
   inspectorFixtureUrl = `http://127.0.0.1:${address.port}/tests/fixtures/planetInspectorBrowser.html`;
 
   cdp = await launchChrome();
-  await cdp.send("Page.enable");
-  await cdp.send("Runtime.enable");
+  await configurePageTarget(cdp);
   await cdp.send("Emulation.setDeviceMetricsOverride", {
     deviceScaleFactor: 2,
     height: 720,
     mobile: true,
     width: 390,
-  });
-  await cdp.send("Emulation.setTouchEmulationEnabled", {
-    enabled: true,
-    maxTouchPoints: 1,
   });
   await loadFixture();
 });
@@ -307,6 +351,9 @@ test("native two-axis touch scroll works before the hold and post-hold movement 
 });
 
 async function loadInspectorFixture(route, width, options = {}) {
+  // Inspector fixtures can intentionally leave wallet requests pending. Give every
+  // test a fresh page target so one fixture cannot stall the next navigation.
+  await replacePageTarget();
   await cdp.send("Emulation.setDeviceMetricsOverride", {
     deviceScaleFactor: 1,
     height: 900,
@@ -318,7 +365,20 @@ async function loadInspectorFixture(route, width, options = {}) {
   await cdp.send("Page.navigate", {
     url: `${inspectorFixtureUrl}?${params}`,
   });
-  await waitForExpression("window.inspectorProof?.appReady === true", 10_000);
+  try {
+    await waitForExpression("window.inspectorProof?.appReady === true", 10_000);
+  } catch (error) {
+    const diagnostics = await evaluate(`({
+      body: document.body?.innerText.slice(0, 2000),
+      errors: window.inspectorProof?.errors,
+      path: location.pathname,
+      readyState: document.readyState,
+      requests: window.inspectorProof?.requests,
+      resources: performance.getEntriesByType('resource').map((entry) => entry.name).slice(-20),
+      url: location.href,
+    })`).catch((diagnosticError) => ({ diagnosticError: diagnosticError.message }));
+    throw new Error(`${error.message}\nInspector bootstrap diagnostics: ${JSON.stringify(diagnostics)}`);
+  }
   if (waitForPlanetSelectors === "false") return;
   try {
     await waitForExpression("document.querySelectorAll('[data-planet-selector-item]').length >= 2");
