@@ -42,7 +42,7 @@ jobs:
           bun-version: 1.1.42
 
       - name: Cache Bun packages
-        if: steps.scope.outputs.any_package_check == 'true'
+        if: steps.scope.outputs.any_package_check == 'true' && runner.name != 'veydrift-mac-backmeupplz-ci'
         uses: actions/cache@v4
         with:
           path: ~/.bun/install/cache
@@ -55,7 +55,7 @@ jobs:
         uses: foundry-rs/foundry-toolchain@v1
 
       - name: Cache Foundry build artifacts
-        if: steps.scope.outputs.contracts == 'true'
+        if: steps.scope.outputs.contracts == 'true' && runner.name != 'veydrift-mac-backmeupplz-ci'
         uses: actions/cache@v4
         with:
           path: |
