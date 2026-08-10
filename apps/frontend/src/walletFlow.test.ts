@@ -20,6 +20,7 @@ import {
   encodeLaunchDefenseHoldCall,
   encodeLaunchInterplanetaryMissileAttackCall,
   encodeLaunchFleetMissionCall,
+  encodeLaunchTransportBatchCall,
   encodeMigrationClaimWithReferralCall,
   encodeUintCall,
   ensureBaseSepoliaNetwork,
@@ -70,6 +71,7 @@ import {
   sendLaunchAttackMissionTransaction,
   sendLaunchInterplanetaryMissileAttackTransaction,
   sendLaunchFleetMissionTransaction,
+  sendLaunchTransportBatchTransaction,
   sendJumpGateJumpTransaction,
   sendCompleteFleetMissionReturnTransaction,
   sendRecallFleetMissionTransaction,
@@ -1339,6 +1341,37 @@ describe("walletFlow", () => {
         params: [{ from: account, to: contract, data }],
       },
     ]);
+  });
+
+  test("encodes and submits one atomic transport batch", async () => {
+    const ships = {
+      smallCargo: 1, lightFighter: 0, recycler: 0, colonyShip: 0, largeCargo: 0,
+      heavyFighter: 0, cruiser: 0, battleship: 0, bomber: 0, destroyer: 0,
+      deathstar: 0, battlecruiser: 0, reaper: 0, pathfinder: 0,
+    };
+    const params = {
+      targetPlanetId: 9,
+      orders: [{
+        originPlanetId: 7,
+        ships,
+        cargo: { metal: 100, crystal: 200, deuterium: 0 },
+        speedPercent: 100,
+      }],
+    };
+    const data = encodeLaunchTransportBatchCall(params);
+    expect(data.slice(0, 10)).toBe("0x9c26e0be");
+    const requests: unknown[] = [];
+    const provider = mockProvider(async ({ method, params: rpcParams }) => {
+      requests.push({ method, params: rpcParams });
+      if (method === "eth_sendTransaction") return "0xbatch";
+      throw new Error(`Unexpected method ${method}`);
+    });
+
+    await expect(sendLaunchTransportBatchTransaction(provider, account, contract, params)).resolves.toBe("0xbatch");
+    expect(requests).toEqual([{
+      method: "eth_sendTransaction",
+      params: [{ from: account, to: contract, data }],
+    }]);
   });
 
   test("decodes nested RPC revert data when fleet launch send returns -32603", async () => {

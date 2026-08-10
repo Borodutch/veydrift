@@ -16,6 +16,7 @@ import {
   ChevronDown,
   Info,
   Package,
+  PackagePlus,
   Pencil,
   RefreshCw,
   Rocket,
@@ -169,6 +170,7 @@ interface OverviewPageProps {
   currentCommanderLabel?: string | undefined;
   selectedPlanetId?: string | undefined;
   onMyPlanetAction?: ((action: GalaxyAction, planet: ManagedPlanetResponse) => void) | undefined;
+  onSupplyPlanet?: ((planet: ManagedPlanetResponse) => void) | undefined;
 }
 
 export function OverviewPage({
@@ -221,6 +223,7 @@ export function OverviewPage({
   currentCommanderLabel,
   selectedPlanetId,
   onMyPlanetAction,
+  onSupplyPlanet,
 }: OverviewPageProps) {
   const usedFields = selectedPlanetUsedFields ?? usedFieldsFromBuildings(settledState.buildings);
   const stats = displayPlanetStats(onChainSettlement, onChainQueues, usedFields, isWalletConnected ? onChainStatus : "local");
@@ -815,6 +818,7 @@ export function OverviewPage({
           commanderLabel={currentCommanderLabel?.trim() || "You"}
           myPlanets={myPlanets}
           onAction={onMyPlanetAction}
+          onSupplyPlanet={onSupplyPlanet}
           onSelectMoon={onSelectMoon}
           onSelectPlanet={onSelectPlanet}
           onSwitchPlanet={onSwitchPlanet}
@@ -865,6 +869,7 @@ function MyPlanetsPanel({
   commanderLabel,
   myPlanets,
   onAction,
+  onSupplyPlanet,
   onSelectMoon,
   onSelectPlanet,
   onSwitchPlanet,
@@ -873,6 +878,7 @@ function MyPlanetsPanel({
   commanderLabel: string;
   myPlanets: readonly OverviewMyPlanetActionGroup[];
   onAction: ((action: GalaxyAction, planet: ManagedPlanetResponse) => void) | undefined;
+  onSupplyPlanet: ((planet: ManagedPlanetResponse) => void) | undefined;
   onSelectMoon: ((coords: Coordinates) => void) | undefined;
   onSelectPlanet: ((coords: Coordinates) => void) | undefined;
   onSwitchPlanet: ((planetId: string, bodyKind: "planet" | "moon") => void) | undefined;
@@ -902,10 +908,11 @@ function MyPlanetsPanel({
               planet={rowPlanet}
               showIdentity={false}
               showMoonIndicator={false}
-              actionSlot={actions.length > 0 ? (
+              actionSlot={actions.length > 0 || onSupplyPlanet ? (
                 <MyPlanetActionButtons
                   actions={actions}
                   onAction={(action) => onAction?.(action, planet)}
+                  onSupply={() => onSupplyPlanet?.(planet)}
                 />
               ) : undefined}
               moonActionSlot={moonActions && moonActions.length > 0 ? (
@@ -925,12 +932,14 @@ function MyPlanetsPanel({
 function MyPlanetActionButtons({
   actions,
   onAction,
+  onSupply,
 }: {
   actions: GalaxyAction[];
   onAction: (action: GalaxyAction) => void;
+  onSupply?: (() => void) | undefined;
 }) {
   const enabledActions = actions.filter((action) => action.enabled);
-  if (enabledActions.length === 0) return null;
+  if (enabledActions.length === 0 && !onSupply) return null;
 
   return (
     <span className="flex flex-wrap justify-end gap-1.5">
@@ -949,6 +958,17 @@ function MyPlanetActionButtons({
           </button>
         );
       })}
+      {onSupply ? (
+        <button
+          aria-label="Supply this planet"
+          className="inline-flex h-10 w-10 items-center justify-center rounded border border-cyan-300/35 bg-cyan-300/10 text-cyan-100 transition hover:bg-cyan-300/20 sm:h-8 sm:w-8"
+          onClick={onSupply}
+          title="Supply this planet"
+          type="button"
+        >
+          <PackagePlus aria-hidden="true" size={15} strokeWidth={1.9} />
+        </button>
+      ) : null}
     </span>
   );
 }

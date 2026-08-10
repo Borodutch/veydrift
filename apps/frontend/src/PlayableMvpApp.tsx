@@ -20,6 +20,12 @@ import {
   type OverviewMyPlanetActionGroup,
   type PlanetRenameActionState,
 } from "./components/OverviewPage";
+import { BatchSupplyModal } from "./components/BatchSupplyModal";
+import {
+  MAX_BATCH_SUPPLY_SOURCES,
+  type BatchSupplyOrder,
+  type BatchSupplySource,
+} from "./batchSupplyPlanner";
 import { InfrastructurePage } from "./components/InfrastructurePage";
 import { DefensePage } from "./components/DefensePage";
 import { AllianceInvitesPage, AlliancePage, allianceInviteAcceptanceState, allianceJoinRequestApprovalState, allianceJoinRequestDismissalState, hasAllianceMembership } from "./components/AlliancePage";
@@ -257,6 +263,7 @@ import {
   sendLaunchBodyFleetMissionTransaction,
   sendLaunchDefenseHoldTransaction,
   sendLaunchFleetMissionTransaction,
+  sendLaunchTransportBatchTransaction,
   sendJoinAttackMissionTransaction,
   encodeColonizationTargetId,
   sendJumpGateJumpTransaction,
@@ -2643,6 +2650,34 @@ function driveLevelsFromTechnologyLevels(levels: Record<string, number> | undefi
   };
 }
 
+function batchSupplySourceForPlanet(
+  planet: ManagedPlanetResponse,
+  shipyard: ChainShipyardState | undefined,
+): BatchSupplySource {
+  const resources = planet.resourcesAsOfNow ?? planet.resources;
+  const ships = emptyMissionShips();
+  for (const row of missionShipInventoryRows) {
+    ships[row.key] = Math.max(0, Math.trunc((shipyard?.launchableShips ?? shipyard?.ships ?? [])
+      .find((item) => item.id === row.id)?.count ?? 0));
+  }
+  const fleetUnavailable = shipyard?.fleetLaunchAvailable === false
+    ? shipyard.fleetLaunchUnavailableReason ?? shipyard.unavailableReason ?? "Fleet slots are unavailable."
+    : undefined;
+  return {
+    planetId: planet.planetId,
+    label: planet.name?.trim() || planet.coordinates,
+    coordinates: { galaxy: planet.galaxy, system: planet.system, position: planet.position },
+    resources: {
+      metal: safeResourceNumber(resources?.metal) ?? 0,
+      crystal: safeResourceNumber(resources?.crystal) ?? 0,
+      deuterium: safeResourceNumber(resources?.deuterium) ?? 0,
+    },
+    ships,
+    driveLevels: driveLevelsFromTechnologyLevels(shipyard?.technologyLevels),
+    ...(fleetUnavailable ? { unavailableReason: fleetUnavailable } : {}),
+  };
+}
+
 // VEY-KANEO-440: best-effort Alliance Depot level of a target planet for the DefenseHold holding-fuel
 // subsidy preview, read from the planet's public building state (Alliance Depot = building id 13).
 // The contract recomputes the real subsidy on launch, so an unknown level (no public state) previews
@@ -3790,6 +3825,11 @@ export function PlayableMvpApp({
   const [shipyardError, setShipyardError] = useState<string | undefined>();
   const [shipyardAction, setShipyardAction] = useState<ShipyardActionState>({ status: "idle" });
   const [galaxyAction, setGalaxyAction] = useState<GalaxyActionState>({ status: "idle" });
+  const [batchSupplyTarget, setBatchSupplyTarget] = useState<ManagedPlanetResponse | null>(null);
+  const [batchSupplySources, setBatchSupplySources] = useState<BatchSupplySource[]>([]);
+  const [batchSupplyMaxSources, setBatchSupplyMaxSources] = useState(MAX_BATCH_SUPPLY_SOURCES);
+  const [batchSupplyLoading, setBatchSupplyLoading] = useState(false);
+  const [batchSupplyError, setBatchSupplyError] = useState<string | undefined>();
   const [pendingGalaxyMission, setPendingGalaxyMission] = useState<PendingGalaxyMission | null>(null);
   const missionComposerRefreshKeyRef = useRef<string | null>(null);
   // VEY-KANEO-431: a join-attack awaiting fleet selection. When set, the same
@@ -6932,6 +6972,65 @@ export function PlayableMvpApp({
     return completed;
   }, [account, apiBaseUrl, loadMissionLaunchSnapshot, refreshConfirmedResourceChange, refreshDefenseState, refreshInfrastructureState, refreshOnChainState, refreshShipyardState, runCoordinatedWriteTransaction, setMoonState]);
 
+  const handleOpenBatchSupply = useCallback((target: ManagedPlanetResponse) => {
+    if (!account || !backendData) {
+      setGalaxyAction({ status: "error", label: "Connect your wallet before planning a supply transport." });
+      return;
+    }
+    const origins = walletPlanets.filter((planet) => planet.planetId !== target.planetId);
+    setBatchSupplyTarget(target);
+    setBatchSupplySources([]);
+    setBatchSupplyError(undefined);
+    setBatchSupplyLoading(true);
+    void Promise.all(origins.map(async (planet) => [planet, await backendData.shipyard(account, planet.planetId, { fresh: true })] as const))
+      .then((rows) => {
+        const fleetSource = rows.map(([, shipyard]) => shipyard).find((shipyard) => shipyard.fleetSlots);
+        const freeSlots = fleetSource?.fleetSlots
+          ? Math.max(0, fleetSource.fleetSlots.limit - fleetSource.fleetSlots.active)
+          : 0;
+        setBatchSupplyMaxSources(Math.min(MAX_BATCH_SUPPLY_SOURCES, freeSlots));
+        setBatchSupplySources(rows
+          .map(([planet, shipyard]) => batchSupplySourceForPlanet(planet, shipyard))
+          .sort((left, right) => (
+            fleetMissionDistance(left.coordinates, { galaxy: target.galaxy, system: target.system, position: target.position })
+              - fleetMissionDistance(right.coordinates, { galaxy: target.galaxy, system: target.system, position: target.position })
+          )));
+      })
+      .catch((error) => {
+        console.error(error);
+        setBatchSupplyError("Could not read source cargo fleets. Refresh and try again.");
+        setBatchSupplySources(origins.map((planet) => batchSupplySourceForPlanet(planet, undefined)));
+        setBatchSupplyMaxSources(0);
+      })
+      .finally(() => setBatchSupplyLoading(false));
+  }, [account, backendData, walletPlanets]);
+
+  const handleConfirmBatchSupply = useCallback((orders: BatchSupplyOrder[]) => {
+    const target = batchSupplyTarget;
+    if (!provider || !account || !gameContract || !target) {
+      setBatchSupplyError("Wallet or target planet is unavailable.");
+      return;
+    }
+    setBatchSupplyError(undefined);
+    void (async () => {
+      const completed = await runGalaxyTransaction("Supply transports", () => sendLaunchTransportBatchTransaction(
+        provider,
+        account,
+        gameContract,
+        {
+          targetPlanetId: target.planetId,
+          orders: orders.map((order) => ({
+            originPlanetId: order.originPlanetId,
+            ships: order.ships,
+            cargo: order.cargo,
+            speedPercent: 100,
+          })),
+        },
+      ), { syncMissionLaunch: true });
+      if (completed) setBatchSupplyTarget(null);
+    })();
+  }, [account, batchSupplyTarget, gameContract, provider, runGalaxyTransaction]);
+
   const runMoonTransaction = useCallback(async (
     label: string,
     send: () => Promise<string>,
@@ -9755,6 +9854,7 @@ export function PlayableMvpApp({
         currentCommanderLabel={playerProfile?.displayName ?? "You"}
         selectedPlanetId={activePlanetId}
         onMyPlanetAction={handleOverviewMyPlanetAction}
+        onSupplyPlanet={handleOpenBatchSupply}
       />
     );
   })();
@@ -9805,6 +9905,20 @@ export function PlayableMvpApp({
         onHistoryClose={() => setPlayerActivityOpen(false)}
         wallet={account}
       />
+      {batchSupplyTarget ? (
+        <BatchSupplyModal
+          actionPending={galaxyAction.status === "pending"}
+          error={batchSupplyError}
+          loading={batchSupplyLoading}
+          maxSources={batchSupplyMaxSources}
+          onClose={() => {
+            if (galaxyAction.status !== "pending") setBatchSupplyTarget(null);
+          }}
+          onConfirm={handleConfirmBatchSupply}
+          sources={batchSupplySources}
+          target={batchSupplyTarget}
+        />
+      ) : null}
     </div>
   );
 }

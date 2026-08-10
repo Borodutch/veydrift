@@ -240,6 +240,16 @@ abstract contract VeydriftGameStorage is Initializable {
         uint32 pathfinder;
     }
 
+    /// @notice One caller-owned source planet's contribution to a single-destination transport batch.
+    /// @dev Kept ABI-compatible with the normal Transport launch inputs so the batch path shares the
+    ///      exact same fuel, cargo, fleet-slot, and mission-resolution rules as an individual mission.
+    struct TransportBatchOrder {
+        uint256 originPlanetId;
+        MissionShips ships;
+        Resources cargo;
+        uint16 speedPercent;
+    }
+
     struct FleetMission {
         FleetMissionStatus status;
         FleetMissionType missionType;

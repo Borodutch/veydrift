@@ -2046,6 +2046,18 @@ describe("projected fleet recall cost", () => {
     expect(mission?.recallCost).toBe("50");
   });
 
+  test("keeps every launch when one transaction emits multiple transport-style mission event sets", () => {
+    // A batch transport deliberately emits the same canonical FleetMission* events once per child
+    // mission. The transaction decoder must not collapse those logs to the final mission.
+    const missions = decodeFleetMissionLogs([
+      ...launchAndCargo(701n, 15n),
+      ...launchAndCargo(702n, 25n),
+    ]);
+    expect(missions.size).toBe(2);
+    expect(missions.get("701")?.fuelCost).toBe("15");
+    expect(missions.get("702")?.fuelCost).toBe("25");
+  });
+
   test("floors a tiny-but-nonzero fuel cost to 1 deuterium, mirroring the contract", () => {
     const mission = decodeFleetMissionLogs(launchAndCargo(2n, 1n)).get("2");
     // floor(1 * 2500 / 10000) = 0, but the contract charges a 1 deuterium minimum.

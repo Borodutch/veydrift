@@ -1467,6 +1467,7 @@ const GAME_SELECTORS = {
   launchDefenseHold: "0xd3ad415f",
   launchBodyFleetMission: "0x0d0a9b08",
   launchFleetMission: "0x60eac16f",
+  launchTransportBatch: "0x9c26e0be",
   resolveFleetMission: "0xde09e7cf",
   startBuildingUpgrade: "0x165715e3",
   finishShipProduction: "0x7bd93154",
@@ -2478,6 +2479,45 @@ export function encodeLaunchFleetMissionCall({
     speedPercent,
     randomnessRequestId,
   ]);
+}
+
+export type BatchTransportOrder = {
+  originPlanetId: bigint | number | string;
+  ships: MissionShips;
+  cargo: { metal: bigint | number | string; crystal: bigint | number | string; deuterium: bigint | number | string };
+  speedPercent: number;
+};
+
+/**
+ * ABI-encodes `launchTransportBatch(uint256,TransportBatchOrder[])`.
+ * The tuple deliberately mirrors the storage struct and the normal transport
+ * launch inputs, so a batch does not get a second set of fleet rules.
+ */
+export function encodeLaunchTransportBatchCall({
+  targetPlanetId,
+  orders,
+}: {
+  targetPlanetId: bigint | number | string;
+  orders: readonly BatchTransportOrder[];
+}): string {
+  return `${GAME_SELECTORS.launchTransportBatch}${encodeAbiParameters(
+    parseAbiParameters(
+      "uint256 targetPlanetId, (uint256 originPlanetId, (uint32 smallCargo, uint32 lightFighter, uint32 recycler, uint32 colonyShip, uint32 largeCargo, uint32 heavyFighter, uint32 cruiser, uint32 battleship, uint32 bomber, uint32 destroyer, uint32 deathstar, uint32 battlecruiser, uint32 reaper, uint32 pathfinder) ships, (uint128 metal, uint128 crystal, uint128 deuterium) cargo, uint16 speedPercent)[] orders",
+    ),
+    [
+      BigInt(targetPlanetId),
+      orders.map((order) => ({
+        originPlanetId: BigInt(order.originPlanetId),
+        ships: order.ships,
+        cargo: {
+          metal: BigInt(order.cargo.metal),
+          crystal: BigInt(order.cargo.crystal),
+          deuterium: BigInt(order.cargo.deuterium),
+        },
+        speedPercent: order.speedPercent,
+      })),
+    ],
+  )}`;
 }
 
 export function encodeLaunchBodyFleetMissionCall({
@@ -3814,6 +3854,19 @@ export async function sendLaunchFleetMissionTransaction(
     from: account,
     to: contractAddress,
     data
+  });
+}
+
+export async function sendLaunchTransportBatchTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  params: Parameters<typeof encodeLaunchTransportBatchCall>[0],
+): Promise<string> {
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodeLaunchTransportBatchCall(params),
   });
 }
 

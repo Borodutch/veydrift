@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
+import {VeydriftBatchTransportModule} from "./VeydriftBatchTransportModule.sol";
 import {VeydriftCatalog} from "./libraries/VeydriftCatalog.sol";
 import {VeydriftAntiRaidPrimitives} from "./libraries/VeydriftAntiRaidPrimitives.sol";
 import {VeydriftDependencies} from "./libraries/VeydriftDependencies.sol";
@@ -19,6 +20,7 @@ contract VeydriftGame is VeydriftResourceReserves {
     address private immutable _colonizationModule;
     address private immutable _defenseHoldModule;
     address private immutable _stateMigrationModule;
+    address private immutable _batchTransportModule;
 
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
 
@@ -48,6 +50,7 @@ contract VeydriftGame is VeydriftResourceReserves {
         _colonizationModule = colonizationModule;
         _defenseHoldModule = defenseHoldModule;
         _stateMigrationModule = stateMigrationModule;
+        _batchTransportModule = address(new VeydriftBatchTransportModule());
     }
 
     function initialize(address admin) external initializer {
@@ -92,10 +95,6 @@ contract VeydriftGame is VeydriftResourceReserves {
         returns (uint256)
     {
         _delegateToFirstPlanetSettlementModule();
-    }
-
-    function hasFirstPlanet(address player) external view returns (bool) {
-        return homePlanetOf[player] != 0;
     }
 
     /// @notice Canonical score used for alliance-war declaration snapshots.
@@ -477,12 +476,20 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     fallback() external {
-        // These read-only settlement selectors remain part of the proxy surface, but route through
-        // fallback to keep the size-constrained implementation below EIP-170's 24 KiB limit.
-        if (msg.sig == 0x29147f24 || msg.sig == 0x729b082f) {
+        // First-planet preview selectors stay in the proxy surface through fallback to keep the
+        // size-constrained implementation below EIP-170's 24 KiB limit.
+        if (msg.sig == 0x29147f24 || msg.sig == 0x729b082f || msg.sig == 0x1d750846) {
             _delegateToFirstPlanetSettlementModule();
+        } else if (msg.sig == 0x9c26e0be) {
+            (bool ok, bytes memory result) = _batchTransportModule.delegatecall(msg.data);
+            assembly ("memory-safe") {
+                switch ok
+                case 0 { revert(add(result, 32), mload(result)) }
+                default { return(add(result, 32), mload(result)) }
+            }
+        } else {
+            _delegateToStateMigrationModule();
         }
-        _delegateToStateMigrationModule();
     }
 
     function planet(uint256 planetId) external view returns (Planet memory) {
