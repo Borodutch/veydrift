@@ -1583,10 +1583,7 @@ export function FirstPlanetSettlementApp() {
         ) : (
           <>
             {paidAllianceInviteSecret ? (
-              <div className="referral-code-field" role="status">
-                <strong>Alliance invite ready</strong>
-                <span>Your first planet is free with this invite. You only need a little Base ETH for gas, receive 2× starter resources, and join the issuing alliance automatically.</span>
-              </div>
+              <AllianceInviteWelcome />
             ) : (
               <ReferralCodeField
                 disabled={planet.kind === "pending"}
@@ -2214,27 +2211,42 @@ function FlowBody({
 }) {
   const networkName = requiredChain.chainName;
   if (mode === "resolving") {
-    return <StateMessage tone="scanning" title="Reading wallet link" body="Checking wallet signal and first-planet settlement state." visual={<SettlementScanVisual label="SETTLEMENT SCAN" />} />;
+    return (
+      <StateMessage
+        tone="scanning"
+        title={prepaidAllianceInvite ? "Preparing your invitation" : "Getting things ready"}
+        body={prepaidAllianceInvite
+          ? "One moment while we prepare your alliance welcome."
+          : "One moment while we check for your wallet."}
+      />
+    );
   }
 
   if (mode === "no-wallet") {
     return (
       <StateMessage
-        title="No pilot wallet detected"
+        title="Wallet not found"
         body={noWalletDetectedMessage(miniAppMode)}
-        action={<PrimaryButton onClick={onConnect}>Check again</PrimaryButton>}
+        action={<PrimaryButton onClick={onConnect}>Try again</PrimaryButton>}
         tone="warning"
       />
     );
   }
 
   if (mode === "connect") {
+    const waitingForWallet = wallet.kind === "connecting";
     return (
       <StateMessage
-        title={wallet.kind === "connecting" ? "Waiting for wallet authorization" : "Link wallet"}
-        body="Connect a wallet to claim your first home world."
-        action={<PrimaryButton disabled={wallet.kind === "connecting"} onClick={onConnect}>Link wallet</PrimaryButton>}
-        tone={wallet.kind === "connecting" ? "scanning" : "ready"}
+        title={waitingForWallet
+          ? "Approve in your wallet"
+          : prepaidAllianceInvite ? "Accept your invitation" : "Claim your home world"}
+        body={waitingForWallet
+          ? "Confirm the connection request to continue."
+          : prepaidAllianceInvite
+            ? "Connect your wallet to join the alliance and claim your free first planet."
+            : "Connect your wallet to begin your first settlement."}
+        action={<PrimaryButton disabled={waitingForWallet} onClick={onConnect}>Connect wallet</PrimaryButton>}
+        tone={waitingForWallet ? "scanning" : "ready"}
       />
     );
   }
@@ -2258,7 +2270,7 @@ function FlowBody({
     return (
       <StateMessage
         title="Wrong network"
-        body={`Current chain ${wallet.chainId}. Switch to ${networkName} to enter the settlement sector.`}
+        body={`Veydrift runs on ${networkName}. Switch networks to continue.`}
         action={
           <PrimaryButton disabled={networkSwitchPending} onClick={onSwitchNetwork}>
             {networkSwitchPending ? "Switching network" : "Switch network"}
@@ -2282,10 +2294,9 @@ function FlowBody({
   if (mode === "pending" && planet.kind === "pending") {
     return (
       <StateMessage
-        title="Colony drop in progress"
-        body={planet.label ?? (planet.txHash ? `Transaction beacon: ${planet.txHash}` : "Confirm the settlement launch in your wallet.")}
+        title="Creating your first world"
+        body={planet.label ?? "Confirm the launch in your wallet. We’ll open the game as soon as your world is ready."}
         tone="scanning"
-        visual={<SettlementScanVisual label="COLONY DROP" />}
       />
     );
   }
@@ -2331,7 +2342,7 @@ function FlowBody({
     : migrationReservation
       ? "Migrate planet"
       : prepaidAllianceInvite
-        ? "Launch free settlement"
+        ? "Accept invite & launch"
       : "Launch settlement";
   const title = settlementFunding.status === "error"
     ? "Settlement info unavailable"
@@ -2341,6 +2352,8 @@ function FlowBody({
     ? `More ${networkName} ETH required`
     : migrationReservation
       ? "Reserved planet found"
+    : prepaidAllianceInvite
+      ? "Your first world is waiting"
     : planet.kind === "legacy-settled"
       ? "Legacy planet detected"
       : "Found your first world";
@@ -2357,8 +2370,27 @@ function FlowBody({
 
 export function noWalletDetectedMessage(miniAppMode: boolean): string {
   return miniAppMode
-    ? "This client does not expose a Base wallet. Open Veydrift with wallet support, or use a browser wallet."
-    : "Open the bridge with an injected EVM wallet or browser wallet.";
+    ? "Veydrift can’t access a wallet here. Open it somewhere with wallet support and try again."
+    : "Open or install a browser wallet, then try again.";
+}
+
+function AllianceInviteWelcome() {
+  return (
+    <div className="landing-invite-welcome" role="status">
+      <span className="landing-invite-icon" aria-hidden="true">
+        <Gift />
+      </span>
+      <div className="landing-invite-copy">
+        <strong>You&apos;re invited</strong>
+        <span>Join the alliance and start with a little extra momentum.</span>
+      </div>
+      <div className="landing-invite-benefits" aria-label="Alliance invite benefits">
+        <span>Free first planet</span>
+        <span>2× starter resources</span>
+        <span>Gas only</span>
+      </div>
+    </div>
+  );
 }
 
 export function settlementLaunchBlocker(
@@ -2465,7 +2497,7 @@ function settlementBody(
     : "";
 
   if (prepaidAllianceInvite) {
-    return `${prefix} This alliance invite starts your first planet for free. You pay no settlement fee—only Base gas. You receive 2× starter resources and join the issuing alliance automatically.`;
+    return "Everything is ready. Launch your first planet to accept the invitation and join your alliance.";
   }
 
   if (settlementFunding.status === "idle" || settlementFunding.status === "loading") {
@@ -2598,21 +2630,6 @@ function StateMessage({
       </div>
       {visual}
       {action ? <div className="settlement-action">{action}</div> : null}
-    </div>
-  );
-}
-
-function SettlementScanVisual({ label }: { label: string }) {
-  return (
-    <div aria-hidden="true" className="settle-scanner">
-      <img alt="" className="settle-scanner-planet" src="/assets/game/style-pass/generated/planets/crystal-violet.webp" />
-      <span className="settle-scanner-orbit settle-scanner-orbit-a" />
-      <span className="settle-scanner-orbit settle-scanner-orbit-b" />
-      <span className="settle-scanner-reticle scanner-reticle-sweep" />
-      <span className="settle-scanner-site settle-scanner-site-a scanner-site-ping" />
-      <span className="settle-scanner-site settle-scanner-site-b scanner-site-ping" />
-      <span className="settle-scanner-site settle-scanner-site-c scanner-site-ping" />
-      <span className="settle-scanner-hud">{label}</span>
     </div>
   );
 }

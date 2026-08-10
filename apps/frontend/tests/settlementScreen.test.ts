@@ -103,7 +103,7 @@ describe("settlement screen mode", () => {
     expect(heroSource).not.toContain("Back cover");
     expect(heroSource).not.toContain("Live Veydrift surfaces from the current alpha build.");
 
-    expect(settlementSource).toContain("Link wallet");
+    expect(settlementSource).toContain("Connect wallet");
     expect(settlementSource).toContain("Paste invite code");
     expect(heroSource).toContain("Build. Raid. Drift.");
     expect(heroSource).toContain("/assets/landing/qa-screens/overview-desktop.jpg");
@@ -115,10 +115,25 @@ describe("settlement screen mode", () => {
     expect(heroSource).toContain("Rift economy");
   });
 
+  test("keeps the landing wallet and alliance invitation hero warm and concise", async () => {
+    const settlementSource = await Bun.file(new URL("../src/FirstPlanetSettlementApp.tsx", import.meta.url)).text();
+    const stylesSource = await Bun.file(new URL("../src/styles.css", import.meta.url)).text();
+
+    expect(settlementSource).toContain("<AllianceInviteWelcome />");
+    expect(settlementSource).toContain("You&apos;re invited");
+    expect(settlementSource).toContain("Free first planet");
+    expect(settlementSource).toContain("2× starter resources");
+    expect(settlementSource).toContain("Preparing your invitation");
+    expect(settlementSource).not.toContain('title="Reading wallet link"');
+    expect(settlementSource).not.toContain('visual={<SettlementScanVisual label="SETTLEMENT SCAN" />}');
+    expect(stylesSource).toContain(".landing-invite-welcome");
+    expect(stylesSource).toContain(".retro-cd-copy-panel .settlement-primary");
+  });
+
   test("keeps no-wallet copy wallet-neutral outside Mini App mode", () => {
-    expect(noWalletDetectedMessage(false)).toBe("Open the bridge with an injected EVM wallet or browser wallet.");
+    expect(noWalletDetectedMessage(false)).toBe("Open or install a browser wallet, then try again.");
     expect(noWalletDetectedMessage(false)).not.toMatch(/metamask/i);
-    expect(noWalletDetectedMessage(true)).toContain("does not expose a Base wallet");
+    expect(noWalletDetectedMessage(true)).toContain("can’t access a wallet here");
   });
 
   test("preserves minimal network, transaction, and error states", () => {
