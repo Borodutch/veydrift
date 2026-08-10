@@ -43,6 +43,24 @@ describe("BackendDataStore", () => {
     expect(loads).toBe(2);
   });
 
+  test("does not reuse an older in-flight request for an authoritative refresh", async () => {
+    const store = new BackendDataStore("https://api.test");
+    let loads = 0;
+    const load = async () => {
+      loads += 1;
+      return { revision: loads };
+    };
+
+    const [first, second] = await Promise.all([
+      store.refresh("fleet-visibility:wallet", load, { dedupe: false }),
+      store.refresh("fleet-visibility:wallet", load, { dedupe: false }),
+    ]);
+
+    expect(first).toEqual({ revision: 1 });
+    expect(second).toEqual({ revision: 2 });
+    expect(loads).toBe(2);
+  });
+
   test("releases a failed request so a later refresh can retry", async () => {
     const store = new BackendDataStore("https://api.test");
     let loads = 0;

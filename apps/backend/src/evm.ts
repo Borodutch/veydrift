@@ -542,6 +542,12 @@ export type IndexedAllianceEvent =
 export type FleetMissionVisibility = {
   wallet: Address;
   homePlanetId: string | null;
+  // Persisted mission/battle read-model version attached by the indexed API. Consumers use this
+  // monotonic token to reject an older response that finishes after a newer live refresh.
+  indexedRevision?: string;
+  // Highest block durably applied by the indexer when this visibility snapshot was generated.
+  indexedBlock?: string | null;
+  generatedAt?: string;
   incoming: FleetMissionSummary[];
   outgoing: FleetMissionSummary[];
   returning: FleetMissionSummary[];

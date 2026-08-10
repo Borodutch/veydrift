@@ -2047,7 +2047,17 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
       const rateLimited = readRateLimitResponse(request, url, readRateLimits);
       if (rateLimited) return withRequestCors(request, rateLimited);
-      return withRequestCors(request, await routeRequest(request));
+      const response = await routeRequest(request);
+      if (request.method === "GET" && jsonContentType(response.headers.get("content-type"))) {
+        const headers = new Headers(response.headers);
+        headers.set("cache-control", "no-store");
+        return withRequestCors(request, new Response(response.body, {
+          headers,
+          status: response.status,
+          statusText: response.statusText
+        }));
+      }
+      return withRequestCors(request, response);
     };
 
     try {
@@ -2578,6 +2588,7 @@ async function refreshCachedJsonResponse(
 
 function cacheableJsonRequestTtlMs(request: Request, url: URL): number {
   if (request.method !== "GET") return 0;
+  if (url.searchParams.get("fresh") === "1") return 0;
   if (url.pathname === "/chain/events") return 0;
   if (url.pathname === "/cca") return 4_000;
   if (url.pathname === "/health") return 10_000;
@@ -2585,21 +2596,22 @@ function cacheableJsonRequestTtlMs(request: Request, url: URL): number {
   if (url.pathname === "/highscores") return livePublicDataRequest(url) ? 1_000 : 300_000;
   if (url.pathname === "/raid-finder/debris") return 30_000;
   if (url.pathname === "/raid-finder/rifters") return 30_000;
-  // These feeds are polled from every active game view. A global read-model version changed for
-  // *unrelated* missions and battle reports, which effectively defeated their cache and made every
-  // player rebuild the same expensive visibility/archive projection. A five-second snapshot keeps
-  // mission transitions live to the UI while preventing that universe-wide invalidation stampede.
-  if (url.pathname.match(/^\/wallet\/[^/]+\/fleet-visibility$/)) return 5_000;
-  if (url.pathname.match(/^\/wallet\/[^/]+\/missions$/)) return 5_000;
-  if (url.pathname.match(/^\/wallet\/[^/]+\/missile-attacks$/)) return 30_000;
-  if (url.pathname === "/missions") return livePublicDataRequest(url) ? 1_000 : 300_000;
-  if (url.pathname.match(/^\/mission\/[^/]+$/)) return 30_000;
+  // Mission Control is an authoritative indexed-state surface. The chain-event stream fires only
+  // after the writer commits a log, so returning a process-local stale snapshot here defeats the
+  // live refresh and can leave a resolved mission shown as Outbound/Resolving. These targeted SQL
+  // projections are already bounded/indexed; never put stale-while-revalidate in front of them.
+  if (url.pathname.match(/^\/wallet\/[^/]+\/fleet-visibility$/)) return 0;
+  if (url.pathname.match(/^\/wallet\/[^/]+\/missions$/)) return 0;
+  if (url.pathname.match(/^\/wallet\/[^/]+\/missile-attacks$/)) return 0;
+  if (url.pathname === "/missions") return livePublicDataRequest(url) ? 0 : 300_000;
+  if (url.pathname.match(/^\/mission\/[^/]+$/)) return 0;
   // Moon/Shipyard/Infrastructure payloads include as-of-now projections that can change when time
   // crosses a mission or per-unit production boundary without a new indexed log. A TTL cache can
   // otherwise preserve mismatched queue, inventory, and Solar Satellite energy values after refresh.
   if (url.pathname.match(/^\/wallet\/[^/]+\/(?:infrastructure|moon|shipyard|defenses)$/)) return 0;
-  // Overview contains fleet visibility, so give its combined snapshot the same bounded freshness.
-  if (url.pathname.match(/^\/wallet\/[^/]+\/overview$/)) return 5_000;
+  // Overview is the canonical combined wallet snapshot used by live chain-event refreshes. It must
+  // advance resources and fleet visibility from the same committed DB state, never a cached copy.
+  if (url.pathname.match(/^\/wallet\/[^/]+\/overview$/)) return 0;
   if (cacheableWalletSnapshotPath(url.pathname)) return 15_000;
   if (url.pathname.startsWith("/wallet/")) return 5_000;
   if (url.pathname.match(/^\/universe\/galaxies\/[0-9]+\/systems\/[0-9]+$/)) return 30_000;
@@ -3493,10 +3505,13 @@ function indexedFleetVisibility(
     wallet,
     options.includeArchive === undefined ? {} : { includeArchive: options.includeArchive }
   );
-  if (options.includeArchive === false) {
-    return visibility;
-  }
-  return visibility;
+  const snapshot = indexer.snapshot();
+  return {
+    ...visibility,
+    indexedRevision: indexer.missionResponseCacheVersion(),
+    indexedBlock: snapshot.latestIndexedBlock,
+    generatedAt: new Date().toISOString()
+  };
 }
 
 function expectsBattleReport(mission: FleetMissionSummary): boolean {

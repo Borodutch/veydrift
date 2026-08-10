@@ -1263,10 +1263,19 @@ describe("Veydrift backend", () => {
     expect(body.planets).toHaveLength(1);
 
     const fleetResponse = await handler(new Request(`http://localhost/wallet/${player}/fleet-visibility?archive=none`));
-    const fleetBody = await fleetResponse.json() as { wallet: string; incoming: FleetMissionSummary[] };
+    const fleetBody = await fleetResponse.json() as {
+      wallet: string;
+      incoming: FleetMissionSummary[];
+      indexedRevision: string;
+      indexedBlock: string | null;
+      generatedAt: string;
+    };
     expect(fleetResponse.status).toBe(200);
     expect(fleetBody.wallet).toBe(player);
     expect(fleetBody.incoming).toEqual([]);
+    expect(fleetBody.indexedRevision).toMatch(/^\d+:\d+$/);
+    expect(fleetBody).toHaveProperty("indexedBlock");
+    expect(Number.isNaN(Date.parse(fleetBody.generatedAt))).toBe(false);
 
     const archiveResponse = await handler(new Request(`http://localhost/wallet/${player}/missions?status=completed&page=1&pageSize=25`));
     const archiveBody = await archiveResponse.json() as { wallet: string; rows: unknown[] };
@@ -1346,7 +1355,7 @@ describe("Veydrift backend", () => {
     expect(waitCalled).toBe(true);
   });
 
-  test("uses a peer's completed shared-cache refresh instead of rebuilding the same cold read", async () => {
+  test("bypasses shared stale caches for authoritative fleet visibility", async () => {
     let routeBuilt = false;
     const cachedBody = new TextEncoder().encode(JSON.stringify({ fromPeer: true })).buffer as ArrayBuffer;
     const sharedResponseCache = {
@@ -1387,8 +1396,8 @@ describe("Veydrift backend", () => {
     const response = await handler(new Request(`http://localhost/wallet/${player}/fleet-visibility?archive=none`));
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ fromPeer: true });
-    expect(routeBuilt).toBe(false);
+    expect(await response.json()).toMatchObject({ wallet: player });
+    expect(routeBuilt).toBe(true);
   });
 
   test("keeps health off the response-cache path", async () => {
@@ -9452,7 +9461,7 @@ describe("Veydrift backend", () => {
     expect(initialHighscores.headers.get("cache-control")).toBe("public, no-store");
     expect(initialHighscoresBody.rankings.total[0].alliance).toBeNull();
     expect(initialMissions.status).toBe(200);
-    expect(initialMissions.headers.get("cache-control")).toBe("public, no-store");
+    expect(initialMissions.headers.get("cache-control")).toBe("no-store");
     expect(initialMissionsBody.missions).toEqual([]);
 
     indexer.applyLog({
@@ -9644,7 +9653,7 @@ describe("Veydrift backend", () => {
     expect(unprotectedBody.rankings.total.find((entry: HighscoreEntry) => entry.wallet === player)?.attackProtection).toBeNull();
   });
 
-  test("uses short private snapshots for overview so unrelated mission events cannot stampede hot reads", async () => {
+  test("serves authoritative overview snapshots without stale browser caching", async () => {
     const chainReader = new MockChainReader();
     const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
     await indexer.rebuild();
@@ -9659,7 +9668,7 @@ describe("Veydrift backend", () => {
     const response = await handler(new Request(`http://localhost/wallet/${player}/overview`));
 
     expect(response.status).toBe(200);
-    expect(response.headers.get("cache-control")).toBe("private, max-age=5, stale-while-revalidate=5");
+    expect(response.headers.get("cache-control")).toBe("no-store");
   });
 
   test("accrues production into highscore raidable loot so it matches the public planet read (VEY-KANEO-454)", async () => {

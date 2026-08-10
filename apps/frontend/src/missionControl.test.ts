@@ -179,8 +179,8 @@ describe("Mission Control battle reports", () => {
       await fetchGlobalMissionArchive("https://api.example.test/", { ...filters, pageSize: 1, summaryOnly: true });
       expect(requestedUrls).toEqual([
         `https://api.example.test/wallet/${wallet}/missions?status=completed&missionNumber=147&missionType=Harvest&planetId=9&page=1&pageSize=25`,
-        "https://api.example.test/missions?status=completed&missionNumber=147&missionType=Harvest&planetId=9&page=1&pageSize=25",
-        "https://api.example.test/missions?status=completed&missionNumber=147&missionType=Harvest&planetId=9&summaryOnly=true&page=1&pageSize=1",
+        "https://api.example.test/missions?status=completed&live=1&missionNumber=147&missionType=Harvest&planetId=9&page=1&pageSize=25",
+        "https://api.example.test/missions?status=completed&live=1&missionNumber=147&missionType=Harvest&planetId=9&summaryOnly=true&page=1&pageSize=1",
       ]);
     } finally {
       globalThis.fetch = originalFetch;
@@ -766,7 +766,7 @@ describe("Mission Control battle reports", () => {
     const requests: Array<[string, "arrival" | "return"]> = [];
     const page = MissionControlPage({
       ...missionControlProps(now, {
-        outgoing: [mission("32", "Transport", "Outbound", undefined, "7", "9", now - 180_000)],
+        outgoing: [{ ...mission("32", "Transport", "Outbound", undefined, "7", "9", now - 180_000), needsResolution: true }],
       }),
       onResolve: (missionId, kind) => requests.push([missionId, kind]),
     });
@@ -1426,7 +1426,7 @@ describe("Mission Control battle reports", () => {
     // One own outbound mission already arrived (due), plus two due joinable alliance attacks that
     // previously fed the removed header flair.
     const text = collectText(MissionControlPage(missionControlProps(now, {
-      outgoing: [mission("32", "Attack", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now - 60_000)],
+      outgoing: [{ ...mission("32", "Attack", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now - 60_000), needsResolution: true }],
       joinableAttacks: [
         mission("34", "Attack", "Outbound", "0x3333333333333333333333333333333333333333", "5", "6", now - 60_000),
         mission("35", "Attack", "Outbound", "0x4444444444444444444444444444444444444444", "5", "6", now - 60_000),
@@ -2963,9 +2963,10 @@ describe("Ready to resolve is gated on randomness for combat missions (VEY-KANEO
     expect(missionReport(attack, now, planetLookup).outcome).toBe("Ready to resolve.");
   });
 
-  test("a non-combat arrival still reads 'Ready to resolve' from the clock alone", () => {
+  test("a non-combat arrival also requires backend-confirmed resolution state", () => {
     const transport = { ...mission("93", "Transport", "Outbound", undefined, "7", "9", arrivedMs), needsResolution: false };
-    expect(missionReport(transport, now, planetLookup).outcome).toBe("Ready to resolve.");
+    expect(missionReport(transport, now, planetLookup).outcome).toBe("en route");
+    expect(missionReport({ ...transport, needsResolution: true }, now, planetLookup).outcome).toBe("Ready to resolve.");
   });
 });
 

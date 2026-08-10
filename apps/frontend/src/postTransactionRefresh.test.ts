@@ -10,13 +10,9 @@ import {
   isStartedShipProductionVisible,
   isStartedResearchStateVisible,
   isMissionLaunchStateVisible,
-  isPendingMissionLaunch,
-  mergePendingMissionLaunches,
+  isFleetVisibilityIndexedThrough,
   missionLaunchMissionsForTransaction,
-  pendingMissionLaunch,
-  pendingMissionLaunchId,
-  reconcilePendingMissionLaunches,
-  removePendingMissionLaunchForTransaction,
+  expectedMissionLaunch,
   waitForFinishedResearchState,
   waitForStartedBuildingState,
   waitForStartedResearchState,
@@ -27,6 +23,7 @@ import {
   waitForAllianceApplicationCleared,
   waitForAllianceProfileState,
   waitForMissionLaunchState,
+  waitForFleetVisibilityIndexedThrough,
   waitForIndexedResourceState,
   waitForRenamedWalletPlanet,
   type FinishedResearchSnapshot,
@@ -92,7 +89,7 @@ describe("post-transaction refresh reconciliation", () => {
 
   test("accepts a visible launched mission with placeholder transaction metadata when launch details match", async () => {
     const txHash = "0xlaunch";
-    const expected = pendingMissionLaunch({
+    const expected = expectedMissionLaunch({
       txHash,
       owner: wallet,
       originPlanetId: "7",
@@ -116,8 +113,6 @@ describe("post-transaction refresh reconciliation", () => {
 
     expect(isMissionLaunchStateVisible(snapshot, txHash, expected)).toBe(true);
     expect(missionLaunchMissionsForTransaction(snapshot, txHash, expected).map((entry) => entry.missionId)).toEqual(["1473"]);
-    expect(reconcilePendingMissionLaunches([expected], snapshot)).toEqual([]);
-    expect(mergePendingMissionLaunches([visible], [expected]).map((entry) => entry.missionId)).toEqual(["1473"]);
 
     const result = await waitForMissionLaunchState(
       async () => snapshot,
@@ -129,7 +124,7 @@ describe("post-transaction refresh reconciliation", () => {
 
   test("does not clear a mission launch sync error for a different placeholder-hash mission", async () => {
     const txHash = "0xlaunch";
-    const expected = pendingMissionLaunch({
+    const expected = expectedMissionLaunch({
       txHash,
       owner: wallet,
       originPlanetId: "7",
@@ -151,7 +146,6 @@ describe("post-transaction refresh reconciliation", () => {
     const snapshot = missionLaunchSnapshot({ outgoing: [differentMission], allActiveMissions: [differentMission] });
 
     expect(isMissionLaunchStateVisible(snapshot, txHash, expected)).toBe(false);
-    expect(reconcilePendingMissionLaunches([expected], snapshot)).toEqual([expected]);
     await expect(waitForMissionLaunchState(
       async () => snapshot,
       txHash,
@@ -159,90 +153,18 @@ describe("post-transaction refresh reconciliation", () => {
     )).rejects.toThrow("launched mission is still syncing");
   });
 
-  test("creates a pending indexing mission row keyed by transaction hash and draft context", () => {
-    const pending = pendingMissionLaunch({
-      txHash: "0xABCDEF1234567890",
-      owner: wallet,
-      originPlanetId: "7",
-      targetPlanetId: "9",
-      missionType: "Transport",
-      ships: { smallCargo: 2, lightFighter: 0 },
-      cargo: { metal: 100, crystal: "25" },
-      fuelCost: 7,
-      submittedAtMs: 1_770_000_000_000,
-      travelSeconds: 90,
-    });
+  test("waits for Mission Control to reach the transaction receipt block", async () => {
+    const stale = { ...emptyFleetVisibility(), indexedBlock: "100", indexedRevision: "1:0" };
+    const current = { ...emptyFleetVisibility(), indexedBlock: "101", indexedRevision: "1:1" };
+    const snapshots = [stale, current];
 
-    expect(pending.missionId).toBe(pendingMissionLaunchId("0xabcdef1234567890"));
-    expect(isPendingMissionLaunch(pending)).toBe(true);
-    expect(pending).toMatchObject({
-      status: "Outbound",
-      missionType: "Transport",
-      owner: wallet,
-      originPlanetId: "7",
-      targetPlanetId: "9",
-      arrivalAt: "1770000090",
-      returnAt: "1770000180",
-      fuelCost: "7",
-      cargo: { metal: "100", crystal: "25", deuterium: "0" },
-      ships: { smallCargo: "2" },
-      transactionHash: "0xabcdef1234567890",
-      blockNumber: "",
-    });
-  });
-
-  test("merges pending mission rows ahead of stale backend active missions", () => {
-    const pending = pendingMissionLaunch({
-      txHash: "0xpending",
-      owner: wallet,
-      originPlanetId: "7",
-      targetPlanetId: "9",
-      missionType: "Attack",
-      ships: { lightFighter: 1 },
-    });
-    const stale = mission("50", { transactionHash: "0xold" });
-
-    expect(mergePendingMissionLaunches([stale], [pending]).map((entry) => entry.missionId)).toEqual([
-      pending.missionId,
-      "50",
-    ]);
-  });
-
-  test("reconciles pending mission rows once canonical tx-hash data appears", () => {
-    const txHash = "0xlaunch";
-    const pending = pendingMissionLaunch({
-      txHash,
-      owner: wallet,
-      originPlanetId: "7",
-      targetPlanetId: "9",
-      missionType: "Attack",
-      ships: { lightFighter: 1 },
-    });
-    const canonical = mission("51", { transactionHash: txHash });
-
-    expect(reconcilePendingMissionLaunches([pending], missionLaunchSnapshot({ allActiveMissions: [canonical] }))).toEqual([]);
-    expect(mergePendingMissionLaunches([canonical], [pending]).map((entry) => entry.missionId)).toEqual(["51"]);
-  });
-
-  test("removes timed-out or failed pending mission rows by transaction hash", () => {
-    const pending = pendingMissionLaunch({
-      txHash: "0xremove",
-      owner: wallet,
-      originPlanetId: "7",
-      targetPlanetId: "9",
-      missionType: "Harvest",
-      ships: { recycler: 1 },
-    });
-    const keep = pendingMissionLaunch({
-      txHash: "0xkeep",
-      owner: wallet,
-      originPlanetId: "7",
-      targetPlanetId: "10",
-      missionType: "Deploy",
-      ships: { smallCargo: 1 },
-    });
-
-    expect(removePendingMissionLaunchForTransaction([pending, keep], "0xREMOVE")).toEqual([keep]);
+    expect(isFleetVisibilityIndexedThrough(stale, 101n)).toBe(false);
+    const result = await waitForFleetVisibilityIndexedThrough(
+      async () => snapshots.shift() ?? current,
+      101n,
+      { attempts: 2, intervalMs: 1, delay: async () => undefined },
+    );
+    expect(result).toBe(current);
   });
 
   test("does not accept a stale finished-building snapshot with an active queue", () => {

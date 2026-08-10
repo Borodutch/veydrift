@@ -73,6 +73,7 @@ import type { Eip1193Provider } from "./walletFlow";
 type WalletReadOptions = {
   source?: "indexed";
   timeoutMs?: number;
+  fresh?: boolean;
 };
 
 type FleetMissionVisibilityOptions = WalletReadOptions & {
@@ -117,7 +118,8 @@ export class BackendDataStore {
 
   constructor(readonly apiBaseUrl: string) {}
 
-  refresh<T>(key: string, load: () => Promise<T>): Promise<T> {
+  refresh<T>(key: string, load: () => Promise<T>, options: { dedupe?: boolean } = {}): Promise<T> {
+    if (options.dedupe === false) return Promise.resolve().then(load);
     const running = this.inFlight.get(key);
     if (running) return running as Promise<T>;
 
@@ -134,17 +136,17 @@ export class BackendDataStore {
 
   settlement(wallet: string, options: WalletReadOptions = {}): Promise<WalletSettlementResponse> {
     const key = cacheKey("settlement", wallet, options);
-    return this.refresh(key, () => fetchWalletSettlement(this.apiBaseUrl, wallet, options));
+    return this.refresh(key, () => fetchWalletSettlement(this.apiBaseUrl, wallet, options), { dedupe: !options.fresh });
   }
 
   overview(wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<WalletOverviewSnapshotResponse> {
     const key = cacheKey("overview", wallet, planetId, options);
-    return this.refresh(key, () => fetchWalletOverviewSnapshot(this.apiBaseUrl, wallet, planetId, options));
+    return this.refresh(key, () => fetchWalletOverviewSnapshot(this.apiBaseUrl, wallet, planetId, options), { dedupe: !options.fresh });
   }
 
-  planets(wallet: string): Promise<WalletPlanetsResponse> {
-    const key = cacheKey("planets", wallet);
-    return this.refresh(key, () => fetchWalletPlanets(this.apiBaseUrl, wallet));
+  planets(wallet: string, options: WalletReadOptions = {}): Promise<WalletPlanetsResponse> {
+    const key = cacheKey("planets", wallet, options);
+    return this.refresh(key, () => fetchWalletPlanets(this.apiBaseUrl, wallet, options), { dedupe: !options.fresh });
   }
 
   watchedPlanets(wallet: string, options: { page?: number; pageSize?: number } = {}): Promise<WatchedPlanetsResponse> {
@@ -154,32 +156,32 @@ export class BackendDataStore {
 
   queues(wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<PlayerQueuesResponse> {
     const key = cacheKey("queues", wallet, planetId, options);
-    return this.refresh(key, () => fetchWalletQueues(this.apiBaseUrl, wallet, planetId, options));
+    return this.refresh(key, () => fetchWalletQueues(this.apiBaseUrl, wallet, planetId, options), { dedupe: !options.fresh });
   }
 
   infrastructure(wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<ChainInfrastructureState> {
     const key = cacheKey("infrastructure", wallet, planetId, options);
-    return this.refresh(key, () => fetchInfrastructureState(this.apiBaseUrl, wallet, planetId, options));
+    return this.refresh(key, () => fetchInfrastructureState(this.apiBaseUrl, wallet, planetId, options), { dedupe: !options.fresh });
   }
 
   moon(wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<ChainMoonState> {
     const key = cacheKey("moon", wallet, planetId, options);
-    return this.refresh(key, () => fetchMoonState(this.apiBaseUrl, wallet, planetId, options));
+    return this.refresh(key, () => fetchMoonState(this.apiBaseUrl, wallet, planetId, options), { dedupe: !options.fresh });
   }
 
   shipyard(wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<ChainShipyardState> {
     const key = cacheKey("shipyard", wallet, planetId, options);
-    return this.refresh(key, () => fetchShipyardState(this.apiBaseUrl, wallet, planetId, options));
+    return this.refresh(key, () => fetchShipyardState(this.apiBaseUrl, wallet, planetId, options), { dedupe: !options.fresh });
   }
 
   defenses(wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<ChainDefenseState> {
     const key = cacheKey("defenses", wallet, planetId, options);
-    return this.refresh(key, () => fetchDefenseState(this.apiBaseUrl, wallet, planetId, options));
+    return this.refresh(key, () => fetchDefenseState(this.apiBaseUrl, wallet, planetId, options), { dedupe: !options.fresh });
   }
 
   research(wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<ChainResearchState> {
     const key = cacheKey("research", wallet, planetId, options);
-    return this.refresh(key, () => fetchResearchState(this.apiBaseUrl, wallet, planetId, options));
+    return this.refresh(key, () => fetchResearchState(this.apiBaseUrl, wallet, planetId, options), { dedupe: !options.fresh });
   }
 
   rift(wallet: string, planetId?: string): Promise<ChainRiftState> {
@@ -281,22 +283,22 @@ export class BackendDataStore {
 
   fleetVisibility(wallet: string, options: FleetMissionVisibilityOptions = {}): Promise<FleetMissionVisibilityResponse> {
     const key = cacheKey("fleet-visibility", wallet, options);
-    return this.refresh(key, () => fetchFleetMissionVisibility(this.apiBaseUrl, wallet, options));
+    return this.refresh(key, () => fetchFleetMissionVisibility(this.apiBaseUrl, wallet, options), { dedupe: !options.fresh });
   }
 
   fleetArchive(wallet: string, options: FleetMissionArchiveOptions = {}): Promise<FleetMissionArchiveResponse> {
     const key = cacheKey("fleet-archive", wallet, options);
-    return this.refresh(key, () => fetchFleetMissionArchive(this.apiBaseUrl, wallet, options));
+    return this.refresh(key, () => fetchFleetMissionArchive(this.apiBaseUrl, wallet, options), { dedupe: false });
   }
 
   missileArchive(wallet: string, options: { page?: number; pageSize?: number; planetId?: string } = {}): Promise<MissileAttackArchiveResponse> {
     const key = cacheKey("missile-archive", wallet, options);
-    return this.refresh(key, () => fetchMissileAttackArchive(this.apiBaseUrl, wallet, options));
+    return this.refresh(key, () => fetchMissileAttackArchive(this.apiBaseUrl, wallet, options), { dedupe: false });
   }
 
   globalActiveMissions(): Promise<GlobalActiveMissionsResponse> {
     const key = cacheKey("global-active-missions");
-    return this.refresh(key, () => fetchGlobalActiveMissions(this.apiBaseUrl));
+    return this.refresh(key, () => fetchGlobalActiveMissions(this.apiBaseUrl), { dedupe: false });
   }
 
   landingActiveMissions<T>(): Promise<T[]> {
@@ -333,12 +335,12 @@ export class BackendDataStore {
 
   globalMissionArchive(options: GlobalMissionArchiveOptions = {}): Promise<GlobalMissionArchiveResponse> {
     const key = cacheKey("global-mission-archive", options);
-    return this.refresh(key, () => fetchGlobalMissionArchive(this.apiBaseUrl, options));
+    return this.refresh(key, () => fetchGlobalMissionArchive(this.apiBaseUrl, options), { dedupe: false });
   }
 
   mission(missionId: string): Promise<MissionDetailResponse> {
     const key = cacheKey("mission", missionId);
-    return this.refresh(key, () => fetchMission(this.apiBaseUrl, missionId));
+    return this.refresh(key, () => fetchMission(this.apiBaseUrl, missionId), { dedupe: false });
   }
 
   battleReports(): Promise<BattleReport[]> {
