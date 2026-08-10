@@ -633,7 +633,7 @@ for (const width of [1280, 390]) {
   const layout = width < 768 ? "mobile" : "desktop";
 
   test(`${layout} Overview to Alliance click commits the route and Alliance UI`, async () => {
-    await loadInspectorFixture("/", width);
+    await loadInspectorFixture("/", width, { audioContextFailure: "true" });
     await waitForExpression("location.pathname === '/' && document.querySelector('main section[aria-label=\"Fleets\"]') !== null");
 
     if (width < 768) {

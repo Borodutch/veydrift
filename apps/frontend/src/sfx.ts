@@ -142,13 +142,25 @@ function ensureContext(): AudioContext | null {
   const AudioContextCtor = window.AudioContext
     ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
   if (!AudioContextCtor) return null;
-  if (!audioContext) {
-    audioContext = new AudioContextCtor();
-    masterGain = audioContext.createGain();
-    masterGain.gain.value = MASTER_VOLUME;
-    masterGain.connect(audioContext.destination);
+  try {
+    if (!audioContext) {
+      const nextContext = new AudioContextCtor();
+      const nextMasterGain = nextContext.createGain();
+      nextMasterGain.gain.value = MASTER_VOLUME;
+      nextMasterGain.connect(nextContext.destination);
+      audioContext = nextContext;
+      masterGain = nextMasterGain;
+    }
+    return audioContext;
+  } catch {
+    // Audio startup is optional feedback. In particular, this can run from the
+    // first pointer gesture; propagating a browser audio failure there can
+    // prevent the corresponding click and leave navigation inert.
+    audioContext = null;
+    masterGain = null;
+    noiseBuffer = null;
+    return null;
   }
-  return audioContext;
 }
 
 function ensureNoiseBuffer(context: AudioContext): AudioBuffer {
@@ -210,19 +222,24 @@ function scheduleNoise(context: AudioContext, destination: AudioNode, spec: Nois
 
 export function playSfx(name: SfxName): void {
   if (muted) return;
-  const context = ensureContext();
-  if (!context || !masterGain) return;
-  if (context.state === "suspended") {
-    void context.resume();
-    return;
-  }
-  const definition = SFX[name];
-  const startAt = context.currentTime + 0.005;
-  for (const tone of definition.tones ?? []) {
-    scheduleTone(context, masterGain, tone, startAt);
-  }
-  for (const noise of definition.noise ?? []) {
-    scheduleNoise(context, masterGain, noise, startAt);
+  try {
+    const context = ensureContext();
+    if (!context || !masterGain) return;
+    if (context.state === "suspended") {
+      void context.resume().catch(() => undefined);
+      return;
+    }
+    const definition = SFX[name];
+    const startAt = context.currentTime + 0.005;
+    for (const tone of definition.tones ?? []) {
+      scheduleTone(context, masterGain, tone, startAt);
+    }
+    for (const noise of definition.noise ?? []) {
+      scheduleNoise(context, masterGain, noise, startAt);
+    }
+  } catch {
+    // Scheduling support varies by browser and device. Sound must never abort
+    // the UI action that requested it.
   }
 }
 
@@ -302,9 +319,13 @@ export function initSfx(): void {
   if (typeof document === "undefined") return;
   document.documentElement.dataset.sfxMuted = muted ? "1" : "0";
   const unlock = () => {
-    const context = ensureContext();
-    if (context?.state === "suspended") {
-      void context.resume();
+    try {
+      const context = ensureContext();
+      if (context?.state === "suspended") {
+        void context.resume().catch(() => undefined);
+      }
+    } catch {
+      // Never let optional audio unlock consume the user's first interaction.
     }
   };
   document.addEventListener("pointerdown", unlock, { once: true, passive: true });
