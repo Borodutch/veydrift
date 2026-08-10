@@ -5,14 +5,9 @@ import type {
   ChainResearchState,
   ChainRiftState,
   ChainShipyardState,
-  FleetMissionArchiveResponse,
-  FleetMissionSummary,
-  FleetMissionVisibilityResponse,
-  GlobalMissionArchiveResponse,
   PlayerQueuesResponse,
   WalletSettlementResponse,
 } from "./walletFlow";
-import type { PlanetType } from "./types";
 
 export type PlanetSectionState = {
   infrastructureChainState: ChainInfrastructureState | null;
@@ -23,11 +18,6 @@ export type PlanetSectionState = {
   riftState: ChainRiftState | null;
   settlementState?: WalletSettlementResponse | undefined;
   queuesState?: PlayerQueuesResponse | undefined;
-  fleetVisibilityState?: FleetMissionVisibilityResponse | undefined;
-  missionArchiveState?: FleetMissionArchiveResponse | undefined;
-  allActiveMissionsState?: FleetMissionSummary[] | undefined;
-  globalMissionArchiveState?: GlobalMissionArchiveResponse | undefined;
-  missionArchetypesByCoordinate?: Map<string, PlanetType> | undefined;
   galaxySystemDataByKey?: Record<string, unknown> | undefined;
   sectionStatus: Partial<Record<PlanetSectionDataKey, PlanetSectionRefreshStatus>>;
 };
@@ -65,11 +55,6 @@ export type PlanetSectionDataKey =
   | "riftState"
   | "settlementState"
   | "queuesState"
-  | "fleetVisibilityState"
-  | "missionArchiveState"
-  | "allActiveMissionsState"
-  | "globalMissionArchiveState"
-  | "missionArchetypesByCoordinate"
   | "galaxySystemDataByKey";
 
 export type PlanetSectionRefreshStatus = {
@@ -261,11 +246,6 @@ const planetSectionDataKeys: PlanetSectionDataKey[] = [
   "riftState",
   "settlementState",
   "queuesState",
-  "fleetVisibilityState",
-  "missionArchiveState",
-  "allActiveMissionsState",
-  "globalMissionArchiveState",
-  "missionArchetypesByCoordinate",
   "galaxySystemDataByKey",
 ];
 
