@@ -209,7 +209,7 @@ export function AlliancePage({
   }, [apiBaseUrl, selectedPlayer]);
 
   return (
-    <section className="grid min-h-0 gap-4">
+    <section className="grid min-h-0 gap-4" data-alliance-page>
       {error ? (
         isGameUnavailableMessage(error) ? <GameUnavailableNotice /> : <Notice tone="error">{error}</Notice>
       ) : null}

@@ -629,6 +629,52 @@ test("desktop sidebar commits the reported Overview to Raid Finder and Shipyard 
     && document.querySelector('main [data-mission-control-page]') === null`);
 });
 
+for (const width of [1280, 390]) {
+  const layout = width < 768 ? "mobile" : "desktop";
+
+  test(`${layout} Overview to Alliance click commits the route and Alliance UI`, async () => {
+    await loadInspectorFixture("/", width);
+    await waitForExpression("location.pathname === '/' && document.querySelector('main section[aria-label=\"Fleets\"]') !== null");
+
+    if (width < 768) {
+      await clickExpressionWithTrustedPointer("document.querySelector('summary[aria-label=\"Open navigation menu\"]')", "touch");
+      await waitForExpression("document.querySelector('details:has(#mobile-navigation-menu)')?.open === true");
+      await clickExpressionWithTrustedPointer("document.querySelector('#mobile-navigation-menu a[href=\"/alliance\"]')", "touch");
+    } else {
+      await clickExpressionWithTrustedPointer("document.querySelector('nav.hidden a[href=\"/alliance\"]')");
+    }
+
+    const activeSelector = width < 768
+      ? '#mobile-navigation-menu a[href="/alliance"][aria-current="page"]'
+      : 'nav.hidden a[href="/alliance"][aria-current="page"]';
+    await waitForExpression(`location.pathname === '/alliance'
+      && document.querySelector('${activeSelector}') !== null
+      && document.querySelector('main [data-alliance-page]') !== null
+      && document.querySelector('main')?.textContent?.includes('Alliance directory') === true
+      && document.querySelector('main [aria-label="Create alliance"]') !== null
+      && document.querySelector('main section[aria-label="Fleets"]') === null
+      ${width < 768 ? "&& document.querySelector('details:has(#mobile-navigation-menu)')?.open === false" : ""}`);
+
+    const result = await evaluate(`({
+      interaction: window.inspectorProof.interactions.findLast((event) => event.type === 'pointerdown') ?? null,
+      path: location.pathname,
+    })`);
+    assert.equal(result.path, "/alliance");
+    assert.equal(result.interaction?.isTrusted, true);
+    assert.equal(result.interaction?.pointerType, width < 768 ? "touch" : "mouse");
+    assert.equal(result.interaction?.type, "pointerdown");
+  });
+
+  test(`direct Alliance load hydrates game content at ${width}px`, async () => {
+    await loadInspectorFixture("/alliance", width, { shell: "settlement" });
+    await waitForExpression(`location.pathname === '/alliance'
+      && document.querySelector('a[href="/alliance"][aria-current="page"]') !== null
+      && document.querySelector('main [data-alliance-page]') !== null
+      && document.querySelector('main')?.textContent?.includes('Alliance directory') === true
+      && document.querySelector('main')?.textContent?.includes('OPEN THE BOX') === false`);
+  });
+}
+
 test("direct Mission Control load hydrates before stalled history reads occupy the API pool", async () => {
   await loadInspectorFixture("/mission-control", 390, { stallMissionBackgroundReads: "true" });
   await waitForExpression(`location.pathname === '/mission-control'

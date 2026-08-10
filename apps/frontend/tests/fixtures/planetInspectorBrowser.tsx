@@ -180,6 +180,34 @@ globalThis.fetch = (async (input) => {
     });
   }
 
+  if (url.pathname.endsWith(`/wallet/${account}/alliance`)) {
+    return Response.json({
+      activeWars: [],
+      allianceAvailable: true,
+      allianceJoinRequests: [],
+      diplomacy: [],
+      directory: [{
+        active: true,
+        allianceId: "7",
+        createdAt: "1770000000",
+        description: "Fixture alliance for hydrated route coverage.",
+        memberCount: 1,
+        members: [],
+        name: "Fixture Fleet",
+        owner: unrelatedOwner,
+        ownerDisplayName: "Fixture Admiral",
+        tag: "FIX",
+        totalMemberScore: "12345",
+      }],
+      members: [],
+      membership: { allianceId: "0", joinedAt: "0", role: "none" },
+      pendingInvites: [],
+      pendingJoinRequests: [],
+      profile: null,
+      wallet: account,
+    });
+  }
+
   if (url.pathname.endsWith(`/wallet/${account}/shipyard`)) {
     return Response.json({
       wallet: account,
