@@ -8,8 +8,6 @@ import {
   type FleetDriveLevels,
 } from "./fleetMissionRules";
 
-export const MAX_BATCH_SUPPLY_SOURCES = 8;
-
 export type SupplyResources = {
   metal: number;
   crystal: number;
@@ -69,7 +67,7 @@ export function buildBatchSupplyPlan({
   requested,
   selectedPlanetIds,
   sources,
-  maxOrders = MAX_BATCH_SUPPLY_SOURCES,
+  maxOrders = Number.MAX_SAFE_INTEGER,
 }: {
   targetCoordinates: Coordinates;
   requested: Partial<SupplyResources>;
@@ -86,7 +84,7 @@ export function buildBatchSupplyPlan({
   const selected = sources
     .filter((source) => selectedPlanetIds.has(source.planetId))
     .sort((left, right) => fleetMissionDistance(left.coordinates, targetCoordinates) - fleetMissionDistance(right.coordinates, targetCoordinates));
-  const boundedMaxOrders = Math.max(0, Math.min(MAX_BATCH_SUPPLY_SOURCES, Math.trunc(maxOrders)));
+  const boundedMaxOrders = Math.max(0, Math.trunc(maxOrders));
   const sourceLimitReached = selected.length > boundedMaxOrders;
 
   for (const source of selected.slice(0, boundedMaxOrders)) {

@@ -6,7 +6,6 @@ import {
   fleetMissionTravelSeconds,
 } from "../fleetMissionRules";
 import {
-  MAX_BATCH_SUPPLY_SOURCES,
   buildBatchSupplyPlan,
   emptySupplyResources,
   type BatchSupplyOrder,
@@ -22,7 +21,7 @@ export function BatchSupplyModal({
   onClose,
   onConfirm,
   sources,
-  maxSources = MAX_BATCH_SUPPLY_SOURCES,
+  maxSources,
   target,
 }: {
   actionPending?: boolean | undefined;
@@ -31,7 +30,7 @@ export function BatchSupplyModal({
   onClose: () => void;
   onConfirm: (orders: BatchSupplyOrder[]) => void;
   sources: readonly BatchSupplySource[];
-  maxSources?: number | undefined;
+  maxSources: number;
   target: ManagedPlanetResponse;
 }) {
   const [requested, setRequested] = useState<Record<keyof SupplyResources, string>>({
@@ -112,7 +111,7 @@ export function BatchSupplyModal({
               <PackagePlus aria-hidden="true" size={20} />
               <h2 className="text-lg font-semibold">Supply {targetLabel}</h2>
             </div>
-            <p className="mt-1 text-sm text-slate-300">Choose the total resources to deliver, then select the colonies that should send them.</p>
+            <p className="mt-1 text-sm text-slate-300">Choose the total resources to deliver, then select the colonies that should send them. Each transport is confirmed separately in your wallet.</p>
           </div>
           <button aria-label="Close supply resources" className="rounded border border-white/15 p-2 text-slate-300 hover:bg-white/10" disabled={actionPending} onClick={onClose} type="button">
             <X aria-hidden="true" size={18} />
@@ -173,7 +172,7 @@ export function BatchSupplyModal({
 
         <div className="grid gap-3">
           {!loading && maxSources === 0 ? <p className="rounded border border-amber-300/30 bg-amber-300/10 p-2 text-sm text-amber-100">All fleet slots are currently occupied. Wait for a fleet to return or research Computer Technology before supplying this planet.</p> : null}
-          {plan.sourceLimitReached ? <p className="rounded border border-amber-300/30 bg-amber-300/10 p-2 text-sm text-amber-100">Select at most {maxSources} sources per supply transaction.</p> : null}
+          {plan.sourceLimitReached ? <p className="rounded border border-amber-300/30 bg-amber-300/10 p-2 text-sm text-amber-100">Select at most {maxSources} sources because that is your current fleet-slot capacity.</p> : null}
           {plan.blockedSources.length > 0 ? <p className="rounded border border-amber-300/30 bg-amber-300/10 p-2 text-sm text-amber-100">Some selected sources cannot launch: {plan.blockedSources.map((source) => source.reason).join(" ")}</p> : null}
           {missingTotal > 0 ? <p className="rounded border border-amber-300/30 bg-amber-300/10 p-2 text-sm text-amber-100">Missing: M {format(plan.missing.metal)} · C {format(plan.missing.crystal)} · D {format(plan.missing.deuterium)}. Select more sources or reduce the request.</p> : null}
           {error ? <p className="rounded border border-red-300/30 bg-red-300/10 p-2 text-sm text-red-100">{error}</p> : null}
@@ -186,7 +185,7 @@ export function BatchSupplyModal({
             </div>
             <button className="inline-flex items-center justify-center gap-2 rounded bg-cyan-300 px-4 py-2 text-sm font-bold text-slate-950 disabled:cursor-not-allowed disabled:opacity-50" disabled={!canSubmit} onClick={() => onConfirm(plan.orders)} type="button">
               <Check aria-hidden="true" size={16} />
-              {actionPending ? "Launching…" : `Launch ${plan.orders.length} transport${plan.orders.length === 1 ? "" : "s"}`}
+              {actionPending ? "Launching…" : `Launch ${plan.orders.length} separate transport${plan.orders.length === 1 ? "" : "s"}`}
             </button>
           </footer>
         </div>

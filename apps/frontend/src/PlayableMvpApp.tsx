@@ -22,7 +22,6 @@ import {
 } from "./components/OverviewPage";
 import { BatchSupplyModal } from "./components/BatchSupplyModal";
 import {
-  MAX_BATCH_SUPPLY_SOURCES,
   type BatchSupplyOrder,
   type BatchSupplySource,
 } from "./batchSupplyPlanner";
@@ -263,7 +262,6 @@ import {
   sendLaunchBodyFleetMissionTransaction,
   sendLaunchDefenseHoldTransaction,
   sendLaunchFleetMissionTransaction,
-  sendLaunchTransportBatchTransaction,
   sendJoinAttackMissionTransaction,
   encodeColonizationTargetId,
   sendJumpGateJumpTransaction,
@@ -3827,7 +3825,7 @@ export function PlayableMvpApp({
   const [galaxyAction, setGalaxyAction] = useState<GalaxyActionState>({ status: "idle" });
   const [batchSupplyTarget, setBatchSupplyTarget] = useState<ManagedPlanetResponse | null>(null);
   const [batchSupplySources, setBatchSupplySources] = useState<BatchSupplySource[]>([]);
-  const [batchSupplyMaxSources, setBatchSupplyMaxSources] = useState(MAX_BATCH_SUPPLY_SOURCES);
+  const [batchSupplyMaxSources, setBatchSupplyMaxSources] = useState(0);
   const [batchSupplyLoading, setBatchSupplyLoading] = useState(false);
   const [batchSupplyError, setBatchSupplyError] = useState<string | undefined>();
   const [pendingGalaxyMission, setPendingGalaxyMission] = useState<PendingGalaxyMission | null>(null);
@@ -6988,7 +6986,7 @@ export function PlayableMvpApp({
         const freeSlots = fleetSource?.fleetSlots
           ? Math.max(0, fleetSource.fleetSlots.limit - fleetSource.fleetSlots.active)
           : 0;
-        setBatchSupplyMaxSources(Math.min(MAX_BATCH_SUPPLY_SOURCES, freeSlots));
+        setBatchSupplyMaxSources(freeSlots);
         setBatchSupplySources(rows
           .map(([planet, shipyard]) => batchSupplySourceForPlanet(planet, shipyard))
           .sort((left, right) => (
@@ -7013,21 +7011,46 @@ export function PlayableMvpApp({
     }
     setBatchSupplyError(undefined);
     void (async () => {
-      const completed = await runGalaxyTransaction("Supply transports", () => sendLaunchTransportBatchTransaction(
-        provider,
-        account,
-        gameContract,
-        {
-          targetPlanetId: target.planetId,
-          orders: orders.map((order) => ({
+      let launched = 0;
+      for (const [index, order] of orders.entries()) {
+        const completed = await runGalaxyTransaction(`Supply transport ${index + 1}/${orders.length}`, () => sendLaunchFleetMissionTransaction(
+          provider,
+          account,
+          gameContract,
+          {
+            originPlanetId: order.originPlanetId,
+            targetPlanetId: target.planetId,
+            missionType: 0,
+            ships: order.ships,
+            cargo: {
+              metal: String(order.cargo.metal),
+              crystal: String(order.cargo.crystal),
+              deuterium: String(order.cargo.deuterium),
+            },
+            speedPercent: 100,
+          },
+        ), {
+          syncMissionLaunch: true,
+          validateShipInventory: {
             originPlanetId: order.originPlanetId,
             ships: order.ships,
-            cargo: order.cargo,
-            speedPercent: 100,
-          })),
-        },
-      ), { syncMissionLaunch: true });
-      if (completed) setBatchSupplyTarget(null);
+          },
+        });
+        if (!completed) {
+          if (launched > 0) {
+            setBatchSupplyTarget(null);
+            setGalaxyAction({
+              status: "error",
+              label: `${launched} of ${orders.length} supply transports launched. The remaining transports were not sent.`,
+            });
+          } else {
+            setBatchSupplyError("No supply transports were sent. Check the wallet error and try again.");
+          }
+          return;
+        }
+        launched += 1;
+      }
+      setBatchSupplyTarget(null);
     })();
   }, [account, batchSupplyTarget, gameContract, provider, runGalaxyTransaction]);
 
