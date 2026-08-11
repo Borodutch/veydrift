@@ -1,7 +1,6 @@
 import { Check, LoaderCircle, PackagePlus, X } from "lucide-preact";
 import { useEffect, useMemo, useState } from "preact/hooks";
 import {
-  fleetMissionAvailableCargoCapacity,
   fleetMissionDistance,
   fleetMissionTravelSeconds,
 } from "../fleetMissionRules";
@@ -121,18 +120,17 @@ export function BatchSupplyModal({
               <PackagePlus aria-hidden="true" size={20} />
               <h2 className="text-lg font-semibold">Supply {targetLabel}</h2>
             </div>
-            <p className="mt-1 text-sm text-slate-300">Choose the total resources to deliver, then select the colonies that should send them. Each transport is confirmed separately in your wallet.</p>
           </div>
           <button aria-label="Close supply resources" className="rounded border border-white/15 p-2 text-slate-300 hover:bg-white/10" disabled={actionPending} onClick={onClose} type="button">
             <X aria-hidden="true" size={18} />
           </button>
         </header>
 
-        <section className="grid grid-cols-[repeat(auto-fit,minmax(15rem,1fr))] gap-2" aria-label="Resources to send">
+        <section className="grid grid-cols-[repeat(auto-fit,minmax(10.5rem,1fr))] gap-2" aria-label="Resources to send">
           {(["metal", "crystal", "deuterium"] as const).map((resource) => (
-            <label className="grid min-w-0 gap-1 rounded-lg border border-white/10 bg-black/20 p-3" key={resource}>
-              <span className="text-xs font-semibold uppercase tracking-wide text-slate-300">{resource}</span>
-              <span className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] gap-2">
+            <label className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-lg border border-white/10 bg-black/20 px-2 py-1.5" key={resource}>
+              <span className="text-xs font-bold uppercase tracking-wide text-slate-300">{resource === "metal" ? "M" : resource === "crystal" ? "C" : "D"}</span>
+              <span className="contents">
                 <input
                   aria-label={`${resource} to send`}
                   className="min-w-0 w-full rounded border border-white/15 bg-black/30 px-2 py-1 font-mono text-sm text-white outline-none focus:border-cyan-300"
@@ -163,7 +161,6 @@ export function BatchSupplyModal({
               const disabled = Boolean(source.unavailableReason) || (!checked && selected.size >= maxSources);
               const order = orderByOrigin.get(source.planetId);
               const distance = fleetMissionDistance(source.coordinates, { galaxy: target.galaxy, system: target.system, position: target.position });
-              const cargoCapacity = fleetMissionAvailableCargoCapacity(source.ships, distance, source.driveLevels);
               const eta = order?.travelSeconds ?? fleetMissionTravelSeconds(distance, source.ships, source.driveLevels);
               return (
                 <label className={`grid cursor-pointer grid-cols-[auto_minmax(0,1fr)] items-start gap-3 rounded-lg border p-3 ${checked ? "border-cyan-300/35 bg-cyan-300/5" : "border-white/10 bg-black/15"} ${disabled ? "cursor-not-allowed opacity-60" : ""}`} key={source.planetId}>
@@ -175,9 +172,8 @@ export function BatchSupplyModal({
                     </span>
                     <span className="mt-0.5 block text-xs text-slate-400">M {format(source.resources.metal)} · C {format(source.resources.crystal)} · D {format(source.resources.deuterium)}</span>
                     <span className="mt-2 flex flex-wrap items-center gap-1.5">
-                      <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{order ? "Fleet used" : "Cargo fleet"}</span>
-                      <SupplyFleetIcons ships={order?.ships ?? source.ships} />
-                      <span className="ml-auto text-xs text-slate-400">Cap {format(cargoCapacity)}</span>
+                      <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Fleet used</span>
+                      <SupplyFleetIcons ships={order?.ships} />
                     </span>
                     {source.unavailableReason ? <span className="block text-xs text-amber-200">{source.unavailableReason}</span> : null}
                   </span>
@@ -202,7 +198,7 @@ export function BatchSupplyModal({
             </div>
             <button className="inline-flex items-center justify-center gap-2 rounded bg-cyan-300 px-4 py-2 text-sm font-bold text-slate-950 disabled:cursor-not-allowed disabled:opacity-50" disabled={!canSubmit} onClick={() => onConfirm(plan.orders)} type="button">
               <Check aria-hidden="true" size={16} />
-              {actionPending ? "Launching…" : `Launch ${plan.orders.length} separate transport${plan.orders.length === 1 ? "" : "s"}`}
+              {actionPending ? "Launching…" : `Launch ${plan.orders.length} transport${plan.orders.length === 1 ? "" : "s"} in one call`}
             </button>
           </footer>
         </div>
@@ -211,7 +207,8 @@ export function BatchSupplyModal({
   );
 }
 
-function SupplyFleetIcons({ ships }: { ships: Partial<MissionShips> }) {
+function SupplyFleetIcons({ ships }: { ships: Partial<MissionShips> | undefined }) {
+  if (!ships) return <span className="text-xs text-slate-500">Set resources to plan fleet</span>;
   const units = supplyCargoShips.filter((ship) => (ships[ship.key] ?? 0) > 0);
   if (units.length === 0) return <span className="text-xs text-slate-500">No cargo ships</span>;
   return (
