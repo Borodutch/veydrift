@@ -16,7 +16,6 @@ contract VeydriftAntiRaidPrimitivesTest is Test {
         assertEq(VeydriftAntiRaidPrimitives.missionFuelCost(30, 20_000), 70);
         assertEq(VeydriftAntiRaidPrimitives.recallReturnSeconds(12), 60);
         assertEq(VeydriftAntiRaidPrimitives.recallReturnSeconds(90), 90);
-        assertEq(VeydriftAntiRaidPrimitives.recallFuelRefund(100), 0);
     }
 
     function testOgameFuelCostKeepsSingleShipFuel() public pure {

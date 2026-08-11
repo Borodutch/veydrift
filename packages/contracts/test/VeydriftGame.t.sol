@@ -6618,11 +6618,13 @@ contract VeydriftGameTest is Test {
         (, uint64 arrivalAt,,) = _fleetMission(recalledMissionId);
         assertGt(arrivalAt, block.timestamp + TEST_FLEET_RECALL_CUTOFF_SECONDS);
 
-        uint128 deuteriumBeforeRecall = game.planet(originPlanetId).resources.deuterium;
         uint64 expectedReturnAt = uint64(block.timestamp + 180 seconds);
         vm.warp(block.timestamp + 90 seconds);
+        // A recall must still work when dispatch has left the origin with no Deuterium reserve.
+        _setResources(originPlanetId, 0, 0, 0);
+        uint128 deuteriumBeforeRecall = game.planet(originPlanetId).resources.deuterium;
         vm.expectEmit(true, true, false, true, address(game));
-        emit FleetMissionRecalled(recalledMissionId, player, expectedReturnAt, 1);
+        emit FleetMissionRecalled(recalledMissionId, player, expectedReturnAt, 0);
         vm.expectEmit(true, true, true, true, address(game));
         emit FleetMissionReturnExposed(
             recalledMissionId,
@@ -6637,8 +6639,9 @@ contract VeydriftGameTest is Test {
         );
         vm.prank(player);
         game.recallFleetMission(recalledMissionId);
-        assertEq(game.planet(originPlanetId).resources.deuterium, deuteriumBeforeRecall - 1);
+        assertEq(game.planet(originPlanetId).resources.deuterium, deuteriumBeforeRecall);
 
+        _setResources(originPlanetId, 10_000, 10_000, 10_000);
         ships.lightFighter = 0;
         vm.prank(player);
         uint256 cutoffMissionId = game.launchFleetMission(
@@ -7511,6 +7514,9 @@ contract VeydriftGameTest is Test {
         uint64 expectedReturnAt = recallAt + (originalReturnAt - holdUntil);
 
         vm.warp(recallAt);
+        // DefenseHold follows the same rule: Recall cannot require a second origin-fuel debit.
+        _setResources(allyPlanetId, 0, 0, 0);
+        uint128 deuteriumBeforeRecall = game.planet(allyPlanetId).resources.deuterium;
         vm.expectEmit(true, true, false, false, address(game));
         emit FleetMissionRecalled(holdMissionId, ally, expectedReturnAt, 0);
         vm.expectEmit(true, true, true, true, address(game));
@@ -7536,6 +7542,7 @@ contract VeydriftGameTest is Test {
             _fleetMission(holdMissionId);
         assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Recalled));
         assertEq(returnAt, expectedReturnAt);
+        assertEq(game.planet(allyPlanetId).resources.deuterium, deuteriumBeforeRecall);
     }
 
     function testDefenseHoldRejectsUnauthorizedTarget() public {

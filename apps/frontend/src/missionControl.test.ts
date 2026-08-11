@@ -1614,19 +1614,19 @@ describe("Mission Control battle reports", () => {
     expect(text).not.toContain("Resolve");
   });
 
-  test("VEY-KANEO-424: owner's outbound recallable mission shows the Recall button and the projected cost, not 'Not recallable'", () => {
+  test("owner's outbound recallable mission shows the Recall button and no additional fuel cost", () => {
     // The ticket: for the same outbound mission Mission Control showed a Recall fleet button while
     // Mission Detail showed neither the button nor the cost ("Not recallable") because the single
     // -mission read returned recallCost: null. The fix projects recallCost for outbound fleets and
     // gates the button on the owner's wallet-scoped fleet-visibility (outgoing), not on recallCost.
     // Here the owner (ownerVisibility.outgoing includes "42") views their own outbound Attack that is
     // still more than the 60s cutoff from arrival, so it is genuinely recallable: the detail page must
-    // surface both the Recall button and the projected cost, matching Mission Control.
+    // surface both the Recall button and the projected zero cost, matching Mission Control.
     const now = Date.parse("2026-06-05T12:00:00.000Z");
     const text = collectText(MissionDetailPage(missionDetailProps(now, {
       mission: {
         ...mission("42", "Attack", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now + 600_000),
-        recallCost: "50",
+        recallCost: "0",
       },
       battleReport: null,
     }))).join(" ");
@@ -1634,7 +1634,7 @@ describe("Mission Control battle reports", () => {
     expect(text).toContain("Available Orders");
     expect(text).toContain("Recall fleet");
     expect(text).toContain("Recall cost");
-    expect(text).toContain("50 deuterium");
+    expect(text).toContain("No additional deuterium");
     expect(text).not.toContain("Not recallable");
   });
 
@@ -1647,14 +1647,14 @@ describe("Mission Control battle reports", () => {
     const text = collectText(MissionDetailPage(missionDetailProps(now, {
       mission: {
         ...mission("43", "Attack", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now + 30_000),
-        recallCost: "50",
+        recallCost: "0",
       },
       battleReport: null,
     }))).join(" ");
 
     expect(text).toContain("Recall cost");
     expect(text).toContain("Not recallable");
-    expect(text).not.toContain("50 deuterium");
+    expect(text).not.toContain("No additional deuterium");
   });
 
   test("VEY-KANEO-648: stationed DefenseHold remains recallable on Mission Control after arrival", () => {
@@ -1663,7 +1663,7 @@ describe("Mission Control battle reports", () => {
       ...mission("6115", "DefenseHold", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now - 3_600_000),
       defenseHoldUntil: Math.floor((now + 2 * 3_600_000) / 1_000).toString(),
       returnAt: Math.floor((now + 3 * 3_600_000) / 1_000).toString(),
-      recallCost: "25",
+      recallCost: "0",
     };
 
     const text = collectText(MissionControlPage(missionControlProps(now, {
@@ -1684,7 +1684,7 @@ describe("Mission Control battle reports", () => {
         ...mission("6115", "DefenseHold", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now - 3_600_000),
         defenseHoldUntil: Math.floor((now + 2 * 3_600_000) / 1_000).toString(),
         returnAt: Math.floor((now + 3 * 3_600_000) / 1_000).toString(),
-        recallCost: "25",
+        recallCost: "0",
       },
       battleReport: null,
     }))).join(" ");
@@ -1692,7 +1692,7 @@ describe("Mission Control battle reports", () => {
     expect(text).toContain("Available Orders");
     expect(text).toContain("Recall fleet");
     expect(text).toContain("Recall cost");
-    expect(text).toContain("25 deuterium");
+    expect(text).toContain("No additional deuterium");
     expect(text).not.toContain("resolving");
     expect(text).not.toContain("Not recallable");
   });
@@ -2913,7 +2913,7 @@ function mission(
     arrivalAt: Math.floor(arrivalMs / 1_000).toString(),
     returnAt: Math.floor((arrivalMs + 60_000) / 1_000).toString(),
     fuelCost: "100",
-    recallCost: "50",
+    recallCost: "0",
     attackGroupId: null,
     joinedAttackMissionIds: [],
     cargo: { metal: "1200", crystal: "300", deuterium: "0" },

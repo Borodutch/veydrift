@@ -347,8 +347,6 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
         }
 
         _settleResources(mission.originPlanetId);
-        uint128 recallCost = _fleetRecallCost(mission.fuelCost);
-        _spend(mission.originPlanetId, Resources({metal: 0, crystal: 0, deuterium: recallCost}));
 
         uint256 returnSeconds = currentTime < mission.arrivalAt
             ? VeydriftAntiRaidPrimitives.recallReturnSeconds(currentTime - mission.departureAt)
@@ -364,7 +362,8 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
             missionId
         );
 
-        emit FleetMissionRecalled(missionId, msg.sender, mission.returnAt, recallCost);
+        // Dispatch fuel already covers the mission. Recall has no refund and no extra fuel debit.
+        emit FleetMissionRecalled(missionId, msg.sender, mission.returnAt, 0);
         emit DefenseHoldEnded(missionId, mission.targetPlanetId, FleetMissionStatus.Recalled);
         emit FleetMissionReturnExposed(
             missionId,
@@ -431,12 +430,6 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
             revert FleetInactive();
         }
         if (mission.owner != msg.sender) revert FleetNotOwner();
-    }
-
-    function _fleetRecallCost(uint128 fuelCost) private pure returns (uint128) {
-        if (fuelCost == 0) return 0;
-        uint128 cost = _toUint128((uint256(fuelCost) * FLEET_RECALL_COST_BPS) / BPS);
-        return cost == 0 ? 1 : cost;
     }
 
     function _requireOwnedBody(uint256 planetId, bool isMoon) private view {

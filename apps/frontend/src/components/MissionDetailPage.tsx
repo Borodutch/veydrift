@@ -264,8 +264,8 @@ function MissionActions({
   // Which orders show is decided by the same wallet-scoped classification the Mission Control list
   // uses, so the two screens always agree (VEY-KANEO-424). It must NOT be gated on mission.recallCost:
   // that field is only emitted by FleetMissionRecalled, so a still-recallable Outbound fleet would
-  // carry a null cost and lose its Recall button. The backend now projects the cost for Outbound
-  // fleets, and the cost row below tolerates a null cost regardless.
+  // carry a null cost and lose its Recall button. The backend now projects an explicit zero for
+  // Outbound fleets, and the cost row below tolerates a null cost regardless.
   const actions = missionLifecycleActions({ activePlanetId, canTransact, context, mission, now });
 
   // Hide the section entirely when no wallet action applies at this stage.
@@ -910,14 +910,14 @@ function showsRecallCost(mission: FleetMissionSummary, context: MissionActionCon
   return ["Outbound", "Returning"].includes(mission.status);
 }
 
-// VEY-KANEO-424: the deuterium recall cost is shown only when recall is actually possible — a fleet
-// still Outbound and within the recall window (backend projects its cost), or one that has already
-// been recalled (the cost it paid). Past the 60s cutoff, or for a Returning fleet, recall can no
-// longer happen, so the row reads "Not recallable". This keeps the cost row consistent with whether
-// the Recall button is offered, and matches Mission Control.
+// Dispatch fuel is already spent, so Recall has no additional Deuterium cost and no refund. Keep
+// historical non-zero event values visible for pre-upgrade recalls, but label current zero-cost
+// recalls plainly. Past the cutoff (or once Returning), recall can no longer happen.
 function recallCostLabel(mission: FleetMissionSummary, now: number): string {
   const recallable = mission.status === "Recalled" || isFleetRecallable(mission, now);
-  return recallable && mission.recallCost ? `${formatResource(mission.recallCost)} deuterium` : "Not recallable";
+  if (!recallable) return "Not recallable";
+  if (!mission.recallCost || mission.recallCost === "0") return "No additional deuterium";
+  return `${formatResource(mission.recallCost)} deuterium`;
 }
 
 function isCombatMission(mission: FleetMissionSummary): boolean {

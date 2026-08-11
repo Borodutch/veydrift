@@ -5387,11 +5387,13 @@ export function decodeFleetMissionLogs(logs: RpcLog[]): Map<string, MutableFleet
 
   // Project the recall cost for fleets that can still be recalled (Outbound, no recall event yet) so
   // Mission Detail / Mission Control can surface the Recall action and its deuterium cost instead of
-  // falling back to "Not recallable" (VEY-KANEO-424). Recalled fleets keep the authoritative cost
-  // emitted by FleetMissionRecalled; finished/returning fleets stay null since recall no longer applies.
+  // falling back to "Not recallable" (VEY-KANEO-424). Recall no longer has an additional fuel
+  // charge, but Outbound fleets carry an explicit zero so callers can describe that accurately.
+  // Recalled fleets keep the authoritative value emitted by FleetMissionRecalled; finished/returning
+  // fleets stay null since recall no longer applies.
   for (const mission of missions.values()) {
     if (mission.recallCost == null && mission.status === "Outbound") {
-      mission.recallCost = projectedFleetRecallCost(mission.fuelCost ?? "0");
+      mission.recallCost = projectedFleetRecallCost();
     }
   }
 
@@ -5653,22 +5655,10 @@ function missionStatusLabel(value: bigint): string {
   return missionStatuses[Number(value)] ?? `Unknown:${value.toString()}`;
 }
 
-// VEY-KANEO-424: the only on-chain event that carries a recall cost is FleetMissionRecalled, so an
-// Outbound fleet that has not been recalled yet decodes with recallCost: null. That null made the
-// Mission Detail page hide the Recall button and render "Not recallable" for a fleet that can still
-// be recalled. The contract derives the recall cost deterministically from the mission's fuel cost
-// (VeydriftGameplayModule._fleetRecallCost: floor(fuelCost * FLEET_RECALL_COST_BPS / BPS), with a
-// floor of 1 deuterium whenever any fuel was spent), so we project the same value for still-recallable
-// Outbound missions instead of leaving it null. A real recall later overwrites this with the emitted
-// amount, which equals this projection.
-const fleetRecallCostBps = 2_500n;
-const fleetRecallCostBpsDenominator = 10_000n;
-
-function projectedFleetRecallCost(fuelCost: string): string {
-  const fuel = BigInt(fuelCost);
-  if (fuel <= 0n) return "0";
-  const cost = (fuel * fleetRecallCostBps) / fleetRecallCostBpsDenominator;
-  return (cost === 0n ? 1n : cost).toString();
+// OGame parity: the dispatch debit is the complete mission fuel bill. The explicit zero preserves
+// the client contract for a still-recallable Outbound fleet without fabricating another debit.
+function projectedFleetRecallCost(): string {
+  return "0";
 }
 
 function battleOutcomeLabel(value: bigint): BattleOutcomeName {
