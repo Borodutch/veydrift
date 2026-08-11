@@ -3,6 +3,7 @@ import {
   REFERRAL_SIGNATURE_REJECTION_MESSAGE,
   referralClaimCodeAfterDashboard,
   referralInviteActionAvailability,
+  referralInviteRefreshDelay,
   referralRejectedRequestMessage,
   referralSettlementBlocker,
   referralValidationMessage,
@@ -176,6 +177,24 @@ describe("referral hardening", () => {
       status: "renewable"
     });
     expect(referralClaimCodeAfterDashboard("new_code", expired)).toBe("borodutch");
+  });
+
+  test("refreshes an active invite dashboard as soon as its window expires", () => {
+    const active = referralDashboard({
+      code: "borodutch",
+      link: "https://veydrift.com?ref=borodutch",
+      status: "active"
+    });
+    const expiresAt = Date.parse(active.invite!.expiresAt);
+    expect(referralInviteRefreshDelay(active, expiresAt - 60_000)).toBe(60_000);
+    expect(referralInviteRefreshDelay(active, expiresAt + 1)).toBe(1_000);
+
+    const renewable = referralDashboard({
+      code: "borodutch",
+      link: "https://veydrift.com?ref=borodutch",
+      status: "renewable"
+    });
+    expect(referralInviteRefreshDelay(renewable, expiresAt)).toBeUndefined();
   });
 
   test("atomically installs the indexed renewal dashboard returned by claim recording", async () => {
