@@ -135,6 +135,47 @@ describe("NavBar section navigation", () => {
     expect(event.preventDefaultCalls).toBe(1);
   });
 
+  test.each([
+    ["desktop", NavItem, "/raid-finder", "Raid Finder"],
+    ["mobile", MobileTab, "/shipyard", "Shipyard"],
+  ] as const)("commits %s navigation on pointer release before a click is available", (_layout, Component, href, label) => {
+    let navigations = 0;
+    const assignedUrls: string[] = [];
+    const location = {
+      href: "https://veydrift.test/galaxy",
+      assign(url: string) {
+        assignedUrls.push(url);
+        this.href = url;
+      },
+    };
+    const link = Component({
+      active: false,
+      href,
+      icon: ChevronDown,
+      label,
+      onClick: () => {
+        navigations += 1;
+        location.href = `https://veydrift.test${href}`;
+      },
+    });
+    const pointerEvent = {
+      altKey: false,
+      button: 0,
+      ctrlKey: false,
+      currentTarget: {
+        href: `https://veydrift.test${href}`,
+        ownerDocument: { defaultView: { location } },
+      },
+      metaKey: false,
+      shiftKey: false,
+    };
+
+    (link.props.onPointerUp as (event: typeof pointerEvent) => void)(pointerEvent);
+    expect(navigations).toBe(1);
+    expect(location.href).toBe(`https://veydrift.test${href}`);
+    expect(assignedUrls).toEqual([]);
+  });
+
   test("preserves modified-click browser behavior without invoking SPA navigation", () => {
     let navigations = 0;
     const assignedUrls: string[] = [];

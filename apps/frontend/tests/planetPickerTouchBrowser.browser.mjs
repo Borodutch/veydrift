@@ -669,6 +669,42 @@ test("Galaxy sidebar trusted clicks commit Raid Finder and Shipyard routes", asy
     && document.querySelector('main')?.textContent?.includes('Galaxy') === false`);
 });
 
+test("Galaxy sidebar pointer releases navigate on desktop and mobile when the later click phase is consumed", async () => {
+  for (const width of [1280, 390]) {
+    for (const [href, destinationSelector] of [
+      ["/raid-finder", "main [data-raid-target-finder-page]"],
+      ["/shipyard", "main [data-production-catalog]"],
+    ]) {
+      await loadInspectorFixture("/galaxy", width);
+      const navSelector = width < 768 ? "#mobile-navigation-menu" : "nav.hidden";
+      const pointerType = width < 768 ? "touch" : "mouse";
+      await waitForExpression("location.pathname === '/galaxy' && document.querySelector('a[href=\"/galaxy\"][aria-current=\"page\"]') !== null");
+      if (width < 768) {
+        await clickExpressionWithTrustedPointer("document.querySelector('summary[aria-label=\"Open navigation menu\"]')", "touch");
+        await waitForExpression("document.querySelector('details:has(#mobile-navigation-menu)')?.open === true");
+      }
+
+      await evaluate(`document.addEventListener('click', (event) => {
+        if (event.target instanceof Element && event.target.closest('${navSelector} a[href="${href}"]')) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+        }
+      }, { capture: true, once: true })`);
+      await clickExpressionWithTrustedPointer(`document.querySelector('${navSelector} a[href="${href}"]')`, pointerType);
+      await waitForExpression(`location.pathname === '${href}'
+        && document.querySelector('${navSelector} a[href="${href}"][aria-current="page"]') !== null
+        && document.querySelector('${destinationSelector}') !== null
+        && document.querySelector('main')?.textContent?.includes('Galaxy') === false
+        ${width < 768 ? "&& document.querySelector('details:has(#mobile-navigation-menu)')?.open === false" : ""}`);
+
+      const pointerProof = await evaluate(`window.inspectorProof.interactions
+        .findLast((event) => event.type === 'pointerdown') ?? null`);
+      assert.equal(pointerProof?.isTrusted, true);
+      assert.equal(pointerProof?.pointerType, pointerType);
+    }
+  }
+});
+
 test("desktop sidebar commits the reported Overview to Raid Finder and Shipyard to Mission Control routes", async () => {
   await loadInspectorFixture("/", 1280);
   await waitForExpression("location.pathname === '/' && document.querySelector('nav.hidden a[href=\"/\"][aria-current=\"page\"]') !== null");

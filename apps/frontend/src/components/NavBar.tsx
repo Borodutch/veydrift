@@ -724,6 +724,14 @@ function handleSectionLinkClick(
   const view = link.ownerDocument.defaultView;
   const targetUrl = link.href;
 
+  // A preceding primary pointerup may already have committed the route. Keep
+  // the following click as the native/keyboard fallback without running the
+  // application transition twice.
+  if (view?.location.href === targetUrl) {
+    event.preventDefault();
+    return;
+  }
+
   // Commit the selected page before the handler returns. pushState updates the
   // URL synchronously, while Preact normally defers the corresponding render;
   // that briefly leaves the previous page visible at the new URL and can be
@@ -748,6 +756,34 @@ function handleSectionLinkClick(
   event.preventDefault();
 }
 
+function handleSectionLinkPointerUp(
+  event: JSX.TargetedPointerEvent<HTMLAnchorElement>,
+  onClick: () => void,
+): void {
+  if (event.button !== 0 || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+
+  const link = event.currentTarget;
+  const view = link.ownerDocument.defaultView;
+  const targetUrl = link.href;
+  if (!view || view.location.href === targetUrl) return;
+
+  // Commit on pointer release, before the browser's later click phase. Chrome
+  // can lose that click when another first-gesture listener fails or consumes
+  // it; in that state the exact anchor receives the trusted pointer sequence,
+  // but neither the SPA callback nor the anchor default ever runs. Pointerup
+  // preserves release-to-activate semantics while making the canonical route
+  // independent from that fragile follow-up event. Keyboard and modified-click
+  // behavior still use the click/native-anchor path below.
+  try {
+    flushSync(onClick);
+  } catch (error) {
+    if (view.location.href !== targetUrl) view.location.assign(targetUrl);
+    throw error;
+  }
+
+  if (view.location.href !== targetUrl) view.location.assign(targetUrl);
+}
+
 export function NavItem({
   active,
   href,
@@ -770,6 +806,7 @@ export function NavItem({
       }`}
       href={href}
       onClick={(event) => handleSectionLinkClick(event, onClick)}
+      onPointerUp={(event) => handleSectionLinkPointerUp(event, onClick)}
       aria-current={active ? "page" : undefined}
     >
       <span className="grid h-7 w-7 shrink-0 place-items-center rounded border border-white/10 bg-black/20 text-slate-300 opacity-90">
@@ -802,6 +839,7 @@ export function MobileTab({
       }`}
       href={href}
       onClick={(event) => handleSectionLinkClick(event, onClick)}
+      onPointerUp={(event) => handleSectionLinkPointerUp(event, onClick)}
       aria-current={active ? "page" : undefined}
     >
       <Icon aria-hidden="true" size={15} strokeWidth={1.9} />
