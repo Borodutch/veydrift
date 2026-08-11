@@ -135,6 +135,135 @@ describe("NavBar section navigation", () => {
     expect(event.preventDefaultCalls).toBe(1);
   });
 
+  test.each([
+    ["desktop", NavItem, "/raid-finder", "Raid Finder"],
+    ["mobile", MobileTab, "/shipyard", "Shipyard"],
+  ] as const)("commits %s navigation on pointer release before a click is available", (_layout, Component, href, label) => {
+    let navigations = 0;
+    const assignedUrls: string[] = [];
+    const location = {
+      href: "https://veydrift.test/galaxy",
+      assign(url: string) {
+        assignedUrls.push(url);
+        this.href = url;
+      },
+    };
+    const link = Component({
+      active: false,
+      href,
+      icon: ChevronDown,
+      label,
+      onClick: () => {
+        navigations += 1;
+        location.href = `https://veydrift.test${href}`;
+      },
+    });
+    const currentTarget = {
+      href: `https://veydrift.test${href}`,
+      ownerDocument: { defaultView: { location } },
+    };
+    const pointerEvent = {
+      altKey: false,
+      button: 0,
+      clientX: 120,
+      clientY: 80,
+      ctrlKey: false,
+      currentTarget,
+      isPrimary: true,
+      metaKey: false,
+      pointerId: 7,
+      shiftKey: false,
+    };
+
+    (link.props.onPointerDown as (event: typeof pointerEvent) => void)(pointerEvent);
+    (link.props.onPointerUp as (event: typeof pointerEvent) => void)(pointerEvent);
+    expect(navigations).toBe(1);
+    expect(location.href).toBe(`https://veydrift.test${href}`);
+    expect(assignedUrls).toEqual([]);
+  });
+
+  test.each([
+    ["desktop", NavItem, "/raid-finder", "Raid Finder"],
+    ["mobile", MobileTab, "/shipyard", "Shipyard"],
+  ] as const)("ignores an unmatched %s pointer release over a section link", (_layout, Component, href, label) => {
+    let navigations = 0;
+    const location = { href: "https://veydrift.test/galaxy" };
+    const link = Component({
+      active: false,
+      href,
+      icon: ChevronDown,
+      label,
+      onClick: () => { navigations += 1; },
+    });
+    const pointerEvent = {
+      altKey: false,
+      button: 0,
+      clientX: 120,
+      clientY: 80,
+      ctrlKey: false,
+      currentTarget: {
+        href: `https://veydrift.test${href}`,
+        ownerDocument: { defaultView: { location } },
+      },
+      isPrimary: true,
+      metaKey: false,
+      pointerId: 7,
+      shiftKey: false,
+    };
+
+    (link.props.onPointerUp as (event: typeof pointerEvent) => void)(pointerEvent);
+    expect(navigations).toBe(0);
+    expect(location.href).toBe("https://veydrift.test/galaxy");
+  });
+
+  test.each(["moved", "canceled"] as const)("rejects a %s pointer activation and its follow-up click", (mode) => {
+    let navigations = 0;
+    const location = { href: "https://veydrift.test/galaxy" };
+    const currentTarget = {
+      href: "https://veydrift.test/shipyard",
+      ownerDocument: { defaultView: { location } },
+    };
+    const link = NavItem({
+      active: false,
+      href: "/shipyard",
+      icon: ChevronDown,
+      label: "Shipyard",
+      onClick: () => { navigations += 1; },
+    });
+    const pointerEvent = {
+      altKey: false,
+      button: 0,
+      clientX: 120,
+      clientY: 80,
+      ctrlKey: false,
+      currentTarget,
+      isPrimary: true,
+      metaKey: false,
+      pointerId: 7,
+      shiftKey: false,
+    };
+
+    (link.props.onPointerDown as (event: typeof pointerEvent) => void)(pointerEvent);
+    if (mode === "moved") {
+      const movedEvent = { ...pointerEvent, clientX: 160 };
+      (link.props.onPointerMove as (event: typeof movedEvent) => void)(movedEvent);
+      (link.props.onPointerUp as (event: typeof movedEvent) => void)(movedEvent);
+      const clickEvent = {
+        ...movedEvent,
+        preventDefaultCalls: 0,
+        preventDefault() { this.preventDefaultCalls += 1; },
+      };
+      (link.props.onClick as (event: typeof clickEvent) => void)(clickEvent);
+      expect(clickEvent.preventDefaultCalls).toBe(1);
+    } else {
+      (link.props.onPointerCancel as (event: typeof pointerEvent) => void)(pointerEvent);
+      (link.props.onPointerUp as (event: typeof pointerEvent) => void)(pointerEvent);
+    }
+
+    expect(navigations).toBe(0);
+    expect(location.href).toBe("https://veydrift.test/galaxy");
+  });
+
   test("preserves modified-click browser behavior without invoking SPA navigation", () => {
     let navigations = 0;
     const assignedUrls: string[] = [];

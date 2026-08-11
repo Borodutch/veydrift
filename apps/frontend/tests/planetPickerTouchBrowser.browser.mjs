@@ -259,7 +259,7 @@ after(async () => {
 async function dispatchTouch(type, x, y) {
   await cdp.send("Input.dispatchTouchEvent", {
     type,
-    touchPoints: type === "touchEnd"
+    touchPoints: type === "touchEnd" || type === "touchCancel"
       ? []
       : [{ force: 1, id: 1, radiusX: 4, radiusY: 4, x, y }],
   });
@@ -425,6 +425,17 @@ async function clickExpressionWithTrustedPointer(expression, pointerType = "mous
   }
   await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", button: "left", clickCount: 1, x: center.x, y: center.y });
   await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", button: "left", clickCount: 1, x: center.x, y: center.y });
+}
+
+async function expressionCenter(expression) {
+  const center = await evaluate(`(() => {
+    const target = ${expression};
+    if (!target) return null;
+    const rect = target.getBoundingClientRect();
+    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+  })()`);
+  assert.ok(center, `could not find ${expression}`);
+  return center;
 }
 
 async function clickSectionAndReadRender(expression) {
@@ -649,15 +660,121 @@ test("desktop sidebar first clicks commit Infrastructure and Shipyard routes", a
     && document.querySelector('main section[aria-label="Fleets"]') === null`);
 });
 
-test("Galaxy sidebar click commits the Infrastructure game route", async () => {
+test("Galaxy sidebar trusted clicks commit Raid Finder and Shipyard routes", async () => {
   await loadInspectorFixture("/galaxy", 1280);
   await waitForExpression("location.pathname === '/galaxy' && document.querySelector('nav.hidden a[href=\"/galaxy\"][aria-current=\"page\"]') !== null");
 
-  await clickExpression("document.querySelector('nav.hidden a[href=\"/infrastructure\"]')");
-  await waitForExpression(`location.pathname === '/infrastructure'
-    && document.querySelector('nav.hidden a[href="/infrastructure"][aria-current="page"]') !== null
-    && document.querySelector('main')?.textContent?.includes('Metal Mine') === true
+  await clickExpressionWithTrustedPointer("document.querySelector('nav.hidden a[href=\"/raid-finder\"]')");
+  await waitForExpression(`location.pathname === '/raid-finder'
+    && document.querySelector('nav.hidden a[href="/raid-finder"][aria-current="page"]') !== null
+    && document.querySelector('main [data-raid-target-finder-page]') !== null
     && document.querySelector('main')?.textContent?.includes('Galaxy') === false`);
+
+  await loadInspectorFixture("/galaxy", 1280);
+  await waitForExpression("location.pathname === '/galaxy' && document.querySelector('nav.hidden a[href=\"/galaxy\"][aria-current=\"page\"]') !== null");
+
+  await clickExpressionWithTrustedPointer("document.querySelector('nav.hidden a[href=\"/shipyard\"]')");
+  await waitForExpression(`location.pathname === '/shipyard'
+    && document.querySelector('nav.hidden a[href="/shipyard"][aria-current="page"]') !== null
+    && document.querySelector('main [data-production-catalog]') !== null
+    && document.querySelector('main')?.textContent?.includes('Galaxy') === false`);
+});
+
+test("desktop mouse release over a Galaxy sidebar link does not navigate when the press began elsewhere", async () => {
+  await loadInspectorFixture("/galaxy", 1280);
+  await waitForExpression("location.pathname === '/galaxy' && document.querySelector('nav.hidden a[href=\"/galaxy\"][aria-current=\"page\"]') !== null");
+
+  const start = await expressionCenter("document.querySelector('main')");
+  const end = await expressionCenter("document.querySelector('nav.hidden a[href=\"/shipyard\"]')");
+  await cdp.send("Input.dispatchMouseEvent", {
+    type: "mousePressed",
+    button: "left",
+    clickCount: 1,
+    x: start.x,
+    y: start.y,
+  });
+  await cdp.send("Input.dispatchMouseEvent", {
+    type: "mouseMoved",
+    button: "left",
+    buttons: 1,
+    x: end.x,
+    y: end.y,
+  });
+  await cdp.send("Input.dispatchMouseEvent", {
+    type: "mouseReleased",
+    button: "left",
+    clickCount: 1,
+    x: end.x,
+    y: end.y,
+  });
+  await delay(100);
+
+  assert.equal(await evaluate("location.pathname"), "/galaxy");
+  assert.equal(
+    await evaluate("document.querySelector('nav.hidden a[href=\"/galaxy\"]')?.getAttribute('aria-current')"),
+    "page",
+  );
+});
+
+test("mobile Galaxy sidebar touch drag and cancel sequences do not navigate", async () => {
+  for (const mode of ["drag", "cancel"]) {
+    await loadInspectorFixture("/galaxy", 390);
+    await waitForExpression("location.pathname === '/galaxy' && document.querySelector('a[href=\"/galaxy\"][aria-current=\"page\"]') !== null");
+    await clickExpressionWithTrustedPointer("document.querySelector('summary[aria-label=\"Open navigation menu\"]')", "touch");
+    await waitForExpression("document.querySelector('details:has(#mobile-navigation-menu)')?.open === true");
+
+    const start = await expressionCenter("document.querySelector('#mobile-navigation-menu a[href=\"/shipyard\"]')");
+    await dispatchTouch("touchStart", start.x, start.y);
+    if (mode === "drag") {
+      await dispatchTouch("touchMove", Math.max(10, start.x - 100), Math.min(890, start.y + 100));
+      await dispatchTouch("touchEnd", Math.max(10, start.x - 100), Math.min(890, start.y + 100));
+    } else {
+      await dispatchTouch("touchCancel", start.x, start.y);
+    }
+    await delay(100);
+
+    assert.equal(await evaluate("location.pathname"), "/galaxy", `${mode} should not activate Shipyard`);
+    assert.equal(
+      await evaluate("document.querySelector('a[href=\"/galaxy\"]')?.getAttribute('aria-current')"),
+      "page",
+    );
+  }
+});
+
+test("Galaxy sidebar pointer releases navigate on desktop and mobile when the later click phase is consumed", async () => {
+  for (const width of [1280, 390]) {
+    for (const [href, destinationSelector] of [
+      ["/raid-finder", "main [data-raid-target-finder-page]"],
+      ["/shipyard", "main [data-production-catalog]"],
+    ]) {
+      await loadInspectorFixture("/galaxy", width);
+      const navSelector = width < 768 ? "#mobile-navigation-menu" : "nav.hidden";
+      const pointerType = width < 768 ? "touch" : "mouse";
+      await waitForExpression("location.pathname === '/galaxy' && document.querySelector('a[href=\"/galaxy\"][aria-current=\"page\"]') !== null");
+      if (width < 768) {
+        await clickExpressionWithTrustedPointer("document.querySelector('summary[aria-label=\"Open navigation menu\"]')", "touch");
+        await waitForExpression("document.querySelector('details:has(#mobile-navigation-menu)')?.open === true");
+      }
+
+      await evaluate(`document.addEventListener('click', (event) => {
+        if (event.target instanceof Element && event.target.closest('${navSelector} a[href="${href}"]')) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+        }
+      }, { capture: true, once: true })`);
+      await clickExpressionWithTrustedPointer(`document.querySelector('${navSelector} a[href="${href}"]')`, pointerType);
+      await waitForExpression(`location.pathname === '${href}'
+        && document.querySelector('${navSelector} a[href="${href}"][aria-current="page"]') !== null
+        && document.querySelector('${destinationSelector}') !== null
+        && document.querySelector('main')?.textContent?.includes('Galaxy') === false
+        ${width < 768 ? "&& document.querySelector('details:has(#mobile-navigation-menu)')?.open === false" : ""}`);
+
+      const pointerProof = await evaluate(`window.inspectorProof.interactions
+        .findLast((event) => event.type === 'pointerdown') ?? null`);
+      assert.equal(pointerProof?.isTrusted, true);
+      assert.equal(pointerProof?.pointerType, pointerType);
+    }
+  }
 });
 
 test("desktop sidebar commits the reported Overview to Raid Finder and Shipyard to Mission Control routes", async () => {
