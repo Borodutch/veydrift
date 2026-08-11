@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildBatchSupplyPlan, MAX_BATCH_SUPPLY_SOURCES, type BatchSupplySource } from "./batchSupplyPlanner";
+import { buildBatchSupplyPlan, type BatchSupplySource } from "./batchSupplyPlanner";
 
 const target = { galaxy: 1, system: 100, position: 8 };
 const drives = { combustionDrive: 6, impulseDrive: 4, hyperspaceDrive: 0 };
@@ -66,15 +66,16 @@ describe("buildBatchSupplyPlan", () => {
     expect(plan.missing.deuterium).toBeGreaterThan(0);
   });
 
-  test("enforces the contract's bounded source count", () => {
-    const sources = Array.from({ length: MAX_BATCH_SUPPLY_SOURCES + 1 }, (_, index) => source({ planetId: String(index + 1) }));
+  test("limits sources by the supplied fleet-slot capacity", () => {
+    const sources = Array.from({ length: 4 }, (_, index) => source({ planetId: String(index + 1) }));
     const plan = buildBatchSupplyPlan({
       targetCoordinates: target,
       requested: { metal: 100 },
       selectedPlanetIds: new Set(sources.map((item) => item.planetId)),
       sources,
+      maxOrders: 3,
     });
     expect(plan.sourceLimitReached).toBe(true);
-    expect(plan.orders.length).toBeLessThanOrEqual(MAX_BATCH_SUPPLY_SOURCES);
+    expect(plan.orders.length).toBeLessThanOrEqual(3);
   });
 });
