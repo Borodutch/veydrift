@@ -1360,6 +1360,8 @@ describe("walletFlow", () => {
     };
     const data = encodeLaunchTransportBatchCall(params);
     expect(data.slice(0, 10)).toBe("0x9c26e0be");
+    expect(data).toMatch(/^0x[0-9a-f]+$/);
+    expect(data.match(/0x/g)).toHaveLength(1);
     const requests: unknown[] = [];
     const provider = mockProvider(async ({ method, params: rpcParams }) => {
       requests.push({ method, params: rpcParams });
