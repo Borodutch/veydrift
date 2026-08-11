@@ -721,6 +721,11 @@ function handleSectionLinkClick(
   if (event.button !== 0 || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
 
   const link = event.currentTarget;
+  if (sectionLinkSuppressedClicks.has(link)) {
+    sectionLinkSuppressedClicks.delete(link);
+    event.preventDefault();
+    return;
+  }
   const view = link.ownerDocument.defaultView;
   const targetUrl = link.href;
 
@@ -756,13 +761,99 @@ function handleSectionLinkClick(
   event.preventDefault();
 }
 
+interface SectionLinkPointerActivation {
+  moved: boolean;
+  pointerId: number;
+  startX: number;
+  startY: number;
+}
+
+const sectionLinkPointerActivations = new WeakMap<HTMLAnchorElement, SectionLinkPointerActivation>();
+const sectionLinkSuppressedClicks = new WeakSet<HTMLAnchorElement>();
+const sectionLinkPointerMoveTolerancePx = 12;
+
+function sectionLinkPointerMoved(activation: SectionLinkPointerActivation, clientX: number, clientY: number): boolean {
+  const deltaX = clientX - activation.startX;
+  const deltaY = clientY - activation.startY;
+  return (deltaX * deltaX) + (deltaY * deltaY) > sectionLinkPointerMoveTolerancePx ** 2;
+}
+
+function handleSectionLinkPointerDown(event: JSX.TargetedPointerEvent<HTMLAnchorElement>): void {
+  const link = event.currentTarget;
+  sectionLinkPointerActivations.delete(link);
+  if (
+    event.button !== 0
+    || event.isPrimary === false
+    || event.altKey
+    || event.ctrlKey
+    || event.metaKey
+    || event.shiftKey
+  ) return;
+
+  sectionLinkPointerActivations.set(link, {
+    moved: false,
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+  });
+  try {
+    link.setPointerCapture?.(event.pointerId);
+  } catch {
+    // The activation checks still work when capture is unavailable or lost.
+  }
+}
+
+function handleSectionLinkPointerMove(event: JSX.TargetedPointerEvent<HTMLAnchorElement>): void {
+  const activation = sectionLinkPointerActivations.get(event.currentTarget);
+  if (!activation || activation.pointerId !== event.pointerId || activation.moved) return;
+  if (sectionLinkPointerMoved(activation, event.clientX, event.clientY)) activation.moved = true;
+}
+
+function clearSectionLinkPointerActivation(event: JSX.TargetedPointerEvent<HTMLAnchorElement>): void {
+  const activation = sectionLinkPointerActivations.get(event.currentTarget);
+  if (activation?.pointerId === event.pointerId) sectionLinkPointerActivations.delete(event.currentTarget);
+}
+
+function suppressSectionLinkFollowupClick(link: HTMLAnchorElement): void {
+  sectionLinkSuppressedClicks.add(link);
+  const clear = () => sectionLinkSuppressedClicks.delete(link);
+  const view = link.ownerDocument.defaultView;
+  if (typeof view?.setTimeout === "function") {
+    view.setTimeout(clear, 0);
+  } else {
+    globalThis.setTimeout(clear, 0);
+  }
+}
+
 function handleSectionLinkPointerUp(
   event: JSX.TargetedPointerEvent<HTMLAnchorElement>,
   onClick: () => void,
 ): void {
-  if (event.button !== 0 || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
-
   const link = event.currentTarget;
+  const activation = sectionLinkPointerActivations.get(link);
+  sectionLinkPointerActivations.delete(link);
+  if (
+    !activation
+    || activation.pointerId !== event.pointerId
+    || event.button !== 0
+    || event.isPrimary === false
+    || event.altKey
+    || event.ctrlKey
+    || event.metaKey
+    || event.shiftKey
+  ) return;
+
+  const releaseTarget = link.ownerDocument.elementFromPoint?.(event.clientX, event.clientY);
+  const releasedOutsideLink = Boolean(releaseTarget && releaseTarget !== link && !link.contains(releaseTarget));
+  if (
+    activation.moved
+    || sectionLinkPointerMoved(activation, event.clientX, event.clientY)
+    || releasedOutsideLink
+  ) {
+    suppressSectionLinkFollowupClick(link);
+    return;
+  }
+
   const view = link.ownerDocument.defaultView;
   const targetUrl = link.href;
   if (!view || view.location.href === targetUrl) return;
@@ -806,6 +897,10 @@ export function NavItem({
       }`}
       href={href}
       onClick={(event) => handleSectionLinkClick(event, onClick)}
+      onLostPointerCapture={clearSectionLinkPointerActivation}
+      onPointerCancel={clearSectionLinkPointerActivation}
+      onPointerDown={handleSectionLinkPointerDown}
+      onPointerMove={handleSectionLinkPointerMove}
       onPointerUp={(event) => handleSectionLinkPointerUp(event, onClick)}
       aria-current={active ? "page" : undefined}
     >
@@ -839,6 +934,10 @@ export function MobileTab({
       }`}
       href={href}
       onClick={(event) => handleSectionLinkClick(event, onClick)}
+      onLostPointerCapture={clearSectionLinkPointerActivation}
+      onPointerCancel={clearSectionLinkPointerActivation}
+      onPointerDown={handleSectionLinkPointerDown}
+      onPointerMove={handleSectionLinkPointerMove}
       onPointerUp={(event) => handleSectionLinkPointerUp(event, onClick)}
       aria-current={active ? "page" : undefined}
     >

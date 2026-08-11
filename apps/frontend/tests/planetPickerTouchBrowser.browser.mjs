@@ -259,7 +259,7 @@ after(async () => {
 async function dispatchTouch(type, x, y) {
   await cdp.send("Input.dispatchTouchEvent", {
     type,
-    touchPoints: type === "touchEnd"
+    touchPoints: type === "touchEnd" || type === "touchCancel"
       ? []
       : [{ force: 1, id: 1, radiusX: 4, radiusY: 4, x, y }],
   });
@@ -425,6 +425,17 @@ async function clickExpressionWithTrustedPointer(expression, pointerType = "mous
   }
   await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", button: "left", clickCount: 1, x: center.x, y: center.y });
   await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", button: "left", clickCount: 1, x: center.x, y: center.y });
+}
+
+async function expressionCenter(expression) {
+  const center = await evaluate(`(() => {
+    const target = ${expression};
+    if (!target) return null;
+    const rect = target.getBoundingClientRect();
+    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+  })()`);
+  assert.ok(center, `could not find ${expression}`);
+  return center;
 }
 
 async function clickSectionAndReadRender(expression) {
@@ -667,6 +678,67 @@ test("Galaxy sidebar trusted clicks commit Raid Finder and Shipyard routes", asy
     && document.querySelector('nav.hidden a[href="/shipyard"][aria-current="page"]') !== null
     && document.querySelector('main [data-production-catalog]') !== null
     && document.querySelector('main')?.textContent?.includes('Galaxy') === false`);
+});
+
+test("desktop mouse release over a Galaxy sidebar link does not navigate when the press began elsewhere", async () => {
+  await loadInspectorFixture("/galaxy", 1280);
+  await waitForExpression("location.pathname === '/galaxy' && document.querySelector('nav.hidden a[href=\"/galaxy\"][aria-current=\"page\"]') !== null");
+
+  const start = await expressionCenter("document.querySelector('main')");
+  const end = await expressionCenter("document.querySelector('nav.hidden a[href=\"/shipyard\"]')");
+  await cdp.send("Input.dispatchMouseEvent", {
+    type: "mousePressed",
+    button: "left",
+    clickCount: 1,
+    x: start.x,
+    y: start.y,
+  });
+  await cdp.send("Input.dispatchMouseEvent", {
+    type: "mouseMoved",
+    button: "left",
+    buttons: 1,
+    x: end.x,
+    y: end.y,
+  });
+  await cdp.send("Input.dispatchMouseEvent", {
+    type: "mouseReleased",
+    button: "left",
+    clickCount: 1,
+    x: end.x,
+    y: end.y,
+  });
+  await delay(100);
+
+  assert.equal(await evaluate("location.pathname"), "/galaxy");
+  assert.equal(
+    await evaluate("document.querySelector('nav.hidden a[href=\"/galaxy\"]')?.getAttribute('aria-current')"),
+    "page",
+  );
+});
+
+test("mobile Galaxy sidebar touch drag and cancel sequences do not navigate", async () => {
+  for (const mode of ["drag", "cancel"]) {
+    await loadInspectorFixture("/galaxy", 390);
+    await waitForExpression("location.pathname === '/galaxy' && document.querySelector('a[href=\"/galaxy\"][aria-current=\"page\"]') !== null");
+    await clickExpressionWithTrustedPointer("document.querySelector('summary[aria-label=\"Open navigation menu\"]')", "touch");
+    await waitForExpression("document.querySelector('details:has(#mobile-navigation-menu)')?.open === true");
+
+    const start = await expressionCenter("document.querySelector('#mobile-navigation-menu a[href=\"/shipyard\"]')");
+    await dispatchTouch("touchStart", start.x, start.y);
+    if (mode === "drag") {
+      await dispatchTouch("touchMove", Math.max(10, start.x - 100), Math.min(890, start.y + 100));
+      await dispatchTouch("touchEnd", Math.max(10, start.x - 100), Math.min(890, start.y + 100));
+    } else {
+      await dispatchTouch("touchCancel", start.x, start.y);
+    }
+    await delay(100);
+
+    assert.equal(await evaluate("location.pathname"), "/galaxy", `${mode} should not activate Shipyard`);
+    assert.equal(
+      await evaluate("document.querySelector('a[href=\"/galaxy\"]')?.getAttribute('aria-current')"),
+      "page",
+    );
+  }
 });
 
 test("Galaxy sidebar pointer releases navigate on desktop and mobile when the later click phase is consumed", async () => {
