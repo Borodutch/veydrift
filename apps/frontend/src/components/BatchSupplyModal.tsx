@@ -190,13 +190,13 @@ export function BatchSupplyModal({
           {missingTotal > 0 ? <p className="rounded border border-amber-300/30 bg-amber-300/10 p-2 text-sm text-amber-100">Missing: M {format(plan.missing.metal)} · C {format(plan.missing.crystal)} · D {format(plan.missing.deuterium)}. Select more sources or reduce the request.</p> : null}
           {error ? <p className="rounded border border-red-300/30 bg-red-300/10 p-2 text-sm text-red-100">{error}</p> : null}
 
-          <footer className="flex flex-col gap-3 border-t border-white/10 pt-3 sm:flex-row sm:items-center sm:justify-between">
+          <footer className="grid gap-3 border-t border-white/10 pt-3">
             <div className="text-sm text-slate-300">
               <strong className="text-white">{plan.orders.length} transport{plan.orders.length === 1 ? "" : "s"}</strong>
               <span> · M {format(plan.delivered.metal)} · C {format(plan.delivered.crystal)} · D {format(plan.delivered.deuterium)} · Fuel {format(plan.fuelCost)} D</span>
               {etaRange ? <span> · arrives {formatDuration(etaRange.earliest)}{etaRange.latest === etaRange.earliest ? "" : `–${formatDuration(etaRange.latest)}`}</span> : null}
             </div>
-            <button className="inline-flex items-center justify-center gap-2 rounded bg-cyan-300 px-4 py-2 text-sm font-bold text-slate-950 disabled:cursor-not-allowed disabled:opacity-50" disabled={!canSubmit} onClick={() => onConfirm(plan.orders)} type="button">
+            <button className="inline-flex w-full items-center justify-center gap-2 whitespace-nowrap rounded bg-cyan-300 px-4 py-2 text-xs font-bold text-slate-950 disabled:cursor-not-allowed disabled:opacity-50 sm:text-sm" disabled={!canSubmit} onClick={() => onConfirm(plan.orders)} type="button">
               <Check aria-hidden="true" size={16} />
               {actionPending ? "Launching…" : `Launch ${plan.orders.length} transport${plan.orders.length === 1 ? "" : "s"} in one call`}
             </button>
