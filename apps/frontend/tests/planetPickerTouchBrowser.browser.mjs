@@ -649,14 +649,23 @@ test("desktop sidebar first clicks commit Infrastructure and Shipyard routes", a
     && document.querySelector('main section[aria-label="Fleets"]') === null`);
 });
 
-test("Galaxy sidebar click commits the Infrastructure game route", async () => {
+test("Galaxy sidebar trusted clicks commit Raid Finder and Shipyard routes", async () => {
   await loadInspectorFixture("/galaxy", 1280);
   await waitForExpression("location.pathname === '/galaxy' && document.querySelector('nav.hidden a[href=\"/galaxy\"][aria-current=\"page\"]') !== null");
 
-  await clickExpression("document.querySelector('nav.hidden a[href=\"/infrastructure\"]')");
-  await waitForExpression(`location.pathname === '/infrastructure'
-    && document.querySelector('nav.hidden a[href="/infrastructure"][aria-current="page"]') !== null
-    && document.querySelector('main')?.textContent?.includes('Metal Mine') === true
+  await clickExpressionWithTrustedPointer("document.querySelector('nav.hidden a[href=\"/raid-finder\"]')");
+  await waitForExpression(`location.pathname === '/raid-finder'
+    && document.querySelector('nav.hidden a[href="/raid-finder"][aria-current="page"]') !== null
+    && document.querySelector('main [data-raid-target-finder-page]') !== null
+    && document.querySelector('main')?.textContent?.includes('Galaxy') === false`);
+
+  await loadInspectorFixture("/galaxy", 1280);
+  await waitForExpression("location.pathname === '/galaxy' && document.querySelector('nav.hidden a[href=\"/galaxy\"][aria-current=\"page\"]') !== null");
+
+  await clickExpressionWithTrustedPointer("document.querySelector('nav.hidden a[href=\"/shipyard\"]')");
+  await waitForExpression(`location.pathname === '/shipyard'
+    && document.querySelector('nav.hidden a[href="/shipyard"][aria-current="page"]') !== null
+    && document.querySelector('main [data-production-catalog]') !== null
     && document.querySelector('main')?.textContent?.includes('Galaxy') === false`);
 });
 
