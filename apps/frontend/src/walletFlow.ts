@@ -2517,7 +2517,7 @@ export function encodeLaunchTransportBatchCall({
         speedPercent: order.speedPercent,
       })),
     ],
-  )}`;
+  ).slice(2)}`;
 }
 
 export function encodeLaunchBodyFleetMissionCall({
