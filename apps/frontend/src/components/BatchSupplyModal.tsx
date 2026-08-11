@@ -118,7 +118,7 @@ export function BatchSupplyModal({
           <div>
             <div className="flex items-center gap-2 text-cyan-100">
               <PackagePlus aria-hidden="true" size={20} />
-              <h2 className="text-lg font-semibold">Supply {targetLabel}</h2>
+              <h2 className="translate-y-px text-lg font-semibold">Supply {targetLabel}</h2>
             </div>
           </div>
           <button aria-label="Close supply resources" className="rounded border border-white/15 p-2 text-slate-300 hover:bg-white/10" disabled={actionPending} onClick={onClose} type="button">
