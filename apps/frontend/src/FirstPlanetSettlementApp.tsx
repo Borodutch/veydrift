@@ -67,6 +67,7 @@ import {
   redeemReferralCode,
   redeemPaidAllianceInvite,
   paidAllianceInviteLocationState,
+  resolvePaidAllianceInvite,
   sendReferralClaimTransaction,
   sendSettlementTransaction,
   settlementFundingShortfallWei,
@@ -83,6 +84,7 @@ import {
   type ReferralHistoryResponse,
   type ReferralRedemption,
   type PaidAllianceInviteRedemption,
+  type PaidAllianceInviteResolution,
   type ReferralResolution,
   type SettlementTransactionOptions,
   type SettlementFundingState,
@@ -300,6 +302,12 @@ type ReferralProgramState =
   | { status: "claiming"; dashboard: ReferralDashboard }
   | { status: "error"; message: string; dashboard?: ReferralDashboard };
 
+type PaidAllianceInviteValidationState =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "resolved"; resolution: PaidAllianceInviteResolution }
+  | { status: "error"; message: string };
+
 export const REFERRAL_SIGNATURE_REJECTION_MESSAGE = "Wallet signature rejected — no transaction was sent";
 const REFERRAL_INVITE_EXPIRY_REFRESH_MIN_DELAY_MS = 1_000;
 
@@ -409,6 +417,7 @@ export function FirstPlanetSettlementApp() {
   ));
   const [referralClaimInspection, setReferralClaimInspection] = useState<ReferralValidationState>({ status: "idle" });
   const [referralValidation, setReferralValidation] = useState<ReferralValidationState>({ status: "idle" });
+  const [paidAllianceInviteValidation, setPaidAllianceInviteValidation] = useState<PaidAllianceInviteValidationState>({ status: "idle" });
   const transactionActionGate = useRef(createTransactionActionGate()).current;
   const farcasterAutoConnectAttempted = useRef(false);
   const farcasterNetworkSetupAttempted = useRef<string>();
@@ -652,6 +661,35 @@ export function FirstPlanetSettlementApp() {
       clearTimeout(timeout);
     };
   }, [account, hasOverview, referralClaimCodeInput, settlementConfigState.apiUrl]);
+
+  const refreshPaidAllianceInviteValidation = useCallback(async (
+    isCurrent: () => boolean = () => true,
+  ): Promise<PaidAllianceInviteResolution | undefined> => {
+    const apiUrl = settlementConfigState.apiUrl;
+    if (!paidAllianceInviteSecret || !apiUrl) {
+      if (isCurrent()) setPaidAllianceInviteValidation({ status: "idle" });
+      return undefined;
+    }
+    setPaidAllianceInviteValidation({ status: "loading" });
+    try {
+      const resolution = await resolvePaidAllianceInvite(apiUrl, paidAllianceInviteSecret);
+      if (isCurrent()) setPaidAllianceInviteValidation({ status: "resolved", resolution });
+      return resolution;
+    } catch (error) {
+      if (isCurrent()) {
+        setPaidAllianceInviteValidation({ status: "error", message: walletRequestErrorMessage(error) });
+      }
+      return undefined;
+    }
+  }, [paidAllianceInviteSecret, settlementConfigState.apiUrl]);
+
+  useEffect(() => {
+    let disposed = false;
+    void refreshPaidAllianceInviteValidation(() => !disposed);
+    return () => {
+      disposed = true;
+    };
+  }, [refreshPaidAllianceInviteValidation]);
 
   useEffect(() => {
     const code = referralCodeInput.trim();
@@ -1314,6 +1352,11 @@ export function FirstPlanetSettlementApp() {
 
       const label = "First planet settlement";
 
+      if (paidAllianceInviteSecret) {
+        const resolution = await refreshPaidAllianceInviteValidation();
+        if (!resolution?.valid) return;
+      }
+
       const funding = await refreshSettlementLaunchInfo(wallet.account, planet);
       if (!funding) {
         return;
@@ -1327,19 +1370,41 @@ export function FirstPlanetSettlementApp() {
       });
 
       try {
-        const allianceInvite = paidAllianceInviteSecret
-          ? await paidAllianceInviteRedemptionForSettlement(wallet.account)
-          : undefined;
+        let allianceInvite: PaidAllianceInviteRedemption | undefined;
+        if (paidAllianceInviteSecret) {
+          try {
+            allianceInvite = await paidAllianceInviteRedemptionForSettlement(wallet.account);
+          } catch (error) {
+            const resolution = await refreshPaidAllianceInviteValidation();
+            if (resolution && !resolution.valid) {
+              setPlanet({ kind: "not-settled" });
+              return;
+            }
+            throw error;
+          }
+        }
         const referral = await referralRedemptionForSettlement(wallet.account);
         const transactionOptions = allianceInvite
           ? settlementTransactionOptions(funding, referral, allianceInvite)
           : settlementTransactionOptions(funding, referral);
-        const txHash = await sendSettlementTransaction(
-          provider,
-          wallet.account,
-          settlementConfig,
-          transactionOptions
-        );
+        let txHash: string;
+        try {
+          txHash = await sendSettlementTransaction(
+            provider,
+            wallet.account,
+            settlementConfig,
+            transactionOptions
+          );
+        } catch (error) {
+          if (paidAllianceInviteSecret && !isUserRejected(error)) {
+            const resolution = await refreshPaidAllianceInviteValidation();
+            if (resolution && !resolution.valid) {
+              setPlanet({ kind: "not-settled" });
+              return;
+            }
+          }
+          throw error;
+        }
         playSfx("tx-confirm");
         setPlanet({
           kind: "pending",
@@ -1602,7 +1667,42 @@ export function FirstPlanetSettlementApp() {
         ) : (
           <>
             {paidAllianceInviteSecret ? (
-              <AllianceInviteWelcome />
+              paidAllianceInviteValidation.status === "resolved" && !paidAllianceInviteValidation.resolution.valid ? (
+                <PaidAllianceInviteUnavailable resolution={paidAllianceInviteValidation.resolution} />
+              ) : paidAllianceInviteValidation.status === "error" ? (
+                <StateMessage
+                  title="Invitation unavailable"
+                  body={`Could not verify this alliance invitation: ${paidAllianceInviteValidation.message}`}
+                  tone="warning"
+                  action={<PrimaryButton onClick={() => { void refreshPaidAllianceInviteValidation(); }}>Retry invitation</PrimaryButton>}
+                />
+              ) : paidAllianceInviteValidation.status === "idle" || paidAllianceInviteValidation.status === "loading" ? (
+                <StateMessage
+                  title="Checking invitation"
+                  body="Verifying this private alliance invitation before connecting your wallet."
+                  tone="scanning"
+                />
+              ) : (
+                <>
+                  <AllianceInviteWelcome />
+                  <FlowBody
+                    mode={mode}
+                    referralCodeInput={referralCodeInput}
+                    referralValidation={referralValidation}
+                    prepaidAllianceInvite
+                    onConnect={connectWallet}
+                    onSettle={settlePlanet}
+                    onSwitchNetwork={switchNetwork}
+                    planet={planet}
+                    settlementFunding={settlementFunding}
+                    settlementReady={settlementContractConfigured(settlementConfig)}
+                    wallet={wallet}
+                    networkSwitchPending={networkSwitchPending}
+                    miniAppMode={miniAppMode}
+                    requiredChain={requiredChain}
+                  />
+                </>
+              )
             ) : (
               <ReferralCodeField
                 disabled={planet.kind === "pending"}
@@ -1611,22 +1711,24 @@ export function FirstPlanetSettlementApp() {
                 value={referralCodeInput}
               />
             )}
-            <FlowBody
-              mode={mode}
-              referralCodeInput={referralCodeInput}
-              referralValidation={referralValidation}
-              prepaidAllianceInvite={Boolean(paidAllianceInviteSecret)}
-              onConnect={connectWallet}
-              onSettle={settlePlanet}
-              onSwitchNetwork={switchNetwork}
-              planet={planet}
-              settlementFunding={settlementFunding}
-              settlementReady={settlementContractConfigured(settlementConfig)}
-              wallet={wallet}
-              networkSwitchPending={networkSwitchPending}
-              miniAppMode={miniAppMode}
-              requiredChain={requiredChain}
-            />
+            {!paidAllianceInviteSecret ? (
+              <FlowBody
+                mode={mode}
+                referralCodeInput={referralCodeInput}
+                referralValidation={referralValidation}
+                prepaidAllianceInvite={false}
+                onConnect={connectWallet}
+                onSettle={settlePlanet}
+                onSwitchNetwork={switchNetwork}
+                planet={planet}
+                settlementFunding={settlementFunding}
+                settlementReady={settlementContractConfigured(settlementConfig)}
+                wallet={wallet}
+                networkSwitchPending={networkSwitchPending}
+                miniAppMode={miniAppMode}
+                requiredChain={requiredChain}
+              />
+            ) : null}
           </>
         )
       )}
@@ -2409,6 +2511,19 @@ function AllianceInviteWelcome() {
         <span>Gas only</span>
       </div>
     </div>
+  );
+}
+
+function PaidAllianceInviteUnavailable({ resolution }: { resolution: PaidAllianceInviteResolution }) {
+  const used = resolution.status === "redeemed";
+  return (
+    <StateMessage
+      title={used ? "Invitation already used" : "Invitation unavailable"}
+      body={used
+        ? "This private alliance invitation has already been accepted. Ask the alliance member for a fresh invite link."
+        : "This private alliance invitation is no longer valid. Ask the alliance member for a fresh invite link."}
+      tone="warning"
+    />
   );
 }
 
