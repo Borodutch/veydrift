@@ -702,6 +702,7 @@ export class SettlementIndexer {
   private planetRebuildPromise: Promise<IndexerSnapshot> | null = null;
   private rebuildPromise: Promise<IndexerSnapshot> | null = null;
   private currentStateHealPromise: Promise<IndexerSnapshot> | null = null;
+  private allianceStateHealPromise: Promise<IndexerSnapshot> | null = null;
   private currentStateHealRunId: string | null = null;
   private targetedHealPlanetIds = new Set<string>();
   private targetedHealPromise: Promise<void> | null = null;
@@ -4165,7 +4166,7 @@ export class SettlementIndexer {
     return this.currentStateHealPromise;
   }
 
-  async seedCurrentAllianceState(): Promise<IndexerSnapshot> {
+  async seedCurrentAllianceState(runId?: string): Promise<IndexerSnapshot> {
     const allianceDirectory = this.chainReader.listAllianceDirectoryState
       ? await this.chainReader.listAllianceDirectoryState()
       : [];
@@ -4182,10 +4183,30 @@ export class SettlementIndexer {
       this.applyAllianceDiplomacySnapshot(allianceDiplomacy);
       this.recordSuccessfulAllianceReconciliation();
       this.setMetadata("lastAllianceStateHealAt", new Date().toISOString());
+      if (runId) this.setMetadata("lastAllianceStateHealRunId", runId);
       this.touch();
     });
 
     return this.snapshot();
+  }
+
+  startAllianceStateHealOnce(runId: string): Promise<IndexerSnapshot> {
+    const normalizedRunId = runId.trim().slice(0, 128);
+    if (!normalizedRunId) return Promise.resolve(this.snapshot());
+    if (this.metadata("lastAllianceStateHealRunId") === normalizedRunId) {
+      return Promise.resolve(this.snapshot());
+    }
+    if (this.allianceStateHealPromise) return this.allianceStateHealPromise;
+
+    this.allianceStateHealPromise = this.seedCurrentAllianceState(normalizedRunId)
+      .catch((error) => {
+        this.recordReconciliationError(error);
+        throw error;
+      })
+      .finally(() => {
+        this.allianceStateHealPromise = null;
+      });
+    return this.allianceStateHealPromise;
   }
 
   async syncCanonicalFleetMissions(reason = "periodic"): Promise<IndexerSnapshot> {

@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
+import {Vm} from "forge-std/Vm.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import {IVeydriftAllianceGame, VeydriftAllianceSystem} from "../src/VeydriftAllianceSystem.sol";
@@ -527,9 +528,29 @@ contract VeydriftAllianceSystemTest is Test {
     }
 
     function testAllianceCreationInvitesRolesAndPublicMembers() public {
+        vm.recordLogs();
         vm.prank(leader);
         uint256 allianceId =
             alliances.createAlliance("VDFT", "Veydrift Union", "Discord: https://discord.gg/vdft");
+
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 profileTopic = keccak256("AllianceProfileUpdated(uint256,string,string,string)");
+        bool foundCanonicalProfile = false;
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (
+                logs[i].emitter == address(alliances) && logs[i].topics.length == 2
+                    && logs[i].topics[0] == profileTopic
+            ) {
+                assertEq(uint256(logs[i].topics[1]), allianceId);
+                (string memory eventTag, string memory eventName, string memory eventDescription) =
+                    abi.decode(logs[i].data, (string, string, string));
+                assertEq(eventTag, "VDFT");
+                assertEq(eventName, "Veydrift Union");
+                assertEq(eventDescription, "Discord: https://discord.gg/vdft");
+                foundCanonicalProfile = true;
+            }
+        }
+        assertTrue(foundCanonicalProfile, "creation must emit the full canonical profile");
 
         VeydriftAllianceSystem.Alliance memory profile = alliances.allianceProfile(allianceId);
         VeydriftAllianceSystem.Membership memory leaderMembership = alliances.allianceOf(leader);

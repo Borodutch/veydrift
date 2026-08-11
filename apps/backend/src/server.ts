@@ -493,6 +493,16 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         console.error("Veydrift canonical resource-state heal failed", error);
       });
   }
+  if (isWriter && loaded.config.allianceStateHealRunId && indexer && loaded.problems.length === 0) {
+    // Explicit, idempotent operator repair for the indexed alliance directory. This reads the
+    // canonical profiles inside the active writer so historical descriptions omitted from the
+    // legacy AllianceCreated event are repaired without an external SQLite writer.
+    void indexer
+      .startAllianceStateHealOnce(loaded.config.allianceStateHealRunId)
+      .catch((error) => {
+        console.error("Veydrift alliance-state heal failed", error);
+      });
+  }
   if (isWriter && indexer && typeof indexer.checkpointWal === "function" && loaded.problems.length === 0) {
     const checkpointWal = () => {
       try {
@@ -2612,6 +2622,10 @@ function cacheableJsonRequestTtlMs(request: Request, url: URL): number {
   // Overview is the canonical combined wallet snapshot used by live chain-event refreshes. It must
   // advance resources and fleet visibility from the same committed DB state, never a cached copy.
   if (url.pathname.match(/^\/wallet\/[^/]+\/overview$/)) return 0;
+  // Alliance writes are confirmed against this indexed projection. Do not let an owner see a
+  // cached empty description after the profile event has already committed.
+  if (url.pathname.match(/^\/wallet\/[^/]+\/alliance$/)) return 0;
+  if (url.pathname.match(/^\/alliance\/[0-9]+$/)) return 0;
   if (cacheableWalletSnapshotPath(url.pathname)) return 15_000;
   if (url.pathname.startsWith("/wallet/")) return 5_000;
   if (url.pathname.match(/^\/universe\/galaxies\/[0-9]+\/systems\/[0-9]+$/)) return 30_000;

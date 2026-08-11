@@ -469,6 +469,11 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
         _addMember(allianceId, msg.sender, AllianceRole.Owner);
 
         emit AllianceCreated(allianceId, msg.sender, tag, name);
+        // AllianceCreated predates the public description field and intentionally keeps its
+        // backwards-compatible topic. Emit the canonical full-profile event in the same
+        // transaction so event-sourced readers materialize the description on creation just as
+        // they already do for later profile edits.
+        emit AllianceProfileUpdated(allianceId, tag, name, description);
     }
 
     function updateAllianceProfile(

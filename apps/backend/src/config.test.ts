@@ -98,6 +98,17 @@ describe("backend config", () => {
     expect(result.config.resourceStateHealRunId).toBe("research-resource-heal-20260728");
   });
 
+  test("normalizes the explicit in-writer alliance-heal run id", () => {
+    const result = loadBackendConfig({
+      VEYDRIFT_ALLIANCE_STATE_HEAL_RUN_ID: "  alliance-profile-description-v1  ",
+      VEYDRIFT_GAME_CONTRACT_ADDRESS: "0x3333333333333333333333333333333333333333",
+      VEYDRIFT_RPC_URL: "https://example.invalid/rpc"
+    });
+
+    expect(result.problems).toEqual([]);
+    expect(result.config.allianceStateHealRunId).toBe("alliance-profile-description-v1");
+  });
+
   test("uses a referral-specific history boundary and defaults it to the shared index boundary", () => {
     const defaults = loadBackendConfig({
       VEYDRIFT_GAME_CONTRACT_ADDRESS: "0x3333333333333333333333333333333333333333",

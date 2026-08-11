@@ -130,6 +130,8 @@ export type AllianceProfileExpectation = {
   description: string;
 };
 
+export type AllianceCreationExpectation = Omit<AllianceProfileExpectation, "allianceId">;
+
 export type HydratedWalletPlanetSnapshot = WalletPlanetSyncSnapshot & {
   selectedPlanet: ManagedPlanetResponse | NonNullable<WalletSettlementResponse["planet"]>;
 };
@@ -361,6 +363,18 @@ export function isAllianceProfileUpdated(
     return false;
   }
 
+  return profile.tag === expectation.tag
+    && profile.name === expectation.name
+    && profile.description === expectation.description;
+}
+
+export function isAllianceCreated(
+  snapshot: ChainAllianceState,
+  expectation: AllianceCreationExpectation,
+): boolean {
+  const allianceId = snapshot.membership.allianceId;
+  const profile = snapshot.profile;
+  if (!profile || profile.active !== true || allianceId === "0") return false;
   return profile.tag === expectation.tag
     && profile.name === expectation.name
     && profile.description === expectation.description;
@@ -883,6 +897,32 @@ export async function waitForAllianceProfileState(
   }
 
   throw new Error(allianceProfileUpdateTimeoutMessage(latest, expectation, lastError));
+}
+
+export async function waitForAllianceCreationState(
+  load: () => Promise<ChainAllianceState>,
+  expectation: AllianceCreationExpectation,
+  options: WaitOptions = {},
+): Promise<ChainAllianceState> {
+  const attempts = options.attempts ?? DEFAULT_POST_TRANSACTION_REFRESH_ATTEMPTS;
+  const intervalMs = options.intervalMs ?? DEFAULT_POST_TRANSACTION_REFRESH_INTERVAL_MS;
+  const delay = options.delay ?? defaultDelay;
+  let latest: ChainAllianceState | undefined;
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      latest = await load();
+      lastError = undefined;
+      if (isAllianceCreated(latest, expectation)) return latest;
+    } catch (error) {
+      lastError = error;
+    }
+    if (attempt < attempts - 1) await delay(intervalMs);
+  }
+
+  const cause = lastError instanceof Error ? ` Last read failed: ${lastError.message}` : "";
+  throw new Error(`Alliance creation confirmed, but its public profile is still syncing in the game API.${cause}`);
 }
 
 export async function waitForMissionLaunchState(
