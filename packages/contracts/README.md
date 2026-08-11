@@ -131,7 +131,7 @@ Fleet missions:
 - Arrivals are lazy: call `resolveFleetMission(missionId)` after `fleetMission(missionId).arrivalAt` to settle the target and resolve the mission.
 - Missions that return must later call `completeFleetMissionReturn(missionId)` after `fleetMission(missionId).returnAt` to land surviving ships and cargo.
 - `fleetMission(missionId)` is public and exposes owner, origin, target, timing, cargo, fuel, and status for every mission. `FleetMissionCargo` and `FleetMissionShips` expose the launch manifest so hostile inbound and returning fleets are indexable from contract truth.
-- The recall deadline is `arrivalAt - FLEET_RECALL_CUTOFF_SECONDS`. `recallFleetMission(missionId)` must be called by that deadline, spends an additional `FLEET_RECALL_COST_BPS` share of the launch fuel from the origin planet, and keeps the recalled fleet publicly visible until it lands. Original launch fuel remains spent.
+- The recall deadline is `arrivalAt - FLEET_RECALL_CUTOFF_SECONDS`. `recallFleetMission(missionId)` must be called by that deadline and keeps the recalled fleet publicly visible until it lands. Mission fuel is paid in full at dispatch; Recall neither refunds fuel nor charges any additional Deuterium.
 
 Moon chance:
 

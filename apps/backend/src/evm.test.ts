@@ -2018,11 +2018,9 @@ describe("fleet mission cargo vs loot", () => {
   });
 });
 
-// VEY-KANEO-424: FleetMissionRecalled is the only event that carries a recall cost, so a still-in-
-// flight Outbound fleet used to decode with recallCost: null, which made the Mission Detail page hide
-// the Recall button and read "Not recallable". The decoder now projects the contract's deterministic
-// recall cost (floor(fuelCost * 2500 / 10000), min 1 deuterium when any fuel was spent) for Outbound
-// fleets, while leaving the authoritative emitted cost for recalled fleets and null elsewhere.
+// FleetMissionRecalled is the only event that carries a recall cost, so Outbound fleets carry the
+// explicit zero-cost recall projection. Dispatch fuel is the complete fuel bill; a real Recall also
+// emits zero. Returning fleets stay null because Recall no longer applies.
 describe("projected fleet recall cost", () => {
   const owner = "0x0000000000000000000000000000000000000abc" as Address;
 
@@ -2039,11 +2037,10 @@ describe("projected fleet recall cost", () => {
     ];
   }
 
-  test("projects 25% of fuel cost for an outbound fleet that has not been recalled", () => {
+  test("projects zero additional fuel for an outbound fleet that has not been recalled", () => {
     const mission = decodeFleetMissionLogs(launchAndCargo(1n, 200n)).get("1");
     expect(mission?.status).toBe("Outbound");
-    // floor(200 * 2500 / 10000) = 50 deuterium.
-    expect(mission?.recallCost).toBe("50");
+    expect(mission?.recallCost).toBe("0");
   });
 
   test("keeps every launch when one transaction emits multiple transport-style mission event sets", () => {
@@ -2058,23 +2055,22 @@ describe("projected fleet recall cost", () => {
     expect(missions.get("702")?.fuelCost).toBe("25");
   });
 
-  test("floors a tiny-but-nonzero fuel cost to 1 deuterium, mirroring the contract", () => {
+  test("keeps Recall free even for a tiny-but-nonzero dispatch fuel cost", () => {
     const mission = decodeFleetMissionLogs(launchAndCargo(2n, 1n)).get("2");
-    // floor(1 * 2500 / 10000) = 0, but the contract charges a 1 deuterium minimum.
-    expect(mission?.recallCost).toBe("1");
+    expect(mission?.recallCost).toBe("0");
   });
 
-  test("keeps the authoritative emitted cost for a recalled fleet", () => {
+  test("keeps the authoritative zero cost emitted for a recalled fleet", () => {
     const logs: RpcLog[] = [
       ...launchAndCargo(3n, 200n),
       makeLog({
         topics: [fleetMissionRecalledTopic, topic(3n), addressTopic(owner)],
-        data: dataWords([word(1_900_000_500n), word(50n)])
+        data: dataWords([word(1_900_000_500n), word(0n)])
       })
     ];
     const mission = decodeFleetMissionLogs(logs).get("3");
     expect(mission?.status).toBe("Recalled");
-    expect(mission?.recallCost).toBe("50");
+    expect(mission?.recallCost).toBe("0");
     expect(mission?.recallProvenance).toBe("FleetMissionRecalled");
   });
 

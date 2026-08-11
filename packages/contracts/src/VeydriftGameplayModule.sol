@@ -472,8 +472,6 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         if (currentTime > recallDeadline) revert FleetRecallCutoffPassed(recallDeadline);
 
         _settleResources(mission.originPlanetId);
-        uint128 recallCost = _fleetRecallCost(mission.fuelCost);
-        _spend(mission.originPlanetId, Resources({metal: 0, crystal: 0, deuterium: recallCost}));
 
         uint64 elapsed = uint64(
             VeydriftAntiRaidPrimitives.recallReturnSeconds(currentTime - mission.departureAt)
@@ -485,7 +483,9 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             _untrackCounterplayMissionResolution(mission.randomnessRequestId, mission);
         }
 
-        emit FleetMissionRecalled(missionId, msg.sender, mission.returnAt, recallCost);
+        // OGame parity: mission fuel is paid in full at dispatch. Recalling only turns the fleet
+        // around; it neither refunds fuel nor charges the origin any additional deuterium.
+        emit FleetMissionRecalled(missionId, msg.sender, mission.returnAt, 0);
         emit FleetMissionReturnExposed(
             missionId,
             msg.sender,
@@ -749,12 +749,6 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             speedPercent,
             slowestSpeed
         );
-    }
-
-    function _fleetRecallCost(uint128 fuelCost) private pure returns (uint128) {
-        if (fuelCost == 0) return 0;
-        uint128 cost = _toUint128((uint256(fuelCost) * FLEET_RECALL_COST_BPS) / BPS);
-        return cost == 0 ? 1 : cost;
     }
 
     function _missionShipQuantity(MissionShips memory ships, Ship ship)

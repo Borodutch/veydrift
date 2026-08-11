@@ -529,10 +529,10 @@ describe("MissionDetailPage recall cost row", () => {
 
   test("keeps the recall cost row for an in-flight outbound mission still within the recall window", () => {
     // arrival far in the future (well before the 60s cutoff) so the fleet is still recallable.
-    const text = renderDetailText({ mission: transportMission({ status: "Outbound", recallCost: "50", arrivalAt: "1770005000", returnAt: "1770006000" }) });
+    const text = renderDetailText({ mission: transportMission({ status: "Outbound", recallCost: "0", arrivalAt: "1770005000", returnAt: "1770006000" }) });
 
     expect(text).toContain("Recall cost");
-    expect(text).toContain("50 deuterium");
+    expect(text).toContain("No additional deuterium");
   });
 
   // VEY-KANEO-424 acceptance #2: past the 60s recall cutoff (but before arrival) the fleet can no
@@ -541,18 +541,18 @@ describe("MissionDetailPage recall cost row", () => {
   test("shows Not recallable for an outbound fleet past the 60s recall cutoff", () => {
     // renderDetailText fixes now at 1_770_001_000_000 ms (1_770_001_000 s); arrival 30s later is
     // inside the 60s cutoff window, so recall is no longer possible.
-    const text = renderDetailText({ mission: transportMission({ status: "Outbound", recallCost: "50", arrivalAt: "1770001030", returnAt: "1770001330" }) });
+    const text = renderDetailText({ mission: transportMission({ status: "Outbound", recallCost: "0", arrivalAt: "1770001030", returnAt: "1770001330" }) });
 
     expect(text).toContain("Recall cost");
     expect(text).toContain("Not recallable");
-    expect(text).not.toContain("50 deuterium");
+    expect(text).not.toContain("No additional deuterium");
   });
 
   test("keeps the recall cost row for a recalled fleet still heading home", () => {
-    const text = renderDetailText({ mission: transportMission({ status: "Recalled", recallCost: null }) });
+    const text = renderDetailText({ mission: transportMission({ status: "Recalled", recallCost: "0" }) });
 
     expect(text).toContain("Recall cost");
-    expect(text).toContain("Not recallable");
+    expect(text).toContain("No additional deuterium");
   });
 });
 

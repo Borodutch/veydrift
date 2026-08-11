@@ -6664,7 +6664,7 @@ describe("SettlementIndexer", () => {
         status: "Outbound",
         defenseHoldUntil: "4000007200",
         needsResolution: false,
-        recallCost: "25"
+        recallCost: "0"
       });
       expect(stationed?.asOfNow?.arrived).toBe(true);
       expect(stationed?.asOfNow?.returned).toBe(false);
@@ -7477,7 +7477,7 @@ describe("SettlementIndexer", () => {
       status: "Outbound",
       missionType: "Transport",
       fuelCost: "4",
-      recallCost: "1",
+      recallCost: "0",
       transactionHash: "0xtransport1448"
     });
   });

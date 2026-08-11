@@ -13,7 +13,6 @@ library VeydriftAntiRaidPrimitives {
     uint8 public constant BASE_FLEET_SLOTS = 1;
     uint8 public constant FLEET_SLOTS_PER_COMPUTER_LEVEL = 1;
     uint32 public constant MIN_RECALL_SECONDS = 60;
-    uint16 public constant RECALL_FUEL_REFUND_BPS = 0;
 
     uint16 public constant BASE_RAID_LOOT_BPS = 5_000;
     uint16 public constant PROTECTED_STORAGE_BPS = 0;
@@ -141,10 +140,6 @@ library VeydriftAntiRaidPrimitives {
             elapsedOutboundSeconds < MIN_RECALL_SECONDS
                 ? MIN_RECALL_SECONDS
                 : elapsedOutboundSeconds;
-    }
-
-    function recallFuelRefund(uint256 fuelCost) internal pure returns (uint256) {
-        return (fuelCost * RECALL_FUEL_REFUND_BPS) / BPS;
     }
 
     function raidableResource(

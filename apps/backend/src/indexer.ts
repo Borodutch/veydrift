@@ -10549,7 +10549,7 @@ export class SettlementIndexer {
       returnAt: row.return_at,
       fuelCost,
       cargo,
-      recallCost: row.status_id === 1 && mergedBase.recallCost === null ? projectedFleetRecallCost(fuelCost) : mergedBase.recallCost,
+      recallCost: row.status_id === 1 && mergedBase.recallCost === null ? projectedFleetRecallCost() : mergedBase.recallCost,
       ...(row.randomness_request_id ? { randomnessRequestId: row.randomness_request_id } : {})
     };
   }
@@ -12320,11 +12320,9 @@ function fleetSlotSettlementDueAt(mission: FleetMissionSummary): number {
 
 const lazyLaunchSettleableOutboundMissionTypes = new Set(["Transport", "Deploy", "Attack", "Harvest"]);
 
-function projectedFleetRecallCost(fuelCost: string): string {
-  const fuel = BigInt(fuelCost);
-  if (fuel <= 0n) return "0";
-  const cost = (fuel * 2_500n) / 10_000n;
-  return (cost === 0n ? 1n : cost).toString();
+// Dispatch fuel is the complete mission fuel bill; Recall has no extra debit.
+function projectedFleetRecallCost(): string {
+  return "0";
 }
 
 function parseJson<T>(value: string, fallback: T): T {
