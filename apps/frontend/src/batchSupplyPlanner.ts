@@ -66,24 +66,34 @@ export function buildBatchSupplyPlan({
   targetCoordinates,
   requested,
   selectedPlanetIds,
+  sourceCargoOverrides = {},
   sources,
   maxOrders = Number.MAX_SAFE_INTEGER,
 }: {
   targetCoordinates: Coordinates;
   requested: Partial<SupplyResources>;
   selectedPlanetIds: ReadonlySet<string>;
+  /** Exact per-source cargo chosen in the Supply modal. Sources without an override keep automatic allocation. */
+  sourceCargoOverrides?: Readonly<Record<string, Partial<SupplyResources>>>;
   sources: readonly BatchSupplySource[];
   maxOrders?: number;
 }): BatchSupplyPlan {
   const normalizedRequested = normalizeSupplyResources(requested);
   const remaining = { ...normalizedRequested };
+  const delivered = emptySupplyResources();
   const orders: BatchSupplyOrder[] = [];
   const blockedSources: BatchSupplyPlan["blockedSources"] = [];
   // Prefer the shortest routes by default: they consume less fuel and arrive sooner. The UI still
   // shows every allocation and lets the player deselect any source before submitting.
   const selected = sources
     .filter((source) => selectedPlanetIds.has(source.planetId))
-    .sort((left, right) => fleetMissionDistance(left.coordinates, targetCoordinates) - fleetMissionDistance(right.coordinates, targetCoordinates));
+    // Apply player-edited shipments first, then use nearby sources to automatically fill the balance.
+    .sort((left, right) => {
+      const leftManual = sourceCargoOverrides[left.planetId] === undefined ? 0 : 1;
+      const rightManual = sourceCargoOverrides[right.planetId] === undefined ? 0 : 1;
+      if (leftManual !== rightManual) return rightManual - leftManual;
+      return fleetMissionDistance(left.coordinates, targetCoordinates) - fleetMissionDistance(right.coordinates, targetCoordinates);
+    });
   const boundedMaxOrders = Math.max(0, Math.trunc(maxOrders));
   const sourceLimitReached = selected.length > boundedMaxOrders;
 
@@ -92,13 +102,20 @@ export function buildBatchSupplyPlan({
       blockedSources.push({ planetId: source.planetId, reason: source.unavailableReason });
       continue;
     }
-    if (resourceTotal(remaining) === 0) break;
+    const manualCargo = sourceCargoOverrides[source.planetId];
+    if (resourceTotal(remaining) === 0 && manualCargo === undefined) continue;
 
-    const requestedFromSource = {
-      metal: Math.min(remaining.metal, safeAmount(source.resources.metal)),
-      crystal: Math.min(remaining.crystal, safeAmount(source.resources.crystal)),
-      deuterium: Math.min(remaining.deuterium, safeAmount(source.resources.deuterium)),
-    };
+    const requestedFromSource = manualCargo === undefined
+      ? {
+        metal: Math.min(remaining.metal, safeAmount(source.resources.metal)),
+        crystal: Math.min(remaining.crystal, safeAmount(source.resources.crystal)),
+        deuterium: Math.min(remaining.deuterium, safeAmount(source.resources.deuterium)),
+      }
+      : {
+        metal: Math.min(safeAmount(manualCargo.metal), safeAmount(source.resources.metal)),
+        crystal: Math.min(safeAmount(manualCargo.crystal), safeAmount(source.resources.crystal)),
+        deuterium: Math.min(safeAmount(manualCargo.deuterium), safeAmount(source.resources.deuterium)),
+      };
     // A colony should contribute what it can carry, rather than being skipped just because the
     // remaining total is larger than its entire cargo fleet. Keep the allocation deterministic so
     // the preview exactly matches the generated child missions.
@@ -120,12 +137,14 @@ export function buildBatchSupplyPlan({
       fuelCost: loadout.fuelCost,
       travelSeconds: loadout.travelSeconds,
     });
-    remaining.metal -= loadout.cargo.metal;
-    remaining.crystal -= loadout.cargo.crystal;
-    remaining.deuterium -= loadout.cargo.deuterium;
+    delivered.metal += loadout.cargo.metal;
+    delivered.crystal += loadout.cargo.crystal;
+    delivered.deuterium += loadout.cargo.deuterium;
+    remaining.metal = Math.max(0, remaining.metal - loadout.cargo.metal);
+    remaining.crystal = Math.max(0, remaining.crystal - loadout.cargo.crystal);
+    remaining.deuterium = Math.max(0, remaining.deuterium - loadout.cargo.deuterium);
   }
 
-  const delivered = subtractResources(normalizedRequested, remaining);
   return {
     orders,
     requested: normalizedRequested,
@@ -231,14 +250,6 @@ function minimumCargoFleet(
     if (fleetMissionAvailableCargoCapacity(ships, distance, driveLevels) >= cargoTotal) return ships;
   }
   return fleetMissionAvailableCargoCapacity(ships, distance, driveLevels) >= cargoTotal ? ships : null;
-}
-
-function subtractResources(left: SupplyResources, right: SupplyResources): SupplyResources {
-  return {
-    metal: Math.max(0, left.metal - right.metal),
-    crystal: Math.max(0, left.crystal - right.crystal),
-    deuterium: Math.max(0, left.deuterium - right.deuterium),
-  };
 }
 
 function resourceTotal(resources: SupplyResources): number {

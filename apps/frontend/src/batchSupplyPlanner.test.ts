@@ -78,4 +78,41 @@ describe("buildBatchSupplyPlan", () => {
     expect(plan.sourceLimitReached).toBe(true);
     expect(plan.orders.length).toBeLessThanOrEqual(3);
   });
+
+  test("uses a player-edited source shipment before automatically filling the balance", () => {
+    const sources = [
+      source({ planetId: "near", coordinates: { galaxy: 1, system: 100, position: 7 }, resources: { metal: 10_000, crystal: 0, deuterium: 5_000 } }),
+      source({ planetId: "far", coordinates: { galaxy: 1, system: 102, position: 7 }, resources: { metal: 10_000, crystal: 0, deuterium: 5_000 } }),
+    ];
+    const plan = buildBatchSupplyPlan({
+      targetCoordinates: target,
+      requested: { metal: 8_000 },
+      selectedPlanetIds: new Set(["near", "far"]),
+      sourceCargoOverrides: { far: { metal: 1_500 } },
+      sources,
+    });
+
+    expect(plan.orders.find((order) => order.originPlanetId === "far")?.cargo.metal).toBe(1_500);
+    expect(plan.delivered.metal).toBe(8_000);
+    expect(plan.orders.find((order) => order.originPlanetId === "near")?.cargo.metal).toBe(6_500);
+  });
+
+  test("caps manual shipments to the source reserve and keeps missing resources nonnegative", () => {
+    const constrained = source({
+      resources: { metal: 100, crystal: 100, deuterium: 5_000 },
+      ships: { largeCargo: 1 },
+    });
+    const plan = buildBatchSupplyPlan({
+      targetCoordinates: target,
+      requested: { metal: 100, crystal: 100 },
+      selectedPlanetIds: new Set([constrained.planetId]),
+      sourceCargoOverrides: { [constrained.planetId]: { metal: 200, crystal: 0 } },
+      sources: [constrained],
+    });
+
+    expect(plan.orders[0]?.cargo.metal).toBe(100);
+    expect(plan.orders[0]?.cargo.crystal).toBe(0);
+    expect(plan.missing).toEqual({ metal: 0, crystal: 100, deuterium: 0 });
+    expect(plan.delivered).toEqual({ metal: 100, crystal: 0, deuterium: 0 });
+  });
 });
