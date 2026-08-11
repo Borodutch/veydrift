@@ -47,10 +47,12 @@ export function BatchSupplyModal({
     deuterium: "",
   });
   const [selectedSourceIds, setSelectedSourceIds] = useState<Set<string>>(new Set());
+  const [sourceCargoOverrides, setSourceCargoOverrides] = useState<Record<string, Partial<SupplyResources>>>({});
 
   useEffect(() => {
     setRequested({ metal: "", crystal: "", deuterium: "" });
     setSelectedSourceIds(new Set());
+    setSourceCargoOverrides({});
   }, [target.planetId]);
 
   useEffect(() => {
@@ -70,9 +72,10 @@ export function BatchSupplyModal({
     targetCoordinates: { galaxy: target.galaxy, system: target.system, position: target.position },
     requested: requestedNumbers,
     selectedPlanetIds: selected,
+    sourceCargoOverrides,
     sources,
     maxOrders: maxSources,
-  }), [requestedNumbers, selected, sources, target.galaxy, target.position, target.system]);
+  }), [requestedNumbers, selected, sourceCargoOverrides, sources, target.galaxy, target.position, target.system]);
   const orderByOrigin = useMemo(() => new Map(plan.orders.map((order) => [order.originPlanetId, order])), [plan.orders]);
 
   const missingTotal = resourceTotal(plan.missing);
@@ -103,6 +106,23 @@ export function BatchSupplyModal({
       if (next.has(planetId)) next.delete(planetId);
       else if (next.size < maxSources) next.add(planetId);
       return next;
+    });
+  };
+
+  const updateSourceCargo = (source: BatchSupplySource, resource: keyof SupplyResources, value: string) => {
+    setSourceCargoOverrides((current) => {
+      const existing = orderByOrigin.get(source.planetId)?.cargo ?? current[source.planetId] ?? emptySupplyResources();
+      return {
+        ...current,
+        [source.planetId]: { ...existing, [resource]: inputAmount(numericInput(value)) },
+      };
+    });
+  };
+
+  const restoreAutomaticSourceCargo = (planetId: string) => {
+    setSourceCargoOverrides((current) => {
+      const { [planetId]: _removed, ...remaining } = current;
+      return remaining;
     });
   };
 
@@ -160,24 +180,54 @@ export function BatchSupplyModal({
               const checked = selected.has(source.planetId);
               const disabled = Boolean(source.unavailableReason) || (!checked && selected.size >= maxSources);
               const order = orderByOrigin.get(source.planetId);
+              const requestedSourceCargo = sourceCargoOverrides[source.planetId];
+              const sourceCargo = order?.cargo ?? requestedSourceCargo ?? emptySupplyResources();
+              const hasManualCargo = sourceCargoOverrides[source.planetId] !== undefined;
+              const shipmentAdjusted = requestedSourceCargo !== undefined && (
+                sourceCargo.metal !== requestedSourceCargo.metal
+                || sourceCargo.crystal !== requestedSourceCargo.crystal
+                || sourceCargo.deuterium !== requestedSourceCargo.deuterium
+              );
               const distance = fleetMissionDistance(source.coordinates, { galaxy: target.galaxy, system: target.system, position: target.position });
               const eta = order?.travelSeconds ?? fleetMissionTravelSeconds(distance, source.ships, source.driveLevels);
               return (
-                <label className={`grid cursor-pointer grid-cols-[auto_minmax(0,1fr)] items-start gap-3 rounded-lg border p-3 ${checked ? "border-cyan-300/35 bg-cyan-300/5" : "border-white/10 bg-black/15"} ${disabled ? "cursor-not-allowed opacity-60" : ""}`} key={source.planetId}>
-                  <input checked={checked} className="mt-1" disabled={disabled} onChange={() => toggleSource(source.planetId)} type="checkbox" />
+                <div className={`grid grid-cols-[auto_minmax(0,1fr)] items-start gap-3 rounded-lg border p-3 ${checked ? "border-cyan-300/35 bg-cyan-300/5" : "border-white/10 bg-black/15"} ${disabled ? "cursor-not-allowed opacity-60" : ""}`} key={source.planetId}>
+                  <label className="cursor-pointer">
+                    <input checked={checked} className="mt-1" disabled={disabled} onChange={() => toggleSource(source.planetId)} type="checkbox" />
+                    <span className="sr-only">Select {source.label}</span>
+                  </label>
                   <span className="min-w-0 flex-1">
                     <span className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
                       <span className="truncate text-sm font-medium text-white">{source.label}</span>
                       {order ? <span className="text-xs text-cyan-100">Sends {format(resourceTotal(order.cargo))} · Fuel {format(order.fuelCost)} D · {formatDuration(eta)}</span> : null}
                     </span>
                     <span className="mt-0.5 block text-xs text-slate-400">M {format(source.resources.metal)} · C {format(source.resources.crystal)} · D {format(source.resources.deuterium)}</span>
+                    {checked ? (
+                      <span className="mt-2 grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto] items-center gap-1.5" aria-label={`${source.label} shipment`}>
+                        {(["metal", "crystal", "deuterium"] as const).map((resource) => (
+                          <label className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-1 rounded border border-white/10 bg-black/20 px-1.5 py-1" key={resource}>
+                            <span className="text-[10px] font-bold text-slate-400">{resource === "metal" ? "M" : resource === "crystal" ? "C" : "D"}</span>
+                            <input
+                              aria-label={`${source.label} ${resource} to send`}
+                              className="min-w-0 w-full bg-transparent font-mono text-xs text-white outline-none placeholder:text-slate-600"
+                              inputMode="numeric"
+                              min="0"
+                              onInput={(event) => updateSourceCargo(source, resource, event.currentTarget.value)}
+                              value={String(sourceCargo[resource])}
+                            />
+                          </label>
+                        ))}
+                        {hasManualCargo ? <button className="min-h-7 rounded border border-white/15 px-1.5 text-[10px] font-semibold text-slate-300 hover:bg-white/10" onClick={() => restoreAutomaticSourceCargo(source.planetId)} type="button">Auto</button> : <span aria-hidden="true" />}
+                      </span>
+                    ) : null}
+                    {shipmentAdjusted ? <span className="mt-1 block text-[11px] text-amber-200">Adjusted to available stock, cargo capacity, and fuel.</span> : null}
                     <span className="mt-2 flex flex-wrap items-center gap-1.5">
                       <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Fleet used</span>
                       <SupplyFleetIcons ships={order?.ships} />
                     </span>
                     {source.unavailableReason ? <span className="block text-xs text-amber-200">{source.unavailableReason}</span> : null}
                   </span>
-                </label>
+                </div>
               );
             })}
           </div>
