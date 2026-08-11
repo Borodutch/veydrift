@@ -262,6 +262,7 @@ import {
   sendLaunchBodyFleetMissionTransaction,
   sendLaunchDefenseHoldTransaction,
   sendLaunchFleetMissionTransaction,
+  sendLaunchTransportBatchTransaction,
   sendJoinAttackMissionTransaction,
   encodeColonizationTargetId,
   sendJumpGateJumpTransaction,
@@ -7011,16 +7012,14 @@ export function PlayableMvpApp({
     }
     setBatchSupplyError(undefined);
     void (async () => {
-      let launched = 0;
-      for (const [index, order] of orders.entries()) {
-        const completed = await runGalaxyTransaction(`Supply transport ${index + 1}/${orders.length}`, () => sendLaunchFleetMissionTransaction(
-          provider,
-          account,
-          gameContract,
-          {
+      const completed = await runGalaxyTransaction(`Supply ${orders.length} transport${orders.length === 1 ? "" : "s"}`, () => sendLaunchTransportBatchTransaction(
+        provider,
+        account,
+        gameContract,
+        {
+          targetPlanetId: target.planetId,
+          orders: orders.map((order) => ({
             originPlanetId: order.originPlanetId,
-            targetPlanetId: target.planetId,
-            missionType: 0,
             ships: order.ships,
             cargo: {
               metal: String(order.cargo.metal),
@@ -7028,29 +7027,11 @@ export function PlayableMvpApp({
               deuterium: String(order.cargo.deuterium),
             },
             speedPercent: 100,
-          },
-        ), {
-          syncMissionLaunch: true,
-          validateShipInventory: {
-            originPlanetId: order.originPlanetId,
-            ships: order.ships,
-          },
-        });
-        if (!completed) {
-          if (launched > 0) {
-            setBatchSupplyTarget(null);
-            setGalaxyAction({
-              status: "error",
-              label: `${launched} of ${orders.length} supply transports launched. The remaining transports were not sent.`,
-            });
-          } else {
-            setBatchSupplyError("No supply transports were sent. Check the wallet error and try again.");
-          }
-          return;
-        }
-        launched += 1;
-      }
-      setBatchSupplyTarget(null);
+          })),
+        },
+      ), { syncMissionLaunch: true });
+      if (completed) setBatchSupplyTarget(null);
+      else setBatchSupplyError("The one-call supply transaction was not sent. Check the wallet error and try again.");
     })();
   }, [account, batchSupplyTarget, gameContract, provider, runGalaxyTransaction]);
 
