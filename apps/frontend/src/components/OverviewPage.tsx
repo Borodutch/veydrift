@@ -961,7 +961,7 @@ function MyPlanetActionButtons({
       {onSupply ? (
         <button
           aria-label="Supply this planet"
-          className="inline-flex h-10 w-10 items-center justify-center rounded border border-cyan-300/35 bg-cyan-300/10 text-cyan-100 transition hover:bg-cyan-300/20 sm:h-8 sm:w-8"
+          className="inline-flex h-10 w-10 items-center justify-center rounded border border-signal/30 bg-signal/10 text-signal transition hover:bg-signal/20 sm:h-8 sm:w-8"
           onClick={onSupply}
           title="Supply this planet"
           type="button"

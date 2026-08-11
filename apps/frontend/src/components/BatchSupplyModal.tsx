@@ -76,6 +76,7 @@ export function BatchSupplyModal({
       latest: Math.max(...plan.orders.map((order) => order.travelSeconds)),
     }
     : undefined;
+  const selectableSourceCount = Math.min(maxSources, sources.length);
 
   const setMax = (resource: keyof SupplyResources) => {
     const maximum = buildBatchSupplyPlan({
@@ -101,10 +102,10 @@ export function BatchSupplyModal({
     <div
       aria-label={`Supply ${targetLabel}`}
       aria-modal="true"
-      className="modal-backdrop-enter fixed inset-0 z-[100] overflow-y-auto bg-black/75 p-3 backdrop-blur-sm sm:p-6"
+      className="modal-backdrop-enter fixed inset-0 z-[100] grid place-items-center bg-black/75 p-3 backdrop-blur-sm sm:p-6"
       role="dialog"
     >
-      <div className="mx-auto grid w-full max-w-3xl gap-4 rounded-xl border border-cyan-300/25 bg-[#101827] p-4 shadow-2xl sm:p-6">
+      <div className="grid max-h-[calc(100dvh-1.5rem)] w-full max-w-3xl grid-rows-[auto_auto_minmax(0,1fr)_auto] gap-4 overflow-hidden rounded-xl border border-cyan-300/25 bg-[#101827] p-4 shadow-2xl sm:max-h-[calc(100dvh-3rem)] sm:p-6">
         <header className="flex items-start justify-between gap-4">
           <div>
             <div className="flex items-center gap-2 text-cyan-100">
@@ -138,53 +139,57 @@ export function BatchSupplyModal({
           ))}
         </section>
 
-        <section className="grid gap-2" aria-label="Source planets">
+        <section className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] gap-2" aria-label="Source planets">
           <div className="flex items-center justify-between gap-3">
             <h3 className="text-sm font-semibold text-slate-100">Source planets</h3>
-            <span className="text-xs text-slate-400">{selected.size}/{maxSources} selected</span>
+            <span className="text-xs text-slate-400">{selected.size}/{selectableSourceCount} selected</span>
           </div>
-          {loading ? (
-            <div className="flex items-center gap-2 rounded-lg border border-white/10 p-4 text-sm text-slate-300"><LoaderCircle className="animate-spin" size={16} /> Reading cargo fleets…</div>
-          ) : sources.length === 0 ? (
-            <div className="rounded-lg border border-white/10 p-4 text-sm text-slate-300">No other owned planets can supply this target.</div>
-          ) : sources.map((source) => {
-            const checked = selected.has(source.planetId);
-            const disabled = Boolean(source.unavailableReason) || (!checked && selected.size >= maxSources);
-            const order = plan.orders.find((candidate) => candidate.originPlanetId === source.planetId);
-            const distance = fleetMissionDistance(source.coordinates, { galaxy: target.galaxy, system: target.system, position: target.position });
-            const cargoCapacity = fleetMissionAvailableCargoCapacity(source.ships, distance, source.driveLevels);
-            const eta = order?.travelSeconds ?? fleetMissionTravelSeconds(distance, source.ships, source.driveLevels);
-            return (
-              <label className={`flex cursor-pointer items-center gap-3 rounded-lg border p-3 ${checked ? "border-cyan-300/35 bg-cyan-300/5" : "border-white/10 bg-black/15"} ${disabled ? "cursor-not-allowed opacity-60" : ""}`} key={source.planetId}>
-                <input checked={checked} disabled={disabled} onChange={() => toggleSource(source.planetId)} type="checkbox" />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-medium text-white">{source.label}</span>
-                  <span className="block text-xs text-slate-400">M {format(source.resources.metal)} · C {format(source.resources.crystal)} · D {format(source.resources.deuterium)} · Cap {format(cargoCapacity)}</span>
-                  {source.unavailableReason ? <span className="block text-xs text-amber-200">{source.unavailableReason}</span> : null}
-                </span>
-                {order ? <span className="text-right text-xs text-cyan-100">Sends {format(resourceTotal(order.cargo))}<br />Fuel {format(order.fuelCost)} D · {formatDuration(eta)}</span> : null}
-              </label>
-            );
-          })}
+          <div className="grid min-h-0 content-start gap-2 overflow-y-auto pr-1">
+            {loading ? (
+              <div className="flex items-center gap-2 rounded-lg border border-white/10 p-4 text-sm text-slate-300"><LoaderCircle className="animate-spin" size={16} /> Reading cargo fleets…</div>
+            ) : sources.length === 0 ? (
+              <div className="rounded-lg border border-white/10 p-4 text-sm text-slate-300">No other owned planets can supply this target.</div>
+            ) : sources.map((source) => {
+              const checked = selected.has(source.planetId);
+              const disabled = Boolean(source.unavailableReason) || (!checked && selected.size >= maxSources);
+              const order = plan.orders.find((candidate) => candidate.originPlanetId === source.planetId);
+              const distance = fleetMissionDistance(source.coordinates, { galaxy: target.galaxy, system: target.system, position: target.position });
+              const cargoCapacity = fleetMissionAvailableCargoCapacity(source.ships, distance, source.driveLevels);
+              const eta = order?.travelSeconds ?? fleetMissionTravelSeconds(distance, source.ships, source.driveLevels);
+              return (
+                <label className={`flex cursor-pointer items-center gap-3 rounded-lg border p-3 ${checked ? "border-cyan-300/35 bg-cyan-300/5" : "border-white/10 bg-black/15"} ${disabled ? "cursor-not-allowed opacity-60" : ""}`} key={source.planetId}>
+                  <input checked={checked} disabled={disabled} onChange={() => toggleSource(source.planetId)} type="checkbox" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-medium text-white">{source.label}</span>
+                    <span className="block text-xs text-slate-400">M {format(source.resources.metal)} · C {format(source.resources.crystal)} · D {format(source.resources.deuterium)} · Cap {format(cargoCapacity)}</span>
+                    {source.unavailableReason ? <span className="block text-xs text-amber-200">{source.unavailableReason}</span> : null}
+                  </span>
+                  {order ? <span className="text-right text-xs text-cyan-100">Sends {format(resourceTotal(order.cargo))}<br />Fuel {format(order.fuelCost)} D · {formatDuration(eta)}</span> : null}
+                </label>
+              );
+            })}
+          </div>
         </section>
 
-        {!loading && maxSources === 0 ? <p className="rounded border border-amber-300/30 bg-amber-300/10 p-2 text-sm text-amber-100">All fleet slots are currently occupied. Wait for a fleet to return or research Computer Technology before supplying this planet.</p> : null}
-        {plan.sourceLimitReached ? <p className="rounded border border-amber-300/30 bg-amber-300/10 p-2 text-sm text-amber-100">Select at most {maxSources} sources per supply transaction.</p> : null}
-        {plan.blockedSources.length > 0 ? <p className="rounded border border-amber-300/30 bg-amber-300/10 p-2 text-sm text-amber-100">Some selected sources cannot launch: {plan.blockedSources.map((source) => source.reason).join(" ")}</p> : null}
-        {missingTotal > 0 ? <p className="rounded border border-amber-300/30 bg-amber-300/10 p-2 text-sm text-amber-100">Missing: M {format(plan.missing.metal)} · C {format(plan.missing.crystal)} · D {format(plan.missing.deuterium)}. Select more sources or reduce the request.</p> : null}
-        {error ? <p className="rounded border border-red-300/30 bg-red-300/10 p-2 text-sm text-red-100">{error}</p> : null}
+        <div className="grid gap-3">
+          {!loading && maxSources === 0 ? <p className="rounded border border-amber-300/30 bg-amber-300/10 p-2 text-sm text-amber-100">All fleet slots are currently occupied. Wait for a fleet to return or research Computer Technology before supplying this planet.</p> : null}
+          {plan.sourceLimitReached ? <p className="rounded border border-amber-300/30 bg-amber-300/10 p-2 text-sm text-amber-100">Select at most {maxSources} sources per supply transaction.</p> : null}
+          {plan.blockedSources.length > 0 ? <p className="rounded border border-amber-300/30 bg-amber-300/10 p-2 text-sm text-amber-100">Some selected sources cannot launch: {plan.blockedSources.map((source) => source.reason).join(" ")}</p> : null}
+          {missingTotal > 0 ? <p className="rounded border border-amber-300/30 bg-amber-300/10 p-2 text-sm text-amber-100">Missing: M {format(plan.missing.metal)} · C {format(plan.missing.crystal)} · D {format(plan.missing.deuterium)}. Select more sources or reduce the request.</p> : null}
+          {error ? <p className="rounded border border-red-300/30 bg-red-300/10 p-2 text-sm text-red-100">{error}</p> : null}
 
-        <footer className="flex flex-col gap-3 border-t border-white/10 pt-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="text-sm text-slate-300">
-            <strong className="text-white">{plan.orders.length} transport{plan.orders.length === 1 ? "" : "s"}</strong>
-            <span> · M {format(plan.delivered.metal)} · C {format(plan.delivered.crystal)} · D {format(plan.delivered.deuterium)} · Fuel {format(plan.fuelCost)} D</span>
-            {etaRange ? <span> · arrives {formatDuration(etaRange.earliest)}{etaRange.latest === etaRange.earliest ? "" : `–${formatDuration(etaRange.latest)}`}</span> : null}
-          </div>
-          <button className="inline-flex items-center justify-center gap-2 rounded bg-cyan-300 px-4 py-2 text-sm font-bold text-slate-950 disabled:cursor-not-allowed disabled:opacity-50" disabled={!canSubmit} onClick={() => onConfirm(plan.orders)} type="button">
-            <Check aria-hidden="true" size={16} />
-            {actionPending ? "Launching…" : `Launch ${plan.orders.length} transport${plan.orders.length === 1 ? "" : "s"}`}
-          </button>
-        </footer>
+          <footer className="flex flex-col gap-3 border-t border-white/10 pt-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="text-sm text-slate-300">
+              <strong className="text-white">{plan.orders.length} transport{plan.orders.length === 1 ? "" : "s"}</strong>
+              <span> · M {format(plan.delivered.metal)} · C {format(plan.delivered.crystal)} · D {format(plan.delivered.deuterium)} · Fuel {format(plan.fuelCost)} D</span>
+              {etaRange ? <span> · arrives {formatDuration(etaRange.earliest)}{etaRange.latest === etaRange.earliest ? "" : `–${formatDuration(etaRange.latest)}`}</span> : null}
+            </div>
+            <button className="inline-flex items-center justify-center gap-2 rounded bg-cyan-300 px-4 py-2 text-sm font-bold text-slate-950 disabled:cursor-not-allowed disabled:opacity-50" disabled={!canSubmit} onClick={() => onConfirm(plan.orders)} type="button">
+              <Check aria-hidden="true" size={16} />
+              {actionPending ? "Launching…" : `Launch ${plan.orders.length} transport${plan.orders.length === 1 ? "" : "s"}`}
+            </button>
+          </footer>
+        </div>
       </div>
     </div>
   );
