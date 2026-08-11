@@ -4613,8 +4613,8 @@ export async function fetchRiftState(apiUrl: string, wallet: string, planetId?: 
   return fetchWalletJson<ChainRiftState>(apiUrl, wallet, withPlanetId("rift", planetId), "Rift");
 }
 
-export async function fetchAllianceState(apiUrl: string, wallet: string): Promise<ChainAllianceState> {
-  return fetchWalletJson<ChainAllianceState>(apiUrl, wallet, "alliance", "Alliance");
+export async function fetchAllianceState(apiUrl: string, wallet: string, options: WalletReadOptions = {}): Promise<ChainAllianceState> {
+  return fetchWalletJson<ChainAllianceState>(apiUrl, wallet, "alliance", "Alliance", options);
 }
 
 export async function fetchPlayerProfile(apiUrl: string, wallet: string): Promise<PlayerProfile> {

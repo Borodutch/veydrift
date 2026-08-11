@@ -208,6 +208,7 @@ import {
   waitForHydratedWalletPlanet,
   waitForAllianceApplicationCleared,
   waitForAllianceProfileState,
+  waitForAllianceCreationState,
   waitForMissionLaunchState,
   waitForFleetVisibilityIndexedThrough,
   waitForIndexedResourceState,
@@ -7230,6 +7231,9 @@ export function PlayableMvpApp({
       tag,
       name,
       description,
+    ), () => waitForAllianceCreationState(
+      async () => backendData!.alliance(account, { fresh: true }),
+      { tag, name, description },
     ));
   }, [account, allianceContract, provider, runAllianceTransaction]);
 
@@ -7310,7 +7314,7 @@ export function PlayableMvpApp({
       name,
       description,
     ), () => waitForAllianceProfileState(
-      async () => backendData!.alliance(account),
+      async () => backendData!.alliance(account, { fresh: true }),
       { allianceId, tag, name, description },
     ));
   }, [account, apiBaseUrl, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction]);

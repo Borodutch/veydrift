@@ -5,6 +5,7 @@ import {
   isFinishedResearchStateVisible,
   isAllianceApplicationCleared,
   isAllianceProfileUpdated,
+  isAllianceCreated,
   isStartedBuildingStateVisible,
   isStartedDefenseProductionVisible,
   isStartedShipProductionVisible,
@@ -22,6 +23,7 @@ import {
   waitForFinishedBuildingState,
   waitForAllianceApplicationCleared,
   waitForAllianceProfileState,
+  waitForAllianceCreationState,
   waitForMissionLaunchState,
   waitForFleetVisibilityIndexedThrough,
   waitForIndexedResourceState,
@@ -272,6 +274,27 @@ describe("post-transaction refresh reconciliation", () => {
 
     expect(loads).toHaveLength(2);
     expect(isAllianceProfileUpdated(result, updatedProfile)).toBe(true);
+  });
+
+  test("waits for creation to expose the exact indexed public description", async () => {
+    const expected = {
+      tag: "VDFT",
+      name: "Veydrift Union",
+      description: "Public charter",
+    };
+    const snapshots = [
+      allianceStateWithApplication(),
+      allianceStateWithProfile({ allianceId: "7", ...expected }),
+    ];
+
+    const result = await waitForAllianceCreationState(
+      async () => snapshots.shift() ?? allianceStateWithProfile({ allianceId: "7", ...expected }),
+      expected,
+      { attempts: 3, intervalMs: 1, delay: async () => undefined },
+    );
+
+    expect(isAllianceCreated(result, expected)).toBe(true);
+    expect(result.profile?.description).toBe("Public charter");
   });
 
   test("explains alliance profile sync timeout when the description remains stale", async () => {

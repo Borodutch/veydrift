@@ -189,9 +189,9 @@ export class BackendDataStore {
     return this.refresh(key, () => fetchRiftState(this.apiBaseUrl, wallet, planetId));
   }
 
-  alliance(wallet: string): Promise<ChainAllianceState> {
-    const key = cacheKey("alliance", wallet);
-    return this.refresh(key, () => fetchAllianceState(this.apiBaseUrl, wallet));
+  alliance(wallet: string, options: WalletReadOptions = {}): Promise<ChainAllianceState> {
+    const key = cacheKey("alliance", wallet, options);
+    return this.refresh(key, () => fetchAllianceState(this.apiBaseUrl, wallet, options), { dedupe: !options.fresh });
   }
 
   profile(wallet: string): Promise<PlayerProfile> {

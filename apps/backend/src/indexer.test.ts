@@ -6135,11 +6135,13 @@ describe("SettlementIndexer", () => {
     const db = new Database(":memory:");
     const owner = "0x3333333333333333333333333333333333333333" as Address;
     const rival = "0x4444444444444444444444444444444444444444" as Address;
+    let directoryReads = 0;
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { throw new Error("alliance-only seed must not read debris events"); },
       async listMoonChanceReportEvents() { throw new Error("alliance-only seed must not read moon chance events"); },
       async listSettledPlanetEvents() { throw new Error("alliance-only seed must not read settled planets"); },
       async listAllianceDirectoryState() {
+        directoryReads += 1;
         return [
           {
             allianceId: "3",
@@ -6157,7 +6159,7 @@ describe("SettlementIndexer", () => {
             active: true,
             tag: "ONE",
             name: "One Member",
-            description: "",
+            description: "Canonical public charter",
             owner,
             createdAt: "1770000037",
             memberCount: 0,
@@ -6182,15 +6184,18 @@ describe("SettlementIndexer", () => {
     db.query("INSERT INTO contract_alliance_members (alliance_id, wallet, role_id, joined_at) VALUES (?, lower(?), ?, ?)").run("37", owner, 3, "1770000037");
     db.query("INSERT INTO contract_alliance_diplomacy (alliance_id, other_alliance_id, status_id, updated_at) VALUES (?, ?, ?, ?)").run("3", "37", 3, "43615945");
 
-    await expect(indexer.seedCurrentAllianceState()).resolves.toMatchObject({
+    await expect(indexer.startAllianceStateHealOnce("alliance-profile-description-v1")).resolves.toMatchObject({
       allianceStaleReason: null,
       safeToServeAllianceState: true
     });
+    await expect(indexer.startAllianceStateHealOnce("alliance-profile-description-v1")).resolves.toBeDefined();
+    expect(directoryReads).toBe(1);
 
     expect(db.query("SELECT member_count FROM contract_alliances WHERE alliance_id = ?").get("37")).toEqual({
       member_count: 1
     });
     expect(indexer.allianceProfile("37")).toMatchObject({
+      description: "Canonical public charter",
       memberCount: 1,
       members: [{ address: owner, role: "owner" }]
     });
