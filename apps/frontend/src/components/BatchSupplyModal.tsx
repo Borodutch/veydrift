@@ -12,7 +12,16 @@ import {
   type BatchSupplySource,
   type SupplyResources,
 } from "../batchSupplyPlanner";
+import { shipAssetByKey } from "../gameAssets";
+import type { MissionShipKey, MissionShips } from "../galaxyActions";
 import type { ManagedPlanetResponse } from "../walletFlow";
+
+const supplyCargoShips: Array<{ key: MissionShipKey; label: string }> = [
+  { key: "largeCargo", label: "Large Cargo" },
+  { key: "smallCargo", label: "Small Cargo" },
+  { key: "recycler", label: "Recycler" },
+  { key: "colonyShip", label: "Colony Ship" },
+];
 
 export function BatchSupplyModal({
   actionPending = false,
@@ -65,6 +74,7 @@ export function BatchSupplyModal({
     sources,
     maxOrders: maxSources,
   }), [requestedNumbers, selected, sources, target.galaxy, target.position, target.system]);
+  const orderByOrigin = useMemo(() => new Map(plan.orders.map((order) => [order.originPlanetId, order])), [plan.orders]);
 
   const missingTotal = resourceTotal(plan.missing);
   const canSubmit = !loading && !actionPending && plan.orders.length > 0 && missingTotal === 0 && !plan.sourceLimitReached;
@@ -118,21 +128,21 @@ export function BatchSupplyModal({
           </button>
         </header>
 
-        <section className="grid gap-2 sm:grid-cols-3" aria-label="Resources to send">
+        <section className="grid grid-cols-[repeat(auto-fit,minmax(15rem,1fr))] gap-2" aria-label="Resources to send">
           {(["metal", "crystal", "deuterium"] as const).map((resource) => (
-            <label className="grid gap-1 rounded-lg border border-white/10 bg-black/20 p-3" key={resource}>
+            <label className="grid min-w-0 gap-1 rounded-lg border border-white/10 bg-black/20 p-3" key={resource}>
               <span className="text-xs font-semibold uppercase tracking-wide text-slate-300">{resource}</span>
-              <span className="flex gap-2">
+              <span className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] gap-2">
                 <input
                   aria-label={`${resource} to send`}
-                  className="min-w-0 flex-1 rounded border border-white/15 bg-black/30 px-2 py-1 font-mono text-sm text-white outline-none focus:border-cyan-300"
+                  className="min-w-0 w-full rounded border border-white/15 bg-black/30 px-2 py-1 font-mono text-sm text-white outline-none focus:border-cyan-300"
                   inputMode="numeric"
                   min="0"
                   onInput={(event) => setRequested((current) => ({ ...current, [resource]: numericInput(event.currentTarget.value) }))}
                   placeholder="0"
                   value={requested[resource]}
                 />
-                <button className="rounded border border-cyan-300/35 px-2 text-xs font-semibold text-cyan-100 hover:bg-cyan-300/10" onClick={() => setMax(resource)} type="button">Max</button>
+                <button className="min-h-8 whitespace-nowrap rounded border border-cyan-300/35 px-2 text-xs font-semibold text-cyan-100 hover:bg-cyan-300/10" onClick={() => setMax(resource)} type="button">Max</button>
               </span>
             </label>
           ))}
@@ -151,19 +161,26 @@ export function BatchSupplyModal({
             ) : sources.map((source) => {
               const checked = selected.has(source.planetId);
               const disabled = Boolean(source.unavailableReason) || (!checked && selected.size >= maxSources);
-              const order = plan.orders.find((candidate) => candidate.originPlanetId === source.planetId);
+              const order = orderByOrigin.get(source.planetId);
               const distance = fleetMissionDistance(source.coordinates, { galaxy: target.galaxy, system: target.system, position: target.position });
               const cargoCapacity = fleetMissionAvailableCargoCapacity(source.ships, distance, source.driveLevels);
               const eta = order?.travelSeconds ?? fleetMissionTravelSeconds(distance, source.ships, source.driveLevels);
               return (
-                <label className={`flex cursor-pointer items-center gap-3 rounded-lg border p-3 ${checked ? "border-cyan-300/35 bg-cyan-300/5" : "border-white/10 bg-black/15"} ${disabled ? "cursor-not-allowed opacity-60" : ""}`} key={source.planetId}>
-                  <input checked={checked} disabled={disabled} onChange={() => toggleSource(source.planetId)} type="checkbox" />
+                <label className={`grid cursor-pointer grid-cols-[auto_minmax(0,1fr)] items-start gap-3 rounded-lg border p-3 ${checked ? "border-cyan-300/35 bg-cyan-300/5" : "border-white/10 bg-black/15"} ${disabled ? "cursor-not-allowed opacity-60" : ""}`} key={source.planetId}>
+                  <input checked={checked} className="mt-1" disabled={disabled} onChange={() => toggleSource(source.planetId)} type="checkbox" />
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-medium text-white">{source.label}</span>
-                    <span className="block text-xs text-slate-400">M {format(source.resources.metal)} · C {format(source.resources.crystal)} · D {format(source.resources.deuterium)} · Cap {format(cargoCapacity)}</span>
+                    <span className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+                      <span className="truncate text-sm font-medium text-white">{source.label}</span>
+                      {order ? <span className="text-xs text-cyan-100">Sends {format(resourceTotal(order.cargo))} · Fuel {format(order.fuelCost)} D · {formatDuration(eta)}</span> : null}
+                    </span>
+                    <span className="mt-0.5 block text-xs text-slate-400">M {format(source.resources.metal)} · C {format(source.resources.crystal)} · D {format(source.resources.deuterium)}</span>
+                    <span className="mt-2 flex flex-wrap items-center gap-1.5">
+                      <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{order ? "Fleet used" : "Cargo fleet"}</span>
+                      <SupplyFleetIcons ships={order?.ships ?? source.ships} />
+                      <span className="ml-auto text-xs text-slate-400">Cap {format(cargoCapacity)}</span>
+                    </span>
                     {source.unavailableReason ? <span className="block text-xs text-amber-200">{source.unavailableReason}</span> : null}
                   </span>
-                  {order ? <span className="text-right text-xs text-cyan-100">Sends {format(resourceTotal(order.cargo))}<br />Fuel {format(order.fuelCost)} D · {formatDuration(eta)}</span> : null}
                 </label>
               );
             })}
@@ -191,6 +208,25 @@ export function BatchSupplyModal({
         </div>
       </div>
     </div>
+  );
+}
+
+function SupplyFleetIcons({ ships }: { ships: Partial<MissionShips> }) {
+  const units = supplyCargoShips.filter((ship) => (ships[ship.key] ?? 0) > 0);
+  if (units.length === 0) return <span className="text-xs text-slate-500">No cargo ships</span>;
+  return (
+    <span className="flex flex-wrap gap-1">
+      {units.map((ship) => {
+        const count = Math.max(0, Math.trunc(ships[ship.key] ?? 0));
+        const label = `${ship.label} ×${count.toLocaleString()}`;
+        return (
+          <span className="inline-flex items-center gap-1 rounded border border-white/10 bg-black/20 px-1 py-0.5" key={ship.key} title={label}>
+            <img alt="" className="h-5 w-5 rounded object-contain" loading="lazy" src={shipAssetByKey[ship.key]} />
+            <span className="text-[11px] font-semibold tabular-nums text-slate-200">×{count.toLocaleString()}</span>
+          </span>
+        );
+      })}
+    </span>
   );
 }
 
