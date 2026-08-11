@@ -1,5 +1,5 @@
 import type { ComponentChildren } from "preact";
-import { useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { Coins, Copy, FileText, Gift, Link, RefreshCw, Share2, TicketCheck, UserRound } from "lucide-preact";
 import { ComingSoonApp } from "./ComingSoonApp";
 import { TelegramIcon } from "./components/TelegramIcon";
@@ -301,6 +301,7 @@ type ReferralProgramState =
   | { status: "error"; message: string; dashboard?: ReferralDashboard };
 
 export const REFERRAL_SIGNATURE_REJECTION_MESSAGE = "Wallet signature rejected — no transaction was sent";
+const REFERRAL_INVITE_EXPIRY_REFRESH_MIN_DELAY_MS = 1_000;
 
 export function referralRejectedRequestMessage(stage: "signature" | "claim-transaction"): string {
   return stage === "signature"
@@ -314,6 +315,17 @@ export function referralClaimCodeAfterDashboard(
 ): string {
   const invite = dashboard.invite ?? dashboard.invites[0];
   return invite?.status === "active" || invite?.status === "renewable" ? invite.code : currentCode;
+}
+
+export function referralInviteRefreshDelay(
+  dashboard: ReferralDashboard | undefined,
+  now = Date.now(),
+): number | undefined {
+  const invite = dashboard?.invite ?? dashboard?.invites[0];
+  if (invite?.status !== "active" || !invite.expiresAt) return undefined;
+  const expiresAt = Date.parse(invite.expiresAt);
+  if (!Number.isFinite(expiresAt)) return undefined;
+  return Math.max(REFERRAL_INVITE_EXPIRY_REFRESH_MIN_DELAY_MS, expiresAt - now);
 }
 
 export function referralInviteActionAvailability(input: {
@@ -419,6 +431,25 @@ export function FirstPlanetSettlementApp() {
   const [successHoldElapsed, setSuccessHoldElapsed] = useState(false);
   const previousPlanetKind = useRef<PlanetState["kind"]>();
   const previousWalletKind = useRef<WalletState["kind"]>();
+
+  const refreshReferralProgram = useCallback(async (
+    connectedAccount = account,
+    isCurrent: () => boolean = () => true,
+  ) => {
+    if (!connectedAccount || !settlementConfigState.apiUrl) return;
+    setReferralProgram({ status: "loading" });
+    try {
+      const dashboard = await backendDataStoreFor(settlementConfigState.apiUrl).referralDashboard(connectedAccount);
+      if (isCurrent()) setReferralProgram({ status: "ready", dashboard });
+    } catch (error) {
+      if (isCurrent()) {
+        setReferralProgram({
+          status: "error",
+          message: walletRequestErrorMessage(error)
+        });
+      }
+    }
+  }, [account, settlementConfigState.apiUrl]);
 
   useEffect(() => {
     const previous = previousPlanetKind.current;
@@ -572,26 +603,30 @@ export function FirstPlanetSettlementApp() {
       setReferralProgram({ status: "idle" });
       return;
     }
-
     let disposed = false;
-    setReferralProgram({ status: "loading" });
-    void backendDataStoreFor(settlementConfigState.apiUrl).referralDashboard(account)
-      .then((dashboard) => {
-        if (!disposed) setReferralProgram({ status: "ready", dashboard });
-      })
-      .catch((error) => {
-        if (!disposed) {
-          setReferralProgram({
-            status: "error",
-            message: walletRequestErrorMessage(error)
-          });
-        }
-      });
-
+    void refreshReferralProgram(account, () => !disposed);
     return () => {
       disposed = true;
     };
-  }, [account, hasOverview, settlementConfigState.apiUrl]);
+  }, [account, hasOverview, refreshReferralProgram, settlementConfigState.apiUrl]);
+
+  useEffect(() => {
+    const dashboard = referralProgram.status === "ready"
+        || referralProgram.status === "claiming"
+        || referralProgram.status === "error"
+      ? referralProgram.dashboard
+      : undefined;
+    const delay = referralInviteRefreshDelay(dashboard);
+    if (delay === undefined || !account) return;
+    let disposed = false;
+    const timer = window.setTimeout(() => {
+      void refreshReferralProgram(account, () => !disposed);
+    }, delay);
+    return () => {
+      disposed = true;
+      window.clearTimeout(timer);
+    };
+  }, [account, referralProgram, refreshReferralProgram]);
 
   useEffect(() => {
     const code = referralClaimCodeInput.trim();
@@ -1371,22 +1406,6 @@ export function FirstPlanetSettlementApp() {
       throw new Error("Alliance invites are unavailable because the game API is not configured.");
     }
     return redeemPaidAllianceInvite(settlementConfigState.apiUrl, paidAllianceInviteSecret, invitee);
-  }
-
-  async function refreshReferralProgram(connectedAccount = account) {
-    if (!connectedAccount || !settlementConfigState.apiUrl) return;
-    setReferralProgram({ status: "loading" });
-    try {
-      setReferralProgram({
-        status: "ready",
-        dashboard: await backendDataStoreFor(settlementConfigState.apiUrl).referralDashboard(connectedAccount)
-      });
-    } catch (error) {
-      setReferralProgram({
-        status: "error",
-        message: walletRequestErrorMessage(error)
-      });
-    }
   }
 
   async function claimReferralInvite() {
