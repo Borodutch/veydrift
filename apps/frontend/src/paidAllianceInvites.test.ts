@@ -174,6 +174,17 @@ describe("paid alliance invite frontend flow", () => {
     }
   });
 
+  test("preflights private invitations and explains when one was already used", async () => {
+    const source = await Bun.file(new URL("./FirstPlanetSettlementApp.tsx", import.meta.url)).text();
+    expect(source).toContain("resolvePaidAllianceInvite(apiUrl, paidAllianceInviteSecret)");
+    expect(source).toContain("Invitation already used");
+    expect(source).toContain("has already been accepted");
+    expect(source).toContain("Checking invitation");
+    expect(source).toContain("const resolution = await refreshPaidAllianceInviteValidation();");
+    expect(source).toContain("if (paidAllianceInviteSecret && !isUserRejected(error))");
+    expect(source).toContain("Retry invitation");
+  });
+
   test("settles a paid alliance invite for free with recipient-bound authorization", async () => {
     const requests: unknown[] = [];
     const provider = providerRecording(requests);
