@@ -108,6 +108,61 @@ describe("loadWalletPlanetSyncSnapshot", () => {
     expect(result.planetsResponse.planets).toHaveLength(1);
   });
 
+  test("falls back to indexed planet reads when the overview fast path is incomplete", async () => {
+    let overviewCalls = 0;
+    let planetsCalled = false;
+    const result = await loadWalletPlanetSyncSnapshot("https://api.test", wallet, undefined, {}, {
+      fetchWalletOverviewSnapshot: async () => {
+        overviewCalls += 1;
+        return {
+          fleetVisibility: undefined,
+          planetsResponse: {
+            wallet,
+            homePlanetId: "7",
+            planets: [],
+          },
+          queues: queues(),
+          settlement: {
+            wallet,
+            hasFirstPlanet: true,
+            homePlanetId: "7",
+            planet: null,
+          },
+        } as any;
+      },
+      fetchWalletPlanets: async () => {
+        planetsCalled = true;
+        return {
+          wallet,
+          homePlanetId: "7",
+          planets: [planet()],
+        } as any;
+      },
+      fetchWalletQueues: async () => queues() as any,
+      fetchFleetMissionVisibility: async () => ({
+        wallet,
+        homePlanetId: "7",
+        incoming: [],
+        outgoing: [],
+        returning: [],
+        joinableAttacks: [],
+        completedMissions: [],
+        battleReports: [],
+      } as any),
+      fetchWalletSettlement: async () => ({
+        wallet,
+        hasFirstPlanet: true,
+        homePlanetId: "7",
+        planet: planet(),
+      } as any),
+    });
+
+    expect(overviewCalls).toBe(1);
+    expect(planetsCalled).toBe(true);
+    expect(result.settlement.planet?.planetId).toBe("7");
+    expect(result.planetsResponse.planets).toHaveLength(1);
+  });
+
   test("forces wallet planet roster reads for settled-planet chain events", async () => {
     let overviewCalled = false;
     let planetsCalled = false;
