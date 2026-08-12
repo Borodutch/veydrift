@@ -918,6 +918,11 @@ export type ChainInfrastructureState = {
   resourcesAsOfNow?: OnChainResources | null;
   resourceSnapshot?: ResourceSnapshotMetadata | null;
   productionPerHour: OnChainResources | null;
+  inviteeProductionBoost?: {
+    multiplierBps: string;
+    expiresAt: string;
+    active: boolean;
+  } | null;
   crawlerProduction?: {
     total: number;
     effective: number;

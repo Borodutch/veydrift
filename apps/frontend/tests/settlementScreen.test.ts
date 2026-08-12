@@ -123,6 +123,7 @@ describe("settlement screen mode", () => {
     expect(settlementSource).toContain("You&apos;re invited");
     expect(settlementSource).toContain("Free first planet");
     expect(settlementSource).toContain("2× starter resources");
+    expect(settlementSource).toContain("2× production · 7 days");
     expect(settlementSource).toContain("Preparing your invitation");
     expect(settlementSource).not.toContain('title="Reading wallet link"');
     expect(settlementSource).not.toContain('visual={<SettlementScanVisual label="SETTLEMENT SCAN" />}');

@@ -196,7 +196,7 @@ describe("frontend static server headers", () => {
       title: "Join Veydrift with secret-invite-code",
       description: "Use invite code secret-invite-code. Eligibility and exact benefits are verified in-game before settlement.",
       status: "CODE secret-invite-code",
-      supportingCopy: "Use this code to start with 2× resources",
+      supportingCopy: "2× resources · 2× production / 7 days",
       subtitle: "",
       footer: "veydrift.com",
     });
@@ -209,7 +209,7 @@ describe("frontend static server headers", () => {
     expect(svg).not.toContain(">Veydrift</text>");
     expect(svg).not.toContain("Invite code:");
     expect(svg.match(/>CODE SECRET-INVITE-CODE<\/text>/g)).toHaveLength(1);
-    expect(svg.match(/>Use this code to start with 2× resources<\/text>/g)).toHaveLength(1);
+    expect(svg.match(/>2× resources · 2× production \/ 7 days<\/text>/g)).toHaveLength(1);
     expect(svg).toContain(">veydrift.com</text>");
     expect(svg).not.toContain('clip-path="url(#singlePlanet)"');
     expect(svg.match(/<image /g)).toHaveLength(1);

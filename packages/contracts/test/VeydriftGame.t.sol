@@ -619,10 +619,14 @@ contract VeydriftGameTest is Test {
         vm.prank(admin);
         migration.importReservations(players, galaxies, systems, positions, fields, temperatures);
 
+        vm.warp(block.timestamp + 1 hours);
         (bytes memory payload,) =
             _signedMigrationPayload(migration, migrationSignerKey, invitee, 42);
         VeydriftStateMigrationModule.MigrationPlayerState memory state =
             abi.decode(payload, (VeydriftStateMigrationModule.MigrationPlayerState));
+        // A signed migration snapshot may be older than the actual claim. That historic interval
+        // must accrue at the normal rate, never retroactively receive the new invitee multiplier.
+        state.planets[0].lastSettledAt = uint64(block.timestamp - 1 hours);
         state.planets[0].resources =
             VeydriftGameStorage.Resources({metal: 500, crystal: 500, deuterium: 0});
         payload = abi.encode(state);
@@ -643,6 +647,9 @@ contract VeydriftGameTest is Test {
         assertEq(planet.resources.metal, 1_000);
         assertEq(planet.resources.crystal, 1_000);
         assertEq(planet.resources.deuterium, 0);
+        (uint256 boostedMetalPerHour,,) = game.productionPerHour(planetId);
+        VeydriftGameStorage.Resources memory preview = game.previewResources(planetId);
+        assertEq(preview.metal, 1_000 + (boostedMetalPerHour / 2));
         assertTrue(referralSystem.referralRedemptions(commitment, invitee));
         assertEq(referralSystem.referralInviteeRedeemed(invitee), true);
         (, bool claimed,,,,,) = migration.migrationReservation(invitee);
@@ -1518,6 +1525,41 @@ contract VeydriftGameTest is Test {
         assertEq(planet.resources.deuterium, 0);
         assertEq(player.balance, inviterBalanceAfterStart + 0.025 ether);
         assertEq(address(game).balance, 0.075 ether);
+    }
+
+    function testReferralInviteeGetsDoubleProductionForExactlySevenDays() public {
+        address invitee = address(0xCAFE);
+        string memory code = "production-boost-code";
+        bytes32 commitment = referralSystem.referralCommitment(player, keccak256(bytes(code)));
+        vm.deal(invitee, 1 ether);
+
+        vm.prank(admin);
+        referralSystem.setReferralSigner(vm.addr(referralSignerKey));
+        vm.prank(player);
+        game.startPlanet{value: 0.05 ether}();
+        vm.prank(player);
+        referralSystem.claimReferralCode(code);
+
+        (uint8 v, bytes32 r, bytes32 s) = _referralSignature(invitee, commitment);
+        vm.prank(invitee);
+        uint256 planetId = game.startPlanetWithReferral{value: 0.05 ether}(commitment, v, r, s);
+
+        _setBuildingLevel(planetId, Building.MetalMine, 1);
+        _setBuildingLevel(planetId, Building.SolarPlant, 1);
+        _setBuildingLevel(planetId, Building.MetalStorage, 3);
+
+        uint64 expiresAt = uint64(block.timestamp + 7 days);
+        (uint256 boostedMetal,,) = game.productionPerHour(planetId);
+        assertEq(boostedMetal, 66, "active referral production must be doubled");
+
+        vm.warp(uint256(expiresAt) + 1 hours);
+        (uint256 standardMetal,,) = game.productionPerHour(planetId);
+        assertEq(standardMetal, 33, "production must return to normal at expiry");
+
+        VeydriftGameStorage.Resources memory preview = game.previewResources(planetId);
+        // 7 days at 2x, then one hour at the normal rate; this proves the lazy settlement
+        // interval splits at the expiry boundary rather than applying the current rate to all time.
+        assertEq(preview.metal, 1_000 + 66 * 24 * 7 + 33);
     }
 
     function testReferralSettlementCreditsRejectingInviterWithoutBrickingInvitee() public {

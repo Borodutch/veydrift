@@ -9105,6 +9105,7 @@ export function PlayableMvpApp({
     <TopBar
       caps={caps}
       crawlerProduction={infrastructureChainState?.crawlerProduction}
+      inviteeProductionBoost={infrastructureChainState?.inviteeProductionBoost}
       energy={topBarEnergy}
       isWalletConnected={isWalletConnected}
       queue={isWalletConnected ? undefined : settledState.queue}

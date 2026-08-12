@@ -192,6 +192,7 @@ contract VeydriftAllianceSystemTest is Test {
 
         uint64 expiresAt = uint64(block.timestamp + 10 minutes);
         (uint8 v, bytes32 r, bytes32 s) = _signPaidInvite(commitment, newCommander, expiresAt);
+        vm.recordLogs();
         vm.prank(newCommander);
         uint256 planetId = game.startPlanetWithAllianceInvite(commitment, expiresAt, v, r, s);
         assertEq(
@@ -207,6 +208,19 @@ contract VeydriftAllianceSystemTest is Test {
         VeydriftGameStorage.Planet memory planet = game.planet(planetId);
         assertEq(planet.resources.metal, 1_000, "must reuse referral starter bonus");
         assertEq(planet.resources.crystal, 1_000, "must reuse referral starter bonus");
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bool activatedBoost;
+        for (uint256 i = 0; i < logs.length; ++i) {
+            if (
+                logs[i].emitter == address(game)
+                    && logs[i].topics[0]
+                        == keccak256("InviteeProductionBoostActivated(address,uint64)")
+            ) {
+                assertEq(address(uint160(uint256(logs[i].topics[1]))), newCommander);
+                activatedBoost = true;
+            }
+        }
+        assertTrue(activatedBoost, "paid alliance invite must activate the production boost");
 
         vm.prank(newCommander);
         vm.expectRevert();
