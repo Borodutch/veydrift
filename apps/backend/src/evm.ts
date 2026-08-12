@@ -916,6 +916,12 @@ export type CrawlerProductionEffect = {
   productionIncreasePerHour: Resources;
 };
 
+export type InviteeProductionBoost = {
+  multiplierBps: string;
+  expiresAt: string;
+  active: boolean;
+};
+
 export type DefenseState = {
   wallet: Address;
   homePlanetId: string | null;
@@ -958,6 +964,7 @@ export type InfrastructureState = {
   resourcesAsOfNow?: Resources | null;
   resourceSnapshot?: ResourceSnapshotMetadata | null;
   productionPerHour: Resources | null;
+  inviteeProductionBoost?: InviteeProductionBoost | null;
   crawlerProduction?: CrawlerProductionEffect | null;
   energyBalance: EnergyBalance | null;
   storageCaps: Resources | null;
@@ -1298,6 +1305,15 @@ export type PlanetSettledEvent = {
   planetId: string;
   lastSettledAt: string;
   resources: Resources;
+};
+
+export type InviteeProductionBoostEvent = {
+  eventName: "InviteeProductionBoostActivated";
+  transactionHash: string;
+  blockNumber: string;
+  logIndex: string;
+  player: Address;
+  expiresAt: string;
 };
 
 export type MoonResourcesSettledEvent = {
@@ -5712,6 +5728,7 @@ const legacyFirstPlanetSettledTopic = "0xb1abaa78f2f23a98f30148c8705b43e6c77e019
 const migrationStateImportedTopic = "0xdb12a7cb693ed25a5a03977074fc4225831b157cd806cfcc62a03e06988f92d9";
 const fullStateMigrationClaimedTopic = "0xc1eb9069a8811bc656d30388efd94a0e3d2c23f9783a2577482dae5dd554e793";
 const planetSettledTopic = "0x7faee98c7c745f9c9fb2117a44185f57454dac3013383364df4c22b5f9bc4077";
+export const inviteeProductionBoostActivatedTopic = "0x6083ebfcba8b43e5215a2535637493040233665ead2fde14e38b622597b62860";
 const moonResourcesSettledTopic = "0xb20fd9e652e1b740544f362fb3047c43a7bf0d6c7fbf0f5cab5f1f939aac6917";
 const planetRenamedTopic = "0x2b772c1fa271aad466ce009b6b5824b2ad6ccd942d21efc686513ffa8eb166cd";
 const buildingStartedTopic = "0x48456f4ba6902f09ee7c2958aca9c9d1f8a5920c8affef08667504670f8bba1b";
@@ -5807,6 +5824,7 @@ const eventNamesByTopic = new Map<string, string>([
   [migrationStateImportedTopic, "MigrationStateImported"],
   [fullStateMigrationClaimedTopic, "FullStateMigrationClaimed"],
   [planetSettledTopic, "PlanetSettled"],
+  [inviteeProductionBoostActivatedTopic, "InviteeProductionBoostActivated"],
   [moonResourcesSettledTopic, "MoonResourcesSettled"],
   [planetRenamedTopic, "PlanetRenamed"],
   [buildingStartedTopic, "BuildingStarted"],
@@ -6006,6 +6024,10 @@ export function isPlayerMigrationLog(log: RpcLog): boolean {
 
 export function isPlanetSettledLog(log: RpcLog): boolean {
   return topicAt(log.topics, 0) === planetSettledTopic;
+}
+
+export function isInviteeProductionBoostLog(log: RpcLog): boolean {
+  return topicAt(log.topics, 0) === inviteeProductionBoostActivatedTopic;
 }
 
 export function isMoonResourcesSettledLog(log: RpcLog): boolean {
@@ -6297,6 +6319,18 @@ export function decodePlanetSettledLog(log: RpcLog): PlanetSettledEvent {
     planetId: decodeUint(topicAt(log.topics, 1)).toString(),
     resources: decodeResources(words.slice(0, 3)),
     lastSettledAt: decodeUintWord(wordAt(words, 3)).toString()
+  };
+}
+
+export function decodeInviteeProductionBoostLog(log: RpcLog): InviteeProductionBoostEvent {
+  const words = splitWords(log.data);
+  return {
+    eventName: "InviteeProductionBoostActivated",
+    transactionHash: log.transactionHash,
+    blockNumber: BigInt(log.blockNumber).toString(),
+    logIndex: (log as RpcLog & { logIndex?: string }).logIndex ?? "0x0",
+    player: decodeAddressWord(topicAt(log.topics, 1)),
+    expiresAt: decodeUintWord(wordAt(words, 0)).toString()
   };
 }
 

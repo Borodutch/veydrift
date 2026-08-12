@@ -35,6 +35,7 @@ import {
   decodeMoonShipCountChangedLog,
   decodeMoonResourcesChangedLog,
   decodePlanetSettledLog,
+  decodeInviteeProductionBoostLog,
   decodePlanetRenamedLog,
   decodeFleetMissionLogs,
   decodeFirstPlanetSettledLog,
@@ -52,6 +53,7 @@ import {
   eventNameForTopic,
   fleetMissionNeedsResolution,
   fleetMissionLaunchedTopic,
+  inviteeProductionBoostActivatedTopic,
   missionBattleRandomnessRequestId,
   isDebrisFieldLog,
   isRandomnessFulfilledLog,
@@ -71,6 +73,7 @@ import {
   isMoonResourcesSettledLog,
   isMoonShipCountChangedLog,
   isPlanetSettledLog,
+  isInviteeProductionBoostLog,
   isPlanetRenamedLog,
   isPlayerMigrationLog,
   isReferralClaimLog,
@@ -127,6 +130,7 @@ import {
   type MoonChanceReportEvent,
   type MoonResourcesSettledEvent,
   type PlanetSettledEvent,
+  type InviteeProductionBoostEvent,
   type PlanetRenamedEvent,
   type PlayerQueues,
   type QueueState,
@@ -2019,6 +2023,16 @@ export class SettlementIndexer {
     return this.metadata(startPriceWeiMetadataKey);
   }
 
+  inviteeProductionBoostExpiresAt(player: `0x${string}`): string | null {
+    const row = this.db.query(`
+      SELECT expires_at
+      FROM contract_invitee_production_boosts
+      WHERE player = lower(?)
+      LIMIT 1
+    `).get(player) as { expires_at: string } | null;
+    return row?.expires_at ?? null;
+  }
+
   referralClaim(owner: `0x${string}`, commitment: `0x${string}`, txHash: `0x${string}`): IndexedReferralClaimEvent | null {
     const row = this.db.query(`
       SELECT event_json
@@ -3755,6 +3769,33 @@ export class SettlementIndexer {
     return this.snapshot();
   }
 
+  applyInviteeProductionBoostEvent(event: InviteeProductionBoostEvent): IndexerSnapshot {
+    const existing = this.db.query(`
+      SELECT expires_at
+      FROM contract_invitee_production_boosts
+      WHERE player = lower(?)
+      LIMIT 1
+    `).get(event.player) as { expires_at: string } | null;
+    // Webhook delivery can be out of order; a later boost always has a later expiry because the
+    // on-chain duration is fixed. Never let a stale log shorten the currently projected window.
+    if (existing && BigInt(existing.expires_at) >= BigInt(event.expiresAt)) return this.snapshot();
+    this.db.query(`
+      INSERT INTO contract_invitee_production_boosts (player, expires_at, event_json)
+      VALUES (lower(?), ?, ?)
+      ON CONFLICT(player) DO UPDATE SET
+        expires_at = excluded.expires_at,
+        event_json = excluded.event_json
+    `).run(event.player, event.expiresAt, JSON.stringify(event));
+    this.touch();
+    return this.snapshot();
+  }
+
+  private removeInviteeProductionBoostEvent(log: IndexedRpcLog): void {
+    // The removed event may not be the player's latest boost. Rebuild its small projection from
+    // the canonical raw ledger instead of deleting a still-valid later window.
+    this.repairInviteeProductionBoostProjectionsFromEventLogs();
+  }
+
   applyMoonResourcesSettledEvent(event: MoonResourcesSettledEvent): IndexerSnapshot {
     this.upsertMoonResourceSnapshot(
       event.planetId,
@@ -3806,6 +3847,9 @@ export class SettlementIndexer {
             true
           );
         }
+        if (isInviteeProductionBoostLog(log)) {
+          this.removeInviteeProductionBoostEvent(log);
+        }
         return { applied: false, duplicate: false, ignored: false, removed: true, snapshot: this.snapshot() };
       }
       if (existing.removed && isPaidAllianceInviteProjectionLog(log)) {
@@ -3815,6 +3859,16 @@ export class SettlementIndexer {
           WHERE event_id = ?
         `).run(JSON.stringify(log), blockNumberToDecimal(log.blockNumber), new Date().toISOString(), eventId);
         this.applyAllianceEvent(decodeAllianceLog(log));
+        this.recordLatestBlock(log.blockNumber);
+        return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
+      }
+      if (existing.removed && isInviteeProductionBoostLog(log)) {
+        this.db.query(`
+          UPDATE indexed_event_logs
+          SET removed = 0, event_json = ?, block_number = ?, received_at = ?
+          WHERE event_id = ?
+        `).run(JSON.stringify(log), blockNumberToDecimal(log.blockNumber), new Date().toISOString(), eventId);
+        this.applyInviteeProductionBoostEvent(decodeInviteeProductionBoostLog(log));
         this.recordLatestBlock(log.blockNumber);
         return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
       }
@@ -3854,6 +3908,9 @@ export class SettlementIndexer {
           true
         );
       }
+      if (isInviteeProductionBoostLog(log)) {
+        this.removeInviteeProductionBoostEvent(log);
+      }
       return { applied: false, duplicate: false, ignored: false, removed: true, snapshot: this.snapshot() };
     }
 
@@ -3866,6 +3923,10 @@ export class SettlementIndexer {
     }
     if (isPlanetSettledLog(log)) {
       this.applyPlanetSettledEvent(decodePlanetSettledLog(log));
+      return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
+    }
+    if (isInviteeProductionBoostLog(log)) {
+      this.applyInviteeProductionBoostEvent(decodeInviteeProductionBoostLog(log));
       return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
     }
     if (isMoonResourcesSettledLog(log)) {
@@ -4812,6 +4873,11 @@ export class SettlementIndexer {
       );
       CREATE INDEX IF NOT EXISTS indexed_referral_reward_claims_inviter_idx
         ON indexed_referral_reward_claims (inviter, transaction_hash);
+      CREATE TABLE IF NOT EXISTS contract_invitee_production_boosts (
+        player TEXT PRIMARY KEY,
+        expires_at TEXT NOT NULL,
+        event_json TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS indexed_mission_event_logs (
         event_id TEXT PRIMARY KEY,
         event_kind TEXT NOT NULL,
@@ -5328,6 +5394,7 @@ export class SettlementIndexer {
     if (paidAllianceInviteContractAddress) {
       this.repairPaidAllianceInviteProjectionsFromEventLogs(paidAllianceInviteContractAddress);
     }
+    this.repairInviteeProductionBoostProjectionsFromEventLogs();
     this.backfillPlayerActivityFeed();
     this.queueDefenderLossBreakdownBackfill();
   }
@@ -5384,6 +5451,25 @@ export class SettlementIndexer {
     } catch {
       return null;
     }
+  }
+
+  private repairInviteeProductionBoostProjectionsFromEventLogs(): void {
+    const rows = this.db.query(`
+      SELECT event_json
+      FROM indexed_event_logs
+      WHERE removed = 0
+        AND lower(json_extract(event_json, '$.topics[0]')) = lower(?)
+      ORDER BY CAST(block_number AS INTEGER) ASC, length(log_index) ASC, log_index ASC
+    `).all(inviteeProductionBoostActivatedTopic) as EventRow[];
+
+    this.db.transaction(() => {
+      // The raw event ledger is canonical. Replaying it makes backend-first deployment optional:
+      // boosts emitted while an older indexer was running are recovered on the next startup.
+      this.db.query("DELETE FROM contract_invitee_production_boosts").run();
+      for (const row of sortedEventRows(rows)) {
+        this.applyInviteeProductionBoostEvent(decodeInviteeProductionBoostLog(row));
+      }
+    })();
   }
 
   private backfillStartPriceProjection(): void {
@@ -9393,6 +9479,20 @@ export class SettlementIndexer {
         .get(eventId);
       if (!existingMissileAttack) {
         this.recordMissileAttackEvent(eventId, log);
+        repairedRows += 1;
+      }
+    }
+
+    if (isInviteeProductionBoostLog(log)) {
+      const event = decodeInviteeProductionBoostLog(log);
+      const existingBoost = this.db.query(`
+        SELECT expires_at
+        FROM contract_invitee_production_boosts
+        WHERE player = lower(?)
+        LIMIT 1
+      `).get(event.player) as { expires_at: string } | null;
+      if (existingBoost === null || BigInt(existingBoost.expires_at) < BigInt(event.expiresAt)) {
+        this.applyInviteeProductionBoostEvent(event);
         repairedRows += 1;
       }
     }

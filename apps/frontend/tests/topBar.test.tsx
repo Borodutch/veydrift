@@ -117,6 +117,14 @@ describe("TopBar", () => {
     expect(panelText).toContain("Insufficient energy reduces mine output to 49%");
   });
 
+  test("shows an active invitee production modifier beside the resource rates", () => {
+    const topBar = renderTopBar({
+      inviteeProductionBoost: { multiplierBps: "20000", expiresAt: "1770000000", active: true },
+    });
+
+    expect(visibleText(topBar)).toContain("2× production");
+  });
+
   test("keeps crawler production visible while backend crawler metadata is syncing", () => {
     const topBar = renderTopBar({ crawlerProduction: undefined });
     const energyInfo = elementNodes(topBar).find(

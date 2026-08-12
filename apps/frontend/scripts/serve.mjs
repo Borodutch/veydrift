@@ -14,7 +14,7 @@ const defaultMetadataTimeoutMs = 1_500;
 export const referralXCardImageVersion = "2";
 export const allianceInviteOgImagePath = "/assets/alliance-invite-og-v3.jpg";
 export const allianceInviteOgTitle = "Alliance Invite — Play Veydrift for Free";
-export const allianceInviteOgDescription = "Accept this alliance invite to play Veydrift for free and start with 2× resources.";
+export const allianceInviteOgDescription = "Accept this alliance invite to play Veydrift for free, start with 2× resources, and produce 2× resources for 7 days.";
 
 export const referralOgLayout = Object.freeze({
   titleX: 58,
@@ -310,7 +310,7 @@ function referralMeta(code = "") {
       ? `Use invite code ${inviteCode}. Eligibility and exact benefits are verified in-game before settlement.`
       : "Open this Veydrift invite. Referral eligibility and exact benefits are verified in-game before settlement.",
     status: inviteCode ? `CODE ${inviteCode}` : "INVITE LINK",
-    supportingCopy: inviteCode ? "Use this code to start with 2× resources" : "",
+    supportingCopy: inviteCode ? "2× resources · 2× production / 7 days" : "",
     subtitle: inviteCode ? "" : "Benefits verified in-game",
     accent: "#5eead4",
     footer: "veydrift.com",

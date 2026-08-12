@@ -10,6 +10,10 @@ import {VeydriftFormulas} from "./libraries/VeydriftFormulas.sol";
 import {VeydriftPlanetGeneration} from "./libraries/VeydriftPlanetGeneration.sol";
 import {Building, Defense, Resource, Ship, Technology} from "./libraries/VeydriftTypes.sol";
 
+interface IVeydriftGameProductionSettler {
+    function settleProductionUntil(uint256 planetId, uint64 settledAt) external;
+}
+
 /// @notice Deployable Base Sepolia test MVP for first-planet settlement and resource-token wiring.
 /// @dev Advanced gameplay entrypoints stay in the ABI and fail explicitly until they are split into modules.
 contract VeydriftGame is VeydriftResourceReserves {
@@ -188,9 +192,9 @@ contract VeydriftGame is VeydriftResourceReserves {
         }
     }
 
-    function settleProductionUntil(uint256 planetId, uint64 settledAt) external {
+    function settleProductionUntil(uint256, uint64) external {
         if (msg.sender != address(this)) revert Unauthorized(msg.sender);
-        _settleResourcesUntil(planetId, settledAt);
+        _delegateToFirstPlanetSettlementModule();
     }
 
     /// @notice Cuts every owned planet's canonical production interval immediately before an
@@ -269,14 +273,15 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function importMigratedStateWithReferral(
-        address,
+        address player,
         bytes calldata,
         bytes32,
         uint8,
         bytes32,
         bytes32
     ) external payable {
-        _delegateToStateMigrationModule();
+        _delegateToStateMigrationModuleWithoutReturn();
+        _activateInviteeProductionBoost(player);
     }
 
     function releaseExcessResourceReserves(address, Resources calldata, Resources calldata)
@@ -478,7 +483,13 @@ contract VeydriftGame is VeydriftResourceReserves {
     fallback() external {
         // First-planet preview selectors stay in the proxy surface through fallback to keep the
         // size-constrained implementation below EIP-170's 24 KiB limit.
-        if (msg.sig == 0x29147f24 || msg.sig == 0x729b082f || msg.sig == 0x1d750846) {
+        if (msg.sig == 0xf5a25efb) {
+            // The view ABI for production reads must remain stable even though the production
+            // code lives in a module. Only an internal staticcall may use this unlisted router;
+            // otherwise a regular caller could route arbitrary module calldata through it.
+            if (msg.sender != address(this)) revert Unauthorized(msg.sender);
+            _delegateToFirstPlanetSettlementModule(msg.data[4:]);
+        } else if (msg.sig == 0x29147f24 || msg.sig == 0x729b082f || msg.sig == 0x1d750846) {
             _delegateToFirstPlanetSettlementModule();
         } else if (msg.sig == 0x9c26e0be) {
             (bool ok, bytes memory result) = _batchTransportModule.delegatecall(msg.data);
@@ -632,43 +643,24 @@ contract VeydriftGame is VeydriftResourceReserves {
         return !occupiedCoordinates[coordinateKey(galaxy, system, position)];
     }
 
-    function previewResources(uint256 planetId) public view returns (Resources memory resources) {
-        Planet storage planetRef = _planets[planetId];
-        resources = planetRef.resources;
-        uint256 elapsed = block.timestamp - planetRef.lastSettledAt;
-        if (elapsed == 0) return resources;
-
-        (uint256 metalPerHour, uint256 crystalPerHour, uint256 deutPerHour) =
-            productionPerHour(planetId);
-        Resources memory produced = Resources({
-            metal: _toUint128((metalPerHour * elapsed) / 1 hours),
-            crystal: _toUint128((crystalPerHour * elapsed) / 1 hours),
-            deuterium: _toUint128((deutPerHour * elapsed) / 1 hours)
-        });
-        (, Resources memory added) = _cappedResourceIncrease(planetId, resources, produced);
-        resources = _add(resources, _reserveLimitedIncrease(added));
+    /// @dev Staticcall enters the proxy's internal read router, which delegatecalls the module
+    ///      under a static context. This retains the historical `view` ABI on the Game facade.
+    function previewResources(uint256 planetId) external view returns (Resources memory) {
+        bytes memory result = _readFromFirstPlanetSettlementModule(
+            abi.encodeWithSelector(this.previewResources.selector, planetId)
+        );
+        return abi.decode(result, (Resources));
     }
 
     function productionPerHour(uint256 planetId)
-        public
+        external
         view
         returns (uint256 metalPerHour, uint256 crystalPerHour, uint256 deuteriumPerHour)
     {
-        Planet storage planetRef = _planets[planetId];
-        return VeydriftFormulas.productionPerHour(
-            _buildingLevels[planetId][Building.MetalMine],
-            _buildingLevels[planetId][Building.CrystalMine],
-            _buildingLevels[planetId][Building.DeuteriumSynthesizer],
-            _buildingLevels[planetId][Building.SolarPlant],
-            _buildingLevels[planetId][Building.FusionReactor],
-            _shipCounts[planetId][Ship.SolarSatellite],
-            _shipCounts[planetId][Ship.Crawler],
-            planetRef.temperature,
-            _technologyLevels[planetRef.owner][Technology.Energy],
-            planetRef.metalMultiplierBps,
-            planetRef.crystalMultiplierBps,
-            planetRef.deuteriumMultiplierBps
+        bytes memory result = _readFromFirstPlanetSettlementModule(
+            abi.encodeWithSelector(this.productionPerHour.selector, planetId)
         );
+        return abi.decode(result, (uint256, uint256, uint256));
     }
 
     function energyBalance(uint256 planetId)
@@ -822,31 +814,7 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function _settleResourcesUntil(uint256 planetId, uint64 settledAt) private {
-        Planet storage planetRef = _planets[planetId];
-        if (settledAt > planetRef.lastSettledAt) {
-            uint256 elapsed = uint256(settledAt) - planetRef.lastSettledAt;
-            (uint256 metalPerHour, uint256 crystalPerHour, uint256 deutPerHour) =
-                productionPerHour(planetId);
-            Resources memory produced = Resources({
-                metal: _toUint128((metalPerHour * elapsed) / 1 hours),
-                crystal: _toUint128((crystalPerHour * elapsed) / 1 hours),
-                deuterium: _toUint128((deutPerHour * elapsed) / 1 hours)
-            });
-            (Resources memory capped, Resources memory added) =
-                _cappedResourceIncrease(planetId, planetRef.resources, produced);
-            added = _reserveLimitedIncrease(added);
-            _increaseInternalResources(added);
-            planetRef.resources = _add(planetRef.resources, added);
-            _creditAllianceProductionBonus(planetId, added);
-            if (
-                planetRef.resources.metal > capped.metal
-                    || planetRef.resources.crystal > capped.crystal
-                    || planetRef.resources.deuterium > capped.deuterium
-            ) {
-                planetRef.resources = capped;
-            }
-            planetRef.lastSettledAt = settledAt;
-        }
+        IVeydriftGameProductionSettler(address(this)).settleProductionUntil(planetId, settledAt);
     }
 
     function _completeBuilding(uint256 planetId, BuildingConstruction memory construction) private {
@@ -899,42 +867,6 @@ contract VeydriftGame is VeydriftResourceReserves {
         _emitPlanetSettled(planetId);
     }
 
-    function _cappedResourceIncrease(
-        uint256 planetId,
-        Resources memory currentResources,
-        Resources memory produced
-    ) private view returns (Resources memory capped, Resources memory added) {
-        capped = _addWithCaps(planetId, currentResources, produced);
-        added = Resources({
-            metal: capped.metal - currentResources.metal,
-            crystal: capped.crystal - currentResources.crystal,
-            deuterium: capped.deuterium - currentResources.deuterium
-        });
-    }
-
-    function _addWithCaps(uint256 planetId, Resources memory resources, Resources memory addition)
-        private
-        view
-        returns (Resources memory)
-    {
-        (uint128 metalCap, uint128 crystalCap, uint128 deuteriumCap) = storageCaps(planetId);
-        return Resources({
-            metal: _addWithCap(resources.metal, addition.metal, metalCap),
-            crystal: _addWithCap(resources.crystal, addition.crystal, crystalCap),
-            deuterium: _addWithCap(resources.deuterium, addition.deuterium, deuteriumCap)
-        });
-    }
-
-    function _addWithCap(uint128 current, uint128 addition, uint128 cap)
-        private
-        pure
-        returns (uint128)
-    {
-        uint256 total = uint256(current) + addition;
-        uint256 effectiveCap = current > cap ? current : cap;
-        return _toUint128(total > effectiveCap ? effectiveCap : total);
-    }
-
     function _multiply(Resources memory resources, uint32 quantity)
         private
         pure
@@ -984,7 +916,11 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function _delegateToFirstPlanetSettlementModule() private {
-        (bool ok, bytes memory result) = _firstPlanetSettlementModule.delegatecall(msg.data);
+        _delegateToFirstPlanetSettlementModule(msg.data);
+    }
+
+    function _delegateToFirstPlanetSettlementModule(bytes calldata data) private {
+        (bool ok, bytes memory result) = _firstPlanetSettlementModule.delegatecall(data);
         if (!ok) {
             assembly ("memory-safe") {
                 revert(add(result, 32), mload(result))
@@ -993,6 +929,21 @@ contract VeydriftGame is VeydriftResourceReserves {
         assembly ("memory-safe") {
             return(add(result, 32), mload(result))
         }
+    }
+
+    function _readFromFirstPlanetSettlementModule(bytes memory data)
+        private
+        view
+        returns (bytes memory result)
+    {
+        (bool ok, bytes memory response) =
+            address(this).staticcall(abi.encodePacked(bytes4(0xf5a25efb), data));
+        if (!ok) {
+            assembly ("memory-safe") {
+                revert(add(response, 32), mload(response))
+            }
+        }
+        return response;
     }
 
     function _delegateToPlanetManagementModule() private {
@@ -1067,6 +1018,16 @@ contract VeydriftGame is VeydriftResourceReserves {
         }
         assembly ("memory-safe") {
             return(add(result, 32), mload(result))
+        }
+    }
+
+    function _delegateToStateMigrationModuleWithoutReturn() private {
+        _requireGameNotPaused();
+        (bool ok, bytes memory result) = _stateMigrationModule.delegatecall(msg.data);
+        if (!ok) {
+            assembly ("memory-safe") {
+                revert(add(result, 32), mload(result))
+            }
         }
     }
 }

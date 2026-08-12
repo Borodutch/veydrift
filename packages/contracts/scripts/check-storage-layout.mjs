@@ -64,7 +64,7 @@ const stableStringify = (value) => JSON.stringify(sortValue(value), null, 2);
 const currentJson = stableStringify(current);
 const expectedJson = stableStringify(expected);
 
-const riftStorageAppend = [
+const reviewedStorageAppend = [
   {
     label: "riftExtractions",
     slot: "55",
@@ -76,6 +76,12 @@ const riftStorageAppend = [
     slot: "56",
     offset: 0,
     type: "mapping(uint256 => struct Resources)",
+  },
+  {
+    label: "_inviteeProductionBoostExpiresAt",
+    slot: "57",
+    offset: 0,
+    type: "mapping(address => uint64)",
   },
 ];
 const riftExtractionStruct = [
@@ -90,22 +96,22 @@ const currentV1Prefix = {
     Object.keys(expected.structs).map((name) => [name, current.structs[name]])
   ),
 };
-const hasReviewedRiftAppend = (
+const hasReviewedStorageAppend = (
   stableStringify(currentV1Prefix) === expectedJson
-  && stableStringify(current.storage.slice(expected.storage.length)) === stableStringify(riftStorageAppend)
+  && stableStringify(current.storage.slice(expected.storage.length)) === stableStringify(reviewedStorageAppend)
   && stableStringify(current.structs.RiftExtraction) === stableStringify(riftExtractionStruct)
 );
 
-if (currentJson !== expectedJson && !hasReviewedRiftAppend) {
+if (currentJson !== expectedJson && !hasReviewedStorageAppend) {
   console.error("VeydriftGame storage layout differs from storage-layout/VeydriftGame.v1.json");
-  console.error("It must preserve the v1 layout or exactly match the reviewed Rift append.");
+  console.error("It must preserve the v1 layout or exactly match the reviewed append.");
   process.exit(1);
 }
 
 console.log(
   currentJson === expectedJson
     ? "VeydriftGame storage layout matches storage-layout/VeydriftGame.v1.json"
-    : "VeydriftGame storage layout preserves v1 and exactly matches the reviewed Rift append"
+    : "VeydriftGame storage layout preserves v1 and exactly matches the reviewed storage append"
 );
 
 for (const contractName of ["VeydriftMetal", "VeydriftCrystal", "VeydriftDeuterium"]) {

@@ -1897,7 +1897,7 @@ function ReferralProgramPanel({
           </div>
           <div>
             <Gift aria-hidden="true" size={18} />
-            <span>Your friend gets <strong>1,000 M · 1,000 C</strong> to start</span>
+            <span>Your friend gets <strong>1,000 M · 1,000 C + 2× production for 7 days</strong></span>
           </div>
         </div>
 
@@ -2508,6 +2508,7 @@ function AllianceInviteWelcome() {
       <div className="landing-invite-benefits" aria-label="Alliance invite benefits">
         <span>Free first planet</span>
         <span>2× starter resources</span>
+        <span>2× production · 7 days</span>
         <span>Gas only</span>
       </div>
     </div>
@@ -2622,7 +2623,7 @@ function settlementBody(
       : "Launch settlement and mint this wallet's home planet.";
   const referralPreview = referralCode.trim() && !migrationReservation
     ? referralValidation.status === "resolved" && referralValidation.resolution.valid
-      ? " Invite code verified: referral settlement starts this planet with 1,000 metal / 1,000 crystal / 0 deuterium."
+      ? " Invite code verified: referral settlement starts this planet with 1,000 metal / 1,000 crystal / 0 deuterium and 2× production for 7 days."
       : referralValidation.status === "resolved"
         ? ` Invite not usable: ${referralValidation.resolution.message}`
         : referralValidation.status === "error"

@@ -5,7 +5,7 @@ import { afterAll, describe, expect, setSystemTime, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { encodeAbiParameters, keccak256, parseAbiParameters, toHex } from "viem";
 import { canonicalContractTables } from "./contractStateSchema";
-import type { Address, AllianceState, CanonicalFleetMissionSnapshot, CanonicalPlanetChainState, DebrisFieldEvent, DefenseState, InfrastructureState, MoonChanceReportEvent, MoonState, PlayerQueues, ResearchState, ShipyardState, SettledPlanetEvent } from "./evm";
+import { inviteeProductionBoostActivatedTopic, type Address, type AllianceState, type CanonicalFleetMissionSnapshot, type CanonicalPlanetChainState, type DebrisFieldEvent, type DefenseState, type InfrastructureState, type MoonChanceReportEvent, type MoonState, type PlayerQueues, type ResearchState, type ShipyardState, type SettledPlanetEvent } from "./evm";
 import { SettlementIndexer } from "./indexer";
 import { deriveBuildingRows, deriveDefenseRows, deriveInfrastructureFields, deriveShipRows } from "./readModels";
 
@@ -339,6 +339,79 @@ describe("SettlementIndexer", () => {
       FROM indexed_mission_event_logs
       WHERE event_id = ?
     `).get(eventId)).toEqual({ event_kind: "fleet", block_number: "112" });
+  });
+
+  test("replays an invitee production boost emitted before the upgraded indexer starts", () => {
+    const database = new Database(":memory:");
+    const reader = {
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    };
+    new SettlementIndexer(reader, 100n, { database, runStartupBackfill: false });
+    const log = {
+      blockNumber: "0x71",
+      transactionHash: `0x${"72".repeat(32)}`,
+      logIndex: "0x0",
+      removed: false,
+      topics: [inviteeProductionBoostActivatedTopic, addressTopic(player)],
+      data: abiWords(1_800_000_000n)
+    };
+    database.query(`
+      INSERT INTO indexed_event_logs (event_id, transaction_hash, log_index, block_number, removed, event_json, received_at)
+      VALUES (?, ?, ?, ?, 0, ?, ?)
+    `).run("legacy-invitee-production-boost", log.transactionHash, log.logIndex, "113", JSON.stringify(log), new Date().toISOString());
+
+    const restarted = new SettlementIndexer(reader, 100n, { database, runStartupBackfill: false });
+    expect(restarted.inviteeProductionBoostExpiresAt(player)).toBe("1800000000");
+  });
+
+  test("does not let an out-of-order older boost shorten a player's active window", () => {
+    const database = new Database(":memory:");
+    const reader = {
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    };
+    const indexer = new SettlementIndexer(reader, 100n, { database, runStartupBackfill: false });
+    indexer.applyLog({
+      blockNumber: "0x72",
+      transactionHash: `0x${"73".repeat(32)}`,
+      logIndex: "0x0",
+      topics: [inviteeProductionBoostActivatedTopic, addressTopic(player)],
+      data: abiWords(1_800_000_000n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x71",
+      transactionHash: `0x${"74".repeat(32)}`,
+      logIndex: "0x0",
+      topics: [inviteeProductionBoostActivatedTopic, addressTopic(player)],
+      data: abiWords(1_700_000_000n)
+    });
+
+    expect(indexer.inviteeProductionBoostExpiresAt(player)).toBe("1800000000");
+  });
+
+  test("removes the projected boost when its sole raw log is removed", () => {
+    const database = new Database(":memory:");
+    const reader = {
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    };
+    const indexer = new SettlementIndexer(reader, 100n, { database, runStartupBackfill: false });
+    const log = {
+      blockNumber: "0x72",
+      transactionHash: `0x${"75".repeat(32)}`,
+      logIndex: "0x0",
+      topics: [inviteeProductionBoostActivatedTopic, addressTopic(player)],
+      data: abiWords(1_800_000_000n)
+    };
+    indexer.applyLog(log);
+    expect(indexer.inviteeProductionBoostExpiresAt(player)).toBe("1800000000");
+
+    indexer.applyLog({ ...log, removed: true });
+    expect(indexer.inviteeProductionBoostExpiresAt(player)).toBeNull();
   });
 
   test("queues only canonical legacy battle reports for defender-loss backfill on reader startup", () => {

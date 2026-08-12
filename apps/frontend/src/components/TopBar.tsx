@@ -69,6 +69,7 @@ interface TopBarProps {
   rates: Resources;
   caps: Resources;
   crawlerProduction?: CrawlerProductionInfo | null | undefined;
+  inviteeProductionBoost?: { multiplierBps: string; expiresAt: string; active: boolean } | null | undefined;
   resourceStatus: ChainLoadStatus;
   queue?: QueueItem | undefined;
   researchQueue?: QueueItem | undefined;
@@ -95,6 +96,7 @@ export function TopBar({
   rates,
   caps,
   crawlerProduction,
+  inviteeProductionBoost,
   resourceStatus,
   queue,
   researchQueue,
@@ -155,6 +157,14 @@ export function TopBar({
                   crawlerProduction={crawlerProduction}
                   sources={energy.sources}
                 />
+              )}
+              {inviteeProductionBoost?.active && (
+                <span
+                  className="inline-flex items-center whitespace-nowrap rounded border border-fuchsia-300/40 bg-fuchsia-300/10 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-fuchsia-100"
+                  title="Invitee production boost: resource production is doubled for your first seven days."
+                >
+                  2× production
+                </span>
               )}
             </>
           )}

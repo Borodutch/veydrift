@@ -3445,7 +3445,7 @@ function indexedWalletPlanetState(
     resourcesAsOfNow: currentPlanet.resources,
     resourceSnapshot: resourceSnapshotMetadataForPlanet(planet),
     moon: moonSummary,
-    tactical: indexedPlanetTacticalSummary(currentPlanet, buildings, ships, defenses, technologyLevels)
+    tactical: indexedPlanetTacticalSummary(currentPlanet, buildings, ships, defenses, technologyLevels, indexer)
   };
 }
 
@@ -3724,7 +3724,7 @@ function indexedInfrastructureState(
   const queue = planet ? indexer.planetQueue(planet.planetId, "building") : null;
   const technologyLevels = indexer.technologyLevels(wallet);
   const currentPlanet = indexedCurrentPlanetState(indexer, planet);
-  const derived = currentPlanet
+  const baseDerived = currentPlanet
     ? deriveInfrastructureFields(currentPlanet, buildings, ships, technologyLevels)
     : {
       productionPerHour: null,
@@ -3733,6 +3733,12 @@ function indexedInfrastructureState(
       protectedResources: null,
       raidableResources: null
     };
+  const boostExpiresAt = indexer.inviteeProductionBoostExpiresAt(wallet);
+  const boostActive = isInviteeProductionBoostActive(boostExpiresAt);
+  const derived = {
+    ...baseDerived,
+    productionPerHour: effectiveProductionPerHour(indexer, wallet, baseDerived.productionPerHour)
+  };
 
   const missionBlockerDetail = missionBlocker
     ? `Mission resolution is pending for this planet (mission ${missionBlocker.missionId}). The indexer or keeper must settle the due mission before infrastructure upgrades can be started.`
@@ -3764,10 +3770,36 @@ function indexedInfrastructureState(
     resourcesAsOfNow: currentPlanet?.resources ?? null,
     resourceSnapshot: planetResourcesPending ? null : resourceSnapshotMetadataForPlanet(planet),
     ...derived,
+    inviteeProductionBoost: boostExpiresAt
+      ? { multiplierBps: "20000", expiresAt: boostExpiresAt, active: boostActive }
+      : null,
     technologyLevels,
     buildings,
     queue
   };
+}
+
+function multiplyResources(resources: Resources | null, multiplier: number): Resources | null {
+  if (!resources) return null;
+  return {
+    metal: (BigInt(resources.metal) * BigInt(multiplier)).toString(),
+    crystal: (BigInt(resources.crystal) * BigInt(multiplier)).toString(),
+    deuterium: (BigInt(resources.deuterium) * BigInt(multiplier)).toString()
+  };
+}
+
+function isInviteeProductionBoostActive(expiresAt: string | null | undefined, now = Date.now()): boolean {
+  return Number(expiresAt ?? "0") > Math.floor(now / 1_000);
+}
+
+function effectiveProductionPerHour(
+  indexer: SettlementIndexer,
+  owner: `0x${string}`,
+  productionPerHour: Resources | null
+): Resources | null {
+  return isInviteeProductionBoostActive(indexer.inviteeProductionBoostExpiresAt(owner))
+    ? multiplyResources(productionPerHour, 2)
+    : productionPerHour;
 }
 
 function indexedMoonState(
@@ -4230,7 +4262,8 @@ function targetCombatIntelForMission(
     indexer.infrastructureRows(planet.planetId),
     indexer.shipRows(planet.planetId),
     indexer.defenseRows(planet.planetId),
-    indexer.technologyLevels(planet.owner)
+    indexer.technologyLevels(planet.owner),
+    indexer
   );
 
   return {
@@ -4285,7 +4318,11 @@ function publicPlanetStateRef(
     stationedDefenderForecastTimeline: indexer.stationedDefenderForecastTimelineForPlanet(planet.planetId),
     stationedDefenderTimelineComplete: true,
     research: indexer.technologyRows(planet.owner).map(({ id, level }) => ({ id, level })),
-    productionPerHour: derived?.productionPerHour ?? null,
+    productionPerHour: effectiveProductionPerHour(
+      indexer,
+      planet.owner,
+      derived?.productionPerHour ?? null
+    ),
     storageCaps: derived?.storageCaps ?? null,
     queues: {
       building: indexer.planetQueue(planet.planetId, "building"),
@@ -4336,7 +4373,8 @@ function resourcesWithClaimableAccrual(
   productionPerHour: Resources | null,
   storageCaps: Resources | null,
   lastSettledAt: string,
-  now = Date.now()
+  now = Date.now(),
+  inviteeProductionBoostExpiresAt?: string | null
 ): Resources {
   if (!productionPerHour || !storageCaps) return current;
 
@@ -4344,10 +4382,15 @@ function resourcesWithClaimableAccrual(
   if (!Number.isFinite(lastSettledAtSeconds) || lastSettledAtSeconds <= 0) return current;
 
   const elapsedSeconds = Math.max(0, Math.floor(now / 1_000) - lastSettledAtSeconds);
+  const boostedElapsedSeconds = boostedProductionSeconds(
+    lastSettledAtSeconds,
+    Math.floor(now / 1_000),
+    inviteeProductionBoostExpiresAt
+  );
   return {
-    metal: resourceWithClaimableAccrual(current.metal, productionPerHour.metal, storageCaps.metal, elapsedSeconds),
-    crystal: resourceWithClaimableAccrual(current.crystal, productionPerHour.crystal, storageCaps.crystal, elapsedSeconds),
-    deuterium: resourceWithClaimableAccrual(current.deuterium, productionPerHour.deuterium, storageCaps.deuterium, elapsedSeconds)
+    metal: resourceWithClaimableAccrual(current.metal, productionPerHour.metal, storageCaps.metal, elapsedSeconds, boostedElapsedSeconds),
+    crystal: resourceWithClaimableAccrual(current.crystal, productionPerHour.crystal, storageCaps.crystal, elapsedSeconds, boostedElapsedSeconds),
+    deuterium: resourceWithClaimableAccrual(current.deuterium, productionPerHour.deuterium, storageCaps.deuterium, elapsedSeconds, boostedElapsedSeconds)
   };
 }
 
@@ -4355,16 +4398,31 @@ function resourceWithClaimableAccrual(
   current: string,
   productionPerHour: string,
   storageCap: string,
-  elapsedSeconds: number
+  elapsedSeconds: number,
+  boostedElapsedSeconds = 0
 ): string {
   const currentValue = Number(current);
   const rate = Math.max(0, Number(productionPerHour));
   const cap = Number(storageCap);
   if (!Number.isFinite(currentValue) || !Number.isFinite(rate) || !Number.isFinite(cap)) return current;
 
-  const produced = Math.floor((rate * elapsedSeconds) / 3_600);
+  const produced = Math.floor((rate * (elapsedSeconds + boostedElapsedSeconds)) / 3_600);
   const remainingCapacity = Math.max(0, cap - currentValue);
   return Math.floor(currentValue + Math.min(produced, remainingCapacity)).toString();
+}
+
+function boostedProductionSeconds(
+  fromAt: number,
+  toAt: number,
+  inviteeProductionBoostExpiresAt?: string | null
+): number {
+  const expiresAt = Number(inviteeProductionBoostExpiresAt ?? "0");
+  // The activation event stores its exact end. Production boosts are contractually fixed at
+  // seven days, so derive the matching start boundary here as well as on-chain. This matters
+  // for migration snapshots whose lastSettledAt predates the claim transaction.
+  const startsAt = expiresAt - 7 * 24 * 60 * 60;
+  if (!Number.isFinite(expiresAt) || startsAt >= toAt || expiresAt <= fromAt) return 0;
+  return Math.max(0, Math.min(toAt, expiresAt) - Math.max(fromAt, startsAt));
 }
 
 function accruedResourcesWithBuildingQueue(
@@ -4376,6 +4434,9 @@ function accruedResourcesWithBuildingQueue(
   if (!Number.isFinite(lastSettledAtSeconds) || lastSettledAtSeconds <= 0) return planet.resources;
 
   const nowSeconds = Math.floor(now / 1_000);
+  const inviteeProductionBoostExpiresAt = indexer.inviteeProductionBoostExpiresAt(
+    planet.owner as `0x${string}`
+  );
   if (nowSeconds <= lastSettledAtSeconds) return planet.resources;
 
   const completed = indexer.completedBuildingQueues(planet.planetId)
@@ -4397,7 +4458,8 @@ function accruedResourcesWithBuildingQueue(
       derived.productionPerHour,
       derived.storageCaps,
       planet.lastSettledAt,
-      now
+      now,
+      inviteeProductionBoostExpiresAt
     );
   }
 
@@ -4416,7 +4478,8 @@ function accruedResourcesWithBuildingQueue(
         resources,
         derived.productionPerHour,
         derived.storageCaps,
-        Math.floor(readyAt - cursor)
+        Math.floor(readyAt - cursor),
+        boostedProductionSeconds(cursor, readyAt, inviteeProductionBoostExpiresAt)
       );
       cursor = readyAt;
     }
@@ -4434,7 +4497,8 @@ function accruedResourcesWithBuildingQueue(
       resources,
       derived.productionPerHour,
       derived.storageCaps,
-      Math.floor(nowSeconds - cursor)
+      Math.floor(nowSeconds - cursor),
+      boostedProductionSeconds(cursor, nowSeconds, inviteeProductionBoostExpiresAt)
     );
   }
 
@@ -4445,13 +4509,14 @@ function resourcesWithClaimableAccrualByElapsed(
   current: Resources,
   productionPerHour: Resources | null,
   storageCaps: Resources | null,
-  elapsedSeconds: number
+  elapsedSeconds: number,
+  boostedElapsedSeconds = 0
 ): Resources {
   if (!productionPerHour || !storageCaps || elapsedSeconds <= 0) return current;
   return {
-    metal: resourceWithClaimableAccrual(current.metal, productionPerHour.metal, storageCaps.metal, elapsedSeconds),
-    crystal: resourceWithClaimableAccrual(current.crystal, productionPerHour.crystal, storageCaps.crystal, elapsedSeconds),
-    deuterium: resourceWithClaimableAccrual(current.deuterium, productionPerHour.deuterium, storageCaps.deuterium, elapsedSeconds)
+    metal: resourceWithClaimableAccrual(current.metal, productionPerHour.metal, storageCaps.metal, elapsedSeconds, boostedElapsedSeconds),
+    crystal: resourceWithClaimableAccrual(current.crystal, productionPerHour.crystal, storageCaps.crystal, elapsedSeconds, boostedElapsedSeconds),
+    deuterium: resourceWithClaimableAccrual(current.deuterium, productionPerHour.deuterium, storageCaps.deuterium, elapsedSeconds, boostedElapsedSeconds)
   };
 }
 
@@ -5330,7 +5395,14 @@ function rankedHighscorePlanets(
     const accrued = indexer
       ? indexedCurrentPlanetState(indexer, planet, { allowPendingResources: true }) ?? planet
       : planet;
-    const tactical = indexedPlanetTacticalSummary(accrued, buildings, ships, defenses, technologyLevels);
+    const tactical = indexedPlanetTacticalSummary(
+      accrued,
+      buildings,
+      ships,
+      defenses,
+      technologyLevels,
+      indexer
+    );
     // Most ranked planets do not have moons. moonState() hydrates resources, buildings, defenses,
     // fleets, and queues, so calling it unconditionally turned one rankings page into hundreds of
     // unnecessary SQLite queries. The indexed primary-key existence lookup lets the common no-moon
@@ -5374,7 +5446,8 @@ export function indexedPlanetTacticalSummary(
   buildings: InfrastructureState["buildings"],
   ships: ShipyardState["ships"],
   defenses: DefenseState["defenses"],
-  technologyLevels: Record<string, number>
+  technologyLevels: Record<string, number>,
+  indexer?: SettlementIndexer
 ): RankedHighscorePlanet["tactical"] {
   const fallbackResources = planet.resources ?? { metal: "0", crystal: "0", deuterium: "0" };
   const derived = buildings.length > 0
@@ -5397,7 +5470,9 @@ export function indexedPlanetTacticalSummary(
     // Rankings call sites), so its resources match the public universe surface. This is the
     // full stockpile LOOT is plundered from at the ~50% on-chain rate. (VEY-KANEO-454)
     grossResourceTotal: resourceTotal(fallbackResources).toString(),
-    productionPerHour: derived?.productionPerHour ?? null,
+    productionPerHour: indexer
+      ? effectiveProductionPerHour(indexer, planet.owner, derived?.productionPerHour ?? null)
+      : derived?.productionPerHour ?? null,
     storageCaps: derived?.storageCaps ?? null,
     ships: {
       ...shipSummary,

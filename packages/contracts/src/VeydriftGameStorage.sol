@@ -66,6 +66,9 @@ abstract contract VeydriftGameStorage is Initializable {
         VeydriftAntiRaidPrimitives.PROTECTED_STORAGE_BPS;
     uint16 internal constant COMBAT_DEBRIS_BPS = 3_000;
     uint16 internal constant REFERRAL_INVITER_FEE_BPS = 5_000;
+    /// @notice Referral and paid-alliance invitees produce twice the normal resources for one week.
+    /// @dev This is a player-wide modifier; it composes with the planet, Energy, and Crawler rules.
+    uint64 internal constant INVITEE_PRODUCTION_BOOST_DURATION = 7 days;
 
     struct Resources {
         uint128 metal;
@@ -368,6 +371,9 @@ abstract contract VeydriftGameStorage is Initializable {
     mapping(uint256 planetId => mapping(Resource resource => RiftExtraction extraction)) public
         riftExtractions;
     mapping(uint256 planetId => Resources resources) internal _riftLockedResources;
+    // Append-only: exact player-wide invitee 2x production window. Its fixed seven-day start
+    // is derived from this stored expiry, which also keeps migrated snapshots non-retroactive.
+    mapping(address player => uint64 expiresAt) internal _inviteeProductionBoostExpiresAt;
 
     error AlreadyStarted();
     error BadStartPayment();
@@ -468,6 +474,7 @@ abstract contract VeydriftGameStorage is Initializable {
         uint16 fields,
         int16 temperature
     );
+    event InviteeProductionBoostActivated(address indexed player, uint64 expiresAt);
     event FirstPlanetSettled(
         address indexed player,
         uint256 indexed planetId,
@@ -866,6 +873,12 @@ abstract contract VeydriftGameStorage is Initializable {
         uint64 currentTime = uint64(block.timestamp);
         if (playerLastActiveAt[player] == currentTime) return;
         playerLastActiveAt[player] = currentTime;
+    }
+
+    function _activateInviteeProductionBoost(address player) internal {
+        uint64 expiresAt = uint64(block.timestamp) + INVITEE_PRODUCTION_BOOST_DURATION;
+        _inviteeProductionBoostExpiresAt[player] = expiresAt;
+        emit InviteeProductionBoostActivated(player, expiresAt);
     }
 
     function _registerOwnedPlanet(address player, uint256 planetId) internal {
