@@ -950,6 +950,47 @@ test("mobile Defenses renders its indexed planet snapshot while wallet overview 
   assert.deepEqual(rendered.errors, []);
 });
 
+for (const width of [390, 1280]) {
+  test(`established-account gameplay routes escape an incomplete overview snapshot at ${width}px`, async () => {
+    const routes = [
+      { path: "/", ready: "document.querySelector('main')?.textContent?.includes('Owned Alpha') === true" },
+      { path: "/mission-control", ready: "document.querySelector('main [data-mission-control-page]') !== null" },
+      { path: "/galaxy", ready: "document.querySelector('main h2')?.textContent === 'Galaxy'" },
+    ];
+
+    for (const route of routes) {
+      await loadInspectorFixture(route.path, width, {
+        incompleteOverview: "true",
+        shell: "settlement",
+        waitForPlanetSelectors: "false",
+      });
+      try {
+        await waitForExpression(`location.pathname === '${route.path}'
+          && document.querySelector('main')?.textContent?.includes('Syncing planetfall') === false
+          && ${route.ready}`);
+      } catch (error) {
+        const diagnostics = await evaluate(`({
+          errors: window.inspectorProof.errors,
+          mainText: document.querySelector('main')?.textContent?.replace(/\\s+/g, ' ').trim(),
+          path: location.pathname,
+          requests: window.inspectorProof.requests,
+        })`);
+        throw new Error(`${error.message}\nGameplay hydration diagnostics: ${JSON.stringify(diagnostics)}`);
+      }
+    }
+
+    const rendered = await evaluate(`({
+      errors: window.inspectorProof.errors,
+      requests: window.inspectorProof.requests,
+      syncingPlanetfall: document.querySelector('main')?.textContent?.includes('Syncing planetfall') ?? false,
+    })`);
+    assert.ok(rendered.requests.some((request) => request.includes('/overview')), JSON.stringify(rendered.requests));
+    assert.ok(rendered.requests.some((request) => request.includes('/settlement')), JSON.stringify(rendered.requests));
+    assert.equal(rendered.syncingPlanetfall, false);
+    assert.deepEqual(rendered.errors, []);
+  });
+}
+
 test("desktop Overview to Shipyard click atomically replaces the rendered page", async () => {
   await loadInspectorFixture("/", 1280);
   await waitForExpression("location.pathname === '/' && document.querySelector('main section[aria-label=\"Fleets\"]') !== null");

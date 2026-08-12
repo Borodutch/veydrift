@@ -195,6 +195,7 @@ import {
   type CanonicalPlanetResourceStore,
 } from "./planetResourceStore";
 import {
+  hydratedWalletPlanetSnapshot,
   isTransientGameStateReadFailure,
   expectedMissionLaunch,
   missionLaunchMissionsForTransaction,
@@ -2723,10 +2724,17 @@ export async function loadWalletPlanetSyncSnapshot(
   const freshReadOptions = options.fresh === undefined ? {} : { fresh: options.fresh };
   if (!options.forceWalletPlanets) {
     try {
-      return await loadOverviewSnapshot(apiBaseUrl, account, overviewPlanetId, {
+      const overviewSnapshot = await loadOverviewSnapshot(apiBaseUrl, account, overviewPlanetId, {
         ...freshReadOptions,
         timeoutMs: INITIAL_OVERVIEW_SNAPSHOT_TIMEOUT_MS,
       });
+      if (hydratedWalletPlanetSnapshot(overviewSnapshot, overviewPlanetId)) {
+        return overviewSnapshot;
+      }
+      // A successful HTTP response can still be an incomplete indexing snapshot. Repeating that
+      // fast path leaves established accounts on the planetfall loader even when their indexed
+      // planet roster or settlement endpoint is already complete. Fall through to those critical
+      // reads just as we do when the overview optimization times out.
     } catch (error) {
       if (!isRecoverableOverviewSnapshotError(error)) {
         throw error;
