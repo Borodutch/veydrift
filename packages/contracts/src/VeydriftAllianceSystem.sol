@@ -165,14 +165,11 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
     error SelfDiplomacy(uint256 allianceId);
     error SnapshotLengthMismatch();
     error WarAlreadyActive(uint256 allianceId, uint256 otherAllianceId);
-    error WarDeclarerAlreadyRecorded(uint256 allianceId, uint256 otherAllianceId);
     error WarDeclarerUnknown(uint256 allianceId, uint256 otherAllianceId);
     error WarEndLocked(uint64 unlocksAt);
     error InvalidWarProtectionModule(address module);
     error WarProtectionUnset();
-    error InvalidWarMigration(
-        uint256 allianceId, uint256 otherAllianceId, uint256 declarerAllianceId, uint64 declaredAt
-    );
+    error LegacyWarRequired(uint256 allianceId, uint256 otherAllianceId);
     error ZeroAddress();
     error NotGame(address caller);
     error NotPaidInviteSystem(address caller);
@@ -210,13 +207,8 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
     event AllianceDiplomacyUpdated(
         uint256 indexed allianceId, uint256 indexed otherAllianceId, DiplomacyStatus status
     );
-    event AllianceWarMetadataMigrated(
-        uint256 indexed allianceId,
-        uint256 indexed otherAllianceId,
-        uint256 indexed declarerAllianceId,
-        uint64 declaredAt
-    );
     event WarProtectionUpdated(address indexed previousModule, address indexed nextModule);
+    event LegacyWarDisabled(uint256 indexed allianceId, uint256 indexed otherAllianceId);
     event AllianceDefenseIntentOpened(
         uint256 indexed intentId,
         uint256 indexed allianceId,
@@ -248,43 +240,33 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
         warMinimumDurationActivatedAt = _now();
     }
 
-    /// @notice Records the verified original declarer for an ambiguous mirrored
-    /// pre-upgrade war. Each pair can be migrated once and only while active.
-    function migrateLegacyWarMetadata(
-        uint256 allianceId,
-        uint256 otherAllianceId,
-        uint256 declarerAllianceId,
-        uint64 declaredAt
+    /// @notice Atomically removes wars created before roster/score protection was introduced.
+    /// @dev Historic relationships cannot safely be upgraded in place because their declaration-time
+    ///      membership and score snapshots do not exist. New wars must use `setDiplomacy(..., War)`.
+    function disableLegacyWars(
+        uint256[] calldata legacyAllianceIds,
+        uint256[] calldata otherAllianceIds
     ) external onlyOwner {
-        _requireAlliance(allianceId);
-        _requireAlliance(otherAllianceId);
-        if (_relationship(allianceId, otherAllianceId) != DiplomacyStatus.War) {
-            revert InvalidWarMigration(allianceId, otherAllianceId, declarerAllianceId, declaredAt);
+        if (legacyAllianceIds.length != otherAllianceIds.length) revert SnapshotLengthMismatch();
+        VeydriftAllianceWarProtection protection = warProtection;
+        for (uint256 index = 0; index < legacyAllianceIds.length;) {
+            uint256 allianceId = legacyAllianceIds[index];
+            uint256 otherAllianceId = otherAllianceIds[index];
+            _requireAlliance(allianceId);
+            _requireAlliance(otherAllianceId);
+            if (
+                allianceId >= otherAllianceId
+                    || _relationship(allianceId, otherAllianceId) != DiplomacyStatus.War
+                    || (address(protection) != address(0)
+                        && protection.warSnapshot(allianceId, otherAllianceId).snapshotId != 0)
+            ) revert LegacyWarRequired(allianceId, otherAllianceId);
+            _clearDiplomacyPair(allianceId, otherAllianceId);
+            emit AllianceDiplomacyUpdated(allianceId, otherAllianceId, DiplomacyStatus.None);
+            emit LegacyWarDisabled(allianceId, otherAllianceId);
+            unchecked {
+                ++index;
+            }
         }
-        if (_warDeclarers[allianceId][otherAllianceId] != 0) {
-            revert WarDeclarerAlreadyRecorded(allianceId, otherAllianceId);
-        }
-        uint256 targetAllianceId;
-        if (declarerAllianceId == allianceId) {
-            targetAllianceId = otherAllianceId;
-        } else if (declarerAllianceId == otherAllianceId) {
-            targetAllianceId = allianceId;
-        } else {
-            revert InvalidWarMigration(allianceId, otherAllianceId, declarerAllianceId, declaredAt);
-        }
-        if (
-            _diplomacy[declarerAllianceId][targetAllianceId] != DiplomacyStatus.War
-                || declaredAt == 0 || declaredAt > _now()
-        ) {
-            revert InvalidWarMigration(allianceId, otherAllianceId, declarerAllianceId, declaredAt);
-        }
-
-        delete _warStartedAts[allianceId][otherAllianceId];
-        delete _warStartedAts[otherAllianceId][allianceId];
-        _setWarMetadata(allianceId, otherAllianceId, declarerAllianceId, declaredAt);
-        emit AllianceWarMetadataMigrated(
-            allianceId, otherAllianceId, declarerAllianceId, declaredAt
-        );
     }
 
     modifier onlyOwner() {
@@ -435,14 +417,13 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
         _requireAlliance(otherAllianceId);
         if (allianceId == otherAllianceId) revert SelfDiplomacy(allianceId);
 
+        // Historic imports do not carry declaration-time roster/score snapshots.
+        // All wars must be declared through `setDiplomacy(..., War)` so the
+        // protection module captures that state atomically.
+        if (status == DiplomacyStatus.War) revert LegacyWarRequired(allianceId, otherAllianceId);
         _clearDiplomacyPair(allianceId, otherAllianceId);
-        if (status == DiplomacyStatus.War) {
-            _diplomacy[allianceId][otherAllianceId] = status;
-            _setWarMetadata(allianceId, otherAllianceId, allianceId, _now());
-        } else {
-            _diplomacy[allianceId][otherAllianceId] = status;
-            _diplomacy[otherAllianceId][allianceId] = status;
-        }
+        _diplomacy[allianceId][otherAllianceId] = status;
+        _diplomacy[otherAllianceId][allianceId] = status;
         emit AllianceDiplomacyUpdated(allianceId, otherAllianceId, status);
     }
 

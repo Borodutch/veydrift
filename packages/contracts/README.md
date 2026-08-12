@@ -400,6 +400,21 @@ The script reads the linked game contract from the live proxy, deploys the new
 implementation, and calls `upgradeToAndCall`. The broadcasting account must be
 the proxy `owner()` because `_authorizeUpgrade` is owner-gated.
 
+Historic wars created before the protection module was introduced cannot be
+made safe retroactively: their declaration-time roster and score snapshots do
+not exist. Disable every such canonical pair during the upgrade instead:
+
+```bash
+PRIVATE_KEY=... ALLIANCE_PROXY_ADDRESS=0xAllianceProxy \
+LEGACY_WAR_ALLIANCE_IDS=1,1,1 LEGACY_WAR_OTHER_ALLIANCE_IDS=4,5,6 \
+forge script script/UpgradeAllianceDisableLegacyWars.s.sol:UpgradeAllianceDisableLegacyWars \
+  --rpc-url "$BASE_MAINNET_RPC_URL" --broadcast
+```
+
+This performs one owner-authorized transaction: deploy the implementation,
+upgrade the proxy, and end each supplied unprotected war. New declarations use
+`setDiplomacy(..., War)`, which captures a mandatory protection snapshot.
+
 For paid alliance invites, upgrade the alliance proxy first, deploy/register the
 treasury, then upgrade the game proxy so production settlement begins crediting
 the configured treasury immediately. Each invite costs exactly `0.006 ether`;

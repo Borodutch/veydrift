@@ -8,8 +8,9 @@ import {VeydriftAllianceWarProtection} from "../src/VeydriftAllianceWarProtectio
 /// @notice Storage-compatible corrective UUPS upgrade for the live
 /// `VeydriftAllianceSystem` proxy. The proxy must already have activated the
 /// minimum war duration; this upgrade preserves that timestamp and all existing
-/// alliance state. After upgrading, use `MigrateAllianceWarMetadata.s.sol` only
-/// for mirrored legacy pairs whose declarer cannot be inferred from raw storage.
+/// alliance state. Historic wars without a protection snapshot must be disabled,
+/// not migrated: their declaration-time roster and score snapshots cannot be
+/// reconstructed safely.
 /// The Game proxy must be upgraded first: the protection module calls its new
 /// canonical `playerScore(address)` read. `UpgradeGame` deploys the fresh First
 /// Planet module required by the size-constrained Game implementation as part of

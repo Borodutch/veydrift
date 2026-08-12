@@ -642,7 +642,7 @@ contract VeydriftAllianceSystemTest is Test {
         assertEq(alliances.allianceJoinRequests(enemyAllianceId).length, 0);
     }
 
-    function testProxyInitializationImportsAllianceRosterAndDiplomacy() public {
+    function testProxyInitializationImportsAllianceRosterAndNonWarDiplomacy() public {
         VeydriftAllianceSystem proxied = VeydriftAllianceSystem(
             address(
                 new ERC1967Proxy(
@@ -714,7 +714,7 @@ contract VeydriftAllianceSystemTest is Test {
         );
 
         vm.prank(admin);
-        proxied.importDiplomacy(7, 8, VeydriftAllianceSystem.DiplomacyStatus.War);
+        proxied.importDiplomacy(7, 8, VeydriftAllianceSystem.DiplomacyStatus.Ally);
 
         VeydriftAllianceSystem.Alliance memory eggs = proxied.allianceProfile(7);
         VeydriftAllianceSystem.Membership memory leaderMembership = proxied.allianceOf(leader);
@@ -728,10 +728,10 @@ contract VeydriftAllianceSystemTest is Test {
         assertEq(memberMembership.joinedAt, 1_700_000_002);
         assertEq(proxied.allianceMembers(7).length, 2);
         assertEq(
-            uint8(proxied.diplomacyStatus(7, 8)), uint8(VeydriftAllianceSystem.DiplomacyStatus.War)
+            uint8(proxied.diplomacyStatus(7, 8)), uint8(VeydriftAllianceSystem.DiplomacyStatus.Ally)
         );
         assertEq(
-            uint8(proxied.diplomacyStatus(8, 7)), uint8(VeydriftAllianceSystem.DiplomacyStatus.War)
+            uint8(proxied.diplomacyStatus(8, 7)), uint8(VeydriftAllianceSystem.DiplomacyStatus.Ally)
         );
     }
 
@@ -1615,7 +1615,7 @@ contract VeydriftAllianceSystemTest is Test {
         );
     }
 
-    function testCorrectiveUpgradeRequiresMigratedDeclarerForLegacyMirroredWars() public {
+    function testOwnerAtomicallyDisablesAllLegacyWars() public {
         VeydriftAllianceSystemStateHarness stateful = VeydriftAllianceSystemStateHarness(
             address(
                 new ERC1967Proxy(
@@ -1640,10 +1640,6 @@ contract VeydriftAllianceSystemTest is Test {
         vm.prank(recruit);
         uint256 secondEnemyAllianceId = proxied.createAlliance("WAR2", "Second War Target", "");
 
-        vm.prank(admin);
-        proxied.initializeWarMinimumDuration();
-        uint64 activatedAt = proxied.warMinimumDurationActivatedAt();
-
         stateful.seedDiplomacyDirection(
             allianceId, enemyAllianceId, VeydriftAllianceSystem.DiplomacyStatus.War
         );
@@ -1657,58 +1653,14 @@ contract VeydriftAllianceSystemTest is Test {
             secondEnemyAllianceId, allianceId, VeydriftAllianceSystem.DiplomacyStatus.War
         );
 
-        VeydriftAllianceSystemStateHarness correctiveImplementation =
-            new VeydriftAllianceSystemStateHarness(IVeydriftAllianceGame(address(game)));
+        uint256[] memory allianceIds = new uint256[](2);
+        uint256[] memory otherAllianceIds = new uint256[](2);
+        allianceIds[0] = allianceId;
+        otherAllianceIds[0] = enemyAllianceId;
+        allianceIds[1] = allianceId;
+        otherAllianceIds[1] = secondEnemyAllianceId;
         vm.prank(admin);
-        proxied.upgradeToAndCall(address(correctiveImplementation), "");
-
-        assertEq(proxied.warDeclarer(allianceId, enemyAllianceId), 0);
-        vm.prank(enemy);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                VeydriftAllianceSystem.WarDeclarerUnknown.selector, enemyAllianceId, allianceId
-            )
-        );
-        proxied.setDiplomacy(
-            enemyAllianceId, allianceId, VeydriftAllianceSystem.DiplomacyStatus.None
-        );
-
-        vm.startPrank(admin);
-        proxied.migrateLegacyWarMetadata(allianceId, enemyAllianceId, allianceId, activatedAt);
-        proxied.migrateLegacyWarMetadata(
-            allianceId, secondEnemyAllianceId, secondEnemyAllianceId, activatedAt
-        );
-        vm.stopPrank();
-        assertEq(proxied.warDeclarer(enemyAllianceId, allianceId), allianceId);
-        assertEq(proxied.warDeclarer(allianceId, secondEnemyAllianceId), secondEnemyAllianceId);
-
-        vm.warp(activatedAt + proxied.WAR_MINIMUM_DURATION());
-        vm.prank(enemy);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                VeydriftAllianceSystem.NotAuthorized.selector, enemy, enemyAllianceId
-            )
-        );
-        proxied.setDiplomacy(
-            enemyAllianceId, allianceId, VeydriftAllianceSystem.DiplomacyStatus.None
-        );
-        vm.prank(leader);
-        proxied.setDiplomacy(
-            allianceId, enemyAllianceId, VeydriftAllianceSystem.DiplomacyStatus.None
-        );
-        vm.prank(leader);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                VeydriftAllianceSystem.NotAuthorized.selector, leader, allianceId
-            )
-        );
-        proxied.setDiplomacy(
-            allianceId, secondEnemyAllianceId, VeydriftAllianceSystem.DiplomacyStatus.None
-        );
-        vm.prank(recruit);
-        proxied.setDiplomacy(
-            secondEnemyAllianceId, allianceId, VeydriftAllianceSystem.DiplomacyStatus.None
-        );
+        proxied.disableLegacyWars(allianceIds, otherAllianceIds);
 
         assertEq(
             uint8(proxied.diplomacyStatus(allianceId, enemyAllianceId)),
@@ -1718,8 +1670,6 @@ contract VeydriftAllianceSystemTest is Test {
             uint8(proxied.diplomacyStatus(enemyAllianceId, allianceId)),
             uint8(VeydriftAllianceSystem.DiplomacyStatus.None)
         );
-        assertEq(proxied.warStartedAt(allianceId, enemyAllianceId), 0);
-        assertEq(proxied.warStartedAt(enemyAllianceId, allianceId), 0);
         assertEq(
             uint8(proxied.diplomacyStatus(allianceId, secondEnemyAllianceId)),
             uint8(VeydriftAllianceSystem.DiplomacyStatus.None)
@@ -1728,67 +1678,46 @@ contract VeydriftAllianceSystemTest is Test {
             uint8(proxied.diplomacyStatus(secondEnemyAllianceId, allianceId)),
             uint8(VeydriftAllianceSystem.DiplomacyStatus.None)
         );
-        assertEq(proxied.warStartedAt(allianceId, secondEnemyAllianceId), 0);
-        assertEq(proxied.warStartedAt(secondEnemyAllianceId, allianceId), 0);
     }
 
-    function testCorrectiveUpgradeClearsBothStoredWarTimestamps() public {
-        VeydriftAllianceSystemStateHarness stateful = VeydriftAllianceSystemStateHarness(
-            address(
-                new ERC1967Proxy(
-                    address(
-                        new VeydriftAllianceSystemStateHarness(IVeydriftAllianceGame(address(game)))
-                    ),
-                    abi.encodeCall(
-                        VeydriftAllianceSystem.initialize,
-                        (IVeydriftAllianceGame(address(game)), admin)
-                    )
-                )
-            )
-        );
-        VeydriftAllianceSystem proxied = VeydriftAllianceSystem(address(stateful));
-        vm.prank(admin);
-        game.setAllianceSystem(address(proxied));
+    function testLegacyCleanupRejectsProtectedWars() public {
+        vm.prank(leader);
+        uint256 allianceId = alliances.createAlliance("ALLY", "Alliance", "");
+        vm.prank(enemy);
+        uint256 enemyAllianceId = alliances.createAlliance("WAR", "War Target", "");
 
         vm.prank(leader);
-        uint256 allianceId = proxied.createAlliance("ALLY", "Alliance", "");
-        vm.prank(enemy);
-        uint256 enemyAllianceId = proxied.createAlliance("WAR", "War Target", "");
-
-        vm.prank(admin);
-        proxied.initializeWarMinimumDuration();
-        uint64 startedAt = uint64(block.timestamp);
-        stateful.seedDiplomacyDirection(
+        alliances.setDiplomacy(
             allianceId, enemyAllianceId, VeydriftAllianceSystem.DiplomacyStatus.War
         );
-        stateful.seedDiplomacyDirection(
-            enemyAllianceId, allianceId, VeydriftAllianceSystem.DiplomacyStatus.War
+
+        uint256[] memory allianceIds = new uint256[](1);
+        uint256[] memory otherAllianceIds = new uint256[](1);
+        allianceIds[0] = allianceId;
+        otherAllianceIds[0] = enemyAllianceId;
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftAllianceSystem.LegacyWarRequired.selector, allianceId, enemyAllianceId
+            )
         );
-        stateful.seedWarStartedAt(allianceId, enemyAllianceId, startedAt);
-        stateful.seedWarStartedAt(enemyAllianceId, allianceId, startedAt);
+        alliances.disableLegacyWars(allianceIds, otherAllianceIds);
+    }
 
-        VeydriftAllianceSystemStateHarness correctiveImplementation =
-            new VeydriftAllianceSystemStateHarness(IVeydriftAllianceGame(address(game)));
-        vm.prank(admin);
-        proxied.upgradeToAndCall(address(correctiveImplementation), "");
-
-        vm.prank(admin);
-        proxied.migrateLegacyWarMetadata(allianceId, enemyAllianceId, allianceId, startedAt);
-        assertEq(stateful.storedWarDeclarer(allianceId, enemyAllianceId), allianceId);
-        assertEq(stateful.storedWarDeclarer(enemyAllianceId, allianceId), allianceId);
-
-        vm.warp(startedAt + proxied.WAR_MINIMUM_DURATION());
+    function testAdministrativeImportCannotCreateUnprotectedWar() public {
         vm.prank(leader);
-        proxied.setDiplomacy(
-            allianceId, enemyAllianceId, VeydriftAllianceSystem.DiplomacyStatus.None
-        );
+        uint256 allianceId = alliances.createAlliance("ALLY", "Alliance", "");
+        vm.prank(enemy);
+        uint256 enemyAllianceId = alliances.createAlliance("WAR", "War Target", "");
 
-        assertEq(proxied.warStartedAt(allianceId, enemyAllianceId), 0);
-        assertEq(proxied.warStartedAt(enemyAllianceId, allianceId), 0);
-        assertEq(stateful.storedWarStartedAt(allianceId, enemyAllianceId), 0);
-        assertEq(stateful.storedWarStartedAt(enemyAllianceId, allianceId), 0);
-        assertEq(stateful.storedWarDeclarer(allianceId, enemyAllianceId), 0);
-        assertEq(stateful.storedWarDeclarer(enemyAllianceId, allianceId), 0);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftAllianceSystem.LegacyWarRequired.selector, allianceId, enemyAllianceId
+            )
+        );
+        alliances.importDiplomacy(
+            allianceId, enemyAllianceId, VeydriftAllianceSystem.DiplomacyStatus.War
+        );
     }
 
     function testUpgradeAuthorizationRemainsOwnerGated() public {
