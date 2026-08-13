@@ -332,44 +332,78 @@ library VeydriftCatalog {
         return (uint256(metal) + crystal) / 10;
     }
 
-    function shipRapidfireAgainstShip(Ship attacker, Ship defender) public pure returns (uint8) {
+    function shipRapidfireAgainstShip(Ship attacker, Ship defender) public pure returns (uint16) {
+        if (attacker == Ship.Deathstar) return _deathstarRapidfireAgainstShip(defender);
+        if (_isStationarySupportShip(defender) && _isMobileShip(attacker)) return 5;
+
+        if (attacker == Ship.HeavyFighter && defender == Ship.SmallCargo) return 3;
         if (attacker == Ship.Cruiser && defender == Ship.LightFighter) return 6;
-        if (
-            attacker == Ship.Destroyer
-                && (defender == Ship.SmallCargo || defender == Ship.LargeCargo)
-        ) {
-            return 3;
-        }
+        if (attacker == Ship.Battleship && defender == Ship.Pathfinder) return 5;
         if (attacker == Ship.Destroyer && defender == Ship.Battlecruiser) return 2;
         if (attacker == Ship.Battlecruiser && defender == Ship.SmallCargo) return 3;
-        if (attacker == Ship.Battlecruiser && defender == Ship.LargeCargo) return 4;
+        if (attacker == Ship.Battlecruiser && defender == Ship.LargeCargo) return 3;
         if (
             attacker == Ship.Battlecruiser
                 && (defender == Ship.HeavyFighter || defender == Ship.Cruiser)
         ) return 4;
         if (attacker == Ship.Battlecruiser && defender == Ship.Battleship) return 7;
-        if (attacker == Ship.Reaper && defender == Ship.Destroyer) return 2;
-        if (attacker == Ship.Reaper && defender == Ship.Deathstar) return 10;
-        if (attacker == Ship.Pathfinder && defender == Ship.Recycler) return 3;
+        if (attacker == Ship.Reaper && defender == Ship.Battleship) return 7;
+        if (attacker == Ship.Reaper && defender == Ship.Bomber) return 4;
+        if (attacker == Ship.Reaper && defender == Ship.Destroyer) return 3;
+        if (attacker == Ship.Pathfinder && defender == Ship.LightFighter) return 3;
+        if (attacker == Ship.Pathfinder && defender == Ship.HeavyFighter) return 2;
+        if (attacker == Ship.Pathfinder && defender == Ship.Cruiser) return 3;
         return 1;
     }
 
     function shipRapidfireAgainstDefense(Ship attacker, Defense defender)
         public
         pure
-        returns (uint8)
+        returns (uint16)
     {
         if (attacker == Ship.Cruiser && defender == Defense.RocketLauncher) return 10;
         if (attacker == Ship.Bomber && defender == Defense.RocketLauncher) return 20;
         if (attacker == Ship.Bomber && defender == Defense.LightLaser) return 20;
-        if (
-            attacker == Ship.Bomber
-                && (defender == Defense.HeavyLaser || defender == Defense.IonCannon)
-        ) return 10;
+        if (attacker == Ship.Bomber && defender == Defense.HeavyLaser) return 10;
+        if (attacker == Ship.Bomber && defender == Defense.GaussCannon) return 5;
+        if (attacker == Ship.Bomber && defender == Defense.IonCannon) return 10;
+        if (attacker == Ship.Bomber && defender == Defense.PlasmaTurret) return 5;
         if (attacker == Ship.Destroyer && defender == Defense.LightLaser) return 10;
-        if (attacker == Ship.Deathstar) return 200;
-        if (attacker == Ship.Reaper && defender == Defense.PlasmaTurret) return 2;
+        if (attacker == Ship.Deathstar && defender == Defense.RocketLauncher) return 200;
+        if (attacker == Ship.Deathstar && defender == Defense.LightLaser) return 200;
+        if (attacker == Ship.Deathstar && defender == Defense.HeavyLaser) return 100;
+        if (attacker == Ship.Deathstar && defender == Defense.GaussCannon) return 50;
+        if (attacker == Ship.Deathstar && defender == Defense.IonCannon) return 100;
+        if (attacker == Ship.Reaper && defender == Defense.IonCannon) return 2;
         return 1;
+    }
+
+    /// @dev Classic OGame core matrix plus the current Reaper/Pathfinder/Crawler extension.
+    ///      Veydrift has no Espionage Probe, so probe-only OGame lanes are intentionally omitted.
+    function _deathstarRapidfireAgainstShip(Ship defender) private pure returns (uint16) {
+        if (
+            defender == Ship.SmallCargo || defender == Ship.Recycler || defender == Ship.ColonyShip
+                || defender == Ship.LargeCargo
+        ) return 250;
+        if (defender == Ship.LightFighter) return 200;
+        if (defender == Ship.HeavyFighter) return 100;
+        if (defender == Ship.Cruiser) return 33;
+        if (defender == Ship.Battleship) return 30;
+        if (defender == Ship.Bomber) return 25;
+        if (defender == Ship.SolarSatellite || defender == Ship.Crawler) return 1_250;
+        if (defender == Ship.Destroyer) return 5;
+        if (defender == Ship.Battlecruiser) return 15;
+        if (defender == Ship.Reaper) return 10;
+        if (defender == Ship.Pathfinder) return 30;
+        return 1;
+    }
+
+    function _isStationarySupportShip(Ship ship) private pure returns (bool) {
+        return ship == Ship.SolarSatellite || ship == Ship.Crawler;
+    }
+
+    function _isMobileShip(Ship ship) private pure returns (bool) {
+        return ship != Ship.SolarSatellite && ship != Ship.Crawler && ship != Ship.Deathstar;
     }
 
     function spaceDockRepairBps(uint16 spaceDockLevel) public pure returns (uint16) {

@@ -152,7 +152,7 @@ contract VeydriftCombatReferenceParityTest is Test {
         _assertReferenceParity(fixture, 782);
     }
 
-    function testReferenceParityCrawlerOnlyDefenderDoesNotForceDraw() public {
+    function testReferenceParityCrawlerOnlyDefenderIsTargetedInCombat() public {
         VeydriftCombatReferenceSimulator.BattleInput memory fixture = _emptyFixture();
         fixture.attackerShips[uint8(Ship.Battleship)] = 100;
         fixture.defenderShips[uint8(Ship.Crawler)] = 1;
@@ -161,8 +161,21 @@ contract VeydriftCombatReferenceParityTest is Test {
             _assertReferenceParity(fixture, 651);
 
         assertEq(uint8(expected.outcome), uint8(VeydriftGameStorage.BattleOutcome.AttackerWin));
-        assertEq(expected.rounds, 0);
+        assertEq(expected.rounds, 1);
         assertEq(expected.defenderShips[uint8(Ship.Crawler)], 0);
+    }
+
+    function testReferenceParitySolarSatelliteOnlyDefenderIsTargetedInCombat() public {
+        VeydriftCombatReferenceSimulator.BattleInput memory fixture = _emptyFixture();
+        fixture.attackerShips[uint8(Ship.Battleship)] = 100;
+        fixture.defenderShips[uint8(Ship.SolarSatellite)] = 1;
+
+        VeydriftCombatReferenceSimulator.BattleResult memory expected =
+            _assertReferenceParity(fixture, 653);
+
+        assertEq(uint8(expected.outcome), uint8(VeydriftGameStorage.BattleOutcome.AttackerWin));
+        assertEq(expected.rounds, 1);
+        assertEq(expected.defenderShips[uint8(Ship.SolarSatellite)], 0);
     }
 
     function testReferenceParityCrawlerDoesNotDrawAfterCombatDefendersCleared() public {

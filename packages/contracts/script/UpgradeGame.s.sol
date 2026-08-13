@@ -27,22 +27,22 @@ import {VeydriftStateMigrationModule} from "../src/VeydriftStateMigrationModule.
 ///      of the new implementation only writes the implementation contract's own (unused) storage,
 ///      never the proxy's owner — the proxy's existing owner is preserved.
 ///
-///      This mirrors the proven manual upgrade performed on 2026-06-11 (tx 0xbf1890…): deploy
+///      This mirrors the proven Base mainnet upgrade flow: deploy
 ///      fresh modules + game impl, then ProxyAdmin.upgradeAndCall(proxy, newImpl, "") from the
 ///      ProxyAdmin owner EOA.
 ///
 ///      Required env:
 ///        PRIVATE_KEY        deployer EOA; MUST be the ProxyAdmin owner (asserted below)
-///        GAME_PROXY_ADDRESS the live VeydriftGame proxy   (0xf12f3173…)
-///        GAME_PROXY_ADMIN   the OZ ProxyAdmin contract     (0xef1570ec…)
+///        GAME_PROXY_ADDRESS the live Base VeydriftGame proxy
+///        GAME_PROXY_ADMIN   its OZ ProxyAdmin contract
 ///      Optional env:
 ///        ADMIN_ADDRESS      module-admin arg for the new impl (defaults to broadcaster; only
 ///                           affects the impl's own storage, never the proxy)
 ///
 ///      Dry run (no broadcast):
-///        forge script script/UpgradeGame.s.sol:UpgradeGame --rpc-url <base_sepolia>
+///        forge script script/UpgradeGame.s.sol:UpgradeGame --rpc-url <base_mainnet>
 ///      Execute:
-///        forge script script/UpgradeGame.s.sol:UpgradeGame --rpc-url <base_sepolia> --broadcast
+///        forge script script/UpgradeGame.s.sol:UpgradeGame --rpc-url <base_mainnet> --broadcast
 contract UpgradeGame is Script {
     function run() external returns (address newImplementation) {
         uint256 privateKey = vm.envUint("PRIVATE_KEY");

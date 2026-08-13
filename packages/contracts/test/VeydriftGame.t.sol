@@ -8176,9 +8176,14 @@ contract VeydriftGameTest is Test {
         (, uint64 arrivalAt,,) = _fleetMission(attackMissionId);
         vm.warp(arrivalAt);
         _fulfillAttackBattleRandomness(attackMissionId, 905);
+        vm.recordLogs();
         game.resolveFleetMission(attackMissionId);
 
-        assertLt(game.defenseCount(targetPlanetId, Defense.PlasmaTurret), 1_400);
+        // The Deathstar is destroyed by the round-start Plasma volley, but still fires its
+        // round-start shot and removes one Plasma Turret. The full classic RF matrix has no
+        // Deathstar -> Plasma lane, so the normal-defense repair roll restores this singleton.
+        assertTrue(_recordedDefenseTotalWas(targetPlanetId, Defense.PlasmaTurret, 1_399));
+        assertEq(game.defenseCount(targetPlanetId, Defense.PlasmaTurret), 1_400);
         (VeydriftGameStorage.FleetMissionStatus attackStatus,,,) = _fleetMission(attackMissionId);
         (VeydriftGameStorage.FleetMissionStatus joinedStatus,,,) = _fleetMission(joinedMissionId);
         assertEq(uint8(attackStatus), uint8(VeydriftGameStorage.FleetMissionStatus.Resolved));
@@ -8250,7 +8255,7 @@ contract VeydriftGameTest is Test {
         assertEq(game.planet(targetPlanetId).resources.metal, 10_000);
     }
 
-    function testAttackBattleCrawlerOnlyDefenderDoesNotForceDraw() public {
+    function testAttackBattleCrawlerOnlyDefenderIsTargetedInCombat() public {
         (uint256 originPlanetId, uint256 targetPlanetId,) =
             _seedAttackPlanetsWithoutScoreProtection();
         _setShipCount(originPlanetId, Ship.Battleship, 100);
@@ -8280,7 +8285,7 @@ contract VeydriftGameTest is Test {
             _attackBattleOutcomeFromRecordedLogs(missionId);
 
         assertEq(uint8(outcome), uint8(VeydriftGameStorage.BattleOutcome.AttackerWin));
-        assertEq(rounds, 0);
+        assertEq(rounds, 1);
         assertEq(game.shipCount(targetPlanetId, Ship.Crawler), 0);
         (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(missionId);
         assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));

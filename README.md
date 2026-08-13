@@ -199,6 +199,17 @@ supports them; if a full redeploy is unavoidable, follow
 `docs/veydrift-contract-redeploy-runbook.md` before broadcasting or marking the
 task done.
 
+Combat rapidfire is contract-canonical. The catalog implements Veydrift's full
+classic relationships, extended for the Reaper, Pathfinder, and Crawler;
+Espionage Probe-only lanes are omitted because Veydrift has no probe ship. In
+particular, Solar Satellites and Crawlers are targetable combat units: every
+mobile ship has rapidfire `x5` against each, while Deathstars have `x1,250`
+against both. The frontend battle
+preview reads the checked `packages/contracts/combat-preview-catalog.json`
+artifact, which is exhaustively tested against the Solidity catalog. See
+`apps/frontend/src/docs/content/docs.md` and `docs/combat-reference.md` for the
+complete matrix and validation model.
+
 ```sh
 cd packages/contracts
 forge fmt --check

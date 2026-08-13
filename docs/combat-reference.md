@@ -12,6 +12,7 @@ The target model is OGame-style classic combat with Veydrift catalog values:
 - A target only has explosion chance after hull damage exceeds 30% of hull.
 - Weapons, shielding, and armor technologies scale combat stats by 10% per level.
 - Rapidfire uses the same deterministic random stream as the contract. Small shot counts expand exact rapidfire chains; large shot counts use the same bounded deterministic sampling as the onchain implementation to stay gas-bounded.
+- The catalog uses Veydrift's full classic rapidfire matrix with the Reaper, Pathfinder, and Crawler extensions. Solar Satellites and Crawlers are targetable combat units: every mobile Veydrift ship has RF x5 against each, and Deathstars have RF x1,250 against each. Veydrift deliberately omits only Espionage Probe lanes because that ship does not exist in its roster. `VeydriftClassicRapidfireCatalog.t.sol` pins every remaining non-1 ship and defense lane, while `combat-preview-catalog.json` is tested against the same Solidity source for the frontend preview.
 - ACS attack is represented by the primary attack group plus one joined attack group.
 - ACS defend and intercept are represented by one counterplay ship group on the defender side.
 - OGame-style ACS Defend (the `DefenseHold` mission) stations a fleet at a planet for a chosen hold
