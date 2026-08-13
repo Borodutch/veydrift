@@ -39,7 +39,7 @@ The automated conformance fixtures cover representative values for:
 | Espionage Probe / Espionage Technology | Intentionally removed by public-onchain-state scope; no spy mechanics are supported. |
 | Interdimensional Rift Stabilizer | Veydrift-only building for resource token bridge mechanics; not a base catalog item. |
 | Space Dock repair system | Veydrift combat-recovery mechanic; not treated as a base construction-speed or production building. |
-| Dreadstar label | Uses Veydrift naming while keeping Deathstar catalog id/cost/requirement semantics. |
+| Dreadstar label | Uses Veydrift naming while keeping the classic catalog id/cost/requirement semantics. |
 | Universe speed | Current formulas use a 1x speed constant with a 60-second minimum queue guard for playable testnet UX. |
 | Deuterium Synthesizer temperature formula | Keeps the already-selected Veydrift approximation using max temperature and basis-point multipliers from the deterministic universe library. |
 
