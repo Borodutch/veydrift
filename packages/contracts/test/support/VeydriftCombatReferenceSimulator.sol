@@ -113,10 +113,6 @@ library VeydriftCombatReferenceSimulator {
         _repairDestroyedDefenses(result.defenderDefenses, destroyedDefenses, input.seed);
         if (finalAttackers != 0 && finalDefenders == 0) {
             result.outcome = VeydriftGameStorage.BattleOutcome.AttackerWin;
-            result.defenderLosses =
-                _add(result.defenderLosses, _wipeSolarSatellites(result.defenderShips));
-            result.defenderShips[uint8(Ship.SolarSatellite)] = 0;
-            result.defenderShips[uint8(Ship.Crawler)] = 0;
         } else if (finalAttackers == 0 && finalDefenders != 0) {
             result.outcome = VeydriftGameStorage.BattleOutcome.DefenderWin;
         } else {
@@ -764,7 +760,7 @@ library VeydriftCombatReferenceSimulator {
 
     function _unitExtraShots(
         uint32 count,
-        uint8 rapidfire,
+        uint16 rapidfire,
         uint256 incoming,
         uint256 targetTotal,
         uint256 seed,
@@ -947,7 +943,7 @@ library VeydriftCombatReferenceSimulator {
     }
 
     function _isPlanetCombatShipId(uint8 shipId) private pure returns (bool) {
-        return shipId <= uint8(Ship.Pathfinder) && shipId != uint8(Ship.SolarSatellite);
+        return shipId <= uint8(Ship.Crawler);
     }
 
     function _copyShips(uint32[16] memory ships) private pure returns (uint32[16] memory copy) {

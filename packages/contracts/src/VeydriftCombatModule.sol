@@ -16,6 +16,8 @@ struct FleetBattleGroup {
 
 struct DefenderBattleGroup {
     VeydriftGameStorage.MissionShips planetShips;
+    uint32 solarSatellites;
+    uint32 crawlers;
     uint32[8] defenses;
     FleetBattleGroup[] counterplay;
     uint256 units;
@@ -150,6 +152,30 @@ contract VeydriftCombatRapidfire is IVeydriftCombatRapidfire {
                 firingUnit,
                 chain
             );
+            generated += _shipRapidfireExtraShots(
+                targetPool.solarSatellites,
+                VeydriftCatalog.shipRapidfireAgainstShip(firingShip, Ship.SolarSatellite),
+                incoming,
+                targetPool.units,
+                seed,
+                round,
+                side,
+                firingUnit,
+                _targetLane(TARGET_LANE_PLANET_SHIP, 0, uint8(Ship.SolarSatellite)),
+                chain
+            );
+            generated += _shipRapidfireExtraShots(
+                targetPool.crawlers,
+                VeydriftCatalog.shipRapidfireAgainstShip(firingShip, Ship.Crawler),
+                incoming,
+                targetPool.units,
+                seed,
+                round,
+                side,
+                firingUnit,
+                _targetLane(TARGET_LANE_PLANET_SHIP, 0, uint8(Ship.Crawler)),
+                chain
+            );
             for (uint8 i = 0; i <= uint8(Defense.LargeShieldDome);) {
                 generated += _shipRapidfireExtraShots(
                     targetPool.defenses[i],
@@ -261,7 +287,7 @@ contract VeydriftCombatRapidfire is IVeydriftCombatRapidfire {
 
     function _shipRapidfireExtraShots(
         uint32 count,
-        uint8 rapidfire,
+        uint16 rapidfire,
         uint256 incoming,
         uint256 targetTotal,
         uint256 seed,
@@ -415,6 +441,8 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
 
     struct DefenderRoundLosses {
         MissionShips planetShips;
+        uint32 solarSatellites;
+        uint32 crawlers;
         uint256 defenseDestroyed;
         FleetRoundLosses[] counterplay;
         Resources resources;
@@ -463,28 +491,6 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         BattleSettlement memory settlement = _runBattle(missionId, mission);
 
         if (settlement.outcome == BattleOutcome.AttackerWin) {
-            // Stationary planet support is wiped when the defense is cleared, with one
-            // canonical total emitted for indexers.
-            if (!mission.targetIsMoon) {
-                uint256 targetPlanetId = mission.targetPlanetId;
-                // Keep this bytecode-light: Ship.SolarSatellite is enum id 9, and
-                // BattleSettlement.defenderLosses is a memory pointer at offset 0x80 whose crystal
-                // field sits at +0x20.
-                assembly ("memory-safe") {
-                    mstore(0x00, targetPlanetId)
-                    mstore(0x20, _shipCounts.slot)
-                    mstore(0x20, keccak256(0x00, 0x40))
-                    mstore(0x00, 9)
-                    let solarSatellites := sload(keccak256(0x00, 0x40))
-                    let defenderCrystalLoss := add(mload(add(settlement, 0x80)), 0x20)
-                    mstore(
-                        defenderCrystalLoss,
-                        add(mload(defenderCrystalLoss), mul(solarSatellites, 2000))
-                    )
-                }
-                _setPlanetShipCount(targetPlanetId, Ship.SolarSatellite, 0);
-                _setPlanetShipCount(targetPlanetId, Ship.Crawler, 0);
-            }
             _settleAttackGroupRaid(missionId);
         }
         _returnLinkedMissions(missionId, mission);
@@ -629,8 +635,14 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
 
         snapshot.defender.planetShips =
             _bodyShipSnapshot(mission.targetPlanetId, mission.targetIsMoon);
+        if (!mission.targetIsMoon) {
+            snapshot.defender.solarSatellites =
+                _shipCounts[mission.targetPlanetId][Ship.SolarSatellite];
+            snapshot.defender.crawlers = _shipCounts[mission.targetPlanetId][Ship.Crawler];
+        }
         snapshot.defender.defenses = _defenseSnapshot(mission.targetPlanetId, mission.targetIsMoon);
         snapshot.defender.units = _missionShipTotal(snapshot.defender.planetShips)
+            + snapshot.defender.solarSatellites + snapshot.defender.crawlers
             + _defenseSnapshotTotal(snapshot.defender.defenses);
         snapshot.defender.counterplay =
             new FleetBattleGroup[](_qualifiedCounterplayCount(attackMissionId, linkedMissionIds));
@@ -942,6 +954,34 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
                 ++i;
             }
         }
+        _addShipFireAtStationarySupportLosses(
+            losses,
+            target,
+            targetPlanetId,
+            firingCount,
+            attack,
+            extraShots,
+            Ship.SolarSatellite,
+            target.solarSatellites,
+            seed,
+            round,
+            side,
+            unit
+        );
+        _addShipFireAtStationarySupportLosses(
+            losses,
+            target,
+            targetPlanetId,
+            firingCount,
+            attack,
+            extraShots,
+            Ship.Crawler,
+            target.crawlers,
+            seed,
+            round,
+            side,
+            unit
+        );
         for (uint8 i = 0; i <= uint8(Defense.LargeShieldDome);) {
             Defense defense = Defense(i);
             uint32 count = target.defenses[i];
@@ -999,6 +1039,34 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         }
     }
 
+    function _addShipFireAtStationarySupportLosses(
+        DefenderRoundLosses memory losses,
+        DefenderBattleGroup memory target,
+        uint256 targetPlanetId,
+        uint32 firingCount,
+        uint256 attack,
+        uint256 extraShots,
+        Ship supportShip,
+        uint32 supportCount,
+        uint256 seed,
+        uint8 round,
+        uint8 side,
+        uint8 unit
+    ) private view {
+        if (supportCount == 0) return;
+        uint256 targetLane = _targetLane(TARGET_LANE_PLANET_SHIP, 0, uint8(supportShip));
+        uint256 shots = _distributedTargetShots(
+            firingCount, supportCount, target.units, seed, round, side, unit, targetLane
+        )
+        + _distributedTargetShots(
+            extraShots, supportCount, target.units, seed, round, side, unit, targetLane
+        );
+        uint32 lost = _deterministicBodyShipLossCount(
+            targetPlanetId, supportShip, supportCount, shots, attack, seed, round, side, targetLane
+        );
+        _addDefenderStationarySupportLoss(losses, supportShip, supportCount, lost);
+    }
+
     function _addFleetShipLoss(
         FleetRoundLosses memory losses,
         MissionShips memory snapshot,
@@ -1028,6 +1096,22 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         uint32 remaining = available - alreadyLost;
         if (lost > remaining) lost = remaining;
         _setMissionShipQuantityMemory(losses.planetShips, ship, alreadyLost + lost);
+        losses.resources = _add(losses.resources, _multiply(_shipCost(ship), lost));
+    }
+
+    function _addDefenderStationarySupportLoss(
+        DefenderRoundLosses memory losses,
+        Ship ship,
+        uint32 available,
+        uint32 lost
+    ) private pure {
+        if (lost == 0) return;
+        uint32 alreadyLost = ship == Ship.SolarSatellite ? losses.solarSatellites : losses.crawlers;
+        if (alreadyLost >= available) return;
+        uint32 remaining = available - alreadyLost;
+        if (lost > remaining) lost = remaining;
+        if (ship == Ship.SolarSatellite) losses.solarSatellites = alreadyLost + lost;
+        else losses.crawlers = alreadyLost + lost;
         losses.resources = _add(losses.resources, _multiply(_shipCost(ship), lost));
     }
 
@@ -1068,6 +1152,7 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         DefenderRoundLosses memory losses
     ) private returns (DefenderLosses memory applied) {
         _applyBodyShipLosses(mission.targetPlanetId, mission.targetIsMoon, losses.planetShips);
+        if (!mission.targetIsMoon) _applyStationarySupportLosses(mission.targetPlanetId, losses);
         _applyDefenseChanges(
             mission.targetPlanetId, mission.targetIsMoon, losses.defenseDestroyed, false
         );
@@ -1115,6 +1200,25 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
             unchecked {
                 ++i;
             }
+        }
+    }
+
+    function _applyStationarySupportLosses(uint256 planetId, DefenderRoundLosses memory losses)
+        private
+    {
+        if (losses.solarSatellites != 0) {
+            uint32 count = _shipCounts[planetId][Ship.SolarSatellite];
+            _setPlanetShipCount(
+                planetId,
+                Ship.SolarSatellite,
+                count > losses.solarSatellites ? count - losses.solarSatellites : 0
+            );
+        }
+        if (losses.crawlers != 0) {
+            uint32 count = _shipCounts[planetId][Ship.Crawler];
+            _setPlanetShipCount(
+                planetId, Ship.Crawler, count > losses.crawlers ? count - losses.crawlers : 0
+            );
         }
     }
 

@@ -413,31 +413,49 @@ Each surviving unit fires once per round before round losses are applied. Shots 
 
 Rapidfire can create extra shots after the normal shot assignment. A rapidfire factor `R` is **not** a guaranteed `R` shots: every selected shot against an eligible target has a continue chance of `(R - 1) / R` and a stop chance of `1 / R`. An omitted attacker-to-target pair has factor `1` and creates no rapidfire shots. Only ships can generate rapidfire; defenses do not have rapidfire as firing units.
 
-| Attacker ship | Target ship | Factor `R` | Continue chance | Stop chance |
-| --- | --- | ---: | ---: | ---: |
-| Cruiser | Light Fighter | 6 | 5/6 = 83.333% | 1/6 = 16.667% |
-| Destroyer | Small Cargo | 3 | 2/3 = 66.667% | 1/3 = 33.333% |
-| Destroyer | Large Cargo | 3 | 2/3 = 66.667% | 1/3 = 33.333% |
-| Destroyer | Battlecruiser | 2 | 1/2 = 50% | 1/2 = 50% |
-| Battlecruiser | Small Cargo | 3 | 2/3 = 66.667% | 1/3 = 33.333% |
-| Battlecruiser | Large Cargo | 4 | 3/4 = 75% | 1/4 = 25% |
-| Battlecruiser | Heavy Fighter | 4 | 3/4 = 75% | 1/4 = 25% |
-| Battlecruiser | Cruiser | 4 | 3/4 = 75% | 1/4 = 25% |
-| Battlecruiser | Battleship | 7 | 6/7 = 85.714% | 1/7 = 14.286% |
-| Reaper | Destroyer | 2 | 1/2 = 50% | 1/2 = 50% |
-| Reaper | Deathstar | 10 | 9/10 = 90% | 1/10 = 10% |
-| Pathfinder | Recycler | 3 | 2/3 = 66.667% | 1/3 = 33.333% |
+The onchain catalog follows Veydrift's full classic rapidfire matrix, with the Reaper, Pathfinder, and Crawler extensions. Veydrift does not have Espionage Probes, so their probe-only lanes are not represented. All omitted pairs are factor `1`.
 
-| Attacker ship | Target defense | Factor `R` | Continue chance | Stop chance |
-| --- | --- | ---: | ---: | ---: |
-| Cruiser | Rocket Launcher | 10 | 9/10 = 90% | 1/10 = 10% |
-| Bomber | Rocket Launcher | 20 | 19/20 = 95% | 1/20 = 5% |
-| Bomber | Light Laser | 20 | 19/20 = 95% | 1/20 = 5% |
-| Bomber | Heavy Laser | 10 | 9/10 = 90% | 1/10 = 10% |
-| Bomber | Ion Cannon | 10 | 9/10 = 90% | 1/10 = 10% |
-| Destroyer | Light Laser | 10 | 9/10 = 90% | 1/10 = 10% |
-| Deathstar | Any defense | 200 | 199/200 = 99.5% | 1/200 = 0.5% |
-| Reaper | Plasma Turret | 2 | 1/2 = 50% | 1/2 = 50% |
+| Attacker ship | Target ship | Factor `R` |
+| --- | --- | ---: |
+| Small Cargo, Light Fighter, Recycler, Colony Ship, Large Cargo, Heavy Fighter, Cruiser, Battleship, Bomber, Destroyer, Battlecruiser, Reaper, Pathfinder | Solar Satellite | 5 |
+| Same mobile ships | Crawler | 5 |
+| Heavy Fighter | Small Cargo | 3 |
+| Cruiser | Light Fighter | 6 |
+| Battleship | Pathfinder | 5 |
+| Destroyer | Battlecruiser | 2 |
+| Battlecruiser | Small Cargo, Large Cargo | 3 |
+| Battlecruiser | Heavy Fighter, Cruiser | 4 |
+| Battlecruiser | Battleship | 7 |
+| Reaper | Battleship | 7 |
+| Reaper | Bomber | 4 |
+| Reaper | Destroyer | 3 |
+| Pathfinder | Light Fighter, Cruiser | 3 |
+| Pathfinder | Heavy Fighter | 2 |
+| Deathstar | Small Cargo, Large Cargo, Recycler, Colony Ship | 250 |
+| Deathstar | Light Fighter | 200 |
+| Deathstar | Heavy Fighter | 100 |
+| Deathstar | Cruiser | 33 |
+| Deathstar | Battleship | 30 |
+| Deathstar | Bomber | 25 |
+| Deathstar | Destroyer | 5 |
+| Deathstar | Battlecruiser | 15 |
+| Deathstar | Reaper | 10 |
+| Deathstar | Pathfinder | 30 |
+| Deathstar | Solar Satellite, Crawler | 1,250 |
+
+| Attacker ship | Target defense | Factor `R` |
+| --- | --- | ---: |
+| Cruiser | Rocket Launcher | 10 |
+| Bomber | Rocket Launcher, Light Laser | 20 |
+| Bomber | Heavy Laser, Ion Cannon | 10 |
+| Bomber | Gauss Cannon, Plasma Turret | 5 |
+| Destroyer | Light Laser | 10 |
+| Deathstar | Rocket Launcher, Light Laser | 200 |
+| Deathstar | Heavy Laser, Ion Cannon | 100 |
+| Deathstar | Gauss Cannon | 50 |
+| Reaper | Ion Cannon | 2 |
+
+In particular, Solar Satellites and Crawlers are targetable, fragile production units rather than rapidfire-proof defensive screens: every mobile ship can chain through them at factor `5`, and a Deathstar has factor `1,250`.
 
 For an ideal chain that stays on eligible targets, the unbounded expected number of shots, including the original shot, is `R`. The contract limits rapidfire to 64 extra-shot chain steps, so that ideal capped expectation is `R * (1 - ((R - 1) / R)^65)`. In a real mixed defender pool, that expectation is not a promise: every chain step retargets by the live target counts and applies deterministic integer rounding.
 
