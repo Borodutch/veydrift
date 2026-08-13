@@ -61,7 +61,7 @@ Out of scope for the current first-planet MVP:
 | Bomber | implemented | Dependency tightened to Shipyard 8 + Impulse 6 + Plasma 5. |
 | Solar Satellite | implemented | Shipyard 1. |
 | Destroyer | implemented | Dependency tightened to Shipyard 9 + Hyperspace Drive 6 + Hyperspace 5. |
-| Deathstar | implemented as Dreadstar label | Dependency tightened to Shipyard 12 + Hyperspace Drive 7 + Hyperspace 6 + Graviton 1. |
+| Dreadstar | implemented | Dependency tightened to Shipyard 12 + Hyperspace Drive 7 + Hyperspace 6 + Graviton 1. |
 | Battlecruiser | implemented | Dependency tightened to Shipyard 8 + Hyperspace Drive 5 + Hyperspace 5 + Laser 12. |
 | Reaper | implemented | Dependency tightened to Shipyard 10 + Hyperspace Drive 7 + Hyperspace 6 + Shielding 6 + Energy 5. |
 | Pathfinder | implemented | Dependency tightened to Shipyard 5 + Hyperspace Drive 2 + Shielding 4. |

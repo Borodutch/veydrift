@@ -11,7 +11,7 @@
     { "id": 8, "key": "bomber", "label": "Bomber", "attack": 1000, "shield": 500, "hull": 7500, "metal": 50000, "crystal": 25000, "deuterium": 15000 },
     { "id": 9, "key": "solarSatellite", "label": "Solar Satellite", "attack": 1, "shield": 1, "hull": 200, "metal": 0, "crystal": 2000, "deuterium": 500 },
     { "id": 10, "key": "destroyer", "label": "Destroyer", "attack": 2000, "shield": 500, "hull": 11000, "metal": 60000, "crystal": 50000, "deuterium": 15000 },
-    { "id": 11, "key": "deathstar", "label": "Deathstar", "attack": 200000, "shield": 50000, "hull": 900000, "metal": 5000000, "crystal": 4000000, "deuterium": 1000000 },
+    { "id": 11, "key": "deathstar", "label": "Dreadstar", "attack": 200000, "shield": 50000, "hull": 900000, "metal": 5000000, "crystal": 4000000, "deuterium": 1000000 },
     { "id": 12, "key": "battlecruiser", "label": "Battlecruiser", "attack": 700, "shield": 400, "hull": 7000, "metal": 30000, "crystal": 40000, "deuterium": 15000 },
     { "id": 13, "key": "reaper", "label": "Reaper", "attack": 2800, "shield": 700, "hull": 14000, "metal": 85000, "crystal": 55000, "deuterium": 20000 },
     { "id": 14, "key": "pathfinder", "label": "Pathfinder", "attack": 200, "shield": 100, "hull": 2300, "metal": 8000, "crystal": 15000, "deuterium": 8000 },

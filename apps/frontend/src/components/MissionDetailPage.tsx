@@ -1114,7 +1114,7 @@ const shipLabels: Record<string, string> = {
   bomber: "Bomber",
   colonyShip: "Colony Ship",
   cruiser: "Cruiser",
-  deathstar: "Deathstar",
+  deathstar: "Dreadstar",
   destroyer: "Destroyer",
   espionageProbe: "Espionage Probe",
   heavyFighter: "Heavy Fighter",
