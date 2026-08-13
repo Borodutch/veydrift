@@ -116,6 +116,9 @@ export function buildBatchSupplyPlan({
         crystal: Math.min(safeAmount(manualCargo.crystal), safeAmount(source.resources.crystal)),
         deuterium: Math.min(safeAmount(manualCargo.deuterium), safeAmount(source.resources.deuterium)),
       };
+    // A selected source with an explicit zero allocation does not need to launch. Check before
+    // capacity capping so a real shipment with no usable cargo fleet still reaches the blocker path.
+    if (resourceTotal(requestedFromSource) === 0) continue;
     // A colony should contribute what it can carry, rather than being skipped just because the
     // remaining total is larger than its entire cargo fleet. Keep the allocation deterministic so
     // the preview exactly matches the generated child missions.
