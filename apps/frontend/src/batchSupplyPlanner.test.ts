@@ -49,11 +49,11 @@ describe("buildBatchSupplyPlan", () => {
     expect(plan.orders.every((order) => order.cargo.deuterium + order.fuelCost <= Number(sources.find((item) => item.planetId === order.originPlanetId)?.resources.deuterium))).toBe(true);
   });
 
-  test("does not report a fuel warning for a selected source with no requested cargo to contribute", () => {
+  test("skips an explicit all-zero manual source shipment without a fuel warning", () => {
     const sources = [
       source({
-        planetId: "deuterium-only",
-        resources: { metal: 0, crystal: 0, deuterium: 100 },
+        planetId: "unused-source",
+        resources: { metal: 1_000, crystal: 1_000, deuterium: 100 },
         ships: { smallCargo: 1 },
       }),
       source({
@@ -67,6 +67,9 @@ describe("buildBatchSupplyPlan", () => {
       targetCoordinates: target,
       requested: { metal: 5_221, crystal: 838, deuterium: 0 },
       selectedPlanetIds: new Set(sources.map((item) => item.planetId)),
+      sourceCargoOverrides: {
+        "unused-source": { metal: 0, crystal: 0, deuterium: 0 },
+      },
       sources,
     });
 
@@ -112,18 +115,25 @@ describe("buildBatchSupplyPlan", () => {
       sources: [cargoSource],
     });
     const fuelCost = launchable.orders[0]?.fuelCost ?? 0;
-    const underFuelled = buildBatchSupplyPlan({
+    const buildUnderFuelledPlan = (deuterium: number) => buildBatchSupplyPlan({
       targetCoordinates: target,
-      requested: { metal: 500, crystal: 250 },
+      requested: { metal: 500, crystal: 250, deuterium },
       selectedPlanetIds: new Set([cargoSource.planetId]),
+      sourceCargoOverrides: {
+        [cargoSource.planetId]: { metal: 500, crystal: 250, deuterium },
+      },
       sources: [{ ...cargoSource, resources: { ...cargoSource.resources, deuterium: Math.max(0, fuelCost - 1) } }],
     });
+    const expectedBlockedSource = {
+      planetId: cargoSource.planetId,
+      reason: "No cargo fleet with enough deuterium for this route.",
+    };
 
     expect(fuelCost).toBeGreaterThan(0);
-    expect(underFuelled.orders).toEqual([]);
-    expect(underFuelled.blockedSources).toEqual([
-      { planetId: cargoSource.planetId, reason: "No cargo fleet with enough deuterium for this route." },
-    ]);
+    expect(buildUnderFuelledPlan(0).orders).toEqual([]);
+    expect(buildUnderFuelledPlan(0).blockedSources).toEqual([expectedBlockedSource]);
+    expect(buildUnderFuelledPlan(1).orders).toEqual([]);
+    expect(buildUnderFuelledPlan(1).blockedSources).toEqual([expectedBlockedSource]);
   });
 
   test("reduces requested deuterium rather than spending fuel from cargo", () => {
