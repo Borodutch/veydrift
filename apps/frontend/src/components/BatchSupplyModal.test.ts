@@ -56,6 +56,12 @@ describe("Batch Supply source row presentation", () => {
 
     expect(batchSupplySourceLimitReason({
       checked: false,
+      maxSources: 0,
+      selectedSourceCount: 0,
+    })).toBe("No fleet slots are available for another transport.");
+
+    expect(batchSupplySourceLimitReason({
+      checked: false,
       maxSources: 4,
       selectedSourceCount: 4,
       unavailableReason: "No usable cargo ships are available on this planet.",

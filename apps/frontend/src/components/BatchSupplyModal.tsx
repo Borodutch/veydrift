@@ -43,6 +43,7 @@ export function batchSupplySourceLimitReason({
   unavailableReason?: string | undefined;
 }): string | undefined {
   if (checked || unavailableReason || selectedSourceCount < maxSources) return undefined;
+  if (maxSources <= 0) return "No fleet slots are available for another transport.";
   return `Deselect another source to use this planet (${maxSources.toLocaleString()} fleet slot${maxSources === 1 ? "" : "s"} available).`;
 }
 
