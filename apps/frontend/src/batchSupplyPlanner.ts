@@ -123,6 +123,10 @@ export function buildBatchSupplyPlan({
       requestedFromSource,
       maximumCargoCapacity(source.ships, targetCoordinates, source.coordinates, source.driveLevels),
     );
+    // A selected source that has none of the still-requested cargo does not need to launch. Treating
+    // its empty allocation as a failed loadout incorrectly reports a fuel shortage; adding even one
+    // unit of deuterium cargo then appears to "fix" launchability despite an unchanged fuel reserve.
+    if (resourceTotal(cargo) === 0) continue;
     const loadout = transportLoadoutForCargo({ cargo, source, targetCoordinates });
     if (!loadout) {
       blockedSources.push({ planetId: source.planetId, reason: "No cargo fleet with enough deuterium for this route." });
