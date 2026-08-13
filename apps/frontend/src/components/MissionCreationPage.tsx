@@ -3487,7 +3487,10 @@ function compositionCombatPower(
 ): number {
   return (rows ?? []).reduce((total, row) => {
     const count = Math.max(0, Math.trunc(row.count));
-    if (kind === "ship" && (row.id < 0 || row.id >= 16 || row.id === 9 || row.id === 15)) return total;
+    // Planet-bound Solar Satellites and Crawlers are non-firing, but they are
+    // still contract combat targets and must contribute to the attack preview
+    // defender shape.
+    if (kind === "ship" && (row.id < 0 || row.id >= 16)) return total;
     if (kind === "defense" && (row.id < 0 || row.id >= 8)) return total;
     return total + count * contractCombatPower(kind, row.id, techLevels);
   }, 0);

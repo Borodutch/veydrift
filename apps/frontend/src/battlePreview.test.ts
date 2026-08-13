@@ -187,6 +187,21 @@ describe("contract battle preview parity", () => {
       { id: 6, label: "Cruiser", count: 1 },
     ]);
   });
+
+  test("treats Solar Satellites and Crawlers as non-firing defender targets for Rapidfire", () => {
+    const result = runContractBattle(
+      battle(ships([11, 1]), ships([9, 100], [15, 100]), defenses()),
+      seed(1),
+    );
+
+    expect(result.defender.startingShips).toEqual([
+      { id: 9, label: "Solar Satellite", count: 100 },
+      { id: 15, label: "Crawler", count: 100 },
+    ]);
+    expect(result.defenderSurvivors).toBeLessThan(200);
+    expect(result.rapidfireExtraShots.attacker).toBeGreaterThan(0);
+    expect(result.rapidfireExtraShots.defender).toBe(0);
+  });
 });
 
 function battle(

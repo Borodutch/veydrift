@@ -1019,10 +1019,10 @@ describe("mission creation", () => {
       sampleCount: 128,
       outcomeCounts: { win: 0, draw: 128, defeat: 0 },
     });
-    expect(forecast.detail).toContain("not a guarantee");
+    expect(forecast.detail).toContain("future oracle word");
   });
 
-  test("does not label the mission-8262 shield stalemate as a probable win", () => {
+  test("includes Solar Satellites in the attack-launch battle preview instead of silently omitting them", () => {
     const forecast = publicTargetBattleForecast({
       ...attackAction.ships,
       smallCargo: 2,
@@ -1030,8 +1030,8 @@ describe("mission creation", () => {
     }, targetPlanet({
       publicState: {
         resources: { metal: "0", crystal: "0", deuterium: "0" },
-        // Mission 8262 resolved Draw with no losses. The old power-ratio preview
-        // missed that these small stacks cannot break shields/hull in six rounds.
+        // Planet-bound Solar Satellites are contract combat targets. They must
+        // be part of the exact preview target pool and Rapidfire calculation.
         fleet: [{ id: 9, count: 4 }],
         defenses: [{ id: 0, count: 3 }],
         stationedDefenders: [],
@@ -1049,12 +1049,46 @@ describe("mission creation", () => {
         best: { metal: 0, crystal: 0, deuterium: 0 },
         worst: { metal: 0, crystal: 0, deuterium: 0 },
       },
-      randomness: {
-        sampleCount: 128,
-        outcomeCounts: { win: 0, draw: 128, defeat: 0 },
-      },
     });
-    expect(forecast.detail).toContain("not a guarantee");
+    expect(forecast.defenderPower).toBeGreaterThan(0);
+    expect(forecast.randomness?.sampleCount).toBe(128);
+    expect(forecast.randomness?.outcomeCounts.win).toBeGreaterThan(0);
+    expect(forecast.randomness?.outcomeCounts.draw).toBeGreaterThan(0);
+    expect(forecast.reportInput?.defender.ships[9]).toBe(4);
+    expect(forecast.sampleReport?.defender.startingShips).toContainEqual({
+      id: 9,
+      label: "Solar Satellite",
+      count: 4,
+    });
+    expect(forecast.sampleReport?.rapidfireExtraShots.attacker).toBeGreaterThan(0);
+    expect(forecast.detail).toContain("future oracle word is not known");
+  });
+
+  test("passes Crawler defenders into the battle worker input used for attack launch", () => {
+    const forecast = publicTargetBattleForecast({
+      ...attackAction.ships,
+      deathstar: 1,
+    }, targetPlanet({
+      publicState: {
+        resources: { metal: "0", crystal: "0", deuterium: "0" },
+        fleet: [{ id: 15, count: 25 }],
+        defenses: [],
+        stationedDefenders: [],
+        buildings: [],
+        research: [],
+        queues: null,
+      },
+    }));
+
+    expect(forecast.kind).not.toBe("uncertain");
+    if (forecast.kind === "uncertain") throw new Error("Expected a concrete battle forecast");
+    expect(forecast.reportInput?.defender.ships[15]).toBe(25);
+    expect(forecast.sampleReport?.defender.startingShips).toContainEqual({
+      id: 15,
+      label: "Crawler",
+      count: 25,
+    });
+    expect(forecast.sampleReport?.rapidfireExtraShots.attacker).toBeGreaterThan(0);
   });
 
   test("surfaces attacker loss ranges when combat randomness changes results", () => {

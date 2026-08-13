@@ -345,7 +345,10 @@ function battleRoundLosses(snapshot: MutableBattle, seed: bigint, round: number)
 
     for (let shipId = 0; shipId < 16; shipId += 1) {
       const count = snapshot.defender.ships[shipId] ?? 0;
-      if (!isBodyCombatShip(shipId) || count === 0) continue;
+      // Solar Satellites and Crawlers are targetable defender units, but do
+      // not fire in combat. Their target-pool handling is deliberately kept
+      // separate from the defender firing roster to match the contract.
+      if (!isBodyFiringShip(shipId) || count === 0) continue;
       const extraShots = fleetExtraShots(snapshot.attackers, shipId, count, attackerTotal, seed, round, 1, shipId);
       losses.defenderRapidfireExtraShots += extraShots;
       fireShipAtFleetLosses(
@@ -504,7 +507,7 @@ function fireShipAtDefenderLosses(
 
   for (let targetShip = 0; targetShip < 16; targetShip += 1) {
     const count = target.ships[targetShip] ?? 0;
-    if (!isBodyCombatShip(targetShip) || count === 0) continue;
+    if (!isBodyCombatTarget(targetShip) || count === 0) continue;
     const lane = targetLaneValue(TARGET_LANE_PLANET_SHIP, 0, targetShip);
     const shots = distributedTargetShots(BigInt(firingCount), count, targetTotal, seed, round, side, firingUnit, lane)
       + distributedTargetShots(extraShots, count, targetTotal, seed, round, side, firingUnit, lane);
@@ -652,8 +655,9 @@ function shipExtraShots(
   bodyShips = false,
 ): bigint {
   let generated = 0n;
-  for (let shipId = 0; shipId <= 14; shipId += 1) {
-    if (shipId === 9 || (bodyShips && !isBodyCombatShip(shipId))) continue;
+  const shipLimit = bodyShips ? 16 : 15;
+  for (let shipId = 0; shipId < shipLimit; shipId += 1) {
+    if ((!bodyShips && shipId === 9) || (bodyShips && !isBodyCombatTarget(shipId))) continue;
     generated += unitExtraShots(
       ships[shipId] ?? 0,
       rapidfireAgainstShip(firingShip, shipId),
@@ -1022,13 +1026,17 @@ function missionShipTotal(ships: readonly number[]): number {
 function bodyShipTotal(ships: readonly number[]): number {
   let total = 0;
   for (let id = 0; id < 16; id += 1) {
-    if (isBodyCombatShip(id)) total += ships[id] ?? 0;
+    if (isBodyCombatTarget(id)) total += ships[id] ?? 0;
   }
   return total;
 }
 
-function isBodyCombatShip(id: number): boolean {
-  return id <= 14 && id !== 9;
+function isBodyCombatTarget(id: number): boolean {
+  return id >= 0 && id < 16;
+}
+
+function isBodyFiringShip(id: number): boolean {
+  return id >= 0 && id <= 14 && id !== 9;
 }
 
 function combatScaled(value: number, technologyLevel: number): bigint {
