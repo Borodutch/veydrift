@@ -9,6 +9,7 @@ import {
   buildingFinishActionErrorLabel,
   attackProtectionSubmitBlocker,
   attackerCombatTechLevelsForMission,
+  batchSupplySourceForPlanet,
   beginRefreshRequest,
   canLoadIndexedPageState,
   canApplyRefreshRequest,
@@ -1016,6 +1017,45 @@ describe("Playable MVP app display helpers", () => {
     expect(blocker).toBe(
       "Need 4 Small Cargo, only 3 available on the origin planet; refresh fleet state or reduce selected ships before launching."
     );
+  });
+
+  test("builds Supply sources from canonical launchable cargo remaining after a partial mission", () => {
+    const wallet = "0x1111111111111111111111111111111111111111";
+    const planet = { ...indexedPlanet(wallet), planetId: "8", name: "Astro" };
+    const state: ChainShipyardState = {
+      wallet,
+      homePlanetId: "7",
+      planetId: "8",
+      productionAvailable: true,
+      resources: null,
+      fleetLaunchAvailable: true,
+      fleetSlots: { active: 1, limit: 5 },
+      shipyardLevel: 1,
+      naniteLevel: 0,
+      technologyLevels: {},
+      ships: [
+        { id: 0, count: 4, cost: { metal: "0", crystal: "0", deuterium: "0" } },
+        { id: 4, count: 2, cost: { metal: "0", crystal: "0", deuterium: "0" } },
+      ],
+      launchableShips: [
+        { id: 0, count: 4, cost: { metal: "0", crystal: "0", deuterium: "0" } },
+        { id: 4, count: 1, cost: { metal: "0", crystal: "0", deuterium: "0" } },
+      ],
+      queue: null,
+    };
+
+    const partialSource = batchSupplySourceForPlanet(planet, state);
+    expect(partialSource).toMatchObject({
+      planetId: "8",
+      label: "Astro",
+      ships: { smallCargo: 4, largeCargo: 1 },
+    });
+    expect(partialSource.unavailableReason).toBeUndefined();
+
+    expect(batchSupplySourceForPlanet(planet, { ...state, launchableShips: [] })).toMatchObject({
+      ships: { largeCargo: 0, smallCargo: 0 },
+      unavailableReason: "No usable cargo ships are available on this planet.",
+    });
   });
 
   test("shows cooperative mission actions only with ships and an open fleet slot", () => {
