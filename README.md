@@ -203,7 +203,7 @@ Combat rapidfire is contract-canonical. The catalog implements Veydrift's full
 classic relationships, extended for the Reaper, Pathfinder, and Crawler;
 Espionage Probe-only lanes are omitted because Veydrift has no probe ship. In
 particular, Solar Satellites and Crawlers are targetable combat units: every
-mobile ship has rapidfire `x5` against each, while Deathstars have `x1,250`
+mobile ship has rapidfire `x5` against each, while Dreadstars have `x1,250`
 against both. The frontend battle
 preview reads the checked `packages/contracts/combat-preview-catalog.json`
 artifact, which is exhaustively tested against the Solidity catalog. See

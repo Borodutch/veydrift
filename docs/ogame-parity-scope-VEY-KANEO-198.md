@@ -15,7 +15,7 @@ boundary before changing contract rules, backend projections, or frontend copy.
 | Interdimensional Rift Stabilizer and resource token bridge | Keep as Veydrift mode | Token reserve flows are core Veydrift economy plumbing, not an OGame mechanic. |
 | Protected storage, loot caps, bashing counters, score protection | Keep as Veydrift public-state counterplay | These replace hidden-intel friction with contract-enforced anti-raid limits. |
 | Space Dock wreckage and repair | Keep as Veydrift recovery layer | Current recovery is explicit contract state and can coexist with OGame-style combat/debris rules. |
-| Dreadstar label | Keep as Veydrift copy over Deathstar semantics | The catalog keeps the classic Deathstar id/cost/stat role while using Veydrift-facing naming. |
+| Dreadstar label | Keep as Veydrift copy over classic superweapon semantics | The catalog keeps the classic id/cost/stat role while using Veydrift-facing naming. |
 | ACS defend, intercept, and return exposure | Keep as public-state implementations | The behavior should track classic fleet counterplay where possible, but visibility remains public. |
 | Markets and transferable planet ownership | Defer | Not part of the current OGame parity batch or MVP gameplay authority. |
 

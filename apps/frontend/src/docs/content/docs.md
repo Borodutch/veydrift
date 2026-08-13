@@ -431,17 +431,17 @@ The onchain catalog follows Veydrift's full classic rapidfire matrix, with the R
 | Reaper | Destroyer | 3 |
 | Pathfinder | Light Fighter, Cruiser | 3 |
 | Pathfinder | Heavy Fighter | 2 |
-| Deathstar | Small Cargo, Large Cargo, Recycler, Colony Ship | 250 |
-| Deathstar | Light Fighter | 200 |
-| Deathstar | Heavy Fighter | 100 |
-| Deathstar | Cruiser | 33 |
-| Deathstar | Battleship | 30 |
-| Deathstar | Bomber | 25 |
-| Deathstar | Destroyer | 5 |
-| Deathstar | Battlecruiser | 15 |
-| Deathstar | Reaper | 10 |
-| Deathstar | Pathfinder | 30 |
-| Deathstar | Solar Satellite, Crawler | 1,250 |
+| Dreadstar | Small Cargo, Large Cargo, Recycler, Colony Ship | 250 |
+| Dreadstar | Light Fighter | 200 |
+| Dreadstar | Heavy Fighter | 100 |
+| Dreadstar | Cruiser | 33 |
+| Dreadstar | Battleship | 30 |
+| Dreadstar | Bomber | 25 |
+| Dreadstar | Destroyer | 5 |
+| Dreadstar | Battlecruiser | 15 |
+| Dreadstar | Reaper | 10 |
+| Dreadstar | Pathfinder | 30 |
+| Dreadstar | Solar Satellite, Crawler | 1,250 |
 
 | Attacker ship | Target defense | Factor `R` |
 | --- | --- | ---: |
@@ -450,12 +450,12 @@ The onchain catalog follows Veydrift's full classic rapidfire matrix, with the R
 | Bomber | Heavy Laser, Ion Cannon | 10 |
 | Bomber | Gauss Cannon, Plasma Turret | 5 |
 | Destroyer | Light Laser | 10 |
-| Deathstar | Rocket Launcher, Light Laser | 200 |
-| Deathstar | Heavy Laser, Ion Cannon | 100 |
-| Deathstar | Gauss Cannon | 50 |
+| Dreadstar | Rocket Launcher, Light Laser | 200 |
+| Dreadstar | Heavy Laser, Ion Cannon | 100 |
+| Dreadstar | Gauss Cannon | 50 |
 | Reaper | Ion Cannon | 2 |
 
-In particular, Solar Satellites and Crawlers are targetable, fragile production units rather than rapidfire-proof defensive screens: every mobile ship can chain through them at factor `5`, and a Deathstar has factor `1,250`.
+In particular, Solar Satellites and Crawlers are targetable, fragile production units rather than rapidfire-proof defensive screens: every mobile ship can chain through them at factor `5`, and a Dreadstar has factor `1,250`.
 
 For an ideal chain that stays on eligible targets, the unbounded expected number of shots, including the original shot, is `R`. The contract limits rapidfire to 64 extra-shot chain steps, so that ideal capped expectation is `R * (1 - ((R - 1) / R)^65)`. In a real mixed defender pool, that expectation is not a promise: every chain step retargets by the live target counts and applies deterministic integer rounding.
 

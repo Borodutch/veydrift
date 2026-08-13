@@ -181,7 +181,7 @@ describe("MissionDetailPage defender Fleet / Defenses block", () => {
       mission: combatMission(),
       battleReport: battleReport({
         defenderSnapshot: {
-          fleet: [{ id: 1, count: 12 }], // Light Fighter
+          fleet: [{ id: 1, count: 12 }, { id: 11, count: 1 }], // Light Fighter, Dreadstar
           defenses: [{ id: 4, count: 3 }], // Gauss Cannon
         },
       }),
@@ -191,6 +191,7 @@ describe("MissionDetailPage defender Fleet / Defenses block", () => {
     const unitTitles = renderDetailUnitTitles(detail);
 
     expect(unitTitles).toContain("Light Fighter ×12");
+    expect(unitTitles).toContain("Dreadstar ×1");
     expect(unitTitles).toContain("Gauss Cannon ×3");
     expect(text).not.toContain(OLD_PLACEHOLDER);
   });

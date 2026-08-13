@@ -198,6 +198,11 @@ describe("contract battle preview parity", () => {
       { id: 9, label: "Solar Satellite", count: 100 },
       { id: 15, label: "Crawler", count: 100 },
     ]);
+    expect(result.attackers[0]?.startingShips).toContainEqual({
+      id: 11,
+      label: "Dreadstar",
+      count: 1,
+    });
     expect(result.defenderSurvivors).toBeLessThan(200);
     expect(result.rapidfireExtraShots.attacker).toBeGreaterThan(0);
     expect(result.rapidfireExtraShots.defender).toBe(0);
