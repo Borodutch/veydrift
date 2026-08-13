@@ -22,6 +22,30 @@ const supplyCargoShips: Array<{ key: MissionShipKey; label: string }> = [
   { key: "colonyShip", label: "Colony Ship" },
 ];
 
+export function batchSupplyFleetPresentation(
+  source: Pick<BatchSupplySource, "ships">,
+  order: Pick<BatchSupplyOrder, "ships"> | undefined,
+): { label: "Available cargo fleet" | "Planned fleet"; ships: Partial<MissionShips> } {
+  return order
+    ? { label: "Planned fleet", ships: order.ships }
+    : { label: "Available cargo fleet", ships: source.ships };
+}
+
+export function batchSupplySourceLimitReason({
+  checked,
+  maxSources,
+  selectedSourceCount,
+  unavailableReason,
+}: {
+  checked: boolean;
+  maxSources: number;
+  selectedSourceCount: number;
+  unavailableReason?: string | undefined;
+}): string | undefined {
+  if (checked || unavailableReason || selectedSourceCount < maxSources) return undefined;
+  return `Deselect another source to use this planet (${maxSources.toLocaleString()} fleet slot${maxSources === 1 ? "" : "s"} available).`;
+}
+
 export function BatchSupplyModal({
   actionPending = false,
   error,
@@ -178,8 +202,16 @@ export function BatchSupplyModal({
               <div className="rounded-lg border border-white/10 p-4 text-sm text-slate-300">No other owned planets can supply this target.</div>
             ) : sources.map((source) => {
               const checked = selected.has(source.planetId);
-              const disabled = Boolean(source.unavailableReason) || (!checked && selected.size >= maxSources);
+              const sourceLimitReason = batchSupplySourceLimitReason({
+                checked,
+                maxSources,
+                selectedSourceCount: selected.size,
+                unavailableReason: source.unavailableReason,
+              });
+              const selectionLimitReached = sourceLimitReason !== undefined;
+              const disabled = Boolean(source.unavailableReason) || selectionLimitReached;
               const order = orderByOrigin.get(source.planetId);
+              const fleetPresentation = batchSupplyFleetPresentation(source, order);
               const requestedSourceCargo = sourceCargoOverrides[source.planetId];
               const sourceCargo = order?.cargo ?? requestedSourceCargo ?? emptySupplyResources();
               const hasManualCargo = sourceCargoOverrides[source.planetId] !== undefined;
@@ -191,7 +223,7 @@ export function BatchSupplyModal({
               const distance = fleetMissionDistance(source.coordinates, { galaxy: target.galaxy, system: target.system, position: target.position });
               const eta = order?.travelSeconds ?? fleetMissionTravelSeconds(distance, source.ships, source.driveLevels);
               return (
-                <div className={`grid grid-cols-[auto_minmax(0,1fr)] items-start gap-3 rounded-lg border p-3 ${checked ? "border-cyan-300/35 bg-cyan-300/5" : "border-white/10 bg-black/15"} ${disabled ? "cursor-not-allowed opacity-60" : ""}`} key={source.planetId}>
+                <div className={`grid grid-cols-[auto_minmax(0,1fr)] items-start gap-3 rounded-lg border p-3 ${checked ? "border-cyan-300/35 bg-cyan-300/5" : "border-white/10 bg-black/15"} ${source.unavailableReason ? "cursor-not-allowed opacity-60" : ""}`} key={source.planetId}>
                   <label className="cursor-pointer">
                     <input checked={checked} className="mt-1" disabled={disabled} onChange={() => toggleSource(source.planetId)} type="checkbox" />
                     <span className="sr-only">Select {source.label}</span>
@@ -222,9 +254,10 @@ export function BatchSupplyModal({
                     ) : null}
                     {shipmentAdjusted ? <span className="mt-1 block text-[11px] text-amber-200">Adjusted to available stock, cargo capacity, and fuel.</span> : null}
                     <span className="mt-2 flex flex-wrap items-center gap-1.5">
-                      <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Fleet used</span>
-                      <SupplyFleetIcons ships={order?.ships} />
+                      <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{fleetPresentation.label}</span>
+                      <SupplyFleetIcons ships={fleetPresentation.ships} />
                     </span>
+                    {sourceLimitReason ? <span className="block text-xs text-slate-400">{sourceLimitReason}</span> : null}
                     {source.unavailableReason ? <span className="block text-xs text-amber-200">{source.unavailableReason}</span> : null}
                   </span>
                 </div>

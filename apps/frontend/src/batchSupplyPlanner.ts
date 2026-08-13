@@ -50,6 +50,10 @@ const cargoShipKeys: Array<{ id: number; key: MissionShipKey }> = [
   { id: 3, key: "colonyShip" },
 ];
 
+export function hasUsableSupplyCargoFleet(ships: Partial<MissionShips>): boolean {
+  return cargoShipKeys.some(({ key }) => safeAmount(ships[key]) > 0);
+}
+
 export function emptySupplyResources(): SupplyResources {
   return { metal: 0, crystal: 0, deuterium: 0 };
 }

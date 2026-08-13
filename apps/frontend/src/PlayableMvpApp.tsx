@@ -22,6 +22,7 @@ import {
 } from "./components/OverviewPage";
 import { BatchSupplyModal } from "./components/BatchSupplyModal";
 import {
+  hasUsableSupplyCargoFleet,
   type BatchSupplyOrder,
   type BatchSupplySource,
 } from "./batchSupplyPlanner";
@@ -2651,7 +2652,7 @@ function driveLevelsFromTechnologyLevels(levels: Record<string, number> | undefi
   };
 }
 
-function batchSupplySourceForPlanet(
+export function batchSupplySourceForPlanet(
   planet: ManagedPlanetResponse,
   shipyard: ChainShipyardState | undefined,
 ): BatchSupplySource {
@@ -2663,7 +2664,9 @@ function batchSupplySourceForPlanet(
   }
   const fleetUnavailable = shipyard?.fleetLaunchAvailable === false
     ? shipyard.fleetLaunchUnavailableReason ?? shipyard.unavailableReason ?? "Fleet slots are unavailable."
-    : undefined;
+    : shipyard && !hasUsableSupplyCargoFleet(ships)
+      ? "No usable cargo ships are available on this planet."
+      : undefined;
   return {
     planetId: planet.planetId,
     label: planet.name?.trim() || planet.coordinates,

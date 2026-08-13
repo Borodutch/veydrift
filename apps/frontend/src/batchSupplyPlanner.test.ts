@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { buildBatchSupplyPlan, type BatchSupplySource } from "./batchSupplyPlanner";
+import {
+  buildBatchSupplyPlan,
+  hasUsableSupplyCargoFleet,
+  type BatchSupplySource,
+} from "./batchSupplyPlanner";
 
 const target = { galaxy: 1, system: 100, position: 8 };
 const drives = { combustionDrive: 6, impulseDrive: 4, hyperspaceDrive: 0 };
@@ -221,5 +225,45 @@ describe("buildBatchSupplyPlan", () => {
     expect(plan.orders[0]?.cargo.crystal).toBe(0);
     expect(plan.missing).toEqual({ metal: 0, crystal: 100, deuterium: 0 });
     expect(plan.delivered).toEqual({ metal: 100, crystal: 0, deuterium: 0 });
+  });
+
+  test("keeps a partially committed cargo fleet launchable from the same available snapshot", () => {
+    const refreshedSource = source({
+      planetId: "partial",
+      ships: { largeCargo: 2 },
+      resources: { metal: 20_000, crystal: 0, deuterium: 5_000 },
+    });
+    const plan = buildBatchSupplyPlan({
+      targetCoordinates: target,
+      requested: { metal: 20_000 },
+      selectedPlanetIds: new Set([refreshedSource.planetId]),
+      sources: [refreshedSource],
+      maxOrders: 1,
+    });
+
+    expect(hasUsableSupplyCargoFleet(refreshedSource.ships)).toBe(true);
+    expect(plan.orders).toHaveLength(1);
+  });
+
+  test("keeps a fully committed cargo fleet unavailable", () => {
+    const fullyCommitted = source({
+      planetId: "full",
+      ships: { largeCargo: 0, smallCargo: 0, recycler: 0, colonyShip: 0 },
+      unavailableReason: "No usable cargo ships are available on this planet.",
+    });
+    const plan = buildBatchSupplyPlan({
+      targetCoordinates: target,
+      requested: { metal: 5_000 },
+      selectedPlanetIds: new Set(["full"]),
+      sources: [fullyCommitted],
+      maxOrders: 1,
+    });
+
+    expect(hasUsableSupplyCargoFleet(fullyCommitted.ships)).toBe(false);
+    expect(plan.orders).toEqual([]);
+    expect(plan.blockedSources).toEqual([{
+      planetId: "full",
+      reason: "No usable cargo ships are available on this planet.",
+    }]);
   });
 });
