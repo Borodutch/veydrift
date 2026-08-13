@@ -78,6 +78,26 @@ describe("buildBatchSupplyPlan", () => {
     expect(plan.delivered).toEqual({ metal: 5_221, crystal: 838, deuterium: 0 });
   });
 
+  test("blocks a nonzero source shipment when no cargo fleet is available", () => {
+    const cargoSource = source({
+      resources: { metal: 500, crystal: 0, deuterium: 100 },
+      ships: {},
+    });
+    const plan = buildBatchSupplyPlan({
+      targetCoordinates: target,
+      requested: { metal: 500 },
+      selectedPlanetIds: new Set([cargoSource.planetId]),
+      sources: [cargoSource],
+    });
+
+    expect(plan.orders).toEqual([]);
+    expect(plan.blockedSources).toEqual([{
+      planetId: cargoSource.planetId,
+      reason: "No cargo fleet with enough deuterium for this route.",
+    }]);
+    expect(plan.missing).toEqual({ metal: 500, crystal: 0, deuterium: 0 });
+  });
+
   test("keeps a metal and crystal source launchable when deuterium cargo changes from zero to one", () => {
     const cargoSource = source({
       resources: { metal: 500, crystal: 250, deuterium: 100 },

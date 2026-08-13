@@ -116,6 +116,9 @@ export function buildBatchSupplyPlan({
         crystal: Math.min(safeAmount(manualCargo.crystal), safeAmount(source.resources.crystal)),
         deuterium: Math.min(safeAmount(manualCargo.deuterium), safeAmount(source.resources.deuterium)),
       };
+    // A selected source with an explicit zero allocation does not need to launch. Check before
+    // capacity capping so a real shipment with no usable cargo fleet still reaches the blocker path.
+    if (resourceTotal(requestedFromSource) === 0) continue;
     // A colony should contribute what it can carry, rather than being skipped just because the
     // remaining total is larger than its entire cargo fleet. Keep the allocation deterministic so
     // the preview exactly matches the generated child missions.
@@ -123,10 +126,6 @@ export function buildBatchSupplyPlan({
       requestedFromSource,
       maximumCargoCapacity(source.ships, targetCoordinates, source.coordinates, source.driveLevels),
     );
-    // A selected source that has none of the still-requested cargo does not need to launch. Treating
-    // its empty allocation as a failed loadout incorrectly reports a fuel shortage; adding even one
-    // unit of deuterium cargo then appears to "fix" launchability despite an unchanged fuel reserve.
-    if (resourceTotal(cargo) === 0) continue;
     const loadout = transportLoadoutForCargo({ cargo, source, targetCoordinates });
     if (!loadout) {
       blockedSources.push({ planetId: source.planetId, reason: "No cargo fleet with enough deuterium for this route." });
