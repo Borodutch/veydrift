@@ -1,7 +1,9 @@
 import type { AvailableWalletProvider, Eip1193Provider } from "./walletFlow";
+import { defaultPlayableApiUrlForLocation } from "./runtimeConfig";
 
 const REOWN_CONNECT_TIMEOUT_MS = 120_000;
 const reownProjectId = import.meta.env.VITE_REOWN_PROJECT_ID?.trim() ?? "";
+const baseCaipNetworkId = "eip155:8453";
 
 type ReownModalState = {
   open: boolean;
@@ -29,6 +31,19 @@ export function walletConnectEnabled(
 
 export function walletConnectConfigurationMessage(): string {
   return "WalletConnect is not configured yet. Install a browser wallet, or try again once Veydrift enables WalletConnect.";
+}
+
+/**
+ * AppKit's connection modal needs a Base RPC for balances and gas estimates.
+ * Route those reads through Veydrift's narrowly scoped API proxy; the actual
+ * node remains reachable only from the backend.
+ */
+export function walletConnectCustomRpcUrls(
+  location: Pick<Location, "hostname"> | undefined = typeof window === "undefined" ? undefined : window.location
+): Record<typeof baseCaipNetworkId, Array<{ url: string }>> {
+  return {
+    [baseCaipNetworkId]: [{ url: `${defaultPlayableApiUrlForLocation(location)}/walletconnect-rpc` }]
+  };
 }
 
 export async function connectWalletConnect(): Promise<AvailableWalletProvider | undefined> {
@@ -107,6 +122,7 @@ async function loadReownAppKit(): Promise<ReownAppKit> {
       adapters: [ethersAdapter as never],
       allowUnsupportedChain: false,
       allWallets: "SHOW",
+      customRpcUrls: walletConnectCustomRpcUrls() as never,
       defaultAccountTypes: { eip155: "eoa" },
       defaultNetwork: networksModule.base,
       features: { analytics: false },

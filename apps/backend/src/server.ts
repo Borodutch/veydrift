@@ -349,6 +349,8 @@ export type ServerDependencies = {
   referralStore?: ReferralInviteStore;
   paidAllianceInviteReader?: PaidAllianceInviteReader;
   paidAllianceInviteSecretStore?: PaidAllianceInviteSecretStore;
+  // Test seam for the narrowly scoped WalletConnect read-only RPC proxy.
+  walletConnectRpc?: Pick<HttpJsonRpcTransport, "request">;
 };
 
 const defaultUniverseSeed = "veydrift-mainnet-preview";
@@ -380,6 +382,17 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       source: "cca-public-read"
     })
     : undefined;
+  // WalletConnect needs an HTTPS JSON-RPC URL for its wallet modal's Base
+  // reads. Keep the node private: this is a small, read-only facade over the
+  // backend's configured own RPC, never a general-purpose public RPC service.
+  const walletConnectRpc = dependencies.walletConnectRpc
+    ?? (loaded.problems.length === 0 && rpcUrlsForConfig(loaded.config).length > 0
+      ? new HttpJsonRpcTransport(rpcUrlsForConfig(loaded.config), {
+        cacheTtlMs: 1_000,
+        minRequestIntervalMs: 0,
+        source: "walletconnect-public-read"
+      })
+      : undefined);
   const indexerChainReader =
     dependencies.chainReader
       ? chainReader
@@ -523,6 +536,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
   const responseCache = new Map<string, CachedJsonResponse>();
   const inflightResponseCache = new Map<string, Promise<CachedJsonResponse | null>>();
   const readRateLimits = new Map<string, { count: number; resetAt: number }>();
+  const walletConnectRpcRateLimits = new Map<string, { count: number; resetAt: number }>();
   const galaxySystemCache = new Map<string, GalaxySystemCacheEntry>();
   const enableResponseCache = dependencies.enableResponseCache ?? usesProductionDependencies;
   const logRequests = dependencies.logRequests ?? (
@@ -617,6 +631,13 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
     if (request.method === "GET" && url.pathname === "/runtime-config") {
       return runtimeConfigResponse(workerRole);
+    }
+
+    if (request.method === "POST" && url.pathname === "/walletconnect-rpc") {
+      if (!walletConnectRpc) return unavailableResponse(loaded.problems);
+      const rateLimited = walletConnectRpcRateLimitResponse(request, walletConnectRpcRateLimits);
+      if (rateLimited) return rateLimited;
+      return walletConnectRpcResponse(request, walletConnectRpc);
     }
 
     if (request.method === "GET" && url.pathname === "/stats") {
@@ -2295,6 +2316,144 @@ async function ccaStateResponse(rpc: HttpJsonRpcTransport, owner: ViemAddress | 
       ...corsHeaders,
       "cache-control": "public, max-age=4, stale-while-revalidate=20"
     }
+  });
+}
+
+const walletConnectRpcBodyLimitBytes = 16 * 1024;
+const walletConnectRpcRateLimitWindowMs = 60_000;
+const walletConnectRpcRateLimitMaxRequests = 120;
+const walletConnectRpcMethods = new Set([
+  "eth_blockNumber",
+  "eth_call",
+  "eth_chainId",
+  "eth_estimateGas",
+  "eth_feeHistory",
+  "eth_gasPrice",
+  "eth_getBalance",
+  "eth_getBlockByHash",
+  "eth_getBlockByNumber",
+  "eth_getCode",
+  "eth_getStorageAt",
+  "eth_getTransactionByHash",
+  "eth_getTransactionCount",
+  "eth_getTransactionReceipt",
+  "eth_maxPriorityFeePerGas"
+]);
+
+type WalletConnectRpcPayload = {
+  id?: string | number | null;
+  jsonrpc?: string;
+  method?: string;
+  params?: unknown[];
+};
+
+type WalletConnectRpcResponse = {
+  error?: { code: number; message: string };
+  id: string | number | null;
+  jsonrpc: "2.0";
+  result?: unknown;
+};
+
+/**
+ * Serve only the Base read calls AppKit can use for wallet display and gas
+ * simulation. Wallet signing and submission still happen through the selected
+ * external wallet; accepting eth_sendTransaction here would expose the node as
+ * a public write relay.
+ */
+export async function walletConnectRpcResponse(
+  request: Request,
+  rpc: Pick<HttpJsonRpcTransport, "request">
+): Promise<Response> {
+  let body: unknown;
+  try {
+    body = await readLimitedJson(request, walletConnectRpcBodyLimitBytes);
+  } catch (error) {
+    const status = error instanceof RequestBodyTooLargeError ? 413 : 400;
+    return Response.json(walletConnectRpcError(null, -32600, "Request body must be valid JSON-RPC."), {
+      headers: { ...corsHeaders, "cache-control": "no-store" },
+      status
+    });
+  }
+
+  const isBatch = Array.isArray(body);
+  const payloads: unknown[] = Array.isArray(body) ? body : [body];
+  if (payloads.length === 0 || payloads.length > 10) {
+    return Response.json(walletConnectRpcError(null, -32600, "JSON-RPC batches must contain 1 to 10 requests."), {
+      headers: { ...corsHeaders, "cache-control": "no-store" },
+      status: 400
+    });
+  }
+
+  const responses = await Promise.all(payloads.map((payload) => walletConnectRpcEntryResponse(payload, rpc)));
+  return Response.json(isBatch ? responses : responses[0], {
+    headers: { ...corsHeaders, "cache-control": "no-store" }
+  });
+}
+
+async function walletConnectRpcEntryResponse(
+  value: unknown,
+  rpc: Pick<HttpJsonRpcTransport, "request">
+): Promise<WalletConnectRpcResponse> {
+  const payload = walletConnectRpcPayload(value);
+  if (!payload) return walletConnectRpcError(null, -32600, "Invalid JSON-RPC request.");
+  if (!walletConnectRpcMethods.has(payload.method)) {
+    return walletConnectRpcError(payload.id, -32601, "JSON-RPC method is not available.");
+  }
+
+  try {
+    const result = await rpc.request<unknown>(payload.method, payload.params);
+    return { id: payload.id, jsonrpc: "2.0", result };
+  } catch {
+    return walletConnectRpcError(payload.id, -32000, "Veydrift Base RPC is temporarily unavailable.");
+  }
+}
+
+function walletConnectRpcPayload(value: unknown): Required<Pick<WalletConnectRpcPayload, "id" | "method" | "params">> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const payload = value as WalletConnectRpcPayload;
+  if (payload.jsonrpc !== "2.0" || typeof payload.method !== "string" || !Array.isArray(payload.params)) return null;
+  const id = payload.id;
+  if (!(typeof id === "string" || typeof id === "number" || id === null)) return null;
+  return { id, method: payload.method, params: payload.params };
+}
+
+function walletConnectRpcError(
+  id: string | number | null,
+  code: number,
+  message: string
+): WalletConnectRpcResponse {
+  return { error: { code, message }, id, jsonrpc: "2.0" };
+}
+
+function walletConnectRpcRateLimitResponse(
+  request: Request,
+  limits: Map<string, { count: number; resetAt: number }>
+): Response | null {
+  const now = Date.now();
+  if (limits.size > 2_048) {
+    for (const [key, value] of limits) {
+      if (value.resetAt <= now) limits.delete(key);
+      if (limits.size <= 2_048) break;
+    }
+  }
+
+  const clientKey = requestClientKey(request);
+  if (!clientKey) return null;
+  const current = limits.get(clientKey);
+  if (!current || current.resetAt <= now) {
+    limits.set(clientKey, { count: 1, resetAt: now + walletConnectRpcRateLimitWindowMs });
+    return null;
+  }
+  current.count += 1;
+  if (current.count <= walletConnectRpcRateLimitMaxRequests) return null;
+
+  return Response.json(walletConnectRpcError(null, -32005, "Too many WalletConnect RPC requests."), {
+    headers: {
+      ...corsHeaders,
+      "cache-control": "no-store",
+      "retry-after": String(Math.ceil((current.resetAt - now) / 1_000))
+    },
+    status: 429
   });
 }
 

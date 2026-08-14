@@ -34,7 +34,10 @@ Set the public `VITE_REOWN_PROJECT_ID` for a [Reown Cloud](https://dashboard.reo
 project to enable WalletConnect in regular browsers. The project must allow the
 deployed Veydrift origin. Do not set this value for the
 Farcaster Mini App: that surface deliberately continues to use only the host
-Farcaster EIP-1193 provider.
+Farcaster EIP-1193 provider. WalletConnect Base reads use the Veydrift API's
+rate-limited `/walletconnect-rpc` allowlist; it proxies only read/simulation
+methods to the backend-configured Base node and never exposes the node or
+transaction-submission methods to browsers.
 
 ## Backend
 
