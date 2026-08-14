@@ -110,7 +110,7 @@ export function StructureDetail({
   levelInfo?: StructureLevelInfo | undefined;
   notice?: { label: string; tone: "error" | "success" } | undefined;
   queue?: StructureQueue | undefined;
-  statusReason?: { disabled: boolean; label: string } | undefined;
+  statusReason?: { disabled: boolean; label: string; supportingLabel?: string | undefined } | undefined;
   summary: string;
 }) {
   const [isInfoOpen, setIsInfoOpen] = useState(false);
@@ -145,6 +145,11 @@ export function StructureDetail({
           <p className={`text-sm font-semibold ${statusReason.disabled ? "text-slate-400" : "text-emerald-200"}`}>
             {statusReason.label}
           </p>
+          {statusReason.supportingLabel ? (
+            <p className={`mt-1 text-sm font-semibold ${statusReason.disabled ? "text-slate-400" : "text-emerald-200"}`}>
+              {statusReason.supportingLabel}
+            </p>
+          ) : null}
         </div>
       ) : null}
 

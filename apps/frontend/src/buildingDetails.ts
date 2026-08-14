@@ -37,15 +37,6 @@ export type BuildingUpgradeStatus = {
   durationSeconds?: number | undefined;
 };
 
-export type BuildingResourceAvailability = {
-  available: number;
-  label: string;
-  missing: number;
-  required: number;
-  resource: keyof Resources;
-  sufficient: boolean;
-};
-
 export type BuildingEnergyDetail =
   | {
       kind: "produces";
@@ -406,27 +397,6 @@ export function formatCost(cost: Resources): string {
     .filter(([, value]) => value > 0)
     .map(([resource, value]) => `${resourceLabels[resource]} ${formatNumber(value)}`)
     .join(", ") || "No resource cost";
-}
-
-export function buildingResourceAvailability(
-  resources: Resources,
-  cost: Resources,
-): BuildingResourceAvailability[] {
-  return resourceEntries(cost)
-    .filter(([, required]) => required > 0)
-    .map(([resource, required]) => {
-      const available = resources[resource];
-      const missing = Math.max(0, required - available);
-
-      return {
-        available,
-        label: resourceLabels[resource],
-        missing,
-        required,
-        resource,
-        sufficient: missing === 0,
-      };
-    });
 }
 
 export function formatMissingResources(resources: Resources, cost: Resources, productionRates?: Resources | undefined): string {
