@@ -564,7 +564,7 @@ describe("walletFlow", () => {
     });
   });
 
-  test("keeps injected-wallet receipt confirmation on the wallet provider", async () => {
+  test.each(["injected", "reown"] as const)("keeps %s receipt confirmation on the wallet provider", async (source) => {
     let walletRequests = 0;
     const provider = mockProvider(async ({ method }) => {
       walletRequests += 1;
@@ -574,7 +574,7 @@ describe("walletFlow", () => {
 
     await expect(confirmTransactionReceiptForProviderSource(
       provider,
-      "injected",
+      source,
       "https://api.example.test",
       "0xinjected",
       {

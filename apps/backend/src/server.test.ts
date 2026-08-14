@@ -35,7 +35,7 @@ import { SettlementIndexer, type IndexedRpcLog } from "./indexer";
 import { MissionResolutionService } from "./missionResolution";
 import { watchedPlanetMessage } from "./playerProfiles";
 import { deriveInfrastructureFields } from "./readModels";
-import { backendBuildMetadata, ccaBidOwnerTopic, createRequestHandler, decodeCcaSubmittedBid, deriveLogBackfiller, readerBootstrapHealthResponse, rpcUnfinishedRequestReadiness, runtimeConfigResponse, shouldRecoverFailedReconciliation } from "./server";
+import { backendBuildMetadata, ccaBidOwnerTopic, createRequestHandler, decodeCcaSubmittedBid, deriveLogBackfiller, readerBootstrapHealthResponse, rpcUnfinishedRequestReadiness, runtimeConfigResponse, shouldRecoverFailedReconciliation, walletConnectRpcResponse } from "./server";
 import { DEFAULT_MAX_WORKER_COUNT } from "./workerPool";
 
 setSystemTime(new Date(1_770_007_680_000));
@@ -110,6 +110,37 @@ test("decodes confirmed Uniswap CCA BidSubmitted logs", () => {
 
 test("uses the indexed bid owner topic when reading a connected wallet's CCA bids", () => {
   expect(ccaBidOwnerTopic(player)).toBe(`0x${"0".repeat(24)}${player.slice(2)}`);
+});
+
+test("WalletConnect RPC proxies only allowlisted Base reads and preserves JSON-RPC ids", async () => {
+  const calls: Array<{ method: string; params: unknown[] }> = [];
+  const rpc = {
+    request: async <T>(method: string, params: unknown[]): Promise<T> => {
+      calls.push({ method, params });
+      return "0x2105" as T;
+    }
+  };
+
+  const read = await walletConnectRpcResponse(new Request("http://localhost/walletconnect-rpc", {
+    body: JSON.stringify({ id: 17, jsonrpc: "2.0", method: "eth_chainId", params: [] }),
+    headers: { "content-type": "application/json" },
+    method: "POST"
+  }), rpc);
+  expect(read.status).toBe(200);
+  expect(await read.json()).toEqual({ id: 17, jsonrpc: "2.0", result: "0x2105" });
+  expect(calls).toEqual([{ method: "eth_chainId", params: [] }]);
+
+  const write = await walletConnectRpcResponse(new Request("http://localhost/walletconnect-rpc", {
+    body: JSON.stringify({ id: "write", jsonrpc: "2.0", method: "eth_sendRawTransaction", params: ["0xdeadbeef"] }),
+    headers: { "content-type": "application/json" },
+    method: "POST"
+  }), rpc);
+  expect(await write.json()).toEqual({
+    error: { code: -32601, message: "JSON-RPC method is not available." },
+    id: "write",
+    jsonrpc: "2.0"
+  });
+  expect(calls).toHaveLength(1);
 });
 
 test("RPC readiness fails closed on growing or stale unfinished requests", () => {

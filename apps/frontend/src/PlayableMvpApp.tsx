@@ -343,6 +343,7 @@ import {
   type PlayerQueuesResponse,
   type QueueStateResponse,
   type WalletPlanetsResponse,
+  type WalletProviderSource,
   type WatchedPlanetsResponse,
   type WalletSettlementResponse,
   type PaidAllianceBonusAmount,
@@ -1870,7 +1871,7 @@ export async function researchStartUnavailableReasonAfterLiveRevalidation({
 
 interface PlayableMvpAppProps {
   provider?: Eip1193Provider | undefined;
-  walletProviderSource?: "injected" | "farcaster" | undefined;
+  walletProviderSource?: WalletProviderSource | undefined;
   account?: string | undefined;
   miniAppMode?: boolean | undefined;
   onConnectWallet?: (() => void) | undefined;

@@ -1553,9 +1553,11 @@ export type FarcasterWalletClient = {
   };
 };
 
+export type WalletProviderSource = "injected" | "farcaster" | "reown";
+
 export type AvailableWalletProvider = {
   provider: Eip1193Provider;
-  source: "injected" | "farcaster";
+  source: WalletProviderSource;
 };
 
 export type AvailableWalletProviderOptions = {
@@ -4797,7 +4799,7 @@ export async function confirmTransactionReceiptFromRpc(
 
 export async function confirmTransactionReceiptForProviderSource(
   provider: Eip1193Provider,
-  providerSource: "injected" | "farcaster" | undefined,
+  providerSource: WalletProviderSource | undefined,
   receiptRpcUrl: string,
   transactionHash: string,
   options: TransactionReceiptConfirmationOptions = {},
