@@ -3,6 +3,7 @@ import {
   buildingLevelInfoColumns,
   buildingLevelInfoRows,
   buildingEnergyDetail,
+  buildingResourceAvailability,
   buildingUpgradeStatus,
   formatBuildingRequirements,
   formatCost,
@@ -110,6 +111,118 @@ describe("building detail helpers", () => {
       { metal: 20, crystal: 50, deuterium: 0 },
       { metal: 80, crystal: 50, deuterium: 10 },
     )).toBe("Requires 60 more Metal, 10 more Deuterium");
+  });
+
+  test("keeps screenshot shortfalls visible while another building is upgrading (VEY-KANEO-847)", () => {
+    const resources = { metal: 558, crystal: 3_705, deuterium: 5_903 };
+    const cost = { metal: 8_444, crystal: 4_222, deuterium: 0 };
+    const state = {
+      ...createInitialPlayableState(1_000),
+      resources,
+      queue: {
+        kind: "building" as const,
+        key: "metalMine" as const,
+        label: "Metal Mine",
+        readyAt: 61_000,
+        startedAt: 1_000,
+        targetLevel: 12,
+      },
+    };
+
+    expect(buildingUpgradeStatus(state, "crystalMine", {
+      chainCost: cost,
+      now: 1_000,
+      spendableResources: resources,
+    })).toMatchObject({
+      cost,
+      disabled: true,
+      reason: "Another building is currently upgrading: Metal Mine Level 12",
+    });
+    expect(buildingResourceAvailability(resources, cost)).toEqual([
+      {
+        available: 558,
+        label: "Metal",
+        missing: 7_886,
+        required: 8_444,
+        resource: "metal",
+        sufficient: false,
+      },
+      {
+        available: 3_705,
+        label: "Crystal",
+        missing: 517,
+        required: 4_222,
+        resource: "crystal",
+        sufficient: false,
+      },
+    ]);
+  });
+
+  test("keeps active-queue affordability explicit when every resource is sufficient (VEY-KANEO-847)", () => {
+    const resources = { metal: 9_000, crystal: 5_000, deuterium: 0 };
+    const cost = { metal: 8_444, crystal: 4_222, deuterium: 0 };
+
+    expect(buildingResourceAvailability(resources, cost)).toEqual([
+      expect.objectContaining({ resource: "metal", missing: 0, sufficient: true }),
+      expect.objectContaining({ resource: "crystal", missing: 0, sufficient: true }),
+    ]);
+  });
+
+  test("distinguishes sufficient and missing resources without negative shortfalls (VEY-KANEO-847)", () => {
+    const availability = buildingResourceAvailability(
+      { metal: 10_000, crystal: 4_000, deuterium: 0 },
+      { metal: 8_444, crystal: 4_222, deuterium: 0 },
+    );
+
+    expect(availability).toEqual([
+      expect.objectContaining({ resource: "metal", missing: 0, sufficient: true }),
+      expect.objectContaining({ resource: "crystal", missing: 222, sufficient: false }),
+    ]);
+    expect(availability.every(({ missing }) => missing >= 0)).toBe(true);
+  });
+
+  test("recomputes availability when the selected planet resource snapshot changes (VEY-KANEO-847)", () => {
+    const cost = { metal: 8_444, crystal: 4_222, deuterium: 0 };
+    const firstPlanet = buildingResourceAvailability(
+      { metal: 558, crystal: 3_705, deuterium: 5_903 },
+      cost,
+    );
+    const secondPlanet = buildingResourceAvailability(
+      { metal: 9_000, crystal: 3_705, deuterium: 5_903 },
+      cost,
+    );
+
+    expect(firstPlanet[0]).toMatchObject({ available: 558, missing: 7_886, sufficient: false });
+    expect(secondPlanet[0]).toMatchObject({ available: 9_000, missing: 0, sufficient: true });
+  });
+
+  test("keeps availability current when the active queue completes (VEY-KANEO-847)", () => {
+    const resources = { metal: 558, crystal: 3_705, deuterium: 5_903 };
+    const cost = { metal: 8_444, crystal: 4_222, deuterium: 0 };
+    const queuedState = {
+      ...createInitialPlayableState(1_000),
+      resources,
+      queue: {
+        kind: "building" as const,
+        key: "metalMine" as const,
+        label: "Metal Mine",
+        readyAt: 61_000,
+        startedAt: 1_000,
+        targetLevel: 12,
+      },
+    };
+
+    expect(buildingUpgradeStatus(queuedState, "crystalMine", {
+      chainCost: cost,
+      now: 1_000,
+      spendableResources: resources,
+    }).reason).toBe("Another building is currently upgrading: Metal Mine Level 12");
+    expect(buildingUpgradeStatus({ ...queuedState, queue: undefined }, "crystalMine", {
+      chainCost: cost,
+      now: 61_000,
+      spendableResources: resources,
+    }).reason).toBe("Requires 7,886 more Metal, 517 more Crystal");
+    expect(buildingResourceAvailability(resources, cost).map(({ missing }) => missing)).toEqual([7_886, 517]);
   });
 
   test("appends the backend-sourced \"affordable in\" ETA when a production rate is supplied (VEY-KANEO-481)", () => {

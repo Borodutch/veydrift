@@ -3,6 +3,7 @@ import type { ComponentChildren, VNode } from "preact";
 import { buildingEnergyDetail, buildingLevelInfoRows, buildingUpgradeStatus } from "../src/buildingDetails";
 import {
   ActiveBuildingQueuePanel,
+  BuildingResourceAvailability,
   BuildingLevelInfoButton,
   BuildingLevelInfoModal,
   InfrastructureLoadErrorPanel,
@@ -156,6 +157,30 @@ describe("Infrastructure page display helpers", () => {
         starterPlanet: true,
       }),
     )).toBe("muted");
+  });
+
+  test("renders authoritative availability separately from the active queue blocker (VEY-KANEO-847)", () => {
+    const availability = BuildingResourceAvailability({
+      cost: { metal: 8_444, crystal: 4_222, deuterium: 0 },
+      resources: { metal: 558, crystal: 3_705, deuterium: 5_903 },
+    });
+    const text = visibleText(availability);
+
+    expect(text).toContain("Metal 558 available / 8,444 needed 7,886 missing");
+    expect(text).toContain("Crystal 3,705 available / 4,222 needed 517 missing");
+    expect(elementNodes(availability).some((node) => String(node.props.className ?? "").includes("min-w-0"))).toBe(true);
+  });
+
+  test("labels sufficient resources independently instead of reporting negative missing amounts (VEY-KANEO-847)", () => {
+    const availability = BuildingResourceAvailability({
+      cost: { metal: 8_444, crystal: 4_222, deuterium: 0 },
+      resources: { metal: 9_000, crystal: 4_000, deuterium: 5_903 },
+    });
+    const text = visibleText(availability);
+
+    expect(text).toContain("Metal 9,000 available / 8,444 needed Sufficient");
+    expect(text).toContain("Crystal 4,000 available / 4,222 needed 222 missing");
+    expect(text).not.toMatch(/-\d[\d,]* missing/);
   });
 
   test("keeps initial infrastructure load failures in the full load-error state", () => {
