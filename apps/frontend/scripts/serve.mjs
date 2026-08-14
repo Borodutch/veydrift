@@ -12,6 +12,7 @@ const assetDataCache = new Map();
 let sharpModule;
 const defaultMetadataTimeoutMs = 1_500;
 export const referralXCardImageVersion = "2";
+export const referralMiniAppImageVersion = "1";
 export const allianceInviteOgImagePath = "/assets/alliance-invite-og-v3.jpg";
 export const allianceInviteOgTitle = "Alliance Invite — Play Veydrift for Free";
 export const allianceInviteOgDescription = "Accept this alliance invite to play Veydrift for free, start with 2× resources, and produce 2× resources for 7 days.";
@@ -37,6 +38,16 @@ export const referralOgLayout = Object.freeze({
   planetTop: 18,
   planetSize: 488,
   minimumTitlePlanetGap: 32,
+});
+
+export const referralMiniAppLayout = Object.freeze({
+  width: 1200,
+  height: 800,
+  contentWidth: 1080,
+  contentHeight: 567,
+  contentLeft: 60,
+  contentTop: 116,
+  safeMargin: 60,
 });
 
 const planetAssets = {
@@ -209,6 +220,15 @@ export function allianceInviteCommitmentForCanonical(pathname) {
 }
 
 export function imageRouteForPathname(pathname) {
+  if (pathname === "/og/farcaster/referral.png") {
+    return { kind: "referral", variant: "farcaster" };
+  }
+
+  const farcasterReferral = pathname.match(/^\/og\/farcaster\/referral\/([A-Za-z0-9_-]{1,24})\.png$/);
+  if (farcasterReferral) {
+    return { kind: "referral", code: farcasterReferral[1].toLowerCase(), variant: "farcaster" };
+  }
+
   if (pathname === "/og/referral.png") return { kind: "referral" };
 
   const referral = pathname.match(/^\/og\/referral\/([A-Za-z0-9_-]{1,24})\.png$/);
@@ -270,6 +290,13 @@ function imagePathForRoute(route) {
   if (route.kind === "moon") return `/og/moon/${route.galaxy}/${route.system}/${route.position}.png`;
   if (route.kind === "player") return `/og/player/${encodeURIComponent(route.wallet)}.png`;
   return `/og/alliance/${encodeURIComponent(route.allianceId)}.png`;
+}
+
+function miniAppImagePathForRoute(route) {
+  if (route.kind !== "referral") return imagePathForRoute(route);
+  return route.code
+    ? `/og/farcaster/referral/${encodeURIComponent(route.code)}.png`
+    : "/og/farcaster/referral.png";
 }
 
 export async function routeMeta(route) {
@@ -580,6 +607,10 @@ export async function renderShareHtml(request, route, appHtml) {
   const imageUrl = route.kind === "referral" && route.code
     ? `${origin}${imagePath}?v=${encodeURIComponent(referralXCardImageVersion)}`
     : `${origin}${imagePath}`;
+  const miniAppImagePath = miniAppImagePathForRoute(route);
+  const miniAppImageUrl = route.kind === "referral"
+    ? `${origin}${miniAppImagePath}?v=${encodeURIComponent(referralMiniAppImageVersion)}`
+    : imageUrl;
   const launchUrl = route.kind === "referral" ? miniAppLaunchUrl(canonicalUrl) : null;
   return injectShareMeta(appHtml, {
     canonicalUrl,
@@ -587,6 +618,7 @@ export async function renderShareHtml(request, route, appHtml) {
     imageType: route.kind === "alliance-invite" ? "image/jpeg" : "image/png",
     imageUrl,
     launchUrl,
+    miniAppImageUrl,
     title: meta.title,
   });
 }
@@ -629,7 +661,15 @@ export function buildReferralMiniAppEmbed({ imageUrl, launchUrl, actionType = "l
   };
 }
 
-export function injectShareMeta(html, { canonicalUrl, description, imageType = "image/png", imageUrl, launchUrl, title }) {
+export function injectShareMeta(html, {
+  canonicalUrl,
+  description,
+  imageType = "image/png",
+  imageUrl,
+  launchUrl,
+  miniAppImageUrl = imageUrl,
+  title,
+}) {
   let nextHtml = html;
   nextHtml = replaceHeadTag(nextHtml, /<title>.*?<\/title>/s, `<title>${escapeHtml(title)}</title>`);
   nextHtml = replaceHeadTag(
@@ -701,12 +741,12 @@ export function injectShareMeta(html, { canonicalUrl, description, imageType = "
     nextHtml = replaceHeadTag(
       nextHtml,
       /<meta\s+name="fc:miniapp"\s+content='[^']*'\s*\/>/s,
-      `<meta name="fc:miniapp" content='${escapeHtml(JSON.stringify(buildReferralMiniAppEmbed({ imageUrl, launchUrl })))}' />`,
+      `<meta name="fc:miniapp" content='${escapeHtml(JSON.stringify(buildReferralMiniAppEmbed({ imageUrl: miniAppImageUrl, launchUrl })))}' />`,
     );
     nextHtml = replaceHeadTag(
       nextHtml,
       /<meta\s+name="fc:frame"\s+content='[^']*'\s*\/>/s,
-      `<meta name="fc:frame" content='${escapeHtml(JSON.stringify(buildReferralMiniAppEmbed({ imageUrl, launchUrl, actionType: "launch_frame" })))}' />`,
+      `<meta name="fc:frame" content='${escapeHtml(JSON.stringify(buildReferralMiniAppEmbed({ imageUrl: miniAppImageUrl, launchUrl, actionType: "launch_frame" })))}' />`,
     );
   }
   return nextHtml;
@@ -732,7 +772,9 @@ async function ogImageResponse(route) {
   }
 
   const meta = await routeMeta(route);
-  const body = await ogPng(meta);
+  const body = route.variant === "farcaster"
+    ? await farcasterReferralPng(meta)
+    : await ogPng(meta);
   ogImageCache.set(cacheKey, { body, expiresAt: Date.now() + 300_000 });
   return new Response(body.slice(0), { headers: ogImageHeaders() });
 }
@@ -781,6 +823,39 @@ export async function ogPng(meta) {
       { input: routeOverlay, left: 0, top: 0, blend: "over" },
       titleOverlay,
     ])
+    .png()
+    .toBuffer();
+}
+
+export async function farcasterReferralPng(meta) {
+  if (meta.kind !== "referral") {
+    throw new Error("Farcaster referral previews require referral metadata.");
+  }
+
+  const sharp = await getSharp();
+  const genericReferralImage = await ogPng(meta);
+  const cropSafeComposition = await sharp(genericReferralImage)
+    .resize({
+      width: referralMiniAppLayout.contentWidth,
+      height: referralMiniAppLayout.contentHeight,
+      fit: "fill",
+    })
+    .png()
+    .toBuffer();
+
+  return sharp({
+    create: {
+      width: referralMiniAppLayout.width,
+      height: referralMiniAppLayout.height,
+      channels: 4,
+      background: "#02050b",
+    },
+  })
+    .composite([{
+      input: cropSafeComposition,
+      left: referralMiniAppLayout.contentLeft,
+      top: referralMiniAppLayout.contentTop,
+    }])
     .png()
     .toBuffer();
 }

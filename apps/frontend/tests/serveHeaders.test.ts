@@ -9,12 +9,15 @@ import {
   buildReferralMiniAppEmbed,
   cacheControl,
   canonicalSharePathForRoute,
+  farcasterReferralPng,
   injectShareMeta,
   imageRouteForPathname,
   gameAppRouteForPathname,
   inviteAppRouteForPathname,
   ogPng,
   ogSvg,
+  referralMiniAppImageVersion,
+  referralMiniAppLayout,
   referralOgLayout,
   renderShareHtml,
   responseHeadersFor,
@@ -188,6 +191,10 @@ describe("frontend static server headers", () => {
     expect(route).toEqual({ kind: "referral", code: "secret-invite-code" });
     expect(imageRouteForPathname("/og/referral/secret-invite-code.png"))
       .toEqual({ kind: "referral", code: "secret-invite-code" });
+    expect(imageRouteForPathname("/og/farcaster/referral/secret-invite-code.png"))
+      .toEqual({ kind: "referral", code: "secret-invite-code", variant: "farcaster" });
+    expect(imageRouteForPathname("/og/farcaster/referral.png"))
+      .toEqual({ kind: "referral", variant: "farcaster" });
 
     const meta = await routeMeta(route!);
 
@@ -228,6 +235,20 @@ describe("frontend static server headers", () => {
     const png = await ogPng(meta);
     expect(png.subarray(1, 4).toString()).toBe("PNG");
     expect(png.length).toBeGreaterThan(100_000);
+    await expect(sharp(png).metadata()).resolves.toMatchObject({ width: 1200, height: 630 });
+
+    const miniAppPng = await farcasterReferralPng(meta);
+    await expect(sharp(miniAppPng).metadata()).resolves.toMatchObject({
+      width: referralMiniAppLayout.width,
+      height: referralMiniAppLayout.height,
+    });
+    expect(referralMiniAppLayout.width / referralMiniAppLayout.height).toBe(3 / 2);
+    expect(referralMiniAppLayout.contentLeft).toBeGreaterThanOrEqual(referralMiniAppLayout.safeMargin);
+    expect(referralMiniAppLayout.width - referralMiniAppLayout.contentLeft - referralMiniAppLayout.contentWidth)
+      .toBeGreaterThanOrEqual(referralMiniAppLayout.safeMargin);
+    expect(referralMiniAppLayout.contentTop).toBeGreaterThanOrEqual(referralMiniAppLayout.safeMargin);
+    expect(referralMiniAppLayout.height - referralMiniAppLayout.contentTop - referralMiniAppLayout.contentHeight)
+      .toBeGreaterThanOrEqual(referralMiniAppLayout.safeMargin);
 
     const titleOnlyPng = await sharp(Buffer.from(await ogSvg(meta, { omitReferralVisual: true })))
       .png()
@@ -289,6 +310,7 @@ describe("frontend static server headers", () => {
       description: "Open this Veydrift invite. Referral eligibility and exact benefits are verified in-game before settlement.",
       imageUrl: "https://veydrift.com/og/referral/secret-invite-code.png",
       launchUrl: "https://veydrift.com/?ref=SECRET-INVITE-CODE&miniApp=true",
+      miniAppImageUrl: "https://veydrift.com/og/farcaster/referral/secret-invite-code.png?v=1",
       title: "Join Veydrift with secret-invite-code",
     });
 
@@ -297,6 +319,10 @@ describe("frontend static server headers", () => {
     expect(output).toContain('<meta property="og:image:alt" content="Join Veydrift with secret-invite-code" />');
     expect(output).toContain('<meta name="twitter:image" content="https://veydrift.com/og/referral/secret-invite-code.png" />');
     expect(output).toContain('<meta name="twitter:image:alt" content="Join Veydrift with secret-invite-code" />');
+    expect(output.match(/https:\/\/veydrift\.com\/og\/farcaster\/referral\/secret-invite-code\.png\?v=1/g))
+      .toHaveLength(2);
+    expect(output.match(/https:\/\/veydrift\.com\/og\/referral\/secret-invite-code\.png/g))
+      .toHaveLength(3);
     expect(output).toContain("Accept invite");
     expect(output).toContain("SECRET-INVITE-CODE&amp;miniApp=true");
     expect(output).not.toContain("valid invite");
@@ -318,6 +344,27 @@ describe("frontend static server headers", () => {
         },
       },
     });
+  });
+
+  test("keeps generic OG and Twitter URLs separate from the Farcaster-only referral asset", async () => {
+    const route = { kind: "referral", code: "borodutch" } as const;
+    const output = await renderShareHtml(
+      new Request("https://veydrift.com/?ref=borodutch"),
+      route,
+      shareHtmlFixture(),
+    );
+    const genericImage = `https://veydrift.com/og/referral/borodutch.png?v=2`;
+    const miniAppImage = `https://veydrift.com/og/farcaster/referral/borodutch.png?v=${referralMiniAppImageVersion}`;
+
+    expect(output).toContain(`<meta property="og:image" content="${genericImage}" />`);
+    expect(output).toContain(`<meta property="og:image:secure_url" content="${genericImage}" />`);
+    expect(output).toContain(`<meta name="twitter:image" content="${genericImage}" />`);
+    expect(output.match(new RegExp(miniAppImage.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g")))
+      .toHaveLength(2);
+    expect(output).not.toContain(`<meta property="og:image" content="${miniAppImage}" />`);
+    expect(output).not.toContain(`<meta name="twitter:image" content="${miniAppImage}" />`);
+    expect(output).toContain("https://veydrift.com/?ref=borodutch&amp;miniApp=true");
+    expect(output).toContain("Accept invite");
   });
 });
 
