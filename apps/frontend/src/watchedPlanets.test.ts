@@ -152,6 +152,40 @@ describe("overview planet sections", () => {
     expect(watchableRowSource).toContain('compact ? "pt-0" : "pt-2"');
   });
 
+  test("keeps four-action planet headers inline at normal mobile widths and wraps only when genuinely narrow", () => {
+    expect(overviewSource).toContain("mobileActionsInline");
+    expect(watchableRowSource).toContain(
+      'grid-cols-[minmax(0,1fr)_auto] max-[359px]:grid-cols-[minmax(0,1fr)] sm:grid-cols-[minmax(0,1fr)_auto]',
+    );
+    expect(watchableRowSource).toContain(
+      'col-start-2 row-start-1 self-center justify-end max-[359px]:col-span-full max-[359px]:col-start-1 max-[359px]:row-start-auto sm:col-span-1 sm:col-start-2 sm:row-start-1',
+    );
+    expect(overviewSource.match(/h-11 w-11/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
+    expect(overviewSource).toContain("flex flex-wrap justify-end gap-1.5");
+  });
+
+  test("keeps a one-action planet and its moon actions in compact inline rows", () => {
+    expect(watchableRowSource).toContain('data-watchable-moon-row="full-width"');
+    expect(watchableRowSource).toContain("col-span-full min-w-0");
+    expect(overviewSource).toContain("moonActionSlot={moonActions && moonActions.length > 0");
+    expect(overviewSource).toContain("<OverviewMoonActionButtons");
+  });
+
+  test("protects long planet names and HOME badges from inline action overlap", () => {
+    expect(watchableRowSource).toContain("flex-nowrap sm:flex-wrap");
+    expect(watchableRowSource).toContain("min-w-0 max-w-full items-center");
+    expect(watchableRowSource).toContain("min-w-0 truncate text-sm font-semibold");
+    expect(watchableRowSource).toContain('mobileActionsInline ? "shrink-0 sm:shrink" : ""');
+  });
+
+  test("preserves permission filtering and accessible labels while actions move inline", () => {
+    expect(overviewSource).toContain("const enabledActions = actions.filter((action) => action.enabled)");
+    expect(overviewSource).toContain("{enabledActions.map((action) =>");
+    expect(overviewSource).toContain("aria-label={action.label}");
+    expect(overviewSource).toContain("title={action.label}");
+    expect(overviewSource).toContain('aria-label="Supply this planet"');
+  });
+
   test("lets nested moon rows span the full watchable row width", () => {
     expect(watchableRowSource).toContain('data-watchable-moon-row="full-width"');
     expect(watchableRowSource).toContain("col-span-full min-w-0");
