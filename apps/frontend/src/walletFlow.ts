@@ -686,6 +686,12 @@ export type PlayerActivityResponse = {
   source?: string;
 };
 
+export type PlayerActivityPresence = {
+  wallet: string;
+  lastSeenAt: string;
+  previousLastSeenAt: string | null;
+};
+
 export type IndexedMissileAttack = {
   eventId: string;
   attacker: string;
@@ -4524,6 +4530,17 @@ export async function fetchPlayerActivity(
   if (options.since !== undefined) params.set("since", String(Math.max(0, Math.floor(options.since))));
   if (options.includeProjected) params.set("includeProjected", "true");
   return fetchWalletJson<PlayerActivityResponse>(apiUrl, wallet, `activity?${params.toString()}`, "Player activity");
+}
+
+export function playerActivityPresenceUrl(apiUrl: string, wallet: string): string {
+  return `${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(wallet)}/activity/presence`;
+}
+
+export async function recordPlayerActivityPresence(apiUrl: string, wallet: string): Promise<PlayerActivityPresence> {
+  return fetchGameApiMutation<PlayerActivityPresence>(
+    playerActivityPresenceUrl(apiUrl, wallet),
+    "Player activity presence"
+  );
 }
 
 export async function fetchMissileAttackArchive(

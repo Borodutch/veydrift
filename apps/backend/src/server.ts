@@ -1371,6 +1371,25 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       }
     }
 
+    if (request.method === "POST" && url.pathname.match(/^\/wallet\/[^/]+\/activity\/presence$/)) {
+      const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
+      try {
+        assertAddress(wallet);
+        if (!indexer) return indexedReadNotReadyResponse("player activity", indexer, { wallet });
+        return Response.json({
+          wallet,
+          ...indexer.recordPlayerActivityPresence(wallet)
+        }, {
+          headers: {
+            ...corsHeaders,
+            "cache-control": "no-store"
+          }
+        });
+      } catch (error) {
+        return errorResponse(error, 400);
+      }
+    }
+
     if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/queues$/)) {
       try {
         return indexedWalletStateResponse(url, indexer, "player queues", indexedPlayerQueues);

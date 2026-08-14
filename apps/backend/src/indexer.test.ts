@@ -1346,6 +1346,23 @@ describe("SettlementIndexer", () => {
     });
   });
 
+  test("keeps one server-side activity presence watermark per wallet", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+
+    expect(indexer.recordPlayerActivityPresence(player, 1_770_000_000)).toEqual({
+      lastSeenAt: "1770000000",
+      previousLastSeenAt: null
+    });
+    expect(indexer.recordPlayerActivityPresence(player, 1_770_000_060)).toEqual({
+      lastSeenAt: "1770000060",
+      previousLastSeenAt: "1770000000"
+    });
+  });
+
   test("records settlement once and collapses migrated planets into one migration action", () => {
     const transactionAt = 1_767_100_000;
     const indexer = new SettlementIndexer({
