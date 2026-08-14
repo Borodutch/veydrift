@@ -1,12 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import {
   REFERRAL_SIGNATURE_REJECTION_MESSAGE,
+  referralCodeDisclosurePresentation,
   referralClaimCodeAfterDashboard,
   referralInviteActionAvailability,
   referralInviteRefreshDelay,
   referralRejectedRequestMessage,
   referralSettlementBlocker,
   referralValidationMessage,
+  referralValidationPresentation,
+  referralValidationTone,
 } from "../src/FirstPlanetSettlementApp";
 import { referralCodeForLanding } from "../src/referralStorage";
 import {
@@ -77,23 +80,96 @@ function referralDashboard(input: {
 
 describe("referral hardening", () => {
   test("shows only the remaining-use count for active and exhausted invite codes", () => {
-    expect(referralValidationMessage(referralResolution("active", 2))).toBe("2/3 uses left");
-    expect(referralValidationMessage(referralResolution("exhausted", 0))).toBe("0/3 uses left");
+    expect(referralValidationMessage(referralResolution("active", 2))).toBe("Active · 2/3 uses left.");
+    expect(referralValidationMessage(referralResolution("exhausted", 0)))
+      .toBe("No uses left · ask the code owner to renew it.");
   });
 
   test("preserves distinct validation help for other invite-code states", () => {
     expect(referralValidationMessage(referralResolution("inactive", 0)))
-      .toBe("Inactive · this permanently owned code must be renewed by its owner.");
+      .toBe("Inactive · the code owner must renew it.");
     expect(referralValidationMessage(referralResolution("self_invite", 0)))
-      .toBe("Self-invite blocked on-chain.");
+      .toBe("This wallet can’t use its own invite code.");
     expect(referralValidationMessage(referralResolution("already_redeemed", 0)))
-      .toBe("This wallet already used a referral invite.");
+      .toBe("This wallet already used an invite code.");
     expect(referralValidationMessage(referralResolution("available", 3)))
-      .toBe("Available but not active · no referral benefit will be claimed.");
+      .toBe("Not active · no referral benefit will be applied.");
     expect(referralValidationMessage(referralResolution("unavailable", 0)))
-      .toBe("Current on-chain price is unavailable; referral settlement is paused.");
+      .toBe("Invite pricing is unavailable. Try again later.");
     expect(referralValidationMessage(referralResolution("invalid", 0)))
-      .toBe("Invalid invite code · no referral benefit will be claimed.");
+      .toBe("Invalid invite code · use 1–24 letters, numbers, underscores, or hyphens.");
+  });
+
+  test("projects concise semantic disclosure summaries for every applied-code state", () => {
+    expect(referralCodeDisclosurePresentation("", { status: "idle" })).toEqual({
+      appliedLabel: "Optional",
+      code: "",
+      status: undefined,
+      tone: "pending",
+    });
+
+    expect(referralCodeDisclosurePresentation(" borodutch ", {
+      status: "resolved",
+      resolution: referralResolution("active", 2),
+    })).toEqual({
+      appliedLabel: "Invite code: borodutch",
+      code: "borodutch",
+      status: "Active · 2/3 uses left.",
+      tone: "success",
+    });
+
+    expect(referralCodeDisclosurePresentation("borodutch", {
+      status: "resolved",
+      resolution: referralResolution("inactive", 0),
+    })).toMatchObject({
+      appliedLabel: "Invite code: borodutch",
+      status: "Inactive · the code owner must renew it.",
+      tone: "warning",
+    });
+
+    expect(referralCodeDisclosurePresentation("not valid!", {
+      status: "resolved",
+      resolution: referralResolution("invalid", 0),
+    })).toMatchObject({
+      appliedLabel: "Invite code: not valid!",
+      status: "Invalid invite code · use 1–24 letters, numbers, underscores, or hyphens.",
+      tone: "error",
+    });
+
+    expect(referralValidationPresentation({ status: "loading" })).toEqual({
+      message: "Checking invite code…",
+      tone: "pending",
+    });
+    expect(referralValidationPresentation({ status: "error", message: "RPC details" })).toEqual({
+      message: "Couldn’t check this invite code. Try again shortly.",
+      tone: "error",
+    });
+  });
+
+  test("maps active, warning, and error invite states to normal semantic tones", () => {
+    expect(referralValidationTone(referralResolution("active", 2))).toBe("success");
+    expect(referralValidationTone(referralResolution("inactive", 0))).toBe("warning");
+    expect(referralValidationTone(referralResolution("exhausted", 0))).toBe("warning");
+    expect(referralValidationTone(referralResolution("invalid", 0))).toBe("error");
+    expect(referralValidationTone(referralResolution("unavailable", 0))).toBe("error");
+  });
+
+  test("keeps the invite editor collapsed, editable, clearable, and responsive", async () => {
+    const appSource = await Bun.file(new URL("../src/FirstPlanetSettlementApp.tsx", import.meta.url)).text();
+    const stylesSource = await Bun.file(new URL("../src/styles.css", import.meta.url)).text();
+
+    expect(appSource).toContain('<details className="referral-code-disclosure">');
+    expect(appSource).toContain('<summary className="referral-code-summary">');
+    expect(appSource).not.toContain('<details className="referral-code-disclosure" open');
+    expect(appSource).toContain("{presentation.appliedLabel}");
+    expect(appSource).toContain('onClick={() => onChange("")}');
+    expect(appSource).toContain("Optional. Add a valid invite code before connecting your wallet.");
+    expect(stylesSource).toContain(".referral-code-summary-status");
+    expect(stylesSource).toContain(".referral-code-status-success");
+    expect(stylesSource).toContain(".referral-code-status-warning");
+    expect(stylesSource).toContain(".referral-code-status-error");
+    expect(stylesSource).toContain("grid-template-columns: auto minmax(0, 1fr) auto");
+    expect(stylesSource).toContain("min-height: 46px");
   });
 
   test("blocks settlement until the backend reports an active invite", () => {
