@@ -12,6 +12,7 @@ import {
   buildingEnergyDetail,
   buildingLevelInfoColumns,
   buildingLevelInfoRows,
+  buildingResourceAvailability,
   type BuildingUpgradeStatus,
   buildingUpgradeStatus,
   formatCost,
@@ -306,13 +307,17 @@ function BuildingDetailPanel({
     energyTechnologyLevel,
   );
   const energy = buildingEnergyDetail(state.buildings, building.key, energyTechnologyLevel);
+  // This is the same backend-authoritative snapshot used by the affordability
+  // gate and the top bar. Keep it independent from the primary action blocker so
+  // an active queue never hides what the selected upgrade still needs.
+  const displayedResources = spendableResources ?? state.resources;
   const status = buildingUpgradeStatus(state, building.key, {
     actionUnavailableReason: actionUnavailableReason ?? actionPendingLabel,
     chainCost,
     chainDurationSeconds: chainDuration,
     now,
     productionRates,
-    spendableResources,
+    spendableResources: displayedResources,
     starterPlanet,
   });
   const effectRows = detailEffectRows(
@@ -380,6 +385,7 @@ function BuildingDetailPanel({
         ) : (
           <>
             <InspectInfoBlock label={binary ? "Build cost" : "Upgrade cost"} value={formatCost(status.cost)} />
+            <BuildingResourceAvailability cost={status.cost} resources={displayedResources} />
             {status.durationSeconds !== undefined ? (
               <InspectInfoBlock label={binary ? "Build time" : "Upgrade time"} value={formatDuration(status.durationSeconds)} />
             ) : null}
@@ -393,6 +399,38 @@ function BuildingDetailPanel({
       statusReason={{ disabled: status.disabled, label: status.reason }}
       summary={binary ? (built ? "Built on this planet" : "Build on this planet") : currentLevel === 0 ? `Build Level ${status.targetLevel}` : `Level ${currentLevel} to ${status.targetLevel}`}
     />
+  );
+}
+
+export function BuildingResourceAvailability({
+  cost,
+  resources,
+}: {
+  cost: Resources;
+  resources: Resources;
+}) {
+  const availability = buildingResourceAvailability(resources, cost);
+
+  return (
+    <InspectInfoBlock label="Resource availability">
+      <div className="mt-1 grid min-w-0 gap-1.5">
+        {availability.map((entry) => (
+          <div className="min-w-0 rounded border border-white/10 bg-white/[0.03] px-2 py-1.5" key={entry.resource}>
+            <div className="flex min-w-0 flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5">
+              <span className="font-semibold text-slate-200">{entry.label}</span>
+              <span className="break-words text-xs text-slate-300">
+                {formatNumber(entry.available)} available / {formatNumber(entry.required)} needed
+              </span>
+            </div>
+            <span className={`mt-0.5 block break-words text-xs font-semibold ${
+              entry.sufficient ? "text-emerald-200" : "text-amber-200"
+            }`}>
+              {entry.sufficient ? "Sufficient" : `${formatNumber(entry.missing)} missing`}
+            </span>
+          </div>
+        ))}
+      </div>
+    </InspectInfoBlock>
   );
 }
 
