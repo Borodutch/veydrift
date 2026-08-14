@@ -901,6 +901,7 @@ function MyPlanetsPanel({
               isHome={planet.isHomePlanet}
               key={planet.planetId}
               meta={[]}
+              mobileActionsInline
               // Tapping one of the player's own planets switches the overview to it (the mobile
               // planet rail); the inspect screen stays reachable from the hero and Galaxy.
               onInspect={onSwitchPlanet ? () => onSwitchPlanet(planet.planetId, "planet") : onSelectPlanet ?? (() => undefined)}
@@ -948,7 +949,7 @@ function MyPlanetActionButtons({
         return (
           <button
             aria-label={action.label}
-            className="inline-flex h-10 w-10 items-center justify-center rounded border border-signal/30 bg-signal/10 text-signal transition hover:bg-signal/20 sm:h-8 sm:w-8"
+            className="inline-flex h-11 w-11 items-center justify-center rounded border border-signal/30 bg-signal/10 text-signal transition hover:bg-signal/20 sm:h-8 sm:w-8"
             key={action.kind}
             onClick={() => onAction(action)}
             title={action.label}
@@ -961,7 +962,7 @@ function MyPlanetActionButtons({
       {onSupply ? (
         <button
           aria-label="Supply this planet"
-          className="inline-flex h-10 w-10 items-center justify-center rounded border border-signal/30 bg-signal/10 text-signal transition hover:bg-signal/20 sm:h-8 sm:w-8"
+          className="inline-flex h-11 w-11 items-center justify-center rounded border border-signal/30 bg-signal/10 text-signal transition hover:bg-signal/20 sm:h-8 sm:w-8"
           onClick={onSupply}
           title="Supply this planet"
           type="button"

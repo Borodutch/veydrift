@@ -23,6 +23,7 @@ export function WatchablePlanetRow({
   isHome = false,
   leadingSlot,
   meta,
+  mobileActionsInline = false,
   mobileIdentityInMeta = false,
   moonActionSlot,
   onInspect,
@@ -45,6 +46,7 @@ export function WatchablePlanetRow({
   isHome?: boolean | undefined;
   leadingSlot?: ComponentChildren;
   meta: PlanetMetaItem[];
+  mobileActionsInline?: boolean | undefined;
   mobileIdentityInMeta?: boolean | undefined;
   moonActionSlot?: ComponentChildren;
   onInspect: (coords: Coordinates) => void;
@@ -89,7 +91,9 @@ export function WatchablePlanetRow({
             : "grid-cols-[3rem_minmax(0,1fr)] sm:grid-cols-[4rem_minmax(0,1fr)_8rem_auto]"
           : showIdentity
             ? "grid-cols-[minmax(0,1fr)] sm:grid-cols-[minmax(0,1fr)_8rem_auto]"
-            : "grid-cols-[minmax(0,1fr)] sm:grid-cols-[minmax(0,1fr)_auto]"
+            : mobileActionsInline
+              ? "grid-cols-[minmax(0,1fr)_auto] max-[359px]:grid-cols-[minmax(0,1fr)] sm:grid-cols-[minmax(0,1fr)_auto]"
+              : "grid-cols-[minmax(0,1fr)] sm:grid-cols-[minmax(0,1fr)_auto]"
       } ${
         isHighlighted
           ? "border-emerald-300/40 bg-emerald-300/10 shadow-[0_0_18px_rgba(110,231,183,0.10)]"
@@ -126,15 +130,19 @@ export function WatchablePlanetRow({
 
         <div className="min-w-0">
           <button
-            className="flex min-w-0 flex-wrap items-center gap-2 text-left"
+            className={`flex min-w-0 max-w-full items-center gap-2 text-left ${
+              mobileActionsInline ? "flex-nowrap sm:flex-wrap" : "flex-wrap"
+            }`}
             onClick={() => onInspect(coords)}
             type="button"
           >
-            <span className="truncate text-sm font-semibold text-white group-hover:text-signal">
+            <span className="min-w-0 truncate text-sm font-semibold text-white group-hover:text-signal">
               {planet.name}
             </span>
             {isHome ? (
-              <span className="rounded border border-cyan-300/35 bg-cyan-300/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-cyan-100">
+              <span className={`rounded border border-cyan-300/35 bg-cyan-300/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-cyan-100 ${
+                mobileActionsInline ? "shrink-0 sm:shrink" : ""
+              }`}>
                 Home
               </span>
             ) : null}
@@ -232,6 +240,8 @@ export function WatchablePlanetRow({
         <div className={`flex min-w-0 ${
           compact && leadingSlot
             ? "col-start-3 row-start-1 self-center justify-end sm:col-start-4"
+            : mobileActionsInline
+              ? "col-start-2 row-start-1 self-center justify-end max-[359px]:col-span-full max-[359px]:col-start-1 max-[359px]:row-start-auto sm:col-span-1 sm:col-start-2 sm:row-start-1"
             : `col-span-full flex-wrap justify-end sm:col-span-1 ${compact ? "pt-0" : "pt-2"}`
         }`}>
           <div className="flex flex-shrink-0 flex-wrap justify-end gap-1.5">
