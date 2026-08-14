@@ -1,6 +1,6 @@
 import type { ComponentChildren } from "preact";
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { Coins, Copy, FileText, Gift, Link, RefreshCw, Share2, TicketCheck, UserRound } from "lucide-preact";
+import { ChevronDown, Coins, Copy, FileText, Gift, Link, RefreshCw, Share2, TicketCheck, UserRound } from "lucide-preact";
 import { ComingSoonApp } from "./ComingSoonApp";
 import { TelegramIcon } from "./components/TelegramIcon";
 import { PlayableMvpApp } from "./PlayableMvpApp";
@@ -365,7 +365,7 @@ export function referralInviteActionAvailability(input: {
   };
 }
 
-type ReferralValidationState =
+export type ReferralValidationState =
   | { status: "idle" }
   | { status: "loading" }
   | { status: "resolved"; resolution: ReferralResolution }
@@ -2135,7 +2135,7 @@ function ReferralProgramPanel({
   );
 }
 
-function ReferralCodeField({
+export function ReferralCodeField({
   disabled,
   onChange,
   validation,
@@ -2146,26 +2146,95 @@ function ReferralCodeField({
   validation: ReferralValidationState;
   value: string;
 }) {
+  const presentation = referralCodeDisclosurePresentation(value, validation);
   return (
-    <label className="referral-code-field">
-      <span>Got invite code?</span>
-      <input
-        autoComplete="off"
-        disabled={disabled}
-        inputMode="text"
-        onInput={(event) => onChange((event.currentTarget as HTMLInputElement).value)}
-        onPaste={(event) => {
-          const code = referralCodeFromText(event.clipboardData?.getData("text") ?? "");
-          if (!code) return;
-          event.preventDefault();
-          onChange(code);
-        }}
-        placeholder="Paste invite code"
-        value={value}
-      />
-      {value.trim() ? <ReferralValidationMessage state={validation} /> : null}
-    </label>
+    <details className="referral-code-disclosure">
+      <summary className="referral-code-summary">
+        <span className="referral-code-summary-chevron" aria-hidden="true">
+          <ChevronDown size={16} />
+        </span>
+        <span className="referral-code-summary-label">Got an invite code?</span>
+        <span className="referral-code-summary-value" title={presentation.code}>
+          {presentation.appliedLabel}
+        </span>
+        {presentation.status ? (
+          <span
+            aria-live="polite"
+            className={`referral-code-summary-status referral-code-status-${presentation.tone}`}
+          >
+            {presentation.status}
+          </span>
+        ) : null}
+      </summary>
+      <div className="referral-code-editor">
+        <div className="referral-code-field">
+          <label className="referral-code-input-label" htmlFor="landing-referral-code">Invite code</label>
+          <span className="referral-code-input-row">
+            <input
+              autoComplete="off"
+              disabled={disabled}
+              id="landing-referral-code"
+              inputMode="text"
+              onInput={(event) => onChange((event.currentTarget as HTMLInputElement).value)}
+              onPaste={(event) => {
+                const code = referralCodeFromText(event.clipboardData?.getData("text") ?? "");
+                if (!code) return;
+                event.preventDefault();
+                onChange(code);
+              }}
+              placeholder="Paste invite code"
+              value={value}
+            />
+            {presentation.code ? (
+              <button
+                className="referral-code-clear"
+                disabled={disabled}
+                onClick={() => onChange("")}
+                type="button"
+              >
+                Clear
+              </button>
+            ) : null}
+          </span>
+        </div>
+        {presentation.code ? (
+          <ReferralValidationMessage state={validation} />
+        ) : (
+          <p className="referral-code-help">Optional. Add a valid invite code before connecting your wallet.</p>
+        )}
+      </div>
+    </details>
   );
+}
+
+export type ReferralCodeStatusTone = "error" | "pending" | "success" | "warning";
+
+export function referralCodeDisclosurePresentation(
+  value: string,
+  validation: ReferralValidationState,
+): {
+  appliedLabel: string;
+  code: string;
+  status: string | undefined;
+  tone: ReferralCodeStatusTone;
+} {
+  const code = value.trim();
+  if (!code) {
+    return {
+      appliedLabel: "Optional",
+      code: "",
+      status: undefined,
+      tone: "pending",
+    };
+  }
+
+  const validationPresentation = referralValidationPresentation(validation);
+  return {
+    appliedLabel: `Invite code: ${code}`,
+    code,
+    status: validationPresentation.message,
+    tone: validationPresentation.tone,
+  };
 }
 
 function ReferralClaimInspectionMessage({ state }: { state: ReferralValidationState }) {
@@ -2214,35 +2283,65 @@ function ReferralClaimInspectionMessage({ state }: { state: ReferralValidationSt
 }
 
 function ReferralValidationMessage({ state }: { state: ReferralValidationState }) {
+  const presentation = referralValidationPresentation(state);
+  return (
+    <span
+      aria-live="polite"
+      className={`referral-code-status referral-code-status-${presentation.tone}`}
+    >
+      {presentation.message}
+    </span>
+  );
+}
+
+export function referralValidationPresentation(state: ReferralValidationState): {
+  message: string;
+  tone: ReferralCodeStatusTone;
+} {
   if (state.status === "loading" || state.status === "idle") {
-    return <span className="referral-muted">Checking invite against on-chain referral state.</span>;
+    return { message: "Checking invite code…", tone: "pending" };
   }
   if (state.status === "error") {
-    return <span className="referral-error">{state.message}</span>;
+    return { message: "Couldn’t check this invite code. Try again shortly.", tone: "error" };
   }
-  const { resolution } = state;
-  const detail = referralValidationMessage(resolution);
-  return (
-    <span className={resolution.valid ? "referral-muted" : "referral-error"}>{detail}</span>
-  );
+
+  return {
+    message: referralValidationMessage(state.resolution),
+    tone: referralValidationTone(state.resolution),
+  };
+}
+
+export function referralValidationTone(resolution: ReferralResolution): ReferralCodeStatusTone {
+  return resolution.status === "active"
+    ? "success"
+    : resolution.status === "inactive"
+      || resolution.status === "exhausted"
+      || resolution.status === "already_redeemed"
+      || resolution.status === "available"
+      ? "warning"
+      : resolution.status === "unavailable"
+        || resolution.status === "self_invite"
+        || resolution.status === "invalid"
+        ? "error"
+        : "pending";
 }
 
 export function referralValidationMessage(resolution: ReferralResolution): string {
   return resolution.status === "active"
-    ? `${resolution.remainingRedemptions}/3 uses left`
+    ? `Active · ${resolution.remainingRedemptions}/3 uses left.`
     : resolution.status === "inactive"
-      ? "Inactive · this permanently owned code must be renewed by its owner."
+      ? "Inactive · the code owner must renew it."
       : resolution.status === "exhausted"
-        ? "0/3 uses left"
+        ? "No uses left · ask the code owner to renew it."
         : resolution.status === "self_invite"
-          ? "Self-invite blocked on-chain."
+          ? "This wallet can’t use its own invite code."
           : resolution.status === "already_redeemed"
-            ? "This wallet already used a referral invite."
+            ? "This wallet already used an invite code."
             : resolution.status === "available"
-              ? "Available but not active · no referral benefit will be claimed."
+              ? "Not active · no referral benefit will be applied."
               : resolution.status === "unavailable"
-                ? "Current on-chain price is unavailable; referral settlement is paused."
-                : "Invalid invite code · no referral benefit will be claimed.";
+                ? "Invite pricing is unavailable. Try again later."
+                : "Invalid invite code · use 1–24 letters, numbers, underscores, or hyphens.";
 }
 
 export function SettlementSupportLinks() {
