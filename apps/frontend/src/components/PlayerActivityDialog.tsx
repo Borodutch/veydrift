@@ -22,19 +22,15 @@ import {
   type PlayerActivityCategory,
   type PlayerActivityItem,
   type PlayerActivityResponse,
+  playerActivityPresenceUrl,
 } from "../walletFlow";
 import { backendDataStoreFor } from "../backendDataStore";
-import {
-  beginPlayerActivitySession,
-  browserPlayerActivityStorage,
-  writePlayerActivityLastSeen,
-} from "../playerActivityStorage";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import { Skeleton, SkeletonRegion, skeletonList } from "./Skeleton";
 
 const HISTORY_PAGE_SIZE = 25;
 const AWAY_PAGE_SIZE = 100;
-const LAST_SEEN_HEARTBEAT_MS = 60_000;
+const PRESENCE_HEARTBEAT_MS = 30_000;
 
 type ActivityDialogState =
   | { mode: "away"; response: PlayerActivityResponse; since: number }
@@ -54,14 +50,12 @@ export function activityCategoryFilterReducer(
 
 export function PlayerActivityCenter({
   apiUrl,
-  chainId,
   explorerUrl,
   historyOpen,
   onHistoryClose,
   wallet,
 }: {
   apiUrl?: string | undefined;
-  chainId: number;
   explorerUrl: string;
   historyOpen: boolean;
   onHistoryClose: () => void;
@@ -72,60 +66,58 @@ export function PlayerActivityCenter({
   const [historyPage, setHistoryPage] = useState(1);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | undefined>();
-  const [lastSeenReady, setLastSeenReady] = useState(false);
-  const identityKey = apiUrl && wallet ? `${apiUrl}:${chainId}:${wallet.toLowerCase()}` : "";
+  const [presenceReady, setPresenceReady] = useState(false);
+  const identityKey = apiUrl && wallet ? `${apiUrl}:${wallet.toLowerCase()}` : "";
 
   useEffect(() => {
     setAwayState(null);
     setHistoryResponse(undefined);
     setHistoryPage(1);
     setError(undefined);
-    setLastSeenReady(false);
+    setPresenceReady(false);
     if (!apiUrl || !wallet) return;
 
-    const storage = browserPlayerActivityStorage();
-    const now = Math.floor(Date.now() / 1_000);
-    const previous = beginPlayerActivitySession(storage, chainId, wallet, now);
-    if (previous === null) {
-      setLastSeenReady(true);
-      return;
-    }
-
     let cancelled = false;
-    void backendDataStoreFor(apiUrl).playerActivity(wallet, {
-      page: 1,
-      pageSize: AWAY_PAGE_SIZE,
-      since: previous,
-      includeProjected: true,
-    }).then((response) => {
+    void backendDataStoreFor(apiUrl).recordPlayerActivityPresence(wallet).then(async (presence) => {
       if (cancelled) return;
-      writePlayerActivityLastSeen(storage, chainId, wallet, Number(response.through));
-      setLastSeenReady(true);
-      if (response.items.length > 0) {
+      setPresenceReady(true);
+      const previous = presence.previousLastSeenAt === null ? null : Number(presence.previousLastSeenAt);
+      if (previous === null || !Number.isSafeInteger(previous) || previous <= 0) return;
+      const response = await backendDataStoreFor(apiUrl).playerActivity(wallet, {
+        page: 1,
+        pageSize: AWAY_PAGE_SIZE,
+        since: previous,
+        includeProjected: true,
+      });
+      if (!cancelled && response.items.length > 0) {
         setAwayState({ mode: "away", response, since: previous });
       }
     }).catch(() => {
-      // Keep the old timestamp so a transient API failure is retried next load.
+      // A failed check-in leaves the server marker unchanged, so a later load retries this window.
     });
     return () => { cancelled = true; };
   }, [identityKey]);
 
   useEffect(() => {
-    if (!lastSeenReady || !wallet) return;
-    const storage = browserPlayerActivityStorage();
-    const markPresent = () => writePlayerActivityLastSeen(storage, chainId, wallet, Math.floor(Date.now() / 1_000));
-    const handleVisibility = () => {
-      if (document.visibilityState === "hidden") markPresent();
+    if (!presenceReady || !apiUrl || !wallet) return;
+    const markPresent = () => void backendDataStoreFor(apiUrl).recordPlayerActivityPresence(wallet).catch(() => {});
+    const markPresentOnExit = () => {
+      const url = playerActivityPresenceUrl(apiUrl, wallet);
+      if (navigator.sendBeacon?.(url, "")) return;
+      void fetch(url, { keepalive: true, method: "POST" }).catch(() => {});
     };
-    const timer = window.setInterval(markPresent, LAST_SEEN_HEARTBEAT_MS);
-    window.addEventListener("pagehide", markPresent);
+    const handleVisibility = () => {
+      markPresent();
+    };
+    const timer = window.setInterval(markPresent, PRESENCE_HEARTBEAT_MS);
+    window.addEventListener("pagehide", markPresentOnExit);
     document.addEventListener("visibilitychange", handleVisibility);
     return () => {
       window.clearInterval(timer);
-      window.removeEventListener("pagehide", markPresent);
+      window.removeEventListener("pagehide", markPresentOnExit);
       document.removeEventListener("visibilitychange", handleVisibility);
     };
-  }, [chainId, lastSeenReady, wallet]);
+  }, [apiUrl, presenceReady, wallet]);
 
   useEffect(() => {
     if (!historyOpen || !apiUrl || !wallet) return;
