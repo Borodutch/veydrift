@@ -90,6 +90,7 @@ import {
   type SettlementFundingState,
   type SettlementConfig,
   type VeydriftWalletChain,
+  type WalletProviderSource,
   type WalletSettlementResponse
 } from "./walletFlow";
 import { backendDataStoreFor } from "./backendDataStore";
@@ -99,6 +100,10 @@ import {
   walletRecoveryPageUrl,
   type WalletRecoveryDevice,
 } from "./walletRecovery";
+import {
+  connectWalletConnect,
+  walletConnectEnabled,
+} from "./reownWallet";
 
 type FetchWalletSettlement = typeof import("./walletFlow").fetchWalletSettlement;
 
@@ -121,7 +126,7 @@ export function shouldAutoConnectFarcasterWallet(input: {
   miniAppMode: boolean;
   providerAvailable: boolean;
   settlementConfigReady: boolean;
-  walletProviderSource: "injected" | "farcaster" | undefined;
+  walletProviderSource: WalletProviderSource | undefined;
   alreadyAttempted: boolean;
 }): boolean {
   return input.providerAvailable
@@ -133,7 +138,7 @@ export function shouldAutoConnectFarcasterWallet(input: {
 
 export function shouldAttemptFarcasterNetworkSetup(input: {
   miniAppMode: boolean;
-  walletProviderSource: "injected" | "farcaster" | undefined;
+  walletProviderSource: WalletProviderSource | undefined;
   chainId: string;
   lastAttemptedChainId: string | undefined;
   requiredChain?: VeydriftWalletChain;
@@ -185,14 +190,14 @@ export function shouldShowPublicPlayableApp(wallet: WalletState, planet: PlanetS
 export function shouldRefreshWalletOnProviderReady(input: {
   account: string | undefined;
   miniAppMode: boolean;
-  walletProviderSource: "injected" | "farcaster" | undefined;
+  walletProviderSource: WalletProviderSource | undefined;
 }): boolean {
   return !(input.miniAppMode && input.walletProviderSource === "farcaster" && !input.account);
 }
 
 export function shouldUseWalletProviderForSettlement(input: {
   miniAppMode: boolean;
-  walletProviderSource: "injected" | "farcaster" | undefined;
+  walletProviderSource: WalletProviderSource | undefined;
 }): boolean {
   return !input.miniAppMode || input.walletProviderSource === "farcaster";
 }
@@ -375,7 +380,7 @@ type WalletProviderDetails = Awaited<ReturnType<typeof getAvailableWalletProvide
 type WalletProviderContext = {
   miniAppMode: boolean;
   miniAppPlatformType: FarcasterMiniAppPlatformType | undefined;
-  walletProviderSource: "injected" | "farcaster" | undefined;
+  walletProviderSource: WalletProviderSource | undefined;
 };
 
 // Some mobile wallet providers (notably Trust Wallet on Android) intermittently
@@ -395,7 +400,7 @@ export function FirstPlanetSettlementApp() {
     kind: "loading"
   });
   const [networkSwitchPending, setNetworkSwitchPending] = useState(false);
-  const [walletProviderSource, setWalletProviderSource] = useState<"injected" | "farcaster" | undefined>();
+  const [walletProviderSource, setWalletProviderSource] = useState<WalletProviderSource | undefined>();
   const [planet, setPlanet] = useState<PlanetState>({
     kind: "idle"
   });
@@ -763,7 +768,7 @@ export function FirstPlanetSettlementApp() {
           return;
         }
 
-        setWallet({ kind: "no-wallet" });
+        setWallet(walletConnectEnabled(false) ? { kind: "disconnected" } : { kind: "no-wallet" });
       }
     })();
 
@@ -1235,9 +1240,12 @@ export function FirstPlanetSettlementApp() {
       ? readFarcasterMiniAppWalletSupport(undefined)
       : Promise.resolve(undefined);
 
-    const walletProvider = provider
+    let walletProvider = provider
       ? undefined
       : await loadWalletProviderDetails({ waitForFarcasterProvider: miniAppMode || !provider });
+    if (!walletProvider?.provider && !miniAppMode && walletConnectEnabled(false)) {
+      walletProvider = await connectWalletConnect();
+    }
     const activeProvider = provider ?? (
       shouldUseWalletProviderForSettlement({
         miniAppMode,
@@ -1267,9 +1275,7 @@ export function FirstPlanetSettlementApp() {
       if (miniAppMode) {
         showFarcasterWalletProviderUnavailable(support);
       } else {
-        setWallet({
-          kind: "no-wallet"
-        });
+        setWallet(walletConnectEnabled(false) ? { kind: "disconnected" } : { kind: "no-wallet" });
       }
       return;
     }

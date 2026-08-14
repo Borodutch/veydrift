@@ -54,6 +54,15 @@ export default defineConfig(({ mode }) => {
           entryFileNames: isTestSurface
             ? "assets/[name]-settlement-[hash].js"
             : "assets/[name]-[hash].js",
+          manualChunks(id) {
+            // Reown is only imported after a regular-browser player explicitly
+            // opens Connect. Keep it out of the initial bundle, especially the
+            // Farcaster Mini App surface where this connector is disabled.
+            if (id.includes("/node_modules/@reown/") || id.includes("/node_modules/@walletconnect/")) {
+              return "reown-wallet";
+            }
+            return undefined;
+          },
         },
       },
     },
