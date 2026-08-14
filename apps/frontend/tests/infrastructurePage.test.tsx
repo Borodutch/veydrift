@@ -3,7 +3,6 @@ import type { ComponentChildren, VNode } from "preact";
 import { buildingEnergyDetail, buildingLevelInfoRows, buildingUpgradeStatus } from "../src/buildingDetails";
 import {
   ActiveBuildingQueuePanel,
-  BuildingResourceAvailability,
   BuildingLevelInfoButton,
   BuildingLevelInfoModal,
   InfrastructureLoadErrorPanel,
@@ -16,11 +15,14 @@ import {
   infrastructureRefreshButtonState,
   infrastructureCatalogTitleTone,
   infrastructureCatalogStatusText,
+  infrastructureQueuedResourceShortfall,
   selectedInfrastructureBuildingKey,
   shouldShowInfrastructureInitialLoadError,
 } from "../src/components/InfrastructurePage";
 import { QueueProgressPanel } from "../src/components/QueueProgressPanel";
 import { buildingEffectMetrics, createInitialPlayableState } from "../src/playableMvp";
+
+const infrastructurePageSource = await Bun.file(new URL("../src/components/InfrastructurePage.tsx", import.meta.url)).text();
 
 describe("Infrastructure page display helpers", () => {
   test("keeps a freshly clicked building authoritative over a stale parent selection", () => {
@@ -159,28 +161,77 @@ describe("Infrastructure page display helpers", () => {
     )).toBe("muted");
   });
 
-  test("renders authoritative availability separately from the active queue blocker (VEY-KANEO-847)", () => {
-    const availability = BuildingResourceAvailability({
+  test("keeps the compact resource shortfall beside another building queue (VEY-KANEO-847)", () => {
+    const shortfall = infrastructureQueuedResourceShortfall({
+      buildingKey: "crystalMine",
       cost: { metal: 8_444, crystal: 4_222, deuterium: 0 },
+      productionRates: undefined,
+      queue: {
+        kind: "building",
+        key: "metalMine",
+        label: "Metal Mine",
+        readyAt: 61_000,
+        startedAt: 1_000,
+        targetLevel: 12,
+      },
       resources: { metal: 558, crystal: 3_705, deuterium: 5_903 },
     });
-    const text = visibleText(availability);
 
-    expect(text).toContain("Metal 558 available / 8,444 needed 7,886 missing");
-    expect(text).toContain("Crystal 3,705 available / 4,222 needed 517 missing");
-    expect(elementNodes(availability).some((node) => String(node.props.className ?? "").includes("min-w-0"))).toBe(true);
+    expect(shortfall).toBe("Requires 7,886 more Metal, 517 more Crystal");
+    expect(infrastructurePageSource).not.toContain("Resource availability");
+    expect(infrastructurePageSource).not.toContain("available / ");
+    expect(infrastructurePageSource).toContain("supportingLabel: queuedResourceShortfall");
   });
 
-  test("labels sufficient resources independently instead of reporting negative missing amounts (VEY-KANEO-847)", () => {
-    const availability = BuildingResourceAvailability({
+  test("hides the compact shortfall when resources are sufficient or the queue completes (VEY-KANEO-847)", () => {
+    const input = {
+      buildingKey: "crystalMine" as const,
       cost: { metal: 8_444, crystal: 4_222, deuterium: 0 },
-      resources: { metal: 9_000, crystal: 4_000, deuterium: 5_903 },
-    });
-    const text = visibleText(availability);
+      productionRates: undefined,
+      queue: {
+        kind: "building" as const,
+        key: "metalMine" as const,
+        label: "Metal Mine",
+        readyAt: 61_000,
+        startedAt: 1_000,
+        targetLevel: 12,
+      },
+    };
 
-    expect(text).toContain("Metal 9,000 available / 8,444 needed Sufficient");
-    expect(text).toContain("Crystal 4,000 available / 4,222 needed 222 missing");
-    expect(text).not.toMatch(/-\d[\d,]* missing/);
+    expect(infrastructureQueuedResourceShortfall({
+      ...input,
+      resources: { metal: 9_000, crystal: 5_000, deuterium: 0 },
+    })).toBeUndefined();
+    expect(infrastructureQueuedResourceShortfall({
+      ...input,
+      queue: undefined,
+      resources: { metal: 558, crystal: 3_705, deuterium: 5_903 },
+    })).toBeUndefined();
+  });
+
+  test("recomputes compact mixed-resource shortfalls from the selected planet snapshot (VEY-KANEO-847)", () => {
+    const input = {
+      buildingKey: "crystalMine" as const,
+      cost: { metal: 8_444, crystal: 4_222, deuterium: 0 },
+      productionRates: undefined,
+      queue: {
+        kind: "building" as const,
+        key: "metalMine" as const,
+        label: "Metal Mine",
+        readyAt: 61_000,
+        startedAt: 1_000,
+        targetLevel: 12,
+      },
+    };
+
+    expect(infrastructureQueuedResourceShortfall({
+      ...input,
+      resources: { metal: 558, crystal: 3_705, deuterium: 5_903 },
+    })).toBe("Requires 7,886 more Metal, 517 more Crystal");
+    expect(infrastructureQueuedResourceShortfall({
+      ...input,
+      resources: { metal: 9_000, crystal: 4_000, deuterium: 5_903 },
+    })).toBe("Requires 222 more Crystal");
   });
 
   test("keeps initial infrastructure load failures in the full load-error state", () => {

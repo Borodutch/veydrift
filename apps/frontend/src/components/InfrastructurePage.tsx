@@ -4,6 +4,7 @@ import {
   buildingCatalog,
   buildingEffectMetrics,
   buildingRequirementsFor,
+  canAfford,
   isBinaryBuilding,
   researchCatalog,
   unmetBuildingRequirement,
@@ -12,12 +13,12 @@ import {
   buildingEnergyDetail,
   buildingLevelInfoColumns,
   buildingLevelInfoRows,
-  buildingResourceAvailability,
   type BuildingUpgradeStatus,
   buildingUpgradeStatus,
   formatCost,
   formatDuration,
   formatFrontendOnlyBuildingRequirement,
+  formatMissingResources,
   formatNumber,
   formatSigned,
   frontendOnlyBuildingRequirementsFor,
@@ -320,6 +321,14 @@ function BuildingDetailPanel({
     spendableResources: displayedResources,
     starterPlanet,
   });
+  const queuedResourceShortfall = infrastructureQueuedResourceShortfall({
+    actionUnavailableReason: actionUnavailableReason ?? actionPendingLabel,
+    buildingKey: building.key,
+    cost: status.cost,
+    productionRates,
+    queue: state.queue,
+    resources: displayedResources,
+  });
   const effectRows = detailEffectRows(
     effect,
     energy,
@@ -385,7 +394,6 @@ function BuildingDetailPanel({
         ) : (
           <>
             <InspectInfoBlock label={binary ? "Build cost" : "Upgrade cost"} value={formatCost(status.cost)} />
-            <BuildingResourceAvailability cost={status.cost} resources={displayedResources} />
             {status.durationSeconds !== undefined ? (
               <InspectInfoBlock label={binary ? "Build time" : "Upgrade time"} value={formatDuration(status.durationSeconds)} />
             ) : null}
@@ -396,42 +404,41 @@ function BuildingDetailPanel({
       label={building.label}
       levelInfo={!binary ? buildingLevelInfoTable(currentLevel, levelInfoRows) : undefined}
       notice={visibleActionNotice ? { label: visibleActionNotice.label, tone: "error" } : undefined}
-      statusReason={{ disabled: status.disabled, label: status.reason }}
+      statusReason={{
+        disabled: status.disabled,
+        label: status.reason,
+        supportingLabel: queuedResourceShortfall,
+      }}
       summary={binary ? (built ? "Built on this planet" : "Build on this planet") : currentLevel === 0 ? `Build Level ${status.targetLevel}` : `Level ${currentLevel} to ${status.targetLevel}`}
     />
   );
 }
 
-export function BuildingResourceAvailability({
+export function infrastructureQueuedResourceShortfall({
+  actionUnavailableReason,
+  buildingKey,
   cost,
+  productionRates,
+  queue,
   resources,
 }: {
+  actionUnavailableReason?: string | undefined;
+  buildingKey: BuildingKey;
   cost: Resources;
+  productionRates?: Resources | undefined;
+  queue: PlayableState["queue"];
   resources: Resources;
-}) {
-  const availability = buildingResourceAvailability(resources, cost);
+}): string | undefined {
+  if (
+    actionUnavailableReason
+    || queue?.kind !== "building"
+    || queue.key === buildingKey
+    || canAfford(resources, cost)
+  ) {
+    return undefined;
+  }
 
-  return (
-    <InspectInfoBlock label="Resource availability">
-      <div className="mt-1 grid min-w-0 gap-1.5">
-        {availability.map((entry) => (
-          <div className="min-w-0 rounded border border-white/10 bg-white/[0.03] px-2 py-1.5" key={entry.resource}>
-            <div className="flex min-w-0 flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5">
-              <span className="font-semibold text-slate-200">{entry.label}</span>
-              <span className="break-words text-xs text-slate-300">
-                {formatNumber(entry.available)} available / {formatNumber(entry.required)} needed
-              </span>
-            </div>
-            <span className={`mt-0.5 block break-words text-xs font-semibold ${
-              entry.sufficient ? "text-emerald-200" : "text-amber-200"
-            }`}>
-              {entry.sufficient ? "Sufficient" : `${formatNumber(entry.missing)} missing`}
-            </span>
-          </div>
-        ))}
-      </div>
-    </InspectInfoBlock>
-  );
+  return formatMissingResources(resources, cost, productionRates);
 }
 
 export function infrastructureUpgradeButtonLabel({
