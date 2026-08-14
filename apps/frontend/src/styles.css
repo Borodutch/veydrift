@@ -3499,6 +3499,45 @@ h4 {
   display: flex;
 }
 
+.wallet-recovery-actions {
+  display: flex;
+  width: min(100%, 620px);
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.wallet-recovery-actions > * {
+  flex: 1 1 220px;
+}
+
+.wallet-recovery-copy-link {
+  display: inline-flex;
+  min-height: 48px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid rgba(216, 180, 254, 0.38);
+  border-radius: 8px;
+  background: rgba(16, 19, 30, 0.78);
+  color: #efe8f5;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 760;
+  padding: 0 18px;
+  transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+}
+
+@media (hover: hover) {
+  .wallet-recovery-copy-link:hover {
+    border-color: rgba(216, 180, 254, 0.68);
+    background: rgba(216, 180, 254, 0.12);
+  }
+}
+
+.wallet-recovery-copy-link:active {
+  transform: translateY(1px) scale(0.98);
+}
+
 .settlement-primary {
   display: inline-flex;
   min-height: 48px;

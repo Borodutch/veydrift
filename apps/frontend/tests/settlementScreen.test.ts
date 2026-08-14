@@ -131,10 +131,11 @@ describe("settlement screen mode", () => {
     expect(stylesSource).toContain(".retro-cd-copy-panel .settlement-primary");
   });
 
-  test("keeps no-wallet copy wallet-neutral outside Mini App mode", () => {
-    expect(noWalletDetectedMessage(false)).toBe("Open or install a browser wallet, then try again.");
-    expect(noWalletDetectedMessage(false)).not.toMatch(/metamask/i);
-    expect(noWalletDetectedMessage(true)).toContain("can’t access a wallet here");
+  test("uses device-specific no-wallet copy without leaking browser guidance into Mini Apps", () => {
+    expect(noWalletDetectedMessage(false, "mobile")).toContain("wallet app’s built-in browser");
+    expect(noWalletDetectedMessage(false, "desktop")).toContain("wallet browser extension");
+    expect(noWalletDetectedMessage(true, "mobile")).toContain("host wallet authorization");
+    expect(noWalletDetectedMessage(true, "mobile")).not.toMatch(/built-in browser|browser extension/i);
   });
 
   test("preserves minimal network, transaction, and error states", () => {

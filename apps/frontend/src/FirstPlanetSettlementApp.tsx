@@ -93,6 +93,12 @@ import {
   type WalletSettlementResponse
 } from "./walletFlow";
 import { backendDataStoreFor } from "./backendDataStore";
+import {
+  walletRecoveryCopy,
+  walletRecoveryDeviceForNavigator,
+  walletRecoveryPageUrl,
+  type WalletRecoveryDevice,
+} from "./walletRecovery";
 
 type FetchWalletSettlement = typeof import("./walletFlow").fetchWalletSettlement;
 
@@ -1699,6 +1705,7 @@ export function FirstPlanetSettlementApp() {
                     wallet={wallet}
                     networkSwitchPending={networkSwitchPending}
                     miniAppMode={miniAppMode}
+                    walletRecoveryDevice={walletRecoveryDeviceForNavigator()}
                     requiredChain={requiredChain}
                   />
                 </>
@@ -1726,6 +1733,7 @@ export function FirstPlanetSettlementApp() {
                 wallet={wallet}
                 networkSwitchPending={networkSwitchPending}
                 miniAppMode={miniAppMode}
+                walletRecoveryDevice={walletRecoveryDeviceForNavigator()}
                 requiredChain={requiredChain}
               />
             ) : null}
@@ -2313,6 +2321,7 @@ function FlowBody({
   wallet,
   networkSwitchPending,
   miniAppMode,
+  walletRecoveryDevice,
   requiredChain
 }: {
   mode: ReturnType<typeof preSettlementMode>;
@@ -2328,6 +2337,7 @@ function FlowBody({
   wallet: WalletState;
   networkSwitchPending: boolean;
   miniAppMode: boolean;
+  walletRecoveryDevice: WalletRecoveryDevice;
   requiredChain: VeydriftWalletChain;
 }) {
   const networkName = requiredChain.chainName;
@@ -2344,11 +2354,21 @@ function FlowBody({
   }
 
   if (mode === "no-wallet") {
+    const recoveryCopy = walletRecoveryCopy({
+      device: walletRecoveryDevice,
+      miniAppMode,
+    });
     return (
       <StateMessage
         title="Wallet not found"
-        body={noWalletDetectedMessage(miniAppMode)}
-        action={<PrimaryButton onClick={onConnect}>Try again</PrimaryButton>}
+        body={recoveryCopy.body}
+        action={(
+          <WalletRecoveryActions
+            copyLinkLabel={recoveryCopy.copyLinkLabel}
+            onRetry={onConnect}
+            retryLabel={recoveryCopy.retryLabel}
+          />
+        )}
         tone="warning"
       />
     );
@@ -2489,10 +2509,55 @@ function FlowBody({
   );
 }
 
-export function noWalletDetectedMessage(miniAppMode: boolean): string {
-  return miniAppMode
-    ? "Veydrift can’t access a wallet here. Open it somewhere with wallet support and try again."
-    : "Open or install a browser wallet, then try again.";
+export function noWalletDetectedMessage(
+  miniAppMode: boolean,
+  device: WalletRecoveryDevice = walletRecoveryDeviceForNavigator(),
+): string {
+  return walletRecoveryCopy({ device, miniAppMode }).body;
+}
+
+function WalletRecoveryActions({
+  copyLinkLabel,
+  onRetry,
+  retryLabel,
+}: {
+  copyLinkLabel: string | undefined;
+  onRetry: () => void;
+  retryLabel: string;
+}) {
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "unavailable">("idle");
+
+  const copyCurrentPage = async () => {
+    const currentUrl = walletRecoveryPageUrl();
+    if (!currentUrl) {
+      setCopyState("unavailable");
+      return;
+    }
+
+    const outcome = await copyReferralText(currentUrl);
+    setCopyState(outcome === "copied" ? "copied" : "unavailable");
+  };
+
+  return (
+    <div className="wallet-recovery-actions">
+      <PrimaryButton onClick={onRetry}>{retryLabel}</PrimaryButton>
+      {copyLinkLabel ? (
+        <button
+          aria-live="polite"
+          className="wallet-recovery-copy-link"
+          onClick={() => { void copyCurrentPage(); }}
+          type="button"
+        >
+          <Copy aria-hidden="true" size={16} />
+          {copyState === "copied"
+            ? "Page link copied"
+            : copyState === "unavailable"
+              ? "Copy unavailable — use address bar"
+              : copyLinkLabel}
+        </button>
+      ) : null}
+    </div>
+  );
 }
 
 function AllianceInviteWelcome() {
