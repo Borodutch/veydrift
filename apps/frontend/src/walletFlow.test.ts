@@ -34,6 +34,7 @@ import {
   fetchInfrastructureState,
   fetchMoonState,
   fetchPlayerActivity,
+  recordPlayerActivityPresence,
   fetchPlayerProfile,
   fetchReferralDashboard,
   fetchReferralHistory,
@@ -198,6 +199,29 @@ describe("walletFlow", () => {
     expect(requestedUrl).toBe(
       `https://api.example.test/wallet/${account}/activity?page=2&pageSize=50&since=1770000000&includeProjected=true`
     );
+  });
+
+  test("records player activity presence without a cached read", async () => {
+    const originalFetch = globalThis.fetch;
+    let request: Request | undefined;
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      request = new Request(input, init);
+      return Response.json({
+        wallet: account,
+        lastSeenAt: "1770007680",
+        previousLastSeenAt: "1770000000",
+      });
+    }) as typeof fetch;
+    try {
+      await expect(recordPlayerActivityPresence("https://api.example.test/", account)).resolves.toMatchObject({
+        lastSeenAt: "1770007680",
+        previousLastSeenAt: "1770000000",
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    expect(request?.method).toBe("POST");
+    expect(request?.url).toBe(`https://api.example.test/wallet/${account}/activity/presence`);
   });
 
   test("encodes personal-sign messages as EIP-1193 hexadecimal bytes", () => {

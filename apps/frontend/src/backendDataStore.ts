@@ -14,6 +14,7 @@ import {
   fetchMission,
   fetchMoonState,
   fetchPlayerActivity,
+  recordPlayerActivityPresence,
   fetchPlayerHighscore,
   fetchPlayerProfile,
   fetchRaidFinderDebrisTargets,
@@ -50,6 +51,7 @@ import {
   type MissileAttackArchiveResponse,
   type MissionDetailResponse,
   type PlayerActivityResponse,
+  type PlayerActivityPresence,
   type PlayerProfile,
   type PlayerQueuesResponse,
   type RaidFinderDebrisResponse,
@@ -220,6 +222,10 @@ export class BackendDataStore {
   ): Promise<PlayerActivityResponse> {
     const key = cacheKey("player-activity", wallet, options);
     return this.refresh(key, () => fetchPlayerActivity(this.apiBaseUrl, wallet, options));
+  }
+
+  recordPlayerActivityPresence(wallet: string): Promise<PlayerActivityPresence> {
+    return recordPlayerActivityPresence(this.apiBaseUrl, wallet);
   }
 
   highscores(options: FetchHighscoreOptions | number = 100): Promise<HighscoreResponse> {

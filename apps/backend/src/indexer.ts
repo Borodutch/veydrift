@@ -1456,6 +1456,36 @@ export class SettlementIndexer {
     return activity;
   }
 
+  recordPlayerActivityPresence(wallet: Address, seenAt = nowSeconds()): {
+    lastSeenAt: string;
+    previousLastSeenAt: string | null;
+  } {
+    const normalizedWallet = wallet.toLowerCase() as Address;
+    const nextSeenAt = Math.max(1, Math.floor(seenAt));
+    return this.db.transaction(() => {
+      const row = this.db.query(`
+        SELECT last_seen_at
+        FROM player_activity_presence
+        WHERE wallet = lower(?)
+      `).get(normalizedWallet) as { last_seen_at: string } | null;
+      const previousLastSeenAt = row && /^\d+$/.test(row.last_seen_at) && Number(row.last_seen_at) > 0
+        ? row.last_seen_at
+        : null;
+      const lastSeenAt = previousLastSeenAt === null
+        ? nextSeenAt
+        : Math.max(nextSeenAt, Number(previousLastSeenAt));
+      this.db.query(`
+        INSERT INTO player_activity_presence (wallet, last_seen_at)
+        VALUES (lower(?), ?)
+        ON CONFLICT(wallet) DO UPDATE SET last_seen_at = excluded.last_seen_at
+      `).run(normalizedWallet, lastSeenAt);
+      return {
+        lastSeenAt: String(lastSeenAt),
+        previousLastSeenAt
+      };
+    })();
+  }
+
   playerActivity(
     wallet: Address,
     options: { includeProjected?: boolean; page: number; pageSize: number; since?: number; through?: number }
@@ -4763,6 +4793,10 @@ export class SettlementIndexer {
         wallet TEXT PRIMARY KEY,
         last_active_at TEXT NOT NULL,
         event_id TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS player_activity_presence (
+        wallet TEXT PRIMARY KEY,
+        last_seen_at TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS indexed_player_activity_feed (
         wallet TEXT NOT NULL,

@@ -1324,6 +1324,27 @@ describe("Veydrift backend", () => {
     expect(Number(body.through)).toBeGreaterThanOrEqual(readyAt);
   });
 
+  test("shares the activity presence watermark between browser sessions", async () => {
+    const handler = createRequestHandler({
+      chainReader: new MockChainReader(),
+      config: configuredTestConfig,
+      indexer: testIndexer()
+    });
+
+    const first = await handler(new Request(`http://localhost/wallet/${player}/activity/presence`, { method: "POST" }));
+    const firstBody = await first.json() as { lastSeenAt: string; previousLastSeenAt: string | null; wallet: string };
+    const second = await handler(new Request(`http://localhost/wallet/${player}/activity/presence`, { method: "POST" }));
+    const secondBody = await second.json() as { lastSeenAt: string; previousLastSeenAt: string | null; wallet: string };
+
+    expect(first.status).toBe(200);
+    expect(firstBody).toMatchObject({ wallet: player, previousLastSeenAt: null });
+    expect(second.status).toBe(200);
+    expect(secondBody).toMatchObject({
+      wallet: player,
+      previousLastSeenAt: firstBody.lastSeenAt
+    });
+  });
+
   test("briefly waits for an in-flight shared-cache refresh on cold indexed reads", async () => {
     let waitCalled = false;
     const sharedResponseCache = {

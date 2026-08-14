@@ -9919,7 +9919,6 @@ export function PlayableMvpApp({
       ) : null}
       <PlayerActivityCenter
         apiUrl={apiBaseUrl}
-        chainId={gameWalletChain.chainId}
         explorerUrl={gameWalletChain.blockExplorerUrls[0]}
         historyOpen={playerActivityOpen}
         onHistoryClose={() => setPlayerActivityOpen(false)}
