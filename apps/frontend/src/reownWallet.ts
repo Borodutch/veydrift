@@ -5,6 +5,20 @@ const REOWN_CONNECT_TIMEOUT_MS = 120_000;
 const reownProjectId = import.meta.env.VITE_REOWN_PROJECT_ID?.trim() ?? "";
 const baseCaipNetworkId = "eip155:8453";
 
+/**
+ * Veydrift only uses AppKit as a WalletConnect pairing UI. Authentication,
+ * embedded wallets, and social login must remain off even if AppKit changes
+ * its remote defaults for a project.
+ */
+export const walletConnectAppKitFeatures = {
+  analytics: false,
+  email: false,
+  emailShowWallets: false,
+  onramp: false,
+  socials: false,
+  swaps: false,
+} as const;
+
 type ReownModalState = {
   open: boolean;
 };
@@ -125,7 +139,7 @@ async function loadReownAppKit(): Promise<ReownAppKit> {
       customRpcUrls: walletConnectCustomRpcUrls() as never,
       defaultAccountTypes: { eip155: "eoa" },
       defaultNetwork: networksModule.base,
-      features: { analytics: false },
+      features: walletConnectAppKitFeatures,
       metadata,
       networks: [networksModule.base],
       projectId: reownProjectId,

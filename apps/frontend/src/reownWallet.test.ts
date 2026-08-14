@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { walletConnectCustomRpcUrls, walletConnectEnabled } from "./reownWallet";
+import {
+  walletConnectAppKitFeatures,
+  walletConnectCustomRpcUrls,
+  walletConnectEnabled,
+} from "./reownWallet";
 
 describe("WalletConnect connector", () => {
   test("never enables on the Farcaster Mini App surface", () => {
@@ -17,6 +21,17 @@ describe("WalletConnect connector", () => {
     });
     expect(walletConnectCustomRpcUrls({ hostname: "localhost" })).toEqual({
       "eip155:8453": [{ url: "https://api-test.veydrift.com/walletconnect-rpc" }]
+    });
+  });
+
+  test("uses AppKit only for external-wallet pairing", () => {
+    expect(walletConnectAppKitFeatures).toEqual({
+      analytics: false,
+      email: false,
+      emailShowWallets: false,
+      onramp: false,
+      socials: false,
+      swaps: false,
     });
   });
 });
