@@ -137,4 +137,26 @@ describe("highscore formulas", () => {
     expect(entry.totalUserScore).toBe("1059");
     expect(entry.totalUserScore).not.toBe(entry.score.total);
   });
+
+  test("keeps moon-stationed and in-flight non-combat ships in fleet and contract-parity scores", () => {
+    const entry = calculateHighscore({
+      wallet: "0x4444444444444444444444444444444444444444" as Address,
+      homePlanetId: "1",
+      planetCount: 1,
+      planets: [{
+        buildings: [],
+        defenses: [],
+        // Planet and moon inventories are combined by the indexer before scoring.
+        ships: [
+          { id: 0, count: 1 },
+          { id: 4, count: 2 },
+        ],
+      }],
+      inFlightShips: [{ id: 10, count: 3 }],
+      technologies: [],
+    });
+
+    expect(entry.score.fleetCount).toBe("6");
+    expect(entry.totalUserScore).toBe("1176");
+  });
 });

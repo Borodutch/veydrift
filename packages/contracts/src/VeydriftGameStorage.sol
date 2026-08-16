@@ -1181,7 +1181,8 @@ abstract contract VeydriftGameStorage is Initializable {
                 }
             }
             for (uint8 id = 0; id <= MAX_SHIP_ID;) {
-                score += uint256(_shipCounts[planetId][Ship(id)]) * (id + 1) * 4;
+                score += (uint256(_shipCounts[planetId][Ship(id)])
+                        + uint256(_moonShipCounts[planetId][Ship(id)])) * (id + 1) * 4;
                 unchecked {
                     ++id;
                 }
@@ -1190,6 +1191,31 @@ abstract contract VeydriftGameStorage is Initializable {
                 ++planetIndex;
             }
         }
+
+        uint256[] storage missionIds = _resolutionMissionIdsByPlayer[player];
+        for (uint256 missionIndex = 0; missionIndex < missionIds.length;) {
+            FleetMission storage mission = _fleetMissions[missionIds[missionIndex]];
+            if (
+                mission.owner == player && mission.missionType <= FleetMissionType.Colonize
+                    && (mission.status == FleetMissionStatus.Outbound
+                        || mission.status == FleetMissionStatus.Returning)
+            ) {
+                score += _missionShipScore(mission.ships);
+            }
+            unchecked {
+                ++missionIndex;
+            }
+        }
+    }
+
+    function _missionShipScore(MissionShips storage ships) private view returns (uint256) {
+        return uint256(ships.smallCargo) * 4 + uint256(ships.lightFighter) * 8
+            + uint256(ships.recycler) * 12 + uint256(ships.colonyShip) * 16
+            + uint256(ships.largeCargo) * 20 + uint256(ships.heavyFighter) * 24
+            + uint256(ships.cruiser) * 28 + uint256(ships.battleship) * 32 + uint256(ships.bomber)
+            * 36 + uint256(ships.destroyer) * 44 + uint256(ships.deathstar) * 48
+            + uint256(ships.battlecruiser) * 52 + uint256(ships.reaper) * 56
+            + uint256(ships.pathfinder) * 60;
     }
 
     function withdrawFees(address payable to) external onlyOwner {
