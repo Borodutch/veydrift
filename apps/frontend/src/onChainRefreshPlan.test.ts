@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  currentPlanetTransactionInputsAvailable,
   shouldClearCachedShipyardStateForPageRefresh,
   shouldEagerlyRefreshPlanetSwitchForPage,
   shouldRefreshPlanetStateForIdentityChange,
@@ -29,19 +30,19 @@ describe("shouldClearCachedShipyardStateForPageRefresh", () => {
 });
 
 describe("shouldEagerlyRefreshPlanetSwitchForPage", () => {
-  test("uses cached planet state while switching origins on Mission Control", () => {
-    expect(shouldEagerlyRefreshPlanetSwitchForPage("mission-control")).toBe(false);
+  test("refreshes every selected planet, including Mission Control origins", () => {
+    expect(shouldEagerlyRefreshPlanetSwitchForPage("mission-control")).toBe(true);
     expect(shouldEagerlyRefreshPlanetSwitchForPage("overview")).toBe(true);
     expect(shouldEagerlyRefreshPlanetSwitchForPage("infrastructure")).toBe(true);
   });
 
-  test("still refreshes initial hydration and connection changes", () => {
+  test("refreshes hydrated planet changes instead of keeping a stale origin", () => {
     const current = { account: "0x123", activePlanetId: "8", apiBaseUrl: "https://game.test" };
     expect(shouldRefreshPlanetStateForIdentityChange(
       "mission-control",
       { ...current, activePlanetId: "7" },
       current,
-    )).toBe(false);
+    )).toBe(true);
     expect(shouldRefreshPlanetStateForIdentityChange(
       "mission-control",
       { ...current, activePlanetId: undefined },
@@ -52,5 +53,13 @@ describe("shouldEagerlyRefreshPlanetSwitchForPage", () => {
       { ...current, apiBaseUrl: "https://other.test" },
       current,
     )).toBe(true);
+  });
+});
+
+describe("currentPlanetTransactionInputsAvailable", () => {
+  test("blocks planet-scoped transactions until the selected planet has a fresh snapshot", () => {
+    expect(currentPlanetTransactionInputsAvailable(true, false)).toBe(false);
+    expect(currentPlanetTransactionInputsAvailable(true, true)).toBe(true);
+    expect(currentPlanetTransactionInputsAvailable(false, true)).toBe(false);
   });
 });

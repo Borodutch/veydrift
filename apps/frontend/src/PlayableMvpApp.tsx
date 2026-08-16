@@ -890,7 +890,19 @@ export function shouldClearCachedShipyardStateForPageRefresh(page: Page): boolea
 }
 
 export function shouldEagerlyRefreshPlanetSwitchForPage(page: Page): boolean {
-  return page !== "mission-control";
+  // Every planet-scoped action must be based on the newly selected colony,
+  // including a Mission Control origin. Keeping a cached origin there can
+  // produce a valid-looking composer whose transaction reverts against the
+  // selected planet's actual ships, resources, or queue.
+  void page;
+  return true;
+}
+
+export function currentPlanetTransactionInputsAvailable(
+  contractInputsAvailable: boolean,
+  activePlanetStateFresh: boolean,
+): boolean {
+  return contractInputsAvailable && activePlanetStateFresh;
 }
 
 export function shouldRefreshPlanetStateForIdentityChange(
@@ -3658,6 +3670,7 @@ export function PlayableMvpApp({
   const [watchedPlanetsPage, setWatchedPlanetsPage] = useState(1);
   const [watchBusyPlanetId, setWatchBusyPlanetId] = useState<string | undefined>();
   const [selectedPlanetId, setSelectedPlanetId] = useState<string | undefined>();
+  const [activePlanetStateFresh, setActivePlanetStateFresh] = useState(true);
   const [selectedBodyKind, setSelectedBodyKind] = useState<OrbitBodyKind>("planet");
   const [planetSectionStore, setPlanetSectionStore] = useState<PlanetSectionStore>({});
   const resolvedSelectedPlanetId = useMemo(() => selectedPlanetIdFromRoster({
@@ -3917,6 +3930,7 @@ export function PlayableMvpApp({
   const globalMissionArchiveRefreshGate = useRef(0);
   const globalMissionArchiveSummaryRefreshGate = useRef(0);
   const planetSwitchGate = useRef(0);
+  const pendingPlanetStateRefreshRef = useRef<string | undefined>();
   const [homePlanetIdentity, setHomePlanetIdentity] = useState<Planet | undefined>();
 
   const runGatedTransaction = useCallback(async (key: string, action: () => Promise<void>) => {
@@ -4236,6 +4250,8 @@ export function PlayableMvpApp({
     setPlayerProfile(undefined);
     setPlanetSectionStore({});
     setSelectedPlanetId(undefined);
+    pendingPlanetStateRefreshRef.current = undefined;
+    setActivePlanetStateFresh(true);
     setSelectedBodyKind("planet");
     setWalletPlanets([]);
     setOnChainQueues(undefined);
@@ -4527,10 +4543,19 @@ export function PlayableMvpApp({
       ? veydriftChainForChainId(runtimeConfig.config.chainId).rpcUrls[0]
       : "";
   }, [runtimeConfig]);
-  const gameActionInputsAvailable = gameActionsAvailableForBody(activeBodyKind, Boolean(provider && account && gameContract && (activePlanetId ?? onChainSettlement?.homePlanetId)));
-  const missionActionInputsAvailable = Boolean(provider && account && gameContract && (activePlanetId ?? onChainSettlement?.homePlanetId));
+  const gameActionInputsAvailable = currentPlanetTransactionInputsAvailable(
+    gameActionsAvailableForBody(activeBodyKind, Boolean(provider && account && gameContract && (activePlanetId ?? onChainSettlement?.homePlanetId))),
+    activePlanetStateFresh,
+  );
+  const missionActionInputsAvailable = currentPlanetTransactionInputsAvailable(
+    Boolean(provider && account && gameContract && (activePlanetId ?? onChainSettlement?.homePlanetId)),
+    activePlanetStateFresh,
+  );
   const allianceActionInputsAvailable = Boolean(provider && account && allianceContract);
-  const moonActionInputsAvailable = Boolean(provider && account && moonContract && (activePlanetId ?? onChainSettlement?.homePlanetId));
+  const moonActionInputsAvailable = currentPlanetTransactionInputsAvailable(
+    Boolean(provider && account && moonContract && (activePlanetId ?? onChainSettlement?.homePlanetId)),
+    activePlanetStateFresh,
+  );
 
   useEffect(() => {
     if (!gameActionInputsAvailable) return;
@@ -4977,6 +5002,10 @@ export function PlayableMvpApp({
         setSelectedPlanetId(nextSelectedPlanetId);
       }
       applyOnChainSettlementSnapshot(nextSettlement);
+      if (pendingPlanetStateRefreshRef.current === nextSelectedPlanetId) {
+        pendingPlanetStateRefreshRef.current = undefined;
+        setActivePlanetStateFresh(true);
+      }
       setPlayerProfile((current) => mergePlayerProfile(current, nextSettlement.player ?? planetsResponse.player));
       setHydratedWalletSnapshotKey(walletSnapshotHydrationKey(apiBaseUrl, account));
     } catch (error) {
@@ -6126,7 +6155,10 @@ export function PlayableMvpApp({
     return buildingFinishUnavailableReasonForDisplay({
       activeBuildingQueue,
       backendSyncPausedReason: infrastructureBackendSyncPausedReason,
-      canTransact: Boolean(provider && account && gameContract),
+      canTransact: currentPlanetTransactionInputsAvailable(
+        Boolean(provider && account && gameContract),
+        activePlanetStateFresh,
+      ),
       completedBuildingFinishExpectation,
       infrastructureState: infrastructureChainState,
       isBuildingReadyToFinish,
@@ -6144,6 +6176,7 @@ export function PlayableMvpApp({
     isDisplayedBuildingQueueReady,
     now,
     provider,
+    activePlanetStateFresh,
   ]);
   const buildingQueue = useMemo(() => {
     if (activeBuildingQueue?.active) {
@@ -7830,6 +7863,10 @@ export function PlayableMvpApp({
     markFreshStateWrite(shipyardRefreshGate);
     markFreshStateWrite(researchRefreshGate);
     markFreshStateWrite(riftRefreshGate);
+    if (planetId !== activePlanetId) {
+      pendingPlanetStateRefreshRef.current = planetId;
+      setActivePlanetStateFresh(false);
+    }
     setSelectedPlanetId(planetId);
     setSelectedBodyKind(nextBodyKind);
     if (nextInspectRoute) {
@@ -7854,7 +7891,7 @@ export function PlayableMvpApp({
       lastSuccessfulRefreshAt: nextQueues ? Date.now() : undefined,
     }));
     setOnChainError(undefined);
-    setOnChainStatus(nextPlanet ? "ready" : "loading");
+    setOnChainStatus(planetId === activePlanetId && nextPlanet ? "ready" : "loading");
     const nextSection = planetSectionForPlanet(planetSectionStore, planetId);
     setInfrastructureError(undefined);
     setInfrastructureLoading(Boolean(apiBaseUrl && account && !hasPlanetSectionData(nextSection, "infrastructureChainState")));
@@ -9160,11 +9197,23 @@ export function PlayableMvpApp({
     ? ""
     : `${window.location.origin}${buildInspectPath({ kind: "page", page: "battle-reports" })}`;
   const gameContractTransactionInputsAvailable = Boolean(provider && account && gameContract);
-  const gameTransactionInputsAvailable = gameActionsAvailableForBody(activeBodyKind, gameContractTransactionInputsAvailable);
-  const missionTransactionInputsAvailable = gameContractTransactionInputsAvailable;
+  const gameTransactionInputsAvailable = currentPlanetTransactionInputsAvailable(
+    gameActionsAvailableForBody(activeBodyKind, gameContractTransactionInputsAvailable),
+    activePlanetStateFresh,
+  );
+  const missionTransactionInputsAvailable = currentPlanetTransactionInputsAvailable(
+    gameContractTransactionInputsAvailable,
+    activePlanetStateFresh,
+  );
   const allianceTransactionInputsAvailable = Boolean(provider && account && allianceContract);
-  const moonTransactionInputsAvailable = Boolean(provider && account && moonContract);
-  const chickenBurnTransactionInputsAvailable = Boolean(provider && account && chickenBurnConfig);
+  const moonTransactionInputsAvailable = currentPlanetTransactionInputsAvailable(
+    Boolean(provider && account && moonContract),
+    activePlanetStateFresh,
+  );
+  const chickenBurnTransactionInputsAvailable = currentPlanetTransactionInputsAvailable(
+    Boolean(provider && account && chickenBurnConfig),
+    activePlanetStateFresh,
+  );
 	  const gameTransactionUnavailableReason = transactionUnavailableReasonFor({
 	    activeActionLabel: pendingActionLabel(
 	      buildingAction,
@@ -9179,13 +9228,17 @@ export function PlayableMvpApp({
 	    ) ?? writeTransactionState.label,
     inputsAvailable: gameTransactionInputsAvailable,
     transactionPending: transactionActionPending,
-    unavailableReason: "Wallet or game contract unavailable",
+    unavailableReason: gameContractTransactionInputsAvailable && !activePlanetStateFresh
+      ? "Loading the selected planet's latest state."
+      : "Wallet or game contract unavailable",
   });
   const missionTransactionUnavailableReason = transactionUnavailableReasonFor({
     activeActionLabel: pendingActionLabel(galaxyAction, missionAction) ?? writeTransactionState.label,
     inputsAvailable: missionTransactionInputsAvailable,
     transactionPending: transactionActionPending,
-    unavailableReason: "Wallet or game contract unavailable",
+    unavailableReason: gameContractTransactionInputsAvailable && !activePlanetStateFresh
+      ? "Loading the selected planet's latest state."
+      : "Wallet or game contract unavailable",
   });
 	  const allianceTransactionUnavailableReason = transactionUnavailableReasonFor({
 	    activeActionLabel: pendingActionLabel(allianceAction) ?? writeTransactionState.label,
@@ -9197,7 +9250,9 @@ export function PlayableMvpApp({
 	    activeActionLabel: pendingActionLabel(moonAction) ?? writeTransactionState.label,
     inputsAvailable: moonTransactionInputsAvailable,
     transactionPending: transactionActionPending,
-    unavailableReason: "Wallet or moon contract unavailable.",
+    unavailableReason: Boolean(provider && account && moonContract) && !activePlanetStateFresh
+      ? "Loading the selected planet's latest state."
+      : "Wallet or moon contract unavailable.",
   });
   const canSubmitGameTransaction = gameTransactionInputsAvailable && !transactionActionPending;
   const canSubmitMissionTransaction = missionTransactionInputsAvailable && !transactionActionPending;
