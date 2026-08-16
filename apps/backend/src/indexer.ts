@@ -3295,6 +3295,7 @@ export class SettlementIndexer {
         wallet
       ));
     const contractTechnologies = this.contractTechnologyLevels(wallet);
+    const inFlightShips = this.activeMissionShipRowsByOwner([wallet]).get(wallet.toLowerCase()) ?? [];
 
     return calculateIndexedHighscore({
       wallet,
@@ -3303,8 +3304,12 @@ export class SettlementIndexer {
       planets: ownedPlanets.map((planet) => ({
         buildings: this.contractInfrastructureRows(planet.planetId).map(({ id, level }) => ({ id, level })),
         defenses: this.contractDefenseRows(planet.planetId).map(({ id, count }) => ({ id, count })),
-        ships: this.contractShipRows(planet.planetId).map(({ id, count }) => ({ id, count }))
+        ships: [
+          ...this.contractShipRows(planet.planetId),
+          ...this.moonShipRows(planet.planetId)
+        ].map(({ id, count }) => ({ id, count }))
       })),
+      inFlightShips,
       technologies: deriveTechnologyRows((id) => contractTechnologies[String(id)] ?? 0)
         .map(({ id, level }) => ({ id, level }))
     });
@@ -3319,7 +3324,9 @@ export class SettlementIndexer {
     const moonBuildingsByPlanet = this.indexedPlanetLevelRows("contract_moon_building_levels", "moon_building_id", "level", planetIds);
     const defensesByPlanet = this.indexedPlanetLevelRows("contract_defense_counts", "defense_id", "count", planetIds);
     const shipsByPlanet = this.indexedPlanetLevelRows("contract_ship_counts", "ship_id", "count", planetIds);
+    const moonShipsByPlanet = this.indexedPlanetLevelRows("contract_moon_ship_counts", "ship_id", "count", planetIds);
     const technologiesByOwner = this.indexedTechnologyLevelRows(ownersAndPlanets.map(([owner]) => owner));
+    const inFlightShipsByOwner = this.activeMissionShipRowsByOwner(ownersAndPlanets.map(([owner]) => owner));
 
     return ownersAndPlanets.map(([owner, planets]) => {
       const homePlanet = planets.find((planet) => planet.eventName === "PlanetStarted") ?? planets[0] ?? null;
@@ -3331,11 +3338,47 @@ export class SettlementIndexer {
           buildings: levelRows(buildingsByPlanet.get(planet.planetId)),
           moonBuildings: levelRows(moonBuildingsByPlanet.get(planet.planetId)),
           defenses: countRows(defensesByPlanet.get(planet.planetId)),
-          ships: countRows(shipsByPlanet.get(planet.planetId))
+          ships: [
+            ...countRows(shipsByPlanet.get(planet.planetId)),
+            ...countRows(moonShipsByPlanet.get(planet.planetId))
+          ]
         })),
+        inFlightShips: inFlightShipsByOwner.get(owner.toLowerCase()) ?? [],
         technologies: levelRows(technologiesByOwner.get(owner.toLowerCase()))
       });
     });
+  }
+
+  private activeMissionShipRowsByOwner(
+    owners: readonly string[]
+  ): Map<string, Array<{ id: number; count: number }>> {
+    const countsByOwner = new Map<string, Map<number, number>>();
+    const normalizedOwners = [...new Set(owners.map((owner) => owner.toLowerCase()))];
+    for (const ownerChunk of chunks(normalizedOwners, 500)) {
+      if (ownerChunk.length === 0) continue;
+      const rows = this.db.query(`
+        SELECT owner, ships_json
+        FROM contract_fleet_missions
+        WHERE owner IN (${ownerChunk.map(() => "?").join(",")})
+          AND status_id IN (1, 2)
+          AND mission_type_id <= 2
+      `).all(...ownerChunk) as Array<{ owner: string; ships_json: string }>;
+      for (const row of rows) {
+        const owner = row.owner.toLowerCase();
+        const ownerCounts = countsByOwner.get(owner) ?? new Map<number, number>();
+        for (const [key, value] of Object.entries(parseJson<Record<string, string>>(row.ships_json, {}))) {
+          const id = shipKeyIds.get(key);
+          const count = Number(value);
+          if (id === undefined || !Number.isSafeInteger(count) || count <= 0) continue;
+          ownerCounts.set(id, (ownerCounts.get(id) ?? 0) + count);
+        }
+        countsByOwner.set(owner, ownerCounts);
+      }
+    }
+    return new Map([...countsByOwner].map(([owner, counts]) => [
+      owner,
+      [...counts].map(([id, count]) => ({ id, count })).sort((left, right) => left.id - right.id)
+    ]));
   }
 
   // Whole-universe highscore leaderboard, memoized against the persisted indexed-state generation.
@@ -3574,7 +3617,7 @@ export class SettlementIndexer {
   }
 
   private indexedPlanetLevelRows(
-    table: "contract_building_levels" | "contract_defense_counts" | "contract_moon_building_levels" | "contract_moon_defense_counts" | "contract_ship_counts",
+    table: "contract_building_levels" | "contract_defense_counts" | "contract_moon_building_levels" | "contract_moon_defense_counts" | "contract_moon_ship_counts" | "contract_ship_counts",
     idColumn: "building_id" | "defense_id" | "moon_building_id" | "ship_id",
     valueColumn: "count" | "level",
     planetIds: readonly string[]

@@ -32,6 +32,7 @@ export type HighscoreInput = {
     defenses: Array<{ id: number; count: number }>;
     ships: Array<{ id: number; count: number }>;
   }>;
+  inFlightShips?: Array<{ id: number; count: number }> | undefined;
   technologies: Array<{ id: number; level: number }>;
 };
 
@@ -134,7 +135,7 @@ export const highscoreFormula = {
   target:
     "Contract-parity player score plus classic non-lifeform category breakdowns: economy, research points, research levels, current military points, current fleet points, ship count, and defense points.",
   summary:
-    "Veydrift Score uses the contract-parity totalUserScore formula: technology levels, owned planets, building levels, current ships, and current defenses. Category breakdowns still use completed canonical owned state: planet and moon buildings as economy, research globally, current military, current fleet, and current defenses.",
+    "Veydrift Score uses the contract-parity totalUserScore formula: technology levels, owned planets, building levels, owned ships across planets, moons, and active non-combat missions, and current defenses. Category breakdowns still use completed canonical owned state: planet and moon buildings as economy, research globally, current military, current fleet, and current defenses.",
   excludedCategories: [
     "Military built, military destroyed, military lost, and honor rankings are intentionally excluded until Veydrift exposes per-wallet historical combat and honor ledgers.",
   ],
@@ -165,6 +166,12 @@ export function calculateHighscore(input: HighscoreInput): HighscoreEntry {
       }
     }
   }
+  for (const ship of input.inFlightShips ?? []) {
+    const cost = shipCosts[ship.id];
+    if (cost) {
+      fleetValue += unitValue(cost) * BigInt(Math.max(0, ship.count));
+    }
+  }
 
   let researchValue = 0n;
   let researchLevelCount = 0n;
@@ -180,15 +187,18 @@ export function calculateHighscore(input: HighscoreInput): HighscoreEntry {
   const military = fleet + defense;
   const fleetCount = input.planets.reduce((sum, planet) => (
     sum + planet.ships.reduce((planetSum, ship) => planetSum + BigInt(Math.max(0, ship.count)), 0n)
-  ), 0n);
+  ), 0n) + (input.inFlightShips ?? []).reduce(
+    (sum, ship) => sum + BigInt(Math.max(0, ship.count)),
+    0n
+  );
   const total = economy + research + military;
 
   // Contract-parity Score (VeydriftGameStorage._totalUserScore): NOT resource-based.
   // Weights mirror the contract exactly — tech (id+1)*15, +1000 per owned planet, building (id+1)*10,
-  // defense (id+1)*2, ship (id+1)*4. Moon buildings are intentionally excluded (the contract's
-  // _totalUserScore loops the Building enum on _ownedPlanetIds only). Computed here from the same
-  // building/tech/ship/defense data the leaderboard already iterates, so the rankings hot path reads it
-  // off the entry with zero extra planet-detail hydration.
+  // defense (id+1)*2, ship (id+1)*4. The indexer combines planet, moon, and active non-combat
+  // mission ship inventories before scoring so moving an owned fleet does not change score. Moon
+  // buildings are intentionally excluded (the contract's _totalUserScore loops the Building enum
+  // on _ownedPlanetIds only).
   let totalUserScore = 0n;
   for (const technology of input.technologies) {
     totalUserScore += BigInt(Math.max(0, technology.level)) * BigInt(technology.id + 1) * 15n;
@@ -204,6 +214,9 @@ export function calculateHighscore(input: HighscoreInput): HighscoreEntry {
     for (const ship of planet.ships) {
       totalUserScore += BigInt(Math.max(0, ship.count)) * BigInt(ship.id + 1) * 4n;
     }
+  }
+  for (const ship of input.inFlightShips ?? []) {
+    totalUserScore += BigInt(Math.max(0, ship.count)) * BigInt(ship.id + 1) * 4n;
   }
 
   return {

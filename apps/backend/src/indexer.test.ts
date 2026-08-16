@@ -10746,6 +10746,60 @@ describe("SettlementIndexer", () => {
     expect(leaderboardEntry.score.total).toBe("0");
   });
 
+  test("keeps moon-stationed and outbound fleet ships in direct and bulk highscores", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xmoon-score",
+      logIndex: "0x0",
+      topics: [moonShipCountChangedTopic, topic(7n), topic(0n)],
+      data: abiWords(2n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x91",
+      transactionHash: "0xin-flight-score",
+      logIndex: "0x0",
+      topics: [fleetMissionLaunchedTopic, topic(900n), addressTopic(player), topic(1n)],
+      data: abiWords(7n, 7n, 1_767_001_000n, 1_767_001_000n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x91",
+      transactionHash: "0xin-flight-score",
+      logIndex: "0x1",
+      topics: [fleetMissionShipsTopic, topic(900n)],
+      data: abiWords(0n, 0n, 0n, 0n, 1n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n)
+    });
+    // Combat survivors cannot be reconstructed exactly from the aggregate loss event, so active
+    // combat missions stay out of the indexed parity projection instead of overcounting launch ships.
+    indexer.applyLog({
+      blockNumber: "0x92",
+      transactionHash: "0xcombat-score",
+      logIndex: "0x0",
+      topics: [fleetMissionLaunchedTopic, topic(901n), addressTopic(player), topic(3n)],
+      data: abiWords(7n, 8n, 1_767_001_000n, 1_767_002_000n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x92",
+      transactionHash: "0xcombat-score",
+      logIndex: "0x1",
+      topics: [fleetMissionShipsTopic, topic(901n)],
+      data: abiWords(0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 10n, 0n, 0n, 0n, 0n)
+    });
+
+    const direct = indexer.highscoreForWallet(player);
+    const bulk = indexer.highscoreLeaderboard().entries[0]!;
+
+    expect(direct.score).toMatchObject({ fleet: "20", fleetCount: "3" });
+    expect(direct.totalUserScore).toBe("1028");
+    expect(bulk.score).toEqual(direct.score);
+    expect(bulk.totalUserScore).toBe(direct.totalUserScore);
+  });
+
   test("keeps cached highscore leaderboard stable when a queue merely becomes due as of now", () => {
     const originalNow = new Date("2026-01-01T00:00:00Z");
     setSystemTime(originalNow);

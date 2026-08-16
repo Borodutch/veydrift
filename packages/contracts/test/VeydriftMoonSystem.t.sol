@@ -1080,6 +1080,7 @@ contract VeydriftMoonSystemTest is Test {
         _createMoon(planetId);
         _fundPlanet(planetId, 20_000, 20_000, 20_000);
         _setShipCount(planetId, Ship.SmallCargo, 1);
+        uint256 scoreBeforeLaunch = game.playerScore(player);
 
         VeydriftGameStorage.MissionShips memory ships;
         ships.smallCargo = 1;
@@ -1095,6 +1096,7 @@ contract VeydriftMoonSystemTest is Test {
             false,
             true
         );
+        assertEq(game.playerScore(player), scoreBeforeLaunch);
 
         (, uint64 arrivalAt,,) = _fleetMission(missionId);
         vm.warp(arrivalAt);
@@ -1102,6 +1104,7 @@ contract VeydriftMoonSystemTest is Test {
 
         assertEq(game.shipCount(planetId, Ship.SmallCargo), 0);
         assertEq(_moonShipCount(planetId, Ship.SmallCargo), 1);
+        assertEq(game.playerScore(player), scoreBeforeLaunch);
     }
 
     function testArrivedMoonDeploySettlesBeforeNextMoonOriginLaunchChecks() public {
