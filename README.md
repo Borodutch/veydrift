@@ -102,7 +102,13 @@ cd apps/backend
 bun run index:sync -- --alliance-state-seed
 ```
 
-Both commands are explicit operator tools and do not add request-time, startup, or periodic
+For a one-time fleet-mission current-state repair inside the active writer, set a unique
+`VEYDRIFT_CURRENT_STATE_HEAL_RUN_ID` for one managed backend deployment. The writer reads only the
+canonical missions currently indexed as active/returning, replaces those rows idempotently, and
+records the run id and completion metadata. Remove the variable after the heal is verified. This is
+the rollout path for repairing event gaps such as phantom Returning rows; it is not a periodic sync.
+
+These operator paths do not add request-time, automatic startup, or periodic
 canonical RPC self-heal.
 
 Copy `apps/backend/.env.example` to `apps/backend/.env` and provide the Base

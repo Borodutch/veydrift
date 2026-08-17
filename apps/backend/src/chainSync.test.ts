@@ -18,6 +18,7 @@ const planetDefenseCountChangedTopic = "0xe861e6f62777a3f6ea372d2892ead2d43e27d7
 const planetSettledTopic = "0x7faee98c7c745f9c9fb2117a44185f57454dac3013383364df4c22b5f9bc4077";
 const moonResourcesChangedTopic = "0xd1823653b6a3910ee502390b5bf01f05a3b571dc81899a6ac3af3f01fae05c26";
 const attackBattleResolvedTopic = "0xc0d98d89682d12d3fe90cd0786b9320015ab3950de5f4ae3f54ca0fe9b660d1b";
+const fleetMissionLaunchedTopic = "0x95e2cb506aa14052bac412e42f47fb34d9234819a960761a7bc7f1920c0ab456";
 const fleetMissionReturnExposedTopic = "0x27a083519451f4434cd1f93497fb93689a906d3b982a3f127cb236aa24356afa";
 const fleetMissionReturnedTopic = "0xbb4a50257c10524783e403a4e0db9c4c3e9378c2e398ec5de34281be1aa97b06";
 const referralInviteWindowActivatedTopic = "0xd51c9643dafa95fcfa30d65f2b6576bc03873e2630d73fc523daf87a7158d589";
@@ -360,6 +361,63 @@ describe("ChainSyncService (polling)", () => {
     service.stop();
   });
 
+  for (const httpHead of [0x181n, 0x182n]) {
+    test(`HTTP tail replay backfills a websocket-missed same-block mission return at head ${httpHead.toString(16)}`, async () => {
+      const indexer = makeIndexer();
+      indexer.applyLog({
+        blockNumber: "0x17f",
+        transactionHash: "0xmission-16511-launch",
+        logIndex: "0x0",
+        topics: [fleetMissionLaunchedTopic, topicWord(16511n), ownerTopic(player), topicWord(0n)],
+        data: abiWords(7n, 99n, 4_000_000_000n, 4_000_000_100n, 0n)
+      });
+      indexer.applyLog({
+        blockNumber: "0x180",
+        transactionHash: "0xmission-16511-returning",
+        logIndex: "0x0",
+        topics: [fleetMissionReturnExposedTopic, topicWord(16511n), ownerTopic(player), topicWord(2n)],
+        data: abiWords(7n, 99n, 4_000_000_200n, 0n, 0n, 0n)
+      });
+      expect(indexer.fleetMission("16511")).toMatchObject({ status: "Returning" });
+
+      let exposeMissedSibling = false;
+      const missedReturn: TestLog = {
+        blockNumber: "0x181",
+        transactionHash: "0xmission-16511-returned",
+        logIndex: "0x1",
+        topics: [fleetMissionReturnedTopic, topicWord(16511n), ownerTopic(player), topicWord(7n)],
+        data: "0x"
+      };
+      const backfiller = new MockBackfiller(0x180n, (from, to) =>
+        exposeMissedSibling && from <= 0x181n && to !== "latest" && to >= 0x181n ? [missedReturn] : []
+      );
+      const liveLogs = new MockLiveLogSubscriber();
+      const service = new ChainSyncService({ ...config, pollIntervalMs: 60_000 }, indexer, {
+        liveLogSubscriber: liveLogs,
+        logBackfiller: backfiller
+      });
+
+      service.start();
+      await waitFor(() => liveLogs.subscription !== null && service.snapshot().lastPolledAt !== null);
+      liveLogs.emit([{
+        ...planetStartedLog("0x181", 8n, "0xwebsocket-only-sibling"),
+        address: config.gameContractAddress!,
+        logIndex: "0x0"
+      }]);
+      await waitFor(() => service.snapshot().latestSyncedBlock === String(0x181n));
+
+      exposeMissedSibling = true;
+      backfiller.head = httpHead;
+      await service.poll();
+
+      const replayRange = backfiller.ranges.at(-1);
+      expect(replayRange?.to).toBe(httpHead);
+      expect(replayRange?.from ?? httpHead + 1n).toBeLessThanOrEqual(0x181n);
+      expect(indexer.fleetMission("16511")).toMatchObject({ status: "Returned" });
+      service.stop();
+    });
+  }
+
   test("falls back to HTTP polling when websocket setup fails", async () => {
     const indexer = makeIndexer();
     const log = {
@@ -660,7 +718,7 @@ describe("ChainSyncService (polling)", () => {
     service.stop();
   });
 
-  test("replays from configured base on the first poll, then ingests only new ranges", async () => {
+  test("replays from configured base on the first poll, then replays a bounded tail", async () => {
     const indexer = makeIndexer();
     const seeded = planetStartedLog("0x191", 7n, "0xseed");
     const backfiller = new MockBackfiller(0x192n, () => [seeded]);
@@ -675,10 +733,10 @@ describe("ChainSyncService (polling)", () => {
     expect(service.snapshot().connected).toBe(true);
     expect(service.snapshot().eventsReceived).toBeGreaterThanOrEqual(1);
 
-    // Head advances; the next poll ingests exactly (cursor+1 .. head).
+    // Head advances; the next poll overlaps the last 64 cursor blocks through the new head.
     backfiller.head = 0x193n;
     await service.poll();
-    expect(backfiller.ranges.at(-1)).toEqual({ from: 0x193n, to: 0x193n });
+    expect(backfiller.ranges.at(-1)).toEqual({ from: 0x153n, to: 0x193n });
     expect(service.snapshot().latestSyncedBlock).toBe(String(0x193n));
 
     service.stop();
@@ -698,7 +756,7 @@ describe("ChainSyncService (polling)", () => {
 
     await service.poll();
 
-    expect(backfiller.ranges).toEqual([{ from: 0x181n, to: 0x182n }]);
+    expect(backfiller.ranges).toEqual([{ from: 0x141n, to: 0x182n }]);
     expect(indexer.snapshot().indexedPlanets).toBe(2);
     service.stop();
   });
@@ -746,7 +804,7 @@ describe("ChainSyncService (polling)", () => {
     await service.poll();
 
     expect(backfiller.referralRanges).toEqual([{ from: 112n, to: 182n }]);
-    expect(backfiller.ranges).toEqual([{ from: 181n, to: 182n }]);
+    expect(backfiller.ranges).toEqual([{ from: 117n, to: 182n }]);
     expect(indexer.referralClaims(player)).toHaveLength(1);
     expect(indexer.referralClaims(player)[0]).toMatchObject({ code: "borodutch", migrated: true });
     expect(indexer.referralRedemptionsForInviter(player)).toHaveLength(1);
@@ -1021,7 +1079,9 @@ describe("ChainSyncService (polling)", () => {
   test("a transient poll failure records the error, keeps the cursor, and recovers next tick", async () => {
     const indexer = makeIndexer();
     const seeded = planetStartedLog("0x181", 7n, "0xseed");
-    const backfiller = new MockBackfiller(0x180n, (from) => from === 0x181n ? [seeded] : []);
+    const backfiller = new MockBackfiller(0x180n, (from, to) =>
+      from <= 0x181n && to !== "latest" && to >= 0x181n ? [seeded] : []
+    );
     const service = new ChainSyncService(config, indexer, { logBackfiller: backfiller });
 
     await service.poll(); // replay through 0x180, no logs
@@ -1036,7 +1096,7 @@ describe("ChainSyncService (polling)", () => {
     // RPC recovers; the same range is retried and the log is finally applied — no event lost.
     backfiller.logsError = null;
     await service.poll();
-    expect(backfiller.ranges.at(-1)).toEqual({ from: 0x181n, to: 0x182n });
+    expect(backfiller.ranges.at(-1)).toEqual({ from: 0x141n, to: 0x182n });
     expect(indexer.snapshot().indexedPlanets).toBeGreaterThanOrEqual(1);
     expect(service.snapshot().lastError).toBeNull();
     service.stop();
@@ -1167,7 +1227,7 @@ describe("ChainSyncService (polling)", () => {
     await service.poll();
 
     expect(service.snapshot()).toMatchObject({
-      lastGetLogsRange: { fromBlock: "385", toBlock: "386" },
+      lastGetLogsRange: { fromBlock: "321", toBlock: "386" },
       latestHeadBlock: "386",
       latestSyncedBlock: "386",
       pollBacklogBlocks: "0",
@@ -1180,7 +1240,7 @@ describe("ChainSyncService (polling)", () => {
     expect(service.snapshot().lastGetLogsDurationMs).toBeGreaterThanOrEqual(0);
     expect(service.snapshot().recentEventReceiveLagMs.p95).toBeGreaterThanOrEqual(2_000);
     expect(published.at(-1)).toMatchObject({
-      lastGetLogsRange: { fromBlock: "385", toBlock: "386" },
+      lastGetLogsRange: { fromBlock: "321", toBlock: "386" },
       latestHeadBlock: "386",
       latestSyncedBlock: "386",
       pollBacklogBlocks: "0",

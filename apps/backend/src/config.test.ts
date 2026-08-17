@@ -98,6 +98,17 @@ describe("backend config", () => {
     expect(result.config.resourceStateHealRunId).toBe("research-resource-heal-20260728");
   });
 
+  test("normalizes the explicit in-writer fleet-mission heal run id", () => {
+    const result = loadBackendConfig({
+      VEYDRIFT_CURRENT_STATE_HEAL_RUN_ID: "  vey-850-phantom-return-heal  ",
+      VEYDRIFT_GAME_CONTRACT_ADDRESS: "0x3333333333333333333333333333333333333333",
+      VEYDRIFT_RPC_URL: "https://example.invalid/rpc"
+    });
+
+    expect(result.problems).toEqual([]);
+    expect(result.config.currentStateHealRunId).toBe("vey-850-phantom-return-heal");
+  });
+
   test("normalizes the explicit in-writer alliance-heal run id", () => {
     const result = loadBackendConfig({
       VEYDRIFT_ALLIANCE_STATE_HEAL_RUN_ID: "  alliance-profile-description-v1  ",
