@@ -1236,9 +1236,10 @@ abstract contract VeydriftGameStorage is Initializable {
         view
         returns (bool)
     {
+        uint64 currentTime = uint64(block.timestamp);
         return _moonAttackParityActivatedAt != 0 && legacyWindow.windowStartedAt != 0
             && legacyWindow.windowStartedAt <= _moonAttackParityActivatedAt
-            && block.timestamp
+            && currentTime
                 < uint256(legacyWindow.windowStartedAt)
                     + VeydriftAntiRaidPrimitives.BASHING_WINDOW_SECONDS;
     }
