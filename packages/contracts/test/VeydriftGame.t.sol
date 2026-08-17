@@ -6506,8 +6506,7 @@ contract VeydriftGameTest is Test {
 
         _fulfillAttackBattleRandomness(missionId, 160);
         vm.prank(unrelated);
-        game.resolveFleetMission(missionId);
-        game.resolveFleetMission(missionId);
+        _resolveAttackFully(missionId);
 
         vm.prank(defender);
         game.startBuildingUpgrade(targetPlanetId, Building.MetalMine);
@@ -7728,7 +7727,7 @@ contract VeydriftGameTest is Test {
         );
 
         _fulfillAttackBattleRandomness(hostileMissionId, 805);
-        game.resolveFleetMission(hostileMissionId);
+        _resolveAttackFully(hostileMissionId);
         (VeydriftGameStorage.FleetMissionStatus counterStatus,,,) =
             _fleetMission(counterplayMissionId);
         assertEq(uint8(counterStatus), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
@@ -8120,7 +8119,7 @@ contract VeydriftGameTest is Test {
         vm.warp(arrivalAt);
         _fulfillAttackBattleRandomness(attackMissionId, 904);
         vm.recordLogs();
-        game.resolveFleetMission(attackMissionId);
+        _resolveAttackFully(attackMissionId);
 
         assertGt(_attackBattleRoundsFromRecordedLogs(attackMissionId), 1);
 
@@ -8243,7 +8242,7 @@ contract VeydriftGameTest is Test {
         (, uint64 arrivalAt, uint64 returnAt,) = _fleetMission(missionId);
         vm.warp(arrivalAt);
         _fulfillAttackBattleRandomness(missionId, 780);
-        game.resolveFleetMission(missionId);
+        _resolveAttackFully(missionId);
 
         VeydriftGameStorage.FleetMissionStatus status;
         (status,, returnAt,) = _fleetMission(missionId);
@@ -8415,7 +8414,7 @@ contract VeydriftGameTest is Test {
         (, uint64 arrivalAt,,) = _fleetMission(missionId);
         vm.warp(arrivalAt);
         _fulfillAttackBattleRandomness(missionId, 780);
-        game.resolveFleetMission(missionId);
+        _resolveAttackFully(missionId);
 
         assertEq(game.defenseCount(targetPlanetId, Defense.SmallShieldDome), 1);
         (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(missionId);
@@ -9075,7 +9074,7 @@ contract VeydriftGameTest is Test {
         (, uint64 attackArrivalAt,,) = _fleetMission(attackMissionId);
         vm.warp(attackArrivalAt);
         _fulfillAttackBattleRandomness(attackMissionId, 2);
-        game.resolveFleetMission(attackMissionId);
+        _resolveAttackFully(attackMissionId);
 
         (uint128 debrisMetal, uint128 debrisCrystal) = game.debrisField(targetPlanetId);
         uint256 outcomeId =
@@ -9174,7 +9173,7 @@ contract VeydriftGameTest is Test {
         (, uint64 attackArrivalAt,,) = _fleetMission(attackMissionId);
         vm.warp(attackArrivalAt);
         _fulfillAttackBattleRandomness(attackMissionId, 4);
-        game.resolveFleetMission(attackMissionId);
+        _resolveAttackFully(attackMissionId);
 
         assertEq(
             moons.moonChanceOutcomeByBattle(keccak256(abi.encode(attackMissionId, targetPlanetId))),
@@ -9878,6 +9877,17 @@ contract VeydriftGameTest is Test {
         _setTechnologyLevel(account, Technology.IntergalacticResearchNetwork, 3_000);
     }
 
+    function _resolveAttackFully(uint256 missionId) private {
+        for (uint256 calls = 0; calls < 6; calls++) {
+            (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(missionId);
+            if (status != VeydriftGameStorage.FleetMissionStatus.Outbound) return;
+            game.resolveFleetMission(missionId);
+        }
+
+        (VeydriftGameStorage.FleetMissionStatus finalStatus,,,) = _fleetMission(missionId);
+        assertTrue(finalStatus != VeydriftGameStorage.FleetMissionStatus.Outbound);
+    }
+
     function _resolveCruiserRocketFixture(
         address attacker,
         address defender,
@@ -10020,7 +10030,7 @@ contract VeydriftGameTest is Test {
         (, uint64 arrivalAt,,) = _fleetMission(attackMissionId);
         vm.warp(arrivalAt);
         _fulfillAttackBattleRandomness(attackMissionId, randomWord);
-        game.resolveFleetMission(attackMissionId);
+        _resolveAttackFully(attackMissionId);
 
         (VeydriftGameStorage.FleetMissionStatus counterStatus,,,) =
             _fleetMission(counterplayMissionId);

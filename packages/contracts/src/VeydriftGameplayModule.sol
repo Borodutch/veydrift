@@ -540,16 +540,32 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
                 // Deploy is terminal at arrival (ships stay at target, no return leg): untrack now.
                 _untrackMissionResolution(missionId, mission);
             }
-        } else if (
-            missionType == FleetMissionType.Attack || missionType == FleetMissionType.Harvest
-        ) {
+        } else if (missionType == FleetMissionType.Attack) {
             _delegateToCombatModule();
+            // A gas-bounded battle remains Outbound between deterministic rounds. The resolver will
+            // submit the next round on its next tick; do not emit a false terminal event meanwhile.
+            if (mission.status == FleetMissionStatus.Outbound) return;
             // Lazy reconcile (VEY-KANEO-468 Phase 2c): untrack only the terminal no-survivor
             // (Resolved) battle here. A surviving fleet becomes Returning and stays enumerable until
             // its return lands, so the lazy return settler can complete it with no keeper tx.
             if (mission.status == FleetMissionStatus.Resolved) {
                 _untrackMissionResolution(missionId, mission);
             }
+        } else if (missionType == FleetMissionType.Harvest) {
+            _harvestDebris(mission);
+            mission.status = FleetMissionStatus.Returning;
+            emit FleetMissionReturnExposed(
+                missionId,
+                mission.owner,
+                FleetMissionStatus.Returning,
+                mission.originPlanetId,
+                mission.targetPlanetId,
+                mission.returnAt,
+                mission.cargo.metal,
+                mission.cargo.crystal,
+                mission.cargo.deuterium
+            );
+            emit FleetMissionResolved(missionId, msg.sender, missionType, mission.returnAt);
         } else {
             if (_fleetMissions[mission.randomnessRequestId].status == FleetMissionStatus.Outbound) {
                 return;
@@ -571,6 +587,38 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
                 mission.cargo.deuterium
             );
         }
+    }
+
+    function _harvestDebris(FleetMission storage mission) private {
+        DebrisField storage field = _debrisFields[mission.targetPlanetId];
+        (uint256 capacity,) = VeydriftFleetFuel.missionMovement(mission.ships, 0, 0, 0);
+        uint256 cargoTotal =
+            uint256(mission.cargo.metal) + mission.cargo.crystal + mission.cargo.deuterium;
+
+        unchecked {
+            capacity -= cargoTotal;
+        }
+        uint128 metal;
+        uint128 crystal;
+        if (field.metal < field.crystal) {
+            metal = _toUint128(_min(field.metal, capacity / 2));
+            unchecked {
+                crystal = _toUint128(_min(field.crystal, capacity - metal));
+            }
+        } else {
+            crystal = _toUint128(_min(field.crystal, capacity / 2));
+            unchecked {
+                metal = _toUint128(_min(field.metal, capacity - crystal));
+            }
+        }
+
+        unchecked {
+            field.metal -= metal;
+            field.crystal -= crystal;
+            mission.cargo.metal += metal;
+            mission.cargo.crystal += crystal;
+        }
+        emit DebrisFieldUpdated(mission.targetPlanetId, field.metal, field.crystal);
     }
 
     function _requirePlanetOwner(uint256 planetId) private view {

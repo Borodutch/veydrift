@@ -69,6 +69,22 @@ interface IVeydriftCombatRapidfire {
         uint8 side,
         uint256 unit
     ) external pure returns (uint32);
+
+    function distributedTargetShots(
+        uint256 shots,
+        uint32 targetCount,
+        uint256 targetTotal,
+        uint256 seed,
+        uint8 round,
+        uint8 side,
+        uint8 firingUnit,
+        uint256 targetUnit
+    ) external pure returns (uint256);
+
+    function repairedDefenseCounts(uint256 destroyedDefenses, uint256 seed)
+        external
+        pure
+        returns (uint256);
 }
 
 contract VeydriftCombatRapidfire is IVeydriftCombatRapidfire {
@@ -250,6 +266,29 @@ contract VeydriftCombatRapidfire is IVeydriftCombatRapidfire {
         // targeted is capped by count, which is already uint32.
         // forge-lint: disable-next-line(unsafe-typecast)
         return sampled > targeted ? uint32(targeted) : uint32(sampled);
+    }
+
+    function distributedTargetShots(
+        uint256 shots,
+        uint32 targetCount,
+        uint256 targetTotal,
+        uint256 seed,
+        uint8 round,
+        uint8 side,
+        uint8 firingUnit,
+        uint256 targetUnit
+    ) external pure returns (uint256) {
+        return _distributedTargetShots(
+            shots, targetCount, targetTotal, seed, round, side, firingUnit, targetUnit
+        );
+    }
+
+    function repairedDefenseCounts(uint256 destroyedDefenses, uint256 seed)
+        external
+        pure
+        returns (uint256)
+    {
+        return VeydriftCatalog.repairedDefenseCounts(destroyedDefenses, seed);
     }
 
     function _shipRapidfireExtraShots(
@@ -462,33 +501,27 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
 
     function resolveFleetMission(uint256 missionId) external {
         FleetMission storage mission = _fleetMissions[missionId];
-        if (mission.missionType == FleetMissionType.Harvest) {
-            _harvestDebris(mission);
-            mission.status = FleetMissionStatus.Returning;
-            _emitFleetMissionReturnExposed(missionId, mission, FleetMissionStatus.Returning);
-            emit FleetMissionResolved(missionId, msg.sender, mission.missionType, mission.returnAt);
-            return;
+        if (_battleResolutionProgress[missionId].rounds == 0) {
+            // Attack protection is rechecked once, before the first combat round, to close the
+            // launch->impact gap. It must not be re-evaluated between gas-bounded rounds after
+            // casualties have already changed both players' scores.
+            (AttackBlockReason protectionReason,) =
+                _attackProtectionPreview(mission.owner, mission.targetPlanetId);
+            Resources storage locked = _riftLockedResources[mission.targetPlanetId];
+            bool hasLiveRift = !mission.targetIsMoon
+                && (locked.metal != 0 || locked.crystal != 0 || locked.deuterium != 0);
+            if (
+                protectionReason == AttackBlockReason.SameAlliance
+                    || (protectionReason == AttackBlockReason.ScoreProtection && !hasLiveRift)
+            ) {
+                _returnLinkedMissions(missionId, mission);
+                mission.status = FleetMissionStatus.Returning;
+                return;
+            }
         }
 
-        // Attack protection is rechecked at resolution to close the launch->impact gap. A live,
-        // planet-bound Rift lock is the deliberate exception: whitepaper semantics make that lock
-        // contestable despite score/newbie protection. Same-alliance attacks always bounce, and a
-        // score-protected target returns to normal protection once its Rift balance is depleted.
-        (AttackBlockReason protectionReason,) =
-            _attackProtectionPreview(mission.owner, mission.targetPlanetId);
-        Resources storage locked = _riftLockedResources[mission.targetPlanetId];
-        bool hasLiveRift = !mission.targetIsMoon
-            && (locked.metal != 0 || locked.crystal != 0 || locked.deuterium != 0);
-        if (
-            protectionReason == AttackBlockReason.SameAlliance
-                || (protectionReason == AttackBlockReason.ScoreProtection && !hasLiveRift)
-        ) {
-            _returnLinkedMissions(missionId, mission);
-            mission.status = FleetMissionStatus.Returning;
-            return;
-        }
-
-        BattleSettlement memory settlement = _runBattle(missionId, mission);
+        (BattleSettlement memory settlement, bool battleComplete) = _runBattle(missionId, mission);
+        if (!battleComplete) return;
 
         if (settlement.outcome == BattleOutcome.AttackerWin) {
             _settleAttackGroupRaid(missionId);
@@ -542,53 +575,50 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
 
     function _runBattle(uint256 missionId, FleetMission storage mission)
         private
-        returns (BattleSettlement memory settlement)
+        returns (BattleSettlement memory settlement, bool complete)
     {
-        settlement.seed = _battleSeed(missionId, mission);
-        uint256 defenderDefenseDestroyed;
-        uint256 finalAttacker;
-        uint256 finalDefender;
-        for (uint8 round = 1; round <= BATTLE_MAX_ROUNDS;) {
-            BattleRoundSnapshot memory snapshot = _battleRoundSnapshot(missionId, mission);
-            finalAttacker = snapshot.attackerUnits;
-            finalDefender = snapshot.defender.units;
+        BattleResolutionProgress storage progress = _battleResolutionProgress[missionId];
+        if (progress.rounds == 0) progress.seed = _battleSeed(missionId, mission);
+        settlement.seed = progress.seed;
 
-            if (snapshot.attackerUnits == 0 || snapshot.defender.units == 0) break;
-
+        BattleRoundSnapshot memory snapshot = _battleRoundSnapshot(missionId, mission);
+        uint256 finalAttacker = snapshot.attackerUnits;
+        uint256 finalDefender = snapshot.defender.units;
+        if (finalAttacker != 0 && finalDefender != 0 && progress.rounds < BATTLE_MAX_ROUNDS) {
+            uint8 round = progress.rounds + 1;
             BattleRoundLosses memory roundLosses =
                 _battleRoundLosses(snapshot, mission, settlement.seed, round);
             Resources memory attackerRoundLosses = _applyAttackerRoundLosses(roundLosses.attackers);
             DefenderLosses memory defenderRoundLosses =
                 _applyDefenderRoundLosses(mission, roundLosses.defender);
 
-            settlement.attackerLosses = _add(settlement.attackerLosses, attackerRoundLosses);
-            settlement.defenderLosses =
-                _add(settlement.defenderLosses, defenderRoundLosses.resources);
-            defenderDefenseDestroyed += defenderRoundLosses.defenseDestroyed;
-            settlement.rounds = round;
+            progress.attackerLosses = _add(progress.attackerLosses, attackerRoundLosses);
+            progress.defenderLosses = _add(progress.defenderLosses, defenderRoundLosses.resources);
+            progress.defenderDefenseDestroyed += defenderRoundLosses.defenseDestroyed;
+            progress.rounds = round;
 
             BattleRoundSnapshot memory afterSnapshot = _battleRoundSnapshot(missionId, mission);
-            uint256 attackerAfter = afterSnapshot.attackerUnits;
-            uint256 defenderAfter = afterSnapshot.defender.units;
-            finalAttacker = attackerAfter;
-            finalDefender = defenderAfter;
+            finalAttacker = afterSnapshot.attackerUnits;
+            finalDefender = afterSnapshot.defender.units;
             emit CombatRoundResolved(
                 missionId,
                 round,
-                attackerAfter,
-                defenderAfter,
+                finalAttacker,
+                finalDefender,
                 attackerRoundLosses.metal,
                 attackerRoundLosses.crystal,
                 defenderRoundLosses.resources.metal,
                 defenderRoundLosses.resources.crystal
             );
-
-            unchecked {
-                ++round;
+            if (finalAttacker != 0 && finalDefender != 0 && round < BATTLE_MAX_ROUNDS) {
+                return (settlement, false);
             }
         }
 
-        _repairDestroyedDefenses(mission, defenderDefenseDestroyed, settlement.seed);
+        settlement.rounds = progress.rounds;
+        settlement.attackerLosses = progress.attackerLosses;
+        settlement.defenderLosses = progress.defenderLosses;
+        _repairDestroyedDefenses(mission, progress.defenderDefenseDestroyed, settlement.seed);
         if (finalAttacker != 0 && finalDefender == 0) {
             settlement.outcome = BattleOutcome.AttackerWin;
         } else if (finalAttacker == 0 && finalDefender != 0) {
@@ -596,6 +626,8 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         } else {
             settlement.outcome = BattleOutcome.Draw;
         }
+        delete _battleResolutionProgress[missionId];
+        complete = true;
     }
 
     function _battleRoundSnapshot(uint256 attackMissionId, FleetMission storage mission)
@@ -1332,7 +1364,8 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         uint256 destroyedDefenses,
         uint256 seed
     ) private {
-        uint256 repairedDefenses = VeydriftCatalog.repairedDefenseCounts(destroyedDefenses, seed);
+        uint256 repairedDefenses = IVeydriftCombatRapidfire(_rapidfireModule)
+            .repairedDefenseCounts(destroyedDefenses, seed);
         _applyDefenseChanges(mission.targetPlanetId, mission.targetIsMoon, repairedDefenses, true);
     }
 
@@ -1345,31 +1378,11 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         uint8 side,
         uint8 firingUnit,
         uint256 targetUnit
-    ) private pure returns (uint256 assigned) {
-        if (shots == 0 || targetCount == 0 || targetTotal == 0) return 0;
-        uint256 weightedShots = shots * targetCount;
-        assigned = weightedShots / targetTotal;
-        if (
-            _combatStream(seed, round, side, firingUnit, targetUnit, 0) % targetTotal
-                < weightedShots % targetTotal
-        ) {
-            assigned += 1;
-        }
-    }
-
-    function _combatStream(
-        uint256 seed,
-        uint8 round,
-        uint8 side,
-        uint256 firingUnit,
-        uint256 targetUnit,
-        uint256 stream
-    ) private pure returns (uint256) {
-        return uint256(
-            keccak256(
-                abi.encode(COMBAT_STREAM_DOMAIN, seed, round, side, firingUnit, targetUnit, stream)
-            )
-        );
+    ) private view returns (uint256) {
+        return IVeydriftCombatRapidfire(_rapidfireModule)
+            .distributedTargetShots(
+                shots, targetCount, targetTotal, seed, round, side, firingUnit, targetUnit
+            );
     }
 
     function _deterministicBodyShipLossCount(
@@ -1603,38 +1616,6 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
             catch {}
     }
 
-    function _harvestDebris(FleetMission storage mission) private {
-        DebrisField storage field = _debrisFields[mission.targetPlanetId];
-        uint256 capacity = _missionCargoCapacity(mission.ships);
-        uint256 cargoTotal =
-            uint256(mission.cargo.metal) + mission.cargo.crystal + mission.cargo.deuterium;
-
-        unchecked {
-            capacity -= cargoTotal;
-        }
-        uint128 metal;
-        uint128 crystal;
-        if (field.metal < field.crystal) {
-            metal = _toUint128(_min(field.metal, capacity / 2));
-            unchecked {
-                crystal = _toUint128(_min(field.crystal, capacity - metal));
-            }
-        } else {
-            crystal = _toUint128(_min(field.crystal, capacity / 2));
-            unchecked {
-                metal = _toUint128(_min(field.metal, capacity - crystal));
-            }
-        }
-
-        unchecked {
-            field.metal -= metal;
-            field.crystal -= crystal;
-            mission.cargo.metal += metal;
-            mission.cargo.crystal += crystal;
-        }
-        _emitDebrisFieldUpdated(mission.targetPlanetId);
-    }
-
     function _setMissionShipQuantity(MissionShips storage ships, Ship ship, uint32 quantity)
         private
     {
@@ -1749,21 +1730,6 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
 
     function _combatScaled(uint256 value, uint16 technologyLevel) private pure returns (uint256) {
         return (value * (BPS + uint256(technologyLevel) * 1_000)) / BPS;
-    }
-
-    function _missionCargoCapacity(MissionShips memory ships) private pure returns (uint256) {
-        uint256 capacity;
-        for (uint8 i = 0; i <= uint8(Ship.Pathfinder);) {
-            Ship ship = Ship(i);
-            uint32 quantity = _missionShipQuantity(ships, ship);
-            if (quantity != 0) {
-                capacity += uint256(quantity) * VeydriftCatalog.shipCargoCapacity(ship);
-            }
-            unchecked {
-                ++i;
-            }
-        }
-        return capacity;
     }
 
     function _missionShipTotal(MissionShips memory ships) private pure returns (uint256) {
