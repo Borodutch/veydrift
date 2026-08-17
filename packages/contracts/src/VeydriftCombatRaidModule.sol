@@ -33,7 +33,7 @@ contract VeydriftCombatRaidModule is VeydriftResourceReserves {
         if (totalCapacity == 0) return;
 
         (AttackBlockReason reason, uint16 plunderBps) =
-            _attackProtectionPreview(mission.owner, mission.targetPlanetId);
+            _attackProtectionPreview(mission.owner, mission.targetPlanetId, mission.targetIsMoon);
         // Bashing is enforced at launch, after which a within-cap attack must retain its
         // ordinary 50% raid settlement. Unlike score protection, it must not zero plunder
         // merely because the launch filled the rolling bashing window before impact.
@@ -209,17 +209,18 @@ contract VeydriftCombatRaidModule is VeydriftResourceReserves {
             && joined.missionType == FleetMissionType.AcsAttack;
     }
 
-    function _attackProtectionPreview(address attacker, uint256 targetPlanetId)
+    function _attackProtectionPreview(address attacker, uint256 targetPlanetId, bool targetIsMoon)
         private
         view
         returns (AttackBlockReason reason, uint16 plunderBps)
     {
         assembly ("memory-safe") {
             let ptr := mload(0x40)
-            mstore(ptr, shl(224, 0x8a6b2246))
+            mstore(ptr, shl(224, 0xdca08aaf))
             mstore(add(ptr, 4), attacker)
             mstore(add(ptr, 36), targetPlanetId)
-            switch staticcall(gas(), address(), ptr, 68, ptr, 96)
+            mstore(add(ptr, 68), targetIsMoon)
+            switch staticcall(gas(), address(), ptr, 100, ptr, 96)
             case 0 { plunderBps := 5000 }
             default {
                 reason := mload(ptr)

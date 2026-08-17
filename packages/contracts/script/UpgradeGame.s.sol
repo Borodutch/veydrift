@@ -28,13 +28,15 @@ import {VeydriftStateMigrationModule} from "../src/VeydriftStateMigrationModule.
 ///      never the proxy's owner — the proxy's existing owner is preserved.
 ///
 ///      This mirrors the proven Base mainnet upgrade flow: deploy
-///      fresh modules + game impl, then ProxyAdmin.upgradeAndCall(proxy, newImpl, "") from the
-///      ProxyAdmin owner EOA.
+///      fresh modules + game impl, then ProxyAdmin.upgradeAndCall(proxy, newImpl,
+///      initializeMoonAttackParity()) from the ProxyAdmin owner EOA. The one-time initializer
+///      records the cutover timestamp used to preserve an active legacy moon bashing window.
 ///
 ///      Required env:
 ///        PRIVATE_KEY        deployer EOA; MUST be the ProxyAdmin owner (asserted below)
 ///        GAME_PROXY_ADDRESS the live Base VeydriftGame proxy
 ///        GAME_PROXY_ADMIN   its OZ ProxyAdmin contract
+///        MOON_PROXY_ADDRESS the already-upgraded MoonSystem proxy
 ///      Optional env:
 ///        ADMIN_ADDRESS      module-admin arg for the new impl (defaults to broadcaster; only
 ///                           affects the impl's own storage, never the proxy)
@@ -49,11 +51,21 @@ contract UpgradeGame is Script {
         address broadcaster = vm.addr(privateKey);
         address proxy = vm.envAddress("GAME_PROXY_ADDRESS");
         address proxyAdmin = vm.envAddress("GAME_PROXY_ADMIN");
+        address moonProxy = vm.envAddress("MOON_PROXY_ADDRESS");
         address moduleAdmin = vm.envOr("ADMIN_ADDRESS", broadcaster);
 
         // The upgrade call is onlyOwner on the ProxyAdmin. Fail fast (before any deploy) if the
         // signer cannot actually execute the upgrade, so we never strand orphaned module deploys.
         require(ProxyAdmin(proxyAdmin).owner() == broadcaster, "BROADCASTER_NOT_PROXY_ADMIN_OWNER");
+        (bool generationOk, bytes memory generationData) =
+            moonProxy.staticcall(abi.encodeWithSignature("moonGeneration(uint256)", 0));
+        require(generationOk && generationData.length >= 32, "MOON_PARITY_NOT_UPGRADED");
+        (bool gameOk, bytes memory gameData) =
+            moonProxy.staticcall(abi.encodeWithSignature("game()"));
+        require(
+            gameOk && gameData.length >= 32 && abi.decode(gameData, (address)) == proxy,
+            "MOON_GAME_MISMATCH"
+        );
 
         vm.startBroadcast(privateKey);
 
@@ -84,7 +96,11 @@ contract UpgradeGame is Script {
         newImplementation = address(newImpl);
 
         ProxyAdmin(proxyAdmin)
-            .upgradeAndCall(ITransparentUpgradeableProxy(proxy), newImplementation, "");
+            .upgradeAndCall(
+                ITransparentUpgradeableProxy(proxy),
+                newImplementation,
+                abi.encodeCall(VeydriftGame.initializeMoonAttackParity, ())
+            );
 
         vm.stopBroadcast();
 

@@ -126,6 +126,32 @@ export type AttackProtectionStatus = {
   } | null;
 };
 
+export function unavailableGalaxyAttackProtection(targetPlanetId: string): AttackProtectionStatus {
+  return {
+    allowed: false,
+    blockedReason: "score_protection",
+    blockedReasonLabel: "Attack protection is unavailable. Refresh Galaxy before launching.",
+    targetPlanetId,
+  };
+}
+
+export function galaxyAttackProtectionRequests(
+  planets: readonly Planet[],
+  account: string | undefined,
+  homeCoords: Coordinates | undefined,
+): Array<{ planetId: string; targetIsMoon: boolean }> {
+  return planets
+    .filter((planet) => planet.occupiedBy && account && !sameCoordinates(homeCoords, planet))
+    .flatMap((planet) => {
+      const planetId = planet.occupiedBy?.planetId;
+      if (!planetId) return [];
+      return [
+        { planetId, targetIsMoon: false },
+        ...(planet.hasMoon ? [{ planetId, targetIsMoon: true }] : []),
+      ];
+    });
+}
+
 export type GalaxyActionState =
   | { status: "idle" }
   | { status: "pending"; label: string }
@@ -183,6 +209,7 @@ export function GalaxyView({
   const cachedSystem = cachedGalaxySystemPlanets(apiBaseUrl, galaxy, system);
   const [systemPlanets, setSystemPlanets] = useState<Planet[]>(() => cachedSystem ?? []);
   const [attackProtection, setAttackProtection] = useState<Record<string, AttackProtectionStatus>>({});
+  const [moonAttackProtection, setMoonAttackProtection] = useState<Record<string, AttackProtectionStatus>>({});
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | undefined>();
   const [reloadNonce, setReloadNonce] = useState(0);
@@ -248,31 +275,32 @@ export function GalaxyView({
   }, [apiBaseUrl, currentSystemKey, galaxy, reloadNonce, system]);
 
   useEffect(() => {
-    const occupiedTargets = planets
-      .filter((planet) => planet.occupiedBy && account && !sameCoordinates(homeCoords, planet))
-      .map((planet) => planet.occupiedBy?.planetId)
-      .filter((planetId): planetId is string => Boolean(planetId));
+    const protectionRequests = galaxyAttackProtectionRequests(planets, account, homeCoords);
 
-    if (occupiedTargets.length === 0) {
+    if (protectionRequests.length === 0) {
       setAttackProtection({});
+      setMoonAttackProtection({});
       return;
     }
 
     let cancelled = false;
-    Promise.all(
-      occupiedTargets.map((planetId) =>
-        backendDataStoreFor(apiBaseUrl).attackProtection(account!, planetId)
-      )
-    )
-      .then((statuses) => {
+    Promise.allSettled(protectionRequests.map(({ planetId, targetIsMoon }) =>
+      backendDataStoreFor(apiBaseUrl).attackProtection(account!, planetId, targetIsMoon)
+    ))
+      .then((results) => {
         if (!cancelled) {
-          setAttackProtection(Object.fromEntries(statuses.map((status) => [status.targetPlanetId, status])));
-        }
-      })
-      .catch((error) => {
-        if (!cancelled) {
-          console.error(error);
-          setAttackProtection({});
+          const nextPlanetProtection: Record<string, AttackProtectionStatus> = {};
+          const nextMoonProtection: Record<string, AttackProtectionStatus> = {};
+          results.forEach((result, index) => {
+            const request = protectionRequests[index];
+            if (!request) return;
+            const status = result.status === "fulfilled"
+              ? result.value
+              : unavailableGalaxyAttackProtection(request.planetId);
+            (request.targetIsMoon ? nextMoonProtection : nextPlanetProtection)[request.planetId] = status;
+          });
+          setAttackProtection(nextPlanetProtection);
+          setMoonAttackProtection(nextMoonProtection);
         }
       });
 
@@ -414,6 +442,7 @@ export function GalaxyView({
                   onToggleWatchPlanet={onToggleWatchPlanet}
                   onAction={onAction}
                   attackProtection={planet?.occupiedBy ? attackProtection[planet.occupiedBy.planetId] : undefined}
+                  moonAttackProtection={planet?.occupiedBy ? moonAttackProtection[planet.occupiedBy.planetId] : undefined}
                   homeCoords={homeCoordsInSystem}
                   homePlanetId={homePlanetId}
                   planet={planet}
@@ -673,6 +702,7 @@ function GalaxySlot({
   shipyardState,
   onAction,
   attackProtection,
+  moonAttackProtection,
   onSelectPlanet,
   onSelectMoon,
   onSelectAlliance,
@@ -695,6 +725,7 @@ function GalaxySlot({
   shipyardState: ChainShipyardState | null;
   onAction: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates) => void) | undefined;
   attackProtection: AttackProtectionStatus | undefined;
+  moonAttackProtection: AttackProtectionStatus | undefined;
   onSelectPlanet: (coords: Coordinates) => void;
   onSelectMoon?: ((coords: Coordinates) => void) | undefined;
   onSelectAlliance: ((allianceId: string) => void) | undefined;
@@ -754,7 +785,7 @@ function GalaxySlot({
   const watched = Boolean(planet.occupiedBy?.planetId && watchedPlanetIds.includes(planet.occupiedBy.planetId));
   const moonActions = galaxyActionsForMoonSlot({
     account,
-    attackProtection,
+    attackProtection: moonAttackProtection,
     defenseState,
     homePlanetId,
     planet,

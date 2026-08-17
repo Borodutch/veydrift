@@ -148,6 +148,7 @@ const acceptedCacheQueryParams = new Map<string, ReadonlySet<string>>([
   ["/wallet/*/queues", new Set(["planetId"])],
   ["/wallet/*/infrastructure", new Set(["planetId"])],
   ["/wallet/*/moon", new Set(["planetId"])],
+  ["/wallet/*/attack-protection", new Set(["targetIsMoon", "targetPlanetId"])],
   ["/wallet/*/shipyard", new Set(["planetId"])],
   ["/wallet/*/defenses", new Set(["planetId"])],
   ["/wallet/*/research", new Set(["planetId"])],
@@ -267,6 +268,7 @@ type RuntimeConfig = {
     gameConfigured: boolean;
     highscoresEndpoint: boolean;
     migrationConfigured: boolean;
+    moonAttackParity: boolean;
     moonConfigured: boolean;
     randomnessConfigured: boolean;
     referralsConfigured: boolean;
@@ -1813,7 +1815,14 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       try {
         assertAddress(wallet);
         const targetPlanetId = positiveBigIntQuery(url, "targetPlanetId");
-        return await indexedAttackProtectionResponse(indexer, chainReader, wallet, targetPlanetId);
+        const targetIsMoon = url.searchParams.get("targetIsMoon") === "true";
+        return await indexedAttackProtectionResponse(
+          indexer,
+          chainReader,
+          wallet,
+          targetPlanetId,
+          targetIsMoon
+        );
       } catch (error) {
         return errorResponse(error, 400);
       }
@@ -2774,6 +2783,7 @@ function acceptedCacheParams(pathname: string): ReadonlySet<string> | undefined 
   if (pathname.match(/^\/wallet\/[^/]+\/queues$/)) return acceptedCacheQueryParams.get("/wallet/*/queues");
   if (pathname.match(/^\/wallet\/[^/]+\/infrastructure$/)) return acceptedCacheQueryParams.get("/wallet/*/infrastructure");
   if (pathname.match(/^\/wallet\/[^/]+\/moon$/)) return acceptedCacheQueryParams.get("/wallet/*/moon");
+  if (pathname.match(/^\/wallet\/[^/]+\/attack-protection$/)) return acceptedCacheQueryParams.get("/wallet/*/attack-protection");
   if (pathname.match(/^\/wallet\/[^/]+\/shipyard$/)) return acceptedCacheQueryParams.get("/wallet/*/shipyard");
   if (pathname.match(/^\/wallet\/[^/]+\/defenses$/)) return acceptedCacheQueryParams.get("/wallet/*/defenses");
   if (pathname.match(/^\/wallet\/[^/]+\/research$/)) return acceptedCacheQueryParams.get("/wallet/*/research");
@@ -5056,6 +5066,15 @@ function getRuntimeConfig(workerRole: WorkerRole = envWorkerRole()): RuntimeConf
     deuterium: process.env.VEYDRIFT_DEUTERIUM_TOKEN_ADDRESS ?? null,
     metal: process.env.VEYDRIFT_METAL_TOKEN_ADDRESS ?? null
   };
+  const moonAttackParityEnabled = ["1", "true", "yes", "on"].includes(
+    (process.env.VEYDRIFT_MOON_ATTACK_PARITY_ENABLED ?? "").trim().toLowerCase()
+  );
+  const moonAttackParityActivatedAt = Number(
+    process.env.VEYDRIFT_MOON_ATTACK_PARITY_ACTIVATED_AT ?? ""
+  );
+  const moonAttackParity = moonAttackParityEnabled
+    && Number.isFinite(moonAttackParityActivatedAt)
+    && moonAttackParityActivatedAt > 0;
 
   return {
     allianceContractAddress,
@@ -5079,6 +5098,9 @@ function getRuntimeConfig(workerRole: WorkerRole = envWorkerRole()): RuntimeConf
       gameConfigured: Boolean(gameContractAddress),
       highscoresEndpoint: true,
       migrationConfigured: Boolean(migrationContractAddress),
+      // Fail closed during rolling deploys. Operators enable this only after the game proxy points
+      // at an implementation exposing the body-attack and body-ACS selectors.
+      moonAttackParity,
       moonConfigured: Boolean(moonContractAddress),
       randomnessConfigured: Boolean(randomnessEngineAddress),
       referralsConfigured: Boolean(
@@ -5604,7 +5626,10 @@ function rankedHighscoreIndexedProtectionLookup(
       const bashingLimited = status?.allowed
         && status.atWar !== true
         && !defenderInactive
-        && indexedBashingLimitReached(launchSecondsByTarget.get(planet.planetId) ?? [], nowSeconds);
+        && indexedBashingLimitReached(
+          bodyAttackLaunchSeconds(launchSecondsByTarget, planet.planetId, false, nowSeconds),
+          nowSeconds
+        );
       statuses.set(planet.planetId, bashingLimited
         ? {
             allowed: false,
@@ -5739,6 +5764,46 @@ function indexedBashingLimitReached(launchSeconds: readonly number[], nowSeconds
   const windowActive = windowStartedAt !== 0 && nowSeconds < windowStartedAt + BASHING_WINDOW_SECONDS;
   const currentCount = windowActive ? count : 0;
   return currentCount >= MAX_ATTACKS_PER_BASHING_WINDOW;
+}
+
+function bodyAttackLaunchSeconds(
+  launchesByTarget: ReadonlyMap<string, number[]>,
+  targetPlanetId: string,
+  targetIsMoon: boolean,
+  nowSeconds: number
+): readonly number[] {
+  const selected = launchesByTarget.get(targetIsMoon ? `moon:${targetPlanetId}` : targetPlanetId) ?? [];
+  const activation = Number(process.env.VEYDRIFT_MOON_ATTACK_PARITY_ACTIVATED_AT ?? "");
+  if (!Number.isFinite(activation) || activation <= 0) return selected;
+
+  const combined = [
+    ...(launchesByTarget.get(targetPlanetId) ?? []),
+    ...(launchesByTarget.get(`moon:${targetPlanetId}`) ?? [])
+  ].sort((left, right) => left - right);
+  let legacyWindowStartedAt = 0;
+  for (const launchedAt of combined) {
+    if (launchedAt > activation) break;
+    if (
+      legacyWindowStartedAt === 0
+      || launchedAt >= legacyWindowStartedAt + BASHING_WINDOW_SECONDS
+    ) {
+      legacyWindowStartedAt = launchedAt;
+    }
+  }
+  const inheritedWindowActive = legacyWindowStartedAt !== 0
+    && activation < legacyWindowStartedAt + BASHING_WINDOW_SECONDS
+    && nowSeconds < legacyWindowStartedAt + BASHING_WINDOW_SECONDS;
+  if (inheritedWindowActive) return combined;
+  if (!targetIsMoon) return selected;
+
+  // Moon launches made before cutover—or while an inherited legacy window remained active—were
+  // recorded by the contract in the shared planet window. Once that window expires they must not
+  // be replayed into the new moon-only counter.
+  const moonWindowStartedAt = legacyWindowStartedAt !== 0
+      && activation < legacyWindowStartedAt + BASHING_WINDOW_SECONDS
+    ? legacyWindowStartedAt + BASHING_WINDOW_SECONDS
+    : activation;
+  return selected.filter((launchedAt) => launchedAt >= moonWindowStartedAt);
 }
 
 function indexedDefenderInactive(lastActiveAt: number | undefined, nowSeconds: number): boolean {
@@ -6262,7 +6327,8 @@ async function indexedAttackProtectionResponse(
   indexer: SettlementIndexer | undefined,
   chainReader: ChainReader | undefined,
   wallet: `0x${string}`,
-  targetPlanetId: bigint
+  targetPlanetId: bigint,
+  targetIsMoon = false
 ): Promise<Response> {
   if (!hasWarmPlanetIndex(indexer)) {
     return indexedReadNotReadyResponse("attack protection", indexer, { wallet, targetPlanetId: targetPlanetId.toString() });
@@ -6274,6 +6340,20 @@ async function indexedAttackProtectionResponse(
       {
         error: "target_planet_not_indexed",
         detail: "Attack protection target is not available from indexed contract state yet.",
+        source: indexedSource
+      },
+      {
+        headers: indexedStateHeaders("not-ready"),
+        status: 404
+      }
+    );
+  }
+
+  if (targetIsMoon && !indexer.hasMoon(targetPlanetId.toString())) {
+    return Response.json(
+      {
+        error: "target_moon_not_indexed",
+        detail: "The target moon no longer exists or is not available from indexed contract state.",
         source: indexedSource
       },
       {
@@ -6319,7 +6399,7 @@ async function indexedAttackProtectionResponse(
   // authoritative for active wars instead of claiming that every war is a bilateral bypass. It is
   // cached per attacker + target by CachedChainReader and is never used by leaderboard fan-out.
   const canonicalWarStatus = atWar && chainReader
-    ? await chainReader.getAttackProtectionStatus(wallet, targetPlanetId)
+    ? await chainReader.getAttackProtectionStatus(wallet, targetPlanetId, targetIsMoon)
     : null;
   // VEY-KANEO-489: use the contract-faithful newbie/score-ratio gate (VeydriftAntiRaidPrimitives.
   // isScoreProtected) instead of a naive score-ratio heuristic. A fixed ratio false-blocks players
@@ -6334,6 +6414,7 @@ async function indexedAttackProtectionResponse(
   // A nonzero planet-scoped Rift lock is fully contestable: it bypasses score/newbie and
   // bashing gates, but never same-alliance protection.
   const riftProtectionBypass = !sameAlliance
+    && !targetIsMoon
     && indexer.hasLiveRiftExtraction(targetPlanetId.toString());
   const scoreComparison = attackProtectionScoreComparison(attacker, defender, scoreProtected);
   // VEY-KANEO-489: also replay the per-(attacker, planet) bashing window the contract enforces. Self
@@ -6341,6 +6422,8 @@ async function indexedAttackProtectionResponse(
   // an empty launch history. same_alliance and score protection are checked first to match the
   // contract's precedence (VeydriftGameStorage._attackProtectionStatus: SameAlliance -> ScoreProtection
   // -> BashingLimit); skipping the launch-log replay when either short-circuits avoids needless work.
+  const nowSeconds = Math.floor(Date.now() / 1_000);
+  const launchSecondsByTarget = indexer.attackLaunchSecondsByTarget(wallet);
   const bashingLimited = canonicalWarStatus
     ? canonicalWarStatus.blockedReason === "bashing_limit"
     : !sameAlliance
@@ -6349,8 +6432,13 @@ async function indexedAttackProtectionResponse(
     && !defenderInactive
     && wallet.toLowerCase() !== target.owner.toLowerCase()
     && indexedBashingLimitReached(
-      indexer.attackLaunchSecondsByTarget(wallet).get(targetPlanetId.toString()) ?? [],
-      Math.floor(Date.now() / 1_000)
+      bodyAttackLaunchSeconds(
+        launchSecondsByTarget,
+        targetPlanetId.toString(),
+        targetIsMoon,
+        nowSeconds
+      ),
+      nowSeconds
     );
   const blockedReason: AttackBlockReason = canonicalWarStatus
     ? canonicalWarStatus.blockedReason

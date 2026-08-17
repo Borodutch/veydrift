@@ -38,6 +38,7 @@ import {
   decodeInviteeProductionBoostLog,
   decodePlanetRenamedLog,
   decodeFleetMissionLogs,
+  decodeFleetMissionBodyIdentity,
   decodeFirstPlanetSettledLog,
   decodePlayerMigrationLog,
   decodeRandomnessFulfilledRequestId,
@@ -53,7 +54,10 @@ import {
   eventNameForTopic,
   fleetMissionNeedsResolution,
   fleetMissionLaunchedTopic,
+  fleetMissionBodiesTopic,
+  fleetMissionLootRatioTopic,
   inviteeProductionBoostActivatedTopic,
+  jumpGateJumpedTopic,
   missionBattleRandomnessRequestId,
   isDebrisFieldLog,
   isRandomnessFulfilledLog,
@@ -160,6 +164,8 @@ import {
   shipCompletedTopic,
   shipQueuedTopic,
   shipQueueTimingSetTopic,
+  moonCreatedTopic,
+  moonDestructionFinalizedTopic,
   startPriceUpdatedEventTopic,
   interplanetaryMissileAttackTopic
 } from "./evm";
@@ -301,6 +307,10 @@ const referralHistoryBackfillMetadataKey = "referralHistoryBackfillV1";
 const paidAllianceInviteHistoryBackfillMetadataKey = "paidAllianceInviteHistoryBackfillV1";
 const paidAllianceInviteProjectionBackfillMetadataKey = "paidAllianceInviteProjectionBackfillV1";
 const productionQueueProjectionBackfillMetadataKey = "productionQueueProjectionBackfillV1";
+const fleetMissionLootRatioProjectionBackfillMetadataKey = "fleetMissionLootRatioProjectionBackfillV1";
+const moonStateEventLedgerBackfillMetadataKey = "moonStateEventLedgerBackfillV1";
+const destroyedMoonStateRepairMetadataKey = "destroyedMoonStateRepairV3";
+const removedMissionEventLedgerRepairMetadataKey = "removedMissionEventLedgerRepairV1";
 const paidAllianceInviteProjectionTopics = [
   paidAllianceInvitePurchasedTopic,
   paidAllianceInviteRedeemedTopic,
@@ -3911,6 +3921,27 @@ export class SettlementIndexer {
     return Boolean(this.moon(planetId));
   }
 
+  private isKnownDestroyedMoon(planetId: string): boolean {
+    if (this.hasMoon(planetId)) return false;
+    const rows = this.db.query(`
+      SELECT event_json
+      FROM indexed_moon_state_event_logs
+      WHERE planet_id = ?
+        AND removed = 0
+        AND lower(json_extract(event_json, '$.topics[0]')) IN (lower(?), lower(?))
+      ORDER BY CAST(block_number AS INTEGER) DESC, length(log_index) DESC, log_index DESC
+    `).all(planetId, moonCreatedTopic, moonDestructionFinalizedTopic) as EventRow[];
+    for (const row of rows) {
+      const log = parseEvent<IndexedRpcLog>(row.event_json);
+      if (isMoonCreatedLog(log)) return false;
+      if (isMoonChanceReportLog(log)) {
+        const event = decodeMoonChanceReportLog(log);
+        if (event.eventName === "MoonDestructionFinalized" && event.moonDestroyed) return true;
+      }
+    }
+    return false;
+  }
+
   riftState(wallet: `0x${string}`, planetId: string | null): RiftState {
     const buildings = planetId ? this.infrastructureRows(planetId) : [];
     const levels = this.technologyLevels(wallet);
@@ -4025,6 +4056,7 @@ export class SettlementIndexer {
   }
 
   applyMoonResourcesSettledEvent(event: MoonResourcesSettledEvent): IndexerSnapshot {
+    if (this.isKnownDestroyedMoon(event.planetId)) return this.snapshot();
     this.upsertMoonResourceSnapshot(
       event.planetId,
       event.resources,
@@ -4045,6 +4077,9 @@ export class SettlementIndexer {
 
   applyMoonChanceEvent(event: MoonChanceReportEvent): IndexerSnapshot {
     this.upsertMoonChanceReport(event);
+    if (event.eventName === "MoonDestructionFinalized" && event.moonDestroyed) {
+      this.clearIndexedMoonState(event.targetPlanetId);
+    }
     this.touch();
     return this.snapshot();
   }
@@ -4067,6 +4102,10 @@ export class SettlementIndexer {
       if (log.removed) {
         this.markReorgDetected();
         this.db.query("UPDATE indexed_event_logs SET removed = 1 WHERE event_id = ?").run(eventId);
+        this.removeMissionEventLog(eventId);
+        const removedMissionId = fleetMissionLogMissionId(log);
+        if (removedMissionId) this.rebuildMissionBodyProjection(removedMissionId);
+        this.recordMoonStateEventLog(eventId, log);
         this.recordRemovedLog(`${eventId}:removed`, log);
         this.removePlayerActivityFeedEvent(eventId);
         if (isPaidAllianceInviteProjectionLog(log)) {
@@ -4080,6 +4119,9 @@ export class SettlementIndexer {
         }
         if (isBattleReportLog(log)) {
           if (this.reconcileCombatResolutionProgress(battleLogMissionId(log)) > 0) this.touch();
+        }
+        if (this.isMoonStateProjectionLog(log)) {
+          this.repairIndexedMoonStateFromEventLogs(this.moonStatePlanetIds(log));
         }
         return { applied: false, duplicate: false, ignored: false, removed: true, snapshot: this.snapshot() };
       }
@@ -4100,6 +4142,29 @@ export class SettlementIndexer {
           WHERE event_id = ?
         `).run(JSON.stringify(log), blockNumberToDecimal(log.blockNumber), new Date().toISOString(), eventId);
         this.applyInviteeProductionBoostEvent(decodeInviteeProductionBoostLog(log));
+        this.recordLatestBlock(log.blockNumber);
+        return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
+      }
+      if (existing.removed && this.isMoonStateProjectionLog(log)) {
+        this.db.query(`
+          UPDATE indexed_event_logs
+          SET removed = 0, event_json = ?, block_number = ?, received_at = ?
+          WHERE event_id = ?
+        `).run(JSON.stringify(log), blockNumberToDecimal(log.blockNumber), new Date().toISOString(), eventId);
+        this.recordMoonStateEventLog(eventId, log);
+        this.repairIndexedMoonStateFromEventLogs(this.moonStatePlanetIds(log));
+        this.recordLatestBlock(log.blockNumber);
+        return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
+      }
+      if (existing.removed && this.missionEventKind(log)) {
+        this.db.query(`
+          UPDATE indexed_event_logs
+          SET removed = 0, event_json = ?, block_number = ?, received_at = ?
+          WHERE event_id = ?
+        `).run(JSON.stringify(log), blockNumberToDecimal(log.blockNumber), new Date().toISOString(), eventId);
+        this.recordMissionEventLog(eventId, log);
+        const restoredMissionId = fleetMissionLogMissionId(log);
+        if (restoredMissionId) this.rebuildMissionBodyProjection(restoredMissionId);
         this.recordLatestBlock(log.blockNumber);
         return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
       }
@@ -4141,6 +4206,9 @@ export class SettlementIndexer {
       }
       if (isInviteeProductionBoostLog(log)) {
         this.removeInviteeProductionBoostEvent(log);
+      }
+      if (this.isMoonStateProjectionLog(log)) {
+        this.repairIndexedMoonStateFromEventLogs(this.moonStatePlanetIds(log));
       }
       return { applied: false, duplicate: false, ignored: false, removed: true, snapshot: this.snapshot() };
     }
@@ -5391,6 +5459,17 @@ export class SettlementIndexer {
         diameter_km INTEGER NOT NULL,
         event_json TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS indexed_moon_state_event_logs (
+        event_id TEXT NOT NULL,
+        planet_id TEXT NOT NULL,
+        removed INTEGER NOT NULL DEFAULT 0,
+        block_number TEXT NOT NULL,
+        log_index TEXT NOT NULL,
+        event_json TEXT NOT NULL,
+        PRIMARY KEY (event_id, planet_id)
+      );
+      CREATE INDEX IF NOT EXISTS indexed_moon_state_event_logs_planet_position_idx
+        ON indexed_moon_state_event_logs (planet_id, removed, block_number, log_index);
       CREATE TABLE IF NOT EXISTS indexed_moon_building_levels (
         planet_id TEXT NOT NULL,
         building_id INTEGER NOT NULL,
@@ -5789,6 +5868,10 @@ export class SettlementIndexer {
       this.repairPaidAllianceInviteProjectionsFromEventLogs(paidAllianceInviteContractAddress);
     }
     this.repairProductionQueueProjectionsFromEventLogs();
+    this.backfillFleetMissionLootRatioProjection();
+    this.repairRemovedMissionEventLedgerRows();
+    this.backfillMoonStateEventLedger();
+    this.repairDestroyedMoonStateFromEventLogs();
     this.repairInviteeProductionBoostProjectionsFromEventLogs();
     this.backfillPlayerActivityFeed();
     this.queueDefenderLossBreakdownBackfill();
@@ -5888,6 +5971,256 @@ export class SettlementIndexer {
       // generation whenever this repair runs.
       this.touch();
     })();
+  }
+
+  /// Backfill the mission-read projection for ratio logs written while an older backend was live.
+  /// Production disables the broad startup backfill, so this migration intentionally reads only the
+  /// durable FleetMissionLootRatio rows and preserves every canonical mutable mission field.
+  private backfillFleetMissionLootRatioProjection(): void {
+    if (this.metadata(fleetMissionLootRatioProjectionBackfillMetadataKey) !== null) return;
+
+    this.db.transaction(() => {
+      const rows = this.db.query(`
+        SELECT event_id, event_json
+        FROM indexed_event_logs
+        WHERE removed = 0
+          AND lower(json_extract(event_json, '$.topics[0]')) = lower(?)
+        ORDER BY CAST(block_number AS INTEGER) ASC, length(log_index) ASC, log_index ASC
+      `).all(fleetMissionLootRatioTopic) as Array<EventRow & { event_id: string }>;
+      const missionIds = new Set<string>();
+      for (const row of rows) {
+        const log = parseEvent<IndexedRpcLog>(row.event_json);
+        this.recordMissionEventLog(row.event_id, log);
+        const missionId = fleetMissionLogMissionId(log);
+        if (missionId) missionIds.add(missionId);
+      }
+
+      for (const missionId of missionIds) {
+        const eventMission = this.eventDerivedFleetMissionForMissionId(missionId);
+        if (!eventMission?.lootRatio) continue;
+        const canonicalRow = this.db.query(`
+          SELECT *
+          FROM contract_fleet_missions
+          WHERE mission_id = ?
+        `).get(missionId) as ContractFleetMissionRow | null;
+        if (!canonicalRow) {
+          this.upsertEventDerivedFleetMissionRow(eventMission);
+          continue;
+        }
+        const canonicalMission = this.canonicalFleetMissionSummary(canonicalRow);
+        this.db.query(`
+          UPDATE contract_fleet_missions
+          SET event_json = ?
+          WHERE mission_id = ?
+        `).run(JSON.stringify({ ...canonicalMission, lootRatio: eventMission.lootRatio }), missionId);
+      }
+
+      this.setMetadata(
+        fleetMissionLootRatioProjectionBackfillMetadataKey,
+        new Date().toISOString()
+      );
+      if (rows.length > 0) this.touchMissionReadModel();
+    })();
+  }
+
+  /// Repair the legacy public moon-presence table from its small durable lifecycle ledger. This
+  /// runs in production even when broad startup backfills are disabled, healing moons destroyed
+  /// before the live handler learned to invalidate `indexed_moons`.
+  private repairDestroyedMoonStateFromEventLogs(): void {
+    if (this.metadata(destroyedMoonStateRepairMetadataKey) !== null) return;
+
+    this.db.transaction(() => {
+      const planetIds = new Set<string>(
+        (this.db.query("SELECT planet_id FROM indexed_moons").all() as Array<{ planet_id: string }>)
+          .map((row) => row.planet_id)
+      );
+      for (const row of this.db.query(
+        "SELECT DISTINCT planet_id FROM indexed_moon_state_event_logs"
+      ).all() as Array<{ planet_id: string }>) {
+        planetIds.add(row.planet_id);
+      }
+      const ids = [...planetIds];
+      for (let offset = 0; offset < ids.length; offset += 100) {
+        this.repairIndexedMoonStateFromEventLogs(ids.slice(offset, offset + 100));
+      }
+      this.setMetadata(destroyedMoonStateRepairMetadataKey, new Date().toISOString());
+    })();
+  }
+
+  /// Populate the dedicated moon lifecycle ledger from older raw rows in bounded batches. Runtime
+  /// reorg/startup repair reads only this planet-keyed table and never rescans the full event ledger.
+  private backfillMoonStateEventLedger(): void {
+    if (this.metadata(moonStateEventLedgerBackfillMetadataKey) !== null) return;
+    let lastRowId = 0;
+    while (true) {
+      const rows = this.db.query(`
+        SELECT rowid, event_id, removed, event_json
+        FROM indexed_event_logs
+        WHERE rowid > ?
+        ORDER BY rowid ASC
+        LIMIT 500
+      `).all(lastRowId) as Array<EventRow & { rowid: number; event_id: string; removed: number }>;
+      if (rows.length === 0) break;
+      this.db.transaction(() => {
+        for (const row of rows) {
+          const log = {
+            ...parseEvent<IndexedRpcLog>(row.event_json),
+            removed: row.removed !== 0
+          };
+          this.recordMoonStateEventLog(row.event_id, log);
+        }
+      })();
+      lastRowId = rows[rows.length - 1]!.rowid;
+    }
+    this.setMetadata(moonStateEventLedgerBackfillMetadataKey, new Date().toISOString());
+  }
+
+  /// Older writers marked the canonical raw row removed without deleting its specialized mission
+  /// ledger row. Purge those rows once on every upgraded database before body-aware bashing reads.
+  /// Future live removals are handled synchronously by removeMissionEventLog().
+  private repairRemovedMissionEventLedgerRows(): void {
+    if (this.metadata(removedMissionEventLedgerRepairMetadataKey) !== null) return;
+    this.db.transaction(() => {
+      const missionIds = new Set<string>();
+      for (const row of this.db.query(`
+        SELECT indexed_mission_event_logs.event_json
+        FROM indexed_mission_event_logs
+        INNER JOIN indexed_event_logs
+          ON indexed_event_logs.event_id = indexed_mission_event_logs.event_id
+        WHERE indexed_event_logs.removed != 0
+      `).all() as Array<{ event_json: string }>) {
+        const missionId = fleetMissionLogMissionId(parseEvent<IndexedRpcLog>(row.event_json));
+        if (missionId) missionIds.add(missionId);
+      }
+      const result = this.db.query(`
+        DELETE FROM indexed_mission_event_logs
+        WHERE event_id IN (
+          SELECT event_id FROM indexed_event_logs WHERE removed != 0
+        )
+      `).run();
+      for (const missionId of missionIds) this.rebuildMissionBodyProjection(missionId);
+      this.setMetadata(removedMissionEventLedgerRepairMetadataKey, new Date().toISOString());
+      if (result.changes > 0) this.touchMissionReadModel();
+    })();
+  }
+
+  private isMoonPresenceProjectionLog(log: IndexedRpcLog): boolean {
+    if (isMoonCreatedLog(log) || isMoonJumpGateLog(log)) return true;
+    if (!isMoonChanceReportLog(log)) return false;
+    return decodeMoonChanceReportLog(log).eventName === "MoonDestructionFinalized";
+  }
+
+  private isMoonStateProjectionLog(log: IndexedRpcLog): boolean {
+    if (this.isMoonPresenceProjectionLog(log)) return true;
+    if (
+      isMoonResourcesSettledLog(log)
+      || isMoonResourcesChangedLog(log)
+      || isMoonShipCountChangedLog(log)
+      || isMoonDefenseCountChangedLog(log)
+    ) return true;
+    if (isIndexedQueueStartedLog(log)) {
+      return decodeIndexedQueueStartedLog(log).queueKind.startsWith("moon-");
+    }
+    if (isIndexedQueueCompletedLog(log)) {
+      return decodeIndexedQueueCompletedLog(log).queueKind.startsWith("moon-");
+    }
+    return false;
+  }
+
+  private moonPresencePlanetIds(log: IndexedRpcLog): string[] {
+    if (isMoonCreatedLog(log)) return [decodeMoonCreatedLog(log).planetId];
+    if (isMoonJumpGateLog(log)) {
+      const event = decodeMoonJumpGateLog(log);
+      return [...new Set([event.originMoonPlanetId, event.destinationMoonPlanetId])];
+    }
+    if (isMoonChanceReportLog(log)) {
+      const event = decodeMoonChanceReportLog(log);
+      return event.eventName === "MoonDestructionFinalized" ? [event.targetPlanetId] : [];
+    }
+    return [];
+  }
+
+  private moonStatePlanetIds(log: IndexedRpcLog): string[] {
+    const presenceIds = this.moonPresencePlanetIds(log);
+    if (presenceIds.length > 0) return presenceIds;
+    if (isMoonResourcesSettledLog(log)) return [decodeMoonResourcesSettledLog(log).planetId];
+    if (isMoonResourcesChangedLog(log)) return [decodeMoonResourcesChangedLog(log).planetId];
+    if (isMoonShipCountChangedLog(log)) return [decodeMoonShipCountChangedLog(log).planetId];
+    if (isMoonDefenseCountChangedLog(log)) return [decodeMoonDefenseCountChangedLog(log).planetId];
+    if (isIndexedQueueStartedLog(log)) {
+      const event = decodeIndexedQueueStartedLog(log);
+      return event.queueKind.startsWith("moon-") && event.planetId ? [event.planetId] : [];
+    }
+    if (isIndexedQueueCompletedLog(log)) {
+      const event = decodeIndexedQueueCompletedLog(log);
+      return event.queueKind.startsWith("moon-") && event.planetId ? [event.planetId] : [];
+    }
+    return [];
+  }
+
+  private moonStateLifecycleLogs(planetIds: ReadonlySet<string>): IndexedRpcLog[] {
+    if (planetIds.size === 0) return [];
+    const placeholders = [...planetIds].map(() => "?").join(", ");
+    const rows = this.db.query(`
+      SELECT event_json
+      FROM indexed_moon_state_event_logs
+      WHERE removed = 0 AND planet_id IN (${placeholders})
+      ORDER BY CAST(block_number AS INTEGER) ASC, length(log_index) ASC, log_index ASC
+    `).all(...planetIds) as EventRow[];
+    return sortedEventRows(rows);
+  }
+
+  private clearIndexedMoonState(planetId: string): void {
+    this.db.query("DELETE FROM indexed_moons WHERE planet_id = ?").run(planetId);
+    this.db.query("DELETE FROM indexed_moon_building_levels WHERE planet_id = ?").run(planetId);
+    this.db.query("DELETE FROM contract_moon_resources WHERE planet_id = ?").run(planetId);
+    this.db.query("DELETE FROM contract_moon_ship_counts WHERE planet_id = ?").run(planetId);
+    this.db.query("DELETE FROM contract_moon_defense_counts WHERE planet_id = ?").run(planetId);
+    this.db.query("DELETE FROM contract_moon_building_levels WHERE planet_id = ?").run(planetId);
+    this.db.query("DELETE FROM contract_moon_building_queues WHERE planet_id = ?").run(planetId);
+    for (const queueKeyValue of [`moon-building:${planetId}`, `moon-defense:${planetId}`]) {
+      this.db.query("DELETE FROM indexed_planet_queues WHERE queue_key = ?").run(queueKeyValue);
+      this.db.query("DELETE FROM contract_production_queues WHERE queue_key = ?").run(queueKeyValue);
+    }
+  }
+
+  private repairIndexedMoonStateFromEventLogs(planetIds: Iterable<string>): void {
+    const requestedIds = new Set([...planetIds].filter((planetId) => planetId.length > 0));
+    if (requestedIds.size === 0) return;
+    for (const planetId of requestedIds) this.clearIndexedMoonState(planetId);
+
+    for (const log of this.moonStateLifecycleLogs(requestedIds)) {
+      const affectedIds = this.moonStatePlanetIds(log).filter((planetId) => requestedIds.has(planetId));
+      if (affectedIds.length === 0) continue;
+      if (isMoonCreatedLog(log)) {
+        this.applyMoonCreatedEvent(decodeMoonCreatedLog(log));
+        continue;
+      }
+      if (isMoonChanceReportLog(log)) {
+        const event = decodeMoonChanceReportLog(log);
+        if (event.eventName === "MoonDestructionFinalized" && event.moonDestroyed) {
+          this.clearIndexedMoonState(event.targetPlanetId);
+        }
+        continue;
+      }
+      if (!affectedIds.some((planetId) => this.hasMoon(planetId))) continue;
+      if (isMoonJumpGateLog(log)) {
+        this.applyMoonJumpGateEvent(decodeMoonJumpGateLog(log));
+      } else if (isMoonResourcesSettledLog(log)) {
+        this.applyMoonResourcesSettledEvent(decodeMoonResourcesSettledLog(log));
+      } else if (isMoonResourcesChangedLog(log)) {
+        this.applyMoonResourcesChangedEvent(decodeMoonResourcesChangedLog(log));
+      } else if (isMoonShipCountChangedLog(log)) {
+        this.applyMoonShipCountChangedEvent(decodeMoonShipCountChangedLog(log));
+      } else if (isMoonDefenseCountChangedLog(log)) {
+        this.applyMoonDefenseCountChangedEvent(decodeMoonDefenseCountChangedLog(log));
+      } else if (isIndexedQueueStartedLog(log)) {
+        this.applyQueueStartedEvent(decodeIndexedQueueStartedLog(log), { settleResources: false });
+      } else if (isIndexedQueueCompletedLog(log)) {
+        this.applyQueueCompletedEvent(decodeIndexedQueueCompletedLog(log));
+      }
+    }
+    this.touch();
   }
 
   private currentPaidAllianceInviteContractAddress(): string | null {
@@ -7347,12 +7680,12 @@ export class SettlementIndexer {
   private upsertCanonicalFleetMission(
     mission: CanonicalFleetMissionSnapshot | CanonicalFleetMissionDetails
   ): number {
-    const eventJson = canonicalFleetMissionEventJson(mission);
     const existing = this.db.query(`
       SELECT event_json
       FROM contract_fleet_missions
       WHERE mission_id = ?
     `).get(mission.missionId) as EventRow | null;
+    const eventJson = canonicalFleetMissionEventJson(mission, existing?.event_json ?? null);
     if (existing?.event_json === eventJson) return 0;
 
     return this.db.query(`
@@ -7761,6 +8094,7 @@ export class SettlementIndexer {
   }
 
   private applyMoonResourcesChangedEvent(event: IndexedMoonResourcesChangedEvent): void {
+    if (this.isKnownDestroyedMoon(event.planetId)) return;
     this.upsertMoonResourceSnapshot(
       event.planetId,
       event.resources,
@@ -7983,6 +8317,9 @@ export class SettlementIndexer {
     // that predate authoritative resource events.
     const startedAt = event.startedAt ?? options.settledAt;
     const startedEvent = startedAt ? { ...event, startedAt } : event;
+    if (event.queueKind.startsWith("moon-") && event.planetId && this.isKnownDestroyedMoon(event.planetId)) {
+      return;
+    }
     if (this.shouldIgnoreStaleCanonicalProductionQueueEvent(startedEvent)) {
       return;
     }
@@ -8091,6 +8428,7 @@ export class SettlementIndexer {
   }
 
   private applyMoonShipCountChangedEvent(event: IndexedMoonShipCountChangedEvent): void {
+    if (this.isKnownDestroyedMoon(event.planetId)) return;
     this.upsertIndexedLevel(
       "contract_moon_ship_counts",
       "ship_id",
@@ -8128,6 +8466,7 @@ export class SettlementIndexer {
   }
 
   private applyMoonDefenseCountChangedEvent(event: IndexedMoonDefenseCountChangedEvent): void {
+    if (this.isKnownDestroyedMoon(event.planetId)) return;
     this.upsertIndexedLevel(
       "contract_moon_defense_counts",
       "defense_id",
@@ -8509,6 +8848,9 @@ export class SettlementIndexer {
     // over the whole window since the last settle and over-reports resources by
     // up to ~3x (VEY-KANEO-429). Settle BEFORE deleting the queue (it carries
     // readyAt) and BEFORE applying the completed level.
+    if (event.queueKind.startsWith("moon-") && event.planetId && this.isKnownDestroyedMoon(event.planetId)) {
+      return;
+    }
     const queue = this.queueState(queueKey(event));
     const matchesActiveQueue = queueMatchesCompletion(event, queue);
     if (event.queueKind === "building" && event.planetId && matchesActiveQueue) {
@@ -10155,8 +10497,29 @@ export class SettlementIndexer {
       this.recordMissionEventLog(eventId, log);
       this.recordUnitCountEventLog(eventId, log);
       this.recordMissileAttackEvent(eventId, log);
+      this.recordMoonStateEventLog(eventId, log);
     }
     return result.changes > 0;
+  }
+
+  private recordMoonStateEventLog(eventId: string, log: IndexedRpcLog): void {
+    if (!this.isMoonStateProjectionLog(log)) return;
+    const planetIds = this.moonStatePlanetIds(log);
+    this.db.query("DELETE FROM indexed_moon_state_event_logs WHERE event_id = ?").run(eventId);
+    for (const planetId of planetIds) {
+      this.db.query(`
+        INSERT INTO indexed_moon_state_event_logs (
+          event_id, planet_id, removed, block_number, log_index, event_json
+        ) VALUES (?, ?, ?, ?, ?, ?)
+      `).run(
+        eventId,
+        planetId,
+        log.removed ? 1 : 0,
+        blockNumberToDecimal(log.blockNumber),
+        log.logIndex ?? "0x0",
+        JSON.stringify(log)
+      );
+    }
   }
 
   private recordMissileAttackEvent(eventId: string, log: IndexedRpcLog): void {
@@ -10196,6 +10559,40 @@ export class SettlementIndexer {
       const missionId = battleLogMissionId(log);
       if (missionId) this.markBattleReportMaterializationPending(missionId, blockNumberToDecimal(log.blockNumber));
     }
+    this.touchMissionReadModel();
+  }
+
+  private removeMissionEventLog(eventId: string): void {
+    const result = this.db
+      .query("DELETE FROM indexed_mission_event_logs WHERE event_id = ?")
+      .run(eventId);
+    if (result.changes > 0) this.touchMissionReadModel();
+  }
+
+  /** Rebuild event-derived body/loot fields after a canonical log is removed or restored.
+   * Canonical reconciliation deliberately preserves these fields, so simply deleting the ledger
+   * row would otherwise leave a reorged FleetMissionBodies value stuck in event_json forever. */
+  private rebuildMissionBodyProjection(missionId: string): void {
+    const row = this.db.query(`
+      SELECT *
+      FROM contract_fleet_missions
+      WHERE mission_id = ?
+    `).get(missionId) as ContractFleetMissionRow | null;
+    if (!row) return;
+
+    const rebuilt = { ...this.canonicalFleetMissionSummary(row) } as FleetMissionSummary;
+    delete rebuilt.originIsMoon;
+    delete rebuilt.targetIsMoon;
+    delete rebuilt.lootRatio;
+    const eventMission = this.eventDerivedFleetMissionForMissionId(missionId);
+    if (eventMission?.originIsMoon !== undefined) rebuilt.originIsMoon = eventMission.originIsMoon;
+    if (eventMission?.targetIsMoon !== undefined) rebuilt.targetIsMoon = eventMission.targetIsMoon;
+    if (eventMission?.lootRatio) rebuilt.lootRatio = eventMission.lootRatio;
+    this.db.query(`
+      UPDATE contract_fleet_missions
+      SET event_json = ?
+      WHERE mission_id = ?
+    `).run(JSON.stringify(rebuilt), missionId);
     this.touchMissionReadModel();
   }
 
@@ -11425,6 +11822,7 @@ export class SettlementIndexer {
         needsResolution: canonicalEventMission.needsResolution,
         ...(canonicalEventMission.originIsMoon !== undefined ? { originIsMoon: canonicalEventMission.originIsMoon } : {}),
         ...(canonicalEventMission.targetIsMoon !== undefined ? { targetIsMoon: canonicalEventMission.targetIsMoon } : {}),
+        ...(canonicalEventMission.lootRatio ? { lootRatio: canonicalEventMission.lootRatio } : {}),
         ...(canonicalEventMission.defenseHoldUntil ? { defenseHoldUntil: canonicalEventMission.defenseHoldUntil } : {}),
         ...(canonicalEventMission.defenseHoldOutcome ? { defenseHoldOutcome: canonicalEventMission.defenseHoldOutcome } : {}),
         ...(canonicalEventMission.recallProvenance ? { recallProvenance: canonicalEventMission.recallProvenance } : {}),
@@ -11501,13 +11899,14 @@ export class SettlementIndexer {
     return requestIds;
   }
 
-  // VEY-KANEO-489: replay every Attack `attacker` has launched, grouped by target planet, as ascending
-  // launch timestamps. The contract anchors each per-(attacker, defender, planet) bashing window at
+  // VEY-KANEO-489: replay every Attack `attacker` has launched, grouped by target body, as ascending
+  // launch timestamps. The contract anchors each per-(attacker, defender, planet, body) bashing window at
   // block.timestamp of the launch (VeydriftGameStorage._recordAttack runs in the FleetMissionLaunched
   // transaction), so the server can derive the live window count from these and apply the same
   // MAX_ATTACKS_PER_BASHING_WINDOW / 24h reset the contract enforces — letting the indexed
   // attack-protection preview report bashing_limit instead of silently allowing a blocked attack.
-  // We key only by (attacker, planet), dropping the contract's defender dimension: planet ids are
+  // Planet keys remain the bare id for backward compatibility; moon keys are `moon:<id>`. We drop
+  // the contract's defender dimension because planet ids are
   // minted monotonically (nextPlanetId++) and never reassigned to a different non-zero owner (attacks
   // loot but never capture; abandonment cannot re-mint an id), so a given planet id maps to exactly one
   // defender over its lifetime — making (attacker, planet) equivalent to (attacker, defender, planet).
@@ -11532,6 +11931,17 @@ export class SettlementIndexer {
         AND json_extract(event_json, '$.topics[3]') = ?
       ORDER BY CAST(block_number AS INTEGER) ASC
     `).all(fleetMissionLaunchedTopic, attackerTopic, attackMissionTypeTopic) as EventRow[];
+    const bodyRows = this.db.query(`
+      SELECT event_json
+      FROM indexed_mission_event_logs
+      WHERE event_kind = 'fleet'
+        AND lower(json_extract(event_json, '$.topics[0]')) = lower(?)
+    `).all(fleetMissionBodiesTopic) as EventRow[];
+    const moonTargetMissionIds = new Set<string>();
+    for (const bodyLog of sortedEventRows(bodyRows)) {
+      const identity = decodeFleetMissionBodyIdentity(bodyLog);
+      if (identity?.targetIsMoon) moonTargetMissionIds.add(identity.missionId);
+    }
     const byTarget = new Map<string, number[]>();
     for (const log of sortedEventRows(rows)) {
       const launch = decodeAttackMissionLaunch(log);
@@ -11540,9 +11950,13 @@ export class SettlementIndexer {
       if (launchedAt === undefined) continue;
       const seconds = Number(launchedAt);
       if (!Number.isFinite(seconds)) continue;
-      const existing = byTarget.get(launch.targetPlanetId);
+      const missionId = fleetMissionLogMissionId(log);
+      const targetKey = missionId && moonTargetMissionIds.has(missionId)
+        ? `moon:${launch.targetPlanetId}`
+        : launch.targetPlanetId;
+      const existing = byTarget.get(targetKey);
       if (existing) existing.push(seconds);
-      else byTarget.set(launch.targetPlanetId, [seconds]);
+      else byTarget.set(targetKey, [seconds]);
     }
     this.attackLaunchSecondsCache.set(normalizedAttacker, {
       missionGeneration: this.missionGeneration,
@@ -13954,8 +14368,9 @@ function countRows(rows: readonly LevelRow[] | undefined): Array<{ id: number; c
   return (rows ?? []).map((row) => ({ id: row.id, count: row.value }));
 }
 
-function canonicalFleetMissionEventJson(mission: CanonicalFleetMissionSnapshot): string {
-  return JSON.stringify(mission);
+function canonicalFleetMissionEventJson(mission: CanonicalFleetMissionSnapshot, existingEventJson: string | null): string {
+  const existingMission = parseCanonicalFleetMissionEvent(existingEventJson);
+  return JSON.stringify(existingMission ? { ...existingMission, ...mission } : mission);
 }
 
 function compareFleetMissionsNewestFirst(left: FleetMissionSummary, right: FleetMissionSummary): number {

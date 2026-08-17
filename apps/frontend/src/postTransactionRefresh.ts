@@ -470,6 +470,8 @@ function missionMatchesExpectedLaunch(
   if (mission.owner.toLowerCase() !== expected.owner.toLowerCase()) return false;
   if (mission.originPlanetId !== expected.originPlanetId) return false;
   if (mission.targetPlanetId !== expected.targetPlanetId) return false;
+  if (Boolean(mission.originIsMoon) !== Boolean(expected.originIsMoon)) return false;
+  if (Boolean(mission.targetIsMoon) !== Boolean(expected.targetIsMoon)) return false;
   if (mission.missionType.toLowerCase() !== expected.missionType.toLowerCase()) return false;
   if (!missionResourcesEqual(mission.cargo, expected.cargo)) return false;
   if (!missionShipsEqual(mission.ships, expected.ships)) return false;

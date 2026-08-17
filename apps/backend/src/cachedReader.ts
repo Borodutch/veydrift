@@ -180,10 +180,14 @@ export class CachedChainReader implements ChainReader {
     return this.inner.listAllianceDiplomacyState();
   }
 
-  getAttackProtectionStatus(wallet: Address, targetPlanetId: bigint): Promise<AttackProtectionStatus> {
+  getAttackProtectionStatus(
+    wallet: Address,
+    targetPlanetId: bigint,
+    targetIsMoon = false
+  ): Promise<AttackProtectionStatus> {
     return this.cached(
-      `attack-protection:${wallet.toLowerCase()}:${targetPlanetId.toString()}`,
-      () => this.inner.getAttackProtectionStatus(wallet, targetPlanetId)
+      `attack-protection:${wallet.toLowerCase()}:${targetPlanetId.toString()}:${targetIsMoon ? "moon" : "planet"}`,
+      () => this.inner.getAttackProtectionStatus(wallet, targetPlanetId, targetIsMoon)
     );
   }
 

@@ -59,7 +59,9 @@ contract VeydriftMoonScoreMainnetForkTest is Test {
         vm.prank(PROXY_ADMIN_OWNER);
         ProxyAdmin(PROXY_ADMIN)
             .upgradeAndCall(
-                ITransparentUpgradeableProxy(GAME_PROXY), address(newImplementation), ""
+                ITransparentUpgradeableProxy(GAME_PROXY),
+                address(newImplementation),
+                abi.encodeCall(VeydriftGame.initializeMoonAttackParity, ())
             );
 
         assertNotEq(_implementation(), oldImplementation);

@@ -470,6 +470,7 @@ export type FleetMissionSummary = {
   targetPlanetId: string;
   originIsMoon?: boolean;
   targetIsMoon?: boolean;
+  lootRatio?: { metalBps: number; crystalBps: number; deuteriumBps: number };
   originPlanet?: FleetMissionPlanetReference | null;
   targetPlanet?: FleetMissionPlanetReference | null;
   arrivalAt: string;
@@ -1479,8 +1480,10 @@ const GAME_SELECTORS = {
   finishBuildingUpgrade: "0x6ab2f9d4",
   finishResourceWithdrawal: "0xde0f208c",
   joinAttackMission: "0x28260eb6",
+  joinBodyAttackMission: "0xdd3e1279",
   launchInterplanetaryMissileAttack: "0xa72cd29a",
   launchAttackMission: "0x19fec22b",
+  launchBodyAttackMission: "0xa2baf848",
   // VEY-KANEO-440/441: ACS Defend stationing. Selector for
   // launchDefenseHold(uint256,uint256,(uint32 x14 MissionShips),(uint128 x3 Resources),uint16,uint256).
   launchDefenseHold: "0xd3ad415f",
@@ -1798,6 +1801,7 @@ const shipLabelByContractId: Record<number, string> = {
 
 type FleetMissionRevertContext = {
   missionType?: number | string | bigint | undefined;
+  originIsMoon?: boolean | undefined;
 };
 
 const contractRevertReasons: Record<string, string> = {
@@ -1833,7 +1837,9 @@ const contractRevertReasons: Record<string, string> = {
 const fleetMissionTransactionSelectors = new Set<string>([
   GAME_SELECTORS.completeFleetMissionReturn,
   GAME_SELECTORS.joinAttackMission,
+  GAME_SELECTORS.joinBodyAttackMission,
   GAME_SELECTORS.launchAttackMission,
+  GAME_SELECTORS.launchBodyAttackMission,
   GAME_SELECTORS.launchBodyFleetMission,
   GAME_SELECTORS.launchFleetMission,
   GAME_SELECTORS.recallFleetMission,
@@ -1923,9 +1929,18 @@ function contractRevertReason(error: unknown, context?: FleetMissionRevertContex
         : "";
       return `Build or keep a Colony Ship on the origin planet before colonizing.${countDetail}`;
     }
-    const insufficientShips = insufficientShipsRevertReason(shipId, revertUintArg(error, 1), revertUintArg(error, 2));
+    const insufficientShips = insufficientShipsRevertReason(
+      shipId,
+      revertUintArg(error, 1),
+      revertUintArg(error, 2),
+      context?.originIsMoon === true,
+    );
     return insufficientShips
-      ?? "Selected origin planet does not have the requested ships. Refresh shipyard state and retry.";
+      ?? `Selected origin ${context?.originIsMoon ? "moon" : "planet"} does not have the requested ships. Refresh fleet state and retry.`;
+  }
+
+  if (selector === INSUFFICIENT_RESOURCES_REVERT_SELECTOR && context?.originIsMoon) {
+    return "The origin moon does not have enough resources or deuterium fuel for this mission. Refresh moon resources and fleet state before retrying.";
   }
 
   if (selector === "0x524f409b" && isColonizeMissionContext(context)) {
@@ -1939,6 +1954,7 @@ function insufficientShipsRevertReason(
   shipId: bigint | undefined,
   available: bigint | undefined,
   required: bigint | undefined,
+  originIsMoon = false,
 ): string | undefined {
   if (shipId === undefined || available === undefined || required === undefined) {
     return undefined;
@@ -1948,7 +1964,7 @@ function insufficientShipsRevertReason(
     ? shipLabelByContractId[shipNumber] ?? `ship #${shipNumber}`
     : "selected ship";
 
-  return `Need ${required.toLocaleString()} ${pluralShipLabel(shipLabel, required)}, only ${available.toLocaleString()} available on the origin planet. Refresh fleet state or reduce the selected ships before launching.`;
+  return `Need ${required.toLocaleString()} ${pluralShipLabel(shipLabel, required)}, only ${available.toLocaleString()} available on the origin ${originIsMoon ? "moon" : "planet"}. Refresh fleet state or reduce the selected ships before launching.`;
 }
 
 function pluralShipLabel(label: string, quantity: bigint): string {
@@ -2122,7 +2138,7 @@ async function sendWalletTransaction(
   provider: Eip1193Provider,
   account: string,
   transaction: TransactionRequest,
-  options: { accountProbeReadyChecked?: boolean } = {},
+  options: { accountProbeReadyChecked?: boolean; fleetMissionContext?: FleetMissionRevertContext } = {},
 ): Promise<string> {
   if (!options.accountProbeReadyChecked) {
     await prepareAccountProbeWalletForTransaction(provider, account);
@@ -2135,7 +2151,7 @@ async function sendWalletTransaction(
     });
   } catch (error) {
     if (isFleetMissionTransactionData(transaction.data)) {
-      const reason = fleetMissionRevertReason(error);
+      const reason = fleetMissionRevertReason(error, options.fleetMissionContext);
       if (reason) {
         throw new Error(reason);
       }
@@ -2587,6 +2603,57 @@ export function encodeLaunchBodyFleetMissionCall({
   ]);
 }
 
+export function encodeLaunchBodyAttackMissionCall({
+  originPlanetId,
+  targetPlanetId,
+  ships,
+  cargo,
+  speedPercent = 100,
+  originIsMoon,
+  targetIsMoon,
+  lootRatio,
+}: {
+  originPlanetId: bigint | number | string;
+  targetPlanetId: bigint | number | string;
+  ships: MissionShips;
+  cargo?: Partial<Pick<OnChainResources, "metal" | "crystal" | "deuterium">> | undefined;
+  speedPercent?: number | undefined;
+  originIsMoon: boolean;
+  targetIsMoon: boolean;
+  lootRatio: { metalBps: number; crystalBps: number; deuteriumBps: number };
+}): string {
+  if (lootRatio.metalBps + lootRatio.crystalBps + lootRatio.deuteriumBps !== 10_000) {
+    throw new Error("Attack loot ratio must total 100%.");
+  }
+  return encodeGameCall(GAME_SELECTORS.launchBodyAttackMission, [
+    originPlanetId,
+    targetPlanetId,
+    ships.smallCargo,
+    ships.lightFighter,
+    ships.recycler,
+    ships.colonyShip,
+    ships.largeCargo,
+    ships.heavyFighter,
+    ships.cruiser,
+    ships.battleship,
+    ships.bomber,
+    ships.destroyer,
+    ships.deathstar,
+    ships.battlecruiser,
+    ships.reaper,
+    ships.pathfinder,
+    cargo?.metal ?? 0,
+    cargo?.crystal ?? 0,
+    cargo?.deuterium ?? 0,
+    speedPercent,
+    originIsMoon ? 1 : 0,
+    targetIsMoon ? 1 : 0,
+    lootRatio.metalBps,
+    lootRatio.crystalBps,
+    lootRatio.deuteriumBps,
+  ]);
+}
+
 // VEY-KANEO-440/441: encode a launchDefenseHold call. Mirrors encodeLaunchFleetMissionCall's flat
 // layout (static MissionShips/Resources tuples inline to consecutive 32-byte words), but carries no
 // missionType (the selector is type-specific) and ends with the player-chosen `holdSeconds` (1h–32h)
@@ -2773,6 +2840,46 @@ export function encodeJoinAttackMissionCall({
     cargo?.metal ?? 0,
     cargo?.crystal ?? 0,
     cargo?.deuterium ?? 0,
+  ]);
+}
+
+export function encodeJoinBodyAttackMissionCall({
+  originPlanetId,
+  attackMissionId,
+  targetPlanetId,
+  ships,
+  cargo,
+  originIsMoon,
+}: {
+  originPlanetId: bigint | number | string;
+  attackMissionId: bigint | number | string;
+  targetPlanetId: bigint | number | string;
+  ships: MissionShips;
+  cargo?: Partial<Pick<OnChainResources, "metal" | "crystal" | "deuterium">> | undefined;
+  originIsMoon: boolean;
+}): string {
+  return encodeGameCall(GAME_SELECTORS.joinBodyAttackMission, [
+    originPlanetId,
+    attackMissionId,
+    targetPlanetId,
+    ships.smallCargo,
+    ships.lightFighter,
+    ships.recycler,
+    ships.colonyShip,
+    ships.largeCargo,
+    ships.heavyFighter,
+    ships.cruiser,
+    ships.battleship,
+    ships.bomber,
+    ships.destroyer,
+    ships.deathstar,
+    ships.battlecruiser,
+    ships.reaper,
+    ships.pathfinder,
+    cargo?.metal ?? 0,
+    cargo?.crystal ?? 0,
+    cargo?.deuterium ?? 0,
+    originIsMoon ? 1 : 0,
   ]);
 }
 
@@ -3903,7 +4010,20 @@ export async function sendLaunchBodyFleetMissionTransaction(
     from: account,
     to: contractAddress,
     data
-  });
+  }, { fleetMissionContext: { originIsMoon: params.originIsMoon } });
+}
+
+export async function sendLaunchBodyAttackMissionTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  params: Parameters<typeof encodeLaunchBodyAttackMissionCall>[0]
+): Promise<string> {
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodeLaunchBodyAttackMissionCall(params)
+  }, { fleetMissionContext: { originIsMoon: params.originIsMoon } });
 }
 
 export async function sendLaunchAttackMissionTransaction(
@@ -3932,6 +4052,19 @@ export async function sendJoinAttackMissionTransaction(
     to: contractAddress,
     data: encodeJoinAttackMissionCall(params)
   });
+}
+
+export async function sendJoinBodyAttackMissionTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  params: Parameters<typeof encodeJoinBodyAttackMissionCall>[0]
+): Promise<string> {
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodeJoinBodyAttackMissionCall(params)
+  }, { fleetMissionContext: { originIsMoon: params.originIsMoon } });
 }
 
 // VEY-KANEO-440/441: launch a DefenseHold (ACS Defend stationing) mission. Contract reverts —
@@ -4455,10 +4588,12 @@ export async function fetchWalletQueues(apiUrl: string, wallet: string, planetId
 export async function fetchAttackProtectionStatus(
   apiUrl: string,
   wallet: string,
-  targetPlanetId: string
+  targetPlanetId: string,
+  targetIsMoon = false
 ): Promise<AttackProtectionStatus> {
   const params = new URLSearchParams();
   params.set("targetPlanetId", targetPlanetId);
+  if (targetIsMoon) params.set("targetIsMoon", "true");
   return fetchWalletJson<AttackProtectionStatus>(
     apiUrl,
     wallet,

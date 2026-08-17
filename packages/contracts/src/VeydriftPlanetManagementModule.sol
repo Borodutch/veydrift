@@ -308,8 +308,16 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
     ///      mission is Returning/Recalled, its `returnAt` has elapsed, and no unresolved combat
     ///      arrival is pending on the origin planet (the combat-snapshot integrity gate).
     function _landFleetReturn(uint256 missionId, FleetMission storage mission) private {
-        _creditBodyResources(mission.originPlanetId, mission.originIsMoon, mission.cargo);
-        _creditBodyMissionShips(mission.originPlanetId, mission.originIsMoon, mission.ships);
+        bool returnToMoon = mission.originIsMoon
+            && _missionMoonExistsForOwner(missionId, mission.originPlanetId, mission.owner, true);
+        if (mission.originIsMoon && !returnToMoon) {
+            // A destroyed moon cannot be recreated by a later fleet return. Preserve the owner's
+            // fleet/cargo by landing it on the parent planet and update the mission body projection.
+            mission.originIsMoon = false;
+            emit FleetMissionBodies(missionId, false, mission.targetIsMoon);
+        }
+        _creditBodyResources(mission.originPlanetId, returnToMoon, mission.cargo);
+        _creditBodyMissionShips(mission.originPlanetId, returnToMoon, mission.ships);
         mission.status = FleetMissionStatus.Returned;
         activeFleetMissionCount[mission.owner] -= 1;
         IVeydriftResolvedMissionUntracker(address(this)).untrackResolvedFleetMission(missionId);

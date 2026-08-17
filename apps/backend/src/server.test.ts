@@ -80,6 +80,7 @@ const moonCreatedTopic = "0x395ddd11cfc613034fc4941029df5968212af4a52ba611d84d32
 const moonResourcesSettledTopic = "0xb20fd9e652e1b740544f362fb3047c43a7bf0d6c7fbf0f5cab5f1f939aac6917";
 const researchQueuedTopic = "0x2c3d4c823cd097fa6cbea60fb91c561d6a497270c397a8c8258170458fe69e73";
 const fleetMissionLaunchedTopic = "0x95e2cb506aa14052bac412e42f47fb34d9234819a960761a7bc7f1920c0ab456";
+const fleetMissionBodiesTopic = "0xfa464e2180f08e3e4d8c4247566d0616a5e1ab845d1678c47fedae6d44e9c502";
 const fleetMissionCargoTopic = "0x3daa6311ecdadad6781f70e5d285e7150f9dc165db88d23be8867be4de33ff29";
 const fleetMissionShipsTopic = "0xf581cbe97357884794500d80286cfbe823fed3b5d77446e477aa694ce89fc82d";
 const fleetMissionRecalledTopic = "0x2c9b31f1abc732f3b6d28e7724439ea4713ae516632088b8c4dc0211479dc6ca";
@@ -1561,6 +1562,7 @@ describe("Veydrift backend", () => {
         gameConfigured: false,
         highscoresEndpoint: true,
         migrationConfigured: false,
+        moonAttackParity: false,
         moonConfigured: false,
         randomnessConfigured: false,
         referralsConfigured: false,
@@ -1587,6 +1589,33 @@ describe("Veydrift backend", () => {
       rpcProvider: "unknown"
     });
     expect(response.status).toBe(200);
+  });
+
+  test("keeps moon attack parity fail closed until operators explicitly enable it", async () => {
+    const previousEnabled = process.env.VEYDRIFT_MOON_ATTACK_PARITY_ENABLED;
+    const previousActivation = process.env.VEYDRIFT_MOON_ATTACK_PARITY_ACTIVATED_AT;
+    try {
+      delete process.env.VEYDRIFT_MOON_ATTACK_PARITY_ENABLED;
+      delete process.env.VEYDRIFT_MOON_ATTACK_PARITY_ACTIVATED_AT;
+      await expect(
+        (await handler(new Request("http://localhost/runtime-config"))).json()
+      ).resolves.toMatchObject({ featureSupport: { moonAttackParity: false } });
+
+      process.env.VEYDRIFT_MOON_ATTACK_PARITY_ENABLED = "true";
+      await expect(
+        (await handler(new Request("http://localhost/runtime-config"))).json()
+      ).resolves.toMatchObject({ featureSupport: { moonAttackParity: false } });
+
+      process.env.VEYDRIFT_MOON_ATTACK_PARITY_ACTIVATED_AT = "1770000000";
+      await expect(
+        (await handler(new Request("http://localhost/runtime-config"))).json()
+      ).resolves.toMatchObject({ featureSupport: { moonAttackParity: true } });
+    } finally {
+      if (previousEnabled === undefined) delete process.env.VEYDRIFT_MOON_ATTACK_PARITY_ENABLED;
+      else process.env.VEYDRIFT_MOON_ATTACK_PARITY_ENABLED = previousEnabled;
+      if (previousActivation === undefined) delete process.env.VEYDRIFT_MOON_ATTACK_PARITY_ACTIVATED_AT;
+      else process.env.VEYDRIFT_MOON_ATTACK_PARITY_ACTIVATED_AT = previousActivation;
+    }
   });
 
   test("builds reader runtime config without request handler dependencies", async () => {
@@ -1877,6 +1906,7 @@ describe("Veydrift backend", () => {
           chickenBurnConfigured: true,
           gameConfigured: true,
           highscoresEndpoint: true,
+          moonAttackParity: false,
           moonConfigured: true,
           randomnessConfigured: true,
           researchEndpoint: true,
@@ -2042,6 +2072,7 @@ describe("Veydrift backend", () => {
               gameConfigured: false,
               highscoresEndpoint: true,
               migrationConfigured: false,
+              moonAttackParity: false,
               moonConfigured: false,
               randomnessConfigured: false,
               referralsConfigured: false,
@@ -5293,6 +5324,13 @@ describe("Veydrift backend", () => {
       topics: [riftExtractionStartedTopic, addressTopic(player), topic(7n), topic(0n)],
       data: abiWords(1_000n, 1_770_000_000n, 1_772_419_200n)
     });
+    indexer.applyLog({
+      blockNumber: "0x201",
+      transactionHash: "0xmoon-protection-target",
+      logIndex: "0x0",
+      topics: [moonCreatedTopic, addressTopic(player), topic(7n)],
+      data: abiWords(2n, 44n, 9n, 12n, 8777n)
+    });
     const handler = createRequestHandler({ config: configuredTestConfig, chainReader: new MockChainReader(), indexer });
 
     const response = await handler(new Request(`http://localhost/wallet/${attacker}/attack-protection?targetPlanetId=7`));
@@ -5307,6 +5345,37 @@ describe("Veydrift backend", () => {
       // balance until ordinary score protection no longer applies.
       plunderBps: 0,
       scoreComparison: { protected: true }
+    });
+
+    const moonResponse = await handler(new Request(
+      `http://localhost/wallet/${attacker}/attack-protection?targetPlanetId=7&targetIsMoon=true`
+    ));
+    const moonBody = await moonResponse.json();
+
+    expect(moonResponse.status).toBe(200);
+    expect(moonBody).toMatchObject({
+      allowed: false,
+      blockedReason: "score_protection",
+      plunderBps: 0,
+      scoreComparison: { protected: true }
+    });
+    expect(moonBody).not.toHaveProperty("riftProtectionBypass");
+  });
+
+  test("moon attack protection fails closed when the target moon does not exist", async () => {
+    const attacker = "0xbf74483db914192bb0a9577f3d8fb29a6d4c08ee" as Address;
+    const indexer = await twoPlanetIndexer(attacker);
+    const handler = createRequestHandler({ config: configuredTestConfig, chainReader: new MockChainReader(), indexer });
+
+    const response = await handler(new Request(
+      `http://localhost/wallet/${attacker}/attack-protection?targetPlanetId=7&targetIsMoon=true`
+    ));
+    const body = await response.json();
+
+    expect(response.status).toBe(404);
+    expect(body).toMatchObject({
+      error: "target_moon_not_indexed",
+      source: "contract-state-indexer"
     });
   });
 
@@ -5422,6 +5491,68 @@ describe("Veydrift backend", () => {
       blockedReason: "bashing_limit",
       blockedReasonLabel: "Attack blocked: bashing limit reached for this attacker, defender, and planet in the current 24-hour window."
     });
+  });
+
+  test("moon and planet previews share the active pre-cutover bashing window", async () => {
+    const attacker = "0x9999999999999999999999999999999999999999" as Address;
+    const indexer = await twoPlanetIndexer(attacker);
+    indexer.applyLog(defenseCompletedLog({ planetId: 8n, defenseId: 0n, total: 350_000n, logIndex: 1 }));
+    indexer.applyLog(defenseCompletedLog({ planetId: 7n, defenseId: 0n, total: 350_000n, logIndex: 2 }));
+    indexer.applyLog({
+      blockNumber: "0x200",
+      transactionHash: "0xmoon-bashing-target",
+      logIndex: "0x0",
+      topics: [moonCreatedTopic, addressTopic(player), topic(7n)],
+      data: abiWords(2n, 44n, 9n, 12n, 8777n)
+    });
+    const nowSeconds = Math.floor(Date.now() / 1_000);
+    const previousActivation = process.env.VEYDRIFT_MOON_ATTACK_PARITY_ACTIVATED_AT;
+    process.env.VEYDRIFT_MOON_ATTACK_PARITY_ACTIVATED_AT = String(nowSeconds - 1_000);
+    try {
+      for (let index = 0; index < 6; index++) {
+        const missionId = BigInt(index + 1);
+        indexer.applyLog(attackLaunchLog({
+          missionId,
+          attacker,
+          targetPlanetId: 7n,
+          blockTimestampSeconds: nowSeconds - 2_000 + index,
+          logIndex: 100 + index,
+        }));
+        indexer.applyLog({
+          blockNumber: "0x201",
+          blockTimestamp: `0x${(nowSeconds - 2_000 + index).toString(16)}`,
+          transactionHash: `0xmoon-body-${index}`,
+          logIndex: `0x${(200 + index).toString(16)}`,
+          topics: [fleetMissionBodiesTopic, topic(missionId)],
+          data: abiWords(0n, 1n)
+        });
+      }
+      const handler = createRequestHandler({ config: configuredTestConfig, chainReader: new MockChainReader(), indexer });
+      const planetResponse = await handler(new Request(`http://localhost/wallet/${attacker}/attack-protection?targetPlanetId=7`));
+      const moonResponse = await handler(new Request(`http://localhost/wallet/${attacker}/attack-protection?targetPlanetId=7&targetIsMoon=true`));
+      expect(await planetResponse.json()).toMatchObject({ allowed: false, blockedReason: "bashing_limit" });
+      expect(await moonResponse.json()).toMatchObject({ allowed: false, blockedReason: "bashing_limit" });
+      const rankingsResponse = await handler(new Request(
+        `http://localhost/highscores?limit=10&currentWallet=${attacker}&includeAttackProtection=true`
+      ));
+      const rankingsBody = await rankingsResponse.json();
+      expect(rankingsBody.rankings.total.find((entry: HighscoreEntry) => entry.wallet === player)?.attackProtection)
+        .toMatchObject({ allowed: false, blockedReason: "bashing_limit" });
+
+      setSystemTime(new Date((nowSeconds + 86_401) * 1_000));
+      const expiredPlanetResponse = await handler(new Request(
+        `http://localhost/wallet/${attacker}/attack-protection?targetPlanetId=7`
+      ));
+      const expiredMoonResponse = await handler(new Request(
+        `http://localhost/wallet/${attacker}/attack-protection?targetPlanetId=7&targetIsMoon=true`
+      ));
+      expect(await expiredPlanetResponse.json()).toMatchObject({ allowed: true, blockedReason: "none" });
+      expect(await expiredMoonResponse.json()).toMatchObject({ allowed: true, blockedReason: "none" });
+    } finally {
+      setSystemTime(new Date(1_770_007_680_000));
+      if (previousActivation === undefined) delete process.env.VEYDRIFT_MOON_ATTACK_PARITY_ACTIVATED_AT;
+      else process.env.VEYDRIFT_MOON_ATTACK_PARITY_ACTIVATED_AT = previousActivation;
+    }
   });
 
   test("indexed attack protection allows the attack below the bashing cap (VEY-KANEO-489)", async () => {

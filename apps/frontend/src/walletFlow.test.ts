@@ -15,7 +15,9 @@ import {
   encodeColonizationTargetId,
   encodeGameCall,
   encodeJoinAttackMissionCall,
+  encodeJoinBodyAttackMissionCall,
   encodeLaunchAttackMissionCall,
+  encodeLaunchBodyAttackMissionCall,
   encodeLaunchBodyFleetMissionCall,
   encodeLaunchDefenseHoldCall,
   encodeLaunchInterplanetaryMissileAttackCall,
@@ -27,6 +29,7 @@ import {
   ensureBaseMainnetNetwork,
   fetchBurningChickenForOwner,
   fetchAllianceState,
+  fetchAttackProtectionStatus,
   fetchDefenseState,
   fetchFleetMissionArchive,
   fetchFleetMissionVisibility,
@@ -70,6 +73,7 @@ import {
   sendCreateColonyTransaction,
   sendJoinAttackMissionTransaction,
   sendLaunchAttackMissionTransaction,
+  sendLaunchBodyAttackMissionTransaction,
   sendLaunchInterplanetaryMissileAttackTransaction,
   sendLaunchFleetMissionTransaction,
   sendLaunchTransportBatchTransaction,
@@ -1049,6 +1053,15 @@ describe("walletFlow", () => {
       targetPlanetId: 9,
       ships,
     });
+    const moonJoinData = encodeJoinBodyAttackMissionCall({
+      originPlanetId: 7,
+      attackMissionId: 12,
+      targetPlanetId: 9,
+      ships,
+      originIsMoon: true,
+    });
+    expect(moonJoinData.slice(0, 10)).toBe("0xdd3e1279");
+    expect(moonJoinData.slice(-64)).toBe("1".padStart(64, "0"));
     const colonyData = encodeLaunchFleetMissionCall({
       originPlanetId: 7,
       targetPlanetId: encodeColonizationTargetId(2, 44, 10),
@@ -1270,6 +1283,75 @@ describe("walletFlow", () => {
         }],
       },
     ]);
+  });
+
+  test("reports stale moon ship counts from the body-aware attack launch send revert", async () => {
+    const ships = {
+      smallCargo: 4,
+      lightFighter: 0,
+      recycler: 0,
+      colonyShip: 0,
+      largeCargo: 0,
+      heavyFighter: 0,
+      cruiser: 0,
+      battleship: 0,
+      bomber: 0,
+      destroyer: 0,
+      deathstar: 0,
+      battlecruiser: 0,
+      reaper: 0,
+      pathfinder: 0,
+    };
+    const provider = mockProvider(async ({ method }) => {
+      if (method === "eth_sendTransaction") {
+        throw { code: 3, message: "execution reverted", data: customErrorData("0x705f508b", [0, 3, 4]) };
+      }
+      throw new Error(`Unexpected method ${method}`);
+    });
+
+    await expect(sendLaunchBodyAttackMissionTransaction(provider, account, contract, {
+      originPlanetId: 7,
+      targetPlanetId: 9,
+      ships,
+      speedPercent: 100,
+      originIsMoon: true,
+      targetIsMoon: false,
+      lootRatio: { metalBps: 3400, crystalBps: 3300, deuteriumBps: 3300 },
+    })).rejects.toThrow("Need 4 Small Cargo, only 3 available on the origin moon");
+  });
+
+  test("reports moon resource shortages against the origin moon", async () => {
+    const provider = mockProvider(async ({ method }) => {
+      if (method === "eth_sendTransaction") {
+        throw { code: 3, message: "execution reverted", data: customErrorData("0x2ab0f96f", [0, 0, 0]) };
+      }
+      throw new Error(`Unexpected method ${method}`);
+    });
+
+    await expect(sendLaunchBodyAttackMissionTransaction(provider, account, contract, {
+      originPlanetId: 7,
+      targetPlanetId: 9,
+      ships: {
+        smallCargo: 1,
+        lightFighter: 0,
+        recycler: 0,
+        colonyShip: 0,
+        largeCargo: 0,
+        heavyFighter: 0,
+        cruiser: 0,
+        battleship: 0,
+        bomber: 0,
+        destroyer: 0,
+        deathstar: 0,
+        battlecruiser: 0,
+        reaper: 0,
+        pathfinder: 0,
+      },
+      speedPercent: 100,
+      originIsMoon: true,
+      targetIsMoon: false,
+      lootRatio: { metalBps: 3400, crystalBps: 3300, deuteriumBps: 3300 },
+    })).rejects.toThrow("origin moon does not have enough resources or deuterium fuel");
   });
 
   test("reports cargo capacity failures from the fleet launch send revert", async () => {
@@ -1681,6 +1763,44 @@ describe("walletFlow", () => {
     );
   });
 
+  test("encodes a body-aware loot-ratio attack mission in contract ABI order", () => {
+    const ships = {
+      smallCargo: 1,
+      lightFighter: 2,
+      recycler: 3,
+      colonyShip: 4,
+      largeCargo: 5,
+      heavyFighter: 6,
+      cruiser: 7,
+      battleship: 8,
+      bomber: 9,
+      destroyer: 10,
+      deathstar: 11,
+      battlecruiser: 12,
+      reaper: 13,
+      pathfinder: 14,
+    };
+
+    expect(encodeLaunchBodyAttackMissionCall({
+      originPlanetId: 7,
+      targetPlanetId: 9,
+      ships,
+      speedPercent: 50,
+      originIsMoon: true,
+      targetIsMoon: false,
+      lootRatio: { metalBps: 2000, crystalBps: 4000, deuteriumBps: 4000 },
+    })).toBe(
+      "0xa2baf848"
+        + [
+          7, 9,
+          1, 2, 3, 4, 5, 6, 7,
+          8, 9, 10, 11, 12, 13, 14,
+          0, 0, 0, 50, 1, 0,
+          2000, 4000, 4000,
+        ].map((value) => BigInt(value).toString(16).padStart(64, "0")).join("")
+    );
+  });
+
   test("rejects an attack loot ratio that does not total 100%", () => {
     const ships = {
       smallCargo: 0,
@@ -1704,6 +1824,14 @@ describe("walletFlow", () => {
       ships,
       lootRatio: { metalBps: 2000, crystalBps: 4000, deuteriumBps: 3000 },
     })).toThrow("Loot ratio must total 100%.");
+    expect(() => encodeLaunchBodyAttackMissionCall({
+      originPlanetId: 7,
+      targetPlanetId: 9,
+      ships,
+      originIsMoon: true,
+      targetIsMoon: false,
+      lootRatio: { metalBps: 2000, crystalBps: 4000, deuteriumBps: 3000 },
+    })).toThrow("Attack loot ratio must total 100%.");
   });
 
   test("encodes the fleet recall transaction", async () => {
@@ -3066,6 +3194,30 @@ describe("walletFlow", () => {
       },
     ]);
     expect(calls.map((call) => new URL(call.url).searchParams.has("source"))).not.toContain(true);
+  });
+
+  test("requests moon-specific attack protection without changing planet requests", async () => {
+    const originalFetch = globalThis.fetch;
+    const urls: string[] = [];
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+      urls.push(String(input));
+      return new Response(JSON.stringify({ allowed: true, blockedReason: "none" }), {
+        headers: { "content-type": "application/json" },
+        status: 200,
+      });
+    }) as unknown as typeof fetch;
+
+    try {
+      await fetchAttackProtectionStatus("https://api.example.test", account, "7");
+      await fetchAttackProtectionStatus("https://api.example.test", account, "7", true);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    expect(urls).toEqual([
+      `https://api.example.test/wallet/${account}/attack-protection?targetPlanetId=7`,
+      `https://api.example.test/wallet/${account}/attack-protection?targetPlanetId=7&targetIsMoon=true`,
+    ]);
   });
 
   test("fresh mission reads never reuse an older in-flight response", async () => {

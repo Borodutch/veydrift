@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
 import {VeydriftBatchTransportModule} from "./VeydriftBatchTransportModule.sol";
+import {VeydriftAcsAttackModule} from "./VeydriftAcsAttackModule.sol";
 import {VeydriftCatalog} from "./libraries/VeydriftCatalog.sol";
 import {VeydriftAntiRaidPrimitives} from "./libraries/VeydriftAntiRaidPrimitives.sol";
 import {VeydriftDependencies} from "./libraries/VeydriftDependencies.sol";
@@ -25,6 +26,7 @@ contract VeydriftGame is VeydriftResourceReserves {
     address private immutable _defenseHoldModule;
     address private immutable _stateMigrationModule;
     address private immutable _batchTransportModule;
+    address private immutable _acsAttackModule;
 
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
 
@@ -55,11 +57,24 @@ contract VeydriftGame is VeydriftResourceReserves {
         _defenseHoldModule = defenseHoldModule;
         _stateMigrationModule = stateMigrationModule;
         _batchTransportModule = address(new VeydriftBatchTransportModule());
+        _acsAttackModule = address(new VeydriftAcsAttackModule());
     }
 
     function initialize(address admin) external initializer {
         if (admin == address(0)) revert Unauthorized(admin);
         __VeydriftGameStorage_init(admin);
+    }
+
+    /// @notice Idempotent upgrade hook that separates new moon bashing windows without resetting an
+    ///         active legacy shared window. Fresh deployments set the marker during initialize.
+    function initializeMoonAttackParity() external {
+        if (_moonAttackParityActivatedAt == 0) {
+            _moonAttackParityActivatedAt = uint64(block.timestamp);
+        }
+    }
+
+    function moonAttackParityActivatedAt() external view returns (uint64) {
+        return _moonAttackParityActivatedAt;
     }
 
     function transferOwnership(address nextOwner) external onlyOwner {
@@ -364,6 +379,21 @@ contract VeydriftGame is VeydriftResourceReserves {
         _delegateToDefenseHoldModule();
     }
 
+    /// @notice Launch a body-aware Attack mission with a player-selected loot ratio.
+    function launchBodyAttackMission(
+        uint256,
+        uint256,
+        MissionShips calldata,
+        Resources calldata,
+        uint16,
+        bool,
+        bool,
+        LootRatio calldata
+    ) external returns (uint256) {
+        _touchPlayer(msg.sender);
+        _delegateToPlayModule();
+    }
+
     function launchFleetMission(
         uint256,
         uint256,
@@ -405,7 +435,19 @@ contract VeydriftGame is VeydriftResourceReserves {
         returns (uint256)
     {
         _touchPlayer(msg.sender);
-        _delegateToPlayModule();
+        _delegateToAcsAttackModule();
+    }
+
+    function joinBodyAttackMission(
+        uint256,
+        uint256,
+        uint256,
+        MissionShips calldata,
+        Resources calldata,
+        bool
+    ) external returns (uint256) {
+        _touchPlayer(msg.sender);
+        _delegateToAcsAttackModule();
     }
 
     /// @notice Launch an OGame-style ACS Defend (DefenseHold) mission: station a fleet at a planet
@@ -477,6 +519,13 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function attackProtectionStatus(address, uint256)
+        external
+        returns (AttackBlockReason, uint8, uint16)
+    {
+        _delegateToAttackProtectionModule();
+    }
+
+    function attackBodyProtectionStatus(address, uint256, bool)
         external
         returns (AttackBlockReason, uint8, uint16)
     {
@@ -1016,6 +1065,19 @@ contract VeydriftGame is VeydriftResourceReserves {
     function _delegateToDefenseHoldModule() private {
         _requireGameNotPaused();
         (bool ok, bytes memory result) = _defenseHoldModule.delegatecall(msg.data);
+        if (!ok) {
+            assembly ("memory-safe") {
+                revert(add(result, 32), mload(result))
+            }
+        }
+        assembly ("memory-safe") {
+            return(add(result, 32), mload(result))
+        }
+    }
+
+    function _delegateToAcsAttackModule() private {
+        _requireGameNotPaused();
+        (bool ok, bytes memory result) = _acsAttackModule.delegatecall(msg.data);
         if (!ok) {
             assembly ("memory-safe") {
                 revert(add(result, 32), mload(result))

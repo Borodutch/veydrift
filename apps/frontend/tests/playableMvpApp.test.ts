@@ -296,7 +296,8 @@ describe("Playable MVP app display helpers", () => {
     });
     expect(gameActionsAvailableForBody("moon", true)).toBe(false);
     expect(gameActionsAvailableForBody("planet", true)).toBe(true);
-    expect(playableMvpSource).toContain("const missionTransactionInputsAvailable = gameContractTransactionInputsAvailable;");
+    expect(playableMvpSource).toContain("const missionTransactionInputsAvailable = currentPlanetTransactionInputsAvailable(");
+    expect(playableMvpSource).toContain("gameContractTransactionInputsAvailable,\n    activePlanetStateFresh,");
     expect(playableMvpSource).toContain("const missionLaunchBlocker = missionTransactionUnavailableReason ?? missionLaunchStateBlocker;");
     expect(playableMvpSource).toContain("canTransact={canSubmitMissionTransaction}");
     expect(playableMvpSource).toContain("transactionUnavailableReason={missionTransactionUnavailableReason}");

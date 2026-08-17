@@ -144,6 +144,9 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
     mapping(bytes32 battleKey => uint256 outcomeId) internal moonDestructionOutcomeByBattle;
     mapping(bytes32 burnId => bool granted) public chickenBurnMoonGranted;
     mapping(address player => uint8 count) public chickenBurnMoonGrantCountOf;
+    // Append-only incarnation counter. Existing live moons are generation zero; every creation
+    // after this upgrade advances the counter, so in-flight missions cannot bind to a replacement.
+    mapping(uint256 planetId => uint64 generation) internal _moonGenerations;
 
     error ChickenBurnAlreadyGranted(bytes32 burnId);
     error ConstructionActive();
@@ -395,6 +398,7 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
         if (planetRef.owner != player) revert NotMoonOwner();
         if (_moons[planetId].exists) revert MoonAlreadyExists(planetId);
 
+        _moonGenerations[planetId] += 1;
         _moons[planetId] = Moon({
             exists: true,
             planetId: planetId,
@@ -880,6 +884,10 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
         return _moons[planetId];
     }
 
+    function moonGeneration(uint256 planetId) external view returns (uint64) {
+        return _moonGenerations[planetId];
+    }
+
     function moonResources(uint256 planetId)
         external
         view
@@ -1315,6 +1323,7 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
     ) private returns (Moon memory createdMoon) {
         uint16 fields = _moonFields(randomWord);
         uint16 diameterKm = _moonDiameter(randomWord);
+        _moonGenerations[planetId] += 1;
         createdMoon = Moon({
             exists: true,
             planetId: planetId,

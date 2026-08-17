@@ -89,7 +89,11 @@ contract UpgradeGameForkTest is Test {
         // Perform the upgrade as the real ProxyAdmin owner.
         vm.prank(PROXY_ADMIN_OWNER);
         ProxyAdmin(PROXY_ADMIN)
-            .upgradeAndCall(ITransparentUpgradeableProxy(PROXY), address(newImpl), "");
+            .upgradeAndCall(
+                ITransparentUpgradeableProxy(PROXY),
+                address(newImpl),
+                abi.encodeCall(VeydriftGame.initializeMoonAttackParity, ())
+            );
 
         // Implementation flipped to the new code.
         address implAfter = _addrFromSlot(IMPL_SLOT);

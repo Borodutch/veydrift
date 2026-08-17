@@ -155,6 +155,49 @@ describe("post-transaction refresh reconciliation", () => {
     )).rejects.toThrow("launched mission is still syncing");
   });
 
+  test("does not match a placeholder-hash planet mission for an otherwise identical moon launch", () => {
+    const txHash = "0xmoonlaunch";
+    const expected = expectedMissionLaunch({
+      txHash,
+      owner: wallet,
+      originPlanetId: "7",
+      targetPlanetId: "9",
+      originIsMoon: true,
+      targetIsMoon: true,
+      missionType: "Attack",
+      ships: { smallCargo: 2 },
+      submittedAtMs: 1_770_000_000_000,
+      travelSeconds: 300,
+    });
+    const wrongBodies = mission("1475", {
+      transactionHash: "0x",
+      blockNumber: "0",
+      missionType: "Attack",
+      originIsMoon: false,
+      targetIsMoon: false,
+      ships: { smallCargo: "2" },
+      arrivalAt: "1770000305",
+      returnAt: "1770000605",
+    });
+    const correctBodies = mission("1476", {
+      ...wrongBodies,
+      missionId: "1476",
+      originIsMoon: true,
+      targetIsMoon: true,
+    });
+
+    expect(isMissionLaunchStateVisible(
+      missionLaunchSnapshot({ outgoing: [wrongBodies], allActiveMissions: [wrongBodies] }),
+      txHash,
+      expected,
+    )).toBe(false);
+    expect(missionLaunchMissionsForTransaction(
+      missionLaunchSnapshot({ outgoing: [correctBodies], allActiveMissions: [correctBodies] }),
+      txHash,
+      expected,
+    ).map((entry) => entry.missionId)).toEqual(["1476"]);
+  });
+
   test("waits for Mission Control to reach the transaction receipt block", async () => {
     const stale = { ...emptyFleetVisibility(), indexedBlock: "100", indexedRevision: "1:0" };
     const current = { ...emptyFleetVisibility(), indexedBlock: "101", indexedRevision: "1:1" };

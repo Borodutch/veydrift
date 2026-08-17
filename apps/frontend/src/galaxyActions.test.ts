@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { galaxyActionsForSlot } from "./galaxyActions";
+import {
+  galaxyActionsForMoonSlot,
+  galaxyAttackProtectionRequests,
+  unavailableGalaxyAttackProtection,
+} from "./components/GalaxyView";
 import { planetDetailGalaxyActions } from "./components/PlanetDetail";
 import { rankingsAttackProtectionForEntry, rankingsProtectionPresentation } from "./rankingsAttackProtection";
 import type { Planet } from "./types";
@@ -7,6 +12,32 @@ import type { Planet } from "./types";
 const account = "0x1111111111111111111111111111111111111111";
 
 describe("galaxyActions", () => {
+  test("loads and applies moon-specific protection independently from the parent planet", () => {
+    const moonTarget = planet({ hasMoon: true });
+    expect(galaxyAttackProtectionRequests(
+      [moonTarget],
+      account,
+      { galaxy: 9, system: 9, position: 9 },
+    )).toEqual([
+      { planetId: moonTarget.occupiedBy!.planetId, targetIsMoon: false },
+      { planetId: moonTarget.occupiedBy!.planetId, targetIsMoon: true },
+    ]);
+
+    const attack = galaxyActionsForMoonSlot({
+      account,
+      attackProtection: unavailableGalaxyAttackProtection(moonTarget.occupiedBy!.planetId),
+      defenseState: null,
+      homePlanetId: "7",
+      planet: moonTarget,
+      shipyardState: shipyardState([{ id: 1, count: 3 }]),
+    }).find((action) => action.kind === "attack");
+
+    expect(attack).toMatchObject({
+      enabled: false,
+      reason: "Attack protection is unavailable. Refresh Galaxy before launching.",
+    });
+  });
+
   test("enables recycler harvest only when indexed debris and recyclers are present", () => {
     const enemy = planet({
       debrisField: {
