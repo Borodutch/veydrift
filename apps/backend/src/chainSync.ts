@@ -52,6 +52,10 @@ type ChainSyncIndexer = Partial<Pick<SettlementIndexer,
 
 const PAID_ALLIANCE_REORG_OVERLAP_BLOCKS = 64n;
 const PAID_ALLIANCE_REORG_CHECK_INTERVAL_BLOCKS = 16n;
+// Re-read the latest complete generic range on every HTTP poll. A websocket callback can contain only
+// some logs from a block; txHash:logIndex dedupe makes this bounded replay cheap and idempotent while
+// ensuring a sibling omitted from that callback is still collected by HTTP even when head has not moved.
+const GENERIC_POLL_REPLAY_BLOCKS = 64n;
 
 export type ReferralHistoryBackfillSnapshot = {
   completedAt: string | null;
@@ -377,8 +381,9 @@ export class ChainSyncService {
     });
   }
 
-  // One poll pass: resolve head, ingest [cursor+1, head], advance the cursor. Reentrancy-guarded so a
-  // slow getLogs that overruns the interval can never run two passes against the same range at once.
+  // One poll pass: resolve head, ingest a bounded overlap through head, advance the cursor.
+  // Reentrancy-guarded so a slow getLogs that overruns the interval can never run two passes against
+  // the same range at once.
   // Public so the interval drives it and tests can step the loop deterministically.
   async poll(): Promise<void> {
     if (this.stopped || this.pollInProgress) {
@@ -408,8 +413,8 @@ export class ChainSyncService {
         this.cursor = this.initialCursor();
       }
 
-      if (head > this.cursor) {
-        const fromBlock = this.cursor < 0n ? 0n : this.cursor + 1n;
+      const fromBlock = this.genericPollFromBlock(head);
+      if (head >= fromBlock) {
         this.lastGetLogsRange = { fromBlock: fromBlock.toString(), toBlock: head.toString() };
         const getLogsStartedAt = Date.now();
         let logs: RpcLog[];
@@ -945,6 +950,18 @@ export class ChainSyncService {
       }
     }
     return this.config.indexFromBlock > 0n ? this.config.indexFromBlock - 1n : -1n;
+  }
+
+  private genericPollFromBlock(head: bigint): bigint {
+    const replayBase = this.config.indexFromBlock > 0n ? this.config.indexFromBlock : 0n;
+    if (this.cursor === null || this.cursor < replayBase) {
+      return replayBase;
+    }
+    // The websocket provider can be ahead of the HTTP provider briefly. Bound the overlap relative to
+    // the lower observed tip; once HTTP reaches the websocket block, that same block is replayed too.
+    const replayTip = head < this.cursor ? head : this.cursor;
+    const overlapStart = replayTip - (GENERIC_POLL_REPLAY_BLOCKS - 1n);
+    return overlapStart > replayBase ? overlapStart : replayBase;
   }
 
   private notify(event: ChainSyncEvent): void {
