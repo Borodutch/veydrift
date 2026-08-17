@@ -21,6 +21,10 @@ const promptnessTargetMs = 60_000;
 const latencySampleLimit = 1_000;
 const initialFailureRetryMs = 30_000;
 const maxFailureRetryMs = 300_000;
+// Combat resolution is intentionally bounded below 25M gas by the contract regression suite.
+// Supply a 30M envelope explicitly, including delegatecall forwarding headroom: Reth's estimator
+// can stop at an inner out-of-gas revert and misreport a valid battle as UnsupportedGameplayModule.
+const fleetMissionResolutionGas = 30_000_000n;
 
 const veydriftGameResolutionAbi = [
   {
@@ -406,7 +410,8 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
             chain: this.chain!,
             functionName,
             args: [BigInt(missionId)],
-            nonce
+            nonce,
+            ...(functionName === "resolveFleetMission" ? { gas: fleetMissionResolutionGas } : {})
           });
           this.nextNonce = nonce + 1;
           return submittedHash;
@@ -423,7 +428,11 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     if (!this.rpcUrl) {
       throw new Error("unlocked-account mission resolver is missing RPC URL");
     }
-    return this.enqueueSubmission(() => this.sendUnlockedTransaction(this.sender as Address, data));
+    return this.enqueueSubmission(() => this.sendUnlockedTransaction(
+      this.sender as Address,
+      data,
+      functionName === "resolveFleetMission" ? fleetMissionResolutionGas : undefined
+    ));
   }
 
   private async enqueueSubmission<T>(submit: () => Promise<T>): Promise<T> {
@@ -448,7 +457,7 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     }
   }
 
-  private async sendUnlockedTransaction(from: Address, data: Hex): Promise<string> {
+  private async sendUnlockedTransaction(from: Address, data: Hex, gas?: bigint): Promise<string> {
     const response = await fetch(this.rpcUrl!, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -456,7 +465,12 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
         jsonrpc: "2.0",
         id: 1,
         method: "eth_sendTransaction",
-        params: [{ from, to: this.gameAddress, data }]
+        params: [{
+          from,
+          to: this.gameAddress,
+          data,
+          ...(gas === undefined ? {} : { gas: `0x${gas.toString(16)}` })
+        }]
       })
     });
     const body = await response.json() as { error?: { message?: string }; result?: string };

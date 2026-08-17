@@ -364,7 +364,7 @@ describe("MissionResolutionService", () => {
 describe("ViemMissionResolutionChainClient", () => {
   test("serializes broadcasts while assigning pending nonces, then waits for receipts concurrently", async () => {
     const account = privateKeyToAccount(`0x${"1".repeat(64)}`);
-    const nonces: number[] = [];
+    const broadcasts: Array<{ functionName: string; gas: bigint | undefined; nonce: number }> = [];
     let activeBroadcasts = 0;
     let peakBroadcasts = 0;
     const publicClient = {
@@ -373,10 +373,14 @@ describe("ViemMissionResolutionChainClient", () => {
       async waitForTransactionReceipt() { return { status: "success" }; }
     } as unknown as PublicClient;
     const walletClient = {
-      async writeContract(input: { nonce: number }) {
+      async writeContract(input: { functionName: string; gas?: bigint; nonce: number }) {
         activeBroadcasts += 1;
         peakBroadcasts = Math.max(peakBroadcasts, activeBroadcasts);
-        nonces.push(input.nonce);
+        broadcasts.push({
+          functionName: input.functionName,
+          gas: input.gas,
+          nonce: input.nonce
+        });
         await new Promise((resolve) => setTimeout(resolve, 1));
         activeBroadcasts -= 1;
         return `0x${input.nonce.toString(16).padStart(64, "0")}`;
@@ -400,8 +404,50 @@ describe("ViemMissionResolutionChainClient", () => {
       client.completeFleetMissionReturn("2")
     ]);
 
-    expect(nonces).toEqual([7, 8]);
+    expect(broadcasts).toEqual([
+      { functionName: "resolveFleetMission", gas: 30_000_000n, nonce: 7 },
+      { functionName: "completeFleetMissionReturn", gas: undefined, nonce: 8 }
+    ]);
     expect(peakBroadcasts).toBe(1);
+  });
+
+  test("supplies the same explicit combat gas envelope to unlocked-account submissions", async () => {
+    const previousFetch = globalThis.fetch;
+    const transactions: Array<Record<string, unknown>> = [];
+    globalThis.fetch = (async (_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      const payload = JSON.parse(String(init?.body)) as {
+        params: Array<Array<Record<string, unknown>> | Record<string, unknown>>;
+      };
+      transactions.push(payload.params[0] as Record<string, unknown>);
+      return new Response(JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        result: `0x${transactions.length.toString(16).padStart(64, "0")}`
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }) as typeof fetch;
+
+    try {
+      const client = new ViemMissionResolutionChainClient(
+        {
+          async listResolvableFleetMissions() { return []; },
+          async listReturnableFleetMissions() { return []; }
+        },
+        config.gameContractAddress!,
+        "0x1111111111111111111111111111111111111111",
+        undefined,
+        undefined,
+        undefined,
+        config.rpcUrl
+      );
+
+      await client.resolveFleetMission("23007");
+      await client.completeFleetMissionReturn("23008");
+
+      expect(transactions[0]?.gas).toBe("0x1c9c380");
+      expect(transactions[1]).not.toHaveProperty("gas");
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
   });
 });
 
