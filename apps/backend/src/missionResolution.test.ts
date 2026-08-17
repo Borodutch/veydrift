@@ -405,7 +405,7 @@ describe("ViemMissionResolutionChainClient", () => {
     ]);
 
     expect(broadcasts).toEqual([
-      { functionName: "resolveFleetMission", gas: 30_000_000n, nonce: 7 },
+      { functionName: "resolveFleetMission", gas: 16_777_216n, nonce: 7 },
       { functionName: "completeFleetMissionReturn", gas: undefined, nonce: 8 }
     ]);
     expect(peakBroadcasts).toBe(1);
@@ -443,7 +443,7 @@ describe("ViemMissionResolutionChainClient", () => {
       await client.resolveFleetMission("23007");
       await client.completeFleetMissionReturn("23008");
 
-      expect(transactions[0]?.gas).toBe("0x1c9c380");
+      expect(transactions[0]?.gas).toBe("0x1000000");
       expect(transactions[1]).not.toHaveProperty("gas");
     } finally {
       globalThis.fetch = previousFetch;

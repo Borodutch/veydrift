@@ -21,10 +21,10 @@ const promptnessTargetMs = 60_000;
 const latencySampleLimit = 1_000;
 const initialFailureRetryMs = 30_000;
 const maxFailureRetryMs = 300_000;
-// Combat resolution is intentionally bounded below 25M gas by the contract regression suite.
-// Supply a 30M envelope explicitly, including delegatecall forwarding headroom: Reth's estimator
-// can stop at an inner out-of-gas revert and misreport a valid battle as UnsupportedGameplayModule.
-const fleetMissionResolutionGas = 30_000_000n;
+// Base caps an individual transaction at 2^24 gas. Supply that envelope explicitly: Reth's
+// estimator can stop at an inner delegatecall's empty out-of-gas revert and misreport a valid,
+// bounded battle as UnsupportedGameplayModule instead of broadcasting it.
+const fleetMissionResolutionGas = 16_777_216n;
 
 const veydriftGameResolutionAbi = [
   {

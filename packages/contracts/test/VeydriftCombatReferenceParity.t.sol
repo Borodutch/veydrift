@@ -463,7 +463,11 @@ contract VeydriftCombatReferenceParityTest is Test {
         vm.warp(arrivalAt);
         _fulfillAttackBattleRandomness(missionId, randomWord);
         vm.recordLogs();
-        game.resolveFleetMission(missionId);
+        for (uint256 calls = 0; calls < 6; calls++) {
+            game.resolveFleetMission(missionId);
+            (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(missionId);
+            if (status != VeydriftGameStorage.FleetMissionStatus.Outbound) break;
+        }
         actual = _actualBattleFromLogs(vm.getRecordedLogs(), missionId);
 
         assertTrue(actual.battleFound, "battle event");
