@@ -3115,14 +3115,32 @@ function hotResponseCachePaths(indexer: SettlementIndexer): string[] {
   return [...paths];
 }
 
+const indexedRequestSnapshotCache = new WeakMap<SettlementIndexer, {
+  expiresAtMs: number;
+  snapshot: IndexerSnapshot;
+}>();
+
+// Indexer event processing requires an immediately fresh snapshot for its own state transition
+// result. HTTP readers only need the snapshot for readiness headers/status, while their payloads
+// are fetched directly from the indexed tables. Coalesce that broad metadata view briefly so an
+// active writer cannot make every concurrent page request re-run it under SQLite contention.
+function indexedReadSnapshot(indexer: SettlementIndexer): IndexerSnapshot {
+  const nowMs = Date.now();
+  const cached = indexedRequestSnapshotCache.get(indexer);
+  if (cached && cached.expiresAtMs > nowMs) return cached.snapshot;
+  const snapshot = indexer.snapshot();
+  indexedRequestSnapshotCache.set(indexer, { expiresAtMs: nowMs + 250, snapshot });
+  return snapshot;
+}
+
 function hasWarmPlanetIndex(indexer: SettlementIndexer | undefined): indexer is SettlementIndexer {
   if (!indexer) return false;
-  return indexer.snapshot().indexedPlanets > 0;
+  return indexedReadSnapshot(indexer).indexedPlanets > 0;
 }
 
 function hasWarmAllianceIndex(indexer: SettlementIndexer | undefined): indexer is SettlementIndexer {
   if (!indexer) return false;
-  return indexer.snapshot().safeToServeAllianceState;
+  return indexedReadSnapshot(indexer).safeToServeAllianceState;
 }
 
 async function readJsonBody(request: Request): Promise<Record<string, unknown> | null> {
@@ -3299,7 +3317,7 @@ function indexedWalletSettlementWarmResponse(
   wallet: `0x${string}`
 ): Response | null {
   if (!indexer) return null;
-  const snapshot = indexer.snapshot();
+  const snapshot = indexedReadSnapshot(indexer);
 
   if (snapshot.indexedPlanets <= 0) {
     if (!migrationClaimPayloadForWallet(wallet)) return null;
@@ -3323,7 +3341,7 @@ function indexedWalletPlanetsWarmResponse(
 ): Response | null {
   if (!indexer || !hasWarmPlanetIndex(indexer)) return null;
 
-  const snapshot = indexer.snapshot();
+  const snapshot = indexedReadSnapshot(indexer);
   return indexedWarmJsonResponse(withPlayerProfile(indexedWalletPlanets(indexer, wallet), indexer, wallet), "wallet planets", snapshot);
 }
 
@@ -3335,7 +3353,7 @@ async function indexedWalletOverviewWarmResponse(
 ): Promise<Response | null> {
   if (!indexer || !hasWarmPlanetIndex(indexer)) return null;
 
-  const snapshot = indexer.snapshot();
+  const snapshot = indexedReadSnapshot(indexer);
   const selectedSettlement = indexedWalletSettlement(indexer, wallet, selectedPlanetId);
   const homeSettlement = selectedSettlement ?? indexedWalletSettlement(indexer, wallet, undefined);
   const settlement = homeSettlement?.settlement ?? indexer.walletSettlement(wallet);
@@ -3440,7 +3458,7 @@ function indexedWarmResponse<T extends object>(
   return indexedWarmJsonResponse(
     build(wallet, settlement.settlement, settlement.planet, detail, indexer),
     surface,
-    indexer.snapshot(),
+    indexedReadSnapshot(indexer),
     detail
   );
 }
@@ -3632,7 +3650,7 @@ function watchedPlanetsResponse(
   const watched = indexer.watchedPlanets(wallet, page, pageSize);
   const watchedPlanetIds = indexer.watchedPlanetIds(wallet);
   const allianceIntel = allianceIntelForPlayers(watched.planets.map((planet) => planet.owner), indexer);
-  const snapshot = indexer.snapshot();
+  const snapshot = indexedReadSnapshot(indexer);
 
   return {
     wallet,
@@ -3790,7 +3808,7 @@ function indexedFleetVisibility(
     wallet,
     options.includeArchive === undefined ? {} : { includeArchive: options.includeArchive }
   );
-  const snapshot = indexer.snapshot();
+  const snapshot = indexedReadSnapshot(indexer);
   return {
     ...visibility,
     indexedRevision: indexer.missionResponseCacheVersion(),
@@ -5096,7 +5114,7 @@ function highscoreFailureResponse(error: unknown): Response {
 }
 
 function highscoreIndexNotReadyResponse(indexer: SettlementIndexer, startedAt: number): Response | null {
-  const snapshot = indexer.snapshot();
+  const snapshot = indexedReadSnapshot(indexer);
   if (highscoreIndexCanServe(snapshot)) return null;
 
   return Response.json(
