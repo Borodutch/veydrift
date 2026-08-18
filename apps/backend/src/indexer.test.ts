@@ -10220,6 +10220,54 @@ describe("SettlementIndexer", () => {
     });
   });
 
+  test("recovers retained timing for a promoted legacy backlog entry without a planet id", () => {
+    const database = new Database(":memory:");
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n, { database });
+    indexer.applyEvent(planet);
+
+    const now = Math.floor(Date.now() / 1_000);
+    // The elapsed head is deliberately old. Reading it must advance into the
+    // legacy backlog entry, which omits planetId in the stored JSON.
+    indexer.applyLog({
+      blockNumber: "0x853",
+      blockTimestamp: `0x${(now - 300).toString(16)}`,
+      transactionHash: "0xlegacy-defense-head",
+      logIndex: "0x0",
+      topics: [defenseQueuedTopic, topic(BigInt(planet.planetId)), topic(6n)],
+      data: abiWords(1n, BigInt(now - 1), 50_000n, 50_000n, 30_000n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x854",
+      blockTimestamp: `0x${(now - 100).toString(16)}`,
+      transactionHash: "0xlegacy-defense-backlog",
+      logIndex: "0x0",
+      topics: [defenseQueuedTopic, topic(BigInt(planet.planetId)), topic(4n)],
+      data: abiWords(5n, BigInt(now + 100), 100_000n, 75_000n, 10_000n)
+    });
+
+    const queue = indexer.playerQueues(player, planet.planetId).defense;
+    expect(queue).toMatchObject({
+      itemId: 4,
+      quantity: 3,
+      startedAt: String(now - 100),
+      productionTiming: {
+        originalQuantity: 5,
+        unitWorkSeconds: "200",
+        rate: "5"
+      },
+      asOfNow: {
+        completedQuantity: 2,
+        remainingQuantity: 3,
+        currentUnitSecondsRemaining: expect.any(Number),
+        currentUnitProgressBps: expect.any(Number)
+      }
+    });
+  });
+
   test("keeps elapsed ship and defense queues out of canonical unit rows", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },

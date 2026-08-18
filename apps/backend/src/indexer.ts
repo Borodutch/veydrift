@@ -8795,7 +8795,7 @@ export class SettlementIndexer {
       const backlog = parseEvent<QueueState[]>(row.backlog_json);
       const sanitizedBacklog = this.sanitizedProductionBacklog(row.queue_kind, queue, Array.isArray(backlog) ? backlog : []);
       if (sanitizedBacklog.length > 0) {
-        sanitizedBacklog.forEach((entry) => this.hydrateRetainedProductionQueueTiming(entry));
+        sanitizedBacklog.forEach((entry) => this.hydrateRetainedProductionQueueTiming(entry, queue.planetId));
         queue.backlog = sanitizedBacklog;
       }
     }
@@ -8815,11 +8815,10 @@ export class SettlementIndexer {
    * exact batch start, current-unit boundary, and final completion without an
    * RPC round trip or an indeterminate progress bar.
    */
-  private hydrateRetainedProductionQueueTiming(queue: QueueState): void {
+  private hydrateRetainedProductionQueueTiming(queue: QueueState, fallbackPlanetId?: string): void {
     if (
       queue.productionTiming
       || (queue.kind !== "defense" && queue.kind !== "ship")
-      || !queue.planetId
       || queue.itemId === undefined
       || queue.quantity === undefined
       || !queue.readyAt
@@ -8828,7 +8827,7 @@ export class SettlementIndexer {
     let planetId: bigint;
     let readyAt: bigint;
     try {
-      planetId = BigInt(queue.planetId);
+      planetId = BigInt(queue.planetId ?? fallbackPlanetId ?? "0");
       readyAt = BigInt(queue.readyAt);
     } catch {
       return;
