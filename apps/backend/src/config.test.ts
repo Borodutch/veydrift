@@ -120,6 +120,17 @@ describe("backend config", () => {
     expect(result.config.fullCanonicalStateHealRunId).toBe("queue-divergence-20260818");
   });
 
+  test("normalizes the explicit research queue started-at repair run id", () => {
+    const result = loadBackendConfig({
+      VEYDRIFT_GAME_CONTRACT_ADDRESS: "0x3333333333333333333333333333333333333333",
+      VEYDRIFT_RESEARCH_QUEUE_STARTED_AT_REPAIR_RUN_ID: "  vey-852-chucky-research-start  ",
+      VEYDRIFT_RPC_URL: "https://example.invalid/rpc"
+    });
+
+    expect(result.problems).toEqual([]);
+    expect(result.config.researchQueueStartedAtRepairRunId).toBe("vey-852-chucky-research-start");
+  });
+
   test("normalizes the explicit in-writer mission archive restore run id", () => {
     const result = loadBackendConfig({
       VEYDRIFT_MISSION_ARCHIVE_RESTORE_RUN_ID: "  mission-archive-restore-20260818  ",

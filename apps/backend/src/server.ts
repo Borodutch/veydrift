@@ -517,6 +517,15 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         console.error("Veydrift full canonical state heal failed", error);
       });
   }
+  if (isWriter && loaded.config.researchQueueStartedAtRepairRunId && indexer && loaded.problems.length === 0) {
+    // Narrow, idempotent projection repair: exact retained ResearchQueued identities supply only
+    // missing startedAt values. It cannot change on-chain readiness, research duration, or levels.
+    void indexer
+      .startResearchQueueStartedAtRepairOnce(loaded.config.researchQueueStartedAtRepairRunId)
+      .catch((error) => {
+        console.error("Veydrift research queue started-at repair failed", error);
+      });
+  }
   if (isWriter && loaded.config.missionArchiveRestoreRunId && indexer && loaded.problems.length === 0) {
     // Explicit, idempotent operator repair for the mission archive. It enumerates the complete
     // canonical mission range and only upserts rows, so a partial/candidate repair can never prune

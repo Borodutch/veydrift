@@ -134,7 +134,9 @@ describe("QueueProgressPanel", () => {
 
     expect(text).toContain("…");
     expect(text).not.toContain("0%");
-    expect(hasClass(panel, "animate-pulse")).toBe(true);
+    expect(hasClass(panel, "queue-indeterminate-track")).toBe(true);
+    expect(hasClass(panel, "w-full")).toBe(true);
+    expect(hasClass(panel, "w-2/3")).toBe(false);
   });
 
   test("renders ready queues as complete even without a started timestamp", () => {

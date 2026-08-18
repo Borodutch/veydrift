@@ -10,6 +10,7 @@ import { SettlementIndexer } from "./indexer";
 import { deriveBuildingRows, deriveDefenseRows, deriveInfrastructureFields, deriveShipRows } from "./readModels";
 
 const player = "0x2222222222222222222222222222222222222222" as Address;
+const chucky = "0x9ea58b89140f60b7a706e88128c56b9de62c8bd8" as Address;
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 setSystemTime(new Date("2026-01-01T00:00:00Z"));
 afterAll(() => setSystemTime());
@@ -3805,6 +3806,171 @@ describe("SettlementIndexer", () => {
     expect(indexer.technologyLevels(player)).toMatchObject({
       "4": 2
     });
+  });
+
+  test("candidate current-state heals preserve only the same research queue start", async () => {
+    const database = new Database(":memory:");
+    let canonicalReadyAt = "1787758249";
+    const researchState = (): ResearchState => ({
+      wallet: player,
+      homePlanetId: planet.planetId,
+      researchAvailable: true,
+      resources: planet.resources,
+      researchLabLevel: 1,
+      researchNetworkLabLevels: [],
+      technologyLevels: { "10": 6 },
+      technologies: [{ id: 10, level: 6, cost: { metal: "0", crystal: "0", deuterium: "0" } }],
+      queue: {
+        active: true,
+        kind: "research",
+        itemId: 10,
+        targetLevel: 7,
+        readyAt: canonicalReadyAt,
+        cost: { metal: "0", crystal: "0", deuterium: "0" }
+      }
+    });
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; },
+      async listCurrentPlanets() { return [planet]; },
+      async getCanonicalPlanetState(): Promise<CanonicalPlanetChainState> {
+        return {
+          planetId: planet.planetId,
+          resources: planet.resources,
+          buildings: [],
+          defenses: [],
+          ships: [],
+          queues: { building: null, defense: null, ship: null }
+        };
+      },
+      async getResearchState() { return researchState(); }
+    }, 100n, { database });
+    indexer.applyEvent(planet);
+    indexer.applyLog({
+      blockNumber: "0x852",
+      blockTimestamp: "1786894249",
+      transactionHash: "0x74c4a3d1b76e8389c9d79cef53c9ed5eeb72e744a8773e0f5c7af3aae107f9d0",
+      logIndex: "0x0",
+      topics: [researchQueuedTopic, addressTopic(player), topic(10n)],
+      data: abiWords(7n, 1787758249n, 0n, 0n, 0n)
+    });
+    // Exercise preservation independently of retained-log recovery.
+    database.query("DELETE FROM indexed_event_logs").run();
+
+    await indexer.startCurrentStateHealOnce("vey-852-candidate-preserve");
+    expect(indexer.playerQueues(player, planet.planetId).research).toMatchObject({
+      itemId: 10,
+      targetLevel: 7,
+      readyAt: "1787758249",
+      startedAt: "1786894249"
+    });
+
+    canonicalReadyAt = "1787758250";
+    await indexer.startCurrentStateHealOnce("vey-852-candidate-mismatch");
+    expect(indexer.playerQueues(player, planet.planetId).research).toMatchObject({
+      itemId: 10,
+      targetLevel: 7,
+      readyAt: "1787758250",
+      startedAt: null
+    });
+  });
+
+  test("full canonical rebuild recovers the exact research start from a retained log", async () => {
+    const database = new Database(":memory:");
+    const researchState: ResearchState = {
+      wallet: player,
+      homePlanetId: planet.planetId,
+      researchAvailable: true,
+      resources: planet.resources,
+      researchLabLevel: 1,
+      researchNetworkLabLevels: [],
+      technologyLevels: { "10": 6 },
+      technologies: [{ id: 10, level: 6, cost: { metal: "0", crystal: "0", deuterium: "0" } }],
+      queue: {
+        active: true,
+        kind: "research",
+        itemId: 10,
+        targetLevel: 7,
+        readyAt: "1787758249",
+        cost: { metal: "0", crystal: "0", deuterium: "0" }
+      }
+    };
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return [planet]; },
+      async listCurrentPlanets() { return [planet]; },
+      async getResearchState() { return researchState; }
+    }, 100n, { database });
+    indexer.applyEvent(planet);
+    indexer.applyLog({
+      blockNumber: "0x852",
+      blockTimestamp: "1786894249",
+      transactionHash: "0x74c4a3d1b76e8389c9d79cef53c9ed5eeb72e744a8773e0f5c7af3aae107f9d0",
+      logIndex: "0x0",
+      topics: [researchQueuedTopic, addressTopic(player), topic(10n)],
+      data: abiWords(7n, 1787758249n, 0n, 0n, 0n)
+    });
+
+    await indexer.rebuild();
+
+    expect(indexer.playerQueues(player, planet.planetId).research).toMatchObject({
+      itemId: 10,
+      targetLevel: 7,
+      readyAt: "1787758249",
+      startedAt: "1786894249"
+    });
+  });
+
+  test("idempotent production repair rejects every mismatched research identity field", async () => {
+    const database = new Database(":memory:");
+    const chuckyPlanet = { ...planet, owner: chucky };
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n, { database });
+    indexer.applyEvent(chuckyPlanet);
+    indexer.applyLog({
+      blockNumber: "0x852",
+      blockTimestamp: "1786894249",
+      transactionHash: "0x74c4a3d1b76e8389c9d79cef53c9ed5eeb72e744a8773e0f5c7af3aae107f9d0",
+      logIndex: "0x0",
+      topics: [researchQueuedTopic, addressTopic(chucky), topic(10n)],
+      data: abiWords(7n, 1787758249n, 0n, 0n, 0n)
+    });
+    database.query("UPDATE indexed_planet_queues SET started_at = NULL").run();
+    database.query("UPDATE contract_production_queues SET started_at = NULL").run();
+
+    await indexer.startResearchQueueStartedAtRepairOnce("vey-852-chucky-repair");
+    expect(indexer.playerQueues(chucky, planet.planetId).research?.startedAt).toBe("1786894249");
+    await indexer.startResearchQueueStartedAtRepairOnce("vey-852-chucky-repair");
+    expect(indexer.snapshot()).toMatchObject({
+      lastResearchQueueStartedAtRepairRunId: "vey-852-chucky-repair",
+      lastResearchQueueStartedAtRepairAt: expect.any(String),
+      lastResearchQueueStartedAtRepairRowsScanned: 1,
+      lastResearchQueueStartedAtRepairRowsRepaired: 1
+    });
+
+    const mismatches = [
+      { column: "ready_at", value: "1787758250" },
+      { column: "item_id", value: 11 },
+      { column: "target_level", value: 8 },
+      { column: "owner", value: "0x3333333333333333333333333333333333333333" }
+    ] as const;
+    for (const [index, mismatch] of mismatches.entries()) {
+      database.query(`UPDATE indexed_planet_queues SET ${mismatch.column} = ?, started_at = NULL`).run(mismatch.value);
+      database.query(`UPDATE contract_production_queues SET ${mismatch.column} = ?, started_at = NULL`).run(mismatch.value);
+      await indexer.startResearchQueueStartedAtRepairOnce(`vey-852-mismatch-${index}`);
+      expect(database.query("SELECT started_at FROM contract_production_queues").get()).toEqual({ started_at: null });
+      database.query(`UPDATE indexed_planet_queues SET ${mismatch.column} = ?`).run(
+        mismatch.column === "ready_at" ? "1787758249" : mismatch.column === "item_id" ? 10 : mismatch.column === "target_level" ? 7 : chucky
+      );
+      database.query(`UPDATE contract_production_queues SET ${mismatch.column} = ?`).run(
+        mismatch.column === "ready_at" ? "1787758249" : mismatch.column === "item_id" ? 10 : mismatch.column === "target_level" ? 7 : chucky
+      );
+    }
   });
 
   test("derives fleet slots from indexed active missions and Computer Technology", () => {

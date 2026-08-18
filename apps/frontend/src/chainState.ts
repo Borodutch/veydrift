@@ -208,7 +208,7 @@ export function buildingQueueItemForDisplay(
 
 export function researchQueueForDisplay(
   queue: QueueStateResponse | null,
-  now = Date.now(),
+  _now = Date.now(),
   options: {
     buildings?: PlayableState["buildings"] | undefined;
     research?: PlayableState["research"] | undefined;
@@ -222,26 +222,20 @@ export function researchQueueForDisplay(
   const readyAt = queueTimestampMs(queue.readyAt);
   if (readyAt === undefined) return undefined;
   const chainStartedAt = queueTimestampMs(queue.startedAt);
-  // VEY-KANEO-465: anchor the progress bar to the backend's queue startedAt
-  // (VEY-KANEO-464) — no client research-duration estimate. When the backend
-  // omits startedAt, fall back to a minimal anchor so an in-progress research
-  // still renders.
+  // A missing start has no honest percentage. Keep the active queue visible but
+  // omit startedAt so every progress surface renders its indeterminate state.
   const startedAt = chainStartedAt !== undefined && chainStartedAt < readyAt
     ? chainStartedAt
-    : fallbackResearchStartedAt(readyAt, now);
+    : undefined;
 
   return {
     kind: "research",
     key: research.key,
     label: research.label,
     readyAt,
-    startedAt,
+    ...(startedAt === undefined ? {} : { startedAt }),
     targetLevel: queue.targetLevel ?? 0,
   };
-}
-
-function fallbackResearchStartedAt(readyAt: number, now: number): number {
-  return Math.min(now, readyAt - 1);
 }
 
 function zeroResearchLevels(): PlayableState["research"] {
