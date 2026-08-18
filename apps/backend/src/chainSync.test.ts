@@ -1052,6 +1052,12 @@ describe("ChainSyncService (polling)", () => {
 
   test("re-scanning an overlapping range is idempotent (no double count, deduped)", async () => {
     const indexer = makeIndexer();
+    const originalApplyLog = indexer.applyLog.bind(indexer);
+    let applyAttempts = 0;
+    indexer.applyLog = (log) => {
+      applyAttempts += 1;
+      return originalApplyLog(log);
+    };
     const countLog: TestLog = {
       blockNumber: "0x181",
       transactionHash: "0xship-count",
@@ -1065,6 +1071,7 @@ describe("ChainSyncService (polling)", () => {
 
     await service.poll(); // ingest -> count 5
     const afterFirst = service.snapshot().eventsReceived;
+    const attemptsAfterFirst = applyAttempts;
     expect(indexer.shipRows("7").find((ship) => ship.id === 1)?.count).toBe(5);
 
     // Force another ingest returning the SAME already-applied logs: the absolute-SET stays 5 and the
@@ -1073,6 +1080,9 @@ describe("ChainSyncService (polling)", () => {
     await service.poll();
     expect(indexer.shipRows("7").find((ship) => ship.id === 1)?.count).toBe(5);
     expect(service.snapshot().eventsReceived).toBe(afterFirst); // duplicates not re-counted
+    // The HTTP safety overlap remains enabled for websocket-missed siblings, but exact events already
+    // processed in this process do not need another SQLite dedupe transaction.
+    expect(applyAttempts).toBe(attemptsAfterFirst);
     service.stop();
   });
 
