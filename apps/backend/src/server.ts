@@ -2117,7 +2117,10 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           // this request recover if the other worker dies while holding its SQLite lock. The hot
           // projections are bounded below this window; a one-second wait made a stale abandoned
           // lock itself a visible backend timeout on mobile navigation.
-          const refreshedByPeer = await sharedResponseCache.waitForFresh(cacheKey, sharedColdReadWaitMs);
+          const refreshedByPeer = await sharedResponseCache.waitForFresh(
+            cacheKey,
+            sharedColdReadWaitMsFor(url)
+          );
           if (refreshedByPeer) {
             responseCache.set(cacheKey, refreshedByPeer);
             return withRequestCors(request, cachedJsonResponse(request, refreshedByPeer));
@@ -2830,7 +2833,12 @@ function cacheableJsonRequestTtlMs(request: Request, url: URL): number {
   if (url.pathname === "/cca") return 4_000;
   if (url.pathname === "/health") return 10_000;
   if (url.pathname === "/stats") return 30_000;
-  if (url.pathname === "/highscores") return livePublicDataRequest(url) ? 1_000 : 300_000;
+  // Public landing pages request the live board independently. Keep its browser response no-store,
+  // but let backend readers share a short snapshot rather than synchronously rebuilding the entire
+  // ranking on every reader after an unrelated indexed event.
+  if (url.pathname === "/highscores") {
+    return landingLeaderboardRequest(url) ? 10_000 : livePublicDataRequest(url) ? 1_000 : 300_000;
+  }
   if (url.pathname === "/raid-finder/debris") return 30_000;
   if (url.pathname === "/raid-finder/rifters") return 30_000;
   // Mission Control is an authoritative indexed-state surface. The chain-event stream fires only
@@ -2895,6 +2903,12 @@ function allianceHistoryCacheIdentity(
 }
 
 function cacheableJsonRequestStaleKey(request: Request, url: URL, cacheKey: string): string {
+  // Leaderboard data is informational, not a transaction precondition. Its global state token changes
+  // on every indexed event, which used to make all readers miss together and each rebuild the full
+  // live board. Reuse the last completed board while exactly one reader refreshes it.
+  if (landingLeaderboardRequest(url)) {
+    return `${request.method} ${url.pathname}${normalizedCacheSearch(url)} indexer=stale`;
+  }
   // Mission Control transitions must not cross read-model versions through the versionless stale
   // cache. In particular, an Outbound payload cannot mask a newly materialized Returning attack and
   // battle report for up to 60 seconds. Same-version stale-while-revalidate remains available.
@@ -3308,7 +3322,7 @@ async function indexedWalletOverviewWarmResponse(
   indexer: SettlementIndexer | undefined,
   wallet: `0x${string}`,
   selectedPlanetId: bigint | undefined,
-  chainReader: ChainReader | undefined
+  _chainReader: ChainReader | undefined
 ): Promise<Response | null> {
   if (!indexer || !hasWarmPlanetIndex(indexer)) return null;
 
@@ -3319,12 +3333,10 @@ async function indexedWalletOverviewWarmResponse(
   const queuePlanetId = homeSettlement?.planet?.planetId ?? settlement.homePlanetId;
   const planetsResponse = indexedWalletPlanets(indexer, wallet);
   const indexedQueues = indexer.playerQueues(wallet, queuePlanetId);
-  const queues = await hydrateOverviewQueueTimelines(
-    indexedQueues,
-    wallet,
-    queuePlanetId,
-    chainReader
-  );
+  // Queue timing is committed by the writer from queue timing events/canonical reconciliation. Never
+  // turn a wallet overview render into an eth_call: with many readers, a browser refresh fan-out made
+  // each request perform the same live queue read and starved normal API work.
+  const queues = indexedQueues;
   const fleetVisibility = indexedFleetVisibility(
     wallet,
     settlement,
@@ -3342,62 +3354,20 @@ async function indexedWalletOverviewWarmResponse(
   }, "overview snapshot", snapshot);
 }
 
-/**
- * Production completion is lazy on-chain, while queue timing is held in the
- * production module's timing slots. The indexed queue is still the source for
- * projected counts, but fill in its missing timeline metadata from a narrowly
- * scoped canonical read so Overview never invents an indeterminate bar.
- */
-async function hydrateOverviewQueueTimelines(
-  indexed: PlayerQueues,
-  wallet: `0x${string}`,
-  planetId: string | null,
-  chainReader: ChainReader | undefined
-): Promise<PlayerQueues> {
-  if (!chainReader || !planetId || !hasMissingProductionTimeline(indexed)) return indexed;
-
-  try {
-    const live = await chainReader.getPlayerQueues(wallet, BigInt(planetId));
-    return {
-      ...indexed,
-      building: mergeQueueTimeline(indexed.building, live.building),
-      defense: mergeQueueTimeline(indexed.defense, live.defense),
-      ship: mergeQueueTimeline(indexed.ship, live.ship),
-      research: mergeQueueTimeline(indexed.research, live.research)
-    };
-  } catch (error) {
-    console.warn("Unable to hydrate Overview production queue timing", error);
-    return indexed;
-  }
+function sharedColdReadWaitMsFor(url: URL): number {
+  // Cold live leaderboards legitimately take longer than a wallet projection. Waiting for their
+  // shared builder is vastly cheaper than launching nine identical SQLite-heavy rebuilds.
+  return landingLeaderboardRequest(url) ? 10_000 : sharedColdReadWaitMs;
 }
 
-function hasMissingProductionTimeline(queues: PlayerQueues): boolean {
-  return [queues.defense, queues.ship].some((queue) =>
-    Boolean(queue?.active && !queue.startedAt && !queue.productionTiming?.startedAt)
-  );
-}
-
-function mergeQueueTimeline(indexed: QueueState | null, live: QueueState | null): QueueState | null {
-  if (!indexed?.active || !live?.active || !sameQueueTimelineIdentity(indexed, live)) return indexed;
-  return {
-    ...indexed,
-    ...(live.startedAt ? { startedAt: live.startedAt } : {}),
-    ...(live.productionTiming ? { productionTiming: live.productionTiming } : {}),
-    ...(indexed.backlog
-      ? { backlog: indexed.backlog.map((entry) => {
-        const liveEntry = live.backlog?.find((candidate) => sameQueueTimelineIdentity(entry, candidate));
-        return mergeQueueTimeline(entry, liveEntry ?? null) ?? entry;
-      }) }
-      : {})
-  };
-}
-
-function sameQueueTimelineIdentity(left: QueueState, right: QueueState): boolean {
-  return left.kind === right.kind
-    && left.itemId === right.itemId
-    && left.targetLevel === right.targetLevel
-    && left.quantity === right.quantity
-    && left.readyAt === right.readyAt;
+function landingLeaderboardRequest(url: URL): boolean {
+  return url.pathname === "/highscores"
+    && url.searchParams.get("live") === "1"
+    && (url.searchParams.get("category") ?? "total") === "total"
+    && (url.searchParams.get("page") ?? "1") === "1"
+    && url.searchParams.get("pageSize") === "250"
+    && !url.searchParams.has("currentWallet")
+    && !url.searchParams.has("includeAttackProtection");
 }
 
 type IndexedMoonNotReadyBody = MoonState & {
