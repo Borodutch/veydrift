@@ -6219,6 +6219,7 @@ export function PlayableMvpApp({
           queue: selectActiveConstructionQueue([
             section.defenseState?.queue,
             section.queuesState?.defense,
+            managedPlanet.planetId === activePlanetId ? onChainQueues?.defense : undefined,
             managedPlanet.queues.defense,
           ]),
         },
@@ -6229,6 +6230,7 @@ export function PlayableMvpApp({
           queue: selectActiveConstructionQueue([
             section.shipyardState?.queue,
             section.queuesState?.ship,
+            managedPlanet.planetId === activePlanetId ? onChainQueues?.ship : undefined,
             managedPlanet.queues.ship,
           ]),
         },
@@ -6263,6 +6265,9 @@ export function PlayableMvpApp({
     return observations;
   }, [
     attributedResearchQueue,
+    activePlanetId,
+    onChainQueues?.defense,
+    onChainQueues?.ship,
     planetSectionStore,
     walletPlanets,
   ]);

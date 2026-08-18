@@ -306,7 +306,7 @@ export function ProductionQueuePanel({
       now={now}
       progressState={progressState}
       completedQuantity={queue.completedQuantity}
-      completionReadyAt={embedded ? totalReadyAt : undefined}
+      completionReadyAt={totalReadyAt}
       completionStartedAt={embedded ? queue.startedAt : undefined}
       currentUnitProgressBps={queue.currentUnitProgressBps}
       currentUnitSecondsRemaining={queue.currentUnitSecondsRemaining}

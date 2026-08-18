@@ -58,6 +58,24 @@ describe("production queue fallback", () => {
     });
   });
 
+  test("uses a matching overview production-timing start when the explicit timestamp is absent", () => {
+    const detailedQueue = queueState("defense", 1, 1, { readyAt: "1700000600" });
+    const overviewQueue = queueState("defense", 1, 1, {
+      readyAt: "1700000600",
+      productionTiming: {
+        startedAt: "1700000000",
+        originalQuantity: 1,
+        unitWorkSeconds: "15000000",
+        rate: "25000",
+      },
+    });
+
+    expect(activeProductionQueue(detailedQueue, overviewQueue, "defense")).toMatchObject({
+      startedAt: "1700000000",
+      productionTiming: overviewQueue.productionTiming,
+    });
+  });
+
   test("preserves overview startedAt when the same active defense queue has a newer quantity and ready time", () => {
     const detailedQueue = queueState("defense", 1, 3, { readyAt: "1700000900" });
     const overviewQueue = queueState("defense", 1, 1, {
