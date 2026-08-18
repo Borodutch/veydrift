@@ -5084,6 +5084,109 @@ describe("SettlementIndexer", () => {
     });
   });
 
+  test("promotes a completed ship batch without dropping the remaining FIFO backlog", () => {
+    const db = new Database(":memory:");
+    const chainReader = {
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    };
+    const indexer = new SettlementIndexer(chainReader, 100n, { database: db });
+    indexer.applyEvent(planet);
+
+    const logs = [
+      {
+        blockNumber: "0xa0",
+        transactionHash: "0xqueue-active",
+        logIndex: "0x0",
+        topics: [shipQueuedTopic, topic(7n), topic(5n)],
+        data: abiWords(1n, 1770001000n, 6000n, 4000n, 0n)
+      },
+      {
+        blockNumber: "0xa0",
+        transactionHash: "0xqueue-active",
+        logIndex: "0x1",
+        topics: [shipQueueTimingSetTopic, topic(7n), topic(5n), topic(1770001000n)],
+        data: abiWords(1770000000n, 1n, 2_500_000n, 2500n)
+      },
+      {
+        blockNumber: "0xa1",
+        transactionHash: "0xqueue-next",
+        logIndex: "0x0",
+        topics: [shipQueuedTopic, topic(7n), topic(10n)],
+        data: abiWords(2n, 1770002600n, 12000n, 10000n, 3000n)
+      },
+      {
+        blockNumber: "0xa1",
+        transactionHash: "0xqueue-next",
+        logIndex: "0x1",
+        topics: [shipQueueTimingSetTopic, topic(7n), topic(10n), topic(1770002600n)],
+        data: abiWords(1770001000n, 2n, 2_000_000n, 2500n)
+      },
+      {
+        blockNumber: "0xa2",
+        transactionHash: "0xqueue-tail",
+        logIndex: "0x0",
+        topics: [shipQueuedTopic, topic(7n), topic(12n)],
+        data: abiWords(3n, 1770003200n, 90000n, 120000n, 45000n)
+      },
+      {
+        blockNumber: "0xa2",
+        transactionHash: "0xqueue-tail",
+        logIndex: "0x1",
+        topics: [shipQueueTimingSetTopic, topic(7n), topic(12n), topic(1770003200n)],
+        data: abiWords(1770002600n, 3n, 2_500_000n, 2500n)
+      },
+      {
+        blockNumber: "0xa3",
+        transactionHash: "0xcomplete-and-promote",
+        logIndex: "0x0",
+        topics: [shipCompletedTopic, topic(7n), topic(5n)],
+        data: abiWords(1n, 1n)
+      },
+      // The contract re-emits ShipQueued for the promoted batch. Processing that event after the
+      // completion must enrich the promoted row without erasing the tail that was queued earlier.
+      {
+        blockNumber: "0xa3",
+        transactionHash: "0xcomplete-and-promote",
+        logIndex: "0x1",
+        topics: [shipQueuedTopic, topic(7n), topic(10n)],
+        data: abiWords(2n, 1770002600n, 12000n, 10000n, 3000n)
+      },
+      {
+        blockNumber: "0xa3",
+        transactionHash: "0xcomplete-and-promote",
+        logIndex: "0x2",
+        topics: [shipQueueTimingSetTopic, topic(7n), topic(10n), topic(1770002600n)],
+        data: abiWords(1770001000n, 2n, 2_000_000n, 2500n)
+      }
+    ];
+    for (const log of logs) indexer.applyLog(log);
+
+    expect(indexer.playerQueues(player, planet.planetId).ship).toMatchObject({
+      itemId: 10,
+      quantity: 2,
+      readyAt: "1770002600",
+      backlog: [{ itemId: 12, quantity: 3, readyAt: "1770003200" }]
+    });
+
+    // Simulate the pre-fix persisted shape observed for VEY-KANEO-851: only the final queued batch
+    // survived. A fresh writer runs the versioned event-ledger repair and restores active + backlog.
+    db.query(`
+      UPDATE contract_production_queues
+      SET item_id = 12, quantity = 3, ready_at = '1770003200', backlog_json = NULL
+      WHERE queue_key = 'ship:7'
+    `).run();
+    db.query("DELETE FROM indexer_metadata WHERE key = 'productionQueueProjectionBackfillV1'").run();
+    const repaired = new SettlementIndexer(chainReader, 100n, { database: db });
+    expect(repaired.playerQueues(player, planet.planetId).ship).toMatchObject({
+      itemId: 10,
+      quantity: 2,
+      readyAt: "1770002600",
+      backlog: [{ itemId: 12, quantity: 3, readyAt: "1770003200" }]
+    });
+  });
+
   test("indexes rift deposits and withdrawal lifecycle", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },

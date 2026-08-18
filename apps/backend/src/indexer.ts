@@ -149,8 +149,14 @@ import {
   allianceBonusWithdrawnTopic,
   allianceProductionBonusAccruedTopic,
   allianceProductionBonusDeferredTopic,
+  defenseCompletedTopic,
+  defenseQueuedTopic,
+  defenseQueueTimingSetTopic,
   paidAllianceInvitePurchasedTopic,
   paidAllianceInviteRedeemedTopic,
+  shipCompletedTopic,
+  shipQueuedTopic,
+  shipQueueTimingSetTopic,
   startPriceUpdatedEventTopic,
   interplanetaryMissileAttackTopic
 } from "./evm";
@@ -282,6 +288,7 @@ const startPriceLogIndexMetadataKey = "canonicalStartPriceLogIndex";
 const referralHistoryBackfillMetadataKey = "referralHistoryBackfillV1";
 const paidAllianceInviteHistoryBackfillMetadataKey = "paidAllianceInviteHistoryBackfillV1";
 const paidAllianceInviteProjectionBackfillMetadataKey = "paidAllianceInviteProjectionBackfillV1";
+const productionQueueProjectionBackfillMetadataKey = "productionQueueProjectionBackfillV1";
 const paidAllianceInviteProjectionTopics = [
   paidAllianceInvitePurchasedTopic,
   paidAllianceInviteRedeemedTopic,
@@ -5476,9 +5483,63 @@ export class SettlementIndexer {
     if (paidAllianceInviteContractAddress) {
       this.repairPaidAllianceInviteProjectionsFromEventLogs(paidAllianceInviteContractAddress);
     }
+    this.repairProductionQueueProjectionsFromEventLogs();
     this.repairInviteeProductionBoostProjectionsFromEventLogs();
     this.backfillPlayerActivityFeed();
     this.queueDefenderLossBreakdownBackfill();
+  }
+
+  private repairProductionQueueProjectionsFromEventLogs(): void {
+    if (this.metadata(productionQueueProjectionBackfillMetadataKey) !== null) return;
+
+    const rows = this.db.query(`
+      SELECT event_json
+      FROM indexed_event_logs
+      WHERE removed = 0
+        AND lower(json_extract(indexed_event_logs.event_json, '$.topics[0]')) IN (?, ?, ?, ?, ?, ?)
+    `).all(
+      defenseQueuedTopic,
+      shipQueuedTopic,
+      defenseQueueTimingSetTopic,
+      shipQueueTimingSetTopic,
+      defenseCompletedTopic,
+      shipCompletedTopic
+    ) as EventRow[];
+
+    this.db.transaction(() => {
+      if (rows.length === 0) {
+        // A cold/new database has nothing durable to reconstruct. Mark the migration without
+        // changing readiness timestamps or deleting a queue that may have come from a canonical
+        // snapshot rather than the raw event ledger.
+        this.setMetadata(productionQueueProjectionBackfillMetadataKey, new Date().toISOString());
+        return;
+      }
+      // Older projections dropped the un-promoted tail when an active batch completed. Rebuild only
+      // ship/defense queues from the durable ordered event ledger; resources and absolute unit counts
+      // remain untouched. Completion rows are projection-only during this replay.
+      this.db.query("DELETE FROM indexed_planet_queues WHERE kind IN ('defense', 'ship')").run();
+      this.db.query("DELETE FROM contract_production_queues WHERE queue_kind IN ('defense', 'ship')").run();
+      for (const log of sortedEventRows(rows)) {
+        if (isIndexedQueueStartedLog(log)) {
+          const event = decodeIndexedQueueStartedLog(log);
+          if (event.queueKind === "defense" || event.queueKind === "ship") {
+            this.applyQueueStartedEvent(event, { settleResources: false });
+          }
+        } else if (isProductionQueueTimingLog(log)) {
+          const event = decodeProductionQueueTimingLog(log);
+          if (event.queueKind === "defense" || event.queueKind === "ship") {
+            this.applyProductionQueueTimingEvent(event);
+          }
+        } else if (isIndexedQueueCompletedLog(log)) {
+          const event = decodeIndexedQueueCompletedLog(log);
+          if (event.queueKind === "defense" || event.queueKind === "ship") {
+            this.applyQueueCompletedEvent(event, { applyEffects: false });
+          }
+        }
+      }
+      this.setMetadata(productionQueueProjectionBackfillMetadataKey, new Date().toISOString());
+      this.touch();
+    })();
   }
 
   private repairPaidAllianceInviteProjectionsFromEventLogs(
@@ -8021,7 +8082,10 @@ export class SettlementIndexer {
     return mutations.length > 0 ? mutations : null;
   }
 
-  private applyQueueCompletedEvent(event: IndexedQueueCompletedEvent): void {
+  private applyQueueCompletedEvent(
+    event: IndexedQueueCompletedEvent,
+    options: { applyEffects?: boolean } = {}
+  ): void {
     // A building completion raises the planet's production rate. The contract
     // settles [lastSettledAt, readyAt] at the OLD rate, completes the building,
     // then accrues at the NEW rate from readyAt (VeydriftGame.sol:720-730). The
@@ -8067,11 +8131,46 @@ export class SettlementIndexer {
         queueKey(event)
       );
     } else if (matchesActiveQueue) {
-      this.db.query("DELETE FROM indexed_planet_queues WHERE queue_key = ?").run(queueKey(event));
-      this.db.query("DELETE FROM contract_production_queues WHERE queue_key = ?").run(queueKey(event));
+      const promoted = queue && this.promoteProductionBacklogAfterCompletion(event, queue);
+      if (!promoted) {
+        this.db.query("DELETE FROM indexed_planet_queues WHERE queue_key = ?").run(queueKey(event));
+        this.db.query("DELETE FROM contract_production_queues WHERE queue_key = ?").run(queueKey(event));
+      }
     }
-    this.applyQueueCompletionEffects(event);
+    if (options.applyEffects !== false) this.applyQueueCompletionEffects(event);
     this.touch();
+  }
+
+  private promoteProductionBacklogAfterCompletion(
+    event: IndexedQueueCompletedEvent,
+    queue: QueueState
+  ): boolean {
+    if (
+      (event.queueKind !== "defense" && event.queueKind !== "ship")
+      || !event.planetId
+    ) return false;
+
+    const [promoted, ...remainingBacklog] = queue.backlog ?? [];
+    if (!promoted || promoted.itemId === undefined || promoted.readyAt === null) return false;
+
+    const key = queueKey(event);
+    this.db.query("DELETE FROM indexed_planet_queues WHERE queue_key = ?").run(key);
+    this.db.query("DELETE FROM contract_production_queues WHERE queue_key = ?").run(key);
+    this.upsertQueue({
+      eventName: event.queueKind === "ship" ? "ShipQueued" : "DefenseQueued",
+      transactionHash: event.transactionHash,
+      blockNumber: event.blockNumber,
+      queueKind: event.queueKind,
+      planetId: event.planetId,
+      itemId: promoted.itemId,
+      ...(promoted.quantity !== undefined ? { quantity: promoted.quantity } : {}),
+      readyAt: promoted.readyAt,
+      ...(promoted.startedAt ? { startedAt: promoted.startedAt } : {}),
+      ...(promoted.productionTiming ? { productionTiming: promoted.productionTiming } : {}),
+      cost: promoted.cost,
+      ...(remainingBacklog.length > 0 ? { backlog: remainingBacklog } : {})
+    });
+    return true;
   }
 
   // Advance a planet's stored resources/lastSettledAt up to `settledAt` at the
