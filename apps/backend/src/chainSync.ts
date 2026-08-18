@@ -56,6 +56,11 @@ const PAID_ALLIANCE_REORG_CHECK_INTERVAL_BLOCKS = 16n;
 // some logs from a block; txHash:logIndex dedupe makes this bounded replay cheap and idempotent while
 // ensuring a sibling omitted from that callback is still collected by HTTP even when head has not moved.
 const GENERIC_POLL_REPLAY_BLOCKS = 64n;
+// The websocket and the bounded HTTP safety replay intentionally overlap. Letting both paths run every
+// duplicate through SQLite is needlessly expensive, especially for high-fanout count-change events. Keep
+// a bounded in-process ledger of successfully handled non-removed logs so the second source can skip the
+// exact same event while still admitting a sibling the websocket did not deliver.
+const RECENT_LOG_IDENTITY_LIMIT = 16_384;
 
 export type ReferralHistoryBackfillSnapshot = {
   completedAt: string | null;
@@ -228,6 +233,7 @@ export class ChainSyncService {
   private cursor: bigint | null = null;
   private readonly recentEventReceiveLagsMs: number[] = [];
   private readonly recentHandlerDurationsMs: Array<{ durationMs: number; sampledAtMs: number }> = [];
+  private readonly recentHandledLogIdentities = new Map<string, undefined>();
 
   constructor(
     private readonly config: BackendConfig,
@@ -724,12 +730,22 @@ export class ChainSyncService {
     let walletPlanetsChanged = false;
     for (const log of sortRpcLogs(logs)) {
       if (!isRpcLog(log)) continue;
+      const logIdentity = rpcLogIdentity(log);
+      const removed = Boolean((log as RpcLog & { removed?: boolean }).removed);
+      // A reorg removal must always reach the indexer and makes a later canonical re-emission eligible
+      // for normal handling again.
+      if (removed) {
+        this.recentHandledLogIdentities.delete(logIdentity);
+      } else if (this.recentHandledLogIdentities.has(logIdentity)) {
+        continue;
+      }
       const block = BigInt(log.blockNumber);
       this.latestSyncedBlock = maxBlockString(this.latestSyncedBlock, block);
       const handlerStartedAt = Date.now();
       let result: ReturnType<NonNullable<SettlementIndexer["applyLog"]>> | undefined;
       try {
         result = applyLog.call(this.indexer, log);
+        if (!removed) this.rememberHandledLogIdentity(logIdentity);
         if (result.applied) {
           this.recordEventReceiveLag(log);
           this.eventsReceived += 1;
@@ -756,6 +772,13 @@ export class ChainSyncService {
       }
     }
     return { applied, lastHash, resourceChanges: [...resourceChanges.values()], walletPlanetsChanged };
+  }
+
+  private rememberHandledLogIdentity(identity: string): void {
+    this.recentHandledLogIdentities.set(identity, undefined);
+    if (this.recentHandledLogIdentities.size <= RECENT_LOG_IDENTITY_LIMIT) return;
+    const oldest = this.recentHandledLogIdentities.keys().next().value;
+    if (oldest !== undefined) this.recentHandledLogIdentities.delete(oldest);
   }
 
   private markConnected(): void {
@@ -1025,6 +1048,10 @@ function sortRpcLogs(logs: readonly RpcLog[]): RpcLog[] {
 
 function logIndexFor(log: RpcLog): string {
   return (log as RpcLog & { logIndex?: string }).logIndex ?? "0x0";
+}
+
+function rpcLogIdentity(log: RpcLog): string {
+  return `${log.transactionHash.toLowerCase()}:${logIndexFor(log).toLowerCase()}`;
 }
 
 function compareBigIntish(left: string, right: string): number {
