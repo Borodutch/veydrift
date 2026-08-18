@@ -298,6 +298,7 @@ export function ProductionQueuePanel({
   showBacklogEta?: boolean | undefined;
   tone?: QueueProgressTone | undefined;
 }) {
+  const totalReadyAt = queue.backlog?.at(-1)?.readyAt ?? queue.readyAt;
   return (
     <QueueProgressPanel
       asset={queue.asset}
@@ -305,6 +306,7 @@ export function ProductionQueuePanel({
       now={now}
       progressState={progressState}
       completedQuantity={queue.completedQuantity}
+      completionReadyAt={embedded ? totalReadyAt : undefined}
       currentUnitProgressBps={queue.currentUnitProgressBps}
       currentUnitSecondsRemaining={queue.currentUnitSecondsRemaining}
       embedded={embedded}
@@ -316,7 +318,7 @@ export function ProductionQueuePanel({
       title="Queue"
       tone={tone}
     >
-      {queue.backlog && queue.backlog.length > 0 ? (
+      {!embedded && queue.backlog && queue.backlog.length > 0 ? (
         queue.backlog.map((entry, index) => {
           const entryTitle = `${entry.label}${entry.quantity ? ` ×${formatter.format(entry.quantity)}` : ""}`;
           return (

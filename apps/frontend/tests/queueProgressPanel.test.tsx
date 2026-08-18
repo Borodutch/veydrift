@@ -78,6 +78,24 @@ describe("QueueProgressPanel", () => {
     expect(descendants(panel, OptimizedImage)[0]?.props.className).toContain("border-white/10");
   });
 
+  test("shows the full queued duration on an embedded queue, not only the active item ETA", () => {
+    const panel = QueueProgressPanel({
+      completionReadyAt: "4000",
+      embedded: true,
+      label: "Small Cargo",
+      now: 1_500_000,
+      quantity: 1,
+      readyAt: "2000",
+      startedAt: "1000",
+      title: "Queue",
+      tone: "sky",
+    });
+    const text = visibleText(panel);
+
+    expect(text).toContain("41m 40s total left");
+    expect(text).not.toContain(formatQueueEta("2000"));
+  });
+
   test("renders a freshly started ship queue near 0%, not nearly full", () => {
     const now = 1_700_000_000_000;
     const startedAt = String(Math.floor(now / 1_000)); // chain seconds: just started
