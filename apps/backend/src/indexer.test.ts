@@ -5,7 +5,7 @@ import { afterAll, describe, expect, setSystemTime, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { encodeAbiParameters, keccak256, parseAbiParameters, toHex } from "viem";
 import { canonicalContractTables } from "./contractStateSchema";
-import { inviteeProductionBoostActivatedTopic, type Address, type AllianceState, type CanonicalFleetMissionSnapshot, type CanonicalPlanetChainState, type DebrisFieldEvent, type DefenseState, type InfrastructureState, type MoonChanceReportEvent, type MoonState, type PlayerQueues, type ResearchState, type ShipyardState, type SettledPlanetEvent } from "./evm";
+import { inviteeProductionBoostActivatedTopic, type Address, type AllianceState, type CanonicalFleetMissionDetails, type CanonicalFleetMissionSnapshot, type CanonicalPlanetChainState, type DebrisFieldEvent, type DefenseState, type InfrastructureState, type MoonChanceReportEvent, type MoonState, type PlayerQueues, type ResearchState, type ShipyardState, type SettledPlanetEvent } from "./evm";
 import { SettlementIndexer } from "./indexer";
 import { deriveBuildingRows, deriveDefenseRows, deriveInfrastructureFields, deriveShipRows } from "./readModels";
 
@@ -8727,6 +8727,17 @@ describe("SettlementIndexer", () => {
         data: abiWords(1n, ...Array.from({ length: 13 }, () => 0n))
       });
 
+      const database = new Database(databasePath);
+      database.query(`
+        INSERT INTO contract_fleet_missions (
+          mission_id, status_id, mission_type_id, owner, origin_planet_id, target_planet_id,
+          departure_at, arrival_at, return_at, fuel_cost,
+          metal_cargo, crystal_cargo, deuterium_cargo, ships_json, randomness_request_id, event_json
+        ) VALUES ('4000', 4, 0, lower(?), ?, '40', '42000000', '1767000000', '1767000500',
+          '50', '10', '20', '30', '{"smallCargo":"2"}', NULL, NULL)
+      `).run(player, planet.planetId);
+      database.close();
+
       expect(writer.allActiveFleetMissions().map((mission) => mission.missionId)).toContain("4749");
 
       await expect(writer.startFleetMissionStateHealOnce("test-fleet-heal")).rejects.toThrow("temporary canonical read failure");
@@ -8748,7 +8759,9 @@ describe("SettlementIndexer", () => {
 
       const reader = new SettlementIndexer(chainReader, 100n, { databasePath, runStartupBackfill: false });
       expect(reader.allActiveFleetMissions().map((mission) => mission.missionId)).not.toContain("4749");
-      expect(reader.allCompletedFleetMissions().map((mission) => mission.missionId)).toContain("4749");
+      expect(reader.allCompletedFleetMissions().map((mission) => mission.missionId)).toEqual(
+        expect.arrayContaining(["4000", "4749"])
+      );
       expect(reader.fleetMission("4749")).toMatchObject({
         missionId: "4749",
         status: "Returned",
@@ -8757,7 +8770,9 @@ describe("SettlementIndexer", () => {
 
       const replayReader = new SettlementIndexer(chainReader, 100n, { databasePath });
       expect(replayReader.allActiveFleetMissions().map((mission) => mission.missionId)).not.toContain("4749");
-      expect(replayReader.allCompletedFleetMissions().map((mission) => mission.missionId)).toContain("4749");
+      expect(replayReader.allCompletedFleetMissions().map((mission) => mission.missionId)).toEqual(
+        expect.arrayContaining(["4000", "4749"])
+      );
       expect(replayReader.fleetMission("4749")).toMatchObject({
         missionId: "4749",
         status: "Returned",
@@ -8769,6 +8784,137 @@ describe("SettlementIndexer", () => {
     } finally {
       rmSync(dir, { force: true, recursive: true });
     }
+  });
+
+  test("one-time archive restore upserts a complete detailed history without pruning unrelated rows", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "veydrift-indexer-"));
+    const databasePath = join(dir, "contract-state.sqlite");
+    let archiveReads = 0;
+    const restoredMissions: CanonicalFleetMissionDetails[] = [
+      {
+        missionId: "1",
+        statusId: 4,
+        missionTypeId: 0,
+        status: "Returned",
+        missionType: "Transport",
+        owner: player,
+        originPlanetId: planet.planetId,
+        targetPlanetId: "40",
+        departureAt: "100",
+        arrivalAt: "200",
+        returnAt: "300",
+        fuelCost: "7",
+        cargo: { metal: "11", crystal: "12", deuterium: "13" },
+        randomnessRequestId: null,
+        ships: { smallCargo: "2" },
+        originIsMoon: true,
+        targetIsMoon: false
+      },
+      {
+        missionId: "2",
+        statusId: 3,
+        missionTypeId: 1,
+        status: "Resolved",
+        missionType: "Deploy",
+        owner: player,
+        originPlanetId: planet.planetId,
+        targetPlanetId: "41",
+        departureAt: "400",
+        arrivalAt: "500",
+        returnAt: "600",
+        fuelCost: "8",
+        cargo: { metal: "21", crystal: "22", deuterium: "23" },
+        randomnessRequestId: null,
+        ships: { largeCargo: "3" },
+        originIsMoon: false,
+        targetIsMoon: true
+      }
+    ];
+    const chainReader = {
+      async listCanonicalFleetMissionArchiveDetails() {
+        archiveReads += 1;
+        return restoredMissions;
+      },
+      async listCanonicalFleetMissions() {
+        throw new Error("detailed archive reader should be preferred");
+      },
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return [planet]; }
+    };
+    try {
+      const writer = new SettlementIndexer(chainReader, 100n, { databasePath });
+      const database = new Database(databasePath);
+      database.query(`
+        INSERT INTO contract_fleet_missions (
+          mission_id, status_id, mission_type_id, owner, origin_planet_id, target_planet_id,
+          departure_at, arrival_at, return_at, fuel_cost,
+          metal_cargo, crystal_cargo, deuterium_cargo, ships_json, randomness_request_id, event_json
+        ) VALUES ('99', 4, 0, lower(?), ?, '40', '700', '800', '900',
+          '9', '31', '32', '33', '{"smallCargo":"4"}', NULL, NULL)
+      `).run(player, planet.planetId);
+      database.close();
+
+      const snapshot = await writer.startFleetMissionArchiveRestoreOnce("archive-restore-v1");
+      expect(snapshot).toMatchObject({
+        lastCanonicalFleetMissionSyncRows: 2,
+        lastCanonicalFleetMissionSyncUpdatedRows: 2,
+        lastCanonicalFleetMissionSyncError: null
+      });
+      expect(archiveReads).toBe(1);
+
+      const reader = new SettlementIndexer(chainReader, 100n, { databasePath, runStartupBackfill: false });
+      expect(reader.allCompletedFleetMissions().map((mission) => mission.missionId)).toEqual(
+        expect.arrayContaining(["1", "2", "99"])
+      );
+      expect(reader.fleetMission("1")).toMatchObject({
+        ships: { smallCargo: "2" },
+        originIsMoon: true,
+        targetIsMoon: false
+      });
+      expect(reader.fleetMission("2")).toMatchObject({
+        ships: { largeCargo: "3" },
+        originIsMoon: false,
+        targetIsMoon: true
+      });
+
+      await writer.startFleetMissionArchiveRestoreOnce("archive-restore-v1");
+      expect(archiveReads).toBe(1);
+    } finally {
+      rmSync(dir, { force: true, recursive: true });
+    }
+  });
+
+  test("archive restore rejects a non-contiguous canonical snapshot before writing", async () => {
+    const chainReader = {
+      async listCanonicalFleetMissions() {
+        return [{
+          missionId: "2",
+          statusId: 4,
+          missionTypeId: 0,
+          status: "Returned",
+          missionType: "Transport",
+          owner: player,
+          originPlanetId: planet.planetId,
+          targetPlanetId: "40",
+          departureAt: "100",
+          arrivalAt: "200",
+          returnAt: "300",
+          fuelCost: "7",
+          cargo: { metal: "11", crystal: "12", deuterium: "13" },
+          randomnessRequestId: null
+        } satisfies CanonicalFleetMissionSnapshot];
+      },
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return [planet]; }
+    };
+    const writer = new SettlementIndexer(chainReader, 100n);
+
+    await expect(writer.startFleetMissionArchiveRestoreOnce("archive-restore-incomplete"))
+      .rejects.toThrow("fleet mission archive snapshot is incomplete at id 1; received 2");
+    expect(writer.allCompletedFleetMissions()).toEqual([]);
+    expect(writer.snapshot().lastCanonicalFleetMissionSyncError).toContain("incomplete at id 1");
   });
 
   test("startup mission-event backfill fills missing rows from raw indexed logs", () => {

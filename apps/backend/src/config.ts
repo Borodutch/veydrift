@@ -10,6 +10,7 @@ export type BackendConfig = {
   indexFromBlock: bigint;
   currentStateHealRunId?: string;
   fullCanonicalStateHealRunId?: string;
+  missionArchiveRestoreRunId?: string;
   resourceStateHealRunId?: string;
   allianceStateHealRunId?: string;
   currentStateHealConcurrency?: number;
@@ -193,6 +194,7 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
       ?? defaultFleetMissionSyncIntervalMs;
   const currentStateHealRunId = normalizeRunId(env.VEYDRIFT_CURRENT_STATE_HEAL_RUN_ID);
   const fullCanonicalStateHealRunId = normalizeRunId(env.VEYDRIFT_FULL_CANONICAL_STATE_HEAL_RUN_ID);
+  const missionArchiveRestoreRunId = normalizeRunId(env.VEYDRIFT_MISSION_ARCHIVE_RESTORE_RUN_ID);
   const resourceStateHealRunId = normalizeRunId(env.VEYDRIFT_RESOURCE_STATE_HEAL_RUN_ID);
   const allianceStateHealRunId = normalizeRunId(env.VEYDRIFT_ALLIANCE_STATE_HEAL_RUN_ID);
   const { rpcUrl, rpcFallbackUrls, rpcSource } = resolveRpcUrl(env);
@@ -378,6 +380,7 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
       indexFromBlock,
       ...(currentStateHealRunId ? { currentStateHealRunId } : {}),
       ...(fullCanonicalStateHealRunId ? { fullCanonicalStateHealRunId } : {}),
+      ...(missionArchiveRestoreRunId ? { missionArchiveRestoreRunId } : {}),
       ...(resourceStateHealRunId ? { resourceStateHealRunId } : {}),
       ...(allianceStateHealRunId ? { allianceStateHealRunId } : {}),
       currentStateHealConcurrency,

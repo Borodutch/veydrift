@@ -517,6 +517,16 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         console.error("Veydrift full canonical state heal failed", error);
       });
   }
+  if (isWriter && loaded.config.missionArchiveRestoreRunId && indexer && loaded.problems.length === 0) {
+    // Explicit, idempotent operator repair for the mission archive. It enumerates the complete
+    // canonical mission range and only upserts rows, so a partial/candidate repair can never prune
+    // unrelated history again.
+    void indexer
+      .startFleetMissionArchiveRestoreOnce(loaded.config.missionArchiveRestoreRunId)
+      .catch((error) => {
+        console.error("Veydrift fleet mission archive restore failed", error);
+      });
+  }
   if (isWriter && loaded.config.resourceStateHealRunId && indexer && loaded.problems.length === 0) {
     // Explicit, idempotent operator repair for indexed planet resources. It executes
     // inside the active writer so an external SQLite process cannot be overwritten by

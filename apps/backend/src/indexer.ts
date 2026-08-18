@@ -95,6 +95,7 @@ import {
   type AllianceInviteSnapshot,
   type AllianceDiplomacySnapshot,
   type CanonicalPlanetChainState,
+  type CanonicalFleetMissionDetails,
   type CanonicalFleetMissionSnapshot,
   type BattleReport,
   type BattleReportDefenderLossBreakdown,
@@ -874,6 +875,7 @@ export class SettlementIndexer {
         | "listAllianceDiplomacyState"
         | "getCanonicalFleetMission"
         | "listAllianceLogs"
+        | "listCanonicalFleetMissionArchiveDetails"
         | "listCanonicalFleetMissions"
         | "listContractLogs"
         | "listCurrentPlanets"
@@ -4389,6 +4391,29 @@ export class SettlementIndexer {
     return this.currentStateHealPromise;
   }
 
+  startFleetMissionArchiveRestoreOnce(runId: string): Promise<IndexerSnapshot> {
+    const normalizedRunId = runId.trim().slice(0, 128);
+    if (!normalizedRunId) return Promise.resolve(this.snapshot());
+    if (this.metadata("lastFleetMissionArchiveRestoreRunId") === normalizedRunId) {
+      return Promise.resolve(this.snapshot());
+    }
+    if (this.currentStateHealPromise) {
+      return this.currentStateHealPromise.then(() => this.startFleetMissionArchiveRestoreOnce(normalizedRunId));
+    }
+    this.currentStateHealRunId = normalizedRunId;
+    this.currentStateHealPromise = this.restoreFleetMissionArchive(normalizedRunId)
+      .catch((error) => {
+        this.recordReconciliationError(error);
+        this.setMetadata("lastCanonicalFleetMissionSyncError", error instanceof Error ? error.message : String(error));
+        throw error;
+      })
+      .finally(() => {
+        this.currentStateHealPromise = null;
+        this.currentStateHealRunId = null;
+      });
+    return this.currentStateHealPromise;
+  }
+
   startCurrentStateHealOnce(runId: string, options: { planetConcurrency?: number } = {}): Promise<IndexerSnapshot> {
     const normalizedRunId = runId.trim().slice(0, 128);
     if (!normalizedRunId) return Promise.resolve(this.snapshot());
@@ -4476,11 +4501,39 @@ export class SettlementIndexer {
     const startedAt = Date.now();
     this.setMetadata("lastCurrentStateHealRunId", runId);
     const fleetMissions = await this.readCurrentFleetMissionHealSnapshot();
-    const changedRows = await this.replaceCanonicalFleetMissions(fleetMissions);
+    // This is intentionally a candidate-only repair. Never treat the small candidate set as a
+    // complete archive snapshot: doing so deleted every unrelated completed mission in VEY-850.
+    const changedRows = await this.upsertCanonicalFleetMissions(fleetMissions, "current fleet mission state");
     const completedAt = new Date().toISOString();
     await this.runHealWrite("current-state fleet mission heal metadata", () => {
       this.setMetadata("lastCurrentStateHealAt", completedAt);
       this.setMetadata("currentStateOneTimeHealCompletedAt", completedAt);
+      this.setMetadata("lastCanonicalFleetMissionSyncAt", completedAt);
+      this.setMetadata("lastCanonicalFleetMissionSyncDurationMs", (Date.now() - startedAt).toString());
+      this.setMetadata("lastCanonicalFleetMissionSyncRows", fleetMissions.length.toString());
+      this.setMetadata("lastCanonicalFleetMissionSyncUpdatedRows", changedRows.toString());
+      this.db.query("DELETE FROM indexer_metadata WHERE key = 'lastCanonicalFleetMissionSyncError'").run();
+      this.db.query("DELETE FROM indexer_metadata WHERE key = 'lastReconciliationError'").run();
+      this.touchMissionReadModel();
+      this.touch();
+    });
+    return this.snapshot();
+  }
+
+  private async restoreFleetMissionArchive(runId: string): Promise<IndexerSnapshot> {
+    const startedAt = Date.now();
+    const fleetMissions = this.chainReader.listCanonicalFleetMissionArchiveDetails
+      ? await this.chainReader.listCanonicalFleetMissionArchiveDetails()
+      : await this.chainReader.listCanonicalFleetMissions?.();
+    if (!fleetMissions) {
+      throw new Error("fleet mission archive restore is unavailable: chain reader cannot enumerate fleet missions");
+    }
+    assertContiguousFleetMissionArchive(fleetMissions);
+    const changedRows = await this.upsertCanonicalFleetMissions(fleetMissions, "fleet mission archive");
+    const completedAt = new Date().toISOString();
+    await this.runHealWrite("fleet mission archive restore metadata", () => {
+      this.setMetadata("lastFleetMissionArchiveRestoreRunId", runId);
+      this.setMetadata("lastFleetMissionArchiveRestoreAt", completedAt);
       this.setMetadata("lastCanonicalFleetMissionSyncAt", completedAt);
       this.setMetadata("lastCanonicalFleetMissionSyncDurationMs", (Date.now() - startedAt).toString());
       this.setMetadata("lastCanonicalFleetMissionSyncRows", fleetMissions.length.toString());
@@ -6866,6 +6919,8 @@ export class SettlementIndexer {
     }
   }
 
+  // Destructive by design: callers must supply the complete canonical mission universe.
+  // Candidate or filtered repair snapshots must use upsertCanonicalFleetMissions instead.
   private async replaceCanonicalFleetMissions(missions: CanonicalFleetMissionSnapshot[]): Promise<number> {
     let changedRows = 0;
     await this.runHealWrite("fleet missions", () => {
@@ -6876,6 +6931,26 @@ export class SettlementIndexer {
           changedRows += this.db.query("DELETE FROM contract_fleet_missions WHERE mission_id = ?").run(row.mission_id).changes;
         }
       }
+      for (const mission of missions) {
+        changedRows += this.upsertCanonicalFleetMission(mission);
+      }
+      this.setMetadata("lastFleetMissionsReconciledAt", new Date().toISOString());
+      if (changedRows > 0) {
+        this.touchMissionReadModel();
+        this.touch();
+      } else {
+        this.snapshotCache = null;
+      }
+    });
+    return changedRows;
+  }
+
+  private async upsertCanonicalFleetMissions(
+    missions: readonly (CanonicalFleetMissionSnapshot | CanonicalFleetMissionDetails)[],
+    label: string
+  ): Promise<number> {
+    let changedRows = 0;
+    await this.runHealWrite(label, () => {
       for (const mission of missions) {
         changedRows += this.upsertCanonicalFleetMission(mission);
       }
@@ -7020,7 +7095,9 @@ export class SettlementIndexer {
     return result.changes;
   }
 
-  private upsertCanonicalFleetMission(mission: CanonicalFleetMissionSnapshot): number {
+  private upsertCanonicalFleetMission(
+    mission: CanonicalFleetMissionSnapshot | CanonicalFleetMissionDetails
+  ): number {
     const eventJson = canonicalFleetMissionEventJson(mission);
     const existing = this.db.query(`
       SELECT event_json
@@ -7066,7 +7143,7 @@ export class SettlementIndexer {
       mission.cargo.metal,
       mission.cargo.crystal,
       mission.cargo.deuterium,
-      "{}",
+      "ships" in mission ? JSON.stringify(mission.ships) : "{}",
       mission.randomnessRequestId,
       eventJson
     ).changes;
@@ -10868,6 +10945,7 @@ export class SettlementIndexer {
       deuterium: row.deuterium_cargo
     };
     const canonicalEventMission = parseCanonicalFleetMissionEvent(row.event_json);
+    const canonicalStorageDetails = parseCanonicalFleetMissionStorageDetails(row.event_json);
     const combatResolutionProgress = parseCombatResolutionProgress(row.event_json);
     const base = eventMission ?? {
       missionId: row.mission_id,
@@ -10878,7 +10956,7 @@ export class SettlementIndexer {
       defendsMissionId: null,
       counterplayDefenderMissionIds: [],
       returnCargo: null,
-      ships: parseJson<Record<string, string>>(row.ships_json, {}),
+      ships: canonicalStorageDetails?.ships ?? parseJson<Record<string, string>>(row.ships_json, {}),
       transactionHash: "0x",
       blockNumber: this.metadata("lastReconciledBlock") ?? "0",
       launchBlockNumber: this.metadata("lastReconciledBlock") ?? "0",
@@ -10909,9 +10987,17 @@ export class SettlementIndexer {
         ...(canonicalEventMission.randomnessRequestId ? { randomnessRequestId: canonicalEventMission.randomnessRequestId } : {})
       }
       : base;
+    const detailedBase = canonicalStorageDetails
+      ? {
+        ...mergedBase,
+        ships: canonicalStorageDetails.ships,
+        originIsMoon: canonicalStorageDetails.originIsMoon,
+        targetIsMoon: canonicalStorageDetails.targetIsMoon
+      }
+      : mergedBase;
     const fuelCost = eventDerivedFuelCost(row, canonicalEventMission ?? eventMission);
     return {
-      ...mergedBase,
+      ...detailedBase,
       missionId: row.mission_id,
       status: fleetMissionStatusLabel(row.status_id),
       missionType: fleetMissionTypeLabel(row.mission_type_id),
@@ -10922,7 +11008,7 @@ export class SettlementIndexer {
       returnAt: row.return_at,
       fuelCost,
       cargo,
-      recallCost: row.status_id === 1 && mergedBase.recallCost === null ? projectedFleetRecallCost() : mergedBase.recallCost,
+      recallCost: row.status_id === 1 && detailedBase.recallCost === null ? projectedFleetRecallCost() : detailedBase.recallCost,
       ...(combatResolutionProgress ? { combatResolutionProgress } : {}),
       ...(row.randomness_request_id ? { randomnessRequestId: row.randomness_request_id } : {})
     };
@@ -12731,6 +12817,32 @@ function parseCanonicalFleetMissionEvent(value: string | null): FleetMissionSumm
   return isStoredFleetMissionSummary(mission) ? mission : null;
 }
 
+function parseCanonicalFleetMissionStorageDetails(value: string | null): {
+  ships: Record<string, string>;
+  originIsMoon: boolean;
+  targetIsMoon: boolean;
+} | null {
+  if (!value) return null;
+  const payload = parseJson<Record<string, unknown> | null>(value, null);
+  if (!payload || typeof payload !== "object") return null;
+  if (
+    typeof payload.originIsMoon !== "boolean"
+    || typeof payload.targetIsMoon !== "boolean"
+    || !payload.ships
+    || typeof payload.ships !== "object"
+    || Array.isArray(payload.ships)
+  ) return null;
+  const ships = Object.fromEntries(
+    Object.entries(payload.ships as Record<string, unknown>)
+      .filter((entry): entry is [string, string] => typeof entry[1] === "string")
+  );
+  return {
+    ships,
+    originIsMoon: payload.originIsMoon,
+    targetIsMoon: payload.targetIsMoon
+  };
+}
+
 function parseCombatResolutionProgress(
   value: string | null
 ): FleetMissionSummary["combatResolutionProgress"] | null {
@@ -13355,6 +13467,19 @@ function chunks<T>(items: readonly T[], size: number): T[][] {
     result.push(items.slice(index, index + size));
   }
   return result;
+}
+
+function assertContiguousFleetMissionArchive(
+  missions: readonly (CanonicalFleetMissionSnapshot | CanonicalFleetMissionDetails)[]
+): void {
+  for (let index = 0; index < missions.length; index += 1) {
+    const expectedMissionId = BigInt(index + 1).toString();
+    if (missions[index]?.missionId !== expectedMissionId) {
+      throw new Error(
+        `fleet mission archive snapshot is incomplete at id ${expectedMissionId}; received ${missions[index]?.missionId ?? "end of snapshot"}`
+      );
+    }
+  }
 }
 
 function levelRows(rows: readonly LevelRow[] | undefined): Array<{ id: number; level: number }> {

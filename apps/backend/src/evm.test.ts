@@ -1400,6 +1400,18 @@ describe("canonical fleet mission details", () => {
     });
     expect(missions[1]?.originIsMoon).toBe(false);
     expect(missions[1]?.targetIsMoon).toBe(true);
+
+    storageSlots.length = 0;
+    const archive = await reader.listCanonicalFleetMissionArchiveDetails();
+    expect(archive).toHaveLength(3);
+    expect(archive[1]).toMatchObject({
+      missionId: "2",
+      status: "Resolved",
+      ships: { smallCargo: "11", bomber: "13" },
+      originIsMoon: false,
+      targetIsMoon: true
+    });
+    expect(storageSlots).toHaveLength(9);
   });
 });
 

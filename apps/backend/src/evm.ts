@@ -1464,6 +1464,7 @@ export interface ChainReader {
   listAllianceDiplomacyState?(): Promise<AllianceDiplomacySnapshot[]>;
   getCanonicalFleetMission?(missionId: bigint): Promise<CanonicalFleetMissionSnapshot | null>;
   listCanonicalFleetMissions?(): Promise<CanonicalFleetMissionSnapshot[]>;
+  listCanonicalFleetMissionArchiveDetails?(): Promise<CanonicalFleetMissionDetails[]>;
   listCanonicalFleetMissionDetails?(): Promise<CanonicalFleetMissionDetails[]>;
   listFleetMissionSummaries?(): Promise<FleetMissionSummary[]>;
   listCurrentPlanets?(): Promise<SettledPlanetEvent[]>;
@@ -2353,6 +2354,25 @@ export class VeydriftGameReader implements ChainReader {
       .map((result, index) => this.decodeCanonicalFleetMission(BigInt(index + 1), result))
       .filter((mission): mission is CanonicalFleetMissionSnapshot => mission !== null);
     return this.withCanonicalCombatResolutionProgress(missions);
+  }
+
+  async listCanonicalFleetMissionArchiveDetails(): Promise<CanonicalFleetMissionDetails[]> {
+    const missions = await this.listCanonicalFleetMissions();
+    const detailed: CanonicalFleetMissionDetails[] = [];
+    // Each supplement reads three packed storage slots. Keep each JSON-RPC batch at or below the
+    // transport's normal 50-call ceiling so a one-shot archive restore cannot create a giant request.
+    const missionBatchSize = Math.max(1, Math.floor(maxBatchCallSize / 3));
+    for (let index = 0; index < missions.length; index += missionBatchSize) {
+      const batch = missions.slice(index, index + missionBatchSize);
+      const supplements = await this.readFleetMissionStorageSupplements(
+        batch.map((mission) => BigInt(mission.missionId))
+      );
+      detailed.push(...batch.map((mission) => ({
+        ...mission,
+        ...(supplements.get(mission.missionId) ?? emptyFleetMissionSupplement())
+      })));
+    }
+    return detailed;
   }
 
   async listCanonicalFleetMissionDetails(): Promise<CanonicalFleetMissionDetails[]> {
