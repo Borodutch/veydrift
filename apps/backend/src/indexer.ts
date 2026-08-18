@@ -8790,15 +8790,98 @@ export class SettlementIndexer {
     }
 
     const queue = this.productionQueueFromRow(row);
+    this.hydrateRetainedProductionQueueTiming(queue);
     if (row.backlog_json) {
       const backlog = parseEvent<QueueState[]>(row.backlog_json);
       const sanitizedBacklog = this.sanitizedProductionBacklog(row.queue_kind, queue, Array.isArray(backlog) ? backlog : []);
       if (sanitizedBacklog.length > 0) {
+        sanitizedBacklog.forEach((entry) => this.hydrateRetainedProductionQueueTiming(entry));
         queue.backlog = sanitizedBacklog;
       }
     }
     cache.values.set(queueKeyValue, queue);
     return cloneQueueState(queue);
+  }
+
+  /**
+   * Older lazy-production batches predate the production-timing storage/event
+   * fields. Once a few units have completed, their canonical queue quantity and
+   * remaining cost no longer match the original `DefenseQueued`/`ShipQueued`
+   * payload, so the old exact queue-row lookup cannot recover a timeline.
+   *
+   * The retained queue-start log still has the immutable final readyAt and the
+   * original quantity. Recover it locally from SQLite and represent its total
+   * duration as `unitWorkSeconds / rate`; this gives every read surface the
+   * exact batch start, current-unit boundary, and final completion without an
+   * RPC round trip or an indeterminate progress bar.
+   */
+  private hydrateRetainedProductionQueueTiming(queue: QueueState): void {
+    if (
+      queue.productionTiming
+      || (queue.kind !== "defense" && queue.kind !== "ship")
+      || !queue.planetId
+      || queue.itemId === undefined
+      || queue.quantity === undefined
+      || !queue.readyAt
+    ) return;
+
+    let planetId: bigint;
+    let readyAt: bigint;
+    try {
+      planetId = BigInt(queue.planetId);
+      readyAt = BigInt(queue.readyAt);
+    } catch {
+      return;
+    }
+    if (planetId <= 0n || readyAt <= 0n) return;
+
+    const queuedTopic = queue.kind === "defense" ? defenseQueuedTopic : shipQueuedTopic;
+    const topicFor = (value: bigint) => `0x${value.toString(16).padStart(64, "0")}`;
+    const rows = this.db.query(`
+      SELECT event_json
+      FROM indexed_event_logs
+      WHERE removed = 0
+        AND lower(json_extract(event_json, '$.topics[0]')) = ?
+        AND lower(json_extract(event_json, '$.topics[1]')) = ?
+        AND lower(json_extract(event_json, '$.topics[2]')) = ?
+      ORDER BY CAST(block_number AS INTEGER) DESC, CAST(log_index AS INTEGER) DESC
+    `).all(
+      queuedTopic.toLowerCase(),
+      topicFor(planetId),
+      topicFor(BigInt(queue.itemId)),
+    ) as EventRow[];
+
+    for (const row of rows) {
+      try {
+        const log = parseEvent<IndexedRpcLog>(row.event_json);
+        const event = decodeIndexedQueueStartedLog(log);
+        const originalQuantity = event.quantity;
+        const startedAt = event.startedAt ?? blockTimestampSeconds(log);
+        if (
+          event.queueKind !== queue.kind
+          || event.itemId !== queue.itemId
+          || event.readyAt !== queue.readyAt
+          || originalQuantity === undefined
+          || originalQuantity < queue.quantity
+          || !startedAt
+        ) continue;
+
+        const startedAtValue = safeBigInt(startedAt, 0n);
+        const duration = readyAt - startedAtValue;
+        if (startedAtValue <= 0n || duration <= 0n) continue;
+
+        queue.startedAt = startedAt;
+        queue.productionTiming = {
+          startedAt,
+          originalQuantity,
+          unitWorkSeconds: duration.toString(),
+          rate: originalQuantity.toString()
+        };
+        return;
+      } catch {
+        // A malformed historical log cannot authorize a timeline recovery.
+      }
+    }
   }
 
   private productionQueueFromRow(row: QueueRow): QueueState {

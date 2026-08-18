@@ -120,7 +120,7 @@ describe("QueueProgressPanel", () => {
     expect(hasClass(panel, "animate-pulse")).toBe(false);
   });
 
-  test("keeps unit-detail metadata out of the compact queue rail", () => {
+  test("shows current-batch completion and the time to the next produced unit", () => {
     const panel = QueueProgressPanel({
       completedQuantity: 2,
       currentUnitProgressBps: 3750,
@@ -137,13 +137,13 @@ describe("QueueProgressPanel", () => {
     });
     const text = visibleText(panel);
 
-    expect(text).toContain("33%");
-    expect(text.replace(/\s+/g, "")).toContain("2/5·33%");
-    expect(text).not.toContain("Units complete");
-    expect(text).not.toContain("Current unit");
+    expect(text.replace(/\s+/g, "")).toContain("2/5·1m15stonext");
+    expect(text).not.toContain("Syncing timeline");
+    expect(hasClass(panel, "queue-fill")).toBe(true);
+    expect(hasClass(panel, "queue-indeterminate-track")).toBe(false);
   });
 
-  test("keeps pending queues without a canonical timeline indeterminate", () => {
+  test("keeps a legacy queue without a recovered timeline stable rather than animated", () => {
     const panel = QueueProgressPanel({
       label: "Light Laser",
       now: 1_500_000,
@@ -154,12 +154,11 @@ describe("QueueProgressPanel", () => {
     });
     const text = visibleText(panel);
 
-    expect(text).toContain("Syncing timeline");
+    expect(text).toContain("0%");
     expect(text).not.toContain("…");
-    expect(text).not.toContain("0%");
-    expect(hasClass(panel, "queue-indeterminate-track")).toBe(true);
-    expect(hasClass(panel, "w-full")).toBe(true);
-    expect(hasClass(panel, "w-2/3")).toBe(false);
+    expect(text).not.toContain("Syncing timeline");
+    expect(hasClass(panel, "queue-indeterminate-track")).toBe(false);
+    expect(hasClass(panel, "queue-fill")).toBe(true);
   });
 
   test("renders ready queues as complete even without a started timestamp", () => {

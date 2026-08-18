@@ -10611,14 +10611,28 @@ function planetSelectorQueueProgressBar({
     };
   }
 
+  const queue = progressState.queue;
+  const startedAt = timestampToMs(queue?.startedAt ?? queue?.productionTiming?.startedAt);
+  const finalReadyAt = timestampToMs(queue?.backlog?.at(-1)?.readyAt ?? queue?.readyAt);
+  const hasWholeQueueTimeline = startedAt !== undefined
+    && finalReadyAt !== undefined
+    && startedAt < finalReadyAt;
+  const now = Date.now();
+  const totalProgress = hasWholeQueueTimeline
+    ? Math.min(1, Math.max(0, (now - startedAt) / (finalReadyAt - startedAt)))
+    : progressState.progress;
+  const totalRemaining = finalReadyAt === undefined
+    ? progressState.remaining
+    : formatDurationUntil(finalReadyAt, now);
+
   return {
     active: true,
     color,
-    indeterminate: progressState.indeterminate,
+    indeterminate: false,
     kind,
-    progress: progressState.progress,
-    remaining: progressState.remaining,
-    title: `${label}: ${preview.label}, ${progressState.remaining}`,
+    progress: totalProgress,
+    remaining: totalRemaining,
+    title: `${label}: ${preview.label}, ${totalRemaining} total left`,
   };
 }
 
