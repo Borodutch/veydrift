@@ -1,5 +1,6 @@
 import type { ComponentChildren } from "preact";
 import type { ConstructionProgress } from "../constructionProgress";
+import { formatDurationUntil } from "../durationFormat";
 import { queueProgressBarState, queueProgressFillState } from "../overviewData";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import { AnimatedProgressBar } from "./AnimatedProgressBar";
@@ -19,6 +20,7 @@ export interface QueueProgressPanelProps {
   asset?: string | undefined;
   children?: ComponentChildren;
   completedQuantity?: number | undefined;
+  completionReadyAt?: QueueTimestamp;
   currentUnitProgressBps?: number | undefined;
   currentUnitSecondsRemaining?: number | undefined;
   embedded?: boolean | undefined;
@@ -74,6 +76,7 @@ export function QueueProgressPanel({
   asset,
   children,
   completedQuantity,
+  completionReadyAt,
   embedded = false,
   indeterminate,
   itemText,
@@ -111,6 +114,10 @@ export function QueueProgressPanel({
       startedAt: hasCanonicalTimeline ? startedAtMs : undefined,
     });
   const percent = Math.round(progressFill.progress * 100);
+  const completionReadyAtMs = queueTimestampToMs(completionReadyAt);
+  const totalQueueRemaining = completionReadyAtMs === undefined
+    ? undefined
+    : formatDurationUntil(completionReadyAtMs, now);
   const totalQuantity = completedQuantity === undefined
     ? undefined
     : completedQuantity + (remainingQuantity ?? quantity ?? 0);
@@ -149,7 +156,11 @@ export function QueueProgressPanel({
                   </span>
                 )}
                 <span className="text-[10px] tabular-nums text-slate-500">
-                  {formatQueueEta(readyAt)}
+                  {totalQueueRemaining === undefined
+                    ? formatQueueEta(readyAt)
+                    : totalQueueRemaining === "Ready"
+                      ? "Queue ready"
+                      : `${totalQueueRemaining} total left`}
                 </span>
               </span>
               {completedQuantity !== undefined && totalQuantity !== undefined ? (
@@ -165,7 +176,7 @@ export function QueueProgressPanel({
               className="h-1.5 w-full bg-white/10"
               fillClassName={classes.fill}
               indeterminate={progressBar.indeterminate}
-              label={`${label} queue progress`}
+              label={`${label} queue progress${totalQueueRemaining ? `, ${totalQueueRemaining} total remaining` : ""}`}
               value={progressFill.progress}
             />
           </span>
