@@ -244,7 +244,11 @@ export function QueueProgressPanel({
               </span>
             )}
             <span className="text-[9px] tabular-nums text-slate-500">
-              {formatQueueEta(readyAt)}
+              {totalQueueRemaining === undefined
+                ? formatQueueEta(readyAt)
+                : totalQueueRemaining === "Ready"
+                  ? "Queue ready"
+                  : `${totalQueueRemaining} total left`}
             </span>
           </span>
         </span>
@@ -261,7 +265,7 @@ export function QueueProgressPanel({
             {completedQuantity !== undefined && totalQuantity !== undefined
               ? `${formatQuantity(completedQuantity)}/${formatQuantity(totalQuantity)} · `
               : ""}
-            {progressBar.indeterminate ? "…" : `${percent}%`}
+            {progressBar.indeterminate ? "Syncing timeline" : `${percent}%`}
           </span>
         </span>
 

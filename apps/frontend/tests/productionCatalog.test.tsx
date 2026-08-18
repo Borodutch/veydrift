@@ -81,6 +81,7 @@ describe("ProductionCatalog selected panel", () => {
       onBuild: () => undefined,
       onQuantity: (_key, quantity) => quantities.push(quantity),
       onSelect: () => undefined,
+      now: 1_700_000_060_000,
       selectedKey: "rocketLauncher",
     });
 
@@ -362,9 +363,10 @@ describe("ProductionCatalog selected panel", () => {
     expect(text).not.toContain("Ion Cannon");
     expect(text).not.toContain("Small Shield Dome");
     expect(text).not.toContain("Gauss Cannon");
-    expect(text).toContain(formatQueueEta("1700000120"));
+    expect(text).toContain("4m total left");
     expect(text).toContain(formatQueueEta("1700000200"));
     expect(text).toContain(formatQueueEta("1700000300"));
+    expect(text).not.toContain("…");
     expect(imageSources).toContain("/assets/game/defenses/ion-cannon.webp");
     expect(imageSources).toContain("/assets/game/defenses/small-shield-dome.webp");
     expect(imageSources).toContain("/assets/game/defenses/gauss-cannon.webp");

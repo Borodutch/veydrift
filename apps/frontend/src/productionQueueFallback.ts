@@ -18,7 +18,8 @@ function mergeProductionQueue(
   primaryQueue: QueueStateResponse,
   fallbackQueue: QueueStateResponse,
 ): QueueStateResponse {
-  const startedAt = primaryQueue.startedAt ?? fallbackQueue.startedAt;
+  const fallbackStartedAt = fallbackQueue.startedAt ?? fallbackQueue.productionTiming?.startedAt;
+  const startedAt = primaryQueue.startedAt ?? primaryQueue.productionTiming?.startedAt ?? fallbackStartedAt;
   const sameTimeline = primaryQueue.readyAt === null
     || primaryQueue.readyAt === undefined
     || primaryQueue.readyAt === fallbackQueue.readyAt;
@@ -58,9 +59,10 @@ function hasUsableFallbackStartedAt(
   primaryQueue: QueueStateResponse,
   fallbackQueue: QueueStateResponse,
 ): boolean {
-  if (fallbackQueue.startedAt === undefined || fallbackQueue.startedAt === null) return false;
+  const fallbackStartedAt = fallbackQueue.startedAt ?? fallbackQueue.productionTiming?.startedAt;
+  if (fallbackStartedAt === undefined || fallbackStartedAt === null) return false;
 
-  const startedAt = Number(fallbackQueue.startedAt);
+  const startedAt = Number(fallbackStartedAt);
   const readyAt = Number(primaryQueue.readyAt ?? fallbackQueue.readyAt);
 
   return Number.isFinite(startedAt) && Number.isFinite(readyAt) && startedAt < readyAt;

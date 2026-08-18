@@ -154,7 +154,8 @@ describe("QueueProgressPanel", () => {
     });
     const text = visibleText(panel);
 
-    expect(text).toContain("…");
+    expect(text).toContain("Syncing timeline");
+    expect(text).not.toContain("…");
     expect(text).not.toContain("0%");
     expect(hasClass(panel, "queue-indeterminate-track")).toBe(true);
     expect(hasClass(panel, "w-full")).toBe(true);
