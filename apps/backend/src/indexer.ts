@@ -4856,6 +4856,10 @@ export class SettlementIndexer {
       allianceDiplomacy
     } = await this.withRebuildDeadline(this.readRebuildInputs(), deadlineMs);
     const rebuild = this.db.transaction(() => {
+      // A cold rebuild clears the canonical queue table before writing current chain state. Capture
+      // exact research timing identities while the old rows still exist so the clear cannot erase a
+      // valid start when the retained event-log window no longer contains its ResearchQueued event.
+      const researchQueues = this.canonicalResearchQueuesWithStartedAt(canonicalState.researchQueues);
       this.db.query("DELETE FROM indexed_planets").run();
       this.db.query("DELETE FROM indexed_debris_fields").run();
       this.db.query("DELETE FROM indexed_moon_chance_reports").run();
@@ -4868,7 +4872,7 @@ export class SettlementIndexer {
       }
       const latestBlock = latestEventBlock([...settledPlanetEvents, ...debrisEvents, ...moonChanceEvents, ...allianceLogs]);
       this.withCanonicalQueueSnapshotBlock(maxBlockLabel(this.metadata("latestIndexedBlock"), latestBlock), () => {
-        this.applyCanonicalState(canonicalState);
+        this.applyCanonicalState({ ...canonicalState, researchQueues });
       });
       this.replayEventDerivedQueueStateFromEventLogs(canonicalState);
       for (const event of debrisEvents) {
@@ -7297,6 +7301,16 @@ export class SettlementIndexer {
 
     const recovered = this.researchStartedAtFromRetainedLog(owner, queue);
     return recovered ? { ...queue, startedAt: recovered } : queue;
+  }
+
+  private canonicalResearchQueuesWithStartedAt(
+    queues: Map<`0x${string}`, QueueState>
+  ): Map<`0x${string}`, QueueState> {
+    const preserved = new Map<`0x${string}`, QueueState>();
+    for (const [owner, queue] of queues) {
+      preserved.set(owner, this.canonicalResearchQueueWithStartedAt(owner, queue) ?? queue);
+    }
+    return preserved;
   }
 
   private researchStartedAtFromRetainedLog(owner: Address, queue: QueueState): string | null {
