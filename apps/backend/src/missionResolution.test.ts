@@ -129,6 +129,36 @@ describe("MissionResolutionService", () => {
     expect(calls).toEqual(["resolve:10", "return:11"]);
   });
 
+  test("reconciles a stale return row after FleetMissionNotResolved instead of leaving it in the retry loop", async () => {
+    let reconciled: string | null = null;
+    const service = new MissionResolutionService(config, {
+      candidateSource: {
+        missionResolutionCandidates: () => ({
+          arrivals: [],
+          returns: [returnLeg("24524", "Returning", "950")]
+        }),
+        async reconcileMissionResolutionCandidate(missionId) {
+          reconciled = missionId;
+        }
+      },
+      chainClient: {
+        async listResolvableFleetMissions() { return []; },
+        async listReturnableFleetMissions() { return []; },
+        async resolveFleetMission() { return "0xresolve"; },
+        async completeFleetMissionReturn() {
+          throw new Error("execution reverted: 0xb3439205");
+        }
+      },
+      logger: silentLogger(),
+      now: () => 1_000_000
+    });
+
+    await service.tick();
+
+    expect(reconciled as string | null).toBe("24524");
+    expect(service.snapshot().failuresByLeg).toEqual({ arrival: 0, return: 1 });
+  });
+
   test("retries a successfully chunked Attack on the next tick until canonical status is terminal", async () => {
     let attempts = 0;
     let terminal = false;

@@ -143,7 +143,9 @@ export class BackendDataStore {
 
   overview(wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<WalletOverviewSnapshotResponse> {
     const key = cacheKey("overview", wallet, planetId, options);
-    return this.refresh(key, () => fetchWalletOverviewSnapshot(this.apiBaseUrl, wallet, planetId, options), { dedupe: !options.fresh });
+    // `fresh` means bypass the short-lived value cache, not send duplicate identical requests when
+    // the Overview, top bar, and selected-planet surface refresh in the same render turn.
+    return this.refresh(key, () => fetchWalletOverviewSnapshot(this.apiBaseUrl, wallet, planetId, options));
   }
 
   planets(wallet: string, options: WalletReadOptions = {}): Promise<WalletPlanetsResponse> {

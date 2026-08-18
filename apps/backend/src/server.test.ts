@@ -1207,7 +1207,7 @@ describe("Veydrift backend", () => {
     expect(snapshots).toBe(1);
   });
 
-  test("serves versionless shared stale reads instead of recomputing cold routes", async () => {
+  test("serves a shared stale snapshot for the live landing leaderboard instead of rebuilding it on every reader", async () => {
     let staleKeyUsed = false;
     const staleBody = new TextEncoder().encode(JSON.stringify({ stale: true })).buffer as ArrayBuffer;
     const sharedResponseCache = {
@@ -1245,7 +1245,7 @@ describe("Veydrift backend", () => {
       sharedResponseCache
     });
 
-    const response = await handler(new Request("http://localhost/highscores?limit=10"));
+    const response = await handler(new Request("http://localhost/highscores?category=total&live=1&page=1&pageSize=250"));
     const body = await response.json();
 
     expect(response.status).toBe(200);

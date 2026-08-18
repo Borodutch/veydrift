@@ -2972,6 +2972,18 @@ export class SettlementIndexer {
     return { arrivals, returns };
   }
 
+  /**
+   * Repair one resolver candidate after the contract rejects an indexed status. This is deliberately
+   * narrow: it never enumerates the mission universe or removes archive rows, and runs only on the
+   * rare FleetMissionNotResolved revert path.
+   */
+  async reconcileMissionResolutionCandidate(missionId: string): Promise<void> {
+    if (!this.chainReader.getCanonicalFleetMission) return;
+    const canonical = await this.chainReader.getCanonicalFleetMission(BigInt(missionId));
+    if (!canonical) return;
+    await this.upsertCanonicalFleetMissions([canonical], `resolver candidate ${missionId}`);
+  }
+
   // Every completed mission across the universe (all players), newest-first, for the past "All" tab.
   allCompletedFleetMissions(): FleetMissionSummary[] {
     return this.indexedFleetMissionReferenceIndex().completed;

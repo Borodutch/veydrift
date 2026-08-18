@@ -57,6 +57,11 @@ export type MissionResolutionCandidates = {
 
 export type MissionResolutionCandidateSource = {
   missionResolutionCandidates(): MissionResolutionCandidates | Promise<MissionResolutionCandidates>;
+  /**
+   * A resolver revert can expose a stale event-indexed mission status. Re-read just that candidate
+   * from canonical storage so it does not remain in the writer's retry loop until a broad repair.
+   */
+  reconcileMissionResolutionCandidate?(missionId: string): Promise<void>;
 };
 
 type MissionLeg = "arrival" | "return";
@@ -314,6 +319,15 @@ export class MissionResolutionService {
     } catch (error) {
       this.failuresByLeg[candidate.leg] += 1;
       const method = candidate.leg === "arrival" ? "resolveFleetMission" : "completeFleetMissionReturn";
+      if (isFleetMissionNotResolvedError(error) && this.candidateSource?.reconcileMissionResolutionCandidate) {
+        try {
+          await this.candidateSource.reconcileMissionResolutionCandidate(candidate.mission.missionId);
+        } catch (reconciliationError) {
+          this.logger.warn(
+            `[mission-resolution] canonical refresh for ${candidate.mission.missionId} failed: ${conciseReasonText(reconciliationError)}`
+          );
+        }
+      }
       const retryAfterMs = this.scheduleRetry(candidate);
       this.logger.warn(
         `[mission-resolution] ${method}(${candidate.mission.missionId}) failed; retry in ${Math.ceil(retryAfterMs / 1_000)}s: ${conciseReasonText(error)}`
@@ -353,6 +367,12 @@ export class MissionResolutionService {
     if (this.lastError) warnings.push("mission_resolution_tick_failed");
     return warnings;
   }
+}
+
+function isFleetMissionNotResolvedError(error: unknown): boolean {
+  // FleetMissionNotResolved(uint64); the selector is stable across the proxy modules. Keep the
+  // check narrow so unrelated resolver failures retain their normal bounded retry behavior.
+  return conciseReasonText(error).includes("0xb3439205");
 }
 
 export class ViemMissionResolutionChainClient implements MissionResolutionChainClient {
