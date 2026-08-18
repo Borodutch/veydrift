@@ -3,6 +3,7 @@ import type { ComponentChildren, VNode } from "preact";
 import {
   parseProductionQuantity,
   ProductionCatalog,
+  ProductionQueuePanel,
   productionQuantityValidationMessage,
   revealProductionPanelAfterSelection,
   type ProductionCatalogItem,
@@ -369,6 +370,38 @@ describe("ProductionCatalog selected panel", () => {
     expect(imageSources).toContain("/assets/game/defenses/gauss-cannon.webp");
     expect(queuePanel?.props.className).toContain("border");
     expect(queueItems.every((node) => !String(node.props.className).includes("border"))).toBe(true);
+  });
+
+  test("keeps embedded Overview queues focused on total remaining time", () => {
+    const panel = ProductionQueuePanel({
+      embedded: true,
+      now: 1_700_000_060_000,
+      queue: {
+        asset: "/assets/game/ships/small-cargo.webp",
+        backlog: [
+          {
+            asset: "/assets/game/ships/large-cargo.webp",
+            label: "Large Cargo",
+            quantity: 9,
+            readyAt: "1700000300",
+          },
+        ],
+        label: "Small Cargo",
+        quantity: 1,
+        readyAt: "1700000120",
+        startedAt: "1700000000",
+      },
+      tone: "sky",
+    });
+    const text = visibleText(panel).replace(/\s+/g, " ");
+    const imageSources = elementNodes(panel)
+      .filter((node) => node.type === "img")
+      .map((node) => node.props.src);
+
+    expect(text).toContain("4m total left");
+    expect(text).not.toContain("×9");
+    expect(imageSources).toContain("/assets/game/ships/small-cargo.webp");
+    expect(imageSources).not.toContain("/assets/game/ships/large-cargo.webp");
   });
 });
 
