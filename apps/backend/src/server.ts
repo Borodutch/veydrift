@@ -2834,10 +2834,10 @@ function cacheableJsonRequestTtlMs(request: Request, url: URL): number {
   if (url.pathname === "/health") return 10_000;
   if (url.pathname === "/stats") return 30_000;
   // Public landing pages request the live board independently. Keep its browser response no-store,
-  // but let backend readers share a short snapshot rather than synchronously rebuilding the entire
-  // ranking on every reader after an unrelated indexed event.
+  // but serve a short shared snapshot across every reader instead of synchronously rebuilding the
+  // entire ranking after unrelated indexed events.
   if (url.pathname === "/highscores") {
-    return landingLeaderboardRequest(url) ? 10_000 : livePublicDataRequest(url) ? 1_000 : 300_000;
+    return landingLeaderboardRequest(url) ? 60_000 : livePublicDataRequest(url) ? 1_000 : 300_000;
   }
   if (url.pathname === "/raid-finder/debris") return 30_000;
   if (url.pathname === "/raid-finder/rifters") return 30_000;
@@ -2926,7 +2926,16 @@ function cacheableJsonRequestStaleKey(request: Request, url: URL, cacheKey: stri
 function cacheableJsonRequestVersion(url: URL, indexer: SettlementIndexer): string {
   if (url.pathname === "/health") return "ttl";
   if (url.pathname === "/stats") return "ttl";
-  if (url.pathname === "/highscores") return livePublicDataRequest(url) ? indexer.indexedStateCacheVersion() : "ttl";
+  if (url.pathname === "/highscores") {
+    // The public landing board is informational. A stable one-minute snapshot means a reader that
+    // did not receive the last browser request can reuse the same completed ranking immediately,
+    // rather than becoming a fresh multi-second SQLite rebuild after every unrelated chain event.
+    return landingLeaderboardRequest(url)
+      ? "landing-leaderboard"
+      : livePublicDataRequest(url)
+        ? indexer.indexedStateCacheVersion()
+        : "ttl";
+  }
   if (url.pathname === "/raid-finder/debris") return "ttl";
   if (url.pathname === "/raid-finder/rifters") return "ttl";
   // Do not use the global mission/battle-report generation for hot per-wallet views. It advances
