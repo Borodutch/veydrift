@@ -25,6 +25,7 @@ export class SharedResponseCache {
   // the backend disk budget but lets the cache cover the active player set.
   private readonly maxRows = 16_384;
   private lastPrunedAt = 0;
+  private readonly maintenanceLockKey = "__response_cache_maintenance__";
 
   constructor(databasePath: string) {
     mkdirSync(dirname(databasePath), { recursive: true });
@@ -100,8 +101,14 @@ export class SharedResponseCache {
     // multi-second synchronous write under load. Expiry is advisory, so batched maintenance keeps
     // the hot path cheap without serving expired entries (get() still filters by expiry).
     if (now - this.lastPrunedAt >= 30_000) {
-      this.prune(now);
-      this.lastPrunedAt = now;
+      // Every reader opens this database. A process-local timestamp made all readers try the full
+      // cache-size prune at once every 30 seconds, causing short SQLite busy windows that defeated
+      // the very shared cache they were trying to populate. Hold the maintenance lease for the
+      // whole interval so exactly one reader performs the advisory cleanup across the process pool.
+      if (this.tryAcquireRefresh(this.maintenanceLockKey, 30_000, now)) {
+        this.prune(now);
+        this.lastPrunedAt = now;
+      }
     }
   }
 
