@@ -155,6 +155,8 @@ import {
   defenseQueueTimingSetTopic,
   paidAllianceInvitePurchasedTopic,
   paidAllianceInviteRedeemedTopic,
+  researchQueuedTopic,
+  researchQueuedV2Topic,
   shipCompletedTopic,
   shipQueuedTopic,
   shipQueueTimingSetTopic,
@@ -258,6 +260,10 @@ export type IndexerSnapshot = {
   lastCanonicalResourceHealAt: string | null;
   lastCanonicalResourceHealPlanetsScanned: number | null;
   lastCanonicalResourceHealRunId: string | null;
+  lastResearchQueueStartedAtRepairRunId: string | null;
+  lastResearchQueueStartedAtRepairAt: string | null;
+  lastResearchQueueStartedAtRepairRowsScanned: number;
+  lastResearchQueueStartedAtRepairRowsRepaired: number;
   lastCanonicalFleetMissionSyncAt: string | null;
   lastCanonicalFleetMissionSyncDurationMs: number | null;
   lastCanonicalFleetMissionSyncError: string | null;
@@ -452,6 +458,7 @@ type QueueRow = {
   item_id: number;
   metal_cost: string;
   original_quantity?: number | null;
+  owner?: string | null;
   planet_id?: string | null;
   production_rate?: string | null;
   queue_kind: string;
@@ -973,6 +980,10 @@ export class SettlementIndexer {
       lastCanonicalResourceHealAt: this.metadata("lastCanonicalResourceHealAt"),
       lastCanonicalResourceHealPlanetsScanned: metadataNumber(this.metadata("lastCanonicalResourceHealPlanetsScanned")),
       lastCanonicalResourceHealRunId: this.metadata("lastCanonicalResourceHealRunId"),
+      lastResearchQueueStartedAtRepairRunId: this.metadata("lastResearchQueueStartedAtRepairRunId"),
+      lastResearchQueueStartedAtRepairAt: this.metadata("lastResearchQueueStartedAtRepairAt"),
+      lastResearchQueueStartedAtRepairRowsScanned: Number(this.metadata("lastResearchQueueStartedAtRepairRowsScanned") ?? 0),
+      lastResearchQueueStartedAtRepairRowsRepaired: Number(this.metadata("lastResearchQueueStartedAtRepairRowsRepaired") ?? 0),
       lastCanonicalFleetMissionSyncAt: this.metadata("lastCanonicalFleetMissionSyncAt"),
       lastCanonicalFleetMissionSyncDurationMs: metadataNumber(this.metadata("lastCanonicalFleetMissionSyncDurationMs")),
       lastCanonicalFleetMissionSyncError: this.metadata("lastCanonicalFleetMissionSyncError"),
@@ -4453,6 +4464,40 @@ export class SettlementIndexer {
     return this.currentStateHealPromise;
   }
 
+  async startResearchQueueStartedAtRepairOnce(runId: string): Promise<IndexerSnapshot> {
+    const normalizedRunId = runId.trim().slice(0, 128);
+    if (!normalizedRunId) return this.snapshot();
+    if (this.metadata("lastResearchQueueStartedAtRepairRunId") === normalizedRunId) {
+      return this.snapshot();
+    }
+
+    await this.runHealWrite("research queue started-at repair", () => {
+      const rows = this.db.query(`
+        SELECT queue_kind, planet_id, owner, item_id, target_level, quantity, ready_at, started_at,
+          original_quantity, unit_work_seconds, production_rate,
+          metal_cost, crystal_cost, deuterium_cost, backlog_json
+        FROM contract_production_queues
+        WHERE queue_kind = 'research' AND started_at IS NULL
+      `).all() as QueueRow[];
+      let repaired = 0;
+      for (const row of rows) {
+        if (!row.owner || !/^0x[0-9a-f]{40}$/i.test(row.owner) || row.target_level === null) continue;
+        const owner = row.owner.toLowerCase() as Address;
+        const queue = this.productionQueueFromRow(row);
+        const startedAt = this.researchStartedAtFromRetainedLog(owner, queue);
+        if (!startedAt) continue;
+        this.upsertCanonicalQueue("research", null, owner, { ...queue, startedAt });
+        repaired += 1;
+      }
+      this.setMetadata("lastResearchQueueStartedAtRepairRunId", normalizedRunId);
+      this.setMetadata("lastResearchQueueStartedAtRepairAt", new Date().toISOString());
+      this.setMetadata("lastResearchQueueStartedAtRepairRowsScanned", rows.length.toString());
+      this.setMetadata("lastResearchQueueStartedAtRepairRowsRepaired", repaired.toString());
+      if (repaired > 0) this.touch();
+    });
+    return this.snapshot();
+  }
+
   private async seedCanonicalPlanetResources(runId: string): Promise<IndexerSnapshot> {
     if (!this.chainReader.listCurrentPlanets) {
       throw new Error("canonical resource heal is unavailable: chain reader cannot enumerate current planets");
@@ -6748,6 +6793,9 @@ export class SettlementIndexer {
 
   private async healOwnerResearch(owner: Address, research: ResearchState): Promise<void> {
     await this.runHealWrite(`owner ${owner} research`, () => {
+      // Candidate heals replace this owner's rows. Resolve timing before deletion so a current-state
+      // queue that omits startedAt cannot erase an exact timestamp already held by the same queue.
+      const researchQueue = this.canonicalResearchQueueWithStartedAt(owner, research.queue);
       this.db.query("DELETE FROM indexed_research_levels WHERE owner = lower(?)").run(owner);
       this.db.query("DELETE FROM contract_technology_levels WHERE owner = lower(?)").run(owner);
       for (const technology of research.technologies) {
@@ -6765,7 +6813,7 @@ export class SettlementIndexer {
       const key = `research:${owner.toLowerCase()}`;
       this.db.query("DELETE FROM indexed_planet_queues WHERE queue_key = ?").run(key);
       this.db.query("DELETE FROM contract_production_queues WHERE queue_key = ?").run(key);
-      this.addActiveResearchQueueToDb(owner, research.queue);
+      this.addActiveResearchQueueToDb(owner, researchQueue);
       this.touch();
     });
   }
@@ -7205,23 +7253,84 @@ export class SettlementIndexer {
     owner: `0x${string}` | null,
     queue: QueueState
   ): void {
+    const canonicalQueue = kind === "research" && owner
+      ? this.canonicalResearchQueueWithStartedAt(owner, queue) ?? queue
+      : queue;
     this.upsertQueue({
       eventName: kind === "building" ? "BuildingStarted" : kind === "defense" ? "DefenseQueued" : kind === "ship" ? "ShipQueued" : "ResearchQueued",
       transactionHash: "0x",
       queueKind: kind,
       ...(planetId ? { planetId } : {}),
       ...(owner ? { owner } : {}),
-      itemId: queue.itemId ?? 0,
-      ...(queue.targetLevel !== undefined ? { targetLevel: queue.targetLevel } : {}),
-      ...(queue.quantity !== undefined ? { quantity: queue.quantity } : {}),
-      readyAt: queue.readyAt ?? "0",
-      ...(queue.startedAt ? { startedAt: queue.startedAt } : {}),
-      ...(queue.productionTiming ? { productionTiming: queue.productionTiming } : {}),
-      cost: queue.cost,
-      ...(queue.backlog?.length ? { backlog: queue.backlog } : {}),
+      itemId: canonicalQueue.itemId ?? 0,
+      ...(canonicalQueue.targetLevel !== undefined ? { targetLevel: canonicalQueue.targetLevel } : {}),
+      ...(canonicalQueue.quantity !== undefined ? { quantity: canonicalQueue.quantity } : {}),
+      readyAt: canonicalQueue.readyAt ?? "0",
+      ...(canonicalQueue.startedAt ? { startedAt: canonicalQueue.startedAt } : {}),
+      ...(canonicalQueue.productionTiming ? { productionTiming: canonicalQueue.productionTiming } : {}),
+      cost: canonicalQueue.cost,
+      ...(canonicalQueue.backlog?.length ? { backlog: canonicalQueue.backlog } : {}),
       canonicalSnapshot: true,
       blockNumber: this.canonicalQueueSnapshotBlock ?? this.metadata("lastReconciledBlock") ?? this.metadata("latestIndexedBlock") ?? "0"
     });
+  }
+
+  private canonicalResearchQueueWithStartedAt(
+    owner: Address,
+    queue: QueueState | null | undefined
+  ): QueueState | null | undefined {
+    if (!queue?.active || queue.startedAt) return queue;
+
+    const existing = this.db.query(`
+      SELECT queue_kind, planet_id, owner, item_id, target_level, quantity, ready_at, started_at,
+        original_quantity, unit_work_seconds, production_rate,
+        metal_cost, crystal_cost, deuterium_cost, backlog_json
+      FROM contract_production_queues
+      WHERE queue_key = ?
+    `).get(`research:${owner.toLowerCase()}`) as QueueRow | null;
+    if (
+      existing?.started_at
+      && researchQueueIdentityMatches(owner, queue, existing.owner, this.productionQueueFromRow(existing))
+    ) {
+      return { ...queue, startedAt: existing.started_at };
+    }
+
+    const recovered = this.researchStartedAtFromRetainedLog(owner, queue);
+    return recovered ? { ...queue, startedAt: recovered } : queue;
+  }
+
+  private researchStartedAtFromRetainedLog(owner: Address, queue: QueueState): string | null {
+    if (!queue.active || queue.itemId === undefined || queue.targetLevel === undefined || !queue.readyAt) {
+      return null;
+    }
+    const ownerTopic = `0x${owner.slice(2).toLowerCase().padStart(64, "0")}`;
+    const rows = this.db.query(`
+      SELECT event_json
+      FROM indexed_event_logs
+      WHERE removed = 0
+        AND lower(json_extract(event_json, '$.topics[0]')) IN (?, ?)
+        AND lower(json_extract(event_json, '$.topics[1]')) = ?
+      ORDER BY CAST(block_number AS INTEGER) DESC, CAST(log_index AS INTEGER) DESC
+    `).all(researchQueuedTopic, researchQueuedV2Topic, ownerTopic) as EventRow[];
+
+    for (const row of rows) {
+      try {
+        const log = parseEvent<IndexedRpcLog>(row.event_json);
+        const event = decodeIndexedQueueStartedLog(log);
+        if (!researchQueueIdentityMatches(owner, queue, event.owner, queueStateFromEvent(event))) continue;
+        const startedAt = event.startedAt ?? blockTimestampSeconds(log);
+        if (
+          startedAt
+          && safeBigInt(startedAt, 0n) > 0n
+          && safeBigInt(startedAt, 0n) < safeBigInt(queue.readyAt, 0n)
+        ) {
+          return startedAt;
+        }
+      } catch {
+        // A malformed retained row cannot authorize a timestamp repair. Keep searching exact logs.
+      }
+    }
+    return null;
   }
 
   private withCanonicalQueueSnapshotBlock<T>(blockNumber: string | null, write: () => T): T {
@@ -8354,7 +8463,11 @@ export class SettlementIndexer {
         quantity = excluded.quantity,
         ready_at = excluded.ready_at,
         started_at = CASE
-          WHEN indexed_planet_queues.ready_at = excluded.ready_at
+          WHEN indexed_planet_queues.kind = excluded.kind
+            AND COALESCE(lower(indexed_planet_queues.owner), '') = COALESCE(lower(excluded.owner), '')
+            AND indexed_planet_queues.item_id = excluded.item_id
+            AND indexed_planet_queues.target_level IS excluded.target_level
+            AND indexed_planet_queues.ready_at = excluded.ready_at
             THEN COALESCE(excluded.started_at, indexed_planet_queues.started_at)
           ELSE excluded.started_at
         END,
@@ -8388,7 +8501,15 @@ export class SettlementIndexer {
         target_level = excluded.target_level,
         quantity = excluded.quantity,
         ready_at = excluded.ready_at,
-        started_at = excluded.started_at,
+        started_at = CASE
+          WHEN contract_production_queues.queue_kind = excluded.queue_kind
+            AND COALESCE(lower(contract_production_queues.owner), '') = COALESCE(lower(excluded.owner), '')
+            AND contract_production_queues.item_id = excluded.item_id
+            AND contract_production_queues.target_level IS excluded.target_level
+            AND contract_production_queues.ready_at = excluded.ready_at
+            THEN COALESCE(excluded.started_at, contract_production_queues.started_at)
+          ELSE excluded.started_at
+        END,
         original_quantity = CASE
           WHEN contract_production_queues.ready_at = excluded.ready_at
             THEN COALESCE(excluded.original_quantity, contract_production_queues.original_quantity)
@@ -12455,6 +12576,19 @@ function canonicalQueueSignature(queue: QueueState | null | undefined): string {
     backlog: (candidate.backlog ?? []).filter((entry) => entry.active).map(normalize)
   });
   return JSON.stringify(normalize(queue));
+}
+
+function researchQueueIdentityMatches(
+  owner: Address,
+  queue: QueueState,
+  candidateOwner: string | null | undefined,
+  candidate: QueueState
+): boolean {
+  return candidate.kind === "research"
+    && candidateOwner?.toLowerCase() === owner.toLowerCase()
+    && candidate.itemId === queue.itemId
+    && candidate.targetLevel === queue.targetLevel
+    && candidate.readyAt === queue.readyAt;
 }
 
 function queueMatchesCompletion(event: IndexedQueueCompletedEvent, queue: QueueState | null): boolean {

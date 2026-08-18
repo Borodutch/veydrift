@@ -160,7 +160,7 @@ export type ResearchQueueItem = {
   key: ResearchKey;
   label: string;
   readyAt: number;
-  startedAt: number;
+  startedAt?: number | undefined;
   targetLevel: number;
 };
 
@@ -168,7 +168,7 @@ export type QueueItem = MainQueueItem | ResearchQueueItem;
 
 export type QueueTimeline = {
   readyAt: number;
-  startedAt: number;
+  startedAt?: number | undefined;
 };
 
 export type PlayableState = {
@@ -1993,7 +1993,7 @@ export function canAfford(resources: Resources, cost: Resources): boolean {
 }
 
 export function queueProgress(queue: QueueTimeline | undefined, now = Date.now()): number {
-  if (!queue) {
+  if (!queue || queue.startedAt === undefined) {
     return 0;
   }
 

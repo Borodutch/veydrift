@@ -228,10 +228,29 @@ describe("chainState", () => {
       key: "energy",
       label: "Energy Technology",
       readyAt: 1_700_000_600_000,
-      startedAt: 1_700_000_300_000,
       targetLevel: 2,
     });
+    expect(queue?.startedAt).toBeUndefined();
     expect(progress(queue, 1_700_000_300_000)).toBe(0);
+  });
+
+  test("shows Chucky's exact ten-day research timeline at about 21 percent", () => {
+    const queue = researchQueueForDisplay({
+      active: true,
+      kind: "research",
+      itemId: 10,
+      targetLevel: 7,
+      startedAt: "1786894249",
+      readyAt: "1787758249",
+      cost: { metal: "0", crystal: "0", deuterium: "0" },
+    }, 1_787_074_249_000);
+
+    expect(queue).toMatchObject({
+      readyAt: 1_787_758_249_000,
+      startedAt: 1_786_894_249_000,
+      targetLevel: 7,
+    });
+    expect(progress(queue, 1_787_074_249_000)).toBeCloseTo(0.2083, 3);
   });
 
   test("keeps ready building queues complete when the backend omits startedAt", () => {

@@ -20,11 +20,12 @@ export function AnimatedProgressBar({
       aria-valuemax={100}
       aria-valuemin={0}
       aria-valuenow={indeterminate ? undefined : percent}
+      aria-valuetext={indeterminate ? "Progress timing unavailable" : `${percent}%`}
       className={`block overflow-hidden rounded-full ${className}`}
       role="progressbar"
     >
       {indeterminate ? (
-        <span className={`block h-full w-2/3 rounded-full ${fillClassName} animate-pulse`} />
+        <span className={`queue-indeterminate-track block h-full w-full rounded-full ${fillClassName}`} />
       ) : (
         <span
           className={`queue-fill block h-full rounded-full ${fillClassName} transition-[width]`}

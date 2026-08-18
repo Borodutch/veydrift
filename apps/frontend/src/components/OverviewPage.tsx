@@ -263,7 +263,13 @@ export function OverviewPage({
     ? researchCatalog.find((research) => research.key === settledState.researchQueue?.key)?.asset
     : undefined;
   const activeResearchProgress = constructionProgress?.research?.progress
-    ?? (onChainResearchQueue ? queueProgressValue(onChainResearchQueue, now) : researchProgress);
+    ?? (onChainResearchQueue
+      ? onChainResearchQueue.startedAt === undefined
+        ? undefined
+        : queueProgressValue(onChainResearchQueue, now)
+      : settledState.researchQueue?.startedAt === undefined
+        ? undefined
+        : researchProgress);
   const onChainDefenseQueue = productionQueueViewModel(onChainQueues?.defense, defenseCatalog);
   const onChainShipQueue = productionQueueViewModel(onChainQueues?.ship, shipCatalog);
   const buildingNoticeKey = buildingQueue?.key ?? buildingKeyForContractId(onChainQueues?.building?.itemId);

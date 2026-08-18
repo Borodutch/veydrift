@@ -4154,6 +4154,26 @@ h4 {
   pointer-events: none;
 }
 
+@keyframes queue-indeterminate-stripes {
+  from {
+    -webkit-mask-position: 0 0;
+    mask-position: 0 0;
+  }
+  to {
+    -webkit-mask-position: 1rem 0;
+    mask-position: 1rem 0;
+  }
+}
+
+.queue-indeterminate-track {
+  opacity: 0.55;
+  -webkit-mask-image: repeating-linear-gradient(135deg, #000 0 0.35rem, transparent 0.35rem 0.7rem);
+  -webkit-mask-size: 1rem 1rem;
+  mask-image: repeating-linear-gradient(135deg, #000 0 0.35rem, transparent 0.35rem 0.7rem);
+  mask-size: 1rem 1rem;
+  animation: queue-indeterminate-stripes 1s linear infinite;
+}
+
 @keyframes queue-ready-pulse {
   0% {
     box-shadow: 0 0 0 0 rgba(140, 255, 200, 0.55);
