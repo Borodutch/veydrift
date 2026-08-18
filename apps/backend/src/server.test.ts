@@ -6998,6 +6998,37 @@ describe("Veydrift backend", () => {
     expect(handler).toBeDefined();
   });
 
+  test("explicit startup mission archive restore runs one complete detailed snapshot inside the writer process", async () => {
+    const chainReader = new MockChainReader();
+    let archiveReads = 0;
+    const archiveReader = chainReader as MockChainReader & Pick<ChainReader, "listCanonicalFleetMissionArchiveDetails">;
+    archiveReader.listCanonicalFleetMissionArchiveDetails = async () => {
+      archiveReads += 1;
+      return [];
+    };
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    const config = {
+      ...configuredTestConfig,
+      missionArchiveRestoreRunId: "test-archive-restore"
+    } satisfies BackendConfig;
+
+    const handler = createRequestHandler({ config, chainReader, indexer });
+    for (let i = 0; i < 50 && !indexer.snapshot().lastCanonicalFleetMissionSyncAt; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(archiveReads).toBe(1);
+    expect(indexer.snapshot()).toMatchObject({
+      lastCanonicalFleetMissionSyncAt: expect.any(String),
+      lastCanonicalFleetMissionSyncRows: 0,
+      lastCanonicalFleetMissionSyncError: null
+    });
+
+    createRequestHandler({ config, chainReader, indexer });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(archiveReads).toBe(1);
+    expect(handler).toBeDefined();
+  });
+
   // Canonical-mirror rule 1/3: the request-time RPC routes POST /index/rebuild and
   // POST /index/verify/:planetId?heal=true were REMOVED — no HTTP request may trigger an RPC read or a
   // runtime canonical self-heal. They must now 404 and must NOT issue any chain read.
