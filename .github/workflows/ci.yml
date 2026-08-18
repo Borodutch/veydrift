@@ -11,7 +11,7 @@ jobs:
     runs-on: ${{ fromJSON(github.event_name == 'pull_request' && github.event.pull_request.user.login == 'backmeupplz' && github.event.pull_request.user.id == 3192028 && vars.VEYDRIFT_LOCAL_CI_RUNNER_LABELS || '["ubuntu-latest"]') }}
     permissions:
       contents: read
-    timeout-minutes: 240
+    timeout-minutes: 360
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
