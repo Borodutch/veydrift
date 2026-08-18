@@ -366,7 +366,9 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
   const rawChainReader =
     dependencies.chainReader ??
     (loaded.problems.length === 0 ? new VeydriftGameReader(loaded.config, undefined, {
-      hydrateQueueStartedAt: false,
+      // Queue progress is user-visible.  Keep the production timing slots on the
+      // narrow live reader so Overview can render a determinate whole-queue bar.
+      hydrateQueueStartedAt: true,
       rpcCallSource: "api-explicit-live-read"
     }) : undefined);
   const cacheReader = rawChainReader && !dependencies.chainReader ? new CachedChainReader(rawChainReader) : undefined;
@@ -398,7 +400,9 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       ? chainReader
       : loaded.problems.length === 0
         ? new VeydriftGameReader(loaded.config, undefined, {
-          hydrateQueueStartedAt: false,
+          // Canonical queue repairs must retain the timing data used to derive
+          // partial completion and whole-queue progress.
+          hydrateQueueStartedAt: true,
           rpcCallSource: "indexer-explicit-rebuild"
         })
         : undefined;
@@ -953,7 +957,12 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
       try {
         assertAddress(wallet);
-        const indexed = indexedWalletOverviewWarmResponse(indexer, wallet, selectedPlanetId(url));
+        const indexed = await indexedWalletOverviewWarmResponse(
+          indexer,
+          wallet,
+          selectedPlanetId(url),
+          chainReader
+        );
         if (indexed) return indexed;
         return indexedReadNotReadyResponse("overview snapshot", indexer, indexedReadLookup(url, wallet));
       } catch (error) {
@@ -3295,11 +3304,12 @@ function indexedWalletPlanetsWarmResponse(
   return indexedWarmJsonResponse(withPlayerProfile(indexedWalletPlanets(indexer, wallet), indexer, wallet), "wallet planets", snapshot);
 }
 
-function indexedWalletOverviewWarmResponse(
+async function indexedWalletOverviewWarmResponse(
   indexer: SettlementIndexer | undefined,
   wallet: `0x${string}`,
-  selectedPlanetId: bigint | undefined
-): Response | null {
+  selectedPlanetId: bigint | undefined,
+  chainReader: ChainReader | undefined
+): Promise<Response | null> {
   if (!indexer || !hasWarmPlanetIndex(indexer)) return null;
 
   const snapshot = indexer.snapshot();
@@ -3308,7 +3318,13 @@ function indexedWalletOverviewWarmResponse(
   const settlement = homeSettlement?.settlement ?? indexer.walletSettlement(wallet);
   const queuePlanetId = homeSettlement?.planet?.planetId ?? settlement.homePlanetId;
   const planetsResponse = indexedWalletPlanets(indexer, wallet);
-  const queues = indexer.playerQueues(wallet, queuePlanetId);
+  const indexedQueues = indexer.playerQueues(wallet, queuePlanetId);
+  const queues = await hydrateOverviewQueueTimelines(
+    indexedQueues,
+    wallet,
+    queuePlanetId,
+    chainReader
+  );
   const fleetVisibility = indexedFleetVisibility(
     wallet,
     settlement,
@@ -3324,6 +3340,64 @@ function indexedWalletOverviewWarmResponse(
     queues,
     fleetVisibility
   }, "overview snapshot", snapshot);
+}
+
+/**
+ * Production completion is lazy on-chain, while queue timing is held in the
+ * production module's timing slots. The indexed queue is still the source for
+ * projected counts, but fill in its missing timeline metadata from a narrowly
+ * scoped canonical read so Overview never invents an indeterminate bar.
+ */
+async function hydrateOverviewQueueTimelines(
+  indexed: PlayerQueues,
+  wallet: `0x${string}`,
+  planetId: string | null,
+  chainReader: ChainReader | undefined
+): Promise<PlayerQueues> {
+  if (!chainReader || !planetId || !hasMissingProductionTimeline(indexed)) return indexed;
+
+  try {
+    const live = await chainReader.getPlayerQueues(wallet, BigInt(planetId));
+    return {
+      ...indexed,
+      building: mergeQueueTimeline(indexed.building, live.building),
+      defense: mergeQueueTimeline(indexed.defense, live.defense),
+      ship: mergeQueueTimeline(indexed.ship, live.ship),
+      research: mergeQueueTimeline(indexed.research, live.research)
+    };
+  } catch (error) {
+    console.warn("Unable to hydrate Overview production queue timing", error);
+    return indexed;
+  }
+}
+
+function hasMissingProductionTimeline(queues: PlayerQueues): boolean {
+  return [queues.defense, queues.ship].some((queue) =>
+    Boolean(queue?.active && !queue.startedAt && !queue.productionTiming?.startedAt)
+  );
+}
+
+function mergeQueueTimeline(indexed: QueueState | null, live: QueueState | null): QueueState | null {
+  if (!indexed?.active || !live?.active || !sameQueueTimelineIdentity(indexed, live)) return indexed;
+  return {
+    ...indexed,
+    ...(live.startedAt ? { startedAt: live.startedAt } : {}),
+    ...(live.productionTiming ? { productionTiming: live.productionTiming } : {}),
+    ...(indexed.backlog
+      ? { backlog: indexed.backlog.map((entry) => {
+        const liveEntry = live.backlog?.find((candidate) => sameQueueTimelineIdentity(entry, candidate));
+        return mergeQueueTimeline(entry, liveEntry ?? null) ?? entry;
+      }) }
+      : {})
+  };
+}
+
+function sameQueueTimelineIdentity(left: QueueState, right: QueueState): boolean {
+  return left.kind === right.kind
+    && left.itemId === right.itemId
+    && left.targetLevel === right.targetLevel
+    && left.quantity === right.quantity
+    && left.readyAt === right.readyAt;
 }
 
 type IndexedMoonNotReadyBody = MoonState & {

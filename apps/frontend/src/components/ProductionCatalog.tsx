@@ -146,7 +146,7 @@ export function productionQueueViewModel(
     label: item?.label ?? (queue.kind === "defense" ? "Defense" : "Ship"),
     quantity: queue.quantity,
     readyAt: queue.readyAt,
-    startedAt: queue.startedAt,
+    startedAt: queue.startedAt ?? queue.productionTiming?.startedAt,
     completedQuantity: queue.asOfNow?.completedQuantity,
     remainingQuantity: queue.asOfNow?.remainingQuantity,
     currentUnitSecondsRemaining: queue.asOfNow?.currentUnitSecondsRemaining,
@@ -159,7 +159,7 @@ export function productionQueueViewModel(
         label: backlogItem?.label ?? (entry.kind === "defense" ? "Defense" : "Ship"),
         quantity: entry.quantity,
         readyAt: entry.readyAt,
-        startedAt: entry.startedAt,
+        startedAt: entry.startedAt ?? entry.productionTiming?.startedAt,
       };
     }),
   };
@@ -307,6 +307,7 @@ export function ProductionQueuePanel({
       progressState={progressState}
       completedQuantity={queue.completedQuantity}
       completionReadyAt={embedded ? totalReadyAt : undefined}
+      completionStartedAt={embedded ? queue.startedAt : undefined}
       currentUnitProgressBps={queue.currentUnitProgressBps}
       currentUnitSecondsRemaining={queue.currentUnitSecondsRemaining}
       embedded={embedded}
@@ -318,7 +319,7 @@ export function ProductionQueuePanel({
       title="Queue"
       tone={tone}
     >
-      {!embedded && queue.backlog && queue.backlog.length > 0 ? (
+      {queue.backlog && queue.backlog.length > 0 ? (
         queue.backlog.map((entry, index) => {
           const entryTitle = `${entry.label}${entry.quantity ? ` ×${formatter.format(entry.quantity)}` : ""}`;
           return (

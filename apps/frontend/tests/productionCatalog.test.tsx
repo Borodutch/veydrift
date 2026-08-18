@@ -372,7 +372,7 @@ describe("ProductionCatalog selected panel", () => {
     expect(queueItems.every((node) => !String(node.props.className).includes("border"))).toBe(true);
   });
 
-  test("keeps embedded Overview queues focused on total remaining time", () => {
+  test("renders the full Overview queue with determinate whole-queue progress", () => {
     const panel = ProductionQueuePanel({
       embedded: true,
       now: 1_700_000_060_000,
@@ -394,14 +394,19 @@ describe("ProductionCatalog selected panel", () => {
       tone: "sky",
     });
     const text = visibleText(panel).replace(/\s+/g, " ");
+    const compactText = text.replace(/\s+/g, "");
     const imageSources = elementNodes(panel)
       .filter((node) => node.type === "img")
       .map((node) => node.props.src);
+    const progressBar = elementNodes(panel)
+      .find((node) => node.props.role === "progressbar");
 
     expect(text).toContain("4m total left");
-    expect(text).not.toContain("×9");
+    expect(compactText).toContain("×9");
     expect(imageSources).toContain("/assets/game/ships/small-cargo.webp");
-    expect(imageSources).not.toContain("/assets/game/ships/large-cargo.webp");
+    expect(imageSources).toContain("/assets/game/ships/large-cargo.webp");
+    expect(progressBar?.props["aria-valuenow"]).toBe(20);
+    expect(progressBar?.props["aria-valuetext"]).toBe("20%");
   });
 });
 

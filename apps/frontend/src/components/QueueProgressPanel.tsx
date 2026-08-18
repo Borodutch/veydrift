@@ -21,6 +21,7 @@ export interface QueueProgressPanelProps {
   children?: ComponentChildren;
   completedQuantity?: number | undefined;
   completionReadyAt?: QueueTimestamp;
+  completionStartedAt?: QueueTimestamp;
   currentUnitProgressBps?: number | undefined;
   currentUnitSecondsRemaining?: number | undefined;
   embedded?: boolean | undefined;
@@ -77,6 +78,7 @@ export function QueueProgressPanel({
   children,
   completedQuantity,
   completionReadyAt,
+  completionStartedAt,
   embedded = false,
   indeterminate,
   itemText,
@@ -92,18 +94,31 @@ export function QueueProgressPanel({
   tone = "amber",
 }: QueueProgressPanelProps) {
   const classes = toneClasses[tone];
-  const readyAtMs = progressState?.readyAtMs ?? queueTimestampToMs(readyAt);
-  const startedAtMs = progressState?.startedAtMs ?? queueTimestampToMs(startedAt);
+  const completionReadyAtMs = queueTimestampToMs(completionReadyAt);
+  const completionStartedAtMs = queueTimestampToMs(completionStartedAt);
+  const showsWholeQueueProgress = embedded
+    && completionReadyAtMs !== undefined
+    && completionStartedAtMs !== undefined;
+  const readyAtMs = showsWholeQueueProgress
+    ? completionReadyAtMs
+    : progressState?.readyAtMs ?? queueTimestampToMs(readyAt);
+  const startedAtMs = showsWholeQueueProgress
+    ? completionStartedAtMs
+    : progressState?.startedAtMs ?? queueTimestampToMs(startedAt);
   const hasCanonicalTimeline = readyAtMs !== undefined && startedAtMs !== undefined && startedAtMs < readyAtMs;
-  const resolvedProgress = progressState?.progress ?? progress;
-  const remaining = progressState?.remaining ?? (readyAtMs !== undefined && readyAtMs <= now ? "Ready" : "");
-  const shouldIndeterminate = progressState?.indeterminate ?? indeterminate ?? (!hasCanonicalTimeline && resolvedProgress === undefined);
+  const resolvedProgress = showsWholeQueueProgress ? undefined : progressState?.progress ?? progress;
+  const remaining = showsWholeQueueProgress
+    ? (readyAtMs !== undefined && readyAtMs <= now ? "Ready" : "")
+    : progressState?.remaining ?? (readyAtMs !== undefined && readyAtMs <= now ? "Ready" : "");
+  const shouldIndeterminate = showsWholeQueueProgress
+    ? !hasCanonicalTimeline
+    : progressState?.indeterminate ?? indeterminate ?? (!hasCanonicalTimeline && resolvedProgress === undefined);
   const progressBar = queueProgressBarState({
     indeterminate: shouldIndeterminate,
     progress: resolvedProgress,
     remaining,
   });
-  const progressFill = progressState
+  const progressFill = progressState && !showsWholeQueueProgress
     ? { animated: false, durationMs: 0, elapsedMs: 0, progress: progressState.progress }
     : queueProgressFillState({
       indeterminate: shouldIndeterminate,
@@ -114,7 +129,6 @@ export function QueueProgressPanel({
       startedAt: hasCanonicalTimeline ? startedAtMs : undefined,
     });
   const percent = Math.round(progressFill.progress * 100);
-  const completionReadyAtMs = queueTimestampToMs(completionReadyAt);
   const totalQueueRemaining = completionReadyAtMs === undefined
     ? undefined
     : formatDurationUntil(completionReadyAtMs, now);
@@ -167,8 +181,6 @@ export function QueueProgressPanel({
                 <span className={`whitespace-nowrap text-[11px] font-semibold tabular-nums ${classes.text}`}>
                   {formatQuantity(completedQuantity)}/{formatQuantity(totalQuantity)}
                 </span>
-              ) : progressBar.indeterminate ? (
-                <span className={`text-[11px] font-semibold ${classes.text}`}>…</span>
               ) : null}
             </span>
 

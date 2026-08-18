@@ -81,6 +81,7 @@ describe("QueueProgressPanel", () => {
   test("shows the full queued duration on an embedded queue, not only the active item ETA", () => {
     const panel = QueueProgressPanel({
       completionReadyAt: "4000",
+      completionStartedAt: "1000",
       embedded: true,
       label: "Small Cargo",
       now: 1_500_000,
@@ -94,6 +95,9 @@ describe("QueueProgressPanel", () => {
 
     expect(text).toContain("41m 40s total left");
     expect(text).not.toContain(formatQueueEta("2000"));
+    expect(text).not.toContain("…");
+    expect(hasClass(panel, "queue-fill")).toBe(true);
+    expect(hasClass(panel, "queue-indeterminate-track")).toBe(false);
   });
 
   test("renders a freshly started ship queue near 0%, not nearly full", () => {
