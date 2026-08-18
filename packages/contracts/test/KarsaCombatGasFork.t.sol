@@ -70,9 +70,19 @@ contract KarsaCombatGasForkTest is Test {
             if (gasUsed > maxGasUsed) maxGasUsed = gasUsed;
             (statusAfter,,,,,,,,,,) = game.fleetMission(MISSION_ID);
             calls += 1;
+            if (calls == 1) {
+                (uint8 roundsCompleted, uint8 totalRounds) =
+                    game.battleResolutionProgress(MISSION_ID);
+                assertEq(uint256(totalRounds), MAX_RESOLUTION_CALLS);
+                assertGt(roundsCompleted, 1, "first transaction did not maximize its round chunk");
+                assertLt(roundsCompleted, totalRounds, "incident unexpectedly resolved in one call");
+            }
         }
 
         assertTrue(statusAfter != VeydriftGameStorage.FleetMissionStatus.Outbound);
+        assertEq(calls, 2, "incident should resolve in two maximal chunks, not six round txs");
+        (uint8 finalRoundsCompleted,) = game.battleResolutionProgress(MISSION_ID);
+        assertEq(finalRoundsCompleted, 0, "terminal battle progress was not cleared");
         (bool usableAfter,) =
             PROXY.call(abi.encodeCall(VeydriftGame.requireNoPendingMoonAttackResolution, (41)));
         assertTrue(usableAfter, "Karsa remains combat-locked after resolution");

@@ -508,6 +508,10 @@ export type FleetMissionSummary = {
   // can avoid a phantom "Ready to resolve" before the keeper can settle. The backend leaves it
   // unset/false while a combat fleet is still mid-flight or awaiting randomness.
   needsResolution?: boolean;
+  combatResolutionProgress?: {
+    roundsCompleted: number;
+    totalRounds: number;
+  };
   resolutionBlocker?: "randomness_pending";
   resolutionBlockerDetail?: string;
   // VEY-KANEO-479: the battle RandomnessEngine request id an Attack consumes at resolution (non-zero

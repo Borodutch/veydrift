@@ -1428,7 +1428,10 @@ function overviewMissionStatus(
   mission: FleetMissionVisibilityResponse["outgoing"][number],
 ): string {
   if (mission.resolutionBlocker === "randomness_pending") return "Awaiting randomness";
-  if (mission.needsResolution === true) return "Resolving";
+  if (mission.needsResolution === true) {
+    const progress = mission.combatResolutionProgress;
+    return progress ? `Resolving ${progress.roundsCompleted}/${progress.totalRounds}` : "Resolving";
+  }
   if (
     mission.missionType === "DefenseHold"
     && mission.status === "Outbound"

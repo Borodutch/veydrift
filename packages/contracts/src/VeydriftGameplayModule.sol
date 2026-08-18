@@ -36,6 +36,11 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             "launchFleetMission(uint256,uint256,uint8,(uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32),(uint128,uint128,uint128),uint16,uint256)"
         )
     );
+    bytes4 private constant RESOLVE_COMBAT_ROUND_SELECTOR =
+        bytes4(keccak256("resolveFleetMissionCombatRound(uint256)"));
+    // Leave enough gas in the parent frame to catch an out-of-gas child round and return the
+    // already-committed rounds successfully. EIP-150 also retains 1/64 of forwarded gas.
+    uint256 private constant COMBAT_ROUND_PARENT_GAS_RESERVE = 500_000;
 
     using SafeCast for uint256;
 
@@ -541,10 +546,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
                 _untrackMissionResolution(missionId, mission);
             }
         } else if (missionType == FleetMissionType.Attack) {
-            _delegateToCombatModule();
-            // A gas-bounded battle remains Outbound between deterministic rounds. The resolver will
-            // submit the next round on its next tick; do not emit a false terminal event meanwhile.
-            if (mission.status == FleetMissionStatus.Outbound) return;
+            if (!_resolveCombatInLargestGasSafeChunk(missionId)) return;
             // Lazy reconcile (VEY-KANEO-468 Phase 2c): untrack only the terminal no-survivor
             // (Resolved) battle here. A surviving fleet becomes Returning and stays enumerable until
             // its return lands, so the lazy return settler can complete it with no keeper tx.
@@ -587,6 +589,57 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
                 mission.cargo.deuterium
             );
         }
+    }
+
+    /// @dev Self-only round entrypoint. The outer resolver calls this through the Game facade so each
+    ///      round has its own revert boundary while all successful rounds remain in one transaction.
+    function resolveFleetMissionCombatRound(uint256) external returns (bool complete) {
+        if (msg.sender != address(this)) revert Unauthorized(msg.sender);
+        address module = _combatModule;
+        (bool ok, bytes memory result) = module.delegatecall(msg.data);
+        if (!ok) {
+            if (result.length != 0) {
+                assembly ("memory-safe") {
+                    revert(add(result, 0x20), mload(result))
+                }
+            }
+            // Preserve an empty revert so the outer chunker can distinguish a child-frame
+            // out-of-gas boundary from a semantic combat failure. Reverting this frame rolls back
+            // only the attempted round; previously completed rounds in the parent transaction stay.
+            assembly ("memory-safe") {
+                revert(0, 0)
+            }
+        }
+        if (result.length != 32) revert UnsupportedGameplayModule();
+        complete = abi.decode(result, (bool));
+    }
+
+    function _resolveCombatInLargestGasSafeChunk(uint256 missionId)
+        private
+        returns (bool complete)
+    {
+        while (_fleetMissions[missionId].status == FleetMissionStatus.Outbound) {
+            uint256 availableGas = gasleft();
+            if (availableGas <= COMBAT_ROUND_PARENT_GAS_RESERVE) return false;
+            (bool ok, bytes memory result) = address(this)
+            .call{gas: availableGas - COMBAT_ROUND_PARENT_GAS_RESERVE}(
+                abi.encodeWithSelector(RESOLVE_COMBAT_ROUND_SELECTOR, missionId)
+            );
+            if (!ok) {
+                // Empty returndata is the expected signal when the next complete round cannot fit.
+                // Any semantic revert (pending randomness, pause, bad state) must remain visible.
+                if (result.length != 0) {
+                    assembly ("memory-safe") {
+                        revert(add(result, 0x20), mload(result))
+                    }
+                }
+                return false;
+            }
+            if (result.length != 32) revert UnsupportedGameplayModule();
+            complete = abi.decode(result, (bool));
+            if (complete) return true;
+        }
+        return true;
     }
 
     function _harvestDebris(FleetMission storage mission) private {

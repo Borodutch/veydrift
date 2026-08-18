@@ -383,8 +383,8 @@ abstract contract VeydriftGameStorage is Initializable {
     // Append-only: exact player-wide invitee 2x production window. Its fixed seven-day start
     // is derived from this stored expiry, which also keeps migrated snapshots non-retroactive.
     mapping(address player => uint64 expiresAt) internal _inviteeProductionBoostExpiresAt;
-    // Large battles resolve one deterministic round per transaction so no valid fleet can exceed
-    // Base's hard per-transaction gas cap. Deleted as soon as final settlement completes.
+    // Large battles resolve in the largest gas-safe chunks of complete rounds. Each round has an
+    // isolated child-call revert boundary; progress is deleted as soon as final settlement completes.
     mapping(uint256 missionId => BattleResolutionProgress progress) internal
         _battleResolutionProgress;
 

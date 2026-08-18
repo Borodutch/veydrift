@@ -697,6 +697,12 @@ export type FleetMissionSummary = {
   // missions reconstructed without a launch event.
   launchBlockNumber: string;
   needsResolution: boolean;
+  // Canonical progress while a large Attack is resolving across gas-bounded transactions.
+  // Omitted before round 1 and after the terminal battle settlement clears contract progress.
+  combatResolutionProgress?: {
+    roundsCompleted: number;
+    totalRounds: number;
+  };
   // VEY-KANEO-479: the RandomnessEngine request id an Attack battle consumes at resolution, captured
   // from FleetMissionLaunched word 4 (VeydriftGameplayModule._requestAttackBattleRandomness). Present
   // and non-zero only for Attack missions; "0"/undefined for every other type (Harvest and the rest
@@ -737,6 +743,7 @@ export type CanonicalFleetMissionSnapshot = {
   fuelCost: string;
   cargo: Resources;
   randomnessRequestId: string | null;
+  combatResolutionProgress?: FleetMissionSummary["combatResolutionProgress"];
 };
 
 export type CanonicalFleetMissionDetails = CanonicalFleetMissionSnapshot & {
@@ -2342,9 +2349,10 @@ export class VeydriftGameReader implements ChainReader {
     }
 
     const results = await this.batchCallContract(this.gameContractAddress, calls);
-    return results
+    const missions = results
       .map((result, index) => this.decodeCanonicalFleetMission(BigInt(index + 1), result))
       .filter((mission): mission is CanonicalFleetMissionSnapshot => mission !== null);
+    return this.withCanonicalCombatResolutionProgress(missions);
   }
 
   async listCanonicalFleetMissionDetails(): Promise<CanonicalFleetMissionDetails[]> {
@@ -2390,7 +2398,42 @@ export class VeydriftGameReader implements ChainReader {
       args: [encodeUint(missionId)]
     }]);
     if (result === undefined) return null;
-    return this.decodeCanonicalFleetMission(missionId, result);
+    const mission = this.decodeCanonicalFleetMission(missionId, result);
+    if (!mission) return null;
+    return (await this.withCanonicalCombatResolutionProgress([mission]))[0] ?? mission;
+  }
+
+  private async withCanonicalCombatResolutionProgress(
+    missions: CanonicalFleetMissionSnapshot[]
+  ): Promise<CanonicalFleetMissionSnapshot[]> {
+    const attackIndexes = missions
+      .map((mission, index) => ({ mission, index }))
+      .filter(({ mission }) => mission.status === "Outbound" && mission.missionType === "Attack");
+    if (attackIndexes.length === 0) return missions;
+    let results: string[];
+    try {
+      results = await this.batchCallContract(this.gameContractAddress, attackIndexes.map(({ mission }) => ({
+        selector: "0xa5edcf21",
+        args: [encodeUint(BigInt(mission.missionId))]
+      })));
+    } catch {
+      // Deployment is deliberately contract-first, but readers may briefly straddle an older Game
+      // implementation (or a test deployment without this optional getter). Mission reads must stay
+      // available; round progress simply remains absent until the upgraded facade is reachable.
+      return missions;
+    }
+    const next = [...missions];
+    attackIndexes.forEach(({ mission, index }, resultIndex) => {
+      const result = results[resultIndex] ?? "0x";
+      if (result.length < 130) return;
+      const words = splitWords(result);
+      const roundsCompleted = Number(decodeUintWord(wordAt(words, 0)));
+      const totalRounds = Number(decodeUintWord(wordAt(words, 1)));
+      next[index] = roundsCompleted > 0
+        ? { ...mission, combatResolutionProgress: { roundsCompleted, totalRounds } }
+        : mission;
+    });
+    return next;
   }
 
   async getInfrastructureState(wallet: Address, selectedPlanetId?: bigint): Promise<InfrastructureState> {
@@ -5471,6 +5514,21 @@ export function isBattleReportLog(log: RpcLog): boolean {
     || topic === combatRoundResolvedTopic
     || topic === combatLossesTopic
     || topic === combatDebrisSignaledTopic;
+}
+
+export function decodeCombatResolutionProgressLog(log: RpcLog): {
+  missionId: string;
+  roundsCompleted: number;
+} | null {
+  if (topicAt(log.topics, 0) !== combatRoundResolvedTopic) return null;
+  return {
+    missionId: decodeUint(topicAt(log.topics, 1)).toString(),
+    roundsCompleted: Number(decodeUint(topicAt(log.topics, 2)))
+  };
+}
+
+export function isAttackBattleResolvedLog(log: RpcLog): boolean {
+  return topicAt(log.topics, 0) === attackBattleResolvedTopic;
 }
 
 export function decodeBattleReportLogs(logs: RpcLog[], requestedMissionId?: string): BattleReport | null {

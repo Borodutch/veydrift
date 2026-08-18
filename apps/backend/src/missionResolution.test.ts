@@ -129,6 +129,42 @@ describe("MissionResolutionService", () => {
     expect(calls).toEqual(["resolve:10", "return:11"]);
   });
 
+  test("retries a successfully chunked Attack on the next tick until canonical status is terminal", async () => {
+    let attempts = 0;
+    let terminal = false;
+    const service = new MissionResolutionService(config, {
+      candidateSource: {
+        missionResolutionCandidates: () => ({
+          arrivals: terminal ? [] : [arrival("23007", "Attack", "900")],
+          returns: []
+        })
+      },
+      chainClient: {
+        async listResolvableFleetMissions() { return []; },
+        async listReturnableFleetMissions() { return []; },
+        async resolveFleetMission() {
+          attempts += 1;
+          terminal = attempts === 2;
+          return `0xchunk${attempts}`;
+        },
+        async completeFleetMissionReturn() { return "0xreturn"; }
+      },
+      logger: silentLogger()
+    });
+
+    await service.tick();
+    await service.tick();
+    await service.tick();
+
+    expect(attempts).toBe(2);
+    expect(service.snapshot()).toMatchObject({
+      failuresByLeg: { arrival: 0 },
+      dueArrivals: { count: 0 },
+      lastResolvedMissionId: "23007",
+      resolvedCount: 2
+    });
+  });
+
   test("drains a burst with bounded concurrency", async () => {
     let active = 0;
     let peak = 0;

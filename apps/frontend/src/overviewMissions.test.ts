@@ -424,8 +424,12 @@ describe("Overview fleets summary", () => {
       timingLabel: "ETA",
       timingValue: "Now",
     });
-    expect(summarizeFleets(visibility({ outgoing: [{ ...outbound, needsResolution: true }] }), now).lines[0]).toMatchObject({
-      state: "Resolving",
+    expect(summarizeFleets(visibility({ outgoing: [{
+      ...outbound,
+      needsResolution: true,
+      combatResolutionProgress: { roundsCompleted: 4, totalRounds: 6 },
+    }] }), now).lines[0]).toMatchObject({
+      state: "Resolving 4/6",
     });
 
     const returning = { ...outbound, status: "Returning", returnAt: Math.floor((now + 5 * 60_000) / 1_000).toString() };

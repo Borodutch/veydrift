@@ -1711,7 +1711,11 @@ export function missionStatusPill(mission: FleetMissionSummary, _now: number): M
     return { label: "Recalled", tone: "border-amber-300/25 bg-amber-300/10 text-amber-100" };
   }
   if (mission.needsResolution === true) {
-    return { label: "Resolving", tone: "border-amber-300/25 bg-amber-300/10 text-amber-100" };
+    const progress = mission.combatResolutionProgress;
+    return {
+      label: progress ? `Resolving ${progress.roundsCompleted}/${progress.totalRounds}` : "Resolving",
+      tone: "border-amber-300/25 bg-amber-300/10 text-amber-100"
+    };
   }
   if (mission.status === "Outbound") {
     if (mission.missionType === "DefenseHold" && mission.asOfNow?.arrived && !mission.asOfNow.returned) {
@@ -3512,7 +3516,10 @@ function missionStatusLabel(status: string): string {
 // surfaces consistent with the time-aware list pills and the mission-detail timeline.
 export function missionDisplayStatusLabel(mission: FleetMissionSummary, _now: number): string {
   if (mission.resolutionBlocker === "randomness_pending") return "awaiting randomness";
-  if (mission.needsResolution === true) return "resolving";
+  if (mission.needsResolution === true) {
+    const progress = mission.combatResolutionProgress;
+    return progress ? `resolving ${progress.roundsCompleted}/${progress.totalRounds}` : "resolving";
+  }
   if (
     mission.status === "Outbound"
     && mission.missionType === "DefenseHold"

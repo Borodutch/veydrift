@@ -563,7 +563,7 @@ describe("Mission Control battle reports", () => {
     const text = collectText(MissionControlPage(missionControlProps(now, {
       incoming: [attackOnMe],
       outgoing: [stationed],
-    }))).join(" ");
+    }))).join(" ").replace(/\s+/g, " ");
 
     expect(text).toContain("Stationed defenses");
     // Own stationed fleet card: violet "Defending" badge + "Holds" countdown.
@@ -1426,7 +1426,11 @@ describe("Mission Control battle reports", () => {
     // One own outbound mission already arrived (due), plus two due joinable alliance attacks that
     // previously fed the removed header flair.
     const text = collectText(MissionControlPage(missionControlProps(now, {
-      outgoing: [{ ...mission("32", "Attack", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now - 60_000), needsResolution: true }],
+      outgoing: [{
+        ...mission("32", "Attack", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now - 60_000),
+        needsResolution: true,
+        combatResolutionProgress: { roundsCompleted: 4, totalRounds: 6 },
+      }],
       joinableAttacks: [
         mission("34", "Attack", "Outbound", "0x3333333333333333333333333333333333333333", "5", "6", now - 60_000),
         mission("35", "Attack", "Outbound", "0x4444444444444444444444444444444444444444", "5", "6", now - 60_000),
@@ -1434,7 +1438,23 @@ describe("Mission Control battle reports", () => {
     }))).join(" ").replace(/\s+/g, " ");
 
     expect(text).not.toContain("Needs orders now");
-    expect(text).toContain("Resolving");
+    expect(text).toContain("Resolving 4/6");
+  });
+
+  test("shows canonical multi-transaction battle progress before the report is terminal", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const text = collectText(MissionDetailPage(missionDetailProps(now, {
+      mission: {
+        ...mission("42", "Attack", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now - 180_000),
+        needsResolution: true,
+        combatResolutionProgress: { roundsCompleted: 4, totalRounds: 6 },
+      },
+      battleReport: null,
+    }))).join(" ").replace(/\s+/g, " ");
+
+    expect(text).toContain("Combat resolving: 4 of up to 6 rounds complete");
+    expect(text).toContain("The resolver will continue automatically");
+    expect(text).not.toContain("Report generating, please hold");
   });
 
   test("renders shareable mission detail stages, actions, and battle report structure", () => {

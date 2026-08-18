@@ -499,7 +499,7 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         _rapidfireModule = rapidfireModule;
     }
 
-    function resolveFleetMission(uint256 missionId) external {
+    function resolveFleetMissionCombatRound(uint256 missionId) external returns (bool complete) {
         FleetMission storage mission = _fleetMissions[missionId];
         if (_battleResolutionProgress[missionId].rounds == 0) {
             // Attack protection is rechecked once, before the first combat round, to close the
@@ -516,12 +516,12 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
             ) {
                 _returnLinkedMissions(missionId, mission);
                 mission.status = FleetMissionStatus.Returning;
-                return;
+                return true;
             }
         }
 
         (BattleSettlement memory settlement, bool battleComplete) = _runBattle(missionId, mission);
-        if (!battleComplete) return;
+        if (!battleComplete) return false;
 
         if (settlement.outcome == BattleOutcome.AttackerWin) {
             _settleAttackGroupRaid(missionId);
@@ -571,6 +571,7 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         );
         emit CombatDebrisSignaled(missionId, mission.targetPlanetId, debris.metal, debris.crystal);
         _requestMoonChanceFromBattle(missionId, mission.targetPlanetId, debris);
+        complete = true;
     }
 
     function _runBattle(uint256 missionId, FleetMission storage mission)
