@@ -46,6 +46,11 @@ import {VeydriftStateMigrationModule} from "../src/VeydriftStateMigrationModule.
 ///      Execute:
 ///        forge script script/UpgradeGame.s.sol:UpgradeGame --rpc-url <base_mainnet> --broadcast
 contract UpgradeGame is Script {
+    // Stable proxy-storage slot verified by scripts/check-storage-layout.mjs. The moon-parity
+    // cutover spans the independently administered Game and MoonSystem proxies, so neither half
+    // may execute while player mission writes are still accepted.
+    bytes32 private constant GAME_PAUSED_SLOT = bytes32(uint256(52));
+
     function run() external returns (address newImplementation) {
         uint256 privateKey = vm.envUint("PRIVATE_KEY");
         address broadcaster = vm.addr(privateKey);
@@ -57,6 +62,7 @@ contract UpgradeGame is Script {
         // The upgrade call is onlyOwner on the ProxyAdmin. Fail fast (before any deploy) if the
         // signer cannot actually execute the upgrade, so we never strand orphaned module deploys.
         require(ProxyAdmin(proxyAdmin).owner() == broadcaster, "BROADCASTER_NOT_PROXY_ADMIN_OWNER");
+        require(uint256(vm.load(proxy, GAME_PAUSED_SLOT)) != 0, "GAME_MUST_BE_PAUSED");
         (bool generationOk, bytes memory generationData) =
             moonProxy.staticcall(abi.encodeWithSignature("moonGeneration(uint256)", 0));
         require(generationOk && generationData.length >= 32, "MOON_PARITY_NOT_UPGRADED");

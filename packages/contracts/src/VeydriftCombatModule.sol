@@ -513,7 +513,7 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
             ) {
                 _returnLinkedMissions(missionId, mission);
                 mission.status = FleetMissionStatus.Returning;
-                return;
+                return true;
             }
 
             // Attack protection is rechecked once, before the first combat round, to close the
