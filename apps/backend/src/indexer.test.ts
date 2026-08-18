@@ -3923,6 +3923,107 @@ describe("SettlementIndexer", () => {
     });
   });
 
+  test("full canonical rebuild preserves an existing exact research start without a retained log", async () => {
+    const database = new Database(":memory:");
+    const researchState: ResearchState = {
+      wallet: player,
+      homePlanetId: planet.planetId,
+      researchAvailable: true,
+      resources: planet.resources,
+      researchLabLevel: 1,
+      researchNetworkLabLevels: [],
+      technologyLevels: { "10": 6 },
+      technologies: [{ id: 10, level: 6, cost: { metal: "0", crystal: "0", deuterium: "0" } }],
+      queue: {
+        active: true,
+        kind: "research",
+        itemId: 10,
+        targetLevel: 7,
+        readyAt: "1787758249",
+        cost: { metal: "0", crystal: "0", deuterium: "0" }
+      }
+    };
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return [planet]; },
+      async listCurrentPlanets() { return [planet]; },
+      async getResearchState() { return researchState; }
+    }, 100n, { database });
+    indexer.applyEvent(planet);
+    indexer.applyLog({
+      blockNumber: "0x852",
+      blockTimestamp: "1786894249",
+      transactionHash: "0x74c4a3d1b76e8389c9d79cef53c9ed5eeb72e744a8773e0f5c7af3aae107f9d0",
+      logIndex: "0x0",
+      topics: [researchQueuedTopic, addressTopic(player), topic(10n)],
+      data: abiWords(7n, 1787758249n, 0n, 0n, 0n)
+    });
+    database.query("DELETE FROM indexed_event_logs").run();
+
+    await indexer.rebuild();
+
+    expect(indexer.playerQueues(player, planet.planetId).research).toMatchObject({
+      itemId: 10,
+      targetLevel: 7,
+      readyAt: "1787758249",
+      startedAt: "1786894249"
+    });
+  });
+
+  test("full canonical rebuild rejects every mismatched pre-clear research start identity", async () => {
+    const mismatches = [
+      { column: "ready_at", value: "1787758250" },
+      { column: "item_id", value: 11 },
+      { column: "target_level", value: 8 },
+      { column: "owner", value: "0x3333333333333333333333333333333333333333" }
+    ] as const;
+
+    for (const mismatch of mismatches) {
+      const database = new Database(":memory:");
+      const researchState: ResearchState = {
+        wallet: player,
+        homePlanetId: planet.planetId,
+        researchAvailable: true,
+        resources: planet.resources,
+        researchLabLevel: 1,
+        researchNetworkLabLevels: [],
+        technologyLevels: { "10": 6 },
+        technologies: [{ id: 10, level: 6, cost: { metal: "0", crystal: "0", deuterium: "0" } }],
+        queue: {
+          active: true,
+          kind: "research",
+          itemId: 10,
+          targetLevel: 7,
+          readyAt: "1787758249",
+          cost: { metal: "0", crystal: "0", deuterium: "0" }
+        }
+      };
+      const indexer = new SettlementIndexer({
+        async listDebrisFieldEvents() { return []; },
+        async listMoonChanceReportEvents() { return []; },
+        async listSettledPlanetEvents() { return [planet]; },
+        async listCurrentPlanets() { return [planet]; },
+        async getResearchState() { return researchState; }
+      }, 100n, { database });
+      indexer.applyEvent(planet);
+      indexer.applyLog({
+        blockNumber: "0x852",
+        blockTimestamp: "1786894249",
+        transactionHash: "0x74c4a3d1b76e8389c9d79cef53c9ed5eeb72e744a8773e0f5c7af3aae107f9d0",
+        logIndex: "0x0",
+        topics: [researchQueuedTopic, addressTopic(player), topic(10n)],
+        data: abiWords(7n, 1787758249n, 0n, 0n, 0n)
+      });
+      database.query("DELETE FROM indexed_event_logs").run();
+      database.query(`UPDATE contract_production_queues SET ${mismatch.column} = ?`).run(mismatch.value);
+
+      await indexer.rebuild();
+
+      expect(indexer.playerQueues(player, planet.planetId).research?.startedAt).toBeNull();
+    }
+  });
+
   test("idempotent production repair rejects every mismatched research identity field", async () => {
     const database = new Database(":memory:");
     const chuckyPlanet = { ...planet, owner: chucky };
