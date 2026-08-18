@@ -5082,6 +5082,23 @@ describe("SettlementIndexer", () => {
       crystal: "0",
       deuterium: "4800"
     });
+
+    // Finishing the active entry must promote the first FIFO backlog entry
+    // without dropping later entries. The contract only emits the promoted
+    // entry, so losing this local backlog makes a later order look active.
+    indexer.applyLog({
+      blockNumber: "0xa4",
+      transactionHash: "0xcomplete-second-small-cargo",
+      logIndex: "0x0",
+      topics: [shipCompletedTopic, topic(7n), topic(0n)],
+      data: abiWords(1n, 2n)
+    });
+    expect(indexer.playerQueues(player, planet.planetId).ship).toMatchObject({
+      itemId: 1,
+      quantity: 3,
+      readyAt: "1770002600",
+      backlog: [{ itemId: 0, quantity: 4, readyAt: "1770003200" }]
+    });
   });
 
   test("promotes a completed ship batch without dropping the remaining FIFO backlog", () => {
