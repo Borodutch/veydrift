@@ -487,13 +487,34 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       console.error("Veydrift explicit index reconciliation failed", error);
     });
   }
-  if (isWriter && loaded.config.currentStateHealRunId && indexer && loaded.problems.length === 0) {
+  if (
+    isWriter
+    && loaded.config.currentStateHealRunId
+    && !loaded.config.fullCanonicalStateHealRunId
+    && indexer
+    && loaded.problems.length === 0
+  ) {
     // Explicit operator heal only. Startup uses the narrow fleet-mission snapshot heal: it repairs the
     // known live divergence once, then normal backend mutation remains event-listener-only.
     void indexer
       .startFleetMissionStateHealOnce(loaded.config.currentStateHealRunId)
       .catch((error) => {
         console.error("Veydrift current-state heal failed", error);
+      });
+  }
+  if (isWriter && loaded.config.fullCanonicalStateHealRunId && indexer && loaded.problems.length === 0) {
+    // Explicit operator-only full snapshot: production queues can have a FIFO
+    // backlog that cannot be reconstructed safely from a single latest queue
+    // event after lazy settlement.  This reads the contract's active queue and
+    // backlog, repairs the mirror atomically, and is idempotent by run ID.
+    void indexer
+      .startCurrentStateHealOnce(loaded.config.fullCanonicalStateHealRunId, {
+        ...(loaded.config.currentStateHealConcurrency
+          ? { planetConcurrency: loaded.config.currentStateHealConcurrency }
+          : {})
+      })
+      .catch((error) => {
+        console.error("Veydrift full canonical state heal failed", error);
       });
   }
   if (isWriter && loaded.config.resourceStateHealRunId && indexer && loaded.problems.length === 0) {

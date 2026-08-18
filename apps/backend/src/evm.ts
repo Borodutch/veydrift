@@ -2743,7 +2743,7 @@ export class VeydriftGameReader implements ChainReader {
       this.readUintCall("0xd9b24865", [encodeUint(planetId), encodeUint(5n)]),
       this.readUintCall("0xd9b24865", [encodeUint(planetId), encodeUint(11n)]),
       this.readUintCall("0xd9b24865", [encodeUint(planetId), encodeUint(14n)]),
-      this.readPlanetQueue("0x5758361d", planetId, "defense"),
+      this.readDefenseQueue(planetId),
       this.readTechnologyLevels(wallet),
       this.readDefenseRows(planetId)
     ]);
@@ -4749,7 +4749,7 @@ export class VeydriftGameReader implements ChainReader {
     const [buildings, building, defense, ship, moon] = await Promise.all([
       this.readBuildingRows(planetId),
       this.readPlanetQueue("0xb8e835ab", planetId, "building"),
-      this.readPlanetQueue("0x5758361d", planetId, "defense"),
+      this.readDefenseQueue(planetId),
       this.readShipQueue(planetId),
       this.readMoonSummary(planet)
     ]);

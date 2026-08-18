@@ -253,6 +253,7 @@ export type IndexerSnapshot = {
   lastCurrentStateHealPlanetsScanned: number | null;
   lastCurrentStateHealRunId: string | null;
   lastCurrentStateHealShipMismatches: number | null;
+  lastCurrentStateHealQueueMismatches: number | null;
   lastCanonicalResourceHealAt: string | null;
   lastCanonicalResourceHealPlanetsScanned: number | null;
   lastCanonicalResourceHealRunId: string | null;
@@ -374,6 +375,7 @@ type CountRow = {
 type CurrentStateHealStats = {
   planetsScanned: number;
   shipMismatches: number;
+  queueMismatches: number;
 };
 
 type MetadataRow = {
@@ -965,6 +967,7 @@ export class SettlementIndexer {
       lastCurrentStateHealPlanetsScanned: metadataNumber(this.metadata("lastCurrentStateHealPlanetsScanned")),
       lastCurrentStateHealRunId: this.metadata("lastCurrentStateHealRunId"),
       lastCurrentStateHealShipMismatches: metadataNumber(this.metadata("lastCurrentStateHealShipMismatches")),
+      lastCurrentStateHealQueueMismatches: metadataNumber(this.metadata("lastCurrentStateHealQueueMismatches")),
       lastCanonicalResourceHealAt: this.metadata("lastCanonicalResourceHealAt"),
       lastCanonicalResourceHealPlanetsScanned: metadataNumber(this.metadata("lastCanonicalResourceHealPlanetsScanned")),
       lastCanonicalResourceHealRunId: this.metadata("lastCanonicalResourceHealRunId"),
@@ -4193,7 +4196,8 @@ export class SettlementIndexer {
     if (!this.chainReader.getCanonicalPlanetState) return;
     const totalStats: CurrentStateHealStats = {
       planetsScanned: 0,
-      shipMismatches: 0
+      shipMismatches: 0,
+      queueMismatches: 0
     };
 
     while (this.targetedHealPlanetIds.size > 0) {
@@ -4207,6 +4211,7 @@ export class SettlementIndexer {
       const stats = await this.healCurrentCanonicalPlanets(planets, CANONICAL_READ_PLANET_CHUNK);
       totalStats.planetsScanned += stats.planetsScanned;
       totalStats.shipMismatches += stats.shipMismatches;
+      totalStats.queueMismatches += stats.queueMismatches;
     }
 
     if (totalStats.planetsScanned > 0) {
@@ -4214,6 +4219,7 @@ export class SettlementIndexer {
         this.setMetadata("lastCurrentStateHealAt", new Date().toISOString());
         this.setMetadata("lastCurrentStateHealPlanetsScanned", totalStats.planetsScanned.toString());
         this.setMetadata("lastCurrentStateHealShipMismatches", totalStats.shipMismatches.toString());
+        this.setMetadata("lastCurrentStateHealQueueMismatches", totalStats.queueMismatches.toString());
         this.touch();
       });
     }
@@ -4386,9 +4392,6 @@ export class SettlementIndexer {
   startCurrentStateHealOnce(runId: string, options: { planetConcurrency?: number } = {}): Promise<IndexerSnapshot> {
     const normalizedRunId = runId.trim().slice(0, 128);
     if (!normalizedRunId) return Promise.resolve(this.snapshot());
-    if (this.metadata("currentStateOneTimeHealCompletedAt")) {
-      return Promise.resolve(this.snapshot());
-    }
     if (this.metadata("lastCurrentStateHealRunId") === normalizedRunId) {
       return Promise.resolve(this.snapshot());
     }
@@ -4572,6 +4575,7 @@ export class SettlementIndexer {
       this.setMetadata("lastCurrentStateHealAt", new Date().toISOString());
       this.setMetadata("lastCurrentStateHealPlanetsScanned", healStats.planetsScanned.toString());
       this.setMetadata("lastCurrentStateHealShipMismatches", healStats.shipMismatches.toString());
+      this.setMetadata("lastCurrentStateHealQueueMismatches", healStats.queueMismatches.toString());
       this.touch();
       this.recordSuccessfulReconciliation(latestBlock);
     });
@@ -4604,7 +4608,8 @@ export class SettlementIndexer {
     const chunkSize = Math.max(1, Math.floor(planetConcurrency));
     const stats: CurrentStateHealStats = {
       planetsScanned: 0,
-      shipMismatches: 0
+      shipMismatches: 0,
+      queueMismatches: 0
     };
 
     for (const planetChunk of chunks(planets, chunkSize)) {
@@ -4617,6 +4622,7 @@ export class SettlementIndexer {
         if (!planet || !row) continue;
         stats.planetsScanned += 1;
         stats.shipMismatches += this.countCanonicalShipMismatches(row);
+        stats.queueMismatches += this.countCanonicalQueueMismatches(row);
         await this.healPlanetIdentity(planet);
         await this.healPlanetResources(row);
         await this.healPlanetBuildings(row);
@@ -6639,6 +6645,17 @@ export class SettlementIndexer {
     let mismatches = 0;
     for (const ship of row.ships) {
       if (this.indexedLevel("contract_ship_counts", "ship_id", row.planetId, ship.id) !== ship.count) {
+        mismatches += 1;
+      }
+    }
+    return mismatches;
+  }
+
+  private countCanonicalQueueMismatches(row: CanonicalPlanetChainState): number {
+    let mismatches = 0;
+    for (const kind of ["building", "defense", "ship"] as const) {
+      if (canonicalQueueSignature(this.queueState(`${kind}:${row.planetId}`))
+        !== canonicalQueueSignature(row.queues[kind])) {
         mismatches += 1;
       }
     }
@@ -12336,6 +12353,22 @@ function queueKey(event: Pick<IndexedQueueStartedEvent | IndexedQueueCompletedEv
   }
 
   return `${event.queueKind}:${event.planetId ?? ""}`;
+}
+
+function canonicalQueueSignature(queue: QueueState | null | undefined): string {
+  if (!queue?.active) return "inactive";
+  const normalize = (candidate: QueueState): Record<string, unknown> => ({
+    kind: candidate.kind,
+    itemId: candidate.itemId ?? null,
+    targetLevel: candidate.targetLevel ?? null,
+    quantity: candidate.quantity ?? null,
+    readyAt: candidate.readyAt ?? null,
+    startedAt: candidate.startedAt ?? null,
+    cost: candidate.cost,
+    productionTiming: candidate.productionTiming ?? null,
+    backlog: (candidate.backlog ?? []).filter((entry) => entry.active).map(normalize)
+  });
+  return JSON.stringify(normalize(queue));
 }
 
 function queueMatchesCompletion(event: IndexedQueueCompletedEvent, queue: QueueState | null): boolean {

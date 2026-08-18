@@ -217,7 +217,14 @@ export function defenseProductionItems({
 }): ProductionCatalogItem<DefenseKey>[] {
   return adaptProductionItems(defenseCatalog, quantities, (defense, { quantity, quantityValid }) => {
     const chainDefense = defenseState?.defenses.find((item) => item.id === defense.id);
-    const deployed = productionAvailable ? chainDefense?.count : undefined;
+    // The contract lazily settles production.  The API projects whole units that
+    // have elapsed from a timed queue, while the canonical defense count remains
+    // unchanged until the next state-changing call.  Show that effective count
+    // here so a partially completed batch cannot read "19 deployed / 2 of 4
+    // complete" at the same time.
+    const deployed = productionAvailable && chainDefense
+      ? chainDefense.count + completedDefenseCount(defense.id, queue)
+      : undefined;
     const baseCost = productionAvailable && chainDefense
       ? resolveDefenseUnitCost(defense.baseCost, chainDefense.cost)
       : undefined;
@@ -413,6 +420,16 @@ function queuedDefenseCount(defenseId: number, queue?: ChainDefenseState["queue"
     if (backlog.active && backlog.itemId === defenseId) {
       quantity += backlog.quantity ?? 0;
     }
+  }
+  return quantity;
+}
+
+function completedDefenseCount(defenseId: number, queue?: ChainDefenseState["queue"] | undefined): number {
+  const completed = (candidate: NonNullable<ChainDefenseState["queue"]>): number =>
+    candidate.itemId === defenseId ? candidate.asOfNow?.completedQuantity ?? 0 : 0;
+  let quantity = queue?.active ? completed(queue) : 0;
+  for (const backlog of queue?.backlog ?? []) {
+    if (backlog.active) quantity += completed(backlog);
   }
   return quantity;
 }

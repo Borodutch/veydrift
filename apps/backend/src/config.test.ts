@@ -109,6 +109,17 @@ describe("backend config", () => {
     expect(result.config.currentStateHealRunId).toBe("vey-850-phantom-return-heal");
   });
 
+  test("normalizes the explicit full canonical-state heal run id", () => {
+    const result = loadBackendConfig({
+      VEYDRIFT_GAME_CONTRACT_ADDRESS: "0x3333333333333333333333333333333333333333",
+      VEYDRIFT_FULL_CANONICAL_STATE_HEAL_RUN_ID: "  queue-divergence-20260818  ",
+      VEYDRIFT_RPC_URL: "https://example.invalid/rpc"
+    });
+
+    expect(result.problems).toEqual([]);
+    expect(result.config.fullCanonicalStateHealRunId).toBe("queue-divergence-20260818");
+  });
+
   test("normalizes the explicit in-writer alliance-heal run id", () => {
     const result = loadBackendConfig({
       VEYDRIFT_ALLIANCE_STATE_HEAL_RUN_ID: "  alliance-profile-description-v1  ",
