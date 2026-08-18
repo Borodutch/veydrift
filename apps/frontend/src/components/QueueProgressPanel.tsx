@@ -1,6 +1,6 @@
 import type { ComponentChildren } from "preact";
 import type { ConstructionProgress } from "../constructionProgress";
-import { formatDurationUntil } from "../durationFormat";
+import { formatDuration, formatDurationUntil } from "../durationFormat";
 import { queueProgressBarState, queueProgressFillState } from "../overviewData";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import { AnimatedProgressBar } from "./AnimatedProgressBar";
@@ -79,6 +79,8 @@ export function QueueProgressPanel({
   completedQuantity,
   completionReadyAt,
   completionStartedAt,
+  currentUnitProgressBps,
+  currentUnitSecondsRemaining,
   embedded = false,
   indeterminate,
   itemText,
@@ -110,9 +112,15 @@ export function QueueProgressPanel({
   const remaining = showsWholeQueueProgress
     ? (readyAtMs !== undefined && readyAtMs <= now ? "Ready" : "")
     : progressState?.remaining ?? (readyAtMs !== undefined && readyAtMs <= now ? "Ready" : "");
-  const shouldIndeterminate = showsWholeQueueProgress
-    ? !hasCanonicalTimeline
-    : progressState?.indeterminate ?? indeterminate ?? (!hasCanonicalTimeline && resolvedProgress === undefined);
+  const hasCurrentUnitProgress = typeof currentUnitProgressBps === "number"
+    && Number.isFinite(currentUnitProgressBps);
+  const currentUnitProgress = hasCurrentUnitProgress
+    ? Math.min(1, Math.max(0, currentUnitProgressBps / 10_000))
+    : undefined;
+  // A production card must never devolve into a generic animated stripe. If an
+  // old queue temporarily lacks timing, keep a stable determinate fill until
+  // the retained-log recovery supplies its canonical timeline.
+  const shouldIndeterminate = false;
   const progressBar = queueProgressBarState({
     indeterminate: shouldIndeterminate,
     progress: resolvedProgress,
@@ -128,7 +136,10 @@ export function QueueProgressPanel({
       remaining,
       startedAt: hasCanonicalTimeline ? startedAtMs : undefined,
     });
-  const percent = Math.round(progressFill.progress * 100);
+  const displayedProgress = !embedded && currentUnitProgress !== undefined
+    ? currentUnitProgress
+    : progressFill.progress;
+  const percent = Math.round(displayedProgress * 100);
   const totalQueueRemaining = completionReadyAtMs === undefined
     ? undefined
     : formatDurationUntil(completionReadyAtMs, now);
@@ -136,6 +147,10 @@ export function QueueProgressPanel({
     ? undefined
     : completedQuantity + (remainingQuantity ?? quantity ?? 0);
   const itemTitle = `${label}${quantity === undefined ? "" : ` ×${formatQuantity(quantity)}`}`;
+  const currentItemRemaining = typeof currentUnitSecondsRemaining === "number"
+    && Number.isFinite(currentUnitSecondsRemaining)
+    ? formatDuration(currentUnitSecondsRemaining)
+    : undefined;
 
   if (embedded) {
     return (
@@ -189,7 +204,7 @@ export function QueueProgressPanel({
               fillClassName={classes.fill}
               indeterminate={progressBar.indeterminate}
               label={`${label} queue progress${totalQueueRemaining ? `, ${totalQueueRemaining} total remaining` : ""}`}
-              value={progressFill.progress}
+              value={displayedProgress}
             />
           </span>
         </span>
@@ -258,14 +273,14 @@ export function QueueProgressPanel({
             className="h-1 w-14 overflow-hidden rounded-full bg-white/10 sm:w-20"
             fillClassName={classes.fill}
             indeterminate={progressBar.indeterminate}
-            label={`${label} queue progress`}
-            value={progressFill.progress}
+            label={`${label} current item progress`}
+            value={displayedProgress}
           />
           <span className={`whitespace-nowrap text-[10px] font-semibold tabular-nums ${classes.text}`}>
             {completedQuantity !== undefined && totalQuantity !== undefined
               ? `${formatQuantity(completedQuantity)}/${formatQuantity(totalQuantity)} · `
               : ""}
-            {progressBar.indeterminate ? "Syncing timeline" : `${percent}%`}
+            {currentItemRemaining ? `${currentItemRemaining} to next` : `${percent}%`}
           </span>
         </span>
 

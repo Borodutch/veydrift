@@ -10164,6 +10164,62 @@ describe("SettlementIndexer", () => {
     ]);
   });
 
+  test("recovers a partially completed legacy defense batch timeline from its retained queue event", () => {
+    const database = new Database(":memory:");
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n, { database });
+    indexer.applyEvent(planet);
+
+    const now = Math.floor(Date.now() / 1_000);
+    const startedAt = now - 100;
+    const readyAt = now + 100;
+    indexer.applyLog({
+      blockNumber: "0x852",
+      blockTimestamp: `0x${startedAt.toString(16)}`,
+      transactionHash: "0xlegacy-defense-timeline",
+      logIndex: "0x0",
+      topics: [defenseQueuedTopic, topic(BigInt(planet.planetId)), topic(4n)],
+      data: abiWords(4n, BigInt(readyAt), 80_000n, 60_000n, 8_000n)
+    });
+
+    // Lazy settlement changes the canonical queue to its remaining two units.
+    // Legacy batches did not persist the production-timing fields alongside it.
+    database.query(`
+      UPDATE contract_production_queues
+      SET quantity = 2,
+          metal_cost = '40000',
+          crystal_cost = '30000',
+          deuterium_cost = '4000',
+          started_at = NULL,
+          original_quantity = NULL,
+          unit_work_seconds = NULL,
+          production_rate = NULL
+      WHERE queue_key = ?
+    `).run(`defense:${planet.planetId}`);
+
+    const queue = indexer.playerQueues(player, planet.planetId).defense;
+    expect(queue).toMatchObject({
+      quantity: 2,
+      startedAt: String(startedAt),
+      productionTiming: {
+        startedAt: String(startedAt),
+        originalQuantity: 4,
+        unitWorkSeconds: "200",
+        rate: "4"
+      },
+      asOfNow: {
+        completedQuantity: 2,
+        remainingQuantity: 2,
+        currentUnitSecondsRemaining: expect.any(Number),
+        currentUnitProgressBps: expect.any(Number),
+        overallProgressBps: expect.any(Number)
+      }
+    });
+  });
+
   test("keeps elapsed ship and defense queues out of canonical unit rows", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
