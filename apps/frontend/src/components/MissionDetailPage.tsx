@@ -465,6 +465,14 @@ function MissionBattleReport({
   }
 
   if (!report) {
+    if (mission.combatResolutionProgress) {
+      const { roundsCompleted, totalRounds } = mission.combatResolutionProgress;
+      return (
+        <Notice tone="warning">
+          Combat resolving: {roundsCompleted} of up to {totalRounds} rounds complete. The resolver will continue automatically.
+        </Notice>
+      );
+    }
     if (materialization?.status === "pending") {
       return (
         <Notice tone="warning">

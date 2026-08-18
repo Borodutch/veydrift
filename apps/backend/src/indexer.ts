@@ -58,6 +58,8 @@ import {
   isDebrisFieldLog,
   isRandomnessFulfilledLog,
   isBattleReportLog,
+  decodeCombatResolutionProgressLog,
+  isAttackBattleResolvedLog,
   isFleetMissionLog,
   isFirstPlanetSettledLog,
   isIndexedQueueCompletedLog,
@@ -3922,6 +3924,9 @@ export class SettlementIndexer {
         }
         if (isInviteeProductionBoostLog(log)) {
           this.removeInviteeProductionBoostEvent(log);
+        }
+        if (isBattleReportLog(log)) {
+          if (this.reconcileCombatResolutionProgress(battleLogMissionId(log)) > 0) this.touch();
         }
         return { applied: false, duplicate: false, ignored: false, removed: true, snapshot: this.snapshot() };
       }
@@ -7832,16 +7837,90 @@ export class SettlementIndexer {
   private applyBattleCompatibilityEvent(log: IndexedRpcLog): number {
     const missionId = battleLogMissionId(log);
     if (!missionId) return 0;
+    const progressChanges = this.applyCombatResolutionProgressEvent(log, missionId);
     const mutationKey = `legacy:battle:${missionId}`;
-    if (this.hasLegacyUnitMutation(mutationKey)) return 0;
+    if (this.hasLegacyUnitMutation(mutationKey)) return progressChanges;
     const battleLogs = this.indexedLogsForTransaction(log.transactionHash)
       .filter((candidate) => isBattleReportLog(candidate) && battleLogMissionId(candidate) === missionId);
     const report = decodeBattleReportLogs(battleLogs, missionId);
-    if (!report || isZeroResources(report.defenderLosses)) return 0;
+    if (!report || isZeroResources(report.defenderLosses)) return progressChanges;
 
     const mutations = this.solvePlanetBattleLossMutations(report);
-    if (!mutations) return 0;
-    return this.applyLegacyUnitMutationsOnce(mutationKey, this.filterLegacyMutationsWithoutExactCountEvent(mutations, log.transactionHash), log);
+    if (!mutations) return progressChanges;
+    return progressChanges + this.applyLegacyUnitMutationsOnce(mutationKey, this.filterLegacyMutationsWithoutExactCountEvent(mutations, log.transactionHash), log);
+  }
+
+  private applyCombatResolutionProgressEvent(log: IndexedRpcLog, missionId: string): number {
+    const progress = decodeCombatResolutionProgressLog(log);
+    const terminal = isAttackBattleResolvedLog(log);
+    if (!progress && !terminal) return 0;
+    const row = this.db.query(`
+      SELECT event_json
+      FROM contract_fleet_missions
+      WHERE mission_id = ?
+    `).get(missionId) as EventRow | null;
+    if (!row) return 0;
+    const payload = parseJson<Record<string, unknown>>(row.event_json ?? "{}", {});
+    const previous = JSON.stringify(payload.combatResolutionProgress ?? null);
+    if (terminal) {
+      delete payload.combatResolutionProgress;
+    } else if (progress) {
+      const current = parseCombatResolutionProgress(JSON.stringify(payload));
+      payload.combatResolutionProgress = {
+        roundsCompleted: Math.max(current?.roundsCompleted ?? 0, progress.roundsCompleted),
+        totalRounds: 6
+      };
+    }
+    if (JSON.stringify(payload.combatResolutionProgress ?? null) === previous) return 0;
+    return this.db.query(`
+      UPDATE contract_fleet_missions
+      SET event_json = ?
+      WHERE mission_id = ?
+    `).run(JSON.stringify(payload), missionId).changes;
+  }
+
+  // Removed logs are exceptional and require rebuilding this one mission's progress from the raw
+  // canonical ledger. The normal ingest path above is O(1), avoiding a global JSON scan per round.
+  private reconcileCombatResolutionProgress(missionId: string | null): number {
+    if (!missionId) return 0;
+    const rows = this.db.query(`
+      SELECT event_json
+      FROM indexed_event_logs
+      WHERE removed = 0
+        AND json_extract(event_json, '$.topics[1]') = ?
+      ORDER BY CAST(block_number AS INTEGER) ASC, CAST(log_index AS INTEGER) ASC
+    `).all(fleetMissionIdTopic(missionId)) as EventRow[];
+    let roundsCompleted = 0;
+    let terminal = false;
+    for (const candidate of sortedEventRows(rows)) {
+      const progress = decodeCombatResolutionProgressLog(candidate);
+      if (progress?.missionId === missionId) {
+        roundsCompleted = Math.max(roundsCompleted, progress.roundsCompleted);
+      }
+      if (isAttackBattleResolvedLog(candidate) && battleLogMissionId(candidate) === missionId) {
+        terminal = true;
+      }
+    }
+
+    const row = this.db.query(`
+      SELECT event_json
+      FROM contract_fleet_missions
+      WHERE mission_id = ?
+    `).get(missionId) as EventRow | null;
+    if (!row) return 0;
+    const payload = parseJson<Record<string, unknown>>(row.event_json ?? "{}", {});
+    const previous = JSON.stringify(payload.combatResolutionProgress ?? null);
+    if (!terminal && roundsCompleted > 0) {
+      payload.combatResolutionProgress = { roundsCompleted, totalRounds: 6 };
+    } else {
+      delete payload.combatResolutionProgress;
+    }
+    if (JSON.stringify(payload.combatResolutionProgress ?? null) === previous) return 0;
+    return this.db.query(`
+      UPDATE contract_fleet_missions
+      SET event_json = ?
+      WHERE mission_id = ?
+    `).run(JSON.stringify(payload), missionId).changes;
   }
 
   private applyGuardedBattleCompatibilityEvent(
@@ -10673,6 +10752,7 @@ export class SettlementIndexer {
       deuterium: row.deuterium_cargo
     };
     const canonicalEventMission = parseCanonicalFleetMissionEvent(row.event_json);
+    const combatResolutionProgress = parseCombatResolutionProgress(row.event_json);
     const base = eventMission ?? {
       missionId: row.mission_id,
       recallCost: null,
@@ -10727,6 +10807,7 @@ export class SettlementIndexer {
       fuelCost,
       cargo,
       recallCost: row.status_id === 1 && mergedBase.recallCost === null ? projectedFleetRecallCost() : mergedBase.recallCost,
+      ...(combatResolutionProgress ? { combatResolutionProgress } : {}),
       ...(row.randomness_request_id ? { randomnessRequestId: row.randomness_request_id } : {})
     };
   }
@@ -12516,6 +12597,25 @@ function parseCanonicalFleetMissionEvent(value: string | null): FleetMissionSumm
   if (!payload || typeof payload !== "object") return null;
   const mission = "mission" in payload ? payload.mission : payload;
   return isStoredFleetMissionSummary(mission) ? mission : null;
+}
+
+function parseCombatResolutionProgress(
+  value: string | null
+): FleetMissionSummary["combatResolutionProgress"] | null {
+  if (!value) return null;
+  const payload = parseJson<Record<string, unknown> | null>(value, null);
+  if (!payload || typeof payload !== "object") return null;
+  const direct = payload.combatResolutionProgress;
+  const nested = payload.mission && typeof payload.mission === "object"
+    ? (payload.mission as Record<string, unknown>).combatResolutionProgress
+    : undefined;
+  const candidate = direct ?? nested;
+  if (!candidate || typeof candidate !== "object") return null;
+  const roundsCompleted = Number((candidate as Record<string, unknown>).roundsCompleted);
+  const totalRounds = Number((candidate as Record<string, unknown>).totalRounds);
+  if (!Number.isInteger(roundsCompleted) || roundsCompleted <= 0) return null;
+  if (!Number.isInteger(totalRounds) || totalRounds < roundsCompleted) return null;
+  return { roundsCompleted, totalRounds };
 }
 
 function mergeFleetMissionSummary(

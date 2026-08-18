@@ -8636,6 +8636,12 @@ contract VeydriftGameTest is Test {
         assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
     }
 
+    function testCombatRoundEntrypointRejectsExternalCallers() public {
+        vm.prank(player);
+        vm.expectRevert(abi.encodeWithSelector(VeydriftGameStorage.Unauthorized.selector, player));
+        game.resolveFleetMissionCombatRound(1);
+    }
+
     function testFleetLaunchLazilyResolvesReadyCombatArrivalBeforePendingGate() public {
         (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
         _setTechnologyLevel(player, Technology.Computer, 1);

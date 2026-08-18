@@ -448,6 +448,24 @@ contract VeydriftGame is VeydriftResourceReserves {
         _delegateToPlayModule();
     }
 
+    /// @dev Self-call surface used by the gameplay module to isolate one complete combat round.
+    ///      A failed child call rolls back only that attempted round, allowing the outer resolver to
+    ///      commit the largest set of rounds that fits under Base's transaction gas cap.
+    function resolveFleetMissionCombatRound(uint256) external returns (bool) {
+        if (msg.sender != address(this)) revert Unauthorized(msg.sender);
+        _delegateToPlayModule();
+    }
+
+    /// @notice Canonical progress for an Attack battle that is resolving across gas-bounded chunks.
+    function battleResolutionProgress(uint256 missionId)
+        external
+        view
+        returns (uint8 roundsCompleted, uint8 totalRounds)
+    {
+        roundsCompleted = _battleResolutionProgress[missionId].rounds;
+        totalRounds = BATTLE_MAX_ROUNDS;
+    }
+
     function completeFleetMissionReturn(uint256) external {
         _touchPlayer(msg.sender);
         _delegateToPlanetManagementModule();

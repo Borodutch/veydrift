@@ -1999,6 +1999,55 @@ describe("SettlementIndexer", () => {
     expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 0)?.count).toBe(0);
   });
 
+  test("indexes multi-transaction combat progress, reconciles reorgs, and clears it at settlement", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xcombat-launch",
+      logIndex: "0x0",
+      topics: [fleetMissionLaunchedTopic, topic(23_007n), addressTopic(player), topic(3n)],
+      data: abiWords(7n, 8n, 1_900_000_000n, 1_900_000_600n, 2_348n)
+    });
+
+    const roundLog = (round: bigint, transactionHash: string, removed = false) => ({
+      blockNumber: round < 3n ? "0x91" : "0x92",
+      transactionHash,
+      logIndex: `0x${round.toString(16)}`,
+      topics: [combatRoundResolvedTopic, topic(23_007n), topic(round)],
+      data: abiWords(10n, 10n, 0n, 0n, 0n, 0n),
+      ...(removed ? { removed: true } : {})
+    });
+    indexer.applyLog(roundLog(1n, "0xcombat-chunk-a"));
+    indexer.applyLog(roundLog(2n, "0xcombat-chunk-a"));
+    indexer.applyLog(roundLog(3n, "0xcombat-chunk-b"));
+    indexer.applyLog(roundLog(4n, "0xcombat-chunk-b"));
+
+    expect(indexer.fleetMissionVisibility(player).outgoing.find((mission) =>
+      mission.missionId === "23007"
+    )?.combatResolutionProgress).toEqual({ roundsCompleted: 4, totalRounds: 6 });
+
+    indexer.applyLog(roundLog(4n, "0xcombat-chunk-b", true));
+    expect(indexer.fleetMissionVisibility(player).outgoing.find((mission) =>
+      mission.missionId === "23007"
+    )?.combatResolutionProgress).toEqual({ roundsCompleted: 3, totalRounds: 6 });
+
+    indexer.applyLog({
+      blockNumber: "0x93",
+      transactionHash: "0xcombat-final",
+      logIndex: "0x0",
+      topics: [attackBattleResolvedTopic, topic(23_007n), addressTopic(player), topic(8n)],
+      data: abiWords(2n, 6n, 123n, 0n, 0n, 0n)
+    });
+    expect(indexer.fleetMissionVisibility(player).outgoing.find((mission) =>
+      mission.missionId === "23007"
+    )?.combatResolutionProgress).toBeUndefined();
+  });
+
   test("legacy combat round counts remove a unique stale defender unit when loss resources prove it was absent", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },

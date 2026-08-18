@@ -1308,6 +1308,33 @@ describe("moon chance report event decoding", () => {
 });
 
 describe("canonical fleet mission details", () => {
+  test("reads canonical multi-transaction combat progress for an outbound attack", async () => {
+    const owner = "0x0000000000000000000000000000000000000abc" as Address;
+    const selectors: string[] = [];
+    const reader = new VeydriftGameReader(readerConfig, {
+      async request<T>(): Promise<T> {
+        throw new Error("unexpected sequential request");
+      },
+      async requestBatch<T>(requests: Array<{ method: string; params: unknown[] }>): Promise<T[]> {
+        return requests.map((request) => {
+          const [call] = request.params as [{ data: string }];
+          const selector = call.data.slice(0, 10);
+          selectors.push(selector);
+          if (selector === "0xf158c946") {
+            return fleetMissionResult({ status: 1n, missionType: 3n, owner }) as T;
+          }
+          if (selector === "0xa5edcf21") return dataWords([word(4n), word(6n)]) as T;
+          throw new Error(`Unexpected selector ${selector}`);
+        });
+      }
+    });
+
+    const mission = await reader.getCanonicalFleetMission(23_007n);
+
+    expect(selectors).toEqual(["0xf158c946", "0xa5edcf21"]);
+    expect(mission?.combatResolutionProgress).toEqual({ roundsCompleted: 4, totalRounds: 6 });
+  });
+
   test("reads active mission ships and body flags from packed storage", async () => {
     const owner = "0x0000000000000000000000000000000000000abc" as Address;
     const storageSlots: string[] = [];
@@ -2434,14 +2461,16 @@ function dataWords(words: string[]): string {
 
 function fleetMissionResult({
   status,
+  missionType = 0n,
   owner
 }: {
   status: bigint;
+  missionType?: bigint;
   owner: Address;
 }): string {
   return dataWords([
     word(status),
-    word(0n),
+    word(missionType),
     addressWord(owner),
     word(41n),
     word(42n),
