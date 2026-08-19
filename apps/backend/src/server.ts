@@ -3351,20 +3351,26 @@ async function indexedWalletOverviewWarmResponse(
   selectedPlanetId: bigint | undefined,
   _chainReader: ChainReader | undefined
 ): Promise<Response | null> {
+  const startedAt = performance.now();
   if (!indexer || !hasWarmPlanetIndex(indexer)) return null;
+  const warmAt = performance.now();
 
   return indexer.readSnapshot(() => {
     const snapshot = indexedReadSnapshot(indexer);
+    const snapshotAt = performance.now();
     const selectedSettlement = indexedWalletSettlement(indexer, wallet, selectedPlanetId);
     const homeSettlement = selectedSettlement ?? indexedWalletSettlement(indexer, wallet, undefined);
     const settlement = homeSettlement?.settlement ?? indexer.walletSettlement(wallet);
     const queuePlanetId = homeSettlement?.planet?.planetId ?? settlement.homePlanetId;
+    const settlementAt = performance.now();
     const planetsResponse = indexedWalletPlanets(indexer, wallet);
+    const planetsAt = performance.now();
     const indexedQueues = indexer.playerQueues(wallet, queuePlanetId);
     // Queue timing is committed by the writer from queue timing events/canonical reconciliation. Never
     // turn a wallet overview render into an eth_call: with many readers, a browser refresh fan-out made
     // each request perform the same live queue read and starved normal API work.
     const queues = indexedQueues;
+    const queuesAt = performance.now();
     const fleetVisibility = indexedFleetVisibility(
       wallet,
       settlement,
@@ -3373,13 +3379,30 @@ async function indexedWalletOverviewWarmResponse(
       indexer,
       { includeArchive: false, includeJoinableAttacks: false }
     );
+    const fleetAt = performance.now();
 
-    return indexedWarmJsonResponse({
+    const response = indexedWarmJsonResponse({
       settlement: withMigrationSnapshotFields(withPlayerProfile(settlement, indexer, wallet), wallet),
       planetsResponse: withPlayerProfile(planetsResponse, indexer, wallet),
       queues,
       fleetVisibility
     }, "overview snapshot", snapshot);
+    const completedAt = performance.now();
+    if (completedAt - startedAt >= 100) {
+      console.warn("Slow overview projection", {
+        durationMs: Math.round(completedAt - startedAt),
+        warmMs: Math.round(warmAt - startedAt),
+        snapshotMs: Math.round(snapshotAt - warmAt),
+        settlementMs: Math.round(settlementAt - snapshotAt),
+        planetsMs: Math.round(planetsAt - settlementAt),
+        queuesMs: Math.round(queuesAt - planetsAt),
+        fleetMs: Math.round(fleetAt - queuesAt),
+        responseMs: Math.round(completedAt - fleetAt),
+        wallet,
+        planetId: queuePlanetId
+      });
+    }
+    return response;
   });
 }
 
