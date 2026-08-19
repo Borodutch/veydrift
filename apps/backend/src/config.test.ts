@@ -131,6 +131,17 @@ describe("backend config", () => {
     expect(result.config.researchQueueStartedAtRepairRunId).toBe("vey-852-chucky-research-start");
   });
 
+  test("normalizes the explicit production queue timing repair run id", () => {
+    const result = loadBackendConfig({
+      VEYDRIFT_GAME_CONTRACT_ADDRESS: "0x3333333333333333333333333333333333333333",
+      VEYDRIFT_PRODUCTION_QUEUE_TIMING_REPAIR_RUN_ID: "  queue-timing-20260818  ",
+      VEYDRIFT_RPC_URL: "https://example.invalid/rpc"
+    });
+
+    expect(result.problems).toEqual([]);
+    expect(result.config.productionQueueTimingRepairRunId).toBe("queue-timing-20260818");
+  });
+
   test("normalizes the explicit in-writer mission archive restore run id", () => {
     const result = loadBackendConfig({
       VEYDRIFT_MISSION_ARCHIVE_RESTORE_RUN_ID: "  mission-archive-restore-20260818  ",

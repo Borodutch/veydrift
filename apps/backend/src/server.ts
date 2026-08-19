@@ -530,6 +530,16 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         console.error("Veydrift research queue started-at repair failed", error);
       });
   }
+  if (isWriter && loaded.config.productionQueueTimingRepairRunId && indexer && loaded.problems.length === 0) {
+    // Explicit, idempotent writer-only backfill for historical ship/defense queues
+    // that predate QueueTiming events.  Readers must never scan the raw event ledger
+    // just to render a progress bar.
+    void indexer
+      .startProductionQueueTimingRepairOnce(loaded.config.productionQueueTimingRepairRunId)
+      .catch((error) => {
+        console.error("Veydrift production queue timing repair failed", error);
+      });
+  }
   if (isWriter && loaded.config.missionArchiveRestoreRunId && indexer && loaded.problems.length === 0) {
     // Explicit, idempotent operator repair for the mission archive. It enumerates the complete
     // canonical mission range and only upserts rows, so a partial/candidate repair can never prune

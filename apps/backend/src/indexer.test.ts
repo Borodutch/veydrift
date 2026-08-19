@@ -10221,6 +10221,55 @@ describe("SettlementIndexer", () => {
     });
   });
 
+  test("persists recovered legacy production timing in the writer instead of scanning logs on reads", async () => {
+    const database = new Database(":memory:");
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n, { database });
+    indexer.applyEvent(planet);
+
+    const now = Math.floor(Date.now() / 1_000);
+    const startedAt = now - 100;
+    const readyAt = now + 100;
+    indexer.applyLog({
+      blockNumber: "0x853",
+      blockTimestamp: `0x${startedAt.toString(16)}`,
+      transactionHash: "0xpersist-legacy-defense-timeline",
+      logIndex: "0x0",
+      topics: [defenseQueuedTopic, topic(BigInt(planet.planetId)), topic(4n)],
+      data: abiWords(4n, BigInt(readyAt), 80_000n, 60_000n, 8_000n)
+    });
+    database.query(`
+      UPDATE contract_production_queues
+      SET quantity = 2, started_at = NULL, original_quantity = NULL,
+          unit_work_seconds = NULL, production_rate = NULL
+      WHERE queue_key = ?
+    `).run(`defense:${planet.planetId}`);
+
+    await indexer.startProductionQueueTimingRepairOnce("queue-timing-20260818");
+    expect(database.query(`
+      SELECT started_at, original_quantity, unit_work_seconds, production_rate
+      FROM contract_production_queues WHERE queue_key = ?
+    `).get(`defense:${planet.planetId}`)).toEqual({
+      started_at: String(startedAt),
+      original_quantity: 4,
+      unit_work_seconds: "200",
+      production_rate: "4"
+    });
+    expect(indexer.playerQueues(player, planet.planetId).defense).toMatchObject({
+      startedAt: String(startedAt),
+      productionTiming: { originalQuantity: 4, unitWorkSeconds: "200", rate: "4" }
+    });
+    await indexer.startProductionQueueTimingRepairOnce("queue-timing-20260818");
+    expect(indexer.snapshot()).toMatchObject({
+      lastProductionQueueTimingRepairRunId: "queue-timing-20260818",
+      lastProductionQueueTimingRepairRowsScanned: 1,
+      lastProductionQueueTimingRepairRowsRepaired: 1
+    });
+  });
+
   test("recovers retained timing for a promoted legacy backlog entry without a planet id", () => {
     const database = new Database(":memory:");
     const indexer = new SettlementIndexer({
