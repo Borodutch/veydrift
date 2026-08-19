@@ -922,6 +922,8 @@ export class SettlementIndexer {
   private readonly randomnessEngineConfigured: boolean;
   // VEY-KANEO-485: see SettlementIndexerOptions. 0 = no cold-rebuild deadline.
   private readonly rebuildDeadlineMs: number;
+  private readSnapshotDepth = 0;
+  private readSnapshotStateVersion: string | null = null;
 
   snapshot(): IndexerSnapshot {
     const nowMs = Date.now();
@@ -1027,11 +1029,19 @@ export class SettlementIndexer {
     return snapshot;
   }
 
-  // API projections frequently read several indexed tables for one screen. On a WAL reader this
-  // establishes one stable read snapshot, so an intervening writer transaction cannot make each
-  // individual SELECT pay its own busy wait. Writers keep their existing atomic mutation paths.
+  // API projections frequently ask for the indexed state version while composing one screen.
+  // Reuse that metadata value only for the synchronous projection call: this removes repeated
+  // SQLite metadata reads without delaying cross-process event freshness beyond that one request.
   readSnapshot<T>(read: () => T): T {
-    return this.db.transaction(read)();
+    const outermost = this.readSnapshotDepth === 0;
+    if (outermost) this.readSnapshotStateVersion = null;
+    this.readSnapshotDepth += 1;
+    try {
+      return read();
+    } finally {
+      this.readSnapshotDepth -= 1;
+      if (outermost) this.readSnapshotStateVersion = null;
+    }
   }
 
   referralHistoryBackfillStatus(
@@ -3559,7 +3569,10 @@ export class SettlementIndexer {
   }
 
   indexedStateCacheVersion(): string {
-    return this.metadata(indexedStateVersionMetadataKey) ?? this.stateGeneration.toString();
+    if (this.readSnapshotStateVersion !== null) return this.readSnapshotStateVersion;
+    const version = this.metadata(indexedStateVersionMetadataKey) ?? this.stateGeneration.toString();
+    if (this.readSnapshotDepth > 0) this.readSnapshotStateVersion = version;
+    return version;
   }
 
   publicStatsSnapshot(
