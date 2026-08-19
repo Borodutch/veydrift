@@ -58,6 +58,7 @@ describe("backend config", () => {
       wsRpcUrl: "wss://base-sepolia.g.alchemy.com/v2/secret-key"
     });
     expect(result.config.indexDbPath).toBe(".data/contract-state.sqlite");
+    expect(result.config.resolverTransactionStorePath).toBe(".data/resolver-transactions.sqlite");
   });
 
   test("parses static RPC fallbacks and exposes them in the safe summary", () => {
@@ -85,6 +86,18 @@ describe("backend config", () => {
 
     expect(result.problems).toEqual([]);
     expect(result.config.indexDbPath).toBe("/tmp/veydrift-contract-state.sqlite");
+    expect(result.config.resolverTransactionStorePath).toBe("/tmp/resolver-transactions.sqlite");
+  });
+
+  test("accepts an explicit durable resolver transaction coordinator path", () => {
+    const result = loadBackendConfig({
+      VEYDRIFT_GAME_CONTRACT_ADDRESS: "0x3333333333333333333333333333333333333333",
+      VEYDRIFT_RESOLVER_TRANSACTION_STORE_PATH: "/shared/veydrift/resolver.sqlite",
+      VEYDRIFT_RPC_URL: "https://example.invalid/rpc"
+    });
+
+    expect(result.problems).toEqual([]);
+    expect(result.config.resolverTransactionStorePath).toBe("/shared/veydrift/resolver.sqlite");
   });
 
   test("normalizes the explicit in-writer resource-heal run id", () => {

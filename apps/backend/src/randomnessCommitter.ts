@@ -7,6 +7,7 @@ import {
   type PublicClient,
   type WalletClient
 } from "viem";
+import { createHash } from "node:crypto";
 import { privateKeyToAccount } from "viem/accounts";
 
 import type { BackendConfig } from "./config";
@@ -21,6 +22,7 @@ import {
   type RandomnessCommitmentStore,
   type RandomnessRequestEvent
 } from "./randomness";
+import { ResolverTransactionCoordinator } from "./resolverTransactions";
 
 /**
  * Minimal RandomnessEngine ABI: the commit-reveal surface the backend fulfiller drives. Keeping it
@@ -116,7 +118,8 @@ export class ViemRandomnessCommitmentChainClient implements RandomnessCommitment
     private readonly walletClient: WalletClient,
     private readonly engineAddress: `0x${string}`,
     private readonly account: ReturnType<typeof privateKeyToAccount>,
-    private readonly chain: ReturnType<typeof defineChain>
+    private readonly chain: ReturnType<typeof defineChain>,
+    private readonly transactionCoordinator = new ResolverTransactionCoordinator(":memory:")
   ) {}
 
   get fulfillerAddress(): `0x${string}` {
@@ -159,29 +162,48 @@ export class ViemRandomnessCommitmentChainClient implements RandomnessCommitment
   }
 
   async commitRandomnessBatch(commitments: string[]): Promise<string> {
-    const hash = await this.walletClient.writeContract({
-      abi: randomnessEngineAbi,
-      account: this.account,
-      address: this.engineAddress,
-      chain: this.chain,
-      functionName: "commitRandomnessBatch",
-      args: [commitments as Hex[]]
+    const operationId = `randomness:commit:${createHash("sha256").update(commitments.join(":"), "utf8").digest("hex")}`;
+    return this.transactionCoordinator.submit({
+      chainId: this.chain.id,
+      address: this.account.address,
+      operationId,
+      getTransactionCount: (blockTag) => this.publicClient.getTransactionCount({
+        address: this.account.address,
+        blockTag
+      }),
+      submit: (nonce) => this.walletClient.writeContract({
+        abi: randomnessEngineAbi,
+        account: this.account,
+        address: this.engineAddress,
+        chain: this.chain,
+        functionName: "commitRandomnessBatch",
+        args: [commitments as Hex[]],
+        nonce
+      }),
+      confirm: (hash) => this.confirm(hash)
     });
-    await this.confirm(hash);
-    return hash;
   }
 
   async fulfillRandomness(requestId: bigint, randomWord: bigint): Promise<string> {
-    const hash = await this.walletClient.writeContract({
-      abi: randomnessEngineAbi,
-      account: this.account,
-      address: this.engineAddress,
-      chain: this.chain,
-      functionName: "fulfillRandomness",
-      args: [requestId, randomWord]
+    return this.transactionCoordinator.submit({
+      chainId: this.chain.id,
+      address: this.account.address,
+      operationId: `randomness:fulfill:${requestId}`,
+      getTransactionCount: (blockTag) => this.publicClient.getTransactionCount({
+        address: this.account.address,
+        blockTag
+      }),
+      submit: (nonce) => this.walletClient.writeContract({
+        abi: randomnessEngineAbi,
+        account: this.account,
+        address: this.engineAddress,
+        chain: this.chain,
+        functionName: "fulfillRandomness",
+        args: [requestId, randomWord],
+        nonce
+      }),
+      confirm: (hash) => this.confirm(hash)
     });
-    await this.confirm(hash);
-    return hash;
   }
 
   async listPendingRequests(): Promise<RandomnessRequestEvent[]> {
@@ -260,6 +282,7 @@ export type RandomnessCommitterOptions = {
   now?: () => Date;
   fulfillerAddress?: string;
   logger?: RandomnessCommitterLogger;
+  transactionCoordinator?: ResolverTransactionCoordinator;
 };
 
 const consoleLogger: RandomnessCommitterLogger = {
@@ -302,7 +325,7 @@ export class RandomnessCommitterService {
     let chainClient = options.chainClient;
     let fulfillerAddress = options.fulfillerAddress ?? null;
     if (!chainClient) {
-      const built = buildViemChainClient(config);
+      const built = buildViemChainClient(config, options.transactionCoordinator);
       if (built) {
         chainClient = built;
         fulfillerAddress = built.fulfillerAddress;
@@ -425,7 +448,8 @@ function randomnessAlertKey(alert: string): string {
 }
 
 function buildViemChainClient(
-  config: BackendConfig
+  config: BackendConfig,
+  transactionCoordinator?: ResolverTransactionCoordinator
 ): ViemRandomnessCommitmentChainClient | undefined {
   if (!config.randomnessEngineAddress || !config.randomnessFulfillerPrivateKey || !config.rpcUrl) {
     return undefined;
@@ -447,7 +471,10 @@ function buildViemChainClient(
     walletClient,
     config.randomnessEngineAddress,
     account,
-    chain
+    chain,
+    transactionCoordinator ?? new ResolverTransactionCoordinator(
+      config.resolverTransactionStorePath ?? ".data/resolver-transactions.sqlite"
+    )
   );
 }
 

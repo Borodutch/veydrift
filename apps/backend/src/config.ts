@@ -1,3 +1,5 @@
+import { dirname, join } from "node:path";
+
 export type DeploymentMode = "local" | "test" | "staging" | "production";
 
 export type BackendConfig = {
@@ -36,6 +38,7 @@ export type BackendConfig = {
   missionResolutionEnabled: boolean;
   missionResolverAddress?: `0x${string}`;
   missionResolverPrivateKey?: `0x${string}`;
+  resolverTransactionStorePath?: string;
   // VEY-KANEO-471: QA staging flag. When VEYDRIFT_QA_SYNTHETIC_STATIONED_DEFENDERS is truthy AND the
   // deployment is NOT production, the fleet-visibility read model injects one synthetic incoming
   // attack with a populated `stationedDefenders` payload so the Mission Control "Stationed defenses"
@@ -201,6 +204,11 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
   const missionArchiveRestoreRunId = normalizeRunId(env.VEYDRIFT_MISSION_ARCHIVE_RESTORE_RUN_ID);
   const resourceStateHealRunId = normalizeRunId(env.VEYDRIFT_RESOURCE_STATE_HEAL_RUN_ID);
   const allianceStateHealRunId = normalizeRunId(env.VEYDRIFT_ALLIANCE_STATE_HEAL_RUN_ID);
+  const indexDbPath = env.VEYDRIFT_INDEX_DB_PATH ?? defaultIndexDbPath;
+  const resolverTransactionStorePath = env.VEYDRIFT_RESOLVER_TRANSACTION_STORE_PATH
+    ?? (indexDbPath === ":memory:"
+      ? ":memory:"
+      : join(dirname(indexDbPath), "resolver-transactions.sqlite"));
   const { rpcUrl, rpcFallbackUrls, rpcSource } = resolveRpcUrl(env);
   const { wsRpcUrl, wsRpcSource } = resolveWsRpcUrl(env);
   const gameContractAddress = parseAddress(
@@ -380,7 +388,7 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
       chainId,
       deploymentMode,
       ...(gameContractAddress ? { gameContractAddress } : {}),
-      indexDbPath: env.VEYDRIFT_INDEX_DB_PATH ?? defaultIndexDbPath,
+      indexDbPath,
       indexFromBlock,
       ...(currentStateHealRunId ? { currentStateHealRunId } : {}),
       ...(fullCanonicalStateHealRunId ? { fullCanonicalStateHealRunId } : {}),
@@ -397,6 +405,7 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
       missionResolutionEnabled: Boolean(missionResolverAddress || missionResolverPrivateKey),
       ...(missionResolverAddress ? { missionResolverAddress } : {}),
       ...(missionResolverPrivateKey ? { missionResolverPrivateKey } : {}),
+      resolverTransactionStorePath,
       ...(migrationContractAddress ? { migrationContractAddress } : {}),
       qaSyntheticStationedDefenders,
       ...(moonContractAddress ? { moonContractAddress } : {}),
