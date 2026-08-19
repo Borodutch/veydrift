@@ -8024,6 +8024,65 @@ describe("SettlementIndexer", () => {
     });
   });
 
+  test("canonical returned-mission snapshots preserve ships from retained launch logs", async () => {
+    const database = new Database(":memory:");
+    const reader = {
+      async listCurrentPlanets() { return [planet]; },
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return [planet]; },
+      async listCanonicalFleetMissions() { return []; }
+    };
+    const writer = new SettlementIndexer(reader, 100n, { database });
+    await writer.rebuild();
+
+    const missionId = 912n;
+    writer.applyLog({
+      blockNumber: "0x80",
+      transactionHash: "0xlaunch912",
+      logIndex: "0x0",
+      topics: [fleetMissionLaunchedTopic, topic(missionId), addressTopic(player), topic(3n)],
+      data: abiWords(BigInt(planet.planetId), 188n, 1_800_000_000n, 1_800_000_600n, 44n)
+    });
+    writer.applyLog({
+      blockNumber: "0x80",
+      transactionHash: "0xlaunch912",
+      logIndex: "0x1",
+      topics: [fleetMissionCargoTopic, topic(missionId)],
+      data: abiWords(0n, 0n, 0n, 70n)
+    });
+    writer.applyLog({
+      blockNumber: "0x80",
+      transactionHash: "0xlaunch912",
+      logIndex: "0x2",
+      topics: [fleetMissionShipsTopic, topic(missionId)],
+      data: abiWords(1n, ...Array.from({ length: 13 }, () => 0n))
+    });
+    writer.applyLog({
+      blockNumber: "0x82",
+      transactionHash: "0xreturned912",
+      logIndex: "0x0",
+      topics: [fleetMissionReturnedTopic, topic(missionId), addressTopic(player), topic(BigInt(planet.planetId))],
+      data: "0x"
+    });
+
+    const launchSnapshot = writer.fleetMission(missionId.toString());
+    expect(launchSnapshot?.ships).toMatchObject({ smallCargo: "1" });
+    database.query(`
+      UPDATE contract_fleet_missions
+      SET ships_json = '{}', event_json = ?
+      WHERE mission_id = ?
+    `).run(JSON.stringify({ ...launchSnapshot, ships: {} }), missionId.toString());
+
+    const restart = new SettlementIndexer(reader, 100n, { database, runStartupBackfill: false });
+    expect(restart.fleetMission(missionId.toString())).toMatchObject({
+      missionId: missionId.toString(),
+      status: "Returned",
+      ships: { smallCargo: "1" }
+    });
+    database.close();
+  });
+
   test("archive reads recover recall provenance from stored logs when the canonical row predates provenance", async () => {
     const database = new Database(":memory:");
     const reader = {
