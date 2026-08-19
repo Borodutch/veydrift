@@ -51,8 +51,12 @@ jobs:
             bun-${{ runner.os }}-
 
       - name: Set up Foundry
-        if: steps.scope.outputs.contracts == 'true'
+        if: steps.scope.outputs.contracts == 'true' && runner.name != 'veydrift-mac-backmeupplz-ci'
         uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Verify Foundry on self-hosted runner
+        if: steps.scope.outputs.contracts == 'true' && runner.name == 'veydrift-mac-backmeupplz-ci'
+        run: forge --version
 
       - name: Cache Foundry build artifacts
         if: steps.scope.outputs.contracts == 'true'
