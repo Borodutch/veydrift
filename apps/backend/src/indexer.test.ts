@@ -7451,6 +7451,7 @@ describe("SettlementIndexer", () => {
 
     const joinable = indexer.fleetMissionVisibility(player).joinableAttacks
       .find((mission) => mission.missionId === "70");
+    expect(indexer.fleetMissionVisibility(player, { includeJoinableAttacks: false }).joinableAttacks).toEqual([]);
     expect(joinable?.attackPreview).toMatchObject({
       selectedAttackerLaneGroup: 4,
       stationedDefenders: [

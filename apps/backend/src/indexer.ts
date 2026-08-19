@@ -2281,7 +2281,10 @@ export class SettlementIndexer {
     };
   }
 
-  fleetMissionVisibility(wallet: `0x${string}`, options: { includeArchive?: boolean } = {}): FleetMissionVisibility {
+  fleetMissionVisibility(
+    wallet: `0x${string}`,
+    options: { includeArchive?: boolean; includeJoinableAttacks?: boolean } = {}
+  ): FleetMissionVisibility {
     const settlement = this.walletSettlement(wallet);
     const walletLower = wallet.toLowerCase();
     const ownedPlanetIds = new Set(
@@ -2289,7 +2292,12 @@ export class SettlementIndexer {
         .map((planet) => planet.planetId)
     );
     const includeArchive = options.includeArchive !== false;
-    const summaries = this.activeFleetMissionsForWalletVisibility(wallet, [...ownedPlanetIds]);
+    const includeJoinableAttacks = options.includeJoinableAttacks !== false;
+    const summaries = this.activeFleetMissionsForWalletVisibility(
+      wallet,
+      [...ownedPlanetIds],
+      includeJoinableAttacks
+    );
     // VEY-KANEO-456: index every mission by id so an incoming attack can resolve the allied AcsDefend
     // fleets stationed against it (linked by `counterplayDefenderMissionIds`) into per-defender detail
     // for the Stationed defenses panel. `nowSeconds` drives the lazy as-of-now reconciliation that hides
@@ -2302,7 +2310,7 @@ export class SettlementIndexer {
       ])
     );
     for (const mission of linkedSummaries) summariesById.set(mission.missionId, mission);
-    const defenseHoldTypeId = fleetMissionTypeId("DefenseHold");
+    const defenseHoldTypeId = includeJoinableAttacks ? fleetMissionTypeId("DefenseHold") : null;
     const activeDefenseHolds = defenseHoldTypeId === null
       ? []
       : this.activeFleetMissionsFromCanonicalRowsWhere(
@@ -2349,13 +2357,13 @@ export class SettlementIndexer {
       && mission.owner.toLowerCase() === walletLower
       && (mission.status === "Returning" || mission.status === "Recalled")
     );
-    const joinableAttackRows = summaries.filter((mission) =>
+    const joinableAttackRows = includeJoinableAttacks ? summaries.filter((mission) =>
         isVisibleActiveFleetMission(mission)
         && mission.owner.toLowerCase() !== walletLower
         && !ownedPlanetIds.has(mission.targetPlanetId)
         && mission.missionType === "Attack"
         && mission.status === "Outbound"
-      );
+      ) : [];
     const defenseHoldStorageOrders = new Map(
       [...new Set(joinableAttackRows.map((attack) => attack.targetPlanetId))]
         .map((planetId) => [planetId, this.defenseHoldStorageOrderForPlanet(planetId)])
@@ -10907,7 +10915,11 @@ export class SettlementIndexer {
     );
   }
 
-  private activeFleetMissionsForWalletVisibility(wallet: `0x${string}`, ownedPlanetIds: readonly string[]): FleetMissionSummary[] {
+  private activeFleetMissionsForWalletVisibility(
+    wallet: `0x${string}`,
+    ownedPlanetIds: readonly string[],
+    includeJoinableAttacks = true
+  ): FleetMissionSummary[] {
     const walletLower = wallet.toLowerCase();
     const uniqueTargetIds = [...new Set(ownedPlanetIds.filter((planetId) => planetId.length > 0))]
       .sort((left, right) => Number(left) - Number(right));
@@ -10918,7 +10930,9 @@ export class SettlementIndexer {
         `(owner = ? OR target_planet_id IN (${uniqueTargetIds.map(() => "?").join(",")}))`,
         [walletLower, ...uniqueTargetIds]
       );
-    const activeJoinableAttacks = this.activeOutboundAttackFleetMissionsFromCanonicalRows();
+    const activeJoinableAttacks = includeJoinableAttacks
+      ? this.activeOutboundAttackFleetMissionsFromCanonicalRows()
+      : [];
     const byMissionId = new Map<string, FleetMissionSummary>();
     for (const mission of ownedOrOutgoing) byMissionId.set(mission.missionId, mission);
     for (const mission of activeJoinableAttacks) byMissionId.set(mission.missionId, mission);
