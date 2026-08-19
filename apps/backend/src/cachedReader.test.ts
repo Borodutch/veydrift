@@ -6,6 +6,35 @@ import type { HighscoreEntry } from "./highscores";
 const wallet = "0x2222222222222222222222222222222222222222" as Address;
 
 describe("CachedChainReader", () => {
+  test("keeps planet and moon attack-protection reads in separate cache entries", async () => {
+    const targetPlanetId = 7n;
+    const bodyCalls: boolean[] = [];
+    const inner = {
+      async getAttackProtectionStatus(_wallet: Address, _targetPlanetId: bigint, targetIsMoon = false) {
+        bodyCalls.push(targetIsMoon);
+        return {
+          wallet,
+          targetPlanetId: targetPlanetId.toString(),
+          allowed: true,
+          blockedReason: "none" as const,
+          blockedReasonLabel: null,
+          relation: "peer" as const,
+          defenderHonorStatus: "neutral" as const,
+          plunderBps: 5000,
+          defenderInactive: false
+        };
+      }
+    } as unknown as ChainReader;
+    const cached = new CachedChainReader(inner);
+
+    await cached.getAttackProtectionStatus(wallet, targetPlanetId);
+    await cached.getAttackProtectionStatus(wallet, targetPlanetId);
+    await cached.getAttackProtectionStatus(wallet, targetPlanetId, true);
+    await cached.getAttackProtectionStatus(wallet, targetPlanetId, true);
+
+    expect(bodyCalls).toEqual([false, true]);
+  });
+
   test("preserves optional highscore support from the wrapped reader", async () => {
     let calls = 0;
     const entry: HighscoreEntry = {

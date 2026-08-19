@@ -470,6 +470,55 @@ describe("current planet enumeration", () => {
   });
 });
 
+describe("attack protection reads", () => {
+  test("uses the body-aware selector for moon protection", async () => {
+    const attackWallet = "0x2222222222222222222222222222222222222222" as Address;
+    const calls: string[] = [];
+    const reader = new VeydriftGameReader(
+      readerConfig,
+      {
+        async request<T>(method: string, params: unknown[]): Promise<T> {
+          expect(method).toBe("eth_call");
+          const [call] = params as [{ data: string }];
+          calls.push(call.data);
+          return dataWords([word(0n), word(0n), word(5000n)]) as T;
+        },
+        snapshot() {
+          return {
+            activeRpcUrl: null,
+            batchRequests: 0,
+            callsByMethod: {},
+            callsBySource: {},
+            failoverCount: 0,
+            httpRequests: 0,
+            lastFailoverReason: null,
+            rpcUrls: [],
+            timeouts: 0,
+            requestSource: "test",
+            startedHttpRequests: 0,
+            finishedHttpRequests: 0,
+            unfinishedHttpRequests: 0,
+            oldestUnfinishedRequestAgeMs: null
+          };
+        }
+      }
+    );
+
+    await expect(reader.getAttackProtectionStatus(attackWallet, 7n)).resolves.toMatchObject({
+      allowed: true,
+      targetPlanetId: "7"
+    });
+    await expect(reader.getAttackProtectionStatus(attackWallet, 7n, true)).resolves.toMatchObject({
+      allowed: true,
+      targetPlanetId: "7"
+    });
+
+    expect(calls[0]?.slice(0, 10)).toBe("0x8a6b2246");
+    expect(calls[1]?.slice(0, 10)).toBe("0xcc4cc1ea");
+    expect(calls[1]?.slice(-64)).toBe(word(1n));
+  });
+});
+
 describe("planet rename event decoding", () => {
   test("decodes planet rename logs", () => {
     const log = makeLog({
