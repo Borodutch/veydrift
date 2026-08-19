@@ -3629,7 +3629,50 @@ function indexedWalletPlanets(
   indexer: SettlementIndexer,
   wallet: `0x${string}`
 ): ReturnType<SettlementIndexer["walletPlanets"]> {
+  const startedAt = performance.now();
   const settlement = indexer.walletSettlement(wallet);
+  const settlementAt = performance.now();
+  const ownedPlanets = indexer.settledPlanetsForOwner(wallet);
+  const rosterAt = performance.now();
+  const timings: Array<Record<string, number | string>> = [];
+  const planets = ownedPlanets.map((planet) => {
+    const planetStartedAt = performance.now();
+    const buildings = indexer.infrastructureRows(planet.planetId);
+    const buildingsAt = performance.now();
+    const queues = {
+      building: indexer.planetQueue(planet.planetId, "building"),
+      defense: indexer.planetQueue(planet.planetId, "defense"),
+      ship: indexer.planetQueue(planet.planetId, "ship")
+    };
+    const queuesAt = performance.now();
+    const managed = indexedManagedPlanet(
+      planet,
+      settlement.homePlanetId,
+      buildings,
+      queues
+    );
+    const managedAt = performance.now();
+    const hydrated = indexedWalletPlanetState(indexer, managed, buildings);
+    const hydratedAt = performance.now();
+    timings.push({
+      planetId: planet.planetId,
+      buildingsMs: Math.round(buildingsAt - planetStartedAt),
+      queuesMs: Math.round(queuesAt - buildingsAt),
+      managedMs: Math.round(managedAt - queuesAt),
+      hydratedMs: Math.round(hydratedAt - managedAt),
+      totalMs: Math.round(hydratedAt - planetStartedAt)
+    });
+    return hydrated;
+  });
+  const completedAt = performance.now();
+  if (completedAt - startedAt >= 100) {
+    console.warn("Slow wallet planets projection", {
+      durationMs: Math.round(completedAt - startedAt),
+      settlementMs: Math.round(settlementAt - startedAt),
+      rosterMs: Math.round(rosterAt - settlementAt),
+      planets: timings
+    });
+  }
   return {
     wallet,
     homePlanetId: settlement.homePlanetId,
@@ -3640,20 +3683,7 @@ function indexedWalletPlanets(
     // planet. This response immediately enriches every planet with the same moon/tactical state,
     // so using that full view here performed two all-planet passes on each cold overview/roster
     // read. Build the managed planet shell once and let indexedWalletPlanetState hydrate details.
-    planets: indexer.settledPlanetsForOwner(wallet).map((planet) => {
-      const buildings = indexer.infrastructureRows(planet.planetId);
-      const managed = indexedManagedPlanet(
-        planet,
-        settlement.homePlanetId,
-        buildings,
-        {
-          building: indexer.planetQueue(planet.planetId, "building"),
-          defense: indexer.planetQueue(planet.planetId, "defense"),
-          ship: indexer.planetQueue(planet.planetId, "ship")
-        }
-      );
-      return indexedWalletPlanetState(indexer, managed, buildings);
-    })
+    planets
   };
 }
 
