@@ -324,7 +324,7 @@ export class MissionResolutionService {
     } catch (error) {
       this.failuresByLeg[candidate.leg] += 1;
       const method = candidate.leg === "arrival" ? "resolveFleetMission" : "completeFleetMissionReturn";
-      if (isFleetMissionNotResolvedError(error) && this.candidateSource?.reconcileMissionResolutionCandidate) {
+      if (needsCanonicalMissionReconciliation(error) && this.candidateSource?.reconcileMissionResolutionCandidate) {
         try {
           await this.candidateSource.reconcileMissionResolutionCandidate(candidate.mission.missionId);
         } catch (reconciliationError) {
@@ -374,10 +374,15 @@ export class MissionResolutionService {
   }
 }
 
-function isFleetMissionNotResolvedError(error: unknown): boolean {
-  // FleetMissionNotResolved(uint64); the selector is stable across the proxy modules. Keep the
-  // check narrow so unrelated resolver failures retain their normal bounded retry behavior.
-  return conciseReasonText(error).includes("0xb3439205");
+function needsCanonicalMissionReconciliation(error: unknown): boolean {
+  const reason = conciseReasonText(error);
+  // FleetMissionNotResolved(uint64); the selector is stable across the proxy modules. A private-key
+  // submission can also reach this path through a mined receipt whose RPC response exposes only the
+  // transaction hash, not the revert data. Refreshing that single mission from canonical state is
+  // safe for every mined resolver revert and prevents a terminal mission from remaining in the due
+  // queue forever. Pre-broadcast failures (funds, nonce, RPC, lease) deliberately do not match.
+  return reason.includes("0xb3439205")
+    || /transaction 0x[0-9a-f]+ reverted/i.test(reason);
 }
 
 export class ViemMissionResolutionChainClient implements MissionResolutionChainClient {

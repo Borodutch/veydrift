@@ -159,6 +159,38 @@ describe("MissionResolutionService", () => {
     expect(service.snapshot().failuresByLeg).toEqual({ arrival: 0, return: 1 });
   });
 
+  test("reconciles a stale arrival when a mined receipt omits the revert selector", async () => {
+    let reconciled: string | null = null;
+    const service = new MissionResolutionService(config, {
+      candidateSource: {
+        missionResolutionCandidates: () => ({
+          arrivals: [arrival("24921", "Deploy", "950")],
+          returns: []
+        }),
+        async reconcileMissionResolutionCandidate(missionId) {
+          reconciled = missionId;
+        }
+      },
+      chainClient: {
+        async listResolvableFleetMissions() { return []; },
+        async listReturnableFleetMissions() { return []; },
+        async resolveFleetMission() {
+          throw new Error(
+            "transaction 0x6ab9e9303048286bce29b9a1d239bcb671395f309f444efb0f39267064cf7af1 reverted"
+          );
+        },
+        async completeFleetMissionReturn() { return "0xreturn"; }
+      },
+      logger: silentLogger(),
+      now: () => 1_000_000
+    });
+
+    await service.tick();
+
+    expect(reconciled as string | null).toBe("24921");
+    expect(service.snapshot().failuresByLeg).toEqual({ arrival: 1, return: 0 });
+  });
+
   test("retries a successfully chunked Attack on the next tick until canonical status is terminal", async () => {
     let attempts = 0;
     let terminal = false;
