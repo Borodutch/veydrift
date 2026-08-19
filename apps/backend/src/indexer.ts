@@ -389,6 +389,11 @@ type MetadataRow = {
   value: string;
 };
 
+type MetadataEntryRow = {
+  key: string;
+  value: string;
+};
+
 type UniverseSystemSnapshotRow = {
   payload_json: string;
   version: string;
@@ -936,11 +941,17 @@ export class SettlementIndexer {
     const reconciliationInProgress = this.rebuildPromise !== null || this.planetRebuildPromise !== null || currentStateHealInProgress;
     const counts = this.indexedCounts();
     const indexedPlanets = counts.indexedPlanets;
-    const lastReconciledAt = this.metadata("lastReconciledAt");
-    const allianceReconciledAt = this.metadata("allianceReconciledAt") ?? lastReconciledAt;
-    const lastReconciledBlock = this.metadata("lastReconciledBlock");
-    const lastReconciliationError = this.metadata("lastReconciliationError");
-    const pendingReconciliationReason = this.metadata("pendingReconciliationReason");
+    // A snapshot exposes many independent metadata values. Read them in one statement so a reader
+    // blocked behind the writer pays at most one SQLite lock wait, rather than one wait per field.
+    // This keeps the event-driven `touch()` invalidation semantics intact while removing the
+    // intermittent multi-second overview tail under the 1-writer/9-reader topology.
+    const metadata = this.snapshotMetadata();
+    const metadataValue = (key: string): string | null => metadata.get(key) ?? null;
+    const lastReconciledAt = metadataValue("lastReconciledAt");
+    const allianceReconciledAt = metadataValue("allianceReconciledAt") ?? lastReconciledAt;
+    const lastReconciledBlock = metadataValue("lastReconciledBlock");
+    const lastReconciliationError = metadataValue("lastReconciliationError");
+    const pendingReconciliationReason = metadataValue("pendingReconciliationReason");
     const blockingStaleReason = this.blockingStaleReason({
       lastReconciledAt,
       lastReconciliationError,
@@ -970,40 +981,40 @@ export class SettlementIndexer {
       indexedState: safeToServeIndexedState ? "healthy" : reconciliationInProgress ? "reconciling" : "stale",
       indexedRiftBalances: counts.indexedRiftBalances,
       fromBlock: this.fromBlock.toString(),
-      lastRebuiltAt: this.metadata("lastRebuiltAt"),
-      lastCurrentStateHealAt: this.metadata("lastCurrentStateHealAt"),
-      currentStateOneTimeHealCompletedAt: this.metadata("currentStateOneTimeHealCompletedAt"),
-      lastCurrentStateHealPlanetsScanned: metadataNumber(this.metadata("lastCurrentStateHealPlanetsScanned")),
-      lastCurrentStateHealRunId: this.metadata("lastCurrentStateHealRunId"),
-      lastCurrentStateHealShipMismatches: metadataNumber(this.metadata("lastCurrentStateHealShipMismatches")),
-      lastCurrentStateHealQueueMismatches: metadataNumber(this.metadata("lastCurrentStateHealQueueMismatches")),
-      lastCanonicalResourceHealAt: this.metadata("lastCanonicalResourceHealAt"),
-      lastCanonicalResourceHealPlanetsScanned: metadataNumber(this.metadata("lastCanonicalResourceHealPlanetsScanned")),
-      lastCanonicalResourceHealRunId: this.metadata("lastCanonicalResourceHealRunId"),
-      lastResearchQueueStartedAtRepairRunId: this.metadata("lastResearchQueueStartedAtRepairRunId"),
-      lastResearchQueueStartedAtRepairAt: this.metadata("lastResearchQueueStartedAtRepairAt"),
-      lastResearchQueueStartedAtRepairRowsScanned: Number(this.metadata("lastResearchQueueStartedAtRepairRowsScanned") ?? 0),
-      lastResearchQueueStartedAtRepairRowsRepaired: Number(this.metadata("lastResearchQueueStartedAtRepairRowsRepaired") ?? 0),
-      lastCanonicalFleetMissionSyncAt: this.metadata("lastCanonicalFleetMissionSyncAt"),
-      lastCanonicalFleetMissionSyncDurationMs: metadataNumber(this.metadata("lastCanonicalFleetMissionSyncDurationMs")),
-      lastCanonicalFleetMissionSyncError: this.metadata("lastCanonicalFleetMissionSyncError"),
-      lastCanonicalFleetMissionSyncRows: metadataNumber(this.metadata("lastCanonicalFleetMissionSyncRows")),
-      lastCanonicalFleetMissionSyncUpdatedRows: metadataNumber(this.metadata("lastCanonicalFleetMissionSyncUpdatedRows")),
+      lastRebuiltAt: metadataValue("lastRebuiltAt"),
+      lastCurrentStateHealAt: metadataValue("lastCurrentStateHealAt"),
+      currentStateOneTimeHealCompletedAt: metadataValue("currentStateOneTimeHealCompletedAt"),
+      lastCurrentStateHealPlanetsScanned: metadataNumber(metadataValue("lastCurrentStateHealPlanetsScanned")),
+      lastCurrentStateHealRunId: metadataValue("lastCurrentStateHealRunId"),
+      lastCurrentStateHealShipMismatches: metadataNumber(metadataValue("lastCurrentStateHealShipMismatches")),
+      lastCurrentStateHealQueueMismatches: metadataNumber(metadataValue("lastCurrentStateHealQueueMismatches")),
+      lastCanonicalResourceHealAt: metadataValue("lastCanonicalResourceHealAt"),
+      lastCanonicalResourceHealPlanetsScanned: metadataNumber(metadataValue("lastCanonicalResourceHealPlanetsScanned")),
+      lastCanonicalResourceHealRunId: metadataValue("lastCanonicalResourceHealRunId"),
+      lastResearchQueueStartedAtRepairRunId: metadataValue("lastResearchQueueStartedAtRepairRunId"),
+      lastResearchQueueStartedAtRepairAt: metadataValue("lastResearchQueueStartedAtRepairAt"),
+      lastResearchQueueStartedAtRepairRowsScanned: Number(metadataValue("lastResearchQueueStartedAtRepairRowsScanned") ?? 0),
+      lastResearchQueueStartedAtRepairRowsRepaired: Number(metadataValue("lastResearchQueueStartedAtRepairRowsRepaired") ?? 0),
+      lastCanonicalFleetMissionSyncAt: metadataValue("lastCanonicalFleetMissionSyncAt"),
+      lastCanonicalFleetMissionSyncDurationMs: metadataNumber(metadataValue("lastCanonicalFleetMissionSyncDurationMs")),
+      lastCanonicalFleetMissionSyncError: metadataValue("lastCanonicalFleetMissionSyncError"),
+      lastCanonicalFleetMissionSyncRows: metadataNumber(metadataValue("lastCanonicalFleetMissionSyncRows")),
+      lastCanonicalFleetMissionSyncUpdatedRows: metadataNumber(metadataValue("lastCanonicalFleetMissionSyncUpdatedRows")),
       lastReconciledAt,
       lastReconciledBlock,
       lastReconciliationError,
       currentStateHealInProgress,
       currentStateHealRunId: this.currentStateHealRunId,
-      latestIndexedBlock: this.metadata("latestIndexedBlock"),
+      latestIndexedBlock: metadataValue("latestIndexedBlock"),
       pendingReconciliationReason,
       reconciliationInProgress,
-      reorgDetectedAt: this.metadata("reorgDetectedAt"),
+      reorgDetectedAt: metadataValue("reorgDetectedAt"),
       safeToServeAllianceState: allianceStaleReason === null,
       safeToServeIndexedState,
       staleReason,
-      startPriceBootstrapDivergence: this.metadata(startPriceBootstrapDivergenceMetadataKey),
-      startPriceSource: this.metadata(startPriceSourceMetadataKey),
-      startPriceWei: this.currentStartPriceWei()
+      startPriceBootstrapDivergence: metadataValue(startPriceBootstrapDivergenceMetadataKey),
+      startPriceSource: metadataValue(startPriceSourceMetadataKey),
+      startPriceWei: metadataValue(startPriceWeiMetadataKey)
     };
     this.snapshotCache = {
       currentStateHealPromise: this.currentStateHealPromise,
@@ -12351,6 +12362,11 @@ export class SettlementIndexer {
   private metadata(key: string): string | null {
     const row = this.db.query("SELECT value FROM indexer_metadata WHERE key = ?").get(key) as MetadataRow | null;
     return row?.value ?? null;
+  }
+
+  private snapshotMetadata(): ReadonlyMap<string, string> {
+    const rows = this.db.query("SELECT key, value FROM indexer_metadata").all() as MetadataEntryRow[];
+    return new Map(rows.map((row) => [row.key, row.value]));
   }
 
   private universeSystemFingerprint(galaxy: number, system: number, label: string, sql: string): string {
