@@ -3325,7 +3325,7 @@ export class VeydriftGameReader implements ChainReader {
   ): Promise<AttackProtectionStatus> {
     assertAddress(wallet);
     const words = splitWords(await this.call(
-      targetIsMoon ? "0xcc4cc1ea" : "0x8a6b2246",
+      targetIsMoon ? "0xdca08aaf" : "0x8a6b2246",
       targetIsMoon
         ? [encodeAddress(wallet), encodeUint(targetPlanetId), encodeUint(1n)]
         : [encodeAddress(wallet), encodeUint(targetPlanetId)]

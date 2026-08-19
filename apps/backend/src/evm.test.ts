@@ -514,7 +514,7 @@ describe("attack protection reads", () => {
     });
 
     expect(calls[0]?.slice(0, 10)).toBe("0x8a6b2246");
-    expect(calls[1]?.slice(0, 10)).toBe("0xcc4cc1ea");
+    expect(calls[1]?.slice(0, 10)).toBe("0xdca08aaf");
     expect(calls[1]?.slice(-64)).toBe(word(1n));
   });
 });
