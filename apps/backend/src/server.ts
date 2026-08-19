@@ -3353,32 +3353,34 @@ async function indexedWalletOverviewWarmResponse(
 ): Promise<Response | null> {
   if (!indexer || !hasWarmPlanetIndex(indexer)) return null;
 
-  const snapshot = indexedReadSnapshot(indexer);
-  const selectedSettlement = indexedWalletSettlement(indexer, wallet, selectedPlanetId);
-  const homeSettlement = selectedSettlement ?? indexedWalletSettlement(indexer, wallet, undefined);
-  const settlement = homeSettlement?.settlement ?? indexer.walletSettlement(wallet);
-  const queuePlanetId = homeSettlement?.planet?.planetId ?? settlement.homePlanetId;
-  const planetsResponse = indexedWalletPlanets(indexer, wallet);
-  const indexedQueues = indexer.playerQueues(wallet, queuePlanetId);
-  // Queue timing is committed by the writer from queue timing events/canonical reconciliation. Never
-  // turn a wallet overview render into an eth_call: with many readers, a browser refresh fan-out made
-  // each request perform the same live queue read and starved normal API work.
-  const queues = indexedQueues;
-  const fleetVisibility = indexedFleetVisibility(
-    wallet,
-    settlement,
-    homeSettlement?.planet ?? null,
-    indexedWarmDetail("fleet visibility"),
-    indexer,
-    { includeArchive: false }
-  );
+  return indexer.readSnapshot(() => {
+    const snapshot = indexedReadSnapshot(indexer);
+    const selectedSettlement = indexedWalletSettlement(indexer, wallet, selectedPlanetId);
+    const homeSettlement = selectedSettlement ?? indexedWalletSettlement(indexer, wallet, undefined);
+    const settlement = homeSettlement?.settlement ?? indexer.walletSettlement(wallet);
+    const queuePlanetId = homeSettlement?.planet?.planetId ?? settlement.homePlanetId;
+    const planetsResponse = indexedWalletPlanets(indexer, wallet);
+    const indexedQueues = indexer.playerQueues(wallet, queuePlanetId);
+    // Queue timing is committed by the writer from queue timing events/canonical reconciliation. Never
+    // turn a wallet overview render into an eth_call: with many readers, a browser refresh fan-out made
+    // each request perform the same live queue read and starved normal API work.
+    const queues = indexedQueues;
+    const fleetVisibility = indexedFleetVisibility(
+      wallet,
+      settlement,
+      homeSettlement?.planet ?? null,
+      indexedWarmDetail("fleet visibility"),
+      indexer,
+      { includeArchive: false }
+    );
 
-  return indexedWarmJsonResponse({
-    settlement: withMigrationSnapshotFields(withPlayerProfile(settlement, indexer, wallet), wallet),
-    planetsResponse: withPlayerProfile(planetsResponse, indexer, wallet),
-    queues,
-    fleetVisibility
-  }, "overview snapshot", snapshot);
+    return indexedWarmJsonResponse({
+      settlement: withMigrationSnapshotFields(withPlayerProfile(settlement, indexer, wallet), wallet),
+      planetsResponse: withPlayerProfile(planetsResponse, indexer, wallet),
+      queues,
+      fleetVisibility
+    }, "overview snapshot", snapshot);
+  });
 }
 
 function sharedColdReadWaitMsFor(url: URL): number {

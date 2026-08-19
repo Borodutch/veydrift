@@ -1027,6 +1027,13 @@ export class SettlementIndexer {
     return snapshot;
   }
 
+  // API projections frequently read several indexed tables for one screen. On a WAL reader this
+  // establishes one stable read snapshot, so an intervening writer transaction cannot make each
+  // individual SELECT pay its own busy wait. Writers keep their existing atomic mutation paths.
+  readSnapshot<T>(read: () => T): T {
+    return this.db.transaction(read)();
+  }
+
   referralHistoryBackfillStatus(
     contractAddress: `0x${string}`,
     fromBlock: bigint
