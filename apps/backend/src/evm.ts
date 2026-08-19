@@ -542,6 +542,10 @@ export type IndexedAllianceEvent =
 export type FleetMissionVisibility = {
   wallet: Address;
   homePlanetId: string | null;
+  // Present on indexed API projections. Cooperative mission rows are classified against this
+  // membership in the same response so clients never have to race a separate alliance-roster read.
+  // Optional only for legacy/direct chain-reader callers that predate the indexed projection.
+  allianceId?: string | null;
   // Persisted mission/battle read-model version attached by the indexed API. Consumers use this
   // monotonic token to reject an older response that finishes after a newer live refresh.
   indexedRevision?: string;
@@ -552,6 +556,7 @@ export type FleetMissionVisibility = {
   outgoing: FleetMissionSummary[];
   returning: FleetMissionSummary[];
   joinableAttacks: FleetMissionSummary[];
+  joinableDefenses?: FleetMissionSummary[];
   completedMissions: FleetMissionSummary[];
   battleReports: BattleReport[];
 };

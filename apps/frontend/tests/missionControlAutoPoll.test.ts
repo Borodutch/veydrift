@@ -92,8 +92,9 @@ describe("VEY-KANEO-433 Mission Control auto-poll", () => {
       outgoing: [mission({ missionId: "a", status: "Outbound", arrivalAt: String(NOW + 60_000) })],
       incoming: [mission({ missionId: "b", status: "Outbound", arrivalAt: String(NOW + 20_000) })],
       joinableAttacks: [mission({ missionId: "c", status: "Outbound", arrivalAt: String(NOW + 90_000) })],
+      joinableDefenses: [mission({ missionId: "d", status: "Outbound", arrivalAt: String(NOW + 10_000) })],
     });
-    expect(nextMissionResolutionEventMs(fleet, NOW)).toBe(NOW + 20_000);
+    expect(nextMissionResolutionEventMs(fleet, NOW)).toBe(NOW + 10_000);
   });
 
   test("uses returnAt for returning/recalled fleets and ignores their arrivalAt", () => {

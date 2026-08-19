@@ -1184,6 +1184,7 @@ describe("Playable MVP app display helpers", () => {
     expect(acsDefendCoordinationBlocker(missionForOwner(undefined), account, allianceState([account]))).toBe(
       "Defended planet state is still syncing."
     );
+    expect(acsDefendCoordinationBlocker(missionForOwner(defender), account, null, true)).toBeUndefined();
   });
 
   test("blocks stale attack submissions after target protection refresh", () => {

@@ -1496,7 +1496,9 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       try {
         const includeArchive = url.searchParams.get("archive") === "full" || url.searchParams.get("archive") === "true";
         return indexedWalletStateResponse(url, indexer, "fleet visibility", (wallet, settlement, planet, detail, indexer) =>
-          indexedFleetVisibility(wallet, settlement, planet, detail, indexer, { includeArchive }), {
+          indexer.readConsistentSnapshot(() =>
+            indexedFleetVisibility(wallet, settlement, planet, detail, indexer, { includeArchive })
+          ), {
           includeSelectedPlanet: false
         });
       } catch (error) {
@@ -3898,7 +3900,9 @@ function indexedFleetVisibility(
   const snapshot = indexedReadSnapshot(indexer);
   return {
     ...visibility,
-    indexedRevision: indexer.missionResponseCacheVersion(),
+    // Alliance membership and fleet missions are one Mission Control read model. Include both
+    // generations so a leave/join cannot compare equal to a pre-transition cooperative projection.
+    indexedRevision: `${indexer.indexedStateCacheVersion()}:${indexer.missionResponseCacheVersion()}`,
     indexedBlock: snapshot.latestIndexedBlock,
     generatedAt: new Date().toISOString()
   };

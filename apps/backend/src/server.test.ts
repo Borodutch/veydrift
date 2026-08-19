@@ -1296,15 +1296,19 @@ describe("Veydrift backend", () => {
     const fleetResponse = await handler(new Request(`http://localhost/wallet/${player}/fleet-visibility?archive=none`));
     const fleetBody = await fleetResponse.json() as {
       wallet: string;
+      allianceId: string | null;
       incoming: FleetMissionSummary[];
+      joinableDefenses: FleetMissionSummary[];
       indexedRevision: string;
       indexedBlock: string | null;
       generatedAt: string;
     };
     expect(fleetResponse.status).toBe(200);
     expect(fleetBody.wallet).toBe(player);
+    expect(fleetBody.allianceId).toBeNull();
     expect(fleetBody.incoming).toEqual([]);
-    expect(fleetBody.indexedRevision).toMatch(/^\d+:\d+$/);
+    expect(fleetBody.joinableDefenses).toEqual([]);
+    expect(fleetBody.indexedRevision).toMatch(/^\d+:\d+:\d+$/);
     expect(fleetBody).toHaveProperty("indexedBlock");
     expect(Number.isNaN(Date.parse(fleetBody.generatedAt))).toBe(false);
 
