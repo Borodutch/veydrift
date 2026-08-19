@@ -32,7 +32,10 @@ export class SharedResponseCache {
     this.db = new Database(databasePath);
     this.db.exec("PRAGMA journal_mode = WAL;");
     this.db.exec("PRAGMA synchronous = NORMAL;");
-    this.db.exec("PRAGMA busy_timeout = 25;");
+    // This database only contains cache rows. A reader that sees a brief writer lock should wait
+    // for the cached/stale response rather than treating it as a miss and synchronously rebuilding
+    // a multi-second leaderboard. Keep the wait bounded well below a visible navigation timeout.
+    this.db.exec("PRAGMA busy_timeout = 250;");
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS response_cache (
         cache_key TEXT PRIMARY KEY,
