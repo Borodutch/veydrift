@@ -519,9 +519,11 @@ Destroyed Rocket Launchers are removed, then 70% of destroyed normal defenses re
 If 2 Rocket Launchers were destroyed and the defender does not win earlier, floor(2 * 70 / 100) = 1 repairs.
 ```
 
-### Protection And Bashing
+### Protection, Bashing, And Alliance Wars
 
-Score uses the same contract formula for ranking and attack protection: economy, research, fleet, and defense components are indexed into one player score. Below 50,000 score, players are protected from opponents more than 1.5× stronger or weaker. From 50,000 through 499,999, the limit is 10×; at 500,000 and above, score protection does not apply. Explicit exceptions can bypass score protection. The bashing window is evaluated by attacker, defender, and planet over 24 hours.
+Score uses the same contract formula for ranking and attack protection: economy, research, fleet, and defense components are indexed into one player score. Below 50,000 score, players are protected from opponents more than 1.5× stronger or weaker. From 50,000 through 499,999, the limit is 10×; at 500,000 and above, score protection does not apply. The bashing window is evaluated by attacker, defender, and planet over 24 hours.
+
+When an alliance declares war, the contract snapshots both alliance total scores and both rosters. Only members in those original rosters receive war exceptions; leaving removes the exception while outside the alliance, and rejoining that same original alliance restores it. If the declaring alliance was weaker or equal at declaration, both original rosters bypass score protection and bashing limits. If it was stronger but no more than 1.5× the declared-on alliance, both original rosters also bypass both limits. If it was more than 1.5× stronger, only original members of the declared-on alliance can bypass score protection and bashing limits when attacking the declaring alliance. The mission confirmation preflight checks the active on-chain war snapshot for the selected target.
 
 ### Moon Chance And Jump Gates
 

@@ -148,7 +148,9 @@ contract VeydriftAllianceSystemTest is Test {
         vm.prank(admin);
         randomness.setPrecommitRequired(false);
         alliances = new VeydriftAllianceSystem(IVeydriftAllianceGame(address(game)));
-        warProtection = new VeydriftAllianceWarProtection(address(alliances), address(game));
+        warProtection = new VeydriftAllianceWarProtection(
+            address(alliances), address(game), address(0), address(this)
+        );
         paidInvites = new VeydriftPaidAllianceInvites(
             IVeydriftPaidInviteAlliance(address(alliances)), admin, vm.addr(inviteSignerKey)
         );
@@ -1087,8 +1089,9 @@ contract VeydriftAllianceSystemTest is Test {
     }
 
     function testWarProtectionRequiresCorrectBindingAndAllianceWriter() public {
-        VeydriftAllianceWarProtection misbound =
-            new VeydriftAllianceWarProtection(address(0xBEEF), address(game));
+        VeydriftAllianceWarProtection misbound = new VeydriftAllianceWarProtection(
+            address(0xBEEF), address(game), address(0), address(this)
+        );
         vm.expectRevert(
             abi.encodeWithSelector(
                 VeydriftAllianceSystem.InvalidWarProtectionModule.selector, address(misbound)
@@ -1104,15 +1107,17 @@ contract VeydriftAllianceSystemTest is Test {
         warProtection.capture(1, 2, uint64(block.timestamp));
     }
 
-    function testWarSnapshotRestrictsLateAndRejoinedMembersAndProtectsOutmatchedDeclaree() public {
+    function testWarSnapshotOnlyLetsTheDeclaredOnSideBypassWhenStrongerAllianceDeclaredDownward()
+        public
+    {
         vm.prank(leader);
         uint256 declarerAllianceId = alliances.createAlliance("ALLY", "Alliance", "");
         _inviteAndAccept(declarerAllianceId, member);
         vm.prank(enemy);
         uint256 declareeAllianceId = alliances.createAlliance("WAR", "War Target", "");
 
-        // Every new commander starts at score 1,000. Twenty Deathstars raise the declarer's
-        // snapshot above the 1.5x band, so it must not receive a score-protection bypass.
+        // Every new commander starts at score 1,000. Twenty Deathstars put the declaring alliance
+        // above the frozen 1.5x band, so only the declared-on side gets both exceptions.
         _setShipCount(game.homePlanetOf(member), Ship.Deathstar, 20);
         vm.prank(leader);
         alliances.setDiplomacy(
@@ -1129,11 +1134,16 @@ contract VeydriftAllianceSystemTest is Test {
         (,,, bool atWar, bool bashingWarException, bool scoreProtectionException) =
             alliances.attackLimitAllianceContext(member, enemy);
         assertTrue(atWar);
-        assertTrue(bashingWarException);
-        assertFalse(scoreProtectionException, "outmatched declarer cannot bypass score protection");
+        assertFalse(bashingWarException, "strong declarer cannot bypass bashing downward");
+        assertFalse(
+            scoreProtectionException, "strong declarer cannot bypass score protection downward"
+        );
 
-        (,,,,, scoreProtectionException) = alliances.attackLimitAllianceContext(enemy, leader);
-        assertTrue(scoreProtectionException, "declarer receives no score protection from declaree");
+        (,,, atWar, bashingWarException, scoreProtectionException) =
+            alliances.attackLimitAllianceContext(enemy, leader);
+        assertTrue(atWar);
+        assertTrue(bashingWarException, "declared-on side bypasses bashing upward");
+        assertTrue(scoreProtectionException, "declared-on side bypasses score protection upward");
 
         _inviteAndAccept(declarerAllianceId, recruit);
         (,,, atWar, bashingWarException, scoreProtectionException) =
@@ -1148,8 +1158,136 @@ contract VeydriftAllianceSystemTest is Test {
         (,,, atWar, bashingWarException, scoreProtectionException) =
             alliances.attackLimitAllianceContext(member, enemy);
         assertTrue(atWar);
-        assertFalse(bashingWarException, "rejoin cannot restore the original war privilege");
-        assertFalse(scoreProtectionException, "rejoin cannot restore score exception");
+        assertFalse(bashingWarException, "policy remains directional after rejoin");
+        assertFalse(scoreProtectionException, "policy remains directional after rejoin");
+    }
+
+    function testWeakerDeclarationAndRejoinGiveBothOriginalSidesFullExceptions() public {
+        vm.prank(leader);
+        uint256 declarerAllianceId = alliances.createAlliance("ALLY", "Alliance", "");
+        _inviteAndAccept(declarerAllianceId, member);
+        vm.prank(enemy);
+        uint256 declareeAllianceId = alliances.createAlliance("WAR", "War Target", "");
+
+        // The declared-on alliance has the larger frozen score. A weaker alliance declaring upward
+        // has full bilateral exceptions regardless of the 1.5x ratio.
+        _setShipCount(game.homePlanetOf(enemy), Ship.Deathstar, 25);
+        vm.prank(leader);
+        alliances.setDiplomacy(
+            declarerAllianceId, declareeAllianceId, VeydriftAllianceSystem.DiplomacyStatus.War
+        );
+
+        (,,, bool atWar, bool bashingWarException, bool scoreProtectionException) =
+            alliances.attackLimitAllianceContext(member, enemy);
+        assertTrue(atWar);
+        assertTrue(bashingWarException);
+        assertTrue(scoreProtectionException);
+
+        (,,,,, scoreProtectionException) = alliances.attackLimitAllianceContext(enemy, leader);
+        assertTrue(scoreProtectionException);
+
+        vm.prank(member);
+        alliances.leaveAlliance();
+        _inviteAndAccept(declarerAllianceId, member);
+        (,,, atWar, bashingWarException, scoreProtectionException) =
+            alliances.attackLimitAllianceContext(member, enemy);
+        assertTrue(atWar);
+        assertTrue(
+            bashingWarException, "original member regains exception after rejoining same alliance"
+        );
+        assertTrue(
+            scoreProtectionException,
+            "original member regains score exception after rejoining same alliance"
+        );
+
+        vm.prank(member);
+        alliances.leaveAlliance();
+        vm.prank(enemy);
+        alliances.inviteMember(declareeAllianceId, member);
+        vm.prank(member);
+        alliances.acceptInvite(declareeAllianceId);
+        (,,, atWar, bashingWarException, scoreProtectionException) =
+            alliances.attackLimitAllianceContext(member, leader);
+        assertTrue(atWar);
+        assertFalse(bashingWarException, "switching sides cannot inherit the other original roster");
+        assertFalse(scoreProtectionException, "switching sides cannot inherit score bypass");
+    }
+
+    function testStrongerDeclarationWithinFrozenRatioGivesBothOriginalSidesFullExceptions() public {
+        vm.prank(leader);
+        uint256 declarerAllianceId = alliances.createAlliance("ALLY", "Alliance", "");
+        _inviteAndAccept(declarerAllianceId, member);
+        vm.prank(enemy);
+        uint256 declareeAllianceId = alliances.createAlliance("WAR", "War Target", "");
+
+        // The declarer is still slightly stronger (2,000 vs 1,960), but remains within the frozen
+        // 1.5x band and therefore both original rosters receive both exceptions.
+        _setShipCount(game.homePlanetOf(enemy), Ship.Deathstar, 20);
+        vm.prank(leader);
+        alliances.setDiplomacy(
+            declarerAllianceId, declareeAllianceId, VeydriftAllianceSystem.DiplomacyStatus.War
+        );
+
+        (,,, bool atWar, bool bashingWarException, bool scoreProtectionException) =
+            alliances.attackLimitAllianceContext(member, enemy);
+        assertTrue(atWar);
+        assertTrue(bashingWarException);
+        assertTrue(scoreProtectionException);
+
+        (,,,,, scoreProtectionException) = alliances.attackLimitAllianceContext(enemy, leader);
+        assertTrue(scoreProtectionException);
+    }
+
+    function testReplacementModulePreservesExistingSnapshotAndRejoinEligibility() public {
+        vm.prank(leader);
+        uint256 declarerAllianceId = alliances.createAlliance("ALLY", "Alliance", "");
+        _inviteAndAccept(declarerAllianceId, member);
+        vm.prank(enemy);
+        uint256 declareeAllianceId = alliances.createAlliance("WAR", "War Target", "");
+        // Preserve an existing weaker-declarer war so both original sides should inherit the
+        // bilateral exception once its legacy roster has been seeded.
+        _setShipCount(game.homePlanetOf(enemy), Ship.Deathstar, 20);
+        vm.prank(leader);
+        alliances.setDiplomacy(
+            declarerAllianceId, declareeAllianceId, VeydriftAllianceSystem.DiplomacyStatus.War
+        );
+
+        VeydriftAllianceWarProtection replacement = new VeydriftAllianceWarProtection(
+            address(alliances), address(game), address(warProtection), address(this)
+        );
+        (bool bashingBeforeSeed, bool scoreBeforeSeed) = replacement.attackExceptions(
+            declarerAllianceId,
+            declareeAllianceId,
+            member,
+            enemy,
+            declarerAllianceId,
+            declareeAllianceId
+        );
+        assertFalse(bashingBeforeSeed, "unseeded legacy roster cannot grant a bypass");
+        assertFalse(scoreBeforeSeed, "unseeded legacy roster cannot grant score bypass");
+        address[] memory declarerMembers = new address[](2);
+        declarerMembers[0] = leader;
+        declarerMembers[1] = member;
+        address[] memory declareeMembers = new address[](1);
+        declareeMembers[0] = enemy;
+        replacement.seedLegacyWarRoster(
+            declarerAllianceId, declareeAllianceId, declarerMembers, declareeMembers
+        );
+        assertTrue(replacement.legacyWarRosterSeeded(declarerAllianceId, declareeAllianceId));
+        alliances.setWarProtection(address(replacement));
+        VeydriftAllianceWarProtection.WarSnapshot memory snapshot =
+            replacement.warSnapshot(declarerAllianceId, declareeAllianceId);
+        assertGt(snapshot.snapshotId, 0, "replacement retains active war snapshot");
+        assertTrue(replacement.memberAtStart(declarerAllianceId, declareeAllianceId, member));
+
+        vm.prank(member);
+        alliances.leaveAlliance();
+        _inviteAndAccept(declarerAllianceId, member);
+        (,,, bool atWar, bool bashingWarException, bool scoreProtectionException) =
+            alliances.attackLimitAllianceContext(member, enemy);
+        assertTrue(atWar);
+        assertTrue(bashingWarException);
+        assertTrue(scoreProtectionException);
     }
 
     function testWarCannotEndUntilFortyEightHoursAfterDeclaration() public {
