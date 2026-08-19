@@ -13259,6 +13259,15 @@ function openIndexerDatabase(databasePath: string, readOnly = false, assumeSchem
   }
   const database = new Database(databasePath, readOnly ? { readonly: true } : undefined);
   database.exec(`PRAGMA busy_timeout = ${readOnly ? 25 : 10000};`);
+  if (databasePath !== ":memory:") {
+    // Reader workers are the latency-critical side of the 1-writer/9-reader topology. These
+    // pragmas are connection-local, so configuring only the writer left every read-only process
+    // with SQLite's tiny default page cache against the production 1.2 GB index. Apply the safe
+    // read settings before the read-only return: mmap shares the kernel page cache across workers
+    // and the 16 MB SQLite cache keeps hot wallet/queue pages resident.
+    database.exec("PRAGMA mmap_size = 268435456;");
+    database.exec("PRAGMA cache_size = -16384;");
+  }
   if (readOnly) {
     database.exec("PRAGMA query_only = ON;");
     return database;
@@ -13273,11 +13282,9 @@ function openIndexerDatabase(databasePath: string, readOnly = false, assumeSchem
     // - WAL lets readers run without blocking the background event-integration writer.
     // - synchronous = NORMAL is the WAL-safe default (durable across app crashes; only a power
     //   loss can lose the last commit, which the chain re-supplies on the next sync).
-    // - mmap_size / cache_size keep the hot read-model tables resident so warm reads avoid disk.
+    // - mmap_size / cache_size are already applied above to every connection, including readers.
     database.exec("PRAGMA journal_mode = WAL;");
     database.exec("PRAGMA synchronous = NORMAL;");
-    database.exec("PRAGMA mmap_size = 268435456;");
-    database.exec("PRAGMA cache_size = -16384;");
     database.exec("PRAGMA wal_autocheckpoint = 1000;");
     database.exec("PRAGMA journal_size_limit = 67108864;");
   }
