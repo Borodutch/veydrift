@@ -3816,6 +3816,7 @@ export class SettlementIndexer {
     // jump gates for each one. A moon-scoped record cannot exist before MoonCreated,
     // so return the same empty shape without the needless SQLite fan-out.
     if (!moon && (!planetId || !this.hasIndexedMoonProjection(planetId))) {
+      const emptyShips = deriveShipRows(() => 0);
       return {
         wallet,
         bodyKind: "moon",
@@ -3826,11 +3827,11 @@ export class SettlementIndexer {
         resources: zeroResources(),
         resourcesAsOfNow: zeroResources(),
         resourceSnapshot: null,
-        ships: [],
-        launchableShips: [],
+        ships: emptyShips,
+        launchableShips: emptyShips,
         moon: null,
         buildings: deriveMoonBuildingRows(() => 0),
-        fleet: [],
+        fleet: emptyShips,
         queue: null,
         technologyLevels: this.technologyLevels(wallet),
         defenses: moonDefenseRows.map((defense) => ({ ...defense, count: 0 })),
