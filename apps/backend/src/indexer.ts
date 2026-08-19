@@ -5161,6 +5161,18 @@ export class SettlementIndexer {
         ON indexed_event_logs (transaction_hash);
       CREATE INDEX IF NOT EXISTS indexed_event_logs_transaction_lower_idx
         ON indexed_event_logs (lower(transaction_hash));
+      -- Legacy production queues recover their canonical timing from QueueStarted
+      -- events. Keep that lookup topic-addressable: otherwise a one-time writer
+      -- repair scans the entire event ledger for every retained FIFO entry.
+      CREATE INDEX IF NOT EXISTS indexed_event_logs_queue_topics_idx
+        ON indexed_event_logs (
+          removed,
+          lower(json_extract(event_json, '$.topics[0]')),
+          lower(json_extract(event_json, '$.topics[1]')),
+          lower(json_extract(event_json, '$.topics[2]')),
+          CAST(block_number AS INTEGER) DESC,
+          CAST(log_index AS INTEGER) DESC
+        );
       CREATE TABLE IF NOT EXISTS indexed_missile_attacks (
         event_id TEXT PRIMARY KEY,
         attacker TEXT NOT NULL,

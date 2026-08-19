@@ -153,6 +153,21 @@ const moonChance: MoonChanceReportEvent = {
 };
 
 describe("SettlementIndexer", () => {
+  test("indexes retained production queue events by their canonical topics", () => {
+    const database = new Database(":memory:");
+    new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n, { database });
+
+    expect(database.query(`
+      SELECT name FROM sqlite_master
+      WHERE type = 'index' AND name = 'indexed_event_logs_queue_topics_idx'
+    `).get()).toEqual({ name: "indexed_event_logs_queue_topics_idx" });
+    database.close();
+  });
+
   test("projects all due resolver legs from canonical active rows without history reconstruction", () => {
     const database = new Database(":memory:");
     const indexer = new SettlementIndexer({
