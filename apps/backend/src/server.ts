@@ -55,6 +55,7 @@ import {
 import { RandomnessCommitterService } from "./randomnessCommitter";
 import { loadRandomnessReadinessSnapshot, type RandomnessReadinessSnapshot } from "./randomness";
 import { MissionResolutionService } from "./missionResolution";
+import { ResolverTransactionCoordinator } from "./resolverTransactions";
 import { logApiRequestEvent } from "./observability";
 import {
   validatePlayerDescription,
@@ -469,14 +470,26 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         diagnosticsPublisher: publishWriterChainSyncDiagnostics
       })
       : undefined);
+  const resolverTransactions = isWriter
+    && loaded.problems.length === 0
+    && Boolean(loaded.config.missionResolverPrivateKey || loaded.config.randomnessFulfillerPrivateKey)
+      ? new ResolverTransactionCoordinator(
+        loaded.config.resolverTransactionStorePath ?? ".data/resolver-transactions.sqlite"
+      )
+      : undefined;
   const randomnessCommitter =
     dependencies.randomnessCommitter ??
-    (isWriter && loaded.problems.length === 0 ? new RandomnessCommitterService(loaded.config) : undefined);
+    (isWriter && loaded.problems.length === 0
+      ? new RandomnessCommitterService(loaded.config, {
+        ...(resolverTransactions ? { transactionCoordinator: resolverTransactions } : {})
+      })
+      : undefined);
   const missionResolution =
     dependencies.missionResolution ??
     (isWriter && loaded.problems.length === 0 && loaded.config.missionResolutionEnabled
       ? new MissionResolutionService(loaded.config, {
-        ...(indexer ? { candidateSource: indexer } : {})
+        ...(indexer ? { candidateSource: indexer } : {}),
+        ...(resolverTransactions ? { transactionCoordinator: resolverTransactions } : {})
       })
       : undefined);
 

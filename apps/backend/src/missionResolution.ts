@@ -13,6 +13,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import type { BackendConfig } from "./config";
 import type { Address, ResolvableFleetMission, ReturnableFleetMission } from "./evm";
 import { VeydriftGameReader } from "./evm";
+import { ResolverTransactionCoordinator } from "./resolverTransactions";
 
 const missionResolutionIntervalMs = 5_000;
 const maxMissionsPerTick = 100;
@@ -125,6 +126,7 @@ export type MissionResolutionServiceOptions = {
   maxConcurrency?: number;
   now?: () => number;
   promptnessTargetMs?: number;
+  transactionCoordinator?: ResolverTransactionCoordinator;
 };
 
 export class MissionResolutionService {
@@ -164,7 +166,10 @@ export class MissionResolutionService {
     private readonly config: BackendConfig,
     options: MissionResolutionServiceOptions = {}
   ) {
-    this.chainClient = options.chainClient ?? buildMissionResolutionChainClient(config);
+    this.chainClient = options.chainClient ?? buildMissionResolutionChainClient(
+      config,
+      options.transactionCoordinator
+    );
     this.candidateSource = options.candidateSource;
     this.intervalMs = options.intervalMs ?? missionResolutionIntervalMs;
     this.logger = options.logger ?? console;
@@ -376,9 +381,6 @@ function isFleetMissionNotResolvedError(error: unknown): boolean {
 }
 
 export class ViemMissionResolutionChainClient implements MissionResolutionChainClient {
-  private submissionTail: Promise<void> = Promise.resolve();
-  private nextNonce: number | undefined;
-
   constructor(
     private readonly reader: Pick<VeydriftGameReader, "listResolvableFleetMissions" | "listReturnableFleetMissions">,
     private readonly gameAddress: Address,
@@ -386,7 +388,8 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     private readonly publicClient?: PublicClient,
     private readonly walletClient?: WalletClient,
     private readonly chain?: ReturnType<typeof defineChain>,
-    private readonly rpcUrl?: string
+    private readonly rpcUrl?: string,
+    private readonly transactionCoordinator = new ResolverTransactionCoordinator(":memory:")
   ) {}
 
   listResolvableFleetMissions(): Promise<ResolvableFleetMission[]> {
@@ -416,57 +419,47 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
       if (!this.walletClient || !this.publicClient || !this.chain) {
         throw new Error("private-key mission resolver is missing viem clients");
       }
-      const hash = await this.enqueueSubmission(async () => {
-        const pendingNonce = await this.publicClient!.getTransactionCount({
+      return this.transactionCoordinator.submit({
+        chainId: this.chain.id,
+        address: account.address,
+        operationId: `mission:${functionName}:${missionId}`,
+        getTransactionCount: (blockTag) => this.publicClient!.getTransactionCount({
           address: account.address,
-          blockTag: "pending"
-        });
-        const nonce = Math.max(pendingNonce, this.nextNonce ?? pendingNonce);
-        try {
-          const submittedHash = await this.walletClient!.writeContract({
-            abi: veydriftGameResolutionAbi,
-            account,
-            address: this.gameAddress,
-            chain: this.chain!,
-            functionName,
-            args: [BigInt(missionId)],
-            nonce,
-            ...(functionName === "resolveFleetMission" ? { gas: fleetMissionResolutionGas } : {})
-          });
-          this.nextNonce = nonce + 1;
-          return submittedHash;
-        } catch (error) {
-          // The transaction may not have reached the node. Re-read pending state before reserving
-          // the next nonce instead of leaving a local gap.
-          this.nextNonce = undefined;
-          throw error;
-        }
+          blockTag
+        }),
+        submit: (nonce) => this.walletClient!.writeContract({
+          abi: veydriftGameResolutionAbi,
+          account,
+          address: this.gameAddress,
+          chain: this.chain!,
+          functionName,
+          args: [BigInt(missionId)],
+          nonce,
+          ...(functionName === "resolveFleetMission" ? { gas: fleetMissionResolutionGas } : {})
+        }),
+        confirm: (hash) => this.confirm(hash)
       });
-      await this.confirm(hash);
-      return hash;
     }
-    if (!this.rpcUrl) {
-      throw new Error("unlocked-account mission resolver is missing RPC URL");
+    if (!this.rpcUrl || !this.publicClient || !this.chain) {
+      throw new Error("unlocked-account mission resolver is missing RPC/public client");
     }
-    return this.enqueueSubmission(() => this.sendUnlockedTransaction(
-      this.sender as Address,
-      data,
-      functionName === "resolveFleetMission" ? fleetMissionResolutionGas : undefined
-    ));
-  }
-
-  private async enqueueSubmission<T>(submit: () => Promise<T>): Promise<T> {
-    let release = () => {};
-    const previous = this.submissionTail;
-    this.submissionTail = new Promise<void>((resolve) => {
-      release = resolve;
+    const from = this.sender as Address;
+    return this.transactionCoordinator.submit({
+      chainId: this.chain.id,
+      address: from,
+      operationId: `mission:${functionName}:${missionId}`,
+      getTransactionCount: (blockTag) => this.publicClient!.getTransactionCount({
+        address: from,
+        blockTag
+      }),
+      submit: (nonce) => this.sendUnlockedTransaction(
+        from,
+        data,
+        nonce,
+        functionName === "resolveFleetMission" ? fleetMissionResolutionGas : undefined
+      ),
+      confirm: (hash) => this.confirm(hash)
     });
-    await previous;
-    try {
-      return await submit();
-    } finally {
-      release();
-    }
   }
 
   private async confirm(hash: Hex): Promise<void> {
@@ -477,7 +470,7 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     }
   }
 
-  private async sendUnlockedTransaction(from: Address, data: Hex, gas?: bigint): Promise<string> {
+  private async sendUnlockedTransaction(from: Address, data: Hex, nonce: number, gas?: bigint): Promise<Hex> {
     const response = await fetch(this.rpcUrl!, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -489,6 +482,7 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
           from,
           to: this.gameAddress,
           data,
+          nonce: `0x${nonce.toString(16)}`,
           ...(gas === undefined ? {} : { gas: `0x${gas.toString(16)}` })
         }]
       })
@@ -497,11 +491,14 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     if (!response.ok || body.error || !body.result) {
       throw new Error(body.error?.message ?? `RPC HTTP ${response.status}`);
     }
-    return body.result;
+    return body.result as Hex;
   }
 }
 
-function buildMissionResolutionChainClient(config: BackendConfig): MissionResolutionChainClient | undefined {
+function buildMissionResolutionChainClient(
+  config: BackendConfig,
+  transactionCoordinator?: ResolverTransactionCoordinator
+): MissionResolutionChainClient | undefined {
   if (!config.gameContractAddress || !config.rpcUrl || !config.missionResolutionEnabled) return undefined;
   if (!config.missionResolverAddress && !config.missionResolverPrivateKey) return undefined;
 
@@ -524,18 +521,32 @@ function buildMissionResolutionChainClient(config: BackendConfig): MissionResolu
       publicClient,
       walletClient,
       chain,
-      config.rpcUrl
+      config.rpcUrl,
+      transactionCoordinator ?? new ResolverTransactionCoordinator(
+        config.resolverTransactionStorePath ?? ".data/resolver-transactions.sqlite"
+      )
     );
   }
+
+  const chain = defineChain({
+    id: config.chainId,
+    name: `veydrift-${config.chainId}`,
+    nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+    rpcUrls: { default: { http: [config.rpcUrl] } }
+  });
+  const publicClient = createPublicClient({ chain, transport: http(config.rpcUrl) });
 
   return new ViemMissionResolutionChainClient(
     reader,
     config.gameContractAddress,
     config.missionResolverAddress!,
+    publicClient,
     undefined,
-    undefined,
-    undefined,
-    config.rpcUrl
+    chain,
+    config.rpcUrl,
+    transactionCoordinator ?? new ResolverTransactionCoordinator(
+      config.resolverTransactionStorePath ?? ".data/resolver-transactions.sqlite"
+    )
   );
 }
 

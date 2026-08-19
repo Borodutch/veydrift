@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { privateKeyToAccount } from "viem/accounts";
+import type { PublicClient, WalletClient } from "viem";
 
 import { loadBackendConfig, type BackendConfig } from "./config";
 import {
@@ -11,7 +13,11 @@ import {
   type RandomnessCommitmentInventory,
   type RandomnessRequestEvent
 } from "./randomness";
-import { RandomnessCommitterService } from "./randomnessCommitter";
+import {
+  RandomnessCommitterService,
+  ViemRandomnessCommitmentChainClient
+} from "./randomnessCommitter";
+import { ResolverTransactionCoordinator } from "./resolverTransactions";
 
 const baseConfig: BackendConfig = {
   chainId: 84532,
@@ -249,5 +255,42 @@ describe("RandomnessCommitterService", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("ViemRandomnessCommitmentChainClient", () => {
+  test("routes commit and fulfillment writes through explicit serialized nonces", async () => {
+    const account = privateKeyToAccount(`0x${"2".repeat(64)}`);
+    let pendingNonce = 21;
+    const writes: Array<{ functionName: string; nonce: number }> = [];
+    const publicClient = {
+      async getTransactionCount() { return pendingNonce; },
+      async waitForTransactionReceipt() { return { status: "success" }; }
+    } as unknown as PublicClient;
+    const walletClient = {
+      async writeContract(input: { functionName: string; nonce: number }) {
+        writes.push({ functionName: input.functionName, nonce: input.nonce });
+        pendingNonce = input.nonce + 1;
+        return `0x${input.nonce.toString(16).padStart(64, "0")}`;
+      }
+    } as unknown as WalletClient;
+    const client = new ViemRandomnessCommitmentChainClient(
+      publicClient,
+      walletClient,
+      baseConfig.randomnessEngineAddress!,
+      account,
+      { id: baseConfig.chainId } as never,
+      new ResolverTransactionCoordinator(":memory:")
+    );
+
+    await Promise.all([
+      client.commitRandomnessBatch(["0x" + "aa".repeat(32)]),
+      client.fulfillRandomness(8n, 42n)
+    ]);
+
+    expect(writes).toEqual([
+      { functionName: "commitRandomnessBatch", nonce: 21 },
+      { functionName: "fulfillRandomness", nonce: 22 }
+    ]);
   });
 });

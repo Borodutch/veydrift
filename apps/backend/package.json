@@ -15,6 +15,7 @@
     "migration:snapshot": "bun src/migrationSnapshot.ts",
     "mission-report:generator": "bun src/missionReportGenerator.ts",
     "randomness:oracle": "bun src/randomnessOracle.ts",
+    "resolver:recover-nonce-gap": "bun src/resolverNonceRecovery.ts",
     "start": "bun src/index.ts",
     "test": "bun test"
   },

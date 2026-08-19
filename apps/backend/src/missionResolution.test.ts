@@ -428,14 +428,14 @@ describe("MissionResolutionService", () => {
 });
 
 describe("ViemMissionResolutionChainClient", () => {
-  test("serializes broadcasts while assigning pending nonces, then waits for receipts concurrently", async () => {
+  test("serializes broadcasts and confirmations while assigning pending nonces", async () => {
     const account = privateKeyToAccount(`0x${"1".repeat(64)}`);
     const broadcasts: Array<{ functionName: string; gas: bigint | undefined; nonce: number }> = [];
     let activeBroadcasts = 0;
     let peakBroadcasts = 0;
+    let pendingNonce = 7;
     const publicClient = {
-      // Model a load-balanced RPC whose pending count has not observed the previous broadcast yet.
-      async getTransactionCount() { return 7; },
+      async getTransactionCount() { return pendingNonce; },
       async waitForTransactionReceipt() { return { status: "success" }; }
     } as unknown as PublicClient;
     const walletClient = {
@@ -447,6 +447,7 @@ describe("ViemMissionResolutionChainClient", () => {
           gas: input.gas,
           nonce: input.nonce
         });
+        pendingNonce = input.nonce + 1;
         await new Promise((resolve) => setTimeout(resolve, 1));
         activeBroadcasts -= 1;
         return `0x${input.nonce.toString(16).padStart(64, "0")}`;
@@ -461,7 +462,7 @@ describe("ViemMissionResolutionChainClient", () => {
       account,
       publicClient,
       walletClient,
-      {} as never,
+      { id: 8453 } as never,
       config.rpcUrl
     );
 
@@ -493,6 +494,10 @@ describe("ViemMissionResolutionChainClient", () => {
     }) as typeof fetch;
 
     try {
+      const publicClient = {
+        async getTransactionCount() { return 7 + transactions.length; },
+        async waitForTransactionReceipt() { return { status: "success" }; }
+      } as unknown as PublicClient;
       const client = new ViemMissionResolutionChainClient(
         {
           async listResolvableFleetMissions() { return []; },
@@ -500,9 +505,9 @@ describe("ViemMissionResolutionChainClient", () => {
         },
         config.gameContractAddress!,
         "0x1111111111111111111111111111111111111111",
+        publicClient,
         undefined,
-        undefined,
-        undefined,
+        { id: 8453 } as never,
         config.rpcUrl
       );
 
@@ -510,7 +515,9 @@ describe("ViemMissionResolutionChainClient", () => {
       await client.completeFleetMissionReturn("23008");
 
       expect(transactions[0]?.gas).toBe("0x1000000");
+      expect(transactions[0]?.nonce).toBe("0x7");
       expect(transactions[1]).not.toHaveProperty("gas");
+      expect(transactions[1]?.nonce).toBe("0x8");
     } finally {
       globalThis.fetch = previousFetch;
     }
