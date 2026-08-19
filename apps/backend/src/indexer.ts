@@ -3751,6 +3751,37 @@ export class SettlementIndexer {
 
   moonState(wallet: `0x${string}`, planetId: string | null): MoonState {
     const moon = planetId ? this.moon(planetId) : null;
+    // Overview hydrates every owned colony. Most have no moon, and the old path
+    // nevertheless read moon resources, queues, fleets, defenses, buildings, and
+    // jump gates for each one. A moon-scoped record cannot exist before MoonCreated,
+    // so return the same empty shape without the needless SQLite fan-out.
+    if (!moon && (!planetId || !this.hasIndexedMoonProjection(planetId))) {
+      return {
+        wallet,
+        bodyKind: "moon",
+        homePlanetId: planetId,
+        parentPlanetId: planetId,
+        moonAvailable: true,
+        unavailableReason: "No moon exists for this home planet yet.",
+        resources: zeroResources(),
+        resourcesAsOfNow: zeroResources(),
+        resourceSnapshot: null,
+        ships: [],
+        launchableShips: [],
+        moon: null,
+        buildings: deriveMoonBuildingRows(() => 0),
+        fleet: [],
+        queue: null,
+        technologyLevels: this.technologyLevels(wallet),
+        defenses: moonDefenseRows.map((defense) => ({ ...defense, count: 0 })),
+        defenseQueue: null,
+        jumpGateDestinations: []
+      };
+    }
+    const moonQueueSettlement = planetId
+      ? this.queueSettlement(`moon-building:${planetId}`)
+      : { queue: null, completed: [] };
+    const defenseQueue = planetId ? this.moonDefenseQueue(planetId) : null;
     const resources = this.moonResources(planetId);
     const jumpGateDestinations = this.moonJumpGateDestinations(wallet, planetId);
     const buildings = planetId
@@ -3760,9 +3791,7 @@ export class SettlementIndexer {
       ? this.indexedLevel("contract_moon_building_levels", "moon_building_id", planetId, 0)
       : 0;
     const projectedLunarBaseLevel = buildings.find((building) => building.id === 0)?.level ?? 0;
-    const moonQueueSettlement = planetId
-      ? this.queueSettlement(`moon-building:${planetId}`)
-      : { queue: null, completed: [] };
+    const ships = planetId ? this.moonShipRows(planetId) : [];
     return {
       wallet,
       bodyKind: "moon",
@@ -3773,7 +3802,7 @@ export class SettlementIndexer {
       resources,
       resourcesAsOfNow: resources,
       resourceSnapshot: this.moonResourceSnapshotMetadata(planetId),
-      ships: planetId ? this.moonShipRows(planetId) : [],
+      ships,
       launchableShips: planetId ? this.launchableMoonShipRows(planetId) : [],
       moon: moon
         ? {
@@ -3787,7 +3816,7 @@ export class SettlementIndexer {
           }
         : null,
       buildings,
-      fleet: planetId ? this.moonShipRows(planetId) : [],
+      fleet: ships,
       queue: moonQueueSettlement.queue,
       ...(moonQueueSettlement.completed[0]
         ? { completionQueue: moonQueueSettlement.completed[0] }
@@ -3797,7 +3826,7 @@ export class SettlementIndexer {
         ...defense,
         count: planetId ? this.moonDefenseCountAsOfNow(planetId, defense.id) : 0
       })),
-      defenseQueue: planetId ? this.moonDefenseQueue(planetId) : null,
+      defenseQueue,
       jumpGateDestinations
     };
   }
@@ -10695,6 +10724,25 @@ export class SettlementIndexer {
   private moon(planetId: string): IndexedMoonCreatedEvent | null {
     const row = this.db.query("SELECT event_json FROM indexed_moons WHERE planet_id = ?").get(planetId) as MoonRow | null;
     return row ? parseEvent<IndexedMoonCreatedEvent>(row.event_json) : null;
+  }
+
+  private hasIndexedMoonProjection(planetId: string): boolean {
+    // Historic/replayed logs can temporarily carry a moon queue or unit row before
+    // its MoonCreated row is available. Preserve that recoverable state, while
+    // allowing the overwhelmingly common no-moon path to avoid hydrating every
+    // moon-scoped table for every colony in an Overview roster.
+    const row = this.db.query(`
+      SELECT 1 AS present
+      WHERE EXISTS (SELECT 1 FROM contract_moon_building_levels WHERE planet_id = ?)
+         OR EXISTS (SELECT 1 FROM contract_moon_ship_counts WHERE planet_id = ?)
+         OR EXISTS (SELECT 1 FROM contract_moon_defense_counts WHERE planet_id = ?)
+         OR EXISTS (SELECT 1 FROM contract_moon_resources WHERE planet_id = ?)
+         OR EXISTS (
+           SELECT 1 FROM contract_production_queues
+           WHERE planet_id = ? AND queue_kind IN ('moon-building', 'moon-defense')
+         )
+    `).get(planetId, planetId, planetId, planetId, planetId) as { present: number } | null;
+    return row !== null;
   }
 
   private riftBalances(wallet: `0x${string}`, planetId: string | null): RiftBalanceRow[] {
