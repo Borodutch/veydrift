@@ -264,6 +264,10 @@ export type IndexerSnapshot = {
   lastResearchQueueStartedAtRepairAt: string | null;
   lastResearchQueueStartedAtRepairRowsScanned: number;
   lastResearchQueueStartedAtRepairRowsRepaired: number;
+  lastProductionQueueTimingRepairRunId: string | null;
+  lastProductionQueueTimingRepairAt: string | null;
+  lastProductionQueueTimingRepairRowsScanned: number;
+  lastProductionQueueTimingRepairRowsRepaired: number;
   lastCanonicalFleetMissionSyncAt: string | null;
   lastCanonicalFleetMissionSyncDurationMs: number | null;
   lastCanonicalFleetMissionSyncError: string | null;
@@ -997,6 +1001,10 @@ export class SettlementIndexer {
       lastResearchQueueStartedAtRepairAt: metadataValue("lastResearchQueueStartedAtRepairAt"),
       lastResearchQueueStartedAtRepairRowsScanned: Number(metadataValue("lastResearchQueueStartedAtRepairRowsScanned") ?? 0),
       lastResearchQueueStartedAtRepairRowsRepaired: Number(metadataValue("lastResearchQueueStartedAtRepairRowsRepaired") ?? 0),
+      lastProductionQueueTimingRepairRunId: metadataValue("lastProductionQueueTimingRepairRunId"),
+      lastProductionQueueTimingRepairAt: metadataValue("lastProductionQueueTimingRepairAt"),
+      lastProductionQueueTimingRepairRowsScanned: Number(metadataValue("lastProductionQueueTimingRepairRowsScanned") ?? 0),
+      lastProductionQueueTimingRepairRowsRepaired: Number(metadataValue("lastProductionQueueTimingRepairRowsRepaired") ?? 0),
       lastCanonicalFleetMissionSyncAt: metadataValue("lastCanonicalFleetMissionSyncAt"),
       lastCanonicalFleetMissionSyncDurationMs: metadataNumber(metadataValue("lastCanonicalFleetMissionSyncDurationMs")),
       lastCanonicalFleetMissionSyncError: metadataValue("lastCanonicalFleetMissionSyncError"),
@@ -4573,6 +4581,61 @@ export class SettlementIndexer {
       this.setMetadata("lastResearchQueueStartedAtRepairAt", new Date().toISOString());
       this.setMetadata("lastResearchQueueStartedAtRepairRowsScanned", rows.length.toString());
       this.setMetadata("lastResearchQueueStartedAtRepairRowsRepaired", repaired.toString());
+      if (repaired > 0) this.touch();
+    });
+    return this.snapshot();
+  }
+
+  async startProductionQueueTimingRepairOnce(runId: string): Promise<IndexerSnapshot> {
+    const normalizedRunId = runId.trim().slice(0, 128);
+    if (!normalizedRunId) return this.snapshot();
+    if (this.metadata("lastProductionQueueTimingRepairRunId") === normalizedRunId) {
+      return this.snapshot();
+    }
+
+    await this.runHealWrite("production queue timing repair", () => {
+      const rows = this.db.query(`
+        SELECT queue_kind, planet_id, item_id, target_level, quantity, ready_at, started_at,
+          original_quantity, unit_work_seconds, production_rate,
+          metal_cost, crystal_cost, deuterium_cost, backlog_json
+        FROM contract_production_queues
+        WHERE queue_kind IN ('defense', 'ship')
+      `).all() as QueueRow[];
+      let repaired = 0;
+      for (const row of rows) {
+        const queue = this.productionQueueFromRow(row);
+        let changed = this.hydrateRetainedProductionQueueTiming(queue);
+        const backlog = row.backlog_json ? parseEvent<QueueState[]>(row.backlog_json) : [];
+        if (Array.isArray(backlog)) {
+          for (const entry of backlog) {
+            changed = this.hydrateRetainedProductionQueueTiming(entry, queue.planetId) || changed;
+          }
+        }
+        if (!changed) continue;
+
+        this.db.query(`
+          UPDATE contract_production_queues
+          SET started_at = ?, original_quantity = ?, unit_work_seconds = ?, production_rate = ?, backlog_json = ?
+          WHERE queue_key = ?
+        `).run(
+          queue.startedAt ?? null,
+          queue.productionTiming?.originalQuantity ?? null,
+          queue.productionTiming?.unitWorkSeconds ?? null,
+          queue.productionTiming?.rate ?? null,
+          this.productionBacklogJson(row.queue_kind, queue, Array.isArray(backlog) ? backlog : []),
+          `${row.queue_kind}:${row.planet_id}`
+        );
+        this.db.query(`
+          UPDATE indexed_planet_queues
+          SET started_at = ?
+          WHERE queue_key = ?
+        `).run(queue.startedAt ?? null, `${row.queue_kind}:${row.planet_id}`);
+        repaired += 1;
+      }
+      this.setMetadata("lastProductionQueueTimingRepairRunId", normalizedRunId);
+      this.setMetadata("lastProductionQueueTimingRepairAt", new Date().toISOString());
+      this.setMetadata("lastProductionQueueTimingRepairRowsScanned", rows.length.toString());
+      this.setMetadata("lastProductionQueueTimingRepairRowsRepaired", repaired.toString());
       if (repaired > 0) this.touch();
     });
     return this.snapshot();
@@ -8895,14 +8958,14 @@ export class SettlementIndexer {
    * exact batch start, current-unit boundary, and final completion without an
    * RPC round trip or an indeterminate progress bar.
    */
-  private hydrateRetainedProductionQueueTiming(queue: QueueState, fallbackPlanetId?: string): void {
+  private hydrateRetainedProductionQueueTiming(queue: QueueState, fallbackPlanetId?: string): boolean {
     if (
       queue.productionTiming
       || (queue.kind !== "defense" && queue.kind !== "ship")
       || queue.itemId === undefined
       || queue.quantity === undefined
       || !queue.readyAt
-    ) return;
+    ) return false;
 
     let planetId: bigint;
     let readyAt: bigint;
@@ -8910,9 +8973,9 @@ export class SettlementIndexer {
       planetId = BigInt(queue.planetId ?? fallbackPlanetId ?? "0");
       readyAt = BigInt(queue.readyAt);
     } catch {
-      return;
+      return false;
     }
-    if (planetId <= 0n || readyAt <= 0n) return;
+    if (planetId <= 0n || readyAt <= 0n) return false;
 
     const queuedTopic = queue.kind === "defense" ? defenseQueuedTopic : shipQueuedTopic;
     const topicFor = (value: bigint) => `0x${value.toString(16).padStart(64, "0")}`;
@@ -8956,11 +9019,12 @@ export class SettlementIndexer {
           unitWorkSeconds: duration.toString(),
           rate: originalQuantity.toString()
         };
-        return;
+        return true;
       } catch {
         // A malformed historical log cannot authorize a timeline recovery.
       }
     }
+    return false;
   }
 
   private productionQueueFromRow(row: QueueRow): QueueState {
