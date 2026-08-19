@@ -1221,14 +1221,14 @@ function WarDeclarationDialog({
         <h3 className="text-lg font-semibold text-white">Declare war on {alliance.tag}</h3>
         <ul className="mt-3 grid gap-2">
           <WarDeclarationRule icon={Users}>
-            War scores and rosters are locked on-chain at declaration. Late joins and members who leave or rejoin get no war exceptions.
+            War scores and rosters are locked on-chain at declaration. Only original members qualify; an original member regains that privilege when rejoining their original alliance.
           </WarDeclarationRule>
           <WarDeclarationRule icon={Clock} tone="rose">
             {warMinimumDurationCopy}
           </WarDeclarationRule>
           <WarDeclarationProtectionWarning allianceName={alliance.tag} declarerScore={declarerScore} declareeScore={alliance.totalMemberScore ?? null} />
           <WarDeclarationRule icon={ShieldOff} tone="amber">
-            Defender advantage: {alliance.tag}&apos;s original members bypass score protection when attacking your original members. Your alliance does not receive this protection as the declarer.
+            If your alliance declares from a stronger position by more than 1.5×, only {alliance.tag}&apos;s original members can bypass score and bashing protection. Otherwise both original rosters can.
           </WarDeclarationRule>
           {snapshotTooLarge ? (
             <WarDeclarationRule icon={X} tone="rose">
@@ -1262,17 +1262,22 @@ export function WarDeclarationProtectionWarning({
     if (declarerScore === null || declareeScore === null) throw new Error("missing score");
     const declarer = BigInt(declarerScore);
     const declaree = BigInt(declareeScore);
+    if (declarer <= declaree) {
+      return <WarDeclarationRule icon={Scale} tone="cyan">
+        Your alliance is not stronger at declaration, so both original rosters will bypass score protection and bashing limits for this war.
+      </WarDeclarationRule>;
+    }
     if (declaree === 0n || declarer * 10_000n > declaree * 15_000n) {
       return <WarDeclarationRule icon={Scale} tone="amber">
-        Alliance score check failed: your total is more than 1.5× {allianceName}&apos;s, so war will not bypass score protection when you attack.
+        Your total is more than 1.5× {allianceName}&apos;s, so only {allianceName}&apos;s original members can bypass score protection and bashing limits in this war.
       </WarDeclarationRule>;
     }
     return <WarDeclarationRule icon={Scale} tone="cyan">
-      Two score checks apply when you attack {allianceName}: your alliance total must be no more than 1.5× theirs, and each attacker must be no more than 1.5× their target.
+      Your alliance is within 1.5× {allianceName}&apos;s frozen total, so both original rosters will bypass score protection and bashing limits for this war.
     </WarDeclarationRule>;
   } catch {
     return <WarDeclarationRule icon={Scale} tone="amber">
-      Two score checks apply: your alliance total must be within 1.5× of the defender, and each attacker must be no more than 1.5× their target.
+      War direction and frozen alliance totals determine whether protection bypass is bilateral or available only to the declared-on alliance.
     </WarDeclarationRule>;
   }
 }
@@ -1406,7 +1411,7 @@ function WarSection({
                     </span>
                     <span className="truncate text-sm font-semibold text-white">{alliance?.name ?? `Alliance #${war.otherAllianceId}`}</span>
                   </div>
-                  <p className="mt-1 text-xs text-slate-400">War is restricted to its declaration snapshot: late joins receive no exceptions. The declarer has no score protection against this alliance; declarer attacks use the 1.5× score checks. {warMinimumDurationCopy}</p>
+                  <p className="mt-1 text-xs text-slate-400">War uses its declaration snapshot: only original members qualify, and they regain eligibility by rejoining their original alliance. A weaker/equal declaration or a stronger declaration within 1.5× is bilateral; otherwise only the declared-on side bypasses score protection and bashing. {warMinimumDurationCopy}</p>
                   {war.warSnapshot ? (
                     <p className="mt-1 text-xs text-slate-500">
                       Snapshot — declarer score {formatScore(war.warSnapshot.declarerScore)} ({war.warSnapshot.declarerMemberCount} members), declaree score {formatScore(war.warSnapshot.declareeScore)} ({war.warSnapshot.declareeMemberCount} members).

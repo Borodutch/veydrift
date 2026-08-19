@@ -5578,7 +5578,25 @@ describe("Veydrift backend", () => {
       topics: [allianceDiplomacyUpdatedTopic, topic(1n), topic(2n)],
       data: abiWords(3n)
     });
-    const handler = createRequestHandler({ config: configuredTestConfig, chainReader: new MockChainReader(), indexer });
+    const chainReader = new class extends MockChainReader {
+      calls: bigint[] = [];
+
+      override async getAttackProtectionStatus(wallet: Address, targetPlanetId: bigint): Promise<AttackProtectionStatus> {
+        this.calls.push(targetPlanetId);
+        return {
+          wallet,
+          targetPlanetId: targetPlanetId.toString(),
+          allowed: true,
+          blockedReason: "none",
+          blockedReasonLabel: null,
+          relation: "peer",
+          defenderHonorStatus: "neutral",
+          plunderBps: 5000,
+          defenderInactive: false
+        };
+      }
+    }();
+    const handler = createRequestHandler({ config: configuredTestConfig, chainReader, indexer });
 
     const response = await handler(new Request(`http://localhost/wallet/${attacker}/attack-protection?targetPlanetId=7`));
     const body = await response.json();
@@ -5590,6 +5608,7 @@ describe("Veydrift backend", () => {
       blockedReason: "none",
       targetAlliance: { allianceId: "2", tag: "DEF", name: "Defenders" }
     });
+    expect(chainReader.calls).toEqual([7n]);
 
     const highscores = await handler(new Request(`http://localhost/highscores?limit=10&currentWallet=${attacker}&includeAttackProtection=true`));
     const highscoreBody = await highscores.json();

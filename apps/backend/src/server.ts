@@ -150,7 +150,8 @@ const acceptedCacheQueryParams = new Map<string, ReadonlySet<string>>([
   ["/wallet/*/moon", new Set(["planetId"])],
   ["/wallet/*/shipyard", new Set(["planetId"])],
   ["/wallet/*/defenses", new Set(["planetId"])],
-  ["/wallet/*/research", new Set(["planetId"])]
+  ["/wallet/*/research", new Set(["planetId"])],
+  ["/wallet/*/attack-protection", new Set(["targetPlanetId"])]
 ]);
 
 const indexedSource = "contract-state-indexer" as const;
@@ -1810,7 +1811,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       try {
         assertAddress(wallet);
         const targetPlanetId = positiveBigIntQuery(url, "targetPlanetId");
-        return indexedAttackProtectionResponse(indexer, wallet, targetPlanetId);
+        return await indexedAttackProtectionResponse(indexer, chainReader, wallet, targetPlanetId);
       } catch (error) {
         return errorResponse(error, 400);
       }
@@ -2774,6 +2775,7 @@ function acceptedCacheParams(pathname: string): ReadonlySet<string> | undefined 
   if (pathname.match(/^\/wallet\/[^/]+\/shipyard$/)) return acceptedCacheQueryParams.get("/wallet/*/shipyard");
   if (pathname.match(/^\/wallet\/[^/]+\/defenses$/)) return acceptedCacheQueryParams.get("/wallet/*/defenses");
   if (pathname.match(/^\/wallet\/[^/]+\/research$/)) return acceptedCacheQueryParams.get("/wallet/*/research");
+  if (pathname.match(/^\/wallet\/[^/]+\/attack-protection$/)) return acceptedCacheQueryParams.get("/wallet/*/attack-protection");
   if (pathname.match(/^\/universe\/galaxies\/[0-9]+\/systems\/[0-9]+$/)) return new Set(["detail"]);
   return undefined;
 }
@@ -2877,6 +2879,10 @@ function cacheableJsonRequestTtlMs(request: Request, url: URL): number {
   // crosses a mission or per-unit production boundary without a new indexed log. A TTL cache can
   // otherwise preserve mismatched queue, inventory, and Solar Satellite energy values after refresh.
   if (url.pathname.match(/^\/wallet\/[^/]+\/(?:infrastructure|moon|shipyard|defenses)$/)) return 0;
+  // Active-war eligibility is checked against a frozen on-chain roster and can change when a
+  // member leaves/rejoins or a war starts/ends. Never let a stale shared HTTP response tell the
+  // mission dialog that a selected target is legal or blocked.
+  if (url.pathname.match(/^\/wallet\/[^/]+\/attack-protection$/)) return 0;
   // Overview is the canonical combined wallet snapshot used by live chain-event refreshes. It must
   // advance resources and fleet visibility from the same committed DB state, never a cached copy.
   if (url.pathname.match(/^\/wallet\/[^/]+\/overview$/)) return 0;
@@ -6247,11 +6253,12 @@ function emptyPaidAllianceInviteSummary() {
   };
 }
 
-function indexedAttackProtectionResponse(
+async function indexedAttackProtectionResponse(
   indexer: SettlementIndexer | undefined,
+  chainReader: ChainReader | undefined,
   wallet: `0x${string}`,
   targetPlanetId: bigint
-): Response {
+): Promise<Response> {
   if (!hasWarmPlanetIndex(indexer)) {
     return indexedReadNotReadyResponse("attack protection", indexer, { wallet, targetPlanetId: targetPlanetId.toString() });
   }
@@ -6302,12 +6309,21 @@ function indexedAttackProtectionResponse(
     && attackerAlliance.allianceId !== "0"
     && attackerAlliance.allianceId === defenderAlliance.allianceId;
   const atWar = indexer.allianceRelationship(attackerAlliance?.allianceId, defenderAlliance?.allianceId) === "war";
+  // A war exception depends on the frozen declaration roster and its direction. The compact index
+  // intentionally does not persist every snapshot member, so this narrow mission-preflight read is
+  // authoritative for active wars instead of claiming that every war is a bilateral bypass. It is
+  // cached per attacker + target by CachedChainReader and is never used by leaderboard fan-out.
+  const canonicalWarStatus = atWar && chainReader
+    ? await chainReader.getAttackProtectionStatus(wallet, targetPlanetId)
+    : null;
   // VEY-KANEO-489: use the contract-faithful newbie/score-ratio gate (VeydriftAntiRaidPrimitives.
   // isScoreProtected) instead of a naive score-ratio heuristic. A fixed ratio false-blocks players
   // past the newbie-protection ceiling,
   // who the contract never score-protects (both ratios are 0). Kept raw (not gated by sameAlliance) so
   // plunderBps below still reflects the score-protection state.
-  const scoreProtected = !defenderInactive
+  const scoreProtected = canonicalWarStatus
+    ? canonicalWarStatus.blockedReason === "score_protection"
+    : !defenderInactive
     && !atWar
     && isIndexedScoreProtected(attackerProtectionScore, defenderProtectionScore);
   // A nonzero planet-scoped Rift lock is fully contestable: it bypasses score/newbie and
@@ -6320,7 +6336,9 @@ function indexedAttackProtectionResponse(
   // an empty launch history. same_alliance and score protection are checked first to match the
   // contract's precedence (VeydriftGameStorage._attackProtectionStatus: SameAlliance -> ScoreProtection
   // -> BashingLimit); skipping the launch-log replay when either short-circuits avoids needless work.
-  const bashingLimited = !sameAlliance
+  const bashingLimited = canonicalWarStatus
+    ? canonicalWarStatus.blockedReason === "bashing_limit"
+    : !sameAlliance
     && !scoreProtected
     && !atWar
     && !defenderInactive
@@ -6329,7 +6347,9 @@ function indexedAttackProtectionResponse(
       indexer.attackLaunchSecondsByTarget(wallet).get(targetPlanetId.toString()) ?? [],
       Math.floor(Date.now() / 1_000)
     );
-  const blockedReason: AttackBlockReason = sameAlliance
+  const blockedReason: AttackBlockReason = canonicalWarStatus
+    ? canonicalWarStatus.blockedReason
+    : sameAlliance
     ? "same_alliance"
     : scoreProtected && !riftProtectionBypass
       ? "score_protection"
@@ -6349,14 +6369,14 @@ function indexedAttackProtectionResponse(
     allowed: blockedReason === "none",
     blockedReason,
     blockedReasonLabel: blockedReason === "none" ? null : attackBlockReasonLabel(blockedReason),
-    relation: defenderProtectionScore > attackerProtectionScore
+    relation: canonicalWarStatus?.relation ?? (defenderProtectionScore > attackerProtectionScore
       ? "stronger"
       : defenderProtectionScore < attackerProtectionScore
         ? "weaker"
-        : "peer",
-    defenderHonorStatus: "neutral",
-    plunderBps: scoreProtected ? 0 : 5000,
-    defenderInactive,
+        : "peer"),
+    defenderHonorStatus: canonicalWarStatus?.defenderHonorStatus ?? "neutral",
+    plunderBps: canonicalWarStatus?.plunderBps ?? (scoreProtected ? 0 : 5000),
+    defenderInactive: canonicalWarStatus?.defenderInactive ?? defenderInactive,
     transportAllowed,
     transportBlockReason,
     transportBlockReasonLabel: transportBlockReasonLabel(transportBlockReason),

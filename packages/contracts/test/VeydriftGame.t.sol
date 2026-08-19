@@ -382,7 +382,9 @@ contract VeydriftGameTest is Test {
         game = _newGame(admin);
         effectiveStateLens = new VeydriftEffectiveStateLens();
         allianceSystem = new VeydriftAllianceSystem(IVeydriftAllianceGame(address(game)));
-        warProtection = new VeydriftAllianceWarProtection(address(allianceSystem), address(game));
+        warProtection = new VeydriftAllianceWarProtection(
+            address(allianceSystem), address(game), address(0), address(this)
+        );
         randomness = new RandomnessEngine(admin, fulfiller);
         vm.prank(admin);
         randomness.setPrecommitRequired(false);
