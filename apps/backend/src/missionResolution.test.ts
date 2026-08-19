@@ -8,6 +8,7 @@ import {
   type MissionResolutionChainClient,
   type MissionResolutionLogger
 } from "./missionResolution";
+import { ResolverTransactionCoordinator } from "./resolverTransactions";
 
 const config: BackendConfig = {
   chainId: 84532,
@@ -189,6 +190,86 @@ describe("MissionResolutionService", () => {
 
     expect(reconciled as string | null).toBe("24921");
     expect(service.snapshot().failuresByLeg).toEqual({ arrival: 1, return: 0 });
+  });
+
+  test("reconciles a previously confirmed no-log operation so Resolved advances and Returned disappears", async () => {
+    const account = privateKeyToAccount(`0x${"1".repeat(64)}`);
+    const broadcasts: string[] = [];
+    let pendingNonce = 7;
+    const publicClient = {
+      async getTransactionCount() { return pendingNonce; },
+      async waitForTransactionReceipt() { return { status: "success" }; }
+    } as unknown as PublicClient;
+    const walletClient = {
+      async writeContract(input: { functionName: string; nonce: number }) {
+        broadcasts.push(`${input.functionName}:${input.nonce}`);
+        pendingNonce = input.nonce + 1;
+        return `0x${input.nonce.toString(16).padStart(64, "0")}`;
+      }
+    } as unknown as WalletClient;
+    const coordinator = new ResolverTransactionCoordinator(":memory:");
+    const client = new ViemMissionResolutionChainClient(
+      {
+        async listResolvableFleetMissions() { return []; },
+        async listReturnableFleetMissions() { return []; }
+      },
+      config.gameContractAddress!,
+      account,
+      publicClient,
+      walletClient,
+      { id: 8453 } as never,
+      config.rpcUrl,
+      coordinator
+    );
+
+    // Simulate the operation confirmed before the indexed source caught up. Reusing this operation
+    // below must not broadcast another resolve transaction.
+    await client.resolveFleetMission("24531");
+
+    let canonicalStatus: "stale-arrival" | "resolved" | "returned" = "stale-arrival";
+    const reconciled: string[] = [];
+    const service = new MissionResolutionService(config, {
+      candidateSource: {
+        missionResolutionCandidates: () => ({
+          arrivals: canonicalStatus === "stale-arrival" ? [arrival("24531", "Transport", "950")] : [],
+          returns: canonicalStatus === "resolved" ? [returnLeg("24531", "Returning", "950")] : []
+        }),
+        async reconcileMissionResolutionCandidate(missionId) {
+          reconciled.push(missionId);
+          canonicalStatus = canonicalStatus === "stale-arrival" ? "resolved" : "returned";
+        }
+      },
+      chainClient: client,
+      logger: silentLogger(),
+      now: () => 1_000_000
+    });
+
+    await service.tick();
+
+    expect(broadcasts).toEqual(["resolveFleetMission:7"]);
+    expect(reconciled).toEqual(["24531"]);
+    expect(canonicalStatus as string).toBe("resolved");
+    expect(service.snapshot()).toMatchObject({
+      resolvedCount: 1,
+      returnedCount: 0,
+      dueArrivals: { count: 0 }
+    });
+
+    await service.tick();
+    await service.tick();
+
+    expect(broadcasts).toEqual([
+      "resolveFleetMission:7",
+      "completeFleetMissionReturn:8"
+    ]);
+    expect(reconciled).toEqual(["24531", "24531"]);
+    expect(canonicalStatus as string).toBe("returned");
+    expect(service.snapshot()).toMatchObject({
+      resolvedCount: 1,
+      returnedCount: 1,
+      dueArrivals: { count: 0 },
+      dueReturns: { count: 0 }
+    });
   });
 
   test("retries a successfully chunked Attack on the next tick until canonical status is terminal", async () => {
