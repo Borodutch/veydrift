@@ -3017,9 +3017,9 @@ export class SettlementIndexer {
   }
 
   /**
-   * Repair one resolver candidate after the contract rejects an indexed status. This is deliberately
-   * narrow: it never enumerates the mission universe or removes archive rows, and runs only on the
-   * rare FleetMissionNotResolved revert path.
+   * Refresh one resolver candidate after a settlement attempt. This is deliberately narrow: it never
+   * enumerates the mission universe or removes archive rows. Successful/idempotently confirmed writes
+   * use it to expose the next canonical leg, while mined reverts use it to repair stale indexed state.
    */
   async reconcileMissionResolutionCandidate(missionId: string): Promise<void> {
     if (!this.chainReader.getCanonicalFleetMission) return;

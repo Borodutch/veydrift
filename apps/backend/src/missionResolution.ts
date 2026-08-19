@@ -59,8 +59,9 @@ export type MissionResolutionCandidates = {
 export type MissionResolutionCandidateSource = {
   missionResolutionCandidates(): MissionResolutionCandidates | Promise<MissionResolutionCandidates>;
   /**
-   * A resolver revert can expose a stale event-indexed mission status. Re-read just that candidate
-   * from canonical storage so it does not remain in the writer's retry loop until a broad repair.
+   * A resolver settlement can expose a stale event-indexed mission status, including when a durable
+   * coordinator reuses a previously confirmed operation. Re-read just that candidate from canonical
+   * storage so its next leg or terminal state is visible without waiting for a broad repair.
    */
   reconcileMissionResolutionCandidate?(missionId: string): Promise<void>;
 };
@@ -310,10 +311,18 @@ export class MissionResolutionService {
     try {
       if (candidate.leg === "arrival") {
         await this.chainClient.resolveFleetMission(candidate.mission.missionId);
+      } else {
+        await this.chainClient.completeFleetMissionReturn(candidate.mission.missionId);
+      }
+      // A successful call can be an idempotent coordinator hit for a transaction confirmed before
+      // this process started. Refresh the indexed source before treating the candidate as settled:
+      // otherwise a canonically Resolved mission never reaches its return leg and a Returned mission
+      // remains in the active projection forever despite no transaction needing to be rebroadcast.
+      await this.candidateSource?.reconcileMissionResolutionCandidate?.(candidate.mission.missionId);
+      if (candidate.leg === "arrival") {
         this.lastResolvedMissionId = candidate.mission.missionId;
         this.resolvedCount += 1;
       } else {
-        await this.chainClient.completeFleetMissionReturn(candidate.mission.missionId);
         this.lastReturnedMissionId = candidate.mission.missionId;
         this.returnedCount += 1;
       }
