@@ -1052,6 +1052,13 @@ export class SettlementIndexer {
     }
   }
 
+  // Mission Control combines membership and mission tables. Hold one SQLite read transaction while
+  // composing that projection so another indexer process cannot interleave a roster transition
+  // between candidate selection and cooperative classification.
+  readConsistentSnapshot<T>(read: () => T): T {
+    return this.readSnapshot(() => this.db.transaction(read)());
+  }
+
   referralHistoryBackfillStatus(
     contractAddress: `0x${string}`,
     fromBlock: bigint
@@ -2295,6 +2302,13 @@ export class SettlementIndexer {
   ): FleetMissionVisibility {
     const settlement = this.walletSettlement(wallet);
     const walletLower = wallet.toLowerCase();
+    const membership = this.allianceMembership(walletLower as Address);
+    const allianceId = membership.allianceId === "0" ? null : membership.allianceId;
+    const allianceMemberAddresses = new Set(
+      allianceId === null
+        ? []
+        : this.allianceMembers(allianceId).map((member) => member.address.toLowerCase())
+    );
     const ownedPlanetIds = new Set(
       this.settledPlanetsForOwner(wallet)
         .map((planet) => planet.planetId)
@@ -2304,7 +2318,7 @@ export class SettlementIndexer {
     const summaries = this.activeFleetMissionsForWalletVisibility(
       wallet,
       [...ownedPlanetIds],
-      includeJoinableAttacks
+      includeJoinableAttacks && allianceId !== null
     );
     // VEY-KANEO-456: index every mission by id so an incoming attack can resolve the allied AcsDefend
     // fleets stationed against it (linked by `counterplayDefenderMissionIds`) into per-defender detail
@@ -2365,19 +2379,40 @@ export class SettlementIndexer {
       && mission.owner.toLowerCase() === walletLower
       && (mission.status === "Returning" || mission.status === "Recalled")
     );
-    const joinableAttackRows = includeJoinableAttacks ? summaries.filter((mission) =>
-        isVisibleActiveFleetMission(mission)
-        && mission.owner.toLowerCase() !== walletLower
-        && !ownedPlanetIds.has(mission.targetPlanetId)
-        && mission.missionType === "Attack"
-        && mission.status === "Outbound"
-      ) : [];
+    const cooperativeAttackRows = includeJoinableAttacks ? summaries.filter((mission) => {
+      if (
+        !isVisibleActiveFleetMission(mission)
+        || mission.owner.toLowerCase() === walletLower
+        || ownedPlanetIds.has(mission.targetPlanetId)
+        || mission.missionType !== "Attack"
+        || mission.status !== "Outbound"
+      ) return false;
+      const targetOwner = mission.targetPlanet?.owner?.toLowerCase();
+      // Missing target ownership cannot be classified safely. Same-alliance attacks also fail closed:
+      // they are neither a cooperative attack nor a hostile attack the viewer may help defend.
+      return targetOwner !== undefined && !(
+        allianceMemberAddresses.has(mission.owner.toLowerCase())
+        && allianceMemberAddresses.has(targetOwner)
+      );
+    }) : [];
+    const joinableAttackRows = cooperativeAttackRows.filter((mission) => {
+      const targetOwner = mission.targetPlanet?.owner?.toLowerCase();
+      return targetOwner !== undefined
+        && allianceMemberAddresses.has(mission.owner.toLowerCase())
+        && !allianceMemberAddresses.has(targetOwner);
+    });
+    const joinableDefenseRows = cooperativeAttackRows.filter((mission) => {
+      const targetOwner = mission.targetPlanet?.owner?.toLowerCase();
+      return targetOwner !== undefined
+        && !allianceMemberAddresses.has(mission.owner.toLowerCase())
+        && allianceMemberAddresses.has(targetOwner)
+        && targetOwner !== walletLower;
+    });
     const defenseHoldStorageOrders = new Map(
-      [...new Set(joinableAttackRows.map((attack) => attack.targetPlanetId))]
+      [...new Set(cooperativeAttackRows.map((attack) => attack.targetPlanetId))]
         .map((planetId) => [planetId, this.defenseHoldStorageOrderForPlanet(planetId)])
     );
-    const joinableAttacks = joinableAttackRows
-      .map((attack) => ({
+    const withAttackPreview = (attack: FleetMissionSummary): FleetMissionSummary => ({
         ...attack,
         attackPreview: this.joinAttackPreviewSummary(
           attack,
@@ -2385,22 +2420,27 @@ export class SettlementIndexer {
           activeDefenseHolds,
           defenseHoldStorageOrders
         )
-      }));
+      });
+    const joinableAttacks = joinableAttackRows.map(withAttackPreview);
+    const joinableDefenses = joinableDefenseRows.map(withAttackPreview);
 
     if (!includeArchive) {
       const activeMissions = [
         ...visibleIncoming,
         ...outgoing,
         ...returning,
-        ...joinableAttacks
+        ...joinableAttacks,
+        ...joinableDefenses
       ];
       return {
         wallet,
         homePlanetId: settlement.homePlanetId,
+        allianceId,
         incoming: visibleIncoming,
         outgoing,
         returning,
         joinableAttacks,
+        joinableDefenses,
         completedMissions: [],
         battleReports: this.indexedBattleReportsForMissions(activeMissions)
       };
@@ -2410,10 +2450,12 @@ export class SettlementIndexer {
     return {
       wallet,
       homePlanetId: settlement.homePlanetId,
+      allianceId,
       incoming: visibleIncoming,
       outgoing,
       returning,
       joinableAttacks,
+      joinableDefenses,
       completedMissions: archive.completedMissions,
       battleReports: this.indexedBattleReportsForMissions(archive.completedMissions.slice(0, 100))
     };

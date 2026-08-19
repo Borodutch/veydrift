@@ -885,6 +885,41 @@ describe("Mission Control battle reports", () => {
     expect(defenseCalls).toEqual(["8052"]);
   });
 
+  test("VEY-KANEO-855 trusts the atomic backend projection when the separate roster response races empty", () => {
+    const now = Date.parse("2026-08-19T17:51:31.000Z");
+    const ally = "0x2222222222222222222222222222222222222222";
+    const enemy = "0x3333333333333333333333333333333333333333";
+    const joinAttack = {
+      ...mission("26133", "Attack", "Outbound", ally, "5", "6", now + 900_000),
+      targetPlanet: planetReference("6", enemy, "Rigel", "4:5:6"),
+    };
+    const joinDefense = {
+      ...mission("26134", "Attack", "Outbound", enemy, "6", "8", now + 900_000),
+      targetPlanet: planetReference("8", ally, "DREAD Bastion", "4:5:8"),
+    };
+    const tree = MissionControlPage({
+      ...missionControlProps(now, {
+        allianceId: "6",
+        joinableAttacks: [joinAttack],
+        joinableDefenses: [joinDefense],
+      }),
+      // Reproduces the production split-read race: the separately timed alliance response is stale
+      // or empty, while fleet visibility already contains the internally consistent revision.
+      allianceMemberAddresses: [],
+      hasAlliance: false,
+      initialView: { activePage: 0, activeTab: "alliance", pastPage: 0, pastTab: "mine" },
+    });
+    const text = collectText(tree).join(" ");
+    const actionLabels = findElements(tree, "button").map((element) => element.props?.["aria-label"]);
+
+    expect(text).toContain("Alliance (2)");
+    expect(text).toContain("#26133");
+    expect(text).toContain("#26134");
+    expect(text).not.toContain("No joinable alliance attacks or defenses.");
+    expect(actionLabels).toContain("Join Attack");
+    expect(actionLabels).toContain("Join Defense");
+  });
+
   test("VEY-KANEO-805: hides cooperative icons after cutoff, without fleets, and after alliance loss", () => {
     const now = Date.parse("2026-08-05T19:30:00.000Z");
     const wallet = "0x1111111111111111111111111111111111111111";
@@ -2762,10 +2797,12 @@ function countOccurrences(haystack: string, needle: string): number {
 function missionControlProps(
   now: number,
   visibility: Partial<{
+    allianceId: string | null;
     incoming: FleetMissionSummary[];
     outgoing: FleetMissionSummary[];
     returning: FleetMissionSummary[];
     joinableAttacks: FleetMissionSummary[];
+    joinableDefenses: FleetMissionSummary[];
   }>,
 ): Parameters<typeof MissionControlPage>[0] {
   return {
@@ -2778,6 +2815,8 @@ function missionControlProps(
       outgoing: visibility.outgoing ?? [],
       returning: visibility.returning ?? [],
       joinableAttacks: visibility.joinableAttacks ?? [],
+      ...(visibility.allianceId !== undefined ? { allianceId: visibility.allianceId } : {}),
+      ...(visibility.joinableDefenses !== undefined ? { joinableDefenses: visibility.joinableDefenses } : {}),
       completedMissions: [],
       battleReports: [],
     },

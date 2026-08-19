@@ -213,16 +213,26 @@ export function MissionControlPage({
   const incoming = fleetVisibility?.incoming ?? [];
   const outgoing = fleetVisibility?.outgoing ?? [];
   const returning = fleetVisibility?.returning ?? [];
-  // A fleet-visibility response can race a newer alliance-membership response during dissolve,
-  // leave, or removal. Fail closed on canonical membership so stale joinable rows cannot leak into
-  // either the Alliance tab or the universe-wide All tab.
-  const cooperativeRows = classifyAllianceCooperativeMissions({
-    allianceMemberAddresses,
-    candidates: fleetVisibility?.joinableAttacks ?? [],
-    wallet: fleetVisibility?.wallet,
-  });
-  const joinableAttacks = hasAlliance ? cooperativeRows.joinAttacks : [];
-  const joinableDefenses = hasAlliance ? cooperativeRows.joinDefenses : [];
+  // Current backends return a viewer-qualified cooperative projection: membership, attacks, and
+  // defenses all come from one indexed revision. During a rolling deploy, legacy responses omit
+  // allianceId/joinableDefenses and retain the former roster-intersection fallback.
+  const hasAuthoritativeAllianceProjection = fleetVisibility?.allianceId !== undefined
+    || fleetVisibility?.joinableDefenses !== undefined;
+  const cooperativeRows = hasAuthoritativeAllianceProjection
+    ? {
+        joinAttacks: fleetVisibility?.joinableAttacks ?? [],
+        joinDefenses: fleetVisibility?.joinableDefenses ?? [],
+      }
+    : classifyAllianceCooperativeMissions({
+        allianceMemberAddresses,
+        candidates: fleetVisibility?.joinableAttacks ?? [],
+        wallet: fleetVisibility?.wallet,
+      });
+  const authoritativeHasAlliance = fleetVisibility?.allianceId !== undefined
+    ? Boolean(fleetVisibility.allianceId && fleetVisibility.allianceId !== "0")
+    : hasAlliance;
+  const joinableAttacks = authoritativeHasAlliance ? cooperativeRows.joinAttacks : [];
+  const joinableDefenses = authoritativeHasAlliance ? cooperativeRows.joinDefenses : [];
   const completedMissions = fleetVisibility?.completedMissions ?? [];
   const battleReports = fleetVisibility?.battleReports ?? [];
   const activeMissionRows = chronologicalActiveMissionRows({ incoming, joinableAttacks, joinableDefenses, outgoing, returning });
@@ -313,7 +323,7 @@ export function MissionControlPage({
   // The view comes from the URL query first (shareable, survives reload + browser back), then the
   // sessionStorage fallback for the in-app back button which lands on bare `/mission-control`.
   const requestedView = initialView ?? resolveMissionControlView();
-  const showAllianceTab = hasAlliance;
+  const showAllianceTab = authoritativeHasAlliance;
   const view = missionControlViewForAllianceMembership(requestedView, showAllianceTab);
   // A canonical membership refresh can invalidate an `at=alliance` selection while this page is
   // already mounted. Repair all three runtime sources of truth synchronously: rendered view,

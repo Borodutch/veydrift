@@ -961,7 +961,12 @@ export function nextMissionResolutionEventMs(
     }
     soonest = soonest === undefined ? ms : Math.min(soonest, ms);
   };
-  for (const mission of [...fleetVisibility.incoming, ...fleetVisibility.outgoing, ...fleetVisibility.joinableAttacks]) {
+  for (const mission of [
+    ...fleetVisibility.incoming,
+    ...fleetVisibility.outgoing,
+    ...fleetVisibility.joinableAttacks,
+    ...(fleetVisibility.joinableDefenses ?? []),
+  ]) {
     if (mission.status === "Outbound") {
       consider(mission.arrivalAt);
     }
@@ -2908,6 +2913,7 @@ function missionArchetypeLookupMissions({
     ...(fleetVisibility?.outgoing ?? []),
     ...(fleetVisibility?.returning ?? []),
     ...(fleetVisibility?.joinableAttacks ?? []),
+    ...(fleetVisibility?.joinableDefenses ?? []),
     ...(fleetVisibility?.completedMissions ?? []),
     ...(allActiveMissions ?? []),
     ...missionRowsFromArchive(missionArchive),
@@ -3108,7 +3114,11 @@ export function acsDefendCoordinationBlocker(
   mission: FleetMissionSummary,
   account: string,
   allianceState: ChainAllianceState | null,
+  backendQualifiedAllianceDefense = false,
 ): string | undefined {
+  // The fleet-visibility projection classified this hostile attack against the viewer's alliance in
+  // the same indexed revision. Do not re-authorize it against a separately timed roster response.
+  if (backendQualifiedAllianceDefense) return undefined;
   const defendedOwner = mission.targetPlanet?.owner;
   if (!defendedOwner) return "Defended planet state is still syncing.";
   if (defendedOwner.toLowerCase() === account.toLowerCase()) return undefined;
@@ -8760,7 +8770,14 @@ export function PlayableMvpApp({
       setMissionAction({ status: "error", label: "Wallet, game contract, or home planet is unavailable." });
       return;
     }
-    const coordinationBlocker = acsDefendCoordinationBlocker(mission, account, allianceState);
+    const backendQualifiedAllianceDefense = displayFleetVisibility?.joinableDefenses
+      ?.some((candidate) => candidate.missionId === mission.missionId) === true;
+    const coordinationBlocker = acsDefendCoordinationBlocker(
+      mission,
+      account,
+      allianceState,
+      backendQualifiedAllianceDefense,
+    );
     if (coordinationBlocker) {
       setMissionAction({ status: "error", label: coordinationBlocker });
       return;
@@ -8780,7 +8797,7 @@ export function PlayableMvpApp({
       depotLevel: defended?.allianceDepotLevel ?? 0,
       coordinationBlocker,
     });
-  }, [account, allianceState, gameContract, onChainSettlement?.homePlanetId, provider]);
+  }, [account, allianceState, displayFleetVisibility, gameContract, onChainSettlement?.homePlanetId, provider]);
 
   const handleConfirmAcsDefend = useCallback((draft: MissionLaunchDraft) => {
     const pending = pendingAcsDefend;

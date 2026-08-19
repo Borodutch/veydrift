@@ -578,6 +578,9 @@ export type FleetMissionPlanetReference = {
 export type FleetMissionVisibilityResponse = {
   wallet: string;
   homePlanetId: string | null;
+  // Indexed backends classify cooperative rows against this membership in the same response.
+  // Optional during rolling deploys so an older backend can still use the roster fallback.
+  allianceId?: string | null;
   indexedRevision?: string;
   indexedBlock?: string | null;
   generatedAt?: string;
@@ -585,6 +588,7 @@ export type FleetMissionVisibilityResponse = {
   outgoing: FleetMissionSummary[];
   returning: FleetMissionSummary[];
   joinableAttacks: FleetMissionSummary[];
+  joinableDefenses?: FleetMissionSummary[];
   completedMissions: FleetMissionSummary[];
   battleReports: BattleReport[];
 };

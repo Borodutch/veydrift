@@ -7394,6 +7394,32 @@ describe("SettlementIndexer", () => {
       async listSettledPlanetEvents() { return []; }
     }, 100n);
     indexer.applyEvent(planet);
+    indexer.applyEvent({
+      ...planet,
+      blockNumber: "124",
+      owner: defenderOwner,
+      planetId: "99",
+      position: 10,
+      transactionHash: "0xjoin-preview-target"
+    });
+    indexer.applyLog({
+      blockNumber: "0x89",
+      blockTimestamp: "0x69801c79",
+      transactionHash: "0xjoin-preview-alliance",
+      logIndex: "0x0",
+      topics: [allianceCreatedTopic, topic(1n), addressTopic(player)],
+      data: abiStrings("PREV", "Preview")
+    });
+    for (const [index, member] of [player, leadOwner].entries()) {
+      indexer.applyLog({
+        blockNumber: `0x${(0x8a + index).toString(16)}`,
+        blockTimestamp: `0x${(0x69801c7a + index).toString(16)}`,
+        transactionHash: `0xjoin-preview-member-${index}`,
+        logIndex: "0x0",
+        topics: [allianceJoinedTopic, topic(1n), addressTopic(member)],
+        data: abiWords(index === 0 ? 3n : 1n)
+      });
+    }
     const applyFleetLog = (
       missionId: bigint,
       owner: Address,
@@ -7522,6 +7548,107 @@ describe("SettlementIndexer", () => {
     expect(incomplete?.attackPreview?.unavailableReason).toContain(
       "DefenseHold #83 is missing from exact stationed-defense storage-order indexing"
     );
+  });
+
+  test("VEY-KANEO-855 classifies alliance attacks and defenses atomically from indexed membership", () => {
+    const ally = "0x3333333333333333333333333333333333333333" as Address;
+    const enemy = "0x4444444444444444444444444444444444444444" as Address;
+    const defendedAlly = "0x5555555555555555555555555555555555555555" as Address;
+    const formerMember = "0x6666666666666666666666666666666666666666" as Address;
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    const owners = [player, ally, enemy, defendedAlly, formerMember];
+    owners.forEach((owner, index) => indexer.applyEvent({
+      ...planet,
+      blockNumber: String(123 + index),
+      planetId: String(7 + index),
+      owner,
+      position: 9 + index,
+      transactionHash: `0xplanet-${index}`
+    }));
+    indexer.applyLog({
+      blockNumber: "0x90",
+      blockTimestamp: "0x69801c80",
+      transactionHash: "0xalliance-create-855",
+      logIndex: "0x0",
+      topics: [allianceCreatedTopic, topic(6n), addressTopic(player)],
+      data: abiStrings("DREAD", "Dread")
+    });
+    [player, ally, defendedAlly, formerMember].forEach((member, index) => indexer.applyLog({
+      blockNumber: `0x${(0x91 + index).toString(16)}`,
+      blockTimestamp: `0x${(0x69801c81 + index).toString(16)}`,
+      transactionHash: `0xalliance-join-855-${index}`,
+      logIndex: "0x0",
+      topics: [allianceJoinedTopic, topic(6n), addressTopic(member)],
+      data: abiWords(index === 0 ? 3n : 1n)
+    }));
+    indexer.applyLog({
+      blockNumber: "0x96",
+      blockTimestamp: "0x69801c86",
+      transactionHash: "0xalliance-leave-855",
+      logIndex: "0x0",
+      topics: [allianceLeftTopic, topic(6n), addressTopic(formerMember)],
+      data: "0x"
+    });
+
+    const launch = (
+      missionId: bigint,
+      owner: Address,
+      originPlanetId: bigint,
+      targetPlanetId: bigint,
+      missionTypeId = 3n
+    ) => {
+      indexer.applyLog({
+        blockNumber: `0x${missionId.toString(16)}`,
+        transactionHash: `0xlaunch-${missionId}`,
+        logIndex: "0x0",
+        topics: [fleetMissionLaunchedTopic, topic(missionId), addressTopic(owner), topic(missionTypeId)],
+        data: abiWords(originPlanetId, targetPlanetId, 1_900_000_000n, 1_900_000_600n, 0n)
+      });
+      indexer.applyLog({
+        blockNumber: `0x${missionId.toString(16)}`,
+        transactionHash: `0xlaunch-${missionId}`,
+        logIndex: "0x1",
+        topics: [fleetMissionCargoTopic, topic(missionId)],
+        data: abiWords(0n, 0n, 0n, 0n)
+      });
+      indexer.applyLog({
+        blockNumber: `0x${missionId.toString(16)}`,
+        transactionHash: `0xlaunch-${missionId}`,
+        logIndex: "0x2",
+        topics: [fleetMissionShipsTopic, topic(missionId), addressTopic(owner)],
+        data: abiWords(1n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n)
+      });
+    };
+
+    launch(85501n, ally, 8n, 9n); // allied attacker -> enemy
+    launch(85502n, enemy, 9n, 10n); // enemy -> another allied target
+    launch(85503n, player, 7n, 9n); // viewer's own attack
+    launch(85504n, formerMember, 11n, 9n); // former member -> enemy
+    launch(85505n, ally, 8n, 10n); // allied attacker -> allied target
+    launch(85506n, ally, 8n, 9n, 1n); // non-Attack mission
+    launch(85507n, ally, 8n, 9n); // terminal mission
+    indexer.applyLog({
+      blockNumber: "0x14e04",
+      transactionHash: "0xreturned-85507",
+      logIndex: "0x3",
+      topics: [fleetMissionReturnedTopic, topic(85507n), addressTopic(ally), topic(8n)],
+      data: "0x"
+    });
+
+    const visibility = indexer.fleetMissionVisibility(player, { includeArchive: false });
+    expect(visibility.allianceId).toBe("6");
+    expect(visibility.joinableAttacks?.map((mission) => mission.missionId)).toEqual(["85501"]);
+    expect(visibility.joinableDefenses?.map((mission) => mission.missionId)).toEqual(["85502"]);
+    expect(visibility.outgoing.map((mission) => mission.missionId)).toEqual(["85503"]);
+
+    const formerVisibility = indexer.fleetMissionVisibility(formerMember, { includeArchive: false });
+    expect(formerVisibility.allianceId).toBeNull();
+    expect(formerVisibility.joinableAttacks).toEqual([]);
+    expect(formerVisibility.joinableDefenses).toEqual([]);
   });
 
   test("removed duplicate log marks reorg health instead of being ignored", () => {
