@@ -417,7 +417,9 @@ export function getQueueBlocker(
 function queuedDefenseCount(defenseId: number, queue?: ChainDefenseState["queue"] | undefined): number {
   let quantity = queue?.active && queue.itemId === defenseId ? queue.quantity ?? 0 : 0;
   for (const backlog of queue?.backlog ?? []) {
-    if (backlog.active && backlog.itemId === defenseId) {
+    // Recovered legacy FIFO entries can omit `active`; an entry is still queued
+    // unless it is explicitly inactive, so it belongs in the selector total.
+    if (backlog.active !== false && backlog.itemId === defenseId) {
       quantity += backlog.quantity ?? 0;
     }
   }

@@ -566,6 +566,42 @@ describe("Defense page display helpers", () => {
     });
   });
 
+  test("counts every active and FIFO Rocket Launcher as queued in the selector", () => {
+    const queue = {
+      active: true,
+      kind: "defense",
+      itemId: 0,
+      quantity: 150,
+      readyAt: "1700000100",
+      cost: { metal: "300000", crystal: "0", deuterium: "0" },
+      backlog: [
+        { kind: "defense", itemId: 0, quantity: 28, readyAt: "1700000200", cost: { metal: "56000", crystal: "0", deuterium: "0" } },
+        { active: true, kind: "defense", itemId: 0, quantity: 113, readyAt: "1700000300", cost: { metal: "226000", crystal: "0", deuterium: "0" } },
+        { active: true, kind: "defense", itemId: 0, quantity: 30, readyAt: "1700000400", cost: { metal: "60000", crystal: "0", deuterium: "0" } },
+      ],
+    };
+    const items = defenseProductionItems({
+      actionPending: false,
+      canTransact: true,
+      defenseState: defenseState({
+        shipyardLevel: 2,
+        technologyLevels: { "0": 1, "1": 3 },
+        defenses: [{ id: 0, count: 492, cost: { metal: "2000", crystal: "0", deuterium: "0" } }],
+        queue,
+      }),
+      productionAvailable: true,
+      quantities: {},
+      queue,
+      resources: { metal: 1_000_000, crystal: 1_000_000, deuterium: 1_000_000 },
+    });
+
+    expect(selectedProductionItem(items, "rocketLauncher")).toMatchObject({
+      countValue: 492,
+      queued: 321,
+      status: "queued",
+    });
+  });
+
   test("uses spendable accrued resources in insufficient-resource copy", () => {
     const items = defenseProductionItems({
       actionPending: false,

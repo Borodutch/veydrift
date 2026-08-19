@@ -413,7 +413,7 @@ function CatalogButton<Key extends string>({
         <p className={`truncate text-sm font-semibold ${labelClass}`}>{item.label}</p>
         <p className="mt-0.5 truncate text-xs text-slate-400">
           {item.countLabel}: {item.countValue === undefined ? "unavailable" : format(item.countValue)}
-          {item.queued ? ` · Queued ${format(item.queued)}` : ""}
+          {item.queued ? ` · Queued: ${format(item.queued)}` : ""}
         </p>
       </div>
       {item.statusLabel ? <span className={`text-xs font-semibold ${statusClass}`}>{item.statusLabel}</span> : null}
@@ -632,6 +632,10 @@ function SelectedProductionDetails<Key extends string>({
         {
           label: item.countLabel,
           value: item.countValue === undefined ? "unavailable" : format(item.countValue),
+        },
+        {
+          label: "Queued",
+          value: item.queued ? `${format(item.queued)} total` : "0",
         },
         ...(item.durationSeconds === undefined
           ? []
