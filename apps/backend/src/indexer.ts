@@ -11372,7 +11372,11 @@ export class SettlementIndexer {
         defendsMissionId: canonicalEventMission.defendsMissionId,
         counterplayDefenderMissionIds: canonicalEventMission.counterplayDefenderMissionIds,
         returnCargo: canonicalEventMission.returnCargo,
-        ships: canonicalEventMission.ships,
+        // A canonical snapshot reflects the fleet that is still in-flight. Once a mission returns
+        // the contract correctly clears that field, but the mission archive must retain the fleet
+        // that originally launched. Prefer a non-empty canonical snapshot (active mission), then
+        // fall back to the retained FleetMissionShips launch event for returned/resolved history.
+        ships: hasAnyShips(canonicalEventMission.ships) ? canonicalEventMission.ships : base.ships,
         transactionHash: canonicalEventMission.transactionHash,
         blockNumber: canonicalEventMission.blockNumber,
         launchBlockNumber: canonicalEventMission.launchBlockNumber,
@@ -11413,25 +11417,20 @@ export class SettlementIndexer {
   }
 
   private canonicalFleetMissionSummaries(rows: readonly ContractFleetMissionRow[]): FleetMissionSummary[] {
-    // Snapshot rows can predate recall provenance even though their immutable event logs remain
-    // indexed. Read only the selected missions' logs in bounded batches, and overlay only that
-    // provenance so the canonical row stays authoritative for every mutable/status field.
-    const recalledMissionIds = new Set<string>();
+    // The contract clears a completed mission's in-flight fleet, while its immutable launch event
+    // retains the composition required by mission history. Read only the selected missions' logs in
+    // bounded batches; canonical state remains authoritative for mutable lifecycle fields.
+    const eventMissionsById = new Map<string, FleetMissionSummary>();
     for (let offset = 0; offset < rows.length; offset += 250) {
       const missionIds = rows.slice(offset, offset + 250).map((row) => row.mission_id);
       const eventMissions = decodeFleetMissionLogs(this.fleetMissionEventLogsForMissionIds(missionIds));
       for (const mission of eventMissions.values()) {
-        if (mission.recallProvenance === "FleetMissionRecalled") {
-          recalledMissionIds.add(mission.missionId);
+        if (isStoredFleetMissionSummary(mission)) {
+          eventMissionsById.set(mission.missionId, mission);
         }
       }
     }
-    return rows.map((row) => {
-      const mission = this.canonicalFleetMissionSummary(row);
-      return recalledMissionIds.has(row.mission_id)
-        ? { ...mission, recallProvenance: "FleetMissionRecalled" }
-        : mission;
-    });
+    return rows.map((row) => this.canonicalFleetMissionSummary(row, eventMissionsById.get(row.mission_id)));
   }
 
   // VEY-KANEO-479: request ids the RandomnessEngine has fulfilled, read from the ingested
