@@ -6,6 +6,8 @@ import {
   batchSupplySourceLimitReason,
 } from "./BatchSupplyModal";
 
+const batchSupplyModalSource = await Bun.file(new URL("./BatchSupplyModal.tsx", import.meta.url)).text();
+
 function source(ships: BatchSupplySource["ships"]): BatchSupplySource {
   return {
     planetId: "188",
@@ -29,6 +31,12 @@ function order(ships: BatchSupplyOrder["ships"]): BatchSupplyOrder {
 }
 
 describe("Batch Supply source row presentation", () => {
+  test("vertically centers the Supply title with its header icon", () => {
+    expect(batchSupplyModalSource).toContain('className="flex items-center gap-2 text-cyan-100"');
+    expect(batchSupplyModalSource).toContain('<h2 className="text-lg font-semibold">Supply {targetLabel}</h2>');
+    expect(batchSupplyModalSource).not.toContain('<h2 className="translate-y-px');
+  });
+
   test("shows the canonical remaining cargo fleet for an unplanned partially committed source", () => {
     const astro = source({ smallCargo: 4, largeCargo: 1 });
 
