@@ -84,6 +84,24 @@ describe("playable chain refresh", () => {
     expect(newestFleetVisibility(current, fleetVisibilitySnapshot("12:5", "901")).indexedRevision).toBe("12:5");
   });
 
+  test("accepts the backend-authoritative revision after a rolling two-part to three-part deploy", () => {
+    const legacy = fleetVisibilitySnapshot("350126:109385", "350126");
+    const authoritative = fleetVisibilitySnapshot("350126:109385:49", "350126");
+
+    expect(newestFleetVisibility(legacy, authoritative)).toBe(authoritative);
+  });
+
+  test("orders state-only changes and rejects older authoritative Mission Control responses", () => {
+    const current = fleetVisibilitySnapshot("350126:109385:49", "350126");
+    const newerAllianceState = fleetVisibilitySnapshot("350126:109385:50", "350126");
+    const olderAllianceState = fleetVisibilitySnapshot("350126:109385:48", "350127");
+    const olderMissionState = fleetVisibilitySnapshot("350125:109385:99", "350127");
+
+    expect(newestFleetVisibility(current, newerAllianceState)).toBe(newerAllianceState);
+    expect(newestFleetVisibility(current, olderAllianceState)).toBe(current);
+    expect(newestFleetVisibility(current, olderMissionState)).toBe(current);
+  });
+
   test("renders only backend-confirmed missions and waits for the indexer after mission transactions", async () => {
     const source = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.url)).text();
 

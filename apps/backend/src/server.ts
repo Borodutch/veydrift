@@ -3900,9 +3900,10 @@ function indexedFleetVisibility(
   const snapshot = indexedReadSnapshot(indexer);
   return {
     ...visibility,
-    // Alliance membership and fleet missions are one Mission Control read model. Include both
-    // generations so a leave/join cannot compare equal to a pre-transition cooperative projection.
-    indexedRevision: `${indexer.indexedStateCacheVersion()}:${indexer.missionResponseCacheVersion()}`,
+    // Alliance membership and fleet missions are one Mission Control read model. Keep the legacy
+    // mission:battle revision as the prefix so an already-open client accepts the first response
+    // after a rolling deploy; the appended state generation then orders membership-only changes.
+    indexedRevision: `${indexer.missionResponseCacheVersion()}:${indexer.indexedStateCacheVersion()}`,
     indexedBlock: snapshot.latestIndexedBlock,
     generatedAt: new Date().toISOString()
   };

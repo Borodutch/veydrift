@@ -1435,6 +1435,8 @@ describe("Veydrift backend", () => {
       releaseRefresh() {}
     } as unknown as import("./sharedResponseCache").SharedResponseCache;
     const indexer = testIndexer();
+    const legacyMissionRevision = indexer.missionResponseCacheVersion();
+    const allianceStateRevision = indexer.indexedStateCacheVersion();
     const originalSnapshot = indexer.snapshot.bind(indexer);
     indexer.snapshot = () => {
       routeBuilt = true;
@@ -1452,7 +1454,10 @@ describe("Veydrift backend", () => {
     const response = await handler(new Request(`http://localhost/wallet/${player}/fleet-visibility?archive=none`));
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({ wallet: player });
+    expect(await response.json()).toMatchObject({
+      wallet: player,
+      indexedRevision: `${legacyMissionRevision}:${allianceStateRevision}`
+    });
     expect(routeBuilt).toBe(true);
   });
 
