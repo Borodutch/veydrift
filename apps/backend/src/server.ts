@@ -3371,7 +3371,7 @@ async function indexedWalletOverviewWarmResponse(
       homeSettlement?.planet ?? null,
       indexedWarmDetail("fleet visibility"),
       indexer,
-      { includeArchive: false }
+      { includeArchive: false, includeJoinableAttacks: false }
     );
 
     return indexedWarmJsonResponse({
@@ -3804,11 +3804,14 @@ function indexedFleetVisibility(
   _planet: SettledPlanetEvent | null,
   _unavailableReason: string,
   indexer: SettlementIndexer,
-  options: { includeArchive?: boolean } = {}
+  options: { includeArchive?: boolean; includeJoinableAttacks?: boolean } = {}
 ): FleetMissionVisibility {
   const visibility = indexer.fleetMissionVisibility(
     wallet,
-    options.includeArchive === undefined ? {} : { includeArchive: options.includeArchive }
+    {
+      ...(options.includeArchive === undefined ? {} : { includeArchive: options.includeArchive }),
+      ...(options.includeJoinableAttacks === undefined ? {} : { includeJoinableAttacks: options.includeJoinableAttacks })
+    }
   );
   const snapshot = indexedReadSnapshot(indexer);
   return {
