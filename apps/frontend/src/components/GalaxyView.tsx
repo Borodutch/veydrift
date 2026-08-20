@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from "preact/hooks";
+import { useState, useEffect, useMemo } from "preact/hooks";
 import type { Planet, Coordinates } from "../types";
 import {
   DEFAULT_MISSION_SPEED_PERCENT,
@@ -41,6 +41,7 @@ import { InlineStateNotice } from "./InlineStateNotice";
 import { WatchablePlanetRow, type PlanetMetaItem } from "./WatchablePlanetRow";
 import { galaxyActionIcon } from "./GalaxyActionIcon";
 import { backendDataStoreFor } from "../backendDataStore";
+import { useBackendDataSnapshot } from "../useBackendDataSnapshot";
 
 const SMALL_CARGO_SHIP_ID = 0;
 const GALAXY_SYSTEM_CACHE_TTL_MS = 2 * 60 * 1_000;
@@ -207,16 +208,20 @@ export function GalaxyView({
 }: Props) {
   const currentSystemKey = galaxySystemKey(galaxy, system);
   const cachedSystem = cachedGalaxySystemPlanets(apiBaseUrl, galaxy, system);
-  const [systemPlanets, setSystemPlanets] = useState<Planet[]>(() => cachedSystem ?? []);
+  const backendData = useMemo(() => backendDataStoreFor(apiBaseUrl), [apiBaseUrl]);
+  const systemSnapshotKey = backendData.key("system", galaxy, system, {});
+  const systemSnapshot = useBackendDataSnapshot<ApiSystemResponse>(backendData, systemSnapshotKey);
+  const systemPlanets = useMemo(
+    () => systemSnapshot?.data
+      ? planetsFromSystemResponse(systemSnapshot.data)
+      : (cachedSystem ?? []),
+    [cachedSystem, systemSnapshot?.data],
+  );
   const [attackProtection, setAttackProtection] = useState<Record<string, AttackProtectionStatus>>({});
   const [moonAttackProtection, setMoonAttackProtection] = useState<Record<string, AttackProtectionStatus>>({});
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | undefined>();
+  const loading = systemSnapshot?.freshness === "refreshing" || systemSnapshot === undefined;
+  const loadError = systemSnapshot?.error;
   const [reloadNonce, setReloadNonce] = useState(0);
-  const [loadedSystemKey, setLoadedSystemKey] = useState<string | undefined>(
-    () => cachedSystem ? currentSystemKey : undefined
-  );
-  const loadedSystemKeyRef = useRef<string | undefined>();
   const homeCoordsInSystem = homeCoords?.galaxy === galaxy && homeCoords.system === system
     ? homeCoords
     : undefined;
@@ -231,51 +236,25 @@ export function GalaxyView({
     () => withOwnedPlanetNames(withHomePlanet(systemPlanets, homePlanetOverride), ownedPlanetsInSystem),
     [homePlanetOverride, ownedPlanetsInSystem, systemPlanets]
   );
-  useEffect(() => {
-    loadedSystemKeyRef.current = loadedSystemKey;
-  }, [loadedSystemKey]);
+  const hasCurrentSystemData = Boolean(systemSnapshot?.data || cachedSystem);
 
   useEffect(() => {
-    let cancelled = false;
-    const canPreserveCurrentSystem = loadedSystemKeyRef.current === currentSystemKey;
-    const cachedPlanets = cachedGalaxySystemPlanets(apiBaseUrl, galaxy, system);
-
-    if (cachedPlanets && !canPreserveCurrentSystem) {
-      setSystemPlanets(cachedPlanets);
-      setLoadedSystemKey(currentSystemKey);
+    if (systemSnapshot?.data) {
+      rememberGalaxySystemPayload(apiBaseUrl, galaxy, system, systemSnapshot.data);
     }
+  }, [apiBaseUrl, galaxy, system, systemSnapshot?.data]);
 
-    setLoading(true);
-    setLoadError(undefined);
-
-    const backendData = backendDataStoreFor(apiBaseUrl);
+  useEffect(() => {
     backendData.cancelScope("galaxy-view-navigation");
     backendData.system<ApiSystemResponse>(galaxy, system, { requestScope: "galaxy-view-navigation" })
-      .then((payload) => {
-        if (cancelled) return;
-        const nextPlanets = rememberGalaxySystemPayload(apiBaseUrl, galaxy, system, payload);
-        setSystemPlanets(nextPlanets);
-        setLoadedSystemKey(currentSystemKey);
-      })
       .catch((error) => {
-        if (!cancelled) {
-          console.error(error);
-          if (!canPreserveCurrentSystem) {
-            setSystemPlanets(planetsForFailedGalaxyLoad());
-            setLoadedSystemKey(undefined);
-          }
-          setLoadError(systemLoadErrorLabel(error));
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
+        if (!(error instanceof DOMException && error.name === "AbortError")) console.error(error);
       });
 
     return () => {
-      cancelled = true;
       backendData.cancelScope("galaxy-view-navigation");
     };
-  }, [apiBaseUrl, currentSystemKey, galaxy, reloadNonce, system]);
+  }, [backendData, currentSystemKey, galaxy, reloadNonce, system]);
 
   useEffect(() => {
     const protectionRequests = galaxyAttackProtectionRequests(planets, account, homeCoords);
@@ -346,7 +325,6 @@ export function GalaxyView({
   for (const p of planets) planetByPosition.set(p.position, p);
 
   const positions = Array.from({ length: POSITION_COUNT }, (_, i) => i + 1);
-  const hasCurrentSystemData = loadedSystemKey === currentSystemKey;
   const showInitialGalaxyLoader = shouldShowGalaxyInitialLoader({ hasCurrentSystemData, loading });
   const showGalaxyRows = shouldShowGalaxyRows({ hasCurrentSystemData });
   const showInitialLoadError = Boolean(loadError && !hasCurrentSystemData && !loading);

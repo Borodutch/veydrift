@@ -43,4 +43,42 @@ describe("frontend backend-data boundary", () => {
     expect(playerGuide).toContain("one shared game-state store and priority scheduler");
     expect(playerGuide).toContain("the same stored responses");
   });
+
+  test("migrated surfaces subscribe to canonical snapshots without response shadow state", async () => {
+    const appSource = await Bun.file(new URL("./PlayableMvpApp.tsx", import.meta.url)).text();
+    const galaxySource = await Bun.file(new URL("./components/GalaxyView.tsx", import.meta.url)).text();
+    const planetSource = await Bun.file(new URL("./components/PlanetDetail.tsx", import.meta.url)).text();
+    const moonSource = await Bun.file(new URL("./components/PublicMoonDetail.tsx", import.meta.url)).text();
+
+    for (const canonicalProjection of [
+      "settlementSnapshot",
+      "walletPlanetsSnapshot",
+      "queuesSnapshot",
+      "fleetVisibilitySnapshot",
+      "missionArchiveSnapshot",
+      "globalMissionArchiveSnapshot",
+      "infrastructureSnapshot",
+      "defenseSnapshot",
+      "shipyardSnapshot",
+      "researchSnapshot",
+    ]) {
+      expect(appSource).toContain(`const ${canonicalProjection} = useBackendDataSnapshot`);
+    }
+    expect(appSource).not.toMatch(/useState<(?:WalletSettlementResponse|FleetMissionVisibilityResponse|FleetMissionArchiveResponse|GlobalMissionArchiveResponse)/);
+    expect(galaxySource).toContain("useBackendDataSnapshot<ApiSystemResponse>");
+    expect(galaxySource).not.toContain("useState<Planet[]>(");
+    expect(planetSource).toContain("useBackendDataSnapshot<ApiSystemResponse>");
+    expect(planetSource).not.toContain("useState<Planet | null>");
+    expect(moonSource).toContain("useBackendDataSnapshot<ApiSystemResponse>");
+    expect(moonSource).not.toContain("useState<Planet | null>");
+  });
+
+  test("scheduled backend transports forward their AbortSignal", async () => {
+    const storeSource = await Bun.file(new URL("./backendDataStore.ts", import.meta.url)).text();
+
+    expect(storeSource).not.toMatch(/return this\.refresh\(key, (?:async )?\(\) => fetch(?:Wallet|Fleet|Global|Mission|Battle|System|Highscore)/);
+    expect(storeSource).toContain("fetchFleetMissionArchive(this.apiBaseUrl, wallet, { ...fetchOptions, signal })");
+    expect(storeSource).toContain("fetchGlobalMissionArchive(this.apiBaseUrl, { ...fetchOptions, signal })");
+    expect(storeSource).toContain("fetchMission(this.apiBaseUrl, missionId, signal)");
+  });
 });

@@ -96,6 +96,7 @@ type FleetMissionArchiveOptions = {
   page?: number;
   pageSize?: number;
   planetId?: string;
+  requestScope?: string;
 };
 
 type GlobalMissionArchiveOptions = {
@@ -104,6 +105,7 @@ type GlobalMissionArchiveOptions = {
   page?: number;
   pageSize?: number;
   planetId?: string;
+  requestScope?: string;
   summaryOnly?: boolean;
 };
 
@@ -175,6 +177,14 @@ export class BackendDataStore {
     this.state.publish(cacheKey(kind, ...parts), data, options);
   }
 
+  fail(kind: string, error: string | undefined, parts: unknown[] = []): void {
+    this.state.fail(cacheKey(kind, ...parts), error);
+  }
+
+  clear(kind: string, ...parts: unknown[]): void {
+    this.state.clear(cacheKey(kind, ...parts));
+  }
+
   coordinateRefresh<T>(
     key: string,
     priority: GameStatePriority,
@@ -222,7 +232,7 @@ export class BackendDataStore {
 
   watchedPlanets(wallet: string, options: { page?: number; pageSize?: number; timeoutMs?: number } = {}): Promise<WatchedPlanetsResponse> {
     const key = cacheKey("watched-planets", wallet, { page: options.page, pageSize: options.pageSize });
-    return this.refresh(key, () => fetchWatchedPlanets(this.apiBaseUrl, wallet, options), {
+    return this.refresh(key, (signal) => fetchWatchedPlanets(this.apiBaseUrl, wallet, { ...options, signal }), {
       deadlineMs: options.timeoutMs ?? 25_000,
       priority: "background",
       wallet,
@@ -295,9 +305,14 @@ export class BackendDataStore {
     });
   }
 
-  rift(wallet: string, planetId?: string): Promise<ChainRiftState> {
+  rift(wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<ChainRiftState> {
     const key = cacheKey("rift", wallet, planetId);
-    return this.refresh(key, () => fetchRiftState(this.apiBaseUrl, wallet, planetId));
+    return this.refresh(key, (signal) => fetchRiftState(this.apiBaseUrl, wallet, planetId, { ...options, signal }), {
+      deadlineMs: options.timeoutMs,
+      planetId,
+      priority: "selected-planet",
+      wallet,
+    });
   }
 
   alliance(wallet: string, options: WalletReadOptions = {}): Promise<ChainAllianceState> {
@@ -312,22 +327,22 @@ export class BackendDataStore {
 
   profile(wallet: string): Promise<PlayerProfile> {
     const key = cacheKey("profile", wallet);
-    return this.refresh(key, () => fetchPlayerProfile(this.apiBaseUrl, wallet));
+    return this.refresh(key, (signal) => fetchPlayerProfile(this.apiBaseUrl, wallet, { signal }));
   }
 
   settlementFunding(wallet: string): Promise<SettlementFundingState> {
     const key = cacheKey("settlement-funding", wallet);
-    return this.refresh(key, () => fetchSettlementFundingState(this.apiBaseUrl, wallet));
+    return this.refresh(key, (signal) => fetchSettlementFundingState(this.apiBaseUrl, wallet, signal));
   }
 
   referralDashboard(wallet: string): Promise<ReferralDashboard> {
     const key = cacheKey("referral-dashboard", wallet);
-    return this.refresh(key, () => fetchReferralDashboard(this.apiBaseUrl, wallet));
+    return this.refresh(key, (signal) => fetchReferralDashboard(this.apiBaseUrl, wallet, signal));
   }
 
   referralHistory(wallet: string, page = 1, pageSize = 25): Promise<ReferralHistoryResponse> {
     const key = cacheKey("referral-history", wallet, page, pageSize);
-    return this.refresh(key, () => fetchReferralHistory(this.apiBaseUrl, wallet, page, pageSize));
+    return this.refresh(key, (signal) => fetchReferralHistory(this.apiBaseUrl, wallet, page, pageSize, signal));
   }
 
   playerActivity(
@@ -335,7 +350,7 @@ export class BackendDataStore {
     options: { includeProjected?: boolean; page?: number; pageSize?: number; since?: number } = {},
   ): Promise<PlayerActivityResponse> {
     const key = cacheKey("player-activity", wallet, options);
-    return this.refresh(key, () => fetchPlayerActivity(this.apiBaseUrl, wallet, options));
+    return this.refresh(key, (signal) => fetchPlayerActivity(this.apiBaseUrl, wallet, { ...options, signal }));
   }
 
   recordPlayerActivityPresence(wallet: string): Promise<PlayerActivityPresence> {
@@ -360,7 +375,7 @@ export class BackendDataStore {
 
   playerHighscore(wallet: string): Promise<HighscoreEntry | null> {
     const key = cacheKey("player-highscore", wallet);
-    return this.refresh(key, () => fetchPlayerHighscore(this.apiBaseUrl, wallet));
+    return this.refresh(key, (signal) => fetchPlayerHighscore(this.apiBaseUrl, wallet, signal));
   }
 
   raidFinderDebris(options: { limit?: number; requestScope?: string } = {}): Promise<RaidFinderDebrisResponse> {
@@ -392,10 +407,11 @@ export class BackendDataStore {
 
   randomnessReadiness<T = unknown>(): Promise<T> {
     const key = cacheKey("randomness-readiness");
-    return this.refresh(key, async () => {
+    return this.refresh(key, async (signal) => {
       const response = await fetch(`${this.apiBaseUrl}/randomness-readiness`, {
         cache: "no-store",
         headers: { accept: "application/json" },
+        signal,
       });
       const payload = await response.json() as T & { reasons?: unknown };
       if (!response.ok) {
@@ -410,18 +426,28 @@ export class BackendDataStore {
 
   runtimeConfig<T>(url: string): Promise<T> {
     const key = cacheKey("runtime-config", url);
-    return this.refresh(key, async () => {
+    return this.refresh(key, async (signal) => {
       const response = await fetch(url, {
         headers: { accept: "application/json" },
+        signal,
       });
       if (!response.ok) throw new Error(`Runtime config failed with ${response.status}`);
       return response.json() as Promise<T>;
     });
   }
 
-  attackProtection(wallet: string, targetPlanetId: string, targetIsMoon = false): Promise<AttackProtectionStatus> {
+  attackProtection(
+    wallet: string,
+    targetPlanetId: string,
+    targetIsMoon = false,
+    options: { requestScope?: string } = {},
+  ): Promise<AttackProtectionStatus> {
     const key = cacheKey("attack-protection", wallet, targetPlanetId, targetIsMoon);
-    return this.refresh(key, () => fetchAttackProtectionStatus(this.apiBaseUrl, wallet, targetPlanetId, targetIsMoon));
+    return this.refresh(
+      key,
+      (signal) => fetchAttackProtectionStatus(this.apiBaseUrl, wallet, targetPlanetId, targetIsMoon, signal),
+      { scope: options.requestScope ?? this.contextScope },
+    );
   }
 
   fleetVisibility(wallet: string, options: FleetMissionVisibilityOptions = {}): Promise<FleetMissionVisibilityResponse> {
@@ -435,26 +461,44 @@ export class BackendDataStore {
   }
 
   fleetArchive(wallet: string, options: FleetMissionArchiveOptions = {}): Promise<FleetMissionArchiveResponse> {
-    const key = cacheKey("fleet-archive", wallet, options);
-    return this.refresh(key, () => fetchFleetMissionArchive(this.apiBaseUrl, wallet, options), { dedupe: false });
+    const { requestScope, ...fetchOptions } = options;
+    const key = cacheKey("fleet-archive", wallet, fetchOptions);
+    return this.refresh(key, (signal) => fetchFleetMissionArchive(this.apiBaseUrl, wallet, { ...fetchOptions, signal }), {
+      dedupe: false,
+      priority: "mission-control",
+      scope: requestScope ?? this.contextScope,
+    });
   }
 
-  missileArchive(wallet: string, options: { page?: number; pageSize?: number; planetId?: string } = {}): Promise<MissileAttackArchiveResponse> {
-    const key = cacheKey("missile-archive", wallet, options);
-    return this.refresh(key, () => fetchMissileAttackArchive(this.apiBaseUrl, wallet, options), { dedupe: false });
+  missileArchive(
+    wallet: string,
+    options: { page?: number; pageSize?: number; planetId?: string; requestScope?: string } = {},
+  ): Promise<MissileAttackArchiveResponse> {
+    const { requestScope, ...fetchOptions } = options;
+    const key = cacheKey("missile-archive", wallet, fetchOptions);
+    return this.refresh(key, (signal) => fetchMissileAttackArchive(this.apiBaseUrl, wallet, { ...fetchOptions, signal }), {
+      dedupe: false,
+      priority: "mission-control",
+      scope: requestScope ?? this.contextScope,
+    });
   }
 
-  globalActiveMissions(): Promise<GlobalActiveMissionsResponse> {
+  globalActiveMissions(options: { requestScope?: string } = {}): Promise<GlobalActiveMissionsResponse> {
     const key = cacheKey("global-active-missions");
-    return this.refresh(key, () => fetchGlobalActiveMissions(this.apiBaseUrl), { dedupe: false });
+    return this.refresh(key, (signal) => fetchGlobalActiveMissions(this.apiBaseUrl, signal), {
+      dedupe: false,
+      priority: "mission-control",
+      scope: options.requestScope ?? this.contextScope,
+    });
   }
 
   landingActiveMissions<T>(): Promise<T[]> {
     const key = cacheKey("landing-active-missions");
-    return this.refresh(key, async () => {
+    return this.refresh(key, async (signal) => {
       const response = await fetch(`${this.apiBaseUrl}/missions?status=active&live=1`, {
         cache: "no-store",
         headers: { accept: "application/json" },
+        signal,
       });
       if (!response.ok) throw new Error("Failed to load landing missions");
       const data = await response.json() as { missions?: T[] };
@@ -464,7 +508,7 @@ export class BackendDataStore {
 
   landingHighscores<T>(): Promise<T[]> {
     const key = cacheKey("landing-highscores");
-    return this.refresh(key, async () => {
+    return this.refresh(key, async (signal) => {
       const params = new URLSearchParams({
         category: "total",
         live: "1",
@@ -474,6 +518,7 @@ export class BackendDataStore {
       const response = await fetch(`${this.apiBaseUrl}/highscores?${params.toString()}`, {
         cache: "no-store",
         headers: { accept: "application/json" },
+        signal,
       });
       if (!response.ok) throw new Error("Failed to load landing highscores");
       const data = await response.json() as { rankings?: { total?: T[] } };
@@ -482,23 +527,35 @@ export class BackendDataStore {
   }
 
   globalMissionArchive(options: GlobalMissionArchiveOptions = {}): Promise<GlobalMissionArchiveResponse> {
-    const key = cacheKey("global-mission-archive", options);
-    return this.refresh(key, () => fetchGlobalMissionArchive(this.apiBaseUrl, options), { dedupe: false });
+    const { requestScope, ...fetchOptions } = options;
+    const key = cacheKey("global-mission-archive", fetchOptions);
+    return this.refresh(key, (signal) => fetchGlobalMissionArchive(this.apiBaseUrl, { ...fetchOptions, signal }), {
+      dedupe: false,
+      priority: "mission-control",
+      scope: requestScope ?? this.contextScope,
+    });
   }
 
-  mission(missionId: string): Promise<MissionDetailResponse> {
+  mission(missionId: string, options: { requestScope?: string } = {}): Promise<MissionDetailResponse> {
     const key = cacheKey("mission", missionId);
-    return this.refresh(key, () => fetchMission(this.apiBaseUrl, missionId), { dedupe: false });
+    return this.refresh(key, (signal) => fetchMission(this.apiBaseUrl, missionId, signal), {
+      dedupe: false,
+      priority: "mission-control",
+      scope: options.requestScope ?? this.contextScope,
+    });
   }
 
-  battleReports(): Promise<BattleReport[]> {
+  battleReports(options: { requestScope?: string } = {}): Promise<BattleReport[]> {
     const key = cacheKey("battle-reports");
-    return this.refresh(key, () => fetchBattleReports(this.apiBaseUrl));
+    return this.refresh(key, (signal) => fetchBattleReports(this.apiBaseUrl, signal), {
+      priority: "mission-control",
+      scope: options.requestScope ?? this.contextScope,
+    });
   }
 
   entityMedia(entityKind: EntityMediaKind, entityId: string): Promise<EntityMediaResponse> {
     const key = cacheKey("entity-media", entityKind, entityId);
-    return this.refresh(key, () => fetchEntityMedia(this.apiBaseUrl, entityKind, entityId));
+    return this.refresh(key, (signal) => fetchEntityMedia(this.apiBaseUrl, entityKind, entityId, signal));
   }
 
   async saveEntityMedia(
@@ -520,7 +577,7 @@ export class BackendDataStore {
 
   burningChicken(owner: string, tokenId: string, config: BurningChickenConfig): Promise<unknown> {
     const key = cacheKey("burning-chicken", owner, tokenId, config.nftContractAddress);
-    return this.refresh(key, () => fetchBurningChickenForOwner(owner, tokenId, config));
+    return this.refresh(key, (signal) => fetchBurningChickenForOwner(owner, tokenId, config, signal));
   }
 
 }

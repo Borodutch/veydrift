@@ -163,13 +163,14 @@ describe("VEY-KANEO-433 Mission Control auto-poll wiring", () => {
     // loot/report without a manual Refresh, so the open detail is re-fetched on the same cadence.
     expect(source).toContain("const refreshOpenMissionDetailSilently = useCallback(async () => {");
     // The silent refresher must NOT toggle the loading spinner (that is the manual Refresh's job),
-    // so it only ever touches setMissionDetail / setMissionDetailError, never setMissionDetailLoading.
-    const silent = source.slice(
-      source.indexOf("const refreshOpenMissionDetailSilently"),
-      source.indexOf("}, [apiBaseUrl, missionDetailId]);", source.indexOf("const refreshOpenMissionDetailSilently")),
-    );
+    // The canonical store owns the detail and freshness, so the silent path only refreshes the
+    // shared mission key and never toggles a component-local loading or response setter.
+    const silentStart = source.indexOf("const refreshOpenMissionDetailSilently");
+    const silent = source.slice(silentStart, source.indexOf("\n  useEffect(() =>", silentStart));
     expect(silent).not.toContain("setMissionDetailLoading");
-    expect(silent).toContain("setMissionDetail(detail)");
+    expect(silent).not.toContain("setMissionDetail(detail)");
+    expect(silent).toContain("backendData!.mission(missionDetailId");
+    expect(source).toContain("const missionDetailSnapshot = useBackendDataSnapshot<MissionDetailResponse>");
     // The ETA-tightened transaction-priority refresh pulls the open report too.
     expect(source).toContain('coordinateRefresh("mission-control-resolution", "transaction"');
     expect(source).toContain("Promise.allSettled([refreshMissionControl(), refreshOpenMissionDetailSilently()])");
@@ -190,6 +191,6 @@ describe("VEY-KANEO-653 pending mission report polling", () => {
     const source = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.url)).text();
     expect(source).toContain("window.setInterval(pollPendingReport, MISSION_REPORT_PENDING_POLL_INTERVAL_MS)");
     expect(source).toContain("!shouldPollPendingMissionReport(missionDetail)");
-    expect(source).toContain("setMissionDetail(detail)");
+    expect(source).toContain('backendData!.mission(missionDetailId, { requestScope: "mission-detail-navigation" })');
   });
 });

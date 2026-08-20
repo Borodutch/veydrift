@@ -53,6 +53,7 @@ const priorityOrder: Record<GameStatePriority, number> = {
 export class GameStateReadScheduler {
   private active = 0;
   private readonly queue: ScheduledRead<unknown>[] = [];
+  private readonly tasks = new Map<AbortController, ScheduledRead<unknown>>();
 
   constructor(private readonly concurrency = 3) {}
 
@@ -71,6 +72,7 @@ export class GameStateReadScheduler {
         controller.abort(reason);
         const index = this.queue.indexOf(task as ScheduledRead<unknown>);
         if (index >= 0) this.queue.splice(index, 1);
+        this.tasks.delete(controller);
         if (task.started && !task.released) {
           task.released = true;
           this.active = Math.max(0, this.active - 1);
@@ -90,6 +92,7 @@ export class GameStateReadScheduler {
         timer,
         started: false,
       };
+      this.tasks.set(controller, task as ScheduledRead<unknown>);
       this.queue.push(task as ScheduledRead<unknown>);
       this.queue.sort((left, right) => left.priority - right.priority || left.deadlineAt - right.deadlineAt);
       this.drain();
@@ -99,12 +102,18 @@ export class GameStateReadScheduler {
 
   cancel(controller: AbortController, reason = new DOMException("Request cancelled", "AbortError")): void {
     if (!controller.signal.aborted) controller.abort(reason);
-    const index = this.queue.findIndex((task) => task.controller === controller);
-    if (index < 0) return;
-    const [task] = this.queue.splice(index, 1);
+    const task = this.tasks.get(controller);
     if (!task) return;
+    this.tasks.delete(controller);
+    const index = this.queue.findIndex((task) => task.controller === controller);
+    if (index >= 0) this.queue.splice(index, 1);
     clearTimeout(task.timer);
     task.reject(reason);
+    if (task.started && !task.released) {
+      task.released = true;
+      this.active = Math.max(0, this.active - 1);
+      this.drain();
+    }
   }
 
   private drain(): void {
@@ -118,6 +127,7 @@ export class GameStateReadScheduler {
         .then(task.resolve, task.reject)
         .finally(() => {
           clearTimeout(task.timer);
+          this.tasks.delete(task.controller);
           if (!task.released) {
             task.released = true;
             this.active = Math.max(0, this.active - 1);
@@ -161,6 +171,26 @@ export class GameStateStore {
       planetId: options.planetId,
       wallet: normalizeWallet(options.wallet),
     });
+    this.emit();
+  }
+
+  fail(key: string, error: string | undefined): void {
+    const generation = this.nextGeneration(key);
+    const current = this.entries.get(key);
+    this.entries.set(key, {
+      ...current,
+      error,
+      freshness: error
+        ? (current?.data === undefined ? "failed" : "delayed")
+        : (current?.data === undefined ? "delayed" : "fresh"),
+      generation,
+    });
+    this.emit();
+  }
+
+  clear(key: string): void {
+    this.nextGeneration(key);
+    this.entries.delete(key);
     this.emit();
   }
 

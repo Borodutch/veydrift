@@ -3882,6 +3882,7 @@ export async function fetchBurningChickenForOwner(
   account: string,
   tokenId: string,
   config: BurningChickenConfig,
+  signal?: AbortSignal,
 ): Promise<BurningChickenNft> {
   const normalizedTokenId = tokenId.trim();
   if (!/^\d+$/.test(normalizedTokenId) || BigInt(normalizedTokenId) <= 0n) {
@@ -3894,8 +3895,10 @@ export async function fetchBurningChickenForOwner(
       config,
       config.nftContractAddress,
       encodeUintCall(ERC721_SELECTORS.ownerOf, normalizedTokenId),
+      signal,
     );
-  } catch {
+  } catch (error) {
+    if (signal?.aborted) throw error;
     throw new Error(`Chicken #${normalizedTokenId} was not found on Base mainnet.`);
   }
 
@@ -3912,6 +3915,7 @@ async function callBaseMainnetContract(
   config: BurningChickenConfig,
   contractAddress: string,
   data: string,
+  signal?: AbortSignal,
 ): Promise<string> {
   const response = await fetch(config.rpcUrl || BASE_MAINNET.rpcUrls[0], {
     body: JSON.stringify({
@@ -3930,6 +3934,7 @@ async function callBaseMainnetContract(
       "content-type": "application/json",
     },
     method: "POST",
+    signal,
   });
   const body = await response.json() as { error?: { message?: string }; result?: string };
   if (!response.ok || body.error || typeof body.result !== "string") {
@@ -4352,8 +4357,8 @@ type SettlementFundingResponse = Omit<SettlementFundingState, "balanceWei" | "st
   startPriceWei: string | null;
 };
 
-export async function fetchSettlementFundingState(apiUrl: string, wallet: string): Promise<SettlementFundingState> {
-  const response = await fetchWalletJson<SettlementFundingResponse>(apiUrl, wallet, "settlement-funding", "Settlement funding");
+export async function fetchSettlementFundingState(apiUrl: string, wallet: string, signal?: AbortSignal): Promise<SettlementFundingState> {
+  const response = await fetchWalletJson<SettlementFundingResponse>(apiUrl, wallet, "settlement-funding", "Settlement funding", { signal });
   return {
     ...response,
     balanceWei: response.balanceWei === null ? null : BigInt(response.balanceWei),
@@ -4422,12 +4427,13 @@ export async function requestReferralWalletSignature(
   return requestPersonalSignature(provider, wallet, referralWalletMessage(wallet, action, commitment));
 }
 
-export async function fetchReferralDashboard(apiUrl: string, wallet: string): Promise<ReferralDashboard> {
+export async function fetchReferralDashboard(apiUrl: string, wallet: string, signal?: AbortSignal): Promise<ReferralDashboard> {
   return fetchWalletJson<ReferralDashboard>(
     apiUrl,
     wallet,
     "referrals",
-    "Referral invites"
+    "Referral invites",
+    { signal },
   );
 }
 
@@ -4435,7 +4441,8 @@ export async function fetchReferralHistory(
   apiUrl: string,
   wallet: string,
   page = 1,
-  pageSize = 25
+  pageSize = 25,
+  signal?: AbortSignal,
 ): Promise<ReferralHistoryResponse> {
   const params = new URLSearchParams({
     page: String(page),
@@ -4445,7 +4452,8 @@ export async function fetchReferralHistory(
     apiUrl,
     wallet,
     `referrals/history?${params.toString()}`,
-    "Invite history"
+    "Invite history",
+    { signal },
   );
 }
 
@@ -4556,7 +4564,7 @@ export async function fetchWalletPlanets(apiUrl: string, wallet: string, options
 export async function fetchWatchedPlanets(
   apiUrl: string,
   wallet: string,
-  options: { page?: number; pageSize?: number; timeoutMs?: number } = {}
+  options: { page?: number; pageSize?: number; signal?: AbortSignal; timeoutMs?: number } = {}
 ): Promise<WatchedPlanetsResponse> {
   const params = new URLSearchParams();
   params.set("page", String(options.page ?? 1));
@@ -4566,7 +4574,7 @@ export async function fetchWatchedPlanets(
     wallet,
     `watched-planets?${params.toString()}`,
     "Watched planets",
-    { timeoutMs: options.timeoutMs ?? WATCHED_PLANETS_API_READ_TIMEOUT_MS }
+    { signal: options.signal, timeoutMs: options.timeoutMs ?? WATCHED_PLANETS_API_READ_TIMEOUT_MS }
   );
 }
 
@@ -4610,7 +4618,8 @@ export async function fetchAttackProtectionStatus(
   apiUrl: string,
   wallet: string,
   targetPlanetId: string,
-  targetIsMoon = false
+  targetIsMoon = false,
+  signal?: AbortSignal,
 ): Promise<AttackProtectionStatus> {
   const params = new URLSearchParams();
   params.set("targetPlanetId", targetPlanetId);
@@ -4619,7 +4628,8 @@ export async function fetchAttackProtectionStatus(
     apiUrl,
     wallet,
     `attack-protection?${params.toString()}`,
-    "Attack protection"
+    "Attack protection",
+    { signal },
   );
 }
 
@@ -4668,6 +4678,7 @@ export async function fetchFleetMissionArchive(
     page?: number;
     pageSize?: number;
     planetId?: string;
+    signal?: AbortSignal;
   } = {}
 ): Promise<FleetMissionArchiveResponse> {
   const params = new URLSearchParams();
@@ -4683,21 +4694,21 @@ export async function fetchFleetMissionArchive(
     wallet,
     `missions?${params.toString()}`,
     "Mission archive",
-    { fresh: true },
+    { fresh: true, signal: options.signal },
   );
 }
 
 export async function fetchPlayerActivity(
   apiUrl: string,
   wallet: string,
-  options: { includeProjected?: boolean; page?: number; pageSize?: number; since?: number } = {}
+  options: { includeProjected?: boolean; page?: number; pageSize?: number; signal?: AbortSignal; since?: number } = {}
 ): Promise<PlayerActivityResponse> {
   const params = new URLSearchParams();
   params.set("page", String(options.page ?? 1));
   params.set("pageSize", String(options.pageSize ?? 25));
   if (options.since !== undefined) params.set("since", String(Math.max(0, Math.floor(options.since))));
   if (options.includeProjected) params.set("includeProjected", "true");
-  return fetchWalletJson<PlayerActivityResponse>(apiUrl, wallet, `activity?${params.toString()}`, "Player activity");
+  return fetchWalletJson<PlayerActivityResponse>(apiUrl, wallet, `activity?${params.toString()}`, "Player activity", { signal: options.signal });
 }
 
 export function playerActivityPresenceUrl(apiUrl: string, wallet: string): string {
@@ -4714,7 +4725,7 @@ export async function recordPlayerActivityPresence(apiUrl: string, wallet: strin
 export async function fetchMissileAttackArchive(
   apiUrl: string,
   wallet: string,
-  options: { page?: number; pageSize?: number; planetId?: string } = {}
+  options: { page?: number; pageSize?: number; planetId?: string; signal?: AbortSignal } = {}
 ): Promise<MissileAttackArchiveResponse> {
   const params = new URLSearchParams();
   if (options.planetId) params.set("planetId", options.planetId);
@@ -4725,15 +4736,15 @@ export async function fetchMissileAttackArchive(
     wallet,
     `missile-attacks?${params.toString()}`,
     "Missile strike archive",
-    { fresh: true },
+    { fresh: true, signal: options.signal },
   );
 }
 
-export async function fetchGlobalActiveMissions(apiUrl: string): Promise<GlobalActiveMissionsResponse> {
+export async function fetchGlobalActiveMissions(apiUrl: string, signal?: AbortSignal): Promise<GlobalActiveMissionsResponse> {
   return fetchGameApiJson<GlobalActiveMissionsResponse>(
     `${apiUrl.replace(/\/+$/, "")}/missions?status=active&live=1`,
     "Active missions",
-    { cache: "no-store", recentReadTtlMs: 0 },
+    { cache: "no-store", recentReadTtlMs: 0, signal },
   );
 }
 
@@ -4745,6 +4756,7 @@ export async function fetchGlobalMissionArchive(
     page?: number;
     pageSize?: number;
     planetId?: string;
+    signal?: AbortSignal;
     summaryOnly?: boolean;
   } = {}
 ): Promise<GlobalMissionArchiveResponse> {
@@ -4760,22 +4772,23 @@ export async function fetchGlobalMissionArchive(
   return fetchGameApiJson<GlobalMissionArchiveResponse>(
     `${apiUrl.replace(/\/+$/, "")}/missions?${params.toString()}`,
     "Mission archive",
-    { cache: "no-store", recentReadTtlMs: 0 },
+    { cache: "no-store", recentReadTtlMs: 0, signal: options.signal },
   );
 }
 
-export async function fetchMission(apiUrl: string, missionId: string): Promise<MissionDetailResponse> {
+export async function fetchMission(apiUrl: string, missionId: string, signal?: AbortSignal): Promise<MissionDetailResponse> {
   return fetchGameApiJson<MissionDetailResponse>(
     `${apiUrl.replace(/\/+$/, "")}/mission/${encodeURIComponent(missionId)}`,
     "Mission",
-    { cache: "no-store", recentReadTtlMs: 0 },
+    { cache: "no-store", recentReadTtlMs: 0, signal },
   );
 }
 
-export async function fetchBattleReports(apiUrl: string): Promise<BattleReport[]> {
+export async function fetchBattleReports(apiUrl: string, signal?: AbortSignal): Promise<BattleReport[]> {
   return fetchGameApiJson<BattleReport[]>(
     `${apiUrl.replace(/\/+$/, "")}/battle-reports`,
-    "Battle reports"
+    "Battle reports",
+    { signal },
   );
 }
 
@@ -4799,16 +4812,16 @@ export async function fetchResearchState(apiUrl: string, wallet: string, planetI
   return fetchWalletJson<ChainResearchState>(apiUrl, wallet, withWalletReadOptions("research", planetId, options), "Research", options);
 }
 
-export async function fetchRiftState(apiUrl: string, wallet: string, planetId?: string): Promise<ChainRiftState> {
-  return fetchWalletJson<ChainRiftState>(apiUrl, wallet, withPlanetId("rift", planetId), "Rift");
+export async function fetchRiftState(apiUrl: string, wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<ChainRiftState> {
+  return fetchWalletJson<ChainRiftState>(apiUrl, wallet, withWalletReadOptions("rift", planetId, options), "Rift", options);
 }
 
 export async function fetchAllianceState(apiUrl: string, wallet: string, options: WalletReadOptions = {}): Promise<ChainAllianceState> {
   return fetchWalletJson<ChainAllianceState>(apiUrl, wallet, "alliance", "Alliance", options);
 }
 
-export async function fetchPlayerProfile(apiUrl: string, wallet: string): Promise<PlayerProfile> {
-  return fetchWalletJson<PlayerProfile>(apiUrl, wallet, "profile", "Player profile");
+export async function fetchPlayerProfile(apiUrl: string, wallet: string, options: WalletReadOptions = {}): Promise<PlayerProfile> {
+  return fetchWalletJson<PlayerProfile>(apiUrl, wallet, "profile", "Player profile", options);
 }
 
 export async function updatePlayerDisplayName(
@@ -5013,10 +5026,11 @@ export async function fetchHighscores(
   );
 }
 
-export async function fetchPlayerHighscore(apiUrl: string, wallet: string): Promise<HighscoreEntry | null> {
+export async function fetchPlayerHighscore(apiUrl: string, wallet: string, signal?: AbortSignal): Promise<HighscoreEntry | null> {
   const response = await fetchGameApiJson<{ entry?: HighscoreEntry | null }>(
     `${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(wallet)}/highscore`,
     "Player highscore",
+    { signal },
   );
   return response.entry ?? null;
 }

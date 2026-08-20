@@ -44,6 +44,7 @@ import { Skeleton, SkeletonRegion, skeletonList } from "./Skeleton";
 import { missionTypeLabel } from "./MissionControlPage";
 import { buildInspectPath } from "../inspectRoutes";
 import { backendDataStoreFor } from "../backendDataStore";
+import { useBackendDataSnapshot } from "../useBackendDataSnapshot";
 
 interface Props {
   account?: string | undefined;
@@ -164,115 +165,80 @@ export function PlanetDetail({
       : null,
     [coords.galaxy, coords.position, coords.system, homeCoords?.galaxy, homeCoords?.position, homeCoords?.system, homePlanet],
   );
-  const [loadedPlanet, setPlanet] = useState<Planet | null>(trustedHomePlanet);
-  const [source, setSource] = useState<"api" | "error" | "loading">("loading");
-  const [attackProtection, setAttackProtection] = useState<AttackProtectionStatus | null>(null);
-  const [activeMissions, setActiveMissions] = useState<FleetMissionSummary[] | null>(null);
+  const backendData = useMemo(() => backendDataStoreFor(apiBaseUrl), [apiBaseUrl]);
+  const systemSnapshot = useBackendDataSnapshot<ApiSystemResponse>(
+    backendData,
+    backendData.key("system", coords.galaxy, coords.system, { detail: "full" }),
+  );
+  const loadedPlanet = systemSnapshot?.data
+    ? planetsFromSystemResponse(systemSnapshot.data).find((item) => item.position === coords.position) ?? null
+    : null;
+  const source: "api" | "error" | "loading" = systemSnapshot?.data
+    ? "api"
+    : systemSnapshot?.freshness === "failed" || systemSnapshot?.freshness === "delayed"
+      ? "error"
+      : "loading";
   const [imageLoaded, setImageLoaded] = useState(false);
   const imageRef = useRef<HTMLImageElement>(null);
-  const currentRequestKey = useRef(planetDetailRequestKey(coords));
-  currentRequestKey.current = planetDetailRequestKey(coords);
   const planet = planetDetailVisiblePlanet(loadedPlanet, coords, trustedHomePlanet);
   const isHome = planet ? sameCoordinates(homeCoords, planet) : false;
+  const targetPlanetId = planet?.occupiedBy?.planetId;
+  const attackProtectionSnapshot = useBackendDataSnapshot<AttackProtectionStatus>(
+    backendData,
+    account && targetPlanetId && !isHome
+      ? backendData.key("attack-protection", account, targetPlanetId, false)
+      : undefined,
+  );
+  const activeMissionSnapshot = useBackendDataSnapshot<GlobalActiveMissionsResponse>(
+    backendData,
+    targetPlanetId ? backendData.key("global-active-missions") : undefined,
+  );
+  const attackProtection = attackProtectionSnapshot?.data ?? null;
+  const activeMissions = !targetPlanetId
+    ? []
+    : activeMissionSnapshot?.data
+      ? activeMissionSnapshot.data.missions.filter((mission) => (
+          mission.originPlanetId === targetPlanetId || mission.targetPlanetId === targetPlanetId
+        ))
+      : null;
 
   useEffect(() => {
-    let cancelled = false;
-    const requestKey = planetDetailRequestKey(coords);
-    setPlanet((current) => planetDetailRefreshStartPlanet({
-      coords,
-      currentPlanet: current,
-      trustedHomePlanet,
-    }));
-    setSource("loading");
-
-    const backendData = backendDataStoreFor(apiBaseUrl);
     backendData.cancelScope("planet-detail-navigation");
     backendData.system<ApiSystemResponse>(coords.galaxy, coords.system, {
       detail: "full",
       requestScope: "planet-detail-navigation",
     })
-      .then((payload) => {
-        if (!canApplyPlanetDetailResponse(requestKey, coords, cancelled)
-          || currentRequestKey.current !== requestKey) return;
-        const apiPlanet = planetsFromSystemResponse(payload).find((item) => item.position === coords.position) ?? null;
-        setPlanet((current) => planetDetailRefreshResultPlanet({
-          apiPlanet,
-          coords,
-          currentPlanet: current,
-          trustedHomePlanet,
-        }));
-        setSource("api");
-      })
       .catch((error) => {
-        if (!cancelled) {
-          console.error(error);
-          setSource("error");
-        }
+        if (!(error instanceof DOMException && error.name === "AbortError")) console.error(error);
       });
 
     return () => {
-      cancelled = true;
       backendData.cancelScope("planet-detail-navigation");
     };
   }, [
-    apiBaseUrl,
+    backendData,
     coords.galaxy,
     coords.position,
     coords.system,
-    trustedHomePlanet,
   ]);
 
   useEffect(() => {
-    const targetPlanetId = planet?.occupiedBy?.planetId;
     if (!account || !targetPlanetId || isHome) {
-      setAttackProtection(null);
       return;
     }
-
-    let cancelled = false;
-    backendDataStoreFor(apiBaseUrl).attackProtection(account, targetPlanetId)
-      .then((status) => {
-        if (!cancelled) setAttackProtection(status);
-      })
+    backendData.attackProtection(account, targetPlanetId, false, { requestScope: "planet-detail-navigation" })
       .catch((error) => {
-        if (!cancelled) {
-          console.error(error);
-          setAttackProtection(null);
-        }
+        if (!(error instanceof DOMException && error.name === "AbortError")) console.error(error);
       });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [account, apiBaseUrl, isHome, planet?.occupiedBy?.planetId]);
+  }, [account, backendData, isHome, targetPlanetId]);
 
   useEffect(() => {
-    const planetId = planet?.occupiedBy?.planetId;
-    if (!planetId) {
-      setActiveMissions([]);
-      return;
-    }
-
-    let cancelled = false;
-    setActiveMissions(null);
-    backendDataStoreFor(apiBaseUrl).globalActiveMissions()
-      .then((payload) => {
-        if (cancelled) return;
-        setActiveMissions(payload.missions.filter((mission) => (
-          mission.originPlanetId === planetId || mission.targetPlanetId === planetId
-        )));
-      })
+    if (!targetPlanetId) return;
+    backendData.globalActiveMissions({ requestScope: "planet-detail-navigation" })
       .catch((error) => {
-        if (!cancelled) {
-          console.error(error);
-          setActiveMissions([]);
-        }
+        if (!(error instanceof DOMException && error.name === "AbortError")) console.error(error);
       });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [apiBaseUrl, planet?.occupiedBy?.planetId]);
+  }, [backendData, targetPlanetId]);
 
   useEffect(() => {
     setImageLoaded(isImageReady(imageRef.current));

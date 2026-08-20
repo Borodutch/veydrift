@@ -31,22 +31,22 @@ refresh trigger
 
 `backendDataStoreFor(apiBaseUrl)` returns the shared canonical store for a normalized API URL. Do not construct a component-local coordinator, request mutex, or authoritative response cache.
 
-Completed responses and freshness changes notify every subscriber. Rankings and Raid Finder consume store snapshots directly; selected-planet, top-bar, Mission Control, Galaxy, and detail refreshes share the same scheduled boundary and generation/cancellation rules while their existing view models remain render-only projections.
+Completed responses and freshness changes notify every subscriber. Rankings, Raid Finder, selected-planet modules, the top bar/Overview shell, Mission Control, Galaxy, and planet/moon detail all subscribe to canonical snapshots. Their remaining local state is limited to interaction and render projections such as the selected tab, page, filters, or composed display rows.
 
 ## Planet state
 
-`planetSectionStore.ts` remains the per-planet render adapter for the large playable shell. Canonical response ownership and freshness live in `GameStateStore`; the adapter groups typed planet sections for existing component props without authorizing stale responses.
+`planetSectionStore.ts` remains a render-only cache for derived per-planet universe projections used by mission composition. Indexed settlement, queues, infrastructure, moon, defense, shipyard, research, and rift responses no longer live there; their data and freshness come directly from `GameStateStore` snapshots.
 
 For example, Infrastructure data follows this path:
 
 ```text
 BackendDataStore.infrastructure(wallet, planetId)
   -> canonical store publishes the indexed response and revision
-  -> project the confirmed response into the planet section for planetId
-  -> Overview, Infrastructure, planet detail, and selector consumers
+  -> every subscriber for wallet + planetId rerenders
+  -> Overview, Infrastructure, top-bar/resource, and selector projections
 ```
 
-The planet section store never performs network requests. The canonical store keeps last-good data on delayed/failed refreshes, and only the current generation can replace it.
+The planet section store never performs network requests or owns backend loading/error state. The canonical store keeps last-good data on delayed/failed refreshes, and only the current generation can replace it.
 
 ## Canonical planet resources
 
