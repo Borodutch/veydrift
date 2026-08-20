@@ -8,7 +8,7 @@
     "fmt:check": "forge fmt --check",
     "check": "bun run check:fast && bun run check:storage && bun run manifest:check",
     "check:fast": "forge fmt --check && bun run check:upgrade-sizes",
-    "check:upgrade-sizes": "forge build src/VeydriftGame.sol src/VeydriftMoonSystem.sol src/VeydriftCombatModule.sol src/VeydriftGameplayModule.sol src/VeydriftPlanetManagementModule.sol src/VeydriftAttackProtectionModule.sol src/VeydriftAcsAttackModule.sol src/VeydriftColonizationModule.sol src/VeydriftDefenseHoldModule.sol src/VeydriftStateMigrationModule.sol src/VeydriftFirstPlanetSettlementModule.sol --sizes --skip test --skip script",
+    "check:upgrade-sizes": "forge build src/VeydriftGame.sol src/VeydriftMoonSystem.sol src/VeydriftCombatModule.sol src/VeydriftGameplayModule.sol src/VeydriftPlanetManagementModule.sol src/VeydriftAttackProtectionModule.sol src/VeydriftAcsAttackModule.sol src/VeydriftColonizationModule.sol src/VeydriftShipProductionModule.sol src/VeydriftDefenseHoldModule.sol src/VeydriftStateMigrationModule.sol src/VeydriftFirstPlanetSettlementModule.sol --sizes --skip test --skip script",
     "check:storage": "FOUNDRY_OPTIMIZER=false FOUNDRY_VIA_IR=true forge build --force --extra-output storageLayout --skip test --skip script && node scripts/check-storage-layout.mjs",
     "storage:check": "bun run check:storage",
     "test": "node scripts/run-tests-separately.mjs",
