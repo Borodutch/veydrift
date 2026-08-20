@@ -110,7 +110,7 @@ contract MoonDefenseHoldIsolationHarness is VeydriftGameStorage {
     }
 }
 
-contract VeydriftMoonSystemTest is Test {
+abstract contract VeydriftMoonSystemTestBase is Test {
     uint128 internal constant RESERVE_FUNDING = 1_000_000_000_000;
 
     address internal admin = address(0xA11CE);
@@ -236,7 +236,7 @@ contract VeydriftMoonSystemTest is Test {
         vm.deal(player, 1 ether);
     }
 
-    function testProxyInitializationAndOwnerUpgradeGate() public {
+    function _testProxyInitializationAndOwnerUpgradeGate() internal {
         VeydriftMoonSystem proxied = VeydriftMoonSystem(
             address(
                 new ERC1967Proxy(
@@ -264,7 +264,7 @@ contract VeydriftMoonSystemTest is Test {
         assertEq(address(proxied.game()), address(game));
     }
 
-    function testDirectPlayerMoonCreationReverts() public {
+    function _testDirectPlayerMoonCreationReverts() internal {
         uint256 planetId = _startPlanet();
 
         vm.prank(player);
@@ -273,7 +273,7 @@ contract VeydriftMoonSystemTest is Test {
         assertFalse(moons.moon(planetId).exists);
     }
 
-    function testAdminMoonCreationAndLunarBaseFields() public {
+    function _testAdminMoonCreationAndLunarBaseFields() internal {
         uint256 planetId = _startPlanet();
 
         VeydriftMoonSystem.Moon memory moon = moons.createMoon(planetId);
@@ -301,7 +301,7 @@ contract VeydriftMoonSystemTest is Test {
         assertEq(moons.moon(planetId).fields, moon.fields + 3);
     }
 
-    function testChickenBurnGrantCreatesMoonForOwnedPlanet() public {
+    function _testChickenBurnGrantCreatesMoonForOwnedPlanet() internal {
         uint256 planetId = _startPlanet();
         VeydriftGameStorage.Planet memory planetRef = game.planet(planetId);
         bytes32 burnId = keccak256("base-mainnet-tx-1-log-0");
@@ -320,7 +320,7 @@ contract VeydriftMoonSystemTest is Test {
         assertEq(moons.chickenBurnMoonGrantCountOf(player), 1);
     }
 
-    function testChickenBurnGrantRejectsDuplicateBurnEvent() public {
+    function _testChickenBurnGrantRejectsDuplicateBurnEvent() internal {
         uint256 planetId = _startPlanet();
         bytes32 burnId = keccak256("base-mainnet-tx-1-log-0");
 
@@ -334,7 +334,7 @@ contract VeydriftMoonSystemTest is Test {
         moons.grantMoonFromChickenBurn(burnId, player, secondPlanetId);
     }
 
-    function testChickenBurnGrantAllowsMoreThanTwoMoonsForAPlayer() public {
+    function _testChickenBurnGrantAllowsMoreThanTwoMoonsForAPlayer() internal {
         uint256 firstPlanetId = _startPlanet();
         uint256 secondPlanetId = 1_002;
         uint256 thirdPlanetId = 1_003;
@@ -352,7 +352,7 @@ contract VeydriftMoonSystemTest is Test {
         assertEq(moons.chickenBurnMoonGrantCountOf(player), 3);
     }
 
-    function testChickenBurnGrantRejectsWrongOwnerAndMissingPlanet() public {
+    function _testChickenBurnGrantRejectsWrongOwnerAndMissingPlanet() internal {
         uint256 planetId = _startPlanet();
 
         address impostor = address(0xBAD);
@@ -363,7 +363,7 @@ contract VeydriftMoonSystemTest is Test {
         moons.grantMoonFromChickenBurn(keccak256("no-planet"), player, 99_999);
     }
 
-    function testChickenBurnGrantIsAdminOnly() public {
+    function _testChickenBurnGrantIsAdminOnly() internal {
         uint256 planetId = _startPlanet();
 
         vm.prank(player);
@@ -371,14 +371,14 @@ contract VeydriftMoonSystemTest is Test {
         moons.grantMoonFromChickenBurn(keccak256("non-admin"), player, planetId);
     }
 
-    function testMoonChanceCalculationAndCap() public view {
+    function _testMoonChanceCalculationAndCap() internal view {
         assertEq(moons.moonChanceBps(99_999, 0), 0);
         assertEq(moons.moonChanceBps(100_000, 0), 100);
         assertEq(moons.moonChanceBps(750_000, 250_000), 1_000);
         assertEq(moons.moonChanceBps(3_000_000, 0), 2_000);
     }
 
-    function testMoonDestructionParityChances() public view {
+    function _testMoonDestructionParityChances() internal view {
         assertEq(moons.moonDestructionChanceBps(3_400, 1), 4_200);
         assertEq(moons.moonDestructionChanceBps(8_500, 1), 800);
         assertEq(moons.moonDestructionChanceBps(3_400, 9), 10_000);
@@ -387,7 +387,7 @@ contract VeydriftMoonSystemTest is Test {
         assertEq(moons.moonDeathstarDestructionChanceBps(8_500), 4_600);
     }
 
-    function testBattleMoonChanceRequestsRandomnessAndBlocksPendingOutcome() public {
+    function _testBattleMoonChanceRequestsRandomnessAndBlocksPendingOutcome() internal {
         uint256 planetId = _startPlanet();
         bytes32 commitment = randomness.randomnessCommitment(123);
         vm.prank(admin);
@@ -424,7 +424,7 @@ contract VeydriftMoonSystemTest is Test {
         moons.finalizeMoonChance(outcomeId);
     }
 
-    function testFulfilledMoonChanceCreatesMoonDeterministically() public {
+    function _testFulfilledMoonChanceCreatesMoonDeterministically() internal {
         uint256 planetId = _startPlanet();
 
         vm.prank(reporter);
@@ -465,7 +465,7 @@ contract VeydriftMoonSystemTest is Test {
         moons.finalizeMoonChance(outcomeId);
     }
 
-    function testFulfilledMoonChanceCanResolveNoMoon() public {
+    function _testFulfilledMoonChanceCanResolveNoMoon() internal {
         uint256 planetId = _startPlanet();
 
         vm.prank(reporter);
@@ -489,7 +489,7 @@ contract VeydriftMoonSystemTest is Test {
         assertEq(moonDiameterKm, 0);
     }
 
-    function testMoonChanceRejectsDuplicateRerollAndExistingMoonSkipsCreation() public {
+    function _testMoonChanceRejectsDuplicateRerollAndExistingMoonSkipsCreation() internal {
         uint256 planetId = _startPlanet();
 
         vm.prank(reporter);
@@ -512,7 +512,7 @@ contract VeydriftMoonSystemTest is Test {
         assertEq(requestId, 0);
     }
 
-    function testMoonChanceRequiresReporterAndQualifyingDebris() public {
+    function _testMoonChanceRequiresReporterAndQualifyingDebris() internal {
         uint256 planetId = _startPlanet();
 
         vm.expectRevert(
@@ -527,7 +527,7 @@ contract VeydriftMoonSystemTest is Test {
         moons.requestMoonChanceFromBattle(82, planetId, 99_999, 0);
     }
 
-    function testMoonDestructionRequestsRandomnessAndDestroysMoonState() public {
+    function _testMoonDestructionRequestsRandomnessAndDestroysMoonState() internal {
         uint256 planetId = _startPlanet();
 
         VeydriftMoonSystem.Moon memory moon = _createMoon(planetId);
@@ -613,7 +613,7 @@ contract VeydriftMoonSystemTest is Test {
         assertFalse(deathstarsDestroyed);
     }
 
-    function testMoonDestructionCanDestroyDeathstarsWithoutDestroyingMoon() public {
+    function _testMoonDestructionCanDestroyDeathstarsWithoutDestroyingMoon() internal {
         uint256 planetId = _startPlanet();
 
         VeydriftMoonSystem.Moon memory moon = _createMoon(planetId);
@@ -635,7 +635,7 @@ contract VeydriftMoonSystemTest is Test {
         assertTrue(moons.moon(planetId).exists);
     }
 
-    function testMoonDestructionRejectsInvalidRequestsAndDuplicates() public {
+    function _testMoonDestructionRejectsInvalidRequestsAndDuplicates() internal {
         uint256 planetId = _startPlanet();
 
         vm.prank(reporter);
@@ -665,7 +665,7 @@ contract VeydriftMoonSystemTest is Test {
         moons.requestMoonDestructionFromBattle(93, planetId, reporter, 1);
     }
 
-    function testMoonBuildingUpgradeSpendsMoonResources() public {
+    function _testMoonBuildingUpgradeSpendsMoonResources() internal {
         uint256 planetId = _startPlanet();
 
         _createMoon(planetId);
@@ -697,7 +697,7 @@ contract VeydriftMoonSystemTest is Test {
         );
     }
 
-    function testMoonFacilitiesUnlockWithMoonRoboticsAndFields() public {
+    function _testMoonFacilitiesUnlockWithMoonRoboticsAndFields() internal {
         uint256 planetId = _startPlanet();
 
         _createMoon(planetId);
@@ -735,7 +735,7 @@ contract VeydriftMoonSystemTest is Test {
         assertEq(uint8(construction.building), uint8(MoonBuilding.JumpGate));
     }
 
-    function testMoonFieldCapacityRequiresOpenFieldEvenForLunarBase() public {
+    function _testMoonFieldCapacityRequiresOpenFieldEvenForLunarBase() internal {
         uint256 planetId = _startPlanet();
 
         _createMoon(planetId);
@@ -751,7 +751,7 @@ contract VeydriftMoonSystemTest is Test {
         moons.startMoonBuildingUpgrade(planetId, MoonBuilding.LunarBase);
     }
 
-    function testMoonFacilitiesUseSingleActiveConstructionSlot() public {
+    function _testMoonFacilitiesUseSingleActiveConstructionSlot() internal {
         uint256 planetId = _startPlanet();
 
         _createMoon(planetId);
@@ -766,7 +766,7 @@ contract VeydriftMoonSystemTest is Test {
         moons.startMoonBuildingUpgrade(planetId, MoonBuilding.RoboticsFactory);
     }
 
-    function testMoonDefenseConstructionUsesMoonShipyardAndSeparateCounts() public {
+    function _testMoonDefenseConstructionUsesMoonShipyardAndSeparateCounts() internal {
         uint256 planetId = _startPlanet();
 
         _createMoon(planetId);
@@ -790,7 +790,7 @@ contract VeydriftMoonSystemTest is Test {
         assertEq(game.defenseCount(planetId, Defense.RocketLauncher), 0);
     }
 
-    function testMoonDefenseIsEffectiveWhenDueAndReconcilesOnNextMutationOnce() public {
+    function _testMoonDefenseIsEffectiveWhenDueAndReconcilesOnNextMutationOnce() internal {
         uint256 planetId = _startPlanet();
 
         _createMoon(planetId);
@@ -821,7 +821,7 @@ contract VeydriftMoonSystemTest is Test {
         assertEq(moons.moonDefenseCount(planetId, Defense.RocketLauncher), 3);
     }
 
-    function testLegacyFinishWrappersAreIdempotentAndSharedMutationSettlesBothQueues() public {
+    function _testLegacyFinishWrappersAreIdempotentAndSharedMutationSettlesBothQueues() internal {
         uint256 planetId = _startPlanet();
 
         _createMoon(planetId);
@@ -858,7 +858,7 @@ contract VeydriftMoonSystemTest is Test {
         assertEq(moons.moonDefenseCount(planetId, Defense.RocketLauncher), 2);
     }
 
-    function testStartingMoonDefenseReconcilesDueShipyardFirst() public {
+    function _testStartingMoonDefenseReconcilesDueShipyardFirst() internal {
         uint256 planetId = _startPlanet();
 
         _createMoon(planetId);
@@ -883,7 +883,7 @@ contract VeydriftMoonSystemTest is Test {
         assertTrue(moons.activeMoonDefenseQueue(planetId).active);
     }
 
-    function testMoonDefenseRequiresMoonShipyard() public {
+    function _testMoonDefenseRequiresMoonShipyard() internal {
         uint256 planetId = _startPlanet();
 
         _createMoon(planetId);
@@ -901,7 +901,7 @@ contract VeydriftMoonSystemTest is Test {
         moons.startMoonDefenseProduction(planetId, Defense.RocketLauncher, 1);
     }
 
-    function testJumpGateRequiresOwnedReadyMoonGates() public {
+    function _testJumpGateRequiresOwnedReadyMoonGates() internal {
         uint256 planetId = _startPlanet();
         uint256 secondPlanetId = 2;
         _setPlanetOwner(secondPlanetId, player);
@@ -930,7 +930,7 @@ contract VeydriftMoonSystemTest is Test {
         moons.jumpGateJump(planetId, secondPlanetId);
     }
 
-    function testJumpGateMovesShipsBetweenOwnedMoons() public {
+    function _testJumpGateMovesShipsBetweenOwnedMoons() internal {
         uint256 planetId = _startPlanet();
         uint256 secondPlanetId = 2;
         _setPlanetOwner(secondPlanetId, player);
@@ -963,7 +963,7 @@ contract VeydriftMoonSystemTest is Test {
         assertEq(moons.moonShipCount(secondPlanetId, Ship.Battlecruiser), 2);
     }
 
-    function testJumpGateShipMovementEmitsMoonShipCountChangedForBothMoons() public {
+    function _testJumpGateShipMovementEmitsMoonShipCountChangedForBothMoons() internal {
         uint256 planetId = _startPlanet();
         uint256 secondPlanetId = 2;
         _setPlanetOwner(secondPlanetId, player);
@@ -993,7 +993,7 @@ contract VeydriftMoonSystemTest is Test {
         moons.jumpGateJumpShips(planetId, secondPlanetId, ships);
     }
 
-    function testMoonDefenseCountsAreIndependentFromPlanetDefenses() public {
+    function _testMoonDefenseCountsAreIndependentFromPlanetDefenses() internal {
         uint256 planetId = _startPlanet();
         _createMoon(planetId);
 
@@ -1005,7 +1005,7 @@ contract VeydriftMoonSystemTest is Test {
         assertEq(moons.moonDefenseCount(planetId, Defense.RocketLauncher), 12);
     }
 
-    function testMoonCombatDefenseRepairRestoresOrdinaryAndRollsDomesIndependently() public {
+    function _testMoonCombatDefenseRepairRestoresOrdinaryAndRollsDomesIndependently() internal {
         uint256 planetId = _startPlanet();
         _createMoon(planetId);
         _setMoonDefenseCount(planetId, Defense.RocketLauncher, 10);
@@ -1034,7 +1034,7 @@ contract VeydriftMoonSystemTest is Test {
         assertEq(game.defenseCount(planetId, Defense.LargeShieldDome), 0);
     }
 
-    function testPlanetToMoonTransportMovesCargoAndReturnsShips() public {
+    function _testPlanetToMoonTransportMovesCargoAndReturnsShips() internal {
         uint256 planetId = _startPlanet();
         _createMoon(planetId);
         _fundPlanet(planetId, 20_000, 20_000, 20_000);
@@ -1073,7 +1073,7 @@ contract VeydriftMoonSystemTest is Test {
         assertEq(game.shipCount(planetId, Ship.SmallCargo), 1);
     }
 
-    function testPlanetToMoonTransportUsesOgameClassicLocalDistance() public {
+    function _testPlanetToMoonTransportUsesOgameClassicLocalDistance() internal {
         uint256 planetId = _startPlanet();
         _createMoon(planetId);
         _fundPlanet(planetId, 20_000, 20_000, 20_000);
@@ -1104,7 +1104,7 @@ contract VeydriftMoonSystemTest is Test {
         assertGt(arrivalAt - departureAt, 10);
     }
 
-    function testMoonToPlanetTransportSpendsMoonResourcesAndReturnsMoonShips() public {
+    function _testMoonToPlanetTransportSpendsMoonResourcesAndReturnsMoonShips() internal {
         uint256 planetId = _startPlanet();
         _createMoon(planetId);
         _fundMoon(planetId, 1_000, 1_000, 1_000);
@@ -1142,7 +1142,7 @@ contract VeydriftMoonSystemTest is Test {
         assertEq(_moonShipCount(planetId, Ship.SmallCargo), 1);
     }
 
-    function testDeployStationsFleetOnMoonWithoutReturnLeg() public {
+    function _testDeployStationsFleetOnMoonWithoutReturnLeg() internal {
         uint256 planetId = _startPlanet();
         _createMoon(planetId);
         _fundPlanet(planetId, 20_000, 20_000, 20_000);
@@ -1174,7 +1174,7 @@ contract VeydriftMoonSystemTest is Test {
         assertEq(game.playerScore(player), scoreBeforeLaunch);
     }
 
-    function testArrivedMoonDeploySettlesBeforeNextMoonOriginLaunchChecks() public {
+    function _testArrivedMoonDeploySettlesBeforeNextMoonOriginLaunchChecks() internal {
         uint256 planetId = _startPlanet();
         _createMoon(planetId);
         _fundPlanet(planetId, 20_000, 20_000, 20_000);
@@ -1216,7 +1216,7 @@ contract VeydriftMoonSystemTest is Test {
         assertEq(_moonShipCount(planetId, Ship.SmallCargo), 0);
     }
 
-    function testMoonAttackLaunchStoresMoonBodyFlags() public {
+    function _testMoonAttackLaunchStoresMoonBodyFlags() internal {
         (uint256 originPlanetId, uint256 targetPlanetId,) = _seedMoonAttackPlanets();
         _fundMoon(originPlanetId, 20_000, 20_000, 20_000);
         _setMoonShipCount(originPlanetId, Ship.SmallCargo, 1);
@@ -1243,7 +1243,7 @@ contract VeydriftMoonSystemTest is Test {
         assertEq(_moonShipCount(originPlanetId, Ship.SmallCargo), 0);
     }
 
-    function testMoonAttackLaunchStoresSelectedLootRatio() public {
+    function _testMoonAttackLaunchStoresSelectedLootRatio() internal {
         (uint256 originPlanetId, uint256 targetPlanetId,) = _seedMoonAttackPlanets();
         _fundMoon(originPlanetId, 20_000, 20_000, 20_000);
         _fundMoon(targetPlanetId, 10_000, 10_000, 10_000);
@@ -1257,7 +1257,7 @@ contract VeydriftMoonSystemTest is Test {
         assertEq(cargo.deuterium, availableCapacity - cargo.metal - cargo.crystal);
     }
 
-    function testAcsJoinPreservesMoonTargetAndEmitsBodyMetadata() public {
+    function _testAcsJoinPreservesMoonTargetAndEmitsBodyMetadata() internal {
         (uint256 originPlanetId, uint256 targetPlanetId,) = _seedMoonAttackPlanets();
         address ally = address(0xA77A);
         vm.deal(ally, 1 ether);
@@ -1296,7 +1296,7 @@ contract VeydriftMoonSystemTest is Test {
         _assertFleetMissionBodiesLog(vm.getRecordedLogs(), joinedMissionId, false, true);
     }
 
-    function testAcsJoinCanLaunchFromMoonInventoryAndResources() public {
+    function _testAcsJoinCanLaunchFromMoonInventoryAndResources() internal {
         (uint256 originPlanetId, uint256 targetPlanetId,) = _seedMoonAttackPlanets();
         address ally = address(0xA77A);
         vm.deal(ally, 1 ether);
@@ -1340,7 +1340,7 @@ contract VeydriftMoonSystemTest is Test {
         assertLt(_moonResources(allyPlanetId).deuterium, 20_000);
     }
 
-    function testAcsJoinFailsClosedWhenTargetMoonDisappears() public {
+    function _testAcsJoinFailsClosedWhenTargetMoonDisappears() internal {
         (uint256 originPlanetId, uint256 targetPlanetId, address defender) =
             _seedMoonAttackPlanets();
         address ally = address(0xA77A);
@@ -1383,7 +1383,7 @@ contract VeydriftMoonSystemTest is Test {
         );
     }
 
-    function testPlanetToMoonAttackHonorsSelectedLootRatio() public {
+    function _testPlanetToMoonAttackHonorsSelectedLootRatio() internal {
         (uint256 originPlanetId, uint256 targetPlanetId,) = _seedMoonAttackPlanets();
         _fundPlanet(originPlanetId, 20_000, 20_000, 20_000);
         _fundMoon(targetPlanetId, 10_000, 10_000, 10_000);
@@ -1414,7 +1414,7 @@ contract VeydriftMoonSystemTest is Test {
         assertEq(cargo.deuterium, 0);
     }
 
-    function testMoonToPlanetAttackHonorsSelectedLootRatio() public {
+    function _testMoonToPlanetAttackHonorsSelectedLootRatio() internal {
         (uint256 originPlanetId, uint256 targetPlanetId,) = _seedMoonAttackPlanets();
         _fundMoon(originPlanetId, 20_000, 20_000, 20_000);
         _fundPlanet(targetPlanetId, 10_000, 10_000, 10_000);
@@ -1445,7 +1445,7 @@ contract VeydriftMoonSystemTest is Test {
         assertGt(cargo.deuterium, 0);
     }
 
-    function testMoonAttackRejectsInvalidLootRatio() public {
+    function _testMoonAttackRejectsInvalidLootRatio() internal {
         (uint256 originPlanetId, uint256 targetPlanetId,) = _seedMoonAttackPlanets();
         _fundMoon(originPlanetId, 20_000, 20_000, 20_000);
         _setMoonShipCount(originPlanetId, Ship.SmallCargo, 1);
@@ -1466,7 +1466,7 @@ contract VeydriftMoonSystemTest is Test {
         );
     }
 
-    function testMoonAttackRaidsMoonResourcesWithoutTouchingParentPlanet() public {
+    function _testMoonAttackRaidsMoonResourcesWithoutTouchingParentPlanet() internal {
         (uint256 originPlanetId, uint256 targetPlanetId,) = _seedMoonAttackPlanets();
         _fundMoon(originPlanetId, 20_000, 20_000, 20_000);
         _fundMoon(targetPlanetId, 10_000, 4_000, 2_000);
@@ -1505,7 +1505,7 @@ contract VeydriftMoonSystemTest is Test {
         assertEq(parentAfter.resources.deuterium, parentBefore.resources.deuterium);
     }
 
-    function testPlanetToMoonAttackLootCapacityIncludesFuel() public {
+    function _testPlanetToMoonAttackLootCapacityIncludesFuel() internal {
         (uint256 originPlanetId, uint256 targetPlanetId,) = _seedMoonAttackPlanets();
         _fundPlanet(originPlanetId, 200_000, 200_000, 200_000);
         _fundMoon(targetPlanetId, 0, 100_000, 100_045);
@@ -1542,7 +1542,7 @@ contract VeydriftMoonSystemTest is Test {
         assertEq(attackCargo.deuterium, 50_000 - fuelCost);
     }
 
-    function testMoonAttackMutatesMoonDefensesNotPlanetDefenses() public {
+    function _testMoonAttackMutatesMoonDefensesNotPlanetDefenses() internal {
         (uint256 originPlanetId, uint256 targetPlanetId, address defender) =
             _seedMoonAttackPlanets();
         // This fixture validates moon/planet defense separation, not score protection.
@@ -1576,7 +1576,7 @@ contract VeydriftMoonSystemTest is Test {
         assertEq(game.defenseCount(targetPlanetId, Defense.RocketLauncher), 0);
     }
 
-    function testPendingMoonAttackBlocksParentPlanetActionsUntilResolved() public {
+    function _testPendingMoonAttackBlocksParentPlanetActionsUntilResolved() internal {
         (uint256 originPlanetId, uint256 targetPlanetId, address defender) =
             _seedMoonAttackPlanets();
         _fundPlanet(originPlanetId, 100_000, 100_000, 100_000);
@@ -1615,7 +1615,7 @@ contract VeydriftMoonSystemTest is Test {
         assertTrue(game.activeBuildingConstruction(targetPlanetId).active);
     }
 
-    function testPlanetAndMoonTargetsHaveIndependentBashingAllowances() public {
+    function _testPlanetAndMoonTargetsHaveIndependentBashingAllowances() internal {
         vm.warp(8 days);
         (uint256 originPlanetId, uint256 targetPlanetId, address defender) =
             _seedMoonAttackPlanets();
@@ -1669,7 +1669,7 @@ contract VeydriftMoonSystemTest is Test {
         assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Outbound));
     }
 
-    function testMoonBashingWindowInheritsActiveLegacyAllowanceAtUpgrade() public {
+    function _testMoonBashingWindowInheritsActiveLegacyAllowanceAtUpgrade() internal {
         vm.warp(8 days);
         MoonAttackWindowHarness harness = new MoonAttackWindowHarness();
         address attacker = address(0xA771);
@@ -1697,21 +1697,21 @@ contract VeydriftMoonSystemTest is Test {
         assertEq(harness.bodyAttackCount(attacker, defender, planetId, false), 0);
     }
 
-    function testPlanetDefenseHoldDoesNotDefendMoonAttack() public {
+    function _testPlanetDefenseHoldDoesNotDefendMoonAttack() internal {
         MoonDefenseHoldIsolationHarness harness = new MoonDefenseHoldIsolationHarness();
         harness.seedPlanetHold(77, 1, 100);
         assertEq(harness.link(77, 2, 200, true), 0);
         assertEq(harness.link(77, 3, 200, false), 1);
     }
 
-    function testMoonAttackParityInitializerIsIdempotent() public {
+    function _testMoonAttackParityInitializerIsIdempotent() internal {
         uint64 activatedAt = game.moonAttackParityActivatedAt();
         assertGt(activatedAt, 0);
         game.initializeMoonAttackParity();
         assertEq(game.moonAttackParityActivatedAt(), activatedAt);
     }
 
-    function testReturnFromDestroyedOriginMoonFallsBackToParentPlanet() public {
+    function _testReturnFromDestroyedOriginMoonFallsBackToParentPlanet() internal {
         uint256 originPlanetId = _startPlanet();
         _createMoon(originPlanetId);
         _fundMoon(originPlanetId, 20_000, 20_000, 20_000);
@@ -1749,7 +1749,7 @@ contract VeydriftMoonSystemTest is Test {
         assertEq(game.moonShipCount(originPlanetId, Ship.SmallCargo), 0);
     }
 
-    function testArrivalAtDestroyedTargetMoonReturnsWithoutGhostState() public {
+    function _testArrivalAtDestroyedTargetMoonReturnsWithoutGhostState() internal {
         uint256 originPlanetId = _startPlanet();
         uint256 targetPlanetId = originPlanetId;
         _createMoon(targetPlanetId);
@@ -1791,7 +1791,7 @@ contract VeydriftMoonSystemTest is Test {
         assertEq(game.moonShipCount(targetPlanetId, Ship.SmallCargo), 0);
     }
 
-    function testAttackDoesNotHitReplacementMoonCreatedBeforeArrival() public {
+    function _testAttackDoesNotHitReplacementMoonCreatedBeforeArrival() internal {
         (uint256 originPlanetId, uint256 targetPlanetId,) = _seedMoonAttackPlanets();
         _fundPlanet(originPlanetId, 20_000, 20_000, 20_000);
         _setShipCount(originPlanetId, Ship.SmallCargo, 1);
@@ -1837,7 +1837,7 @@ contract VeydriftMoonSystemTest is Test {
 
     // VEY-KANEO-468: a due moon-building construction completes lazily on the next moon interaction,
     // with no finishMoonBuildingUpgrade tx required.
-    function testMoonBuildingSettlesLazilyWithoutFinishTx() public {
+    function _testMoonBuildingSettlesLazilyWithoutFinishTx() internal {
         uint256 planetId = _startPlanet();
         _fundMoon(planetId, 3_000_000, 5_000_000, 3_000_000);
         _createMoon(planetId);
@@ -2149,5 +2149,237 @@ contract VeydriftMoonSystemTest is Test {
         );
         diameterKm = uint16(3_466 + (seed % 5_479));
         fields = 1;
+    }
+}
+
+contract VeydriftMoonSystemCoreTest is VeydriftMoonSystemTestBase {
+    function testProxyInitializationAndOwnerUpgradeGate() public {
+        _testProxyInitializationAndOwnerUpgradeGate();
+    }
+
+    function testDirectPlayerMoonCreationReverts() public {
+        _testDirectPlayerMoonCreationReverts();
+    }
+
+    function testAdminMoonCreationAndLunarBaseFields() public {
+        _testAdminMoonCreationAndLunarBaseFields();
+    }
+
+    function testChickenBurnGrantCreatesMoonForOwnedPlanet() public {
+        _testChickenBurnGrantCreatesMoonForOwnedPlanet();
+    }
+
+    function testChickenBurnGrantRejectsDuplicateBurnEvent() public {
+        _testChickenBurnGrantRejectsDuplicateBurnEvent();
+    }
+
+    function testChickenBurnGrantAllowsMoreThanTwoMoonsForAPlayer() public {
+        _testChickenBurnGrantAllowsMoreThanTwoMoonsForAPlayer();
+    }
+
+    function testChickenBurnGrantRejectsWrongOwnerAndMissingPlanet() public {
+        _testChickenBurnGrantRejectsWrongOwnerAndMissingPlanet();
+    }
+
+    function testChickenBurnGrantIsAdminOnly() public {
+        _testChickenBurnGrantIsAdminOnly();
+    }
+
+    function testMoonChanceCalculationAndCap() public view {
+        _testMoonChanceCalculationAndCap();
+    }
+
+    function testMoonDestructionParityChances() public view {
+        _testMoonDestructionParityChances();
+    }
+
+    function testBattleMoonChanceRequestsRandomnessAndBlocksPendingOutcome() public {
+        _testBattleMoonChanceRequestsRandomnessAndBlocksPendingOutcome();
+    }
+
+    function testFulfilledMoonChanceCreatesMoonDeterministically() public {
+        _testFulfilledMoonChanceCreatesMoonDeterministically();
+    }
+
+    function testFulfilledMoonChanceCanResolveNoMoon() public {
+        _testFulfilledMoonChanceCanResolveNoMoon();
+    }
+
+    function testMoonChanceRejectsDuplicateRerollAndExistingMoonSkipsCreation() public {
+        _testMoonChanceRejectsDuplicateRerollAndExistingMoonSkipsCreation();
+    }
+
+    function testMoonChanceRequiresReporterAndQualifyingDebris() public {
+        _testMoonChanceRequiresReporterAndQualifyingDebris();
+    }
+
+    function testMoonDestructionRequestsRandomnessAndDestroysMoonState() public {
+        _testMoonDestructionRequestsRandomnessAndDestroysMoonState();
+    }
+
+    function testMoonDestructionCanDestroyDeathstarsWithoutDestroyingMoon() public {
+        _testMoonDestructionCanDestroyDeathstarsWithoutDestroyingMoon();
+    }
+
+    function testMoonDestructionRejectsInvalidRequestsAndDuplicates() public {
+        _testMoonDestructionRejectsInvalidRequestsAndDuplicates();
+    }
+
+    function testMoonBuildingUpgradeSpendsMoonResources() public {
+        _testMoonBuildingUpgradeSpendsMoonResources();
+    }
+
+    function testMoonFacilitiesUnlockWithMoonRoboticsAndFields() public {
+        _testMoonFacilitiesUnlockWithMoonRoboticsAndFields();
+    }
+
+    function testMoonFieldCapacityRequiresOpenFieldEvenForLunarBase() public {
+        _testMoonFieldCapacityRequiresOpenFieldEvenForLunarBase();
+    }
+
+    function testMoonFacilitiesUseSingleActiveConstructionSlot() public {
+        _testMoonFacilitiesUseSingleActiveConstructionSlot();
+    }
+
+    function testMoonDefenseConstructionUsesMoonShipyardAndSeparateCounts() public {
+        _testMoonDefenseConstructionUsesMoonShipyardAndSeparateCounts();
+    }
+
+    function testMoonDefenseIsEffectiveWhenDueAndReconcilesOnNextMutationOnce() public {
+        _testMoonDefenseIsEffectiveWhenDueAndReconcilesOnNextMutationOnce();
+    }
+
+    function testLegacyFinishWrappersAreIdempotentAndSharedMutationSettlesBothQueues() public {
+        _testLegacyFinishWrappersAreIdempotentAndSharedMutationSettlesBothQueues();
+    }
+
+    function testStartingMoonDefenseReconcilesDueShipyardFirst() public {
+        _testStartingMoonDefenseReconcilesDueShipyardFirst();
+    }
+
+    function testMoonDefenseRequiresMoonShipyard() public {
+        _testMoonDefenseRequiresMoonShipyard();
+    }
+
+    function testJumpGateRequiresOwnedReadyMoonGates() public {
+        _testJumpGateRequiresOwnedReadyMoonGates();
+    }
+
+    function testJumpGateMovesShipsBetweenOwnedMoons() public {
+        _testJumpGateMovesShipsBetweenOwnedMoons();
+    }
+
+    function testJumpGateShipMovementEmitsMoonShipCountChangedForBothMoons() public {
+        _testJumpGateShipMovementEmitsMoonShipCountChangedForBothMoons();
+    }
+}
+
+contract VeydriftMoonAttackParityTest is VeydriftMoonSystemTestBase {
+    function testMoonDefenseCountsAreIndependentFromPlanetDefenses() public {
+        _testMoonDefenseCountsAreIndependentFromPlanetDefenses();
+    }
+
+    function testMoonCombatDefenseRepairRestoresOrdinaryAndRollsDomesIndependently() public {
+        _testMoonCombatDefenseRepairRestoresOrdinaryAndRollsDomesIndependently();
+    }
+
+    function testPlanetToMoonTransportMovesCargoAndReturnsShips() public {
+        _testPlanetToMoonTransportMovesCargoAndReturnsShips();
+    }
+
+    function testPlanetToMoonTransportUsesOgameClassicLocalDistance() public {
+        _testPlanetToMoonTransportUsesOgameClassicLocalDistance();
+    }
+
+    function testMoonToPlanetTransportSpendsMoonResourcesAndReturnsMoonShips() public {
+        _testMoonToPlanetTransportSpendsMoonResourcesAndReturnsMoonShips();
+    }
+
+    function testDeployStationsFleetOnMoonWithoutReturnLeg() public {
+        _testDeployStationsFleetOnMoonWithoutReturnLeg();
+    }
+
+    function testArrivedMoonDeploySettlesBeforeNextMoonOriginLaunchChecks() public {
+        _testArrivedMoonDeploySettlesBeforeNextMoonOriginLaunchChecks();
+    }
+
+    function testMoonAttackLaunchStoresMoonBodyFlags() public {
+        _testMoonAttackLaunchStoresMoonBodyFlags();
+    }
+
+    function testMoonAttackLaunchStoresSelectedLootRatio() public {
+        _testMoonAttackLaunchStoresSelectedLootRatio();
+    }
+
+    function testAcsJoinPreservesMoonTargetAndEmitsBodyMetadata() public {
+        _testAcsJoinPreservesMoonTargetAndEmitsBodyMetadata();
+    }
+
+    function testAcsJoinCanLaunchFromMoonInventoryAndResources() public {
+        _testAcsJoinCanLaunchFromMoonInventoryAndResources();
+    }
+
+    function testAcsJoinFailsClosedWhenTargetMoonDisappears() public {
+        _testAcsJoinFailsClosedWhenTargetMoonDisappears();
+    }
+
+    function testPlanetToMoonAttackHonorsSelectedLootRatio() public {
+        _testPlanetToMoonAttackHonorsSelectedLootRatio();
+    }
+
+    function testMoonToPlanetAttackHonorsSelectedLootRatio() public {
+        _testMoonToPlanetAttackHonorsSelectedLootRatio();
+    }
+
+    function testMoonAttackRejectsInvalidLootRatio() public {
+        _testMoonAttackRejectsInvalidLootRatio();
+    }
+
+    function testMoonAttackRaidsMoonResourcesWithoutTouchingParentPlanet() public {
+        _testMoonAttackRaidsMoonResourcesWithoutTouchingParentPlanet();
+    }
+
+    function testPlanetToMoonAttackLootCapacityIncludesFuel() public {
+        _testPlanetToMoonAttackLootCapacityIncludesFuel();
+    }
+
+    function testMoonAttackMutatesMoonDefensesNotPlanetDefenses() public {
+        _testMoonAttackMutatesMoonDefensesNotPlanetDefenses();
+    }
+
+    function testPendingMoonAttackBlocksParentPlanetActionsUntilResolved() public {
+        _testPendingMoonAttackBlocksParentPlanetActionsUntilResolved();
+    }
+
+    function testPlanetAndMoonTargetsHaveIndependentBashingAllowances() public {
+        _testPlanetAndMoonTargetsHaveIndependentBashingAllowances();
+    }
+
+    function testMoonBashingWindowInheritsActiveLegacyAllowanceAtUpgrade() public {
+        _testMoonBashingWindowInheritsActiveLegacyAllowanceAtUpgrade();
+    }
+
+    function testPlanetDefenseHoldDoesNotDefendMoonAttack() public {
+        _testPlanetDefenseHoldDoesNotDefendMoonAttack();
+    }
+
+    function testMoonAttackParityInitializerIsIdempotent() public {
+        _testMoonAttackParityInitializerIsIdempotent();
+    }
+
+    function testReturnFromDestroyedOriginMoonFallsBackToParentPlanet() public {
+        _testReturnFromDestroyedOriginMoonFallsBackToParentPlanet();
+    }
+
+    function testArrivalAtDestroyedTargetMoonReturnsWithoutGhostState() public {
+        _testArrivalAtDestroyedTargetMoonReturnsWithoutGhostState();
+    }
+
+    function testAttackDoesNotHitReplacementMoonCreatedBeforeArrival() public {
+        _testAttackDoesNotHitReplacementMoonCreatedBeforeArrival();
+    }
+
+    function testMoonBuildingSettlesLazilyWithoutFinishTx() public {
+        _testMoonBuildingSettlesLazilyWithoutFinishTx();
     }
 }
