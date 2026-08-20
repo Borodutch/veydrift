@@ -6,6 +6,7 @@ import {Vm} from "forge-std/Vm.sol";
 import {RandomnessEngine} from "../src/RandomnessEngine.sol";
 import {IVeydriftAllianceGame, VeydriftAllianceSystem} from "../src/VeydriftAllianceSystem.sol";
 import {VeydriftAttackProtectionModule} from "../src/VeydriftAttackProtectionModule.sol";
+import {VeydriftAcsAttackModule} from "../src/VeydriftAcsAttackModule.sol";
 import {VeydriftCombatModule, VeydriftCombatRapidfire} from "../src/VeydriftCombatModule.sol";
 import {VeydriftColonizationModule} from "../src/VeydriftColonizationModule.sol";
 import {VeydriftShipProductionModule} from "../src/VeydriftShipProductionModule.sol";
@@ -716,7 +717,8 @@ contract VeydriftCombatReferenceParityTest is Test {
             address(attackProtectionModule),
             address(colonizationModule),
             address(defenseHoldModule),
-            address(stateMigrationModule)
+            address(stateMigrationModule),
+            address(new VeydriftAcsAttackModule())
         );
     }
 }

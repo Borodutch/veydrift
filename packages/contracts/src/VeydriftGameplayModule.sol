@@ -41,6 +41,11 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
     // Leave enough gas in the parent frame to catch an out-of-gas child round and return the
     // already-committed rounds successfully. EIP-150 also retains 1/64 of forwarded gas.
     uint256 private constant COMBAT_ROUND_PARENT_GAS_RESERVE = 500_000;
+    bytes4 private constant LAUNCH_BODY_FLEET_MISSION_SELECTOR = bytes4(
+        keccak256(
+            "launchBodyFleetMission(uint256,uint256,uint8,(uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32),(uint128,uint128,uint128),uint16,bool,bool)"
+        )
+    );
 
     using SafeCast for uint256;
 
@@ -133,15 +138,43 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         );
     }
 
-    function joinAttackMission(
-        uint256 originPlanetId,
-        uint256 attackMissionId,
-        uint256 expectedTargetPlanetId,
-        MissionShips calldata ships,
-        Resources calldata cargo
+    /// @notice Launch a planet/moon Attack mission with the same player-selected loot ratio used
+    ///         by planet-to-planet attacks.
+    /// @dev Re-dispatches to the established body-aware launch path, then records the ratio on the
+    ///      created mission. The facade routes that nested call to VeydriftDefenseHoldModule, so
+    ///      body validation, fuel, inventory, and randomness continue to have one implementation.
+    function launchBodyAttackMission(
+        uint256,
+        uint256,
+        MissionShips calldata,
+        Resources calldata,
+        uint16,
+        bool,
+        bool,
+        LootRatio calldata lootRatio
     ) external returns (uint256 missionId) {
-        return _joinAttackMission(
-            originPlanetId, attackMissionId, expectedTargetPlanetId, ships, cargo
+        if (uint256(lootRatio.metalBps) + lootRatio.crystalBps + lootRatio.deuteriumBps != BPS) {
+            revert InvalidLootRatio();
+        }
+        bytes4 selector = LAUNCH_BODY_FLEET_MISSION_SELECTOR;
+        bool ok;
+        assembly ("memory-safe") {
+            let ptr := mload(0x40)
+            mstore(ptr, selector)
+            calldatacopy(add(ptr, 0x04), 0x04, 0x40)
+            mstore(add(ptr, 0x44), 3)
+            let restLen := sub(calldatasize(), 0xA4)
+            calldatacopy(add(ptr, 0x64), 0x44, restLen)
+            ok := delegatecall(gas(), address(), ptr, add(restLen, 0x64), ptr, 0x20)
+            missionId := mload(ptr)
+            if iszero(ok) {
+                returndatacopy(ptr, 0, returndatasize())
+                revert(ptr, returndatasize())
+            }
+        }
+        _fleetMissions[missionId].lootRatio = lootRatio;
+        emit FleetMissionLootRatio(
+            missionId, lootRatio.metalBps, lootRatio.crystalBps, lootRatio.deuteriumBps
         );
     }
 
@@ -188,7 +221,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             revert InvalidMissionType(missionType);
         }
         if (missionType == FleetMissionType.Attack) {
-            _enforceAttackProtection(msg.sender, targetPlanetId);
+            _enforceAttackProtection(msg.sender, targetPlanetId, false);
         }
         uint256 fleetSlots = VeydriftAntiRaidPrimitives.fleetSlotLimit(
             _technologyLevels[msg.sender][Technology.Computer]
@@ -310,128 +343,17 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         _emitFleetMissionShips(missionId, ships);
     }
 
-    function _enforceAttackProtection(address attacker, uint256 targetPlanetId) private view {
-        (bool ok, bytes memory data) =
-            address(this).staticcall(abi.encodeWithSelector(0x946213e2, attacker, targetPlanetId));
+    function _enforceAttackProtection(address attacker, uint256 targetPlanetId, bool targetIsMoon)
+        private
+        view
+    {
+        (bool ok, bytes memory data) = address(this)
+            .staticcall(abi.encodeWithSelector(0xcc4cc1ea, attacker, targetPlanetId, targetIsMoon));
         if (!ok) {
             assembly ("memory-safe") {
                 revert(add(data, 32), mload(data))
             }
         }
-    }
-
-    function _joinAttackMission(
-        uint256 originPlanetId,
-        uint256 attackMissionId,
-        uint256 expectedTargetPlanetId,
-        MissionShips memory ships,
-        Resources memory cargo
-    ) private returns (uint256 missionId) {
-        _requirePlanetOwner(originPlanetId);
-        FleetMission storage attack = _fleetMissions[attackMissionId];
-        if (
-            attack.status != FleetMissionStatus.Outbound
-                || attack.missionType != FleetMissionType.Attack
-        ) {
-            revert InvalidMissionType(FleetMissionType.AcsAttack);
-        }
-        if (attack.targetPlanetId != expectedTargetPlanetId) revert InvalidId();
-        _settleDueCombatArrivals(msg.sender);
-        _requireNoPendingMissionResolutionForPlanet(originPlanetId);
-        _requireNoPendingMissionResolutionForPlanet(attack.targetPlanetId);
-
-        uint64 cutoffAt =
-            attack.arrivalAt - VeydriftAntiRaidPrimitives.ACS_DEFEND_JOIN_CUTOFF_SECONDS;
-        if (_currentTimestamp() >= cutoffAt) revert AttackJoinCutoffPassed(cutoffAt);
-        _enforceAttackProtection(msg.sender, attack.targetPlanetId);
-
-        uint256 fleetSlots = VeydriftAntiRaidPrimitives.fleetSlotLimit(
-            _technologyLevels[msg.sender][Technology.Computer]
-        );
-        if (activeFleetMissionCount[msg.sender] >= fleetSlots) {
-            revert FleetSlotLimitReached(fleetSlots);
-        }
-
-        (uint256 capacity, uint256 slowestSpeed) = _missionMovement(msg.sender, ships);
-        if (capacity == 0) revert InvalidQuantity();
-        _requireMissionShips(originPlanetId, ships);
-
-        _settleActionPlanet(originPlanetId);
-        uint256 travelDistance = _planetDistance(originPlanetId, attack.targetPlanetId);
-        uint128 fuelCost = _toUint128(
-            _ogameMissionFuelCost(
-                msg.sender,
-                ships,
-                travelDistance,
-                VeydriftAntiRaidPrimitives.FULL_MISSION_SPEED_PERCENT,
-                slowestSpeed
-            )
-        );
-        uint64 departureAt = _currentTimestamp();
-        uint256 travelSeconds = VeydriftAntiRaidPrimitives.travelSeconds(
-            travelDistance,
-            slowestSpeed,
-            VeydriftAntiRaidPrimitives.FULL_MISSION_SPEED_PERCENT,
-            FLEET_UNIVERSE_SPEED
-        );
-        uint64 naturalArrivalAt = (uint256(departureAt) + travelSeconds).toUint64();
-        if (naturalArrivalAt > attack.arrivalAt) revert FleetAlreadyArrived();
-        uint256 cargoTotal =
-            uint256(cargo.metal) + uint256(cargo.crystal) + uint256(cargo.deuterium);
-        uint256 committedCapacity = cargoTotal + fuelCost;
-        if (committedCapacity > capacity) {
-            revert CargoCapacityExceeded(capacity, committedCapacity);
-        }
-
-        _spend(
-            originPlanetId,
-            Resources({
-                metal: cargo.metal,
-                crystal: cargo.crystal,
-                deuterium: _toUint128(uint256(cargo.deuterium) + fuelCost)
-            })
-        );
-        _increaseInternalResources(cargo);
-        _debitMissionShips(originPlanetId, ships);
-
-        uint64 returnAt = (uint256(attack.arrivalAt) + travelSeconds).toUint64();
-        missionId = nextFleetId++;
-        activeFleetMissionCount[msg.sender] += 1;
-        _fleetMissions[missionId] = FleetMission({
-            status: FleetMissionStatus.Outbound,
-            missionType: FleetMissionType.AcsAttack,
-            owner: msg.sender,
-            originPlanetId: originPlanetId,
-            targetPlanetId: attack.targetPlanetId,
-            departureAt: departureAt,
-            arrivalAt: attack.arrivalAt,
-            returnAt: returnAt,
-            fuelCost: fuelCost,
-            cargo: cargo,
-            ships: ships,
-            randomnessRequestId: attackMissionId,
-            lootRatio: LootRatio({metalBps: 0, crystalBps: 0, deuteriumBps: 0}),
-            originIsMoon: false,
-            targetIsMoon: false
-        });
-        _fleetCounterplayMissions[attackMissionId].push(missionId);
-        _trackCounterplayMissionResolution(attackMissionId, _fleetMissions[missionId]);
-
-        emit AttackMissionJoined(
-            attackMissionId, missionId, msg.sender, originPlanetId, attack.targetPlanetId
-        );
-        emit FleetMissionLaunched(
-            missionId,
-            msg.sender,
-            FleetMissionType.AcsAttack,
-            originPlanetId,
-            attack.targetPlanetId,
-            attack.arrivalAt,
-            returnAt,
-            attackMissionId
-        );
-        emit FleetMissionCargo(missionId, cargo.metal, cargo.crystal, cargo.deuterium, fuelCost);
-        _emitFleetMissionShips(missionId, ships);
     }
 
     function _requestAttackBattleRandomness(uint256 missionId) private returns (uint256 requestId) {
@@ -517,12 +439,15 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             _settleAttackTargetSnapshot(mission.targetPlanetId, mission.arrivalAt);
             // OGame-style ACS Defend: pull every fleet stationed over this attack's arrival into the
             // attack's counterplay roster so the battle machinery fights them as defenders.
+            // DefenseHold is body-scoped. A fleet stationed over the parent planet must not
+            // silently join combat against its moon.
             VeydriftDefenseHoldStorage.linkQualifiedDefenders(
                 _stationedDefenseMissions[mission.targetPlanetId],
                 _fleetCounterplayMissions[missionId],
                 _fleetMissions,
                 _defenseHoldUntil,
-                mission.arrivalAt
+                mission.arrivalAt,
+                mission.targetIsMoon
             );
         } else {
             _settleResources(mission.targetPlanetId);

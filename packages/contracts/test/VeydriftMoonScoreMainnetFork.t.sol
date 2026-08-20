@@ -7,6 +7,7 @@ import {
     ITransparentUpgradeableProxy
 } from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {VeydriftAttackProtectionModule} from "../src/VeydriftAttackProtectionModule.sol";
+import {VeydriftAcsAttackModule} from "../src/VeydriftAcsAttackModule.sol";
 import {VeydriftCombatModule, VeydriftCombatRapidfire} from "../src/VeydriftCombatModule.sol";
 import {VeydriftColonizationModule} from "../src/VeydriftColonizationModule.sol";
 import {VeydriftDefenseHoldModule} from "../src/VeydriftDefenseHoldModule.sol";
@@ -59,7 +60,9 @@ contract VeydriftMoonScoreMainnetForkTest is Test {
         vm.prank(PROXY_ADMIN_OWNER);
         ProxyAdmin(PROXY_ADMIN)
             .upgradeAndCall(
-                ITransparentUpgradeableProxy(GAME_PROXY), address(newImplementation), ""
+                ITransparentUpgradeableProxy(GAME_PROXY),
+                address(newImplementation),
+                abi.encodeCall(VeydriftGame.initializeMoonAttackParity, ())
             );
 
         assertNotEq(_implementation(), oldImplementation);
@@ -101,7 +104,8 @@ contract VeydriftMoonScoreMainnetForkTest is Test {
             address(attackProtectionModule),
             address(colonizationModule),
             address(defenseHoldModule),
-            address(stateMigrationModule)
+            address(stateMigrationModule),
+            address(new VeydriftAcsAttackModule())
         );
     }
 }

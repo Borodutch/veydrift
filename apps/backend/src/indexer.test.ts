@@ -38,6 +38,7 @@ const researchQueuedTopic = "0x2c3d4c823cd097fa6cbea60fb91c561d6a497270c397a8c82
 const researchQueuedV2Topic = "0xc656964d8e68d0b6942679e773cfa1067a21bfab5837879972bcf64c948deaa6";
 const researchCompletedTopic = "0x93dffeb1ed0a05133592cf6d82b9a200c2ac72b521497b81cef83ac57cb84b4f";
 const moonCreatedTopic = "0x395ddd11cfc613034fc4941029df5968212af4a52ba611d84d3257824c81f4a4";
+const moonDestructionFinalizedTopic = "0xdac71b69e1912e36573457fd7e6227e8b5ac86e9e011bd7eddc6c104221ed803";
 const moonResourcesChangedTopic = "0xd1823653b6a3910ee502390b5bf01f05a3b571dc81899a6ac3af3f01fae05c26";
 const moonBuildingStartedTopic = "0x6b41aeb096e643752dad879b8f3875d8657186226c3cf8b6e7a38c27292f215a";
 const moonBuildingCompletedTopic = "0x59b630c46c04307254808aac61ea2de2a7e6fbf5ed6eb0ebee81c917b575ed3a";
@@ -68,6 +69,7 @@ const allianceBonusWithdrawnTopic = "0x369bd7e76fd86a155ec571e2d405665938d7c74cc
 const fleetMissionLaunchedTopic = "0x95e2cb506aa14052bac412e42f47fb34d9234819a960761a7bc7f1920c0ab456";
 const fleetMissionCargoTopic = "0x3daa6311ecdadad6781f70e5d285e7150f9dc165db88d23be8867be4de33ff29";
 const fleetMissionShipsTopic = "0xf581cbe97357884794500d80286cfbe823fed3b5d77446e477aa694ce89fc82d";
+const fleetMissionLootRatioTopic = "0xa6846d64330aacb1675d30a3535ea36822060fb38252cbb6b358bec4149767ff";
 const fleetMissionBodiesTopic = "0xfa464e2180f08e3e4d8c4247566d0616a5e1ab845d1678c47fedae6d44e9c502";
 const defenseHoldStationedTopic = "0x1183ab32cc2efce96b8c0956b35dd1b46c594234a5717fd810d8cc569a193a47";
 const defenseHoldEndedTopic = "0xf72983c656a87e172935581e9c19f22826c62a2c4d552c6dd217c498a9d88586";
@@ -355,6 +357,284 @@ describe("SettlementIndexer", () => {
       FROM indexed_mission_event_logs
       WHERE event_id = ?
     `).get(eventId)).toEqual({ event_kind: "fleet", block_number: "112" });
+  });
+
+  test("narrowly backfills historical fleet loot ratios when broad startup backfill is disabled", () => {
+    const database = new Database(":memory:");
+    const reader = {
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    };
+    const indexer = new SettlementIndexer(reader, 100n, { database, runStartupBackfill: false });
+    indexer.applyEvent(planet);
+    const transactionHash = `0x${"91".repeat(32)}`;
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash,
+      logIndex: "0x0",
+      topics: [fleetMissionLaunchedTopic, topic(42n), addressTopic(player), topic(3n)],
+      data: abiWords(7n, 8n, 1_767_000_600n, 1_767_001_200n, 99n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash,
+      logIndex: "0x1",
+      topics: [fleetMissionCargoTopic, topic(42n)],
+      data: abiWords(0n, 0n, 0n, 10n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash,
+      logIndex: "0x2",
+      topics: [fleetMissionShipsTopic, topic(42n)],
+      data: abiWords(1n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash,
+      logIndex: "0x3",
+      topics: [fleetMissionLootRatioTopic, topic(42n)],
+      data: abiWords(5_000n, 3_000n, 2_000n)
+    });
+
+    // Recreate a production database written by an older backend: the raw log is durable, but the
+    // specialized mission ledger and canonical payload do not yet carry the ratio.
+    database.query(`
+      DELETE FROM indexed_mission_event_logs
+      WHERE lower(json_extract(event_json, '$.topics[0]')) = lower(?)
+    `).run(fleetMissionLootRatioTopic);
+    const row = database.query(`
+      SELECT event_json FROM contract_fleet_missions WHERE mission_id = '42'
+    `).get() as { event_json: string };
+    const staleMission = JSON.parse(row.event_json) as Record<string, unknown>;
+    delete staleMission.lootRatio;
+    if (staleMission.mission && typeof staleMission.mission === "object") {
+      delete (staleMission.mission as Record<string, unknown>).lootRatio;
+    }
+    database.query(`
+      UPDATE contract_fleet_missions SET event_json = ? WHERE mission_id = '42'
+    `).run(JSON.stringify(staleMission));
+    database.query(`
+      DELETE FROM indexer_metadata WHERE key = 'fleetMissionLootRatioProjectionBackfillV1'
+    `).run();
+
+    const restarted = new SettlementIndexer(reader, 100n, { database, runStartupBackfill: false });
+    expect(restarted.allActiveFleetMissions().find((mission) => mission.missionId === "42")).toMatchObject({
+      lootRatio: { metalBps: 5_000, crystalBps: 3_000, deuteriumBps: 2_000 }
+    });
+    expect(database.query(`
+      SELECT event_kind FROM indexed_mission_event_logs
+      WHERE lower(json_extract(event_json, '$.topics[0]')) = lower(?)
+    `).get(fleetMissionLootRatioTopic)).toEqual({ event_kind: "fleet" });
+  });
+
+  test("removes destroyed moons, restores them on reorg, and repairs legacy stale presence on restart", () => {
+    const database = new Database(":memory:");
+    const reader = {
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    };
+    const indexer = new SettlementIndexer(reader, 100n, { database, runStartupBackfill: false });
+    indexer.applyEvent(planet);
+    indexer.applyLog({
+      blockNumber: "0x87",
+      transactionHash: `0x${"92".repeat(32)}`,
+      logIndex: "0x0",
+      topics: [moonCreatedTopic, addressTopic(player), topic(7n)],
+      data: abiWords(2n, 44n, 9n, 12n, 8_777n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x87",
+      transactionHash: "0xmoon-resources-before-destruction",
+      logIndex: "0x1",
+      topics: [moonResourcesChangedTopic, topic(7n)],
+      data: abiWords(123n, 456n, 789n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x87",
+      transactionHash: "0xmoon-ships-before-destruction",
+      logIndex: "0x2",
+      topics: [moonShipCountChangedTopic, topic(7n), topic(1n)],
+      data: abiWords(5n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x87",
+      transactionHash: "0xmoon-defense-before-destruction",
+      logIndex: "0x3",
+      topics: [moonDefenseCountChangedTopic, topic(7n), topic(2n)],
+      data: abiWords(7n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x87",
+      transactionHash: "0xmoon-building-before-destruction",
+      logIndex: "0x4",
+      topics: [moonBuildingCompletedTopic, topic(7n), topic(2n)],
+      data: abiWords(1n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x87",
+      transactionHash: "0xmoon-queue-before-destruction",
+      logIndex: "0x5",
+      topics: [moonDefenseQueuedTopic, topic(7n), topic(0n)],
+      data: abiWords(3n, 1_770_001_800n, 6_000n, 0n, 0n)
+    });
+    const destructionTransactionHash = `0x${"93".repeat(32)}`;
+    const zeroResourcesLog = {
+      blockNumber: "0x88",
+      transactionHash: destructionTransactionHash,
+      logIndex: "0x0",
+      topics: [moonResourcesChangedTopic, topic(7n)],
+      data: abiWords(0n, 0n, 0n)
+    };
+    const zeroShipsLog = {
+      blockNumber: "0x88",
+      transactionHash: destructionTransactionHash,
+      logIndex: "0x1",
+      topics: [moonShipCountChangedTopic, topic(7n), topic(1n)],
+      data: abiWords(0n)
+    };
+    const destructionLog = {
+      blockNumber: "0x88",
+      transactionHash: destructionTransactionHash,
+      logIndex: "0x2",
+      topics: [moonDestructionFinalizedTopic, topic(1n), topic(2n), topic(7n)],
+      data: abiWords(1n, 0n, 123n)
+    };
+    indexer.applyLog(zeroResourcesLog);
+    indexer.applyLog(zeroShipsLog);
+    indexer.applyLog(destructionLog);
+    expect(indexer.hasMoon("7")).toBe(false);
+    expect(indexer.moonState(player, "7")).toMatchObject({
+      moon: null,
+      resources: { metal: "0", crystal: "0", deuterium: "0" },
+      queue: null,
+      defenseQueue: null,
+      buildings: expect.arrayContaining([expect.objectContaining({ id: 2, level: 0 })]),
+      fleet: expect.arrayContaining([expect.objectContaining({ id: 1, count: 0 })]),
+      defenses: expect.arrayContaining([expect.objectContaining({ id: 2, count: 0 })])
+    });
+
+    // A stale or reordered post-destruction moon event must not recreate public ghost state.
+    const postDestructionResourcesLog = {
+      blockNumber: "0x89",
+      transactionHash: "0xmoon-resources-after-destruction",
+      logIndex: "0x0",
+      topics: [moonResourcesChangedTopic, topic(7n)],
+      data: abiWords(999n, 888n, 777n)
+    };
+    const postDestructionShipsLog = {
+      blockNumber: "0x89",
+      transactionHash: "0xmoon-ships-after-destruction",
+      logIndex: "0x1",
+      topics: [moonShipCountChangedTopic, topic(7n), topic(1n)],
+      data: abiWords(42n)
+    };
+    indexer.applyLog(postDestructionResourcesLog);
+    indexer.applyLog(postDestructionShipsLog);
+    expect(indexer.hasMoon("7")).toBe(false);
+    expect(indexer.moonState(player, "7")).toMatchObject({
+      moon: null,
+      resources: { metal: "0", crystal: "0", deuterium: "0" },
+      fleet: expect.arrayContaining([expect.objectContaining({ id: 1, count: 0 })])
+    });
+    const lifecycleCount = database.query(`
+      SELECT COUNT(*) AS count FROM indexed_moon_state_event_logs WHERE planet_id = '7'
+    `).get() as { count: number };
+    expect(lifecycleCount.count).toBeGreaterThan(0);
+    indexer.applyLog({ ...postDestructionShipsLog, removed: true });
+    indexer.applyLog({ ...postDestructionResourcesLog, removed: true });
+
+    indexer.applyLog({ ...destructionLog, removed: true });
+    indexer.applyLog({ ...zeroShipsLog, removed: true });
+    indexer.applyLog({ ...zeroResourcesLog, removed: true });
+    expect(indexer.hasMoon("7")).toBe(true);
+    expect(indexer.moonState(player, "7")).toMatchObject({
+      resources: { metal: "123", crystal: "456", deuterium: "789" },
+      defenseQueue: expect.objectContaining({ kind: "moon-defense", itemId: 0, quantity: 3 }),
+      buildings: expect.arrayContaining([expect.objectContaining({ id: 2, level: 1 })]),
+      fleet: expect.arrayContaining([expect.objectContaining({ id: 1, count: 5 })]),
+      defenses: expect.arrayContaining([expect.objectContaining({ id: 2, count: 7 })])
+    });
+    indexer.applyLog(zeroResourcesLog);
+    indexer.applyLog(zeroShipsLog);
+    indexer.applyLog(destructionLog);
+    expect(indexer.hasMoon("7")).toBe(false);
+
+    // Simulate an old process that persisted the destruction but left the public presence row.
+    database.query(`
+      INSERT INTO indexed_moons (planet_id, owner, fields, diameter_km, event_json)
+      VALUES ('7', lower(?), 12, 8777, ?)
+      ON CONFLICT(planet_id) DO UPDATE SET event_json = excluded.event_json
+    `).run(player, JSON.stringify({
+      eventName: "MoonCreated",
+      transactionHash: `0x${"92".repeat(32)}`,
+      blockNumber: "135",
+      owner: player,
+      planetId: "7",
+      galaxy: 2,
+      system: 44,
+      position: 9,
+      fields: 12,
+      diameterKm: 8_777,
+      createdAt: "135"
+    }));
+    database.query(`
+      DELETE FROM indexer_metadata WHERE key = 'destroyedMoonStateRepairV3'
+    `).run();
+    const restarted = new SettlementIndexer(reader, 100n, { database, runStartupBackfill: false });
+    expect(restarted.hasMoon("7")).toBe(false);
+    expect(restarted.moonState(player, "7")).toMatchObject({
+      moon: null,
+      resources: { metal: "0", crystal: "0", deuterium: "0" },
+      queue: null,
+      defenseQueue: null,
+      buildings: expect.arrayContaining([expect.objectContaining({ id: 2, level: 0 })]),
+      fleet: expect.arrayContaining([expect.objectContaining({ id: 1, count: 0 })]),
+      defenses: expect.arrayContaining([expect.objectContaining({ id: 2, count: 0 })])
+    });
+  });
+
+  test("moon lifecycle startup backfill preserves the raw ledger removed flag", () => {
+    const database = new Database(":memory:");
+    const reader = {
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    };
+    const indexer = new SettlementIndexer(reader, 100n, { database, runStartupBackfill: false });
+    indexer.applyEvent(planet);
+    const createdLog = {
+      blockNumber: "0x87",
+      transactionHash: `0x${"94".repeat(32)}`,
+      logIndex: "0x0",
+      topics: [moonCreatedTopic, addressTopic(player), topic(7n)],
+      data: abiWords(2n, 44n, 9n, 12n, 8_777n)
+    };
+    indexer.applyLog(createdLog);
+    indexer.applyLog({ ...createdLog, removed: true });
+
+    // Model upgrading a DB written by the old live-removal path: the raw row says removed, while
+    // its embedded JSON still contains the original canonical-shaped log and no removed property.
+    database.query("DELETE FROM indexed_moon_state_event_logs").run();
+    database.query(`
+      INSERT INTO indexed_moons (planet_id, owner, fields, diameter_km, event_json)
+      VALUES ('7', lower(?), 12, 8777, ?)
+    `).run(player, JSON.stringify({ planetId: "7", owner: player, fields: 12, diameterKm: 8_777 }));
+    database.query(`
+      DELETE FROM indexer_metadata
+      WHERE key IN ('moonStateEventLedgerBackfillV1', 'destroyedMoonStateRepairV3')
+    `).run();
+
+    const restarted = new SettlementIndexer(reader, 100n, {
+      database,
+      runStartupBackfill: false
+    });
+    expect(restarted.hasMoon("7")).toBe(false);
+    expect(database.query(`
+      SELECT removed FROM indexed_moon_state_event_logs WHERE planet_id = '7'
+    `).get()).toEqual({ removed: 1 });
   });
 
   test("replays an invitee production boost emitted before the upgraded indexer starts", () => {
@@ -9386,6 +9666,86 @@ describe("SettlementIndexer", () => {
     expect(writer.snapshot().lastCanonicalFleetMissionSyncError).toContain("incomplete at id 1");
   });
 
+  test("canonical fleet mission reconciliation preserves the indexed attack loot ratio", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "veydrift-indexer-"));
+    const databasePath = join(dir, "contract-state.sqlite");
+    const chainReader = {
+      async getCanonicalFleetMission(missionId: bigint) {
+        if (missionId !== 77n) return null;
+        return {
+          missionId: "77",
+          statusId: 4,
+          missionTypeId: 3,
+          status: "Returned",
+          missionType: "Attack",
+          owner: player,
+          originPlanetId: planet.planetId,
+          targetPlanetId: "99",
+          departureAt: "1770000000",
+          arrivalAt: "1770001200",
+          returnAt: "1770002400",
+          fuelCost: "1",
+          cargo: { metal: "0", crystal: "0", deuterium: "0" },
+          randomnessRequestId: null
+        } satisfies CanonicalFleetMissionSnapshot;
+      },
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return [planet]; }
+    };
+    try {
+      const writer = new SettlementIndexer(chainReader, 100n, { databasePath });
+      writer.applyEvent(planet);
+      writer.applyLog({
+        blockNumber: "0x90",
+        transactionHash: "0xattack77",
+        logIndex: "0x0",
+        topics: [fleetMissionLaunchedTopic, topic(77n), addressTopic(player), topic(3n)],
+        data: abiWords(BigInt(planet.planetId), 99n, 1770001200n, 1770002400n, 0n)
+      });
+      writer.applyLog({
+        blockNumber: "0x90",
+        transactionHash: "0xattack77",
+        logIndex: "0x1",
+        topics: [fleetMissionCargoTopic, topic(77n)],
+        data: abiWords(0n, 0n, 0n, 1n)
+      });
+      writer.applyLog({
+        blockNumber: "0x90",
+        transactionHash: "0xattack77",
+        logIndex: "0x2",
+        topics: [fleetMissionShipsTopic, topic(77n)],
+        data: abiWords(1n, ...Array.from({ length: 13 }, () => 0n))
+      });
+      writer.applyLog({
+        blockNumber: "0x90",
+        transactionHash: "0xattack77",
+        logIndex: "0x3",
+        topics: [fleetMissionLootRatioTopic, topic(77n)],
+        data: abiWords(2_000n, 5_000n, 3_000n)
+      });
+
+      expect(writer.fleetMission("77")?.lootRatio).toEqual({
+        metalBps: 2_000,
+        crystalBps: 5_000,
+        deuteriumBps: 3_000
+      });
+      await writer.startFleetMissionStateHealOnce("preserve-attack-loot-ratio");
+
+      const reader = new SettlementIndexer(chainReader, 100n, {
+        databasePath,
+        runStartupBackfill: false
+      });
+      expect(reader.fleetMission("77")).toMatchObject({
+        missionId: "77",
+        status: "Returned",
+        lootRatio: { metalBps: 2_000, crystalBps: 5_000, deuteriumBps: 3_000 }
+      });
+    } finally {
+      rmSync(dir, { force: true, recursive: true });
+    }
+  });
+
   test("startup mission-event backfill fills missing rows from raw indexed logs", () => {
     const dir = mkdtempSync(join(tmpdir(), "veydrift-indexer-"));
     const databasePath = join(dir, "contract-state.sqlite");
@@ -11780,14 +12140,24 @@ describe("SettlementIndexer", () => {
       async listMoonChanceReportEvents() { return []; },
       async listSettledPlanetEvents() { return []; }
     }, 100n, { database });
-    indexer.applyLog({
+    const moonAttackLog = {
       blockNumber: "0x90",
       blockTimestamp: "0x64",
       transactionHash: "0xattack-cache-1",
       logIndex: "0x0",
       topics: [fleetMissionLaunchedTopic, topic(50n), addressTopic(attacker), topic(3n)],
       data: abiWords(7n, 99n, 1770001200n, 1770002400n, 0n)
-    });
+    };
+    const moonAttackBodiesLog = {
+      blockNumber: "0x90",
+      blockTimestamp: "0x64",
+      transactionHash: "0xattack-cache-1-bodies",
+      logIndex: "0x3",
+      topics: [fleetMissionBodiesTopic, topic(50n)],
+      data: abiWords(0n, 1n)
+    };
+    indexer.applyLog(moonAttackLog);
+    indexer.applyLog(moonAttackBodiesLog);
     indexer.applyLog({
       blockNumber: "0x90",
       blockTimestamp: "0x96",
@@ -11809,7 +12179,8 @@ describe("SettlementIndexer", () => {
     const second = indexer.attackLaunchSecondsByTarget(attacker);
 
     expect(second).toBe(first);
-    expect(first.get("99")).toEqual([100]);
+    expect(first.get("moon:99")).toEqual([100]);
+    expect(first.has("99")).toBe(false);
     expect(first.has("101")).toBe(false);
     expect(first.has("102")).toBe(false);
 
@@ -11840,7 +12211,44 @@ describe("SettlementIndexer", () => {
 
     const third = indexer.attackLaunchSecondsByTarget(attacker);
     expect(third).not.toBe(first);
-    expect(third.get("99")).toEqual([100, 200]);
+    expect(third.get("moon:99")).toEqual([100]);
+    expect(third.get("99")).toEqual([200]);
+
+    indexer.applyLog({ ...moonAttackBodiesLog, removed: true });
+    const afterBodyRemoval = indexer.attackLaunchSecondsByTarget(attacker);
+    expect(afterBodyRemoval).not.toBe(third);
+    expect(afterBodyRemoval.has("moon:99")).toBe(false);
+    expect(afterBodyRemoval.get("99")).toEqual([100, 200]);
+    expect(indexer.fleetMission("50")?.targetIsMoon).not.toBe(true);
+
+    indexer.applyLog(moonAttackBodiesLog);
+    expect(indexer.attackLaunchSecondsByTarget(attacker).get("moon:99")).toEqual([100]);
+    expect(indexer.fleetMission("50")?.targetIsMoon).toBe(true);
+
+    indexer.applyLog({ ...moonAttackLog, removed: true });
+    const afterAttackRemoval = indexer.attackLaunchSecondsByTarget(attacker);
+    expect(afterAttackRemoval.has("moon:99")).toBe(false);
+    expect(afterAttackRemoval.get("99")).toEqual([200]);
+
+    indexer.applyLog(moonAttackLog);
+    expect(indexer.attackLaunchSecondsByTarget(attacker).get("moon:99")).toEqual([100]);
+
+    // Model a production DB written before live removal deleted the specialized row: the raw body
+    // row is removed but indexed_mission_event_logs and the materialized mission still say moon.
+    database.query(`
+      UPDATE indexed_event_logs SET removed = 1
+      WHERE transaction_hash = lower(?) AND log_index = '0x3'
+    `).run(moonAttackBodiesLog.transactionHash);
+    database.query(`
+      DELETE FROM indexer_metadata WHERE key = 'removedMissionEventLedgerRepairV1'
+    `).run();
+    const restarted = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n, { database, runStartupBackfill: false });
+    expect(restarted.attackLaunchSecondsByTarget(attacker).has("moon:99")).toBe(false);
+    expect(restarted.fleetMission("50")?.targetIsMoon).not.toBe(true);
   });
   test("batches player profile hydration without per-wallet lookups", () => {
     const database = new Database(":memory:");

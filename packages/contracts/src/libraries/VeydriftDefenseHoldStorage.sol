@@ -79,7 +79,8 @@ library VeydriftDefenseHoldStorage {
             uint256 missionId => VeydriftGameStorage.FleetMission mission
         ) storage missions,
         mapping(uint256 missionId => uint64 holdUntil) storage defenseHoldUntil,
-        uint64 attackArrivalAt
+        uint64 attackArrivalAt,
+        bool attackTargetIsMoon
     ) public {
         for (uint256 i = 0; i < stationedMissionIds.length;) {
             uint256 stationedMissionId = stationedMissionIds[i];
@@ -87,6 +88,7 @@ library VeydriftDefenseHoldStorage {
             if (
                 stationed.status == VeydriftGameStorage.FleetMissionStatus.Outbound
                     && stationed.missionType == VeydriftGameStorage.FleetMissionType.DefenseHold
+                    && stationed.targetIsMoon == attackTargetIsMoon
                     && stationed.arrivalAt <= attackArrivalAt
                     && defenseHoldUntil[stationedMissionId] >= attackArrivalAt
             ) {

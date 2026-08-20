@@ -651,6 +651,7 @@ export type FleetMissionSummary = {
   targetPlanetId: string;
   originIsMoon?: boolean;
   targetIsMoon?: boolean;
+  lootRatio?: { metalBps: number; crystalBps: number; deuteriumBps: number };
   originPlanet?: FleetMissionPlanetReference | null;
   targetPlanet?: FleetMissionPlanetReference | null;
   arrivalAt: string;
@@ -1462,7 +1463,11 @@ export interface ChainReader {
   getRiftState(wallet: Address, planetId?: bigint): Promise<RiftState>;
   getAllianceState(wallet: Address): Promise<AllianceState>;
   getAllianceIntelForPlayers?(wallets: readonly Address[]): Promise<Map<Address, AllianceIdentity>>;
-  getAttackProtectionStatus(wallet: Address, targetPlanetId: bigint): Promise<AttackProtectionStatus>;
+  getAttackProtectionStatus(
+    wallet: Address,
+    targetPlanetId: bigint,
+    targetIsMoon?: boolean
+  ): Promise<AttackProtectionStatus>;
   getHighscoreForWallet?(wallet: Address, planetIds?: string[]): Promise<HighscoreEntry>;
   getHighscoresForWallets?(planetsByOwner: ReadonlyMap<string, SettledPlanetEvent[]>): Promise<HighscoreEntry[]>;
   listAllianceDirectoryState?(): Promise<AllianceState["directory"]>;
@@ -3315,9 +3320,18 @@ export class VeydriftGameReader implements ChainReader {
     return result;
   }
 
-  async getAttackProtectionStatus(wallet: Address, targetPlanetId: bigint): Promise<AttackProtectionStatus> {
+  async getAttackProtectionStatus(
+    wallet: Address,
+    targetPlanetId: bigint,
+    targetIsMoon = false
+  ): Promise<AttackProtectionStatus> {
     assertAddress(wallet);
-    const words = splitWords(await this.call("0x8a6b2246", [encodeAddress(wallet), encodeUint(targetPlanetId)]));
+    const words = splitWords(await this.call(
+      targetIsMoon ? "0xdca08aaf" : "0x8a6b2246",
+      targetIsMoon
+        ? [encodeAddress(wallet), encodeUint(targetPlanetId), encodeUint(1n)]
+        : [encodeAddress(wallet), encodeUint(targetPlanetId)]
+    ));
     const blockedReason = decodeAttackBlockReason(Number(decodeUintWord(wordAt(words, 0))));
     const flags = words.length > 1 ? Number(decodeUintWord(wordAt(words, 1))) : 0;
     const plunderBps = words.length > 2 ? Number(decodeUintWord(wordAt(words, 2))) : 5000;
@@ -5041,6 +5055,7 @@ export class VeydriftGameReader implements ChainReader {
         fleetMissionCargoTopic,
         fleetMissionShipsTopic,
         fleetMissionBodiesTopic,
+        fleetMissionLootRatioTopic,
         fleetMissionRecalledTopic,
         fleetMissionResolvedTopic,
         fleetMissionReturnExposedTopic,
@@ -5430,6 +5445,13 @@ export function decodeFleetMissionLogs(logs: RpcLog[]): Map<string, MutableFleet
       const words = splitWords(log.data);
       mission.originIsMoon = decodeUintWord(wordAt(words, 0)) !== 0n;
       mission.targetIsMoon = decodeUintWord(wordAt(words, 1)) !== 0n;
+    } else if (topic === fleetMissionLootRatioTopic) {
+      const words = splitWords(log.data);
+      mission.lootRatio = {
+        metalBps: Number(decodeUintWord(wordAt(words, 0))),
+        crystalBps: Number(decodeUintWord(wordAt(words, 1))),
+        deuteriumBps: Number(decodeUintWord(wordAt(words, 2)))
+      };
     } else if (topic === fleetMissionRecalledTopic) {
       const words = splitWords(log.data);
       mission.owner = decodeAddressWord(topicAt(log.topics, 2));
@@ -5836,7 +5858,8 @@ const moonDefenseCountChangedTopic = "0x0bf9a31209477c6f81619cdd411e232ee9a5b64e
 export const fleetMissionLaunchedTopic = "0x95e2cb506aa14052bac412e42f47fb34d9234819a960761a7bc7f1920c0ab456";
 const fleetMissionCargoTopic = "0x3daa6311ecdadad6781f70e5d285e7150f9dc165db88d23be8867be4de33ff29";
 const fleetMissionShipsTopic = "0xf581cbe97357884794500d80286cfbe823fed3b5d77446e477aa694ce89fc82d";
-const fleetMissionBodiesTopic = "0xfa464e2180f08e3e4d8c4247566d0616a5e1ab845d1678c47fedae6d44e9c502";
+export const fleetMissionBodiesTopic = "0xfa464e2180f08e3e4d8c4247566d0616a5e1ab845d1678c47fedae6d44e9c502";
+export const fleetMissionLootRatioTopic = "0xa6846d64330aacb1675d30a3535ea36822060fb38252cbb6b358bec4149767ff";
 const fleetMissionRecalledTopic = "0x2c9b31f1abc732f3b6d28e7724439ea4713ae516632088b8c4dc0211479dc6ca";
 const fleetMissionResolvedTopic = "0xcb928b431ffcdbe55fddc2bf06967951efb3dfe87d14bc436d546fdbbee9cb2d";
 const fleetMissionReturnExposedTopic = "0x27a083519451f4434cd1f93497fb93689a906d3b982a3f127cb236aa24356afa";
@@ -5866,13 +5889,13 @@ const moonChanceFinalizedTopic = "0xd485b8634099625ba076107f73a9ea0e95b3f6ac18d7
 const moonChanceSkippedExistingMoonTopic =
   "0x93793f9a66f3a0a4cea93b7eb92e142d7283b5b33f657e14277879f2f8e7ab4e";
 const moonDestructionRequestedTopic = "0x719ab77026e22a766a85f5c32e5294b20e76b8a0490812761ab98ab3a1739884";
-const moonDestructionFinalizedTopic = "0xdac71b69e1912e36573457fd7e6227e8b5ac86e9e011bd7eddc6c104221ed803";
-const moonCreatedTopic = "0x395ddd11cfc613034fc4941029df5968212af4a52ba611d84d3257824c81f4a4";
+export const moonDestructionFinalizedTopic = "0xdac71b69e1912e36573457fd7e6227e8b5ac86e9e011bd7eddc6c104221ed803";
+export const moonCreatedTopic = "0x395ddd11cfc613034fc4941029df5968212af4a52ba611d84d3257824c81f4a4";
 const moonBuildingStartedTopic = "0x6b41aeb096e643752dad879b8f3875d8657186226c3cf8b6e7a38c27292f215a";
 const moonBuildingCompletedTopic = "0x59b630c46c04307254808aac61ea2de2a7e6fbf5ed6eb0ebee81c917b575ed3a";
 const moonDefenseQueuedTopic = "0xa53d76ce638ebf6aee45c30e9622beeafc4e9c2c9bcd3122a72a3a7e00500637";
 const moonDefenseCompletedTopic = "0xb84a089b29951e8696b0ef11e5766578a0e1348284a93e4731fcb416d0536a70";
-const jumpGateJumpedTopic = "0xf255456c5522e3e1e2a8063b9e1e2f5cd7243315601b1e8aef2893fe9efc3da6";
+export const jumpGateJumpedTopic = "0xf255456c5522e3e1e2a8063b9e1e2f5cd7243315601b1e8aef2893fe9efc3da6";
 const allianceCreatedTopic = "0x4a2634d9b86143d681c41580ee71aad7571fc28bc42c855fcd354bfee4485372";
 const allianceProfileUpdatedTopic = "0x6cd70a2e9b3cebb75f35ae8c618b15036c7b0c425e5b688ec918c2f58df7360e";
 const allianceInviteCreatedTopic = "0x2ebeddd3f0119f5464f0f6acb95cbc1477a11e19b059f3234bbb0a671cf2b4bd";
@@ -5933,6 +5956,7 @@ const eventNamesByTopic = new Map<string, string>([
   [fleetMissionCargoTopic, "FleetMissionCargo"],
   [fleetMissionShipsTopic, "FleetMissionShips"],
   [fleetMissionBodiesTopic, "FleetMissionBodies"],
+  [fleetMissionLootRatioTopic, "FleetMissionLootRatio"],
   [fleetMissionRecalledTopic, "FleetMissionRecalled"],
   [fleetMissionResolvedTopic, "FleetMissionResolved"],
   [fleetMissionReturnExposedTopic, "FleetMissionReturnExposed"],
@@ -6244,6 +6268,7 @@ export function isFleetMissionLog(log: RpcLog): boolean {
     || topic === fleetMissionCargoTopic
     || topic === fleetMissionShipsTopic
     || topic === fleetMissionBodiesTopic
+    || topic === fleetMissionLootRatioTopic
     || topic === fleetMissionRecalledTopic
     || topic === fleetMissionResolvedTopic
     || topic === fleetMissionReturnExposedTopic
@@ -6268,6 +6293,22 @@ export function decodeAttackMissionLaunch(
     const attacker = decodeAddressWord(topicAt(log.topics, 2)).toLowerCase() as Address;
     const targetPlanetId = decodeUintWord(wordAt(splitWords(log.data), 1)).toString();
     return { attacker, targetPlanetId };
+  } catch {
+    return null;
+  }
+}
+
+export function decodeFleetMissionBodyIdentity(
+  log: RpcLog
+): { missionId: string; originIsMoon: boolean; targetIsMoon: boolean } | null {
+  try {
+    if (topicAt(log.topics, 0) !== fleetMissionBodiesTopic) return null;
+    const words = splitWords(log.data);
+    return {
+      missionId: decodeUint(topicAt(log.topics, 1)).toString(),
+      originIsMoon: decodeUintWord(wordAt(words, 0)) !== 0n,
+      targetIsMoon: decodeUintWord(wordAt(words, 1)) !== 0n
+    };
   } catch {
     return null;
   }

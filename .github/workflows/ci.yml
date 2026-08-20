@@ -11,7 +11,7 @@ jobs:
     runs-on: ${{ fromJSON(github.event_name == 'pull_request' && github.event.pull_request.user.login == 'backmeupplz' && github.event.pull_request.user.id == 3192028 && vars.VEYDRIFT_LOCAL_CI_RUNNER_LABELS || '["ubuntu-latest"]') }}
     permissions:
       contents: read
-    timeout-minutes: 20
+    timeout-minutes: 360
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
@@ -51,8 +51,12 @@ jobs:
             bun-${{ runner.os }}-
 
       - name: Set up Foundry
-        if: steps.scope.outputs.contracts == 'true'
+        if: steps.scope.outputs.contracts == 'true' && runner.name != 'veydrift-mac-backmeupplz-ci'
         uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Verify Foundry on self-hosted runner
+        if: steps.scope.outputs.contracts == 'true' && runner.name == 'veydrift-mac-backmeupplz-ci'
+        run: forge --version
 
       - name: Cache Foundry build artifacts
         if: steps.scope.outputs.contracts == 'true'

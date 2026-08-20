@@ -289,9 +289,12 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
             originIsMoon: originIsMoon,
             targetIsMoon: targetIsMoon
         });
+        _recordMissionMoonIncarnations(
+            missionId, originPlanetId, targetPlanetId, originIsMoon, targetIsMoon
+        );
         _trackMissionResolution(missionId, _fleetMissions[missionId]);
         if (isAttack) {
-            _recordAttack(msg.sender, targetPlanetId);
+            _recordAttack(msg.sender, targetPlanetId, targetIsMoon);
         }
 
         emit FleetMissionLaunched(

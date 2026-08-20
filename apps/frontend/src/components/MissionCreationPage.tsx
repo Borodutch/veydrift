@@ -101,7 +101,7 @@ const ZERO_COMBAT_TECH_LEVELS: CombatTechLevels = { weapons: 0, shielding: 0, ar
 type EnabledGalaxyAction = Extract<GalaxyAction, { enabled: true }>;
 export type ResourceKey = (typeof RESOURCE_KEYS)[number];
 
-export type MissionAttackLootMode = "none" | "joined" | "custom" | "body-greedy";
+export type MissionAttackLootMode = "none" | "joined" | "custom";
 
 export function missionAttackLootMode({
   action,
@@ -116,7 +116,7 @@ export function missionAttackLootMode({
 }): MissionAttackLootMode {
   if (action.mode !== "mission" || action.kind !== "attack") return "none";
   if (joinAttackMode) return "joined";
-  return originIsMoon || targetIsMoon ? "body-greedy" : "custom";
+  return "custom";
 }
 
 export type MissionResourceSnapshot = {
@@ -143,6 +143,7 @@ export type MissionBodySelection = {
   targetMoonAvailable: boolean;
   originMoonResources?: MissionResourceSnapshot | undefined;
   originMoonShipyardState?: ChainShipyardState | null | undefined;
+  targetSelectionLocked?: boolean | undefined;
 };
 
 export type UnitItem = {
@@ -440,6 +441,7 @@ export function MissionCreationPage({
   driveLevels = {},
   joinAttackContext,
   joinAttackMode = false,
+  moonAttackParityEnabled = false,
   nowMs = Date.now(),
   onBack,
   onConfirm,
@@ -475,6 +477,8 @@ export function MissionCreationPage({
   // with no loot ratio or speed controls (the join inherits the lead attack's
   // loot split and coordinated arrival).
   joinAttackMode?: boolean | undefined;
+  /** Runtime capability enabled only after the compatible game implementation is live. */
+  moonAttackParityEnabled?: boolean | undefined;
   // Injectable clock so hold-duration math is deterministic in tests.
   nowMs?: number | undefined;
   onBack: () => void;
@@ -513,11 +517,17 @@ export function MissionCreationPage({
   const bodyMissionSupported = action.mode === "mission" && (action.kind === "attack" || cargoSupported);
   const bodySelectionVisibility = missionBodySelectionVisibility({
     bodyMissionSupported: bodyMissionSupported && Boolean(bodySelection),
-    originMoonAvailable: Boolean(bodySelection?.originMoonAvailable),
-    targetMoonAvailable: Boolean(bodySelection?.targetMoonAvailable),
+    // Keep an explicitly selected moon visible when refreshed state says it disappeared. The
+    // submit blocker below must fail closed instead of silently changing the launch origin.
+    originMoonAvailable: Boolean(bodySelection?.originMoonAvailable) || originIsMoon,
+    targetMoonAvailable: Boolean(bodySelection?.targetMoonAvailable) || targetIsMoon,
+    targetSelectionLocked: Boolean(bodySelection?.targetSelectionLocked),
   });
   const effectiveOriginIsMoon = Boolean(bodySelectionVisibility.originVisible && originIsMoon);
-  const effectiveTargetIsMoon = Boolean(bodySelectionVisibility.targetVisible && targetIsMoon);
+  // Preserve an explicitly selected moon even if refreshed intel says it disappeared. Switching this
+  // to the parent planet would change the transaction target without the player's consent; the draft
+  // blocker below instead keeps the Moon selection visible and fails closed.
+  const effectiveTargetIsMoon = targetIsMoon;
   const distance = originCoords
     ? action.mode === "mission"
       ? fleetMissionDistanceForMission(originCoords, coords, action.mission, {
@@ -552,14 +562,19 @@ export function MissionCreationPage({
   const destinationIntelVisible = shouldShowDestinationIntel(action);
   const cargoTotal = resourceDraftNumber(cargo.metal) + resourceDraftNumber(cargo.crystal) + resourceDraftNumber(cargo.deuterium);
   const normalizedCargo = cargoSupported ? normalizeMissionCargoDraft(cargo) : undefined;
-  const attackLootMode = missionAttackLootMode({
-    action,
-    joinAttackMode,
-    originIsMoon: effectiveOriginIsMoon,
-    targetIsMoon: effectiveTargetIsMoon,
-  });
+  const moonAttackNeedsUpgrade = action.kind === "attack"
+    && (effectiveOriginIsMoon || effectiveTargetIsMoon)
+    && !moonAttackParityEnabled;
+  const attackLootMode = moonAttackNeedsUpgrade
+    ? "none"
+    : missionAttackLootMode({
+        action,
+        joinAttackMode,
+        originIsMoon: effectiveOriginIsMoon,
+        targetIsMoon: effectiveTargetIsMoon,
+      });
   const attackIntelVisible = attackLootMode !== "none";
-  const lootPreviewVisible = attackLootMode === "custom" || attackLootMode === "body-greedy";
+  const lootPreviewVisible = attackLootMode === "custom";
   const lootRatioSupported = attackLootMode === "custom" && !acsDefendMode;
   const lootRatioActive = lootRatioSupported && !greedyLootEnabled;
   const displayedLootRatio = lootRatioActive ? lootRatio : GREEDY_LOOT_RATIO;
@@ -584,7 +599,13 @@ export function MissionCreationPage({
   const stationedDefenderRows = stationedDefenderAttackWarningRows(stationedDefenders);
   const targetComposition = useMemo(
     () => missionTargetCompositionUnits(target, effectiveTargetIsMoon),
-    [effectiveTargetIsMoon, target?.publicState?.defenses, target?.publicState?.fleet],
+    [
+      effectiveTargetIsMoon,
+      target?.publicMoonState?.defenses,
+      target?.publicMoonState?.fleet,
+      target?.publicState?.defenses,
+      target?.publicState?.fleet,
+    ],
   );
   const targetFleetUnits = targetComposition.fleet;
   const targetDefenseUnits = targetComposition.defenses;
@@ -693,9 +714,12 @@ export function MissionCreationPage({
     resources: effectiveResources,
     selectedShipCount,
     staleShipQuantityBlocker,
-    submitBlocker: effectiveOriginIsMoon && !bodySelection?.originMoonShipyardState
+    submitBlocker: moonAttackNeedsUpgrade
+      ? "Moon attack parity is still activating. Refresh shortly before launching."
+      : effectiveOriginIsMoon && !bodySelection?.originMoonShipyardState
       ? "Moon fleet state is still loading."
-      : submitBlocker,
+      : missionTargetMoonUnavailableReason(effectiveTargetIsMoon, bodySelection?.targetMoonAvailable)
+        ?? submitBlocker,
     totalCargoCapacity,
   });
   const visibleBlockedReason = actionPending ? undefined : blockedReason;
@@ -1001,7 +1025,6 @@ export function MissionCreationPage({
               availabilityDetail={resourceIntel.projectionDetail}
               greedyLootEnabled={greedyLootEnabled}
               lootIntelAvailable={resourceIntel.projectedArrivalLootable !== null}
-              lootMode={attackLootMode}
               lootRatio={displayedLootRatio}
               lootRatioTotal={lootRatioTotal}
               onAmountChange={updateLootAmount}
@@ -1134,13 +1157,15 @@ export function missionBodySelectionVisibility({
   bodyMissionSupported,
   originMoonAvailable,
   targetMoonAvailable,
+  targetSelectionLocked = false,
 }: {
   bodyMissionSupported: boolean;
   originMoonAvailable: boolean;
   targetMoonAvailable: boolean;
+  targetSelectionLocked?: boolean | undefined;
 }): { sectionVisible: boolean; originVisible: boolean; targetVisible: boolean } {
   const originVisible = bodyMissionSupported && originMoonAvailable;
-  const targetVisible = bodyMissionSupported && targetMoonAvailable;
+  const targetVisible = bodyMissionSupported && targetMoonAvailable && !targetSelectionLocked;
   return {
     originVisible,
     sectionVisible: originVisible || targetVisible,
@@ -1521,6 +1546,15 @@ export function missionDraftBlocker({
     return `Loot ratio must total ${LOOT_RATIO_TOTAL_PERCENT}%.`;
   }
   return undefined;
+}
+
+export function missionTargetMoonUnavailableReason(
+  targetIsMoon: boolean,
+  targetMoonAvailable: boolean | undefined,
+): string | undefined {
+  return targetIsMoon && targetMoonAvailable !== true
+    ? "The target moon no longer exists. Select Planet or refresh the target before launching."
+    : undefined;
 }
 
 function cargoResourceOverdraft(
@@ -3016,7 +3050,6 @@ export function MissionLootSection({
   availabilityDetail,
   greedyLootEnabled,
   lootIntelAvailable,
-  lootMode,
   lootRatio,
   lootRatioTotal,
   onAmountChange,
@@ -3029,7 +3062,6 @@ export function MissionLootSection({
   availabilityDetail: string;
   greedyLootEnabled: boolean;
   lootIntelAvailable: boolean;
-  lootMode: Extract<MissionAttackLootMode, "custom" | "body-greedy">;
   lootRatio: MissionLootRatioDraft;
   lootRatioTotal: number;
   onAmountChange: (key: ResourceKey, value: number) => void;
@@ -3045,25 +3077,16 @@ export function MissionLootSection({
         predictedLoot={predictedLoot}
         unavailableDetail={lootIntelAvailable ? undefined : availabilityDetail}
       />
-      {lootMode === "custom" ? (
-        <LootRatioControls
-          cargoCapacity={availableCargo}
-          greedyLootEnabled={greedyLootEnabled}
-          lootRatio={lootRatio}
-          lootRatioTotal={lootRatioTotal}
-          onAmountChange={onAmountChange}
-          onGreedyChange={onGreedyChange}
-          onPercentChange={onPercentChange}
-          onResetEven={onResetEven}
-        />
-      ) : (
-        <p
-          aria-label="Body attack loot allocation"
-          className="rounded border border-signal/20 bg-signal/[0.06] px-3 py-2 text-xs leading-5 text-slate-300"
-        >
-          Moon attacks use the on-chain greedy loot order: metal first, then crystal, then deuterium. Custom splits are unavailable when the origin or target is a moon.
-        </p>
-      )}
+      <LootRatioControls
+        cargoCapacity={availableCargo}
+        greedyLootEnabled={greedyLootEnabled}
+        lootRatio={lootRatio}
+        lootRatioTotal={lootRatioTotal}
+        onAmountChange={onAmountChange}
+        onGreedyChange={onGreedyChange}
+        onPercentChange={onPercentChange}
+        onResetEven={onResetEven}
+      />
     </MissionFormSection>
   );
 }
@@ -3293,10 +3316,10 @@ export function missionTargetCompositionUnits(
   target: Planet | undefined,
   targetIsMoon = false,
 ): { fleet: UnitItem[]; defenses: UnitItem[] } {
-  if (targetIsMoon) return { fleet: [], defenses: [] };
+  const bodyState = targetIsMoon ? target?.publicMoonState : target?.publicState;
   return {
-    fleet: compositionUnits(target?.publicState?.fleet, shipCatalog, shipAssetByKey),
-    defenses: compositionUnits(target?.publicState?.defenses, defenseCatalog, defenseAssetByKey),
+    fleet: compositionUnits(bodyState?.fleet, shipCatalog, shipAssetByKey),
+    defenses: compositionUnits(bodyState?.defenses, defenseCatalog, defenseAssetByKey),
   };
 }
 

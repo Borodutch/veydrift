@@ -9,6 +9,7 @@ import {IVeydriftAllianceGame, VeydriftAllianceSystem} from "../src/VeydriftAlli
 import {VeydriftAllianceWarProtection} from "../src/VeydriftAllianceWarProtection.sol";
 import {RandomnessEngine} from "../src/RandomnessEngine.sol";
 import {VeydriftAttackProtectionModule} from "../src/VeydriftAttackProtectionModule.sol";
+import {VeydriftAcsAttackModule} from "../src/VeydriftAcsAttackModule.sol";
 import {VeydriftCombatModule, VeydriftCombatRapidfire} from "../src/VeydriftCombatModule.sol";
 import {VeydriftColonizationModule} from "../src/VeydriftColonizationModule.sol";
 import {VeydriftShipProductionModule} from "../src/VeydriftShipProductionModule.sol";
@@ -142,7 +143,8 @@ contract VeydriftAllianceSystemTest is Test {
             address(attackProtectionModule),
             address(colonizationModule),
             address(defenseHoldModule),
-            address(stateMigrationModule)
+            address(stateMigrationModule),
+            address(new VeydriftAcsAttackModule())
         );
         RandomnessEngine randomness = new RandomnessEngine(admin, fulfiller);
         vm.prank(admin);

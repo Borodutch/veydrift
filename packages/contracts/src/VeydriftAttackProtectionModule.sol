@@ -14,4 +14,12 @@ contract VeydriftAttackProtectionModule is VeydriftResourceReserves {
     {
         return _attackProtectionStatus(attacker, targetPlanetId);
     }
+
+    function attackBodyProtectionStatus(address attacker, uint256 targetPlanetId, bool targetIsMoon)
+        external
+        view
+        returns (AttackBlockReason blockedReason, uint8 flags, uint16 plunderBps)
+    {
+        return _attackProtectionStatus(attacker, targetPlanetId, targetIsMoon);
+    }
 }

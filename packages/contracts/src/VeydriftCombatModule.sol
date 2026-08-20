@@ -502,11 +502,26 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
     function resolveFleetMissionCombatRound(uint256 missionId) external returns (bool complete) {
         FleetMission storage mission = _fleetMissions[missionId];
         if (_battleResolutionProgress[missionId].rounds == 0) {
+            if (
+                mission.targetIsMoon
+                    && !_missionMoonExistsForOwner(
+                        missionId,
+                        mission.targetPlanetId,
+                        _planets[mission.targetPlanetId].owner,
+                        false
+                    )
+            ) {
+                _returnLinkedMissions(missionId, mission);
+                mission.status = FleetMissionStatus.Returning;
+                return true;
+            }
+
             // Attack protection is rechecked once, before the first combat round, to close the
             // launch->impact gap. It must not be re-evaluated between gas-bounded rounds after
             // casualties have already changed both players' scores.
-            (AttackBlockReason protectionReason,) =
-                _attackProtectionPreview(mission.owner, mission.targetPlanetId);
+            (AttackBlockReason protectionReason,) = _attackProtectionPreview(
+                mission.owner, mission.targetPlanetId, mission.targetIsMoon
+            );
             Resources storage locked = _riftLockedResources[mission.targetPlanetId];
             bool hasLiveRift = !mission.targetIsMoon
                 && (locked.metal != 0 || locked.crystal != 0 || locked.deuterium != 0);
@@ -1708,17 +1723,18 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         );
     }
 
-    function _attackProtectionPreview(address attacker, uint256 targetPlanetId)
+    function _attackProtectionPreview(address attacker, uint256 targetPlanetId, bool targetIsMoon)
         private
         view
         returns (AttackBlockReason reason, uint16 plunderBps)
     {
         assembly ("memory-safe") {
             let ptr := mload(0x40)
-            mstore(ptr, shl(224, 0x8a6b2246))
+            mstore(ptr, shl(224, 0xdca08aaf))
             mstore(add(ptr, 4), attacker)
             mstore(add(ptr, 36), targetPlanetId)
-            switch staticcall(gas(), address(), ptr, 68, ptr, 96)
+            mstore(add(ptr, 68), targetIsMoon)
+            switch staticcall(gas(), address(), ptr, 100, ptr, 96)
             case 0 {
                 plunderBps := 5000
             }

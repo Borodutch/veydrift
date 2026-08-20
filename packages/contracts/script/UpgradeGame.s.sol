@@ -7,6 +7,7 @@ import {
     ITransparentUpgradeableProxy
 } from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {VeydriftAttackProtectionModule} from "../src/VeydriftAttackProtectionModule.sol";
+import {VeydriftAcsAttackModule} from "../src/VeydriftAcsAttackModule.sol";
 import {VeydriftCombatModule, VeydriftCombatRapidfire} from "../src/VeydriftCombatModule.sol";
 import {VeydriftColonizationModule} from "../src/VeydriftColonizationModule.sol";
 import {VeydriftShipProductionModule} from "../src/VeydriftShipProductionModule.sol";
@@ -28,13 +29,15 @@ import {VeydriftStateMigrationModule} from "../src/VeydriftStateMigrationModule.
 ///      never the proxy's owner — the proxy's existing owner is preserved.
 ///
 ///      This mirrors the proven Base mainnet upgrade flow: deploy
-///      fresh modules + game impl, then ProxyAdmin.upgradeAndCall(proxy, newImpl, "") from the
-///      ProxyAdmin owner EOA.
+///      fresh modules + game impl, then ProxyAdmin.upgradeAndCall(proxy, newImpl,
+///      initializeMoonAttackParity()) from the ProxyAdmin owner EOA. The one-time initializer
+///      records the cutover timestamp used to preserve an active legacy moon bashing window.
 ///
 ///      Required env:
 ///        PRIVATE_KEY        deployer EOA; MUST be the ProxyAdmin owner (asserted below)
 ///        GAME_PROXY_ADDRESS the live Base VeydriftGame proxy
 ///        GAME_PROXY_ADMIN   its OZ ProxyAdmin contract
+///        MOON_PROXY_ADDRESS the already-upgraded MoonSystem proxy
 ///      Optional env:
 ///        ADMIN_ADDRESS      module-admin arg for the new impl (defaults to broadcaster; only
 ///                           affects the impl's own storage, never the proxy)
@@ -44,16 +47,32 @@ import {VeydriftStateMigrationModule} from "../src/VeydriftStateMigrationModule.
 ///      Execute:
 ///        forge script script/UpgradeGame.s.sol:UpgradeGame --rpc-url <base_mainnet> --broadcast
 contract UpgradeGame is Script {
+    // Stable proxy-storage slot verified by scripts/check-storage-layout.mjs. The moon-parity
+    // cutover spans the independently administered Game and MoonSystem proxies, so neither half
+    // may execute while player mission writes are still accepted.
+    bytes32 private constant GAME_PAUSED_SLOT = bytes32(uint256(52));
+
     function run() external returns (address newImplementation) {
         uint256 privateKey = vm.envUint("PRIVATE_KEY");
         address broadcaster = vm.addr(privateKey);
         address proxy = vm.envAddress("GAME_PROXY_ADDRESS");
         address proxyAdmin = vm.envAddress("GAME_PROXY_ADMIN");
+        address moonProxy = vm.envAddress("MOON_PROXY_ADDRESS");
         address moduleAdmin = vm.envOr("ADMIN_ADDRESS", broadcaster);
 
         // The upgrade call is onlyOwner on the ProxyAdmin. Fail fast (before any deploy) if the
         // signer cannot actually execute the upgrade, so we never strand orphaned module deploys.
         require(ProxyAdmin(proxyAdmin).owner() == broadcaster, "BROADCASTER_NOT_PROXY_ADMIN_OWNER");
+        require(uint256(vm.load(proxy, GAME_PAUSED_SLOT)) != 0, "GAME_MUST_BE_PAUSED");
+        (bool generationOk, bytes memory generationData) =
+            moonProxy.staticcall(abi.encodeWithSignature("moonGeneration(uint256)", 0));
+        require(generationOk && generationData.length >= 32, "MOON_PARITY_NOT_UPGRADED");
+        (bool gameOk, bytes memory gameData) =
+            moonProxy.staticcall(abi.encodeWithSignature("game()"));
+        require(
+            gameOk && gameData.length >= 32 && abi.decode(gameData, (address)) == proxy,
+            "MOON_GAME_MISMATCH"
+        );
 
         vm.startBroadcast(privateKey);
 
@@ -62,6 +81,7 @@ contract UpgradeGame is Script {
         VeydriftGameplayModule gameplayModule = new VeydriftGameplayModule(address(combatModule));
         VeydriftPlanetManagementModule planetManagementModule = new VeydriftPlanetManagementModule();
         VeydriftAttackProtectionModule attackProtectionModule = new VeydriftAttackProtectionModule();
+        VeydriftAcsAttackModule acsAttackModule = new VeydriftAcsAttackModule();
         VeydriftColonizationModule colonizationModule =
             new VeydriftColonizationModule(address(new VeydriftShipProductionModule()));
         VeydriftDefenseHoldModule defenseHoldModule = new VeydriftDefenseHoldModule();
@@ -79,12 +99,17 @@ contract UpgradeGame is Script {
             address(attackProtectionModule),
             address(colonizationModule),
             address(defenseHoldModule),
-            address(stateMigrationModule)
+            address(stateMigrationModule),
+            address(acsAttackModule)
         );
         newImplementation = address(newImpl);
 
         ProxyAdmin(proxyAdmin)
-            .upgradeAndCall(ITransparentUpgradeableProxy(proxy), newImplementation, "");
+            .upgradeAndCall(
+                ITransparentUpgradeableProxy(proxy),
+                newImplementation,
+                abi.encodeCall(VeydriftGame.initializeMoonAttackParity, ())
+            );
 
         vm.stopBroadcast();
 
@@ -92,5 +117,6 @@ contract UpgradeGame is Script {
         console2.log("New implementation:", newImplementation);
         console2.log("Gameplay module:   ", address(gameplayModule));
         console2.log("Combat module:     ", address(combatModule));
+        console2.log("ACS attack module: ", address(acsAttackModule));
     }
 }

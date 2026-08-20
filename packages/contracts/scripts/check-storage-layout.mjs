@@ -89,6 +89,36 @@ const reviewedStorageAppend = [
     offset: 0,
     type: "mapping(uint256 => struct BattleResolutionProgress)",
   },
+  {
+    label: "_missionOriginMoonGeneration",
+    slot: "59",
+    offset: 0,
+    type: "mapping(uint256 => uint64)",
+  },
+  {
+    label: "_missionTargetMoonGeneration",
+    slot: "60",
+    offset: 0,
+    type: "mapping(uint256 => uint64)",
+  },
+  {
+    label: "_moonAttackParityActivatedAt",
+    slot: "61",
+    offset: 0,
+    type: "uint64",
+  },
+  {
+    label: "_missionOriginMoonGenerationRecorded",
+    slot: "62",
+    offset: 0,
+    type: "mapping(uint256 => bool)",
+  },
+  {
+    label: "_missionTargetMoonGenerationRecorded",
+    slot: "63",
+    offset: 0,
+    type: "mapping(uint256 => bool)",
+  },
 ];
 const riftExtractionStruct = [
   {label: "active", slot: "0", offset: 0, type: "bool"},

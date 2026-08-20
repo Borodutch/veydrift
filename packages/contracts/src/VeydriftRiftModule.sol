@@ -98,8 +98,8 @@ contract VeydriftRiftModule is VeydriftResourceReserves {
         view
     {
         if (_planets[planetId].owner == attacker) revert SelfAttack();
-        (bool ok, bytes memory data) =
-            address(this).staticcall(abi.encodeWithSelector(0x8a6b2246, attacker, planetId));
+        (bool ok, bytes memory data) = address(this)
+            .staticcall(abi.encodeWithSelector(0xdca08aaf, attacker, planetId, targetIsMoon));
         if (!ok) assembly ("memory-safe") { revert(add(data, 32), mload(data)) }
         if (data.length < 32) return;
         (AttackBlockReason reason,,) = abi.decode(data, (AttackBlockReason, uint8, uint16));

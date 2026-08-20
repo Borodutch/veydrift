@@ -99,6 +99,26 @@ contract VeydriftDefenseProductionModule is VeydriftResourceReserves {
         if (mission.status != FleetMissionStatus.Outbound) return;
         if (_currentTimestamp() < mission.arrivalAt) revert FleetNotArrived(mission.arrivalAt);
 
+        address targetOwner = _planets[mission.targetPlanetId].owner;
+        if (!_missionMoonExistsForOwner(missionId, mission.targetPlanetId, targetOwner, false)) {
+            // The target moon disappeared in flight. Keep cargo and ships on the mission and send
+            // the fleet home instead of writing ghost state that a future moon could inherit.
+            mission.status = FleetMissionStatus.Returning;
+            emit FleetMissionResolved(missionId, msg.sender, mission.missionType, mission.returnAt);
+            emit FleetMissionReturnExposed(
+                missionId,
+                mission.owner,
+                FleetMissionStatus.Returning,
+                mission.originPlanetId,
+                mission.targetPlanetId,
+                mission.returnAt,
+                mission.cargo.metal,
+                mission.cargo.crystal,
+                mission.cargo.deuterium
+            );
+            return;
+        }
+
         _moonResources[mission.targetPlanetId] =
             _add(_moonResources[mission.targetPlanetId], mission.cargo);
         _emitMoonResourcesChanged(mission.targetPlanetId);

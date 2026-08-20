@@ -284,9 +284,9 @@ export class BackendDataStore {
     });
   }
 
-  attackProtection(wallet: string, targetPlanetId: string): Promise<AttackProtectionStatus> {
-    const key = cacheKey("attack-protection", wallet, targetPlanetId);
-    return this.refresh(key, () => fetchAttackProtectionStatus(this.apiBaseUrl, wallet, targetPlanetId));
+  attackProtection(wallet: string, targetPlanetId: string, targetIsMoon = false): Promise<AttackProtectionStatus> {
+    const key = cacheKey("attack-protection", wallet, targetPlanetId, targetIsMoon);
+    return this.refresh(key, () => fetchAttackProtectionStatus(this.apiBaseUrl, wallet, targetPlanetId, targetIsMoon));
   }
 
   fleetVisibility(wallet: string, options: FleetMissionVisibilityOptions = {}): Promise<FleetMissionVisibilityResponse> {

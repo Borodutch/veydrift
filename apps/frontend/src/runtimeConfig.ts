@@ -15,6 +15,7 @@ export type RuntimeConfig = {
     gameConfigured: boolean;
     highscoresEndpoint: boolean;
     migrationConfigured?: boolean;
+    moonAttackParity?: boolean;
     moonConfigured: boolean;
     randomnessConfigured: boolean;
     referralsConfigured?: boolean;

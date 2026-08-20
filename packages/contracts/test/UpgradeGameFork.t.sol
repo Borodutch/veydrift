@@ -7,6 +7,7 @@ import {
     ITransparentUpgradeableProxy
 } from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {VeydriftAttackProtectionModule} from "../src/VeydriftAttackProtectionModule.sol";
+import {VeydriftAcsAttackModule} from "../src/VeydriftAcsAttackModule.sol";
 import {VeydriftCombatModule, VeydriftCombatRapidfire} from "../src/VeydriftCombatModule.sol";
 import {VeydriftColonizationModule} from "../src/VeydriftColonizationModule.sol";
 import {VeydriftShipProductionModule} from "../src/VeydriftShipProductionModule.sol";
@@ -83,13 +84,18 @@ contract UpgradeGameForkTest is Test {
             address(attackProtectionModule),
             address(colonizationModule),
             address(defenseHoldModule),
-            address(stateMigrationModule)
+            address(stateMigrationModule),
+            address(new VeydriftAcsAttackModule())
         );
 
         // Perform the upgrade as the real ProxyAdmin owner.
         vm.prank(PROXY_ADMIN_OWNER);
         ProxyAdmin(PROXY_ADMIN)
-            .upgradeAndCall(ITransparentUpgradeableProxy(PROXY), address(newImpl), "");
+            .upgradeAndCall(
+                ITransparentUpgradeableProxy(PROXY),
+                address(newImpl),
+                abi.encodeCall(VeydriftGame.initializeMoonAttackParity, ())
+            );
 
         // Implementation flipped to the new code.
         address implAfter = _addrFromSlot(IMPL_SLOT);

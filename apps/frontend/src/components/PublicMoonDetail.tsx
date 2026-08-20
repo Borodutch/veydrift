@@ -73,6 +73,7 @@ export function PublicMoonDetail({
   const [loadedPlanet, setPlanet] = useState<Planet | null>(null);
   const [source, setSource] = useState<"api" | "error" | "loading">("loading");
   const [attackProtection, setAttackProtection] = useState<AttackProtectionStatus | null>(null);
+  const [attackProtectionUnavailable, setAttackProtectionUnavailable] = useState(true);
   const [activeMissions, setActiveMissions] = useState<FleetMissionSummary[] | null>(null);
   const currentRequestKey = useRef(planetDetailRequestKey(coords));
   currentRequestKey.current = planetDetailRequestKey(coords);
@@ -108,18 +109,25 @@ export function PublicMoonDetail({
     const isHome = planet ? sameCoordinates(homeCoords, planet) : false;
     if (!account || !targetPlanetId || isHome) {
       setAttackProtection(null);
+      setAttackProtectionUnavailable(false);
       return;
     }
 
     let cancelled = false;
-    backendDataStoreFor(apiBaseUrl).attackProtection(account, targetPlanetId)
+    setAttackProtection(null);
+    setAttackProtectionUnavailable(true);
+    backendDataStoreFor(apiBaseUrl).attackProtection(account, targetPlanetId, true)
       .then((status) => {
-        if (!cancelled) setAttackProtection(status);
+        if (!cancelled) {
+          setAttackProtection(status);
+          setAttackProtectionUnavailable(false);
+        }
       })
       .catch((error) => {
         if (!cancelled) {
           console.error(error);
           setAttackProtection(null);
+          setAttackProtectionUnavailable(true);
         }
       });
 
@@ -158,11 +166,18 @@ export function PublicMoonDetail({
   }, [apiBaseUrl, planet?.occupiedBy?.planetId]);
 
   const coordinateText = `[${coords.galaxy}:${coords.system}:${coords.position}]`;
+  const visibleTargetPlanetId = planet?.occupiedBy?.planetId;
+  const protectionRequired = Boolean(
+    account && visibleTargetPlanetId && planet && !sameCoordinates(homeCoords, planet)
+  );
   const actions = planet?.hasMoon
       ? publicMoonActions({
         account,
         actionState,
         attackProtection,
+        attackProtectionUnavailable: protectionRequired && (
+          attackProtectionUnavailable || attackProtection?.targetPlanetId !== visibleTargetPlanetId
+        ),
         coords,
         defenseState,
         homeCoords,
@@ -475,6 +490,7 @@ export function publicMoonActions({
   account,
   actionState,
   attackProtection,
+  attackProtectionUnavailable,
   coords,
   defenseState,
   homeCoords,
@@ -487,6 +503,7 @@ export function publicMoonActions({
   account: string | undefined;
   actionState: GalaxyActionState;
   attackProtection: AttackProtectionStatus | null;
+  attackProtectionUnavailable: boolean;
   coords: Coordinates;
   defenseState: ChainDefenseState | null | undefined;
   homeCoords: Coordinates | undefined;
@@ -523,7 +540,10 @@ export function publicMoonActions({
       label: "Attack",
       onAction,
       planet,
-      unavailableReason,
+      unavailableReason: unavailableReason
+        ?? (attackProtectionUnavailable
+          ? "Attack protection is unavailable. Refresh before attacking."
+          : undefined),
     }),
     moonMissionAction({
       action: actionsByKind.get("transport"),

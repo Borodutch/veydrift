@@ -387,6 +387,15 @@ abstract contract VeydriftGameStorage is Initializable {
     // isolated child-call revert boundary; progress is deleted as soon as final settlement completes.
     mapping(uint256 missionId => BattleResolutionProgress progress) internal
         _battleResolutionProgress;
+    // Append-only moon-attack parity state. A mission records the exact moon generation that was
+    // present at launch, preventing a destroyed moon's replacement at the same planet id from
+    // inheriting in-flight ships, cargo, or attacks. The activation timestamp lets the first
+    // post-upgrade moon attack conservatively inherit an active legacy shared bashing window.
+    mapping(uint256 missionId => uint64 generation) internal _missionOriginMoonGeneration;
+    mapping(uint256 missionId => uint64 generation) internal _missionTargetMoonGeneration;
+    uint64 internal _moonAttackParityActivatedAt;
+    mapping(uint256 missionId => bool recorded) internal _missionOriginMoonGenerationRecorded;
+    mapping(uint256 missionId => bool recorded) internal _missionTargetMoonGenerationRecorded;
 
     error AlreadyStarted();
     error BadStartPayment();
@@ -843,6 +852,7 @@ abstract contract VeydriftGameStorage is Initializable {
         startPrice = DEFAULT_START_PRICE;
         nextPlanetId = 1;
         nextFleetId = 1;
+        _moonAttackParityActivatedAt = uint64(block.timestamp);
     }
 
     modifier onlyOwner() {
@@ -1044,6 +1054,10 @@ abstract contract VeydriftGameStorage is Initializable {
     }
 
     function _recordAttack(address attacker, uint256 targetPlanetId) internal {
+        _recordAttack(attacker, targetPlanetId, false);
+    }
+
+    function _recordAttack(address attacker, uint256 targetPlanetId, bool targetIsMoon) internal {
         address defender = _attackDefender(targetPlanetId);
         bool defenderInactive =
             VeydriftAntiRaidPrimitives.isInactive(playerLastActiveAt[defender], block.timestamp);
@@ -1051,7 +1065,14 @@ abstract contract VeydriftGameStorage is Initializable {
             return;
         }
 
-        bytes32 windowKey = _attackWindowKey(attacker, defender, targetPlanetId);
+        bytes32 legacyWindowKey = _attackWindowKey(attacker, defender, targetPlanetId);
+        AttackWindow storage legacyWindow = _attackWindows[legacyWindowKey];
+        // If the pre-cutover shared window was active at activation, keep both bodies on that
+        // single window until it naturally expires. This makes the transition observable and
+        // exactly reproducible by the indexed UI instead of forking the count mid-window.
+        bytes32 windowKey = targetIsMoon && !_legacyMoonAttackWindowActive(legacyWindow)
+            ? _attackWindowKey(attacker, defender, targetPlanetId, true)
+            : legacyWindowKey;
         AttackWindow storage window = _attackWindows[windowKey];
         uint64 currentTime = uint64(block.timestamp);
         if (
@@ -1067,6 +1088,14 @@ abstract contract VeydriftGameStorage is Initializable {
     }
 
     function _attackProtectionStatus(address attacker, uint256 targetPlanetId)
+        internal
+        view
+        returns (AttackBlockReason reason, uint8 flags, uint16 plunderBps)
+    {
+        return _attackProtectionStatus(attacker, targetPlanetId, false);
+    }
+
+    function _attackProtectionStatus(address attacker, uint256 targetPlanetId, bool targetIsMoon)
         internal
         view
         returns (AttackBlockReason reason, uint8 flags, uint16 plunderBps)
@@ -1100,7 +1129,7 @@ abstract contract VeydriftGameStorage is Initializable {
             return (AttackBlockReason.ScoreProtection, flags, plunderBps);
         }
         if (VeydriftAntiRaidPrimitives.isBashingLimitReached(
-                _currentAttackCount(_attackWindowKey(attacker, defender, targetPlanetId)),
+                _currentBodyAttackCount(attacker, defender, targetPlanetId, targetIsMoon),
                 bashingWarException || defenderInactive
             )) {
             return (AttackBlockReason.BashingLimit, flags, plunderBps);
@@ -1168,6 +1197,106 @@ abstract contract VeydriftGameStorage is Initializable {
         returns (bytes32)
     {
         return keccak256(abi.encode(attacker, defender, targetPlanetId));
+    }
+
+    /// @dev Planet windows retain their historical key exactly. Moon windows use a distinct domain
+    ///      so attacking either body never consumes the other body's bashing allowance.
+    function _attackWindowKey(
+        address attacker,
+        address defender,
+        uint256 targetPlanetId,
+        bool targetIsMoon
+    ) internal pure returns (bytes32) {
+        return targetIsMoon
+            ? keccak256(
+                abi.encode("VEYDRIFT_MOON_ATTACK_WINDOW", attacker, defender, targetPlanetId)
+            )
+            : _attackWindowKey(attacker, defender, targetPlanetId);
+    }
+
+    function _currentBodyAttackCount(
+        address attacker,
+        address defender,
+        uint256 targetPlanetId,
+        bool targetIsMoon
+    ) internal view returns (uint32 count) {
+        AttackWindow storage legacyWindow = _attackWindows[
+            _attackWindowKey(attacker, defender, targetPlanetId)
+        ];
+        if (targetIsMoon && _legacyMoonAttackWindowActive(legacyWindow)) {
+            return _currentAttackCount(_attackWindowKey(attacker, defender, targetPlanetId));
+        }
+        count =
+            _currentAttackCount(_attackWindowKey(attacker, defender, targetPlanetId, targetIsMoon));
+        return count;
+    }
+
+    function _legacyMoonAttackWindowActive(AttackWindow storage legacyWindow)
+        internal
+        view
+        returns (bool)
+    {
+        uint64 currentTime = uint64(block.timestamp);
+        return _moonAttackParityActivatedAt != 0 && legacyWindow.windowStartedAt != 0
+            && legacyWindow.windowStartedAt <= _moonAttackParityActivatedAt
+            && currentTime
+                < uint256(legacyWindow.windowStartedAt)
+                    + VeydriftAntiRaidPrimitives.BASHING_WINDOW_SECONDS;
+    }
+
+    function _recordMissionMoonIncarnations(
+        uint256 missionId,
+        uint256 originPlanetId,
+        uint256 targetPlanetId,
+        bool originIsMoon,
+        bool targetIsMoon
+    ) internal {
+        if (originIsMoon) {
+            _missionOriginMoonGeneration[missionId] = _moonGeneration(originPlanetId);
+            _missionOriginMoonGenerationRecorded[missionId] = true;
+        }
+        if (targetIsMoon) {
+            _missionTargetMoonGeneration[missionId] = _moonGeneration(targetPlanetId);
+            _missionTargetMoonGenerationRecorded[missionId] = true;
+        }
+    }
+
+    function _missionMoonExistsForOwner(
+        uint256 missionId,
+        uint256 planetId,
+        address owner_,
+        bool origin
+    ) internal view returns (bool) {
+        address moonSystem = _moonSystem;
+        if (moonSystem == address(0)) return false;
+        (bool ok, bytes memory data) =
+            moonSystem.staticcall(abi.encodeWithSignature("moon(uint256)", planetId));
+        if (!ok || data.length < 96) return false;
+        (bool exists,, address moonOwner,,, uint64 createdAt,) =
+            abi.decode(data, (bool, uint256, address, uint16, uint16, uint64, uint64));
+        if (!exists || moonOwner != owner_) return false;
+        // This timestamp guard makes the two-proxy rollout safe in either compatibility gap. It
+        // also protects legacy missions that predate the generation getter: a replacement moon is
+        // always created after the mission departed and therefore cannot inherit that mission.
+        if (createdAt > _fleetMissions[missionId].departureAt) return false;
+        uint64 expected = origin
+            ? _missionOriginMoonGeneration[missionId]
+            : _missionTargetMoonGeneration[missionId];
+        bool generationRecorded = origin
+            ? _missionOriginMoonGenerationRecorded[missionId]
+            : _missionTargetMoonGenerationRecorded[missionId];
+        // Missions launched by the old Game during the MoonSystem-first rollout gap have no
+        // generation marker. They remain valid only for the same createdAt incarnation above.
+        if (!generationRecorded) return true;
+        return _moonGeneration(planetId) == expected;
+    }
+
+    function _moonGeneration(uint256 planetId) internal view returns (uint64 generation) {
+        address moonSystem = _moonSystem;
+        if (moonSystem == address(0)) return 0;
+        (bool ok, bytes memory data) =
+            moonSystem.staticcall(abi.encodeWithSignature("moonGeneration(uint256)", planetId));
+        if (ok && data.length >= 32) generation = abi.decode(data, (uint64));
     }
 
     function _totalUserScore(address player) internal view returns (uint256 score) {

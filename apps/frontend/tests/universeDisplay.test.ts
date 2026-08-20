@@ -789,6 +789,7 @@ describe("tester universe display data", () => {
       account,
       actionState: { status: "idle" as const },
       attackProtection: null,
+      attackProtectionUnavailable: false,
       defenseState: null,
       homeCoords: { galaxy: 2, system: 44, position: 1 },
       homePlanetId: "7",
@@ -823,6 +824,16 @@ describe("tester universe display data", () => {
       { kind: "deploy", defaultTargetIsMoon: true },
     ]);
     expect(ownActions.find((action) => action.kind === "defend")?.disabledReason).toContain("Moon defense stationing");
+
+    const unavailableActions = publicMoonActions({
+      ...base,
+      attackProtectionUnavailable: true,
+      coords: { galaxy: 2, system: 44, position: 9 },
+      planet: enemyMoon,
+    });
+    expect(unavailableActions.find((action) => action.kind === "attack")?.disabledReason)
+      .toBe("Attack protection is unavailable. Refresh before attacking.");
+    expect(unavailableActions.find((action) => action.kind === "attack")?.onClick).toBeUndefined();
   });
 
   test("planet detail uses canonical Solar Satellite E/Sat temperature", () => {

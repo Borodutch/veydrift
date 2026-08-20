@@ -262,11 +262,13 @@ import {
   sendCreateColonyTransaction,
   sendLaunchInterplanetaryMissileAttackTransaction,
   sendLaunchAttackMissionTransaction,
+  sendLaunchBodyAttackMissionTransaction,
   sendLaunchBodyFleetMissionTransaction,
   sendLaunchDefenseHoldTransaction,
   sendLaunchFleetMissionTransaction,
   sendLaunchTransportBatchTransaction,
   sendJoinAttackMissionTransaction,
+  sendJoinBodyAttackMissionTransaction,
   encodeColonizationTargetId,
   sendJumpGateJumpTransaction,
   sendCompleteFleetMissionReturnTransaction,
@@ -4543,6 +4545,8 @@ export function PlayableMvpApp({
   const gameContract = useMemo(() => {
     return runtimeConfig.status === "ready" ? gameContractAddress(runtimeConfig.config) : undefined;
   }, [runtimeConfig]);
+  const moonAttackParityEnabled = runtimeConfig.status === "ready"
+    && runtimeConfig.config.featureSupport?.moonAttackParity === true;
   const allianceContract = useMemo(() => {
     return runtimeConfig.status === "ready" ? allianceContractAddress(runtimeConfig.config) : undefined;
   }, [runtimeConfig]);
@@ -6920,7 +6924,7 @@ export function PlayableMvpApp({
     label: string,
     send: () => Promise<string>,
     options: {
-      validateAttackProtection?: { targetPlanetId: string } | undefined;
+      validateAttackProtection?: { targetPlanetId: string; targetIsMoon?: boolean | undefined } | undefined;
       expectedMissionLaunch?: ((txHash: string) => FleetMissionSummary);
       resourceChange?: Pick<ChainResourceChange, "bodyKind" | "planetId">;
       syncMissionLaunch?: boolean;
@@ -6958,13 +6962,13 @@ export function PlayableMvpApp({
           }
         }
         if (options.validateAttackProtection) {
-          const { targetPlanetId } = options.validateAttackProtection;
+          const { targetPlanetId, targetIsMoon = false } = options.validateAttackProtection;
           setGalaxyAction({ status: "pending", label: `${label}: refreshing target protection.` });
           if (!apiBaseUrl || !account) {
             throw new Error("Wallet or game API is unavailable while refreshing target protection.");
           }
           await revalidateAttackProtectionBeforeSubmit(
-            () => backendData!.attackProtection(account, targetPlanetId),
+            () => backendData!.attackProtection(account, targetPlanetId, targetIsMoon),
           );
           if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return false;
         }
@@ -8460,7 +8464,7 @@ export function PlayableMvpApp({
       targetCoords: Coordinates;
       originIsMoon?: boolean | undefined;
       targetIsMoon?: boolean | undefined;
-      validateAttackProtection?: { targetPlanetId: string } | undefined;
+      validateAttackProtection?: { targetPlanetId: string; targetIsMoon?: boolean | undefined } | undefined;
       validateShipInventory?: { originIsMoon?: boolean | undefined; originPlanetId: string; ships: MissionShips } | undefined;
     }) => ({
       validateAttackProtection,
@@ -8579,30 +8583,46 @@ export function PlayableMvpApp({
     const supportsBodyMission = supportsCargoMission || action.kind === "attack";
     const originIsMoon = supportsBodyMission && draft.originIsMoon === true;
     const targetIsMoon = supportsBodyMission && draft.targetIsMoon === true;
-    if (action.kind === "attack" && draft.lootRatio && !originIsMoon && !targetIsMoon) {
+    if (action.kind === "attack" && (originIsMoon || targetIsMoon) && !moonAttackParityEnabled) {
+      setGalaxyAction({
+        status: "error",
+        label: "Moon attack parity is still activating. Refresh shortly before launching.",
+      });
+      return;
+    }
+    if (action.kind === "attack" && draft.lootRatio) {
       const { metal, crystal, deuterium } = draft.lootRatio;
-      closeMissionCreationWhenComplete(runGalaxyTransaction(`${action.label} mission`, () => sendLaunchAttackMissionTransaction(
-          provider,
-          account,
-          gameContract,
-          {
+      const lootRatio = {
+        metalBps: metal * 100,
+        crystalBps: crystal * 100,
+        deuteriumBps: deuterium * 100,
+      };
+      const launchAttack = () => originIsMoon || targetIsMoon
+        ? sendLaunchBodyAttackMissionTransaction(provider, account, gameContract, {
             originPlanetId,
             targetPlanetId,
             ships: draft.ships,
             speedPercent: draft.speedPercent,
-            lootRatio: {
-              metalBps: metal * 100,
-              crystalBps: crystal * 100,
-              deuteriumBps: deuterium * 100,
-            },
-          },
-        ), pendingLaunchOptions({
+            originIsMoon,
+            targetIsMoon,
+            lootRatio,
+          })
+        : sendLaunchAttackMissionTransaction(provider, account, gameContract, {
+            originPlanetId,
+            targetPlanetId,
+            ships: draft.ships,
+            speedPercent: draft.speedPercent,
+            lootRatio,
+          });
+      closeMissionCreationWhenComplete(runGalaxyTransaction(`${action.label} mission`, launchAttack, pendingLaunchOptions({
           missionType: "Attack",
           targetPlanet: target,
           targetPlanetId,
           targetCoords: coords,
-          validateAttackProtection: { targetPlanetId },
-          validateShipInventory: { originPlanetId, ships: draft.ships },
+          originIsMoon,
+          targetIsMoon,
+          validateAttackProtection: { targetPlanetId, targetIsMoon },
+          validateShipInventory: { originIsMoon, originPlanetId, ships: draft.ships },
         })));
       return;
     }
@@ -8635,7 +8655,7 @@ export function PlayableMvpApp({
       targetCoords: coords,
       originIsMoon,
       targetIsMoon,
-      validateAttackProtection: action.kind === "attack" ? { targetPlanetId } : undefined,
+      validateAttackProtection: action.kind === "attack" ? { targetPlanetId, targetIsMoon } : undefined,
       validateShipInventory: { originIsMoon, originPlanetId, ships: draft.ships },
     }));
     closeMissionCreationWhenComplete(runMission());
@@ -8653,6 +8673,7 @@ export function PlayableMvpApp({
     shipyardState?.technologyLevels,
     moonState,
     missionResourcesForOrigin,
+    moonAttackParityEnabled,
     walletPlanets.length,
   ]);
 
@@ -8941,8 +8962,9 @@ export function PlayableMvpApp({
   const handleConfirmJoinAttack = useCallback((draft: MissionLaunchDraft) => {
     const pending = pendingJoinAttack;
     if (!pending) return;
-    if (!provider || !account || !gameContract || !onChainSettlement?.homePlanetId) {
-      setGalaxyAction({ status: "error", label: "Wallet, game contract, or home planet is unavailable." });
+    const originPlanetId = activePlanetId ?? selectedManagedPlanet?.planetId;
+    if (!provider || !account || !gameContract || !originPlanetId) {
+      setGalaxyAction({ status: "error", label: "Wallet, game contract, or selected origin is unavailable." });
       return;
     }
 
@@ -8952,37 +8974,57 @@ export function PlayableMvpApp({
     };
     const driveLevels = driveLevelsFromTechnologyLevels(shipyardState?.technologyLevels);
     void (async () => {
-      const completed = await runGalaxyTransaction("Group attack join", () => sendJoinAttackMissionTransaction(
-        provider,
-        account,
-        gameContract,
-        {
-          originPlanetId: onChainSettlement.homePlanetId ?? "0",
+      const originIsMoon = draft.originIsMoon === true;
+      const targetIsMoon = pending.mission.targetIsMoon === true;
+      if ((originIsMoon || targetIsMoon) && !moonAttackParityEnabled) {
+        setGalaxyAction({
+          status: "error",
+          label: "Moon attack parity is still activating. Refresh shortly before joining.",
+        });
+        return;
+      }
+      const sendJoin = originIsMoon
+        ? () => sendJoinBodyAttackMissionTransaction(provider, account, gameContract, {
+          originPlanetId,
           attackMissionId: pending.attackMissionId,
           targetPlanetId: pending.targetPlanetId,
           ships: draft.ships,
-        },
-      ), {
+          originIsMoon: true,
+        })
+        : () => sendJoinAttackMissionTransaction(provider, account, gameContract, {
+          originPlanetId,
+          attackMissionId: pending.attackMissionId,
+          targetPlanetId: pending.targetPlanetId,
+          ships: draft.ships,
+        });
+      const completed = await runGalaxyTransaction("Group attack join", sendJoin, {
         expectedMissionLaunch: (txHash) => expectedMissionLaunchForDraft(txHash, {
           account,
           originPlanet: selectedManagedPlanet,
-          originPlanetId: onChainSettlement.homePlanetId ?? "0",
+          originPlanetId,
+          targetPlanet: pending.target,
           targetPlanetId: pending.targetPlanetId,
           targetCoords: pending.coords,
           missionType: "AcsAttack",
           draft,
           driveLevels,
+          originIsMoon,
+          targetIsMoon,
         }),
         resourceChange: {
-          bodyKind: "planet",
-          planetId: onChainSettlement.homePlanetId ?? "0",
+          bodyKind: originIsMoon ? "moon" : "planet",
+          planetId: originPlanetId,
         },
         syncMissionLaunch: true,
-        validateShipInventory: { originPlanetId: onChainSettlement.homePlanetId ?? "0", ships: draft.ships },
+        validateAttackProtection: {
+          targetIsMoon,
+          targetPlanetId: pending.targetPlanetId,
+        },
+        validateShipInventory: { originIsMoon, originPlanetId, ships: draft.ships },
       });
       if (completed) closeJoinAttack();
     })();
-  }, [account, gameContract, onChainSettlement?.homePlanetId, pendingJoinAttack, provider, runGalaxyTransaction, selectedManagedPlanet, shipyardState?.technologyLevels]);
+  }, [account, activePlanetId, gameContract, moonAttackParityEnabled, pendingJoinAttack, provider, runGalaxyTransaction, selectedManagedPlanet, shipyardState?.technologyLevels]);
 
   const handleNavigate = useCallback((target: Page) => {
     playSfx("tab");
@@ -9471,6 +9513,7 @@ export function PlayableMvpApp({
             : undefined}
           defenseHoldMode={pendingGalaxyMission.action.kind === "defenseHold"}
           driveLevels={driveLevelsFromTechnologyLevels(shipyardState?.technologyLevels)}
+          moonAttackParityEnabled={moonAttackParityEnabled}
           key={missionComposerIdentity({
             account,
             activePlanetId,
@@ -9497,14 +9540,34 @@ export function PlayableMvpApp({
     if (pendingJoinAttack) {
       return (
         <MissionCreationPage
-          action={{ enabled: true, kind: "attack", label: "Join attack", mode: "mission", mission: "attack", ships: emptyMissionShips() }}
+          action={{
+            enabled: true,
+            kind: "attack",
+            label: "Join attack",
+            mode: "mission",
+            mission: "attack",
+            ships: emptyMissionShips(),
+            defaultTargetIsMoon: pendingJoinAttack.mission.targetIsMoon === true,
+          }}
           actionPending={galaxyAction.status === "pending"}
           actionPendingLabel={galaxyAction.status === "pending" ? galaxyAction.label : undefined}
           attackerCombatTechLevels={attackerCombatTechLevels}
+          bodySelection={{
+            defaultOriginIsMoon: activeBodyKind === "moon",
+            defaultTargetIsMoon: pendingJoinAttack.mission.targetIsMoon === true,
+            originMoonAvailable: Boolean(selectedManagedPlanet?.moon?.exists && moonState?.moon?.exists),
+            originMoonResources: missionMoonResources(moonState),
+            originMoonShipyardState: missionMoonShipyardState({ moonState, shipyardState }),
+            targetMoonAvailable: pendingJoinAttack.mission.targetIsMoon === true
+              ? Boolean(pendingJoinAttack.target?.hasMoon)
+              : false,
+            targetSelectionLocked: true,
+          }}
           coords={pendingJoinAttack.coords}
           driveLevels={driveLevelsFromTechnologyLevels(shipyardState?.technologyLevels)}
           joinAttackContext={joinAttackForecastContextForMission(pendingJoinAttack.mission)}
           joinAttackMode
+          moonAttackParityEnabled={moonAttackParityEnabled}
           nowMs={now}
           onBack={() => setPendingJoinAttack(null)}
           onConfirm={handleConfirmJoinAttack}

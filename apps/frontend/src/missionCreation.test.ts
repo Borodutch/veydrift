@@ -22,6 +22,8 @@ import {
   missionConfirmButtonLabel,
   missionComposerRouteEndpoints,
   missionDraftBlocker,
+  missionTargetCompositionUnits,
+  missionTargetMoonUnavailableReason,
   MissionFuelCost,
   MissionTimingGrid,
   MISSION_TIMING_PLACEHOLDER,
@@ -387,7 +389,12 @@ describe("mission creation", () => {
     expect(missionCreationSource).toContain("const bodyMissionSupported = action.mode === \"mission\" && (action.kind === \"attack\" || cargoSupported);");
     expect(playableMvpAppSource).toContain("pendingGalaxyMission.action.kind === \"attack\"");
     expect(playableMvpAppSource).toContain("const supportsBodyMission = supportsCargoMission || action.kind === \"attack\";");
-    expect(playableMvpAppSource).toContain("draft.lootRatio && !originIsMoon && !targetIsMoon");
+    expect(playableMvpAppSource).toContain('action.kind === "attack" && draft.lootRatio');
+    expect(playableMvpAppSource).toContain("sendLaunchBodyAttackMissionTransaction");
+    expect(playableMvpAppSource).toContain("validateShipInventory: { originIsMoon, originPlanetId, ships: draft.ships }");
+    expect(playableMvpAppSource).toContain("validateAttackProtection: { targetPlanetId, targetIsMoon }");
+    expect(playableMvpAppSource).toContain("targetPlanet: pending.target");
+    expect(playableMvpAppSource).toContain("const targetIsMoon = pending.mission.targetIsMoon === true;");
 
     const target = targetPlanet({
       hasMoon: true,
@@ -430,14 +437,22 @@ describe("mission creation", () => {
     expect(moonBattleForecast.sampleReport?.defender.startingDefenses).toEqual([
       expect.objectContaining({ id: 0, count: 1 }),
     ]);
+    expect(missionTargetCompositionUnits(target, true)).toEqual({
+      fleet: [expect.objectContaining({ key: "lightFighter", count: 2 })],
+      defenses: [expect.objectContaining({ count: 1 })],
+    });
+    expect(missionTargetCompositionUnits(target, false)).toEqual({
+      fleet: [expect.objectContaining({ key: "battleship", count: 25 })],
+      defenses: [expect.objectContaining({ count: 200 })],
+    });
   });
 
   test("keeps attack loot visible across every supported planet and moon body route", () => {
     const routeModes = [
       { label: "planet→planet", originIsMoon: false, targetIsMoon: false, mode: "custom" },
-      { label: "planet→moon", originIsMoon: false, targetIsMoon: true, mode: "body-greedy" },
-      { label: "moon→planet", originIsMoon: true, targetIsMoon: false, mode: "body-greedy" },
-      { label: "moon→moon", originIsMoon: true, targetIsMoon: true, mode: "body-greedy" },
+      { label: "planet→moon", originIsMoon: false, targetIsMoon: true, mode: "custom" },
+      { label: "moon→planet", originIsMoon: true, targetIsMoon: false, mode: "custom" },
+      { label: "moon→moon", originIsMoon: true, targetIsMoon: true, mode: "custom" },
     ] as const;
 
     for (const route of routeModes) {
@@ -492,36 +507,27 @@ describe("mission creation", () => {
       onResetEven: () => undefined,
       predictedLoot: { metal: 300, crystal: 150, deuterium: 50 },
     } as const;
-    const bodyLoot = MissionLootSection({
-      ...sharedProps,
-      lootIntelAvailable: false,
-      lootMode: "body-greedy",
-    });
     const customLoot = MissionLootSection({
       ...sharedProps,
       lootIntelAvailable: true,
-      lootMode: "custom",
     });
-    const bodyText = collectText(bodyLoot).join(" ");
     const customText = collectText(customLoot).join(" ");
-
-    expect(bodyText).toContain("Loot");
-    expect(bodyText).toContain("Loot at arrival");
-    expect(bodyText).toContain("Moon attacks use the on-chain greedy loot order");
-    expect(bodyText).toContain("Custom splits are unavailable");
-    expect(bodyText).toContain("Moon resource intel is unavailable for this target.");
-    expect(bodyText).not.toContain("Metal %");
-    expect(findElements(bodyLoot, "p").some(
-      (element) => element.props?.["aria-label"] === "Body attack loot allocation",
-    )).toBe(true);
 
     expect(customText).toContain("Loot at arrival");
     expect(customText).toContain("Metal %");
     expect(customText).toContain("Metal up to");
     expect(customText).toContain("Even split");
-    expect(missionCreationSource).toContain('const lootPreviewVisible = attackLootMode === "custom" || attackLootMode === "body-greedy";');
+    expect(missionCreationSource).toContain('const lootPreviewVisible = attackLootMode === "custom";');
+    expect(missionCreationSource).not.toContain("Moon attacks use the on-chain greedy loot order");
     expect(missionCreationSource).toContain("lootRatioSupported && !greedyLootEnabled ? lootRatio : null");
     expect(missionCreationSource).toContain("<MissionLootSection");
+  });
+
+  test("fails moon attacks closed until the upgraded contract capability is enabled", () => {
+    expect(missionCreationSource).toContain("moonAttackParityEnabled = false");
+    expect(missionCreationSource).toContain("Moon attack parity is still activating. Refresh shortly before launching.");
+    expect(playableMvpAppSource).toContain("runtimeConfig.config.featureSupport?.moonAttackParity === true");
+    expect(playableMvpAppSource).toContain("(originIsMoon || targetIsMoon) && !moonAttackParityEnabled");
   });
 
   test("keeps the Loot controls width-safe and naturally scroll-reachable at supported mobile sizes", () => {
@@ -689,12 +695,47 @@ describe("mission creation", () => {
       sectionVisible: false,
       targetVisible: false,
     });
+    expect(missionBodySelectionVisibility({
+      bodyMissionSupported: true,
+      originMoonAvailable: true,
+      targetMoonAvailable: true,
+      targetSelectionLocked: true,
+    })).toEqual({
+      originVisible: true,
+      sectionVisible: true,
+      targetVisible: false,
+    });
     expect(missionCreationSource).not.toContain("Moon bodies keep independent");
   });
 
   test("mission body selectors can be preselected by Overview moon shortcuts", () => {
     expect(missionCreationSource).toContain("action.defaultOriginIsMoon === true");
     expect(missionCreationSource).toContain("action.defaultTargetIsMoon === true");
+  });
+
+  test("preserves a selected moon and blocks instead of silently attacking its parent when it disappears", () => {
+    expect(missionTargetMoonUnavailableReason(true, false)).toBe(
+      "The target moon no longer exists. Select Planet or refresh the target before launching."
+    );
+    expect(missionTargetMoonUnavailableReason(true, undefined)).toContain("moon no longer exists");
+    expect(missionTargetMoonUnavailableReason(false, false)).toBeUndefined();
+    expect(missionTargetMoonUnavailableReason(true, true)).toBeUndefined();
+    expect(missionCreationSource).toContain("const effectiveTargetIsMoon = targetIsMoon;");
+    expect(missionCreationSource).toContain("Boolean(bodySelection?.targetMoonAvailable) || targetIsMoon");
+    expect(missionCreationSource).toContain("Boolean(bodySelection?.originMoonAvailable) || originIsMoon");
+    expect(missionCreationSource).toContain("effectiveOriginIsMoon && !bodySelection?.originMoonShipyardState");
+  });
+
+  test("keeps moon group-attack joins on moon intel and moon protection", () => {
+    expect(playableMvpAppSource).toContain(
+      "defaultTargetIsMoon: pendingJoinAttack.mission.targetIsMoon === true",
+    );
+    expect(playableMvpAppSource).toContain(
+      "targetMoonAvailable: pendingJoinAttack.mission.targetIsMoon === true",
+    );
+    expect(playableMvpAppSource).toContain(
+      "const targetIsMoon = pending.mission.targetIsMoon === true;",
+    );
   });
 
   test("keeps attack confirm visibly pending while transaction and indexing settle", () => {

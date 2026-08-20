@@ -6,6 +6,7 @@ import {
   attachAttackGroupParticipants,
   decodeAttackMissionLaunch,
   decodeBattleReportLogs,
+  decodeFleetMissionBodyIdentity,
   decodeFleetMissionLogs,
   decodeFirstPlanetSettledLog,
   decodePlayerMigrationLog,
@@ -36,6 +37,8 @@ const moonDestructionFinalizedTopic = "0xdac71b69e1912e36573457fd7e6227e8b5ac86e
 const fleetMissionLaunchedTopic = "0x95e2cb506aa14052bac412e42f47fb34d9234819a960761a7bc7f1920c0ab456";
 const fleetMissionCargoTopic = "0x3daa6311ecdadad6781f70e5d285e7150f9dc165db88d23be8867be4de33ff29";
 const fleetMissionShipsTopic = "0xf581cbe97357884794500d80286cfbe823fed3b5d77446e477aa694ce89fc82d";
+const fleetMissionBodiesTopic = "0xfa464e2180f08e3e4d8c4247566d0616a5e1ab845d1678c47fedae6d44e9c502";
+const fleetMissionLootRatioTopic = "0xa6846d64330aacb1675d30a3535ea36822060fb38252cbb6b358bec4149767ff";
 const fleetMissionReturnExposedTopic = "0x27a083519451f4434cd1f93497fb93689a906d3b982a3f127cb236aa24356afa";
 const fleetMissionRecalledTopic = "0x2c9b31f1abc732f3b6d28e7724439ea4713ae516632088b8c4dc0211479dc6ca";
 const fleetMissionResolvedTopic = "0xcb928b431ffcdbe55fddc2bf06967951efb3dfe87d14bc436d546fdbbee9cb2d";
@@ -464,6 +467,55 @@ describe("current planet enumeration", () => {
       })
     ]);
     expect(batchSelectors).toEqual(["0x181c1bc4", "0xec16d865", "0x181c1bc4", "0xec16d865"]);
+  });
+});
+
+describe("attack protection reads", () => {
+  test("uses the body-aware selector for moon protection", async () => {
+    const attackWallet = "0x2222222222222222222222222222222222222222" as Address;
+    const calls: string[] = [];
+    const reader = new VeydriftGameReader(
+      readerConfig,
+      {
+        async request<T>(method: string, params: unknown[]): Promise<T> {
+          expect(method).toBe("eth_call");
+          const [call] = params as [{ data: string }];
+          calls.push(call.data);
+          return dataWords([word(0n), word(0n), word(5000n)]) as T;
+        },
+        snapshot() {
+          return {
+            activeRpcUrl: null,
+            batchRequests: 0,
+            callsByMethod: {},
+            callsBySource: {},
+            failoverCount: 0,
+            httpRequests: 0,
+            lastFailoverReason: null,
+            rpcUrls: [],
+            timeouts: 0,
+            requestSource: "test",
+            startedHttpRequests: 0,
+            finishedHttpRequests: 0,
+            unfinishedHttpRequests: 0,
+            oldestUnfinishedRequestAgeMs: null
+          };
+        }
+      }
+    );
+
+    await expect(reader.getAttackProtectionStatus(attackWallet, 7n)).resolves.toMatchObject({
+      allowed: true,
+      targetPlanetId: "7"
+    });
+    await expect(reader.getAttackProtectionStatus(attackWallet, 7n, true)).resolves.toMatchObject({
+      allowed: true,
+      targetPlanetId: "7"
+    });
+
+    expect(calls[0]?.slice(0, 10)).toBe("0x8a6b2246");
+    expect(calls[1]?.slice(0, 10)).toBe("0xdca08aaf");
+    expect(calls[1]?.slice(-64)).toBe(word(1n));
   });
 });
 
@@ -1939,6 +1991,30 @@ describe("attack resolution is gated on battle randomness (VEY-KANEO-479)", () =
 });
 
 describe("fleet mission cargo vs loot", () => {
+  test("decodes body identity used to separate planet and moon protection windows", () => {
+    expect(decodeFleetMissionBodyIdentity(makeLog({
+      topics: [fleetMissionBodiesTopic, topic(77n)],
+      data: dataWords([word(1n), word(0n)])
+    }))).toEqual({ missionId: "77", originIsMoon: true, targetIsMoon: false });
+  });
+
+  test("retains the selected attack loot ratio in the mission read model", () => {
+    const owner = "0x0000000000000000000000000000000000000abc" as Address;
+    const missionId = 77n;
+    const mission = decodeFleetMissionLogs([
+      makeLog({
+        topics: [fleetMissionLaunchedTopic, topic(missionId), addressTopic(owner), topic(3n)],
+        data: dataWords([word(99n), word(1n), word(1_700_000_000n), word(1_700_000_600n)])
+      }),
+      makeLog({
+        topics: [fleetMissionLootRatioTopic, topic(missionId)],
+        data: dataWords([word(2_000n), word(5_000n), word(3_000n)])
+      })
+    ]).get(missionId.toString());
+
+    expect(mission?.lootRatio).toEqual({ metalBps: 2_000, crystalBps: 5_000, deuteriumBps: 3_000 });
+  });
+
   // VEY-404: a pure attack that loaded no outbound cargo but looted 50 metal must report Cargo 0
   // (outbound launch cargo) and Loot 50 (battle report) — not 50/50. On-chain the contract folds
   // loot into mission.cargo before emitting FleetMissionReturnExposed, so the indexer must keep the

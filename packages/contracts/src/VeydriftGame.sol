@@ -25,6 +25,7 @@ contract VeydriftGame is VeydriftResourceReserves {
     address private immutable _defenseHoldModule;
     address private immutable _stateMigrationModule;
     address private immutable _batchTransportModule;
+    address private immutable _acsAttackModule;
 
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
 
@@ -39,13 +40,14 @@ contract VeydriftGame is VeydriftResourceReserves {
         address attackProtectionModule,
         address colonizationModule,
         address defenseHoldModule,
-        address stateMigrationModule
+        address stateMigrationModule,
+        address acsAttackModule
     ) VeydriftResourceReserves(admin) {
         if (
             firstPlanetSettlementModule == address(0) || gameplayModule == address(0)
                 || planetManagementModule == address(0) || attackProtectionModule == address(0)
                 || colonizationModule == address(0) || defenseHoldModule == address(0)
-                || stateMigrationModule == address(0)
+                || stateMigrationModule == address(0) || acsAttackModule == address(0)
         ) revert UnsupportedGameplayModule();
         _firstPlanetSettlementModule = firstPlanetSettlementModule;
         _gameplayModule = gameplayModule;
@@ -55,11 +57,24 @@ contract VeydriftGame is VeydriftResourceReserves {
         _defenseHoldModule = defenseHoldModule;
         _stateMigrationModule = stateMigrationModule;
         _batchTransportModule = address(new VeydriftBatchTransportModule());
+        _acsAttackModule = acsAttackModule;
     }
 
     function initialize(address admin) external initializer {
         if (admin == address(0)) revert Unauthorized(admin);
         __VeydriftGameStorage_init(admin);
+    }
+
+    /// @notice Idempotent upgrade hook that separates new moon bashing windows without resetting an
+    ///         active legacy shared window. Fresh deployments set the marker during initialize.
+    function initializeMoonAttackParity() external {
+        if (_moonAttackParityActivatedAt == 0) {
+            _moonAttackParityActivatedAt = uint64(block.timestamp);
+        }
+    }
+
+    function moonAttackParityActivatedAt() external view returns (uint64) {
+        return _moonAttackParityActivatedAt;
     }
 
     function transferOwnership(address nextOwner) external onlyOwner {
@@ -364,6 +379,21 @@ contract VeydriftGame is VeydriftResourceReserves {
         _delegateToDefenseHoldModule();
     }
 
+    /// @notice Launch a body-aware Attack mission with a player-selected loot ratio.
+    function launchBodyAttackMission(
+        uint256,
+        uint256,
+        MissionShips calldata,
+        Resources calldata,
+        uint16,
+        bool,
+        bool,
+        LootRatio calldata
+    ) external returns (uint256) {
+        _touchPlayer(msg.sender);
+        _delegateToPlayModule();
+    }
+
     function launchFleetMission(
         uint256,
         uint256,
@@ -405,7 +435,19 @@ contract VeydriftGame is VeydriftResourceReserves {
         returns (uint256)
     {
         _touchPlayer(msg.sender);
-        _delegateToPlayModule();
+        _delegateToAcsAttackModule();
+    }
+
+    function joinBodyAttackMission(
+        uint256,
+        uint256,
+        uint256,
+        MissionShips calldata,
+        Resources calldata,
+        bool
+    ) external returns (uint256) {
+        _touchPlayer(msg.sender);
+        _delegateToAcsAttackModule();
     }
 
     /// @notice Launch an OGame-style ACS Defend (DefenseHold) mission: station a fleet at a planet
@@ -483,6 +525,13 @@ contract VeydriftGame is VeydriftResourceReserves {
         _delegateToAttackProtectionModule();
     }
 
+    function attackBodyProtectionStatus(address, uint256, bool)
+        external
+        returns (AttackBlockReason, uint8, uint16)
+    {
+        _delegateToAttackProtectionModule();
+    }
+
     function depositMarketResource(uint256, Resource, uint128) external {
         _touchPlayer(msg.sender);
         _delegateToPlanetManagementModule();
@@ -516,6 +565,12 @@ contract VeydriftGame is VeydriftResourceReserves {
                 case 0 { revert(add(result, 32), mload(result)) }
                 default { return(add(result, 32), mload(result)) }
             }
+        } else if (msg.sig == 0xcc4cc1ea) {
+            // Attack launch and ACS modules enforce protection through an internal staticcall so
+            // the Rift-aware implementation can stay outside this size-constrained facade. Do not
+            // expose that parameterized enforcement helper as a public fallback selector.
+            if (msg.sender != address(this)) revert Unauthorized(msg.sender);
+            _delegateToStateMigrationModule();
         } else {
             _delegateToStateMigrationModule();
         }
@@ -1016,6 +1071,19 @@ contract VeydriftGame is VeydriftResourceReserves {
     function _delegateToDefenseHoldModule() private {
         _requireGameNotPaused();
         (bool ok, bytes memory result) = _defenseHoldModule.delegatecall(msg.data);
+        if (!ok) {
+            assembly ("memory-safe") {
+                revert(add(result, 32), mload(result))
+            }
+        }
+        assembly ("memory-safe") {
+            return(add(result, 32), mload(result))
+        }
+    }
+
+    function _delegateToAcsAttackModule() private {
+        _requireGameNotPaused();
+        (bool ok, bytes memory result) = _acsAttackModule.delegatecall(msg.data);
         if (!ok) {
             assembly ("memory-safe") {
                 revert(add(result, 32), mload(result))

@@ -13,6 +13,7 @@ import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeab
 import {Deploy} from "../script/Deploy.s.sol";
 import {DeployResourceTokens} from "../script/DeployResourceTokens.s.sol";
 import {VeydriftAttackProtectionModule} from "../src/VeydriftAttackProtectionModule.sol";
+import {VeydriftAcsAttackModule} from "../src/VeydriftAcsAttackModule.sol";
 import {VeydriftAllianceSystem} from "../src/VeydriftAllianceSystem.sol";
 import {VeydriftPaidAllianceInvites} from "../src/VeydriftPaidAllianceInvites.sol";
 import {VeydriftCombatModule, VeydriftCombatRapidfire} from "../src/VeydriftCombatModule.sol";
@@ -311,7 +312,8 @@ contract VeydriftResourceTokenTest is Test {
             address(attackProtectionModule),
             address(colonizationModule),
             address(defenseHoldModule),
-            address(stateMigrationModule)
+            address(stateMigrationModule),
+            address(new VeydriftAcsAttackModule())
         );
         vm.setEnv("VEYDRIFT_GAME_CONTRACT_ADDRESS", vm.toString(address(existingGame)));
 
