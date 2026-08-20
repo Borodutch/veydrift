@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "preact/hooks";
+import { useState, useEffect, useMemo, useRef } from "preact/hooks";
 import type { Planet, Coordinates } from "../types";
 import {
   DEFAULT_MISSION_SPEED_PERCENT,

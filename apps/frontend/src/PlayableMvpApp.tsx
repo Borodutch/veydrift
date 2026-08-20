@@ -332,6 +332,7 @@ import {
   type MissileAttackArchiveResponse,
   type FleetMissionPlanetReference,
   type FleetMissionSummary,
+  type GlobalActiveMissionsResponse,
   type GlobalMissionArchiveResponse,
   type HighscoreEntry,
   type HighscorePlanet,

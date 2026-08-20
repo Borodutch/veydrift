@@ -3934,7 +3934,7 @@ async function callBaseMainnetContract(
       "content-type": "application/json",
     },
     method: "POST",
-    signal,
+    ...(signal === undefined ? {} : { signal }),
   });
   const body = await response.json() as { error?: { message?: string }; result?: string };
   if (!response.ok || body.error || typeof body.result !== "string") {
@@ -5188,7 +5188,7 @@ async function fetchWalletJson<T>(
   wallet: string,
   path: string,
   label: string,
-  options: { fresh?: boolean; signal?: AbortSignal; timeoutMs?: number } = {}
+  options: { fresh?: boolean; signal?: AbortSignal | undefined; timeoutMs?: number } = {}
 ): Promise<T> {
   const timeoutMs = options.timeoutMs ?? WALLET_API_READ_TIMEOUT_MS;
   const url = `${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(wallet)}/${path}`;
@@ -5209,7 +5209,7 @@ async function fetchGameApiJson<T>(
     httpErrorMessage?: (response: Response) => Promise<string>;
     networkFailureMessage?: (error: unknown) => string;
     recentReadTtlMs?: number;
-    signal?: AbortSignal;
+    signal?: AbortSignal | undefined;
     timeoutMs?: number;
   } = {}
 ): Promise<T> {
@@ -5254,7 +5254,7 @@ async function fetchGameApiJsonUnpooled<T>(
     cache?: RequestCache;
     httpErrorMessage?: (response: Response) => Promise<string>;
     networkFailureMessage?: (error: unknown) => string;
-    signal?: AbortSignal;
+    signal?: AbortSignal | undefined;
     timeoutMs?: number;
   }
 ): Promise<T> {

@@ -173,7 +173,12 @@ export class BackendDataStore {
     return this.state.value<T>(cacheKey(kind, ...parts));
   }
 
-  publish<T>(kind: string, data: T, parts: unknown[] = [], options: { planetId?: string; wallet?: string } = {}): void {
+  publish<T>(
+    kind: string,
+    data: T,
+    parts: unknown[] = [],
+    options: { planetId?: string | undefined; wallet?: string | undefined } = {},
+  ): void {
     this.state.publish(cacheKey(kind, ...parts), data, options);
   }
 
