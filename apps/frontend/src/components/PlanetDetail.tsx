@@ -170,7 +170,7 @@ export function PlanetDetail({
     backendData,
     backendData.key("system", coords.galaxy, coords.system, { detail: "full" }),
   );
-  const loadedPlanet = systemSnapshot?.data
+  const apiPlanet = systemSnapshot?.data
     ? planetsFromSystemResponse(systemSnapshot.data).find((item) => item.position === coords.position) ?? null
     : null;
   const source: "api" | "error" | "loading" = systemSnapshot?.data
@@ -180,7 +180,12 @@ export function PlanetDetail({
       : "loading";
   const [imageLoaded, setImageLoaded] = useState(false);
   const imageRef = useRef<HTMLImageElement>(null);
-  const planet = planetDetailVisiblePlanet(loadedPlanet, coords, trustedHomePlanet);
+  const planet = planetDetailRefreshResultPlanet({
+    apiPlanet,
+    coords,
+    currentPlanet: null,
+    trustedHomePlanet,
+  });
   const isHome = planet ? sameCoordinates(homeCoords, planet) : false;
   const targetPlanetId = planet?.occupiedBy?.planetId;
   const attackProtectionSnapshot = useBackendDataSnapshot<AttackProtectionStatus>(
