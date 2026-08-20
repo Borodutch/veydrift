@@ -22,6 +22,7 @@ import {VeydriftDependencies} from "../src/libraries/VeydriftDependencies.sol";
 import {VeydriftAntiRaidPrimitives} from "../src/libraries/VeydriftAntiRaidPrimitives.sol";
 import {VeydriftCatalog} from "../src/libraries/VeydriftCatalog.sol";
 import {VeydriftDefenseHoldStorage} from "../src/libraries/VeydriftDefenseHoldStorage.sol";
+import {VeydriftBodyAttackWindow} from "../src/libraries/VeydriftBodyAttackWindow.sol";
 import {
     Building,
     Defense,
@@ -66,7 +67,16 @@ contract MoonAttackWindowHarness is VeydriftGameStorage {
     }
 
     function recordMoonAttack(address attacker, uint256 planetId) external {
-        _recordAttack(attacker, planetId, true);
+        VeydriftBodyAttackWindow.record(
+            _planets,
+            _attackWindows,
+            _attackProtectionExemptions,
+            playerLastActiveAt,
+            _moonAttackParityActivatedAt,
+            attacker,
+            planetId,
+            true
+        );
     }
 
     function bodyAttackCount(
