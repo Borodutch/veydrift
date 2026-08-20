@@ -10,7 +10,7 @@
     "check:fast": "forge fmt --check && forge build src/VeydriftGame.sol src/VeydriftMoonSystem.sol src/VeydriftAcsAttackModule.sol --sizes --skip test --skip script",
     "check:storage": "FOUNDRY_OPTIMIZER=false FOUNDRY_VIA_IR=true forge build --force --extra-output storageLayout --skip test --skip script && node scripts/check-storage-layout.mjs",
     "storage:check": "bun run check:storage",
-    "test": "forge test",
+    "test": "forge test --dynamic-test-linking",
     "manifest:generate": "VEYDRIFT_SOURCE_COMMIT=$(git log -1 --format=%H -- . ':(exclude)manifests/vey-741-base-fork-dry-run.json') VEYDRIFT_MANIFEST_PATH=manifests/vey-741-base-fork-dry-run.json forge test --match-path test/VeydriftUniswapLaunchMainnetFork.t.sol -vv",
     "manifest:check": "node scripts/validate-veydrift-uniswap-launch-manifest.mjs && bun run manifest:test",
     "manifest:test": "node --test scripts/validate-veydrift-uniswap-launch-manifest.test.mjs"
