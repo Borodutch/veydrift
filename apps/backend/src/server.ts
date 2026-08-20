@@ -6,7 +6,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import { CachedChainReader } from "./cachedReader";
 import { ChainSyncService } from "./chainSync";
 import type { ChainSyncSnapshot, LiveLogSubscriber } from "./chainSync";
-import { loadBackendConfig, safeConfigSummary, type BackendConfig, type ConfigProblem } from "./config";
+import { loadBackendConfig, safeConfigSummary, type BackendConfig, type ConfigProblem, type ConfigResult } from "./config";
 import {
   assertAddress,
   attackBlockReasonLabel,
@@ -23,6 +23,7 @@ import {
   type MissileAttackArchiveResponse,
   type FleetMissionSummary,
   type FleetMissionVisibility,
+  type GameMaintenanceState,
   type GlobalActiveMissionsResponse,
   type GlobalMissionArchiveResponse,
   type InfrastructureState,
@@ -45,6 +46,7 @@ import {
 } from "./evm";
 import { highscoreCategories, highscoreFormula, type HighscoreEntry, type ScoreBreakdown } from "./highscores";
 import {
+  GameMaintenanceStateReader,
   indexedManagedPlanet,
   SettlementIndexer,
   type IndexedDebrisFieldEvent,
@@ -4999,9 +5001,16 @@ export function runtimeConfigResponse(workerRole: WorkerRole = envWorkerRole()):
   });
 }
 
-export function readerBootstrapHealthResponse(workerRole: WorkerRole = envWorkerRole()): Response {
-  const loaded = loadBackendConfig();
-  const readiness = backendReadiness(loaded.problems, null, null, null, null);
+export function readerBootstrapHealthResponse(
+  workerRole: WorkerRole = envWorkerRole(),
+  options: {
+    configResult?: ConfigResult;
+    gameMaintenanceState?: GameMaintenanceState | null;
+  } = {}
+): Response {
+  const loaded = options.configResult ?? loadBackendConfig();
+  const gameMaintenanceState = options.gameMaintenanceState ?? null;
+  const readiness = backendReadiness(loaded.problems, null, null, null, gameMaintenanceState);
   const randomnessReadiness = currentRandomnessReadiness(
     loaded.config.randomnessCommitmentStorePath,
     Boolean(loaded.config.randomnessEngineAddress && loaded.config.randomnessFulfillerPrivateKey)
@@ -5017,6 +5026,7 @@ export function readerBootstrapHealthResponse(workerRole: WorkerRole = envWorker
       readiness,
       chainSync: null,
       missionResolution: null,
+      gameMaintenance: gameMaintenanceState,
       randomnessCommitter: null,
       indexer: null,
       rpc: null,
@@ -5027,6 +5037,37 @@ export function readerBootstrapHealthResponse(workerRole: WorkerRole = envWorker
       status: healthy ? 200 : 503
     }
   );
+}
+
+export function createReaderBootstrapHandler(
+  workerRole: WorkerRole,
+  options: {
+    configResult?: ConfigResult;
+    gameMaintenanceState?: () => GameMaintenanceState | null;
+    now?: () => number;
+  } = {}
+): (request: Request) => Response | undefined {
+  const loaded = options.configResult ?? loadBackendConfig();
+  const maintenanceReader = options.gameMaintenanceState
+    ? null
+    : loaded.problems.length === 0
+      ? new GameMaintenanceStateReader(loaded.config.indexDbPath)
+      : null;
+  const readGameMaintenanceState = options.gameMaintenanceState
+    ?? (() => maintenanceReader?.gameMaintenanceState(options.now?.() ?? Date.now()) ?? null);
+
+  return (request: Request): Response | undefined => {
+    const url = new URL(request.url);
+    if (request.method !== "GET") return undefined;
+    if (url.pathname === "/runtime-config") return withRequestCors(request, runtimeConfigResponse(workerRole));
+    if (url.pathname === "/health") {
+      return withRequestCors(request, readerBootstrapHealthResponse(workerRole, {
+        configResult: loaded,
+        gameMaintenanceState: readGameMaintenanceState()
+      }));
+    }
+    return undefined;
+  };
 }
 
 function getRuntimeConfig(workerRole: WorkerRole = envWorkerRole()): RuntimeConfig {
