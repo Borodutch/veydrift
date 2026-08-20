@@ -124,6 +124,27 @@ describe("galaxyActions", () => {
     });
   });
 
+  test("requires target-specific verification before advertising a ranked active-war attack", () => {
+    const attack = galaxyActionsForSlot({
+      account,
+      attackProtection: {
+        allowed: true,
+        atWar: true,
+        warEligibilityNeedsCheck: true,
+        blockedReason: "none",
+        blockedReasonLabel: null,
+      },
+      homePlanetId: "7",
+      planet: planet(),
+      shipyardState: shipyardState([{ id: 1, count: 3 }]),
+    }).find((action) => action.kind === "attack");
+
+    expect(attack).toMatchObject({
+      enabled: true,
+      label: "Verify war attack",
+    });
+  });
+
   test.each([
     ["sub-50k 1.5× band", "18001", "12000"],
     ["50k–499,999 10× band", "500001", "50000"],
