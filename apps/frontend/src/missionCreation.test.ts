@@ -56,6 +56,14 @@ import type { Planet } from "./types";
 const missionCreationSource = await Bun.file(new URL("./components/MissionCreationPage.tsx", import.meta.url)).text();
 const playableMvpAppSource = await Bun.file(new URL("./PlayableMvpApp.tsx", import.meta.url)).text();
 
+test("shows canonical active-war eligibility and persistent mission errors in the composer", () => {
+  expect(missionCreationSource).toContain("warProtectionNotice");
+  expect(missionCreationSource).toContain("actionError");
+  expect(missionCreationSource).toContain('role="alert"');
+  expect(playableMvpAppSource).toContain("Checking this target's active-war roster and protection rules.");
+  expect(playableMvpAppSource).toContain("Frozen original rosters and declaration direction still apply.");
+});
+
 const attackAction: Extract<GalaxyAction, { enabled: true }> = {
   enabled: true,
   kind: "attack",

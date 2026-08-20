@@ -66,6 +66,9 @@ export function rankingsAttackProtectionForEntry({
       ? existing.blockedReasonLabel
       : "Attack blocked: target belongs to your alliance.",
     ...(existing?.atWar === undefined ? {} : { atWar: existing.atWar }),
+    ...(existing?.warEligibilityNeedsCheck === undefined
+      ? {}
+      : { warEligibilityNeedsCheck: existing.warEligibilityNeedsCheck }),
     ...(existing?.scoreComparison ? { scoreComparison: existing.scoreComparison } : {}),
   };
 }
@@ -80,6 +83,9 @@ function highscoreAttackProtectionToGalaxyStatus(
     blockedReason: attackProtection.blockedReason,
     blockedReasonLabel: attackProtection.blockedReasonLabel,
     ...(attackProtection.atWar === undefined ? {} : { atWar: attackProtection.atWar }),
+    ...(attackProtection.warEligibilityNeedsCheck === undefined
+      ? {}
+      : { warEligibilityNeedsCheck: attackProtection.warEligibilityNeedsCheck }),
     ...(attackProtection.scoreComparison
       ? {
           scoreComparison: {
