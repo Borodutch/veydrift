@@ -85,7 +85,6 @@ contract Deploy is ResourceTokenDeployment {
         VeydriftGameplayModule gameplayModule = new VeydriftGameplayModule(address(combatModule));
         VeydriftPlanetManagementModule planetManagementModule = new VeydriftPlanetManagementModule();
         VeydriftAttackProtectionModule attackProtectionModule = new VeydriftAttackProtectionModule();
-        VeydriftAcsAttackModule acsAttackModule = new VeydriftAcsAttackModule();
         VeydriftColonizationModule colonizationModule =
             new VeydriftColonizationModule(address(new VeydriftShipProductionModule()));
         VeydriftDefenseHoldModule defenseHoldModule = new VeydriftDefenseHoldModule();
@@ -103,7 +102,7 @@ contract Deploy is ResourceTokenDeployment {
             address(colonizationModule),
             address(defenseHoldModule),
             address(stateMigrationModule),
-            address(acsAttackModule)
+            address(new VeydriftAcsAttackModule())
         );
         gameAddress = address(
             new TransparentUpgradeableProxy(
