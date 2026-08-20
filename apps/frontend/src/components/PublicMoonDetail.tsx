@@ -84,7 +84,12 @@ export function PublicMoonDetail({
     const requestKey = planetDetailRequestKey(coords);
     setSource("loading");
 
-    backendDataStoreFor(apiBaseUrl).system<ApiSystemResponse>(coords.galaxy, coords.system, { detail: "full" })
+    const backendData = backendDataStoreFor(apiBaseUrl);
+    backendData.cancelScope("moon-detail-navigation");
+    backendData.system<ApiSystemResponse>(coords.galaxy, coords.system, {
+      detail: "full",
+      requestScope: "moon-detail-navigation",
+    })
       .then((payload) => {
         if (!canApplyPlanetDetailResponse(requestKey, coords, cancelled)
           || currentRequestKey.current !== requestKey) return;
@@ -101,6 +106,7 @@ export function PublicMoonDetail({
 
     return () => {
       cancelled = true;
+      backendData.cancelScope("moon-detail-navigation");
     };
   }, [apiBaseUrl, coords.galaxy, coords.position, coords.system]);
 

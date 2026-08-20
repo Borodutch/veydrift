@@ -3706,6 +3706,9 @@ export function PlayableMvpApp({
     ?? onChainSettlementState?.homePlanetId
     ?? indexedInfrastructurePlanetId(planetSectionStore, account)
     ?? indexedDefensePlanetId(planetSectionStore, account);
+  useEffect(() => {
+    backendData?.setContext(account, activePlanetId);
+  }, [account, activePlanetId, backendData]);
   const selectedMoonBody = selectedManagedPlanet?.moon?.exists ? selectedManagedPlanet.moon : null;
   const activeBodyKind = resolvedOrbitBodyKind(selectedBodyKind, selectedManagedPlanet);
   const activePlanetSection = useMemo(
@@ -5923,38 +5926,30 @@ export function PlayableMvpApp({
   ]);
 
   useEffect(() => {
-    if (chainSyncHealthy) {
+    if (chainSyncHealthy || !backendData) {
       return;
     }
 
     const interval = window.setInterval(() => {
-      void refreshOnChainState();
-      refreshInfrastructureState();
+      void backendData.coordinateRefresh("background-selected-planet", "background", async () => (
+        Promise.allSettled([refreshOnChainState(), refreshInfrastructureState()])
+      ), 20_000);
     }, 120_000);
     return () => window.clearInterval(interval);
-  }, [chainSyncHealthy, refreshInfrastructureState, refreshOnChainState]);
+  }, [backendData, chainSyncHealthy, refreshInfrastructureState, refreshOnChainState]);
 
   useEffect(() => {
     if (!apiBaseUrl || !account || !pageStateHydrationReady || !onChainSettlement?.planet) {
       return;
     }
 
-    let refreshInFlight = false;
     const refreshTopBarResources = () => {
       if (typeof document !== "undefined" && document.visibilityState === "hidden") {
         return;
       }
-      if (refreshInFlight) {
-        return;
-      }
-
-      refreshInFlight = true;
-      Promise.allSettled([
-        refreshOnChainState(),
-        refreshInfrastructureState(),
-      ]).finally(() => {
-        refreshInFlight = false;
-      });
+      void backendData!.coordinateRefresh("top-bar-selected-planet", "selected-planet", async () => (
+        Promise.allSettled([refreshOnChainState(), refreshInfrastructureState()])
+      ), 20_000);
     };
 
     const interval = window.setInterval(refreshTopBarResources, TOP_BAR_RESOURCE_POLL_INTERVAL_MS);
@@ -5962,6 +5957,7 @@ export function PlayableMvpApp({
   }, [
     account,
     apiBaseUrl,
+    backendData,
     onChainSettlement?.planet?.planetId,
     pageStateHydrationReady,
     refreshInfrastructureState,
@@ -5977,25 +5973,20 @@ export function PlayableMvpApp({
       return;
     }
 
-    let refreshInFlight = false;
     const pollMissionControl = () => {
       if (typeof document !== "undefined" && document.visibilityState === "hidden") {
         return;
       }
-      if (refreshInFlight) {
-        return;
-      }
-      refreshInFlight = true;
       // Refresh the lists and, when a battle report is open, that detail too, so loot/report on the
       // open report surface live alongside the list status (VEY-KANEO-433).
-      Promise.allSettled([refreshMissionControl(), refreshOpenMissionDetailSilently()]).finally(() => {
-        refreshInFlight = false;
-      });
+      void backendData!.coordinateRefresh("mission-control", "mission-control", async () => (
+        Promise.allSettled([refreshMissionControl(), refreshOpenMissionDetailSilently()])
+      ), 20_000);
     };
 
     const interval = window.setInterval(pollMissionControl, TOP_BAR_RESOURCE_POLL_INTERVAL_MS);
     return () => window.clearInterval(interval);
-  }, [account, apiBaseUrl, page, pageStateHydrationReady, refreshMissionControl, refreshOpenMissionDetailSilently]);
+  }, [account, apiBaseUrl, backendData, page, pageStateHydrationReady, refreshMissionControl, refreshOpenMissionDetailSilently]);
 
   // VEY-KANEO-433: tighten the poll around resolution — schedule a one-shot refresh just after the
   // soonest active mission is due to arrive (or a returning fleet to land) so the new status, loot,
@@ -6014,12 +6005,12 @@ export function PlayableMvpApp({
       if (typeof document !== "undefined" && document.visibilityState === "hidden") {
         return;
       }
-      void refreshMissionControl();
-      // Also pull the open report so a viewer watching it sees the resolution land at arrival time.
-      void refreshOpenMissionDetailSilently();
+      void backendData!.coordinateRefresh("mission-control-resolution", "transaction", async () => (
+        Promise.allSettled([refreshMissionControl(), refreshOpenMissionDetailSilently()])
+      ), 20_000);
     }, delay);
     return () => window.clearTimeout(timer);
-  }, [account, apiBaseUrl, fleetVisibility, page, pageStateHydrationReady, refreshMissionControl, refreshOpenMissionDetailSilently]);
+  }, [account, apiBaseUrl, backendData, fleetVisibility, page, pageStateHydrationReady, refreshMissionControl, refreshOpenMissionDetailSilently]);
 
   const state = useMemo<PlayableState>(() => infrastructurePlayableState(infrastructureChainState, now), [infrastructureChainState, now]);
   const settledState = state;

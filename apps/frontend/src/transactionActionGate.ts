@@ -14,9 +14,11 @@ export type WriteTransactionPhase =
 
 export type WriteTransactionState = {
   error?: unknown;
+  key?: string;
   label?: string;
   phase: WriteTransactionPhase;
-  txHash?: string;
+  stage?: "wallet" | "confirmed" | "waiting-for-index" | "applied" | "timed-out" | "failed";
+  txHash?: string | undefined;
 };
 
 export type WriteTransactionDescriptor<IndexedSnapshot = void> = {
@@ -58,33 +60,43 @@ export async function runWriteTransaction<IndexedSnapshot = void>(
   const result = await gate.run(descriptor.key, async () => {
     didRun = true;
     const setState = (state: WriteTransactionState) => descriptor.onStateChange?.(state);
-    setState({ phase: "pending", label: transactionAwaitingWalletLabel(descriptor.label) });
+    setState({ key: descriptor.key, phase: "pending", stage: "wallet", label: transactionAwaitingWalletLabel(descriptor.label) });
 
+    let txHash: string | undefined;
+    let receiptConfirmed = false;
     try {
-      const txHash = await descriptor.send();
-      setState({ phase: "confirming", label: transactionConfirmingLabel(descriptor.label, txHash), txHash });
+      txHash = await descriptor.send();
+      setState({ key: descriptor.key, phase: "confirming", stage: "wallet", label: transactionConfirmingLabel(descriptor.label, txHash), txHash });
       const receipt = await descriptor.confirm(txHash);
-      setState({ phase: "confirmed", label: transactionConfirmedLabel(descriptor.label), txHash });
-      setState({ phase: "indexing", label: transactionSyncingLabel(descriptor.label), txHash });
+      receiptConfirmed = true;
+      setState({ key: descriptor.key, phase: "confirmed", stage: "confirmed", label: transactionConfirmedLabel(descriptor.label), txHash });
+      setState({ key: descriptor.key, phase: "indexing", stage: "waiting-for-index", label: transactionSyncingLabel(descriptor.label), txHash });
       const snapshot = descriptor.waitForIndexed ? await descriptor.waitForIndexed(receipt, txHash) : undefined;
       if (descriptor.applyIndexedState) {
         await descriptor.applyIndexedState(snapshot as IndexedSnapshot);
       }
-      setState({ phase: "success", label: `${descriptor.label} confirmed.`, txHash });
+      setState({ key: descriptor.key, phase: "success", stage: "applied", label: `${descriptor.label} confirmed.`, txHash });
       completed = true;
     } catch (error) {
       await descriptor.onErrorRefresh?.(error);
+      const indexingTimedOut = receiptConfirmed && isTransactionIndexingTimeout(error);
       setState({
         error,
+        key: descriptor.key,
         phase: "error",
+        stage: indexingTimedOut ? "timed-out" : "failed",
         label: descriptor.errorLabel?.(error) ?? (error instanceof Error ? error.message : `${descriptor.label} failed.`),
+        txHash,
       });
-    } finally {
-      setState({ phase: "idle" });
     }
   });
 
   return result === undefined && !didRun ? false : completed;
+}
+
+export function isTransactionIndexingTimeout(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return /timed?\s*out|still syncing|index(?:ed|ing).*unavailable|syncing indexed state/i.test(message);
 }
 
 export function transactionAwaitingWalletLabel(label?: string): string {

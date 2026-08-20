@@ -8,6 +8,7 @@ import type { GalaxyAction } from "../galaxyActions";
 import type { Coordinates } from "../types";
 import { shortAddress, type FleetMissionSummary, type HighscoreCategory, type HighscoreEntry, type HighscorePlanet, type HighscoreResponse } from "../walletFlow";
 import { backendDataStoreFor } from "../backendDataStore";
+import { useBackendDataSnapshot } from "../useBackendDataSnapshot";
 import { OptimizedImage } from "./OptimizedImage";
 import { refreshButtonState } from "./PageHeader";
 import { PlanetMoonSubsection } from "./PlanetMoonIndicator";
@@ -158,7 +159,6 @@ export function scrollRankingsCurrentPlayerRow(
 
 export function RankingsPage({ activeMissions, apiBaseUrl, currentAllianceId, currentWallet, now, moonActionsForPlanet, onMoonAction, onPlanetAction, onSelectAlliance, onSelectMoon, onSelectPlayer, onSelectPlanet, originCoordinates, planetActionsForPlanet }: RankingsPageProps) {
   const [active, setActive] = useState<HighscoreCategory>("total");
-  const [data, setData] = useState<HighscoreResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [viewTransitioning, setViewTransitioning] = useState(false);
   const [error, setError] = useState<string | undefined>();
@@ -166,10 +166,22 @@ export function RankingsPage({ activeMissions, apiBaseUrl, currentAllianceId, cu
   const [pendingCurrentPlayerJumpPage, setPendingCurrentPlayerJumpPage] = useState<number | null>(null);
   const [expandedRankingWallets, setExpandedRankingWallets] = useState<Set<string>>(() => new Set());
   const rankingsSectionRef = useRef<HTMLElement | null>(null);
+  const requestGenerationRef = useRef(0);
+  const backendData = useMemo(() => apiBaseUrl ? backendDataStoreFor(apiBaseUrl) : undefined, [apiBaseUrl]);
+  const requestOptions = useMemo(() => ({
+    category: active,
+    ...(currentWallet ? { currentWallet } : {}),
+    page,
+    pageSize: rankingsPageSize,
+  }), [active, currentWallet, page]);
+  const dataSnapshot = useBackendDataSnapshot<HighscoreResponse>(
+    backendData,
+    backendData?.key("highscores", requestOptions),
+  );
+  const data = dataSnapshot?.data ?? null;
 
   const load = (targetPage = page) => {
     if (!apiBaseUrl) {
-      setData(null);
       setLoading(false);
       setViewTransitioning(false);
       setError("Game API unavailable.");
@@ -178,18 +190,24 @@ export function RankingsPage({ activeMissions, apiBaseUrl, currentAllianceId, cu
 
     setLoading(true);
     setError(undefined);
-    backendDataStoreFor(apiBaseUrl).highscores({
+    const requestGeneration = ++requestGenerationRef.current;
+    const store = backendDataStoreFor(apiBaseUrl);
+    store.cancelScope("rankings-page");
+    store.highscores({
       category: active,
       ...(currentWallet ? { currentWallet } : {}),
       page: targetPage,
-      pageSize: rankingsPageSize
+      pageSize: rankingsPageSize,
+      requestScope: "rankings-page",
     })
-      .then(setData)
+      .then(() => undefined)
       .catch((nextError) => {
+        if (requestGeneration !== requestGenerationRef.current) return;
         console.error(nextError);
         setError(nextError instanceof Error ? nextError.message : "Rankings could not be loaded.");
       })
       .finally(() => {
+        if (requestGeneration !== requestGenerationRef.current) return;
         setLoading(false);
         setViewTransitioning(false);
       });
@@ -203,6 +221,10 @@ export function RankingsPage({ activeMissions, apiBaseUrl, currentAllianceId, cu
 
   useEffect(() => {
     load(page);
+    return () => {
+      requestGenerationRef.current += 1;
+      if (apiBaseUrl) backendDataStoreFor(apiBaseUrl).cancelScope("rankings-page");
+    };
   }, [active, apiBaseUrl, currentWallet, page]);
 
   useEffect(() => {

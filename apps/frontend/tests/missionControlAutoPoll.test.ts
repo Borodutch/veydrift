@@ -138,8 +138,10 @@ describe("VEY-KANEO-433 Mission Control auto-poll wiring", () => {
     // Periodic poll while the page is open, on the same cadence as the top bar, hidden-tab guarded.
     expect(source).toContain("shouldAutoPollMissionControlForPage(page)");
     expect(source).toContain("window.setInterval(pollMissionControl, TOP_BAR_RESOURCE_POLL_INTERVAL_MS)");
-    // The periodic poll refreshes both the lists and the open battle-report detail together.
-    expect(source).toContain("Promise.allSettled([refreshMissionControl(), refreshOpenMissionDetailSilently()]).finally(");
+    // The periodic poll refreshes both lists and open detail through the shared priority scheduler.
+    expect(source).toContain('coordinateRefresh("mission-control", "mission-control"');
+    expect(source).toContain("Promise.allSettled([refreshMissionControl(), refreshOpenMissionDetailSilently()])");
+    expect(source).not.toContain("let refreshInFlight = false;\n    const pollMissionControl");
     // VEY-KANEO-783: the shared Mission Control refresher also reloads canonical alliance
     // membership, so dissolve/leave/removal hides Alliance without reconnecting or reloading.
     const refresher = source.slice(
@@ -168,8 +170,9 @@ describe("VEY-KANEO-433 Mission Control auto-poll wiring", () => {
     );
     expect(silent).not.toContain("setMissionDetailLoading");
     expect(silent).toContain("setMissionDetail(detail)");
-    // The ETA-tightened one-shot pulls the open report too, so resolution lands promptly on it.
-    expect(source).toContain("void refreshOpenMissionDetailSilently();");
+    // The ETA-tightened transaction-priority refresh pulls the open report too.
+    expect(source).toContain('coordinateRefresh("mission-control-resolution", "transaction"');
+    expect(source).toContain("Promise.allSettled([refreshMissionControl(), refreshOpenMissionDetailSilently()])");
   });
 });
 

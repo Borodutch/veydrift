@@ -185,7 +185,12 @@ export function PlanetDetail({
     }));
     setSource("loading");
 
-    backendDataStoreFor(apiBaseUrl).system<ApiSystemResponse>(coords.galaxy, coords.system, { detail: "full" })
+    const backendData = backendDataStoreFor(apiBaseUrl);
+    backendData.cancelScope("planet-detail-navigation");
+    backendData.system<ApiSystemResponse>(coords.galaxy, coords.system, {
+      detail: "full",
+      requestScope: "planet-detail-navigation",
+    })
       .then((payload) => {
         if (!canApplyPlanetDetailResponse(requestKey, coords, cancelled)
           || currentRequestKey.current !== requestKey) return;
@@ -207,6 +212,7 @@ export function PlanetDetail({
 
     return () => {
       cancelled = true;
+      backendData.cancelScope("planet-detail-navigation");
     };
   }, [
     apiBaseUrl,

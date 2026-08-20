@@ -22,7 +22,6 @@ import {
   type PlayerActivityCategory,
   type PlayerActivityItem,
   type PlayerActivityResponse,
-  playerActivityPresenceUrl,
 } from "../walletFlow";
 import { backendDataStoreFor } from "../backendDataStore";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
@@ -102,9 +101,7 @@ export function PlayerActivityCenter({
     if (!presenceReady || !apiUrl || !wallet) return;
     const markPresent = () => void backendDataStoreFor(apiUrl).recordPlayerActivityPresence(wallet).catch(() => {});
     const markPresentOnExit = () => {
-      const url = playerActivityPresenceUrl(apiUrl, wallet);
-      if (navigator.sendBeacon?.(url, "")) return;
-      void fetch(url, { keepalive: true, method: "POST" }).catch(() => {});
+      backendDataStoreFor(apiUrl).recordPlayerActivityPresenceOnExit(wallet);
     };
     const handleVisibility = () => {
       markPresent();

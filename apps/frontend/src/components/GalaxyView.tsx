@@ -248,7 +248,9 @@ export function GalaxyView({
     setLoading(true);
     setLoadError(undefined);
 
-    backendDataStoreFor(apiBaseUrl).system<ApiSystemResponse>(galaxy, system)
+    const backendData = backendDataStoreFor(apiBaseUrl);
+    backendData.cancelScope("galaxy-view-navigation");
+    backendData.system<ApiSystemResponse>(galaxy, system, { requestScope: "galaxy-view-navigation" })
       .then((payload) => {
         if (cancelled) return;
         const nextPlanets = rememberGalaxySystemPayload(apiBaseUrl, galaxy, system, payload);
@@ -271,6 +273,7 @@ export function GalaxyView({
 
     return () => {
       cancelled = true;
+      backendData.cancelScope("galaxy-view-navigation");
     };
   }, [apiBaseUrl, currentSystemKey, galaxy, reloadNonce, system]);
 

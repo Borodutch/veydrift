@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { createTransactionActionGate, runWriteTransaction, type WriteTransactionPhase } from "../src/transactionActionGate";
+import {
+  createTransactionActionGate,
+  runWriteTransaction,
+  type WriteTransactionPhase,
+  type WriteTransactionState,
+} from "../src/transactionActionGate";
 import { confirmTransactionReceiptForProviderSource, type Eip1193Provider } from "../src/walletFlow";
 
 describe("transaction action gate", () => {
@@ -117,7 +122,7 @@ describe("transaction action gate", () => {
     });
 
     expect(completed).toBe(true);
-    expect(phases).toEqual(["pending", "confirming", "confirmed", "indexing", "success", "idle"]);
+    expect(phases).toEqual(["pending", "confirming", "confirmed", "indexing", "success"]);
   });
 
   test("keeps other writes blocked until backend indexing and apply callbacks settle", async () => {
@@ -153,6 +158,30 @@ describe("transaction action gate", () => {
     indexed.resolve();
     await expect(first).resolves.toBe(true);
     expect(gate.isRunning()).toBe(false);
+  });
+
+  test("keeps a visible timed-out terminal state while releasing the global write gate", async () => {
+    const gate = createTransactionActionGate();
+    const states: WriteTransactionState[] = [];
+
+    await expect(runWriteTransaction(gate, {
+      key: "shipyard:start:timeout",
+      label: "Ship production",
+      send: async () => "0xtimeout",
+      confirm: async () => ({ transactionHash: "0xtimeout", blockNumber: "0x20" }),
+      waitForIndexed: async () => {
+        throw new Error("Indexed shipyard state timed out while still syncing.");
+      },
+      onStateChange: (state) => states.push(state),
+    })).resolves.toBe(false);
+
+    expect(states.at(-1)).toMatchObject({
+      phase: "error",
+      stage: "timed-out",
+      txHash: "0xtimeout",
+    });
+    expect(gate.isRunning()).toBe(false);
+    await expect(gate.run("research:start:next", async () => "next")).resolves.toBe("next");
   });
 
   test("releases the global gate for a second mission after Farcaster app-RPC confirmation and indexing", async () => {

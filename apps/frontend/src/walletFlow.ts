@@ -72,7 +72,13 @@ const GAME_API_MAX_CONCURRENT_READS = 3;
 const gameApiInflightReads = new Map<string, Promise<unknown>>();
 const gameApiRecentReads = new Map<string, { expiresAt: number; value: unknown }>();
 let gameApiActiveReads = 0;
-const gameApiReadQueue: Array<() => void> = [];
+type GameApiReadQueueEntry = {
+  resolve: (release: () => void) => void;
+  reject: (reason: unknown) => void;
+  signal: AbortSignal;
+  onAbort: () => void;
+};
+const gameApiReadQueue: GameApiReadQueueEntry[] = [];
 
 export type SettlementConfig = {
   address?: string;
@@ -4338,7 +4344,7 @@ function decodeStandardRevertReason(data: string): string | undefined {
 }
 
 export async function fetchWalletSettlement(apiUrl: string, wallet: string, options: WalletReadOptions = {}): Promise<WalletSettlementResponse> {
-  return fetchWalletJson<WalletSettlementResponse>(apiUrl, wallet, withWalletReadOptions("settlement", undefined, options), "Settlement");
+  return fetchWalletJson<WalletSettlementResponse>(apiUrl, wallet, withWalletReadOptions("settlement", undefined, options), "Settlement", options);
 }
 
 type SettlementFundingResponse = Omit<SettlementFundingState, "balanceWei" | "startPriceWei"> & {
@@ -4544,7 +4550,7 @@ export async function recordReferralRedemptionTransaction(
 }
 
 export async function fetchWalletPlanets(apiUrl: string, wallet: string, options: WalletReadOptions = {}): Promise<WalletPlanetsResponse> {
-  return fetchWalletJson<WalletPlanetsResponse>(apiUrl, wallet, withWalletReadOptions("planets", undefined, options), "Planets");
+  return fetchWalletJson<WalletPlanetsResponse>(apiUrl, wallet, withWalletReadOptions("planets", undefined, options), "Planets", options);
 }
 
 export async function fetchWatchedPlanets(
@@ -4589,6 +4595,7 @@ type WalletReadOptions = {
   source?: "indexed";
   timeoutMs?: number;
   fresh?: boolean;
+  signal?: AbortSignal;
 };
 
 type FleetMissionVisibilityOptions = WalletReadOptions & {
@@ -4596,7 +4603,7 @@ type FleetMissionVisibilityOptions = WalletReadOptions & {
 };
 
 export async function fetchWalletQueues(apiUrl: string, wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<PlayerQueuesResponse> {
-  return fetchWalletJson<PlayerQueuesResponse>(apiUrl, wallet, withWalletReadOptions("queues", planetId, options), "Queues");
+  return fetchWalletJson<PlayerQueuesResponse>(apiUrl, wallet, withWalletReadOptions("queues", planetId, options), "Queues", options);
 }
 
 export async function fetchAttackProtectionStatus(
@@ -4630,6 +4637,7 @@ export async function fetchWalletOverviewSnapshot(
     {
       ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
       ...(options.fresh === undefined ? {} : { fresh: options.fresh }),
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
     }
   );
 }
@@ -4645,6 +4653,7 @@ export async function fetchFleetMissionVisibility(apiUrl: string, wallet: string
     {
       ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
       ...(options.fresh === undefined ? {} : { fresh: options.fresh }),
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
     }
   );
 }
@@ -4771,23 +4780,23 @@ export async function fetchBattleReports(apiUrl: string): Promise<BattleReport[]
 }
 
 export async function fetchInfrastructureState(apiUrl: string, wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<ChainInfrastructureState> {
-  return fetchWalletJson<ChainInfrastructureState>(apiUrl, wallet, withWalletReadOptions("infrastructure", planetId, options), "Infrastructure");
+  return fetchWalletJson<ChainInfrastructureState>(apiUrl, wallet, withWalletReadOptions("infrastructure", planetId, options), "Infrastructure", options);
 }
 
 export async function fetchMoonState(apiUrl: string, wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<ChainMoonState> {
-  return fetchWalletJson<ChainMoonState>(apiUrl, wallet, withWalletReadOptions("moon", planetId, options), "Moon");
+  return fetchWalletJson<ChainMoonState>(apiUrl, wallet, withWalletReadOptions("moon", planetId, options), "Moon", options);
 }
 
 export async function fetchShipyardState(apiUrl: string, wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<ChainShipyardState> {
-  return fetchWalletJson<ChainShipyardState>(apiUrl, wallet, withWalletReadOptions("shipyard", planetId, options), "Shipyard");
+  return fetchWalletJson<ChainShipyardState>(apiUrl, wallet, withWalletReadOptions("shipyard", planetId, options), "Shipyard", options);
 }
 
 export async function fetchDefenseState(apiUrl: string, wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<ChainDefenseState> {
-  return fetchWalletJson<ChainDefenseState>(apiUrl, wallet, withWalletReadOptions("defenses", planetId, options), "Defenses");
+  return fetchWalletJson<ChainDefenseState>(apiUrl, wallet, withWalletReadOptions("defenses", planetId, options), "Defenses", options);
 }
 
 export async function fetchResearchState(apiUrl: string, wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<ChainResearchState> {
-  return fetchWalletJson<ChainResearchState>(apiUrl, wallet, withWalletReadOptions("research", planetId, options), "Research");
+  return fetchWalletJson<ChainResearchState>(apiUrl, wallet, withWalletReadOptions("research", planetId, options), "Research", options);
 }
 
 export async function fetchRiftState(apiUrl: string, wallet: string, planetId?: string): Promise<ChainRiftState> {
@@ -4974,6 +4983,7 @@ export type FetchHighscoreOptions = {
   limit?: number;
   page?: number;
   pageSize?: number;
+  signal?: AbortSignal;
 };
 
 export async function fetchHighscores(
@@ -4991,20 +5001,16 @@ export async function fetchHighscores(
     if (options.page !== undefined) params.set("page", String(options.page));
     if (options.pageSize !== undefined) params.set("pageSize", String(options.pageSize));
   }
-  let response: Response;
-
-  try {
-    response = await fetch(`${apiUrl.replace(/\/+$/, "")}/highscores?${params.toString()}`, {
-      headers: {
-        accept: "application/json"
-      }
-    });
-  } catch (error) {
-    throw new Error(highscoreNetworkFailureMessage(error));
-  }
-
-  if (!response.ok) throw new Error(await highscoreHttpFailureMessage(response));
-  return response.json();
+  return fetchGameApiJson<HighscoreResponse>(
+    `${apiUrl.replace(/\/+$/, "")}/highscores?${params.toString()}`,
+    "Rankings",
+    {
+      httpErrorMessage: highscoreHttpFailureMessage,
+      networkFailureMessage: highscoreNetworkFailureMessage,
+      recentReadTtlMs: 0,
+      ...(typeof options === "number" || options.signal === undefined ? {} : { signal: options.signal }),
+    },
+  );
 }
 
 export async function fetchPlayerHighscore(apiUrl: string, wallet: string): Promise<HighscoreEntry | null> {
@@ -5017,46 +5023,40 @@ export async function fetchPlayerHighscore(apiUrl: string, wallet: string): Prom
 
 export async function fetchRaidFinderDebrisTargets(
   apiUrl: string,
-  options: { limit?: number } = {},
+  options: { limit?: number; signal?: AbortSignal } = {},
 ): Promise<RaidFinderDebrisResponse> {
   const params = new URLSearchParams();
   if (options.limit) params.set("limit", String(options.limit));
   const query = params.toString();
-  let response: Response;
-
-  try {
-    response = await fetch(`${apiUrl.replace(/\/+$/, "")}/raid-finder/debris${query ? `?${query}` : ""}`, {
-      headers: {
-        accept: "application/json"
-      }
-    });
-  } catch (error) {
-    throw new Error(highscoreNetworkFailureMessage(error));
-  }
-
-  if (!response.ok) throw new Error(await highscoreHttpFailureMessage(response));
-  return response.json();
+  return fetchGameApiJson<RaidFinderDebrisResponse>(
+    `${apiUrl.replace(/\/+$/, "")}/raid-finder/debris${query ? `?${query}` : ""}`,
+    "Raid finder debris",
+    {
+      httpErrorMessage: highscoreHttpFailureMessage,
+      networkFailureMessage: highscoreNetworkFailureMessage,
+      recentReadTtlMs: 0,
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    },
+  );
 }
 
 export async function fetchRaidFinderRifters(
   apiUrl: string,
-  options: { limit?: number } = {},
+  options: { limit?: number; signal?: AbortSignal } = {},
 ): Promise<RaidFinderRiftersResponse> {
   const params = new URLSearchParams();
   if (options.limit) params.set("limit", String(options.limit));
   const query = params.toString();
-  let response: Response;
-
-  try {
-    response = await fetch(`${apiUrl.replace(/\/+$/, "")}/raid-finder/rifters${query ? `?${query}` : ""}`, {
-      headers: { accept: "application/json" }
-    });
-  } catch (error) {
-    throw new Error(highscoreNetworkFailureMessage(error));
-  }
-
-  if (!response.ok) throw new Error(await highscoreHttpFailureMessage(response));
-  return response.json();
+  return fetchGameApiJson<RaidFinderRiftersResponse>(
+    `${apiUrl.replace(/\/+$/, "")}/raid-finder/rifters${query ? `?${query}` : ""}`,
+    "Raid finder rifters",
+    {
+      httpErrorMessage: highscoreHttpFailureMessage,
+      networkFailureMessage: highscoreNetworkFailureMessage,
+      recentReadTtlMs: 0,
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    },
+  );
 }
 
 async function highscoreHttpFailureMessage(response: Response): Promise<string> {
@@ -5109,12 +5109,13 @@ export async function fetchSystemData(
   apiUrl: string,
   galaxy: number,
   system: number,
-  options: { detail?: "full" } = {},
+  options: { detail?: "full"; signal?: AbortSignal } = {},
 ): Promise<unknown> {
   const detail = options.detail ? `?detail=${options.detail}` : "";
   const url = `${apiUrl.replace(/\/+$/, "")}/universe/galaxies/${galaxy}/systems/${system}${detail}`;
   return fetchGameApiJson<unknown>(url, "System", {
-    httpErrorMessage: async (response) => `System API failed: ${response.status}`
+    httpErrorMessage: async (response) => `System API failed: ${response.status}`,
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
   });
 }
 
@@ -5173,7 +5174,7 @@ async function fetchWalletJson<T>(
   wallet: string,
   path: string,
   label: string,
-  options: { fresh?: boolean; timeoutMs?: number } = {}
+  options: { fresh?: boolean; signal?: AbortSignal; timeoutMs?: number } = {}
 ): Promise<T> {
   const timeoutMs = options.timeoutMs ?? WALLET_API_READ_TIMEOUT_MS;
   const url = `${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(wallet)}/${path}`;
@@ -5181,6 +5182,7 @@ async function fetchWalletJson<T>(
     cache: "no-store",
     ...(options.fresh ? { recentReadTtlMs: 0 } : {}),
     timeoutMs,
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
     networkFailureMessage: (error) => walletApiNetworkFailureMessage(label, error)
   });
 }
@@ -5193,13 +5195,16 @@ async function fetchGameApiJson<T>(
     httpErrorMessage?: (response: Response) => Promise<string>;
     networkFailureMessage?: (error: unknown) => string;
     recentReadTtlMs?: number;
+    signal?: AbortSignal;
     timeoutMs?: number;
   } = {}
 ): Promise<T> {
   const cacheKey = `GET ${url}`;
   const now = Date.now();
   const freshQuery = /(?:[?&])fresh=1(?:&|$)/.test(url);
-  const recentReadTtlMs = options.recentReadTtlMs ?? (freshQuery ? 0 : GAME_API_RECENT_READ_TTL_MS);
+  const recentReadTtlMs = options.signal
+    ? 0
+    : options.recentReadTtlMs ?? (freshQuery ? 0 : GAME_API_RECENT_READ_TTL_MS);
   if (recentReadTtlMs > 0) {
     const recent = gameApiRecentReads.get(cacheKey);
     if (recent && recent.expiresAt > now) return recent.value as T;
@@ -5235,18 +5240,23 @@ async function fetchGameApiJsonUnpooled<T>(
     cache?: RequestCache;
     httpErrorMessage?: (response: Response) => Promise<string>;
     networkFailureMessage?: (error: unknown) => string;
+    signal?: AbortSignal;
     timeoutMs?: number;
   }
 ): Promise<T> {
-  const releaseReadSlot = await acquireGameApiReadSlot();
   const timeoutMs = options.timeoutMs ?? WALLET_API_READ_TIMEOUT_MS;
   const controller = new AbortController();
   const timeoutId = setTimeout(() => {
     controller.abort(new Error(`Timed out reading ${label.toLowerCase()} from the game API after ${Math.round(timeoutMs / 1_000)} seconds.`));
   }, timeoutMs);
+  const forwardAbort = () => controller.abort(options.signal?.reason ?? new DOMException("Request cancelled", "AbortError"));
+  if (options.signal?.aborted) forwardAbort();
+  else options.signal?.addEventListener("abort", forwardAbort, { once: true });
 
   let response: Response;
+  let releaseReadSlot: (() => void) | undefined;
   try {
+    releaseReadSlot = await acquireGameApiReadSlot(controller.signal);
     response = await fetch(url, {
       ...(options.cache !== undefined ? { cache: options.cache } : {}),
       headers: { accept: "application/json" },
@@ -5261,7 +5271,8 @@ async function fetchGameApiJsonUnpooled<T>(
     throw new Error(options.networkFailureMessage?.(error) ?? walletApiNetworkFailureMessage(label, error));
   } finally {
     clearTimeout(timeoutId);
-    releaseReadSlot();
+    options.signal?.removeEventListener("abort", forwardAbort);
+    releaseReadSlot?.();
   }
 
   if (!response.ok) {
@@ -5270,7 +5281,8 @@ async function fetchGameApiJsonUnpooled<T>(
   return response.json() as Promise<T>;
 }
 
-async function acquireGameApiReadSlot(): Promise<() => void> {
+async function acquireGameApiReadSlot(signal: AbortSignal): Promise<() => void> {
+  if (signal.aborted) throw signal.reason;
   if (gameApiActiveReads < GAME_API_MAX_CONCURRENT_READS) {
     gameApiActiveReads += 1;
     return releaseGameApiReadSlot;
@@ -5279,16 +5291,25 @@ async function acquireGameApiReadSlot(): Promise<() => void> {
   // A queued read receives the slot that releaseGameApiReadSlot hands to it.
   // Do not increment gameApiActiveReads after the wait, or a burst leaves the
   // counter permanently above the limit once all actual fetches have finished.
-  await new Promise<void>((resolve) => {
-    gameApiReadQueue.push(resolve);
+  return new Promise<() => void>((resolve, reject) => {
+    let entry!: GameApiReadQueueEntry;
+    const onAbort = () => {
+      const index = gameApiReadQueue.indexOf(entry);
+      if (index >= 0) gameApiReadQueue.splice(index, 1);
+      reject(signal.reason);
+    };
+    entry = { onAbort, reject, resolve, signal };
+    signal.addEventListener("abort", onAbort, { once: true });
+    gameApiReadQueue.push(entry);
   });
-  return releaseGameApiReadSlot;
 }
 
 function releaseGameApiReadSlot(): void {
-  const next = gameApiReadQueue.shift();
-  if (next) {
-    next();
+  while (gameApiReadQueue.length > 0) {
+    const next = gameApiReadQueue.shift()!;
+    next.signal.removeEventListener("abort", next.onAbort);
+    if (next.signal.aborted) continue;
+    next.resolve(releaseGameApiReadSlot);
     return;
   }
   gameApiActiveReads = Math.max(0, gameApiActiveReads - 1);
