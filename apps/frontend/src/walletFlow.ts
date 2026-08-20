@@ -1240,6 +1240,7 @@ export type HighscoreEntry = {
     defenderInactive?: boolean;
     scoreComparison?: AttackProtectionScoreComparison;
     atWar?: boolean;
+    warEligibilityNeedsCheck?: boolean;
     targetAlliance?: {
       allianceId: string;
       tag: string;
@@ -1276,6 +1277,8 @@ export type AttackProtectionStatus = {
   defenderInactive?: boolean;
   riftProtectionBypass?: boolean;
   scoreComparison?: AttackProtectionScoreComparison;
+  atWar?: boolean;
+  warEligibilityNeedsCheck?: boolean;
   transportAllowed?: boolean;
   transportBlockReason?: "none" | "own_planet" | "same_alliance" | "not_allied";
   transportBlockReasonLabel?: string | null;

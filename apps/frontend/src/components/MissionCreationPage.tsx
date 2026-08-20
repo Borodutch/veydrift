@@ -430,6 +430,7 @@ export function MissionCreationPage({
   acsDefendContext,
   acsDefendMode = false,
   action,
+  actionError,
   actionPending,
   actionPendingLabel,
   bodySelection,
@@ -451,6 +452,7 @@ export function MissionCreationPage({
   shipyardState,
   submitBlocker,
   target,
+  warProtectionNotice,
 }: {
   // VEY-KANEO-440: render the picker for an ACS Defend ("Defend planet") counterplay. Like a normal
   // mission it keeps the ship picker and speed control, but adds a hold-duration / holding-fuel /
@@ -458,6 +460,8 @@ export function MissionCreationPage({
   acsDefendContext?: AcsDefendComposeContext | undefined;
   acsDefendMode?: boolean | undefined;
   action: EnabledGalaxyAction;
+  /** Persistent launch failure from the parent mission flow (for example canonical war eligibility). */
+  actionError?: string | undefined;
   actionPending: boolean;
   actionPendingLabel?: string | undefined;
   bodySelection?: MissionBodySelection | undefined;
@@ -487,6 +491,8 @@ export function MissionCreationPage({
   shipyardState: ChainShipyardState | null;
   submitBlocker?: string | undefined;
   target: Planet | undefined;
+  /** Target-specific active-war policy result, fetched before Confirm is enabled. */
+  warProtectionNotice?: string | undefined;
 }) {
   const defaultOriginIsMoon = Boolean(bodySelection?.defaultOriginIsMoon)
     || (action.mode === "mission" && action.defaultOriginIsMoon === true);
@@ -1038,6 +1044,16 @@ export function MissionCreationPage({
         {visibleBlockedReason ? (
           <p className="rounded border border-amber-300/20 bg-amber-300/10 px-3 py-2 text-xs text-amber-100">
             {visibleBlockedReason}
+          </p>
+        ) : null}
+        {warProtectionNotice ? (
+          <p className="rounded border border-sky-300/20 bg-sky-300/10 px-3 py-2 text-xs text-sky-100">
+            {warProtectionNotice}
+          </p>
+        ) : null}
+        {actionError ? (
+          <p className="rounded border border-rose-300/30 bg-rose-300/10 px-3 py-2 text-xs text-rose-100" role="alert">
+            {actionError}
           </p>
         ) : null}
         <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-2">

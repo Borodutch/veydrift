@@ -25,6 +25,7 @@ export type GalaxyAttackProtectionStatus = {
     defenderScore: string;
   };
   atWar?: boolean;
+  warEligibilityNeedsCheck?: boolean;
   transportAllowed?: boolean;
   transportBlockReason?: "none" | "own_planet" | "same_alliance" | "not_allied";
   transportBlockReasonLabel?: string | null;
@@ -225,7 +226,7 @@ export function galaxyActionsForSlot({
       enabled: {
         enabled: true,
         kind: "attack",
-        label: "Attack",
+        label: attackProtection?.warEligibilityNeedsCheck ? "Verify war attack" : "Attack",
         mode: "mission",
         mission: "attack",
         ships: emptyMissionShips(),

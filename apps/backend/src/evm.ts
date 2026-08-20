@@ -1266,6 +1266,8 @@ export type AttackProtectionStatus = {
   transportBlockReasonLabel?: string | null;
   scoreComparison?: AttackProtectionScoreComparison;
   atWar?: boolean;
+  /** Rankings must verify frozen-war eligibility for a selected target before launch. */
+  warEligibilityNeedsCheck?: boolean;
   targetAlliance?: AllianceIdentity | null;
 };
 

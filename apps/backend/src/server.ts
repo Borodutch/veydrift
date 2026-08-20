@@ -5276,7 +5276,7 @@ type RankedReferralHistoryResponse = Omit<ReferralHistoryResponse, "entries"> & 
   }>;
 };
 
-type RankedHighscoreAttackProtection = Pick<AttackProtectionStatus, "allowed" | "atWar" | "blockedReason" | "blockedReasonLabel" | "defenderInactive" | "scoreComparison" | "targetAlliance">;
+type RankedHighscoreAttackProtection = Pick<AttackProtectionStatus, "allowed" | "atWar" | "warEligibilityNeedsCheck" | "blockedReason" | "blockedReasonLabel" | "defenderInactive" | "scoreComparison" | "targetAlliance">;
 
 type RankedHighscorePlanet = {
   planetId: string;
@@ -5692,7 +5692,10 @@ function indexedScoreProtectionStatus(
       blockedReasonLabel: null,
       defenderInactive,
       scoreComparison,
-      ...(atWar ? { atWar: true } : {}),
+      // Rankings are index-only. They know that a war is active but cannot cheaply evaluate the
+      // frozen declaration roster and direction for every result. The selected target is verified
+      // by the target-specific canonical preflight before Confirm is enabled.
+      ...(atWar ? { atWar: true, warEligibilityNeedsCheck: true } : {}),
       ...(defenderAlliance ? { targetAlliance: defenderAlliance } : {})
     };
   }
@@ -6453,6 +6456,15 @@ async function indexedAttackProtectionResponse(
     ? "own_planet"
     : "not_allied";
   const transportAllowed = transportBlockReason === "own_planet";
+  // An active war is deliberately narrower than a blanket protection bypass: the frozen original
+  // rosters and declaration direction decide whether this exact attacker/target pairing qualifies.
+  // Make that distinction visible to the composer instead of presenting an ordinary score-protection
+  // message after a target list advertised the war.
+  const blockedReasonLabel = blockedReason === "none"
+    ? null
+    : atWar && canonicalWarStatus
+      ? "Attack blocked: this active war only bypasses protection for eligible original declaration-roster members in its allowed direction. Normal protection applies to this matchup."
+      : attackBlockReasonLabel(blockedReason);
 
   const body: AttackProtectionStatus & {
     source: typeof indexedSource;
@@ -6461,7 +6473,7 @@ async function indexedAttackProtectionResponse(
     targetPlanetId: targetPlanetId.toString(),
     allowed: blockedReason === "none",
     blockedReason,
-    blockedReasonLabel: blockedReason === "none" ? null : attackBlockReasonLabel(blockedReason),
+    blockedReasonLabel,
     relation: canonicalWarStatus?.relation ?? (defenderProtectionScore > attackerProtectionScore
       ? "stronger"
       : defenderProtectionScore < attackerProtectionScore
