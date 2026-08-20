@@ -1249,32 +1249,9 @@ contract VeydriftMoonSystemTest is Test {
         _fundMoon(targetPlanetId, 10_000, 10_000, 10_000);
         _setMoonShipCount(originPlanetId, Ship.SmallCargo, 1);
 
-        VeydriftGameStorage.MissionShips memory ships;
-        ships.smallCargo = 1;
-        uint256 expectedMissionId = game.nextFleetId();
-        vm.expectEmit(true, false, false, true, address(game));
-        emit FleetMissionLootRatio(expectedMissionId, 2_000, 5_000, 3_000);
-        vm.prank(player);
-        uint256 missionId = game.launchBodyAttackMission(
-            originPlanetId,
-            targetPlanetId,
-            ships,
-            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
-            100,
-            true,
-            true,
-            VeydriftGameStorage.LootRatio({metalBps: 2_000, crystalBps: 5_000, deuteriumBps: 3_000})
-        );
-
-        assertEq(missionId, expectedMissionId);
-        (,,,,,,,, uint128 fuelCost,,) = game.fleetMission(missionId);
-        uint256 availableCapacity = 5_000 - fuelCost;
-        (, uint64 arrivalAt,,) = _fleetMission(missionId);
-        vm.warp(arrivalAt);
-        _fulfillAttackBattleRandomness(missionId, 659);
-        game.resolveFleetMission(missionId);
-
-        (,,, VeydriftGameStorage.Resources memory cargo) = _fleetMission(missionId);
+        uint256 missionId = _launchMoonAttackWithLootRatio(originPlanetId, targetPlanetId);
+        uint256 availableCapacity = 5_000 - _fleetFuelCost(missionId);
+        VeydriftGameStorage.Resources memory cargo = _resolveAttackAndGetCargo(missionId);
         assertEq(cargo.metal, (availableCapacity * 2_000) / 10_000);
         assertEq(cargo.crystal, (availableCapacity * 5_000) / 10_000);
         assertEq(cargo.deuterium, availableCapacity - cargo.metal - cargo.crystal);
@@ -1912,6 +1889,44 @@ contract VeydriftMoonSystemTest is Test {
 
     function _createMoon(uint256 planetId) internal returns (VeydriftMoonSystem.Moon memory) {
         return moons.createMoon(planetId);
+    }
+
+    function _launchMoonAttackWithLootRatio(uint256 originPlanetId, uint256 targetPlanetId)
+        internal
+        returns (uint256 missionId)
+    {
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.smallCargo = 1;
+        uint256 expectedMissionId = game.nextFleetId();
+        vm.expectEmit(true, false, false, true, address(game));
+        emit FleetMissionLootRatio(expectedMissionId, 2_000, 5_000, 3_000);
+        vm.prank(player);
+        missionId = game.launchBodyAttackMission(
+            originPlanetId,
+            targetPlanetId,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            100,
+            true,
+            true,
+            VeydriftGameStorage.LootRatio({metalBps: 2_000, crystalBps: 5_000, deuteriumBps: 3_000})
+        );
+        assertEq(missionId, expectedMissionId);
+    }
+
+    function _fleetFuelCost(uint256 missionId) internal view returns (uint128 fuelCost) {
+        (,,,,,,,, fuelCost,,) = game.fleetMission(missionId);
+    }
+
+    function _resolveAttackAndGetCargo(uint256 missionId)
+        internal
+        returns (VeydriftGameStorage.Resources memory cargo)
+    {
+        (, uint64 arrivalAt,,) = _fleetMission(missionId);
+        vm.warp(arrivalAt);
+        _fulfillAttackBattleRandomness(missionId, 659);
+        game.resolveFleetMission(missionId);
+        (,,, cargo) = _fleetMission(missionId);
     }
 
     function _destroyMoonGuaranteed(uint256 planetId) internal {
