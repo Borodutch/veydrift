@@ -565,6 +565,12 @@ contract VeydriftGame is VeydriftResourceReserves {
                 case 0 { revert(add(result, 32), mload(result)) }
                 default { return(add(result, 32), mload(result)) }
             }
+        } else if (msg.sig == 0xcc4cc1ea) {
+            // Attack launch and ACS modules enforce protection through an internal staticcall so
+            // the Rift-aware implementation can stay outside this size-constrained facade. Do not
+            // expose that parameterized enforcement helper as a public fallback selector.
+            if (msg.sender != address(this)) revert Unauthorized(msg.sender);
+            _delegateToStateMigrationModule();
         } else {
             _delegateToStateMigrationModule();
         }
