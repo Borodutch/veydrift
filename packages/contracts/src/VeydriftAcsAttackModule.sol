@@ -19,6 +19,12 @@ interface IVeydriftAcsAttackProtection {
 contract VeydriftAcsAttackModule is VeydriftResourceReserves {
     using SafeCast for uint256;
 
+    struct AcsJoinTiming {
+        uint128 fuelCost;
+        uint64 departureAt;
+        uint64 returnAt;
+    }
+
     constructor() VeydriftResourceReserves(address(0)) {}
 
     function joinAttackMission(
@@ -54,8 +60,24 @@ contract VeydriftAcsAttackModule is VeydriftResourceReserves {
         Resources calldata cargo,
         bool originIsMoon
     ) private returns (uint256 missionId) {
+        FleetMission storage attack = _requireJoinableAttack(
+            originPlanetId, attackMissionId, expectedTargetPlanetId, originIsMoon
+        );
+        AcsJoinTiming memory timing =
+            _prepareJoinFleet(originPlanetId, originIsMoon, ships, cargo, attack);
+        return _recordJoinedMission(
+            originPlanetId, attackMissionId, originIsMoon, ships, cargo, attack, timing
+        );
+    }
+
+    function _requireJoinableAttack(
+        uint256 originPlanetId,
+        uint256 attackMissionId,
+        uint256 expectedTargetPlanetId,
+        bool originIsMoon
+    ) private returns (FleetMission storage attack) {
         _requireOwnedBody(originPlanetId, originIsMoon);
-        FleetMission storage attack = _fleetMissions[attackMissionId];
+        attack = _fleetMissions[attackMissionId];
         if (
             attack.status != FleetMissionStatus.Outbound
                 || attack.missionType != FleetMissionType.Attack
@@ -84,7 +106,15 @@ contract VeydriftAcsAttackModule is VeydriftResourceReserves {
         ) revert InvalidId();
         IVeydriftAcsAttackProtection(address(this))
             .enforceBodyAttackProtection(msg.sender, attack.targetPlanetId, attack.targetIsMoon);
+    }
 
+    function _prepareJoinFleet(
+        uint256 originPlanetId,
+        bool originIsMoon,
+        MissionShips calldata ships,
+        Resources calldata cargo,
+        FleetMission storage attack
+    ) private returns (AcsJoinTiming memory timing) {
         uint256 fleetSlots = VeydriftAntiRaidPrimitives.fleetSlotLimit(
             _technologyLevels[msg.sender][Technology.Computer]
         );
@@ -100,7 +130,7 @@ contract VeydriftAcsAttackModule is VeydriftResourceReserves {
         uint256 travelDistance = originPlanetId == attack.targetPlanetId
             ? 5
             : _planetDistance(originPlanetId, attack.targetPlanetId);
-        uint128 fuelCost = _toUint128(
+        timing.fuelCost = _toUint128(
             VeydriftFleetFuel.ogameMissionFuelCost(
                 ships,
                 _technologyLevels[msg.sender][Technology.CombustionDrive],
@@ -111,18 +141,18 @@ contract VeydriftAcsAttackModule is VeydriftResourceReserves {
                 slowestSpeed
             )
         );
-        uint64 departureAt = _currentTimestamp();
+        timing.departureAt = _currentTimestamp();
         uint256 travelSeconds = VeydriftAntiRaidPrimitives.travelSeconds(
             travelDistance,
             slowestSpeed,
             VeydriftAntiRaidPrimitives.FULL_MISSION_SPEED_PERCENT,
             FLEET_UNIVERSE_SPEED
         );
-        uint64 naturalArrivalAt = (uint256(departureAt) + travelSeconds).toUint64();
+        uint64 naturalArrivalAt = (uint256(timing.departureAt) + travelSeconds).toUint64();
         if (naturalArrivalAt > attack.arrivalAt) revert FleetAlreadyArrived();
 
         uint256 cargoTotal = uint256(cargo.metal) + cargo.crystal + cargo.deuterium;
-        uint256 committedCapacity = cargoTotal + fuelCost;
+        uint256 committedCapacity = cargoTotal + timing.fuelCost;
         if (committedCapacity > capacity) {
             revert CargoCapacityExceeded(capacity, committedCapacity);
         }
@@ -133,13 +163,24 @@ contract VeydriftAcsAttackModule is VeydriftResourceReserves {
             Resources({
                 metal: cargo.metal,
                 crystal: cargo.crystal,
-                deuterium: _toUint128(uint256(cargo.deuterium) + fuelCost)
+                deuterium: _toUint128(uint256(cargo.deuterium) + timing.fuelCost)
             })
         );
         _increaseInternalResources(cargo);
         _debitBodyMissionShips(originPlanetId, originIsMoon, ships);
 
-        uint64 returnAt = (uint256(attack.arrivalAt) + travelSeconds).toUint64();
+        timing.returnAt = (uint256(attack.arrivalAt) + travelSeconds).toUint64();
+    }
+
+    function _recordJoinedMission(
+        uint256 originPlanetId,
+        uint256 attackMissionId,
+        bool originIsMoon,
+        MissionShips calldata ships,
+        Resources calldata cargo,
+        FleetMission storage attack,
+        AcsJoinTiming memory timing
+    ) private returns (uint256 missionId) {
         missionId = nextFleetId++;
         activeFleetMissionCount[msg.sender] += 1;
         _fleetMissions[missionId] = FleetMission({
@@ -148,10 +189,10 @@ contract VeydriftAcsAttackModule is VeydriftResourceReserves {
             owner: msg.sender,
             originPlanetId: originPlanetId,
             targetPlanetId: attack.targetPlanetId,
-            departureAt: departureAt,
+            departureAt: timing.departureAt,
             arrivalAt: attack.arrivalAt,
-            returnAt: returnAt,
-            fuelCost: fuelCost,
+            returnAt: timing.returnAt,
+            fuelCost: timing.fuelCost,
             cargo: cargo,
             ships: ships,
             randomnessRequestId: attackMissionId,
@@ -175,10 +216,12 @@ contract VeydriftAcsAttackModule is VeydriftResourceReserves {
             originPlanetId,
             attack.targetPlanetId,
             attack.arrivalAt,
-            returnAt,
+            timing.returnAt,
             attackMissionId
         );
-        emit FleetMissionCargo(missionId, cargo.metal, cargo.crystal, cargo.deuterium, fuelCost);
+        emit FleetMissionCargo(
+            missionId, cargo.metal, cargo.crystal, cargo.deuterium, timing.fuelCost
+        );
         emit FleetMissionBodies(missionId, originIsMoon, attack.targetIsMoon);
         _emitFleetMissionShips(missionId, ships);
     }
