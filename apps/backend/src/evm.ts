@@ -552,6 +552,7 @@ export type FleetMissionVisibility = {
   // Highest block durably applied by the indexer when this visibility snapshot was generated.
   indexedBlock?: string | null;
   generatedAt?: string;
+  gameMaintenance?: GameMaintenanceState | null;
   incoming: FleetMissionSummary[];
   outgoing: FleetMissionSummary[];
   returning: FleetMissionSummary[];
@@ -559,6 +560,13 @@ export type FleetMissionVisibility = {
   joinableDefenses?: FleetMissionSummary[];
   completedMissions: FleetMissionSummary[];
   battleReports: BattleReport[];
+};
+
+export type GameMaintenanceState = {
+  paused: boolean;
+  observedAt: string;
+  pausedSince: string | null;
+  pauseAgeSeconds: number;
 };
 
 export type FleetMissionArchiveEntry =

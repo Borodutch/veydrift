@@ -678,6 +678,36 @@ describe("MissionControlPage", () => {
     expect(text).toContain("Resolve");
   });
 
+  test("explains maintenance instead of presenting overdue missions as normally resolving", () => {
+    const page = missionControlPage({
+      fleetVisibility: {
+        wallet: "0x1111111111111111111111111111111111111111",
+        homePlanetId: "7",
+        gameMaintenance: {
+          paused: true,
+          observedAt: "2026-08-20T17:33:29.000Z",
+          pausedSince: "2026-08-20T17:33:29.000Z",
+          pauseAgeSeconds: 120
+        },
+        incoming: [],
+        outgoing: [mission({ arrivalAt: "1770000000", missionId: "27543", missionType: "Transport", needsResolution: true })],
+        returning: [],
+        joinableAttacks: [],
+        completedMissions: [],
+        battleReports: [],
+      },
+      canTransact: false,
+      now: 1_770_000_700_000,
+      transactionUnavailableReason: "Game maintenance is active."
+    });
+
+    expect(visibleText(page)).toContain(
+      "Game maintenance is active. Mission arrivals, returns, and game actions will resume automatically after maintenance."
+    );
+    expect(visibleAttributeValues(page, "data-mission-status")).toEqual(["Paused for maintenance"]);
+    expect(visibleAttributeValues(page, "data-mission-status-action")).toEqual([]);
+  });
+
   test("stacks the overdue Resolve action below Resolving without changing disabled or terminal states", () => {
     const overdue = mission({ arrivalAt: "1770000000", missionId: "12", missionType: "Transport", needsResolution: true });
     const visibility = {

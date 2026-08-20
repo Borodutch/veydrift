@@ -4,6 +4,7 @@ import {
   defineChain,
   encodeFunctionData,
   http,
+  toHex,
   type Hex,
   type PublicClient,
   type WalletClient
@@ -11,8 +12,9 @@ import {
 import { privateKeyToAccount } from "viem/accounts";
 
 import type { BackendConfig } from "./config";
-import type { Address, ResolvableFleetMission, ReturnableFleetMission } from "./evm";
+import type { Address, GameMaintenanceState, ResolvableFleetMission, ReturnableFleetMission } from "./evm";
 import { VeydriftGameReader } from "./evm";
+import { emitObservabilityEvent } from "./observability";
 import { ResolverTransactionCoordinator } from "./resolverTransactions";
 
 const missionResolutionIntervalMs = 5_000;
@@ -22,6 +24,11 @@ const promptnessTargetMs = 60_000;
 const latencySampleLimit = 1_000;
 const initialFailureRetryMs = 30_000;
 const maxFailureRetryMs = 300_000;
+const maxPauseProbeBackoffMs = 30_000;
+const longPauseAlertAfterMs = 10 * 60_000;
+// VeydriftGame.v1 storage layout fixes `_gamePaused` at proxy slot 52. Reading the canonical proxy
+// storage avoids a contract upgrade solely to expose an operational getter.
+const gamePausedStorageSlot = toHex(52n, { size: 32 });
 // Base caps an individual transaction at 2^24 gas. Supply that envelope explicitly: Reth's
 // estimator can stop at an inner delegatecall's empty out-of-gas revert and misreport a valid,
 // bounded battle as UnsupportedGameplayModule instead of broadcasting it.
@@ -49,6 +56,7 @@ export type MissionResolutionChainClient = {
   listReturnableFleetMissions(): Promise<ReturnableFleetMission[]>;
   resolveFleetMission(missionId: string): Promise<string>;
   completeFleetMissionReturn(missionId: string): Promise<string>;
+  gamePaused?(): Promise<boolean>;
 };
 
 export type MissionResolutionCandidates = {
@@ -64,6 +72,8 @@ export type MissionResolutionCandidateSource = {
    * storage so its next leg or terminal state is visible without waiting for a broad repair.
    */
   reconcileMissionResolutionCandidate?(missionId: string): Promise<void>;
+  gameMaintenanceState?(): GameMaintenanceState | null;
+  recordGameMaintenanceState?(state: GameMaintenanceState): void;
 };
 
 type MissionLeg = "arrival" | "return";
@@ -96,6 +106,13 @@ export type MissionResolutionSnapshot = {
   promptnessTargetSeconds: number;
   healthStatus: "healthy" | "degraded";
   healthWarnings: string[];
+  gamePaused: boolean;
+  gamePauseObservedAt: string | null;
+  gamePausedSince: string | null;
+  gamePauseAgeSeconds: number;
+  nextGamePauseProbeAt: string | null;
+  pausedResolutionAttempts: number;
+  longPauseAlerts: number;
   inFlight: boolean;
   lastRunAt: string | null;
   lastCompletedRunAt: string | null;
@@ -127,6 +144,7 @@ export type MissionResolutionServiceOptions = {
   maxConcurrency?: number;
   now?: () => number;
   promptnessTargetMs?: number;
+  longPauseAlertAfterMs?: number;
   transactionCoordinator?: ResolverTransactionCoordinator;
 };
 
@@ -139,6 +157,7 @@ export class MissionResolutionService {
   private readonly maxConcurrency: number;
   private readonly now: () => number;
   private readonly promptnessTargetMs: number;
+  private readonly longPauseAlertAfterMs: number;
   private timer: ReturnType<typeof setInterval> | undefined;
   private inFlight = false;
   private lastRunAt: string | null = null;
@@ -151,6 +170,14 @@ export class MissionResolutionService {
   private lastReturnedMissionId: string | null = null;
   private resolvedCount = 0;
   private returnedCount = 0;
+  private gamePaused = false;
+  private gamePauseObservedAt: string | null = null;
+  private gamePausedSince: string | null = null;
+  private nextGamePauseProbeAtMs = 0;
+  private pauseProbeBackoffMs: number;
+  private pausedResolutionAttempts = 0;
+  private longPauseAlerts = 0;
+  private lastLongPauseAlertAtMs = 0;
   private readonly pendingDueAt: Record<MissionLeg, Map<string, number>> = {
     arrival: new Map(),
     return: new Map()
@@ -178,6 +205,8 @@ export class MissionResolutionService {
     this.maxConcurrency = Math.max(1, Math.floor(options.maxConcurrency ?? missionResolutionConcurrency));
     this.now = options.now ?? Date.now;
     this.promptnessTargetMs = Math.max(1_000, Math.floor(options.promptnessTargetMs ?? promptnessTargetMs));
+    this.longPauseAlertAfterMs = Math.max(1_000, Math.floor(options.longPauseAlertAfterMs ?? longPauseAlertAfterMs));
+    this.pauseProbeBackoffMs = this.intervalMs;
   }
 
   snapshot(): MissionResolutionSnapshot {
@@ -194,6 +223,15 @@ export class MissionResolutionService {
       promptnessTargetSeconds: Math.ceil(this.promptnessTargetMs / 1_000),
       healthStatus: healthWarnings.length === 0 ? "healthy" : "degraded",
       healthWarnings,
+      gamePaused: this.gamePaused,
+      gamePauseObservedAt: this.gamePauseObservedAt,
+      gamePausedSince: this.gamePausedSince,
+      gamePauseAgeSeconds: this.gamePauseAgeSeconds(nowMs),
+      nextGamePauseProbeAt: this.gamePaused && this.nextGamePauseProbeAtMs > nowMs
+        ? new Date(this.nextGamePauseProbeAtMs).toISOString()
+        : null,
+      pausedResolutionAttempts: this.pausedResolutionAttempts,
+      longPauseAlerts: this.longPauseAlerts,
       inFlight: this.inFlight,
       lastRunAt: this.lastRunAt,
       lastCompletedRunAt: this.lastCompletedRunAt,
@@ -239,11 +277,19 @@ export class MissionResolutionService {
     const startedAtMs = this.now();
     this.lastRunAt = new Date(startedAtMs).toISOString();
     try {
+      if (this.gamePaused && startedAtMs < this.nextGamePauseProbeAtMs) return;
+      const paused = await this.readCanonicalGamePause();
+      this.observeGamePause(paused, startedAtMs);
       const scanStartedAtMs = this.now();
       const candidates = await this.listCandidates();
       this.lastScanDurationMs = Math.max(0, this.now() - scanStartedAtMs);
       const settlementCandidates = toSettlementCandidates(candidates);
       this.publishDueCandidates(settlementCandidates);
+      if (paused) {
+        this.recordPausedResolutionAttempts(settlementCandidates, startedAtMs);
+        this.lastError = null;
+        return;
+      }
       await this.settleCandidates(settlementCandidates);
       this.lastError = null;
     } catch (error) {
@@ -280,6 +326,84 @@ export class MissionResolutionService {
     return { arrivals, returns };
   }
 
+  private async readCanonicalGamePause(): Promise<boolean> {
+    if (!this.chainClient?.gamePaused) return false;
+    return this.chainClient.gamePaused();
+  }
+
+  private observeGamePause(paused: boolean, observedAtMs: number): void {
+    const observedAt = new Date(observedAtMs).toISOString();
+    const shouldPersist = paused || this.gamePauseObservedAt === null || this.gamePaused !== paused;
+    if (paused) {
+      if (!this.gamePaused) {
+        const persisted = this.candidateSource?.gameMaintenanceState?.();
+        this.gamePausedSince = persisted?.paused && persisted.pausedSince
+          ? persisted.pausedSince
+          : observedAt;
+        this.pauseProbeBackoffMs = this.intervalMs;
+        this.lastLongPauseAlertAtMs = 0;
+      }
+      this.gamePaused = true;
+      this.gamePauseObservedAt = observedAt;
+      this.nextGamePauseProbeAtMs = observedAtMs + this.pauseProbeBackoffMs;
+      this.pauseProbeBackoffMs = Math.min(maxPauseProbeBackoffMs, this.pauseProbeBackoffMs * 2);
+    } else {
+      const recovered = this.gamePaused;
+      this.gamePaused = false;
+      this.gamePauseObservedAt = observedAt;
+      this.gamePausedSince = null;
+      this.nextGamePauseProbeAtMs = 0;
+      this.pauseProbeBackoffMs = this.intervalMs;
+      this.lastLongPauseAlertAtMs = 0;
+      if (recovered) {
+        emitObservabilityEvent({ kind: "mission_resolution_game_unpaused", component: "mission-resolution" });
+      }
+    }
+    if (shouldPersist) {
+      this.candidateSource?.recordGameMaintenanceState?.({
+        paused: this.gamePaused,
+        observedAt,
+        pausedSince: this.gamePausedSince,
+        pauseAgeSeconds: this.gamePauseAgeSeconds(observedAtMs)
+      });
+    }
+  }
+
+  private recordPausedResolutionAttempts(candidates: readonly MissionSettlementCandidate[], nowMs: number): void {
+    const attempted = candidates.length;
+    this.pausedResolutionAttempts += attempted;
+    const pauseAgeSeconds = this.gamePauseAgeSeconds(nowMs);
+    emitObservabilityEvent({
+      kind: "mission_resolution_suppressed_while_game_paused",
+      component: "mission-resolution",
+      attempted,
+      dueArrivals: candidates.filter((candidate) => candidate.leg === "arrival").length,
+      dueReturns: candidates.filter((candidate) => candidate.leg === "return").length,
+      pauseAgeSeconds,
+      nextProbeAt: new Date(this.nextGamePauseProbeAtMs).toISOString()
+    }, "warn");
+    if (
+      pauseAgeSeconds * 1_000 >= this.longPauseAlertAfterMs
+      && nowMs - this.lastLongPauseAlertAtMs >= this.longPauseAlertAfterMs
+    ) {
+      this.lastLongPauseAlertAtMs = nowMs;
+      this.longPauseAlerts += 1;
+      this.logger.warn(`[mission-resolution] game pause has lasted ${Math.floor(pauseAgeSeconds)}s; resolver submissions remain suppressed`);
+      emitObservabilityEvent({
+        kind: "mission_resolution_long_game_pause",
+        component: "mission-resolution",
+        pauseAgeSeconds,
+        pausedSince: this.gamePausedSince
+      }, "warn");
+    }
+  }
+
+  private gamePauseAgeSeconds(nowMs: number): number {
+    if (!this.gamePaused || !this.gamePausedSince) return 0;
+    const pausedSinceMs = Date.parse(this.gamePausedSince);
+    return Number.isFinite(pausedSinceMs) ? Math.max(0, (nowMs - pausedSinceMs) / 1_000) : 0;
+  }
+
   private publishDueCandidates(candidates: readonly MissionSettlementCandidate[]): void {
     this.pendingDueAt.arrival.clear();
     this.pendingDueAt.return.clear();
@@ -294,7 +418,7 @@ export class MissionResolutionService {
       .slice(0, this.maxMissionsPerTick * 5);
     let successful = 0;
     let cursor = 0;
-    while (cursor < attemptable.length && successful < this.maxMissionsPerTick) {
+    while (cursor < attemptable.length && successful < this.maxMissionsPerTick && !this.gamePaused) {
       const remainingSuccessSlots = this.maxMissionsPerTick - successful;
       const batchSize = Math.min(this.maxConcurrency, remainingSuccessSlots, attemptable.length - cursor);
       const batch = attemptable.slice(cursor, cursor + batchSize);
@@ -331,6 +455,11 @@ export class MissionResolutionService {
       this.failedCandidateRetries.delete(candidateRetryKey(candidate));
       return true;
     } catch (error) {
+      if (error instanceof GamePausedBeforeResolverAllocationError) {
+        this.observeGamePause(true, this.now());
+        this.recordPausedResolutionAttempts([candidate], this.now());
+        return false;
+      }
       this.failuresByLeg[candidate.leg] += 1;
       const method = candidate.leg === "arrival" ? "resolveFleetMission" : "completeFleetMissionReturn";
       if (needsCanonicalMissionReconciliation(error) && this.candidateSource?.reconcileMissionResolutionCandidate) {
@@ -376,8 +505,12 @@ export class MissionResolutionService {
   private healthWarnings(dueArrivals: DueLegSnapshot, dueReturns: DueLegSnapshot): string[] {
     const warnings: string[] = [];
     const targetSeconds = this.promptnessTargetMs / 1_000;
-    if ((dueArrivals.oldestAgeSeconds ?? 0) > targetSeconds) warnings.push("stale_due_arrival_backlog");
-    if ((dueReturns.oldestAgeSeconds ?? 0) > targetSeconds) warnings.push("stale_due_return_backlog");
+    if (!this.gamePaused && (dueArrivals.oldestAgeSeconds ?? 0) > targetSeconds) warnings.push("stale_due_arrival_backlog");
+    if (!this.gamePaused && (dueReturns.oldestAgeSeconds ?? 0) > targetSeconds) warnings.push("stale_due_return_backlog");
+    if (this.gamePaused) warnings.push("game_paused");
+    if (this.gamePauseAgeSeconds(this.now()) * 1_000 >= this.longPauseAlertAfterMs) {
+      warnings.push("game_pause_long_running");
+    }
     if (this.lastError) warnings.push("mission_resolution_tick_failed");
     return warnings;
   }
@@ -422,12 +555,25 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     return this.write("completeFleetMissionReturn", missionId);
   }
 
+  async gamePaused(): Promise<boolean> {
+    if (!this.publicClient) throw new Error("mission resolver is missing a public client for the canonical game pause probe");
+    const value = await this.publicClient.getStorageAt({
+      address: this.gameAddress,
+      slot: gamePausedStorageSlot
+    });
+    return value !== undefined && BigInt(value) !== 0n;
+  }
+
   private async write(functionName: "resolveFleetMission" | "completeFleetMissionReturn", missionId: string): Promise<string> {
     const data = encodeFunctionData({
       abi: veydriftGameResolutionAbi,
       functionName,
       args: [BigInt(missionId)]
     });
+    // The service probes once before scanning, but a long batch can straddle an operator pause.
+    // Re-check at the final boundary before entering the persistent coordinator: no lease, nonce
+    // allocation, wallet estimate, or broadcast is allowed after the canonical pause flips.
+    if (await this.gamePaused()) throw new GamePausedBeforeResolverAllocationError();
     if (typeof this.sender !== "string") {
       const account = this.sender;
       if (!this.walletClient || !this.publicClient || !this.chain) {
@@ -506,6 +652,13 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
       throw new Error(body.error?.message ?? `RPC HTTP ${response.status}`);
     }
     return body.result as Hex;
+  }
+}
+
+export class GamePausedBeforeResolverAllocationError extends Error {
+  constructor() {
+    super("canonical game pause is active; resolver transaction allocation is suppressed");
+    this.name = "GamePausedBeforeResolverAllocationError";
   }
 }
 

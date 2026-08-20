@@ -933,6 +933,8 @@ describe("Veydrift backend", () => {
         indexedState: null,
         safeToServeIndexedState: null,
         missionResolutionStatus: null,
+        gamePaused: false,
+        gamePauseAgeSeconds: null,
         rpcOldestUnfinishedRequestAgeMs: null,
         rpcUnfinishedRequestGrowthDetected: false,
         rpcUnfinishedRequests: 0
@@ -940,6 +942,7 @@ describe("Veydrift backend", () => {
       chainSync: null,
       indexer: null,
       missionResolution: null,
+      gameMaintenance: null,
       randomnessCommitter: null,
       randomnessReadiness: {
         ready: true,
@@ -11147,6 +11150,44 @@ describe("worker role gating (VEY-KANEO-466)", () => {
     expect(response.status).toBe(200);
   });
 
+  test("reader health surfaces the shared persisted game-maintenance state", async () => {
+    const indexer = {
+      gameMaintenanceState() {
+        return {
+          paused: true,
+          observedAt: "2026-08-20T17:34:29.000Z",
+          pausedSince: "2026-08-20T17:33:29.000Z",
+          pauseAgeSeconds: 60
+        };
+      },
+      snapshot() {
+        throw new Error("reader health must not load the broad indexer snapshot");
+      }
+    } as unknown as SettlementIndexer;
+    const handler = createRequestHandler({
+      chainReader: new MockChainReader(),
+      config: {
+        ...configuredTestConfig,
+        missionResolutionEnabled: true,
+        missionResolverAddress: "0x4444444444444444444444444444444444444444"
+      },
+      indexer,
+      role: "reader"
+    });
+
+    const response = await handler(new Request("http://localhost/health"));
+    const body = await response.json();
+
+    expect(body.missionResolution).toBeNull();
+    expect(body.gameMaintenance).toMatchObject({ paused: true, pauseAgeSeconds: 60 });
+    expect(body.readiness).toMatchObject({
+      degraded: true,
+      degradationReasons: ["game_paused"],
+      gamePaused: true,
+      gamePauseAgeSeconds: 60
+    });
+  });
+
   test("writer health surfaces mission resolution status when enabled", async () => {
     const service = new MissionResolutionService(
       {
@@ -11269,6 +11310,72 @@ describe("worker role gating (VEY-KANEO-466)", () => {
     expect(body.readiness).toMatchObject({
       degraded: true,
       degradationReasons: ["stale_due_arrival_backlog"],
+      missionResolutionStatus: "degraded"
+    });
+  });
+
+  test("writer health distinguishes an intentional game pause and exposes its age", async () => {
+    let nowMs = 1_000_000;
+    const service = new MissionResolutionService(
+      {
+        ...configuredTestConfig,
+        missionResolutionEnabled: true,
+        missionResolverAddress: "0x4444444444444444444444444444444444444444"
+      },
+      {
+        candidateSource: {
+          missionResolutionCandidates() {
+            return { arrivals: [], returns: [] };
+          }
+        },
+        chainClient: {
+          async gamePaused() { return true; },
+          async listResolvableFleetMissions() { return []; },
+          async listReturnableFleetMissions() { return []; },
+          async resolveFleetMission() { return "0xresolve"; },
+          async completeFleetMissionReturn() { return "0xreturn"; }
+        },
+        intervalMs: 60_000,
+        logger: { warn() {}, error() {} },
+        now: () => nowMs
+      }
+    );
+    await service.tick();
+    nowMs += 42_000;
+    const indexer = {
+      snapshot() {
+        return { indexedState: "healthy", safeToServeIndexedState: true };
+      }
+    } as unknown as SettlementIndexer;
+    const handler = createRequestHandler({
+      chainReader: new MockChainReader(),
+      config: {
+        ...configuredTestConfig,
+        missionResolutionEnabled: true,
+        missionResolverAddress: "0x4444444444444444444444444444444444444444"
+      },
+      indexer,
+      missionResolution: service
+    });
+
+    const response = await handler(new Request("http://localhost/health"));
+    const body = await response.json();
+
+    service.stop();
+    // This isolated writer fixture intentionally has no connected chain-sync service, so readiness
+    // remains 503; the pause itself is represented by the distinct degraded reason below.
+    expect(response.status).toBe(503);
+    expect(body.missionResolution).toMatchObject({
+      gamePaused: true,
+      gamePauseAgeSeconds: 42,
+      healthStatus: "degraded",
+      healthWarnings: ["game_paused"]
+    });
+    expect(body.readiness).toMatchObject({
+      degraded: true,
+      degradationReasons: ["game_paused"],
+      gamePaused: true,
+      gamePauseAgeSeconds: 42,
       missionResolutionStatus: "degraded"
     });
   });

@@ -645,11 +645,13 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       const chainSyncSnapshot = chainSync?.snapshot() ?? null;
       const indexerSnapshot = isWriter ? (indexer?.snapshot() ?? null) : null;
       const missionResolutionSnapshot = missionResolution?.snapshot() ?? null;
+      const gameMaintenanceSnapshot = indexer?.gameMaintenanceState?.() ?? null;
       const readiness = backendReadiness(
         loaded.problems,
         chainSyncSnapshot,
         indexerSnapshot,
         missionResolutionSnapshot,
+        gameMaintenanceSnapshot,
         [
           chainReader?.rpcMetrics?.(),
           logBackfiller?.rpcMetrics?.(),
@@ -671,6 +673,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           readiness,
           chainSync: chainSyncSnapshot,
           missionResolution: missionResolutionSnapshot,
+          gameMaintenance: gameMaintenanceSnapshot,
           randomnessCommitter: randomnessCommitter?.snapshot() ?? null,
           indexer: indexerSnapshot,
           rpc: chainReader?.rpcMetrics?.() ?? null,
@@ -3915,7 +3918,8 @@ function indexedFleetVisibility(
     // after a rolling deploy; the appended state generation then orders membership-only changes.
     indexedRevision: `${indexer.missionResponseCacheVersion()}:${indexer.indexedStateCacheVersion()}`,
     indexedBlock: snapshot.latestIndexedBlock,
-    generatedAt: new Date().toISOString()
+    generatedAt: new Date().toISOString(),
+    gameMaintenance: indexer.gameMaintenanceState()
   };
 }
 
@@ -4997,7 +5001,7 @@ export function runtimeConfigResponse(workerRole: WorkerRole = envWorkerRole()):
 
 export function readerBootstrapHealthResponse(workerRole: WorkerRole = envWorkerRole()): Response {
   const loaded = loadBackendConfig();
-  const readiness = backendReadiness(loaded.problems, null, null, null);
+  const readiness = backendReadiness(loaded.problems, null, null, null, null);
   const randomnessReadiness = currentRandomnessReadiness(
     loaded.config.randomnessCommitmentStorePath,
     Boolean(loaded.config.randomnessEngineAddress && loaded.config.randomnessFulfillerPrivateKey)
@@ -6515,6 +6519,7 @@ function backendReadiness(
   chainSyncSnapshot: unknown,
   indexerSnapshot: unknown,
   missionResolutionSnapshot: unknown,
+  gameMaintenanceSnapshot: unknown,
   rpcSnapshots: unknown[] = [],
 ): {
   ready: boolean;
@@ -6527,6 +6532,8 @@ function backendReadiness(
   indexedState: string | null;
   safeToServeIndexedState: boolean | null;
   missionResolutionStatus: string | null;
+  gamePaused: boolean;
+  gamePauseAgeSeconds: number | null;
   rpcUnfinishedRequests: number;
   rpcOldestUnfinishedRequestAgeMs: number | null;
   rpcUnfinishedRequestGrowthDetected: boolean;
@@ -6538,9 +6545,15 @@ function backendReadiness(
   const safeToServeIndexedState = booleanSnapshotField(indexerSnapshot, "safeToServeIndexedState");
   const missionResolutionStatus = stringSnapshotField(missionResolutionSnapshot, "healthStatus");
   const missionResolutionWarnings = stringArraySnapshotField(missionResolutionSnapshot, "healthWarnings");
+  const gamePaused = booleanSnapshotField(gameMaintenanceSnapshot, "paused")
+    ?? booleanSnapshotField(missionResolutionSnapshot, "gamePaused")
+    ?? false;
+  const gamePauseAgeSeconds = numberSnapshotField(gameMaintenanceSnapshot, "pauseAgeSeconds")
+    ?? numberSnapshotField(missionResolutionSnapshot, "gamePauseAgeSeconds");
   const configurationReady = problems.length === 0;
   const rpcReadiness = rpcUnfinishedRequestReadiness(rpcSnapshots);
   const degradationReasons = [...missionResolutionWarnings];
+  if (gamePaused && !degradationReasons.includes("game_paused")) degradationReasons.push("game_paused");
   if (!rpcReadiness.ready) degradationReasons.push("Upstream RPC unfinished requests are growing or stale.");
 
   return {
@@ -6550,7 +6563,7 @@ function backendReadiness(
       && subscribedToLogs !== false
       && safeToServeIndexedState !== false
       && rpcReadiness.ready,
-    degraded: missionResolutionStatus === "degraded" || !rpcReadiness.ready,
+    degraded: gamePaused || missionResolutionStatus === "degraded" || !rpcReadiness.ready,
     degradationReasons,
     configurationReady,
     chainSyncConnected,
@@ -6559,6 +6572,8 @@ function backendReadiness(
     indexedState,
     safeToServeIndexedState,
     missionResolutionStatus,
+    gamePaused,
+    gamePauseAgeSeconds,
     rpcUnfinishedRequests: rpcReadiness.unfinishedRequests,
     rpcOldestUnfinishedRequestAgeMs: rpcReadiness.oldestAgeMs,
     rpcUnfinishedRequestGrowthDetected: !rpcReadiness.ready,
@@ -6608,6 +6623,12 @@ function stringArraySnapshotField(snapshot: unknown, key: string): string[] {
   if (!snapshot || typeof snapshot !== "object") return [];
   const value = (snapshot as Record<string, unknown>)[key];
   return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
+}
+
+function numberSnapshotField(snapshot: unknown, key: string): number | null {
+  if (!snapshot || typeof snapshot !== "object") return null;
+  const value = (snapshot as Record<string, unknown>)[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 function errorResponse(error: unknown, status: number): Response {

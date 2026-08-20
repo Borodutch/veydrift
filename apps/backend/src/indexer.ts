@@ -109,6 +109,7 @@ import {
   type FleetMissionPlanetReference,
   type FleetMissionVisibility,
   type FleetMissionSummary,
+  type GameMaintenanceState,
   type ResolvableFleetMission,
   type ReturnableFleetMission,
   type StationedDefenderSummary,
@@ -297,6 +298,7 @@ export type IndexerSnapshot = {
 };
 
 const writerChainSyncDiagnosticsMetadataKey = "writerChainSyncDiagnostics";
+const gameMaintenanceStateMetadataKey = "gameMaintenanceState";
 const startPriceWeiMetadataKey = "canonicalStartPriceWei";
 const startPriceSourceMetadataKey = "canonicalStartPriceSource";
 const startPriceBootstrapWeiMetadataKey = "startPriceBootstrapWei";
@@ -1045,6 +1047,31 @@ export class SettlementIndexer {
       snapshot
     };
     return snapshot;
+  }
+
+  gameMaintenanceState(nowMs = Date.now()): GameMaintenanceState | null {
+    const raw = this.metadata(gameMaintenanceStateMetadataKey);
+    if (!raw) return null;
+    try {
+      const stored = JSON.parse(raw) as Partial<GameMaintenanceState>;
+      if (typeof stored.paused !== "boolean" || typeof stored.observedAt !== "string") return null;
+      const pausedSince = typeof stored.pausedSince === "string" ? stored.pausedSince : null;
+      const pausedSinceMs = pausedSince ? Date.parse(pausedSince) : Number.NaN;
+      return {
+        paused: stored.paused,
+        observedAt: stored.observedAt,
+        pausedSince,
+        pauseAgeSeconds: stored.paused && Number.isFinite(pausedSinceMs)
+          ? Math.max(0, (nowMs - pausedSinceMs) / 1_000)
+          : 0
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  recordGameMaintenanceState(state: GameMaintenanceState): void {
+    this.setMetadata(gameMaintenanceStateMetadataKey, JSON.stringify(state), { invalidateSnapshot: false });
   }
 
   // API projections frequently ask for the indexed state version while composing one screen.

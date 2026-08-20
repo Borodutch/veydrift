@@ -585,6 +585,7 @@ export type FleetMissionVisibilityResponse = {
   indexedRevision?: string;
   indexedBlock?: string | null;
   generatedAt?: string;
+  gameMaintenance?: GameMaintenanceState | null;
   incoming: FleetMissionSummary[];
   outgoing: FleetMissionSummary[];
   returning: FleetMissionSummary[];
@@ -593,6 +594,16 @@ export type FleetMissionVisibilityResponse = {
   completedMissions: FleetMissionSummary[];
   battleReports: BattleReport[];
 };
+
+export type GameMaintenanceState = {
+  paused: boolean;
+  observedAt: string;
+  pausedSince: string | null;
+  pauseAgeSeconds: number;
+};
+
+export const GAME_MAINTENANCE_MESSAGE =
+  "Game maintenance is active. Mission arrivals, returns, and game actions will resume automatically after maintenance.";
 
 export type WalletOverviewSnapshotResponse = {
   fleetVisibility: FleetMissionVisibilityResponse;

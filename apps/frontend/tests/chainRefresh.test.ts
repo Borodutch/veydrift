@@ -290,8 +290,10 @@ describe("playable chain refresh", () => {
 
     expect(source).toContain("runGatedTransaction(\"player-profile:update\"");
     expect(source).toContain("const gameContractTransactionInputsAvailable = Boolean(provider && account && gameContract)");
-    expect(source).toContain("const gameTransactionInputsAvailable = gameActionsAvailableForBody(activeBodyKind, gameContractTransactionInputsAvailable)");
-    expect(source).toContain("const missionTransactionInputsAvailable = gameContractTransactionInputsAvailable");
+    expect(source).toContain("const gameMaintenancePaused = displayFleetVisibility?.gameMaintenance?.paused === true");
+    expect(source).toContain("gameActionsAvailableForBody(activeBodyKind, gameContractTransactionInputsAvailable),\n    activePlanetStateFresh,\n  ) && !gameMaintenancePaused");
+    expect(source).toContain("const missionTransactionInputsAvailable = currentPlanetTransactionInputsAvailable(\n    gameContractTransactionInputsAvailable,\n    activePlanetStateFresh,\n  ) && !gameMaintenancePaused");
+    expect(source).toContain("unavailableReason: gameMaintenancePaused\n      ? GAME_MAINTENANCE_MESSAGE");
     expect(source).toContain("const canSubmitGameTransaction = gameTransactionInputsAvailable && !transactionActionPending");
     expect(source).toContain("const canSubmitMissionTransaction = missionTransactionInputsAvailable && !transactionActionPending");
     expect(source).toContain("runCoordinatedWriteTransaction");
