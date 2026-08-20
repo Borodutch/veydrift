@@ -37,7 +37,7 @@ contract VeydriftCombatRaidModule is VeydriftResourceReserves {
         // Bashing is enforced at launch, after which a within-cap attack must retain its
         // ordinary 50% raid settlement. Unlike score protection, it must not zero plunder
         // merely because the launch filled the rolling bashing window before impact.
-        if (!mission.targetIsMoon && reason == AttackBlockReason.ScoreProtection) {
+        if (reason == AttackBlockReason.ScoreProtection) {
             plunderBps = 0;
         }
         Resources memory loot = mission.targetIsMoon

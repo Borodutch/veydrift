@@ -1505,6 +1505,65 @@ abstract contract VeydriftMoonSystemTestBase is Test {
         assertEq(parentAfter.resources.deuterium, parentBefore.resources.deuterium);
     }
 
+    function _testPostBattleScoreProtectionSuppressesPlanetAndMoonLoot() internal {
+        uint256 snapshot = vm.snapshotState();
+        _assertPostBattleScoreProtectionSuppressesLoot(false);
+        assertTrue(vm.revertToState(snapshot));
+        _assertPostBattleScoreProtectionSuppressesLoot(true);
+    }
+
+    function _assertPostBattleScoreProtectionSuppressesLoot(bool targetIsMoon) internal {
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedMoonAttackPlanets();
+        _fundPlanet(originPlanetId, 100_000, 100_000, 100_000);
+        if (targetIsMoon) _fundMoon(targetPlanetId, 30_000, 30_000, 30_000);
+        else _fundPlanet(targetPlanetId, 30_000, 30_000, 30_000);
+        // Keep both players within the 1.5x newbie band before launch and after the attacking ship
+        // leaves the origin. The deathstar's high combat power per score then destroys enough of
+        // the defender's score for protection to become active only during the battle.
+        _setTechnologyLevel(player, Technology.IntergalacticResearchNetwork, 7);
+        _setShipCount(originPlanetId, Ship.Deathstar, 1);
+        if (targetIsMoon) _setMoonShipCount(targetPlanetId, Ship.LightFighter, 150);
+        else _setShipCount(targetPlanetId, Ship.LightFighter, 150);
+
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.deathstar = 1;
+        vm.prank(player);
+        uint256 missionId = game.launchBodyFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            100,
+            false,
+            targetIsMoon
+        );
+
+        (VeydriftGameStorage.AttackBlockReason launchReason,,) =
+            _attackBodyProtectionStatus(player, targetPlanetId, targetIsMoon);
+        assertEq(uint8(launchReason), uint8(VeydriftGameStorage.AttackBlockReason.None));
+
+        (, uint64 arrivalAt,,) = _fleetMission(missionId);
+        vm.warp(arrivalAt);
+        _fulfillAttackBattleRandomness(missionId, 659);
+        _resolveAttackFully(missionId);
+
+        uint32 defenderShips = targetIsMoon
+            ? _moonShipCount(targetPlanetId, Ship.LightFighter)
+            : game.shipCount(targetPlanetId, Ship.LightFighter);
+        assertLt(defenderShips, 150, "battle must reduce defender score");
+        (VeydriftGameStorage.AttackBlockReason settlementReason,,) =
+            _attackBodyProtectionStatus(player, targetPlanetId, targetIsMoon);
+        assertEq(
+            uint8(settlementReason), uint8(VeydriftGameStorage.AttackBlockReason.ScoreProtection)
+        );
+
+        (,,, VeydriftGameStorage.Resources memory cargo) = _fleetMission(missionId);
+        assertEq(cargo.metal, 0, "score-protected settlement looted metal");
+        assertEq(cargo.crystal, 0, "score-protected settlement looted crystal");
+        assertEq(cargo.deuterium, 0, "score-protected settlement looted deuterium");
+    }
+
     function _testPlanetToMoonAttackLootCapacityIncludesFuel() internal {
         (uint256 originPlanetId, uint256 targetPlanetId,) = _seedMoonAttackPlanets();
         _fundPlanet(originPlanetId, 200_000, 200_000, 200_000);
@@ -2045,6 +2104,34 @@ abstract contract VeydriftMoonSystemTestBase is Test {
         (status,,,,,, arrivalAt, returnAt,, cargo,) = game.fleetMission(missionId);
     }
 
+    function _resolveAttackFully(uint256 missionId) internal {
+        for (uint256 calls = 0; calls < 6; calls++) {
+            (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(missionId);
+            if (status != VeydriftGameStorage.FleetMissionStatus.Outbound) return;
+            game.resolveFleetMission(missionId);
+        }
+        revert("attack did not resolve");
+    }
+
+    function _attackBodyProtectionStatus(
+        address attacker,
+        uint256 targetPlanetId,
+        bool targetIsMoon
+    )
+        internal
+        view
+        returns (VeydriftGameStorage.AttackBlockReason reason, uint8 flags, uint16 plunderBps)
+    {
+        (bool ok, bytes memory data) = address(game)
+            .staticcall(
+                abi.encodeWithSelector(
+                    game.attackBodyProtectionStatus.selector, attacker, targetPlanetId, targetIsMoon
+                )
+            );
+        assertTrue(ok);
+        return abi.decode(data, (VeydriftGameStorage.AttackBlockReason, uint8, uint16));
+    }
+
     function _fulfillAttackBattleRandomness(uint256 missionId, uint256 randomWord) internal {
         (, VeydriftGameStorage.FleetMissionType missionType,,,,,,,,, uint256 requestId) =
             game.fleetMission(missionId);
@@ -2337,6 +2424,10 @@ contract VeydriftMoonAttackParityTest is VeydriftMoonSystemTestBase {
 
     function testMoonAttackRaidsMoonResourcesWithoutTouchingParentPlanet() public {
         _testMoonAttackRaidsMoonResourcesWithoutTouchingParentPlanet();
+    }
+
+    function testPostBattleScoreProtectionSuppressesPlanetAndMoonLoot() public {
+        _testPostBattleScoreProtectionSuppressesPlanetAndMoonLoot();
     }
 
     function testPlanetToMoonAttackLootCapacityIncludesFuel() public {
