@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {VeydriftAntiRaidPrimitives} from "./libraries/VeydriftAntiRaidPrimitives.sol";
+import {VeydriftMoonIncarnation} from "./libraries/VeydriftMoonIncarnation.sol";
 import {Building, Defense, Resource, Ship, Technology} from "./libraries/VeydriftTypes.sol";
 
 interface IERC20ReserveToken {
@@ -1251,14 +1252,18 @@ abstract contract VeydriftGameStorage is Initializable {
         bool originIsMoon,
         bool targetIsMoon
     ) internal {
-        if (originIsMoon) {
-            _missionOriginMoonGeneration[missionId] = _moonGeneration(originPlanetId);
-            _missionOriginMoonGenerationRecorded[missionId] = true;
-        }
-        if (targetIsMoon) {
-            _missionTargetMoonGeneration[missionId] = _moonGeneration(targetPlanetId);
-            _missionTargetMoonGenerationRecorded[missionId] = true;
-        }
+        VeydriftMoonIncarnation.recordMission(
+            _missionOriginMoonGeneration,
+            _missionTargetMoonGeneration,
+            _missionOriginMoonGenerationRecorded,
+            _missionTargetMoonGenerationRecorded,
+            _moonSystem,
+            missionId,
+            originPlanetId,
+            targetPlanetId,
+            originIsMoon,
+            targetIsMoon
+        );
     }
 
     function _missionMoonExistsForOwner(
@@ -1267,36 +1272,22 @@ abstract contract VeydriftGameStorage is Initializable {
         address owner_,
         bool origin
     ) internal view returns (bool) {
-        address moonSystem = _moonSystem;
-        if (moonSystem == address(0)) return false;
-        (bool ok, bytes memory data) =
-            moonSystem.staticcall(abi.encodeWithSignature("moon(uint256)", planetId));
-        if (!ok || data.length < 96) return false;
-        (bool exists,, address moonOwner,,, uint64 createdAt,) =
-            abi.decode(data, (bool, uint256, address, uint16, uint16, uint64, uint64));
-        if (!exists || moonOwner != owner_) return false;
-        // This timestamp guard makes the two-proxy rollout safe in either compatibility gap. It
-        // also protects legacy missions that predate the generation getter: a replacement moon is
-        // always created after the mission departed and therefore cannot inherit that mission.
-        if (createdAt > _fleetMissions[missionId].departureAt) return false;
         uint64 expected = origin
             ? _missionOriginMoonGeneration[missionId]
             : _missionTargetMoonGeneration[missionId];
         bool generationRecorded = origin
             ? _missionOriginMoonGenerationRecorded[missionId]
             : _missionTargetMoonGenerationRecorded[missionId];
-        // Missions launched by the old Game during the MoonSystem-first rollout gap have no
-        // generation marker. They remain valid only for the same createdAt incarnation above.
-        if (!generationRecorded) return true;
-        return _moonGeneration(planetId) == expected;
-    }
-
-    function _moonGeneration(uint256 planetId) internal view returns (uint64 generation) {
-        address moonSystem = _moonSystem;
-        if (moonSystem == address(0)) return 0;
-        (bool ok, bytes memory data) =
-            moonSystem.staticcall(abi.encodeWithSignature("moonGeneration(uint256)", planetId));
-        if (ok && data.length >= 32) generation = abi.decode(data, (uint64));
+        // The linked decoder keeps timestamp and legacy-generation compatibility checks identical
+        // without embedding the MoonSystem's wide tuple decode in every game module.
+        return VeydriftMoonIncarnation.existsForMissionOwner(
+            _moonSystem,
+            planetId,
+            owner_,
+            _fleetMissions[missionId].departureAt,
+            expected,
+            generationRecorded
+        );
     }
 
     function _totalUserScore(address player) internal view returns (uint256 score) {

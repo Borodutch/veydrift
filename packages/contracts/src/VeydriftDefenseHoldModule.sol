@@ -8,8 +8,9 @@ import {VeydriftCatalog} from "./libraries/VeydriftCatalog.sol";
 import {VeydriftFormulas} from "./libraries/VeydriftFormulas.sol";
 import {VeydriftAntiRaidPrimitives} from "./libraries/VeydriftAntiRaidPrimitives.sol";
 import {VeydriftDefenseHoldStorage} from "./libraries/VeydriftDefenseHoldStorage.sol";
+import {VeydriftBodyAttackWindow} from "./libraries/VeydriftBodyAttackWindow.sol";
 import {VeydriftFleetFuel} from "./libraries/VeydriftFleetFuel.sol";
-import {VeydriftMoonPresence} from "./VeydriftMoonPresence.sol";
+import {VeydriftMoonIncarnation} from "./libraries/VeydriftMoonIncarnation.sol";
 import {Building, Ship, Technology} from "./libraries/VeydriftTypes.sol";
 
 interface IVeydriftDefenseHoldAllianceSystem {
@@ -25,13 +26,6 @@ interface IVeydriftDefenseHoldRandomnessEngine {
     function requestRandomness(bytes32 purposeHash) external returns (uint256 requestId);
 }
 
-interface IVeydriftMoonPresence {
-    function existsForOwner(address moonSystem, uint256 planetId, address owner_)
-        external
-        view
-        returns (bool);
-}
-
 interface IVeydriftRiftAttackProtection {
     function enforceBodyAttackProtection(address attacker, uint256 planetId, bool targetIsMoon)
         external
@@ -45,11 +39,7 @@ interface IVeydriftRiftAttackProtection {
 contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
     using SafeCast for uint256;
 
-    address private immutable _moonPresence;
-
-    constructor() VeydriftResourceReserves(address(0)) {
-        _moonPresence = address(new VeydriftMoonPresence());
-    }
+    constructor() VeydriftResourceReserves(address(0)) {}
 
     /// @notice Launch a DefenseHold mission. The fleet flies to `targetPlanetId` (owned by the sender
     ///         or a same-alliance member), holds for `holdSeconds` after arrival, and defends any
@@ -294,7 +284,16 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
         );
         _trackMissionResolution(missionId, _fleetMissions[missionId]);
         if (isAttack) {
-            _recordAttack(msg.sender, targetPlanetId, targetIsMoon);
+            VeydriftBodyAttackWindow.record(
+                _planets,
+                _attackWindows,
+                _attackProtectionExemptions,
+                playerLastActiveAt,
+                _moonAttackParityActivatedAt,
+                msg.sender,
+                targetPlanetId,
+                targetIsMoon
+            );
         }
 
         emit FleetMissionLaunched(
@@ -446,7 +445,7 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
     }
 
     function _moonExistsForOwner(uint256 planetId, address owner_) private view returns (bool) {
-        return IVeydriftMoonPresence(_moonPresence).existsForOwner(_moonSystem, planetId, owner_);
+        return VeydriftMoonIncarnation.existsForOwner(_moonSystem, planetId, owner_);
     }
 
     function _requireShips(uint256 planetId, Ship ship, uint32 quantity) private view {
