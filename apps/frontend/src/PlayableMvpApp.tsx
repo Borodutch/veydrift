@@ -314,6 +314,7 @@ import {
   switchVeydriftNetwork,
   updatePlayerProfile,
   veydriftChainForChainId,
+  GAME_MAINTENANCE_MESSAGE,
   WALLET_BOOTSTRAP_READ_TIMEOUT_MS,
   type VeydriftWalletChain,
   type ChainDefenseState,
@@ -9304,14 +9305,15 @@ export function PlayableMvpApp({
     ? ""
     : `${window.location.origin}${buildInspectPath({ kind: "page", page: "battle-reports" })}`;
   const gameContractTransactionInputsAvailable = Boolean(provider && account && gameContract);
+  const gameMaintenancePaused = displayFleetVisibility?.gameMaintenance?.paused === true;
   const gameTransactionInputsAvailable = currentPlanetTransactionInputsAvailable(
     gameActionsAvailableForBody(activeBodyKind, gameContractTransactionInputsAvailable),
     activePlanetStateFresh,
-  );
+  ) && !gameMaintenancePaused;
   const missionTransactionInputsAvailable = currentPlanetTransactionInputsAvailable(
     gameContractTransactionInputsAvailable,
     activePlanetStateFresh,
-  );
+  ) && !gameMaintenancePaused;
   const allianceTransactionInputsAvailable = Boolean(provider && account && allianceContract);
   const moonTransactionInputsAvailable = currentPlanetTransactionInputsAvailable(
     Boolean(provider && account && moonContract),
@@ -9335,7 +9337,9 @@ export function PlayableMvpApp({
 	    ) ?? writeTransactionState.label,
     inputsAvailable: gameTransactionInputsAvailable,
     transactionPending: transactionActionPending,
-    unavailableReason: gameContractTransactionInputsAvailable && !activePlanetStateFresh
+    unavailableReason: gameMaintenancePaused
+      ? GAME_MAINTENANCE_MESSAGE
+      : gameContractTransactionInputsAvailable && !activePlanetStateFresh
       ? "Loading the selected planet's latest state."
       : "Wallet or game contract unavailable",
   });
@@ -9343,7 +9347,9 @@ export function PlayableMvpApp({
     activeActionLabel: pendingActionLabel(galaxyAction, missionAction) ?? writeTransactionState.label,
     inputsAvailable: missionTransactionInputsAvailable,
     transactionPending: transactionActionPending,
-    unavailableReason: gameContractTransactionInputsAvailable && !activePlanetStateFresh
+    unavailableReason: gameMaintenancePaused
+      ? GAME_MAINTENANCE_MESSAGE
+      : gameContractTransactionInputsAvailable && !activePlanetStateFresh
       ? "Loading the selected planet's latest state."
       : "Wallet or game contract unavailable",
   });

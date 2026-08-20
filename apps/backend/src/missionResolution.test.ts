@@ -71,6 +71,157 @@ describe("MissionResolutionService", () => {
     expect(service.snapshot().enabled).toBe(false);
   });
 
+  test("retains due arrivals and returns without allocating work while the canonical game pause is active", async () => {
+    let nowMs = 1_000_000;
+    let paused = true;
+    let pauseProbes = 0;
+    const calls: string[] = [];
+    const service = new MissionResolutionService(config, {
+      candidateSource: {
+        missionResolutionCandidates: () => ({
+          arrivals: [arrival("27543", "Transport", "900")],
+          returns: [returnLeg("27544", "Returning", "920")]
+        })
+      },
+      chainClient: fakeClient({
+        calls,
+        resolvable: [],
+        returnable: [],
+        paused: async () => {
+          pauseProbes += 1;
+          return paused;
+        }
+      }),
+      intervalMs: 5_000,
+      logger: silentLogger(),
+      now: () => nowMs
+    });
+
+    await service.tick();
+    expect(calls).toEqual([]);
+    expect(service.snapshot()).toMatchObject({
+      gamePaused: true,
+      gamePauseAgeSeconds: 0,
+      healthStatus: "degraded",
+      healthWarnings: ["game_paused"],
+      dueArrivals: { count: 1 },
+      dueReturns: { count: 1 },
+      pausedResolutionAttempts: 2
+    });
+
+    nowMs += 4_999;
+    await service.tick();
+    expect(pauseProbes).toBe(1);
+    expect(calls).toEqual([]);
+
+    nowMs += 1;
+    await service.tick();
+    expect(pauseProbes).toBe(2);
+    expect(calls).toEqual([]);
+
+    paused = false;
+    nowMs += 10_000;
+    await service.tick();
+    expect(calls).toEqual(["resolve:27543", "return:27544"]);
+    expect(service.snapshot()).toMatchObject({
+      gamePaused: false,
+      gamePauseAgeSeconds: 0,
+      dueArrivals: { count: 0 },
+      dueReturns: { count: 0 }
+    });
+  });
+
+  test("discovers missions that become due during a pause and recovers promptly after unpause", async () => {
+    let nowMs = 1_000_000;
+    let paused = true;
+    const calls: string[] = [];
+    const service = new MissionResolutionService(config, {
+      candidateSource: {
+        missionResolutionCandidates: () => ({
+          arrivals: nowMs >= 1_005_000 ? [arrival("27545", "Transport", "1005")] : [],
+          returns: []
+        })
+      },
+      chainClient: fakeClient({ calls, resolvable: [], returnable: [], paused: async () => paused }),
+      intervalMs: 5_000,
+      logger: silentLogger(),
+      now: () => nowMs
+    });
+
+    await service.tick();
+    expect(service.snapshot().dueArrivals.count).toBe(0);
+    nowMs += 5_000;
+    await service.tick();
+    expect(service.snapshot().dueArrivals.count).toBe(1);
+    expect(calls).toEqual([]);
+
+    paused = false;
+    nowMs += 10_000;
+    await service.tick();
+    expect(calls).toEqual(["resolve:27545"]);
+  });
+
+  test("preserves pause age across a rolling service restart and alerts on a long pause", async () => {
+    let nowMs = 1_600_000;
+    const stored = {
+      paused: true,
+      observedAt: "1970-01-01T00:25:00.000Z",
+      pausedSince: "1970-01-01T00:25:00.000Z",
+      pauseAgeSeconds: 100
+    };
+    const warnings: string[] = [];
+    const source = {
+      missionResolutionCandidates: () => ({ arrivals: [], returns: [] }),
+      gameMaintenanceState: () => stored,
+      recordGameMaintenanceState(state: typeof stored) { Object.assign(stored, state); }
+    };
+    const service = new MissionResolutionService(config, {
+      candidateSource: source,
+      chainClient: fakeClient({ calls: [], resolvable: [], returnable: [], paused: async () => true }),
+      intervalMs: 5_000,
+      longPauseAlertAfterMs: 60_000,
+      logger: { warn(message) { warnings.push(message); }, error() {} },
+      now: () => nowMs
+    });
+
+    await service.tick();
+    expect(service.snapshot()).toMatchObject({
+      gamePaused: true,
+      gamePausedSince: "1970-01-01T00:25:00.000Z",
+      gamePauseAgeSeconds: 100,
+      healthWarnings: ["game_paused", "game_pause_long_running"],
+      longPauseAlerts: 1
+    });
+    expect(warnings).toHaveLength(1);
+  });
+
+  test("fails closed on an unrelated pause-probe RPC failure and remains actionable on recovery", async () => {
+    let probeFails = true;
+    const calls: string[] = [];
+    const client = fakeClient({
+      calls,
+      resolvable: ["27546"],
+      returnable: [],
+      paused: async () => {
+        if (probeFails) throw new Error("RPC pause probe failed");
+        return false;
+      }
+    });
+    const service = new MissionResolutionService(config, { chainClient: client, logger: silentLogger() });
+
+    await service.tick();
+    expect(calls).toEqual([]);
+    expect(service.snapshot()).toMatchObject({
+      lastError: "RPC pause probe failed",
+      healthWarnings: ["mission_resolution_tick_failed"]
+    });
+
+    probeFails = false;
+    await service.tick();
+    expect(calls).toEqual(["resolve:27546"]);
+    expect(service.snapshot().lastError).toBeNull();
+  });
+
   test("continues past failed return candidates until the per-tick success cap", async () => {
     const calls: string[] = [];
     const service = new MissionResolutionService(config, {
@@ -198,6 +349,7 @@ describe("MissionResolutionService", () => {
     let pendingNonce = 7;
     const publicClient = {
       async getTransactionCount() { return pendingNonce; },
+      async getStorageAt() { return `0x${"0".repeat(64)}`; },
       async waitForTransactionReceipt() { return { status: "success" }; }
     } as unknown as PublicClient;
     const walletClient = {
@@ -549,6 +701,7 @@ describe("ViemMissionResolutionChainClient", () => {
     let pendingNonce = 7;
     const publicClient = {
       async getTransactionCount() { return pendingNonce; },
+      async getStorageAt() { return `0x${"0".repeat(64)}`; },
       async waitForTransactionReceipt() { return { status: "success" }; }
     } as unknown as PublicClient;
     const walletClient = {
@@ -609,6 +762,7 @@ describe("ViemMissionResolutionChainClient", () => {
     try {
       const publicClient = {
         async getTransactionCount() { return 7 + transactions.length; },
+        async getStorageAt() { return `0x${"0".repeat(64)}`; },
         async waitForTransactionReceipt() { return { status: "success" }; }
       } as unknown as PublicClient;
       const client = new ViemMissionResolutionChainClient(
@@ -635,6 +789,65 @@ describe("ViemMissionResolutionChainClient", () => {
       globalThis.fetch = previousFetch;
     }
   });
+
+  test("reads the canonical game pause from the fixed proxy storage slot", async () => {
+    let requestedSlot: string | undefined;
+    const publicClient = {
+      async getStorageAt(input: { slot: string }) {
+        requestedSlot = input.slot;
+        return `0x${"1".padStart(64, "0")}`;
+      }
+    } as unknown as PublicClient;
+    const client = new ViemMissionResolutionChainClient(
+      {
+        async listResolvableFleetMissions() { return []; },
+        async listReturnableFleetMissions() { return []; }
+      },
+      config.gameContractAddress!,
+      "0x1111111111111111111111111111111111111111",
+      publicClient,
+      undefined,
+      { id: 8453 } as never,
+      config.rpcUrl
+    );
+
+    expect(await client.gamePaused()).toBe(true);
+    expect(requestedSlot).toBe(`0x${"34".padStart(64, "0")}`);
+  });
+
+  test("rechecks pause immediately before coordinator entry without allocating a nonce", async () => {
+    const account = privateKeyToAccount(`0x${"1".repeat(64)}`);
+    let nonceReads = 0;
+    let broadcasts = 0;
+    const publicClient = {
+      async getStorageAt() { return `0x${"1".padStart(64, "0")}`; },
+      async getTransactionCount() { nonceReads += 1; return 7; },
+      async waitForTransactionReceipt() { return { status: "success" }; }
+    } as unknown as PublicClient;
+    const walletClient = {
+      async writeContract() {
+        broadcasts += 1;
+        return `0x${"1".padStart(64, "0")}`;
+      }
+    } as unknown as WalletClient;
+    const client = new ViemMissionResolutionChainClient(
+      {
+        async listResolvableFleetMissions() { return []; },
+        async listReturnableFleetMissions() { return []; }
+      },
+      config.gameContractAddress!,
+      account,
+      publicClient,
+      walletClient,
+      { id: 8453 } as never,
+      config.rpcUrl,
+      new ResolverTransactionCoordinator(":memory:")
+    );
+
+    await expect(client.completeFleetMissionReturn("27543")).rejects.toThrow("canonical game pause is active");
+    expect(nonceReads).toBe(0);
+    expect(broadcasts).toBe(0);
+  });
 });
 
 function fakeClient(input: {
@@ -643,8 +856,10 @@ function fakeClient(input: {
   failReturns?: string[];
   resolvable: string[];
   returnable: string[];
+  paused?: () => Promise<boolean>;
 }): MissionResolutionChainClient {
   return {
+    ...(input.paused ? { gamePaused: input.paused } : {}),
     async listResolvableFleetMissions() {
       return input.resolvable.map((missionId) => ({
         arrivalAt: "1",
