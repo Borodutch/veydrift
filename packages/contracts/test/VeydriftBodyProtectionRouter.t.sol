@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {RandomnessEngine} from "../src/RandomnessEngine.sol";
 import {VeydriftAttackProtectionModule} from "../src/VeydriftAttackProtectionModule.sol";
+import {VeydriftAcsAttackModule} from "../src/VeydriftAcsAttackModule.sol";
 import {VeydriftCombatModule, VeydriftCombatRapidfire} from "../src/VeydriftCombatModule.sol";
 import {VeydriftColonizationModule} from "../src/VeydriftColonizationModule.sol";
 import {VeydriftDefenseHoldModule} from "../src/VeydriftDefenseHoldModule.sol";
@@ -64,7 +65,8 @@ contract VeydriftBodyProtectionRouterTest is Test {
             address(new VeydriftAttackProtectionModule()),
             address(new VeydriftColonizationModule(address(new VeydriftShipProductionModule()))),
             address(new VeydriftDefenseHoldModule()),
-            address(new VeydriftStateMigrationModule(address(0xBEEF)))
+            address(new VeydriftStateMigrationModule(address(0xBEEF))),
+            address(new VeydriftAcsAttackModule())
         );
         game = VeydriftGame(
             address(

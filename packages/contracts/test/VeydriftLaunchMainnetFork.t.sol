@@ -7,6 +7,7 @@ import {
     ITransparentUpgradeableProxy
 } from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {VeydriftAttackProtectionModule} from "../src/VeydriftAttackProtectionModule.sol";
+import {VeydriftAcsAttackModule} from "../src/VeydriftAcsAttackModule.sol";
 import {VeydriftCombatModule, VeydriftCombatRapidfire} from "../src/VeydriftCombatModule.sol";
 import {VeydriftColonizationModule} from "../src/VeydriftColonizationModule.sol";
 import {VeydriftShipProductionModule} from "../src/VeydriftShipProductionModule.sol";
@@ -70,7 +71,8 @@ contract VeydriftLaunchMainnetForkTest is Test {
             address(new VeydriftAttackProtectionModule()),
             address(new VeydriftColonizationModule(address(new VeydriftShipProductionModule()))),
             address(new VeydriftDefenseHoldModule()),
-            address(new VeydriftStateMigrationModule(address(0xBEEF)))
+            address(new VeydriftStateMigrationModule(address(0xBEEF))),
+            address(new VeydriftAcsAttackModule())
         );
 
         vm.prank(proxyAdminOwner);

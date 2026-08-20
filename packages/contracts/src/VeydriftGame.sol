@@ -3,7 +3,6 @@ pragma solidity ^0.8.28;
 
 import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
 import {VeydriftBatchTransportModule} from "./VeydriftBatchTransportModule.sol";
-import {VeydriftAcsAttackModule} from "./VeydriftAcsAttackModule.sol";
 import {VeydriftCatalog} from "./libraries/VeydriftCatalog.sol";
 import {VeydriftAntiRaidPrimitives} from "./libraries/VeydriftAntiRaidPrimitives.sol";
 import {VeydriftDependencies} from "./libraries/VeydriftDependencies.sol";
@@ -41,13 +40,14 @@ contract VeydriftGame is VeydriftResourceReserves {
         address attackProtectionModule,
         address colonizationModule,
         address defenseHoldModule,
-        address stateMigrationModule
+        address stateMigrationModule,
+        address acsAttackModule
     ) VeydriftResourceReserves(admin) {
         if (
             firstPlanetSettlementModule == address(0) || gameplayModule == address(0)
                 || planetManagementModule == address(0) || attackProtectionModule == address(0)
                 || colonizationModule == address(0) || defenseHoldModule == address(0)
-                || stateMigrationModule == address(0)
+                || stateMigrationModule == address(0) || acsAttackModule == address(0)
         ) revert UnsupportedGameplayModule();
         _firstPlanetSettlementModule = firstPlanetSettlementModule;
         _gameplayModule = gameplayModule;
@@ -57,7 +57,7 @@ contract VeydriftGame is VeydriftResourceReserves {
         _defenseHoldModule = defenseHoldModule;
         _stateMigrationModule = stateMigrationModule;
         _batchTransportModule = address(new VeydriftBatchTransportModule());
-        _acsAttackModule = address(new VeydriftAcsAttackModule());
+        _acsAttackModule = acsAttackModule;
     }
 
     function initialize(address admin) external initializer {
