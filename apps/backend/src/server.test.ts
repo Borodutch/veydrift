@@ -35,7 +35,7 @@ import { SettlementIndexer, type IndexedRpcLog } from "./indexer";
 import { MissionResolutionService } from "./missionResolution";
 import { watchedPlanetMessage } from "./playerProfiles";
 import { deriveInfrastructureFields } from "./readModels";
-import { backendBuildMetadata, ccaBidOwnerTopic, createRequestHandler, decodeCcaSubmittedBid, deriveLogBackfiller, readerBootstrapHealthResponse, rpcUnfinishedRequestReadiness, runtimeConfigResponse, shouldRecoverFailedReconciliation, walletConnectRpcResponse } from "./server";
+import { backendBuildMetadata, ccaBidOwnerTopic, createReaderBootstrapHandler, createRequestHandler, decodeCcaSubmittedBid, deriveLogBackfiller, readerBootstrapHealthResponse, rpcUnfinishedRequestReadiness, runtimeConfigResponse, shouldRecoverFailedReconciliation, walletConnectRpcResponse } from "./server";
 import { DEFAULT_MAX_WORKER_COUNT } from "./workerPool";
 
 setSystemTime(new Date(1_770_007_680_000));
@@ -1646,6 +1646,74 @@ describe("Veydrift backend", () => {
       indexedState: null,
       safeToServeIndexedState: null
     });
+  });
+
+  test("serves persisted maintenance state through the production reader bootstrap route", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "veydrift-reader-bootstrap-health-"));
+    const databasePath = join(dir, "contract-state.sqlite");
+    let nowMs = Date.parse("2026-08-20T17:34:29.000Z");
+    try {
+      const writer = new SettlementIndexer(new MockChainReader(), configuredTestConfig.indexFromBlock, { databasePath });
+      writer.recordGameMaintenanceState({
+        paused: false,
+        observedAt: "2026-08-20T17:32:29.000Z",
+        pausedSince: null,
+        pauseAgeSeconds: 0
+      });
+      const handler = createReaderBootstrapHandler("reader", {
+        configResult: {
+          config: { ...configuredTestConfig, indexDbPath: databasePath },
+          problems: []
+        },
+        now: () => nowMs
+      });
+
+      const first = await handler(new Request("http://localhost/health"));
+      expect(first).toBeDefined();
+      expect(first!.status).toBe(200);
+      await expect(first!.json()).resolves.toMatchObject({
+        backend: { worker: { role: "reader" } },
+        gameMaintenance: { paused: false, pauseAgeSeconds: 0 },
+        readiness: {
+          degraded: false,
+          degradationReasons: [],
+          gamePaused: false,
+          gamePauseAgeSeconds: 0
+        },
+        missionResolution: null,
+        indexer: null,
+        rpc: null
+      });
+
+      writer.recordGameMaintenanceState({
+        paused: true,
+        observedAt: "2026-08-20T17:33:29.000Z",
+        pausedSince: "2026-08-20T17:33:29.000Z",
+        pauseAgeSeconds: 0
+      });
+      const paused = await handler(new Request("http://localhost/health"));
+      expect(paused).toBeDefined();
+      expect(paused!.status).toBe(200);
+      await expect(paused!.json()).resolves.toMatchObject({
+        gameMaintenance: { paused: true, pauseAgeSeconds: 60 },
+        readiness: {
+          degraded: true,
+          degradationReasons: ["game_paused"],
+          gamePaused: true,
+          gamePauseAgeSeconds: 60
+        }
+      });
+
+      nowMs += 30_000;
+      const second = await handler(new Request("http://localhost/health"));
+      expect(second).toBeDefined();
+      await expect(second!.json()).resolves.toMatchObject({
+        gameMaintenance: { paused: true, pauseAgeSeconds: 90 },
+        readiness: { gamePauseAgeSeconds: 90 }
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   test("prefers provider build SHA metadata over stale generic GIT_SHA", async () => {

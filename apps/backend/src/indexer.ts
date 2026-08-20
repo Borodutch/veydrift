@@ -384,6 +384,31 @@ export type SettlementIndexerOptions = {
   rebuildDeadlineMs?: number;
 };
 
+/**
+ * Narrow read-only access for bootstrap health checks. Reader workers serve /health before their
+ * full request handler is initialized, so they must not construct SettlementIndexer (which warms
+ * broad table-count diagnostics) merely to read one shared maintenance metadata value.
+ */
+export class GameMaintenanceStateReader {
+  private database: Database | null = null;
+
+  constructor(private readonly databasePath: string) {}
+
+  gameMaintenanceState(nowMs = Date.now()): GameMaintenanceState | null {
+    try {
+      this.database ??= openIndexerDatabase(this.databasePath, true, true);
+      const row = this.database
+        .query("SELECT value FROM indexer_metadata WHERE key = ?")
+        .get(gameMaintenanceStateMetadataKey) as MetadataRow | null;
+      return parseGameMaintenanceState(row?.value ?? null, nowMs);
+    } catch {
+      // The writer may still be creating the database/schema during a rolling start. Keep bootstrap
+      // health available and retry the same narrow read on the next request.
+      return null;
+    }
+  }
+}
+
 export type BattleReportMaterializationRequest = {
   databasePath: string | null;
   fromBlock: string;
@@ -1050,24 +1075,7 @@ export class SettlementIndexer {
   }
 
   gameMaintenanceState(nowMs = Date.now()): GameMaintenanceState | null {
-    const raw = this.metadata(gameMaintenanceStateMetadataKey);
-    if (!raw) return null;
-    try {
-      const stored = JSON.parse(raw) as Partial<GameMaintenanceState>;
-      if (typeof stored.paused !== "boolean" || typeof stored.observedAt !== "string") return null;
-      const pausedSince = typeof stored.pausedSince === "string" ? stored.pausedSince : null;
-      const pausedSinceMs = pausedSince ? Date.parse(pausedSince) : Number.NaN;
-      return {
-        paused: stored.paused,
-        observedAt: stored.observedAt,
-        pausedSince,
-        pauseAgeSeconds: stored.paused && Number.isFinite(pausedSinceMs)
-          ? Math.max(0, (nowMs - pausedSinceMs) / 1_000)
-          : 0
-      };
-    } catch {
-      return null;
-    }
+    return parseGameMaintenanceState(this.metadata(gameMaintenanceStateMetadataKey), nowMs);
   }
 
   recordGameMaintenanceState(state: GameMaintenanceState): void {
@@ -13896,6 +13904,26 @@ function openIndexerDatabase(databasePath: string, readOnly = false, assumeSchem
     database.exec("PRAGMA journal_size_limit = 67108864;");
   }
   return database;
+}
+
+function parseGameMaintenanceState(raw: string | null, nowMs: number): GameMaintenanceState | null {
+  if (!raw) return null;
+  try {
+    const stored = JSON.parse(raw) as Partial<GameMaintenanceState>;
+    if (typeof stored.paused !== "boolean" || typeof stored.observedAt !== "string") return null;
+    const pausedSince = typeof stored.pausedSince === "string" ? stored.pausedSince : null;
+    const pausedSinceMs = pausedSince ? Date.parse(pausedSince) : Number.NaN;
+    return {
+      paused: stored.paused,
+      observedAt: stored.observedAt,
+      pausedSince,
+      pauseAgeSeconds: stored.paused && Number.isFinite(pausedSinceMs)
+        ? Math.max(0, (nowMs - pausedSinceMs) / 1_000)
+        : 0
+    };
+  } catch {
+    return null;
+  }
 }
 
 function parseEvent<T>(value: string): T {
