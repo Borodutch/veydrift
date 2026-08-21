@@ -65,8 +65,11 @@ describe("frontend backend-data boundary", () => {
       expect(appSource).toContain(`const ${canonicalProjection} = useBackendDataSnapshot`);
     }
     expect(appSource).not.toMatch(/useState<(?:WalletSettlementResponse|FleetMissionVisibilityResponse|FleetMissionArchiveResponse|GlobalMissionArchiveResponse)/);
+    expect(appSource).not.toMatch(/const \[(?:onChainStatus|onChainError|activePlanetStateFresh|canonicalPlanetResources|planetSectionStore|allianceState|allianceLoading|allianceError),/);
     expect(galaxySource).toContain("useBackendDataSnapshot<ApiSystemResponse>");
+    expect(galaxySource).toContain("useBackendDataSnapshots<AttackProtectionStatus>");
     expect(galaxySource).not.toContain("useState<Planet[]>(");
+    expect(galaxySource).not.toMatch(/useState<Record<string, AttackProtectionStatus>>/);
     expect(planetSource).toContain("useBackendDataSnapshot<ApiSystemResponse>");
     expect(planetSource).not.toContain("useState<Planet | null>");
     expect(moonSource).toContain("useBackendDataSnapshot<ApiSystemResponse>");

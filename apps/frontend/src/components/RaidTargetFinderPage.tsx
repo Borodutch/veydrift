@@ -141,17 +141,12 @@ export function RaidTargetFinderPage({
   originCoordinates,
   shipyardState,
 }: RaidTargetFinderPageProps) {
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | undefined>();
-  const [debrisError, setDebrisError] = useState<string | undefined>();
-  const [rifterError, setRifterError] = useState<string | undefined>();
   const [mode, setMode] = useState<RaidFinderMode>("raids");
   const [pages, setPages] = useState<RaidFinderPages>({ raids: 1, debris: 1, rifters: 1 });
   const [persistedSettings] = useState(() => readPersistedRaidTargetSettings());
   const [filters, setFilters] = useState<RaidTargetFilters>(() => persistedSettings.filters);
   const [sort, setSort] = useState<RaidTargetSort>(() => persistedSettings.sort);
   const [debrisSort, setDebrisSort] = useState<DebrisTargetSort>(DEFAULT_DEBRIS_TARGET_SORT);
-  const requestGenerationRef = useRef(0);
   const backendData = useMemo(() => apiBaseUrl ? backendDataStoreFor(apiBaseUrl) : undefined, [apiBaseUrl]);
   const highscoreOptions = useMemo(() => ({
     category: "total" as const,
@@ -175,6 +170,11 @@ export function RaidTargetFinderPage({
   const entries = highscoreSnapshot?.data?.rankings.total ?? [];
   const debrisEntries = debrisSnapshot?.data?.targets ?? [];
   const rifterEntries = rifterSnapshot?.data?.targets ?? [];
+  const loading = [highscoreSnapshot, debrisSnapshot, rifterSnapshot]
+    .some((snapshot) => snapshot?.freshness === "refreshing");
+  const error = apiBaseUrl ? highscoreSnapshot?.error : "Game API unavailable.";
+  const debrisError = apiBaseUrl ? debrisSnapshot?.error : "Game API unavailable.";
+  const rifterError = apiBaseUrl ? rifterSnapshot?.error : "Game API unavailable.";
   const hasLoaded = highscoreSnapshot?.lastSuccessfulUpdate !== undefined;
   const showAllianceFilter = hasActiveAlliance(currentAllianceId);
   const effectiveFilters = useMemo(
@@ -188,17 +188,11 @@ export function RaidTargetFinderPage({
 
   const load = () => {
     if (!apiBaseUrl) {
-      setError("Game API unavailable.");
       return;
     }
 
-    setLoading(true);
-    setError(undefined);
-    setDebrisError(undefined);
-    setRifterError(undefined);
     setPages({ raids: 1, debris: 1, rifters: 1 });
     const backendData = backendDataStoreFor(apiBaseUrl);
-    const requestGeneration = ++requestGenerationRef.current;
     backendData.cancelScope("raid-finder-page");
     const highscoresRequest = backendData.highscores({
       category: "total",
@@ -210,32 +204,12 @@ export function RaidTargetFinderPage({
     const debrisRequest = backendData.raidFinderDebris({ limit: raidTargetFinderPageSize, requestScope: "raid-finder-page" });
     const riftersRequest = backendData.raidFinderRifters({ limit: raidTargetFinderPageSize, requestScope: "raid-finder-page" });
 
-    highscoresRequest
-      .then((response) => {
-        if (requestGeneration !== requestGenerationRef.current) return;
-        void response;
-      })
-      .catch((nextError) => {
-        if (requestGeneration !== requestGenerationRef.current) return;
-        console.error(nextError);
-        setError(nextError instanceof Error ? nextError.message : "Raid targets could not be loaded.");
-      });
-    debrisRequest
-      .then(() => undefined)
-      .catch((nextError) => {
-        if (requestGeneration !== requestGenerationRef.current) return;
-        console.error(nextError);
-        setDebrisError(nextError instanceof Error ? nextError.message : "Debris targets could not be loaded.");
-      });
-    riftersRequest
-      .then(() => undefined)
-      .catch((nextError) => {
-        if (requestGeneration !== requestGenerationRef.current) return;
-        console.error(nextError);
-        setRifterError(nextError instanceof Error ? nextError.message : "Rift targets could not be loaded.");
-      });
-    void Promise.allSettled([highscoresRequest, debrisRequest, riftersRequest]).finally(() => {
-      if (requestGeneration === requestGenerationRef.current) setLoading(false);
+    void Promise.allSettled([highscoresRequest, debrisRequest, riftersRequest]).then((results) => {
+      for (const result of results) {
+        if (result.status === "rejected" && !(result.reason instanceof DOMException && result.reason.name === "AbortError")) {
+          console.error(result.reason);
+        }
+      }
     });
   };
 
@@ -244,7 +218,6 @@ export function RaidTargetFinderPage({
     // Reload whenever the API endpoint or viewer wallet changes so protection
     // and own-planet exclusion stay accurate.
     return () => {
-      requestGenerationRef.current += 1;
       if (apiBaseUrl) backendDataStoreFor(apiBaseUrl).cancelScope("raid-finder-page");
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

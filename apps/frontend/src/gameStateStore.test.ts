@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { BackendDataStore } from "./backendDataStore";
 import { GameStateReadScheduler, GameStateStore } from "./gameStateStore";
+import { backendDataProjection } from "./useBackendDataSnapshot";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -109,22 +111,36 @@ describe("GameStateStore", () => {
     expect(order).toEqual(["transaction", "selected", "background"]);
   });
 
-  test("notifies every screen projection when shared state advances", async () => {
-    const store = new GameStateStore();
-    const observed: number[] = [];
-    const unsubscribeOverview = store.subscribe(() => {
-      const revision = store.snapshot<{ revision: number }>("wallet")?.data?.revision;
-      if (revision) observed.push(revision);
-    });
-    const unsubscribeTopBar = store.subscribe(() => {
-      const revision = store.snapshot<{ revision: number }>("wallet")?.data?.revision;
-      if (revision) observed.push(revision);
-    });
+  test("propagates shared refreshing, fresh, delayed, and failed entries through runtime surface consumers", async () => {
+    const store = new BackendDataStore("https://api.test");
+    const key = store.key("overview", "0xabc", "planet-7");
+    const topBar = backendDataProjection<{ revision: number }>(store, key);
+    const overview = backendDataProjection<{ revision: number }>(store, key);
+    const topBarObserved: string[] = [];
+    const overviewObserved: string[] = [];
+    const observe = (target: string[]) => (snapshot: ReturnType<typeof topBar.getSnapshot>) => {
+      target.push(`${snapshot?.freshness ?? "missing"}:${snapshot?.data?.revision ?? "none"}:${snapshot?.error ?? "none"}`);
+    };
+    const unsubscribeTopBar = topBar.subscribe(observe(topBarObserved));
+    const unsubscribeOverview = overview.subscribe(observe(overviewObserved));
 
-    await store.read("wallet", async () => ({ revision: 9 }));
+    const response = deferred<{ revision: number }>();
+    const refresh = store.refresh(key, () => response.promise);
+    response.resolve({ revision: 9 });
+    await refresh;
+    store.fail("overview", "Indexer is delayed.", ["0xabc", "planet-7"]);
+    store.clear("overview", "0xabc", "planet-7");
+    await expect(store.refresh(key, async () => {
+      throw new Error("Indexer is unavailable.");
+    })).rejects.toThrow("Indexer is unavailable.");
+
     unsubscribeOverview();
     unsubscribeTopBar();
-    expect(observed).toEqual([9, 9]);
+    expect(topBarObserved).toEqual(overviewObserved);
+    expect(topBarObserved).toContain("refreshing:none:none");
+    expect(topBarObserved).toContain("fresh:9:none");
+    expect(topBarObserved).toContain("delayed:9:Indexer is delayed.");
+    expect(topBarObserved).toContain("failed:none:Indexer is unavailable.");
   });
 
   test("exposes nested backend index revisions with the canonical snapshot", async () => {

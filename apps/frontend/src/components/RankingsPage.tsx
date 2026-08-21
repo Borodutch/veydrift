@@ -159,14 +159,11 @@ export function scrollRankingsCurrentPlayerRow(
 
 export function RankingsPage({ activeMissions, apiBaseUrl, currentAllianceId, currentWallet, now, moonActionsForPlanet, onMoonAction, onPlanetAction, onSelectAlliance, onSelectMoon, onSelectPlayer, onSelectPlanet, originCoordinates, planetActionsForPlanet }: RankingsPageProps) {
   const [active, setActive] = useState<HighscoreCategory>("total");
-  const [loading, setLoading] = useState(false);
   const [viewTransitioning, setViewTransitioning] = useState(false);
-  const [error, setError] = useState<string | undefined>();
   const [page, setPage] = useState(1);
   const [pendingCurrentPlayerJumpPage, setPendingCurrentPlayerJumpPage] = useState<number | null>(null);
   const [expandedRankingWallets, setExpandedRankingWallets] = useState<Set<string>>(() => new Set());
   const rankingsSectionRef = useRef<HTMLElement | null>(null);
-  const requestGenerationRef = useRef(0);
   const backendData = useMemo(() => apiBaseUrl ? backendDataStoreFor(apiBaseUrl) : undefined, [apiBaseUrl]);
   const requestOptions = useMemo(() => ({
     category: active,
@@ -179,18 +176,15 @@ export function RankingsPage({ activeMissions, apiBaseUrl, currentAllianceId, cu
     backendData?.key("highscores", requestOptions),
   );
   const data = dataSnapshot?.data ?? null;
+  const loading = dataSnapshot?.freshness === "refreshing";
+  const error = apiBaseUrl ? dataSnapshot?.error : "Game API unavailable.";
 
   const load = (targetPage = page) => {
     if (!apiBaseUrl) {
-      setLoading(false);
       setViewTransitioning(false);
-      setError("Game API unavailable.");
       return;
     }
 
-    setLoading(true);
-    setError(undefined);
-    const requestGeneration = ++requestGenerationRef.current;
     const store = backendDataStoreFor(apiBaseUrl);
     store.cancelScope("rankings-page");
     store.highscores({
@@ -200,29 +194,21 @@ export function RankingsPage({ activeMissions, apiBaseUrl, currentAllianceId, cu
       pageSize: rankingsPageSize,
       requestScope: "rankings-page",
     })
-      .then(() => undefined)
       .catch((nextError) => {
-        if (requestGeneration !== requestGenerationRef.current) return;
-        console.error(nextError);
-        setError(nextError instanceof Error ? nextError.message : "Rankings could not be loaded.");
+        if (!(nextError instanceof DOMException && nextError.name === "AbortError")) console.error(nextError);
       })
       .finally(() => {
-        if (requestGeneration !== requestGenerationRef.current) return;
-        setLoading(false);
         setViewTransitioning(false);
       });
   };
 
   const beginViewTransition = () => {
-    setLoading(true);
     setViewTransitioning(true);
-    setError(undefined);
   };
 
   useEffect(() => {
     load(page);
     return () => {
-      requestGenerationRef.current += 1;
       if (apiBaseUrl) backendDataStoreFor(apiBaseUrl).cancelScope("rankings-page");
     };
   }, [active, apiBaseUrl, currentWallet, page]);

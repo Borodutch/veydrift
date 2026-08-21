@@ -3576,8 +3576,11 @@ export function PlayableMvpApp({
   );
   const onChainSettlementState = settlementSnapshot?.data;
   const [playerProfile, setPlayerProfile] = useState<PlayerProfile | undefined>();
-  const canonicalPlanetResourcesRef = useRef<CanonicalPlanetResourceStore>({});
-  const [canonicalPlanetResources, setCanonicalPlanetResources] = useState<CanonicalPlanetResourceStore>({});
+  const canonicalPlanetResourcesSnapshot = useBackendDataSnapshot<CanonicalPlanetResourceStore>(
+    backendData,
+    backendData && account ? backendData.key("canonical-planet-resources", account) : undefined,
+  );
+  const canonicalPlanetResources = canonicalPlanetResourcesSnapshot?.data ?? {};
   const walletPlanetsSnapshot = useBackendDataSnapshot<WalletPlanetsResponse>(
     backendData,
     backendData && account ? backendData.key("planets", account) : undefined,
@@ -3615,17 +3618,20 @@ export function PlayableMvpApp({
       ...(options.planetId === undefined ? {} : { planetId: options.planetId }),
       ...(options.wallet ?? account ? { wallet: options.wallet ?? account } : {}),
     });
-    const next = promoteCanonicalPlanetResources(canonicalPlanetResourcesRef.current, candidate, {
+    if (!backendData || !account) return candidate;
+    const current = backendData.value<CanonicalPlanetResourceStore>("canonical-planet-resources", account) ?? {};
+    const next = promoteCanonicalPlanetResources(current, candidate, {
       ...(options.confirmedTransaction === undefined ? {} : { confirmedTransaction: options.confirmedTransaction }),
     });
-    if (next !== canonicalPlanetResourcesRef.current) {
-      canonicalPlanetResourcesRef.current = next;
-      setCanonicalPlanetResources(next);
+    if (next !== current) {
+      backendData.publish("canonical-planet-resources", next, [account], { wallet: account });
     }
     return candidate;
-  }, [account]);
+  }, [account, backendData]);
   const promoteWalletPlanetResourceStates = useCallback((planets: readonly ManagedPlanetResponse[]) => {
-    let next = canonicalPlanetResourcesRef.current;
+    if (!backendData || !account) return {};
+    const current = backendData.value<CanonicalPlanetResourceStore>("canonical-planet-resources", account) ?? {};
+    let next = current;
     for (const planetState of planets) {
       next = promoteCanonicalPlanetResources(next, backendResourceSnapshot(planetState, {
         planetId: planetState.planetId,
@@ -3639,12 +3645,11 @@ export function PlayableMvpApp({
         }));
       }
     }
-    if (next !== canonicalPlanetResourcesRef.current) {
-      canonicalPlanetResourcesRef.current = next;
-      setCanonicalPlanetResources(next);
+    if (next !== current) {
+      backendData.publish("canonical-planet-resources", next, [account], { wallet: account });
     }
     return next;
-  }, [account]);
+  }, [account, backendData]);
   const planetPickerWallet = planetPickerWalletKey(account);
   const [planetPickerOrderState, setPlanetPickerOrderState] = useState<{
     planetIds: string[] | undefined;
@@ -3727,9 +3732,20 @@ export function PlayableMvpApp({
   }, [account, backendData, watchedPlanetsOptions]);
   const [watchBusyPlanetId, setWatchBusyPlanetId] = useState<string | undefined>();
   const [selectedPlanetId, setSelectedPlanetId] = useState<string | undefined>();
-  const [activePlanetStateFresh, setActivePlanetStateFresh] = useState(true);
   const [selectedBodyKind, setSelectedBodyKind] = useState<OrbitBodyKind>("planet");
-  const [planetSectionStore, setPlanetSectionStore] = useState<PlanetSectionStore>({});
+  const planetSectionStoreSnapshot = useBackendDataSnapshot<PlanetSectionStore>(
+    backendData,
+    backendData && account ? backendData.key("planet-sections", account) : undefined,
+  );
+  const planetSectionStore = planetSectionStoreSnapshot?.data ?? {};
+  const setPlanetSectionStore = useCallback((
+    value: PlanetSectionStore | ((current: PlanetSectionStore) => PlanetSectionStore),
+  ) => {
+    if (!backendData || !account) return;
+    const current = backendData.value<PlanetSectionStore>("planet-sections", account) ?? {};
+    const next = typeof value === "function" ? value(current) : value;
+    backendData.publish("planet-sections", next, [account], { wallet: account });
+  }, [account, backendData]);
   const resolvedSelectedPlanetId = useMemo(() => selectedPlanetIdFromRoster({
     homePlanetId: onChainSettlementState?.homePlanetId,
     planets: walletPlanets,
@@ -3744,6 +3760,17 @@ export function PlayableMvpApp({
     ?? onChainSettlementState?.homePlanetId
     ?? indexedInfrastructurePlanetId(planetSectionStore, account)
     ?? indexedDefensePlanetId(planetSectionStore, account);
+  const activePlanetReadinessSnapshot = useBackendDataSnapshot<boolean>(
+    backendData,
+    backendData && account && activePlanetId
+      ? backendData.key("planet-readiness", account, activePlanetId)
+      : undefined,
+  );
+  const activePlanetStateFresh = activePlanetReadinessSnapshot?.data ?? true;
+  const setPlanetStateFresh = useCallback((planetId: string | undefined, fresh: boolean) => {
+    if (!backendData || !account || !planetId) return;
+    backendData.publish("planet-readiness", fresh, [account, planetId], { planetId, wallet: account });
+  }, [account, backendData]);
   useEffect(() => {
     backendData?.setContext(account, activePlanetId);
   }, [account, activePlanetId, backendData]);
@@ -3907,8 +3934,42 @@ export function PlayableMvpApp({
     const next = typeof value === "function" ? value(current) : value;
     if (next) backendData.publish("mission", next, [missionDetailId]);
   }, [backendData, missionDetailId]);
-  const [onChainStatus, setOnChainStatus] = useState<ChainLoadStatus>("local");
-  const [onChainError, setOnChainError] = useState<string | undefined>();
+  const onChainStatusSnapshot = useBackendDataSnapshot<ChainLoadStatus>(
+    backendData,
+    backendData ? backendData.key("wallet-read-status", account ?? "disconnected") : undefined,
+  );
+  const onChainErrorSnapshot = useBackendDataSnapshot<string>(
+    backendData,
+    backendData ? backendData.key("wallet-read-error", account ?? "disconnected") : undefined,
+  );
+  const selectedPlanetOverviewSnapshot = useBackendDataSnapshot<WalletOverviewSnapshotResponse>(
+    backendData,
+    backendData && account ? backendData.key("overview", account, activePlanetId) : undefined,
+  );
+  const onChainStatus = isWalletConnected
+    ? selectedPlanetOverviewSnapshot?.freshness === "refreshing"
+      ? "loading"
+      : selectedPlanetOverviewSnapshot?.freshness === "failed"
+        ? "error"
+        : onChainStatusSnapshot?.data
+          ?? (settlementSnapshot?.data || walletPlanetsSnapshot?.data ? "ready" : "loading")
+    : "local";
+  const onChainError = selectedPlanetOverviewSnapshot?.error ?? onChainErrorSnapshot?.data;
+  const setOnChainStatus = useCallback((
+    value: ChainLoadStatus | ((current: ChainLoadStatus) => ChainLoadStatus),
+  ) => {
+    if (!backendData) return;
+    const keyWallet = account ?? "disconnected";
+    const current = backendData.value<ChainLoadStatus>("wallet-read-status", keyWallet) ?? "local";
+    const next = typeof value === "function" ? value(current) : value;
+    backendData.publish("wallet-read-status", next, [keyWallet], account ? { wallet: account } : {});
+  }, [account, backendData]);
+  const setOnChainError = useCallback((error: string | undefined) => {
+    if (!backendData) return;
+    const keyWallet = account ?? "disconnected";
+    if (error === undefined) backendData.clear("wallet-read-error", keyWallet);
+    else backendData.publish("wallet-read-error", error, [keyWallet], account ? { wallet: account } : {});
+  }, [account, backendData]);
   const [hydratedWalletSnapshotKey, setHydratedWalletSnapshotKey] = useState<string | undefined>();
   const [chainSyncHealthy, setChainSyncHealthy] = useState(false);
   const activePlanetResourceSnapshot = canonicalPlanetResourceSnapshotFor(
@@ -4010,9 +4071,22 @@ export function PlayableMvpApp({
     if (backendData && account) backendData.fail("defenses", error, [account, activePlanetId]);
   }, [account, activePlanetId, backendData]);
   const [defenseAction, setDefenseAction] = useState<DefenseActionState>({ status: "idle" });
-  const [allianceState, setAllianceState] = useState<ChainAllianceState | null>(null);
-  const [allianceLoading, setAllianceLoading] = useState(false);
-  const [allianceError, setAllianceError] = useState<string | undefined>();
+  const allianceSnapshot = useBackendDataSnapshot<ChainAllianceState>(
+    backendData,
+    backendData && account ? backendData.key("alliance", account) : undefined,
+  );
+  const allianceState = allianceSnapshot?.data ?? null;
+  const allianceLoading = allianceSnapshot?.freshness === "refreshing";
+  const allianceError = allianceSnapshot?.error;
+  const setAllianceState = useCallback((
+    value: ChainAllianceState | null | ((current: ChainAllianceState | null) => ChainAllianceState | null),
+  ) => {
+    if (!backendData || !account) return;
+    const current = backendData.value<ChainAllianceState>("alliance", account) ?? null;
+    const next = typeof value === "function" ? value(current) : value;
+    if (next) backendData.publish("alliance", next, [account], { wallet: account });
+    else backendData.clear("alliance", account);
+  }, [account, backendData]);
   const [allianceAction, setAllianceAction] = useState<AllianceActionState>({ status: "idle" });
   const [selectedAllianceId, setSelectedAllianceId] = useState<string | null>(null);
   const shipyardSnapshot = useBackendDataSnapshot<ChainShipyardState>(
@@ -4457,7 +4531,7 @@ export function PlayableMvpApp({
     setPlanetSectionStore({});
     setSelectedPlanetId(undefined);
     pendingPlanetStateRefreshRef.current = undefined;
-    setActivePlanetStateFresh(true);
+    setPlanetStateFresh(activePlanetId, true);
     setSelectedBodyKind("planet");
     setWalletPlanets([]);
     setOnChainQueues(undefined);
@@ -4835,24 +4909,14 @@ export function PlayableMvpApp({
 
   const refreshAllianceState = useCallback(() => {
     if (!apiBaseUrl || !account) {
-      setAllianceState(null);
       return Promise.resolve(null);
     }
 
-    setAllianceLoading(true);
-    setAllianceError(undefined);
     return backendData!.alliance(account)
-      .then((next) => {
-        setAllianceState(next);
-        return next;
-      })
+      .then((next) => next)
       .catch((error) => {
         console.error(error);
-        setAllianceError(error instanceof Error ? error.message : "Alliance state could not be loaded.");
         return null;
-      })
-      .finally(() => {
-        setAllianceLoading(false);
       });
   }, [account, apiBaseUrl]);
 
@@ -4997,7 +5061,7 @@ export function PlayableMvpApp({
       applyOnChainSettlementSnapshot(nextSettlement);
       if (pendingPlanetStateRefreshRef.current === nextSelectedPlanetId) {
         pendingPlanetStateRefreshRef.current = undefined;
-        setActivePlanetStateFresh(true);
+        setPlanetStateFresh(nextSelectedPlanetId, true);
       }
       setPlayerProfile((current) => mergePlayerProfile(current, nextSettlement.player ?? planetsResponse.player));
       setHydratedWalletSnapshotKey(walletSnapshotHydrationKey(apiBaseUrl, account));
@@ -6729,7 +6793,6 @@ export function PlayableMvpApp({
     send: () => Promise<string>,
     afterReceipt?: (() => Promise<ChainAllianceState | null | undefined>) | undefined,
   ) => {
-    setAllianceLoading(true);
     await runCoordinatedWriteTransaction({
       key: `alliance:${label}`,
       label,
@@ -6747,14 +6810,8 @@ export function PlayableMvpApp({
         if (state.phase === "success") setAllianceAction({ status: "success", label: `${label} confirmed.` });
         else if (state.phase === "error") setAllianceAction({ status: "error", label: state.label ?? `${label} failed.` });
         else if (state.phase !== "idle") setAllianceAction({ status: "pending", label: state.label ?? transactionSyncingLabel(label) });
-        if (state.phase === "idle") {
-          setAllianceLoading(false);
-        }
       },
     });
-    if (!transactionActionGate.isRunning(`alliance:${label}`)) {
-        setAllianceLoading(false);
-    }
   }, [refreshAllianceState, runCoordinatedWriteTransaction, transactionActionGate]);
 
   const runResearchTransaction = useCallback(async (
@@ -7298,7 +7355,6 @@ export function PlayableMvpApp({
     }
 
     setAllianceAction({ status: "pending", label: "Refreshing alliance invitation..." });
-    setAllianceLoading(true);
     void backendData!.alliance(account)
       .then((next) => {
         setAllianceState(next);
@@ -7327,9 +7383,6 @@ export function PlayableMvpApp({
           status: "error",
           label: error instanceof Error ? error.message : "Alliance invitation could not be refreshed.",
         });
-      })
-      .finally(() => {
-        setAllianceLoading(false);
       });
   }, [account, apiBaseUrl, allianceContract, provider, runAllianceTransaction]);
 
@@ -7369,7 +7422,6 @@ export function PlayableMvpApp({
 
     const currentAllianceId = allianceState.membership.allianceId;
     setAllianceAction({ status: "pending", label: "Refreshing alliance application..." });
-    setAllianceLoading(true);
     void backendData!.alliance(account)
       .then((next) => {
         setAllianceState(next);
@@ -7405,9 +7457,6 @@ export function PlayableMvpApp({
           status: "error",
           label: error instanceof Error ? error.message : "Alliance application could not be refreshed.",
         });
-      })
-      .finally(() => {
-        setAllianceLoading(false);
       });
   }, [account, apiBaseUrl, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction, waitForAllianceApplicationState]);
 
@@ -7419,7 +7468,6 @@ export function PlayableMvpApp({
 
     const currentAllianceId = allianceState.membership.allianceId;
     setAllianceAction({ status: "pending", label: "Refreshing alliance application..." });
-    setAllianceLoading(true);
     void backendData!.alliance(account)
       .then((next) => {
         setAllianceState(next);
@@ -7455,9 +7503,6 @@ export function PlayableMvpApp({
           status: "error",
           label: error instanceof Error ? error.message : "Alliance application could not be refreshed.",
         });
-      })
-      .finally(() => {
-        setAllianceLoading(false);
       });
   }, [account, apiBaseUrl, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction, waitForAllianceApplicationState]);
 
@@ -7792,7 +7837,7 @@ export function PlayableMvpApp({
     markFreshStateWrite(riftRefreshGate);
     if (planetId !== activePlanetId) {
       pendingPlanetStateRefreshRef.current = planetId;
-      setActivePlanetStateFresh(false);
+      setPlanetStateFresh(planetId, false);
     }
     setSelectedPlanetId(planetId);
     setSelectedBodyKind(nextBodyKind);
