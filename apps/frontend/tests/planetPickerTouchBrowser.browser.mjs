@@ -28,6 +28,9 @@ let inspectorFixtureUrl;
 let pageTargetId;
 let server;
 
+const INSPECTOR_APP_READY_TIMEOUT_MS = 30_000;
+const INSPECTOR_PRELOAD_TIMEOUT_MS = 120_000;
+
 function delay(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
@@ -194,6 +197,46 @@ async function loadFixture() {
   await waitForExpression("window.touchProofReady === true");
 }
 
+async function preloadInspectorFixture() {
+  // A focused --test-name-pattern invocation reaches the inspector with a cold
+  // Vite module graph. Keep that one-time transform/crawl cost outside each
+  // scenario's app-ready deadline, and do not continue until the full fixture
+  // has executed in Chrome and Vite has finished processing its static imports.
+  // A fresh page target then discards this app instance and its input/timer
+  // state while retaining Vite's transformed graph and the browser cache.
+  await cdp.send("Emulation.setDeviceMetricsOverride", {
+    deviceScaleFactor: 1,
+    height: 900,
+    mobile: false,
+    width: 1280,
+  });
+  await cdp.send("Page.navigate", {
+    url: `${inspectorFixtureUrl}?${new URLSearchParams({
+      incompleteOverview: "true",
+      route: "/",
+      shell: "settlement",
+    })}`,
+  });
+  try {
+    await waitForExpression(
+      "window.inspectorProof?.appReady === true",
+      INSPECTOR_PRELOAD_TIMEOUT_MS,
+    );
+  } catch (error) {
+    const diagnostics = await evaluate(`({
+      body: document.body?.innerText.slice(0, 2000),
+      errors: window.inspectorProof?.errors,
+      path: location.pathname,
+      readyState: document.readyState,
+      resources: performance.getEntriesByType('resource').map((entry) => entry.name).slice(-20),
+      url: location.href,
+    })`).catch((diagnosticError) => ({ diagnosticError: diagnosticError.message }));
+    throw new Error(`${error.message}\nInspector preload diagnostics: ${JSON.stringify(diagnostics)}`);
+  }
+  await server.waitForRequestsIdle();
+  await replacePageTarget();
+}
+
 before(async () => {
   server = await createServer({
     logLevel: "error",
@@ -214,6 +257,7 @@ before(async () => {
 
   cdp = await launchChrome();
   await configurePageTarget(cdp);
+  await preloadInspectorFixture();
   await cdp.send("Emulation.setDeviceMetricsOverride", {
     deviceScaleFactor: 2,
     height: 720,
@@ -366,7 +410,10 @@ async function loadInspectorFixture(route, width, options = {}) {
     url: `${inspectorFixtureUrl}?${params}`,
   });
   try {
-    await waitForExpression("window.inspectorProof?.appReady === true", 30_000);
+    await waitForExpression(
+      "window.inspectorProof?.appReady === true",
+      INSPECTOR_APP_READY_TIMEOUT_MS,
+    );
   } catch (error) {
     const diagnostics = await evaluate(`({
       body: document.body?.innerText.slice(0, 2000),
