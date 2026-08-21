@@ -31,6 +31,27 @@ describe("GameStateStore", () => {
     });
   });
 
+  test("clearing an error does not invalidate an in-flight deduplicated read", async () => {
+    const store = new GameStateStore();
+    const response = deferred<{ level: number }>();
+    const firstRead = store.read("infrastructure:wallet:planet", () => response.promise);
+
+    store.fail("infrastructure:wallet:planet", undefined);
+    const deduplicatedRead = store.read("infrastructure:wallet:planet", () => {
+      throw new Error("deduplicated refresh must not start another transport");
+    });
+    response.resolve({ level: 4 });
+
+    await expect(Promise.all([firstRead, deduplicatedRead])).resolves.toEqual([
+      { level: 4 },
+      { level: 4 },
+    ]);
+    expect(store.snapshot<{ level: number }>("infrastructure:wallet:planet")).toMatchObject({
+      data: { level: 4 },
+      freshness: "fresh",
+    });
+  });
+
   test("removes a cancelled navigation read before it consumes a queue slot", async () => {
     const store = new GameStateStore(new GameStateReadScheduler(1));
     const blocker = deferred<string>();

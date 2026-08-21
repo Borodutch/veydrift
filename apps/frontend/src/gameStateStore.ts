@@ -175,14 +175,24 @@ export class GameStateStore {
   }
 
   fail(key: string, error: string | undefined): void {
-    const generation = this.nextGeneration(key);
     const current = this.entries.get(key);
+    if (error === undefined) {
+      if (!current) return;
+      this.entries.set(key, {
+        ...current,
+        error: undefined,
+        freshness: current.freshness === "refreshing"
+          ? "refreshing"
+          : (current.data === undefined ? "delayed" : "fresh"),
+      });
+      this.emit();
+      return;
+    }
+    const generation = this.nextGeneration(key);
     this.entries.set(key, {
       ...current,
       error,
-      freshness: error
-        ? (current?.data === undefined ? "failed" : "delayed")
-        : (current?.data === undefined ? "delayed" : "fresh"),
+      freshness: current?.data === undefined ? "failed" : "delayed",
       generation,
     });
     this.emit();
