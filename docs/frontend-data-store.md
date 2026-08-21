@@ -2,7 +2,7 @@
 
 ## Purpose
 
-`apps/frontend/src/backendDataStore.ts` is the typed read-side boundary and canonical runtime owner between UI code and the Veydrift backend. It owns normalized responses, stable request keys, generation ordering, freshness, failures, and the priority read scheduler.
+`apps/frontend/src/backendDataStore.ts` is the typed state boundary and canonical runtime owner between UI code, wallet writes, and the Veydrift backend. It owns normalized responses, stable request keys, generation ordering, freshness, failures, the priority read scheduler, the global write gate, and transaction lifecycle state.
 
 Low-level request encoding and response validation remain in `walletFlow.ts` and `entityMedia.ts`. Those modules are transport clients, and UI components must not call their read functions directly.
 
@@ -15,6 +15,7 @@ Low-level request encoding and response validation remain in `walletFlow.ts` and
 5. `GameStateStore` is the canonical owner of response data and `fresh`, `refreshing`, `delayed`, or `failed` freshness. Screen and planet-section state is a render projection, not another authoritative response copy.
 6. A failed refresh must not clear the last confirmed view projection. The projection owner records the error while retaining its previous data.
 7. A wallet transaction is successful in the UI only after its exact transaction or expected state transition is visible in indexed data.
+8. UI components submit writes and request reconciliation through `BackendDataStore`; they do not own a second transaction gate, write lifecycle, or post-write response cache.
 
 Generation, cancellation, priority, cross-screen propagation, and enqueue-time deadline behavior are enforced by `gameStateStore.test.ts`. Boundary/coalescing behavior remains covered by `backendDataStore.test.ts` and `backendDataBoundary.test.ts`.
 
@@ -29,7 +30,18 @@ refresh trigger
   -> subscribed screen projections rerender
 ```
 
-`backendDataStoreFor(apiBaseUrl)` returns the shared canonical store for a normalized API URL. Do not construct a component-local coordinator, request mutex, or authoritative response cache.
+Wallet mutations use the same boundary:
+
+```text
+component action
+  -> BackendDataStore shared write gate
+  -> wallet submission + receipt confirmation
+  -> transaction-priority reconciliation of canonical response keys
+  -> shared write lifecycle becomes applied/timed-out/failed
+  -> all subscribed components rerender from those same store entries
+```
+
+`backendDataStoreFor(apiBaseUrl)` returns the shared canonical store for a normalized API URL. Do not construct a component-local coordinator, transaction gate, request mutex, write lifecycle, or authoritative response cache.
 
 Completed responses and freshness changes notify every subscriber. Rankings, Raid Finder, selected-planet modules, the top bar/Overview shell, Mission Control, Galaxy, and planet/moon detail all subscribe to canonical snapshots. Their remaining local state is limited to interaction and render projections such as the selected tab, page, filters, or composed display rows.
 
@@ -73,4 +85,6 @@ The underlying wallet API client also has a very short recent-response window to
 
 ## Mutations
 
-Wallet transactions remain in the transaction helpers because the wallet provider, receipt confirmation, and chain switching are not backend reads. The shared write state records wallet submission, confirmation, waiting for index, and the visible terminal outcome (`applied`, `timed-out`, or `failed`). A timeout releases the global write gate while preserving its transaction hash and retry context.
+Wallet provider calls and receipt confirmation remain transaction-helper concerns, but `BackendDataStore` owns their single global gate and publishes every write phase into `GameStateStore`. Components subscribe to that shared write entry just like read entries. The shared state records wallet submission, confirmation, waiting for index, and the visible terminal outcome (`applied`, `timed-out`, or `failed`). A timeout releases the global write gate while preserving its transaction hash and retry context.
+
+Post-write reconciliation also belongs to this boundary. For example, defense production polls `defenses(wallet, planetId)` and `queues(wallet, planetId)` at transaction priority. Those exact canonical entries drive the Defenses page, Overview, queue widgets, and transaction feedback; the initiating component does not manually copy the response into separate local state or run an additional resource poll.

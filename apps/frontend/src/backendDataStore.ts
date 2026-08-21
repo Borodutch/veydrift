@@ -77,12 +77,24 @@ import {
   type GameStateEntry,
   type GameStatePriority,
 } from "./gameStateStore";
+import {
+  waitForStartedDefenseProductionState,
+  type StartedDefenseProductionExpectation,
+  type StartedDefenseProductionSnapshot,
+} from "./postTransactionRefresh";
+import {
+  createTransactionActionGate,
+  runWriteTransaction as executeWriteTransaction,
+  type WriteTransactionDescriptor,
+  type WriteTransactionState,
+} from "./transactionActionGate";
 
 type WalletReadOptions = {
   source?: "indexed";
   timeoutMs?: number;
   fresh?: boolean;
   signal?: AbortSignal;
+  priority?: GameStatePriority;
 };
 
 type FleetMissionVisibilityOptions = WalletReadOptions & {
@@ -114,7 +126,7 @@ function cacheKey(kind: string, ...parts: unknown[]): string {
 }
 
 /**
- * The single read-side boundary for the playable frontend.
+ * The single state and refresh boundary for the playable frontend.
  *
  * It owns normalized response data, generations, freshness, failures, and the
  * three-slot priority scheduler. Calling the same read again while it is
@@ -124,6 +136,7 @@ function cacheKey(kind: string, ...parts: unknown[]): string {
  */
 export class BackendDataStore {
   private readonly state = new GameStateStore();
+  private readonly transactionGate = createTransactionActionGate();
   private contextScope = "public";
 
   constructor(readonly apiBaseUrl: string) {}
@@ -163,6 +176,45 @@ export class BackendDataStore {
 
   key(kind: string, ...parts: unknown[]): string {
     return cacheKey(kind, ...parts);
+  }
+
+  writeTransactionKey(key?: string): string {
+    return cacheKey("write-transaction", key ?? "global");
+  }
+
+  private publishWriteTransactionState(state: WriteTransactionState): void {
+    this.state.publish(this.writeTransactionKey(), state);
+    if (state.key) this.state.publish(this.writeTransactionKey(state.key), state);
+  }
+
+  runWriteTransaction<IndexedSnapshot = void>(
+    descriptor: WriteTransactionDescriptor<IndexedSnapshot>,
+  ): Promise<boolean> {
+    return executeWriteTransaction(this.transactionGate, {
+      ...descriptor,
+      onStateChange: (state) => {
+        this.publishWriteTransactionState(state);
+        descriptor.onStateChange?.(state);
+      },
+    });
+  }
+
+  async runExclusiveTransaction<T>(
+    key: string,
+    label: string,
+    action: () => Promise<T>,
+  ): Promise<T | undefined> {
+    return this.transactionGate.run(key, async () => {
+      this.publishWriteTransactionState({ key, label, phase: "pending", stage: "wallet" });
+      try {
+        const result = await action();
+        this.publishWriteTransactionState({ key, label, phase: "success", stage: "applied" });
+        return result;
+      } catch (error) {
+        this.publishWriteTransactionState({ error, key, label, phase: "error", stage: "failed" });
+        throw error;
+      }
+    });
   }
 
   snapshot<T>(key: string): GameStateEntry<T> | undefined {
@@ -250,7 +302,7 @@ export class BackendDataStore {
       dedupe: !options.fresh,
       deadlineMs: options.timeoutMs,
       planetId,
-      priority: "selected-planet",
+      priority: options.priority ?? "selected-planet",
       wallet,
     });
   }
@@ -294,9 +346,31 @@ export class BackendDataStore {
       dedupe: !options.fresh,
       deadlineMs: options.timeoutMs,
       planetId,
-      priority: "selected-planet",
+      priority: options.priority ?? "selected-planet",
       wallet,
     });
+  }
+
+  /**
+   * The authoritative post-write refresh for defense production. It polls and
+   * publishes the same defense and queue entries consumed by every screen, so
+   * transaction feedback cannot drift from a separately managed component
+   * snapshot.
+   */
+  waitForStartedDefenseProduction(
+    wallet: string,
+    expectation: StartedDefenseProductionExpectation,
+  ): Promise<StartedDefenseProductionSnapshot> {
+    return waitForStartedDefenseProductionState(
+      async () => {
+        const [defense, queues] = await Promise.all([
+          this.defenses(wallet, expectation.planetId, { fresh: true, priority: "transaction" }),
+          this.queues(wallet, expectation.planetId, { fresh: true, priority: "transaction" }),
+        ]);
+        return { defense, queues };
+      },
+      expectation,
+    );
   }
 
   research(wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<ChainResearchState> {

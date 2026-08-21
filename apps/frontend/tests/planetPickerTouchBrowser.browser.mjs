@@ -904,6 +904,9 @@ test("direct Mission Control load hydrates before stalled history reads occupy t
   await waitForExpression(`location.pathname === '/mission-control'
     && document.querySelector('main')?.textContent?.includes('Syncing planetfall') === false
     && document.querySelector('main [data-mission-control-page]') !== null`);
+  await waitForExpression(`window.inspectorProof.requests.some((request) => (
+    request.includes('/missions?') || request.includes('/missile-attacks?')
+  ))`);
 
   const requests = await evaluate("window.inspectorProof.requests");
   const overviewIndex = requests.findIndex((request) => request.includes('/overview'));

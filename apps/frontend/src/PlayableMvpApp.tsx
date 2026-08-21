@@ -202,7 +202,7 @@ import {
   missionLaunchMissionsForTransaction,
   waitForFinishedResearchState,
   waitForStartedResearchState,
-  waitForStartedDefenseProductionState,
+  queuedDefenseProductionQuantity,
   waitForStartedShipProductionState,
   waitForStartedBuildingState,
   startedBuildingQueueFromWalletPlanets,
@@ -367,8 +367,6 @@ type FetchWalletPlanets = typeof import("./walletFlow").fetchWalletPlanets;
 type FetchFleetMissionVisibility = typeof import("./walletFlow").fetchFleetMissionVisibility;
 type FetchWalletSettlement = typeof import("./walletFlow").fetchWalletSettlement;
 import {
-  createTransactionActionGate,
-  runWriteTransaction,
   transactionAwaitingWalletLabel,
   transactionSyncingLabel,
   type WriteTransactionState,
@@ -3549,6 +3547,14 @@ export function PlayableMvpApp({
     () => apiBaseUrl ? backendDataStoreFor(apiBaseUrl) : undefined,
     [apiBaseUrl],
   );
+  const writeTransactionSnapshot = useBackendDataSnapshot<WriteTransactionState>(
+    backendData,
+    backendData?.writeTransactionKey(),
+  );
+  const writeTransactionState = writeTransactionSnapshot?.data ?? { phase: "idle" as const };
+  const transactionActionPending = writeTransactionState.phase !== "idle"
+    && writeTransactionState.phase !== "success"
+    && writeTransactionState.phase !== "error";
   const [page, setPage] = useState<Page>(() => initialInspectPageState().page);
   // Mission Control used to fetch and mount every All/Incoming archive before the default My
   // missions view could become interactive. Keep the persisted deep-link selection working while
@@ -4191,13 +4197,10 @@ export function PlayableMvpApp({
   const [planetRenameAction, setPlanetRenameAction] = useState<PlanetRenameActionState>({ status: "idle" });
   const [playerProfileAction, setPlayerProfileAction] = useState<PlanetRenameActionState>({ status: "idle" });
   const [missionAction, setMissionAction] = useState<MissionActionState>({ status: "idle" });
-  const [transactionActionPending, setTransactionActionPending] = useState(false);
-  const [writeTransactionState, setWriteTransactionState] = useState<WriteTransactionState>({ phase: "idle" });
   // The shareable battle-report URL currently shown in the share dialog; null when it is closed.
   const [shareDialogUrl, setShareDialogUrl] = useState<string | null>(null);
   const [playerActivityOpen, setPlayerActivityOpen] = useState(false);
   const [moonAction, setMoonAction] = useState<MoonActionState>({ status: "idle" });
-  const transactionActionGate = useRef(createTransactionActionGate()).current;
   const onChainRefreshGate = useRef(0);
   const infrastructureRefreshGate = useRef(0);
   const defenseRefreshGate = useRef(0);
@@ -4215,15 +4218,14 @@ export function PlayableMvpApp({
   const [homePlanetIdentity, setHomePlanetIdentity] = useState<Planet | undefined>();
 
   const runGatedTransaction = useCallback(async (key: string, action: () => Promise<void>) => {
-    await transactionActionGate.run(key, async () => {
-      setTransactionActionPending(true);
-      try {
-        await action();
-      } finally {
-        setTransactionActionPending(false);
-      }
-    });
-  }, [transactionActionGate]);
+    if (!backendData) throw new Error("Game state store is unavailable.");
+    try {
+      await backendData.runExclusiveTransaction(key, key, action);
+    } catch {
+      // The action owns user-facing error copy; the shared store owns the
+      // authoritative failed lifecycle and gate release.
+    }
+  }, [backendData]);
 
   useActionNoticeAutoDismiss(defenseAction, setDefenseAction);
   useActionNoticeAutoDismiss(allianceAction, setAllianceAction);
@@ -4811,7 +4813,8 @@ export function PlayableMvpApp({
     send: () => Promise<string>;
     waitForIndexed?: (receipt: TransactionReceipt, txHash: string) => Promise<IndexedSnapshot>;
   }) => {
-    return runWriteTransaction(transactionActionGate, {
+    if (!backendData) throw new Error("Game state store is unavailable.");
+    return backendData.runWriteTransaction({
       ...(applyIndexedState ? { applyIndexedState } : {}),
       confirm: confirmSubmittedTransaction,
       ...(errorLabel ? { errorLabel } : {}),
@@ -4819,8 +4822,6 @@ export function PlayableMvpApp({
       label,
       ...(onErrorRefresh ? { onErrorRefresh } : {}),
       onStateChange: (state) => {
-        setWriteTransactionState(state);
-        setTransactionActionPending(state.phase !== "idle" && state.phase !== "success" && state.phase !== "error");
         // Success/error feedback arrives through the action-notice hook below;
         // the gate only voices wallet/chain progress so sounds never double up.
         if (state.phase === "pending") {
@@ -4834,7 +4835,7 @@ export function PlayableMvpApp({
       send,
       ...(waitForIndexed ? { waitForIndexed: waitForIndexed as (receipt: unknown, txHash: string) => Promise<IndexedSnapshot> } : {}),
     });
-  }, [confirmSubmittedTransaction, transactionActionGate]);
+  }, [backendData, confirmSubmittedTransaction]);
 
   const refreshInfrastructureState = useCallback(async () => {
     const requestId = beginRefreshRequest(infrastructureRefreshGate);
@@ -5446,29 +5447,13 @@ export function PlayableMvpApp({
     setDefenseError(undefined);
 
     try {
-      const snapshot = await waitForStartedDefenseProductionState(
-        async () => {
-          const [defense, queues] = await Promise.all([
-            backendData!.defenses(account, activePlanetId),
-            backendData!.queues(account, activePlanetId),
-          ]);
-
-          return { defense, queues };
-        },
-        expectation,
-      );
+      const snapshot = await backendData!.waitForStartedDefenseProduction(account, expectation);
       if (expectation.resourceIndexing) {
-        await convergeBackendIndexedResourceState(
-          () => backendData!.defenses(account, activePlanetId),
-          expectation.resourceIndexing,
-          { planetId: activePlanetId },
-        );
+        promoteBackendResourceState(snapshot.defense, { confirmedTransaction: true });
       }
 
       if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
-      setDefenseState(snapshot.defense);
       setDefenseError(undefined);
-      setOnChainQueues(snapshot.queues);
       setOnChainError(undefined);
       setOnChainStatus("ready");
     } catch (error) {
@@ -5482,7 +5467,7 @@ export function PlayableMvpApp({
       if (canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) {
       }
     }
-  }, [account, activePlanetId, apiBaseUrl, convergeBackendIndexedResourceState, refreshDefenseState, refreshOnChainState]);
+  }, [account, apiBaseUrl, backendData, promoteBackendResourceState, refreshDefenseState, refreshOnChainState]);
 
   const refreshStartedShipProductionState = useCallback(async (expectation: StartedShipProductionExpectation) => {
     const planetSwitchRequestId = planetSwitchGate.current;
@@ -6813,7 +6798,7 @@ export function PlayableMvpApp({
         else if (state.phase !== "idle") setAllianceAction({ status: "pending", label: state.label ?? transactionSyncingLabel(label) });
       },
     });
-  }, [refreshAllianceState, runCoordinatedWriteTransaction, transactionActionGate]);
+  }, [refreshAllianceState, runCoordinatedWriteTransaction]);
 
   const runResearchTransaction = useCallback(async (
     label: string,
@@ -7217,10 +7202,7 @@ export function PlayableMvpApp({
     }
 
     const planetId = defenseState.homePlanetId;
-    const currentQueuedQuantity =
-      activeDefenseProductionQueue?.itemId === defenseId
-        ? activeDefenseProductionQueue.quantity ?? 0
-        : 0;
+    const currentQueuedQuantity = queuedDefenseProductionQuantity(defenseState.queue, defenseId);
     const expectedQuantity = currentQueuedQuantity + quantity;
     const resourceBaseline = defenseState.resourceSnapshot;
 
@@ -7239,8 +7221,8 @@ export function PlayableMvpApp({
     }));
   }, [
     account,
-    activeDefenseProductionQueue,
     defenseState?.homePlanetId,
+    defenseState?.queue,
     defenseState?.resourceSnapshot,
     gameContract,
     provider,
@@ -7970,6 +7952,7 @@ export function PlayableMvpApp({
           status: "error",
           label: error instanceof Error ? error.message : "Profile update failed.",
         });
+        throw error;
       }
     });
   }, [account, apiBaseUrl, page, provider, refreshAllianceState, runGatedTransaction, updateOnChainSettlementSnapshot]);
