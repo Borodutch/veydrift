@@ -969,7 +969,12 @@ for (const width of [390, 1280]) {
       resourceValue: document.querySelector('[data-resource-status="ready"] summary[title^="Metal:"] [data-tick-value]')?.dataset.tickValue ?? null,
     })`);
     const routes = [
-      { path: "/mission-control", ready: "document.querySelector('main [data-mission-control-page]') !== null" },
+      {
+        path: "/mission-control",
+        ready: `document.querySelector('[data-past-tab-panel="mine"]')?.textContent?.includes('No completed missions are visible for this wallet yet.') === true
+          && document.querySelector('[data-past-tab-button="all"]')?.textContent?.includes('All (0)') === true
+          && document.querySelector('main')?.textContent?.includes('Loading completed missions…') === false`,
+      },
       { path: "/galaxy", ready: "document.querySelector('main h2')?.textContent === 'Galaxy'" },
     ];
 
@@ -1008,11 +1013,14 @@ for (const width of [390, 1280]) {
     })`);
     assert.equal(rendered.overviewRequests, initialSnapshot.overviewRequests, JSON.stringify(rendered.requests));
     assert.ok(rendered.requests.some((request) => request.includes('/settlement')), JSON.stringify(rendered.requests));
+    assert.ok(rendered.requests.some((request) => request.includes('/wallet/0x1111111111111111111111111111111111111111/missions?status=completed')), JSON.stringify(rendered.requests));
+    assert.ok(rendered.requests.some((request) => request.includes('/wallet/0x1111111111111111111111111111111111111111/missile-attacks?')), JSON.stringify(rendered.requests));
+    assert.ok(rendered.requests.some((request) => request.includes('/missions?status=completed') && request.includes('summaryOnly=true')), JSON.stringify(rendered.requests));
     assert.equal(rendered.resourceStatus, "ready");
     assert.match(rendered.resourceTitle ?? "", /^Metal: 10,313\b/);
     assert.equal(rendered.resourceValue, initialSnapshot.resourceValue);
     assert.equal(rendered.syncingPlanetfall, false);
-    assert.deepEqual(rendered.errors.filter((error) => /^window-error:|^unhandled:/.test(error)), []);
+    assert.deepEqual(rendered.errors, []);
   });
 }
 
