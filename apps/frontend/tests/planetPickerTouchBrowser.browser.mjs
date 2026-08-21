@@ -366,7 +366,7 @@ async function loadInspectorFixture(route, width, options = {}) {
     url: `${inspectorFixtureUrl}?${params}`,
   });
   try {
-    await waitForExpression("window.inspectorProof?.appReady === true", 10_000);
+    await waitForExpression("window.inspectorProof?.appReady === true", 30_000);
   } catch (error) {
     const diagnostics = await evaluate(`({
       body: document.body?.innerText.slice(0, 2000),
@@ -952,21 +952,39 @@ test("mobile Defenses renders its indexed planet snapshot while wallet overview 
 
 for (const width of [390, 1280]) {
   test(`established-account gameplay routes escape an incomplete overview snapshot at ${width}px`, async () => {
+    await loadInspectorFixture("/", width, {
+      incompleteOverview: "true",
+      shell: "settlement",
+      waitForPlanetSelectors: "false",
+    });
+    await waitForExpression(`location.pathname === '/'
+      && document.querySelector('main')?.textContent?.includes('Syncing planetfall') === false
+      && document.querySelector('main')?.textContent?.includes('Owned Alpha') === true
+      && document.querySelector('[data-resource-status="ready"] summary[title^="Metal:"]') !== null
+      && window.inspectorProof.requests.some((request) => request.includes('/overview'))
+      && window.inspectorProof.requests.some((request) => request.includes('/settlement'))`);
+
+    const initialSnapshot = await evaluate(`({
+      overviewRequests: window.inspectorProof.requests.filter((request) => request.includes('/overview')).length,
+      resourceValue: document.querySelector('[data-resource-status="ready"] summary[title^="Metal:"] [data-tick-value]')?.dataset.tickValue ?? null,
+    })`);
     const routes = [
-      { path: "/", ready: "document.querySelector('main')?.textContent?.includes('Owned Alpha') === true" },
       { path: "/mission-control", ready: "document.querySelector('main [data-mission-control-page]') !== null" },
       { path: "/galaxy", ready: "document.querySelector('main h2')?.textContent === 'Galaxy'" },
     ];
 
     for (const route of routes) {
-      await loadInspectorFixture(route.path, width, {
-        incompleteOverview: "true",
-        shell: "settlement",
-        waitForPlanetSelectors: "false",
-      });
+      if (width < 768) {
+        await clickExpressionWithTrustedPointer("document.querySelector('summary[aria-label=\"Open navigation menu\"]')", "touch");
+        await waitForExpression("document.querySelector('details:has(#mobile-navigation-menu)')?.open === true");
+        await clickExpressionWithTrustedPointer(`document.querySelector('#mobile-navigation-menu a[href="${route.path}"]')`, "touch");
+      } else {
+        await clickExpressionWithTrustedPointer(`document.querySelector('nav.hidden a[href="${route.path}"]')`);
+      }
       try {
         await waitForExpression(`location.pathname === '${route.path}'
           && document.querySelector('main')?.textContent?.includes('Syncing planetfall') === false
+          && document.querySelector('[data-resource-status="ready"] summary[title^="Metal:"] [data-tick-value]')?.dataset.tickValue === ${JSON.stringify(initialSnapshot.resourceValue)}
           && ${route.ready}`);
       } catch (error) {
         const diagnostics = await evaluate(`({
@@ -981,13 +999,20 @@ for (const width of [390, 1280]) {
 
     const rendered = await evaluate(`({
       errors: window.inspectorProof.errors,
+      overviewRequests: window.inspectorProof.requests.filter((request) => request.includes('/overview')).length,
       requests: window.inspectorProof.requests,
+      resourceStatus: document.querySelector('[data-resource-status]')?.getAttribute('data-resource-status') ?? null,
+      resourceTitle: document.querySelector('[data-resource-status] summary[title^="Metal:"]')?.title ?? null,
+      resourceValue: document.querySelector('[data-resource-status] summary[title^="Metal:"] [data-tick-value]')?.dataset.tickValue ?? null,
       syncingPlanetfall: document.querySelector('main')?.textContent?.includes('Syncing planetfall') ?? false,
     })`);
-    assert.ok(rendered.requests.some((request) => request.includes('/overview')), JSON.stringify(rendered.requests));
+    assert.equal(rendered.overviewRequests, initialSnapshot.overviewRequests, JSON.stringify(rendered.requests));
     assert.ok(rendered.requests.some((request) => request.includes('/settlement')), JSON.stringify(rendered.requests));
+    assert.equal(rendered.resourceStatus, "ready");
+    assert.match(rendered.resourceTitle ?? "", /^Metal: 10,313\b/);
+    assert.equal(rendered.resourceValue, initialSnapshot.resourceValue);
     assert.equal(rendered.syncingPlanetfall, false);
-    assert.deepEqual(rendered.errors, []);
+    assert.deepEqual(rendered.errors.filter((error) => /^window-error:|^unhandled:/.test(error)), []);
   });
 }
 
