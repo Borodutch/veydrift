@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { BackendDataStore } from "./backendDataStore";
+import type { WriteTransactionState } from "./transactionActionGate";
 
 describe("BackendDataStore", () => {
   test("reuses one in-flight request for the same stable key", async () => {
@@ -103,5 +104,54 @@ describe("BackendDataStore", () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+
+  test("publishes one shared write lifecycle to every subscriber", async () => {
+    const store = new BackendDataStore("https://api.test");
+    const phases: string[] = [];
+    const unsubscribe = store.subscribe(() => {
+      const phase = store.snapshot<WriteTransactionState>(store.writeTransactionKey())?.data?.phase;
+      if (phase && phases.at(-1) !== phase) phases.push(phase);
+    });
+
+    try {
+      await expect(store.runWriteTransaction({
+        confirm: async () => ({ status: "0x1" }),
+        key: "defense:start:4",
+        label: "Defense production",
+        send: async () => "0xabc",
+        waitForIndexed: async () => ({ indexed: true }),
+      })).resolves.toBe(true);
+    } finally {
+      unsubscribe();
+    }
+
+    expect(phases).toEqual(["pending", "confirming", "confirmed", "indexing", "success"]);
+    expect(store.snapshot<WriteTransactionState>(store.writeTransactionKey("defense:start:4"))?.data)
+      .toMatchObject({ key: "defense:start:4", phase: "success", stage: "applied", txHash: "0xabc" });
+  });
+
+  test("uses the same shared gate for receipt writes and non-receipt mutations", async () => {
+    const store = new BackendDataStore("https://api.test");
+    let release!: () => void;
+    const held = store.runExclusiveTransaction("player-profile:update", "Profile update", () =>
+      new Promise<void>((resolve) => { release = resolve; })
+    );
+    await Promise.resolve();
+
+    let sent = false;
+    await expect(store.runWriteTransaction({
+      confirm: async () => ({}),
+      key: "defense:start:4",
+      label: "Defense production",
+      send: async () => {
+        sent = true;
+        return "0xabc";
+      },
+    })).resolves.toBe(false);
+    expect(sent).toBe(false);
+
+    release();
+    await held;
   });
 });

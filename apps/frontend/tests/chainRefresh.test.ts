@@ -143,9 +143,13 @@ describe("playable chain refresh", () => {
 
   test("uses one confirmed-resource promotion path for all shared production spends", async () => {
     const source = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.url)).text();
-    for (const endpoint of ["infrastructure", "defenses", "shipyard", "research"]) {
+    const storeSource = await Bun.file(new URL("../src/backendDataStore.ts", import.meta.url)).text();
+    for (const endpoint of ["infrastructure", "shipyard", "research"]) {
       expect(source).toContain(`await convergeBackendIndexedResourceState(\n          () => backendData!.${endpoint}`);
     }
+    expect(source).toContain("backendData!.waitForStartedDefenseProduction(account, expectation)");
+    expect(storeSource).toContain("waitForStartedDefenseProductionState(");
+    expect(source).toContain("promoteBackendResourceState(snapshot.defense, { confirmedTransaction: true })");
     expect(source).toContain("promoteBackendResourceState(state, { confirmedTransaction: true })");
   });
 

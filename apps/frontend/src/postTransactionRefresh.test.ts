@@ -490,6 +490,36 @@ describe("post-transaction refresh reconciliation", () => {
     })).toBe(true);
   });
 
+  test("accepts the expected defense total when one item is split across active and backlog entries", () => {
+    const snapshot = startedDefenseProductionSnapshot();
+    const splitQueue = {
+      ...snapshot.defense.queue!,
+      quantity: 2,
+      backlog: [
+        {
+          ...snapshot.defense.queue!,
+          quantity: 4,
+          readyAt: "1770000120",
+        },
+        {
+          ...snapshot.defense.queue!,
+          itemId: 1,
+          quantity: 8,
+          readyAt: "1770000180",
+        },
+      ],
+    };
+
+    expect(isStartedDefenseProductionVisible({
+      defense: { ...snapshot.defense, queue: splitQueue },
+      queues: { ...snapshot.queues, defense: splitQueue },
+    }, {
+      itemId: 0,
+      planetId: "7",
+      quantity: 6,
+    })).toBe(true);
+  });
+
   test("polls until started ship production is visible on Shipyard or Overview state", async () => {
     expect(isStartedShipProductionVisible(staleShipProductionSnapshot(), {
       itemId: 0,

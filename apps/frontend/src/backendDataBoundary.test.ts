@@ -44,6 +44,21 @@ describe("frontend backend-data boundary", () => {
     expect(playerGuide).toContain("the same stored responses");
   });
 
+  test("keeps the write gate, write lifecycle, and defense reconciliation in the canonical store", async () => {
+    const appSource = await Bun.file(new URL("./PlayableMvpApp.tsx", import.meta.url)).text();
+    const storeSource = await Bun.file(new URL("./backendDataStore.ts", import.meta.url)).text();
+
+    expect(storeSource).toContain("private readonly transactionGate = createTransactionActionGate()");
+    expect(storeSource).toContain("runWriteTransaction<IndexedSnapshot = void>");
+    expect(storeSource).toContain("waitForStartedDefenseProduction(");
+    expect(appSource).toContain("backendData?.writeTransactionKey()");
+    expect(appSource).toContain("backendData.runWriteTransaction({");
+    expect(appSource).toContain("backendData!.waitForStartedDefenseProduction(account, expectation)");
+    expect(appSource).not.toContain("useRef(createTransactionActionGate())");
+    expect(appSource).not.toMatch(/useState<WriteTransactionState>/);
+    expect(appSource).not.toContain("waitForStartedDefenseProductionState(");
+  });
+
   test("migrated surfaces subscribe to canonical snapshots without response shadow state", async () => {
     const appSource = await Bun.file(new URL("./PlayableMvpApp.tsx", import.meta.url)).text();
     const galaxySource = await Bun.file(new URL("./components/GalaxyView.tsx", import.meta.url)).text();

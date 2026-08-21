@@ -257,8 +257,8 @@ export function isStartedDefenseProductionVisible(
     return false;
   }
 
-  return defenseQueueMatches(snapshot.defense.queue, expectation)
-    || defenseQueueMatches(snapshot.queues.defense, expectation);
+  return queuedDefenseProductionQuantity(snapshot.defense.queue, expectation.itemId) >= expectation.quantity
+    || queuedDefenseProductionQuantity(snapshot.queues.defense, expectation.itemId) >= expectation.quantity;
 }
 
 export function isStartedShipProductionVisible(
@@ -579,22 +579,20 @@ function resourceSnapshotKey(snapshot: ResourceSnapshotMetadata): string {
   ].join(":");
 }
 
-function defenseQueueMatches(
-  queue: ChainDefenseState["queue"] | PlayerQueuesResponse["defense"],
-  expectation: StartedDefenseProductionExpectation,
-): boolean {
-  return defenseQueueEntries(queue).some((entry) =>
-    entry.active
-      && entry.itemId === expectation.itemId
-      && (entry.quantity ?? 0) >= expectation.quantity
-  );
-}
-
 function defenseQueueEntries(
   queue: ChainDefenseState["queue"] | PlayerQueuesResponse["defense"],
 ): NonNullable<ChainDefenseState["queue"]>[] {
   if (!queue) return [];
   return [queue, ...(queue.backlog ?? [])];
+}
+
+export function queuedDefenseProductionQuantity(
+  queue: ChainDefenseState["queue"] | PlayerQueuesResponse["defense"],
+  itemId: number,
+): number {
+  return defenseQueueEntries(queue)
+    .filter((entry) => entry.active && entry.itemId === itemId)
+    .reduce((total, entry) => total + (entry.quantity ?? 0), 0);
 }
 
 function shipQueueMatches(
@@ -1088,9 +1086,7 @@ function matchingDefenseQueueQuantity(
   queue: ChainDefenseState["queue"] | PlayerQueuesResponse["defense"] | undefined,
   itemId: number,
 ): number {
-  return defenseQueueEntries(queue ?? null)
-    .filter((entry) => entry.active && entry.itemId === itemId)
-    .reduce((total, entry) => total + (entry.quantity ?? 0), 0);
+  return queuedDefenseProductionQuantity(queue ?? null, itemId);
 }
 
 function startedShipProductionTimeoutMessage(
