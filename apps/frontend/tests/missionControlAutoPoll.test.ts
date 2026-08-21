@@ -138,8 +138,10 @@ describe("VEY-KANEO-433 Mission Control auto-poll wiring", () => {
     // Periodic poll while the page is open, on the same cadence as the top bar, hidden-tab guarded.
     expect(source).toContain("shouldAutoPollMissionControlForPage(page)");
     expect(source).toContain("window.setInterval(pollMissionControl, TOP_BAR_RESOURCE_POLL_INTERVAL_MS)");
-    // The periodic poll refreshes both the lists and the open battle-report detail together.
-    expect(source).toContain("Promise.allSettled([refreshMissionControl(), refreshOpenMissionDetailSilently()]).finally(");
+    // The periodic poll refreshes both lists and open detail through the shared priority scheduler.
+    expect(source).toContain('coordinateRefresh("mission-control", "mission-control"');
+    expect(source).toContain("Promise.allSettled([refreshMissionControl(), refreshOpenMissionDetailSilently()])");
+    expect(source).not.toContain("let refreshInFlight = false;\n    const pollMissionControl");
     // VEY-KANEO-783: the shared Mission Control refresher also reloads canonical alliance
     // membership, so dissolve/leave/removal hides Alliance without reconnecting or reloading.
     const refresher = source.slice(
@@ -161,15 +163,17 @@ describe("VEY-KANEO-433 Mission Control auto-poll wiring", () => {
     // loot/report without a manual Refresh, so the open detail is re-fetched on the same cadence.
     expect(source).toContain("const refreshOpenMissionDetailSilently = useCallback(async () => {");
     // The silent refresher must NOT toggle the loading spinner (that is the manual Refresh's job),
-    // so it only ever touches setMissionDetail / setMissionDetailError, never setMissionDetailLoading.
-    const silent = source.slice(
-      source.indexOf("const refreshOpenMissionDetailSilently"),
-      source.indexOf("}, [apiBaseUrl, missionDetailId]);", source.indexOf("const refreshOpenMissionDetailSilently")),
-    );
+    // The canonical store owns the detail and freshness, so the silent path only refreshes the
+    // shared mission key and never toggles a component-local loading or response setter.
+    const silentStart = source.indexOf("const refreshOpenMissionDetailSilently");
+    const silent = source.slice(silentStart, source.indexOf("\n  useEffect(() =>", silentStart));
     expect(silent).not.toContain("setMissionDetailLoading");
-    expect(silent).toContain("setMissionDetail(detail)");
-    // The ETA-tightened one-shot pulls the open report too, so resolution lands promptly on it.
-    expect(source).toContain("void refreshOpenMissionDetailSilently();");
+    expect(silent).not.toContain("setMissionDetail(detail)");
+    expect(silent).toContain("backendData!.mission(missionDetailId");
+    expect(source).toContain("const missionDetailSnapshot = useBackendDataSnapshot<MissionDetailResponse>");
+    // The ETA-tightened transaction-priority refresh pulls the open report too.
+    expect(source).toContain('coordinateRefresh("mission-control-resolution", "transaction"');
+    expect(source).toContain("Promise.allSettled([refreshMissionControl(), refreshOpenMissionDetailSilently()])");
   });
 });
 
@@ -187,6 +191,6 @@ describe("VEY-KANEO-653 pending mission report polling", () => {
     const source = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.url)).text();
     expect(source).toContain("window.setInterval(pollPendingReport, MISSION_REPORT_PENDING_POLL_INTERVAL_MS)");
     expect(source).toContain("!shouldPollPendingMissionReport(missionDetail)");
-    expect(source).toContain("setMissionDetail(detail)");
+    expect(source).toContain('backendData!.mission(missionDetailId, { requestScope: "mission-detail-navigation" })');
   });
 });

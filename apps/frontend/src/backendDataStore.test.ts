@@ -76,4 +76,32 @@ describe("BackendDataStore", () => {
     })).resolves.toEqual({ level: 5 });
     expect(loads).toBe(2);
   });
+
+  test("aborts the real Galaxy transport when navigation cancels its surface scope", async () => {
+    const originalFetch = globalThis.fetch;
+    let transportSignal: AbortSignal | undefined;
+    let markTransportStarted!: () => void;
+    const transportStarted = new Promise<void>((resolve) => {
+      markTransportStarted = resolve;
+    });
+    globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
+      transportSignal = init?.signal ?? undefined;
+      markTransportStarted();
+      return new Promise<Response>((_resolve, reject) => {
+        transportSignal?.addEventListener("abort", () => reject(transportSignal?.reason), { once: true });
+      });
+    }) as typeof fetch;
+
+    try {
+      const store = new BackendDataStore("https://api.test");
+      const request = store.system(2, 44, { requestScope: "galaxy-view-navigation" });
+      await transportStarted;
+      store.cancelScope("galaxy-view-navigation");
+
+      await expect(request).rejects.toMatchObject({ name: "AbortError" });
+      expect(transportSignal?.aborted).toBe(true);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });

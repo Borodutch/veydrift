@@ -4,14 +4,14 @@ describe("VEY-KANEO-836 Mission Control wallet scope", () => {
   test("keeps active and past mission state outside the selected-planet cache", async () => {
     const appSource = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.url)).text();
     const stateStart = appSource.indexOf("// Mission Control is a commander-level surface.");
-    const stateEnd = appSource.indexOf("const [publicBattleReports", stateStart);
+    const stateEnd = appSource.indexOf("const publicBattleReportsSnapshot", stateStart);
     const missionState = appSource.slice(stateStart, stateEnd);
 
     expect(stateStart).toBeGreaterThan(-1);
-    expect(missionState).toContain("const [fleetVisibility, setFleetVisibility] = useState");
-    expect(missionState).toContain("const [missionArchive, setMissionArchive] = useState");
-    expect(missionState).toContain("const [allActiveMissions, setAllActiveMissions] = useState");
-    expect(missionState).toContain("const [globalMissionArchive, setGlobalMissionArchive] = useState");
+    expect(missionState).toContain("const fleetVisibilitySnapshot = useBackendDataSnapshot");
+    expect(missionState).toContain("const missionArchiveSnapshot = useBackendDataSnapshot");
+    expect(missionState).toContain("const allActiveMissionsSnapshot = useBackendDataSnapshot");
+    expect(missionState).toContain("const globalMissionArchiveSnapshot = useBackendDataSnapshot");
     expect(missionState).toContain("const [missionPlanetArchetypesByCoordinate, setMissionPlanetArchetypesByCoordinate] = useState");
     expect(missionState).not.toContain("activePlanetSection");
     expect(missionState).not.toContain("activePlanetId");

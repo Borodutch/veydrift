@@ -3338,6 +3338,36 @@ describe("walletFlow", () => {
     }
   });
 
+  test("times out a queued read from enqueue time without starting a fourth fetch", async () => {
+    const originalFetch = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = ((_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      calls += 1;
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+      });
+    }) as unknown as typeof fetch;
+
+    try {
+      const blockers = ["1", "2", "3"].map((planetId) => (
+        fetchInfrastructureState("https://api.example.test", account, planetId, { fresh: true, timeoutMs: 100 })
+      ));
+      for (let attempt = 0; attempt < 20 && calls < 3; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(calls).toBe(3);
+
+      await expect(fetchInfrastructureState(
+        "https://api.example.test",
+        account,
+        "4",
+        { fresh: true, timeoutMs: 5 },
+      )).rejects.toThrow("Timed out reading infrastructure");
+      expect(calls).toBe(3);
+      await Promise.allSettled(blockers);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   test("includes backend wallet API validation messages in shipyard errors", async () => {
     const originalFetch = globalThis.fetch;
 
@@ -3759,6 +3789,7 @@ describe("walletFlow", () => {
       expect(String(input)).toBe("https://api.example.test/highscores?limit=100");
       expect(init).toEqual({
         headers: { accept: "application/json" },
+        signal: expect.any(AbortSignal),
       });
       return new Response(JSON.stringify(rankings), {
         headers: { "content-type": "application/json" },
@@ -3805,6 +3836,7 @@ describe("walletFlow", () => {
       expect(String(input)).toBe(`https://api.example.test/highscores?limit=50&category=military&currentWallet=${account}&includeAttackProtection=true&page=2&pageSize=50`);
       expect(init).toEqual({
         headers: { accept: "application/json" },
+        signal: expect.any(AbortSignal),
       });
       return new Response(JSON.stringify(rankings), {
         headers: { "content-type": "application/json" },

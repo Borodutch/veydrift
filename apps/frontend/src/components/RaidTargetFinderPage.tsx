@@ -1,11 +1,20 @@
-import { useEffect, useMemo, useState } from "preact/hooks";
+import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Recycle, ShieldAlert, Swords } from "lucide-preact";
 import { planetImageForType } from "../data/mockUniverse";
 import { formatDurationUntil } from "../durationFormat";
 import { activeMissionsByPlanetId, planetMissionSubtext } from "../planetMissionSubtext";
 import type { Coordinates } from "../types";
-import { shortAddress, type ChainShipyardState, type DebrisTargetResponse, type FleetMissionSummary, type HighscoreEntry, type RiftFinderTargetResponse } from "../walletFlow";
+import {
+  shortAddress,
+  type ChainShipyardState,
+  type FleetMissionSummary,
+  type HighscoreResponse,
+  type RaidFinderDebrisResponse,
+  type RaidFinderRiftersResponse,
+  type RiftFinderTargetResponse,
+} from "../walletFlow";
 import { backendDataStoreFor } from "../backendDataStore";
+import { useBackendDataSnapshot } from "../useBackendDataSnapshot";
 import type { FleetMissionVisibilityResponse } from "../walletFlow";
 import {
   DEFAULT_DEBRIS_TARGET_SORT,
@@ -132,20 +141,41 @@ export function RaidTargetFinderPage({
   originCoordinates,
   shipyardState,
 }: RaidTargetFinderPageProps) {
-  const [entries, setEntries] = useState<HighscoreEntry[]>([]);
-  const [debrisEntries, setDebrisEntries] = useState<DebrisTargetResponse[]>([]);
-  const [rifterEntries, setRifterEntries] = useState<RiftFinderTargetResponse[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | undefined>();
-  const [debrisError, setDebrisError] = useState<string | undefined>();
-  const [rifterError, setRifterError] = useState<string | undefined>();
-  const [hasLoaded, setHasLoaded] = useState(false);
   const [mode, setMode] = useState<RaidFinderMode>("raids");
   const [pages, setPages] = useState<RaidFinderPages>({ raids: 1, debris: 1, rifters: 1 });
   const [persistedSettings] = useState(() => readPersistedRaidTargetSettings());
   const [filters, setFilters] = useState<RaidTargetFilters>(() => persistedSettings.filters);
   const [sort, setSort] = useState<RaidTargetSort>(() => persistedSettings.sort);
   const [debrisSort, setDebrisSort] = useState<DebrisTargetSort>(DEFAULT_DEBRIS_TARGET_SORT);
+  const backendData = useMemo(() => apiBaseUrl ? backendDataStoreFor(apiBaseUrl) : undefined, [apiBaseUrl]);
+  const highscoreOptions = useMemo(() => ({
+    category: "total" as const,
+    ...(currentWallet ? { currentWallet } : {}),
+    page: 1,
+    pageSize: raidTargetFinderPageSize,
+  }), [currentWallet]);
+  const targetOptions = useMemo(() => ({ limit: raidTargetFinderPageSize }), []);
+  const highscoreSnapshot = useBackendDataSnapshot<HighscoreResponse>(
+    backendData,
+    backendData?.key("highscores", highscoreOptions),
+  );
+  const debrisSnapshot = useBackendDataSnapshot<RaidFinderDebrisResponse>(
+    backendData,
+    backendData?.key("raid-finder-debris", targetOptions),
+  );
+  const rifterSnapshot = useBackendDataSnapshot<RaidFinderRiftersResponse>(
+    backendData,
+    backendData?.key("raid-finder-rifters", targetOptions),
+  );
+  const entries = highscoreSnapshot?.data?.rankings.total ?? [];
+  const debrisEntries = debrisSnapshot?.data?.targets ?? [];
+  const rifterEntries = rifterSnapshot?.data?.targets ?? [];
+  const loading = [highscoreSnapshot, debrisSnapshot, rifterSnapshot]
+    .some((snapshot) => snapshot?.freshness === "refreshing");
+  const error = apiBaseUrl ? highscoreSnapshot?.error : "Game API unavailable.";
+  const debrisError = apiBaseUrl ? debrisSnapshot?.error : "Game API unavailable.";
+  const rifterError = apiBaseUrl ? rifterSnapshot?.error : "Game API unavailable.";
+  const hasLoaded = highscoreSnapshot?.lastSuccessfulUpdate !== undefined;
   const showAllianceFilter = hasActiveAlliance(currentAllianceId);
   const effectiveFilters = useMemo(
     () => showAllianceFilter ? filters : { ...filters, hideSameAlliance: false },
@@ -158,56 +188,38 @@ export function RaidTargetFinderPage({
 
   const load = () => {
     if (!apiBaseUrl) {
-      setEntries([]);
-      setError("Game API unavailable.");
       return;
     }
 
-    setLoading(true);
-    setError(undefined);
-    setDebrisError(undefined);
-    setRifterError(undefined);
     setPages({ raids: 1, debris: 1, rifters: 1 });
     const backendData = backendDataStoreFor(apiBaseUrl);
+    backendData.cancelScope("raid-finder-page");
     const highscoresRequest = backendData.highscores({
       category: "total",
       ...(currentWallet ? { currentWallet } : {}),
       page: 1,
       pageSize: raidTargetFinderPageSize,
+      requestScope: "raid-finder-page",
     });
-    const debrisRequest = backendData.raidFinderDebris({ limit: raidTargetFinderPageSize });
-    const riftersRequest = backendData.raidFinderRifters({ limit: raidTargetFinderPageSize });
+    const debrisRequest = backendData.raidFinderDebris({ limit: raidTargetFinderPageSize, requestScope: "raid-finder-page" });
+    const riftersRequest = backendData.raidFinderRifters({ limit: raidTargetFinderPageSize, requestScope: "raid-finder-page" });
 
-    highscoresRequest
-      .then((response) => {
-        setEntries(response.rankings.total ?? []);
-        setHasLoaded(true);
-      })
-      .catch((nextError) => {
-        console.error(nextError);
-        setError(nextError instanceof Error ? nextError.message : "Raid targets could not be loaded.");
-      });
-    debrisRequest
-      .then((response) => setDebrisEntries(response.targets ?? []))
-      .catch((nextError) => {
-        console.error(nextError);
-        setDebrisEntries([]);
-        setDebrisError(nextError instanceof Error ? nextError.message : "Debris targets could not be loaded.");
-      });
-    riftersRequest
-      .then((response) => setRifterEntries(response.targets ?? []))
-      .catch((nextError) => {
-        console.error(nextError);
-        setRifterEntries([]);
-        setRifterError(nextError instanceof Error ? nextError.message : "Rift targets could not be loaded.");
-      });
-    void Promise.allSettled([highscoresRequest, debrisRequest, riftersRequest]).finally(() => setLoading(false));
+    void Promise.allSettled([highscoresRequest, debrisRequest, riftersRequest]).then((results) => {
+      for (const result of results) {
+        if (result.status === "rejected" && !(result.reason instanceof DOMException && result.reason.name === "AbortError")) {
+          console.error(result.reason);
+        }
+      }
+    });
   };
 
   useEffect(() => {
     load();
     // Reload whenever the API endpoint or viewer wallet changes so protection
     // and own-planet exclusion stay accurate.
+    return () => {
+      if (apiBaseUrl) backendDataStoreFor(apiBaseUrl).cancelScope("raid-finder-page");
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [apiBaseUrl, currentWallet]);
 

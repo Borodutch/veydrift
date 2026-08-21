@@ -14,6 +14,7 @@ import {
   fetchMission,
   fetchMoonState,
   fetchPlayerActivity,
+  playerActivityPresenceUrl,
   recordPlayerActivityPresence,
   fetchPlayerHighscore,
   fetchPlayerProfile,
@@ -71,11 +72,17 @@ import {
   type EntityMediaResponse,
 } from "./entityMedia";
 import type { Eip1193Provider } from "./walletFlow";
+import {
+  GameStateStore,
+  type GameStateEntry,
+  type GameStatePriority,
+} from "./gameStateStore";
 
 type WalletReadOptions = {
   source?: "indexed";
   timeoutMs?: number;
   fresh?: boolean;
+  signal?: AbortSignal;
 };
 
 type FleetMissionVisibilityOptions = WalletReadOptions & {
@@ -89,6 +96,7 @@ type FleetMissionArchiveOptions = {
   page?: number;
   pageSize?: number;
   planetId?: string;
+  requestScope?: string;
 };
 
 type GlobalMissionArchiveOptions = {
@@ -97,6 +105,7 @@ type GlobalMissionArchiveOptions = {
   page?: number;
   pageSize?: number;
   planetId?: string;
+  requestScope?: string;
   summaryOnly?: boolean;
 };
 
@@ -107,115 +116,238 @@ function cacheKey(kind: string, ...parts: unknown[]): string {
 /**
  * The single read-side boundary for the playable frontend.
  *
- * It owns only in-flight backend requests. Calling the same read again while
- * it is running returns the existing promise, so UI code never needs a
- * component-local request mutex or a second backend call for the same key.
- *
- * Consumer-visible data, loading/error status, and freshness belong to the
- * view projection that renders them. Planet surfaces use planetSectionStore;
- * other screens keep their existing local projections.
+ * It owns normalized response data, generations, freshness, failures, and the
+ * three-slot priority scheduler. Calling the same read again while it is
+ * running returns the existing promise. Screens may keep render projections,
+ * but this store is the authoritative runtime snapshot and rejects stale
+ * generations before they can replace newer shared state.
  */
 export class BackendDataStore {
-  private readonly inFlight = new Map<string, Promise<unknown>>();
+  private readonly state = new GameStateStore();
+  private contextScope = "public";
 
   constructor(readonly apiBaseUrl: string) {}
 
-  refresh<T>(key: string, load: () => Promise<T>, options: { dedupe?: boolean } = {}): Promise<T> {
-    if (options.dedupe === false) return Promise.resolve().then(load);
-    const running = this.inFlight.get(key);
-    if (running) return running as Promise<T>;
+  refresh<T>(
+    key: string,
+    load: (signal: AbortSignal) => Promise<T>,
+    options: {
+      dedupe?: boolean;
+      deadlineMs?: number | undefined;
+      planetId?: string | undefined;
+      priority?: GameStatePriority | undefined;
+      scope?: string | undefined;
+      wallet?: string | undefined;
+    } = {},
+  ): Promise<T> {
+    return this.state.read(key, load, {
+      ...options,
+      scope: options.scope ?? this.contextScope,
+    });
+  }
 
-    let request!: Promise<T>;
-    request = Promise.resolve()
-      .then(load)
-      .finally(() => {
-        if (this.inFlight.get(key) === request) this.inFlight.delete(key);
-      });
+  setContext(wallet?: string, planetId?: string): void {
+    const nextScope = cacheKey("context", wallet?.toLowerCase(), planetId);
+    if (nextScope === this.contextScope) return;
+    this.state.cancelScope(this.contextScope);
+    this.contextScope = nextScope;
+  }
 
-    this.inFlight.set(key, request);
-    return request;
+  cancelScope(scope: string): void {
+    this.state.cancelScope(scope);
+  }
+
+  subscribe(listener: () => void): () => void {
+    return this.state.subscribe(listener);
+  }
+
+  key(kind: string, ...parts: unknown[]): string {
+    return cacheKey(kind, ...parts);
+  }
+
+  snapshot<T>(key: string): GameStateEntry<T> | undefined {
+    return this.state.snapshot<T>(key);
+  }
+
+  value<T>(kind: string, ...parts: unknown[]): T | undefined {
+    return this.state.value<T>(cacheKey(kind, ...parts));
+  }
+
+  publish<T>(
+    kind: string,
+    data: T,
+    parts: unknown[] = [],
+    options: { planetId?: string | undefined; wallet?: string | undefined } = {},
+  ): void {
+    this.state.publish(cacheKey(kind, ...parts), data, options);
+  }
+
+  fail(kind: string, error: string | undefined, parts: unknown[] = []): void {
+    this.state.fail(cacheKey(kind, ...parts), error);
+  }
+
+  clear(kind: string, ...parts: unknown[]): void {
+    this.state.clear(cacheKey(kind, ...parts));
+  }
+
+  coordinateRefresh<T>(
+    key: string,
+    priority: GameStatePriority,
+    load: (signal: AbortSignal) => Promise<T>,
+    deadlineMs = 10_000,
+  ): Promise<T> {
+    return this.refresh(cacheKey("coordinated-refresh", key), load, {
+      deadlineMs,
+      priority,
+      scope: this.contextScope,
+    });
   }
 
   settlement(wallet: string, options: WalletReadOptions = {}): Promise<WalletSettlementResponse> {
-    const key = cacheKey("settlement", wallet, options);
-    return this.refresh(key, () => fetchWalletSettlement(this.apiBaseUrl, wallet, options), { dedupe: !options.fresh });
+    const key = cacheKey("settlement", wallet);
+    return this.refresh(key, (signal) => fetchWalletSettlement(this.apiBaseUrl, wallet, { ...options, signal }), {
+      dedupe: !options.fresh,
+      deadlineMs: options.timeoutMs,
+      priority: "selected-planet",
+      wallet,
+    });
   }
 
   overview(wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<WalletOverviewSnapshotResponse> {
-    const key = cacheKey("overview", wallet, planetId, options);
+    const key = cacheKey("overview", wallet, planetId);
     // `fresh` means bypass the short-lived value cache, not send duplicate identical requests when
     // the Overview, top bar, and selected-planet surface refresh in the same render turn.
-    return this.refresh(key, () => fetchWalletOverviewSnapshot(this.apiBaseUrl, wallet, planetId, options));
+    return this.refresh(key, (signal) => fetchWalletOverviewSnapshot(this.apiBaseUrl, wallet, planetId, { ...options, signal }), {
+      deadlineMs: options.timeoutMs,
+      planetId,
+      priority: "selected-planet",
+      wallet,
+    });
   }
 
   planets(wallet: string, options: WalletReadOptions = {}): Promise<WalletPlanetsResponse> {
-    const key = cacheKey("planets", wallet, options);
-    return this.refresh(key, () => fetchWalletPlanets(this.apiBaseUrl, wallet, options), { dedupe: !options.fresh });
+    const key = cacheKey("planets", wallet);
+    return this.refresh(key, (signal) => fetchWalletPlanets(this.apiBaseUrl, wallet, { ...options, signal }), {
+      dedupe: !options.fresh,
+      deadlineMs: options.timeoutMs,
+      priority: "selected-planet",
+      wallet,
+    });
   }
 
-  watchedPlanets(wallet: string, options: { page?: number; pageSize?: number } = {}): Promise<WatchedPlanetsResponse> {
-    const key = cacheKey("watched-planets", wallet, options);
-    return this.refresh(key, () => fetchWatchedPlanets(this.apiBaseUrl, wallet, options));
+  watchedPlanets(wallet: string, options: { page?: number; pageSize?: number; timeoutMs?: number } = {}): Promise<WatchedPlanetsResponse> {
+    const key = cacheKey("watched-planets", wallet, { page: options.page, pageSize: options.pageSize });
+    return this.refresh(key, (signal) => fetchWatchedPlanets(this.apiBaseUrl, wallet, { ...options, signal }), {
+      deadlineMs: options.timeoutMs ?? 25_000,
+      priority: "background",
+      wallet,
+    });
   }
 
   queues(wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<PlayerQueuesResponse> {
-    const key = cacheKey("queues", wallet, planetId, options);
-    return this.refresh(key, () => fetchWalletQueues(this.apiBaseUrl, wallet, planetId, options), { dedupe: !options.fresh });
+    const key = cacheKey("queues", wallet, planetId);
+    return this.refresh(key, (signal) => fetchWalletQueues(this.apiBaseUrl, wallet, planetId, { ...options, signal }), {
+      dedupe: !options.fresh,
+      deadlineMs: options.timeoutMs,
+      planetId,
+      priority: "selected-planet",
+      wallet,
+    });
   }
 
   infrastructure(wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<ChainInfrastructureState> {
-    const key = cacheKey("infrastructure", wallet, planetId, options);
-    return this.refresh(key, () => fetchInfrastructureState(this.apiBaseUrl, wallet, planetId, options), { dedupe: !options.fresh });
+    const key = cacheKey("infrastructure", wallet, planetId);
+    return this.refresh(key, (signal) => fetchInfrastructureState(this.apiBaseUrl, wallet, planetId, { ...options, signal }), {
+      dedupe: !options.fresh,
+      deadlineMs: options.timeoutMs,
+      planetId,
+      priority: "selected-planet",
+      wallet,
+    });
   }
 
   moon(wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<ChainMoonState> {
-    const key = cacheKey("moon", wallet, planetId, options);
-    return this.refresh(key, () => fetchMoonState(this.apiBaseUrl, wallet, planetId, options), { dedupe: !options.fresh });
+    const key = cacheKey("moon", wallet, planetId);
+    return this.refresh(key, (signal) => fetchMoonState(this.apiBaseUrl, wallet, planetId, { ...options, signal }), {
+      dedupe: !options.fresh,
+      deadlineMs: options.timeoutMs,
+      planetId,
+      priority: "selected-planet",
+      wallet,
+    });
   }
 
   shipyard(wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<ChainShipyardState> {
-    const key = cacheKey("shipyard", wallet, planetId, options);
-    return this.refresh(key, () => fetchShipyardState(this.apiBaseUrl, wallet, planetId, options), { dedupe: !options.fresh });
+    const key = cacheKey("shipyard", wallet, planetId);
+    return this.refresh(key, (signal) => fetchShipyardState(this.apiBaseUrl, wallet, planetId, { ...options, signal }), {
+      dedupe: !options.fresh,
+      deadlineMs: options.timeoutMs,
+      planetId,
+      priority: "selected-planet",
+      wallet,
+    });
   }
 
   defenses(wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<ChainDefenseState> {
-    const key = cacheKey("defenses", wallet, planetId, options);
-    return this.refresh(key, () => fetchDefenseState(this.apiBaseUrl, wallet, planetId, options), { dedupe: !options.fresh });
+    const key = cacheKey("defenses", wallet, planetId);
+    return this.refresh(key, (signal) => fetchDefenseState(this.apiBaseUrl, wallet, planetId, { ...options, signal }), {
+      dedupe: !options.fresh,
+      deadlineMs: options.timeoutMs,
+      planetId,
+      priority: "selected-planet",
+      wallet,
+    });
   }
 
   research(wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<ChainResearchState> {
-    const key = cacheKey("research", wallet, planetId, options);
-    return this.refresh(key, () => fetchResearchState(this.apiBaseUrl, wallet, planetId, options), { dedupe: !options.fresh });
+    const key = cacheKey("research", wallet, planetId);
+    return this.refresh(key, (signal) => fetchResearchState(this.apiBaseUrl, wallet, planetId, { ...options, signal }), {
+      dedupe: !options.fresh,
+      deadlineMs: options.timeoutMs,
+      planetId,
+      priority: "selected-planet",
+      wallet,
+    });
   }
 
-  rift(wallet: string, planetId?: string): Promise<ChainRiftState> {
+  rift(wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<ChainRiftState> {
     const key = cacheKey("rift", wallet, planetId);
-    return this.refresh(key, () => fetchRiftState(this.apiBaseUrl, wallet, planetId));
+    return this.refresh(key, (signal) => fetchRiftState(this.apiBaseUrl, wallet, planetId, { ...options, signal }), {
+      deadlineMs: options.timeoutMs,
+      planetId,
+      priority: "selected-planet",
+      wallet,
+    });
   }
 
   alliance(wallet: string, options: WalletReadOptions = {}): Promise<ChainAllianceState> {
-    const key = cacheKey("alliance", wallet, options);
-    return this.refresh(key, () => fetchAllianceState(this.apiBaseUrl, wallet, options), { dedupe: !options.fresh });
+    const key = cacheKey("alliance", wallet);
+    return this.refresh(key, (signal) => fetchAllianceState(this.apiBaseUrl, wallet, { ...options, signal }), {
+      dedupe: !options.fresh,
+      deadlineMs: options.timeoutMs,
+      priority: "background",
+      wallet,
+    });
   }
 
   profile(wallet: string): Promise<PlayerProfile> {
     const key = cacheKey("profile", wallet);
-    return this.refresh(key, () => fetchPlayerProfile(this.apiBaseUrl, wallet));
+    return this.refresh(key, (signal) => fetchPlayerProfile(this.apiBaseUrl, wallet, { signal }));
   }
 
   settlementFunding(wallet: string): Promise<SettlementFundingState> {
     const key = cacheKey("settlement-funding", wallet);
-    return this.refresh(key, () => fetchSettlementFundingState(this.apiBaseUrl, wallet));
+    return this.refresh(key, (signal) => fetchSettlementFundingState(this.apiBaseUrl, wallet, signal));
   }
 
   referralDashboard(wallet: string): Promise<ReferralDashboard> {
     const key = cacheKey("referral-dashboard", wallet);
-    return this.refresh(key, () => fetchReferralDashboard(this.apiBaseUrl, wallet));
+    return this.refresh(key, (signal) => fetchReferralDashboard(this.apiBaseUrl, wallet, signal));
   }
 
   referralHistory(wallet: string, page = 1, pageSize = 25): Promise<ReferralHistoryResponse> {
     const key = cacheKey("referral-history", wallet, page, pageSize);
-    return this.refresh(key, () => fetchReferralHistory(this.apiBaseUrl, wallet, page, pageSize));
+    return this.refresh(key, (signal) => fetchReferralHistory(this.apiBaseUrl, wallet, page, pageSize, signal));
   }
 
   playerActivity(
@@ -223,44 +355,68 @@ export class BackendDataStore {
     options: { includeProjected?: boolean; page?: number; pageSize?: number; since?: number } = {},
   ): Promise<PlayerActivityResponse> {
     const key = cacheKey("player-activity", wallet, options);
-    return this.refresh(key, () => fetchPlayerActivity(this.apiBaseUrl, wallet, options));
+    return this.refresh(key, (signal) => fetchPlayerActivity(this.apiBaseUrl, wallet, { ...options, signal }));
   }
 
   recordPlayerActivityPresence(wallet: string): Promise<PlayerActivityPresence> {
     return recordPlayerActivityPresence(this.apiBaseUrl, wallet);
   }
 
-  highscores(options: FetchHighscoreOptions | number = 100): Promise<HighscoreResponse> {
-    const key = cacheKey("highscores", options);
-    return this.refresh(key, () => fetchHighscores(this.apiBaseUrl, options));
+  recordPlayerActivityPresenceOnExit(wallet: string): void {
+    const url = playerActivityPresenceUrl(this.apiBaseUrl, wallet);
+    if (typeof navigator !== "undefined" && navigator.sendBeacon?.(url, "")) return;
+    void fetch(url, { keepalive: true, method: "POST" }).catch(() => {});
+  }
+
+  highscores(options: (FetchHighscoreOptions & { requestScope?: string }) | number = 100): Promise<HighscoreResponse> {
+    const { requestScope, ...fetchOptions } = typeof options === "number" ? { requestScope: undefined } : options;
+    const normalizedOptions = typeof options === "number" ? options : fetchOptions;
+    const key = cacheKey("highscores", normalizedOptions);
+    return this.refresh(key, (signal) => fetchHighscores(
+      this.apiBaseUrl,
+      typeof normalizedOptions === "number" ? normalizedOptions : { ...normalizedOptions, signal },
+    ), { priority: "background", scope: requestScope ?? this.contextScope });
   }
 
   playerHighscore(wallet: string): Promise<HighscoreEntry | null> {
     const key = cacheKey("player-highscore", wallet);
-    return this.refresh(key, () => fetchPlayerHighscore(this.apiBaseUrl, wallet));
+    return this.refresh(key, (signal) => fetchPlayerHighscore(this.apiBaseUrl, wallet, signal));
   }
 
-  raidFinderDebris(options: { limit?: number } = {}): Promise<RaidFinderDebrisResponse> {
-    const key = cacheKey("raid-finder-debris", options);
-    return this.refresh(key, () => fetchRaidFinderDebrisTargets(this.apiBaseUrl, options));
+  raidFinderDebris(options: { limit?: number; requestScope?: string } = {}): Promise<RaidFinderDebrisResponse> {
+    const { requestScope, ...fetchOptions } = options;
+    const key = cacheKey("raid-finder-debris", fetchOptions);
+    return this.refresh(key, (signal) => fetchRaidFinderDebrisTargets(this.apiBaseUrl, { ...fetchOptions, signal }), {
+      priority: "background",
+      scope: requestScope ?? this.contextScope,
+    });
   }
 
-  raidFinderRifters(options: { limit?: number } = {}): Promise<RaidFinderRiftersResponse> {
-    const key = cacheKey("raid-finder-rifters", options);
-    return this.refresh(key, () => fetchRaidFinderRifters(this.apiBaseUrl, options));
+  raidFinderRifters(options: { limit?: number; requestScope?: string } = {}): Promise<RaidFinderRiftersResponse> {
+    const { requestScope, ...fetchOptions } = options;
+    const key = cacheKey("raid-finder-rifters", fetchOptions);
+    return this.refresh(key, (signal) => fetchRaidFinderRifters(this.apiBaseUrl, { ...fetchOptions, signal }), {
+      priority: "background",
+      scope: requestScope ?? this.contextScope,
+    });
   }
 
-  system<T = unknown>(galaxy: number, system: number, options: { detail?: "full" } = {}): Promise<T> {
-    const key = cacheKey("system", galaxy, system, options);
-    return this.refresh(key, () => fetchSystemData(this.apiBaseUrl, galaxy, system, options) as Promise<T>);
+  system<T = unknown>(galaxy: number, system: number, options: { detail?: "full"; requestScope?: string } = {}): Promise<T> {
+    const { requestScope, ...fetchOptions } = options;
+    const key = cacheKey("system", galaxy, system, fetchOptions);
+    return this.refresh(key, (signal) => fetchSystemData(this.apiBaseUrl, galaxy, system, { ...fetchOptions, signal }) as Promise<T>, {
+      priority: "background",
+      scope: requestScope ?? this.contextScope,
+    });
   }
 
   randomnessReadiness<T = unknown>(): Promise<T> {
     const key = cacheKey("randomness-readiness");
-    return this.refresh(key, async () => {
+    return this.refresh(key, async (signal) => {
       const response = await fetch(`${this.apiBaseUrl}/randomness-readiness`, {
         cache: "no-store",
         headers: { accept: "application/json" },
+        signal,
       });
       const payload = await response.json() as T & { reasons?: unknown };
       if (!response.ok) {
@@ -275,46 +431,79 @@ export class BackendDataStore {
 
   runtimeConfig<T>(url: string): Promise<T> {
     const key = cacheKey("runtime-config", url);
-    return this.refresh(key, async () => {
+    return this.refresh(key, async (signal) => {
       const response = await fetch(url, {
         headers: { accept: "application/json" },
+        signal,
       });
       if (!response.ok) throw new Error(`Runtime config failed with ${response.status}`);
       return response.json() as Promise<T>;
     });
   }
 
-  attackProtection(wallet: string, targetPlanetId: string, targetIsMoon = false): Promise<AttackProtectionStatus> {
+  attackProtection(
+    wallet: string,
+    targetPlanetId: string,
+    targetIsMoon = false,
+    options: { requestScope?: string } = {},
+  ): Promise<AttackProtectionStatus> {
     const key = cacheKey("attack-protection", wallet, targetPlanetId, targetIsMoon);
-    return this.refresh(key, () => fetchAttackProtectionStatus(this.apiBaseUrl, wallet, targetPlanetId, targetIsMoon));
+    return this.refresh(
+      key,
+      (signal) => fetchAttackProtectionStatus(this.apiBaseUrl, wallet, targetPlanetId, targetIsMoon, signal),
+      { scope: options.requestScope ?? this.contextScope },
+    );
   }
 
   fleetVisibility(wallet: string, options: FleetMissionVisibilityOptions = {}): Promise<FleetMissionVisibilityResponse> {
-    const key = cacheKey("fleet-visibility", wallet, options);
-    return this.refresh(key, () => fetchFleetMissionVisibility(this.apiBaseUrl, wallet, options), { dedupe: !options.fresh });
+    const key = cacheKey("fleet-visibility", wallet, options.includeArchive);
+    return this.refresh(key, (signal) => fetchFleetMissionVisibility(this.apiBaseUrl, wallet, { ...options, signal }), {
+      dedupe: !options.fresh,
+      deadlineMs: options.timeoutMs,
+      priority: "mission-control",
+      wallet,
+    });
   }
 
   fleetArchive(wallet: string, options: FleetMissionArchiveOptions = {}): Promise<FleetMissionArchiveResponse> {
-    const key = cacheKey("fleet-archive", wallet, options);
-    return this.refresh(key, () => fetchFleetMissionArchive(this.apiBaseUrl, wallet, options), { dedupe: false });
+    const { requestScope, ...fetchOptions } = options;
+    const key = cacheKey("fleet-archive", wallet, fetchOptions);
+    return this.refresh(key, (signal) => fetchFleetMissionArchive(this.apiBaseUrl, wallet, { ...fetchOptions, signal }), {
+      dedupe: false,
+      priority: "mission-control",
+      scope: requestScope ?? this.contextScope,
+    });
   }
 
-  missileArchive(wallet: string, options: { page?: number; pageSize?: number; planetId?: string } = {}): Promise<MissileAttackArchiveResponse> {
-    const key = cacheKey("missile-archive", wallet, options);
-    return this.refresh(key, () => fetchMissileAttackArchive(this.apiBaseUrl, wallet, options), { dedupe: false });
+  missileArchive(
+    wallet: string,
+    options: { page?: number; pageSize?: number; planetId?: string; requestScope?: string } = {},
+  ): Promise<MissileAttackArchiveResponse> {
+    const { requestScope, ...fetchOptions } = options;
+    const key = cacheKey("missile-archive", wallet, fetchOptions);
+    return this.refresh(key, (signal) => fetchMissileAttackArchive(this.apiBaseUrl, wallet, { ...fetchOptions, signal }), {
+      dedupe: false,
+      priority: "mission-control",
+      scope: requestScope ?? this.contextScope,
+    });
   }
 
-  globalActiveMissions(): Promise<GlobalActiveMissionsResponse> {
+  globalActiveMissions(options: { requestScope?: string } = {}): Promise<GlobalActiveMissionsResponse> {
     const key = cacheKey("global-active-missions");
-    return this.refresh(key, () => fetchGlobalActiveMissions(this.apiBaseUrl), { dedupe: false });
+    return this.refresh(key, (signal) => fetchGlobalActiveMissions(this.apiBaseUrl, signal), {
+      dedupe: false,
+      priority: "mission-control",
+      scope: options.requestScope ?? this.contextScope,
+    });
   }
 
   landingActiveMissions<T>(): Promise<T[]> {
     const key = cacheKey("landing-active-missions");
-    return this.refresh(key, async () => {
+    return this.refresh(key, async (signal) => {
       const response = await fetch(`${this.apiBaseUrl}/missions?status=active&live=1`, {
         cache: "no-store",
         headers: { accept: "application/json" },
+        signal,
       });
       if (!response.ok) throw new Error("Failed to load landing missions");
       const data = await response.json() as { missions?: T[] };
@@ -324,7 +513,7 @@ export class BackendDataStore {
 
   landingHighscores<T>(): Promise<T[]> {
     const key = cacheKey("landing-highscores");
-    return this.refresh(key, async () => {
+    return this.refresh(key, async (signal) => {
       const params = new URLSearchParams({
         category: "total",
         live: "1",
@@ -334,6 +523,7 @@ export class BackendDataStore {
       const response = await fetch(`${this.apiBaseUrl}/highscores?${params.toString()}`, {
         cache: "no-store",
         headers: { accept: "application/json" },
+        signal,
       });
       if (!response.ok) throw new Error("Failed to load landing highscores");
       const data = await response.json() as { rankings?: { total?: T[] } };
@@ -342,23 +532,35 @@ export class BackendDataStore {
   }
 
   globalMissionArchive(options: GlobalMissionArchiveOptions = {}): Promise<GlobalMissionArchiveResponse> {
-    const key = cacheKey("global-mission-archive", options);
-    return this.refresh(key, () => fetchGlobalMissionArchive(this.apiBaseUrl, options), { dedupe: false });
+    const { requestScope, ...fetchOptions } = options;
+    const key = cacheKey("global-mission-archive", fetchOptions);
+    return this.refresh(key, (signal) => fetchGlobalMissionArchive(this.apiBaseUrl, { ...fetchOptions, signal }), {
+      dedupe: false,
+      priority: "mission-control",
+      scope: requestScope ?? this.contextScope,
+    });
   }
 
-  mission(missionId: string): Promise<MissionDetailResponse> {
+  mission(missionId: string, options: { requestScope?: string } = {}): Promise<MissionDetailResponse> {
     const key = cacheKey("mission", missionId);
-    return this.refresh(key, () => fetchMission(this.apiBaseUrl, missionId), { dedupe: false });
+    return this.refresh(key, (signal) => fetchMission(this.apiBaseUrl, missionId, signal), {
+      dedupe: false,
+      priority: "mission-control",
+      scope: options.requestScope ?? this.contextScope,
+    });
   }
 
-  battleReports(): Promise<BattleReport[]> {
+  battleReports(options: { requestScope?: string } = {}): Promise<BattleReport[]> {
     const key = cacheKey("battle-reports");
-    return this.refresh(key, () => fetchBattleReports(this.apiBaseUrl));
+    return this.refresh(key, (signal) => fetchBattleReports(this.apiBaseUrl, signal), {
+      priority: "mission-control",
+      scope: options.requestScope ?? this.contextScope,
+    });
   }
 
   entityMedia(entityKind: EntityMediaKind, entityId: string): Promise<EntityMediaResponse> {
     const key = cacheKey("entity-media", entityKind, entityId);
-    return this.refresh(key, () => fetchEntityMedia(this.apiBaseUrl, entityKind, entityId));
+    return this.refresh(key, (signal) => fetchEntityMedia(this.apiBaseUrl, entityKind, entityId, signal));
   }
 
   async saveEntityMedia(
@@ -380,7 +582,7 @@ export class BackendDataStore {
 
   burningChicken(owner: string, tokenId: string, config: BurningChickenConfig): Promise<unknown> {
     const key = cacheKey("burning-chicken", owner, tokenId, config.nftContractAddress);
-    return this.refresh(key, () => fetchBurningChickenForOwner(owner, tokenId, config));
+    return this.refresh(key, (signal) => fetchBurningChickenForOwner(owner, tokenId, config, signal));
   }
 
 }

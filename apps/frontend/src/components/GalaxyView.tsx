@@ -41,6 +41,7 @@ import { InlineStateNotice } from "./InlineStateNotice";
 import { WatchablePlanetRow, type PlanetMetaItem } from "./WatchablePlanetRow";
 import { galaxyActionIcon } from "./GalaxyActionIcon";
 import { backendDataStoreFor } from "../backendDataStore";
+import { useBackendDataSnapshot, useBackendDataSnapshots } from "../useBackendDataSnapshot";
 
 const SMALL_CARGO_SHIP_ID = 0;
 const GALAXY_SYSTEM_CACHE_TTL_MS = 2 * 60 * 1_000;
@@ -207,16 +208,18 @@ export function GalaxyView({
 }: Props) {
   const currentSystemKey = galaxySystemKey(galaxy, system);
   const cachedSystem = cachedGalaxySystemPlanets(apiBaseUrl, galaxy, system);
-  const [systemPlanets, setSystemPlanets] = useState<Planet[]>(() => cachedSystem ?? []);
-  const [attackProtection, setAttackProtection] = useState<Record<string, AttackProtectionStatus>>({});
-  const [moonAttackProtection, setMoonAttackProtection] = useState<Record<string, AttackProtectionStatus>>({});
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | undefined>();
-  const [reloadNonce, setReloadNonce] = useState(0);
-  const [loadedSystemKey, setLoadedSystemKey] = useState<string | undefined>(
-    () => cachedSystem ? currentSystemKey : undefined
+  const backendData = useMemo(() => backendDataStoreFor(apiBaseUrl), [apiBaseUrl]);
+  const systemSnapshotKey = backendData.key("system", galaxy, system, {});
+  const systemSnapshot = useBackendDataSnapshot<ApiSystemResponse>(backendData, systemSnapshotKey);
+  const systemPlanets = useMemo(
+    () => systemSnapshot?.data
+      ? planetsFromSystemResponse(systemSnapshot.data)
+      : (cachedSystem ?? []),
+    [cachedSystem, systemSnapshot?.data],
   );
-  const loadedSystemKeyRef = useRef<string | undefined>();
+  const loading = systemSnapshot?.freshness === "refreshing" || systemSnapshot === undefined;
+  const loadError = systemSnapshot?.error;
+  const [reloadNonce, setReloadNonce] = useState(0);
   const homeCoordsInSystem = homeCoords?.galaxy === galaxy && homeCoords.system === system
     ? homeCoords
     : undefined;
@@ -231,83 +234,66 @@ export function GalaxyView({
     () => withOwnedPlanetNames(withHomePlanet(systemPlanets, homePlanetOverride), ownedPlanetsInSystem),
     [homePlanetOverride, ownedPlanetsInSystem, systemPlanets]
   );
-  useEffect(() => {
-    loadedSystemKeyRef.current = loadedSystemKey;
-  }, [loadedSystemKey]);
+  const protectionRequests = useMemo(
+    () => galaxyAttackProtectionRequests(planets, account, homeCoords),
+    [account, homeCoords?.galaxy, homeCoords?.position, homeCoords?.system, planets],
+  );
+  const protectionKeys = useMemo(
+    () => protectionRequests.map(({ planetId, targetIsMoon }) => (
+      backendData.key("attack-protection", account!, planetId, targetIsMoon)
+    )),
+    [account, backendData, protectionRequests],
+  );
+  const protectionSnapshots = useBackendDataSnapshots<AttackProtectionStatus>(backendData, protectionKeys);
+  const { attackProtection, moonAttackProtection } = useMemo(() => {
+    const planet: Record<string, AttackProtectionStatus> = {};
+    const moon: Record<string, AttackProtectionStatus> = {};
+    protectionRequests.forEach((request, index) => {
+      const snapshot = protectionSnapshots.get(protectionKeys[index]!);
+      const status = snapshot?.data
+        ?? (snapshot?.error ? unavailableGalaxyAttackProtection(request.planetId) : undefined);
+      if (status) (request.targetIsMoon ? moon : planet)[request.planetId] = status;
+    });
+    return { attackProtection: planet, moonAttackProtection: moon };
+  }, [protectionKeys, protectionRequests, protectionSnapshots]);
+  const hasCurrentSystemData = Boolean(systemSnapshot?.data || cachedSystem);
 
   useEffect(() => {
-    let cancelled = false;
-    const canPreserveCurrentSystem = loadedSystemKeyRef.current === currentSystemKey;
-    const cachedPlanets = cachedGalaxySystemPlanets(apiBaseUrl, galaxy, system);
-
-    if (cachedPlanets && !canPreserveCurrentSystem) {
-      setSystemPlanets(cachedPlanets);
-      setLoadedSystemKey(currentSystemKey);
+    if (systemSnapshot?.data) {
+      rememberGalaxySystemPayload(apiBaseUrl, galaxy, system, systemSnapshot.data);
     }
+  }, [apiBaseUrl, galaxy, system, systemSnapshot?.data]);
 
-    setLoading(true);
-    setLoadError(undefined);
-
-    backendDataStoreFor(apiBaseUrl).system<ApiSystemResponse>(galaxy, system)
-      .then((payload) => {
-        if (cancelled) return;
-        const nextPlanets = rememberGalaxySystemPayload(apiBaseUrl, galaxy, system, payload);
-        setSystemPlanets(nextPlanets);
-        setLoadedSystemKey(currentSystemKey);
-      })
+  useEffect(() => {
+    backendData.cancelScope("galaxy-view-navigation");
+    backendData.system<ApiSystemResponse>(galaxy, system, { requestScope: "galaxy-view-navigation" })
       .catch((error) => {
-        if (!cancelled) {
-          console.error(error);
-          if (!canPreserveCurrentSystem) {
-            setSystemPlanets(planetsForFailedGalaxyLoad());
-            setLoadedSystemKey(undefined);
-          }
-          setLoadError(systemLoadErrorLabel(error));
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
+        if (!(error instanceof DOMException && error.name === "AbortError")) console.error(error);
       });
 
     return () => {
-      cancelled = true;
+      backendData.cancelScope("galaxy-view-navigation");
     };
-  }, [apiBaseUrl, currentSystemKey, galaxy, reloadNonce, system]);
+  }, [backendData, currentSystemKey, galaxy, reloadNonce, system]);
 
   useEffect(() => {
-    const protectionRequests = galaxyAttackProtectionRequests(planets, account, homeCoords);
-
-    if (protectionRequests.length === 0) {
-      setAttackProtection({});
-      setMoonAttackProtection({});
-      return;
-    }
-
-    let cancelled = false;
+    backendData.cancelScope("galaxy-view-protection");
+    if (protectionRequests.length === 0) return;
     Promise.allSettled(protectionRequests.map(({ planetId, targetIsMoon }) =>
-      backendDataStoreFor(apiBaseUrl).attackProtection(account!, planetId, targetIsMoon)
+      backendData.attackProtection(account!, planetId, targetIsMoon, { requestScope: "galaxy-view-protection" })
     ))
       .then((results) => {
-        if (!cancelled) {
-          const nextPlanetProtection: Record<string, AttackProtectionStatus> = {};
-          const nextMoonProtection: Record<string, AttackProtectionStatus> = {};
-          results.forEach((result, index) => {
-            const request = protectionRequests[index];
-            if (!request) return;
-            const status = result.status === "fulfilled"
-              ? result.value
-              : unavailableGalaxyAttackProtection(request.planetId);
-            (request.targetIsMoon ? nextMoonProtection : nextPlanetProtection)[request.planetId] = status;
-          });
-          setAttackProtection(nextPlanetProtection);
-          setMoonAttackProtection(nextMoonProtection);
+        for (const result of results) {
+          if (result.status === "rejected" && !(result.reason instanceof DOMException && result.reason.name === "AbortError")) {
+            console.error(result.reason);
+          }
         }
       });
 
     return () => {
-      cancelled = true;
+      backendData.cancelScope("galaxy-view-protection");
     };
-  }, [account, apiBaseUrl, homeCoords?.galaxy, homeCoords?.position, homeCoords?.system, planets]);
+  }, [account, backendData, protectionRequests]);
 
   const handlePrevSystem = () => {
     let newSystem = system - 1;
@@ -343,7 +329,6 @@ export function GalaxyView({
   for (const p of planets) planetByPosition.set(p.position, p);
 
   const positions = Array.from({ length: POSITION_COUNT }, (_, i) => i + 1);
-  const hasCurrentSystemData = loadedSystemKey === currentSystemKey;
   const showInitialGalaxyLoader = shouldShowGalaxyInitialLoader({ hasCurrentSystemData, loading });
   const showGalaxyRows = shouldShowGalaxyRows({ hasCurrentSystemData });
   const showInitialLoadError = Boolean(loadError && !hasCurrentSystemData && !loading);

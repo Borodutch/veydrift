@@ -1,0 +1,154 @@
+import { describe, expect, test } from "bun:test";
+import { BackendDataStore } from "./backendDataStore";
+import { GameStateReadScheduler, GameStateStore } from "./gameStateStore";
+import { backendDataProjection } from "./useBackendDataSnapshot";
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((nextResolve, nextReject) => {
+    resolve = nextResolve;
+    reject = nextReject;
+  });
+  return { promise, reject, resolve };
+}
+
+describe("GameStateStore", () => {
+  test("keeps the newest generation when responses resolve out of order", async () => {
+    const store = new GameStateStore();
+    const older = deferred<{ revision: number }>();
+    const newer = deferred<{ revision: number }>();
+
+    const olderRead = store.read("overview:wallet:1", () => older.promise, { dedupe: false });
+    const newerRead = store.read("overview:wallet:1", () => newer.promise, { dedupe: false });
+    newer.resolve({ revision: 2 });
+    await expect(newerRead).resolves.toEqual({ revision: 2 });
+    older.resolve({ revision: 1 });
+    await expect(olderRead).resolves.toEqual({ revision: 1 });
+
+    expect(store.snapshot<{ revision: number }>("overview:wallet:1")).toMatchObject({
+      data: { revision: 2 },
+      freshness: "fresh",
+      indexRevision: "2",
+    });
+  });
+
+  test("clearing an error does not invalidate an in-flight deduplicated read", async () => {
+    const store = new GameStateStore();
+    const response = deferred<{ level: number }>();
+    const firstRead = store.read("infrastructure:wallet:planet", () => response.promise);
+
+    store.fail("infrastructure:wallet:planet", undefined);
+    const deduplicatedRead = store.read("infrastructure:wallet:planet", () => {
+      throw new Error("deduplicated refresh must not start another transport");
+    });
+    response.resolve({ level: 4 });
+
+    await expect(Promise.all([firstRead, deduplicatedRead])).resolves.toEqual([
+      { level: 4 },
+      { level: 4 },
+    ]);
+    expect(store.snapshot<{ level: number }>("infrastructure:wallet:planet")).toMatchObject({
+      data: { level: 4 },
+      freshness: "fresh",
+    });
+  });
+
+  test("removes a cancelled navigation read before it consumes a queue slot", async () => {
+    const store = new GameStateStore(new GameStateReadScheduler(1));
+    const blocker = deferred<string>();
+    let navigationLoads = 0;
+    const active = store.read("active", () => blocker.promise, { scope: "stable", deadlineMs: 100 });
+    const navigation = store.read("galaxy:old", async () => {
+      navigationLoads += 1;
+      return "stale";
+    }, { scope: "navigation:old", deadlineMs: 100 });
+
+    store.cancelScope("navigation:old");
+    await expect(navigation).rejects.toMatchObject({ name: "AbortError" });
+    expect(navigationLoads).toBe(0);
+    blocker.resolve("ready");
+    await expect(active).resolves.toBe("ready");
+  });
+
+  test("enforces an end-to-end deadline while a read is queued", async () => {
+    const store = new GameStateStore(new GameStateReadScheduler(1));
+    const blocker = deferred<string>();
+    let queuedLoads = 0;
+    const active = store.read("active", () => blocker.promise, { deadlineMs: 100 });
+    const queued = store.read("queued", async () => {
+      queuedLoads += 1;
+      return "late";
+    }, { deadlineMs: 5 });
+
+    await expect(queued).rejects.toThrow("including queue time");
+    expect(queuedLoads).toBe(0);
+    expect(store.snapshot("queued")?.freshness).toBe("failed");
+    blocker.resolve("ready");
+    await active;
+  });
+
+  test("runs transaction convergence before selected and background refreshes", async () => {
+    const scheduler = new GameStateReadScheduler(1);
+    const blocker = deferred<string>();
+    const order: string[] = [];
+    const active = scheduler.schedule("active", () => blocker.promise, { deadlineMs: 100 }).promise;
+    const background = scheduler.schedule("background", async () => {
+      order.push("background");
+      return "background";
+    }, { priority: "background", deadlineMs: 100 }).promise;
+    const selected = scheduler.schedule("selected", async () => {
+      order.push("selected");
+      return "selected";
+    }, { priority: "selected-planet", deadlineMs: 100 }).promise;
+    const transaction = scheduler.schedule("transaction", async () => {
+      order.push("transaction");
+      return "transaction";
+    }, { priority: "transaction", deadlineMs: 100 }).promise;
+
+    blocker.resolve("ready");
+    await Promise.all([active, background, selected, transaction]);
+    expect(order).toEqual(["transaction", "selected", "background"]);
+  });
+
+  test("propagates shared refreshing, fresh, delayed, and failed entries through runtime surface consumers", async () => {
+    const store = new BackendDataStore("https://api.test");
+    const key = store.key("overview", "0xabc", "planet-7");
+    const topBar = backendDataProjection<{ revision: number }>(store, key);
+    const overview = backendDataProjection<{ revision: number }>(store, key);
+    const topBarObserved: string[] = [];
+    const overviewObserved: string[] = [];
+    const observe = (target: string[]) => (snapshot: ReturnType<typeof topBar.getSnapshot>) => {
+      target.push(`${snapshot?.freshness ?? "missing"}:${snapshot?.data?.revision ?? "none"}:${snapshot?.error ?? "none"}`);
+    };
+    const unsubscribeTopBar = topBar.subscribe(observe(topBarObserved));
+    const unsubscribeOverview = overview.subscribe(observe(overviewObserved));
+
+    const response = deferred<{ revision: number }>();
+    const refresh = store.refresh(key, () => response.promise);
+    response.resolve({ revision: 9 });
+    await refresh;
+    store.fail("overview", "Indexer is delayed.", ["0xabc", "planet-7"]);
+    store.clear("overview", "0xabc", "planet-7");
+    await expect(store.refresh(key, async () => {
+      throw new Error("Indexer is unavailable.");
+    })).rejects.toThrow("Indexer is unavailable.");
+
+    unsubscribeOverview();
+    unsubscribeTopBar();
+    expect(topBarObserved).toEqual(overviewObserved);
+    expect(topBarObserved).toContain("refreshing:none:none");
+    expect(topBarObserved).toContain("fresh:9:none");
+    expect(topBarObserved).toContain("delayed:9:Indexer is delayed.");
+    expect(topBarObserved).toContain("failed:none:Indexer is unavailable.");
+  });
+
+  test("exposes nested backend index revisions with the canonical snapshot", async () => {
+    const store = new GameStateStore();
+    await store.read("overview", async () => ({
+      fleetVisibility: { indexedRevision: "block:991:4" },
+      settlement: { planet: null },
+    }));
+    expect(store.snapshot("overview")?.indexRevision).toBe("block:991:4");
+  });
+});
