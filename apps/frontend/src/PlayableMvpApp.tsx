@@ -348,6 +348,7 @@ import {
   type QueueStateResponse,
   type WalletPlanetsResponse,
   type WalletProviderSource,
+  type WalletOverviewSnapshotResponse,
   type WatchedPlanetsResponse,
   type WalletSettlementResponse,
   type PaidAllianceBonusAmount,
