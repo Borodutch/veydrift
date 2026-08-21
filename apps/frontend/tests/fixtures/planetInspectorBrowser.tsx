@@ -172,6 +172,31 @@ globalThis.fetch = (async (input) => {
     return Response.json(walletOverview().settlement);
   }
 
+  if (url.pathname.endsWith(`/wallet/${account}/missions`)) {
+    return Response.json({
+      homePlanetId: ownedPlanets[0]!.planetId,
+      pagination: emptyArchivePagination(url),
+      rows: [],
+      wallet: account,
+    });
+  }
+
+  if (url.pathname.endsWith(`/wallet/${account}/missile-attacks`)) {
+    return Response.json({
+      homePlanetId: ownedPlanets[0]!.planetId,
+      pagination: emptyArchivePagination(url),
+      rows: [],
+      wallet: account,
+    });
+  }
+
+  if (url.pathname.endsWith("/missions") && url.searchParams.get("status") === "completed") {
+    return Response.json({
+      pagination: emptyArchivePagination(url),
+      rows: [],
+    });
+  }
+
   if (url.pathname.endsWith(`/wallet/${account}/profile`)) {
     return Response.json({
       description: null,
@@ -467,6 +492,17 @@ function incompleteWalletOverview() {
       ...overview.settlement,
       planet: null,
     },
+  };
+}
+
+function emptyArchivePagination(url: URL) {
+  return {
+    hasNextPage: false,
+    hasPreviousPage: false,
+    page: Number(url.searchParams.get("page") ?? 1),
+    pageSize: Number(url.searchParams.get("pageSize") ?? 25),
+    totalEntries: 0,
+    totalPages: 1,
   };
 }
 

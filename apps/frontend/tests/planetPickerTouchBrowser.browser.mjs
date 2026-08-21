@@ -28,6 +28,9 @@ let inspectorFixtureUrl;
 let pageTargetId;
 let server;
 
+const INSPECTOR_APP_READY_TIMEOUT_MS = 30_000;
+const INSPECTOR_PRELOAD_TIMEOUT_MS = 120_000;
+
 function delay(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
@@ -194,6 +197,46 @@ async function loadFixture() {
   await waitForExpression("window.touchProofReady === true");
 }
 
+async function preloadInspectorFixture() {
+  // A focused --test-name-pattern invocation reaches the inspector with a cold
+  // Vite module graph. Keep that one-time transform/crawl cost outside each
+  // scenario's app-ready deadline, and do not continue until the full fixture
+  // has executed in Chrome and Vite has finished processing its static imports.
+  // A fresh page target then discards this app instance and its input/timer
+  // state while retaining Vite's transformed graph and the browser cache.
+  await cdp.send("Emulation.setDeviceMetricsOverride", {
+    deviceScaleFactor: 1,
+    height: 900,
+    mobile: false,
+    width: 1280,
+  });
+  await cdp.send("Page.navigate", {
+    url: `${inspectorFixtureUrl}?${new URLSearchParams({
+      incompleteOverview: "true",
+      route: "/",
+      shell: "settlement",
+    })}`,
+  });
+  try {
+    await waitForExpression(
+      "window.inspectorProof?.appReady === true",
+      INSPECTOR_PRELOAD_TIMEOUT_MS,
+    );
+  } catch (error) {
+    const diagnostics = await evaluate(`({
+      body: document.body?.innerText.slice(0, 2000),
+      errors: window.inspectorProof?.errors,
+      path: location.pathname,
+      readyState: document.readyState,
+      resources: performance.getEntriesByType('resource').map((entry) => entry.name).slice(-20),
+      url: location.href,
+    })`).catch((diagnosticError) => ({ diagnosticError: diagnosticError.message }));
+    throw new Error(`${error.message}\nInspector preload diagnostics: ${JSON.stringify(diagnostics)}`);
+  }
+  await server.waitForRequestsIdle();
+  await replacePageTarget();
+}
+
 before(async () => {
   server = await createServer({
     logLevel: "error",
@@ -214,6 +257,7 @@ before(async () => {
 
   cdp = await launchChrome();
   await configurePageTarget(cdp);
+  await preloadInspectorFixture();
   await cdp.send("Emulation.setDeviceMetricsOverride", {
     deviceScaleFactor: 2,
     height: 720,
@@ -366,7 +410,10 @@ async function loadInspectorFixture(route, width, options = {}) {
     url: `${inspectorFixtureUrl}?${params}`,
   });
   try {
-    await waitForExpression("window.inspectorProof?.appReady === true", 10_000);
+    await waitForExpression(
+      "window.inspectorProof?.appReady === true",
+      INSPECTOR_APP_READY_TIMEOUT_MS,
+    );
   } catch (error) {
     const diagnostics = await evaluate(`({
       body: document.body?.innerText.slice(0, 2000),
@@ -952,21 +999,44 @@ test("mobile Defenses renders its indexed planet snapshot while wallet overview 
 
 for (const width of [390, 1280]) {
   test(`established-account gameplay routes escape an incomplete overview snapshot at ${width}px`, async () => {
+    await loadInspectorFixture("/", width, {
+      incompleteOverview: "true",
+      shell: "settlement",
+      waitForPlanetSelectors: "false",
+    });
+    await waitForExpression(`location.pathname === '/'
+      && document.querySelector('main')?.textContent?.includes('Syncing planetfall') === false
+      && document.querySelector('main')?.textContent?.includes('Owned Alpha') === true
+      && document.querySelector('[data-resource-status="ready"] summary[title^="Metal:"]') !== null
+      && window.inspectorProof.requests.some((request) => request.includes('/overview'))
+      && window.inspectorProof.requests.some((request) => request.includes('/settlement'))`);
+
+    const initialSnapshot = await evaluate(`({
+      overviewRequests: window.inspectorProof.requests.filter((request) => request.includes('/overview')).length,
+      resourceValue: document.querySelector('[data-resource-status="ready"] summary[title^="Metal:"] [data-tick-value]')?.dataset.tickValue ?? null,
+    })`);
     const routes = [
-      { path: "/", ready: "document.querySelector('main')?.textContent?.includes('Owned Alpha') === true" },
-      { path: "/mission-control", ready: "document.querySelector('main [data-mission-control-page]') !== null" },
+      {
+        path: "/mission-control",
+        ready: `document.querySelector('[data-past-tab-panel="mine"]')?.textContent?.includes('No completed missions are visible for this wallet yet.') === true
+          && document.querySelector('[data-past-tab-button="all"]')?.textContent?.includes('All (0)') === true
+          && document.querySelector('main')?.textContent?.includes('Loading completed missions…') === false`,
+      },
       { path: "/galaxy", ready: "document.querySelector('main h2')?.textContent === 'Galaxy'" },
     ];
 
     for (const route of routes) {
-      await loadInspectorFixture(route.path, width, {
-        incompleteOverview: "true",
-        shell: "settlement",
-        waitForPlanetSelectors: "false",
-      });
+      if (width < 768) {
+        await clickExpressionWithTrustedPointer("document.querySelector('summary[aria-label=\"Open navigation menu\"]')", "touch");
+        await waitForExpression("document.querySelector('details:has(#mobile-navigation-menu)')?.open === true");
+        await clickExpressionWithTrustedPointer(`document.querySelector('#mobile-navigation-menu a[href="${route.path}"]')`, "touch");
+      } else {
+        await clickExpressionWithTrustedPointer(`document.querySelector('nav.hidden a[href="${route.path}"]')`);
+      }
       try {
         await waitForExpression(`location.pathname === '${route.path}'
           && document.querySelector('main')?.textContent?.includes('Syncing planetfall') === false
+          && document.querySelector('[data-resource-status="ready"] summary[title^="Metal:"] [data-tick-value]')?.dataset.tickValue === ${JSON.stringify(initialSnapshot.resourceValue)}
           && ${route.ready}`);
       } catch (error) {
         const diagnostics = await evaluate(`({
@@ -981,11 +1051,21 @@ for (const width of [390, 1280]) {
 
     const rendered = await evaluate(`({
       errors: window.inspectorProof.errors,
+      overviewRequests: window.inspectorProof.requests.filter((request) => request.includes('/overview')).length,
       requests: window.inspectorProof.requests,
+      resourceStatus: document.querySelector('[data-resource-status]')?.getAttribute('data-resource-status') ?? null,
+      resourceTitle: document.querySelector('[data-resource-status] summary[title^="Metal:"]')?.title ?? null,
+      resourceValue: document.querySelector('[data-resource-status] summary[title^="Metal:"] [data-tick-value]')?.dataset.tickValue ?? null,
       syncingPlanetfall: document.querySelector('main')?.textContent?.includes('Syncing planetfall') ?? false,
     })`);
-    assert.ok(rendered.requests.some((request) => request.includes('/overview')), JSON.stringify(rendered.requests));
+    assert.equal(rendered.overviewRequests, initialSnapshot.overviewRequests, JSON.stringify(rendered.requests));
     assert.ok(rendered.requests.some((request) => request.includes('/settlement')), JSON.stringify(rendered.requests));
+    assert.ok(rendered.requests.some((request) => request.includes('/wallet/0x1111111111111111111111111111111111111111/missions?status=completed')), JSON.stringify(rendered.requests));
+    assert.ok(rendered.requests.some((request) => request.includes('/wallet/0x1111111111111111111111111111111111111111/missile-attacks?')), JSON.stringify(rendered.requests));
+    assert.ok(rendered.requests.some((request) => request.includes('/missions?status=completed') && request.includes('summaryOnly=true')), JSON.stringify(rendered.requests));
+    assert.equal(rendered.resourceStatus, "ready");
+    assert.match(rendered.resourceTitle ?? "", /^Metal: 10,313\b/);
+    assert.equal(rendered.resourceValue, initialSnapshot.resourceValue);
     assert.equal(rendered.syncingPlanetfall, false);
     assert.deepEqual(rendered.errors, []);
   });

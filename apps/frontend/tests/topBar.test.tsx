@@ -3,6 +3,14 @@ import type { ComponentChildren, VNode } from "preact";
 import { TopBar } from "../src/components/TopBar";
 
 describe("TopBar", () => {
+  test("exposes the canonical resource freshness rendered by the shell", () => {
+    const readyTopBar = renderTopBar();
+    const loadingTopBar = renderTopBar({ resourceStatus: "loading" });
+
+    expect((readyTopBar as VNode).props?.["data-resource-status"]).toBe("ready");
+    expect((loadingTopBar as VNode).props?.["data-resource-status"]).toBe("loading");
+  });
+
   test("gives mobile resources a full-width row separate from the icon row", () => {
     const topBar = renderTopBar();
     const nodes = elementNodes(topBar);
