@@ -309,6 +309,27 @@ globalThis.fetch = (async (input) => {
     });
   }
 
+  if (url.pathname.endsWith(`/wallet/${account}/research`)) {
+    return Response.json({
+      homePlanetId: "owned-a",
+      planetId: "owned-a",
+      queue: null,
+      researchAvailable: true,
+      researchLabLevel: 1,
+      researchNetworkLabLevels: [],
+      resources: { crystal: "3873", deuterium: "102", metal: "10313" },
+      resourcesAsOfNow: { crystal: "3873", deuterium: "102", metal: "10313" },
+      technologies: [{
+        cost: { crystal: "400", deuterium: "200", metal: "800" },
+        durationSeconds: 60,
+        id: 0,
+        level: 1,
+      }],
+      technologyLevels: { "0": 1 },
+      wallet: account,
+    });
+  }
+
   if (url.pathname.endsWith(`/wallet/${account}/watched-planets`)) {
     return Response.json({
       pagination: { page: 1, pageSize: 25, total: 0, totalPages: 1 },

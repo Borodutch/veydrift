@@ -4864,7 +4864,7 @@ export function PlayableMvpApp({
         console.error(moonResult.reason);
       }
     }
-  }, [account, activePlanetId, apiBaseUrl, infrastructureChainState, moonState, promoteBackendResourceState]);
+  }, [account, activePlanetId, apiBaseUrl, backendData, promoteBackendResourceState]);
 
   const refreshLiveInfrastructureState = useCallback(async () => {
     const requestId = beginRefreshRequest(infrastructureRefreshGate);
@@ -4885,7 +4885,7 @@ export function PlayableMvpApp({
       if (!canApplyRefreshRequest(infrastructureRefreshGate, requestId)) throw error;
       throw error;
     }
-  }, [account, activePlanetId, apiBaseUrl, infrastructureChainState, promoteBackendResourceState]);
+  }, [account, activePlanetId, apiBaseUrl, backendData, promoteBackendResourceState]);
 
   const refreshDefenseState = useCallback(async () => {
     const requestId = beginRefreshRequest(defenseRefreshGate);
@@ -4906,7 +4906,7 @@ export function PlayableMvpApp({
       }
       return null;
     }
-  }, [account, activePlanetId, apiBaseUrl, promoteBackendResourceState]);
+  }, [account, activePlanetId, apiBaseUrl, backendData, promoteBackendResourceState]);
 
   const refreshAllianceState = useCallback(() => {
     if (!apiBaseUrl || !account) {
@@ -4919,7 +4919,7 @@ export function PlayableMvpApp({
         console.error(error);
         return null;
       });
-  }, [account, apiBaseUrl]);
+  }, [account, apiBaseUrl, backendData]);
 
   const refreshShipyardState = useCallback(async (options: { clearCachedState?: boolean } = {}) => {
     const requestId = beginRefreshRequest(shipyardRefreshGate);
@@ -4943,7 +4943,7 @@ export function PlayableMvpApp({
       }
       return null;
     }
-  }, [account, activePlanetId, apiBaseUrl, promoteBackendResourceState]);
+  }, [account, activePlanetId, apiBaseUrl, backendData, promoteBackendResourceState]);
 
   const refreshResearchState = useCallback(async () => {
     const requestId = beginRefreshRequest(researchRefreshGate);
@@ -4964,7 +4964,7 @@ export function PlayableMvpApp({
       }
       return null;
     }
-  }, [account, activePlanetId, apiBaseUrl, promoteBackendResourceState, researchState]);
+  }, [account, activePlanetId, apiBaseUrl, backendData, promoteBackendResourceState]);
 
   const refreshRiftState = useCallback(async () => {
     const requestId = beginRefreshRequest(riftRefreshGate);
@@ -4984,7 +4984,7 @@ export function PlayableMvpApp({
       }
       return null;
     }
-  }, [account, activePlanetId, apiBaseUrl, onChainQueues?.research]);
+  }, [account, activePlanetId, apiBaseUrl, backendData]);
 
   const refreshOnChainState = useCallback(async (
     renameExpectation?: { planetId: string; name: string },

@@ -922,6 +922,22 @@ for (const width of [390, 1280]) {
       && document.querySelector('main [data-production-catalog]') !== null`);
   });
 
+  test(`direct Research load settles its canonical state once at ${width}px`, async () => {
+    await loadInspectorFixture("/research", width, { shell: "settlement" });
+    await waitForExpression(`location.pathname === '/research'
+      && document.querySelector('main')?.textContent?.includes('Loading research state') === false
+      && document.querySelector('main')?.textContent?.includes('Energy Technology') === true`);
+
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    const rendered = await evaluate(`({
+      errors: window.inspectorProof.errors,
+      researchRequests: window.inspectorProof.requests.filter((request) => request.includes('/research')).length,
+      text: document.querySelector('main')?.textContent?.replace(/\\s+/g, ' ').trim(),
+    })`);
+    assert.equal(rendered.researchRequests, 1, JSON.stringify(rendered));
+    assert.deepEqual(rendered.errors, []);
+  });
+
   for (const route of ["infrastructure", "defenses"]) {
     test(`direct ${route} load hydrates game content at ${width}px`, async () => {
       await loadInspectorFixture(`/${route}`, width, { shell: "settlement" });
@@ -931,6 +947,7 @@ for (const width of [390, 1280]) {
         && document.querySelector('main')?.textContent?.includes('${route === "infrastructure" ? "Metal Mine" : "Rocket Launcher"}') === true
         && document.querySelector('main')?.textContent?.includes('OPEN THE BOX') === false`);
       if (route === "infrastructure") {
+        await new Promise((resolve) => setTimeout(resolve, 250));
         const rendered = await evaluate(`({
           bodyText: document.body.textContent?.replace(/\\s+/g, ' ').trim(),
           errors: window.inspectorProof.errors,
@@ -939,6 +956,14 @@ for (const width of [390, 1280]) {
         })`);
         assert.match(rendered.mainText ?? "", /Level 4/);
         assert.match(rendered.bodyText ?? "", /\+620\/h/);
+        assert.ok(
+          rendered.requests.filter((request) => request.includes('/infrastructure')).length <= 2,
+          JSON.stringify(rendered),
+        );
+        assert.ok(
+          rendered.requests.filter((request) => request.includes('/moon')).length <= 2,
+          JSON.stringify(rendered),
+        );
         assert.deepEqual(rendered.errors, []);
       }
     });

@@ -968,11 +968,11 @@ export function researchActionStatus({
   const reason = actionPending
     ? actionPendingLabel ?? "Awaiting wallet"
     : loading
-      ? "Reading on-chain research state"
+      ? "Loading research state"
       : error
         ? "Research state unavailable"
         : !researchState
-          ? "Reading on-chain research state"
+          ? "Research state not loaded"
           : researchState.researchAvailable === false
           ? researchState.unavailableReason ?? "Research unavailable on this contract"
           : !researchState.homePlanetId
