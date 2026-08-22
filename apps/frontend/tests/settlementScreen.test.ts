@@ -45,12 +45,27 @@ describe("settlement screen mode", () => {
     expect(shouldShowPublicPlayableApp({ kind: "no-wallet" }, { kind: "idle" })).toBe(false);
     expect(shouldShowPublicPlayableApp(connected, { kind: "not-settled" })).toBe(false);
     expect(shouldShowPublicPlayableApp(connected, { kind: "checking" })).toBe(false);
-    expect(shouldShowPublicPlayableApp(connected, { kind: "already-settled", planet: {
-      label: "Prime",
-      source: "chain",
-    } })).toBe(false);
-    expect(shouldShowMiniAppWalletError(true, { kind: "error", message: "Farcaster Mini App wallet setup failed (FARCASTER_BASE_SEPOLIA_UNSUPPORTED)." })).toBe(true);
-    expect(shouldShowMiniAppWalletError(false, { kind: "error", message: "Farcaster Mini App wallet setup failed (FARCASTER_BASE_SEPOLIA_UNSUPPORTED)." })).toBe(false);
+    expect(
+      shouldShowPublicPlayableApp(connected, {
+        kind: "already-settled",
+        planet: {
+          label: "Prime",
+          source: "chain",
+        },
+      }),
+    ).toBe(false);
+    expect(
+      shouldShowMiniAppWalletError(true, {
+        kind: "error",
+        message: "Farcaster Mini App wallet setup failed (FARCASTER_BASE_SEPOLIA_UNSUPPORTED).",
+      }),
+    ).toBe(true);
+    expect(
+      shouldShowMiniAppWalletError(false, {
+        kind: "error",
+        message: "Farcaster Mini App wallet setup failed (FARCASTER_BASE_SEPOLIA_UNSUPPORTED).",
+      }),
+    ).toBe(false);
   });
 
   test("routes the landing through the retro CD box pre-play gate before playable state", async () => {
@@ -67,9 +82,9 @@ describe("settlement screen mode", () => {
     expect(settlementSource).toContain("heroSupport={<SettlementSupportLinks />}");
     expect(settlementSource).not.toContain("<SettlementScanner");
     expect(landingSource).toContain("<RetroCdBoxHero");
-    expect(landingSource).toContain("ariaLabel=\"Veydrift landing\"");
-    expect(landingSource).toContain("stage=\"section\"");
-    expect(landingSource).toContain("id=\"claim\"");
+    expect(landingSource).toContain('ariaLabel="Veydrift landing"');
+    expect(landingSource).toContain('stage="section"');
+    expect(landingSource).toContain('id="claim"');
     expect(heroSource).toContain("retro-cd-case");
     expect(heroSource).toContain("retro-cd-front");
     expect(heroSource).toContain("retro-cd-back");
@@ -84,13 +99,11 @@ describe("settlement screen mode", () => {
   test("fails closed when a canonical alliance invite is incomplete or mismatched", async () => {
     const settlementSource = await Bun.file(new URL("../src/FirstPlanetSettlementApp.tsx", import.meta.url)).text();
 
-    expect(settlementSource).toContain('const invalidPaidAllianceInvite = paidAllianceInviteLocation.kind === "invalid";');
+    expect(settlementSource).toContain('paidAllianceInviteLocation.kind === "invalid"');
     expect(settlementSource).toContain("invalidPaidAllianceInvite ? (");
     expect(settlementSource).toContain('title="Invalid alliance invite"');
     expect(settlementSource).toContain("This link is incomplete or does not match its private invite key.");
-    expect(settlementSource.indexOf('title="Invalid alliance invite"')).toBeLessThan(
-      settlementSource.indexOf("<FlowBody", settlementSource.indexOf('title="Invalid alliance invite"')),
-    );
+    expect(settlementSource.indexOf('title="Invalid alliance invite"')).toBeLessThan(settlementSource.indexOf("<FlowBody", settlementSource.indexOf('title="Invalid alliance invite"')));
   });
 
   test("uses the beta cover badge without the retired CD cover labels", async () => {
@@ -143,7 +156,12 @@ describe("settlement screen mode", () => {
 
     expect(preSettlementMode({ account: connected.account, chainId: "0x1", kind: "wrong-network" }, { kind: "idle" })).toBe("wrong-network");
     expect(preSettlementMode(connected, pending)).toBe("pending");
-    expect(preSettlementMode(connected, { kind: "error", message: "RPC unavailable" })).toBe("error");
+    expect(
+      preSettlementMode(connected, {
+        kind: "error",
+        message: "RPC unavailable",
+      }),
+    ).toBe("error");
     expect(preSettlementMode({ kind: "disconnected" }, { kind: "error", message: "Wallet read timed out" })).toBe("error");
   });
 
@@ -161,47 +179,53 @@ describe("settlement screen mode", () => {
   });
 
   test("keeps true wallet settlement failures wallet-specific", () => {
-    expect(settlementErrorStateMessage({
-      kind: "error",
-      message: "Timed out reading accounts from the wallet. Unlock or reconnect your wallet, then retry.",
-    })).toEqual({
+    expect(
+      settlementErrorStateMessage({
+        kind: "error",
+        message: "Timed out reading accounts from the wallet. Unlock or reconnect your wallet, then retry.",
+      }),
+    ).toEqual({
       body: "Timed out reading accounts from the wallet. Unlock or reconnect your wallet, then retry.",
       title: "Wallet error",
     });
-    expect(settlementErrorStateMessage({
-      kind: "rejected",
-      message: "Wallet connection was rejected.",
-    })).toEqual({
+    expect(
+      settlementErrorStateMessage({
+        kind: "rejected",
+        message: "Wallet connection was rejected.",
+      }),
+    ).toEqual({
       body: "Wallet connection was rejected.",
       title: "Request rejected",
     });
   });
 
   test("maps indexed API settlement state to playable state without wallet eth_call reads", () => {
-    expect(indexedSettlementState({
-      wallet: connected.account,
-      hasFirstPlanet: true,
-      homePlanetId: "7",
-      planet: {
-        planetId: "7",
-        owner: connected.account,
-        name: "Prime",
-        galaxy: 2,
-        system: 44,
-        position: 9,
-        fields: 211,
-        temperature: -8,
-        metalMultiplierBps: 10_000,
-        crystalMultiplierBps: 10_000,
-        deuteriumMultiplierBps: 10_000,
-        lastSettledAt: "1770000000",
-        resources: {
-          metal: "5000",
-          crystal: "4900",
-          deuterium: "4800",
+    expect(
+      indexedSettlementState({
+        wallet: connected.account,
+        hasFirstPlanet: true,
+        homePlanetId: "7",
+        planet: {
+          planetId: "7",
+          owner: connected.account,
+          name: "Prime",
+          galaxy: 2,
+          system: 44,
+          position: 9,
+          fields: 211,
+          temperature: -8,
+          metalMultiplierBps: 10_000,
+          crystalMultiplierBps: 10_000,
+          deuteriumMultiplierBps: 10_000,
+          lastSettledAt: "1770000000",
+          resources: {
+            metal: "5000",
+            crystal: "4900",
+            deuterium: "4800",
+          },
         },
-      },
-    })).toEqual({
+      }),
+    ).toEqual({
       kind: "settled",
       planet: {
         label: "Prime",
@@ -219,94 +243,108 @@ describe("settlement screen mode", () => {
       },
     });
 
-    expect(indexedSettlementState({
-      wallet: connected.account,
-      hasFirstPlanet: false,
-      homePlanetId: null,
-      planet: null,
-    })).toEqual({ kind: "not-settled" });
+    expect(
+      indexedSettlementState({
+        wallet: connected.account,
+        hasFirstPlanet: false,
+        homePlanetId: null,
+        planet: null,
+      }),
+    ).toEqual({ kind: "not-settled" });
   });
 
   test("keeps post-settlement zero-resource placeholders in indexing state", () => {
-    expect(indexedSettlementState({
-      wallet: connected.account,
-      hasFirstPlanet: true,
-      homePlanetId: "7",
-      planet: {
-        planetId: "7",
-        owner: connected.account,
-        name: null,
-        galaxy: 2,
-        system: 44,
-        position: 9,
-        fields: 211,
-        temperature: -8,
-        metalMultiplierBps: 10_000,
-        crystalMultiplierBps: 10_000,
-        deuteriumMultiplierBps: 10_000,
-        lastSettledAt: "0",
-        resources: {
-          metal: "0",
-          crystal: "0",
-          deuterium: "0",
+    expect(
+      indexedSettlementState({
+        wallet: connected.account,
+        hasFirstPlanet: true,
+        homePlanetId: "7",
+        planet: {
+          planetId: "7",
+          owner: connected.account,
+          name: null,
+          galaxy: 2,
+          system: 44,
+          position: 9,
+          fields: 211,
+          temperature: -8,
+          metalMultiplierBps: 10_000,
+          crystalMultiplierBps: 10_000,
+          deuteriumMultiplierBps: 10_000,
+          lastSettledAt: "0",
+          resources: {
+            metal: "0",
+            crystal: "0",
+            deuterium: "0",
+          },
         },
-      },
-    })).toEqual({ kind: "indexing" });
+      }),
+    ).toEqual({ kind: "indexing" });
   });
 
   test("keeps stale zero-resource indexed settlement in indexing state", () => {
-    expect(indexedSettlementState({
-      wallet: connected.account,
-      hasFirstPlanet: true,
-      homePlanetId: "7",
-      stale: true,
-      indexer: {
-        safeToServeIndexedState: false,
-        staleReason: "planet_resources_pending:7",
-      },
-      planet: {
-        planetId: "7",
-        owner: connected.account,
-        name: null,
-        galaxy: 2,
-        system: 44,
-        position: 9,
-        fields: 211,
-        temperature: -8,
-        metalMultiplierBps: 10_000,
-        crystalMultiplierBps: 10_000,
-        deuteriumMultiplierBps: 10_000,
-        lastSettledAt: "0",
-        resources: {
-          metal: "0",
-          crystal: "0",
-          deuterium: "0",
+    expect(
+      indexedSettlementState({
+        wallet: connected.account,
+        hasFirstPlanet: true,
+        homePlanetId: "7",
+        stale: true,
+        indexer: {
+          safeToServeIndexedState: false,
+          staleReason: "planet_resources_pending:7",
         },
-      },
-    })).toEqual({ kind: "indexing" });
+        planet: {
+          planetId: "7",
+          owner: connected.account,
+          name: null,
+          galaxy: 2,
+          system: 44,
+          position: 9,
+          fields: 211,
+          temperature: -8,
+          metalMultiplierBps: 10_000,
+          crystalMultiplierBps: 10_000,
+          deuteriumMultiplierBps: 10_000,
+          lastSettledAt: "0",
+          resources: {
+            metal: "0",
+            crystal: "0",
+            deuterium: "0",
+          },
+        },
+      }),
+    ).toEqual({ kind: "indexing" });
   });
 
   test("waits for indexed settlement resources to hydrate after reconnect", async () => {
     const responses = [
-      indexedSettlementResponse({ lastSettledAt: "0", resources: { metal: "0", crystal: "0", deuterium: "0" } }),
-      indexedSettlementResponse({ lastSettledAt: "1770000000", resources: { metal: "5000", crystal: "4900", deuterium: "4800" } }),
+      indexedSettlementResponse({
+        lastSettledAt: "0",
+        resources: { metal: "0", crystal: "0", deuterium: "0" },
+      }),
+      indexedSettlementResponse({
+        lastSettledAt: "1770000000",
+        resources: { metal: "5000", crystal: "4900", deuterium: "4800" },
+      }),
     ];
     const fetches: string[] = [];
     const delays: number[] = [];
 
-    await expect(waitForIndexedSettledPlanet("https://api.example.test", connected.account, {
-      attempts: 2,
-      delay: async (ms) => {
-        delays.push(ms);
-      },
-      fetchSettlement: async (apiUrl, account) => {
-        fetches.push(`${apiUrl}:${account}`);
-        const response = responses.shift();
-        if (!response) throw new Error("unexpected extra fetch");
-        return response;
-      },
-      intervalMs: 25,
-    })).resolves.toMatchObject({
+    await expect(
+      waitForIndexedSettledPlanet("https://api.example.test", connected.account, {
+        attempts: 2,
+        delay: async (ms) => {
+          delays.push(ms);
+        },
+        fetchSettlement: async (apiUrl, account) => {
+          fetches.push(`${apiUrl}:${account}`);
+          const response = responses.shift();
+          if (!response) throw new Error("unexpected extra fetch");
+          return response;
+        },
+        intervalMs: 25,
+      }),
+    ).resolves.toMatchObject({
       kind: "settled",
       planet: {
         coordinates: "2:44:9",
@@ -318,85 +356,129 @@ describe("settlement screen mode", () => {
       },
     });
 
-    expect(fetches).toEqual([
-      `https://api.example.test:${connected.account}`,
-      `https://api.example.test:${connected.account}`,
-    ]);
+    expect(fetches).toEqual([`https://api.example.test:${connected.account}`, `https://api.example.test:${connected.account}`]);
     expect(delays).toEqual([25]);
   });
 
   test("times out with a retryable message when indexed starter resources stay pending", async () => {
-    await expect(waitForIndexedSettledPlanet("https://api.example.test", connected.account, {
-      attempts: 2,
-      delay: async () => {},
-      fetchSettlement: async () => indexedSettlementResponse({
-        lastSettledAt: "0",
-        resources: { metal: "0", crystal: "0", deuterium: "0" },
+    await expect(
+      waitForIndexedSettledPlanet("https://api.example.test", connected.account, {
+        attempts: 2,
+        delay: async () => {},
+        fetchSettlement: async () =>
+          indexedSettlementResponse({
+            lastSettledAt: "0",
+            resources: { metal: "0", crystal: "0", deuterium: "0" },
+          }),
+        intervalMs: 1,
       }),
-      intervalMs: 1,
-    })).rejects.toThrow(POST_SETTLEMENT_INDEXING_TIMEOUT_MESSAGE);
+    ).rejects.toThrow(POST_SETTLEMENT_INDEXING_TIMEOUT_MESSAGE);
   });
 
   test("blocks settlement launch until funding info is ready and affordable", () => {
-    expect(settlementLaunchBlocker(false, { status: "ready", funding: {
-      affordable: true,
-      balanceWei: 1n,
-      contractKind: "game",
-      startPriceWei: 1n,
-    } })).toContain("contract address");
+    expect(
+      settlementLaunchBlocker(false, {
+        status: "ready",
+        funding: {
+          affordable: true,
+          balanceWei: 1n,
+          contractKind: "game",
+          startPriceWei: 1n,
+        },
+      }),
+    ).toContain("contract address");
 
     expect(settlementLaunchBlocker(true, { status: "loading" })).toContain("still loading");
-    expect(settlementLaunchBlocker(true, {
-      status: "error",
-      message: "RPC unavailable",
-    })).toBe("RPC unavailable");
-    expect(settlementLaunchBlocker(true, { status: "ready", funding: {
-      affordable: false,
-      balanceWei: null,
-      contractKind: "game",
-      startPriceWei: 1n,
-      unavailableReason: "Resource token reserves are not configured.",
-    } })).toBe("Resource token reserves are not configured.");
-    expect(settlementLaunchBlocker(true, { status: "ready", funding: {
-      affordable: false,
-      balanceWei: 6_415_269_622_757_181n,
-      contractKind: "game",
-      startPriceWei: 12_000_000_000_000_000n,
-    } })).toBe("This wallet needs at least 0.005584730377242819 more ETH on Base, plus gas, before launching settlement.");
-    expect(settlementLaunchBlocker(true, { status: "ready", funding: {
-      affordable: true,
-      balanceWei: 1n,
-      contractKind: "game",
-      startPriceWei: 1n,
-    } })).toBeUndefined();
-    expect(settlementLaunchBlocker(true, { status: "ready", funding: {
-      affordable: false,
-      balanceWei: 0n,
-      contractKind: "game",
-      startPriceWei: 12_000_000_000_000_000n,
-    } }, true)).toBeUndefined();
+    expect(
+      settlementLaunchBlocker(true, {
+        status: "error",
+        message: "RPC unavailable",
+      }),
+    ).toBe("RPC unavailable");
+    expect(
+      settlementLaunchBlocker(true, {
+        status: "ready",
+        funding: {
+          affordable: false,
+          balanceWei: null,
+          contractKind: "game",
+          startPriceWei: 1n,
+          unavailableReason: "Resource token reserves are not configured.",
+        },
+      }),
+    ).toBe("Resource token reserves are not configured.");
+    expect(
+      settlementLaunchBlocker(true, {
+        status: "ready",
+        funding: {
+          affordable: false,
+          balanceWei: 6_415_269_622_757_181n,
+          contractKind: "game",
+          startPriceWei: 12_000_000_000_000_000n,
+        },
+      }),
+    ).toBe("This wallet needs at least 0.005584730377242819 more ETH on Base, plus gas, before launching settlement.");
+    expect(
+      settlementLaunchBlocker(true, {
+        status: "ready",
+        funding: {
+          affordable: true,
+          balanceWei: 1n,
+          contractKind: "game",
+          startPriceWei: 1n,
+        },
+      }),
+    ).toBeUndefined();
+    expect(
+      settlementLaunchBlocker(
+        true,
+        {
+          status: "ready",
+          funding: {
+            affordable: false,
+            balanceWei: 0n,
+            contractKind: "game",
+            startPriceWei: 12_000_000_000_000_000n,
+          },
+        },
+        true,
+      ),
+    ).toBeUndefined();
   });
 
   test("lets an underfunded wallet recheck without bypassing other launch blockers", () => {
-    const underfunded = { status: "ready", funding: {
-      affordable: false,
-      balanceWei: 6_415_269_622_757_181n,
-      contractKind: "game" as const,
-      startPriceWei: 12_000_000_000_000_000n,
-    } };
+    const underfunded = {
+      status: "ready",
+      funding: {
+        affordable: false,
+        balanceWei: 6_415_269_622_757_181n,
+        contractKind: "game" as const,
+        startPriceWei: 12_000_000_000_000_000n,
+      },
+    };
 
     expect(settlementBalanceRecheckAvailable(true, underfunded)).toBe(true);
     expect(settlementBalanceRecheckAvailable(true, underfunded, true)).toBe(false);
     expect(settlementBalanceRecheckAvailable(false, underfunded)).toBe(false);
-    expect(settlementBalanceRecheckAvailable(true, { status: "ready", funding: {
-      ...underfunded.funding,
-      unavailableReason: "Resource token reserves are not configured.",
-    } })).toBe(false);
-    expect(settlementBalanceRecheckAvailable(true, { status: "ready", funding: {
-      ...underfunded.funding,
-      affordable: true,
-      balanceWei: 13_000_000_000_000_000n,
-    } })).toBe(false);
+    expect(
+      settlementBalanceRecheckAvailable(true, {
+        status: "ready",
+        funding: {
+          ...underfunded.funding,
+          unavailableReason: "Resource token reserves are not configured.",
+        },
+      }),
+    ).toBe(false);
+    expect(
+      settlementBalanceRecheckAvailable(true, {
+        status: "ready",
+        funding: {
+          ...underfunded.funding,
+          affordable: true,
+          balanceWei: 13_000_000_000_000_000n,
+        },
+      }),
+    ).toBe(false);
   });
 
   test("keeps backend migration reservation when Mini App contract reads are unavailable", () => {
@@ -420,34 +502,42 @@ describe("settlement screen mode", () => {
   });
 
   test("auto-connects only the Farcaster wallet provider in Mini App mode", () => {
-    expect(shouldAutoConnectFarcasterWallet({
-      alreadyAttempted: false,
-      miniAppMode: true,
-      providerAvailable: true,
-      settlementConfigReady: true,
-      walletProviderSource: "farcaster",
-    })).toBe(true);
-    expect(shouldAutoConnectFarcasterWallet({
-      alreadyAttempted: false,
-      miniAppMode: true,
-      providerAvailable: true,
-      settlementConfigReady: true,
-      walletProviderSource: "injected",
-    })).toBe(false);
-    expect(shouldAutoConnectFarcasterWallet({
-      alreadyAttempted: true,
-      miniAppMode: true,
-      providerAvailable: true,
-      settlementConfigReady: true,
-      walletProviderSource: "farcaster",
-    })).toBe(false);
-    expect(shouldAutoConnectFarcasterWallet({
-      alreadyAttempted: false,
-      miniAppMode: true,
-      providerAvailable: true,
-      settlementConfigReady: true,
-      walletProviderSource: "farcaster",
-    })).toBe(true);
+    expect(
+      shouldAutoConnectFarcasterWallet({
+        alreadyAttempted: false,
+        miniAppMode: true,
+        providerAvailable: true,
+        settlementConfigReady: true,
+        walletProviderSource: "farcaster",
+      }),
+    ).toBe(true);
+    expect(
+      shouldAutoConnectFarcasterWallet({
+        alreadyAttempted: false,
+        miniAppMode: true,
+        providerAvailable: true,
+        settlementConfigReady: true,
+        walletProviderSource: "injected",
+      }),
+    ).toBe(false);
+    expect(
+      shouldAutoConnectFarcasterWallet({
+        alreadyAttempted: true,
+        miniAppMode: true,
+        providerAvailable: true,
+        settlementConfigReady: true,
+        walletProviderSource: "farcaster",
+      }),
+    ).toBe(false);
+    expect(
+      shouldAutoConnectFarcasterWallet({
+        alreadyAttempted: false,
+        miniAppMode: true,
+        providerAvailable: true,
+        settlementConfigReady: true,
+        walletProviderSource: "farcaster",
+      }),
+    ).toBe(true);
   });
 
   test("attempts Farcaster Base Sepolia setup once per observed wrong chain", () => {
@@ -456,30 +546,38 @@ describe("settlement screen mode", () => {
     const forcedChain = process.env.VITE_VEYDRIFT_CHAIN;
     delete process.env.VITE_VEYDRIFT_CHAIN;
     try {
-      expect(shouldAttemptFarcasterNetworkSetup({
-        chainId: "0x2105",
-        lastAttemptedChainId: undefined,
-        miniAppMode: true,
-        walletProviderSource: "farcaster",
-      })).toBe(true);
-      expect(shouldAttemptFarcasterNetworkSetup({
-        chainId: "0x2105",
-        lastAttemptedChainId: "0x2105",
-        miniAppMode: true,
-        walletProviderSource: "farcaster",
-      })).toBe(false);
-      expect(shouldAttemptFarcasterNetworkSetup({
-        chainId: "0x2105",
-        lastAttemptedChainId: undefined,
-        miniAppMode: true,
-        walletProviderSource: "injected",
-      })).toBe(false);
-      expect(shouldAttemptFarcasterNetworkSetup({
-        chainId: "0x14a34",
-        lastAttemptedChainId: undefined,
-        miniAppMode: true,
-        walletProviderSource: "farcaster",
-      })).toBe(false);
+      expect(
+        shouldAttemptFarcasterNetworkSetup({
+          chainId: "0x2105",
+          lastAttemptedChainId: undefined,
+          miniAppMode: true,
+          walletProviderSource: "farcaster",
+        }),
+      ).toBe(true);
+      expect(
+        shouldAttemptFarcasterNetworkSetup({
+          chainId: "0x2105",
+          lastAttemptedChainId: "0x2105",
+          miniAppMode: true,
+          walletProviderSource: "farcaster",
+        }),
+      ).toBe(false);
+      expect(
+        shouldAttemptFarcasterNetworkSetup({
+          chainId: "0x2105",
+          lastAttemptedChainId: undefined,
+          miniAppMode: true,
+          walletProviderSource: "injected",
+        }),
+      ).toBe(false);
+      expect(
+        shouldAttemptFarcasterNetworkSetup({
+          chainId: "0x14a34",
+          lastAttemptedChainId: undefined,
+          miniAppMode: true,
+          walletProviderSource: "farcaster",
+        }),
+      ).toBe(false);
     } finally {
       if (forcedChain === undefined) {
         delete process.env.VITE_VEYDRIFT_CHAIN;
@@ -490,30 +588,38 @@ describe("settlement screen mode", () => {
   });
 
   test("retries Farcaster provider discovery only while Mini App wallet support may still be late", () => {
-    expect(shouldRetryFarcasterWalletProviderProbe({
-      attempt: 1,
-      maxAttempts: 3,
-      miniAppMode: true,
-      providerAvailable: false,
-    })).toBe(true);
-    expect(shouldRetryFarcasterWalletProviderProbe({
-      attempt: 3,
-      maxAttempts: 3,
-      miniAppMode: true,
-      providerAvailable: false,
-    })).toBe(false);
-    expect(shouldRetryFarcasterWalletProviderProbe({
-      attempt: 1,
-      maxAttempts: 3,
-      miniAppMode: false,
-      providerAvailable: false,
-    })).toBe(false);
-    expect(shouldRetryFarcasterWalletProviderProbe({
-      attempt: 1,
-      maxAttempts: 3,
-      miniAppMode: true,
-      providerAvailable: true,
-    })).toBe(false);
+    expect(
+      shouldRetryFarcasterWalletProviderProbe({
+        attempt: 1,
+        maxAttempts: 3,
+        miniAppMode: true,
+        providerAvailable: false,
+      }),
+    ).toBe(true);
+    expect(
+      shouldRetryFarcasterWalletProviderProbe({
+        attempt: 3,
+        maxAttempts: 3,
+        miniAppMode: true,
+        providerAvailable: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldRetryFarcasterWalletProviderProbe({
+        attempt: 1,
+        maxAttempts: 3,
+        miniAppMode: false,
+        providerAvailable: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldRetryFarcasterWalletProviderProbe({
+        attempt: 1,
+        maxAttempts: 3,
+        miniAppMode: true,
+        providerAvailable: true,
+      }),
+    ).toBe(false);
   });
 
   test("routes rejected wallet authorization retries back through wallet connect", () => {
@@ -538,11 +644,13 @@ describe("settlement screen mode", () => {
       throw new Error(`Unexpected method ${method}`);
     });
 
-    await expect(walletConnectionAccounts(provider, {
-      miniAppMode: true,
-      miniAppPlatformType: "web",
-      walletProviderSource: "farcaster",
-    })).resolves.toEqual([connected.account]);
+    await expect(
+      walletConnectionAccounts(provider, {
+        miniAppMode: true,
+        miniAppPlatformType: "web",
+        walletProviderSource: "farcaster",
+      }),
+    ).resolves.toEqual([connected.account]);
     expect(calls).toEqual(["eth_accounts", "eth_requestAccounts"]);
   });
 
@@ -554,11 +662,13 @@ describe("settlement screen mode", () => {
       throw new Error(`Unexpected method ${method}`);
     });
 
-    await expect(walletConnectionAccounts(provider, {
-      miniAppMode: true,
-      miniAppPlatformType: "web",
-      walletProviderSource: "farcaster",
-    })).resolves.toEqual([connected.account]);
+    await expect(
+      walletConnectionAccounts(provider, {
+        miniAppMode: true,
+        miniAppPlatformType: "web",
+        walletProviderSource: "farcaster",
+      }),
+    ).resolves.toEqual([connected.account]);
     expect(calls).toEqual(["eth_accounts"]);
   });
 
@@ -570,11 +680,13 @@ describe("settlement screen mode", () => {
       throw new Error(`Unexpected method ${method}`);
     });
 
-    await expect(walletConnectionAccounts(provider, {
-      miniAppMode: true,
-      miniAppPlatformType: "mobile",
-      walletProviderSource: "farcaster",
-    })).resolves.toEqual([connected.account]);
+    await expect(
+      walletConnectionAccounts(provider, {
+        miniAppMode: true,
+        miniAppPlatformType: "mobile",
+        walletProviderSource: "farcaster",
+      }),
+    ).resolves.toEqual([connected.account]);
     expect(calls).toEqual(["eth_requestAccounts"]);
   });
 
@@ -586,74 +698,95 @@ describe("settlement screen mode", () => {
       throw new Error(`Unexpected method ${method}`);
     });
 
-    await expect(walletConnectionAccounts(provider, {
-      miniAppMode: true,
-      miniAppPlatformType: undefined,
-      walletProviderSource: "farcaster",
-    })).resolves.toEqual([connected.account]);
+    await expect(
+      walletConnectionAccounts(provider, {
+        miniAppMode: true,
+        miniAppPlatformType: undefined,
+        walletProviderSource: "farcaster",
+      }),
+    ).resolves.toEqual([connected.account]);
     expect(calls).toEqual(["eth_requestAccounts"]);
   });
 
   test("lets Farcaster Mini App connect own the initial account authorization", () => {
-    expect(shouldRefreshWalletOnProviderReady({
-      account: undefined,
-      miniAppMode: true,
-      walletProviderSource: "farcaster",
-    })).toBe(false);
+    expect(
+      shouldRefreshWalletOnProviderReady({
+        account: undefined,
+        miniAppMode: true,
+        walletProviderSource: "farcaster",
+      }),
+    ).toBe(false);
 
-    expect(shouldRefreshWalletOnProviderReady({
-      account: connected.account,
-      miniAppMode: true,
-      walletProviderSource: "farcaster",
-    })).toBe(true);
+    expect(
+      shouldRefreshWalletOnProviderReady({
+        account: connected.account,
+        miniAppMode: true,
+        walletProviderSource: "farcaster",
+      }),
+    ).toBe(true);
 
-    expect(shouldRefreshWalletOnProviderReady({
-      account: undefined,
-      miniAppMode: true,
-      walletProviderSource: "injected",
-    })).toBe(true);
+    expect(
+      shouldRefreshWalletOnProviderReady({
+        account: undefined,
+        miniAppMode: true,
+        walletProviderSource: "injected",
+      }),
+    ).toBe(true);
   });
 
   test("blocks Mini App mode from using injected or missing providers", () => {
-    expect(shouldUseWalletProviderForSettlement({
-      miniAppMode: true,
-      walletProviderSource: "farcaster",
-    })).toBe(true);
+    expect(
+      shouldUseWalletProviderForSettlement({
+        miniAppMode: true,
+        walletProviderSource: "farcaster",
+      }),
+    ).toBe(true);
 
-    expect(shouldUseWalletProviderForSettlement({
-      miniAppMode: true,
-      walletProviderSource: "injected",
-    })).toBe(false);
+    expect(
+      shouldUseWalletProviderForSettlement({
+        miniAppMode: true,
+        walletProviderSource: "injected",
+      }),
+    ).toBe(false);
 
-    expect(shouldUseWalletProviderForSettlement({
-      miniAppMode: true,
-      walletProviderSource: undefined,
-    })).toBe(false);
+    expect(
+      shouldUseWalletProviderForSettlement({
+        miniAppMode: true,
+        walletProviderSource: undefined,
+      }),
+    ).toBe(false);
 
-    expect(shouldUseWalletProviderForSettlement({
-      miniAppMode: false,
-      walletProviderSource: "injected",
-    })).toBe(true);
+    expect(
+      shouldUseWalletProviderForSettlement({
+        miniAppMode: false,
+        walletProviderSource: "injected",
+      }),
+    ).toBe(true);
   });
 
   test("surfaces an unavailable account when Farcaster desktop authorization returns no account", async () => {
-    await expect(walletConnectionAccounts(walletProvider(async ({ method }) => {
-      if (method === "eth_accounts") return [];
-      if (method === "eth_requestAccounts") return [];
-      throw new Error(`Unexpected method ${method}`);
-    }), {
-      miniAppMode: true,
-      miniAppPlatformType: "web",
-      walletProviderSource: "farcaster",
-    })).rejects.toThrow("Wallet account is unavailable. Reconnect your wallet, then retry.");
+    await expect(
+      walletConnectionAccounts(
+        walletProvider(async ({ method }) => {
+          if (method === "eth_accounts") return [];
+          if (method === "eth_requestAccounts") return [];
+          throw new Error(`Unexpected method ${method}`);
+        }),
+        {
+          miniAppMode: true,
+          miniAppPlatformType: "web",
+          walletProviderSource: "farcaster",
+        },
+      ),
+    ).rejects.toThrow("Wallet account is unavailable. Reconnect your wallet, then retry.");
   });
 
   test("uses backend settlement state instead of Mini App read-provider fallbacks", async () => {
     const source = await Bun.file(new URL("../src/FirstPlanetSettlementApp.tsx", import.meta.url)).text();
 
     expect(source).toContain("readIndexedSettlementState");
-    expect(source).toContain("backendDataStoreFor(settlementConfigState.apiUrl!).settlementFunding(connectedAccount)");
-    expect(source).toContain("settlementTransactionOptions(funding, referral)");
+    expect(source).toContain("backendDataStoreFor(settlementConfigState.apiUrl!).settlementFunding(");
+    expect(source).toContain("settlementTransactionOptions(funding, referral, allianceInvite)");
     expect(source).not.toContain("readSettlementStateWithMiniAppFallback");
     expect(source).not.toContain("readSettlementFundingWithMiniAppFallback");
     expect(source).not.toContain("isUnsupportedProviderMethodError(error)");
@@ -665,7 +798,7 @@ describe("settlement screen mode", () => {
     const source = await Bun.file(new URL("../src/FirstPlanetSettlementApp.tsx", import.meta.url)).text();
 
     expect(source).toContain("farcasterAutoConnectAttempted");
-    expect(source).toContain("input.walletProviderSource === \"farcaster\"");
+    expect(source).toContain('input.walletProviderSource === "farcaster"');
     expect(source).toContain("void connectWallet()");
     expect(source).toContain("signalFarcasterReadyOnce");
     expect(source).toContain("farcasterMiniAppWalletSupport");
@@ -683,10 +816,8 @@ describe("settlement screen mode", () => {
   });
 
   test("formats reportable Farcaster Mini App wallet errors with host diagnostics", () => {
-    expect(farcasterMiniAppReportableWalletError(
-      "FARCASTER_BASE_SEPOLIA_SWITCH_FAILED",
-      "The host rejected wallet_switchEthereumChain.",
-      {
+    expect(
+      farcasterMiniAppReportableWalletError("FARCASTER_BASE_SEPOLIA_SWITCH_FAILED", "The host rejected wallet_switchEthereumChain.", {
         chainId: "0x2105",
         requestedChainId: "0x14a34",
         source: "farcaster",
@@ -698,18 +829,20 @@ describe("settlement screen mode", () => {
           message: "Farcaster Mini App host did not report supported chains.",
         },
         error: { code: 4902, message: "Unrecognized chain" },
-      },
-    )).toBe(
+      }),
+    ).toBe(
       "Wallet setup failed (FARCASTER_BASE_SEPOLIA_SWITCH_FAILED). The host rejected wallet_switchEthereumChain. Details: chain=0x2105; requestedChain=0x14a34; source=farcaster; support=unknown/FARCASTER_CHAINS_UNAVAILABLE; capabilities=wallet.getEthereumProvider; chains=none; errorCode=4902; errorMessage=Unrecognized chain. Please send this exact message to Veydrift support.",
     );
 
-    expect(farcasterMiniAppSupportErrorMessage({
-      status: "unsupported",
-      code: "FARCASTER_BASE_SEPOLIA_UNSUPPORTED",
-      capabilities: ["wallet.getEthereumProvider"],
-      chains: ["eip155:8453"],
-      message: "Farcaster Mini App host does not advertise eip155:84532.",
-    })).toContain("Reported chains: eip155:8453.");
+    expect(
+      farcasterMiniAppSupportErrorMessage({
+        status: "unsupported",
+        code: "FARCASTER_BASE_SEPOLIA_UNSUPPORTED",
+        capabilities: ["wallet.getEthereumProvider"],
+        chains: ["eip155:8453"],
+        message: "Farcaster Mini App host does not advertise eip155:84532.",
+      }),
+    ).toContain("Reported chains: eip155:8453.");
   });
 
   test("rechecks the Farcaster wallet provider when connect is clicked after a cold desktop load", async () => {
@@ -717,16 +850,14 @@ describe("settlement screen mode", () => {
 
     expect(source).toContain("waitForFarcasterProvider: miniAppMode || !provider");
     expect(source).toContain("shouldRetryFarcasterWalletProviderProbe");
-    expect(source).toContain("{ preferFarcasterProvider: waitForFarcasterProvider }");
-    expect(source).toContain("walletProvider.source !== \"farcaster\"");
-    expect(source).toContain("const accounts = await walletConnectionAccounts(activeProvider, providerContext)");
+    expect(source).toContain("preferFarcasterProvider: waitForFarcasterProvider");
+    expect(source).toContain('walletProvider.source !== "farcaster"');
+    expect(source).toContain("const accounts = await walletConnectionAccounts(");
     expect(source).toContain("await refreshWallet(activeProvider, accounts[0], providerContext)");
   });
 });
 
-function walletProvider(
-  request: Eip1193Provider["request"],
-): Eip1193Provider {
+function walletProvider(request: Eip1193Provider["request"]): Eip1193Provider {
   return { request };
 }
 

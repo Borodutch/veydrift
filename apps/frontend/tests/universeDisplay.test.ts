@@ -178,7 +178,7 @@ describe("tester universe display data", () => {
     );
   });
 
-  test("reuses a recently loaded galaxy system payload for instant same-system renders", () => {
+  test("does not keep a second module-local galaxy response cache", () => {
     clearGalaxySystemCache();
     const payload = {
       galaxy: 6,
@@ -204,7 +204,9 @@ describe("tester universe display data", () => {
     const planets = rememberGalaxySystemPayload("https://api.test", 6, 9, payload, 1_000);
 
     expect(planets).toHaveLength(1);
-    expect(cachedGalaxySystemPlanets("https://api.test/", 6, 9, 1_000 + 119_999)?.[0]?.occupiedBy?.planetId).toBe("7");
+    // BackendDataStore is the one frontend cache.  Galaxy helpers may still
+    // normalize a payload for the immediate caller, but must not retain it.
+    expect(cachedGalaxySystemPlanets("https://api.test/", 6, 9, 1_000 + 119_999)).toBeUndefined();
     expect(cachedGalaxySystemPlanets("https://api.test", 6, 9, 1_000 + 120_001)).toBeUndefined();
   });
 

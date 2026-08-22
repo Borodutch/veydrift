@@ -5,10 +5,7 @@ import type { ApiPlanet } from "./data/mockUniverse";
 import type { PlanetType, PublicStationedDefender } from "./types";
 
 export type Eip1193Provider = {
-  request<T = unknown>(args: {
-    method: string;
-    params?: unknown[];
-  }): Promise<T>;
+  request<T = unknown>(args: { method: string; params?: unknown[] }): Promise<T>;
   on?: (event: string, listener: (...args: unknown[]) => void) => void;
   removeListener?: (event: string, listener: (...args: unknown[]) => void) => void;
   providers?: Eip1193Provider[];
@@ -28,11 +25,7 @@ export function personalSignPayload(message: string): `0x${string}` {
   return toHex(message);
 }
 
-export async function requestPersonalSignature(
-  provider: Eip1193Provider,
-  wallet: string,
-  message: string,
-): Promise<string> {
+export async function requestPersonalSignature(provider: Eip1193Provider, wallet: string, message: string): Promise<string> {
   return provider.request<string>({
     method: "personal_sign",
     params: [personalSignPayload(message), wallet],
@@ -363,35 +356,39 @@ export type ManagedPlanetResponse = NonNullable<WalletSettlementResponse["planet
     ships?: ChainShipyardState["ships"];
     defenses?: ChainDefenseState["defenses"];
   } | null;
-  tactical?: {
-    currentResources?: OnChainResources;
-    raidableResources: OnChainResources;
-    raidableResourceTotal: string;
-    // Full production-accrued public resources; LOOT (`raidableResourceTotal`) is the
-    // ~50% on-chain plunder of this. Surfaced so the Raid Finder can show the plunder
-    // math instead of looking like it under-reports. (VEY-KANEO-454)
-    grossResourceTotal?: string;
-    productionPerHour?: OnChainResources | null;
-    storageCaps?: OnChainResources | null;
-    ships: {
-      count: number;
-      power: string;
-    };
-    defenses: {
-      count: number;
-      power: string;
-    };
-    combatPower: string;
-  } | undefined;
+  tactical?:
+    | {
+        currentResources?: OnChainResources;
+        raidableResources: OnChainResources;
+        raidableResourceTotal: string;
+        // Full production-accrued public resources; LOOT (`raidableResourceTotal`) is the
+        // ~50% on-chain plunder of this. Surfaced so the Raid Finder can show the plunder
+        // math instead of looking like it under-reports. (VEY-KANEO-454)
+        grossResourceTotal?: string;
+        productionPerHour?: OnChainResources | null;
+        storageCaps?: OnChainResources | null;
+        ships: {
+          count: number;
+          power: string;
+        };
+        defenses: {
+          count: number;
+          power: string;
+        };
+        combatPower: string;
+      }
+    | undefined;
 };
 
 export type WalletPlanetsResponse = {
   wallet: string;
   homePlanetId: string | null;
   player?: PlayerProfile | undefined;
-  queues?: {
-    research: QueueStateResponse | null;
-  } | undefined;
+  queues?:
+    | {
+        research: QueueStateResponse | null;
+      }
+    | undefined;
   planets: ManagedPlanetResponse[];
 };
 
@@ -599,8 +596,7 @@ export type GameMaintenanceState = {
   pauseAgeSeconds: number;
 };
 
-export const GAME_MAINTENANCE_MESSAGE =
-  "Game maintenance is active. Mission arrivals, returns, and game actions will resume automatically after maintenance.";
+export const GAME_MAINTENANCE_MESSAGE = "Game maintenance is active. Mission arrivals, returns, and game actions will resume automatically after maintenance.";
 
 export type WalletOverviewSnapshotResponse = {
   fleetVisibility: FleetMissionVisibilityResponse;
@@ -629,7 +625,11 @@ export type WatchPlanetMutationResponse = {
 };
 
 export type FleetMissionArchiveEntry =
-  | { kind: "mission"; mission: FleetMissionSummary; report?: BattleReport | undefined }
+  | {
+      kind: "mission";
+      mission: FleetMissionSummary;
+      report?: BattleReport | undefined;
+    }
   | { kind: "battleReport"; report: BattleReport };
 
 // Universe-wide (no wallet scope) active missions for the Mission Control "All" active tab.
@@ -658,15 +658,7 @@ export type FleetMissionArchiveResponse = {
   };
 };
 
-export type PlayerActivityCategory =
-  | "combat"
-  | "infrastructure"
-  | "mission"
-  | "moon"
-  | "production"
-  | "research"
-  | "rift"
-  | "system";
+export type PlayerActivityCategory = "combat" | "infrastructure" | "mission" | "moon" | "production" | "research" | "rift" | "system";
 
 export type PlayerActivityItem = {
   id: string;
@@ -1223,15 +1215,7 @@ export type AllianceDiplomacyEntry = {
   alliance: ChainAllianceState["directory"][number] | null;
 };
 
-export type HighscoreCategory =
-  | "total"
-  | "economy"
-  | "research"
-  | "researchLevels"
-  | "military"
-  | "fleet"
-  | "fleetCount"
-  | "defense";
+export type HighscoreCategory = "total" | "economy" | "research" | "researchLevels" | "military" | "fleet" | "fleetCount" | "defense";
 
 export type HighscoreEntry = {
   rank: number;
@@ -1439,14 +1423,10 @@ export const BASE_SEPOLIA = {
   nativeCurrency: {
     name: "Sepolia Ether",
     symbol: "ETH",
-    decimals: 18
+    decimals: 18,
   },
-  rpcUrls: [
-    "https://sepolia.base.org"
-  ],
-  blockExplorerUrls: [
-    "https://sepolia.basescan.org"
-  ]
+  rpcUrls: ["https://sepolia.base.org"],
+  blockExplorerUrls: ["https://sepolia.basescan.org"],
 } as const;
 export const BASE_MAINNET = {
   chainId: 8453,
@@ -1455,14 +1435,10 @@ export const BASE_MAINNET = {
   nativeCurrency: {
     name: "Ether",
     symbol: "ETH",
-    decimals: 18
+    decimals: 18,
   },
-  rpcUrls: [
-    "https://mainnet.base.org"
-  ],
-  blockExplorerUrls: [
-    "https://basescan.org"
-  ]
+  rpcUrls: ["https://mainnet.base.org"],
+  blockExplorerUrls: ["https://basescan.org"],
 } as const;
 const BASE_MAINNET_CHAIN_ID_HEX = BASE_MAINNET.chainIdHex;
 const BASE_SEPOLIA_SWITCH_CONFIRM_ATTEMPTS = 6;
@@ -1511,7 +1487,7 @@ const GAME_SELECTORS = {
   recallFleetMission: "0x1cbc460c",
   startDefenseProduction: "0xfec06283",
   startResearch: "0x7f314b93",
-  startShipProduction: "0x13aed9a2"
+  startShipProduction: "0x13aed9a2",
 } as const;
 const COLONIZATION_COORDINATE_FLAG = 1n << 255n;
 const COLONIZE_MISSION_TYPE = 2;
@@ -1523,7 +1499,7 @@ const MOON_SELECTORS = {
   jumpGateJump: "0x36aaf8f8",
   jumpGateJumpShips: "0x3095d992",
   startMoonBuildingUpgrade: "0x715e1b1a",
-  startMoonDefenseProduction: "0x31779b60"
+  startMoonDefenseProduction: "0x31779b60",
 } as const;
 const ALLIANCE_SELECTORS = {
   createAlliance: "0x944cde0e",
@@ -1540,10 +1516,10 @@ const ALLIANCE_SELECTORS = {
   setMemberRole: "0xbfbb73f1",
   setMembersRole: "0xe0c22e19",
   setDiplomacy: "0x63b9e8f8",
-  transferAllianceOwnership: "0xb1d3b1e4"
+  transferAllianceOwnership: "0xb1d3b1e4",
 } as const;
 const ERC20_SELECTORS = {
-  approve: "0x095ea7b3"
+  approve: "0x095ea7b3",
 } as const;
 const ERC721_SELECTORS = {
   ownerOf: "0x6352211e",
@@ -1586,14 +1562,13 @@ export type AvailableWalletProviderOptions = {
   preferFarcasterProvider?: boolean;
 };
 
-export function getInjectedProvider(
-  globalWindow: InjectedWindow | undefined,
-): Eip1193Provider | undefined {
+export function getInjectedProvider(globalWindow: InjectedWindow | undefined): Eip1193Provider | undefined {
   const ethereum = globalWindow?.ethereum;
   const injectedProviders = ethereum?.providers?.filter(isEip1193Provider) ?? [];
-  const preferredProvider = injectedProviders.find((provider) => provider.isRabby)
-    ?? injectedProviders.find((provider) => provider.isOkxWallet || provider.isOKExWallet)
-    ?? (isEip1193Provider(globalWindow?.okxwallet) ? globalWindow.okxwallet : undefined);
+  const preferredProvider =
+    injectedProviders.find((provider) => provider.isRabby) ??
+    injectedProviders.find((provider) => provider.isOkxWallet || provider.isOKExWallet) ??
+    (isEip1193Provider(globalWindow?.okxwallet) ? globalWindow.okxwallet : undefined);
 
   return preferredProvider ?? ethereum;
 }
@@ -1614,14 +1589,14 @@ export async function getAvailableWalletProviderDetails(
   const farcasterProvider = await getFarcasterEthereumProvider(farcasterClient);
   return farcasterProvider
     ? {
-      provider: farcasterProvider,
-      source: "farcaster",
-    }
+        provider: farcasterProvider,
+        source: "farcaster",
+      }
     : injected
       ? {
-        provider: injected,
-        source: "injected",
-      }
+          provider: injected,
+          source: "injected",
+        }
       : undefined;
 }
 
@@ -1633,16 +1608,10 @@ export async function getAvailableWalletProvider(
   return (await getAvailableWalletProviderDetails(globalWindow, farcasterClient, options))?.provider;
 }
 
-async function getFarcasterEthereumProvider(
-  farcasterClient: FarcasterWalletClient,
-): Promise<Eip1193Provider | undefined> {
+async function getFarcasterEthereumProvider(farcasterClient: FarcasterWalletClient): Promise<Eip1193Provider | undefined> {
   if (farcasterClient.isInMiniApp) {
     try {
-      const isInMiniApp = await timeoutPromise(
-        farcasterClient.isInMiniApp(FARCASTER_WALLET_PROVIDER_TIMEOUT_MS),
-        FARCASTER_WALLET_PROVIDER_TIMEOUT_MS,
-        "Farcaster Mini App host detection",
-      );
+      const isInMiniApp = await timeoutPromise(farcasterClient.isInMiniApp(FARCASTER_WALLET_PROVIDER_TIMEOUT_MS), FARCASTER_WALLET_PROVIDER_TIMEOUT_MS, "Farcaster Mini App host detection");
       if (!isInMiniApp) {
         return undefined;
       }
@@ -1653,9 +1622,7 @@ async function getFarcasterEthereumProvider(
 
   try {
     const providerRequest = farcasterClient.wallet?.getEthereumProvider?.();
-    const provider = providerRequest
-      ? await timeoutPromise(Promise.resolve(providerRequest), FARCASTER_WALLET_PROVIDER_TIMEOUT_MS, "wallet provider")
-      : undefined;
+    const provider = providerRequest ? await timeoutPromise(Promise.resolve(providerRequest), FARCASTER_WALLET_PROVIDER_TIMEOUT_MS, "wallet provider") : undefined;
     if (isEip1193Provider(provider)) {
       return provider;
     }
@@ -1687,23 +1654,21 @@ export function isUserRejected(error: unknown): boolean {
 
 export const CONTRACT_REJECTED_NO_REASON_MESSAGE =
   "The game contract rejected this transaction, but the wallet did not provide a specific reason. Refresh game state and retry, or choose a different action if the state changed.";
-export const GAME_BACKEND_UNAVAILABLE_MESSAGE =
-  GAME_UNAVAILABLE_MESSAGE;
+export const GAME_BACKEND_UNAVAILABLE_MESSAGE = GAME_UNAVAILABLE_MESSAGE;
 export const REFERRAL_CODE_ALREADY_OWNED_REVERT_SELECTOR = "0xe1c8233f";
 export const REFERRAL_TOP_UP_UNAVAILABLE_REVERT_SELECTOR = "0xe6c55a82";
-export const REFERRAL_CODE_FRONT_RUN_MESSAGE =
-  "Another player claimed this invite code before your transaction completed. Choose a different code and try again.";
-export const REFERRAL_TOP_UP_UNAVAILABLE_MESSAGE =
-  "Invite capacity can only be topped up once every 24 hours.";
+export const REFERRAL_CODE_FRONT_RUN_MESSAGE = "Another player claimed this invite code before your transaction completed. Choose a different code and try again.";
+export const REFERRAL_TOP_UP_UNAVAILABLE_MESSAGE = "Invite capacity can only be topped up once every 24 hours.";
 
 export function isGameBackendUnavailableMessage(message: string | undefined): boolean {
-  return typeof message === "string" && (
-    message === GAME_BACKEND_UNAVAILABLE_MESSAGE
-    || /veydrift backend is temporarily unavailable/i.test(message)
-    || /veydrift backend is temporarily unreachable/i.test(message)
-    || /timed out reading .* from the game api/i.test(message)
-    || /game api may be temporarily unavailable/i.test(message)
-    || /game api is temporarily unavailable/i.test(message)
+  return (
+    typeof message === "string" &&
+    (message === GAME_BACKEND_UNAVAILABLE_MESSAGE ||
+      /veydrift backend is temporarily unavailable/i.test(message) ||
+      /veydrift backend is temporarily unreachable/i.test(message) ||
+      /timed out reading .* from the game api/i.test(message) ||
+      /game api may be temporarily unavailable/i.test(message) ||
+      /game api is temporarily unavailable/i.test(message))
   );
 }
 
@@ -1757,15 +1722,15 @@ export function walletRecoveryActionMessage(message: string | undefined): string
   if (!trimmed) return undefined;
 
   if (
-    trimmed === WALLET_LOCKED_MESSAGE
-    || trimmed === WALLET_ACCOUNT_UNAVAILABLE_MESSAGE
-    || trimmed === WALLET_CONNECTION_REJECTED_MESSAGE
-    || trimmed === WALLET_ACCOUNT_MISMATCH_MESSAGE
-    || /wallet is locked|metamask is locked|unlock metamask|unlock your wallet/i.test(trimmed)
-    || /wallet account is unavailable|wallet account authorization|selected wallet account changed/i.test(trimmed)
-    || /wallet connection was rejected|user rejected|request rejected|permission|unauthori[sz]ed/i.test(trimmed)
-    || /wallet provider is unavailable|provider unavailable|wallet disconnected|disconnected wallet/i.test(trimmed)
-    || /timed out reading .* from the wallet/i.test(trimmed)
+    trimmed === WALLET_LOCKED_MESSAGE ||
+    trimmed === WALLET_ACCOUNT_UNAVAILABLE_MESSAGE ||
+    trimmed === WALLET_CONNECTION_REJECTED_MESSAGE ||
+    trimmed === WALLET_ACCOUNT_MISMATCH_MESSAGE ||
+    /wallet is locked|metamask is locked|unlock metamask|unlock your wallet/i.test(trimmed) ||
+    /wallet account is unavailable|wallet account authorization|selected wallet account changed/i.test(trimmed) ||
+    /wallet connection was rejected|user rejected|request rejected|permission|unauthori[sz]ed/i.test(trimmed) ||
+    /wallet provider is unavailable|provider unavailable|wallet disconnected|disconnected wallet/i.test(trimmed) ||
+    /timed out reading .* from the wallet/i.test(trimmed)
   ) {
     return "Wallet needs attention. Unlock or reconnect your wallet, return to Veydrift, then retry.";
   }
@@ -1822,7 +1787,8 @@ type FleetMissionRevertContext = {
 };
 
 const contractRevertReasons: Record<string, string> = {
-  "0x2ab0f96f": "The origin planet does not have enough resources or deuterium fuel for this mission. Refresh backend resources and queues before retrying; the indexed spendable balance may still be catching up with earlier queued spending.",
+  "0x2ab0f96f":
+    "The origin planet does not have enough resources or deuterium fuel for this mission. Refresh backend resources and queues before retrying; the indexed spendable balance may still be catching up with earlier queued spending.",
   "0xd7c35576": "The selected ships do not have enough cargo capacity for this mission. Add cargo-capable ships, reduce cargo, slow the mission, or choose a closer target.",
   "0x57aab7e3": "All fleet slots are already in use. Fleet slots come from your Computer Technology — research it to unlock more, or wait for a fleet to return, then retry.",
   "0x400d5197": "You cannot attack your own planet.",
@@ -1877,9 +1843,7 @@ function isColonizeMissionContext(context: FleetMissionRevertContext | undefined
 
 function revertSelector(error: unknown): string | undefined {
   const data = errorData(error);
-  return typeof data === "string" && /^0x[a-fA-F0-9]{8}/.test(data)
-    ? data.slice(0, 10).toLowerCase()
-    : undefined;
+  return typeof data === "string" && /^0x[a-fA-F0-9]{8}/.test(data) ? data.slice(0, 10).toLowerCase() : undefined;
 }
 
 function revertUintArg(error: unknown, index: number): bigint | undefined {
@@ -1910,9 +1874,7 @@ function dependencyLabel(dependency: string | undefined): string {
   const level = parts.at(-1);
   const subjectParts = level && /^\d+$/.test(level) ? parts.slice(0, -1) : parts;
   const subject = subjectParts.join(" ");
-  const readableSubject = subject
-    ? subject.toLowerCase().replace(/\b\w/g, (letter) => letter.toUpperCase())
-    : "Prerequisite";
+  const readableSubject = subject ? subject.toLowerCase().replace(/\b\w/g, (letter) => letter.toUpperCase()) : "Prerequisite";
 
   return level && /^\d+$/.test(level) ? `${readableSubject} ${level}` : dependency.replace(/_/g, " ");
 }
@@ -1941,19 +1903,12 @@ function contractRevertReason(error: unknown, context?: FleetMissionRevertContex
     if (shipId === COLONY_SHIP_ID || isColonizeMissionContext(context)) {
       const available = revertUintArg(error, 1);
       const required = revertUintArg(error, 2);
-      const countDetail = available !== undefined && required !== undefined
-        ? ` Need ${required.toLocaleString()} ${pluralShipLabel("Colony Ship", required)}, only ${available.toLocaleString()} available.`
-        : "";
+      const countDetail =
+        available !== undefined && required !== undefined ? ` Need ${required.toLocaleString()} ${pluralShipLabel("Colony Ship", required)}, only ${available.toLocaleString()} available.` : "";
       return `Build or keep a Colony Ship on the origin planet before colonizing.${countDetail}`;
     }
-    const insufficientShips = insufficientShipsRevertReason(
-      shipId,
-      revertUintArg(error, 1),
-      revertUintArg(error, 2),
-      context?.originIsMoon === true,
-    );
-    return insufficientShips
-      ?? `Selected origin ${context?.originIsMoon ? "moon" : "planet"} does not have the requested ships. Refresh fleet state and retry.`;
+    const insufficientShips = insufficientShipsRevertReason(shipId, revertUintArg(error, 1), revertUintArg(error, 2), context?.originIsMoon === true);
+    return insufficientShips ?? `Selected origin ${context?.originIsMoon ? "moon" : "planet"} does not have the requested ships. Refresh fleet state and retry.`;
   }
 
   if (selector === INSUFFICIENT_RESOURCES_REVERT_SELECTOR && context?.originIsMoon) {
@@ -1967,19 +1922,12 @@ function contractRevertReason(error: unknown, context?: FleetMissionRevertContex
   return contractRevertReasons[selector ?? ""];
 }
 
-function insufficientShipsRevertReason(
-  shipId: bigint | undefined,
-  available: bigint | undefined,
-  required: bigint | undefined,
-  originIsMoon = false,
-): string | undefined {
+function insufficientShipsRevertReason(shipId: bigint | undefined, available: bigint | undefined, required: bigint | undefined, originIsMoon = false): string | undefined {
   if (shipId === undefined || available === undefined || required === undefined) {
     return undefined;
   }
   const shipNumber = Number(shipId);
-  const shipLabel = Number.isSafeInteger(shipNumber)
-    ? shipLabelByContractId[shipNumber] ?? `ship #${shipNumber}`
-    : "selected ship";
+  const shipLabel = Number.isSafeInteger(shipNumber) ? (shipLabelByContractId[shipNumber] ?? `ship #${shipNumber}`) : "selected ship";
 
   return `Need ${required.toLocaleString()} ${pluralShipLabel(shipLabel, required)}, only ${available.toLocaleString()} available on the origin ${originIsMoon ? "moon" : "planet"}. Refresh fleet state or reduce the selected ships before launching.`;
 }
@@ -2081,9 +2029,13 @@ export async function assertWalletUnlocked(provider: Eip1193Provider): Promise<v
 
   let accounts: string[];
   try {
-    accounts = await readWalletRequest<string[]>(provider, {
-      method: "eth_accounts",
-    }, "wallet accounts");
+    accounts = await readWalletRequest<string[]>(
+      provider,
+      {
+        method: "eth_accounts",
+      },
+      "wallet accounts",
+    );
   } catch {
     return;
   }
@@ -2100,9 +2052,13 @@ async function assertAccountProbeWalletReady(provider: Eip1193Provider, account:
 
   let accounts: string[];
   try {
-    accounts = await readWalletRequest<string[]>(provider, {
-      method: "eth_accounts",
-    }, "wallet accounts");
+    accounts = await readWalletRequest<string[]>(
+      provider,
+      {
+        method: "eth_accounts",
+      },
+      "wallet accounts",
+    );
   } catch {
     return;
   }
@@ -2117,9 +2073,13 @@ async function assertAccountProbeWalletReady(provider: Eip1193Provider, account:
 
   let requestedAccounts: string[];
   try {
-    requestedAccounts = await readWalletRequest<string[]>(provider, {
-      method: "eth_requestAccounts",
-    }, "wallet account authorization");
+    requestedAccounts = await readWalletRequest<string[]>(
+      provider,
+      {
+        method: "eth_requestAccounts",
+      },
+      "wallet account authorization",
+    );
   } catch (error) {
     if (isUserRejected(error)) {
       throw new Error(WALLET_CONNECTION_REJECTED_MESSAGE);
@@ -2155,16 +2115,38 @@ async function sendWalletTransaction(
   provider: Eip1193Provider,
   account: string,
   transaction: TransactionRequest,
-  options: { accountProbeReadyChecked?: boolean; fleetMissionContext?: FleetMissionRevertContext } = {},
+  options: {
+    accountProbeReadyChecked?: boolean;
+    fleetMissionContext?: FleetMissionRevertContext;
+  } = {},
 ): Promise<string> {
   if (!options.accountProbeReadyChecked) {
     await prepareAccountProbeWalletForTransaction(provider, account);
   }
 
+  // All wallet writes share this gate. Simulate the exact calldata with the
+  // connected account immediately before asking the wallet to submit it. This
+  // is intentionally an ordinary eth_call: it never reconciles game state in
+  // the browser, and only prevents a prompt for a transaction that the chain
+  // already knows will revert.
+  try {
+    await provider.request<string>({
+      method: "eth_call",
+      params: [transaction, "latest"],
+    });
+  } catch (error) {
+    if (isFleetMissionTransactionData(transaction.data)) {
+      const reason = fleetMissionRevertReason(error, options.fleetMissionContext);
+      if (reason) throw new Error(reason);
+    }
+    const message = walletRequestErrorMessage(error);
+    throw new Error(`Transaction simulation failed: ${message}`);
+  }
+
   try {
     return await provider.request<string>({
       method: "eth_sendTransaction",
-      params: [transaction]
+      params: [transaction],
     });
   } catch (error) {
     if (isFleetMissionTransactionData(transaction.data)) {
@@ -2227,10 +2209,7 @@ export function veydriftChainFromEnv(value: string | undefined): VeydriftWalletC
 }
 
 export function defaultVeydriftChainForLocation(location: Pick<Location, "hostname"> | undefined = typeof window === "undefined" ? undefined : window.location): VeydriftWalletChain {
-  return veydriftChainFromEnv(import.meta.env.VITE_VEYDRIFT_CHAIN)
-    ?? (location?.hostname === "veydrift.com" || location?.hostname === "www.veydrift.com"
-      ? BASE_MAINNET
-      : BASE_SEPOLIA);
+  return veydriftChainFromEnv(import.meta.env.VITE_VEYDRIFT_CHAIN) ?? (location?.hostname === "veydrift.com" || location?.hostname === "www.veydrift.com" ? BASE_MAINNET : BASE_SEPOLIA);
 }
 
 export function farcasterChainFor(chain: VeydriftWalletChain): string {
@@ -2239,9 +2218,7 @@ export function farcasterChainFor(chain: VeydriftWalletChain): string {
 
 export function miniAppUnsupportedChainMessage(chainId: string, requiredChain: VeydriftWalletChain = BASE_SEPOLIA): string {
   const normalized = chainId.toLowerCase();
-  const currentChain = normalized === BASE_MAINNET_CHAIN_ID_HEX
-    ? `Base mainnet (${BASE_MAINNET_CHAIN_ID_HEX})`
-    : `chain ${chainId}`;
+  const currentChain = normalized === BASE_MAINNET_CHAIN_ID_HEX ? `Base mainnet (${BASE_MAINNET_CHAIN_ID_HEX})` : `chain ${chainId}`;
   const host = requiredChain.chainId === BASE_MAINNET.chainId ? "veydrift.com" : "test.veydrift.com";
 
   return `${currentChain} is active in this wallet, but ${host} requires ${requiredChain.chainName} (${requiredChain.chainIdHex}). Veydrift can ask your wallet to switch or add ${requiredChain.chainName}; if the wallet rejects that request, use a wallet with ${requiredChain.chainName} support or open the browser wallet flow.`;
@@ -2255,12 +2232,7 @@ export const playerDisplayNameMaxLength = 32;
 export const playerDescriptionMaxLength = 500;
 
 export function playerDisplayNameMessage(wallet: string, displayName: string): string {
-  return [
-    "Veydrift player display name",
-    `Wallet: ${wallet.toLowerCase()}`,
-    `Display name: ${displayName}`,
-    "Only sign this message if you want this public name shown in Veydrift."
-  ].join("\n");
+  return ["Veydrift player display name", `Wallet: ${wallet.toLowerCase()}`, `Display name: ${displayName}`, "Only sign this message if you want this public name shown in Veydrift."].join("\n");
 }
 
 export function playerProfileMessage(wallet: string, displayName: string, description: string | null): string {
@@ -2269,7 +2241,7 @@ export function playerProfileMessage(wallet: string, displayName: string, descri
     `Wallet: ${wallet.toLowerCase()}`,
     `Display name: ${displayName}`,
     `Description: ${description ?? ""}`,
-    "Only sign this message if you want this public profile shown in Veydrift."
+    "Only sign this message if you want this public profile shown in Veydrift.",
   ].join("\n");
 }
 
@@ -2281,7 +2253,7 @@ export function watchedPlanetMessage(wallet: string, action: WatchedPlanetAction
     `Wallet: ${wallet.toLowerCase()}`,
     `Action: ${action}`,
     `Planet ID: ${planetId}`,
-    "Only sign this message if you want to update your Veydrift watched planets."
+    "Only sign this message if you want to update your Veydrift watched planets.",
   ].join("\n");
 }
 
@@ -2318,10 +2290,7 @@ export function playerDisplayLabel(profile: PlayerProfile | null | undefined, wa
   return profile?.displayName ?? profile?.fallbackName ?? (wallet ? shortAddress(wallet) : "Unnamed player");
 }
 
-export function mergePlayerProfile(
-  current: PlayerProfile | undefined,
-  next: PlayerProfile | undefined
-): PlayerProfile | undefined {
+export function mergePlayerProfile(current: PlayerProfile | undefined, next: PlayerProfile | undefined): PlayerProfile | undefined {
   if (!next) return current;
   if (!current?.displayName) return next;
   if (current.wallet.toLowerCase() !== next.wallet.toLowerCase()) return next;
@@ -2343,11 +2312,7 @@ export function migrationContractConfigured(config: SettlementConfig): config is
   return Boolean(config.migrationAddress && /^0x[a-fA-F0-9]{40}$/.test(config.migrationAddress));
 }
 
-export async function readMigrationReservation(
-  provider: Eip1193Provider,
-  migrationContractAddress: string | undefined,
-  account: string,
-): Promise<MigrationReservation | null> {
+export async function readMigrationReservation(provider: Eip1193Provider, migrationContractAddress: string | undefined, account: string): Promise<MigrationReservation | null> {
   if (!migrationContractAddress || !/^0x[a-fA-F0-9]{40}$/.test(migrationContractAddress)) {
     return null;
   }
@@ -2356,10 +2321,13 @@ export async function readMigrationReservation(
   try {
     result = await provider.request<string>({
       method: "eth_call",
-      params: [{
-        to: migrationContractAddress,
-        data: encodeAddressCall(MIGRATION_RESERVATION_SELECTOR, account),
-      }, "latest"],
+      params: [
+        {
+          to: migrationContractAddress,
+          data: encodeAddressCall(MIGRATION_RESERVATION_SELECTOR, account),
+        },
+        "latest",
+      ],
     });
   } catch {
     return null;
@@ -2416,25 +2384,18 @@ export function encodeMigrationClaimCall(statePayload: string, signature: string
   const encodedPayload = encodeAbiBytes(statePayload);
   const encodedSignature = encodeAbiBytes(signature);
   const signatureOffset = 64n + BigInt(encodedPayload.length / 2);
-  return `${MIGRATION_CLAIM_SELECTOR}${(64n).toString(16).padStart(64, "0")}${signatureOffset.toString(16).padStart(64, "0")}${encodedPayload}${encodedSignature}`;
+  return `${MIGRATION_CLAIM_SELECTOR}${64n.toString(16).padStart(64, "0")}${signatureOffset.toString(16).padStart(64, "0")}${encodedPayload}${encodedSignature}`;
 }
 
-export function encodeMigrationClaimWithReferralCall(
-  statePayload: string,
-  signature: string,
-  referral: ReferralRedemption,
-): string {
-  return `${MIGRATION_CLAIM_WITH_REFERRAL_SELECTOR}${encodeAbiParameters(
-    parseAbiParameters("bytes, bytes, bytes32, uint8, bytes32, bytes32"),
-    [
-      statePayload as `0x${string}`,
-      signature as `0x${string}`,
-      referral.commitment as `0x${string}`,
-      referral.v,
-      referral.r as `0x${string}`,
-      referral.s as `0x${string}`,
-    ],
-  ).slice(2)}`;
+export function encodeMigrationClaimWithReferralCall(statePayload: string, signature: string, referral: ReferralRedemption): string {
+  return `${MIGRATION_CLAIM_WITH_REFERRAL_SELECTOR}${encodeAbiParameters(parseAbiParameters("bytes, bytes, bytes32, uint8, bytes32, bytes32"), [
+    statePayload as `0x${string}`,
+    signature as `0x${string}`,
+    referral.commitment as `0x${string}`,
+    referral.v,
+    referral.r as `0x${string}`,
+    referral.s as `0x${string}`,
+  ]).slice(2)}`;
 }
 
 function encodeHexWord(value: string, label: string): string {
@@ -2445,51 +2406,27 @@ function encodeHexWord(value: string, label: string): string {
 }
 
 function encodeReferralSettlementData(selector: string, referral: ReferralRedemption): string {
-  return `${selector}${
-    encodeHexWord(referral.commitment, "Referral commitment")
-  }${
-    BigInt(referral.v).toString(16).padStart(64, "0")
-  }${
-    encodeHexWord(referral.r, "Referral signature r")
-  }${
-    encodeHexWord(referral.s, "Referral signature s")
-  }`;
+  return `${selector}${encodeHexWord(referral.commitment, "Referral commitment")}${BigInt(referral.v).toString(16).padStart(64, "0")}${encodeHexWord(
+    referral.r,
+    "Referral signature r",
+  )}${encodeHexWord(referral.s, "Referral signature s")}`;
 }
 
-export function encodeBurningChickenMoonCall(
-  selector: string,
-  tokenId: bigint | number | string,
-  planetId: bigint | number | string,
-  coordinates: BurningChickenMoonCoordinates,
-): string {
+export function encodeBurningChickenMoonCall(selector: string, tokenId: bigint | number | string, planetId: bigint | number | string, coordinates: BurningChickenMoonCoordinates): string {
   const { galaxy, system, position } = coordinates;
-  if (
-    !Number.isInteger(galaxy)
-    || galaxy < 1
-    || galaxy > 9
-    || !Number.isInteger(system)
-    || system < 1
-    || system > 499
-    || !Number.isInteger(position)
-    || position < 1
-    || position > 15
-  ) {
+  if (!Number.isInteger(galaxy) || galaxy < 1 || galaxy > 9 || !Number.isInteger(system) || system < 1 || system > 499 || !Number.isInteger(position) || position < 1 || position > 15) {
     throw new Error("Burning Chicken moon coordinates are invalid.");
   }
-  return encodeGameCall(selector, [
-    tokenId,
-    planetId,
-    galaxy,
-    system,
-    position,
-  ]);
+  return encodeGameCall(selector, [tokenId, planetId, galaxy, system, position]);
 }
 
 export function encodePlanetNameCall(selector: string, planetId: bigint | number | string, name: string): string {
   const encoded = new TextEncoder().encode(name);
   const length = encoded.length;
-  const chunks = Array.from(encoded, (byte) => byte.toString(16).padStart(2, "0")).join("").padEnd(Math.ceil(length / 32) * 64, "0");
-  return `${selector}${BigInt(planetId).toString(16).padStart(64, "0")}${(64n).toString(16).padStart(64, "0")}${BigInt(length).toString(16).padStart(64, "0")}${chunks}`;
+  const chunks = Array.from(encoded, (byte) => byte.toString(16).padStart(2, "0"))
+    .join("")
+    .padEnd(Math.ceil(length / 32) * 64, "0");
+  return `${selector}${BigInt(planetId).toString(16).padStart(64, "0")}${64n.toString(16).padStart(64, "0")}${BigInt(length).toString(16).padStart(64, "0")}${chunks}`;
 }
 
 export function encodeLaunchFleetMissionCall({
@@ -2538,7 +2475,11 @@ export function encodeLaunchFleetMissionCall({
 export type BatchTransportOrder = {
   originPlanetId: bigint | number | string;
   ships: MissionShips;
-  cargo: { metal: bigint | number | string; crystal: bigint | number | string; deuterium: bigint | number | string };
+  cargo: {
+    metal: bigint | number | string;
+    crystal: bigint | number | string;
+    deuterium: bigint | number | string;
+  };
   speedPercent: number;
 };
 
@@ -2547,13 +2488,7 @@ export type BatchTransportOrder = {
  * The tuple deliberately mirrors the storage struct and the normal transport
  * launch inputs, so a batch does not get a second set of fleet rules.
  */
-export function encodeLaunchTransportBatchCall({
-  targetPlanetId,
-  orders,
-}: {
-  targetPlanetId: bigint | number | string;
-  orders: readonly BatchTransportOrder[];
-}): string {
+export function encodeLaunchTransportBatchCall({ targetPlanetId, orders }: { targetPlanetId: bigint | number | string; orders: readonly BatchTransportOrder[] }): string {
   return `${GAME_SELECTORS.launchTransportBatch}${encodeAbiParameters(
     parseAbiParameters(
       "uint256 targetPlanetId, (uint256 originPlanetId, (uint32 smallCargo, uint32 lightFighter, uint32 recycler, uint32 colonyShip, uint32 largeCargo, uint32 heavyFighter, uint32 cruiser, uint32 battleship, uint32 bomber, uint32 destroyer, uint32 deathstar, uint32 battlecruiser, uint32 reaper, uint32 pathfinder) ships, (uint128 metal, uint128 crystal, uint128 deuterium) cargo, uint16 speedPercent)[] orders",
@@ -2787,10 +2722,7 @@ export function encodeColonizationTargetId(galaxy: number, system: number, posit
     throw new Error("Enter a valid position.");
   }
 
-  return (COLONIZATION_COORDINATE_FLAG
-    | (BigInt(galaxy) << 24n)
-    | (BigInt(system) << 8n)
-    | BigInt(position)).toString();
+  return (COLONIZATION_COORDINATE_FLAG | (BigInt(galaxy) << 24n) | (BigInt(system) << 8n) | BigInt(position)).toString();
 }
 
 export type DecodedColonizationTarget = {
@@ -2806,9 +2738,7 @@ export type DecodedColonizationTarget = {
 // colonization flag bit by `encodeColonizationTargetId`. Decoding it lets us show the
 // real coordinates instead of an opaque "unavailable" fallback. Returns null for any
 // id without the flag bit, which covers every real planet id.
-export function decodeColonizationTargetId(
-  planetId: string | bigint | number,
-): DecodedColonizationTarget | null {
+export function decodeColonizationTargetId(planetId: string | bigint | number): DecodedColonizationTarget | null {
   let value: bigint;
   try {
     value = BigInt(planetId);
@@ -2820,7 +2750,12 @@ export function decodeColonizationTargetId(
   const galaxy = Number((value >> 24n) & 0xffffn);
   const system = Number((value >> 8n) & 0xffffn);
   const position = Number(value & 0xffn);
-  return { galaxy, system, position, coordinates: `${galaxy}:${system}:${position}` };
+  return {
+    galaxy,
+    system,
+    position,
+    coordinates: `${galaxy}:${system}:${position}`,
+  };
 }
 
 export function encodeJoinAttackMissionCall({
@@ -2911,12 +2846,7 @@ export function encodeLaunchInterplanetaryMissileAttackCall({
   primaryTargetId: bigint | number | string;
   quantity: bigint | number | string;
 }): string {
-  return encodeGameCall(GAME_SELECTORS.launchInterplanetaryMissileAttack, [
-    originPlanetId,
-    targetPlanetId,
-    primaryTargetId,
-    quantity,
-  ]);
+  return encodeGameCall(GAME_SELECTORS.launchInterplanetaryMissileAttack, [originPlanetId, targetPlanetId, primaryTargetId, quantity]);
 }
 
 export function encodeStringTripleCall(selector: string, values: [string, string, string]): string {
@@ -2963,17 +2893,12 @@ export function encodeUintAddressUintCall(selector: string, value: bigint | numb
 
 export function encodeUintAddressArrayCall(selector: string, value: bigint | number | string, addresses: string[]): string {
   const encodedAddresses = addresses.map((address) => address.toLowerCase().replace(/^0x/, "").padStart(64, "0")).join("");
-  return `${selector}${BigInt(value).toString(16).padStart(64, "0")}${(64n).toString(16).padStart(64, "0")}${BigInt(addresses.length).toString(16).padStart(64, "0")}${encodedAddresses}`;
+  return `${selector}${BigInt(value).toString(16).padStart(64, "0")}${64n.toString(16).padStart(64, "0")}${BigInt(addresses.length).toString(16).padStart(64, "0")}${encodedAddresses}`;
 }
 
-export function encodeUintAddressArrayUintCall(
-  selector: string,
-  value: bigint | number | string,
-  addresses: string[],
-  role: bigint | number | string
-): string {
+export function encodeUintAddressArrayUintCall(selector: string, value: bigint | number | string, addresses: string[], role: bigint | number | string): string {
   const encodedAddresses = addresses.map((address) => address.toLowerCase().replace(/^0x/, "").padStart(64, "0")).join("");
-  return `${selector}${BigInt(value).toString(16).padStart(64, "0")}${(96n).toString(16).padStart(64, "0")}${BigInt(role).toString(16).padStart(64, "0")}${BigInt(addresses.length).toString(16).padStart(64, "0")}${encodedAddresses}`;
+  return `${selector}${BigInt(value).toString(16).padStart(64, "0")}${96n.toString(16).padStart(64, "0")}${BigInt(role).toString(16).padStart(64, "0")}${BigInt(addresses.length).toString(16).padStart(64, "0")}${encodedAddresses}`;
 }
 
 function encodeAbiString(value: string): string {
@@ -3045,15 +2970,24 @@ function decodeAddressResult(hex: string): string {
 }
 
 export async function getCurrentAccounts(provider: Eip1193Provider, timeoutMs?: number): Promise<string[]> {
-  return readWalletRequest<string[]>(provider, {
-    method: "eth_accounts"
-  }, "wallet accounts", timeoutMs);
+  return readWalletRequest<string[]>(
+    provider,
+    {
+      method: "eth_accounts",
+    },
+    "wallet accounts",
+    timeoutMs,
+  );
 }
 
 export async function requestAccounts(provider: Eip1193Provider): Promise<string[]> {
-  const accounts = await readWalletRequest<string[]>(provider, {
-    method: "eth_requestAccounts"
-  }, "wallet account authorization");
+  const accounts = await readWalletRequest<string[]>(
+    provider,
+    {
+      method: "eth_requestAccounts",
+    },
+    "wallet account authorization",
+  );
   if (!accounts[0]) {
     throw new Error(WALLET_ACCOUNT_UNAVAILABLE_MESSAGE);
   }
@@ -3062,9 +2996,14 @@ export async function requestAccounts(provider: Eip1193Provider): Promise<string
 }
 
 export async function getChainId(provider: Eip1193Provider, timeoutMs?: number): Promise<string> {
-  return readWalletRequest<string>(provider, {
-    method: "eth_chainId"
-  }, "wallet network", timeoutMs);
+  return readWalletRequest<string>(
+    provider,
+    {
+      method: "eth_chainId",
+    },
+    "wallet network",
+    timeoutMs,
+  );
 }
 
 export async function waitForBaseSepoliaNetwork(
@@ -3073,7 +3012,7 @@ export async function waitForBaseSepoliaNetwork(
     attempts?: number;
     intervalMs?: number;
     readTimeoutMs?: number;
-  } = {}
+  } = {},
 ): Promise<string> {
   return waitForVeydriftNetwork(provider, BASE_SEPOLIA, options);
 }
@@ -3085,7 +3024,7 @@ export async function waitForVeydriftNetwork(
     attempts?: number;
     intervalMs?: number;
     readTimeoutMs?: number;
-  } = {}
+  } = {},
 ): Promise<string> {
   const attempts = Math.max(1, options.attempts ?? BASE_SEPOLIA_SWITCH_CONFIRM_ATTEMPTS);
   const intervalMs = Math.max(0, options.intervalMs ?? BASE_SEPOLIA_SWITCH_CONFIRM_INTERVAL_MS);
@@ -3120,9 +3059,7 @@ export async function ensureVeydriftNetwork(provider: Eip1193Provider, chain: Ve
     try {
       await provider.request({
         method: "wallet_addEthereumChain",
-        params: [
-          chain
-        ]
+        params: [chain],
       });
     } catch (addError) {
       if (!isAlreadyAddedChainError(addError)) {
@@ -3146,9 +3083,9 @@ export function switchVeydriftNetwork(provider: Eip1193Provider, chain: Veydrift
     method: "wallet_switchEthereumChain",
     params: [
       {
-        chainId: chain.chainIdHex
-      }
-    ]
+        chainId: chain.chainIdHex,
+      },
+    ],
   });
 }
 
@@ -3162,8 +3099,7 @@ function isUnknownChainError(error: unknown): boolean {
     return true;
   }
 
-  return typeof candidate.message === "string"
-    && /unknown chain|unrecognized chain|chain .*not (?:been )?added|wallet_addEthereumChain/i.test(candidate.message);
+  return typeof candidate.message === "string" && /unknown chain|unrecognized chain|chain .*not (?:been )?added|wallet_addEthereumChain/i.test(candidate.message);
 }
 
 function isAlreadyAddedChainError(error: unknown): boolean {
@@ -3172,16 +3108,10 @@ function isAlreadyAddedChainError(error: unknown): boolean {
   }
 
   const candidate = error as { message?: unknown };
-  return typeof candidate.message === "string"
-    && /already (?:been )?(?:added|exists)|chain .*already/i.test(candidate.message);
+  return typeof candidate.message === "string" && /already (?:been )?(?:added|exists)|chain .*already/i.test(candidate.message);
 }
 
-export async function sendSettlementTransaction(
-  provider: Eip1193Provider,
-  account: string,
-  config: SettlementConfig,
-  options: SettlementTransactionOptions = {}
-): Promise<string> {
+export async function sendSettlementTransaction(provider: Eip1193Provider, account: string, config: SettlementConfig, options: SettlementTransactionOptions = {}): Promise<string> {
   if (!settlementContractConfigured(config)) {
     throw new Error("Settlement contract address is not configured.");
   }
@@ -3203,13 +3133,9 @@ export async function sendSettlementTransaction(
         from: account,
         to: options.migrationContractAddress,
         data: options.referral
-          ? encodeMigrationClaimWithReferralCall(
-            options.migrationClaim.statePayload,
-            options.migrationClaim.signature,
-            options.referral,
-          )
+          ? encodeMigrationClaimWithReferralCall(options.migrationClaim.statePayload, options.migrationClaim.signature, options.referral)
           : encodeMigrationClaimCall(options.migrationClaim.statePayload, options.migrationClaim.signature),
-        value: encodeQuantity(options.startPriceWei)
+        value: encodeQuantity(options.startPriceWei),
       });
     }
 
@@ -3225,19 +3151,15 @@ export async function sendSettlementTransaction(
     return sendWalletTransaction(provider, account, {
       from: account,
       to: config.address,
-      data: options.referral
-        ? encodeReferralSettlementData(START_PLANET_WITH_REFERRAL_SELECTOR, options.referral)
-        : START_PLANET_SELECTOR,
-      value: encodeQuantity(options.startPriceWei)
+      data: options.referral ? encodeReferralSettlementData(START_PLANET_WITH_REFERRAL_SELECTOR, options.referral) : START_PLANET_SELECTOR,
+      value: encodeQuantity(options.startPriceWei),
     });
   }
 
   return sendWalletTransaction(provider, account, {
     from: account,
     to: config.address,
-    data: options.referral
-      ? encodeReferralSettlementData(SETTLE_FIRST_PLANET_WITH_REFERRAL_SELECTOR, options.referral)
-      : settlementTransactionData()
+    data: options.referral ? encodeReferralSettlementData(SETTLE_FIRST_PLANET_WITH_REFERRAL_SELECTOR, options.referral) : settlementTransactionData(),
   });
 }
 
@@ -3271,14 +3193,9 @@ export function paidAllianceInviteSecretFromHash(hash: string): string {
   return /^0x[0-9a-fA-F]{64}$/.test(secret) ? secret.toLowerCase() : "";
 }
 
-export type PaidAllianceInviteLocationState =
-  | { kind: "none" }
-  | { canonical: boolean; kind: "valid"; secret: string }
-  | { kind: "invalid" };
+export type PaidAllianceInviteLocationState = { kind: "none" } | { canonical: boolean; kind: "valid"; secret: string } | { kind: "invalid" };
 
-export function paidAllianceInviteLocationState(
-  location: Pick<Location, "hash" | "pathname">,
-): PaidAllianceInviteLocationState {
+export function paidAllianceInviteLocationState(location: Pick<Location, "hash" | "pathname">): PaidAllianceInviteLocationState {
   const secret = paidAllianceInviteSecretFromHash(location.hash);
   const isCanonicalPath = location.pathname.startsWith("/alliance-invite/");
   if (!isCanonicalPath) {
@@ -3293,9 +3210,7 @@ export function paidAllianceInviteLocationState(
   return { canonical: true, kind: "valid", secret };
 }
 
-export function paidAllianceInviteSecretFromLocation(
-  location: Pick<Location, "hash" | "pathname">,
-): string {
+export function paidAllianceInviteSecretFromLocation(location: Pick<Location, "hash" | "pathname">): string {
   const state = paidAllianceInviteLocationState(location);
   return state.kind === "valid" ? state.secret : "";
 }
@@ -3310,11 +3225,7 @@ export async function resolvePaidAllianceInvite(apiUrl: string, secret: string):
   return response.json() as Promise<PaidAllianceInviteResolution>;
 }
 
-export async function redeemPaidAllianceInvite(
-  apiUrl: string,
-  secret: string,
-  invitee: string,
-): Promise<PaidAllianceInviteRedemption> {
+export async function redeemPaidAllianceInvite(apiUrl: string, secret: string, invitee: string): Promise<PaidAllianceInviteRedemption> {
   const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/alliance-invites/redeem`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -3351,17 +3262,13 @@ export async function recoverPaidAllianceInvites(apiUrl: string, provider: Eip11
     body: JSON.stringify({ viewer, signature }),
   });
   if (!response.ok) throw new Error(`Alliance invite recovery failed (${response.status}).`);
-  const body = await response.json() as { invites?: Array<{ commitment: string; secret: string }> };
+  const body = (await response.json()) as {
+    invites?: Array<{ commitment: string; secret: string }>;
+  };
   return body.invites ?? [];
 }
 
-export async function sendBuyPaidAllianceInviteTransaction(
-  provider: Eip1193Provider,
-  account: string,
-  contractAddress: string,
-  commitment: string,
-  priceWei: bigint,
-): Promise<string> {
+export async function sendBuyPaidAllianceInviteTransaction(provider: Eip1193Provider, account: string, contractAddress: string, commitment: string, priceWei: bigint): Promise<string> {
   return sendWalletTransaction(provider, account, {
     from: account,
     to: contractAddress,
@@ -3387,10 +3294,11 @@ export async function sendWithdrawPaidAllianceBonusTransaction(
   return sendWalletTransaction(provider, account, {
     from: account,
     to: contractAddress,
-    data: `${WITHDRAW_PAID_ALLIANCE_BONUS_SELECTOR}${encodeAbiParameters(
-      parseAbiParameters("uint256,uint256,(uint128,uint128,uint128)"),
-      [BigInt(allianceId), BigInt(planetId), [metal, crystal, deuterium]],
-    ).slice(2)}`,
+    data: `${WITHDRAW_PAID_ALLIANCE_BONUS_SELECTOR}${encodeAbiParameters(parseAbiParameters("uint256,uint256,(uint128,uint128,uint128)"), [
+      BigInt(allianceId),
+      BigInt(planetId),
+      [metal, crystal, deuterium],
+    ]).slice(2)}`,
   });
 }
 
@@ -3406,16 +3314,13 @@ function encodePaidAllianceInviteSettlement(redemption: PaidAllianceInviteRedemp
   if (!/^[0-9a-fA-F]{130}$/.test(signature)) throw new Error("Alliance invite authorization signature is invalid.");
   let v = Number.parseInt(signature.slice(128, 130), 16);
   if (v < 27) v += 27;
-  return `${START_PLANET_WITH_ALLIANCE_INVITE_SELECTOR}${encodeAbiParameters(
-    parseAbiParameters("bytes32,uint64,uint8,bytes32,bytes32"),
-    [
-      redemption.commitment as `0x${string}`,
-      BigInt(redemption.expiresAt),
-      v,
-      `0x${signature.slice(0, 64)}`,
-      `0x${signature.slice(64, 128)}`,
-    ],
-  ).slice(2)}`;
+  return `${START_PLANET_WITH_ALLIANCE_INVITE_SELECTOR}${encodeAbiParameters(parseAbiParameters("bytes32,uint64,uint8,bytes32,bytes32"), [
+    redemption.commitment as `0x${string}`,
+    BigInt(redemption.expiresAt),
+    v,
+    `0x${signature.slice(0, 64)}`,
+    `0x${signature.slice(64, 128)}`,
+  ]).slice(2)}`;
 }
 
 function paidAllianceInviteCommitmentWord(commitment: string): string {
@@ -3423,12 +3328,7 @@ function paidAllianceInviteCommitmentWord(commitment: string): string {
   return commitment.slice(2).toLowerCase();
 }
 
-export async function sendReferralClaimTransaction(
-  provider: Eip1193Provider,
-  account: string,
-  config: SettlementConfig,
-  code: string
-): Promise<string> {
+export async function sendReferralClaimTransaction(provider: Eip1193Provider, account: string, config: SettlementConfig, code: string): Promise<string> {
   if (!settlementContractConfigured(config)) {
     throw new Error("Settlement contract address is not configured.");
   }
@@ -3438,39 +3338,23 @@ export async function sendReferralClaimTransaction(
   return sendWalletTransaction(provider, account, {
     from: account,
     to: config.referralSystemAddress,
-    data: `${CLAIM_REFERRAL_CODE_SELECTOR}${encodeAbiParameters(
-      parseAbiParameters("string"),
-      [normalizeReferralClaimCode(code)]
-    ).slice(2)}`
+    data: `${CLAIM_REFERRAL_CODE_SELECTOR}${encodeAbiParameters(parseAbiParameters("string"), [normalizeReferralClaimCode(code)]).slice(2)}`,
   });
 }
 
-export async function sendStartShipProductionTransaction(
-  provider: Eip1193Provider,
-  account: string,
-  contractAddress: string,
-  planetId: string,
-  shipId: number,
-  quantity: number
-): Promise<string> {
+export async function sendStartShipProductionTransaction(provider: Eip1193Provider, account: string, contractAddress: string, planetId: string, shipId: number, quantity: number): Promise<string> {
   return sendWalletTransaction(provider, account, {
     from: account,
     to: contractAddress,
-    data: encodeGameCall(GAME_SELECTORS.startShipProduction, [planetId, shipId, quantity])
+    data: encodeGameCall(GAME_SELECTORS.startShipProduction, [planetId, shipId, quantity]),
   });
 }
 
-export async function sendApproveResourceTokenTransaction(
-  provider: Eip1193Provider,
-  account: string,
-  tokenAddress: string,
-  spenderAddress: string,
-  amount: bigint | number | string
-): Promise<string> {
+export async function sendApproveResourceTokenTransaction(provider: Eip1193Provider, account: string, tokenAddress: string, spenderAddress: string, amount: bigint | number | string): Promise<string> {
   return sendWalletTransaction(provider, account, {
     from: account,
     to: tokenAddress,
-    data: encodeAddressUintCall(ERC20_SELECTORS.approve, spenderAddress, amount)
+    data: encodeAddressUintCall(ERC20_SELECTORS.approve, spenderAddress, amount),
   });
 }
 
@@ -3480,12 +3364,12 @@ export async function sendDepositResourceTransaction(
   contractAddress: string,
   planetId: string,
   resourceId: number,
-  amount: bigint | number | string
+  amount: bigint | number | string,
 ): Promise<string> {
   return sendWalletTransaction(provider, account, {
     from: account,
     to: contractAddress,
-    data: encodeGameCall(GAME_SELECTORS.depositResource, [planetId, resourceId, amount])
+    data: encodeGameCall(GAME_SELECTORS.depositResource, [planetId, resourceId, amount]),
   });
 }
 
@@ -3495,25 +3379,20 @@ export async function sendRequestResourceWithdrawalTransaction(
   contractAddress: string,
   planetId: string,
   resourceId: number,
-  amount: bigint | number | string
+  amount: bigint | number | string,
 ): Promise<string> {
   return sendWalletTransaction(provider, account, {
     from: account,
     to: contractAddress,
-    data: encodeGameCall(GAME_SELECTORS.requestResourceWithdrawal, [planetId, resourceId, amount])
+    data: encodeGameCall(GAME_SELECTORS.requestResourceWithdrawal, [planetId, resourceId, amount]),
   });
 }
 
-export async function sendFinishResourceWithdrawalTransaction(
-  provider: Eip1193Provider,
-  account: string,
-  contractAddress: string,
-  resourceId: number
-): Promise<string> {
+export async function sendFinishResourceWithdrawalTransaction(provider: Eip1193Provider, account: string, contractAddress: string, resourceId: number): Promise<string> {
   return sendWalletTransaction(provider, account, {
     from: account,
     to: contractAddress,
-    data: encodeGameCall(GAME_SELECTORS.finishResourceWithdrawal, [resourceId])
+    data: encodeGameCall(GAME_SELECTORS.finishResourceWithdrawal, [resourceId]),
   });
 }
 
@@ -3523,26 +3402,20 @@ export async function sendStartRiftExtractionTransaction(
   contractAddress: string,
   planetId: string,
   resourceId: number,
-  amount: bigint | number | string
+  amount: bigint | number | string,
 ): Promise<string> {
   return sendWalletTransaction(provider, account, {
     from: account,
     to: contractAddress,
-    data: encodeGameCall(GAME_SELECTORS.startRiftExtraction, [planetId, resourceId, amount])
+    data: encodeGameCall(GAME_SELECTORS.startRiftExtraction, [planetId, resourceId, amount]),
   });
 }
 
-export async function sendFinalizeRiftExtractionTransaction(
-  provider: Eip1193Provider,
-  account: string,
-  contractAddress: string,
-  planetId: string,
-  resourceId: number
-): Promise<string> {
+export async function sendFinalizeRiftExtractionTransaction(provider: Eip1193Provider, account: string, contractAddress: string, planetId: string, resourceId: number): Promise<string> {
   return sendWalletTransaction(provider, account, {
     from: account,
     to: contractAddress,
-    data: encodeGameCall(GAME_SELECTORS.finalizeRiftExtraction, [planetId, resourceId])
+    data: encodeGameCall(GAME_SELECTORS.finalizeRiftExtraction, [planetId, resourceId]),
   });
 }
 
@@ -3552,41 +3425,28 @@ export async function sendStartDefenseProductionTransaction(
   contractAddress: string,
   planetId: string,
   defenseId: number,
-  quantity: number
+  quantity: number,
 ): Promise<string> {
   return sendWalletTransaction(provider, account, {
     from: account,
     to: contractAddress,
-    data: encodeGameCall(GAME_SELECTORS.startDefenseProduction, [planetId, defenseId, quantity])
+    data: encodeGameCall(GAME_SELECTORS.startDefenseProduction, [planetId, defenseId, quantity]),
   });
 }
 
-export async function sendCreateAllianceTransaction(
-  provider: Eip1193Provider,
-  account: string,
-  contractAddress: string,
-  tag: string,
-  name: string,
-  description: string
-): Promise<string> {
+export async function sendCreateAllianceTransaction(provider: Eip1193Provider, account: string, contractAddress: string, tag: string, name: string, description: string): Promise<string> {
   return sendWalletTransaction(provider, account, {
     from: account,
     to: contractAddress,
-    data: encodeStringTripleCall(ALLIANCE_SELECTORS.createAlliance, [tag, name, description])
+    data: encodeStringTripleCall(ALLIANCE_SELECTORS.createAlliance, [tag, name, description]),
   });
 }
 
-export async function sendAllianceInviteTransaction(
-  provider: Eip1193Provider,
-  account: string,
-  contractAddress: string,
-  allianceId: string,
-  playerAddress: string
-): Promise<string> {
+export async function sendAllianceInviteTransaction(provider: Eip1193Provider, account: string, contractAddress: string, allianceId: string, playerAddress: string): Promise<string> {
   return sendWalletTransaction(provider, account, {
     from: account,
     to: contractAddress,
-    data: `${ALLIANCE_SELECTORS.inviteMember}${BigInt(allianceId).toString(16).padStart(64, "0")}${playerAddress.toLowerCase().replace(/^0x/, "").padStart(64, "0")}`
+    data: `${ALLIANCE_SELECTORS.inviteMember}${BigInt(allianceId).toString(16).padStart(64, "0")}${playerAddress.toLowerCase().replace(/^0x/, "").padStart(64, "0")}`,
   });
 }
 
@@ -3597,119 +3457,76 @@ export async function sendAllianceProfileTransaction(
   allianceId: string,
   tag: string,
   name: string,
-  description: string
+  description: string,
 ): Promise<string> {
   return sendWalletTransaction(provider, account, {
     from: account,
     to: contractAddress,
-    data: encodeUintStringTripleCall(ALLIANCE_SELECTORS.updateAllianceProfile, allianceId, [tag, name, description])
+    data: encodeUintStringTripleCall(ALLIANCE_SELECTORS.updateAllianceProfile, allianceId, [tag, name, description]),
   });
 }
 
-export async function sendAcceptAllianceInviteTransaction(
-  provider: Eip1193Provider,
-  account: string,
-  contractAddress: string,
-  allianceId: string
-): Promise<string> {
+export async function sendAcceptAllianceInviteTransaction(provider: Eip1193Provider, account: string, contractAddress: string, allianceId: string): Promise<string> {
   return sendWalletTransaction(provider, account, {
     from: account,
     to: contractAddress,
-    data: encodeUintCall(ALLIANCE_SELECTORS.acceptInvite, allianceId)
+    data: encodeUintCall(ALLIANCE_SELECTORS.acceptInvite, allianceId),
   });
 }
 
-export async function sendAllianceJoinRequestTransaction(
-  provider: Eip1193Provider,
-  account: string,
-  contractAddress: string,
-  allianceId: string
-): Promise<string> {
+export async function sendAllianceJoinRequestTransaction(provider: Eip1193Provider, account: string, contractAddress: string, allianceId: string): Promise<string> {
   return sendWalletTransaction(provider, account, {
     from: account,
     to: contractAddress,
-    data: encodeUintCall(ALLIANCE_SELECTORS.requestJoinAlliance, allianceId)
+    data: encodeUintCall(ALLIANCE_SELECTORS.requestJoinAlliance, allianceId),
   });
 }
 
-export async function sendCancelAllianceJoinRequestTransaction(
-  provider: Eip1193Provider,
-  account: string,
-  contractAddress: string,
-  allianceId: string
-): Promise<string> {
+export async function sendCancelAllianceJoinRequestTransaction(provider: Eip1193Provider, account: string, contractAddress: string, allianceId: string): Promise<string> {
   return sendWalletTransaction(provider, account, {
     from: account,
     to: contractAddress,
-    data: encodeUintCall(ALLIANCE_SELECTORS.cancelJoinRequest, allianceId)
+    data: encodeUintCall(ALLIANCE_SELECTORS.cancelJoinRequest, allianceId),
   });
 }
 
-export async function sendApproveAllianceJoinRequestTransaction(
-  provider: Eip1193Provider,
-  account: string,
-  contractAddress: string,
-  allianceId: string,
-  playerAddress: string
-): Promise<string> {
+export async function sendApproveAllianceJoinRequestTransaction(provider: Eip1193Provider, account: string, contractAddress: string, allianceId: string, playerAddress: string): Promise<string> {
   return sendWalletTransaction(provider, account, {
     from: account,
     to: contractAddress,
-    data: encodeUintAddressCall(ALLIANCE_SELECTORS.approveJoinRequest, allianceId, playerAddress)
+    data: encodeUintAddressCall(ALLIANCE_SELECTORS.approveJoinRequest, allianceId, playerAddress),
   });
 }
 
-export async function sendDismissAllianceJoinRequestTransaction(
-  provider: Eip1193Provider,
-  account: string,
-  contractAddress: string,
-  allianceId: string,
-  playerAddress: string
-): Promise<string> {
+export async function sendDismissAllianceJoinRequestTransaction(provider: Eip1193Provider, account: string, contractAddress: string, allianceId: string, playerAddress: string): Promise<string> {
   return sendWalletTransaction(provider, account, {
     from: account,
     to: contractAddress,
-    data: encodeUintAddressCall(ALLIANCE_SELECTORS.dismissJoinRequest, allianceId, playerAddress)
+    data: encodeUintAddressCall(ALLIANCE_SELECTORS.dismissJoinRequest, allianceId, playerAddress),
   });
 }
 
-export async function sendAllianceKickTransaction(
-  provider: Eip1193Provider,
-  account: string,
-  contractAddress: string,
-  allianceId: string,
-  playerAddress: string
-): Promise<string> {
+export async function sendAllianceKickTransaction(provider: Eip1193Provider, account: string, contractAddress: string, allianceId: string, playerAddress: string): Promise<string> {
   return sendWalletTransaction(provider, account, {
     from: account,
     to: contractAddress,
-    data: encodeUintAddressCall(ALLIANCE_SELECTORS.kickMember, allianceId, playerAddress)
+    data: encodeUintAddressCall(ALLIANCE_SELECTORS.kickMember, allianceId, playerAddress),
   });
 }
 
-export async function sendAllianceBatchKickTransaction(
-  provider: Eip1193Provider,
-  account: string,
-  contractAddress: string,
-  allianceId: string,
-  playerAddresses: string[]
-): Promise<string> {
+export async function sendAllianceBatchKickTransaction(provider: Eip1193Provider, account: string, contractAddress: string, allianceId: string, playerAddresses: string[]): Promise<string> {
   return sendWalletTransaction(provider, account, {
     from: account,
     to: contractAddress,
-    data: encodeUintAddressArrayCall(ALLIANCE_SELECTORS.kickMembers, allianceId, playerAddresses)
+    data: encodeUintAddressArrayCall(ALLIANCE_SELECTORS.kickMembers, allianceId, playerAddresses),
   });
 }
 
-export async function sendAllianceLeaveTransaction(
-  provider: Eip1193Provider,
-  account: string,
-  contractAddress: string
-): Promise<string> {
+export async function sendAllianceLeaveTransaction(provider: Eip1193Provider, account: string, contractAddress: string): Promise<string> {
   return sendWalletTransaction(provider, account, {
     from: account,
     to: contractAddress,
-    data: ALLIANCE_SELECTORS.leaveAlliance
+    data: ALLIANCE_SELECTORS.leaveAlliance,
   });
 }
 
@@ -3719,12 +3536,12 @@ export async function sendAllianceRoleTransaction(
   contractAddress: string,
   allianceId: string,
   playerAddress: string,
-  role: "member" | "officer"
+  role: "member" | "officer",
 ): Promise<string> {
   return sendWalletTransaction(provider, account, {
     from: account,
     to: contractAddress,
-    data: encodeUintAddressUintCall(ALLIANCE_SELECTORS.setMemberRole, allianceId, playerAddress, role === "officer" ? 2 : 1)
+    data: encodeUintAddressUintCall(ALLIANCE_SELECTORS.setMemberRole, allianceId, playerAddress, role === "officer" ? 2 : 1),
   });
 }
 
@@ -3734,12 +3551,12 @@ export async function sendAllianceBatchRoleTransaction(
   contractAddress: string,
   allianceId: string,
   playerAddresses: string[],
-  role: "member" | "officer"
+  role: "member" | "officer",
 ): Promise<string> {
   return sendWalletTransaction(provider, account, {
     from: account,
     to: contractAddress,
-    data: encodeUintAddressArrayUintCall(ALLIANCE_SELECTORS.setMembersRole, allianceId, playerAddresses, role === "officer" ? 2 : 1)
+    data: encodeUintAddressArrayUintCall(ALLIANCE_SELECTORS.setMembersRole, allianceId, playerAddresses, role === "officer" ? 2 : 1),
   });
 }
 
@@ -3749,30 +3566,20 @@ export async function sendAllianceDiplomacyTransaction(
   contractAddress: string,
   allianceId: string,
   otherAllianceId: string,
-  status: AllianceDiplomacyStatus
+  status: AllianceDiplomacyStatus,
 ): Promise<string> {
   return sendWalletTransaction(provider, account, {
     from: account,
     to: contractAddress,
-    data: encodeGameCall(ALLIANCE_SELECTORS.setDiplomacy, [
-      allianceId,
-      otherAllianceId,
-      allianceDiplomacyStatusId(status),
-    ])
+    data: encodeGameCall(ALLIANCE_SELECTORS.setDiplomacy, [allianceId, otherAllianceId, allianceDiplomacyStatusId(status)]),
   });
 }
 
-export async function sendAllianceTransferOwnershipTransaction(
-  provider: Eip1193Provider,
-  account: string,
-  contractAddress: string,
-  allianceId: string,
-  playerAddress: string
-): Promise<string> {
+export async function sendAllianceTransferOwnershipTransaction(provider: Eip1193Provider, account: string, contractAddress: string, allianceId: string, playerAddress: string): Promise<string> {
   return sendWalletTransaction(provider, account, {
     from: account,
     to: contractAddress,
-    data: encodeUintAddressCall(ALLIANCE_SELECTORS.transferAllianceOwnership, allianceId, playerAddress)
+    data: encodeUintAddressCall(ALLIANCE_SELECTORS.transferAllianceOwnership, allianceId, playerAddress),
   });
 }
 
@@ -3783,80 +3590,51 @@ function allianceDiplomacyStatusId(status: AllianceDiplomacyStatus): number {
   return 0;
 }
 
-export async function sendStartBuildingUpgradeTransaction(
-  provider: Eip1193Provider,
-  account: string,
-  contractAddress: string,
-  planetId: string,
-  buildingId: number
-): Promise<string> {
+export async function sendStartBuildingUpgradeTransaction(provider: Eip1193Provider, account: string, contractAddress: string, planetId: string, buildingId: number): Promise<string> {
   const data = encodeGameCall(GAME_SELECTORS.startBuildingUpgrade, [planetId, buildingId]);
   const transaction: TransactionRequest = {
     from: account,
     to: contractAddress,
-    data
+    data,
   };
 
   const accountProbeReadyChecked = await prepareAccountProbeWalletForTransaction(provider, account);
   if (!accountProbeReadyChecked) await assertWalletUnlocked(provider);
 
   return sendWalletTransaction(provider, account, transaction, {
-    accountProbeReadyChecked
+    accountProbeReadyChecked,
   });
 }
 
-export async function sendRenamePlanetTransaction(
-  provider: Eip1193Provider,
-  account: string,
-  contractAddress: string,
-  planetId: string,
-  name: string
-): Promise<string> {
+export async function sendRenamePlanetTransaction(provider: Eip1193Provider, account: string, contractAddress: string, planetId: string, name: string): Promise<string> {
   return sendWalletTransaction(provider, account, {
     from: account,
     to: contractAddress,
-    data: encodePlanetNameCall(GAME_SELECTORS.renamePlanet, planetId, name)
+    data: encodePlanetNameCall(GAME_SELECTORS.renamePlanet, planetId, name),
   });
 }
 
-export async function sendAbandonPlanetTransaction(
-  provider: Eip1193Provider,
-  account: string,
-  contractAddress: string,
-  planetId: string
-): Promise<string> {
+export async function sendAbandonPlanetTransaction(provider: Eip1193Provider, account: string, contractAddress: string, planetId: string): Promise<string> {
   return sendWalletTransaction(provider, account, {
     from: account,
     to: contractAddress,
-    data: encodeGameCall(GAME_SELECTORS.abandonPlanet, [planetId])
+    data: encodeGameCall(GAME_SELECTORS.abandonPlanet, [planetId]),
   });
 }
 
-export async function sendStartResearchTransaction(
-  provider: Eip1193Provider,
-  account: string,
-  contractAddress: string,
-  planetId: string,
-  technologyId: number
-): Promise<string> {
+export async function sendStartResearchTransaction(provider: Eip1193Provider, account: string, contractAddress: string, planetId: string, technologyId: number): Promise<string> {
   return sendWalletTransaction(provider, account, {
     from: account,
     to: contractAddress,
-    data: encodeGameCall(GAME_SELECTORS.startResearch, [planetId, technologyId])
+    data: encodeGameCall(GAME_SELECTORS.startResearch, [planetId, technologyId]),
   });
 }
 
-export async function sendStartMoonBuildingUpgradeTransaction(
-  provider: Eip1193Provider,
-  account: string,
-  contractAddress: string,
-  planetId: string,
-  buildingId: number
-): Promise<string> {
+export async function sendStartMoonBuildingUpgradeTransaction(provider: Eip1193Provider, account: string, contractAddress: string, planetId: string, buildingId: number): Promise<string> {
   return sendWalletTransaction(provider, account, {
     from: account,
     to: contractAddress,
-    data: encodeGameCall(MOON_SELECTORS.startMoonBuildingUpgrade, [planetId, buildingId])
+    data: encodeGameCall(MOON_SELECTORS.startMoonBuildingUpgrade, [planetId, buildingId]),
   });
 }
 
@@ -3866,21 +3644,16 @@ export async function sendStartMoonDefenseProductionTransaction(
   contractAddress: string,
   planetId: string,
   defenseId: number,
-  quantity: number
+  quantity: number,
 ): Promise<string> {
   return sendWalletTransaction(provider, account, {
     from: account,
     to: contractAddress,
-    data: encodeGameCall(MOON_SELECTORS.startMoonDefenseProduction, [planetId, defenseId, quantity])
+    data: encodeGameCall(MOON_SELECTORS.startMoonDefenseProduction, [planetId, defenseId, quantity]),
   });
 }
 
-export async function fetchBurningChickenForOwner(
-  account: string,
-  tokenId: string,
-  config: BurningChickenConfig,
-  signal?: AbortSignal,
-): Promise<BurningChickenNft> {
+export async function fetchBurningChickenForOwner(account: string, tokenId: string, config: BurningChickenConfig, signal?: AbortSignal): Promise<BurningChickenNft> {
   const normalizedTokenId = tokenId.trim();
   if (!/^\d+$/.test(normalizedTokenId) || BigInt(normalizedTokenId) <= 0n) {
     throw new Error("Enter a valid Chicken token ID.");
@@ -3888,12 +3661,7 @@ export async function fetchBurningChickenForOwner(
 
   let ownerHex: string;
   try {
-    ownerHex = await callBaseMainnetContract(
-      config,
-      config.nftContractAddress,
-      encodeUintCall(ERC721_SELECTORS.ownerOf, normalizedTokenId),
-      signal,
-    );
+    ownerHex = await callBaseMainnetContract(config, config.nftContractAddress, encodeUintCall(ERC721_SELECTORS.ownerOf, normalizedTokenId), signal);
   } catch (error) {
     if (signal?.aborted) throw error;
     throw new Error(`Chicken #${normalizedTokenId} was not found on Base mainnet.`);
@@ -3908,12 +3676,7 @@ export async function fetchBurningChickenForOwner(
   };
 }
 
-async function callBaseMainnetContract(
-  config: BurningChickenConfig,
-  contractAddress: string,
-  data: string,
-  signal?: AbortSignal,
-): Promise<string> {
+async function callBaseMainnetContract(config: BurningChickenConfig, contractAddress: string, data: string, signal?: AbortSignal): Promise<string> {
   const response = await fetch(config.rpcUrl || BASE_MAINNET.rpcUrls[0], {
     body: JSON.stringify({
       id: 1,
@@ -3933,7 +3696,10 @@ async function callBaseMainnetContract(
     method: "POST",
     ...(signal === undefined ? {} : { signal }),
   });
-  const body = await response.json() as { error?: { message?: string }; result?: string };
+  const body = (await response.json()) as {
+    error?: { message?: string };
+    result?: string;
+  };
   if (!response.ok || body.error || typeof body.result !== "string") {
     throw new Error(body.error?.message ?? "Burning Chicken contract read failed.");
   }
@@ -3962,33 +3728,33 @@ export async function sendJumpGateJumpTransaction(
   contractAddress: string,
   originMoonPlanetId: string,
   destinationMoonPlanetId: string,
-  ships?: MissionShips
+  ships?: MissionShips,
 ): Promise<string> {
   const selector = ships ? MOON_SELECTORS.jumpGateJumpShips : MOON_SELECTORS.jumpGateJump;
   const args = ships
     ? [
-      originMoonPlanetId,
-      destinationMoonPlanetId,
-      ships.smallCargo,
-      ships.lightFighter,
-      ships.recycler,
-      ships.colonyShip,
-      ships.largeCargo,
-      ships.heavyFighter,
-      ships.cruiser,
-      ships.battleship,
-      ships.bomber,
-      ships.destroyer,
-      ships.deathstar,
-      ships.battlecruiser,
-      ships.reaper,
-      ships.pathfinder,
-    ]
+        originMoonPlanetId,
+        destinationMoonPlanetId,
+        ships.smallCargo,
+        ships.lightFighter,
+        ships.recycler,
+        ships.colonyShip,
+        ships.largeCargo,
+        ships.heavyFighter,
+        ships.cruiser,
+        ships.battleship,
+        ships.bomber,
+        ships.destroyer,
+        ships.deathstar,
+        ships.battlecruiser,
+        ships.reaper,
+        ships.pathfinder,
+      ]
     : [originMoonPlanetId, destinationMoonPlanetId];
   return sendWalletTransaction(provider, account, {
     from: account,
     to: contractAddress,
-    data: encodeGameCall(selector, args)
+    data: encodeGameCall(selector, args),
   });
 }
 
@@ -3996,14 +3762,14 @@ export async function sendLaunchFleetMissionTransaction(
   provider: Eip1193Provider,
   account: string,
   contractAddress: string,
-  params: Parameters<typeof encodeLaunchFleetMissionCall>[0]
+  params: Parameters<typeof encodeLaunchFleetMissionCall>[0],
 ): Promise<string> {
   const data = encodeLaunchFleetMissionCall(params);
 
   return sendWalletTransaction(provider, account, {
     from: account,
     to: contractAddress,
-    data
+    data,
   });
 }
 
@@ -4024,42 +3790,52 @@ export async function sendLaunchBodyFleetMissionTransaction(
   provider: Eip1193Provider,
   account: string,
   contractAddress: string,
-  params: Parameters<typeof encodeLaunchBodyFleetMissionCall>[0]
+  params: Parameters<typeof encodeLaunchBodyFleetMissionCall>[0],
 ): Promise<string> {
   const data = encodeLaunchBodyFleetMissionCall(params);
 
-  return sendWalletTransaction(provider, account, {
-    from: account,
-    to: contractAddress,
-    data
-  }, { fleetMissionContext: { originIsMoon: params.originIsMoon } });
+  return sendWalletTransaction(
+    provider,
+    account,
+    {
+      from: account,
+      to: contractAddress,
+      data,
+    },
+    { fleetMissionContext: { originIsMoon: params.originIsMoon } },
+  );
 }
 
 export async function sendLaunchBodyAttackMissionTransaction(
   provider: Eip1193Provider,
   account: string,
   contractAddress: string,
-  params: Parameters<typeof encodeLaunchBodyAttackMissionCall>[0]
+  params: Parameters<typeof encodeLaunchBodyAttackMissionCall>[0],
 ): Promise<string> {
-  return sendWalletTransaction(provider, account, {
-    from: account,
-    to: contractAddress,
-    data: encodeLaunchBodyAttackMissionCall(params)
-  }, { fleetMissionContext: { originIsMoon: params.originIsMoon } });
+  return sendWalletTransaction(
+    provider,
+    account,
+    {
+      from: account,
+      to: contractAddress,
+      data: encodeLaunchBodyAttackMissionCall(params),
+    },
+    { fleetMissionContext: { originIsMoon: params.originIsMoon } },
+  );
 }
 
 export async function sendLaunchAttackMissionTransaction(
   provider: Eip1193Provider,
   account: string,
   contractAddress: string,
-  params: Parameters<typeof encodeLaunchAttackMissionCall>[0]
+  params: Parameters<typeof encodeLaunchAttackMissionCall>[0],
 ): Promise<string> {
   const data = encodeLaunchAttackMissionCall(params);
 
   return sendWalletTransaction(provider, account, {
     from: account,
     to: contractAddress,
-    data
+    data,
   });
 }
 
@@ -4067,12 +3843,12 @@ export async function sendJoinAttackMissionTransaction(
   provider: Eip1193Provider,
   account: string,
   contractAddress: string,
-  params: Parameters<typeof encodeJoinAttackMissionCall>[0]
+  params: Parameters<typeof encodeJoinAttackMissionCall>[0],
 ): Promise<string> {
   return sendWalletTransaction(provider, account, {
     from: account,
     to: contractAddress,
-    data: encodeJoinAttackMissionCall(params)
+    data: encodeJoinAttackMissionCall(params),
   });
 }
 
@@ -4080,31 +3856,36 @@ export async function sendJoinBodyAttackMissionTransaction(
   provider: Eip1193Provider,
   account: string,
   contractAddress: string,
-  params: Parameters<typeof encodeJoinBodyAttackMissionCall>[0]
+  params: Parameters<typeof encodeJoinBodyAttackMissionCall>[0],
 ): Promise<string> {
-  return sendWalletTransaction(provider, account, {
-    from: account,
-    to: contractAddress,
-    data: encodeJoinBodyAttackMissionCall(params)
-  }, { fleetMissionContext: { originIsMoon: params.originIsMoon } });
+  return sendWalletTransaction(
+    provider,
+    account,
+    {
+      from: account,
+      to: contractAddress,
+      data: encodeJoinBodyAttackMissionCall(params),
+    },
+    { fleetMissionContext: { originIsMoon: params.originIsMoon } },
+  );
 }
 
 // VEY-KANEO-440/441: launch a DefenseHold (ACS Defend stationing) mission. Contract reverts —
 // ineligible target (not own/ally), out-of-range hold window, under-fuelled or over-capacity fleet —
-// surface as a clear message from the send error path (the wallet simulates before signing, and a
-// reverted receipt is reported on submit). VEY-KANEO-463: no frontend preflight eth_call.
+// surface as a clear message from the centralized eth_call simulation before the wallet asks the
+// player to sign. A reverted receipt remains a fallback for a state change after simulation.
 export async function sendLaunchDefenseHoldTransaction(
   provider: Eip1193Provider,
   account: string,
   contractAddress: string,
-  params: Parameters<typeof encodeLaunchDefenseHoldCall>[0]
+  params: Parameters<typeof encodeLaunchDefenseHoldCall>[0],
 ): Promise<string> {
   const data = encodeLaunchDefenseHoldCall(params);
 
   return sendWalletTransaction(provider, account, {
     from: account,
     to: contractAddress,
-    data
+    data,
   });
 }
 
@@ -4112,51 +3893,36 @@ export async function sendLaunchInterplanetaryMissileAttackTransaction(
   provider: Eip1193Provider,
   account: string,
   contractAddress: string,
-  params: Parameters<typeof encodeLaunchInterplanetaryMissileAttackCall>[0]
+  params: Parameters<typeof encodeLaunchInterplanetaryMissileAttackCall>[0],
 ): Promise<string> {
   return sendWalletTransaction(provider, account, {
     from: account,
     to: contractAddress,
-    data: encodeLaunchInterplanetaryMissileAttackCall(params)
+    data: encodeLaunchInterplanetaryMissileAttackCall(params),
   });
 }
 
-export async function sendRecallFleetMissionTransaction(
-  provider: Eip1193Provider,
-  account: string,
-  contractAddress: string,
-  missionId: string
-): Promise<string> {
+export async function sendRecallFleetMissionTransaction(provider: Eip1193Provider, account: string, contractAddress: string, missionId: string): Promise<string> {
   return sendWalletTransaction(provider, account, {
     from: account,
     to: contractAddress,
-    data: encodeGameCall(GAME_SELECTORS.recallFleetMission, [missionId])
+    data: encodeGameCall(GAME_SELECTORS.recallFleetMission, [missionId]),
   });
 }
 
-export async function sendResolveFleetMissionTransaction(
-  provider: Eip1193Provider,
-  account: string,
-  contractAddress: string,
-  missionId: string
-): Promise<string> {
+export async function sendResolveFleetMissionTransaction(provider: Eip1193Provider, account: string, contractAddress: string, missionId: string): Promise<string> {
   return sendWalletTransaction(provider, account, {
     from: account,
     to: contractAddress,
-    data: encodeGameCall(GAME_SELECTORS.resolveFleetMission, [missionId])
+    data: encodeGameCall(GAME_SELECTORS.resolveFleetMission, [missionId]),
   });
 }
 
-export async function sendCompleteFleetMissionReturnTransaction(
-  provider: Eip1193Provider,
-  account: string,
-  contractAddress: string,
-  missionId: string
-): Promise<string> {
+export async function sendCompleteFleetMissionReturnTransaction(provider: Eip1193Provider, account: string, contractAddress: string, missionId: string): Promise<string> {
   return sendWalletTransaction(provider, account, {
     from: account,
     to: contractAddress,
-    data: encodeGameCall(GAME_SELECTORS.completeFleetMissionReturn, [missionId])
+    data: encodeGameCall(GAME_SELECTORS.completeFleetMissionReturn, [missionId]),
   });
 }
 
@@ -4168,7 +3934,7 @@ export async function sendCreateColonyTransaction(
   galaxy: number,
   system: number,
   position: number,
-  speedPercent = 100
+  speedPercent = 100,
 ): Promise<string> {
   const params: Parameters<typeof encodeLaunchFleetMissionCall>[0] = {
     originPlanetId,
@@ -4205,16 +3971,11 @@ export function planetFromTransaction(account: string, txHash: string): PlanetSu
   return {
     label: `Settled by ${shortAddress(account)}`,
     txHash,
-    source: "transaction"
+    source: "transaction",
   };
 }
 
-async function readWalletRequest<T>(
-  provider: Eip1193Provider,
-  args: { method: string; params?: unknown[] },
-  label: string,
-  timeoutMs: number = WALLET_READ_TIMEOUT_MS
-): Promise<T> {
+async function readWalletRequest<T>(provider: Eip1193Provider, args: { method: string; params?: unknown[] }, label: string, timeoutMs: number = WALLET_READ_TIMEOUT_MS): Promise<T> {
   return timeoutPromise(provider.request<T>(args), timeoutMs, label);
 }
 
@@ -4248,9 +4009,7 @@ function errorMessage(error: unknown): string {
 }
 
 function errorCode(error: unknown): unknown {
-  return typeof error === "object" && error !== null && "code" in error
-    ? (error as { code: unknown }).code
-    : undefined;
+  return typeof error === "object" && error !== null && "code" in error ? (error as { code: unknown }).code : undefined;
 }
 
 export function isTransientWalletBootstrapError(error: unknown): boolean {
@@ -4359,22 +4118,24 @@ export async function fetchSettlementFundingState(apiUrl: string, wallet: string
   return {
     ...response,
     balanceWei: response.balanceWei === null ? null : BigInt(response.balanceWei),
-    startPriceWei: response.startPriceWei === null ? null : BigInt(response.startPriceWei)
+    startPriceWei: response.startPriceWei === null ? null : BigInt(response.startPriceWei),
   };
 }
 
-export async function readWalletNativeBalance(
-  provider: Eip1193Provider,
-  wallet: string,
-): Promise<bigint> {
+export async function readWalletNativeBalance(provider: Eip1193Provider, wallet: string): Promise<bigint> {
   if (!/^0x[0-9a-fA-F]{40}$/.test(wallet)) {
     throw new Error("Wallet address is invalid.");
   }
 
-  const balance = await readWalletRequest<unknown>(provider, {
-    method: "eth_getBalance",
-    params: [wallet, "latest"],
-  }, "wallet Base ETH balance", WALLET_API_READ_TIMEOUT_MS);
+  const balance = await readWalletRequest<unknown>(
+    provider,
+    {
+      method: "eth_getBalance",
+      params: [wallet, "latest"],
+    },
+    "wallet Base ETH balance",
+    WALLET_API_READ_TIMEOUT_MS,
+  );
 
   if (typeof balance !== "string" || !/^0x[0-9a-fA-F]+$/.test(balance)) {
     throw new Error("Wallet returned an invalid Base ETH balance.");
@@ -4383,10 +4144,7 @@ export async function readWalletNativeBalance(
   return BigInt(balance);
 }
 
-export function settlementFundingWithWalletBalance(
-  funding: SettlementFundingState,
-  balanceWei: bigint,
-): SettlementFundingState {
+export function settlementFundingWithWalletBalance(funding: SettlementFundingState, balanceWei: bigint): SettlementFundingState {
   const hasSettlementValue = funding.startPriceWei === null || balanceWei >= funding.startPriceWei;
   return {
     ...funding,
@@ -4397,17 +4155,11 @@ export function settlementFundingWithWalletBalance(
 
 export function settlementFundingShortfallWei(funding: SettlementFundingState): bigint | null {
   if (funding.balanceWei === null || funding.startPriceWei === null) return null;
-  return funding.startPriceWei > funding.balanceWei
-    ? funding.startPriceWei - funding.balanceWei
-    : 0n;
+  return funding.startPriceWei > funding.balanceWei ? funding.startPriceWei - funding.balanceWei : 0n;
 }
 
 export function referralWalletMessage(wallet: string, action: ReferralWalletAction, commitment?: string): string {
-  const lines = [
-    "Veydrift referral invites",
-    `Wallet: ${wallet.toLowerCase()}`,
-    `Action: ${action}`
-  ];
+  const lines = ["Veydrift referral invites", `Wallet: ${wallet.toLowerCase()}`, `Action: ${action}`];
   if (commitment !== undefined) {
     lines.push(`Commitment: ${commitment.toLowerCase()}`);
   }
@@ -4415,72 +4167,33 @@ export function referralWalletMessage(wallet: string, action: ReferralWalletActi
   return lines.join("\n");
 }
 
-export async function requestReferralWalletSignature(
-  provider: Eip1193Provider,
-  wallet: string,
-  action: ReferralWalletAction,
-  commitment?: string
-): Promise<string> {
+export async function requestReferralWalletSignature(provider: Eip1193Provider, wallet: string, action: ReferralWalletAction, commitment?: string): Promise<string> {
   return requestPersonalSignature(provider, wallet, referralWalletMessage(wallet, action, commitment));
 }
 
 export async function fetchReferralDashboard(apiUrl: string, wallet: string, signal?: AbortSignal): Promise<ReferralDashboard> {
-  return fetchWalletJson<ReferralDashboard>(
-    apiUrl,
-    wallet,
-    "referrals",
-    "Referral invites",
-    { signal },
-  );
+  return fetchWalletJson<ReferralDashboard>(apiUrl, wallet, "referrals", "Referral invites", { signal });
 }
 
-export async function fetchReferralHistory(
-  apiUrl: string,
-  wallet: string,
-  page = 1,
-  pageSize = 25,
-  signal?: AbortSignal,
-): Promise<ReferralHistoryResponse> {
+export async function fetchReferralHistory(apiUrl: string, wallet: string, page = 1, pageSize = 25, signal?: AbortSignal): Promise<ReferralHistoryResponse> {
   const params = new URLSearchParams({
     page: String(page),
-    pageSize: String(pageSize)
+    pageSize: String(pageSize),
   });
-  return fetchWalletJson<ReferralHistoryResponse>(
-    apiUrl,
-    wallet,
-    `referrals/history?${params.toString()}`,
-    "Invite history",
-    { signal },
-  );
+  return fetchWalletJson<ReferralHistoryResponse>(apiUrl, wallet, `referrals/history?${params.toString()}`, "Invite history", { signal });
 }
 
-export async function persistReferralClaimIntent(
-  apiUrl: string,
-  wallet: string,
-  code: string,
-  commitment: string,
-  signature: string
-): Promise<void> {
-  await fetchGameApiMutation(
-    `${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(wallet)}/referrals/claim-intent`,
-    "Referral claim recovery",
-    { code, commitment, signature }
-  );
+export async function persistReferralClaimIntent(apiUrl: string, wallet: string, code: string, commitment: string, signature: string): Promise<void> {
+  await fetchGameApiMutation(`${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(wallet)}/referrals/claim-intent`, "Referral claim recovery", { code, commitment, signature });
 }
 
-export async function recordReferralClaimTransaction(
-  apiUrl: string,
-  wallet: string,
-  code: string,
-  commitment: string,
-  txHash: string,
-  signature: string
-): Promise<ReferralDashboard> {
-  return fetchGameApiMutation<ReferralDashboard>(
-    `${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(wallet)}/referrals/claim-transaction`,
-    "Referral claim transaction",
-    { code, commitment, signature, txHash }
-  );
+export async function recordReferralClaimTransaction(apiUrl: string, wallet: string, code: string, commitment: string, txHash: string, signature: string): Promise<ReferralDashboard> {
+  return fetchGameApiMutation<ReferralDashboard>(`${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(wallet)}/referrals/claim-transaction`, "Referral claim transaction", {
+    code,
+    commitment,
+    signature,
+    txHash,
+  });
 }
 
 export function generateReferralClaimCode(length = REFERRAL_DEFAULT_CODE_LENGTH): string {
@@ -4505,22 +4218,15 @@ export function referralCommitment(code: string, inviter: string): string {
   if (!/^0x[a-fA-F0-9]{40}$/.test(inviter)) {
     throw new Error("Referral inviter must be a 0x-prefixed EVM address.");
   }
-  return keccak256(encodeAbiParameters(
-    parseAbiParameters("address,bytes32"),
-    [inviter as `0x${string}`, referralCodeHash(code) as `0x${string}`]
-  ));
+  return keccak256(encodeAbiParameters(parseAbiParameters("address,bytes32"), [inviter as `0x${string}`, referralCodeHash(code) as `0x${string}`]));
 }
 
-export async function validateReferralCode(
-  apiUrl: string,
-  code: string,
-  invitee?: string
-): Promise<ReferralResolution> {
+export async function validateReferralCode(apiUrl: string, code: string, invitee?: string): Promise<ReferralResolution> {
   const url = new URL(`${apiUrl.replace(/\/+$/, "")}/referrals/resolve`);
   url.searchParams.set("code", code);
   if (invitee) url.searchParams.set("invitee", invitee);
   return fetchGameApiJson<ReferralResolution>(url.toString(), "Referral validation", {
-    cache: "no-store"
+    cache: "no-store",
   });
 }
 
@@ -4529,29 +4235,16 @@ export async function inspectReferralCode(apiUrl: string, code: string, wallet: 
   url.searchParams.set("code", code);
   url.searchParams.set("wallet", wallet);
   return fetchGameApiJson<ReferralResolution>(url.toString(), "Referral code availability", {
-    cache: "no-store"
+    cache: "no-store",
   });
 }
 
 export async function redeemReferralCode(apiUrl: string, code: string, invitee: string): Promise<ReferralRedemption> {
-  return fetchGameApiMutation<ReferralRedemption>(
-    `${apiUrl.replace(/\/+$/, "")}/referrals/redeem`,
-    "Referral code",
-    { code, invitee }
-  );
+  return fetchGameApiMutation<ReferralRedemption>(`${apiUrl.replace(/\/+$/, "")}/referrals/redeem`, "Referral code", { code, invitee });
 }
 
-export async function recordReferralRedemptionTransaction(
-  apiUrl: string,
-  code: string,
-  invitee: string,
-  txHash: string
-): Promise<void> {
-  await fetchGameApiMutation(
-    `${apiUrl.replace(/\/+$/, "")}/referrals/redeem-transaction`,
-    "Referral redemption transaction",
-    { code, invitee, txHash }
-  );
+export async function recordReferralRedemptionTransaction(apiUrl: string, code: string, invitee: string, txHash: string): Promise<void> {
+  await fetchGameApiMutation(`${apiUrl.replace(/\/+$/, "")}/referrals/redeem-transaction`, "Referral redemption transaction", { code, invitee, txHash });
 }
 
 export async function fetchWalletPlanets(apiUrl: string, wallet: string, options: WalletReadOptions = {}): Promise<WalletPlanetsResponse> {
@@ -4561,18 +4254,20 @@ export async function fetchWalletPlanets(apiUrl: string, wallet: string, options
 export async function fetchWatchedPlanets(
   apiUrl: string,
   wallet: string,
-  options: { page?: number; pageSize?: number; signal?: AbortSignal; timeoutMs?: number } = {}
+  options: {
+    page?: number;
+    pageSize?: number;
+    signal?: AbortSignal;
+    timeoutMs?: number;
+  } = {},
 ): Promise<WatchedPlanetsResponse> {
   const params = new URLSearchParams();
   params.set("page", String(options.page ?? 1));
   params.set("pageSize", String(options.pageSize ?? 25));
-  return fetchWalletJson<WatchedPlanetsResponse>(
-    apiUrl,
-    wallet,
-    `watched-planets?${params.toString()}`,
-    "Watched planets",
-    { signal: options.signal, timeoutMs: options.timeoutMs ?? WATCHED_PLANETS_API_READ_TIMEOUT_MS }
-  );
+  return fetchWalletJson<WatchedPlanetsResponse>(apiUrl, wallet, `watched-planets?${params.toString()}`, "Watched planets", {
+    signal: options.signal,
+    timeoutMs: options.timeoutMs ?? WATCHED_PLANETS_API_READ_TIMEOUT_MS,
+  });
 }
 
 export async function watchPlanet(apiUrl: string, provider: Eip1193Provider, wallet: string, planetId: string): Promise<WatchPlanetMutationResponse> {
@@ -4583,17 +4278,16 @@ export async function unwatchPlanet(apiUrl: string, provider: Eip1193Provider, w
   return mutateWatchedPlanet(apiUrl, provider, wallet, "unwatch", "DELETE", `watched-planets/${encodeURIComponent(planetId)}`, planetId);
 }
 
-export async function requestWatchedPlanetSignature(
-  provider: Eip1193Provider,
-  wallet: string,
-  action: WatchedPlanetAction,
-  planetId: string,
-  timeoutMs?: number
-): Promise<string> {
-  return readWalletRequest<string>(provider, {
-    method: "personal_sign",
-    params: [personalSignPayload(watchedPlanetMessage(wallet, action, planetId)), wallet]
-  }, "watched planet signature", timeoutMs);
+export async function requestWatchedPlanetSignature(provider: Eip1193Provider, wallet: string, action: WatchedPlanetAction, planetId: string, timeoutMs?: number): Promise<string> {
+  return readWalletRequest<string>(
+    provider,
+    {
+      method: "personal_sign",
+      params: [personalSignPayload(watchedPlanetMessage(wallet, action, planetId)), wallet],
+    },
+    "watched planet signature",
+    timeoutMs,
+  );
 }
 
 type WalletReadOptions = {
@@ -4611,58 +4305,29 @@ export async function fetchWalletQueues(apiUrl: string, wallet: string, planetId
   return fetchWalletJson<PlayerQueuesResponse>(apiUrl, wallet, withWalletReadOptions("queues", planetId, options), "Queues", options);
 }
 
-export async function fetchAttackProtectionStatus(
-  apiUrl: string,
-  wallet: string,
-  targetPlanetId: string,
-  targetIsMoon = false,
-  signal?: AbortSignal,
-): Promise<AttackProtectionStatus> {
+export async function fetchAttackProtectionStatus(apiUrl: string, wallet: string, targetPlanetId: string, targetIsMoon = false, signal?: AbortSignal): Promise<AttackProtectionStatus> {
   const params = new URLSearchParams();
   params.set("targetPlanetId", targetPlanetId);
   if (targetIsMoon) params.set("targetIsMoon", "true");
-  return fetchWalletJson<AttackProtectionStatus>(
-    apiUrl,
-    wallet,
-    `attack-protection?${params.toString()}`,
-    "Attack protection",
-    { signal },
-  );
+  return fetchWalletJson<AttackProtectionStatus>(apiUrl, wallet, `attack-protection?${params.toString()}`, "Attack protection", { signal });
 }
 
-export async function fetchWalletOverviewSnapshot(
-  apiUrl: string,
-  wallet: string,
-  planetId?: string,
-  options: WalletReadOptions = {}
-): Promise<WalletOverviewSnapshotResponse> {
-  return fetchWalletJson<WalletOverviewSnapshotResponse>(
-    apiUrl,
-    wallet,
-    withWalletReadOptions("overview", planetId, options),
-    "Overview snapshot",
-    {
-      ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
-      ...(options.fresh === undefined ? {} : { fresh: options.fresh }),
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
-    }
-  );
+export async function fetchWalletOverviewSnapshot(apiUrl: string, wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<WalletOverviewSnapshotResponse> {
+  return fetchWalletJson<WalletOverviewSnapshotResponse>(apiUrl, wallet, withWalletReadOptions("overview", planetId, options), "Overview snapshot", {
+    ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+    ...(options.fresh === undefined ? {} : { fresh: options.fresh }),
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
+  });
 }
 
 export async function fetchFleetMissionVisibility(apiUrl: string, wallet: string, options: FleetMissionVisibilityOptions = {}): Promise<FleetMissionVisibilityResponse> {
   const params = new URLSearchParams();
   if (options.includeArchive === false) params.set("archive", "none");
-  return fetchWalletJson<FleetMissionVisibilityResponse>(
-    apiUrl,
-    wallet,
-    withWalletReadOptions("fleet-visibility", undefined, options, params),
-    "Fleet visibility",
-    {
-      ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
-      ...(options.fresh === undefined ? {} : { fresh: options.fresh }),
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
-    }
-  );
+  return fetchWalletJson<FleetMissionVisibilityResponse>(apiUrl, wallet, withWalletReadOptions("fleet-visibility", undefined, options, params), "Fleet visibility", {
+    ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+    ...(options.fresh === undefined ? {} : { fresh: options.fresh }),
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
+  });
 }
 
 export async function fetchFleetMissionArchive(
@@ -4676,7 +4341,7 @@ export async function fetchFleetMissionArchive(
     pageSize?: number;
     planetId?: string;
     signal?: AbortSignal;
-  } = {}
+  } = {},
 ): Promise<FleetMissionArchiveResponse> {
   const params = new URLSearchParams();
   params.set("status", "completed");
@@ -4686,19 +4351,19 @@ export async function fetchFleetMissionArchive(
   if (options.planetId) params.set("planetId", options.planetId);
   params.set("page", String(options.page ?? 1));
   params.set("pageSize", String(options.pageSize ?? 25));
-  return fetchWalletJson<FleetMissionArchiveResponse>(
-    apiUrl,
-    wallet,
-    `missions?${params.toString()}`,
-    "Mission archive",
-    { fresh: true, signal: options.signal },
-  );
+  return fetchWalletJson<FleetMissionArchiveResponse>(apiUrl, wallet, `missions?${params.toString()}`, "Mission archive", { fresh: true, signal: options.signal });
 }
 
 export async function fetchPlayerActivity(
   apiUrl: string,
   wallet: string,
-  options: { includeProjected?: boolean; page?: number; pageSize?: number; signal?: AbortSignal; since?: number } = {}
+  options: {
+    includeProjected?: boolean;
+    page?: number;
+    pageSize?: number;
+    signal?: AbortSignal;
+    since?: number;
+  } = {},
 ): Promise<PlayerActivityResponse> {
   const params = new URLSearchParams();
   params.set("page", String(options.page ?? 1));
@@ -4713,36 +4378,28 @@ export function playerActivityPresenceUrl(apiUrl: string, wallet: string): strin
 }
 
 export async function recordPlayerActivityPresence(apiUrl: string, wallet: string): Promise<PlayerActivityPresence> {
-  return fetchGameApiMutation<PlayerActivityPresence>(
-    playerActivityPresenceUrl(apiUrl, wallet),
-    "Player activity presence"
-  );
+  return fetchGameApiMutation<PlayerActivityPresence>(playerActivityPresenceUrl(apiUrl, wallet), "Player activity presence");
 }
 
 export async function fetchMissileAttackArchive(
   apiUrl: string,
   wallet: string,
-  options: { page?: number; pageSize?: number; planetId?: string; signal?: AbortSignal } = {}
+  options: {
+    page?: number;
+    pageSize?: number;
+    planetId?: string;
+    signal?: AbortSignal;
+  } = {},
 ): Promise<MissileAttackArchiveResponse> {
   const params = new URLSearchParams();
   if (options.planetId) params.set("planetId", options.planetId);
   params.set("page", String(options.page ?? 1));
   params.set("pageSize", String(options.pageSize ?? 25));
-  return fetchWalletJson<MissileAttackArchiveResponse>(
-    apiUrl,
-    wallet,
-    `missile-attacks?${params.toString()}`,
-    "Missile strike archive",
-    { fresh: true, signal: options.signal },
-  );
+  return fetchWalletJson<MissileAttackArchiveResponse>(apiUrl, wallet, `missile-attacks?${params.toString()}`, "Missile strike archive", { fresh: true, signal: options.signal });
 }
 
 export async function fetchGlobalActiveMissions(apiUrl: string, signal?: AbortSignal): Promise<GlobalActiveMissionsResponse> {
-  return fetchGameApiJson<GlobalActiveMissionsResponse>(
-    `${apiUrl.replace(/\/+$/, "")}/missions?status=active&live=1`,
-    "Active missions",
-    { cache: "no-store", signal },
-  );
+  return fetchGameApiJson<GlobalActiveMissionsResponse>(`${apiUrl.replace(/\/+$/, "")}/missions?status=active&live=1`, "Active missions", { cache: "no-store", signal });
 }
 
 export async function fetchGlobalMissionArchive(
@@ -4755,7 +4412,7 @@ export async function fetchGlobalMissionArchive(
     planetId?: string;
     signal?: AbortSignal;
     summaryOnly?: boolean;
-  } = {}
+  } = {},
 ): Promise<GlobalMissionArchiveResponse> {
   const params = new URLSearchParams();
   params.set("status", "completed");
@@ -4766,27 +4423,15 @@ export async function fetchGlobalMissionArchive(
   if (options.summaryOnly) params.set("summaryOnly", "true");
   params.set("page", String(options.page ?? 1));
   params.set("pageSize", String(options.pageSize ?? 25));
-  return fetchGameApiJson<GlobalMissionArchiveResponse>(
-    `${apiUrl.replace(/\/+$/, "")}/missions?${params.toString()}`,
-    "Mission archive",
-    { cache: "no-store", signal: options.signal },
-  );
+  return fetchGameApiJson<GlobalMissionArchiveResponse>(`${apiUrl.replace(/\/+$/, "")}/missions?${params.toString()}`, "Mission archive", { cache: "no-store", signal: options.signal });
 }
 
 export async function fetchMission(apiUrl: string, missionId: string, signal?: AbortSignal): Promise<MissionDetailResponse> {
-  return fetchGameApiJson<MissionDetailResponse>(
-    `${apiUrl.replace(/\/+$/, "")}/mission/${encodeURIComponent(missionId)}`,
-    "Mission",
-    { cache: "no-store", signal },
-  );
+  return fetchGameApiJson<MissionDetailResponse>(`${apiUrl.replace(/\/+$/, "")}/mission/${encodeURIComponent(missionId)}`, "Mission", { cache: "no-store", signal });
 }
 
 export async function fetchBattleReports(apiUrl: string, signal?: AbortSignal): Promise<BattleReport[]> {
-  return fetchGameApiJson<BattleReport[]>(
-    `${apiUrl.replace(/\/+$/, "")}/battle-reports`,
-    "Battle reports",
-    { signal },
-  );
+  return fetchGameApiJson<BattleReport[]>(`${apiUrl.replace(/\/+$/, "")}/battle-reports`, "Battle reports", { signal });
 }
 
 export async function fetchInfrastructureState(apiUrl: string, wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<ChainInfrastructureState> {
@@ -4821,21 +4466,16 @@ export async function fetchPlayerProfile(apiUrl: string, wallet: string, options
   return fetchWalletJson<PlayerProfile>(apiUrl, wallet, "profile", "Player profile", options);
 }
 
-export async function updatePlayerDisplayName(
-  apiUrl: string,
-  provider: Eip1193Provider,
-  account: string,
-  displayName: string
-): Promise<PlayerProfile> {
+export async function updatePlayerDisplayName(apiUrl: string, provider: Eip1193Provider, account: string, displayName: string): Promise<PlayerProfile> {
   const message = playerDisplayNameMessage(account, displayName);
   const signature = await requestPersonalSignature(provider, account, message);
   const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(account)}/profile/display-name`, {
     body: JSON.stringify({ displayName, signature }),
     headers: {
       accept: "application/json",
-      "content-type": "application/json"
+      "content-type": "application/json",
     },
-    method: "POST"
+    method: "POST",
   });
 
   if (!response.ok) {
@@ -4844,22 +4484,16 @@ export async function updatePlayerDisplayName(
   return response.json() as Promise<PlayerProfile>;
 }
 
-export async function updatePlayerProfile(
-  apiUrl: string,
-  provider: Eip1193Provider,
-  account: string,
-  displayName: string,
-  description: string | null
-): Promise<PlayerProfile> {
+export async function updatePlayerProfile(apiUrl: string, provider: Eip1193Provider, account: string, displayName: string, description: string | null): Promise<PlayerProfile> {
   const message = playerProfileMessage(account, displayName, description);
   const signature = await requestPersonalSignature(provider, account, message);
   const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(account)}/profile`, {
     body: JSON.stringify({ description, displayName, signature }),
     headers: {
       accept: "application/json",
-      "content-type": "application/json"
+      "content-type": "application/json",
     },
-    method: "POST"
+    method: "POST",
   });
 
   if (!response.ok) {
@@ -4917,11 +4551,7 @@ type TransactionReceiptConfirmationOptions = {
 export async function confirmTransactionReceiptFromRpc(
   rpcUrl: string,
   transactionHash: string,
-  {
-    fetcher = fetch,
-    pollMs = TRANSACTION_RECEIPT_POLL_MS,
-    timeoutMs = TRANSACTION_RECEIPT_TIMEOUT_MS,
-  }: TransactionReceiptConfirmationOptions = {},
+  { fetcher = fetch, pollMs = TRANSACTION_RECEIPT_POLL_MS, timeoutMs = TRANSACTION_RECEIPT_TIMEOUT_MS }: TransactionReceiptConfirmationOptions = {},
 ): Promise<TransactionReceipt> {
   if (!rpcUrl.trim()) {
     throw new Error("App RPC is unavailable while confirming the transaction.");
@@ -4946,7 +4576,7 @@ export async function confirmTransactionReceiptFromRpc(
       if (!response.ok) {
         throw new Error(`Transaction receipt RPC returned ${response.status}.`);
       }
-      const body = await response.json() as {
+      const body = (await response.json()) as {
         error?: { code?: number; message?: string };
         result?: TransactionReceipt | null;
       };
@@ -4996,10 +4626,7 @@ export type FetchHighscoreOptions = {
   signal?: AbortSignal;
 };
 
-export async function fetchHighscores(
-  apiUrl: string,
-  options: FetchHighscoreOptions | number = 100
-): Promise<HighscoreResponse> {
+export async function fetchHighscores(apiUrl: string, options: FetchHighscoreOptions | number = 100): Promise<HighscoreResponse> {
   const params = new URLSearchParams();
   if (typeof options === "number") {
     params.set("limit", String(options));
@@ -5011,60 +4638,38 @@ export async function fetchHighscores(
     if (options.page !== undefined) params.set("page", String(options.page));
     if (options.pageSize !== undefined) params.set("pageSize", String(options.pageSize));
   }
-  return fetchGameApiJson<HighscoreResponse>(
-    `${apiUrl.replace(/\/+$/, "")}/highscores?${params.toString()}`,
-    "Rankings",
-    {
-      httpErrorMessage: highscoreHttpFailureMessage,
-      networkFailureMessage: highscoreNetworkFailureMessage,
-      ...(typeof options === "number" || options.signal === undefined ? {} : { signal: options.signal }),
-    },
-  );
+  return fetchGameApiJson<HighscoreResponse>(`${apiUrl.replace(/\/+$/, "")}/highscores?${params.toString()}`, "Rankings", {
+    httpErrorMessage: highscoreHttpFailureMessage,
+    networkFailureMessage: highscoreNetworkFailureMessage,
+    ...(typeof options === "number" || options.signal === undefined ? {} : { signal: options.signal }),
+  });
 }
 
 export async function fetchPlayerHighscore(apiUrl: string, wallet: string, signal?: AbortSignal): Promise<HighscoreEntry | null> {
-  const response = await fetchGameApiJson<{ entry?: HighscoreEntry | null }>(
-    `${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(wallet)}/highscore`,
-    "Player highscore",
-    { signal },
-  );
+  const response = await fetchGameApiJson<{ entry?: HighscoreEntry | null }>(`${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(wallet)}/highscore`, "Player highscore", { signal });
   return response.entry ?? null;
 }
 
-export async function fetchRaidFinderDebrisTargets(
-  apiUrl: string,
-  options: { limit?: number; signal?: AbortSignal } = {},
-): Promise<RaidFinderDebrisResponse> {
+export async function fetchRaidFinderDebrisTargets(apiUrl: string, options: { limit?: number; signal?: AbortSignal } = {}): Promise<RaidFinderDebrisResponse> {
   const params = new URLSearchParams();
   if (options.limit) params.set("limit", String(options.limit));
   const query = params.toString();
-  return fetchGameApiJson<RaidFinderDebrisResponse>(
-    `${apiUrl.replace(/\/+$/, "")}/raid-finder/debris${query ? `?${query}` : ""}`,
-    "Raid finder debris",
-    {
-      httpErrorMessage: highscoreHttpFailureMessage,
-      networkFailureMessage: highscoreNetworkFailureMessage,
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
-    },
-  );
+  return fetchGameApiJson<RaidFinderDebrisResponse>(`${apiUrl.replace(/\/+$/, "")}/raid-finder/debris${query ? `?${query}` : ""}`, "Raid finder debris", {
+    httpErrorMessage: highscoreHttpFailureMessage,
+    networkFailureMessage: highscoreNetworkFailureMessage,
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
+  });
 }
 
-export async function fetchRaidFinderRifters(
-  apiUrl: string,
-  options: { limit?: number; signal?: AbortSignal } = {},
-): Promise<RaidFinderRiftersResponse> {
+export async function fetchRaidFinderRifters(apiUrl: string, options: { limit?: number; signal?: AbortSignal } = {}): Promise<RaidFinderRiftersResponse> {
   const params = new URLSearchParams();
   if (options.limit) params.set("limit", String(options.limit));
   const query = params.toString();
-  return fetchGameApiJson<RaidFinderRiftersResponse>(
-    `${apiUrl.replace(/\/+$/, "")}/raid-finder/rifters${query ? `?${query}` : ""}`,
-    "Raid finder rifters",
-    {
-      httpErrorMessage: highscoreHttpFailureMessage,
-      networkFailureMessage: highscoreNetworkFailureMessage,
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
-    },
-  );
+  return fetchGameApiJson<RaidFinderRiftersResponse>(`${apiUrl.replace(/\/+$/, "")}/raid-finder/rifters${query ? `?${query}` : ""}`, "Raid finder rifters", {
+    httpErrorMessage: highscoreHttpFailureMessage,
+    networkFailureMessage: highscoreNetworkFailureMessage,
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
+  });
 }
 
 async function highscoreHttpFailureMessage(response: Response): Promise<string> {
@@ -5097,7 +4702,7 @@ async function highscoreHttpFailureMessage(response: Response): Promise<string> 
 async function readJsonErrorBody(response: Response): Promise<{ error?: unknown } | undefined> {
   try {
     const parsed = await response.clone().json();
-    return parsed && typeof parsed === "object" ? parsed as { error?: unknown } : undefined;
+    return parsed && typeof parsed === "object" ? (parsed as { error?: unknown }) : undefined;
   } catch {
     return undefined;
   }
@@ -5113,12 +4718,7 @@ function highscoreNetworkFailureMessage(error: unknown): string {
   return message || "Rankings could not be loaded.";
 }
 
-export async function fetchSystemData(
-  apiUrl: string,
-  galaxy: number,
-  system: number,
-  options: { detail?: "full"; signal?: AbortSignal } = {},
-): Promise<unknown> {
+export async function fetchSystemData(apiUrl: string, galaxy: number, system: number, options: { detail?: "full"; signal?: AbortSignal } = {}): Promise<unknown> {
   const detail = options.detail ? `?detail=${options.detail}` : "";
   const url = `${apiUrl.replace(/\/+$/, "")}/universe/galaxies/${galaxy}/systems/${system}${detail}`;
   return fetchGameApiJson<unknown>(url, "System", {
@@ -5133,11 +4733,7 @@ function delay(ms: number): Promise<void> {
   });
 }
 
-async function fetchGameApiMutation<T>(
-  url: string,
-  label: string,
-  body?: Record<string, unknown>
-): Promise<T> {
+async function fetchGameApiMutation<T>(url: string, label: string, body?: Record<string, unknown>): Promise<T> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => {
     controller.abort(new Error(`Timed out writing ${label.toLowerCase()} to the game API after ${Math.round(WALLET_API_READ_TIMEOUT_MS / 1_000)} seconds.`));
@@ -5146,19 +4742,21 @@ async function fetchGameApiMutation<T>(
   let response: Response;
   try {
     response = await fetch(url, {
-      ...(body ? {
-        body: JSON.stringify(body),
-        headers: {
-          accept: "application/json",
-          "content-type": "application/json"
-        }
-      } : {
-        headers: {
-          accept: "application/json"
-        }
-      }),
+      ...(body
+        ? {
+            body: JSON.stringify(body),
+            headers: {
+              accept: "application/json",
+              "content-type": "application/json",
+            },
+          }
+        : {
+            headers: {
+              accept: "application/json",
+            },
+          }),
       method: "POST",
-      signal: controller.signal
+      signal: controller.signal,
     });
   } catch (error) {
     if (controller.signal.aborted) {
@@ -5182,7 +4780,11 @@ async function fetchWalletJson<T>(
   wallet: string,
   path: string,
   label: string,
-  options: { fresh?: boolean; signal?: AbortSignal | undefined; timeoutMs?: number } = {}
+  options: {
+    fresh?: boolean;
+    signal?: AbortSignal | undefined;
+    timeoutMs?: number;
+  } = {},
 ): Promise<T> {
   const timeoutMs = options.timeoutMs ?? WALLET_API_READ_TIMEOUT_MS;
   const url = `${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(wallet)}/${path}`;
@@ -5190,7 +4792,7 @@ async function fetchWalletJson<T>(
     cache: "no-store",
     timeoutMs,
     ...(options.signal === undefined ? {} : { signal: options.signal }),
-    networkFailureMessage: (error) => walletApiNetworkFailureMessage(label, error)
+    networkFailureMessage: (error) => walletApiNetworkFailureMessage(label, error),
   });
 }
 
@@ -5203,7 +4805,7 @@ async function fetchGameApiJson<T>(
     networkFailureMessage?: (error: unknown) => string;
     signal?: AbortSignal | undefined;
     timeoutMs?: number;
-  } = {}
+  } = {},
 ): Promise<T> {
   // BackendDataStore is the only owner of GET deduplication, caching and
   // scheduling.  This adapter deliberately performs one abortable transport
@@ -5220,7 +4822,7 @@ async function fetchGameApiJsonUnpooled<T>(
     networkFailureMessage?: (error: unknown) => string;
     signal?: AbortSignal | undefined;
     timeoutMs?: number;
-  }
+  },
 ): Promise<T> {
   const timeoutMs = options.timeoutMs ?? WALLET_API_READ_TIMEOUT_MS;
   const controller = new AbortController();
@@ -5268,7 +4870,7 @@ async function mutateWatchedPlanet(
   action: WatchedPlanetAction,
   method: "POST" | "DELETE",
   path: string,
-  planetId: string
+  planetId: string,
 ): Promise<WatchPlanetMutationResponse> {
   const signature = await requestWatchedPlanetSignature(provider, wallet, action, planetId);
   const init: RequestInit = {
@@ -5276,9 +4878,9 @@ async function mutateWatchedPlanet(
     cache: "no-store",
     headers: {
       accept: "application/json",
-      "content-type": "application/json"
+      "content-type": "application/json",
     },
-    method
+    method,
   };
   const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(wallet)}/${path}`, init);
   if (!response.ok) throw new Error(await apiErrorMessage(response, "Watched planets"));
@@ -5306,7 +4908,7 @@ function isContractPlanetId(planetId: string): boolean {
 async function apiErrorMessage(response: Response, label: string): Promise<string> {
   const fallback = `${label} API failed: ${response.status}`;
   try {
-    const body = await response.clone().json() as { error?: unknown };
+    const body = (await response.clone().json()) as { error?: unknown };
     const error = typeof body.error === "string" ? body.error.trim() : "";
 
     if (response.status === 503 && error === "backend_not_configured") {

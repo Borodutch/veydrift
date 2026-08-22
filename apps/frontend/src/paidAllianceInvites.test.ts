@@ -148,10 +148,15 @@ describe("paid alliance invite frontend flow", () => {
       crystal: "0",
       deuterium: "7",
     });
-    expect(requests).toHaveLength(2);
-    expect((requests[0] as any).params[0].data.slice(0, 10)).toBe("0x9c9a1061");
-    expect((requests[0] as any).params[0].value).toBe("0x1550f7dca70000");
-    expect((requests[1] as any).params[0].data.slice(0, 10)).toBe("0x2d20f511");
+    // Every write does an exact eth_call immediately before wallet submission.
+    expect(requests).toHaveLength(4);
+    expect((requests[0] as any).method).toBe("eth_call");
+    expect((requests[1] as any).method).toBe("eth_sendTransaction");
+    expect((requests[1] as any).params[0].data.slice(0, 10)).toBe("0x9c9a1061");
+    expect((requests[1] as any).params[0].value).toBe("0x1550f7dca70000");
+    expect((requests[2] as any).method).toBe("eth_call");
+    expect((requests[3] as any).method).toBe("eth_sendTransaction");
+    expect((requests[3] as any).params[0].data.slice(0, 10)).toBe("0x2d20f511");
   });
 
   test("sends bearer secrets only in POST bodies, never request URLs", async () => {
@@ -176,12 +181,12 @@ describe("paid alliance invite frontend flow", () => {
 
   test("preflights private invitations and explains when one was already used", async () => {
     const source = await Bun.file(new URL("./FirstPlanetSettlementApp.tsx", import.meta.url)).text();
-    expect(source).toContain("resolvePaidAllianceInvite(apiUrl, paidAllianceInviteSecret)");
+    expect(source).toContain("paidAllianceInviteQuery.refetch()");
     expect(source).toContain("Invitation already used");
     expect(source).toContain("has already been accepted");
     expect(source).toContain("Checking invitation");
-    expect(source).toContain("const resolution = await refreshPaidAllianceInviteValidation();");
-    expect(source).toContain("if (paidAllianceInviteSecret && !isUserRejected(error))");
+    expect(source).toContain("await refreshPaidAllianceInviteValidation()");
+    expect(source).toContain("errorLabel: (error) => (isUserRejected(error)");
     expect(source).toContain("Retry invitation");
   });
 

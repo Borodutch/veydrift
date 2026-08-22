@@ -3,14 +3,7 @@ export type TransactionActionGate = {
   run: <T>(key: string, action: () => Promise<T>) => Promise<T | undefined>;
 };
 
-export type WriteTransactionPhase =
-  | "idle"
-  | "pending"
-  | "confirming"
-  | "confirmed"
-  | "indexing"
-  | "success"
-  | "error";
+export type WriteTransactionPhase = "idle" | "pending" | "confirming" | "confirmed" | "indexing" | "success" | "error";
 
 export type WriteTransactionState = {
   error?: unknown;
@@ -29,6 +22,12 @@ export type WriteTransactionDescriptor<IndexedSnapshot = void> = {
   label: string;
   onErrorRefresh?: (error: unknown) => Promise<void> | void;
   onStateChange?: (state: WriteTransactionState) => void;
+  /**
+   * Optional wallet/API preparation that must share the same global write
+   * gate as submission (for example an authorization signature).  It never
+   * reconciles state; post-receipt indexing remains in waitForIndexed.
+   */
+  prepare?: () => Promise<void>;
   send: () => Promise<string>;
   waitForIndexed?: (receipt: unknown, txHash: string) => Promise<IndexedSnapshot>;
 };
@@ -37,7 +36,7 @@ export function createTransactionActionGate(): TransactionActionGate {
   let inFlightKey: string | undefined;
 
   return {
-    isRunning: (key) => key ? inFlightKey === key : inFlightKey !== undefined,
+    isRunning: (key) => (key ? inFlightKey === key : inFlightKey !== undefined),
     run: async (key, action) => {
       if (inFlightKey) return undefined;
 
@@ -51,31 +50,58 @@ export function createTransactionActionGate(): TransactionActionGate {
   };
 }
 
-export async function runWriteTransaction<IndexedSnapshot = void>(
-  gate: TransactionActionGate,
-  descriptor: WriteTransactionDescriptor<IndexedSnapshot>,
-): Promise<boolean> {
+export async function runWriteTransaction<IndexedSnapshot = void>(gate: TransactionActionGate, descriptor: WriteTransactionDescriptor<IndexedSnapshot>): Promise<boolean> {
   let completed = false;
   let didRun = false;
   const result = await gate.run(descriptor.key, async () => {
     didRun = true;
     const setState = (state: WriteTransactionState) => descriptor.onStateChange?.(state);
-    setState({ key: descriptor.key, phase: "pending", stage: "wallet", label: transactionAwaitingWalletLabel(descriptor.label) });
+    setState({
+      key: descriptor.key,
+      phase: "pending",
+      stage: "wallet",
+      label: transactionAwaitingWalletLabel(descriptor.label),
+    });
 
     let txHash: string | undefined;
     let receiptConfirmed = false;
     try {
+      await descriptor.prepare?.();
       txHash = await descriptor.send();
-      setState({ key: descriptor.key, phase: "confirming", stage: "wallet", label: transactionConfirmingLabel(descriptor.label, txHash), txHash });
+      setState({
+        key: descriptor.key,
+        phase: "confirming",
+        stage: "wallet",
+        label: transactionConfirmingLabel(descriptor.label, txHash),
+        txHash,
+      });
       const receipt = await descriptor.confirm(txHash);
       receiptConfirmed = true;
-      setState({ key: descriptor.key, phase: "confirmed", stage: "confirmed", label: transactionConfirmedLabel(descriptor.label), txHash });
-      setState({ key: descriptor.key, phase: "indexing", stage: "waiting-for-index", label: transactionSyncingLabel(descriptor.label), txHash });
+      setState({
+        key: descriptor.key,
+        phase: "confirmed",
+        stage: "confirmed",
+        label: transactionConfirmedLabel(descriptor.label),
+        txHash,
+      });
+      setState({
+        key: descriptor.key,
+        phase: "indexing",
+        stage: "waiting-for-index",
+        label: transactionSyncingLabel(descriptor.label),
+        txHash,
+      });
       const snapshot = descriptor.waitForIndexed ? await descriptor.waitForIndexed(receipt, txHash) : undefined;
       if (descriptor.applyIndexedState) {
         await descriptor.applyIndexedState(snapshot as IndexedSnapshot);
       }
-      setState({ key: descriptor.key, phase: "success", stage: "applied", label: `${descriptor.label} confirmed.`, txHash });
+      setState({
+        key: descriptor.key,
+        phase: "success",
+        stage: "applied",
+        label: `${descriptor.label} confirmed.`,
+        txHash,
+      });
       completed = true;
     } catch (error) {
       await descriptor.onErrorRefresh?.(error);

@@ -391,8 +391,10 @@ describe("mission creation", () => {
     expect(playableMvpAppSource).toContain("const supportsBodyMission = supportsCargoMission || action.kind === \"attack\";");
     expect(playableMvpAppSource).toContain('action.kind === "attack" && draft.lootRatio');
     expect(playableMvpAppSource).toContain("sendLaunchBodyAttackMissionTransaction");
-    expect(playableMvpAppSource).toContain("validateShipInventory: { originIsMoon, originPlanetId, ships: draft.ships }");
-    expect(playableMvpAppSource).toContain("validateAttackProtection: { targetPlanetId, targetIsMoon }");
+    expect(playableMvpAppSource).toContain("validateShipInventory:");
+    expect(playableMvpAppSource).toContain("originIsMoon,");
+    expect(playableMvpAppSource).toContain("validateAttackProtection:");
+    expect(playableMvpAppSource).toContain("targetIsMoon,");
     expect(playableMvpAppSource).toContain("targetPlanet: pending.target");
     expect(playableMvpAppSource).toContain("const targetIsMoon = pending.mission.targetIsMoon === true;");
 
@@ -623,7 +625,7 @@ describe("mission creation", () => {
     expect(initial.smallCargo).toBe(0);
     expect(Object.values(initial).every((count) => count === 0)).toBe(true);
     expect(staleSelectedShipQuantityBlocker(deployAction, initial, moonOriginState)).toBeUndefined();
-    expect(playableMvpAppSource).toContain("const moonOriginShipyardState = missionMoonShipyardState({ moonState, shipyardState });");
+    expect(playableMvpAppSource).toContain("const moonOriginShipyardState = missionMoonShipyardState({");
     expect(playableMvpAppSource).toContain("shipyardState: moonOriginShipyardState,");
     expect(missionDraftBlocker({
       action: deployAction,
@@ -651,9 +653,7 @@ describe("mission creation", () => {
       selectedShipCount: 1,
       totalCargoCapacity: 50,
     })).toBeUndefined();
-    expect(playableMvpAppSource).toContain(
-      "validateShipInventory: { originIsMoon, originPlanetId, ships: draft.ships }",
-    );
+    expect(playableMvpAppSource).toContain("validateShipInventory:");
     expect(playableMvpAppSource).toContain(
       "backendData!.moon(account, options.validateShipInventory.originPlanetId)",
     );

@@ -192,6 +192,6 @@ describe("VEY-KANEO-653 pending mission report polling", () => {
     expect(source).toContain("MISSION_REPORT_PENDING_POLL_INTERVAL_MS");
     expect(source).toContain('"kind:mission"');
     expect(source).toContain("!shouldPollPendingMissionReport(missionDetail)");
-    expect(source).toContain('backendData!.mission(missionDetailId, { requestScope: "mission-detail-navigation" })');
+    expect(source).toContain("backendData!.mission(missionDetailId)");
   });
 });

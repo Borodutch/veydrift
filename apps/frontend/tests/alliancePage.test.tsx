@@ -545,7 +545,7 @@ describe("AlliancePage loading display", () => {
     expect(alliancePageSource).not.toContain('role="tooltip"');
     expect(alliancePageSource).toContain('title={endAction.reason ?? "End war"}');
     expect(alliancePageSource).toContain("Only the alliance that declared this war can end it.");
-    expect(alliancePageSource).toContain("War is restricted to its declaration snapshot: late joins receive no exceptions.");
+    expect(alliancePageSource).toContain("War uses its declaration snapshot: only original members qualify");
   });
 
   test("keeps member administration compact behind explicit controls", () => {

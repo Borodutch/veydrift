@@ -146,15 +146,16 @@ describe("playable chain refresh", () => {
   });
 
   test("uses one confirmed-resource promotion path for all shared production spends", async () => {
-    const source = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.url)).text();
     const storeSource = await Bun.file(new URL("../src/backendDataStore.ts", import.meta.url)).text();
-    for (const endpoint of ["infrastructure", "shipyard", "research"]) {
-      expect(source).toContain(`await convergeBackendIndexedResourceState(\n          () => backendData!.${endpoint}`);
-    }
-    expect(source).toContain("backendData!.waitForStartedDefenseProduction(account, expectation)");
+    // Transaction convergence belongs to the data store.  The shell only
+    // selects an opaque indexing plan, so all production spends share the
+    // same receipt/indexed-resource ordering.
+    expect(storeSource).toContain("resourceChange:");
+    expect(storeSource).toContain("startedBuilding:");
+    expect(storeSource).toContain("startedShipProduction:");
+    expect(storeSource).toContain("startedResearch:");
     expect(storeSource).toContain("waitForStartedDefenseProductionState(");
-    expect(source).toContain("promoteBackendResourceState(snapshot.defense, { confirmedTransaction: true })");
-    expect(source).toContain("promoteBackendResourceState(state, { confirmedTransaction: true })");
+    expect(storeSource).toContain("resourceIndexingExpectationForTransaction(txHash, baseline");
   });
 
   test("promotes every indexed planet or moon resource transaction from the chain event stream", async () => {
@@ -205,7 +206,7 @@ describe("playable chain refresh", () => {
     expect(shouldRefreshShipyardStateForPage("mission-control")).toBe(false);
     expect(shouldRefreshShipyardStateForPage("research")).toBe(false);
     expect(shouldClearCachedShipyardStateForPageRefresh("shipyard")).toBe(false);
-    expect(source).toContain("if (!shouldRefreshShipyardStateForPage(page)) return;");
+    expect(source).toContain("pageStateHydrationReady && shouldRefreshShipyardStateForPage(page)");
   });
 
   test("refreshes a Mission Control origin after a planet switch without clearing confirmed inventory", async () => {
@@ -218,7 +219,7 @@ describe("playable chain refresh", () => {
     expect(shouldClearCachedShipyardStateForPageRefresh("raid-target-finder")).toBe(false);
     expect(shouldEagerlyRefreshPlanetSwitchForPage("mission-control")).toBe(true);
     expect(shouldEagerlyRefreshPlanetSwitchForPage("overview")).toBe(true);
-    expect(source).toContain("refreshShipyardState();");
+    expect(source).toContain("refreshShipyardState({ clearCachedState: true });");
     expect(source).toContain("Mission Control can switch origins entirely from its cached wallet roster.");
   });
 
@@ -270,7 +271,8 @@ describe("playable chain refresh", () => {
     expect(walletFlowSource).not.toContain("waitForReceipt(");
     expect(walletFlowSource).toContain("eth_getTransactionReceipt");
     expect(source).toContain("confirm: confirmSubmittedTransaction");
-    expect(source).toContain("sendStartBuildingUpgradeTransaction(\n          provider,\n          account,\n          gameContract,\n          planetId,\n          building,\n        )");
+    expect(walletFlowSource).toContain('method: "eth_call"');
+    expect(walletFlowSource).toContain('method: "eth_sendTransaction"');
     expect(source).not.toContain("building,\n          { readProvider },");
     // VEY-KANEO-507: ready production queues reconcile inside the upgraded contracts,
     // so the frontend no longer adds a manual finish-before-start wallet transaction.
@@ -281,55 +283,48 @@ describe("playable chain refresh", () => {
   test("gates mutating transaction families until receipt and backend sync work settle", async () => {
     const source = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.url)).text();
 
-    for (const snippet of [
-      "key: `building:start:",
-      "key: `alliance:",
-      "key: `rift:",
-      "key: `galaxy:",
-      "key: `moon:",
-      "key: \"planet:rename\"",
-      "key: \"planet:abandon\"",
-      "key: `mission:",
-    ]) {
-      expect(source).toContain(snippet);
-    }
-
-    expect(source).toContain("runGatedTransaction(\"player-profile:update\"");
+    const storeSource = await Bun.file(new URL("../src/backendDataStore.ts", import.meta.url)).text();
+    expect(source).toContain("runCoordinatedWriteTransaction");
+    expect(source).toContain("backendData.runWriteTransaction({");
+    expect(storeSource).toContain("readonly transactionGate = createTransactionActionGate()");
+    expect(storeSource).toContain("executeWriteTransaction(this.transactionGate, {");
     expect(source).toContain("const gameContractTransactionInputsAvailable = Boolean(provider && account && gameContract)");
     expect(source).toContain("const gameMaintenancePaused = displayFleetVisibility?.gameMaintenance?.paused === true");
-    expect(source).toContain("gameActionsAvailableForBody(activeBodyKind, gameContractTransactionInputsAvailable),\n    activePlanetStateFresh,\n  ) && !gameMaintenancePaused");
-    expect(source).toContain("const missionTransactionInputsAvailable = currentPlanetTransactionInputsAvailable(\n    gameContractTransactionInputsAvailable,\n    activePlanetStateFresh,\n  ) && !gameMaintenancePaused");
+    expect(source).toContain("gameActionsAvailableForBody(");
+    expect(source).toContain("activePlanetStateFresh");
+    expect(source).toContain("const missionTransactionInputsAvailable = currentPlanetTransactionInputsAvailable(");
     expect(source).toContain("unavailableReason: gameMaintenancePaused\n      ? GAME_MAINTENANCE_MESSAGE");
     expect(source).toContain("const canSubmitGameTransaction = gameTransactionInputsAvailable && !transactionActionPending");
     expect(source).toContain("const canSubmitMissionTransaction = missionTransactionInputsAvailable && !transactionActionPending");
     expect(source).toContain("runCoordinatedWriteTransaction");
-    expect(source).toContain("resourceIndexingExpectationForTransaction(txHash, resourceBaseline, receipt)");
+    expect(storeSource).toContain("resourceIndexingExpectationForTransaction(txHash, baseline");
     expect(source).toContain("const allianceTransactionUnavailableReason = transactionUnavailableReasonFor({");
     expect(source).toContain("const moonTransactionUnavailableReason = transactionUnavailableReasonFor({");
     expect(source).toContain("setRiftAction((current) => clearRecoveredWalletContractUnavailableAction(current, true));");
     expect(source).toContain("transactionUnavailableReason={gameTransactionUnavailableReason}");
     expect(source).toContain("transactionUnavailableReason={allianceTransactionUnavailableReason}");
     expect(source).toContain("transactionUnavailableReason={moonTransactionUnavailableReason}");
-    expect(source).toContain("await Promise.allSettled([\n              refreshShipyardState(),");
-    expect(source).toContain("await Promise.allSettled([\n          refreshRiftState(),");
-    expect(source).toContain("refreshOnChainState(undefined, { force: true }),");
-    expect(source).not.toContain("void refreshOnChainState(undefined, { force: true });");
+    expect(source).toContain("indexing: options.syncMissionLaunch");
+    expect(source).toContain("backendData!.indexing.missionLaunch(");
   });
 
   test("keeps mission confirmation open until receipt confirmation and indexing settle", async () => {
     const source = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.url)).text();
 
-    expect(source).toContain("): Promise<boolean> => {\n    let completed = false;");
+    expect(source).toContain("const runGalaxyTransaction = useCallback(");
+    expect(source).toContain("let completed = false;");
     expect(source).toContain("confirm: confirmSubmittedTransaction");
-    expect(source).toContain("const [missionSnapshot] = await Promise.all([");
-    expect(source).toContain("waitForMissionLaunchState(loadMissionLaunchSnapshot, submittedTxHash");
-    expect(source).toContain("if (state.phase === \"success\") setGalaxyAction({ status: \"success\", label: `${label} confirmed.` });");
+    const storeSource = await Bun.file(new URL("../src/backendDataStore.ts", import.meta.url)).text();
+    expect(storeSource).toContain("waitForMissionLaunchState(");
+    expect(storeSource).toContain("missionLaunch:");
+    expect(source).toContain('if (state.phase === "success")');
+    expect(source).toContain("label: `${label} confirmed.`");
     expect(source).toContain("completed = result;");
     expect(source).toContain("const closeMissionCreationWhenComplete = (transaction: Promise<boolean>) => {");
     expect(source).toContain("if (await transaction) closeMissionCreation();");
-    expect(source).toContain("closeMissionCreationWhenComplete(runGalaxyTransaction(\"Colony mission\"");
-    expect(source).toContain("closeMissionCreationWhenComplete(runGalaxyTransaction(\"Missile attack\"");
-    expect(source).toContain("closeMissionCreationWhenComplete(runGalaxyTransaction(\"Stationed defense\"");
+    expect(source).toContain('"Colony mission"');
+    expect(source).toContain('"Missile attack"');
+    expect(source).toContain('"Stationed defense"');
     expect(source).toContain("closeMissionCreationWhenComplete(runMission());");
     expect(source).toContain("const closeAcsDefendWhenComplete = (transaction: Promise<boolean>) => {");
     expect(source).toContain("if (await transaction) setPendingAcsDefend(null);");

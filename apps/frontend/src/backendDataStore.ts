@@ -23,6 +23,12 @@ import {
   fetchResearchState,
   fetchReferralDashboard,
   fetchReferralHistory,
+  inspectReferralCode,
+  persistReferralClaimIntent,
+  resolvePaidAllianceInvite,
+  recordReferralClaimTransaction,
+  recordReferralRedemptionTransaction,
+  storePaidAllianceInvite,
   fetchRiftState,
   fetchSettlementFundingState,
   fetchShipyardState,
@@ -32,6 +38,10 @@ import {
   fetchWalletQueues,
   fetchWalletSettlement,
   fetchWatchedPlanets,
+  unwatchPlanet,
+  watchPlanet,
+  updatePlayerProfile,
+  validateReferralCode,
   type AttackProtectionStatus,
   type BattleReport,
   type BurningChickenConfig,
@@ -59,44 +69,45 @@ import {
   type RaidFinderRiftersResponse,
   type ReferralDashboard,
   type ReferralHistoryResponse,
+  type ReferralResolution,
+  type PaidAllianceInviteResolution,
   type SettlementFundingState,
   type WalletOverviewSnapshotResponse,
   type WalletPlanetsResponse,
   type WalletSettlementResponse,
   type WatchedPlanetsResponse,
+  type WatchPlanetMutationResponse,
+  REFERRAL_CODE_FRONT_RUN_MESSAGE,
 } from "./walletFlow";
-import {
-  fetchEntityMedia,
-  updateEntityMedia,
-  type EntityMediaKind,
-  type EntityMediaResponse,
-} from "./entityMedia";
+import { fetchEntityMedia, updateEntityMedia, type EntityMediaKind, type EntityMediaResponse } from "./entityMedia";
 import type { Eip1193Provider } from "./walletFlow";
-import {
-  GameStateStore,
-  type GameStateEntry,
-  type GameStatePriority,
-} from "./gameStateStore";
-import {
-  backendResourceSnapshot,
-  promoteCanonicalPlanetResources,
-  type BackendResourceState,
-  type CanonicalPlanetResourceSnapshot,
-  type CanonicalPlanetResourceStore,
-} from "./planetResourceStore";
+import { GameStateStore, type GameStateEntry, type GameStatePriority } from "./gameStateStore";
+import { backendResourceSnapshot, promoteCanonicalPlanetResources, type BackendResourceState, type CanonicalPlanetResourceSnapshot, type CanonicalPlanetResourceStore } from "./planetResourceStore";
 import {
   isResourceSnapshotIndexedAfterTransaction,
+  resourceIndexingExpectationForTransaction,
+  waitForAllianceApplicationCleared,
+  waitForAllianceCreationState,
+  waitForAllianceProfileState,
+  waitForFleetVisibilityIndexedThrough,
+  waitForMissionLaunchState,
+  waitForRenamedWalletPlanet,
+  waitForStartedBuildingState,
   waitForStartedDefenseProductionState,
+  waitForStartedResearchState,
+  waitForStartedShipProductionState,
+  type AllianceApplicationExpectation,
+  type AllianceCreationExpectation,
+  type AllianceProfileExpectation,
+  type MissionLaunchSnapshot,
   type ResourceIndexingExpectation,
+  type StartedBuildingExpectation,
   type StartedDefenseProductionExpectation,
   type StartedDefenseProductionSnapshot,
+  type StartedResearchExpectation,
+  type StartedShipProductionExpectation,
 } from "./postTransactionRefresh";
-import {
-  createTransactionActionGate,
-  runWriteTransaction as executeWriteTransaction,
-  type WriteTransactionDescriptor,
-  type WriteTransactionState,
-} from "./transactionActionGate";
+import { createTransactionActionGate, runWriteTransaction as executeWriteTransaction, type WriteTransactionDescriptor, type WriteTransactionState } from "./transactionActionGate";
 
 type WalletReadOptions = {
   source?: "indexed";
@@ -121,15 +132,26 @@ export type IndexedReadWaitOptions = {
   timeoutError?: string;
 };
 
-export type BackendWriteTransactionDescriptor<IndexedSnapshot = void> =
-  WriteTransactionDescriptor<IndexedSnapshot> & {
-    /**
-     * Canonical resources affected by a confirmed mutation.  The wallet UI
-     * owns signing, but indexed convergence always returns through this data
-     * store rather than page-specific refresh trees.
-     */
-    invalidateTags?: readonly BackendDataTag[];
-  };
+declare const backendIndexingPlanBrand: unique symbol;
+
+/**
+ * An opaque description of the indexed backend state a confirmed write must
+ * expose.  Only BackendDataStore creates plans, so screens cannot install
+ * their own pollers, cache writes, or request-time reconciliation.
+ */
+export type BackendIndexingPlan = {
+  readonly [backendIndexingPlanBrand]: true;
+};
+
+export type BackendWriteTransactionDescriptor = Omit<WriteTransactionDescriptor<void>, "applyIndexedState" | "waitForIndexed"> & {
+  /**
+   * Canonical resources affected by a confirmed mutation.  The wallet UI
+   * owns signing, but indexed convergence always returns through this data
+   * store rather than page-specific refresh trees.
+   */
+  invalidateTags?: readonly BackendDataTag[];
+  indexing?: BackendIndexingPlan | undefined;
+};
 
 type RegisteredResource = {
   key: string;
@@ -142,6 +164,22 @@ type RegisteredResource = {
     wallet?: string | undefined;
   };
   tags: ReadonlySet<BackendDataTag>;
+};
+
+type ManagedPoller = {
+  timer: ReturnType<typeof setInterval>;
+  references: number;
+};
+
+type ActivityPresencePoller = ManagedPoller & {
+  handleExit: () => void;
+  handleVisibility: () => void;
+};
+
+type IndexingPlanRunner = (receipt: unknown, txHash: string) => Promise<void>;
+
+type ReceiptBlock = {
+  blockNumber?: string | number | bigint | null;
 };
 
 type FleetMissionVisibilityOptions = WalletReadOptions & {
@@ -170,17 +208,22 @@ function cacheKey(kind: string, ...parts: unknown[]): string {
   return `${kind}:${JSON.stringify(parts)}`;
 }
 
-function resourceTagsForKey(
-  key: string,
-  wallet?: string | undefined,
-  planetId?: string | undefined,
-): ReadonlySet<BackendDataTag> {
+function resourceTagsForKey(key: string, wallet?: string | undefined, planetId?: string | undefined): ReadonlySet<BackendDataTag> {
   const separator = key.indexOf(":");
   const kind = separator >= 0 ? key.slice(0, separator) : key;
   const tags = new Set<BackendDataTag>([`kind:${kind}`]);
   if (wallet) tags.add(`wallet:${wallet.toLowerCase()}`);
   if (planetId) tags.add(`planet:${planetId}`);
   return tags;
+}
+
+function hasIndexedSettlementResources(settlement: WalletSettlementResponse): boolean {
+  const planet = settlement.planet;
+  if (!settlement.hasFirstPlanet || !settlement.homePlanetId || !planet) return false;
+  const settledAt = Number(planet.lastSettledAt);
+  if (!Number.isFinite(settledAt) || settledAt <= 0) return false;
+  const resources = planet.resources;
+  return !(resources.metal === "0" && resources.crystal === "0" && resources.deuterium === "0");
 }
 
 /**
@@ -209,10 +252,233 @@ export class BackendDataStore {
    */
   private readonly trailingInvalidations = new Set<string>();
   private readonly trailingInvalidationTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  private readonly pollers = new Map<string, ReturnType<typeof setInterval>>();
+  private readonly pollers = new Map<string, ManagedPoller>();
+  private readonly activityPresencePollers = new Map<string, ActivityPresencePoller>();
   private readonly scheduledRefreshes = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly indexingPlanRunners = new WeakMap<object, IndexingPlanRunner>();
+  /**
+   * Detail endpoints are separate cache keys but project into one canonical
+   * planet-resource entity. Track request start order per body so an earlier
+   * endpoint response that arrives late cannot replace a newer detail read.
+   */
+  private readonly planetResourceReadGenerations = new Map<string, number>();
 
   constructor(readonly apiBaseUrl: string) {}
+
+  /**
+   * Store-created plans are the only post-receipt convergence API exposed to
+   * screens. They contain expectation data, never UI callbacks or transport
+   * loaders, so every retry remains an ordinary indexed backend read.
+   */
+  readonly indexing = {
+    refresh: (tags: readonly BackendDataTag[]): BackendIndexingPlan => this.createIndexingPlan(async () => this.refreshIndexedTags(tags)),
+    resourceChange: (wallet: string, planetId: string, bodyKind: "planet" | "moon" = "planet", baseline: ResourceIndexingExpectation["baseline"] = undefined): BackendIndexingPlan =>
+      this.createIndexingPlan(async (receipt, txHash) => {
+        const expectation = resourceIndexingExpectationForTransaction(txHash, baseline, receipt as ReceiptBlock);
+        if (bodyKind === "moon") {
+          await this.waitForIndexedResource(
+            () =>
+              this.moon(wallet, planetId, {
+                fresh: true,
+                priority: "transaction",
+              }),
+            expectation,
+          );
+        } else {
+          await this.waitForIndexedResource(
+            () =>
+              this.shipyard(wallet, planetId, {
+                fresh: true,
+                priority: "transaction",
+              }),
+            expectation,
+          );
+        }
+      }),
+    settledPlanet: (wallet: string): BackendIndexingPlan =>
+      this.createIndexingPlan(async () => {
+        await this.waitForIndexed(
+          () =>
+            this.settlement(wallet, {
+              fresh: true,
+              priority: "transaction",
+            }),
+          hasIndexedSettlementResources,
+          {
+            attempts: 8,
+            intervalMs: 2_000,
+            timeoutError: "Settlement is confirmed, but the game API is still indexing starter resources. Retry once backend sync catches up.",
+          },
+        );
+      }),
+    referralClaim: (wallet: string, code: string, commitment: string, signature: string | (() => string)): BackendIndexingPlan =>
+      this.createIndexingPlan(async (_receipt, txHash) => {
+        const resolvedSignature = typeof signature === "function" ? signature() : signature;
+        if (!resolvedSignature) {
+          throw new Error("Referral claim authorization is unavailable.");
+        }
+        await this.recordReferralClaimAfterIndexing(wallet, code, commitment, txHash, resolvedSignature);
+      }),
+    startedBuilding: (wallet: string, expectation: StartedBuildingExpectation, baseline: ResourceIndexingExpectation["baseline"] = undefined): BackendIndexingPlan =>
+      this.createIndexingPlan(async (receipt, txHash) => {
+        const indexedExpectation = {
+          ...expectation,
+          resourceIndexing: resourceIndexingExpectationForTransaction(txHash, baseline, receipt as ReceiptBlock),
+        };
+        await waitForStartedBuildingState(
+          async () => ({
+            infrastructure: await this.infrastructure(wallet, indexedExpectation.planetId, { fresh: true, priority: "transaction" }),
+            planetsResponse: await this.planets(wallet, {
+              fresh: true,
+              priority: "transaction",
+            }),
+            queues: await this.queues(wallet, indexedExpectation.planetId, {
+              fresh: true,
+              priority: "transaction",
+            }),
+          }),
+          indexedExpectation,
+        );
+      }),
+    startedShipProduction: (wallet: string, expectation: StartedShipProductionExpectation, baseline: ResourceIndexingExpectation["baseline"] = undefined): BackendIndexingPlan =>
+      this.createIndexingPlan(async (receipt, txHash) => {
+        const indexedExpectation = {
+          ...expectation,
+          resourceIndexing: resourceIndexingExpectationForTransaction(txHash, baseline, receipt as ReceiptBlock),
+        };
+        await waitForStartedShipProductionState(
+          async () => ({
+            queues: await this.queues(wallet, indexedExpectation.planetId, {
+              fresh: true,
+              priority: "transaction",
+            }),
+            shipyard: await this.shipyard(wallet, indexedExpectation.planetId, {
+              fresh: true,
+              priority: "transaction",
+            }),
+          }),
+          indexedExpectation,
+        );
+      }),
+    startedDefenseProduction: (wallet: string, expectation: StartedDefenseProductionExpectation, baseline: ResourceIndexingExpectation["baseline"] = undefined): BackendIndexingPlan =>
+      this.createIndexingPlan(async (receipt, txHash) => {
+        const indexedExpectation = {
+          ...expectation,
+          resourceIndexing: resourceIndexingExpectationForTransaction(txHash, baseline, receipt as ReceiptBlock),
+        };
+        await this.waitForStartedDefenseProduction(wallet, indexedExpectation);
+      }),
+    startedResearch: (wallet: string, planetId: string, expectation: StartedResearchExpectation, baseline: ResourceIndexingExpectation["baseline"] = undefined): BackendIndexingPlan =>
+      this.createIndexingPlan(async (receipt, txHash) => {
+        const indexedExpectation = {
+          ...expectation,
+          resourceIndexing: resourceIndexingExpectationForTransaction(txHash, baseline, receipt as ReceiptBlock),
+        };
+        await waitForStartedResearchState(
+          async () => ({
+            queues: await this.queues(wallet, planetId, {
+              fresh: true,
+              priority: "transaction",
+            }),
+            research: await this.research(wallet, planetId, {
+              fresh: true,
+              priority: "transaction",
+            }),
+          }),
+          indexedExpectation,
+        );
+      }),
+    all: (plans: readonly BackendIndexingPlan[]): BackendIndexingPlan =>
+      this.createIndexingPlan(async (receipt, txHash) => {
+        for (const plan of plans) {
+          const run = this.indexingPlanRunners.get(plan as object);
+          if (!run) {
+            throw new Error("The write supplied an indexing plan from a different data store.");
+          }
+          await run(receipt, txHash);
+        }
+      }),
+    fleetVisibility: (wallet: string, tags: readonly BackendDataTag[] = []): BackendIndexingPlan =>
+      this.createIndexingPlan(async (receipt) => {
+        await waitForFleetVisibilityIndexedThrough(
+          () =>
+            this.fleetVisibility(wallet, {
+              fresh: true,
+              includeArchive: false,
+            }),
+          (receipt as ReceiptBlock).blockNumber,
+        );
+        await this.refreshIndexedTags(tags);
+      }),
+    missionLaunch: (wallet: string, expectedMission: (txHash: string) => import("./walletFlow").FleetMissionSummary | undefined, tags: readonly BackendDataTag[] = []): BackendIndexingPlan =>
+      this.createIndexingPlan(async (_receipt, txHash) => {
+        await waitForMissionLaunchState(
+          async (): Promise<MissionLaunchSnapshot> => ({
+            allActiveMissions: (await this.globalActiveMissions()).missions,
+            fleetVisibility: await this.fleetVisibility(wallet, {
+              fresh: true,
+              includeArchive: false,
+            }),
+          }),
+          txHash,
+          { expectedMission: expectedMission(txHash) },
+        );
+        await this.refreshIndexedTags(tags);
+      }),
+    alliance: (wallet: string, expectation?: AllianceApplicationExpectation | AllianceProfileExpectation | AllianceCreationExpectation): BackendIndexingPlan =>
+      this.createIndexingPlan(async () => {
+        if (!expectation) {
+          await this.alliance(wallet, { fresh: true });
+          return;
+        }
+        if ("allianceId" in expectation && "requester" in expectation) {
+          await waitForAllianceApplicationCleared(() => this.alliance(wallet, { fresh: true }), expectation);
+        } else if ("allianceId" in expectation) {
+          await waitForAllianceProfileState(() => this.alliance(wallet, { fresh: true }), expectation);
+        } else {
+          await waitForAllianceCreationState(() => this.alliance(wallet, { fresh: true }), expectation);
+        }
+      }),
+    paidAllianceInvite: (wallet: string, provider: Eip1193Provider, secret: string): BackendIndexingPlan =>
+      this.createIndexingPlan(async () => {
+        await storePaidAllianceInvite(this.apiBaseUrl, provider, wallet, secret);
+        await this.alliance(wallet, { fresh: true });
+      }),
+    planetRename: (wallet: string, planetId: string, name: string): BackendIndexingPlan =>
+      this.createIndexingPlan(async () => {
+        await this.waitForIndexed(
+          () => this.planets(wallet, { fresh: true, priority: "transaction" }),
+          (snapshot) => snapshot.planets.some((planet) => planet.planetId === planetId && planet.name === name),
+          {
+            timeoutError: "The renamed planet is still syncing with the game API.",
+          },
+        );
+      }),
+    planetAbsent: (wallet: string, planetId: string): BackendIndexingPlan =>
+      this.createIndexingPlan(async () => {
+        await this.waitForIndexed(
+          () => this.planets(wallet, { fresh: true, priority: "transaction" }),
+          (snapshot) => !snapshot.planets.some((planet) => planet.planetId === planetId),
+          {
+            timeoutError: "The abandoned planet is still syncing with the game API.",
+          },
+        );
+      }),
+    moonExists: (wallet: string, planetId: string): BackendIndexingPlan =>
+      this.createIndexingPlan(async () => {
+        await this.waitForIndexed(
+          () =>
+            this.moon(wallet, planetId, {
+              fresh: true,
+              priority: "transaction",
+            }),
+          (snapshot) => Boolean(snapshot?.moon),
+          {
+            timeoutError: "The confirmed moon is still syncing with the game API.",
+          },
+        );
+      }),
+  };
 
   refresh<T>(
     key: string,
@@ -262,12 +528,7 @@ export class BackendDataStore {
   ): Promise<T> {
     const snapshot = this.state.snapshot<T>(key);
     const maxAgeMs = options.maxAgeMs ?? 5_000;
-    if (
-      snapshot?.data !== undefined
-      && snapshot.freshness === "fresh"
-      && snapshot.lastSuccessfulUpdate !== undefined
-      && Date.now() - snapshot.lastSuccessfulUpdate < maxAgeMs
-    ) {
+    if (snapshot?.data !== undefined && snapshot.freshness === "fresh" && snapshot.lastSuccessfulUpdate !== undefined && Date.now() - snapshot.lastSuccessfulUpdate < maxAgeMs) {
       return Promise.resolve(snapshot.data);
     }
     return this.refresh(key, load, options);
@@ -285,6 +546,11 @@ export class BackendDataStore {
     const reads: Promise<unknown>[] = [];
     for (const resource of this.resources.values()) {
       if (![...resource.tags].some((tag) => wanted.has(tag))) continue;
+      // Mark every matching canonical entry stale, including inactive source
+      // planets in a batch mutation. They will not lie about freshness when a
+      // player navigates back later; only currently subscribed resources are
+      // eagerly transported again.
+      this.state.invalidate(resource.key);
       if (options.activeOnly !== false && this.state.subscriberCount(resource.key) === 0) continue;
       if (this.state.hasInFlight(resource.key)) {
         this.trailingInvalidations.add(resource.key);
@@ -301,24 +567,33 @@ export class BackendDataStore {
    * not create timers or duplicate refresh loops themselves.
    */
   startPolling(name: string, tags: readonly BackendDataTag[], intervalMs: number, priority: GameStatePriority): () => void {
-    this.stopPolling(name);
+    const existing = this.pollers.get(name);
+    if (existing) {
+      existing.references += 1;
+      return () => this.releasePolling(name);
+    }
     const poll = () => {
       if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
       void this.invalidate(tags, { activeOnly: true, priority });
     };
-    this.pollers.set(name, setInterval(poll, intervalMs));
-    return () => this.stopPolling(name);
+    this.pollers.set(name, {
+      timer: setInterval(poll, intervalMs),
+      references: 1,
+    });
+    return () => this.releasePolling(name);
   }
 
+  /** Force-stop every owner of a named poller, for terminal teardown only. */
   stopPolling(name: string): void {
     const poller = this.pollers.get(name);
     if (!poller) return;
-    clearInterval(poller);
+    clearInterval(poller.timer);
     this.pollers.delete(name);
   }
 
   stopAllPolling(): void {
     for (const name of this.pollers.keys()) this.stopPolling(name);
+    for (const name of this.activityPresencePollers.keys()) this.stopPlayerActivityPresence(name);
   }
 
   /** Public landing data has one store-owned refresh policy and SSE bridge. */
@@ -333,7 +608,11 @@ export class BackendDataStore {
   /** Presence is backend data, so its heartbeat belongs here rather than in a dialog. */
   startPlayerActivityPresence(wallet: string): () => void {
     const name = `player-activity-presence:${wallet.toLowerCase()}`;
-    this.stopPolling(name);
+    const existing = this.activityPresencePollers.get(name);
+    if (existing) {
+      existing.references += 1;
+      return () => this.releasePlayerActivityPresence(name);
+    }
     const markPresent = () => {
       void this.recordPlayerActivityPresence(wallet).catch(() => {
         // A later heartbeat retries transient API failures without poisoning a
@@ -345,26 +624,25 @@ export class BackendDataStore {
     const handleExit = () => this.recordPlayerActivityPresenceOnExit(wallet);
     document.addEventListener("visibilitychange", handleVisibility);
     window.addEventListener("pagehide", handleExit);
-    this.pollers.set(name, setInterval(markPresent, 30_000));
-    return () => {
-      document.removeEventListener("visibilitychange", handleVisibility);
-      window.removeEventListener("pagehide", handleExit);
-      this.stopPolling(name);
-    };
+    this.activityPresencePollers.set(name, {
+      timer: setInterval(markPresent, 30_000),
+      references: 1,
+      handleExit,
+      handleVisibility,
+    });
+    return () => this.releasePlayerActivityPresence(name);
   }
 
-  scheduleRefresh(
-    name: string,
-    tags: readonly BackendDataTag[],
-    delayMs: number,
-    priority: GameStatePriority,
-  ): () => void {
+  scheduleRefresh(name: string, tags: readonly BackendDataTag[], delayMs: number, priority: GameStatePriority): () => void {
     this.cancelScheduledRefresh(name);
-    this.scheduledRefreshes.set(name, setTimeout(() => {
-      this.scheduledRefreshes.delete(name);
-      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
-      void this.invalidate(tags, { activeOnly: true, priority });
-    }, delayMs));
+    this.scheduledRefreshes.set(
+      name,
+      setTimeout(() => {
+        this.scheduledRefreshes.delete(name);
+        if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+        void this.invalidate(tags, { activeOnly: true, priority });
+      }, delayMs),
+    );
     return () => this.cancelScheduledRefresh(name);
   }
 
@@ -382,7 +660,9 @@ export class BackendDataStore {
    */
   connectChainEvents(wallet: string, options: { debounceMs?: number } = {}): () => void {
     if (typeof window === "undefined" || typeof window.EventSource === "undefined") {
-      this.commitBackendSnapshot("chain-sync-health", false, [wallet], { wallet });
+      this.commitBackendSnapshot("chain-sync-health", false, [wallet], {
+        wallet,
+      });
       return () => {};
     }
 
@@ -409,14 +689,11 @@ export class BackendDataStore {
           subscribedToHeads?: boolean;
           subscribedToLogs?: boolean;
         };
-        this.commitBackendSnapshot(
-          "chain-sync-health",
-          Boolean(payload.connected && payload.subscribedToHeads && payload.subscribedToLogs),
-          [wallet],
-          { wallet },
-        );
+        this.commitBackendSnapshot("chain-sync-health", Boolean(payload.connected && payload.subscribedToHeads && payload.subscribedToLogs), [wallet], { wallet });
       } catch {
-        this.commitBackendSnapshot("chain-sync-health", false, [wallet], { wallet });
+        this.commitBackendSnapshot("chain-sync-health", false, [wallet], {
+          wallet,
+        });
       }
     };
     const onChainEvent = (event: MessageEvent) => {
@@ -450,7 +727,10 @@ export class BackendDataStore {
 
     events.addEventListener("chain-event", onChainEvent);
     events.addEventListener("sync-status", updateHealth);
-    events.onerror = () => this.commitBackendSnapshot("chain-sync-health", false, [wallet], { wallet });
+    events.onerror = () =>
+      this.commitBackendSnapshot("chain-sync-health", false, [wallet], {
+        wallet,
+      });
     return () => {
       if (timer !== undefined) clearTimeout(timer);
       events.close();
@@ -486,36 +766,76 @@ export class BackendDataStore {
     if (state.key) this.state.publish(this.writeTransactionKey(state.key), state);
   }
 
-  async runWriteTransaction<IndexedSnapshot = void>(
-    descriptor: BackendWriteTransactionDescriptor<IndexedSnapshot>,
-  ): Promise<boolean> {
-    const { invalidateTags, ...transaction } = descriptor;
+  private createIndexingPlan(run: IndexingPlanRunner): BackendIndexingPlan {
+    const plan = {} as BackendIndexingPlan;
+    this.indexingPlanRunners.set(plan as object, run);
+    return plan;
+  }
+
+  private async refreshIndexedTags(tags: readonly BackendDataTag[]): Promise<void> {
+    if (tags.length === 0) return;
+    const results = await this.invalidate(tags, {
+      activeOnly: false,
+      priority: "transaction",
+    });
+    const rejected = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+    if (rejected) throw rejected.reason;
+  }
+
+  async runWriteTransaction(descriptor: BackendWriteTransactionDescriptor): Promise<boolean> {
+    const { indexing, invalidateTags, ...transaction } = descriptor;
+    const indexingRunner = indexing ? this.indexingPlanRunners.get(indexing as object) : undefined;
+    if (indexing && !indexingRunner) {
+      throw new Error("The write supplied an indexing plan from a different data store.");
+    }
     const completed = await executeWriteTransaction(this.transactionGate, {
       ...transaction,
+      ...(indexingRunner
+        ? {
+            waitForIndexed: async (receipt, txHash) => {
+              return indexingRunner(receipt, txHash);
+            },
+          }
+        : {}),
       onStateChange: (state) => {
         this.publishWriteTransactionState(state);
         descriptor.onStateChange?.(state);
       },
     });
     if (completed && invalidateTags && invalidateTags.length > 0) {
-      await this.invalidate(invalidateTags, { activeOnly: true, priority: "transaction" });
+      await this.invalidate(invalidateTags, {
+        activeOnly: true,
+        priority: "transaction",
+      });
     }
     return completed;
   }
 
-  async runExclusiveTransaction<T>(
-    key: string,
-    label: string,
-    action: () => Promise<T>,
-  ): Promise<T | undefined> {
+  async runExclusiveTransaction<T>(key: string, label: string, action: () => Promise<T>): Promise<T | undefined> {
     return this.transactionGate.run(key, async () => {
-      this.publishWriteTransactionState({ key, label, phase: "pending", stage: "wallet" });
+      this.publishWriteTransactionState({
+        key,
+        label,
+        phase: "pending",
+        stage: "wallet",
+      });
       try {
         const result = await action();
-        this.publishWriteTransactionState({ key, label, phase: "success", stage: "applied" });
+        this.publishWriteTransactionState({
+          key,
+          label,
+          phase: "success",
+          stage: "applied",
+        });
         return result;
       } catch (error) {
-        this.publishWriteTransactionState({ error, key, label, phase: "error", stage: "failed" });
+        this.publishWriteTransactionState({
+          error,
+          key,
+          label,
+          phase: "error",
+          stage: "failed",
+        });
         throw error;
       }
     });
@@ -526,11 +846,7 @@ export class BackendDataStore {
    * true. Reconciliation itself remains exclusively backend-owned; this is
    * merely one shared way for mutations to observe its published result.
    */
-  async waitForIndexed<T>(
-    load: () => Promise<T>,
-    indexed: (value: T) => boolean,
-    options: IndexedReadWaitOptions = {},
-  ): Promise<T> {
+  async waitForIndexed<T>(load: () => Promise<T>, indexed: (value: T) => boolean, options: IndexedReadWaitOptions = {}): Promise<T> {
     const attempts = options.attempts ?? 12;
     const intervalMs = options.intervalMs ?? 1_000;
     const delay = options.delay ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
@@ -548,22 +864,11 @@ export class BackendDataStore {
    * read is an ordinary indexed API read and the backend decides when it is
    * safe to serve the transaction's state.
    */
-  waitForIndexedResource<T extends { resourceSnapshot?: unknown }>(
-    load: () => Promise<T>,
-    expectation: ResourceIndexingExpectation,
-    options: IndexedReadWaitOptions = {},
-  ): Promise<T> {
-    return this.waitForIndexed(
-      load,
-      (state) => isResourceSnapshotIndexedAfterTransaction(
-        state.resourceSnapshot as Parameters<typeof isResourceSnapshotIndexedAfterTransaction>[0],
-        expectation,
-      ),
-      {
-        ...options,
-        timeoutError: options.timeoutError ?? "The confirmed resource change is still syncing with the game API.",
-      },
-    );
+  waitForIndexedResource<T extends { resourceSnapshot?: unknown }>(load: () => Promise<T>, expectation: ResourceIndexingExpectation, options: IndexedReadWaitOptions = {}): Promise<T> {
+    return this.waitForIndexed(load, (state) => isResourceSnapshotIndexedAfterTransaction(state.resourceSnapshot as Parameters<typeof isResourceSnapshotIndexedAfterTransaction>[0], expectation), {
+      ...options,
+      timeoutError: options.timeoutError ?? "The confirmed resource change is still syncing with the game API.",
+    });
   }
 
   snapshot<T>(key: string): GameStateEntry<T> | undefined {
@@ -573,12 +878,7 @@ export class BackendDataStore {
   /** Whether a canonical query can be reused without another transport. */
   isFresh(key: string, maxAgeMs = 5_000): boolean {
     const snapshot = this.state.snapshot(key);
-    return Boolean(
-      snapshot?.data !== undefined
-      && snapshot.freshness === "fresh"
-      && snapshot.lastSuccessfulUpdate !== undefined
-      && Date.now() - snapshot.lastSuccessfulUpdate < maxAgeMs,
-    );
+    return Boolean(snapshot?.data !== undefined && snapshot.freshness === "fresh" && snapshot.lastSuccessfulUpdate !== undefined && Date.now() - snapshot.lastSuccessfulUpdate < maxAgeMs);
   }
 
   value<T>(kind: string, ...parts: unknown[]): T | undefined {
@@ -586,31 +886,29 @@ export class BackendDataStore {
   }
 
   /** Apply an actual backend response to its canonical snapshot. */
-  commitBackendSnapshot<T>(
+  private commitBackendSnapshot<T>(
     kind: string,
     data: T,
     parts: unknown[] = [],
-    options: { planetId?: string | undefined; wallet?: string | undefined } = {},
+    options: {
+      planetId?: string | undefined;
+      wallet?: string | undefined;
+    } = {},
   ): void {
     this.state.publish(cacheKey(kind, ...parts), data, options);
   }
 
   /** Record a backend transport failure while retaining any last-good data. */
-  markBackendFailure(kind: string, error: string | undefined, parts: unknown[] = []): void {
+  private markBackendFailure(kind: string, error: string | undefined, parts: unknown[] = []): void {
     this.state.fail(cacheKey(kind, ...parts), error);
   }
 
   /** Remove a canonical snapshot only when its source is no longer applicable. */
-  discardBackendSnapshot(kind: string, ...parts: unknown[]): void {
+  private discardBackendSnapshot(kind: string, ...parts: unknown[]): void {
     this.state.clear(cacheKey(kind, ...parts));
   }
 
-  coordinateRefresh<T>(
-    key: string,
-    priority: GameStatePriority,
-    load: (signal: AbortSignal) => Promise<T>,
-    deadlineMs = 10_000,
-  ): Promise<T> {
+  coordinateRefresh<T>(key: string, priority: GameStatePriority, load: (signal: AbortSignal) => Promise<T>, deadlineMs = 10_000): Promise<T> {
     return this.refresh(cacheKey("coordinated-refresh", key), load, {
       deadlineMs,
       priority,
@@ -628,11 +926,10 @@ export class BackendDataStore {
       wallet?: string | undefined;
     },
   ): void {
-    // A query key fully identifies its loader inputs. Keep its descriptor
-    // stable instead of allowing a later component's cancellation scope to
-    // overwrite the active resource owner.
-    if (this.resources.has(key)) return;
-    this.resources.set(key, {
+    // A query key fully identifies its loader inputs. Later equivalent reads
+    // may provide a newer closure or policy, so update the descriptor without
+    // letting a route-local cancellation scope become canonical.
+    const descriptor: RegisteredResource = {
       key,
       load: load as (signal: AbortSignal) => Promise<unknown>,
       options: {
@@ -642,14 +939,43 @@ export class BackendDataStore {
         scope: undefined,
       },
       tags: resourceTagsForKey(key, options.wallet, options.planetId),
-    });
+    };
+    const existing = this.resources.get(key);
+    if (!existing) {
+      this.resources.set(key, descriptor);
+      return;
+    }
+    existing.load = descriptor.load;
+    existing.options = descriptor.options;
+    existing.tags = new Set([...existing.tags, ...descriptor.tags]);
   }
 
-  private readRegisteredResource(
-    resource: RegisteredResource,
-    options: BackendDataRefreshOptions,
-    dedupe: boolean,
-  ): Promise<unknown> {
+  private releasePolling(name: string): void {
+    const poller = this.pollers.get(name);
+    if (!poller) return;
+    poller.references -= 1;
+    if (poller.references > 0) return;
+    this.stopPolling(name);
+  }
+
+  private releasePlayerActivityPresence(name: string): void {
+    const poller = this.activityPresencePollers.get(name);
+    if (!poller) return;
+    poller.references -= 1;
+    if (poller.references > 0) return;
+    this.stopPlayerActivityPresence(name);
+  }
+
+  private stopPlayerActivityPresence(name: string): void {
+    const poller = this.activityPresencePollers.get(name);
+    if (!poller) return;
+    document.removeEventListener("visibilitychange", poller.handleVisibility);
+    window.removeEventListener("pagehide", poller.handleExit);
+    clearInterval(poller.timer);
+    this.activityPresencePollers.delete(name);
+  }
+
+  private readRegisteredResource(resource: RegisteredResource, options: BackendDataRefreshOptions, dedupe: boolean): Promise<unknown> {
     const read = this.state.read(resource.key, resource.load, {
       ...resource.options,
       dedupe,
@@ -673,10 +999,13 @@ export class BackendDataStore {
       // has removed its in-flight entry. Keep one bounded fallback for another
       // consumer's overlapping read; never spin a zero-delay retry loop.
       if (!this.trailingInvalidationTimers.has(key)) {
-        this.trailingInvalidationTimers.set(key, setTimeout(() => {
-          this.trailingInvalidationTimers.delete(key);
-          this.flushTrailingInvalidation(key);
-        }, 25));
+        this.trailingInvalidationTimers.set(
+          key,
+          setTimeout(() => {
+            this.trailingInvalidationTimers.delete(key);
+            this.flushTrailingInvalidation(key);
+          }, 25),
+        );
       }
       return;
     }
@@ -695,12 +1024,16 @@ export class BackendDataStore {
       bodyKind?: "moon" | "planet";
       confirmedTransaction?: boolean;
       planetId?: string | null | undefined;
+      requestGeneration?: number | undefined;
+      sourcePriority?: number | undefined;
       wallet?: string | null | undefined;
     } = {},
   ): CanonicalPlanetResourceSnapshot | undefined {
     const candidate = backendResourceSnapshot(state, {
       ...(options.bodyKind === undefined ? {} : { bodyKind: options.bodyKind }),
       ...(options.planetId === undefined ? {} : { planetId: options.planetId }),
+      ...(options.sourcePriority === undefined ? {} : { sourcePriority: options.sourcePriority }),
+      ...(options.requestGeneration === undefined ? {} : { requestGeneration: options.requestGeneration }),
       ...(options.wallet ? { wallet: options.wallet } : {}),
     });
     const wallet = options.wallet?.toLowerCase() ?? candidate?.wallet?.toLowerCase();
@@ -709,15 +1042,40 @@ export class BackendDataStore {
     const next = promoteCanonicalPlanetResources(current, candidate, {
       ...(options.confirmedTransaction === undefined ? {} : { confirmedTransaction: options.confirmedTransaction }),
     });
-    if (next !== current) this.commitBackendSnapshot("canonical-planet-resources", next, [wallet], { wallet });
+    if (next !== current)
+      this.commitBackendSnapshot("canonical-planet-resources", next, [wallet], {
+        wallet,
+      });
     return candidate;
+  }
+
+  private planetResourceReadGeneration(wallet: string, planetId: string | undefined, bodyKind: "planet" | "moon", resourceKey: string, forceNewRead: boolean): number | undefined {
+    if (!planetId) return undefined;
+    const identity = `${wallet.toLowerCase()}:${bodyKind}:${planetId}`;
+    const existing = this.planetResourceReadGenerations.get(identity) ?? 0;
+    // A deduplicated caller is joining the already-started transport, not
+    // starting a newer cross-endpoint read. Reuse its generation so that
+    // ordinary query sharing cannot invalidate its own response.
+    if (!forceNewRead && this.state.hasInFlight(resourceKey)) return existing;
+    const next = existing + 1;
+    this.planetResourceReadGenerations.set(identity, next);
+    return next;
   }
 
   promoteWalletPlanetResources(wallet: string, planets: readonly WalletPlanetsResponse["planets"][number][]): void {
     for (const planet of planets) {
-      this.promoteResourceState(planet, { planetId: planet.planetId, wallet });
+      this.promoteResourceState(planet, {
+        planetId: planet.planetId,
+        sourcePriority: 10,
+        wallet,
+      });
       if (planet.moon?.exists) {
-        this.promoteResourceState(planet.moon, { bodyKind: "moon", planetId: planet.planetId, wallet });
+        this.promoteResourceState(planet.moon, {
+          bodyKind: "moon",
+          planetId: planet.planetId,
+          sourcePriority: 10,
+          wallet,
+        });
       }
     }
   }
@@ -730,7 +1088,11 @@ export class BackendDataStore {
       priority: "selected-planet",
       wallet,
     }).then((state) => {
-      this.promoteResourceState(state.planet, { planetId: state.homePlanetId, wallet });
+      this.promoteResourceState(state.planet, {
+        planetId: state.homePlanetId,
+        sourcePriority: 20,
+        wallet,
+      });
       return state;
     });
   }
@@ -739,11 +1101,53 @@ export class BackendDataStore {
     const key = cacheKey("overview", wallet, planetId);
     // `fresh` means bypass the short-lived value cache, not send duplicate identical requests when
     // the Overview, top bar, and selected-planet surface refresh in the same render turn.
-    return this.refresh(key, (signal) => fetchWalletOverviewSnapshot(this.apiBaseUrl, wallet, planetId, { ...options, signal }), {
-      deadlineMs: options.timeoutMs,
-      planetId,
-      priority: "selected-planet",
+    return this.refresh(
+      key,
+      (signal) =>
+        fetchWalletOverviewSnapshot(this.apiBaseUrl, wallet, planetId, {
+          ...options,
+          signal,
+        }),
+      {
+        dedupe: !options.fresh,
+        deadlineMs: options.timeoutMs,
+        planetId,
+        priority: "selected-planet",
+        wallet,
+      },
+    ).then((snapshot) => {
+      // Overview is a backend-produced aggregate of the same indexed state
+      // exposed by these individual queries. Fan it out here, at the data
+      // boundary, so shells never need to publish their own copies merely to
+      // hydrate the planet picker after one aggregate read. An older overview
+      // transport can resolve after a newer generation; only the aggregate
+      // value currently accepted by GameStateStore may fan out into those
+      // other canonical keys.
+      if (this.value<WalletOverviewSnapshotResponse>("overview", wallet, planetId) === snapshot) {
+        this.publishOverviewSnapshot(wallet, planetId, snapshot);
+      }
+      return snapshot;
+    });
+  }
+
+  private publishOverviewSnapshot(wallet: string, planetId: string | undefined, snapshot: WalletOverviewSnapshotResponse): void {
+    const normalizedWallet = wallet.toLowerCase();
+    this.commitBackendSnapshot("planets", snapshot.planetsResponse, [wallet], {
       wallet,
+    });
+    this.commitBackendSnapshot("settlement", snapshot.settlement, [wallet], {
+      wallet,
+    });
+    this.commitBackendSnapshot("queues", snapshot.queues, [wallet, planetId], {
+      planetId,
+      wallet,
+    });
+    this.commitBackendSnapshot("fleet-visibility", snapshot.fleetVisibility, [wallet, false], { wallet });
+    this.promoteWalletPlanetResources(normalizedWallet, snapshot.planetsResponse.planets);
+    this.promoteResourceState(snapshot.settlement.planet, {
+      planetId: snapshot.settlement.homePlanetId,
+      sourcePriority: 20,
+      wallet: normalizedWallet,
     });
   }
 
@@ -761,7 +1165,10 @@ export class BackendDataStore {
   }
 
   watchedPlanets(wallet: string, options: { page?: number; pageSize?: number; timeoutMs?: number } = {}): Promise<WatchedPlanetsResponse> {
-    const key = cacheKey("watched-planets", wallet, { page: options.page, pageSize: options.pageSize });
+    const key = cacheKey("watched-planets", wallet, {
+      page: options.page,
+      pageSize: options.pageSize,
+    });
     return this.refresh(key, (signal) => fetchWatchedPlanets(this.apiBaseUrl, wallet, { ...options, signal }), {
       deadlineMs: options.timeoutMs ?? 25_000,
       priority: "background",
@@ -771,67 +1178,128 @@ export class BackendDataStore {
 
   queues(wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<PlayerQueuesResponse> {
     const key = cacheKey("queues", wallet, planetId);
-    return this.refresh(key, (signal) => fetchWalletQueues(this.apiBaseUrl, wallet, planetId, { ...options, signal }), {
-      dedupe: !options.fresh,
-      deadlineMs: options.timeoutMs,
-      planetId,
-      priority: options.priority ?? "selected-planet",
-      wallet,
-    });
+    return this.refresh(
+      key,
+      (signal) =>
+        fetchWalletQueues(this.apiBaseUrl, wallet, planetId, {
+          ...options,
+          signal,
+        }),
+      {
+        dedupe: !options.fresh,
+        deadlineMs: options.timeoutMs,
+        planetId,
+        priority: options.priority ?? "selected-planet",
+        wallet,
+      },
+    );
   }
 
   infrastructure(wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<ChainInfrastructureState> {
     const key = cacheKey("infrastructure", wallet, planetId);
-    return this.refresh(key, (signal) => fetchInfrastructureState(this.apiBaseUrl, wallet, planetId, { ...options, signal }), {
-      dedupe: !options.fresh,
-      deadlineMs: options.timeoutMs,
-      planetId,
-      priority: "selected-planet",
-      wallet,
-    }).then((state) => {
-      this.promoteResourceState(state, { planetId, wallet });
+    const requestGeneration = this.planetResourceReadGeneration(wallet, planetId, "planet", key, options.fresh === true);
+    return this.refresh(
+      key,
+      (signal) =>
+        fetchInfrastructureState(this.apiBaseUrl, wallet, planetId, {
+          ...options,
+          signal,
+        }),
+      {
+        dedupe: !options.fresh,
+        deadlineMs: options.timeoutMs,
+        planetId,
+        priority: "selected-planet",
+        wallet,
+      },
+    ).then((state) => {
+      this.promoteResourceState(state, {
+        planetId,
+        requestGeneration,
+        wallet,
+      });
       return state;
     });
   }
 
   moon(wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<ChainMoonState> {
     const key = cacheKey("moon", wallet, planetId);
-    return this.refresh(key, (signal) => fetchMoonState(this.apiBaseUrl, wallet, planetId, { ...options, signal }), {
-      dedupe: !options.fresh,
-      deadlineMs: options.timeoutMs,
-      planetId,
-      priority: "selected-planet",
-      wallet,
-    }).then((state) => {
-      this.promoteResourceState(state, { bodyKind: "moon", planetId, wallet });
+    const requestGeneration = this.planetResourceReadGeneration(wallet, planetId, "moon", key, options.fresh === true);
+    return this.refresh(
+      key,
+      (signal) =>
+        fetchMoonState(this.apiBaseUrl, wallet, planetId, {
+          ...options,
+          signal,
+        }),
+      {
+        dedupe: !options.fresh,
+        deadlineMs: options.timeoutMs,
+        planetId,
+        priority: "selected-planet",
+        wallet,
+      },
+    ).then((state) => {
+      this.promoteResourceState(state, {
+        bodyKind: "moon",
+        planetId,
+        requestGeneration,
+        wallet,
+      });
       return state;
     });
   }
 
   shipyard(wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<ChainShipyardState> {
     const key = cacheKey("shipyard", wallet, planetId);
-    return this.refresh(key, (signal) => fetchShipyardState(this.apiBaseUrl, wallet, planetId, { ...options, signal }), {
-      dedupe: !options.fresh,
-      deadlineMs: options.timeoutMs,
-      planetId,
-      priority: "selected-planet",
-      wallet,
-    }).then((state) => {
-      this.promoteResourceState(state, { planetId, wallet });
+    const requestGeneration = this.planetResourceReadGeneration(wallet, planetId, "planet", key, options.fresh === true);
+    return this.refresh(
+      key,
+      (signal) =>
+        fetchShipyardState(this.apiBaseUrl, wallet, planetId, {
+          ...options,
+          signal,
+        }),
+      {
+        dedupe: !options.fresh,
+        deadlineMs: options.timeoutMs,
+        planetId,
+        priority: "selected-planet",
+        wallet,
+      },
+    ).then((state) => {
+      this.promoteResourceState(state, {
+        planetId,
+        requestGeneration,
+        wallet,
+      });
       return state;
     });
   }
 
   defenses(wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<ChainDefenseState> {
     const key = cacheKey("defenses", wallet, planetId);
-    return this.refresh(key, (signal) => fetchDefenseState(this.apiBaseUrl, wallet, planetId, { ...options, signal }), {
-      dedupe: !options.fresh,
-      deadlineMs: options.timeoutMs,
-      planetId,
-      priority: options.priority ?? "selected-planet",
-      wallet,
-    }).then((state) => {
-      this.promoteResourceState(state, { planetId, wallet });
+    const requestGeneration = this.planetResourceReadGeneration(wallet, planetId, "planet", key, options.fresh === true);
+    return this.refresh(
+      key,
+      (signal) =>
+        fetchDefenseState(this.apiBaseUrl, wallet, planetId, {
+          ...options,
+          signal,
+        }),
+      {
+        dedupe: !options.fresh,
+        deadlineMs: options.timeoutMs,
+        planetId,
+        priority: options.priority ?? "selected-planet",
+        wallet,
+      },
+    ).then((state) => {
+      this.promoteResourceState(state, {
+        planetId,
+        requestGeneration,
+        wallet,
+      });
       return state;
     });
   }
@@ -842,44 +1310,65 @@ export class BackendDataStore {
    * transaction feedback cannot drift from a separately managed component
    * snapshot.
    */
-  waitForStartedDefenseProduction(
-    wallet: string,
-    expectation: StartedDefenseProductionExpectation,
-  ): Promise<StartedDefenseProductionSnapshot> {
-    return waitForStartedDefenseProductionState(
-      async () => {
-        const [defense, queues] = await Promise.all([
-          this.defenses(wallet, expectation.planetId, { fresh: true, priority: "transaction" }),
-          this.queues(wallet, expectation.planetId, { fresh: true, priority: "transaction" }),
-        ]);
-        return { defense, queues };
-      },
-      expectation,
-    );
+  waitForStartedDefenseProduction(wallet: string, expectation: StartedDefenseProductionExpectation): Promise<StartedDefenseProductionSnapshot> {
+    return waitForStartedDefenseProductionState(async () => {
+      const [defense, queues] = await Promise.all([
+        this.defenses(wallet, expectation.planetId, {
+          fresh: true,
+          priority: "transaction",
+        }),
+        this.queues(wallet, expectation.planetId, {
+          fresh: true,
+          priority: "transaction",
+        }),
+      ]);
+      return { defense, queues };
+    }, expectation);
   }
 
   research(wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<ChainResearchState> {
     const key = cacheKey("research", wallet, planetId);
-    return this.refresh(key, (signal) => fetchResearchState(this.apiBaseUrl, wallet, planetId, { ...options, signal }), {
-      dedupe: !options.fresh,
-      deadlineMs: options.timeoutMs,
-      planetId,
-      priority: "selected-planet",
-      wallet,
-    }).then((state) => {
-      this.promoteResourceState(state, { planetId, wallet });
+    const requestGeneration = this.planetResourceReadGeneration(wallet, planetId, "planet", key, options.fresh === true);
+    return this.refresh(
+      key,
+      (signal) =>
+        fetchResearchState(this.apiBaseUrl, wallet, planetId, {
+          ...options,
+          signal,
+        }),
+      {
+        dedupe: !options.fresh,
+        deadlineMs: options.timeoutMs,
+        planetId,
+        priority: "selected-planet",
+        wallet,
+      },
+    ).then((state) => {
+      this.promoteResourceState(state, {
+        planetId,
+        requestGeneration,
+        wallet,
+      });
       return state;
     });
   }
 
   rift(wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<ChainRiftState> {
     const key = cacheKey("rift", wallet, planetId);
-    return this.refresh(key, (signal) => fetchRiftState(this.apiBaseUrl, wallet, planetId, { ...options, signal }), {
-      deadlineMs: options.timeoutMs,
-      planetId,
-      priority: "selected-planet",
-      wallet,
-    });
+    return this.refresh(
+      key,
+      (signal) =>
+        fetchRiftState(this.apiBaseUrl, wallet, planetId, {
+          ...options,
+          signal,
+        }),
+      {
+        deadlineMs: options.timeoutMs,
+        planetId,
+        priority: "selected-planet",
+        wallet,
+      },
+    );
   }
 
   alliance(wallet: string, options: WalletReadOptions = {}): Promise<ChainAllianceState> {
@@ -912,9 +1401,48 @@ export class BackendDataStore {
     return this.refresh(key, (signal) => fetchReferralHistory(this.apiBaseUrl, wallet, page, pageSize, signal), { wallet });
   }
 
+  referralCodeInspection(wallet: string, code: string): Promise<ReferralResolution> {
+    const key = cacheKey("referral-code-inspection", wallet, code);
+    return this.refresh(
+      key,
+      (signal) => {
+        // The adapter does not yet accept AbortSignal, but this remains a
+        // canonical store-owned request with generation/failure handling.
+        void signal;
+        return inspectReferralCode(this.apiBaseUrl, code, wallet);
+      },
+      { wallet },
+    );
+  }
+
+  referralCodeValidation(code: string, invitee?: string): Promise<ReferralResolution> {
+    const key = cacheKey("referral-code-validation", code, invitee);
+    return this.refresh(
+      key,
+      (signal) => {
+        void signal;
+        return validateReferralCode(this.apiBaseUrl, code, invitee);
+      },
+      invitee ? { wallet: invitee } : {},
+    );
+  }
+
+  paidAllianceInviteResolution(secret: string): Promise<PaidAllianceInviteResolution> {
+    const key = cacheKey("paid-alliance-invite-resolution", secret);
+    return this.refresh(key, (signal) => {
+      void signal;
+      return resolvePaidAllianceInvite(this.apiBaseUrl, secret);
+    });
+  }
+
   playerActivity(
     wallet: string,
-    options: { includeProjected?: boolean; page?: number; pageSize?: number; since?: number } = {},
+    options: {
+      includeProjected?: boolean;
+      page?: number;
+      pageSize?: number;
+      since?: number;
+    } = {},
   ): Promise<PlayerActivityResponse> {
     const key = cacheKey("player-activity", wallet, options);
     return this.refresh(key, (signal) => fetchPlayerActivity(this.apiBaseUrl, wallet, { ...options, signal }), { wallet });
@@ -933,14 +1461,9 @@ export class BackendDataStore {
   highscores(options: FetchHighscoreOptions | number = 100): Promise<HighscoreResponse> {
     const normalizedOptions = options;
     const key = cacheKey("highscores", normalizedOptions);
-    return this.refresh(key, (signal) => fetchHighscores(
-      this.apiBaseUrl,
-      typeof normalizedOptions === "number" ? normalizedOptions : { ...normalizedOptions, signal },
-    ), {
+    return this.refresh(key, (signal) => fetchHighscores(this.apiBaseUrl, typeof normalizedOptions === "number" ? normalizedOptions : { ...normalizedOptions, signal }), {
       priority: "background",
-      ...(typeof normalizedOptions === "number" || !normalizedOptions.currentWallet
-        ? {}
-        : { wallet: normalizedOptions.currentWallet }),
+      ...(typeof normalizedOptions === "number" || !normalizedOptions.currentWallet ? {} : { wallet: normalizedOptions.currentWallet }),
     });
   }
 
@@ -965,9 +1488,17 @@ export class BackendDataStore {
 
   system<T = unknown>(galaxy: number, system: number, options: { detail?: "full" } = {}): Promise<T> {
     const key = cacheKey("system", galaxy, system, options);
-    return this.refresh(key, (signal) => fetchSystemData(this.apiBaseUrl, galaxy, system, { ...options, signal }) as Promise<T>, {
-      priority: "background",
-    });
+    return this.refresh(
+      key,
+      (signal) =>
+        fetchSystemData(this.apiBaseUrl, galaxy, system, {
+          ...options,
+          signal,
+        }) as Promise<T>,
+      {
+        priority: "background",
+      },
+    );
   }
 
   randomnessReadiness<T = unknown>(): Promise<T> {
@@ -978,11 +1509,9 @@ export class BackendDataStore {
         headers: { accept: "application/json" },
         signal,
       });
-      const payload = await response.json() as T & { reasons?: unknown };
+      const payload = (await response.json()) as T & { reasons?: unknown };
       if (!response.ok) {
-        const reason = Array.isArray(payload.reasons) && typeof payload.reasons[0] === "string"
-          ? payload.reasons[0]
-          : `Randomness readiness API failed: ${response.status}`;
+        const reason = Array.isArray(payload.reasons) && typeof payload.reasons[0] === "string" ? payload.reasons[0] : `Randomness readiness API failed: ${response.status}`;
         throw new Error(reason);
       }
       return payload;
@@ -1001,50 +1530,63 @@ export class BackendDataStore {
     });
   }
 
-  attackProtection(
-    wallet: string,
-    targetPlanetId: string,
-    targetIsMoon = false,
-  ): Promise<AttackProtectionStatus> {
+  attackProtection(wallet: string, targetPlanetId: string, targetIsMoon = false): Promise<AttackProtectionStatus> {
     const key = cacheKey("attack-protection", wallet, targetPlanetId, targetIsMoon);
-    return this.refresh(
-      key,
-      (signal) => fetchAttackProtectionStatus(this.apiBaseUrl, wallet, targetPlanetId, targetIsMoon, signal),
-      { planetId: targetPlanetId, wallet },
-    );
+    return this.refresh(key, (signal) => fetchAttackProtectionStatus(this.apiBaseUrl, wallet, targetPlanetId, targetIsMoon, signal), { planetId: targetPlanetId, wallet });
   }
 
   fleetVisibility(wallet: string, options: FleetMissionVisibilityOptions = {}): Promise<FleetMissionVisibilityResponse> {
     const key = cacheKey("fleet-visibility", wallet, options.includeArchive);
-    return this.refresh(key, (signal) => fetchFleetMissionVisibility(this.apiBaseUrl, wallet, { ...options, signal }), {
-      dedupe: !options.fresh,
-      deadlineMs: options.timeoutMs,
-      priority: "mission-control",
-      wallet,
-    });
+    return this.refresh(
+      key,
+      (signal) =>
+        fetchFleetMissionVisibility(this.apiBaseUrl, wallet, {
+          ...options,
+          signal,
+        }),
+      {
+        dedupe: !options.fresh,
+        deadlineMs: options.timeoutMs,
+        priority: "mission-control",
+        wallet,
+      },
+    );
   }
 
   fleetArchive(wallet: string, options: FleetMissionArchiveOptions = {}): Promise<FleetMissionArchiveResponse> {
     const key = cacheKey("fleet-archive", wallet, options);
-    return this.refresh(key, (signal) => fetchFleetMissionArchive(this.apiBaseUrl, wallet, { ...options, signal }), {
-      dedupe: false,
-      planetId: options.planetId,
-      priority: "mission-control",
-      wallet,
-    });
+    return this.refresh(
+      key,
+      (signal) =>
+        fetchFleetMissionArchive(this.apiBaseUrl, wallet, {
+          ...options,
+          signal,
+        }),
+      {
+        dedupe: false,
+        planetId: options.planetId,
+        priority: "mission-control",
+        wallet,
+      },
+    );
   }
 
-  missileArchive(
-    wallet: string,
-    options: { page?: number; pageSize?: number; planetId?: string } = {},
-  ): Promise<MissileAttackArchiveResponse> {
+  missileArchive(wallet: string, options: { page?: number; pageSize?: number; planetId?: string } = {}): Promise<MissileAttackArchiveResponse> {
     const key = cacheKey("missile-archive", wallet, options);
-    return this.refresh(key, (signal) => fetchMissileAttackArchive(this.apiBaseUrl, wallet, { ...options, signal }), {
-      dedupe: false,
-      planetId: options.planetId,
-      priority: "mission-control",
-      wallet,
-    });
+    return this.refresh(
+      key,
+      (signal) =>
+        fetchMissileAttackArchive(this.apiBaseUrl, wallet, {
+          ...options,
+          signal,
+        }),
+      {
+        dedupe: false,
+        planetId: options.planetId,
+        priority: "mission-control",
+        wallet,
+      },
+    );
   }
 
   globalActiveMissions(): Promise<GlobalActiveMissionsResponse> {
@@ -1057,36 +1599,44 @@ export class BackendDataStore {
 
   landingActiveMissions<T>(): Promise<T[]> {
     const key = cacheKey("landing-active-missions");
-    return this.refresh(key, async (signal) => {
-      const response = await fetch(`${this.apiBaseUrl}/missions?status=active&live=1`, {
-        cache: "no-store",
-        headers: { accept: "application/json" },
-        signal,
-      });
-      if (!response.ok) throw new Error("Failed to load landing missions");
-      const data = await response.json() as { missions?: T[] };
-      return data.missions ?? [];
-    }, { priority: "background" });
+    return this.refresh(
+      key,
+      async (signal) => {
+        const response = await fetch(`${this.apiBaseUrl}/missions?status=active&live=1`, {
+          cache: "no-store",
+          headers: { accept: "application/json" },
+          signal,
+        });
+        if (!response.ok) throw new Error("Failed to load landing missions");
+        const data = (await response.json()) as { missions?: T[] };
+        return data.missions ?? [];
+      },
+      { priority: "background" },
+    );
   }
 
   landingHighscores<T>(): Promise<T[]> {
     const key = cacheKey("landing-highscores");
-    return this.refresh(key, async (signal) => {
-      const params = new URLSearchParams({
-        category: "total",
-        live: "1",
-        page: "1",
-        pageSize: "250",
-      });
-      const response = await fetch(`${this.apiBaseUrl}/highscores?${params.toString()}`, {
-        cache: "no-store",
-        headers: { accept: "application/json" },
-        signal,
-      });
-      if (!response.ok) throw new Error("Failed to load landing highscores");
-      const data = await response.json() as { rankings?: { total?: T[] } };
-      return data.rankings?.total ?? [];
-    }, { priority: "background" });
+    return this.refresh(
+      key,
+      async (signal) => {
+        const params = new URLSearchParams({
+          category: "total",
+          live: "1",
+          page: "1",
+          pageSize: "250",
+        });
+        const response = await fetch(`${this.apiBaseUrl}/highscores?${params.toString()}`, {
+          cache: "no-store",
+          headers: { accept: "application/json" },
+          signal,
+        });
+        if (!response.ok) throw new Error("Failed to load landing highscores");
+        const data = (await response.json()) as { rankings?: { total?: T[] } };
+        return data.rankings?.total ?? [];
+      },
+      { priority: "background" },
+    );
   }
 
   globalMissionArchive(options: GlobalMissionArchiveOptions = {}): Promise<GlobalMissionArchiveResponse> {
@@ -1112,44 +1662,103 @@ export class BackendDataStore {
     });
   }
 
-  entityMedia(
-    entityKind: EntityMediaKind,
-    entityId: string,
-  ): Promise<EntityMediaResponse> {
+  entityMedia(entityKind: EntityMediaKind, entityId: string): Promise<EntityMediaResponse> {
     const key = cacheKey("entity-media", entityKind, entityId);
-    return this.refresh(key, (signal) => fetchEntityMedia(this.apiBaseUrl, entityKind, entityId, signal), {
-    });
+    return this.refresh(key, (signal) => fetchEntityMedia(this.apiBaseUrl, entityKind, entityId, signal), {});
   }
 
-  async saveEntityMedia(
-    provider: Eip1193Provider,
-    wallet: string,
-    entityKind: EntityMediaKind,
-    entityId: string,
-    mediaUrl: string,
-  ): Promise<EntityMediaResponse> {
-    const response = await updateEntityMedia(
-      this.apiBaseUrl,
-      provider,
-      wallet,
-      entityKind,
-      entityId,
-      mediaUrl,
-    );
+  async saveEntityMedia(provider: Eip1193Provider, wallet: string, entityKind: EntityMediaKind, entityId: string, mediaUrl: string): Promise<EntityMediaResponse> {
+    const response = await updateEntityMedia(this.apiBaseUrl, provider, wallet, entityKind, entityId, mediaUrl);
     this.commitBackendSnapshot("entity-media", response, [entityKind, entityId]);
-    void this.invalidate([`kind:entity-media`], { activeOnly: true, priority: "transaction" });
+    void this.invalidate([`kind:entity-media`], {
+      activeOnly: true,
+      priority: "transaction",
+    });
     return response;
+  }
+
+  /**
+   * Watch mutations are signed backend writes, not contract transactions. They
+   * still use the shared mutation gate and invalidate every subscribed watched
+   * view instead of patching one component's local page in place.
+   */
+  async setPlanetWatched(provider: Eip1193Provider, wallet: string, planetId: string, watched: boolean): Promise<WatchPlanetMutationResponse> {
+    const response = await this.runExclusiveTransaction(`watched-planet:${wallet.toLowerCase()}:${planetId}`, watched ? "Unwatch planet" : "Watch planet", () =>
+      watched ? unwatchPlanet(this.apiBaseUrl, provider, wallet, planetId) : watchPlanet(this.apiBaseUrl, provider, wallet, planetId),
+    );
+    if (!response) throw new Error("Another game action is already in progress.");
+    await this.invalidate([`wallet:${wallet.toLowerCase()}`, "kind:watched-planets"], { activeOnly: true, priority: "transaction" });
+    return response;
+  }
+
+  /** Signed profile updates share the store-owned mutation gate and refresh policy. */
+  async savePlayerProfile(provider: Eip1193Provider, wallet: string, displayName: string, description: string | null): Promise<PlayerProfile> {
+    const profile = await this.runExclusiveTransaction(`profile:${wallet.toLowerCase()}`, "Save profile", () => updatePlayerProfile(this.apiBaseUrl, provider, wallet, displayName, description));
+    if (!profile) throw new Error("Another game action is already in progress.");
+    this.commitBackendSnapshot("profile", profile, [wallet], { wallet });
+    await this.invalidate([`wallet:${wallet.toLowerCase()}`, "kind:profile", "kind:settlement", "kind:alliance"], { activeOnly: true, priority: "transaction" });
+    return profile;
+  }
+
+  /** Record a confirmed referral redemption and invalidate shared referral views. */
+  async recordReferralRedemption(code: string, invitee: string, txHash: string): Promise<void> {
+    await recordReferralRedemptionTransaction(this.apiBaseUrl, code, invitee, txHash);
+    await this.invalidate([`wallet:${invitee.toLowerCase()}`, "kind:referral-dashboard", "kind:referral-history"], { activeOnly: true, priority: "transaction" });
+  }
+
+  /** Persist signed referral-claim recovery data through the shared mutation boundary. */
+  async persistReferralClaimIntent(wallet: string, code: string, commitment: string, signature: string): Promise<void> {
+    await persistReferralClaimIntent(this.apiBaseUrl, wallet, code, commitment, signature);
+  }
+
+  /**
+   * The claim contract event is indexed asynchronously. Keep its retry and
+   * reconciliation policy here so settlement UI never owns a second polling
+   * lifecycle. All reads are backend API reads; this does not reconcile chain
+   * state in the browser.
+   */
+  async recordReferralClaimAfterIndexing(wallet: string, code: string, commitment: string, txHash: string, signature: string): Promise<ReferralDashboard> {
+    const attempts = 12;
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      try {
+        const dashboard = await recordReferralClaimTransaction(this.apiBaseUrl, wallet, code, commitment, txHash, signature);
+        this.commitBackendSnapshot("referral-dashboard", dashboard, [wallet]);
+        await this.invalidate([`wallet:${wallet.toLowerCase()}`, "kind:referral-dashboard", "kind:referral-history"], { activeOnly: true, priority: "transaction" });
+        return dashboard;
+      } catch (error) {
+        if (!isReferralClaimIndexingLag(error) || attempt === attempts - 1) throw error;
+        try {
+          const current = await inspectReferralCode(this.apiBaseUrl, code, wallet);
+          if (current.ownership === "reserved") throw new Error(REFERRAL_CODE_FRONT_RUN_MESSAGE);
+        } catch (inspectionError) {
+          if (inspectionError instanceof Error && inspectionError.message === REFERRAL_CODE_FRONT_RUN_MESSAGE) {
+            throw inspectionError;
+          }
+          // Preserve the original unconfirmed-transaction error while the
+          // backend is temporarily unavailable or catching up.
+        }
+        await waitForBackendIndexing(2_500);
+      }
+    }
+    throw new Error("Referral claim indexing did not return a dashboard.");
   }
 
   burningChicken(owner: string, tokenId: string, config: BurningChickenConfig): Promise<unknown> {
     const key = cacheKey("burning-chicken", owner, tokenId, config.nftContractAddress);
     return this.refresh(key, (signal) => fetchBurningChickenForOwner(owner, tokenId, config, signal));
   }
-
 }
 
 export function createBackendDataStore(apiBaseUrl: string): BackendDataStore {
   return new BackendDataStore(apiBaseUrl.replace(/\/+$/, ""));
+}
+
+function isReferralClaimIndexingLag(error: unknown): boolean {
+  return /referral claim transaction is not indexed|referral_claim_unconfirmed/i.test(error instanceof Error ? error.message : String(error));
+}
+
+function waitForBackendIndexing(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 const sharedBackendDataStores = new Map<string, BackendDataStore>();

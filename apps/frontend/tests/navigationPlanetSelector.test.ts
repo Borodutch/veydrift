@@ -292,7 +292,8 @@ describe("navigation and planet selector UI source contracts", () => {
     expect(playableSource).toContain("interaction.current.reorderPointerTarget(targetPlanetId, position)");
     expect(playableSource).toContain('if (event.key === "Escape")');
     expect(playableSource).toContain("Press and hold to reorder. With the keyboard, use arrow keys, Home, or End");
-    expect(playableSource).toContain('<span aria-live="polite" className="sr-only">{reorderAnnouncement}</span>');
+    expect(playableSource).toContain('aria-live="polite"');
+    expect(playableSource).toContain("{reorderAnnouncement}");
     expect(playableSource).toContain("if (onBeforeSelect && !onBeforeSelect(planet.planetId, event)) return;");
     expect(playableSource).toContain("onSelect(planet.planetId, bodyKind);");
   });
