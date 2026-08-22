@@ -77,6 +77,13 @@ contract VeydriftGame is VeydriftResourceReserves {
         return _moonAttackParityActivatedAt;
     }
 
+    /// @notice Cross-contract rollout guard used by MoonSystem to fail closed while the Game proxy
+    /// is paused. Older Game implementations do not expose this selector, so a newly upgraded
+    /// MoonSystem also rejects generation-changing writes during the mixed-version interval.
+    function gamePaused() external view returns (bool) {
+        return _gamePaused != 0;
+    }
+
     function transferOwnership(address nextOwner) external onlyOwner {
         if (nextOwner == address(0)) revert Unauthorized(nextOwner);
         address oldOwner = _owner;

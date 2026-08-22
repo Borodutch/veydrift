@@ -190,7 +190,7 @@ describe("referral invites", () => {
     expect(() => normalizeReferralCode("abcdefghijklmnopqrstuvwxy")).toThrow("1–24");
   });
 
-  test("computes the exact three-use window boundary", () => {
+  test("keeps used capacity consumed until an explicit top-up", () => {
     const now = new Date("2026-07-08T12:00:00.000Z");
     expect(referralQuota([
       { redeemedAt: "2026-07-08T11:00:00.000Z" },
@@ -198,16 +198,16 @@ describe("referral invites", () => {
       { redeemedAt: "2026-07-08T09:00:00.000Z" }
     ], now)).toEqual({
       remainingClaims: 0,
-      nextClaimAt: "2026-07-09T09:00:00.000Z"
+      nextClaimAt: null
     });
     expect(referralQuota([
       { redeemedAt: "2026-07-07T12:00:00.000Z" },
       { redeemedAt: "2026-07-08T10:00:00.000Z" },
       { redeemedAt: "2026-07-08T09:00:00.000Z" }
-    ], now).remainingClaims).toBe(1);
+    ], now).remainingClaims).toBe(0);
   });
 
-  test("derives available, owned, reserved, renewable, active, and exhausted truth from chain events", () => {
+  test("keeps codes permanent while exposing owner top-up eligibility and exhausted capacity", () => {
     const chain = referralIndex();
     const now = new Date("2026-07-08T12:00:00.000Z");
     const nowSeconds = Math.floor(now.getTime() / 1_000);
@@ -216,9 +216,15 @@ describe("referral invites", () => {
 
     chain.claims.push(claimEvent({ code: "Owned_Code", activatedAt: nowSeconds - 86_400, blockNumber: 100 }));
     const owned = resolveReferralCode({ code: "OWNED_CODE", index: chain.indexer, wallet: player, now, startPriceWei });
-    expect(owned).toMatchObject({ ownership: "owned_by_you", renewable: true, status: "inactive" });
+    expect(owned).toMatchObject({
+      ownership: "owned_by_you",
+      renewable: true,
+      status: "active",
+      topUpAvailable: true,
+      valid: true
+    });
     const reserved = resolveReferralCode({ code: "owned_code", index: chain.indexer, wallet: other, now, startPriceWei });
-    expect(reserved).toMatchObject({ ownership: "reserved", renewable: false, status: "inactive" });
+    expect(reserved).toMatchObject({ ownership: "reserved", renewable: false, status: "active", valid: true });
 
     chain.claims.push(claimEvent({ code: "Owned_Code", activatedAt: nowSeconds - 60, blockNumber: 101, txByte: "ac" }));
     expect(resolveReferralCode({ code: "owned_code", index: chain.indexer, invitee, now, startPriceWei })).toMatchObject({
@@ -493,5 +499,53 @@ describe("referral invites", () => {
     } finally {
       rmSync(dir, { force: true, recursive: true });
     }
+  });
+
+  test("claim-intent rejects early top-ups and opens at the 24-hour boundary", async () => {
+    const chain = referralIndex();
+    const claim = claimEvent({ code: "permanent-code", activatedAt: Math.floor(Date.now() / 1_000) });
+    chain.claims.push(claim);
+    const handler = createRequestHandler({
+      config: testConfig(),
+      indexer: chain.indexer,
+      referralStore: new ReferralInviteStore(),
+      role: "reader"
+    });
+    const signature = await playerAccount.signMessage({
+      message: referralWalletMessage(player, "claim-transaction", claim.commitment)
+    });
+    const request = () => new Request(`http://localhost/wallet/${player}/referrals/claim-intent`, {
+      body: JSON.stringify({ code: claim.code, commitment: claim.commitment, signature }),
+      headers: { "content-type": "application/json" },
+      method: "POST"
+    });
+
+    const early = await handler(request());
+    expect(early.status).toBe(409);
+    expect(await early.json()).toMatchObject({ error: "referral_top_up_unavailable" });
+
+    claim.claimedAt = String(Math.floor(Date.now() / 1_000) - 86_400);
+    const available = await handler(request());
+    expect(available.status).toBe(200);
+
+    const rotatedCode = "different-code";
+    const rotatedCommitment = referralCommitment(rotatedCode, player);
+    const rotatedSignature = await playerAccount.signMessage({
+      message: referralWalletMessage(player, "claim-transaction", rotatedCommitment)
+    });
+    const rotation = await handler(new Request(
+      `http://localhost/wallet/${player}/referrals/claim-intent`,
+      {
+        body: JSON.stringify({
+          code: rotatedCode,
+          commitment: rotatedCommitment,
+          signature: rotatedSignature
+        }),
+        headers: { "content-type": "application/json" },
+        method: "POST"
+      }
+    ));
+    expect(rotation.status).toBe(409);
+    expect(await rotation.json()).toMatchObject({ error: "referral_code_locked" });
   });
 });

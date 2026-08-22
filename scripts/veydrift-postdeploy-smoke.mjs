@@ -141,6 +141,7 @@ async function checkReferralOnChain() {
       configuredSignerWord,
       migrationFinalizedWord,
       maxCodeLengthWord,
+      topUpCooldownWord,
       startPriceWord,
       expectedValidHash,
       importedValidHash,
@@ -160,6 +161,7 @@ async function checkReferralOnChain() {
       ethCall(manifest.contracts.referralSystem, "0xdad0eeb7"),
       ethCall(manifest.contracts.referralSystem, "0x4c52a884"),
       ethCall(manifest.contracts.referralSystem, "0x3a81d776"),
+      ethCall(manifest.contracts.referralSystem, "0x574bdda8"),
       ethCall(manifest.contracts.game, "0xf1a9af89"),
       ethCall(manifest.contracts.referralSystem, "0x78b26966"),
       ethCall(manifest.contracts.referralSystem, "0x3da16ca6"),
@@ -179,6 +181,7 @@ async function checkReferralOnChain() {
     const configuredSigner = decodeAddressWord(configuredSignerWord);
     const migrationFinalized = BigInt(migrationFinalizedWord) === 1n;
     const maxCodeLength = Number(BigInt(maxCodeLengthWord));
+    const topUpCooldownSeconds = Number(BigInt(topUpCooldownWord));
     const expectedValidCount = Number(BigInt(expectedValidCountWord));
     const importedValidCount = Number(BigInt(importedValidCountWord));
     const expectedHashOnlyCount = Number(BigInt(expectedHashOnlyCountWord));
@@ -194,8 +197,9 @@ async function checkReferralOnChain() {
       configuredSigner,
       migrationFinalized,
       maxCodeLength,
+      topUpCooldownSeconds,
       migrationManifest: {
-        legacyCommitmentSemantics: "keccak256(original-case-sensitive-code-bytes)",
+        sourceCommitmentSemantics: "raw legacy code hash or canonical owner-bound commitment",
         expectedValidHash,
         importedValidHash,
         expectedHashOnlyHash,
@@ -216,6 +220,7 @@ async function checkReferralOnChain() {
     expect(eqAddress(configuredSigner, referralSigner), "referral system referralSigner() must match expected signer");
     expect(migrationFinalized, "referral code migration must be finalized before rollout");
     expect(maxCodeLength === 24, "referral system must expose the canonical 24-character code limit");
+    expect(topUpCooldownSeconds === 86_400, "referral top-up cooldown must be exactly 24 hours");
     expect(expectedValidCount > 0, "referral migration must commit at least one reviewed valid code");
     expect(importedValidCount === expectedValidCount, "referral valid-code migration count must match its reviewed manifest");
     expect(eqHex(importedValidHash, expectedValidHash), "referral valid-code migration hash must match its reviewed manifest");
