@@ -17,7 +17,7 @@ export function backendDataProjection<T>(
     subscribe: (listener) => {
       const emit = () => listener(getSnapshot());
       emit();
-      return store.subscribe(emit);
+      return store.subscribeKey(key, emit);
     },
   };
 }
@@ -44,9 +44,12 @@ export function useBackendDataSnapshots<T>(
 ): ReadonlyMap<string, GameStateEntry<T> | undefined> {
   const [, setVersion] = useState(0);
   const signature = keys.join("\u0000");
+  const stableKeys = useMemo(() => [...keys], [signature]);
   useEffect(() => {
-    if (!store || keys.length === 0) return;
-    return store.subscribe(() => setVersion((version) => version + 1));
-  }, [signature, store]);
-  return new Map(keys.map((key) => [key, store?.snapshot<T>(key)]));
+    if (!store || stableKeys.length === 0) return;
+    const refresh = () => setVersion((version) => version + 1);
+    const unsubscribes = stableKeys.map((key) => store.subscribeKey(key, refresh));
+    return () => unsubscribes.forEach((unsubscribe) => unsubscribe());
+  }, [stableKeys, store]);
+  return new Map(stableKeys.map((key) => [key, store?.snapshot<T>(key)]));
 }

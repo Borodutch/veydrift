@@ -111,6 +111,22 @@ describe("GameStateStore", () => {
     expect(order).toEqual(["transaction", "selected", "background"]);
   });
 
+  test("notifies a keyed subscriber only when its canonical entry changes", () => {
+    const store = new GameStateStore();
+    let systemUpdates = 0;
+    const unsubscribe = store.subscribeKey("system:1:2", () => {
+      systemUpdates += 1;
+    });
+
+    store.publish("attack-protection:0xabc:9:false", { allowed: true });
+    expect(systemUpdates).toBe(0);
+
+    store.publish("system:1:2", { planets: [] });
+    expect(systemUpdates).toBe(1);
+
+    unsubscribe();
+  });
+
   test("propagates shared refreshing, fresh, delayed, and failed entries through runtime surface consumers", async () => {
     const store = new BackendDataStore("https://api.test");
     const key = store.key("overview", "0xabc", "planet-7");

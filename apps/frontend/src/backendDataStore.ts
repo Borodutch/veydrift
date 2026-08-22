@@ -174,6 +174,10 @@ export class BackendDataStore {
     return this.state.subscribe(listener);
   }
 
+  subscribeKey(key: string, listener: () => void): () => void {
+    return this.state.subscribeKey(key, listener);
+  }
+
   key(kind: string, ...parts: unknown[]): string {
     return cacheKey(kind, ...parts);
   }
