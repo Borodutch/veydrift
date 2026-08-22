@@ -917,6 +917,24 @@ test("direct Mission Control load hydrates before stalled history reads occupy t
   assert.ok(firstHistoryIndex > overviewIndex, JSON.stringify(requests));
 });
 
+test("Galaxy settles its system and target-protection state once", async () => {
+  await loadInspectorFixture("/galaxy", 390, { shell: "settlement" });
+  await waitForExpression(`location.pathname === '/galaxy'
+    && document.querySelector('main h2')?.textContent === 'Galaxy'
+    && window.inspectorProof.requests.some((request) => request.includes('/universe/galaxies/1/systems/2'))
+    && window.inspectorProof.requests.some((request) => request.includes('/attack-protection'))`);
+
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  const rendered = await evaluate(`({
+    errors: window.inspectorProof.errors,
+    protectionRequests: window.inspectorProof.requests.filter((request) => request.includes('/attack-protection')).length,
+    systemRequests: window.inspectorProof.requests.filter((request) => request.includes('/universe/galaxies/1/systems/2')).length,
+  })`);
+  assert.ok(rendered.systemRequests <= 2, JSON.stringify(rendered));
+  assert.equal(rendered.protectionRequests, 2, JSON.stringify(rendered));
+  assert.deepEqual(rendered.errors, []);
+});
+
 for (const width of [390, 1280]) {
   test(`direct Shipyard load hydrates game content at ${width}px`, async () => {
     await loadInspectorFixture("/shipyard", width);

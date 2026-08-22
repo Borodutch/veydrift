@@ -61,6 +61,9 @@ const publicSystems = new Map([
   ["4:5", systemPayload(4, 5, 6, "Owned Beta Public", account, "owned-b", 2202, false)],
   ["9:9", systemPayload(9, 9, 9, "Unrelated Gamma", unrelatedOwner, "unrelated", 9909, true)],
 ]);
+publicSystems.get("1:2")?.planets.push(
+  systemPayload(1, 2, 9, "Nearby Rival", unrelatedOwner, "nearby-rival", 4404, true).planets[0]!,
+);
 
 const pendingDetailRequests = new Map<string, (response: Response) => void>();
 let detailRaceKind: "moon" | "planet" | null = null;

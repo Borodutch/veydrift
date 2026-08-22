@@ -3,6 +3,7 @@ import type { ComponentChildren, VNode } from "preact";
 import {
   galaxyActionsForMoonSlot,
   GalaxyActionButtons,
+  galaxyAttackProtectionRequestSignature,
   galaxyLoadErrorPresentation,
   withOwnedPlanetNames,
 } from "../src/components/GalaxyView";
@@ -10,6 +11,13 @@ import type { Planet } from "../src/types";
 import type { ChainShipyardState } from "../src/walletFlow";
 
 describe("GalaxyView moon actions", () => {
+  test("keeps the protection refresh identity stable across equivalent galaxy rows", () => {
+    expect(galaxyAttackProtectionRequestSignature([
+      { planetId: "9", targetIsMoon: false },
+      { planetId: "9", targetIsMoon: true },
+    ])).toBe("9:planet|9:moon");
+  });
+
   test("overlays renamed owned planets without discarding public galaxy intel", () => {
     const owner = "0x2222222222222222222222222222222222222222";
     const publicPlanet = {
