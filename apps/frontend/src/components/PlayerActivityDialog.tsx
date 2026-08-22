@@ -25,12 +25,11 @@ import {
 } from "../walletFlow";
 import { backendDataStoreFor } from "../backendDataStore";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
+import { useBackendDataQuery } from "../useBackendDataQuery";
 import { Skeleton, SkeletonRegion, skeletonList } from "./Skeleton";
 
 const HISTORY_PAGE_SIZE = 25;
 const AWAY_PAGE_SIZE = 100;
-const PRESENCE_HEARTBEAT_MS = 30_000;
-
 type ActivityDialogState =
   | { mode: "away"; response: PlayerActivityResponse; since: number }
   | { mode: "history"; response: PlayerActivityResponse | undefined };
@@ -60,37 +59,51 @@ export function PlayerActivityCenter({
   onHistoryClose: () => void;
   wallet?: string | undefined;
 }) {
-  const [awayState, setAwayState] = useState<Extract<ActivityDialogState, { mode: "away" }> | null>(null);
-  const [historyResponse, setHistoryResponse] = useState<PlayerActivityResponse | undefined>();
   const [historyPage, setHistoryPage] = useState(1);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | undefined>();
   const [presenceReady, setPresenceReady] = useState(false);
+  const [awaySince, setAwaySince] = useState<number | undefined>();
+  const [awayDismissed, setAwayDismissed] = useState(false);
   const identityKey = apiUrl && wallet ? `${apiUrl}:${wallet.toLowerCase()}` : "";
+  const backendData = useMemo(() => apiUrl ? backendDataStoreFor(apiUrl) : undefined, [apiUrl]);
+  const historyQuery = useBackendDataQuery<PlayerActivityResponse>(
+    backendData,
+    backendData && wallet ? backendData.key("player-activity", wallet, { page: historyPage, pageSize: HISTORY_PAGE_SIZE }) : undefined,
+    backendData && wallet
+      ? (scope) => backendData.playerActivity(wallet, { page: historyPage, pageSize: HISTORY_PAGE_SIZE, requestScope: scope })
+      : undefined,
+    Boolean(historyOpen && wallet),
+  );
+  const awayQuery = useBackendDataQuery<PlayerActivityResponse>(
+    backendData,
+    backendData && wallet && awaySince
+      ? backendData.key("player-activity", wallet, { page: 1, pageSize: AWAY_PAGE_SIZE, since: awaySince, includeProjected: true })
+      : undefined,
+    backendData && wallet && awaySince
+      ? (scope) => backendData.playerActivity(wallet, {
+        page: 1,
+        pageSize: AWAY_PAGE_SIZE,
+        since: awaySince,
+        includeProjected: true,
+        requestScope: scope,
+      })
+      : undefined,
+    Boolean(presenceReady && wallet && awaySince && !awayDismissed),
+  );
 
   useEffect(() => {
-    setAwayState(null);
-    setHistoryResponse(undefined);
     setHistoryPage(1);
-    setError(undefined);
     setPresenceReady(false);
+    setAwaySince(undefined);
+    setAwayDismissed(false);
     if (!apiUrl || !wallet) return;
 
     let cancelled = false;
-    void backendDataStoreFor(apiUrl).recordPlayerActivityPresence(wallet).then(async (presence) => {
+    void backendDataStoreFor(apiUrl).recordPlayerActivityPresence(wallet).then((presence) => {
       if (cancelled) return;
       setPresenceReady(true);
       const previous = presence.previousLastSeenAt === null ? null : Number(presence.previousLastSeenAt);
       if (previous === null || !Number.isSafeInteger(previous) || previous <= 0) return;
-      const response = await backendDataStoreFor(apiUrl).playerActivity(wallet, {
-        page: 1,
-        pageSize: AWAY_PAGE_SIZE,
-        since: previous,
-        includeProjected: true,
-      });
-      if (!cancelled && response.items.length > 0) {
-        setAwayState({ mode: "away", response, since: previous });
-      }
+      setAwaySince(previous);
     }).catch(() => {
       // A failed check-in leaves the server marker unchanged, so a later load retries this window.
     });
@@ -98,55 +111,25 @@ export function PlayerActivityCenter({
   }, [identityKey]);
 
   useEffect(() => {
-    if (!presenceReady || !apiUrl || !wallet) return;
-    const markPresent = () => void backendDataStoreFor(apiUrl).recordPlayerActivityPresence(wallet).catch(() => {});
-    const markPresentOnExit = () => {
-      backendDataStoreFor(apiUrl).recordPlayerActivityPresenceOnExit(wallet);
-    };
-    const handleVisibility = () => {
-      markPresent();
-    };
-    const timer = window.setInterval(markPresent, PRESENCE_HEARTBEAT_MS);
-    window.addEventListener("pagehide", markPresentOnExit);
-    document.addEventListener("visibilitychange", handleVisibility);
-    return () => {
-      window.clearInterval(timer);
-      window.removeEventListener("pagehide", markPresentOnExit);
-      document.removeEventListener("visibilitychange", handleVisibility);
-    };
-  }, [apiUrl, presenceReady, wallet]);
-
-  useEffect(() => {
-    if (!historyOpen || !apiUrl || !wallet) return;
-    let cancelled = false;
-    setAwayState(null);
-    setLoading(true);
-    setError(undefined);
-    void backendDataStoreFor(apiUrl).playerActivity(wallet, { page: historyPage, pageSize: HISTORY_PAGE_SIZE })
-      .then((response) => {
-        if (!cancelled) setHistoryResponse(response);
-      })
-      .catch((reason) => {
-        if (!cancelled) setError(reason instanceof Error ? reason.message : "Activity history could not be loaded.");
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => { cancelled = true; };
-  }, [apiUrl, historyOpen, historyPage, wallet]);
+    if (!presenceReady || !backendData || !wallet) return;
+    return backendData.startPlayerActivityPresence(wallet);
+  }, [backendData, presenceReady, wallet]);
 
   if (!apiUrl || !wallet) return null;
+  const awayResponse = awayQuery.snapshot?.data;
   const state: ActivityDialogState | null = historyOpen
-    ? { mode: "history", response: historyResponse }
-    : awayState;
+    ? { mode: "history", response: historyQuery.snapshot?.data }
+    : !awayDismissed && awaySince && awayResponse?.items.length
+      ? { mode: "away", response: awayResponse, since: awaySince }
+      : null;
   if (!state) return null;
 
-  const close = state.mode === "history" ? onHistoryClose : () => setAwayState(null);
+  const close = state.mode === "history" ? onHistoryClose : () => setAwayDismissed(true);
   return (
     <PlayerActivityDialog
-      error={state.mode === "history" ? error : undefined}
+      error={state.mode === "history" ? historyQuery.snapshot?.error : undefined}
       explorerUrl={explorerUrl}
-      loading={state.mode === "history" && loading}
+      loading={state.mode === "history" && historyQuery.snapshot?.freshness === "refreshing" && !historyQuery.snapshot?.data}
       mode={state.mode}
       onClose={close}
       onPageChange={state.mode === "history" ? setHistoryPage : undefined}

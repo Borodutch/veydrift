@@ -112,6 +112,13 @@ export type BackendDataRefreshOptions = {
   priority?: GameStatePriority;
 };
 
+export type IndexedReadWaitOptions = {
+  attempts?: number;
+  intervalMs?: number;
+  delay?: (ms: number) => Promise<void>;
+  timeoutError?: string;
+};
+
 export type BackendWriteTransactionDescriptor<IndexedSnapshot = void> =
   WriteTransactionDescriptor<IndexedSnapshot> & {
     /**
@@ -195,6 +202,13 @@ export class BackendDataStore {
    * of calling page-specific callback trees.
    */
   private readonly resources = new Map<string, RegisteredResource>();
+  /**
+   * A chain event can arrive after a request starts but before it returns. In
+   * that case the in-flight response may predate the event's indexed state, so
+   * one trailing read is required after the current transport settles.
+   */
+  private readonly trailingInvalidations = new Set<string>();
+  private readonly trailingInvalidationTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly pollers = new Map<string, ReturnType<typeof setInterval>>();
   private readonly scheduledRefreshes = new Map<string, ReturnType<typeof setTimeout>>();
   private contextScope = "public";
@@ -218,7 +232,12 @@ export class BackendDataStore {
       scope: options.scope ?? this.contextScope,
     };
     this.registerResource(key, load, readOptions);
-    return this.state.read(key, load, readOptions);
+    const read = this.state.read(key, load, readOptions);
+    void read.then(
+      () => this.flushTrailingInvalidation(key),
+      () => this.flushTrailingInvalidation(key),
+    );
+    return read;
   }
 
   /**
@@ -254,11 +273,7 @@ export class BackendDataStore {
   refetch(key: string, options: BackendDataRefreshOptions = {}): Promise<unknown> | undefined {
     const resource = this.resources.get(key);
     if (!resource) return undefined;
-    return this.state.read(key, resource.load, {
-      ...resource.options,
-      dedupe: true,
-      priority: options.priority ?? resource.options.priority,
-    });
+    return this.readRegisteredResource(resource, options, true);
   }
 
   /** Invalidate canonical resources by identity, then refresh active views. */
@@ -268,7 +283,11 @@ export class BackendDataStore {
     for (const resource of this.resources.values()) {
       if (![...resource.tags].some((tag) => wanted.has(tag))) continue;
       if (options.activeOnly !== false && this.state.subscriberCount(resource.key) === 0) continue;
-      const refresh = this.refetch(resource.key, options);
+      if (this.state.hasInFlight(resource.key)) {
+        this.trailingInvalidations.add(resource.key);
+        continue;
+      }
+      const refresh = this.readRegisteredResource(resource, options, false);
       if (refresh) reads.push(refresh);
     }
     return Promise.allSettled(reads);
@@ -297,6 +316,38 @@ export class BackendDataStore {
 
   stopAllPolling(): void {
     for (const name of this.pollers.keys()) this.stopPolling(name);
+  }
+
+  /** Public landing data has one store-owned refresh policy and SSE bridge. */
+  startLandingFeedPolling(): () => void {
+    return this.startPolling("landing-active-missions", ["kind:landing-active-missions"], 60_000, "background");
+  }
+
+  startLandingAlliancePolling(): () => void {
+    return this.startPolling("landing-highscores", ["kind:landing-highscores"], 300_000, "background");
+  }
+
+  /** Presence is backend data, so its heartbeat belongs here rather than in a dialog. */
+  startPlayerActivityPresence(wallet: string): () => void {
+    const name = `player-activity-presence:${wallet.toLowerCase()}`;
+    this.stopPolling(name);
+    const markPresent = () => {
+      void this.recordPlayerActivityPresence(wallet).catch(() => {
+        // A later heartbeat retries transient API failures without poisoning a
+        // dialog-local loading state.
+      });
+    };
+    markPresent();
+    const handleVisibility = () => markPresent();
+    const handleExit = () => this.recordPlayerActivityPresenceOnExit(wallet);
+    document.addEventListener("visibilitychange", handleVisibility);
+    window.addEventListener("pagehide", handleExit);
+    this.pollers.set(name, setInterval(markPresent, 30_000));
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibility);
+      window.removeEventListener("pagehide", handleExit);
+      this.stopPolling(name);
+    };
   }
 
   scheduleRefresh(
@@ -368,10 +419,18 @@ export class BackendDataStore {
     const onChainEvent = (event: MessageEvent) => {
       const tags: BackendDataTag[] = [
         `wallet:${wallet.toLowerCase()}`,
+        "kind:attack-protection",
         "kind:fleet-visibility",
         "kind:global-active-missions",
         "kind:global-mission-archive",
         "kind:battle-reports",
+        "kind:highscores",
+        "kind:landing-active-missions",
+        "kind:landing-highscores",
+        "kind:player-highscore",
+        "kind:raid-finder-debris",
+        "kind:raid-finder-rifters",
+        "kind:system",
       ];
       try {
         const payload = JSON.parse(event.data) as {
@@ -467,6 +526,27 @@ export class BackendDataStore {
     });
   }
 
+  /**
+   * Polls only indexed API reads until a caller-provided indexed predicate is
+   * true. Reconciliation itself remains exclusively backend-owned; this is
+   * merely one shared way for mutations to observe its published result.
+   */
+  async waitForIndexed<T>(
+    load: () => Promise<T>,
+    indexed: (value: T) => boolean,
+    options: IndexedReadWaitOptions = {},
+  ): Promise<T> {
+    const attempts = options.attempts ?? 12;
+    const intervalMs = options.intervalMs ?? 1_000;
+    const delay = options.delay ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      const value = await load();
+      if (indexed(value)) return value;
+      if (attempt < attempts - 1) await delay(intervalMs);
+    }
+    throw new Error(options.timeoutError ?? "Timed out waiting for indexed state.");
+  }
+
   snapshot<T>(key: string): GameStateEntry<T> | undefined {
     return this.state.snapshot<T>(key);
   }
@@ -516,11 +596,63 @@ export class BackendDataStore {
       wallet?: string | undefined;
     },
   ): void {
+    // A query key fully identifies its loader inputs. Keep its descriptor
+    // stable instead of allowing a later component's cancellation scope to
+    // overwrite the active resource owner.
+    if (this.resources.has(key)) return;
     this.resources.set(key, {
       key,
       load: load as (signal: AbortSignal) => Promise<unknown>,
-      options,
+      options: {
+        ...options,
+        // Scopes belong to individual subscriptions, never to the canonical
+        // resource descriptor that SSE/write invalidation refreshes later.
+        scope: undefined,
+      },
       tags: resourceTagsForKey(key, options.wallet, options.planetId),
+    });
+  }
+
+  private readRegisteredResource(
+    resource: RegisteredResource,
+    options: BackendDataRefreshOptions,
+    dedupe: boolean,
+  ): Promise<unknown> {
+    const read = this.state.read(resource.key, resource.load, {
+      ...resource.options,
+      dedupe,
+      priority: options.priority ?? resource.options.priority,
+      // Invalidation is store-owned and must not be cancelled when a route
+      // unmounts or a selected planet changes.
+      scope: `backend-data:${resource.key}`,
+    });
+    void read.then(
+      () => this.flushTrailingInvalidation(resource.key),
+      () => this.flushTrailingInvalidation(resource.key),
+    );
+    return read;
+  }
+
+  private flushTrailingInvalidation(key: string): void {
+    if (!this.trailingInvalidations.delete(key)) return;
+    if (this.state.hasInFlight(key)) {
+      this.trailingInvalidations.add(key);
+      // A promise completion normally reaches this method after GameStateStore
+      // has removed its in-flight entry. Keep one bounded fallback for another
+      // consumer's overlapping read; never spin a zero-delay retry loop.
+      if (!this.trailingInvalidationTimers.has(key)) {
+        this.trailingInvalidationTimers.set(key, setTimeout(() => {
+          this.trailingInvalidationTimers.delete(key);
+          this.flushTrailingInvalidation(key);
+        }, 25));
+      }
+      return;
+    }
+    const resource = this.resources.get(key);
+    if (!resource) return;
+    void this.readRegisteredResource(resource, { priority: "transaction" }, false).catch(() => {
+      // The canonical resource snapshot keeps last-good data and its normal
+      // failure state. A later poll/manual retry can recover transient errors.
     });
   }
 
@@ -730,30 +862,34 @@ export class BackendDataStore {
 
   profile(wallet: string): Promise<PlayerProfile> {
     const key = cacheKey("profile", wallet);
-    return this.refresh(key, (signal) => fetchPlayerProfile(this.apiBaseUrl, wallet, { signal }));
+    return this.refresh(key, (signal) => fetchPlayerProfile(this.apiBaseUrl, wallet, { signal }), { wallet });
   }
 
   settlementFunding(wallet: string): Promise<SettlementFundingState> {
     const key = cacheKey("settlement-funding", wallet);
-    return this.refresh(key, (signal) => fetchSettlementFundingState(this.apiBaseUrl, wallet, signal));
+    return this.refresh(key, (signal) => fetchSettlementFundingState(this.apiBaseUrl, wallet, signal), { wallet });
   }
 
   referralDashboard(wallet: string): Promise<ReferralDashboard> {
     const key = cacheKey("referral-dashboard", wallet);
-    return this.refresh(key, (signal) => fetchReferralDashboard(this.apiBaseUrl, wallet, signal));
+    return this.refresh(key, (signal) => fetchReferralDashboard(this.apiBaseUrl, wallet, signal), { wallet });
   }
 
   referralHistory(wallet: string, page = 1, pageSize = 25): Promise<ReferralHistoryResponse> {
     const key = cacheKey("referral-history", wallet, page, pageSize);
-    return this.refresh(key, (signal) => fetchReferralHistory(this.apiBaseUrl, wallet, page, pageSize, signal));
+    return this.refresh(key, (signal) => fetchReferralHistory(this.apiBaseUrl, wallet, page, pageSize, signal), { wallet });
   }
 
   playerActivity(
     wallet: string,
-    options: { includeProjected?: boolean; page?: number; pageSize?: number; since?: number } = {},
+    options: { includeProjected?: boolean; page?: number; pageSize?: number; since?: number; requestScope?: string } = {},
   ): Promise<PlayerActivityResponse> {
-    const key = cacheKey("player-activity", wallet, options);
-    return this.refresh(key, (signal) => fetchPlayerActivity(this.apiBaseUrl, wallet, { ...options, signal }));
+    const { requestScope, ...fetchOptions } = options;
+    const key = cacheKey("player-activity", wallet, fetchOptions);
+    return this.refresh(key, (signal) => fetchPlayerActivity(this.apiBaseUrl, wallet, { ...fetchOptions, signal }), {
+      scope: requestScope ?? this.contextScope,
+      wallet,
+    });
   }
 
   recordPlayerActivityPresence(wallet: string): Promise<PlayerActivityPresence> {
@@ -767,18 +903,29 @@ export class BackendDataStore {
   }
 
   highscores(options: (FetchHighscoreOptions & { requestScope?: string }) | number = 100): Promise<HighscoreResponse> {
-    const { requestScope, ...fetchOptions } = typeof options === "number" ? { requestScope: undefined } : options;
-    const normalizedOptions = typeof options === "number" ? options : fetchOptions;
+    const requestScope = typeof options === "number" ? undefined : options.requestScope;
+    const normalizedOptions: FetchHighscoreOptions | number = typeof options === "number"
+      ? options
+      : (() => {
+        const { requestScope: _requestScope, ...fetchOptions } = options;
+        return fetchOptions;
+      })();
     const key = cacheKey("highscores", normalizedOptions);
     return this.refresh(key, (signal) => fetchHighscores(
       this.apiBaseUrl,
       typeof normalizedOptions === "number" ? normalizedOptions : { ...normalizedOptions, signal },
-    ), { priority: "background", scope: requestScope ?? this.contextScope });
+    ), {
+      priority: "background",
+      scope: requestScope ?? this.contextScope,
+      ...(typeof normalizedOptions === "number" || !normalizedOptions.currentWallet
+        ? {}
+        : { wallet: normalizedOptions.currentWallet }),
+    });
   }
 
   playerHighscore(wallet: string): Promise<HighscoreEntry | null> {
     const key = cacheKey("player-highscore", wallet);
-    return this.refresh(key, (signal) => fetchPlayerHighscore(this.apiBaseUrl, wallet, signal));
+    return this.refresh(key, (signal) => fetchPlayerHighscore(this.apiBaseUrl, wallet, signal), { wallet });
   }
 
   raidFinderDebris(options: { limit?: number; requestScope?: string } = {}): Promise<RaidFinderDebrisResponse> {
@@ -849,7 +996,7 @@ export class BackendDataStore {
     return this.refresh(
       key,
       (signal) => fetchAttackProtectionStatus(this.apiBaseUrl, wallet, targetPlanetId, targetIsMoon, signal),
-      { scope: options.requestScope ?? this.contextScope },
+      { planetId: targetPlanetId, scope: options.requestScope ?? this.contextScope, wallet },
     );
   }
 
@@ -868,8 +1015,10 @@ export class BackendDataStore {
     const key = cacheKey("fleet-archive", wallet, fetchOptions);
     return this.refresh(key, (signal) => fetchFleetMissionArchive(this.apiBaseUrl, wallet, { ...fetchOptions, signal }), {
       dedupe: false,
+      planetId: fetchOptions.planetId,
       priority: "mission-control",
       scope: requestScope ?? this.contextScope,
+      wallet,
     });
   }
 
@@ -881,8 +1030,10 @@ export class BackendDataStore {
     const key = cacheKey("missile-archive", wallet, fetchOptions);
     return this.refresh(key, (signal) => fetchMissileAttackArchive(this.apiBaseUrl, wallet, { ...fetchOptions, signal }), {
       dedupe: false,
+      planetId: fetchOptions.planetId,
       priority: "mission-control",
       scope: requestScope ?? this.contextScope,
+      wallet,
     });
   }
 
@@ -895,7 +1046,7 @@ export class BackendDataStore {
     });
   }
 
-  landingActiveMissions<T>(): Promise<T[]> {
+  landingActiveMissions<T>(options: { requestScope?: string } = {}): Promise<T[]> {
     const key = cacheKey("landing-active-missions");
     return this.refresh(key, async (signal) => {
       const response = await fetch(`${this.apiBaseUrl}/missions?status=active&live=1`, {
@@ -906,10 +1057,10 @@ export class BackendDataStore {
       if (!response.ok) throw new Error("Failed to load landing missions");
       const data = await response.json() as { missions?: T[] };
       return data.missions ?? [];
-    });
+    }, { priority: "background", scope: options.requestScope ?? this.contextScope });
   }
 
-  landingHighscores<T>(): Promise<T[]> {
+  landingHighscores<T>(options: { requestScope?: string } = {}): Promise<T[]> {
     const key = cacheKey("landing-highscores");
     return this.refresh(key, async (signal) => {
       const params = new URLSearchParams({
@@ -926,7 +1077,7 @@ export class BackendDataStore {
       if (!response.ok) throw new Error("Failed to load landing highscores");
       const data = await response.json() as { rankings?: { total?: T[] } };
       return data.rankings?.total ?? [];
-    });
+    }, { priority: "background", scope: options.requestScope ?? this.contextScope });
   }
 
   globalMissionArchive(options: GlobalMissionArchiveOptions = {}): Promise<GlobalMissionArchiveResponse> {
@@ -956,9 +1107,15 @@ export class BackendDataStore {
     });
   }
 
-  entityMedia(entityKind: EntityMediaKind, entityId: string): Promise<EntityMediaResponse> {
+  entityMedia(
+    entityKind: EntityMediaKind,
+    entityId: string,
+    options: { requestScope?: string } = {},
+  ): Promise<EntityMediaResponse> {
     const key = cacheKey("entity-media", entityKind, entityId);
-    return this.refresh(key, (signal) => fetchEntityMedia(this.apiBaseUrl, entityKind, entityId, signal));
+    return this.refresh(key, (signal) => fetchEntityMedia(this.apiBaseUrl, entityKind, entityId, signal), {
+      scope: options.requestScope ?? this.contextScope,
+    });
   }
 
   async saveEntityMedia(
@@ -968,7 +1125,7 @@ export class BackendDataStore {
     entityId: string,
     mediaUrl: string,
   ): Promise<EntityMediaResponse> {
-    return updateEntityMedia(
+    const response = await updateEntityMedia(
       this.apiBaseUrl,
       provider,
       wallet,
@@ -976,6 +1133,9 @@ export class BackendDataStore {
       entityId,
       mediaUrl,
     );
+    this.publish("entity-media", response, [entityKind, entityId]);
+    void this.invalidate([`kind:entity-media`], { activeOnly: true, priority: "transaction" });
+    return response;
   }
 
   burningChicken(owner: string, tokenId: string, config: BurningChickenConfig): Promise<unknown> {

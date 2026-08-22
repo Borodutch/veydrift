@@ -13,5 +13,8 @@ describe("app routing", () => {
     expect(source).not.toMatch(/cca/i);
     expect(game).not.toContain("auctionBanner");
     expect(topBar).not.toContain("auctionBanner");
+    expect(topBar).toContain('key="crystal"');
+    expect(topBar).toContain('key="deuterium"');
+    expect(topBar).not.toContain("tickValueRef");
   });
 });

@@ -1059,7 +1059,6 @@ for (const width of [390, 1280]) {
 
     const initialSnapshot = await evaluate(`({
       overviewRequests: window.inspectorProof.requests.filter((request) => request.includes('/overview')).length,
-      resourceValue: document.querySelector('[data-resource-status="ready"] summary[title^="Metal:"] [data-tick-value]')?.dataset.tickValue ?? null,
     })`);
     const routes = [
       {
@@ -1082,7 +1081,7 @@ for (const width of [390, 1280]) {
       try {
         await waitForExpression(`location.pathname === '${route.path}'
           && document.querySelector('main')?.textContent?.includes('Syncing planetfall') === false
-          && document.querySelector('[data-resource-status="ready"] summary[title^="Metal:"] [data-tick-value]')?.dataset.tickValue === ${JSON.stringify(initialSnapshot.resourceValue)}
+          && document.querySelector('[data-resource-status="ready"] [data-resource="M"] summary') !== null
           && ${route.ready}`);
       } catch (error) {
         const diagnostics = await evaluate(`({
@@ -1101,7 +1100,6 @@ for (const width of [390, 1280]) {
       requests: window.inspectorProof.requests,
       resourceStatus: document.querySelector('[data-resource-status]')?.getAttribute('data-resource-status') ?? null,
       resourceTitle: document.querySelector('[data-resource-status] summary[title^="Metal:"]')?.title ?? null,
-      resourceValue: document.querySelector('[data-resource-status] summary[title^="Metal:"] [data-tick-value]')?.dataset.tickValue ?? null,
       syncingPlanetfall: document.querySelector('main')?.textContent?.includes('Syncing planetfall') ?? false,
     })`);
     assert.equal(rendered.overviewRequests, initialSnapshot.overviewRequests, JSON.stringify(rendered.requests));
@@ -1111,7 +1109,6 @@ for (const width of [390, 1280]) {
     assert.ok(rendered.requests.some((request) => request.includes('/missions?status=completed') && request.includes('summaryOnly=true')), JSON.stringify(rendered.requests));
     assert.equal(rendered.resourceStatus, "ready");
     assert.match(rendered.resourceTitle ?? "", /^Metal: 10,313\b/);
-    assert.equal(rendered.resourceValue, initialSnapshot.resourceValue);
     assert.equal(rendered.syncingPlanetfall, false);
     assert.deepEqual(rendered.errors, []);
   });

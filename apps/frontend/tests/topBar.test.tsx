@@ -63,6 +63,22 @@ describe("TopBar", () => {
     expect(text).not.toContain("Collect");
   });
 
+  test("keeps mobile crystal and deuterium slots bound to their own values", async () => {
+    const topBar = renderTopBar({
+      resources: { metal: 11, crystal: 222, deuterium: 3333 },
+    });
+    const pips = elementNodes(topBar).filter((node) => node.type === "details" && node.props?.["data-resource"]);
+    const byResource = new Map(pips.map((node) => [node.props?.["data-resource"], visibleText(node)]));
+    const source = await Bun.file(new URL("../src/components/TopBar.tsx", import.meta.url)).text();
+
+    expect(byResource.get("M")).toContain("11");
+    expect(byResource.get("C")).toContain("222");
+    expect(byResource.get("D")).toContain("3,333");
+    // Resource slots must stay Preact-controlled: the former animation wrote
+    // text into a recycled mobile span and could show Deuterium under Crystal.
+    expect(source).not.toContain("tickValueRef");
+  });
+
   test("renders an energy explanation info control", () => {
     const topBar = renderTopBar();
     const energyInfo = elementNodes(topBar).find(

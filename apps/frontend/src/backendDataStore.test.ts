@@ -98,6 +98,57 @@ describe("BackendDataStore", () => {
     }
   });
 
+  test("runs one trailing read when indexed invalidation lands during an in-flight request", async () => {
+    const store = new BackendDataStore("https://api.test");
+    const key = store.key("infrastructure", "0xabc", "planet-7");
+    let resolveFirst!: (value: { revision: number }) => void;
+    let loads = 0;
+    const load = () => {
+      loads += 1;
+      if (loads === 1) {
+        return new Promise<{ revision: number }>((resolve) => {
+          resolveFirst = resolve;
+        });
+      }
+      return Promise.resolve({ revision: loads });
+    };
+    const unsubscribe = store.subscribeKey(key, () => {});
+
+    try {
+      const initial = store.refresh(key, load, { planetId: "planet-7", wallet: "0xabc" });
+      await Promise.resolve();
+      await store.invalidate(["planet:planet-7"], { priority: "transaction" });
+      resolveFirst({ revision: 1 });
+      await initial;
+      await new Promise<void>((resolve) => setTimeout(resolve, 5));
+
+      expect(loads).toBe(2);
+      expect(store.snapshot<{ revision: number }>(key)?.data).toEqual({ revision: 2 });
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  test("keeps the first canonical resource descriptor when another surface reads the same key", async () => {
+    const store = new BackendDataStore("https://api.test");
+    const key = store.key("system", 1, 2);
+    const unsubscribe = store.subscribeKey(key, () => {});
+    let firstLoads = 0;
+    let secondLoads = 0;
+
+    try {
+      await store.refresh(key, async () => ({ source: "first", revision: ++firstLoads }), { scope: "first-surface" });
+      await store.refresh(key, async () => ({ source: "second", revision: ++secondLoads }), { scope: "second-surface" });
+      await store.invalidate(["kind:system"]);
+
+      expect(firstLoads).toBe(2);
+      expect(secondLoads).toBe(1);
+      expect(store.snapshot<{ source: string; revision: number }>(key)?.data).toEqual({ source: "first", revision: 2 });
+    } finally {
+      unsubscribe();
+    }
+  });
+
   test("keeps global polling alive when the selected planet context changes", async () => {
     const store = new BackendDataStore("https://api.test");
     const key = store.key("global-active-missions");
