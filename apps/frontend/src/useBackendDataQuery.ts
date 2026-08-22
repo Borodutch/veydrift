@@ -37,10 +37,11 @@ export function useBackendDataQuery<T>(
   }, [enabled, key, scope, store]);
 
   useEffect(() => {
-    void refetch().catch((error) => {
+    void refetch().catch(() => {
       // The data store owns the canonical failure state exposed by `snapshot`.
-      // Avoid an unhandled rejection when a background query fails.
-      console.error(error);
+      // Avoid an unhandled rejection when a background query fails. Consumers
+      // render the snapshot's error state, so background failures must not be
+      // promoted to a window error.
     });
     return () => store?.cancelScope(scope);
   }, [refetch, scope, store]);
