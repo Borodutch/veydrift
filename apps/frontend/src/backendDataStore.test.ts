@@ -78,6 +78,49 @@ describe("BackendDataStore", () => {
     expect(loads).toBe(2);
   });
 
+  test("keeps one registered resource owner for cache reuse and tag invalidation", async () => {
+    const store = new BackendDataStore("https://api.test");
+    const key = store.key("infrastructure", "0xabc", "planet-7");
+    let loads = 0;
+    const load = async () => ({ revision: ++loads });
+    const unsubscribe = store.subscribeKey(key, () => {});
+
+    try {
+      await store.ensure(key, load, { wallet: "0xabc", planetId: "planet-7", maxAgeMs: 60_000 });
+      await store.ensure(key, load, { wallet: "0xabc", planetId: "planet-7", maxAgeMs: 60_000 });
+      expect(loads).toBe(1);
+
+      await store.invalidate(["planet:planet-7"], { priority: "transaction" });
+      expect(loads).toBe(2);
+      expect(store.snapshot<{ revision: number }>(key)?.data).toEqual({ revision: 2 });
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  test("keeps global polling alive when the selected planet context changes", async () => {
+    const store = new BackendDataStore("https://api.test");
+    const key = store.key("global-active-missions");
+    let loads = 0;
+    const unsubscribe = store.subscribeKey(key, () => {});
+    const stopPolling = store.startPolling(
+      "mission-control",
+      ["kind:global-active-missions"],
+      5,
+      "mission-control",
+    );
+
+    try {
+      await store.refresh(key, async () => ({ revision: ++loads }));
+      store.setContext("0xabc", "planet-7");
+      await new Promise<void>((resolve) => setTimeout(resolve, 30));
+      expect(loads).toBeGreaterThan(1);
+    } finally {
+      stopPolling();
+      unsubscribe();
+    }
+  });
+
   test("aborts the real Galaxy transport when navigation cancels its surface scope", async () => {
     const originalFetch = globalThis.fetch;
     let transportSignal: AbortSignal | undefined;
@@ -129,6 +172,31 @@ describe("BackendDataStore", () => {
     expect(phases).toEqual(["pending", "confirming", "confirmed", "indexing", "success"]);
     expect(store.snapshot<WriteTransactionState>(store.writeTransactionKey("defense:start:4"))?.data)
       .toMatchObject({ key: "defense:start:4", phase: "success", stage: "applied", txHash: "0xabc" });
+  });
+
+  test("invalidates subscribed canonical resources after indexed write convergence", async () => {
+    const store = new BackendDataStore("https://api.test");
+    const key = store.key("infrastructure", "0xabc", "planet-7");
+    let loads = 0;
+    const unsubscribe = store.subscribeKey(key, () => {});
+
+    try {
+      await store.refresh(key, async () => ({ revision: ++loads }), {
+        planetId: "planet-7",
+        wallet: "0xabc",
+      });
+      await expect(store.runWriteTransaction({
+        confirm: async () => ({ status: "0x1" }),
+        invalidateTags: ["wallet:0xabc", "planet:planet-7"],
+        key: "building:start:planet-7",
+        label: "Building upgrade",
+        send: async () => "0xabc",
+        waitForIndexed: async () => ({ indexed: true }),
+      })).resolves.toBe(true);
+      expect(loads).toBe(2);
+    } finally {
+      unsubscribe();
+    }
   });
 
   test("uses the same shared gate for receipt writes and non-receipt mutations", async () => {

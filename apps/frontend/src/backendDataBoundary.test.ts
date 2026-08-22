@@ -29,15 +29,19 @@ describe("frontend backend-data boundary", () => {
 
   test("keeps canonical data and freshness in one subscribed runtime store", async () => {
     const storeSource = await Bun.file(new URL("./backendDataStore.ts", import.meta.url)).text();
-    const planetStoreSource = await Bun.file(new URL("./planetSectionStore.ts", import.meta.url)).text();
+    const appSource = await Bun.file(new URL("./PlayableMvpApp.tsx", import.meta.url)).text();
     const guide = await Bun.file(new URL("../../../docs/frontend-data-store.md", import.meta.url)).text();
     const playerGuide = await Bun.file(new URL("./docs/content/docs.md", import.meta.url)).text();
 
     expect(storeSource).toContain("private readonly state = new GameStateStore()");
+    expect(storeSource).toContain("private readonly resources = new Map<string, RegisteredResource>()");
+    expect(storeSource).toContain("connectChainEvents(wallet");
+    expect(storeSource).toContain("startPolling(name");
+    expect(storeSource).toContain("invalidate(tags");
     expect(storeSource).toContain("subscribe(listener");
     expect(storeSource).toContain("snapshot<T>(key: string)");
-    expect(planetStoreSource).toContain("export type PlanetSectionRefreshStatus");
-    expect(planetStoreSource).toContain("export function setPlanetSectionData");
+    expect(appSource).not.toContain('from "./planetSectionStore"');
+    expect(appSource).not.toContain("setPlanetSectionStore");
     expect(guide).toContain("canonical runtime owner");
     expect(guide).toContain("Deadlines begin at enqueue time");
     expect(playerGuide).toContain("one shared game-state store and priority scheduler");

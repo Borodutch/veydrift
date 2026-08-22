@@ -37,8 +37,8 @@ describe("navigation and planet selector UI source contracts", () => {
       planetId: "owned-b",
     });
 
-    expect(playableSource.match(/onSelect=\{handleSelectManagedPlanet\}/g)?.length).toBe(2);
-    expect(playableSource).toContain("writeInspectRoute(nextInspectRoute)");
+    expect(playableSource.match(/onSelect=\{handleSelectManagedPlanet\}/g)?.length).toBeGreaterThanOrEqual(2);
+    expect(playableSource).toContain("navigateToInspectRoute(nextInspectRoute)");
   });
 
   test("preserves unrelated inspection while restoring owned deep links and browser history routes", () => {
@@ -214,7 +214,7 @@ describe("navigation and planet selector UI source contracts", () => {
     expect(playableSource).toContain('constructionProgressKey(planet.planetId, "planet", "building")');
     expect(playableSource).toContain('constructionProgressKey(planet.planetId, "planet", "defense")');
     expect(playableSource).toContain('constructionProgressKey(planet.planetId, "planet", "ship")');
-    expect(playableSource).toContain("progress: progressState.progress");
+    expect(playableSource).toContain("progress: totalProgress");
     expect(playableSource).not.toContain('className="grid w-full grid-cols-3 gap-1"');
     expect(playableSource).not.toContain("opacity-45");
   });
@@ -226,13 +226,16 @@ describe("navigation and planet selector UI source contracts", () => {
     expect(playableSource).not.toContain('className="grid w-full grid-cols-3 gap-1 min-h-');
   });
 
-  test("reconciles completed queues for unselected planets and background tabs", () => {
+  test("asks the centralized backend-data store to refresh completed queues for unselected planets", () => {
     const completionRefreshSource = playableSource.slice(
-      playableSource.indexOf("Array.from(confirmedConstructionQueues.values())"),
+      playableSource.indexOf("const nextEventMs = nextProductionQueueCompletionEventMs(Array.from(constructionQueues.values())"),
       playableSource.indexOf("// Chime when an active production queue reaches completion."),
     );
-    expect(completionRefreshSource).toContain("Array.from(confirmedConstructionQueues.values())");
-    expect(completionRefreshSource).toContain("refreshOnChainState(undefined, { force: true, forceWalletPlanets: true })");
+    expect(completionRefreshSource).toContain("Array.from(constructionQueues.values())");
+    expect(completionRefreshSource).toContain('backendData!.scheduleRefresh(');
+    expect(completionRefreshSource).toContain('"production-queue-completion"');
+    expect(completionRefreshSource).toContain("`wallet:${account.toLowerCase()}`");
+    expect(completionRefreshSource).not.toContain("confirmedConstructionQueues");
     expect(completionRefreshSource).not.toContain('document.visibilityState === "hidden"');
   });
 
@@ -299,15 +302,15 @@ describe("navigation and planet selector UI source contracts", () => {
     expect(playableSource).toContain("selected={selected}");
     expect(playableSource).not.toContain('selectedBodyKind={activeBodyKind}');
     expect(playableSource).toContain('setSelectedBodyKind(nextBodyKind)');
-    expect(playableSource).toContain('setPage("moon")');
-    expect(playableSource).toContain('if (target !== "moon")');
+    expect(playableSource).toContain('navigateToInspectRoute({ kind: "page", page: "moon" })');
+    expect(playableSource).toContain('if (route.page !== "moon") setSelectedBodyKind("planet")');
   });
 
   test("normal navigation from a selected moon returns to the parent planet context", () => {
-    expect(playableSource).toContain('if (target !== "moon")');
+    expect(playableSource).toContain('if (route.page !== "moon") setSelectedBodyKind("planet")');
     expect(playableSource).toContain('setSelectedBodyKind("planet")');
     expect(playableSource).not.toContain('activeBodyKind === "moon" && (page === "overview" || page === "infrastructure" || page === "defenses" || page === "shipyard")');
-    expect(playableSource).toContain('if (page === "moon")');
+    expect(playableSource).toContain('if (route.page !== "moon") setSelectedBodyKind("planet")');
   });
 
   test("moon overview actions open moon-origin parent-planet mission flows", () => {

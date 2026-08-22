@@ -37,20 +37,6 @@ export function constructionProgressKey(
   return `${bodyKind}:${planetId}:${kind}`;
 }
 
-/**
- * Undefined means a refresh did not produce a confirmed queue value, so the last
- * confirmed observation stays visible. Null is an explicit, successful idle
- * observation and clears the queue. This distinction prevents refresh errors from
- * blanking progress without preserving a completed queue after a successful read.
- */
-export function retainConfirmedConstructionQueue(
-  previous: QueueStateResponse | null | undefined,
-  observation: QueueStateResponse | null | undefined,
-): QueueStateResponse | null {
-  if (observation === undefined) return previous?.active ? previous : null;
-  return observation?.active ? observation : null;
-}
-
 /** Prefer the most specific active read while filling optional timeline metadata
  * from matching broader snapshots. A lagging idle read cannot blank a queue that
  * another confirmed indexed surface still reports as active. */
@@ -77,14 +63,18 @@ export function selectActiveConstructionQueue(
   }, primary);
 }
 
-export function reconcileConstructionQueues(
-  previous: ReadonlyMap<string, QueueStateResponse | null>,
+/**
+ * Backend responses are the only queue source of truth.  This creates a
+ * body-scoped display projection from the current response set; it deliberately
+ * does not retain, settle, or repair an older queue in the browser.
+ */
+export function constructionQueueState(
   observations: readonly ConstructionQueueObservation[],
 ): Map<string, QueueStateResponse | null> {
-  const next = new Map(previous);
+  const next = new Map<string, QueueStateResponse | null>();
   for (const observation of observations) {
     const key = constructionProgressKey(observation.planetId, observation.bodyKind, observation.kind);
-    next.set(key, retainConfirmedConstructionQueue(next.get(key), observation.queue));
+    next.set(key, observation.queue?.active ? observation.queue : null);
   }
   return next;
 }
@@ -123,10 +113,9 @@ export function constructionProgressForQueue({
   const readyAtMs = timestampToMs(activeQueue?.readyAt);
   const startedAtMs = timestampToMs(activeQueue?.startedAt ?? activeQueue?.productionTiming?.startedAt);
   const hasTimeline = readyAtMs !== undefined && startedAtMs !== undefined && startedAtMs < readyAtMs;
-  const complete = Boolean(activeQueue && (
-    activeQueue.asOfNow?.complete === true
-    || (readyAtMs !== undefined && readyAtMs <= now)
-  ));
+  // Completion is calculated by the backend's as-of-now projection.  The local
+  // clock only animates a known-active queue; it never settles it.
+  const complete = activeQueue?.asOfNow?.complete === true;
   const backendProgress = activeQueue?.asOfNow?.overallProgressBps;
   const progress = complete
     ? 1
