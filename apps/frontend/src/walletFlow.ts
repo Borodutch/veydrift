@@ -67,19 +67,6 @@ const REFERRAL_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxy
 export const REFERRAL_DEFAULT_CODE_LENGTH = 9;
 export const REFERRAL_CODE_PATTERN = /^[A-Za-z0-9_-]{1,24}$/;
 
-const GAME_API_RECENT_READ_TTL_MS = 750;
-const GAME_API_MAX_CONCURRENT_READS = 3;
-const gameApiInflightReads = new Map<string, Promise<unknown>>();
-const gameApiRecentReads = new Map<string, { expiresAt: number; value: unknown }>();
-let gameApiActiveReads = 0;
-type GameApiReadQueueEntry = {
-  resolve: (release: () => void) => void;
-  reject: (reason: unknown) => void;
-  signal: AbortSignal;
-  onAbort: () => void;
-};
-const gameApiReadQueue: GameApiReadQueueEntry[] = [];
-
 export type SettlementConfig = {
   address?: string;
   legacyAddress?: string;
@@ -4754,7 +4741,7 @@ export async function fetchGlobalActiveMissions(apiUrl: string, signal?: AbortSi
   return fetchGameApiJson<GlobalActiveMissionsResponse>(
     `${apiUrl.replace(/\/+$/, "")}/missions?status=active&live=1`,
     "Active missions",
-    { cache: "no-store", recentReadTtlMs: 0, signal },
+    { cache: "no-store", signal },
   );
 }
 
@@ -4782,7 +4769,7 @@ export async function fetchGlobalMissionArchive(
   return fetchGameApiJson<GlobalMissionArchiveResponse>(
     `${apiUrl.replace(/\/+$/, "")}/missions?${params.toString()}`,
     "Mission archive",
-    { cache: "no-store", recentReadTtlMs: 0, signal: options.signal },
+    { cache: "no-store", signal: options.signal },
   );
 }
 
@@ -4790,7 +4777,7 @@ export async function fetchMission(apiUrl: string, missionId: string, signal?: A
   return fetchGameApiJson<MissionDetailResponse>(
     `${apiUrl.replace(/\/+$/, "")}/mission/${encodeURIComponent(missionId)}`,
     "Mission",
-    { cache: "no-store", recentReadTtlMs: 0, signal },
+    { cache: "no-store", signal },
   );
 }
 
@@ -5030,7 +5017,6 @@ export async function fetchHighscores(
     {
       httpErrorMessage: highscoreHttpFailureMessage,
       networkFailureMessage: highscoreNetworkFailureMessage,
-      recentReadTtlMs: 0,
       ...(typeof options === "number" || options.signal === undefined ? {} : { signal: options.signal }),
     },
   );
@@ -5058,7 +5044,6 @@ export async function fetchRaidFinderDebrisTargets(
     {
       httpErrorMessage: highscoreHttpFailureMessage,
       networkFailureMessage: highscoreNetworkFailureMessage,
-      recentReadTtlMs: 0,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     },
   );
@@ -5077,7 +5062,6 @@ export async function fetchRaidFinderRifters(
     {
       httpErrorMessage: highscoreHttpFailureMessage,
       networkFailureMessage: highscoreNetworkFailureMessage,
-      recentReadTtlMs: 0,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     },
   );
@@ -5204,7 +5188,6 @@ async function fetchWalletJson<T>(
   const url = `${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(wallet)}/${path}`;
   return fetchGameApiJson<T>(url, label, {
     cache: "no-store",
-    ...(options.fresh ? { recentReadTtlMs: 0 } : {}),
     timeoutMs,
     ...(options.signal === undefined ? {} : { signal: options.signal }),
     networkFailureMessage: (error) => walletApiNetworkFailureMessage(label, error)
@@ -5218,43 +5201,14 @@ async function fetchGameApiJson<T>(
     cache?: RequestCache;
     httpErrorMessage?: (response: Response) => Promise<string>;
     networkFailureMessage?: (error: unknown) => string;
-    recentReadTtlMs?: number;
     signal?: AbortSignal | undefined;
     timeoutMs?: number;
   } = {}
 ): Promise<T> {
-  const cacheKey = `GET ${url}`;
-  const now = Date.now();
-  const freshQuery = /(?:[?&])fresh=1(?:&|$)/.test(url);
-  const recentReadTtlMs = options.signal
-    ? 0
-    : options.recentReadTtlMs ?? (freshQuery ? 0 : GAME_API_RECENT_READ_TTL_MS);
-  if (recentReadTtlMs > 0) {
-    const recent = gameApiRecentReads.get(cacheKey);
-    if (recent && recent.expiresAt > now) return recent.value as T;
-    if (recent) gameApiRecentReads.delete(cacheKey);
-  }
-
-  if (recentReadTtlMs > 0) {
-    const inflight = gameApiInflightReads.get(cacheKey);
-    if (inflight) return inflight as Promise<T>;
-  }
-
-  const request = fetchGameApiJsonUnpooled<T>(url, label, options);
-  if (recentReadTtlMs > 0) gameApiInflightReads.set(cacheKey, request);
-  try {
-    const value = await request;
-    if (recentReadTtlMs > 0) {
-      gameApiRecentReads.set(cacheKey, {
-        expiresAt: Date.now() + recentReadTtlMs,
-        value
-      });
-      pruneRecentGameApiReads();
-    }
-    return value;
-  } finally {
-    if (recentReadTtlMs > 0) gameApiInflightReads.delete(cacheKey);
-  }
+  // BackendDataStore is the only owner of GET deduplication, caching and
+  // scheduling.  This adapter deliberately performs one abortable transport
+  // so an invalidation cannot be satisfied by a lower-level stale response.
+  return fetchGameApiJsonUnpooled<T>(url, label, options);
 }
 
 async function fetchGameApiJsonUnpooled<T>(
@@ -5278,9 +5232,7 @@ async function fetchGameApiJsonUnpooled<T>(
   else options.signal?.addEventListener("abort", forwardAbort, { once: true });
 
   let response: Response;
-  let releaseReadSlot: (() => void) | undefined;
   try {
-    releaseReadSlot = await acquireGameApiReadSlot(controller.signal);
     response = await fetch(url, {
       ...(options.cache !== undefined ? { cache: options.cache } : {}),
       headers: { accept: "application/json" },
@@ -5296,7 +5248,6 @@ async function fetchGameApiJsonUnpooled<T>(
   } finally {
     clearTimeout(timeoutId);
     options.signal?.removeEventListener("abort", forwardAbort);
-    releaseReadSlot?.();
   }
 
   if (!response.ok) {
@@ -5305,55 +5256,9 @@ async function fetchGameApiJsonUnpooled<T>(
   return response.json() as Promise<T>;
 }
 
-async function acquireGameApiReadSlot(signal: AbortSignal): Promise<() => void> {
-  if (signal.aborted) throw signal.reason;
-  if (gameApiActiveReads < GAME_API_MAX_CONCURRENT_READS) {
-    gameApiActiveReads += 1;
-    return releaseGameApiReadSlot;
-  }
-
-  // A queued read receives the slot that releaseGameApiReadSlot hands to it.
-  // Do not increment gameApiActiveReads after the wait, or a burst leaves the
-  // counter permanently above the limit once all actual fetches have finished.
-  return new Promise<() => void>((resolve, reject) => {
-    let entry!: GameApiReadQueueEntry;
-    const onAbort = () => {
-      const index = gameApiReadQueue.indexOf(entry);
-      if (index >= 0) gameApiReadQueue.splice(index, 1);
-      reject(signal.reason);
-    };
-    entry = { onAbort, reject, resolve, signal };
-    signal.addEventListener("abort", onAbort, { once: true });
-    gameApiReadQueue.push(entry);
-  });
-}
-
-function releaseGameApiReadSlot(): void {
-  while (gameApiReadQueue.length > 0) {
-    const next = gameApiReadQueue.shift()!;
-    next.signal.removeEventListener("abort", next.onAbort);
-    if (next.signal.aborted) continue;
-    next.resolve(releaseGameApiReadSlot);
-    return;
-  }
-  gameApiActiveReads = Math.max(0, gameApiActiveReads - 1);
-}
-
-function pruneRecentGameApiReads(): void {
-  if (gameApiRecentReads.size <= 256) return;
-  const now = Date.now();
-  for (const [key, value] of gameApiRecentReads) {
-    if (value.expiresAt <= now || gameApiRecentReads.size > 256) {
-      gameApiRecentReads.delete(key);
-    }
-  }
-}
-
 export function __clearGameApiReadPoolForTests(): void {
-  gameApiInflightReads.clear();
-  gameApiRecentReads.clear();
-  gameApiActiveReads = 0;
-  gameApiReadQueue.length = 0;
+  // Compatibility seam for older transport tests. GET lifecycle state lives
+  // in BackendDataStore now, so there is no wallet-flow pool to reset.
 }
 
 async function mutateWatchedPlanet(

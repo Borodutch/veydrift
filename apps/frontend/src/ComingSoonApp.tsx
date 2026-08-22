@@ -706,7 +706,7 @@ function useLandingFeed(): { items: LandingFeedItem[]; status: LandingLoadStatus
   const query = useBackendDataQuery<LandingFleetMission[]>(
     backendData,
     backendData.key("landing-active-missions"),
-    (scope) => backendData.landingActiveMissions<LandingFleetMission>({ requestScope: scope }),
+    () => backendData.landingActiveMissions<LandingFleetMission>(),
   );
   useEffect(() => backendData.startLandingFeedPolling(), [backendData]);
   const missions = query.snapshot?.data ?? [];
@@ -724,7 +724,7 @@ function useTopAlliances(): { items: LandingAlliance[]; status: LandingLoadStatu
   const query = useBackendDataQuery<LandingHighscoreEntry[]>(
     backendData,
     backendData.key("landing-highscores"),
-    (scope) => backendData.landingHighscores<LandingHighscoreEntry>({ requestScope: scope }),
+    () => backendData.landingHighscores<LandingHighscoreEntry>(),
   );
   useEffect(() => backendData.startLandingAlliancePolling(), [backendData]);
   const items = topAlliancesFromHighscores(query.snapshot?.data ?? []);

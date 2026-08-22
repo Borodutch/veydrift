@@ -172,7 +172,7 @@ describe("BackendDataStore", () => {
     }
   });
 
-  test("aborts the real Galaxy transport when navigation cancels its surface scope", async () => {
+  test("keeps a canonical Galaxy transport independent of route-local cancellation", async () => {
     const originalFetch = globalThis.fetch;
     let transportSignal: AbortSignal | undefined;
     let markTransportStarted!: () => void;
@@ -182,19 +182,17 @@ describe("BackendDataStore", () => {
     globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
       transportSignal = init?.signal ?? undefined;
       markTransportStarted();
-      return new Promise<Response>((_resolve, reject) => {
-        transportSignal?.addEventListener("abort", () => reject(transportSignal?.reason), { once: true });
-      });
+      return Promise.resolve(new Response(JSON.stringify({ planets: [] }), {
+        headers: { "content-type": "application/json" },
+      }));
     }) as typeof fetch;
 
     try {
       const store = new BackendDataStore("https://api.test");
-      const request = store.system(2, 44, { requestScope: "galaxy-view-navigation" });
+      const request = store.system(2, 44);
       await transportStarted;
-      store.cancelScope("galaxy-view-navigation");
-
-      await expect(request).rejects.toMatchObject({ name: "AbortError" });
-      expect(transportSignal?.aborted).toBe(true);
+      await expect(request).resolves.toEqual({ planets: [] });
+      expect(transportSignal?.aborted).toBe(false);
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -223,6 +221,22 @@ describe("BackendDataStore", () => {
     expect(phases).toEqual(["pending", "confirming", "confirmed", "indexing", "success"]);
     expect(store.snapshot<WriteTransactionState>(store.writeTransactionKey("defense:start:4"))?.data)
       .toMatchObject({ key: "defense:start:4", phase: "success", stage: "applied", txHash: "0xabc" });
+  });
+
+  test("waits only for a backend-published resource revision after a confirmed write", async () => {
+    const store = new BackendDataStore("https://api.test");
+    let reads = 0;
+
+    await expect(store.waitForIndexedResource(
+      async () => ({
+        resourceSnapshot: reads++ === 0
+          ? { blockNumber: "10", transactionHash: "0xolder" }
+          : { blockNumber: "11", transactionHash: "0xconfirmed" },
+      }),
+      { receiptBlockNumber: "11", transactionHash: "0xconfirmed" },
+      { attempts: 2, intervalMs: 0 },
+    )).resolves.toMatchObject({ resourceSnapshot: { transactionHash: "0xconfirmed" } });
+    expect(reads).toBe(2);
   });
 
   test("invalidates subscribed canonical resources after indexed write convergence", async () => {

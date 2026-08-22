@@ -41,17 +41,11 @@ import { InlineStateNotice } from "./InlineStateNotice";
 import { WatchablePlanetRow, type PlanetMetaItem } from "./WatchablePlanetRow";
 import { galaxyActionIcon } from "./GalaxyActionIcon";
 import { backendDataStoreFor } from "../backendDataStore";
-import { useBackendDataSnapshot, useBackendDataSnapshots } from "../useBackendDataSnapshot";
+import { useBackendDataQuery } from "../useBackendDataQuery";
+import { useBackendDataSnapshots } from "../useBackendDataSnapshot";
 
 const SMALL_CARGO_SHIP_ID = 0;
-const GALAXY_SYSTEM_CACHE_TTL_MS = 2 * 60 * 1_000;
 const defaultMissionShips = (): Partial<MissionShips> => ({ smallCargo: 1 });
-type GalaxySystemCacheEntry = {
-  planets: Planet[];
-  storedAt: number;
-};
-
-const galaxySystemCache = new Map<string, GalaxySystemCacheEntry>();
 
 export function formatAllianceLabel(alliance: Planet["alliance"]): string {
   if (!alliance) return "";
@@ -212,20 +206,22 @@ export function GalaxyView({
   watchedPlanetIds = [],
   watchBusyPlanetId,
 }: Props) {
-  const currentSystemKey = galaxySystemKey(galaxy, system);
-  const cachedSystem = cachedGalaxySystemPlanets(apiBaseUrl, galaxy, system);
   const backendData = useMemo(() => backendDataStoreFor(apiBaseUrl), [apiBaseUrl]);
   const systemSnapshotKey = backendData.key("system", galaxy, system, {});
-  const systemSnapshot = useBackendDataSnapshot<ApiSystemResponse>(backendData, systemSnapshotKey);
+  const systemQuery = useBackendDataQuery<ApiSystemResponse>(
+    backendData,
+    systemSnapshotKey,
+    () => backendData.system<ApiSystemResponse>(galaxy, system),
+  );
+  const systemSnapshot = systemQuery.snapshot;
   const systemPlanets = useMemo(
     () => systemSnapshot?.data
       ? planetsFromSystemResponse(systemSnapshot.data)
-      : (cachedSystem ?? []),
-    [cachedSystem, systemSnapshot?.data],
+      : [],
+    [systemSnapshot?.data],
   );
   const loading = systemSnapshot?.freshness === "refreshing" || systemSnapshot === undefined;
   const loadError = systemSnapshot?.error;
-  const [reloadNonce, setReloadNonce] = useState(0);
   const homeCoordsInSystem = homeCoords?.galaxy === galaxy && homeCoords.system === system
     ? homeCoords
     : undefined;
@@ -266,43 +262,15 @@ export function GalaxyView({
     });
     return { attackProtection: planet, moonAttackProtection: moon };
   }, [protectionKeys, protectionRequests, protectionSnapshots]);
-  const hasCurrentSystemData = Boolean(systemSnapshot?.data || cachedSystem);
+  const hasCurrentSystemData = Boolean(systemSnapshot?.data);
 
   useEffect(() => {
-    if (systemSnapshot?.data) {
-      rememberGalaxySystemPayload(apiBaseUrl, galaxy, system, systemSnapshot.data);
-    }
-  }, [apiBaseUrl, galaxy, system, systemSnapshot?.data]);
-
-  useEffect(() => {
-    backendData.cancelScope("galaxy-view-navigation");
-    backendData.system<ApiSystemResponse>(galaxy, system, { requestScope: "galaxy-view-navigation" })
-      .catch((error) => {
-        if (!(error instanceof DOMException && error.name === "AbortError")) console.error(error);
-      });
-
-    return () => {
-      backendData.cancelScope("galaxy-view-navigation");
-    };
-  }, [backendData, currentSystemKey, reloadNonce]);
-
-  useEffect(() => {
-    backendData.cancelScope("galaxy-view-protection");
     if (protectionRequests.length === 0) return;
-    Promise.allSettled(protectionRequests.map(({ planetId, targetIsMoon }) =>
-      backendData.attackProtection(account!, planetId, targetIsMoon, { requestScope: "galaxy-view-protection" })
-    ))
-      .then((results) => {
-        for (const result of results) {
-          if (result.status === "rejected" && !(result.reason instanceof DOMException && result.reason.name === "AbortError")) {
-            console.error(result.reason);
-          }
-        }
-      });
-
-    return () => {
-      backendData.cancelScope("galaxy-view-protection");
-    };
+    void Promise.all(protectionRequests.map(({ planetId, targetIsMoon }) =>
+      backendData.attackProtection(account!, planetId, targetIsMoon)
+    )).catch(() => {
+      // Individual canonical snapshots expose a delayed/failed state.
+    });
   }, [account, backendData, protectionRequestSignature]);
 
   const handlePrevSystem = () => {
@@ -405,7 +373,7 @@ export function GalaxyView({
               <p>{loadErrorPresentation?.message}</p>
               <button
                 className="mt-2 h-9 rounded border border-white/15 px-3 text-xs font-semibold text-slate-200 transition hover:border-white/25 hover:text-white"
-                onClick={() => setReloadNonce((value) => value + 1)}
+                onClick={() => { void systemQuery.refetch(); }}
                 type="button"
               >
                 Retry system load
@@ -525,10 +493,6 @@ function clampInteger(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, Math.trunc(value)));
 }
 
-function galaxySystemKey(galaxy: number, system: number): string {
-  return `${galaxy}:${system}`;
-}
-
 export function galaxySystemRequestUrl(apiBaseUrl: string, galaxy: number, system: number): string {
   return `${apiBaseUrl.replace(/\/+$/, "")}/universe/galaxies/${galaxy}/systems/${system}`;
 }
@@ -538,38 +502,28 @@ export function planetsForFailedGalaxyLoad(): Planet[] {
 }
 
 export function rememberGalaxySystemPayload(
-  apiBaseUrl: string,
-  galaxy: number,
-  system: number,
+  _apiBaseUrl: string,
+  _galaxy: number,
+  _system: number,
   payload: ApiSystemResponse,
-  now = Date.now()
+  _now = Date.now()
 ): Planet[] {
-  const planets = planetsFromSystemResponse(payload);
-  galaxySystemCache.set(galaxySystemCacheKey(apiBaseUrl, galaxy, system), {
-    planets,
-    storedAt: now,
-  });
-  return planets;
+  // Compatibility projection only. Canonical system payload caching belongs to
+  // BackendDataStore, not a Galaxy module-local map.
+  return planetsFromSystemResponse(payload);
 }
 
 export function cachedGalaxySystemPlanets(
-  apiBaseUrl: string,
-  galaxy: number,
-  system: number,
-  now = Date.now()
+  _apiBaseUrl: string,
+  _galaxy: number,
+  _system: number,
+  _now = Date.now()
 ): Planet[] | undefined {
-  const key = galaxySystemCacheKey(apiBaseUrl, galaxy, system);
-  const entry = galaxySystemCache.get(key);
-  if (!entry) return undefined;
-  if (now - entry.storedAt > GALAXY_SYSTEM_CACHE_TTL_MS) {
-    galaxySystemCache.delete(key);
-    return undefined;
-  }
-  return entry.planets;
+  return undefined;
 }
 
 export function clearGalaxySystemCache(): void {
-  galaxySystemCache.clear();
+  // Kept for test compatibility. There is no Galaxy-local backend cache.
 }
 
 export function shouldShowGalaxyInitialLoader({
@@ -616,10 +570,6 @@ export function systemLoadErrorLabel(error: unknown): string {
   if (error instanceof TypeError) return GAME_UNAVAILABLE_MESSAGE;
   if (error instanceof Error && /\b5\d\d\b/.test(error.message)) return GAME_UNAVAILABLE_MESSAGE;
   return error instanceof Error ? error.message : "The universe API request failed.";
-}
-
-function galaxySystemCacheKey(apiBaseUrl: string, galaxy: number, system: number): string {
-  return galaxySystemRequestUrl(apiBaseUrl, galaxy, system);
 }
 
 export function formatGalaxyHeatLabel(temperature: Planet["temperature"]): string {

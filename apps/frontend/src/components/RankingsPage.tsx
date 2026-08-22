@@ -8,7 +8,7 @@ import type { GalaxyAction } from "../galaxyActions";
 import type { Coordinates } from "../types";
 import { shortAddress, type FleetMissionSummary, type HighscoreCategory, type HighscoreEntry, type HighscorePlanet, type HighscoreResponse } from "../walletFlow";
 import { backendDataStoreFor } from "../backendDataStore";
-import { useBackendDataSnapshot } from "../useBackendDataSnapshot";
+import { useBackendDataQuery } from "../useBackendDataQuery";
 import { OptimizedImage } from "./OptimizedImage";
 import { refreshButtonState } from "./PageHeader";
 import { PlanetMoonSubsection } from "./PlanetMoonIndicator";
@@ -171,51 +171,29 @@ export function RankingsPage({ activeMissions, apiBaseUrl, currentAllianceId, cu
     page,
     pageSize: rankingsPageSize,
   }), [active, currentWallet, page]);
-  const dataSnapshot = useBackendDataSnapshot<HighscoreResponse>(
+  const rankingsQuery = useBackendDataQuery<HighscoreResponse>(
     backendData,
     backendData?.key("highscores", requestOptions),
+    backendData ? () => backendData.highscores(requestOptions) : undefined,
   );
+  const dataSnapshot = rankingsQuery.snapshot;
   const data = dataSnapshot?.data ?? null;
   const loading = dataSnapshot?.freshness === "refreshing";
   const error = apiBaseUrl ? dataSnapshot?.error : "Game API unavailable.";
-
-  const load = (targetPage = page) => {
-    if (!apiBaseUrl) {
-      setViewTransitioning(false);
-      return;
-    }
-
-    const store = backendDataStoreFor(apiBaseUrl);
-    store.cancelScope("rankings-page");
-    store.highscores({
-      category: active,
-      ...(currentWallet ? { currentWallet } : {}),
-      page: targetPage,
-      pageSize: rankingsPageSize,
-      requestScope: "rankings-page",
-    })
-      .catch((nextError) => {
-        if (!(nextError instanceof DOMException && nextError.name === "AbortError")) console.error(nextError);
-      })
-      .finally(() => {
-        setViewTransitioning(false);
-      });
-  };
 
   const beginViewTransition = () => {
     setViewTransitioning(true);
   };
 
   useEffect(() => {
-    load(page);
-    return () => {
-      if (apiBaseUrl) backendDataStoreFor(apiBaseUrl).cancelScope("rankings-page");
-    };
-  }, [active, apiBaseUrl, currentWallet, page]);
-
-  useEffect(() => {
     setExpandedRankingWallets(new Set());
   }, [active, page]);
+
+  useEffect(() => {
+    if (viewTransitioning && !loading && dataSnapshot?.lastSuccessfulUpdate !== undefined) {
+      setViewTransitioning(false);
+    }
+  }, [dataSnapshot?.lastSuccessfulUpdate, loading, viewTransitioning]);
 
   const missionsByPlanetId = useMemo(() => activeMissionsByPlanetId(activeMissions ?? []), [activeMissions]);
   const nowMs = now ?? Date.now();

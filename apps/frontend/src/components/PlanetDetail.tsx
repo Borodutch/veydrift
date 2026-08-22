@@ -44,7 +44,7 @@ import { Skeleton, SkeletonRegion, skeletonList } from "./Skeleton";
 import { missionTypeLabel } from "./MissionControlPage";
 import { buildInspectPath } from "../inspectRoutes";
 import { backendDataStoreFor } from "../backendDataStore";
-import { useBackendDataSnapshot } from "../useBackendDataSnapshot";
+import { useBackendDataQuery } from "../useBackendDataQuery";
 
 interface Props {
   account?: string | undefined;
@@ -166,10 +166,12 @@ export function PlanetDetail({
     [coords.galaxy, coords.position, coords.system, homeCoords?.galaxy, homeCoords?.position, homeCoords?.system, homePlanet],
   );
   const backendData = useMemo(() => backendDataStoreFor(apiBaseUrl), [apiBaseUrl]);
-  const systemSnapshot = useBackendDataSnapshot<ApiSystemResponse>(
+  const systemQuery = useBackendDataQuery<ApiSystemResponse>(
     backendData,
     backendData.key("system", coords.galaxy, coords.system, { detail: "full" }),
+    () => backendData.system<ApiSystemResponse>(coords.galaxy, coords.system, { detail: "full" }),
   );
+  const systemSnapshot = systemQuery.snapshot;
   const apiPlanet = systemSnapshot?.data
     ? planetsFromSystemResponse(systemSnapshot.data).find((item) => item.position === coords.position) ?? null
     : null;
@@ -188,16 +190,22 @@ export function PlanetDetail({
   });
   const isHome = planet ? sameCoordinates(homeCoords, planet) : false;
   const targetPlanetId = planet?.occupiedBy?.planetId;
-  const attackProtectionSnapshot = useBackendDataSnapshot<AttackProtectionStatus>(
+  const attackProtectionQuery = useBackendDataQuery<AttackProtectionStatus>(
     backendData,
     account && targetPlanetId && !isHome
       ? backendData.key("attack-protection", account, targetPlanetId, false)
       : undefined,
+    account && targetPlanetId && !isHome
+      ? () => backendData.attackProtection(account, targetPlanetId, false)
+      : undefined,
   );
-  const activeMissionSnapshot = useBackendDataSnapshot<GlobalActiveMissionsResponse>(
+  const attackProtectionSnapshot = attackProtectionQuery.snapshot;
+  const activeMissionQuery = useBackendDataQuery<GlobalActiveMissionsResponse>(
     backendData,
     targetPlanetId ? backendData.key("global-active-missions") : undefined,
+    targetPlanetId ? () => backendData.globalActiveMissions() : undefined,
   );
+  const activeMissionSnapshot = activeMissionQuery.snapshot;
   const attackProtection = attackProtectionSnapshot?.data ?? null;
   const activeMissions = !targetPlanetId
     ? []
@@ -206,44 +214,6 @@ export function PlanetDetail({
           mission.originPlanetId === targetPlanetId || mission.targetPlanetId === targetPlanetId
         ))
       : null;
-
-  useEffect(() => {
-    backendData.cancelScope("planet-detail-navigation");
-    backendData.system<ApiSystemResponse>(coords.galaxy, coords.system, {
-      detail: "full",
-      requestScope: "planet-detail-navigation",
-    })
-      .catch((error) => {
-        if (!(error instanceof DOMException && error.name === "AbortError")) console.error(error);
-      });
-
-    return () => {
-      backendData.cancelScope("planet-detail-navigation");
-    };
-  }, [
-    backendData,
-    coords.galaxy,
-    coords.position,
-    coords.system,
-  ]);
-
-  useEffect(() => {
-    if (!account || !targetPlanetId || isHome) {
-      return;
-    }
-    backendData.attackProtection(account, targetPlanetId, false, { requestScope: "planet-detail-navigation" })
-      .catch((error) => {
-        if (!(error instanceof DOMException && error.name === "AbortError")) console.error(error);
-      });
-  }, [account, backendData, isHome, targetPlanetId]);
-
-  useEffect(() => {
-    if (!targetPlanetId) return;
-    backendData.globalActiveMissions({ requestScope: "planet-detail-navigation" })
-      .catch((error) => {
-        if (!(error instanceof DOMException && error.name === "AbortError")) console.error(error);
-      });
-  }, [backendData, targetPlanetId]);
 
   useEffect(() => {
     setImageLoaded(isImageReady(imageRef.current));

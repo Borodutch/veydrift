@@ -39,7 +39,7 @@ export function EntityMediaPanel({
   const mediaQuery = useBackendDataQuery<EntityMediaResponse>(
     backendData,
     backendData.key("entity-media", entityKind, entityId),
-    (scope) => backendData.entityMedia(entityKind, entityId, { requestScope: scope }),
+    () => backendData.entityMedia(entityKind, entityId),
   );
   const response = mediaQuery.snapshot?.data;
   const record = response?.media ?? null;

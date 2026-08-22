@@ -69,7 +69,7 @@ export function PlayerActivityCenter({
     backendData,
     backendData && wallet ? backendData.key("player-activity", wallet, { page: historyPage, pageSize: HISTORY_PAGE_SIZE }) : undefined,
     backendData && wallet
-      ? (scope) => backendData.playerActivity(wallet, { page: historyPage, pageSize: HISTORY_PAGE_SIZE, requestScope: scope })
+      ? () => backendData.playerActivity(wallet, { page: historyPage, pageSize: HISTORY_PAGE_SIZE })
       : undefined,
     Boolean(historyOpen && wallet),
   );
@@ -79,12 +79,11 @@ export function PlayerActivityCenter({
       ? backendData.key("player-activity", wallet, { page: 1, pageSize: AWAY_PAGE_SIZE, since: awaySince, includeProjected: true })
       : undefined,
     backendData && wallet && awaySince
-      ? (scope) => backendData.playerActivity(wallet, {
+      ? () => backendData.playerActivity(wallet, {
         page: 1,
         pageSize: AWAY_PAGE_SIZE,
         since: awaySince,
         includeProjected: true,
-        requestScope: scope,
       })
       : undefined,
     Boolean(presenceReady && wallet && awaySince && !awayDismissed),
