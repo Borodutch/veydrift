@@ -1,5 +1,5 @@
 import type { ComponentChildren } from "preact";
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useMemo, useState } from "preact/hooks";
 import {
   Activity,
   ArrowRight,
@@ -18,13 +18,13 @@ import { RetroCdBoxHero, type CdView } from "./components/RetroCdBoxHero";
 import { TELEGRAM_SUPPORT_URL, WHITEPAPER_URL } from "./supportLinks";
 import { playableApiUrl } from "./runtimeConfig";
 import { backendDataStoreFor } from "./backendDataStore";
+import { useBackendDataQuery } from "./useBackendDataQuery";
 
 const alphaUrl = "https://test.veydrift.com";
 const claimUrl = "#claim";
 export const landingAgentPrompt = "Use https://veydrift.com/docs to play Veydrift for me. Grow my empire, prioritize Metal, Crystal and Deuterium production, and prepare surplus resources for the Rift. Ask before signing transactions or taking irreversible actions.";
 export const landingFeedRefreshMs = 60_000;
 export const landingAllianceRefreshMs = 300_000;
-export const landingChainEventRefreshDebounceMs = 500;
 
 const ships = {
   colonyShip: "/assets/game/style-pass/generated/ships/colony-ship.webp",
@@ -148,7 +148,9 @@ export function ComingSoonApp({
   useLandingScrollParallax();
   useLandingReveals();
   useLandingCardTilt();
-  const chainRefreshToken = useLandingChainRefreshToken();
+  const backendData = useMemo(() => backendDataStoreFor(playableApiUrl), []);
+
+  useEffect(() => backendData.connectChainEvents("public"), [backendData]);
 
   return (
     <main className="landing-page min-h-dvh overflow-hidden bg-void text-white">
@@ -157,8 +159,8 @@ export function ComingSoonApp({
       <HowItWorksSection />
       <AgentSection />
       <RiftSection />
-      <FeedSection refreshToken={chainRefreshToken} />
-      <AlliancesSection refreshToken={chainRefreshToken} />
+      <FeedSection />
+      <AlliancesSection />
       <AlphaSection />
     </main>
   );
@@ -484,8 +486,8 @@ function RiftPoint({ title, body }: { title: string; body: string }) {
   );
 }
 
-function FeedSection({ refreshToken }: { refreshToken: number }) {
-  const feed = useLandingFeed(refreshToken);
+function FeedSection() {
+  const feed = useLandingFeed();
 
   return (
     <section className="relative overflow-hidden bg-[#05070d] px-5 py-20 sm:px-8 sm:py-24 lg:px-10 lg:py-28">
@@ -610,8 +612,8 @@ export function landingLaunchCtaForLocation(
   };
 }
 
-function AlliancesSection({ refreshToken }: { refreshToken: number }) {
-  const alliances = useTopAlliances(refreshToken);
+function AlliancesSection() {
+  const alliances = useTopAlliances();
 
   return (
     <section className="relative overflow-hidden bg-[#080b12] px-5 py-20 sm:px-8 sm:py-24 lg:px-10 lg:py-28">
@@ -699,122 +701,39 @@ function LandingStatusPill({ status }: { status: LandingLoadStatus }) {
   );
 }
 
-function useLandingChainRefreshToken(): number {
-  const [refreshToken, setRefreshToken] = useState(0);
-
-  useEffect(() => {
-    if (typeof window.EventSource === "undefined") return;
-
-    const eventsUrl = `${playableApiUrl.replace(/\/+$/, "")}/chain/events`;
-    const eventSource = new window.EventSource(eventsUrl);
-    let refreshTimeoutId: number | null = null;
-
-    const refreshFromChainEvent = () => {
-      if (refreshTimeoutId !== null) window.clearTimeout(refreshTimeoutId);
-      refreshTimeoutId = window.setTimeout(() => {
-        refreshTimeoutId = null;
-        setRefreshToken((current) => current + 1);
-      }, landingChainEventRefreshDebounceMs);
-    };
-
-    eventSource.addEventListener("chain-event", refreshFromChainEvent);
-
-    return () => {
-      if (refreshTimeoutId !== null) window.clearTimeout(refreshTimeoutId);
-      eventSource.removeEventListener("chain-event", refreshFromChainEvent);
-      eventSource.close();
-    };
-  }, []);
-
-  return refreshToken;
+function useLandingFeed(): { items: LandingFeedItem[]; status: LandingLoadStatus } {
+  const backendData = useMemo(() => backendDataStoreFor(playableApiUrl), []);
+  const query = useBackendDataQuery<LandingFleetMission[]>(
+    backendData,
+    backendData.key("landing-active-missions"),
+    (scope) => backendData.landingActiveMissions<LandingFleetMission>({ requestScope: scope }),
+  );
+  useEffect(() => backendData.startLandingFeedPolling(), [backendData]);
+  const missions = query.snapshot?.data ?? [];
+  const items = landingFeedFromMissions(missions);
+  const status: LandingLoadStatus = query.snapshot?.freshness === "failed"
+    ? "offline"
+    : query.snapshot?.data === undefined
+      ? "loading"
+      : items.length > 0 ? "ready" : "empty";
+  return { items, status };
 }
 
-function useLandingFeed(refreshToken: number): { items: LandingFeedItem[]; status: LandingLoadStatus } {
-  const [feed, setFeed] = useState<{ items: LandingFeedItem[]; status: LandingLoadStatus }>({
-    items: [],
-    status: "loading",
-  });
-
-  useEffect(() => {
-    let cancelled = false;
-    let activeController: AbortController | null = null;
-
-    const loadLandingFeed = () => {
-      activeController?.abort();
-      const controller = new AbortController();
-      activeController = controller;
-
-      fetchLandingActiveMissions(controller.signal)
-        .then((missions) => {
-          if (cancelled) return;
-          const items = landingFeedFromMissions(missions);
-          setFeed({ items, status: items.length > 0 ? "ready" : "empty" });
-        })
-        .catch((error) => {
-          if (cancelled || isAbortError(error)) return;
-          setFeed({ items: [], status: "offline" });
-        });
-    };
-
-    loadLandingFeed();
-    const intervalId = window.setInterval(loadLandingFeed, landingFeedRefreshMs);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(intervalId);
-      activeController?.abort();
-    };
-  }, [refreshToken]);
-
-  return feed;
-}
-
-function useTopAlliances(refreshToken: number): { items: LandingAlliance[]; status: LandingLoadStatus } {
-  const [alliances, setAlliances] = useState<{ items: LandingAlliance[]; status: LandingLoadStatus }>({
-    items: [],
-    status: "loading",
-  });
-
-  useEffect(() => {
-    let cancelled = false;
-    let activeController: AbortController | null = null;
-
-    const loadLandingAlliances = () => {
-      activeController?.abort();
-      const controller = new AbortController();
-      activeController = controller;
-
-      fetchLandingHighscores(controller.signal)
-        .then((data) => {
-          if (cancelled) return;
-          const next = topAlliancesFromHighscores(data);
-          setAlliances({ items: next, status: next.length > 0 ? "ready" : "empty" });
-        })
-        .catch((error) => {
-          if (cancelled || isAbortError(error)) return;
-          setAlliances({ items: [], status: "offline" });
-        });
-    };
-
-    loadLandingAlliances();
-    const intervalId = window.setInterval(loadLandingAlliances, landingAllianceRefreshMs);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(intervalId);
-      activeController?.abort();
-    };
-  }, [refreshToken]);
-
-  return alliances;
-}
-
-async function fetchLandingActiveMissions(_signal?: AbortSignal): Promise<LandingFleetMission[]> {
-  return backendDataStoreFor(playableApiUrl).landingActiveMissions<LandingFleetMission>();
-}
-
-async function fetchLandingHighscores(_signal?: AbortSignal): Promise<LandingHighscoreEntry[]> {
-  return backendDataStoreFor(playableApiUrl).landingHighscores<LandingHighscoreEntry>();
+function useTopAlliances(): { items: LandingAlliance[]; status: LandingLoadStatus } {
+  const backendData = useMemo(() => backendDataStoreFor(playableApiUrl), []);
+  const query = useBackendDataQuery<LandingHighscoreEntry[]>(
+    backendData,
+    backendData.key("landing-highscores"),
+    (scope) => backendData.landingHighscores<LandingHighscoreEntry>({ requestScope: scope }),
+  );
+  useEffect(() => backendData.startLandingAlliancePolling(), [backendData]);
+  const items = topAlliancesFromHighscores(query.snapshot?.data ?? []);
+  const status: LandingLoadStatus = query.snapshot?.freshness === "failed"
+    ? "offline"
+    : query.snapshot?.data === undefined
+      ? "loading"
+      : items.length > 0 ? "ready" : "empty";
+  return { items, status };
 }
 
 export function landingFeedFromMissions(missions: readonly LandingFleetMission[], now = Date.now()): LandingFeedItem[] {
@@ -987,8 +906,4 @@ function landingAllianceBoardLabel(status: LandingLoadStatus): string {
 
 function landingCommanderCount(count: number): string {
   return `${count} commander${count === 1 ? "" : "s"}`;
-}
-
-function isAbortError(error: unknown): boolean {
-  return error instanceof DOMException && error.name === "AbortError";
 }

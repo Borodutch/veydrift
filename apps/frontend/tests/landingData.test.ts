@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import {
   landingAllianceRefreshMs,
   landingAgentPrompt,
-  landingChainEventRefreshDebounceMs,
   landingFeedRefreshMs,
   landingFeedFromMissions,
   landingLaunchCtaForLocation,
@@ -23,20 +22,18 @@ describe("landing backend data", () => {
     expect(landingSource).toContain('href="/docs"');
   });
 
-  test("polls landing backend panels while the page remains open", () => {
+  test("delegates landing refresh policy to the centralized backend data store", () => {
     expect(landingFeedRefreshMs).toBe(60_000);
     expect(landingAllianceRefreshMs).toBe(300_000);
-    expect(landingSource).toContain("window.setInterval(loadLandingFeed, landingFeedRefreshMs)");
-    expect(landingSource).toContain("window.setInterval(loadLandingAlliances, landingAllianceRefreshMs)");
-    expect(landingSource).toContain("window.clearInterval(intervalId)");
+    expect(landingSource).toContain("backendData.startLandingFeedPolling()");
+    expect(landingSource).toContain("backendData.startLandingAlliancePolling()");
+    expect(backendDataStoreSource).toContain("startLandingFeedPolling");
+    expect(backendDataStoreSource).toContain("startLandingAlliancePolling");
   });
 
-  test("refreshes landing panels from indexed chain events without browser caching", () => {
-    expect(landingChainEventRefreshDebounceMs).toBe(500);
-    expect(landingSource).toContain("new window.EventSource(eventsUrl)");
-    expect(landingSource).toContain('addEventListener("chain-event", refreshFromChainEvent)');
-    expect(landingSource).toContain("removeEventListener(\"chain-event\", refreshFromChainEvent)");
-    expect(landingSource).toContain("setRefreshToken((current) => current + 1)");
+  test("refreshes landing panels from the shared indexed chain-event bridge", () => {
+    expect(landingSource).toContain('backendData.connectChainEvents("public")');
+    expect(landingSource).not.toContain("new window.EventSource");
     expect(backendDataStoreSource).toContain("/missions?status=active&live=1");
     expect(backendDataStoreSource).toContain('live: "1"');
     expect(backendDataStoreSource.match(/cache: "no-store"/g)).toHaveLength(3);

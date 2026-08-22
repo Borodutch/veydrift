@@ -3031,27 +3031,26 @@ export async function waitForIndexedSettledPlanet(
   const intervalMs = options.intervalMs ?? POST_SETTLEMENT_READ_INTERVAL_MS;
   const fetchSettlement: FetchWalletSettlement = options.fetchSettlement
     ?? ((baseUrl, wallet, readOptions) => backendDataStoreFor(baseUrl).settlement(wallet, readOptions));
-  const wait = options.delay ?? delay;
-
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    const settlement = await fetchSettlement(apiUrl, account);
-    const indexed = indexedSettlementState(settlement);
-    if (indexed.kind === "settled" && indexed.planet.coordinates) {
-      return indexed;
-    }
-
-    if (attempt < attempts - 1) {
-      await wait(intervalMs);
-    }
-  }
-
+  const settlement = await backendDataStoreFor(apiUrl).waitForIndexed(
+    () => fetchSettlement(apiUrl, account),
+    (value) => {
+      const indexed = indexedSettlementState(value);
+      return indexed.kind === "settled" && Boolean(indexed.planet.coordinates);
+    },
+    {
+      attempts,
+      intervalMs,
+      ...(options.delay ? { delay: options.delay } : {}),
+      timeoutError: POST_SETTLEMENT_INDEXING_TIMEOUT_MESSAGE,
+    },
+  );
+  const indexed = indexedSettlementState(settlement);
+  if (indexed.kind === "settled" && indexed.planet.coordinates) return indexed;
   throw new Error(POST_SETTLEMENT_INDEXING_TIMEOUT_MESSAGE);
 }
 
 function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function recordReferralClaimTransactionAfterIndexing(

@@ -175,6 +175,11 @@ export class GameStateStore {
     return [...this.listenersByKey.keys()];
   }
 
+  /** True while a transport for this canonical key is queued or running. */
+  hasInFlight(key: string): boolean {
+    return this.inFlight.has(key);
+  }
+
   snapshot<T>(key: string): GameStateEntry<T> | undefined {
     return this.entries.get(key) as GameStateEntry<T> | undefined;
   }

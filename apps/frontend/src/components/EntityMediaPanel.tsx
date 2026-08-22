@@ -5,8 +5,10 @@ import {
   type EntityMediaKind,
   type EntityMediaRecord,
   type EntityMediaPlaybackState,
+  type EntityMediaResponse,
 } from "../entityMedia";
 import { backendDataStoreFor } from "../backendDataStore";
+import { useBackendDataQuery } from "../useBackendDataQuery";
 import { playableApiUrl } from "../runtimeConfig";
 import type { Eip1193Provider } from "../walletFlow";
 import { Skeleton, SkeletonRegion } from "./Skeleton";
@@ -28,38 +30,26 @@ export function EntityMediaPanel({
 }) {
   const normalizedApiUrl = apiBaseUrl || playableApiUrl;
   const entityKey = `${entityKind}:${entityKind === "player" ? entityId.toLowerCase() : entityId}`;
-  const [record, setRecord] = useState<EntityMediaRecord | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [mediaUrl, setMediaUrl] = useState("");
   const [action, setAction] = useState<{ status: "idle" | "pending" | "success" | "error"; label?: string }>({ status: "idle" });
   const [playback, setPlayback] = useState<EntityMediaPlaybackState>({ enabled: true, entityKey });
   const heading = entityMediaHeading(entityKind);
+  const backendData = useMemo(() => backendDataStoreFor(normalizedApiUrl), [normalizedApiUrl]);
+  const mediaQuery = useBackendDataQuery<EntityMediaResponse>(
+    backendData,
+    backendData.key("entity-media", entityKind, entityId),
+    (scope) => backendData.entityMedia(entityKind, entityId, { requestScope: scope }),
+  );
+  const response = mediaQuery.snapshot?.data;
+  const record = response?.media ?? null;
+  const loading = mediaQuery.snapshot?.freshness === "refreshing" && response === undefined;
+  const loadError = mediaQuery.snapshot?.error ?? null;
 
   useEffect(() => {
     setPlayback((current) => nextEntityMediaPlaybackState(current, entityKey, "sync-entity"));
-    setLoading(true);
-    setLoadError(null);
-    let cancelled = false;
-    void backendDataStoreFor(normalizedApiUrl).entityMedia(entityKind, entityId)
-      .then((response) => {
-        if (cancelled) return;
-        setRecord(response.media);
-        setMediaUrl(response.media?.media.canonicalUrl ?? "");
-      })
-      .catch((error) => {
-        if (!cancelled) {
-          setLoadError(error instanceof Error ? error.message : "Media could not be loaded.");
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [entityId, entityKey, entityKind, normalizedApiUrl]);
+    setMediaUrl(record?.media.canonicalUrl ?? "");
+  }, [entityKey, record?.media.canonicalUrl]);
 
   const embedUrl = useMemo(
     () => record ? entityMediaEmbedUrl(record.media) : null,
@@ -73,14 +63,13 @@ export function EntityMediaPanel({
     }
     setAction({ status: "pending", label: "Waiting for wallet signature" });
     try {
-      const response = await backendDataStoreFor(normalizedApiUrl).saveEntityMedia(
+      const response = await backendData.saveEntityMedia(
         provider,
         account,
         entityKind,
         entityId,
         nextUrl
       );
-      setRecord(response.media);
       setMediaUrl(response.media?.media.canonicalUrl ?? "");
       setEditorOpen(false);
       setAction({

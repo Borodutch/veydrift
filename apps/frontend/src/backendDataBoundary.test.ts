@@ -23,7 +23,7 @@ describe("frontend backend-data boundary", () => {
     expect(appSource).toContain("backendData!.infrastructure(account, activePlanetId)");
     expect(appSource).toContain("backendData!.queues(account, activePlanetId)");
     expect(storeSource).toContain("private readonly state = new GameStateStore()");
-    expect(storeSource).toContain("return this.state.read(key, load");
+    expect(storeSource).toContain("return this.readRegisteredResource(resource");
     expect(storeSource).toContain('priority: "selected-planet"');
   });
 

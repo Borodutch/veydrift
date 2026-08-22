@@ -31,39 +31,6 @@ function topBarHeightSyncRef(element: HTMLElement | null) {
   topBarObserver.observe(element);
 }
 
-// Imperative count-up tween + direction flash for resource values. Reads the
-// previous value from a data attribute so it works across renders without
-// hooks/state; refs never run when tests call components as plain functions.
-function tickValueRef(value: number, formatValue: (next: number) => string) {
-  return (element: HTMLElement | null) => {
-    if (!element) return;
-    const previous = Number(element.dataset.tickValue);
-    element.dataset.tickValue = String(value);
-    if (!Number.isFinite(previous) || previous === value) return;
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-
-    const flashClass = value > previous ? "resource-flash-up" : "resource-flash-down";
-    element.classList.remove("resource-flash-up", "resource-flash-down");
-    void element.offsetWidth;
-    element.classList.add(flashClass);
-
-    const start = performance.now();
-    const duration = 500;
-    const delta = value - previous;
-    const step = (now: number) => {
-      const progress = Math.min(1, (now - start) / duration);
-      const eased = 1 - (1 - progress) ** 2;
-      element.textContent = formatValue(previous + delta * eased);
-      if (progress < 1 && element.isConnected) {
-        requestAnimationFrame(step);
-      } else {
-        element.textContent = formatValue(value);
-      }
-    };
-    requestAnimationFrame(step);
-  };
-}
-
 interface TopBarProps {
   resources?: Resources | undefined;
   rates: Resources;
@@ -124,6 +91,7 @@ export function TopBar({
           ) : (
             <>
               <ResourcePip
+                key="metal"
                 abbr="M"
                 cap={showResourceDetails ? caps.metal : undefined}
                 color="text-amber-300"
@@ -132,6 +100,7 @@ export function TopBar({
                 value={resources.metal}
               />
               <ResourcePip
+                key="crystal"
                 abbr="C"
                 cap={showResourceDetails ? caps.crystal : undefined}
                 color="text-cyan-300"
@@ -140,6 +109,7 @@ export function TopBar({
                 value={resources.crystal}
               />
               <ResourcePip
+                key="deuterium"
                 abbr="D"
                 cap={showResourceDetails ? caps.deuterium : undefined}
                 color="text-emerald-300"
@@ -282,6 +252,7 @@ function ResourcePip({
     <details
       className="group relative flex h-10 min-w-0 flex-1 items-center justify-center rounded border border-white/10 bg-white/[0.03] whitespace-nowrap sm:h-6 sm:flex-none sm:justify-start sm:rounded-none sm:border-0 sm:bg-transparent"
       data-close-outside
+      data-resource={abbr}
       ref={detailsCloseOutsideRef}
     >
       <summary
@@ -294,8 +265,8 @@ function ResourcePip({
             <span className="hidden sm:inline">{label}</span>
           </span>
           <span className={`min-w-0 truncate text-[11px] leading-none sm:text-xs ${pct >= 90 ? "resource-cap-warning text-amber-100" : "text-white"}`}>
-            <span className="sm:hidden" ref={tickValueRef(value, formatCompact)}>{formatCompact(value)}</span>
-            <span className="hidden sm:inline" ref={tickValueRef(value, format)}>{format(value)}</span>
+            <span className="sm:hidden">{formatCompact(value)}</span>
+            <span className="hidden sm:inline">{format(value)}</span>
           </span>
           {rate !== undefined && <span className="hidden text-[10px] leading-none text-slate-500 sm:inline">+{format(rate)}/h</span>}
           {pct >= 90 && (
@@ -365,8 +336,8 @@ function EnergyPip({
           <span className="hidden sm:inline">Energy</span>
         </span>
         <span className={`min-w-0 truncate text-[11px] leading-none sm:text-xs ${current < 0 ? "text-red-200" : "text-white"}`}>
-          <span className="sm:hidden" ref={tickValueRef(current, formatCompact)}>{formatCompact(current)}</span>
-          <span className="hidden sm:inline" ref={tickValueRef(current, format)}>{format(current)}</span>
+          <span className="sm:hidden">{formatCompact(current)}</span>
+          <span className="hidden sm:inline">{format(current)}</span>
         </span>
         {required > 0 && <span className="hidden text-[10px] leading-none text-slate-500 sm:inline">{format(produced)}/{format(required)}</span>}
         {showShortageFactor && (
