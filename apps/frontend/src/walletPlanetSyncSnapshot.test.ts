@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { loadWalletPlanetSyncSnapshot } from "./PlayableMvpApp";
+import { batchSupplySourceForPlanet, loadWalletPlanetSyncSnapshot } from "./PlayableMvpApp";
 
 const wallet = "0x2222222222222222222222222222222222222222";
 
@@ -55,6 +55,25 @@ function queues() {
 }
 
 describe("loadWalletPlanetSyncSnapshot", () => {
+  test("uses the fresh shipyard resource snapshot for Supply origins", () => {
+    const stalePlanet = planet();
+    stalePlanet.resourcesAsOfNow = { metal: "5000", crystal: "4900", deuterium: "4800" };
+
+    const source = batchSupplySourceForPlanet(stalePlanet as any, {
+      wallet,
+      homePlanetId: "7",
+      resources: { metal: "1000", crystal: "900", deuterium: "800" },
+      resourcesAsOfNow: { metal: "420", crystal: "69", deuterium: "17" },
+      shipyardLevel: 1,
+      naniteLevel: 0,
+      technologyLevels: {},
+      ships: [],
+      queue: null,
+    });
+
+    expect(source.resources).toEqual({ metal: 420, crystal: 69, deuterium: 17 });
+  });
+
   test("uses the overview fast path before an active planet is known", async () => {
     let overviewCalled = false;
     const result = await loadWalletPlanetSyncSnapshot("https://api.test", wallet, undefined, {}, {

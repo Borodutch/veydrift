@@ -2681,7 +2681,13 @@ export function batchSupplySourceForPlanet(
   planet: ManagedPlanetResponse,
   shipyard: ChainShipyardState | undefined,
 ): BatchSupplySource {
-  const resources = planet.resourcesAsOfNow ?? planet.resources;
+  // Supply opens with a fresh shipyard snapshot for every origin. Prefer its
+  // as-of-now resources over the roster object captured before those reads;
+  // otherwise a Max shipment can include resources already spent on-chain.
+  const resources = shipyard?.resourcesAsOfNow
+    ?? shipyard?.resources
+    ?? planet.resourcesAsOfNow
+    ?? planet.resources;
   const ships = emptyMissionShips();
   for (const row of missionShipInventoryRows) {
     ships[row.key] = Math.max(0, Math.trunc((shipyard?.launchableShips ?? shipyard?.ships ?? [])
