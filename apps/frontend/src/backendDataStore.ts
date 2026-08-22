@@ -85,7 +85,9 @@ import {
   type CanonicalPlanetResourceStore,
 } from "./planetResourceStore";
 import {
+  isResourceSnapshotIndexedAfterTransaction,
   waitForStartedDefenseProductionState,
+  type ResourceIndexingExpectation,
   type StartedDefenseProductionExpectation,
   type StartedDefenseProductionSnapshot,
 } from "./postTransactionRefresh";
@@ -153,7 +155,6 @@ type FleetMissionArchiveOptions = {
   page?: number;
   pageSize?: number;
   planetId?: string;
-  requestScope?: string;
 };
 
 type GlobalMissionArchiveOptions = {
@@ -162,7 +163,6 @@ type GlobalMissionArchiveOptions = {
   page?: number;
   pageSize?: number;
   planetId?: string;
-  requestScope?: string;
   summaryOnly?: boolean;
 };
 
@@ -211,7 +211,6 @@ export class BackendDataStore {
   private readonly trailingInvalidationTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly pollers = new Map<string, ReturnType<typeof setInterval>>();
   private readonly scheduledRefreshes = new Map<string, ReturnType<typeof setTimeout>>();
-  private contextScope = "public";
 
   constructor(readonly apiBaseUrl: string) {}
 
@@ -229,7 +228,11 @@ export class BackendDataStore {
   ): Promise<T> {
     const readOptions = {
       ...options,
-      scope: options.scope ?? this.contextScope,
+      // A cache resource, not a route, owns its transport.  Page-local scope
+      // strings used to let an unmount cancel another view's shared read and
+      // then present retained stale data as fresh.  Keep a stable internal
+      // scope only for diagnostics; cache reads are never route-cancelled.
+      scope: `backend-data:${key}`,
     };
     this.registerResource(key, load, readOptions);
     const read = this.state.read(key, load, readOptions);
@@ -379,7 +382,7 @@ export class BackendDataStore {
    */
   connectChainEvents(wallet: string, options: { debounceMs?: number } = {}): () => void {
     if (typeof window === "undefined" || typeof window.EventSource === "undefined") {
-      this.publish("chain-sync-health", false, [wallet], { wallet });
+      this.commitBackendSnapshot("chain-sync-health", false, [wallet], { wallet });
       return () => {};
     }
 
@@ -406,14 +409,14 @@ export class BackendDataStore {
           subscribedToHeads?: boolean;
           subscribedToLogs?: boolean;
         };
-        this.publish(
+        this.commitBackendSnapshot(
           "chain-sync-health",
           Boolean(payload.connected && payload.subscribedToHeads && payload.subscribedToLogs),
           [wallet],
           { wallet },
         );
       } catch {
-        this.publish("chain-sync-health", false, [wallet], { wallet });
+        this.commitBackendSnapshot("chain-sync-health", false, [wallet], { wallet });
       }
     };
     const onChainEvent = (event: MessageEvent) => {
@@ -447,7 +450,7 @@ export class BackendDataStore {
 
     events.addEventListener("chain-event", onChainEvent);
     events.addEventListener("sync-status", updateHealth);
-    events.onerror = () => this.publish("chain-sync-health", false, [wallet], { wallet });
+    events.onerror = () => this.commitBackendSnapshot("chain-sync-health", false, [wallet], { wallet });
     return () => {
       if (timer !== undefined) clearTimeout(timer);
       events.close();
@@ -455,19 +458,11 @@ export class BackendDataStore {
   }
 
   setContext(wallet?: string, planetId?: string): void {
-    const nextScope = cacheKey("context", wallet?.toLowerCase(), planetId);
-    if (nextScope === this.contextScope) return;
-    this.state.cancelScope(this.contextScope);
-    // Pollers are store-owned registrations, not request scopes.  Stopping every
-    // poller here would silently disable global Mission Control polling whenever
-    // a player switches planets; React does not remount that page effect for a
-    // same-wallet planet switch.  Context-bound reads are already cancelled
-    // above, while pollers continue to invalidate their declared resource tags.
-    this.contextScope = nextScope;
-  }
-
-  cancelScope(scope: string): void {
-    this.state.cancelScope(scope);
+    // Context selects resource keys in callers. It must not cancel shared
+    // in-flight reads: a wallet/global resource stays valid across a planet
+    // switch, and a planet-key response is safe in its own canonical entry.
+    void wallet;
+    void planetId;
   }
 
   subscribe(listener: () => void): () => void {
@@ -547,15 +542,51 @@ export class BackendDataStore {
     throw new Error(options.timeoutError ?? "Timed out waiting for indexed state.");
   }
 
+  /**
+   * Wait for a backend-published resource snapshot after a confirmed write.
+   * This deliberately does not perform reconciliation in the browser: each
+   * read is an ordinary indexed API read and the backend decides when it is
+   * safe to serve the transaction's state.
+   */
+  waitForIndexedResource<T extends { resourceSnapshot?: unknown }>(
+    load: () => Promise<T>,
+    expectation: ResourceIndexingExpectation,
+    options: IndexedReadWaitOptions = {},
+  ): Promise<T> {
+    return this.waitForIndexed(
+      load,
+      (state) => isResourceSnapshotIndexedAfterTransaction(
+        state.resourceSnapshot as Parameters<typeof isResourceSnapshotIndexedAfterTransaction>[0],
+        expectation,
+      ),
+      {
+        ...options,
+        timeoutError: options.timeoutError ?? "The confirmed resource change is still syncing with the game API.",
+      },
+    );
+  }
+
   snapshot<T>(key: string): GameStateEntry<T> | undefined {
     return this.state.snapshot<T>(key);
+  }
+
+  /** Whether a canonical query can be reused without another transport. */
+  isFresh(key: string, maxAgeMs = 5_000): boolean {
+    const snapshot = this.state.snapshot(key);
+    return Boolean(
+      snapshot?.data !== undefined
+      && snapshot.freshness === "fresh"
+      && snapshot.lastSuccessfulUpdate !== undefined
+      && Date.now() - snapshot.lastSuccessfulUpdate < maxAgeMs,
+    );
   }
 
   value<T>(kind: string, ...parts: unknown[]): T | undefined {
     return this.state.value<T>(cacheKey(kind, ...parts));
   }
 
-  publish<T>(
+  /** Apply an actual backend response to its canonical snapshot. */
+  commitBackendSnapshot<T>(
     kind: string,
     data: T,
     parts: unknown[] = [],
@@ -564,11 +595,13 @@ export class BackendDataStore {
     this.state.publish(cacheKey(kind, ...parts), data, options);
   }
 
-  fail(kind: string, error: string | undefined, parts: unknown[] = []): void {
+  /** Record a backend transport failure while retaining any last-good data. */
+  markBackendFailure(kind: string, error: string | undefined, parts: unknown[] = []): void {
     this.state.fail(cacheKey(kind, ...parts), error);
   }
 
-  clear(kind: string, ...parts: unknown[]): void {
+  /** Remove a canonical snapshot only when its source is no longer applicable. */
+  discardBackendSnapshot(kind: string, ...parts: unknown[]): void {
     this.state.clear(cacheKey(kind, ...parts));
   }
 
@@ -581,7 +614,6 @@ export class BackendDataStore {
     return this.refresh(cacheKey("coordinated-refresh", key), load, {
       deadlineMs,
       priority,
-      scope: this.contextScope,
     });
   }
 
@@ -677,7 +709,7 @@ export class BackendDataStore {
     const next = promoteCanonicalPlanetResources(current, candidate, {
       ...(options.confirmedTransaction === undefined ? {} : { confirmedTransaction: options.confirmedTransaction }),
     });
-    if (next !== current) this.publish("canonical-planet-resources", next, [wallet], { wallet });
+    if (next !== current) this.commitBackendSnapshot("canonical-planet-resources", next, [wallet], { wallet });
     return candidate;
   }
 
@@ -882,14 +914,10 @@ export class BackendDataStore {
 
   playerActivity(
     wallet: string,
-    options: { includeProjected?: boolean; page?: number; pageSize?: number; since?: number; requestScope?: string } = {},
+    options: { includeProjected?: boolean; page?: number; pageSize?: number; since?: number } = {},
   ): Promise<PlayerActivityResponse> {
-    const { requestScope, ...fetchOptions } = options;
-    const key = cacheKey("player-activity", wallet, fetchOptions);
-    return this.refresh(key, (signal) => fetchPlayerActivity(this.apiBaseUrl, wallet, { ...fetchOptions, signal }), {
-      scope: requestScope ?? this.contextScope,
-      wallet,
-    });
+    const key = cacheKey("player-activity", wallet, options);
+    return this.refresh(key, (signal) => fetchPlayerActivity(this.apiBaseUrl, wallet, { ...options, signal }), { wallet });
   }
 
   recordPlayerActivityPresence(wallet: string): Promise<PlayerActivityPresence> {
@@ -902,21 +930,14 @@ export class BackendDataStore {
     void fetch(url, { keepalive: true, method: "POST" }).catch(() => {});
   }
 
-  highscores(options: (FetchHighscoreOptions & { requestScope?: string }) | number = 100): Promise<HighscoreResponse> {
-    const requestScope = typeof options === "number" ? undefined : options.requestScope;
-    const normalizedOptions: FetchHighscoreOptions | number = typeof options === "number"
-      ? options
-      : (() => {
-        const { requestScope: _requestScope, ...fetchOptions } = options;
-        return fetchOptions;
-      })();
+  highscores(options: FetchHighscoreOptions | number = 100): Promise<HighscoreResponse> {
+    const normalizedOptions = options;
     const key = cacheKey("highscores", normalizedOptions);
     return this.refresh(key, (signal) => fetchHighscores(
       this.apiBaseUrl,
       typeof normalizedOptions === "number" ? normalizedOptions : { ...normalizedOptions, signal },
     ), {
       priority: "background",
-      scope: requestScope ?? this.contextScope,
       ...(typeof normalizedOptions === "number" || !normalizedOptions.currentWallet
         ? {}
         : { wallet: normalizedOptions.currentWallet }),
@@ -928,30 +949,24 @@ export class BackendDataStore {
     return this.refresh(key, (signal) => fetchPlayerHighscore(this.apiBaseUrl, wallet, signal), { wallet });
   }
 
-  raidFinderDebris(options: { limit?: number; requestScope?: string } = {}): Promise<RaidFinderDebrisResponse> {
-    const { requestScope, ...fetchOptions } = options;
-    const key = cacheKey("raid-finder-debris", fetchOptions);
-    return this.refresh(key, (signal) => fetchRaidFinderDebrisTargets(this.apiBaseUrl, { ...fetchOptions, signal }), {
+  raidFinderDebris(options: { limit?: number } = {}): Promise<RaidFinderDebrisResponse> {
+    const key = cacheKey("raid-finder-debris", options);
+    return this.refresh(key, (signal) => fetchRaidFinderDebrisTargets(this.apiBaseUrl, { ...options, signal }), {
       priority: "background",
-      scope: requestScope ?? this.contextScope,
     });
   }
 
-  raidFinderRifters(options: { limit?: number; requestScope?: string } = {}): Promise<RaidFinderRiftersResponse> {
-    const { requestScope, ...fetchOptions } = options;
-    const key = cacheKey("raid-finder-rifters", fetchOptions);
-    return this.refresh(key, (signal) => fetchRaidFinderRifters(this.apiBaseUrl, { ...fetchOptions, signal }), {
+  raidFinderRifters(options: { limit?: number } = {}): Promise<RaidFinderRiftersResponse> {
+    const key = cacheKey("raid-finder-rifters", options);
+    return this.refresh(key, (signal) => fetchRaidFinderRifters(this.apiBaseUrl, { ...options, signal }), {
       priority: "background",
-      scope: requestScope ?? this.contextScope,
     });
   }
 
-  system<T = unknown>(galaxy: number, system: number, options: { detail?: "full"; requestScope?: string } = {}): Promise<T> {
-    const { requestScope, ...fetchOptions } = options;
-    const key = cacheKey("system", galaxy, system, fetchOptions);
-    return this.refresh(key, (signal) => fetchSystemData(this.apiBaseUrl, galaxy, system, { ...fetchOptions, signal }) as Promise<T>, {
+  system<T = unknown>(galaxy: number, system: number, options: { detail?: "full" } = {}): Promise<T> {
+    const key = cacheKey("system", galaxy, system, options);
+    return this.refresh(key, (signal) => fetchSystemData(this.apiBaseUrl, galaxy, system, { ...options, signal }) as Promise<T>, {
       priority: "background",
-      scope: requestScope ?? this.contextScope,
     });
   }
 
@@ -990,13 +1005,12 @@ export class BackendDataStore {
     wallet: string,
     targetPlanetId: string,
     targetIsMoon = false,
-    options: { requestScope?: string } = {},
   ): Promise<AttackProtectionStatus> {
     const key = cacheKey("attack-protection", wallet, targetPlanetId, targetIsMoon);
     return this.refresh(
       key,
       (signal) => fetchAttackProtectionStatus(this.apiBaseUrl, wallet, targetPlanetId, targetIsMoon, signal),
-      { planetId: targetPlanetId, scope: options.requestScope ?? this.contextScope, wallet },
+      { planetId: targetPlanetId, wallet },
     );
   }
 
@@ -1011,42 +1025,37 @@ export class BackendDataStore {
   }
 
   fleetArchive(wallet: string, options: FleetMissionArchiveOptions = {}): Promise<FleetMissionArchiveResponse> {
-    const { requestScope, ...fetchOptions } = options;
-    const key = cacheKey("fleet-archive", wallet, fetchOptions);
-    return this.refresh(key, (signal) => fetchFleetMissionArchive(this.apiBaseUrl, wallet, { ...fetchOptions, signal }), {
+    const key = cacheKey("fleet-archive", wallet, options);
+    return this.refresh(key, (signal) => fetchFleetMissionArchive(this.apiBaseUrl, wallet, { ...options, signal }), {
       dedupe: false,
-      planetId: fetchOptions.planetId,
+      planetId: options.planetId,
       priority: "mission-control",
-      scope: requestScope ?? this.contextScope,
       wallet,
     });
   }
 
   missileArchive(
     wallet: string,
-    options: { page?: number; pageSize?: number; planetId?: string; requestScope?: string } = {},
+    options: { page?: number; pageSize?: number; planetId?: string } = {},
   ): Promise<MissileAttackArchiveResponse> {
-    const { requestScope, ...fetchOptions } = options;
-    const key = cacheKey("missile-archive", wallet, fetchOptions);
-    return this.refresh(key, (signal) => fetchMissileAttackArchive(this.apiBaseUrl, wallet, { ...fetchOptions, signal }), {
+    const key = cacheKey("missile-archive", wallet, options);
+    return this.refresh(key, (signal) => fetchMissileAttackArchive(this.apiBaseUrl, wallet, { ...options, signal }), {
       dedupe: false,
-      planetId: fetchOptions.planetId,
+      planetId: options.planetId,
       priority: "mission-control",
-      scope: requestScope ?? this.contextScope,
       wallet,
     });
   }
 
-  globalActiveMissions(options: { requestScope?: string } = {}): Promise<GlobalActiveMissionsResponse> {
+  globalActiveMissions(): Promise<GlobalActiveMissionsResponse> {
     const key = cacheKey("global-active-missions");
     return this.refresh(key, (signal) => fetchGlobalActiveMissions(this.apiBaseUrl, signal), {
       dedupe: false,
       priority: "mission-control",
-      scope: options.requestScope ?? this.contextScope,
     });
   }
 
-  landingActiveMissions<T>(options: { requestScope?: string } = {}): Promise<T[]> {
+  landingActiveMissions<T>(): Promise<T[]> {
     const key = cacheKey("landing-active-missions");
     return this.refresh(key, async (signal) => {
       const response = await fetch(`${this.apiBaseUrl}/missions?status=active&live=1`, {
@@ -1057,10 +1066,10 @@ export class BackendDataStore {
       if (!response.ok) throw new Error("Failed to load landing missions");
       const data = await response.json() as { missions?: T[] };
       return data.missions ?? [];
-    }, { priority: "background", scope: options.requestScope ?? this.contextScope });
+    }, { priority: "background" });
   }
 
-  landingHighscores<T>(options: { requestScope?: string } = {}): Promise<T[]> {
+  landingHighscores<T>(): Promise<T[]> {
     const key = cacheKey("landing-highscores");
     return this.refresh(key, async (signal) => {
       const params = new URLSearchParams({
@@ -1077,44 +1086,38 @@ export class BackendDataStore {
       if (!response.ok) throw new Error("Failed to load landing highscores");
       const data = await response.json() as { rankings?: { total?: T[] } };
       return data.rankings?.total ?? [];
-    }, { priority: "background", scope: options.requestScope ?? this.contextScope });
+    }, { priority: "background" });
   }
 
   globalMissionArchive(options: GlobalMissionArchiveOptions = {}): Promise<GlobalMissionArchiveResponse> {
-    const { requestScope, ...fetchOptions } = options;
-    const key = cacheKey("global-mission-archive", fetchOptions);
-    return this.refresh(key, (signal) => fetchGlobalMissionArchive(this.apiBaseUrl, { ...fetchOptions, signal }), {
+    const key = cacheKey("global-mission-archive", options);
+    return this.refresh(key, (signal) => fetchGlobalMissionArchive(this.apiBaseUrl, { ...options, signal }), {
       dedupe: false,
       priority: "mission-control",
-      scope: requestScope ?? this.contextScope,
     });
   }
 
-  mission(missionId: string, options: { requestScope?: string } = {}): Promise<MissionDetailResponse> {
+  mission(missionId: string): Promise<MissionDetailResponse> {
     const key = cacheKey("mission", missionId);
     return this.refresh(key, (signal) => fetchMission(this.apiBaseUrl, missionId, signal), {
       dedupe: false,
       priority: "mission-control",
-      scope: options.requestScope ?? this.contextScope,
     });
   }
 
-  battleReports(options: { requestScope?: string } = {}): Promise<BattleReport[]> {
+  battleReports(): Promise<BattleReport[]> {
     const key = cacheKey("battle-reports");
     return this.refresh(key, (signal) => fetchBattleReports(this.apiBaseUrl, signal), {
       priority: "mission-control",
-      scope: options.requestScope ?? this.contextScope,
     });
   }
 
   entityMedia(
     entityKind: EntityMediaKind,
     entityId: string,
-    options: { requestScope?: string } = {},
   ): Promise<EntityMediaResponse> {
     const key = cacheKey("entity-media", entityKind, entityId);
     return this.refresh(key, (signal) => fetchEntityMedia(this.apiBaseUrl, entityKind, entityId, signal), {
-      scope: options.requestScope ?? this.contextScope,
     });
   }
 
@@ -1133,7 +1136,7 @@ export class BackendDataStore {
       entityId,
       mediaUrl,
     );
-    this.publish("entity-media", response, [entityKind, entityId]);
+    this.commitBackendSnapshot("entity-media", response, [entityKind, entityId]);
     void this.invalidate([`kind:entity-media`], { activeOnly: true, priority: "transaction" });
     return response;
   }

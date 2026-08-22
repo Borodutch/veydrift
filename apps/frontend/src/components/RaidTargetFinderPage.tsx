@@ -14,7 +14,7 @@ import {
   type RiftFinderTargetResponse,
 } from "../walletFlow";
 import { backendDataStoreFor } from "../backendDataStore";
-import { useBackendDataSnapshot } from "../useBackendDataSnapshot";
+import { useBackendDataQuery } from "../useBackendDataQuery";
 import type { FleetMissionVisibilityResponse } from "../walletFlow";
 import {
   DEFAULT_DEBRIS_TARGET_SORT,
@@ -155,18 +155,24 @@ export function RaidTargetFinderPage({
     pageSize: raidTargetFinderPageSize,
   }), [currentWallet]);
   const targetOptions = useMemo(() => ({ limit: raidTargetFinderPageSize }), []);
-  const highscoreSnapshot = useBackendDataSnapshot<HighscoreResponse>(
+  const highscoreQuery = useBackendDataQuery<HighscoreResponse>(
     backendData,
     backendData?.key("highscores", highscoreOptions),
+    backendData ? () => backendData.highscores(highscoreOptions) : undefined,
   );
-  const debrisSnapshot = useBackendDataSnapshot<RaidFinderDebrisResponse>(
+  const debrisQuery = useBackendDataQuery<RaidFinderDebrisResponse>(
     backendData,
     backendData?.key("raid-finder-debris", targetOptions),
+    backendData ? () => backendData.raidFinderDebris(targetOptions) : undefined,
   );
-  const rifterSnapshot = useBackendDataSnapshot<RaidFinderRiftersResponse>(
+  const rifterQuery = useBackendDataQuery<RaidFinderRiftersResponse>(
     backendData,
     backendData?.key("raid-finder-rifters", targetOptions),
+    backendData ? () => backendData.raidFinderRifters(targetOptions) : undefined,
   );
+  const highscoreSnapshot = highscoreQuery.snapshot;
+  const debrisSnapshot = debrisQuery.snapshot;
+  const rifterSnapshot = rifterQuery.snapshot;
   const entries = highscoreSnapshot?.data?.rankings.total ?? [];
   const debrisEntries = debrisSnapshot?.data?.targets ?? [];
   const rifterEntries = rifterSnapshot?.data?.targets ?? [];
@@ -186,41 +192,8 @@ export function RaidTargetFinderPage({
     persistRaidTargetSettings({ filters, sort });
   }, [filters, sort]);
 
-  const load = () => {
-    if (!apiBaseUrl) {
-      return;
-    }
-
-    setPages({ raids: 1, debris: 1, rifters: 1 });
-    const backendData = backendDataStoreFor(apiBaseUrl);
-    backendData.cancelScope("raid-finder-page");
-    const highscoresRequest = backendData.highscores({
-      category: "total",
-      ...(currentWallet ? { currentWallet } : {}),
-      page: 1,
-      pageSize: raidTargetFinderPageSize,
-      requestScope: "raid-finder-page",
-    });
-    const debrisRequest = backendData.raidFinderDebris({ limit: raidTargetFinderPageSize, requestScope: "raid-finder-page" });
-    const riftersRequest = backendData.raidFinderRifters({ limit: raidTargetFinderPageSize, requestScope: "raid-finder-page" });
-
-    void Promise.allSettled([highscoresRequest, debrisRequest, riftersRequest]).then((results) => {
-      for (const result of results) {
-        if (result.status === "rejected" && !(result.reason instanceof DOMException && result.reason.name === "AbortError")) {
-          console.error(result.reason);
-        }
-      }
-    });
-  };
-
   useEffect(() => {
-    load();
-    // Reload whenever the API endpoint or viewer wallet changes so protection
-    // and own-planet exclusion stay accurate.
-    return () => {
-      if (apiBaseUrl) backendDataStoreFor(apiBaseUrl).cancelScope("raid-finder-page");
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    setPages({ raids: 1, debris: 1, rifters: 1 });
   }, [apiBaseUrl, currentWallet]);
 
   const allTargets = useMemo(

@@ -144,8 +144,8 @@ describe("GameStateStore", () => {
     const refresh = store.refresh(key, () => response.promise);
     response.resolve({ revision: 9 });
     await refresh;
-    store.fail("overview", "Indexer is delayed.", ["0xabc", "planet-7"]);
-    store.clear("overview", "0xabc", "planet-7");
+    store.markBackendFailure("overview", "Indexer is delayed.", ["0xabc", "planet-7"]);
+    store.discardBackendSnapshot("overview", "0xabc", "planet-7");
     await expect(store.refresh(key, async () => {
       throw new Error("Indexer is unavailable.");
     })).rejects.toThrow("Indexer is unavailable.");

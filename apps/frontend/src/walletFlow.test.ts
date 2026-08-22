@@ -3036,7 +3036,7 @@ describe("walletFlow", () => {
     });
   });
 
-  test("fetches dynamic wallet state without browser cache and pools duplicate burst reads", async () => {
+  test("keeps wallet-flow reads as uncached transports for the shared data store", async () => {
     const originalFetch = globalThis.fetch;
     const calls: Array<{ url: string; init: { cache: RequestCache | undefined; headers: HeadersInit | undefined; signal: boolean } }> = [];
 
@@ -3079,120 +3079,14 @@ describe("walletFlow", () => {
       globalThis.fetch = originalFetch;
     }
 
-    expect(calls).toEqual([
-      {
-        url: `https://api.example.test/wallet/${account}/settlement`,
-        init: {
-          cache: "no-store",
-          headers: { accept: "application/json" },
-          signal: true,
-        },
-      },
-      {
-        url: `https://api.example.test/wallet/${account}/planets`,
-        init: {
-          cache: "no-store",
-          headers: { accept: "application/json" },
-          signal: true,
-        },
-      },
-      {
-        url: `https://api.example.test/wallet/${account}/queues`,
-        init: {
-          cache: "no-store",
-          headers: { accept: "application/json" },
-          signal: true,
-        },
-      },
-      {
-        url: `https://api.example.test/wallet/${account}/queues?planetId=7`,
-        init: {
-          cache: "no-store",
-          headers: { accept: "application/json" },
-          signal: true,
-        },
-      },
-      {
-        url: `https://api.example.test/wallet/${account}/infrastructure`,
-        init: {
-          cache: "no-store",
-          headers: { accept: "application/json" },
-          signal: true,
-        },
-      },
-      {
-        url: `https://api.example.test/wallet/${account}/moon?planetId=7`,
-        init: {
-          cache: "no-store",
-          headers: { accept: "application/json" },
-          signal: true,
-        },
-      },
-      {
-        url: `https://api.example.test/wallet/${account}/moon`,
-        init: {
-          cache: "no-store",
-          headers: { accept: "application/json" },
-          signal: true,
-        },
-      },
-      {
-        url: `https://api.example.test/wallet/${account}/research?planetId=7`,
-        init: {
-          cache: "no-store",
-          headers: { accept: "application/json" },
-          signal: true,
-        },
-      },
-      {
-        url: `https://api.example.test/wallet/${account}/fleet-visibility`,
-        init: {
-          cache: "no-store",
-          headers: { accept: "application/json" },
-          signal: true,
-        },
-      },
-      {
-        url: `https://api.example.test/wallet/${account}/fleet-visibility?archive=none`,
-        init: {
-          cache: "no-store",
-          headers: { accept: "application/json" },
-          signal: true,
-        },
-      },
-      {
-        url: `https://api.example.test/wallet/${account}/missions?status=completed&page=2&pageSize=25`,
-        init: {
-          cache: "no-store",
-          headers: { accept: "application/json" },
-          signal: true,
-        },
-      },
-      {
-        url: `https://api.example.test/wallet/${account}/shipyard?planetId=4`,
-        init: {
-          cache: "no-store",
-          headers: { accept: "application/json" },
-          signal: true,
-        },
-      },
-      {
-        url: `https://api.example.test/wallet/${account}/shipyard`,
-        init: {
-          cache: "no-store",
-          headers: { accept: "application/json" },
-          signal: true,
-        },
-      },
-      {
-        url: `https://api.example.test/wallet/${account}/defenses?planetId=4`,
-        init: {
-          cache: "no-store",
-          headers: { accept: "application/json" },
-          signal: true,
-        },
-      },
-    ]);
+    expect(calls).toHaveLength(19);
+    expect(calls.every((call) => (
+      call.init.cache === "no-store"
+      && call.init.signal
+      && JSON.stringify(call.init.headers) === JSON.stringify({ accept: "application/json" })
+    ))).toBe(true);
+    expect(calls.filter((call) => call.url.endsWith(`/settlement`))).toHaveLength(2);
+    expect(calls.filter((call) => call.url.endsWith(`/moon?planetId=7`))).toHaveLength(2);
     expect(calls.map((call) => new URL(call.url).searchParams.has("source"))).not.toContain(true);
   });
 
@@ -3290,7 +3184,7 @@ describe("walletFlow", () => {
     }
   });
 
-  test("limits distinct game API reads while still pooling duplicate URLs", async () => {
+  test("leaves concurrency control to BackendDataStore instead of the transport adapter", async () => {
     const originalFetch = globalThis.fetch;
     let active = 0;
     let maxActive = 0;
@@ -3323,8 +3217,8 @@ describe("walletFlow", () => {
         fetchDefenseState("https://api.example.test", account, "1"),
       ]);
 
-      expect(calls).toBe(10);
-      expect(maxActive).toBeLessThanOrEqual(3);
+      expect(calls).toBe(11);
+      expect(maxActive).toBeGreaterThan(3);
 
       const followUp = fetchResearchState("https://api.example.test", account, "2");
       const followUpCompleted = await Promise.race([
@@ -3338,7 +3232,7 @@ describe("walletFlow", () => {
     }
   });
 
-  test("times out a queued read from enqueue time without starting a fourth fetch", async () => {
+  test("times out an uncached transport without retaining a wallet-flow queue", async () => {
     const originalFetch = globalThis.fetch;
     let calls = 0;
     globalThis.fetch = ((_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
@@ -3361,7 +3255,7 @@ describe("walletFlow", () => {
         "4",
         { fresh: true, timeoutMs: 5 },
       )).rejects.toThrow("Timed out reading infrastructure");
-      expect(calls).toBe(3);
+      expect(calls).toBe(4);
       await Promise.allSettled(blockers);
     } finally {
       globalThis.fetch = originalFetch;

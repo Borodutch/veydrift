@@ -7,7 +7,7 @@ import {
   Shield,
 } from "lucide-preact";
 import type { ComponentChildren } from "preact";
-import { useEffect, useMemo } from "preact/hooks";
+import { useMemo } from "preact/hooks";
 import type { Coordinates, Planet } from "../types";
 import { formatPlanetType, planetsFromSystemResponse, type ApiSystemResponse } from "../data/mockUniverse";
 import { galaxyActionsForSlot, type GalaxyAction } from "../galaxyActions";
@@ -40,7 +40,7 @@ import { MoonDetailSkeleton } from "./LoadingSkeletons";
 import { Skeleton, SkeletonRegion, skeletonList } from "./Skeleton";
 import { buildInspectPath } from "../inspectRoutes";
 import { backendDataStoreFor } from "../backendDataStore";
-import { useBackendDataSnapshot } from "../useBackendDataSnapshot";
+import { useBackendDataQuery } from "../useBackendDataQuery";
 
 type PublicMoonDetailProps = {
   account?: string | undefined;
@@ -72,10 +72,12 @@ export function PublicMoonDetail({
   transactionUnavailableReason,
 }: PublicMoonDetailProps) {
   const backendData = useMemo(() => backendDataStoreFor(apiBaseUrl), [apiBaseUrl]);
-  const systemSnapshot = useBackendDataSnapshot<ApiSystemResponse>(
+  const systemQuery = useBackendDataQuery<ApiSystemResponse>(
     backendData,
     backendData.key("system", coords.galaxy, coords.system, { detail: "full" }),
+    () => backendData.system<ApiSystemResponse>(coords.galaxy, coords.system, { detail: "full" }),
   );
+  const systemSnapshot = systemQuery.snapshot;
   const loadedPlanet = systemSnapshot?.data
     ? planetsFromSystemResponse(systemSnapshot.data).find((item) => item.position === coords.position) ?? null
     : null;
@@ -87,16 +89,22 @@ export function PublicMoonDetail({
   const planet = planetDetailVisiblePlanet(loadedPlanet, coords);
   const targetPlanetId = planet?.occupiedBy?.planetId;
   const isHome = planet ? sameCoordinates(homeCoords, planet) : false;
-  const attackProtectionSnapshot = useBackendDataSnapshot<AttackProtectionStatus>(
+  const attackProtectionQuery = useBackendDataQuery<AttackProtectionStatus>(
     backendData,
     account && targetPlanetId && !isHome
       ? backendData.key("attack-protection", account, targetPlanetId, true)
       : undefined,
+    account && targetPlanetId && !isHome
+      ? () => backendData.attackProtection(account, targetPlanetId, true)
+      : undefined,
   );
-  const activeMissionSnapshot = useBackendDataSnapshot<GlobalActiveMissionsResponse>(
+  const attackProtectionSnapshot = attackProtectionQuery.snapshot;
+  const activeMissionQuery = useBackendDataQuery<GlobalActiveMissionsResponse>(
     backendData,
     targetPlanetId ? backendData.key("global-active-missions") : undefined,
+    targetPlanetId ? () => backendData.globalActiveMissions() : undefined,
   );
+  const activeMissionSnapshot = activeMissionQuery.snapshot;
   const attackProtection = attackProtectionSnapshot?.data ?? null;
   const attackProtectionUnavailable = Boolean(account && targetPlanetId && !isHome && !attackProtectionSnapshot?.data);
   const activeMissions = !targetPlanetId
@@ -107,39 +115,6 @@ export function PublicMoonDetail({
           || (mission.targetPlanetId === targetPlanetId && mission.targetIsMoon === true)
         ))
       : null;
-
-  useEffect(() => {
-    backendData.cancelScope("moon-detail-navigation");
-    backendData.system<ApiSystemResponse>(coords.galaxy, coords.system, {
-      detail: "full",
-      requestScope: "moon-detail-navigation",
-    })
-      .catch((error) => {
-        if (!(error instanceof DOMException && error.name === "AbortError")) console.error(error);
-      });
-
-    return () => {
-      backendData.cancelScope("moon-detail-navigation");
-    };
-  }, [backendData, coords.galaxy, coords.position, coords.system]);
-
-  useEffect(() => {
-    if (!account || !targetPlanetId || isHome) {
-      return;
-    }
-    backendData.attackProtection(account, targetPlanetId, true, { requestScope: "moon-detail-navigation" })
-      .catch((error) => {
-        if (!(error instanceof DOMException && error.name === "AbortError")) console.error(error);
-      });
-  }, [account, backendData, isHome, targetPlanetId]);
-
-  useEffect(() => {
-    if (!targetPlanetId) return;
-    backendData.globalActiveMissions({ requestScope: "moon-detail-navigation" })
-      .catch((error) => {
-        if (!(error instanceof DOMException && error.name === "AbortError")) console.error(error);
-      });
-  }, [backendData, targetPlanetId]);
 
   const coordinateText = `[${coords.galaxy}:${coords.system}:${coords.position}]`;
   const visibleTargetPlanetId = planet?.occupiedBy?.planetId;
