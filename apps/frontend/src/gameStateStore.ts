@@ -144,12 +144,23 @@ export class GameStateStore {
   private readonly inFlight = new Map<string, InFlightRead>();
   private readonly activeReads = new Set<InFlightRead>();
   private readonly listeners = new Set<() => void>();
+  private readonly listenersByKey = new Map<string, Set<() => void>>();
 
   constructor(private readonly scheduler = new GameStateReadScheduler(3)) {}
 
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  subscribeKey(key: string, listener: () => void): () => void {
+    const listeners = this.listenersByKey.get(key) ?? new Set<() => void>();
+    listeners.add(listener);
+    this.listenersByKey.set(key, listeners);
+    return () => {
+      listeners.delete(listener);
+      if (listeners.size === 0) this.listenersByKey.delete(key);
+    };
   }
 
   snapshot<T>(key: string): GameStateEntry<T> | undefined {
@@ -171,7 +182,7 @@ export class GameStateStore {
       planetId: options.planetId,
       wallet: normalizeWallet(options.wallet),
     });
-    this.emit();
+    this.emit([key]);
   }
 
   fail(key: string, error: string | undefined): void {
@@ -185,7 +196,7 @@ export class GameStateStore {
           ? "refreshing"
           : (current.data === undefined ? "delayed" : "fresh"),
       });
-      this.emit();
+      this.emit([key]);
       return;
     }
     const generation = this.nextGeneration(key);
@@ -195,13 +206,13 @@ export class GameStateStore {
       freshness: current?.data === undefined ? "failed" : "delayed",
       generation,
     });
-    this.emit();
+    this.emit([key]);
   }
 
   clear(key: string): void {
     this.nextGeneration(key);
     this.entries.delete(key);
-    this.emit();
+    this.emit([key]);
   }
 
   read<T>(key: string, load: (signal: AbortSignal) => Promise<T>, options: GameStateReadOptions = {}): Promise<T> {
@@ -218,7 +229,7 @@ export class GameStateStore {
       planetId: options.planetId ?? previous?.planetId,
       wallet: normalizeWallet(options.wallet) ?? previous?.wallet,
     });
-    this.emit();
+    this.emit([key]);
 
     const scheduled = this.scheduler.schedule(key, load, options);
     let promise!: Promise<T>;
@@ -234,7 +245,7 @@ export class GameStateStore {
         planetId: options.planetId,
         wallet: normalizeWallet(options.wallet),
       });
-      this.emit();
+      this.emit([key]);
       return data;
     }, (error) => {
       if (this.isCurrent(key, generation)) {
@@ -248,7 +259,7 @@ export class GameStateStore {
             : (current?.data === undefined ? "failed" : "delayed"),
           generation,
         });
-        this.emit();
+        this.emit([key]);
       }
       throw error;
     }).finally(() => {
@@ -280,7 +291,7 @@ export class GameStateStore {
         generation,
       });
     }
-    if (cancelledKeys.size > 0) this.emit();
+    if (cancelledKeys.size > 0) this.emit(cancelledKeys);
   }
 
   private nextGeneration(key: string): number {
@@ -293,8 +304,11 @@ export class GameStateStore {
     return this.generations.get(key) === generation;
   }
 
-  private emit(): void {
+  private emit(keys: Iterable<string> = []): void {
     for (const listener of this.listeners) listener();
+    for (const key of new Set(keys)) {
+      for (const listener of this.listenersByKey.get(key) ?? []) listener();
+    }
   }
 }
 

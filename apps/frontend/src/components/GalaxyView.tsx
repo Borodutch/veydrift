@@ -153,6 +153,12 @@ export function galaxyAttackProtectionRequests(
     });
 }
 
+export function galaxyAttackProtectionRequestSignature(
+  requests: readonly { planetId: string; targetIsMoon: boolean }[],
+): string {
+  return requests.map(({ planetId, targetIsMoon }) => `${planetId}:${targetIsMoon ? "moon" : "planet"}`).join("|");
+}
+
 export type GalaxyActionState =
   | { status: "idle" }
   | { status: "pending"; label: string }
@@ -238,6 +244,10 @@ export function GalaxyView({
     () => galaxyAttackProtectionRequests(planets, account, homeCoords),
     [account, homeCoords?.galaxy, homeCoords?.position, homeCoords?.system, planets],
   );
+  const protectionRequestSignature = useMemo(
+    () => galaxyAttackProtectionRequestSignature(protectionRequests),
+    [protectionRequests],
+  );
   const protectionKeys = useMemo(
     () => protectionRequests.map(({ planetId, targetIsMoon }) => (
       backendData.key("attack-protection", account!, planetId, targetIsMoon)
@@ -274,7 +284,7 @@ export function GalaxyView({
     return () => {
       backendData.cancelScope("galaxy-view-navigation");
     };
-  }, [backendData, currentSystemKey, galaxy, reloadNonce, system]);
+  }, [backendData, currentSystemKey, reloadNonce]);
 
   useEffect(() => {
     backendData.cancelScope("galaxy-view-protection");
@@ -293,7 +303,7 @@ export function GalaxyView({
     return () => {
       backendData.cancelScope("galaxy-view-protection");
     };
-  }, [account, backendData, protectionRequests]);
+  }, [account, backendData, protectionRequestSignature]);
 
   const handlePrevSystem = () => {
     let newSystem = system - 1;
