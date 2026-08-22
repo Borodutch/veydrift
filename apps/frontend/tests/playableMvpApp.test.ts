@@ -883,6 +883,33 @@ describe("Playable MVP app display helpers", () => {
     expect(buttonSource).toContain('className="!-right-1 !-top-1 !h-5 !w-5 xl:!h-5 xl:!w-5"');
   });
 
+  test("uses one route owner to invalidate transient mission screens for tab and history navigation", () => {
+    const routeOwnerSource = sourceBetween(
+      playableMvpSource,
+      "const applyInspectRoute = useCallback",
+      "const navigateToInspectRoute = useCallback",
+    );
+    const historyListenerSource = sourceBetween(
+      playableMvpSource,
+      "const navigateToInspectRoute = useCallback",
+      "setPlayerProfile(undefined)",
+    );
+    const tabNavigationSource = sourceBetween(
+      playableMvpSource,
+      "const handleNavigate = useCallback",
+      "const handleOpenMissionReport = useCallback",
+    );
+
+    expect(routeOwnerSource).toContain("setPendingGalaxyMission(null)");
+    expect(routeOwnerSource).toContain("setPendingAttackProtection(null)");
+    expect(routeOwnerSource).toContain("setPendingJoinAttack(null)");
+    expect(routeOwnerSource).toContain("setPendingAcsDefend(null)");
+    expect(routeOwnerSource).toContain("setPage(route.page)");
+    expect(historyListenerSource).toContain("applyInspectRoute(parseInspectRouteFromLocation(window.location))");
+    expect(tabNavigationSource).toContain('navigateToInspectRoute({ kind: "page", page: target })');
+    expect(tabNavigationSource).not.toContain("setPendingGalaxyMission");
+  });
+
   test("keys galaxy home sync by coordinates instead of background snapshot identity", () => {
     expect(homeGalaxySystemSyncKey({ galaxy: 2, system: 44, position: 7 })).toBe("2:44");
     expect(homeGalaxySystemSyncKey({ galaxy: 2, system: 44, position: 9 })).toBe("2:44");
