@@ -82,20 +82,14 @@ async function waitForPageTarget(expectedTargetId, timeoutMs = 10_000) {
   while (Date.now() < deadline) {
     try {
       const targets = await (await fetch(devToolsTargetsUrl)).json();
-      const pageTarget = targets.find((target) => (
-        target.type === "page"
-        && (!expectedTargetId || target.id === expectedTargetId)
-        && target.webSocketDebuggerUrl
-      ));
+      const pageTarget = targets.find((target) => target.type === "page" && (!expectedTargetId || target.id === expectedTargetId) && target.webSocketDebuggerUrl);
       if (pageTarget) return pageTarget;
     } catch {
       // DevTools can advertise its browser socket just before the target list is ready.
     }
     await delay(25);
   }
-  throw new Error(expectedTargetId
-    ? `Chrome did not expose page target ${expectedTargetId}.`
-    : "Chrome did not expose a page target.");
+  throw new Error(expectedTargetId ? `Chrome did not expose page target ${expectedTargetId}.` : "Chrome did not expose a page target.");
 }
 
 async function configurePageTarget(connection) {
@@ -130,18 +124,13 @@ async function launchChrome() {
   }
 
   chromeProfile = mkdtempSync(join(tmpdir(), "veydrift-touch-browser-"));
-  chrome = spawn(executable, [
-    "--headless=new",
-    "--disable-dev-shm-usage",
-    "--no-first-run",
-    "--no-default-browser-check",
-    "--no-sandbox",
-    "--remote-debugging-port=0",
-    `--user-data-dir=${chromeProfile}`,
-    "about:blank",
-  ], {
-    stdio: ["ignore", "ignore", "pipe"],
-  });
+  chrome = spawn(
+    executable,
+    ["--headless=new", "--disable-dev-shm-usage", "--no-first-run", "--no-default-browser-check", "--no-sandbox", "--remote-debugging-port=0", `--user-data-dir=${chromeProfile}`, "about:blank"],
+    {
+      stdio: ["ignore", "ignore", "pipe"],
+    },
+  );
 
   const browserWebSocketUrl = await new Promise((resolve, reject) => {
     // GitHub-hosted runners occasionally take longer than the local cold-start path
@@ -163,9 +152,7 @@ async function launchChrome() {
   });
 
   browserCdp = await connectCdp(browserWebSocketUrl);
-  devToolsTargetsUrl = browserWebSocketUrl
-    .replace(/^ws:/, "http:")
-    .replace(/\/devtools\/browser\/.*$/, "/json/list");
+  devToolsTargetsUrl = browserWebSocketUrl.replace(/^ws:/, "http:").replace(/\/devtools\/browser\/.*$/, "/json/list");
   const pageTarget = await waitForPageTarget();
   pageTargetId = pageTarget.id;
   return connectCdp(pageTarget.webSocketDebuggerUrl);
@@ -218,10 +205,7 @@ async function preloadInspectorFixture() {
     })}`,
   });
   try {
-    await waitForExpression(
-      "window.inspectorProof?.appReady === true",
-      INSPECTOR_PRELOAD_TIMEOUT_MS,
-    );
+    await waitForExpression("window.inspectorProof?.appReady === true", INSPECTOR_PRELOAD_TIMEOUT_MS);
   } catch (error) {
     const diagnostics = await evaluate(`({
       body: document.body?.innerText.slice(0, 2000),
@@ -270,14 +254,8 @@ before(async () => {
 after(async () => {
   if (chrome && chrome.exitCode === null) {
     const exited = new Promise((resolve) => chrome.once("exit", resolve));
-    await Promise.race([
-      browserCdp?.send("Browser.close").catch(() => undefined),
-      delay(1_000),
-    ]);
-    await Promise.race([
-      exited,
-      delay(3_000),
-    ]);
+    await Promise.race([browserCdp?.send("Browser.close").catch(() => undefined), delay(1_000)]);
+    await Promise.race([exited, delay(3_000)]);
     if (chrome.exitCode === null) {
       chrome.kill("SIGTERM");
       await Promise.race([exited, delay(2_000)]);
@@ -303,9 +281,7 @@ after(async () => {
 async function dispatchTouch(type, x, y) {
   await cdp.send("Input.dispatchTouchEvent", {
     type,
-    touchPoints: type === "touchEnd" || type === "touchCancel"
-      ? []
-      : [{ force: 1, id: 1, radiusX: 4, radiusY: 4, x, y }],
+    touchPoints: type === "touchEnd" || type === "touchCancel" ? [] : [{ force: 1, id: 1, radiusX: 4, radiusY: 4, x, y }],
   });
 }
 
@@ -330,11 +306,7 @@ async function proofState() {
 
 async function moveTouch(x, y, axis) {
   for (const offset of [15, 30, 50, 75, 105]) {
-    await dispatchTouch(
-      "touchMove",
-      axis === "x" ? x - offset : x,
-      axis === "y" ? y - offset : y,
-    );
+    await dispatchTouch("touchMove", axis === "x" ? x - offset : x, axis === "y" ? y - offset : y);
     await delay(30);
   }
 }
@@ -363,10 +335,7 @@ test("native two-axis touch scroll works before the hold and post-hold movement 
   const horizontalScrollState = await proofState();
   assert.equal(horizontalScrollState.activations, 0);
   assert.equal(horizontalScrollState.preventedTouchMoves, 0);
-  assert.ok(
-    horizontalScrollState.scrollLeft > 0,
-    `expected native horizontal scroll, got scrollLeft=${horizontalScrollState.scrollLeft}`,
-  );
+  assert.ok(horizontalScrollState.scrollLeft > 0, `expected native horizontal scroll, got scrollLeft=${horizontalScrollState.scrollLeft}`);
 
   await loadFixture();
   center = await planetCenter();
@@ -381,14 +350,8 @@ test("native two-axis touch scroll works before the hold and post-hold movement 
 
   const reorderState = await proofState();
   assert.equal(reorderState.activations, 1);
-  assert.ok(
-    reorderState.preventedTouchMoves > 0,
-    `expected cancelled touchmove after activation: ${JSON.stringify(reorderState)}`,
-  );
-  assert.ok(
-    reorderState.pointerMovesAfterActivation > 0,
-    `expected pointermove after activation: ${JSON.stringify(reorderState)}`,
-  );
+  assert.ok(reorderState.preventedTouchMoves > 0, `expected cancelled touchmove after activation: ${JSON.stringify(reorderState)}`);
+  assert.ok(reorderState.pointerMovesAfterActivation > 0, `expected pointermove after activation: ${JSON.stringify(reorderState)}`);
   assert.equal(reorderState.pointerCancels, 0);
   assert.equal(reorderState.scrollLeft, 0);
   assert.equal(reorderState.scrollTop, 0);
@@ -410,10 +373,7 @@ async function loadInspectorFixture(route, width, options = {}) {
     url: `${inspectorFixtureUrl}?${params}`,
   });
   try {
-    await waitForExpression(
-      "window.inspectorProof?.appReady === true",
-      INSPECTOR_APP_READY_TIMEOUT_MS,
-    );
+    await waitForExpression("window.inspectorProof?.appReady === true", INSPECTOR_APP_READY_TIMEOUT_MS);
   } catch (error) {
     const diagnostics = await evaluate(`({
       body: document.body?.innerText.slice(0, 2000),
@@ -621,7 +581,7 @@ test("desktop selector atomically replaces an unrelated inspector with one owned
   await loadInspectorFixture("/planet/9/9/9", 1280);
   await waitForExpression("document.querySelector('main h2')?.textContent === 'Unrelated Gamma'");
 
-  await clickExpression("document.querySelector('aside[aria-label=\"Select planet\"] [data-planet-selector-item=\"owned-b\"] button[data-planet-selector-long-press]')");
+  await clickExpression('document.querySelector(\'aside[aria-label="Select planet"] [data-planet-selector-item="owned-b"] button[data-planet-selector-long-press]\')');
   await waitForExpression("location.pathname === '/planet/4/5/6'");
   try {
     await waitForExpression("document.querySelector('main h2')?.textContent?.includes('Owned Beta') === true");
@@ -641,7 +601,10 @@ test("desktop selector atomically replaces an unrelated inspector with one owned
   assert.equal(snapshot.heading, "Owned Beta");
   assert.match(snapshot.text, /Home world/);
   assert.match(snapshot.text, /Add media/);
-  assert.ok(snapshot.topBarTitles.some((title) => title.startsWith("Metal: 203")));
+  assert.ok(
+    snapshot.topBarTitles.some((title) => title.startsWith("Metal: 203")),
+    JSON.stringify(snapshot),
+  );
   assert.ok(snapshot.topBarTitles.some((title) => title.startsWith("Crystal: 201")));
   assert.ok(snapshot.topBarTitles.some((title) => title.startsWith("Deuterium: 202")));
   assert.doesNotMatch(snapshot.text, /Unrelated Gamma|9,909/);
@@ -684,7 +647,10 @@ test("mobile hamburger selector independently invokes the owned-planet transitio
   assert.equal(snapshot.heading, "Owned Beta");
   assert.match(snapshot.text, /Home world/);
   assert.match(snapshot.text, /Add media/);
-  assert.ok(snapshot.topBarTitles.some((title) => title.startsWith("Metal: 203")));
+  assert.ok(
+    snapshot.topBarTitles.some((title) => title.startsWith("Metal: 203")),
+    JSON.stringify(snapshot),
+  );
   assert.doesNotMatch(snapshot.text, /Unrelated Gamma|9,909/);
 });
 
@@ -757,10 +723,7 @@ test("desktop mouse release over a Galaxy sidebar link does not navigate when th
   await delay(100);
 
   assert.equal(await evaluate("location.pathname"), "/galaxy");
-  assert.equal(
-    await evaluate("document.querySelector('nav.hidden a[href=\"/galaxy\"]')?.getAttribute('aria-current')"),
-    "page",
-  );
+  assert.equal(await evaluate("document.querySelector('nav.hidden a[href=\"/galaxy\"]')?.getAttribute('aria-current')"), "page");
 });
 
 test("mobile Galaxy sidebar touch drag and cancel sequences do not navigate", async () => {
@@ -781,10 +744,7 @@ test("mobile Galaxy sidebar touch drag and cancel sequences do not navigate", as
     await delay(100);
 
     assert.equal(await evaluate("location.pathname"), "/galaxy", `${mode} should not activate Shipyard`);
-    assert.equal(
-      await evaluate("document.querySelector('a[href=\"/galaxy\"]')?.getAttribute('aria-current')"),
-      "page",
-    );
+    assert.equal(await evaluate("document.querySelector('a[href=\"/galaxy\"]')?.getAttribute('aria-current')"), "page");
   }
 });
 
@@ -868,9 +828,7 @@ for (const width of [1280, 390]) {
       await clickExpressionWithTrustedPointer("document.querySelector('nav.hidden a[href=\"/alliance\"]')");
     }
 
-    const activeSelector = width < 768
-      ? '#mobile-navigation-menu a[href="/alliance"][aria-current="page"]'
-      : 'nav.hidden a[href="/alliance"][aria-current="page"]';
+    const activeSelector = width < 768 ? '#mobile-navigation-menu a[href="/alliance"][aria-current="page"]' : 'nav.hidden a[href="/alliance"][aria-current="page"]';
     await waitForExpression(`location.pathname === '/alliance'
       && document.querySelector('${activeSelector}') !== null
       && document.querySelector('main [data-alliance-page]') !== null
@@ -909,10 +867,8 @@ test("direct Mission Control load hydrates before stalled history reads occupy t
   ))`);
 
   const requests = await evaluate("window.inspectorProof.requests");
-  const overviewIndex = requests.findIndex((request) => request.includes('/overview'));
-  const firstHistoryIndex = requests.findIndex((request) => (
-    request.includes('/missions?') || request.includes('/missile-attacks?')
-  ));
+  const overviewIndex = requests.findIndex((request) => request.includes("/overview"));
+  const firstHistoryIndex = requests.findIndex((request) => request.includes("/missions?") || request.includes("/missile-attacks?"));
   assert.ok(overviewIndex >= 0, JSON.stringify(requests));
   assert.ok(firstHistoryIndex > overviewIndex, JSON.stringify(requests));
 });
@@ -977,14 +933,8 @@ for (const width of [390, 1280]) {
         })`);
         assert.match(rendered.mainText ?? "", /Level 4/);
         assert.match(rendered.bodyText ?? "", /\+620\/h/);
-        assert.ok(
-          rendered.requests.filter((request) => request.includes('/infrastructure')).length <= 2,
-          JSON.stringify(rendered),
-        );
-        assert.ok(
-          rendered.requests.filter((request) => request.includes('/moon')).length <= 2,
-          JSON.stringify(rendered),
-        );
+        assert.ok(rendered.requests.filter((request) => request.includes("/infrastructure")).length <= 2, JSON.stringify(rendered));
+        assert.ok(rendered.requests.filter((request) => request.includes("/moon")).length <= 2, JSON.stringify(rendered));
         assert.deepEqual(rendered.errors, []);
       }
     });
@@ -1006,7 +956,10 @@ test("Infrastructure renders its indexed planet snapshot while wallet overview h
     errors: window.inspectorProof.errors,
     requests: window.inspectorProof.requests,
   })`);
-  assert.ok(rendered.requests.some((request) => request.includes('/infrastructure')), JSON.stringify(rendered.requests));
+  assert.ok(
+    rendered.requests.some((request) => request.includes("/infrastructure")),
+    JSON.stringify(rendered.requests),
+  );
   assert.deepEqual(rendered.errors, []);
 });
 
@@ -1038,7 +991,10 @@ test("mobile Defenses renders its indexed planet snapshot while wallet overview 
     errors: window.inspectorProof.errors,
     requests: window.inspectorProof.requests,
   })`);
-  assert.ok(rendered.requests.some((request) => request.includes('/defenses')), JSON.stringify(rendered.requests));
+  assert.ok(
+    rendered.requests.some((request) => request.includes("/defenses")),
+    JSON.stringify(rendered.requests),
+  );
   assert.doesNotMatch(rendered.bodyText ?? "", /Resources loading|Syncing planetfall/);
   assert.deepEqual(rendered.errors, []);
 });
@@ -1103,10 +1059,22 @@ for (const width of [390, 1280]) {
       syncingPlanetfall: document.querySelector('main')?.textContent?.includes('Syncing planetfall') ?? false,
     })`);
     assert.equal(rendered.overviewRequests, initialSnapshot.overviewRequests, JSON.stringify(rendered.requests));
-    assert.ok(rendered.requests.some((request) => request.includes('/settlement')), JSON.stringify(rendered.requests));
-    assert.ok(rendered.requests.some((request) => request.includes('/wallet/0x1111111111111111111111111111111111111111/missions?status=completed')), JSON.stringify(rendered.requests));
-    assert.ok(rendered.requests.some((request) => request.includes('/wallet/0x1111111111111111111111111111111111111111/missile-attacks?')), JSON.stringify(rendered.requests));
-    assert.ok(rendered.requests.some((request) => request.includes('/missions?status=completed') && request.includes('summaryOnly=true')), JSON.stringify(rendered.requests));
+    assert.ok(
+      rendered.requests.some((request) => request.includes("/settlement")),
+      JSON.stringify(rendered.requests),
+    );
+    assert.ok(
+      rendered.requests.some((request) => request.includes("/wallet/0x1111111111111111111111111111111111111111/missions?status=completed")),
+      JSON.stringify(rendered.requests),
+    );
+    assert.ok(
+      rendered.requests.some((request) => request.includes("/wallet/0x1111111111111111111111111111111111111111/missile-attacks?")),
+      JSON.stringify(rendered.requests),
+    );
+    assert.ok(
+      rendered.requests.some((request) => request.includes("/missions?status=completed") && request.includes("summaryOnly=true")),
+      JSON.stringify(rendered.requests),
+    );
     assert.equal(rendered.resourceStatus, "ready");
     assert.match(rendered.resourceTitle ?? "", /^Metal: 10,313\b/);
     assert.equal(rendered.syncingPlanetfall, false);
@@ -1137,9 +1105,7 @@ test("wallet shell does not let a repeated account event interrupt the Build ges
   await waitForExpression(`location.pathname === '/shipyard'
     && [...document.querySelectorAll('main button')].some((button) => button.textContent?.trim() === 'Build' && !button.disabled)`);
 
-  await clickExpressionWithTrustedPointer(
-    "[...document.querySelectorAll('main button')].find((button) => button.textContent?.trim() === 'Build' && !button.disabled)",
-  );
+  await clickExpressionWithTrustedPointer("[...document.querySelectorAll('main button')].find((button) => button.textContent?.trim() === 'Build' && !button.disabled)");
   await waitForExpression("window.inspectorProof.walletRequests.some((request) => request.method === 'eth_sendTransaction')");
   await delay(100);
 
@@ -1164,9 +1130,7 @@ test("wallet shell does not let a repeated chain event interrupt the Build gestu
   await waitForExpression(`location.pathname === '/shipyard'
     && [...document.querySelectorAll('main button')].some((button) => button.textContent?.trim() === 'Build' && !button.disabled)`);
 
-  await clickExpressionWithTrustedPointer(
-    "[...document.querySelectorAll('main button')].find((button) => button.textContent?.trim() === 'Build' && !button.disabled)",
-  );
+  await clickExpressionWithTrustedPointer("[...document.querySelectorAll('main button')].find((button) => button.textContent?.trim() === 'Build' && !button.disabled)");
   await waitForExpression("window.inspectorProof.walletRequests.some((request) => request.method === 'eth_sendTransaction')");
   await delay(100);
 
@@ -1249,7 +1213,9 @@ test("mobile sidebar first clicks commit routes and close the menu", async () =>
   await clickExpression("document.querySelector('summary[aria-label=\"Open navigation menu\"]')");
   await waitForExpression("document.querySelector('details:has(#mobile-navigation-menu)')?.open === true");
   await clickExpression("document.querySelector('#mobile-navigation-menu a[href=\"/infrastructure\"]')");
-  await waitForExpression("location.pathname === '/infrastructure' && document.querySelector('#mobile-navigation-menu a[href=\"/infrastructure\"][aria-current=\"page\"]') !== null && document.querySelector('details:has(#mobile-navigation-menu)')?.open === false");
+  await waitForExpression(
+    "location.pathname === '/infrastructure' && document.querySelector('#mobile-navigation-menu a[href=\"/infrastructure\"][aria-current=\"page\"]') !== null && document.querySelector('details:has(#mobile-navigation-menu)')?.open === false",
+  );
 
   await clickExpression("document.querySelector('summary[aria-label=\"Open navigation menu\"]')");
   await waitForExpression("document.querySelector('details:has(#mobile-navigation-menu)')?.open === true");

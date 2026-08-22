@@ -19,8 +19,12 @@ describe("GameStateStore", () => {
     const older = deferred<{ revision: number }>();
     const newer = deferred<{ revision: number }>();
 
-    const olderRead = store.read("overview:wallet:1", () => older.promise, { dedupe: false });
-    const newerRead = store.read("overview:wallet:1", () => newer.promise, { dedupe: false });
+    const olderRead = store.read("overview:wallet:1", () => older.promise, {
+      dedupe: false,
+    });
+    const newerRead = store.read("overview:wallet:1", () => newer.promise, {
+      dedupe: false,
+    });
     newer.resolve({ revision: 2 });
     await expect(newerRead).resolves.toEqual({ revision: 2 });
     older.resolve({ revision: 1 });
@@ -44,10 +48,7 @@ describe("GameStateStore", () => {
     });
     response.resolve({ level: 4 });
 
-    await expect(Promise.all([firstRead, deduplicatedRead])).resolves.toEqual([
-      { level: 4 },
-      { level: 4 },
-    ]);
+    await expect(Promise.all([firstRead, deduplicatedRead])).resolves.toEqual([{ level: 4 }, { level: 4 }]);
     expect(store.snapshot<{ level: number }>("infrastructure:wallet:planet")).toMatchObject({
       data: { level: 4 },
       freshness: "fresh",
@@ -58,11 +59,18 @@ describe("GameStateStore", () => {
     const store = new GameStateStore(new GameStateReadScheduler(1));
     const blocker = deferred<string>();
     let navigationLoads = 0;
-    const active = store.read("active", () => blocker.promise, { scope: "stable", deadlineMs: 100 });
-    const navigation = store.read("galaxy:old", async () => {
-      navigationLoads += 1;
-      return "stale";
-    }, { scope: "navigation:old", deadlineMs: 100 });
+    const active = store.read("active", () => blocker.promise, {
+      scope: "stable",
+      deadlineMs: 100,
+    });
+    const navigation = store.read(
+      "galaxy:old",
+      async () => {
+        navigationLoads += 1;
+        return "stale";
+      },
+      { scope: "navigation:old", deadlineMs: 100 },
+    );
 
     store.cancelScope("navigation:old");
     await expect(navigation).rejects.toMatchObject({ name: "AbortError" });
@@ -75,11 +83,17 @@ describe("GameStateStore", () => {
     const store = new GameStateStore(new GameStateReadScheduler(1));
     const blocker = deferred<string>();
     let queuedLoads = 0;
-    const active = store.read("active", () => blocker.promise, { deadlineMs: 100 });
-    const queued = store.read("queued", async () => {
-      queuedLoads += 1;
-      return "late";
-    }, { deadlineMs: 5 });
+    const active = store.read("active", () => blocker.promise, {
+      deadlineMs: 100,
+    });
+    const queued = store.read(
+      "queued",
+      async () => {
+        queuedLoads += 1;
+        return "late";
+      },
+      { deadlineMs: 5 },
+    );
 
     await expect(queued).rejects.toThrow("including queue time");
     expect(queuedLoads).toBe(0);
@@ -92,19 +106,33 @@ describe("GameStateStore", () => {
     const scheduler = new GameStateReadScheduler(1);
     const blocker = deferred<string>();
     const order: string[] = [];
-    const active = scheduler.schedule("active", () => blocker.promise, { deadlineMs: 100 }).promise;
-    const background = scheduler.schedule("background", async () => {
-      order.push("background");
-      return "background";
-    }, { priority: "background", deadlineMs: 100 }).promise;
-    const selected = scheduler.schedule("selected", async () => {
-      order.push("selected");
-      return "selected";
-    }, { priority: "selected-planet", deadlineMs: 100 }).promise;
-    const transaction = scheduler.schedule("transaction", async () => {
-      order.push("transaction");
-      return "transaction";
-    }, { priority: "transaction", deadlineMs: 100 }).promise;
+    const active = scheduler.schedule("active", () => blocker.promise, {
+      deadlineMs: 100,
+    }).promise;
+    const background = scheduler.schedule(
+      "background",
+      async () => {
+        order.push("background");
+        return "background";
+      },
+      { priority: "background", deadlineMs: 100 },
+    ).promise;
+    const selected = scheduler.schedule(
+      "selected",
+      async () => {
+        order.push("selected");
+        return "selected";
+      },
+      { priority: "selected-planet", deadlineMs: 100 },
+    ).promise;
+    const transaction = scheduler.schedule(
+      "transaction",
+      async () => {
+        order.push("transaction");
+        return "transaction";
+      },
+      { priority: "transaction", deadlineMs: 100 },
+    ).promise;
 
     blocker.resolve("ready");
     await Promise.all([active, background, selected, transaction]);
@@ -144,19 +172,18 @@ describe("GameStateStore", () => {
     const refresh = store.refresh(key, () => response.promise);
     response.resolve({ revision: 9 });
     await refresh;
-    store.markBackendFailure("overview", "Indexer is delayed.", ["0xabc", "planet-7"]);
-    store.discardBackendSnapshot("overview", "0xabc", "planet-7");
-    await expect(store.refresh(key, async () => {
-      throw new Error("Indexer is unavailable.");
-    })).rejects.toThrow("Indexer is unavailable.");
+    await expect(
+      store.refresh(key, async () => {
+        throw new Error("Indexer is unavailable.");
+      }),
+    ).rejects.toThrow("Indexer is unavailable.");
 
     unsubscribeOverview();
     unsubscribeTopBar();
     expect(topBarObserved).toEqual(overviewObserved);
     expect(topBarObserved).toContain("refreshing:none:none");
     expect(topBarObserved).toContain("fresh:9:none");
-    expect(topBarObserved).toContain("delayed:9:Indexer is delayed.");
-    expect(topBarObserved).toContain("failed:none:Indexer is unavailable.");
+    expect(topBarObserved).toContain("delayed:9:Indexer is unavailable.");
   });
 
   test("exposes nested backend index revisions with the canonical snapshot", async () => {

@@ -12,18 +12,9 @@ import {
   referralValidationTone,
 } from "../src/FirstPlanetSettlementApp";
 import { referralCodeForLanding } from "../src/referralStorage";
-import {
-  REFERRAL_CODE_FRONT_RUN_MESSAGE,
-  REFERRAL_TOP_UP_UNAVAILABLE_MESSAGE,
-  referralClaimErrorMessage,
-  type ReferralDashboard,
-  type ReferralResolution,
-} from "../src/walletFlow";
+import { REFERRAL_CODE_FRONT_RUN_MESSAGE, REFERRAL_TOP_UP_UNAVAILABLE_MESSAGE, referralClaimErrorMessage, type ReferralDashboard, type ReferralResolution } from "../src/walletFlow";
 
-function referralResolution(
-  status: ReferralResolution["status"],
-  remainingRedemptions: number,
-): ReferralResolution {
+function referralResolution(status: ReferralResolution["status"], remainingRedemptions: number): ReferralResolution {
   return {
     codeHash: `0x${"11".repeat(32)}`,
     commitment: `0x${"22".repeat(32)}`,
@@ -44,11 +35,7 @@ function referralResolution(
   };
 }
 
-function referralDashboard(input: {
-  code: string;
-  link: string;
-  status: "active" | "renewable" | "owned";
-}): ReferralDashboard {
+function referralDashboard(input: { code: string; link: string; status: "active" | "renewable" | "owned" }): ReferralDashboard {
   const invite = {
     claimedAt: "2026-07-15T19:01:33.000Z",
     code: input.code,
@@ -65,7 +52,7 @@ function referralDashboard(input: {
     renewable: input.status === "renewable",
     topUpAvailable: input.status === "renewable",
     status: input.status === "renewable" ? "active" : input.status,
-    txHash: `0x${"33".repeat(32)}`
+    txHash: `0x${"33".repeat(32)}`,
   };
   return {
     claimableRewardsWei: "0",
@@ -79,30 +66,23 @@ function referralDashboard(input: {
     remainingRedemptions: 3,
     rewardPerUseWei: "6000000000000000",
     totalAccruedRewardsWei: "0",
-    totalPaidRewardsWei: "0"
+    totalPaidRewardsWei: "0",
   };
 }
 
 describe("referral hardening", () => {
   test("shows only the remaining-use count for active and exhausted invite codes", () => {
     expect(referralValidationMessage(referralResolution("active", 2))).toBe("Active · 2/3 uses left.");
-    expect(referralValidationMessage(referralResolution("exhausted", 0)))
-      .toBe("No uses left · ask the code owner to top it up.");
+    expect(referralValidationMessage(referralResolution("exhausted", 0))).toBe("No uses left · ask the code owner to top it up.");
   });
 
   test("preserves distinct validation help for other invite-code states", () => {
-    expect(referralValidationMessage(referralResolution("inactive", 0)))
-      .toBe("Inactive · this wallet uses a different invite code.");
-    expect(referralValidationMessage(referralResolution("self_invite", 0)))
-      .toBe("This wallet can’t use its own invite code.");
-    expect(referralValidationMessage(referralResolution("already_redeemed", 0)))
-      .toBe("This wallet already used an invite code.");
-    expect(referralValidationMessage(referralResolution("available", 3)))
-      .toBe("Available to claim.");
-    expect(referralValidationMessage(referralResolution("unavailable", 0)))
-      .toBe("Invite pricing is unavailable. Try again later.");
-    expect(referralValidationMessage(referralResolution("invalid", 0)))
-      .toBe("Invalid invite code · use 1–24 letters, numbers, underscores, or hyphens.");
+    expect(referralValidationMessage(referralResolution("inactive", 0))).toBe("Inactive · this wallet uses a different invite code.");
+    expect(referralValidationMessage(referralResolution("self_invite", 0))).toBe("This wallet can’t use its own invite code.");
+    expect(referralValidationMessage(referralResolution("already_redeemed", 0))).toBe("This wallet already used an invite code.");
+    expect(referralValidationMessage(referralResolution("available", 3))).toBe("Available to claim.");
+    expect(referralValidationMessage(referralResolution("unavailable", 0))).toBe("Invite pricing is unavailable. Try again later.");
+    expect(referralValidationMessage(referralResolution("invalid", 0))).toBe("Invalid invite code · use 1–24 letters, numbers, underscores, or hyphens.");
   });
 
   test("projects concise semantic disclosure summaries for every applied-code state", () => {
@@ -113,29 +93,35 @@ describe("referral hardening", () => {
       tone: "pending",
     });
 
-    expect(referralCodeDisclosurePresentation(" borodutch ", {
-      status: "resolved",
-      resolution: referralResolution("active", 2),
-    })).toEqual({
+    expect(
+      referralCodeDisclosurePresentation(" borodutch ", {
+        status: "resolved",
+        resolution: referralResolution("active", 2),
+      }),
+    ).toEqual({
       appliedLabel: "Invite code: borodutch",
       code: "borodutch",
       status: "Active · 2/3 uses left.",
       tone: "success",
     });
 
-    expect(referralCodeDisclosurePresentation("borodutch", {
-      status: "resolved",
-      resolution: referralResolution("inactive", 0),
-    })).toMatchObject({
+    expect(
+      referralCodeDisclosurePresentation("borodutch", {
+        status: "resolved",
+        resolution: referralResolution("inactive", 0),
+      }),
+    ).toMatchObject({
       appliedLabel: "Invite code: borodutch",
       status: "Inactive · this wallet uses a different invite code.",
       tone: "warning",
     });
 
-    expect(referralCodeDisclosurePresentation("not valid!", {
-      status: "resolved",
-      resolution: referralResolution("invalid", 0),
-    })).toMatchObject({
+    expect(
+      referralCodeDisclosurePresentation("not valid!", {
+        status: "resolved",
+        resolution: referralResolution("invalid", 0),
+      }),
+    ).toMatchObject({
       appliedLabel: "Invite code: not valid!",
       status: "Invalid invite code · use 1–24 letters, numbers, underscores, or hyphens.",
       tone: "error",
@@ -145,7 +131,12 @@ describe("referral hardening", () => {
       message: "Checking invite code…",
       tone: "pending",
     });
-    expect(referralValidationPresentation({ status: "error", message: "RPC details" })).toEqual({
+    expect(
+      referralValidationPresentation({
+        status: "error",
+        message: "RPC details",
+      }),
+    ).toEqual({
       message: "Couldn’t check this invite code. Try again shortly.",
       tone: "error",
     });
@@ -180,61 +171,65 @@ describe("referral hardening", () => {
   test("blocks settlement until the backend reports an active invite", () => {
     expect(referralSettlementBlocker("borodutch", { status: "idle" })).toContain("still loading");
     expect(referralSettlementBlocker("borodutch", { status: "loading" })).toContain("still loading");
-    expect(referralSettlementBlocker("borodutch", {
-      status: "resolved",
-      resolution: {
-        commitment: null,
-        expiresAt: null,
-        inviterRewardWei: null,
-        message: "This invite is exhausted.",
-        nextRedemptionAt: null,
-        remainingRedemptions: 0,
-        startPriceWei: null,
-        status: "exhausted",
-        valid: false
-      }
-    })).toBe("This invite is exhausted.");
-    expect(referralSettlementBlocker("borodutch", {
-      status: "resolved",
-      resolution: {
-        commitment: `0x${"11".repeat(32)}`,
-        expiresAt: "2026-07-16T00:00:00.000Z",
-        inviterRewardWei: "25000000000000000",
-        message: "Invite active.",
-        nextRedemptionAt: null,
-        remainingRedemptions: 2,
-        startPriceWei: "50000000000000000",
-        status: "active",
-        valid: true
-      }
-    })).toBeUndefined();
+    expect(
+      referralSettlementBlocker("borodutch", {
+        status: "resolved",
+        resolution: {
+          commitment: null,
+          expiresAt: null,
+          inviterRewardWei: null,
+          message: "This invite is exhausted.",
+          nextRedemptionAt: null,
+          remainingRedemptions: 0,
+          startPriceWei: null,
+          status: "exhausted",
+          valid: false,
+        },
+      }),
+    ).toBe("This invite is exhausted.");
+    expect(
+      referralSettlementBlocker("borodutch", {
+        status: "resolved",
+        resolution: {
+          commitment: `0x${"11".repeat(32)}`,
+          expiresAt: "2026-07-16T00:00:00.000Z",
+          inviterRewardWei: "25000000000000000",
+          message: "Invite active.",
+          nextRedemptionAt: null,
+          remainingRedemptions: 2,
+          startPriceWei: "50000000000000000",
+          status: "active",
+          valid: true,
+        },
+      }),
+    ).toBeUndefined();
     expect(referralSettlementBlocker("", { status: "idle" })).toBeUndefined();
   });
 
   test("keeps referral redemption enabled for migration-authorized first-planet starts", async () => {
     const appSource = await Bun.file(new URL("../src/FirstPlanetSettlementApp.tsx", import.meta.url)).text();
-    expect(appSource).toContain(
-      "const referral = await referralRedemptionForSettlement(wallet.account);"
-    );
+    expect(appSource).toContain("const referral = await referralRedemptionForSettlement(wallet.account);");
     expect(appSource).not.toContain("funding.migrationContractAddress\n          ? undefined");
   });
 
   test("shows every rejected validation state before wallet submission", () => {
     for (const status of ["expired", "exhausted", "self_invite", "already_redeemed", "invalid"] as const) {
-      expect(referralSettlementBlocker("borodutch", {
-        status: "resolved",
-        resolution: {
-          commitment: null,
-          expiresAt: null,
-          inviterRewardWei: "6000000000000000",
-          message: `Referral ${status}.`,
-          nextRedemptionAt: null,
-          remainingRedemptions: 0,
-          startPriceWei: "12000000000000000",
-          status,
-          valid: false
-        }
-      })).toBe(`Referral ${status}.`);
+      expect(
+        referralSettlementBlocker("borodutch", {
+          status: "resolved",
+          resolution: {
+            commitment: null,
+            expiresAt: null,
+            inviterRewardWei: "6000000000000000",
+            message: `Referral ${status}.`,
+            nextRedemptionAt: null,
+            remainingRedemptions: 0,
+            startPriceWei: "12000000000000000",
+            status,
+            valid: false,
+          },
+        }),
+      ).toBe(`Referral ${status}.`);
     }
   });
 
@@ -248,14 +243,14 @@ describe("referral hardening", () => {
     const active = referralDashboard({
       code: "borodutch",
       link: "https://veydrift.com?ref=borodutch",
-      status: "active"
+      status: "active",
     });
     expect(referralClaimCodeAfterDashboard("Z9VVTDYWW", active)).toBe("borodutch");
 
     const expired = referralDashboard({
       code: "borodutch",
       link: "https://veydrift.com?ref=borodutch",
-      status: "renewable"
+      status: "renewable",
     });
     expect(referralClaimCodeAfterDashboard("new_code", expired)).toBe("borodutch");
   });
@@ -264,7 +259,7 @@ describe("referral hardening", () => {
     const active = referralDashboard({
       code: "borodutch",
       link: "https://veydrift.com?ref=borodutch",
-      status: "active"
+      status: "active",
     });
     const nextTopUpAt = Date.parse(active.invite!.nextTopUpAt!);
     expect(referralInviteRefreshDelay(active, nextTopUpAt - 60_000)).toBe(60_000);
@@ -273,15 +268,19 @@ describe("referral hardening", () => {
     const renewable = referralDashboard({
       code: "borodutch",
       link: "https://veydrift.com?ref=borodutch",
-      status: "renewable"
+      status: "renewable",
     });
     expect(referralInviteRefreshDelay(renewable, nextTopUpAt)).toBeUndefined();
   });
 
-  test("atomically installs the indexed renewal dashboard returned by claim recording", async () => {
+  test("publishes the indexed renewal dashboard through the shared referral query", async () => {
     const appSource = await Bun.file(new URL("../src/FirstPlanetSettlementApp.tsx", import.meta.url)).text();
-    expect(appSource).toContain("const dashboard = await recordReferralClaimTransactionAfterIndexing(");
-    expect(appSource).toContain('setReferralProgram({ status: "ready", dashboard });');
+    const storeSource = await Bun.file(new URL("../src/backendDataStore.ts", import.meta.url)).text();
+    expect(appSource).toContain("indexing: data.indexing.referralClaim(");
+    expect(storeSource).toContain("async recordReferralClaimAfterIndexing(");
+    expect(storeSource).toContain("referralClaim: (");
+    expect(appSource).toContain('setReferralProgramPhase({ status: "idle" });');
+    expect(appSource).toContain("useBackendDataQuery(");
     expect(appSource).toContain("uses left");
     expect(appSource).not.toContain("uses left today");
     expect(appSource).not.toContain("await refreshReferralProgram(wallet.account);");
@@ -291,7 +290,8 @@ describe("referral hardening", () => {
     const appSource = await Bun.file(new URL("../src/FirstPlanetSettlementApp.tsx", import.meta.url)).text();
     expect(appSource).toContain("Top up your invite code");
     expect(appSource).toContain("Your invite code never expires");
-    expect(appSource).toContain("top it up to 3 available uses");
+    expect(appSource).toContain("top it up to 3");
+    expect(appSource).toContain("available uses.");
     expect(appSource).toContain("for inviting a friend");
     expect(appSource).toContain("Your friend gets");
     expect(appSource).toContain("<RankingCommanderLink");
@@ -300,7 +300,7 @@ describe("referral hardening", () => {
     expect(appSource).toContain("Commanders you've invited");
     expect(appSource).toContain("referral-history-header");
     expect(appSource).toContain("referral-history-commander");
-    expect(appSource).toContain("backendDataStoreFor(apiBaseUrl).referralHistory(wallet, historyPage, 25)");
+    expect(appSource).toContain("historyData.referralHistory(wallet, historyPage, 25)");
     expect(appSource).toContain("<RankingsPagination");
     expect(appSource).not.toContain("fetchPlayerProfile(apiBaseUrl, wallet)");
     expect(appSource).toContain("Lifetime earned");
@@ -318,32 +318,38 @@ describe("referral hardening", () => {
     const active = referralDashboard({
       code: "borodutch",
       link: "https://veydrift.com?ref=borodutch",
-      status: "active"
+      status: "active",
     });
-    expect(referralInviteActionAvailability({
-      busy: false,
-      claimCode: "borodutch",
-      dashboard: active,
-      selectedCodeClaimable: true
-    })).toEqual({ canClaim: false, inviteActive: true });
+    expect(
+      referralInviteActionAvailability({
+        busy: false,
+        claimCode: "borodutch",
+        dashboard: active,
+        selectedCodeClaimable: true,
+      }),
+    ).toEqual({ canClaim: false, inviteActive: true });
 
     const expired = referralDashboard({
       code: "borodutch",
       link: "https://veydrift.com?ref=borodutch",
-      status: "renewable"
+      status: "renewable",
     });
-    expect(referralInviteActionAvailability({
-      busy: false,
-      claimCode: "borodutch",
-      dashboard: expired,
-      selectedCodeClaimable: true
-    })).toEqual({ canClaim: true, inviteActive: true });
-    expect(referralInviteActionAvailability({
-      busy: false,
-      claimCode: "new_code",
-      dashboard: expired,
-      selectedCodeClaimable: true
-    })).toEqual({ canClaim: false, inviteActive: true });
+    expect(
+      referralInviteActionAvailability({
+        busy: false,
+        claimCode: "borodutch",
+        dashboard: expired,
+        selectedCodeClaimable: true,
+      }),
+    ).toEqual({ canClaim: true, inviteActive: true });
+    expect(
+      referralInviteActionAvailability({
+        busy: false,
+        claimCode: "new_code",
+        dashboard: expired,
+        selectedCodeClaimable: true,
+      }),
+    ).toEqual({ canClaim: false, inviteActive: true });
   });
 
   test("shows active invite details directly and removes the reveal gate", async () => {
@@ -366,13 +372,11 @@ describe("referral hardening", () => {
   });
 
   test("shows a specific code-race error when another wallet claims first", () => {
-    expect(referralClaimErrorMessage({ data: `0xe1c8233f${"00".repeat(64)}` }))
-      .toBe(REFERRAL_CODE_FRONT_RUN_MESSAGE);
+    expect(referralClaimErrorMessage({ data: `0xe1c8233f${"00".repeat(64)}` })).toBe(REFERRAL_CODE_FRONT_RUN_MESSAGE);
   });
 
   test("shows a specific cooldown error when a top-up races the 24-hour boundary", () => {
-    expect(referralClaimErrorMessage({ data: `0xe6c55a82${"00".repeat(64)}` }))
-      .toBe(REFERRAL_TOP_UP_UNAVAILABLE_MESSAGE);
+    expect(referralClaimErrorMessage({ data: `0xe6c55a82${"00".repeat(64)}` })).toBe(REFERRAL_TOP_UP_UNAVAILABLE_MESSAGE);
   });
 
   test("persists referral intent and avoids hard-coded fiat or multiplier promises", async () => {

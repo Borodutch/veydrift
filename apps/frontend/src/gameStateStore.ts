@@ -57,11 +57,7 @@ export class GameStateReadScheduler {
 
   constructor(private readonly concurrency = 3) {}
 
-  schedule<T>(
-    key: string,
-    run: (signal: AbortSignal) => Promise<T>,
-    options: Pick<GameStateReadOptions, "deadlineMs" | "priority"> = {},
-  ): { controller: AbortController; promise: Promise<T> } {
+  schedule<T>(key: string, run: (signal: AbortSignal) => Promise<T>, options: Pick<GameStateReadOptions, "deadlineMs" | "priority"> = {}): { controller: AbortController; promise: Promise<T> } {
     const controller = new AbortController();
     const deadlineMs = options.deadlineMs ?? 10_000;
     const deadlineAt = Date.now() + deadlineMs;
@@ -209,9 +205,7 @@ export class GameStateStore {
       this.entries.set(key, {
         ...current,
         error: undefined,
-        freshness: current.freshness === "refreshing"
-          ? "refreshing"
-          : (current.data === undefined ? "delayed" : "fresh"),
+        freshness: current.freshness === "refreshing" ? "refreshing" : current.data === undefined ? "delayed" : "fresh",
       });
       this.emit([key]);
       return;
@@ -229,6 +223,23 @@ export class GameStateStore {
   clear(key: string): void {
     this.nextGeneration(key);
     this.entries.delete(key);
+    this.emit([key]);
+  }
+
+  /**
+   * Retain last-good data but require the next consumer/invalidator to read a
+   * new canonical backend snapshot. Advancing the generation also prevents an
+   * older in-flight response from silently restoring the entry to `fresh`.
+   */
+  invalidate(key: string): void {
+    const generation = this.nextGeneration(key);
+    const current = this.entries.get(key);
+    this.entries.set(key, {
+      ...current,
+      error: undefined,
+      freshness: "delayed",
+      generation,
+    });
     this.emit([key]);
   }
 
@@ -251,38 +262,41 @@ export class GameStateStore {
     const scheduled = this.scheduler.schedule(key, load, options);
     let promise!: Promise<T>;
     let request!: InFlightRead<T>;
-    promise = scheduled.promise.then((data) => {
-      if (!this.isCurrent(key, generation)) return data;
-      this.entries.set(key, {
-        data,
-        freshness: "fresh",
-        generation,
-        indexRevision: backendIndexRevision(data),
-        lastSuccessfulUpdate: Date.now(),
-        planetId: options.planetId,
-        wallet: normalizeWallet(options.wallet),
+    promise = scheduled.promise
+      .then(
+        (data) => {
+          if (!this.isCurrent(key, generation)) return data;
+          this.entries.set(key, {
+            data,
+            freshness: "fresh",
+            generation,
+            indexRevision: backendIndexRevision(data),
+            lastSuccessfulUpdate: Date.now(),
+            planetId: options.planetId,
+            wallet: normalizeWallet(options.wallet),
+          });
+          this.emit([key]);
+          return data;
+        },
+        (error) => {
+          if (this.isCurrent(key, generation)) {
+            const current = this.entries.get(key);
+            const cancelled = isAbortError(error);
+            this.entries.set(key, {
+              ...current,
+              error: cancelled ? undefined : errorMessage(error),
+              freshness: cancelled ? (current?.data === undefined ? "delayed" : "fresh") : current?.data === undefined ? "failed" : "delayed",
+              generation,
+            });
+            this.emit([key]);
+          }
+          throw error;
+        },
+      )
+      .finally(() => {
+        if (this.inFlight.get(key)?.promise === promise) this.inFlight.delete(key);
+        this.activeReads.delete(request as InFlightRead);
       });
-      this.emit([key]);
-      return data;
-    }, (error) => {
-      if (this.isCurrent(key, generation)) {
-        const current = this.entries.get(key);
-        const cancelled = isAbortError(error);
-        this.entries.set(key, {
-          ...current,
-          error: cancelled ? undefined : errorMessage(error),
-          freshness: cancelled
-            ? (current?.data === undefined ? "delayed" : "fresh")
-            : (current?.data === undefined ? "failed" : "delayed"),
-          generation,
-        });
-        this.emit([key]);
-      }
-      throw error;
-    }).finally(() => {
-      if (this.inFlight.get(key)?.promise === promise) this.inFlight.delete(key);
-      this.activeReads.delete(request as InFlightRead);
-    });
     request = { controller: scheduled.controller, generation, key, promise, scope: options.scope };
     this.inFlight.set(key, request);
     this.activeReads.add(request as InFlightRead);
@@ -332,12 +346,7 @@ export class GameStateStore {
 export function backendIndexRevision(value: unknown): string | undefined {
   if (!value || typeof value !== "object") return undefined;
   const record = value as Record<string, unknown>;
-  const direct = record.indexRevision
-    ?? record.indexedRevision
-    ?? record.revision
-    ?? record.indexedBlock
-    ?? record.blockNumber
-    ?? record.generatedAt;
+  const direct = record.indexRevision ?? record.indexedRevision ?? record.revision ?? record.indexedBlock ?? record.blockNumber ?? record.generatedAt;
   if (typeof direct === "string" || typeof direct === "number" || typeof direct === "bigint") return String(direct);
   const resourceSnapshot = record.resourceSnapshot;
   if (resourceSnapshot && typeof resourceSnapshot === "object") {

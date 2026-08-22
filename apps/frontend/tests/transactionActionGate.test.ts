@@ -1,10 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import {
-  createTransactionActionGate,
-  runWriteTransaction,
-  type WriteTransactionPhase,
-  type WriteTransactionState,
-} from "../src/transactionActionGate";
+import { createTransactionActionGate, runWriteTransaction, type WriteTransactionPhase, type WriteTransactionState } from "../src/transactionActionGate";
 import { confirmTransactionReceiptForProviderSource, type Eip1193Provider } from "../src/walletFlow";
 
 describe("transaction action gate", () => {
@@ -125,6 +120,38 @@ describe("transaction action gate", () => {
     expect(phases).toEqual(["pending", "confirming", "confirmed", "indexing", "success"]);
   });
 
+  test("keeps wallet preparation inside the same gate as submission", async () => {
+    const gate = createTransactionActionGate();
+    const prepared = deferred<void>();
+    const steps: string[] = [];
+
+    const first = runWriteTransaction(gate, {
+      key: "referral:claim",
+      label: "Referral reward claim",
+      prepare: async () => {
+        steps.push("prepare");
+        await prepared.promise;
+      },
+      send: async () => {
+        steps.push("send");
+        return "0xclaim";
+      },
+      confirm: async () => ({}),
+    });
+    const second = runWriteTransaction(gate, {
+      key: "settlement:first-planet",
+      label: "First planet settlement",
+      send: async () => "0xsettlement",
+      confirm: async () => ({}),
+    });
+
+    await expect(second).resolves.toBe(false);
+    expect(steps).toEqual(["prepare"]);
+    prepared.resolve();
+    await expect(first).resolves.toBe(true);
+    expect(steps).toEqual(["prepare", "send"]);
+  });
+
   test("keeps other writes blocked until backend indexing and apply callbacks settle", async () => {
     const gate = createTransactionActionGate();
     const indexed = deferred<void>();
@@ -134,7 +161,10 @@ describe("transaction action gate", () => {
       key: "research:start:4",
       label: "Research",
       send: async () => "0xresearch",
-      confirm: async () => ({ transactionHash: "0xresearch", blockNumber: "0x20" }),
+      confirm: async () => ({
+        transactionHash: "0xresearch",
+        blockNumber: "0x20",
+      }),
       waitForIndexed: async () => {
         await indexed.promise;
       },
@@ -164,16 +194,21 @@ describe("transaction action gate", () => {
     const gate = createTransactionActionGate();
     const states: WriteTransactionState[] = [];
 
-    await expect(runWriteTransaction(gate, {
-      key: "shipyard:start:timeout",
-      label: "Ship production",
-      send: async () => "0xtimeout",
-      confirm: async () => ({ transactionHash: "0xtimeout", blockNumber: "0x20" }),
-      waitForIndexed: async () => {
-        throw new Error("Indexed shipyard state timed out while still syncing.");
-      },
-      onStateChange: (state) => states.push(state),
-    })).resolves.toBe(false);
+    await expect(
+      runWriteTransaction(gate, {
+        key: "shipyard:start:timeout",
+        label: "Ship production",
+        send: async () => "0xtimeout",
+        confirm: async () => ({
+          transactionHash: "0xtimeout",
+          blockNumber: "0x20",
+        }),
+        waitForIndexed: async () => {
+          throw new Error("Indexed shipyard state timed out while still syncing.");
+        },
+        onStateChange: (state) => states.push(state),
+      }),
+    ).resolves.toBe(false);
 
     expect(states.at(-1)).toMatchObject({
       phase: "error",
@@ -194,19 +229,15 @@ describe("transaction action gate", () => {
       },
     };
     const confirmedTransactions: string[] = [];
-    const confirm = (txHash: string) => confirmTransactionReceiptForProviderSource(
-      farcasterProvider,
-      "farcaster",
-      "https://base-rpc.example.test",
-      txHash,
-      {
-        fetcher: async () => Response.json({
-          result: { status: "0x1", transactionHash: txHash },
-        }),
+    const confirm = (txHash: string) =>
+      confirmTransactionReceiptForProviderSource(farcasterProvider, "farcaster", "https://base-rpc.example.test", txHash, {
+        fetcher: async () =>
+          Response.json({
+            result: { status: "0x1", transactionHash: txHash },
+          }),
         pollMs: 1,
         timeoutMs: 100,
-      },
-    );
+      });
 
     const first = await runWriteTransaction(gate, {
       key: "mission:transport:1",
@@ -230,10 +261,7 @@ describe("transaction action gate", () => {
     expect(first).toBe(true);
     expect(second).toBe(true);
     expect(walletReceiptReads).toBe(0);
-    expect(confirmedTransactions).toEqual([
-      `0x${"11".repeat(32)}`,
-      `0x${"22".repeat(32)}`,
-    ]);
+    expect(confirmedTransactions).toEqual([`0x${"11".repeat(32)}`, `0x${"22".repeat(32)}`]);
     expect(gate.isRunning()).toBe(false);
   });
 });

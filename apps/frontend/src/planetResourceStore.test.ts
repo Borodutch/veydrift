@@ -37,16 +37,81 @@ describe("canonical planet resource store", () => {
     expect(canonicalPlanetResourceSnapshotFor(store, wallet, "7")?.resourcesAsOfNow.metal).toBe("120");
   });
 
-  test("rejects same-version decreases but accepts backend-accrued increases", () => {
+  test("accepts a same-version lower balance from an authoritative detail refresh", () => {
     let store: CanonicalPlanetResourceStore = {};
     store = promote(store, snapshot("7", "0x20", "200", "120"));
-    const current = store;
 
     store = promote(store, snapshot("7", "0x20", "200", "119"));
-    expect(store).toBe(current);
+    expect(canonicalPlanetResourceSnapshotFor(store, wallet, "7")?.resourcesAsOfNow.metal).toBe("119");
 
     store = promote(store, snapshot("7", "0x20", "200", "121"));
     expect(canonicalPlanetResourceSnapshotFor(store, wallet, "7")?.resourcesAsOfNow.metal).toBe("121");
+  });
+
+  test("does not let a lower-priority roster response overwrite a tied detail snapshot", () => {
+    let store: CanonicalPlanetResourceStore = {};
+    store = promote(store, snapshot("7", "0x20", "200", "120", "0x0", 30));
+    store = promote(store, snapshot("7", "0x20", "200", "500", "0x0", 10));
+
+    expect(canonicalPlanetResourceSnapshotFor(store, wallet, "7")?.resourcesAsOfNow.metal).toBe("120");
+  });
+
+  test("accepts a same-priority fresh detail response that omits optional index metadata", () => {
+    let store: CanonicalPlanetResourceStore = {};
+    store = promote(store, snapshot("7", "0x20", "200", "120", "0x1", 30));
+    const sparseDetail = backendResourceSnapshot(
+      {
+        wallet,
+        planetId: "7",
+        resources: { metal: "119", crystal: "119", deuterium: "119" },
+        resourcesAsOfNow: { metal: "119", crystal: "119", deuterium: "119" },
+      },
+      { sourcePriority: 30 },
+    );
+
+    store = promoteCanonicalPlanetResources(store, sparseDetail);
+    expect(canonicalPlanetResourceSnapshotFor(store, wallet, "7")?.resourcesAsOfNow.metal).toBe("119");
+  });
+
+  test("rejects a late older detail response from a different endpoint", () => {
+    let store: CanonicalPlanetResourceStore = {};
+    const olderRequest = backendResourceSnapshot(
+      {
+        wallet,
+        planetId: "7",
+        resources: { metal: "500", crystal: "500", deuterium: "500" },
+        resourcesAsOfNow: { metal: "500", crystal: "500", deuterium: "500" },
+      },
+      { requestGeneration: 1, sourcePriority: 30 },
+    );
+    const newerRequest = backendResourceSnapshot(
+      {
+        wallet,
+        planetId: "7",
+        resources: { metal: "119", crystal: "119", deuterium: "119" },
+        resourcesAsOfNow: { metal: "119", crystal: "119", deuterium: "119" },
+      },
+      { requestGeneration: 2, sourcePriority: 30 },
+    );
+
+    store = promoteCanonicalPlanetResources(store, newerRequest);
+    store = promoteCanonicalPlanetResources(store, olderRequest);
+
+    expect(canonicalPlanetResourceSnapshotFor(store, wallet, "7")?.resourcesAsOfNow.metal).toBe("119");
+  });
+
+  test("refuses an ambiguously identified home-planet response for another selected planet", () => {
+    const ambiguous = backendResourceSnapshot(
+      {
+        wallet,
+        homePlanetId: "7",
+        resources: { metal: "500", crystal: "500", deuterium: "500" },
+        resourcesAsOfNow: { metal: "500", crystal: "500", deuterium: "500" },
+      },
+      { planetId: "8" },
+    );
+
+    expect(ambiguous).toBeUndefined();
   });
 
   test("orders multiple resource changes in the same block by backend log index", () => {
@@ -68,10 +133,7 @@ describe("canonical planet resource store", () => {
     const staleRoster = [planet("7", "100", "500"), planet("8", "101", "800")];
 
     expect(walletSettlementWithCanonicalPlanetResources(staleSettlement, store, wallet)?.planet?.resourcesAsOfNow?.metal).toBe("120");
-    expect(walletPlanetsWithCanonicalPlanetResources(staleRoster, store, wallet).map((item) => item.resourcesAsOfNow?.metal)).toEqual([
-      "120",
-      "800",
-    ]);
+    expect(walletPlanetsWithCanonicalPlanetResources(staleRoster, store, wallet).map((item) => item.resourcesAsOfNow?.metal)).toEqual(["120", "800"]);
   });
 
   test("converges page, top-bar, roster, and Rift projections after indexed transfer and return credits", () => {
@@ -95,25 +157,14 @@ describe("canonical planet resource store", () => {
       unlocked: true,
       withdrawalDelaySeconds: "0",
       requirements: [],
-      resources: [
-        riftResource("metal", 0),
-        riftResource("crystal", 1),
-        riftResource("deuterium", 2),
-      ],
+      resources: [riftResource("metal", 0), riftResource("crystal", 1), riftResource("deuterium", 2)],
       pendingWithdrawals: [],
     };
 
     expect(resourceStateWithCanonicalPlanetResources(stalePage, origin).resourcesAsOfNow.metal).toBe("420");
-    expect(riftStateWithCanonicalPlanetResources(staleRift, origin)?.resources.map((item) => item.inGameBalance)).toEqual([
-      "420",
-      "420",
-      "420",
-    ]);
+    expect(riftStateWithCanonicalPlanetResources(staleRift, origin)?.resources.map((item) => item.inGameBalance)).toEqual(["420", "420", "420"]);
     expect(walletSettlementWithCanonicalPlanetResources(settlement("7", "100", "500"), store, wallet)?.planet?.resourcesAsOfNow?.metal).toBe("420");
-    expect(walletPlanetsWithCanonicalPlanetResources([
-      planet("7", "100", "500"),
-      planet("8", "101", "800"),
-    ], store, wallet).map((item) => item.resourcesAsOfNow?.metal)).toEqual(["420", "950"]);
+    expect(walletPlanetsWithCanonicalPlanetResources([planet("7", "100", "500"), planet("8", "101", "800")], store, wallet).map((item) => item.resourcesAsOfNow?.metal)).toEqual(["420", "950"]);
     expect(destination?.resourcesAsOfNow.metal).toBe("950");
   });
 });
@@ -131,30 +182,29 @@ function riftResource(key: "metal" | "crystal" | "deuterium", resourceId: number
   };
 }
 
-function promote(
-  store: CanonicalPlanetResourceStore,
-  next: ReturnType<typeof snapshot>,
-  confirmedTransaction = false,
-): CanonicalPlanetResourceStore {
+function promote(store: CanonicalPlanetResourceStore, next: ReturnType<typeof snapshot>, confirmedTransaction = false): CanonicalPlanetResourceStore {
   return promoteCanonicalPlanetResources(store, next, { confirmedTransaction });
 }
 
-function snapshot(planetId: string, blockNumber: string, lastSettledAt: string, metal: string, logIndex = "0x0") {
-  return backendResourceSnapshot({
-    wallet,
-    planetId,
-    planetLastSettledAt: lastSettledAt,
-    resources: { metal, crystal: metal, deuterium: metal },
-    resourcesAsOfNow: { metal, crystal: metal, deuterium: metal },
-    resourceSnapshot: {
+function snapshot(planetId: string, blockNumber: string, lastSettledAt: string, metal: string, logIndex = "0x0", sourcePriority?: number) {
+  return backendResourceSnapshot(
+    {
+      wallet,
       planetId,
-      transactionHash: `0xtx${blockNumber}`,
-      blockNumber,
-      logIndex,
-      lastSettledAt,
+      planetLastSettledAt: lastSettledAt,
       resources: { metal, crystal: metal, deuterium: metal },
+      resourcesAsOfNow: { metal, crystal: metal, deuterium: metal },
+      resourceSnapshot: {
+        planetId,
+        transactionHash: `0xtx${blockNumber}`,
+        blockNumber,
+        logIndex,
+        lastSettledAt,
+        resources: { metal, crystal: metal, deuterium: metal },
+      },
     },
-  })!;
+    { sourcePriority },
+  )!;
 }
 
 function settlement(planetId: string, lastSettledAt: string, metal: string): WalletSettlementResponse {

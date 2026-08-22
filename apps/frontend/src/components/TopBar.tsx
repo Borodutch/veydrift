@@ -58,195 +58,154 @@ type CrawlerProductionInfo = {
   };
 };
 
-export function TopBar({
-  resources,
-  rates,
-  caps,
-  crawlerProduction,
-  inviteeProductionBoost,
-  resourceStatus,
-  queue,
-  researchQueue,
-  account,
-  energy,
-  isWalletConnected,
-}: TopBarProps) {
+export function TopBar({ resources, rates, caps, crawlerProduction, inviteeProductionBoost, resourceStatus, queue, researchQueue, account, energy, isWalletConnected }: TopBarProps) {
   const showResourceDetails = Boolean(resources);
 
   return (
     <div className="sticky top-0 z-30" data-resource-status={resourceStatus} ref={topBarHeightSyncRef}>
       <div className="border-b border-white/10 bg-[#0a0f1a]/95 backdrop-blur">
         <div className="mx-auto flex min-h-10 max-w-[96rem] flex-wrap items-center justify-center gap-x-3 gap-y-1 px-2 py-1 sm:min-h-11 sm:justify-between sm:px-4 sm:py-1.5 lg:px-6">
-        <div className="flex w-full min-w-0 flex-col gap-1 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:justify-start sm:gap-x-2.5 sm:gap-y-1.5">
-          {/* Mobile: resources own a full-width row so values never truncate;
+          <div className="flex w-full min-w-0 flex-col gap-1 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:justify-start sm:gap-x-2.5 sm:gap-y-1.5">
+            {/* Mobile: resources own a full-width row so values never truncate;
               icons + wallet live on the row below. sm:contents flattens both
               rows back into the single desktop flex line. */}
-          <div className="flex min-w-0 items-stretch gap-1 sm:contents">
-          {!isWalletConnected ? (
-            <span className="text-xs text-slate-400">Connect wallet for resources</span>
-          ) : resourceStatus === "loading" && !resources ? (
-            <span className="text-xs text-slate-400">Resources loading</span>
-          ) : !resources ? (
-            <span className="text-xs text-amber-200">Resources unavailable</span>
-          ) : (
-            <>
-              <ResourcePip
-                key="metal"
-                abbr="M"
-                cap={showResourceDetails ? caps.metal : undefined}
-                color="text-amber-300"
-                label="Metal"
-                rate={showResourceDetails ? rates.metal : undefined}
-                value={resources.metal}
-              />
-              <ResourcePip
-                key="crystal"
-                abbr="C"
-                cap={showResourceDetails ? caps.crystal : undefined}
-                color="text-cyan-300"
-                label="Crystal"
-                rate={showResourceDetails ? rates.crystal : undefined}
-                value={resources.crystal}
-              />
-              <ResourcePip
-                key="deuterium"
-                abbr="D"
-                cap={showResourceDetails ? caps.deuterium : undefined}
-                color="text-emerald-300"
-                label="Deuterium"
-                rate={showResourceDetails ? rates.deuterium : undefined}
-                value={resources.deuterium}
-              />
-              {shouldShowTopBarEnergy(energy) && (
-                <EnergyPip
-                  context="Selected player planet"
-                  produced={energy.produced}
-                  rates={rates}
-                  required={energy.required}
-                  scaleBps={energy.scaleBps}
-                  crawlerProduction={crawlerProduction}
-                  sources={energy.sources}
-                />
+            <div className="flex min-w-0 items-stretch gap-1 sm:contents">
+              {!isWalletConnected ? (
+                <span className="text-xs text-slate-400">Connect wallet for resources</span>
+              ) : resourceStatus === "loading" && !resources ? (
+                <span className="text-xs text-slate-400">Resources loading</span>
+              ) : !resources ? (
+                <span className="text-xs text-amber-200">Resources unavailable</span>
+              ) : (
+                <>
+                  <ResourcePip
+                    key="metal"
+                    abbr="M"
+                    cap={showResourceDetails ? caps.metal : undefined}
+                    color="text-amber-300"
+                    label="Metal"
+                    rate={showResourceDetails ? rates.metal : undefined}
+                    value={resources.metal}
+                  />
+                  <ResourcePip
+                    key="crystal"
+                    abbr="C"
+                    cap={showResourceDetails ? caps.crystal : undefined}
+                    color="text-cyan-300"
+                    label="Crystal"
+                    rate={showResourceDetails ? rates.crystal : undefined}
+                    value={resources.crystal}
+                  />
+                  <ResourcePip
+                    key="deuterium"
+                    abbr="D"
+                    cap={showResourceDetails ? caps.deuterium : undefined}
+                    color="text-emerald-300"
+                    label="Deuterium"
+                    rate={showResourceDetails ? rates.deuterium : undefined}
+                    value={resources.deuterium}
+                  />
+                  {shouldShowTopBarEnergy(energy) && (
+                    <EnergyPip
+                      context="Selected player planet"
+                      produced={energy.produced}
+                      rates={rates}
+                      required={energy.required}
+                      scaleBps={energy.scaleBps}
+                      crawlerProduction={crawlerProduction}
+                      sources={energy.sources}
+                    />
+                  )}
+                  {inviteeProductionBoost?.active && (
+                    <span
+                      className="inline-flex items-center whitespace-nowrap rounded border border-fuchsia-300/40 bg-fuchsia-300/10 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-fuchsia-100"
+                      title="Invitee production boost: resource production is doubled for your first seven days."
+                    >
+                      2× production
+                    </span>
+                  )}
+                </>
               )}
-              {inviteeProductionBoost?.active && (
-                <span
-                  className="inline-flex items-center whitespace-nowrap rounded border border-fuchsia-300/40 bg-fuchsia-300/10 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-fuchsia-100"
-                  title="Invitee production boost: resource production is doubled for your first seven days."
-                >
-                  2× production
-                </span>
+            </div>
+            <div className="flex min-w-0 items-center gap-1 sm:contents">
+              <a
+                aria-label="Telegram support"
+                className="grid h-10 min-w-0 flex-1 place-items-center rounded border border-signal/35 bg-signal/10 text-signal transition hover:bg-signal/20 sm:hidden"
+                href={TELEGRAM_SUPPORT_URL}
+                rel="noopener noreferrer"
+                target="_blank"
+                title="Telegram support"
+              >
+                <TelegramIcon className="h-3.5 w-3.5" />
+              </a>
+              <a
+                aria-label="Veydrift documentation"
+                className="grid h-10 min-w-0 flex-1 place-items-center rounded border border-cyan-300/35 bg-cyan-300/10 text-cyan-100 transition hover:bg-cyan-300/20 sm:hidden"
+                href="/docs"
+                title="Veydrift documentation"
+              >
+                <CircleHelp className="h-3.5 w-3.5" size={14} strokeWidth={2} />
+              </a>
+              <a
+                aria-label="Veydrift whitepaper"
+                className="grid h-10 min-w-0 flex-1 place-items-center rounded border border-amber-200/35 bg-amber-200/10 text-amber-100 transition hover:bg-amber-200/20 sm:hidden"
+                href={WHITEPAPER_URL}
+                rel="noopener noreferrer"
+                target="_blank"
+                title="Veydrift whitepaper"
+              >
+                <FileText className="h-3.5 w-3.5" size={14} strokeWidth={2} />
+              </a>
+              <SoundToggle className="grid h-10 min-w-0 flex-1 place-items-center rounded border border-white/15 bg-white/[0.06] text-slate-200 transition hover:bg-white/10 sm:hidden" />
+              {isWalletConnected && account && (
+                <span className="inline-flex h-10 max-w-[7.5rem] shrink-0 items-center truncate px-1 font-mono text-[11px] leading-none text-slate-400 sm:hidden">{shortAddress(account)}</span>
               )}
-            </>
-          )}
+            </div>
+            {queue && <span className="inline-flex h-6 max-w-40 items-center truncate rounded bg-white/10 px-2 text-xs leading-none text-slate-300">{queue.label}</span>}
+            {researchQueue && <span className="inline-flex h-6 max-w-40 items-center truncate rounded bg-cyan-300/10 px-2 text-xs leading-none text-cyan-200">{researchQueue.label}</span>}
           </div>
-          <div className="flex min-w-0 items-center gap-1 sm:contents">
-          <a
-            aria-label="Telegram support"
-            className="grid h-10 min-w-0 flex-1 place-items-center rounded border border-signal/35 bg-signal/10 text-signal transition hover:bg-signal/20 sm:hidden"
-            href={TELEGRAM_SUPPORT_URL}
-            rel="noopener noreferrer"
-            target="_blank"
-            title="Telegram support"
-          >
-            <TelegramIcon className="h-3.5 w-3.5" />
-          </a>
-          <a
-            aria-label="Veydrift documentation"
-            className="grid h-10 min-w-0 flex-1 place-items-center rounded border border-cyan-300/35 bg-cyan-300/10 text-cyan-100 transition hover:bg-cyan-300/20 sm:hidden"
-            href="/docs"
-            title="Veydrift documentation"
-          >
-            <CircleHelp className="h-3.5 w-3.5" size={14} strokeWidth={2} />
-          </a>
-          <a
-            aria-label="Veydrift whitepaper"
-            className="grid h-10 min-w-0 flex-1 place-items-center rounded border border-amber-200/35 bg-amber-200/10 text-amber-100 transition hover:bg-amber-200/20 sm:hidden"
-            href={WHITEPAPER_URL}
-            rel="noopener noreferrer"
-            target="_blank"
-            title="Veydrift whitepaper"
-          >
-            <FileText className="h-3.5 w-3.5" size={14} strokeWidth={2} />
-          </a>
-          <SoundToggle className="grid h-10 min-w-0 flex-1 place-items-center rounded border border-white/15 bg-white/[0.06] text-slate-200 transition hover:bg-white/10 sm:hidden" />
-          {isWalletConnected && account && (
-            <span className="inline-flex h-10 max-w-[7.5rem] shrink-0 items-center truncate px-1 font-mono text-[11px] leading-none text-slate-400 sm:hidden">
-              {shortAddress(account)}
-            </span>
-          )}
+
+          <div className="hidden min-w-0 max-w-full items-center gap-2 sm:flex sm:justify-end sm:gap-3">
+            <a
+              aria-label="Telegram support"
+              className="hidden h-7 w-7 shrink-0 items-center justify-center rounded border border-signal/35 bg-signal/10 text-[11px] font-semibold leading-none text-signal transition hover:bg-signal/20 sm:inline-flex lg:w-auto lg:gap-1.5 lg:px-2"
+              href={TELEGRAM_SUPPORT_URL}
+              rel="noopener noreferrer"
+              target="_blank"
+              title="Telegram support"
+            >
+              <TelegramIcon className="h-3.5 w-3.5" />
+              <span className="sr-only lg:not-sr-only">Telegram</span>
+            </a>
+            <a
+              aria-label="Veydrift documentation"
+              className="hidden h-7 w-7 shrink-0 items-center justify-center rounded border border-cyan-300/35 bg-cyan-300/10 text-cyan-100 transition hover:bg-cyan-300/20 sm:inline-flex"
+              href="/docs"
+              title="Veydrift documentation"
+            >
+              <CircleHelp className="h-3.5 w-3.5" size={14} strokeWidth={2} />
+            </a>
+            <a
+              aria-label="Veydrift whitepaper"
+              className="hidden h-7 w-7 shrink-0 items-center justify-center rounded border border-amber-200/35 bg-amber-200/10 text-[11px] font-semibold leading-none text-amber-100 transition hover:bg-amber-200/20 sm:inline-flex lg:w-auto lg:gap-1.5 lg:px-2"
+              href={WHITEPAPER_URL}
+              rel="noopener noreferrer"
+              target="_blank"
+              title="Veydrift whitepaper"
+            >
+              <FileText className="h-3.5 w-3.5" size={14} strokeWidth={2} />
+              <span className="sr-only lg:not-sr-only">Whitepaper</span>
+            </a>
+            <SoundToggle className="hidden h-7 w-7 shrink-0 items-center justify-center rounded border border-white/15 bg-white/[0.06] text-slate-300 transition hover:bg-white/10 sm:inline-flex" />
+            {isWalletConnected && account && <span className="inline-flex h-6 max-w-[7.25rem] items-center truncate font-mono text-xs leading-none text-slate-400">{shortAddress(account)}</span>}
           </div>
-          {queue && (
-            <span className="inline-flex h-6 max-w-40 items-center truncate rounded bg-white/10 px-2 text-xs leading-none text-slate-300">
-              {queue.label}
-            </span>
-          )}
-          {researchQueue && (
-            <span className="inline-flex h-6 max-w-40 items-center truncate rounded bg-cyan-300/10 px-2 text-xs leading-none text-cyan-200">
-              {researchQueue.label}
-            </span>
-          )}
-        </div>
-
-        <div className="hidden min-w-0 max-w-full items-center gap-2 sm:flex sm:justify-end sm:gap-3">
-          <a
-            aria-label="Telegram support"
-            className="hidden h-7 w-7 shrink-0 items-center justify-center rounded border border-signal/35 bg-signal/10 text-[11px] font-semibold leading-none text-signal transition hover:bg-signal/20 sm:inline-flex lg:w-auto lg:gap-1.5 lg:px-2"
-            href={TELEGRAM_SUPPORT_URL}
-            rel="noopener noreferrer"
-            target="_blank"
-            title="Telegram support"
-          >
-            <TelegramIcon className="h-3.5 w-3.5" />
-            <span className="sr-only lg:not-sr-only">Telegram</span>
-          </a>
-          <a
-            aria-label="Veydrift documentation"
-            className="hidden h-7 w-7 shrink-0 items-center justify-center rounded border border-cyan-300/35 bg-cyan-300/10 text-cyan-100 transition hover:bg-cyan-300/20 sm:inline-flex"
-            href="/docs"
-            title="Veydrift documentation"
-          >
-            <CircleHelp className="h-3.5 w-3.5" size={14} strokeWidth={2} />
-          </a>
-          <a
-            aria-label="Veydrift whitepaper"
-            className="hidden h-7 w-7 shrink-0 items-center justify-center rounded border border-amber-200/35 bg-amber-200/10 text-[11px] font-semibold leading-none text-amber-100 transition hover:bg-amber-200/20 sm:inline-flex lg:w-auto lg:gap-1.5 lg:px-2"
-            href={WHITEPAPER_URL}
-            rel="noopener noreferrer"
-            target="_blank"
-            title="Veydrift whitepaper"
-          >
-            <FileText className="h-3.5 w-3.5" size={14} strokeWidth={2} />
-            <span className="sr-only lg:not-sr-only">Whitepaper</span>
-          </a>
-          <SoundToggle className="hidden h-7 w-7 shrink-0 items-center justify-center rounded border border-white/15 bg-white/[0.06] text-slate-300 transition hover:bg-white/10 sm:inline-flex" />
-          {isWalletConnected && account && (
-            <span className="inline-flex h-6 max-w-[7.25rem] items-center truncate font-mono text-xs leading-none text-slate-400">
-              {shortAddress(account)}
-            </span>
-          )}
-        </div>
-
         </div>
       </div>
     </div>
   );
 }
 
-function ResourcePip({
-  abbr,
-  label,
-  value,
-  rate,
-  cap,
-  color,
-}: {
-  abbr: string;
-  label: string;
-  value: number;
-  rate?: number | undefined;
-  cap?: number | undefined;
-  color: string;
-}) {
+function ResourcePip({ abbr, label, value, rate, cap, color }: { abbr: string; label: string; value: number; rate?: number | undefined; cap?: number | undefined; color: string }) {
   const pct = cap && cap > 0 ? Math.min(100, Math.round((value / cap) * 100)) : 0;
   return (
     <details
@@ -269,9 +228,7 @@ function ResourcePip({
             <span className="hidden sm:inline">{format(value)}</span>
           </span>
           {rate !== undefined && <span className="hidden text-[10px] leading-none text-slate-500 sm:inline">+{format(rate)}/h</span>}
-          {pct >= 90 && (
-            <span className="resource-cap-warning hidden text-[10px] leading-none text-amber-400 sm:inline">{pct}%</span>
-          )}
+          {pct >= 90 && <span className="resource-cap-warning hidden text-[10px] leading-none text-amber-400 sm:inline">{pct}%</span>}
         </span>
       </summary>
       <div className="fixed left-2 right-2 top-12 z-50 whitespace-normal rounded border border-cyan-300/25 bg-[#111827] p-3 text-left text-xs leading-5 text-slate-300 shadow-2xl shadow-black/50 sm:absolute sm:left-auto sm:right-0 sm:top-full sm:mt-2 sm:w-56">
@@ -289,7 +246,8 @@ function ResourcePip({
             <>
               <dt className="text-slate-500">Capacity</dt>
               <dd className="text-right font-semibold text-slate-100">
-                {format(cap)}{pct > 0 ? ` (${pct}%)` : ""}
+                {format(cap)}
+                {pct > 0 ? ` (${pct}%)` : ""}
               </dd>
             </>
           )}
@@ -326,9 +284,9 @@ function EnergyPip({
   return (
     <div
       className="flex h-10 min-w-0 flex-[1.5] items-center justify-center rounded border border-white/10 bg-white/[0.03] px-1 whitespace-nowrap sm:h-6 sm:flex-none sm:justify-start sm:rounded-none sm:border-0 sm:bg-transparent sm:px-0"
-      title={showShortageFactor
-        ? `${format(produced)} produced / ${format(required)} required; production reduced to ${productionPercent}%`
-        : `${format(produced)} produced / ${format(required)} required`}
+      title={
+        showShortageFactor ? `${format(produced)} produced / ${format(required)} required; production reduced to ${productionPercent}%` : `${format(produced)} produced / ${format(required)} required`
+      }
     >
       <span className="inline-flex min-w-0 items-center gap-0.5 sm:gap-1.5">
         <span className={`text-[11px] font-semibold leading-none sm:text-xs ${tone}`}>
@@ -339,7 +297,11 @@ function EnergyPip({
           <span className="sm:hidden">{formatCompact(current)}</span>
           <span className="hidden sm:inline">{format(current)}</span>
         </span>
-        {required > 0 && <span className="hidden text-[10px] leading-none text-slate-500 sm:inline">{format(produced)}/{format(required)}</span>}
+        {required > 0 && (
+          <span className="hidden text-[10px] leading-none text-slate-500 sm:inline">
+            {format(produced)}/{format(required)}
+          </span>
+        )}
         {showShortageFactor && (
           <span className="text-[9px] font-semibold leading-none text-red-200 sm:text-[10px]">
             <span className="sm:hidden">{productionPercent}%</span>
@@ -357,9 +319,7 @@ function EnergyPip({
           <div className="fixed left-2 right-2 top-12 z-50 whitespace-normal rounded border border-cyan-300/25 bg-[#111827] p-3 text-left text-xs leading-5 text-slate-300 shadow-2xl shadow-black/50 sm:absolute sm:left-auto sm:right-0 sm:top-full sm:mt-2 sm:w-72">
             <div className="font-semibold text-cyan-100">Resources</div>
             <div className="mt-1 font-mono text-[11px] leading-4 text-cyan-200">{context}</div>
-            <p className="mt-1">
-              Mines produce resources. Energy powers mines, and crawlers can boost mine output.
-            </p>
+            <p className="mt-1">Mines produce resources. Energy powers mines, and crawlers can boost mine output.</p>
             <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] leading-4">
               <dt className="text-slate-500">Metal production</dt>
               <dd className="text-right font-semibold text-slate-100">{formatRate(rates.metal)}</dd>
@@ -384,7 +344,9 @@ function EnergyPip({
                 <dt className="text-slate-500">Solar Plant</dt>
                 <dd className="text-right font-semibold text-slate-100">{format(sources.solarPlant)}</dd>
                 <dt className="text-slate-500">Fusion Generator</dt>
-                <dd className="text-right font-semibold text-slate-100">{format(sources.fusionReactor)} from {format(sources.fusionReactorDeuteriumConsumed)} DEUT/h</dd>
+                <dd className="text-right font-semibold text-slate-100">
+                  {format(sources.fusionReactor)} from {format(sources.fusionReactorDeuteriumConsumed)} DEUT/h
+                </dd>
                 <dt className="text-slate-500">Solar Satellites</dt>
                 <dd className="text-right font-semibold text-slate-100">
                   {format(sources.solarSatellites)} from {format(sources.solarSatelliteCount)} satellites ({format(sources.solarSatelliteEnergy)} E/Sat)
@@ -393,9 +355,7 @@ function EnergyPip({
             )}
             <CrawlerProductionDetails crawlerProduction={crawlerProduction} />
             <p className={`mt-2 text-[11px] leading-4 ${showShortageFactor ? "text-red-200" : "text-slate-400"}`}>
-              {showShortageFactor
-                ? `Insufficient energy reduces mine output to ${productionPercent}% until you add more energy production or reduce consumption.`
-                : "Mine output is fully powered."}
+              {showShortageFactor ? `Insufficient energy reduces mine output to ${productionPercent}% until you add more energy production or reduce consumption.` : "Mine output is fully powered."}
             </p>
           </div>
         </details>
@@ -404,11 +364,7 @@ function EnergyPip({
   );
 }
 
-function CrawlerProductionDetails({
-  crawlerProduction,
-}: {
-  crawlerProduction?: CrawlerProductionInfo | null | undefined;
-}) {
+function CrawlerProductionDetails({ crawlerProduction }: { crawlerProduction?: CrawlerProductionInfo | null | undefined }) {
   if (!crawlerProduction) {
     return (
       <>
@@ -424,9 +380,7 @@ function CrawlerProductionDetails({
           <dt className="text-slate-500">Deuterium impact</dt>
           <dd className="text-right font-semibold text-slate-100">Syncing</dd>
         </dl>
-        <p className="mt-2 text-[11px] leading-4 text-slate-400">
-          Crawler production details are syncing from the backend production model.
-        </p>
+        <p className="mt-2 text-[11px] leading-4 text-slate-400">Crawler production details are syncing from the backend production model.</p>
       </>
     );
   }
@@ -441,9 +395,7 @@ function CrawlerProductionDetails({
           {format(crawlerProduction.effective)} / {format(crawlerProduction.total)} effective
         </dd>
         <dt className="text-slate-500">Effective cap</dt>
-        <dd className={crawlerProduction.capped ? "text-right font-semibold text-amber-200" : "text-right font-semibold text-slate-100"}>
-          {format(crawlerProduction.maxEffective)}
-        </dd>
+        <dd className={crawlerProduction.capped ? "text-right font-semibold text-amber-200" : "text-right font-semibold text-slate-100"}>{format(crawlerProduction.maxEffective)}</dd>
         <dt className="text-slate-500">Metal impact</dt>
         <dd className="text-right font-semibold text-slate-100">{formatCrawlerImpact(crawlerProduction.productionIncreasePerHour.metal)}</dd>
         <dt className="text-slate-500">Crystal impact</dt>
@@ -455,8 +407,8 @@ function CrawlerProductionDetails({
         {crawlerProduction.total <= 0
           ? "No crawlers are boosting this planet yet."
           : crawlerProduction.capped
-          ? "Extra crawlers above the effective cap are idle until mine levels increase."
-          : "Only effective crawlers contribute to mine production."}
+            ? "Extra crawlers above the effective cap are idle until mine levels increase."
+            : "Only effective crawlers contribute to mine production."}
       </p>
     </>
   );
