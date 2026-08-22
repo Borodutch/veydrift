@@ -4446,6 +4446,94 @@ export function PlayableMvpApp({
     return () => abortController.abort();
   }, [apiBaseUrl, missionUniverseSystemKeys.length, refreshMissionUniverseSystems]);
 
+  const applyInspectRoute = useCallback((
+    route: InspectRoute,
+    options?: { planetBackRoute?: PlanetDetailBackRoute | null },
+  ) => {
+    setPlanetBackRoute(options?.planetBackRoute ?? null);
+    // A route is the canonical owner of the visible screen. Mission composers
+    // and cooperative-action dialogs are intentionally transient and are not
+    // encoded in the URL, so every route transition must invalidate them.
+    // Keeping this cleanup here prevents a stale composer from rendering over
+    // `/raid-finder` after popstate/hashchange or a cached SPA transition.
+    setPendingGalaxyMission(null);
+    setPendingAttackProtection(null);
+    setPendingJoinAttack(null);
+    setPendingAcsDefend(null);
+    if (route.kind === "player") {
+      setInspectedPlayerWallet(route.wallet);
+      setInspectedAllianceId(null);
+      setMissionDetailId(null);
+      setMissionReportId(null);
+      setSelectedCoords(undefined);
+      setPage("player-inspect");
+      return;
+    }
+    if (route.kind === "alliance") {
+      setInspectedAllianceId(route.allianceId);
+      setSelectedAllianceId(route.allianceId);
+      setInspectedPlayerWallet(null);
+      setMissionDetailId(null);
+      setMissionReportId(null);
+      setSelectedCoords(undefined);
+      setPage("alliance-inspect");
+      return;
+    }
+    if (route.kind === "mission") {
+      setMissionDetailId(route.missionId);
+      setInspectedPlayerWallet(null);
+      setInspectedAllianceId(null);
+      setMissionReportId(null);
+      setSelectedCoords(undefined);
+      setPage("mission-control");
+      return;
+    }
+    if (route.kind === "mission-report") {
+      setInspectedPlayerWallet(null);
+      setInspectedAllianceId(null);
+      setMissionDetailId(null);
+      setMissionReportId(route.missionId);
+      setSelectedCoords(undefined);
+      setPage("mission-control");
+      return;
+    }
+    if (route.kind === "planet") {
+      setInspectedPlayerWallet(null);
+      setInspectedAllianceId(null);
+      setMissionDetailId(null);
+      setMissionReportId(null);
+      setGalaxyNav({ galaxy: route.coords.galaxy, system: route.coords.system });
+      setSelectedCoords(route.coords);
+      setPage("planet");
+      return;
+    }
+    if (route.kind === "moon") {
+      setInspectedPlayerWallet(null);
+      setInspectedAllianceId(null);
+      setMissionDetailId(null);
+      setMissionReportId(null);
+      setGalaxyNav({ galaxy: route.coords.galaxy, system: route.coords.system });
+      setSelectedCoords(route.coords);
+      setPage("moon-inspect");
+      return;
+    }
+    setInspectedPlayerWallet(null);
+    setInspectedAllianceId(null);
+    setMissionDetailId(null);
+    setMissionReportId(null);
+    setPage(route.page);
+    if (route.page !== "moon") setSelectedBodyKind("planet");
+    if (route.page !== "planet") setSelectedCoords(undefined);
+  }, []);
+
+  const navigateToInspectRoute = useCallback((
+    route: InspectRoute,
+    options?: { planetBackRoute?: PlanetDetailBackRoute | null },
+  ) => {
+    applyInspectRoute(route, options);
+    writeInspectRoute(route);
+  }, [applyInspectRoute]);
+
   useEffect(() => {
     if (typeof window === "undefined") return;
     const handleRouteChange = () => {
@@ -4460,74 +4548,7 @@ export function PlayableMvpApp({
       window.removeEventListener("hashchange", handleRouteChange);
       window.removeEventListener("popstate", handleRouteChange);
     };
-
-    function applyInspectRoute(route: InspectRoute) {
-      setPlanetBackRoute(null);
-      if (route.kind === "player") {
-        setInspectedPlayerWallet(route.wallet);
-        setInspectedAllianceId(null);
-        setMissionDetailId(null);
-        setMissionReportId(null);
-        setSelectedCoords(undefined);
-        setPage("player-inspect");
-        return;
-      }
-      if (route.kind === "alliance") {
-        setInspectedAllianceId(route.allianceId);
-        setSelectedAllianceId(route.allianceId);
-        setInspectedPlayerWallet(null);
-        setMissionDetailId(null);
-        setMissionReportId(null);
-        setSelectedCoords(undefined);
-        setPage("alliance-inspect");
-        return;
-      }
-      if (route.kind === "mission") {
-        setMissionDetailId(route.missionId);
-        setInspectedPlayerWallet(null);
-        setInspectedAllianceId(null);
-        setMissionReportId(null);
-        setSelectedCoords(undefined);
-        setPage("mission-control");
-        return;
-      }
-      if (route.kind === "mission-report") {
-        setInspectedPlayerWallet(null);
-        setInspectedAllianceId(null);
-        setMissionDetailId(null);
-        setMissionReportId(route.missionId);
-        setSelectedCoords(undefined);
-        setPage("mission-control");
-        return;
-      }
-      if (route.kind === "planet") {
-        setInspectedPlayerWallet(null);
-        setInspectedAllianceId(null);
-        setMissionDetailId(null);
-        setMissionReportId(null);
-        setGalaxyNav({ galaxy: route.coords.galaxy, system: route.coords.system });
-        setSelectedCoords(route.coords);
-        setPage("planet");
-        return;
-      }
-      if (route.kind === "moon") {
-        setInspectedPlayerWallet(null);
-        setInspectedAllianceId(null);
-        setMissionDetailId(null);
-        setMissionReportId(null);
-        setGalaxyNav({ galaxy: route.coords.galaxy, system: route.coords.system });
-        setSelectedCoords(route.coords);
-        setPage("moon-inspect");
-        return;
-      }
-      setInspectedPlayerWallet(null);
-      setInspectedAllianceId(null);
-      setMissionDetailId(null);
-      setMissionReportId(null);
-      setPage(route.page);
-      if (route.page !== "planet") setSelectedCoords(undefined);
-    }
-  }, []);
+  }, [applyInspectRoute]);
 
   useEffect(() => {
     setPlayerProfile(undefined);
@@ -7825,17 +7846,9 @@ export function PlayableMvpApp({
     setSelectedPlanetId(planetId);
     setSelectedBodyKind(nextBodyKind);
     if (nextInspectRoute) {
-      setPlanetBackRoute(null);
-      setInspectedPlayerWallet(null);
-      setInspectedAllianceId(null);
-      setMissionDetailId(null);
-      setMissionReportId(null);
-      setGalaxyNav({ galaxy: nextInspectRoute.coords.galaxy, system: nextInspectRoute.coords.system });
-      setSelectedCoords(nextInspectRoute.coords);
-      setPage(nextInspectRoute.kind === "moon" ? "moon-inspect" : "planet");
-      writeInspectRoute(nextInspectRoute);
+      navigateToInspectRoute(nextInspectRoute);
     } else if (nextBodyKind === "moon") {
-      setPage("moon");
+      navigateToInspectRoute({ kind: "page", page: "moon" });
     }
     applyOnChainSettlementSnapshot(walletSettlementForManagedPlanet(onChainSettlement, nextPlanet));
     const nextQueues = walletQueuesForManagedPlanet(onChainQueues, nextPlanet);
@@ -7879,6 +7892,7 @@ export function PlayableMvpApp({
     applyOnChainSettlementSnapshot,
     onChainQueues,
     onChainSettlement,
+    navigateToInspectRoute,
     page,
     playerProfile?.displayName,
     walletPlanets,
@@ -8947,47 +8961,16 @@ export function PlayableMvpApp({
   const handleNavigate = useCallback((target: Page) => {
     playSfx("tab");
     haptic("tick");
-    setPlanetBackRoute(null);
-    setPendingGalaxyMission(null);
-    setPendingJoinAttack(null);
-    setPendingAcsDefend(null);
-    setInspectedPlayerWallet(null);
-    setInspectedAllianceId(null);
-    setMissionDetailId(null);
-    setMissionReportId(null);
-    if (target !== "moon") {
-      setSelectedBodyKind("planet");
-    }
-    setPage(target);
-    setSelectedCoords(undefined);
-    writeInspectRoute({ kind: "page", page: target });
-  }, []);
+    navigateToInspectRoute({ kind: "page", page: target });
+  }, [navigateToInspectRoute]);
 
   const handleOpenMissionReport = useCallback((missionId: string) => {
-    setPlanetBackRoute(null);
-    setPendingGalaxyMission(null);
-    setPendingJoinAttack(null);
-    setPendingAcsDefend(null);
-    setInspectedPlayerWallet(null);
-    setInspectedAllianceId(null);
-    setMissionDetailId(missionId);
-    setMissionReportId(null);
-    setSelectedCoords(undefined);
-    setPage("mission-control");
-    writeInspectRoute({ kind: "mission", missionId });
-  }, []);
+    navigateToInspectRoute({ kind: "mission", missionId });
+  }, [navigateToInspectRoute]);
 
   const handleOpenMissionReportList = useCallback(() => {
-    setPlanetBackRoute(null);
-    setPendingGalaxyMission(null);
-    setPendingJoinAttack(null);
-    setPendingAcsDefend(null);
-    setMissionDetailId(null);
-    setMissionReportId(null);
-    setPage("mission-control");
-    setSelectedCoords(undefined);
-    writeInspectRoute({ kind: "page", page: "mission-control" });
-  }, []);
+    navigateToInspectRoute({ kind: "page", page: "mission-control" });
+  }, [navigateToInspectRoute]);
 
   const missionReportUrlForMission = useCallback((missionId: string) => {
     const path = buildInspectPath({ kind: "mission", missionId });
@@ -8996,46 +8979,26 @@ export function PlayableMvpApp({
   }, []);
 
   const handleSelectPlanet = useCallback((coords: Coordinates) => {
-    setPlanetBackRoute(planetDetailBackRouteForCurrentScreen({
+    const planetBackRoute = planetDetailBackRouteForCurrentScreen({
       inspectedAllianceId,
       inspectedPlayerWallet,
       missionDetailId,
       missionReportId,
       page,
-    }));
-    setPendingGalaxyMission(null);
-    setPendingJoinAttack(null);
-    setPendingAcsDefend(null);
-    setGalaxyNav({ galaxy: coords.galaxy, system: coords.system });
-    setSelectedCoords(coords);
-    setInspectedPlayerWallet(null);
-    setInspectedAllianceId(null);
-    setMissionDetailId(null);
-    setMissionReportId(null);
-    setPage("planet");
-    writeInspectRoute({ kind: "planet", coords });
-  }, [inspectedAllianceId, inspectedPlayerWallet, missionDetailId, missionReportId, page]);
+    });
+    navigateToInspectRoute({ kind: "planet", coords }, { planetBackRoute });
+  }, [inspectedAllianceId, inspectedPlayerWallet, missionDetailId, missionReportId, navigateToInspectRoute, page]);
 
   const handleSelectMoon = useCallback((coords: Coordinates) => {
-    setPlanetBackRoute(planetDetailBackRouteForCurrentScreen({
+    const planetBackRoute = planetDetailBackRouteForCurrentScreen({
       inspectedAllianceId,
       inspectedPlayerWallet,
       missionDetailId,
       missionReportId,
       page,
-    }));
-    setPendingGalaxyMission(null);
-    setPendingJoinAttack(null);
-    setPendingAcsDefend(null);
-    setGalaxyNav({ galaxy: coords.galaxy, system: coords.system });
-    setSelectedCoords(coords);
-    setInspectedPlayerWallet(null);
-    setInspectedAllianceId(null);
-    setMissionDetailId(null);
-    setMissionReportId(null);
-    setPage("moon-inspect");
-    writeInspectRoute({ kind: "moon", coords });
-  }, [inspectedAllianceId, inspectedPlayerWallet, missionDetailId, missionReportId, page]);
+    });
+    navigateToInspectRoute({ kind: "moon", coords }, { planetBackRoute });
+  }, [inspectedAllianceId, inspectedPlayerWallet, missionDetailId, missionReportId, navigateToInspectRoute, page]);
 
   const moonOverviewActions = useMemo(() => {
     if (!selectedManagedPlanet?.moon?.exists) return [];
@@ -9116,56 +9079,37 @@ export function PlayableMvpApp({
       handleSelectPlanet(homeCoords);
       return;
     }
-    setPage("galaxy");
-  }, [handleSelectPlanet, homeCoords]);
+    handleNavigate("galaxy");
+  }, [handleNavigate, handleSelectPlanet, homeCoords]);
 
   const handleSelectAlliance = useCallback((allianceId: string) => {
-    setPendingGalaxyMission(null);
-    setPendingJoinAttack(null);
-    setPendingAcsDefend(null);
-    setSelectedAllianceId(allianceId);
-    setInspectedAllianceId(allianceId);
-    setInspectedPlayerWallet(null);
-    setMissionDetailId(null);
-    setMissionReportId(null);
-    setSelectedCoords(undefined);
-    setPage("alliance-inspect");
-    writeInspectRoute({ kind: "alliance", allianceId });
-  }, []);
+    navigateToInspectRoute({ kind: "alliance", allianceId });
+  }, [navigateToInspectRoute]);
 
   const handleSelectPlayer = useCallback((wallet: string) => {
-    setPendingGalaxyMission(null);
-    setPendingJoinAttack(null);
-    setPendingAcsDefend(null);
-    setInspectedPlayerWallet(wallet);
-    setInspectedAllianceId(null);
-    setMissionDetailId(null);
-    setMissionReportId(null);
-    setSelectedCoords(undefined);
-    setPage("player-inspect");
-    writeInspectRoute({ kind: "player", wallet });
-  }, []);
+    navigateToInspectRoute({ kind: "player", wallet });
+  }, [navigateToInspectRoute]);
 
   const handleOpenRequirement = useCallback((target: RequirementTarget) => {
     setSelectedCoords(undefined);
 
     if (target.kind === "building") {
       setSelectedBuildingKey(target.key);
-      setPage("infrastructure");
+      handleNavigate("infrastructure");
       return;
     }
 
     if (target.kind === "research") {
       setSelectedResearchKey(target.key);
-      setPage("research");
+      handleNavigate("research");
       return;
     }
 
     if (target.kind === "ship") {
       setSelectedShipKey(target.key);
-      setPage("shipyard");
+      handleNavigate("shipyard");
     }
-  }, []);
+  }, [handleNavigate]);
 
   const topBar = (
     <TopBar
