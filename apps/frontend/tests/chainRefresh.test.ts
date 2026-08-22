@@ -23,10 +23,12 @@ import type { ChainInfrastructureState, FleetMissionVisibilityResponse, WalletSe
 describe("playable chain refresh", () => {
   test("uses backend chain events instead of the old fast unconditional polling loops", async () => {
     const source = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.url)).text();
+    const storeSource = await Bun.file(new URL("../src/backendDataStore.ts", import.meta.url)).text();
 
-    expect(source).toContain("new window.EventSource");
-    expect(source).toContain("/chain/events");
-    expect(source).toContain("snapshot.subscribedToHeads && snapshot.subscribedToLogs");
+    expect(source).toContain("backendData.connectChainEvents(account");
+    expect(storeSource).toContain("new window.EventSource");
+    expect(storeSource).toContain("/chain/events");
+    expect(storeSource).toContain("payload.connected && payload.subscribedToHeads && payload.subscribedToLogs");
     expect(source).toContain("120_000");
     expect(source).not.toMatch(/window\.setInterval\([\s\S]{0,600},\s*30_000\)/);
     expect(source).not.toMatch(/window\.setInterval\([\s\S]{0,600},\s*2_500\)/);
@@ -34,10 +36,12 @@ describe("playable chain refresh", () => {
 
   test("polls the canonical wallet resource snapshot for the hydrated top bar", async () => {
     const source = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.url)).text();
+    const storeSource = await Bun.file(new URL("../src/backendDataStore.ts", import.meta.url)).text();
 
     expect(source).toContain("TOP_BAR_RESOURCE_POLL_INTERVAL_MS = 10_000");
-    expect(source).toContain("refreshTopBarResources");
-    expect(source).toContain("document.visibilityState === \"hidden\"");
+    expect(source).toContain('"top-bar-selected-planet"');
+    expect(source).toContain("backendData!.startPolling(");
+    expect(storeSource).toContain('document.visibilityState === "hidden"');
     expect(source).toContain("refreshOnChainState()");
     expect(source).toContain("refreshInfrastructureState()");
     expect(source).toContain("onChainRefreshGate");
@@ -154,21 +158,19 @@ describe("playable chain refresh", () => {
   });
 
   test("promotes every indexed planet or moon resource transaction from the chain event stream", async () => {
-    const source = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.url)).text();
+    const source = await Bun.file(new URL("../src/backendDataStore.ts", import.meta.url)).text();
 
-    expect(source).toContain("chainEventResourceChanges(event)");
-    expect(source).toContain("refreshConfirmedResourceChangeFromEvent(change)");
-    expect(source).toContain("convergeBackendIndexedResourceState(");
-    expect(source).toContain("applyBackendConfirmedMoonResourceState(state as unknown as ChainMoonState)");
-    expect(source).toContain("resourceChange: {\n        bodyKind: originIsMoon ?");
-    expect(source).toContain('), { bodyKind: "planet", planetId: homePlanetId });');
-    expect(source).toContain('), { bodyKind: "moon", planetId: moonState.homePlanetId });');
+    expect(source).toContain("connectChainEvents(wallet");
+    expect(source).toContain("payload.resourceChanges");
+    expect(source).toContain("`planet:${change.planetId}`");
+    expect(source).toContain("promoteResourceState(");
+    expect(source).toContain('bodyKind: "moon"');
   });
 
   test("uses the wallet-scoped canonical resource store instead of component-local balance mutation", async () => {
     const source = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.url)).text();
 
-    expect(source).toContain("canonicalPlanetResourcesRef");
+    expect(source).toContain("canonicalPlanetResourcesSnapshot");
     expect(source).toContain("walletPlanetsWithCanonicalPlanetResources");
     expect(source).toContain("walletSettlementWithCanonicalPlanetResources");
     expect(source).toContain("resourceStateWithCanonicalPlanetResources");
@@ -206,7 +208,7 @@ describe("playable chain refresh", () => {
     expect(source).toContain("if (!shouldRefreshShipyardStateForPage(page)) return;");
   });
 
-  test("keeps Mission Control planet switches cached until a launch composer opens", async () => {
+  test("refreshes a Mission Control origin after a planet switch without clearing confirmed inventory", async () => {
     const source = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.url)).text();
 
     expect(shouldClearCachedShipyardStateForPageRefresh("shipyard")).toBe(false);
@@ -214,20 +216,20 @@ describe("playable chain refresh", () => {
     expect(shouldClearCachedShipyardStateForPageRefresh("mission-control")).toBe(false);
     expect(shouldClearCachedShipyardStateForPageRefresh("rankings")).toBe(false);
     expect(shouldClearCachedShipyardStateForPageRefresh("raid-target-finder")).toBe(false);
-    expect(shouldEagerlyRefreshPlanetSwitchForPage("mission-control")).toBe(false);
+    expect(shouldEagerlyRefreshPlanetSwitchForPage("mission-control")).toBe(true);
     expect(shouldEagerlyRefreshPlanetSwitchForPage("overview")).toBe(true);
-    expect(source).toContain("refreshShipyardState({ clearCachedState: true });");
+    expect(source).toContain("refreshShipyardState();");
     expect(source).toContain("Mission Control can switch origins entirely from its cached wallet roster.");
   });
 
-  test("skips only hydrated Mission Control planet switches, never initial or connection reads", () => {
+  test("refreshes every planet switch, including Mission Control origins", () => {
     const connected = { account: "0x123", activePlanetId: "7", apiBaseUrl: "https://game.test" };
 
     expect(shouldRefreshPlanetStateForIdentityChange(
       "mission-control",
       connected,
       { ...connected, activePlanetId: "8" },
-    )).toBe(false);
+    )).toBe(true);
     expect(shouldRefreshPlanetStateForIdentityChange(
       "overview",
       connected,

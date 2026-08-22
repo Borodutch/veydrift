@@ -135,13 +135,13 @@ describe("VEY-KANEO-433 Mission Control auto-poll wiring", () => {
   test("PlayableMvpApp installs the Mission Control auto-poll on the top-bar cadence with a tightened ETA refresh", async () => {
     const source = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.url)).text();
 
-    // Periodic poll while the page is open, on the same cadence as the top bar, hidden-tab guarded.
+    // Periodic poll while the page is open is owned by the shared store, not a
+    // page-local timer/callback chain.
     expect(source).toContain("shouldAutoPollMissionControlForPage(page)");
-    expect(source).toContain("window.setInterval(pollMissionControl, TOP_BAR_RESOURCE_POLL_INTERVAL_MS)");
-    // The periodic poll refreshes both lists and open detail through the shared priority scheduler.
-    expect(source).toContain('coordinateRefresh("mission-control", "mission-control"');
-    expect(source).toContain("Promise.allSettled([refreshMissionControl(), refreshOpenMissionDetailSilently()])");
-    expect(source).not.toContain("let refreshInFlight = false;\n    const pollMissionControl");
+    expect(source).toContain('backendData!.startPolling(\n      "mission-control"');
+    expect(source).toContain('"kind:fleet-visibility"');
+    expect(source).toContain('"kind:global-mission-archive"');
+    expect(source).not.toContain("const pollMissionControl = () =>");
     // VEY-KANEO-783: the shared Mission Control refresher also reloads canonical alliance
     // membership, so dissolve/leave/removal hides Alliance without reconnecting or reloading.
     const refresher = source.slice(
@@ -171,9 +171,8 @@ describe("VEY-KANEO-433 Mission Control auto-poll wiring", () => {
     expect(silent).not.toContain("setMissionDetail(detail)");
     expect(silent).toContain("backendData!.mission(missionDetailId");
     expect(source).toContain("const missionDetailSnapshot = useBackendDataSnapshot<MissionDetailResponse>");
-    // The ETA-tightened transaction-priority refresh pulls the open report too.
-    expect(source).toContain('coordinateRefresh("mission-control-resolution", "transaction"');
-    expect(source).toContain("Promise.allSettled([refreshMissionControl(), refreshOpenMissionDetailSilently()])");
+    // The ETA-tightened transaction-priority refresh is also store-owned.
+    expect(source).toContain('backendData!.scheduleRefresh(\n      "mission-control-resolution"');
   });
 });
 
@@ -189,7 +188,9 @@ describe("VEY-KANEO-653 pending mission report polling", () => {
 
   test("PlayableMvpApp installs a 3s pending-report poll that stops after a report appears", async () => {
     const source = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.url)).text();
-    expect(source).toContain("window.setInterval(pollPendingReport, MISSION_REPORT_PENDING_POLL_INTERVAL_MS)");
+    expect(source).toContain("`pending-report:${missionDetailId}`");
+    expect(source).toContain("MISSION_REPORT_PENDING_POLL_INTERVAL_MS");
+    expect(source).toContain('"kind:mission"');
     expect(source).toContain("!shouldPollPendingMissionReport(missionDetail)");
     expect(source).toContain('backendData!.mission(missionDetailId, { requestScope: "mission-detail-navigation" })');
   });

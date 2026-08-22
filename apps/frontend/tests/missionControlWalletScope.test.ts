@@ -18,18 +18,18 @@ describe("VEY-KANEO-836 Mission Control wallet scope", () => {
     expect(missionState).not.toContain("setPlanetSection");
   });
 
-  test("does not model commander-level mission feeds as planet-section data", async () => {
-    const storeSource = await Bun.file(new URL("../src/planetSectionStore.ts", import.meta.url)).text();
+  test("stores commander-level mission feeds as wallet-wide canonical resources", async () => {
+    const storeSource = await Bun.file(new URL("../src/backendDataStore.ts", import.meta.url)).text();
 
     for (const walletWideKey of [
-      "fleetVisibilityState",
-      "missionArchiveState",
-      "allActiveMissionsState",
-      "globalMissionArchiveState",
-      "missionArchetypesByCoordinate",
+      "fleetVisibility(",
+      "fleetArchive(",
+      "globalActiveMissions(",
+      "globalMissionArchive(",
     ]) {
-      expect(storeSource).not.toContain(walletWideKey);
+      expect(storeSource).toContain(walletWideKey);
     }
+    expect(storeSource).toContain('`wallet:${wallet.toLowerCase()}`');
   });
 
   test("refreshes wallet-wide results directly while preserving only explicit planet filters", async () => {

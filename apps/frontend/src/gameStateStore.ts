@@ -163,6 +163,18 @@ export class GameStateStore {
     };
   }
 
+  /**
+   * A resource may be retained in the cache after a screen unmounts, but only
+   * subscribed resources should be eagerly refreshed by the shared scheduler.
+   */
+  subscriberCount(key: string): number {
+    return this.listenersByKey.get(key)?.size ?? 0;
+  }
+
+  subscribedKeys(): readonly string[] {
+    return [...this.listenersByKey.keys()];
+  }
+
   snapshot<T>(key: string): GameStateEntry<T> | undefined {
     return this.entries.get(key) as GameStateEntry<T> | undefined;
   }
