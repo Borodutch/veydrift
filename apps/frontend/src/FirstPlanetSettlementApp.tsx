@@ -320,7 +320,7 @@ type PaidAllianceInviteValidationState =
   | { status: "error"; message: string };
 
 export const REFERRAL_SIGNATURE_REJECTION_MESSAGE = "Wallet signature rejected — no transaction was sent";
-const REFERRAL_INVITE_EXPIRY_REFRESH_MIN_DELAY_MS = 1_000;
+const REFERRAL_INVITE_TOP_UP_REFRESH_MIN_DELAY_MS = 1_000;
 
 export function referralRejectedRequestMessage(stage: "signature" | "claim-transaction"): string {
   return stage === "signature"
@@ -341,10 +341,10 @@ export function referralInviteRefreshDelay(
   now = Date.now(),
 ): number | undefined {
   const invite = dashboard?.invite ?? dashboard?.invites[0];
-  if (invite?.status !== "active" || !invite.expiresAt) return undefined;
-  const expiresAt = Date.parse(invite.expiresAt);
-  if (!Number.isFinite(expiresAt)) return undefined;
-  return Math.max(REFERRAL_INVITE_EXPIRY_REFRESH_MIN_DELAY_MS, expiresAt - now);
+  if (invite?.status !== "active" || invite.topUpAvailable || !invite.nextTopUpAt) return undefined;
+  const nextTopUpAt = Date.parse(invite.nextTopUpAt);
+  if (!Number.isFinite(nextTopUpAt)) return undefined;
+  return Math.max(REFERRAL_INVITE_TOP_UP_REFRESH_MIN_DELAY_MS, nextTopUpAt - now);
 }
 
 export function referralInviteActionAvailability(input: {
@@ -358,11 +358,15 @@ export function referralInviteActionAvailability(input: {
 } {
   const invite = input.dashboard?.invite ?? input.dashboard?.invites[0];
   const inviteActive = invite?.status === "active";
+  const topUpAvailable = Boolean(inviteActive && invite?.topUpAvailable);
+  const selectedCurrentCode = Boolean(
+    inviteActive && invite?.code.toLowerCase() === input.claimCode.trim().toLowerCase()
+  );
   return {
     canClaim: Boolean(
       input.dashboard?.configured
         && !input.busy
-        && !inviteActive
+        && (!inviteActive || (topUpAvailable && selectedCurrentCode))
         && /^[A-Za-z0-9_-]{1,24}$/.test(input.claimCode.trim())
         && input.selectedCodeClaimable
     ),
@@ -1797,9 +1801,9 @@ function ReferralProgramPanel({
     selectedCodeClaimable: Boolean(selectedCodeClaimable)
   });
   const actionLabel = claiming
-    ? "Activating invites"
+    ? "Updating invites"
     : inspected?.ownership === "owned_by_you" && inspected.renewable
-      ? "Top up 3 uses"
+      ? "Top up to 3 uses"
       : "Activate 3 uses";
   const rewardLabel = dashboard?.rewardPerUseWei
     ? `${formatEth(BigInt(dashboard.rewardPerUseWei))} ETH`
@@ -1916,7 +1920,7 @@ function ReferralProgramPanel({
         </div>
 
         <p className="referral-daily-note">
-          You get 3 invite uses every day. Your code stays reserved—come back daily to top it up.
+          Your invite code never expires. Once every 24 hours, top it up to 3 available uses.
         </p>
 
         {!inviteActive && state.status !== "loading" ? (
@@ -1927,7 +1931,7 @@ function ReferralProgramPanel({
                 <div>
                   <strong>Top up your invite code</strong>
                   <span>
-                    Add 3 uses to <b>{invite.code}</b> for today.
+                    Reset <b>{invite.code}</b> to 3 available uses.
                   </span>
                 </div>
               </div>
@@ -1993,7 +1997,14 @@ function ReferralProgramPanel({
               <a href={invite.link}>Open invite link</a>
               <div className="referral-invite-meta">
                 <span><strong>{invite.remainingRedemptions}/3</strong> uses left</span>
-                {invite.expiresAt ? <span>Ends {formatDateTime(invite.expiresAt)}</span> : null}
+                <span>Never expires</span>
+                <span>
+                  {invite.topUpAvailable
+                    ? "Top up available now"
+                    : invite.nextTopUpAt
+                      ? `Next top up ${formatDateTime(invite.nextTopUpAt)}`
+                      : "Top up timing unavailable"}
+                </span>
               </div>
             </div>
             <div className="referral-copy-actions">
@@ -2258,32 +2269,25 @@ function ReferralClaimInspectionMessage({ state }: { state: ReferralValidationSt
     return (
       <p className="referral-muted">
         Available
-        {resolution.remainingRedemptions === 0 && resolution.nextRedemptionAt
-          ? ` · invites reopen ${formatDateTime(resolution.nextRedemptionAt)}`
-          : ""}
+        {resolution.topUpAvailable ? " · top up available now" : ""}
       </p>
     );
   }
   if (resolution.ownership === "owned_by_you") {
-    if (resolution.renewable && !(resolution.remainingRedemptions === 0 && resolution.nextRedemptionAt)) {
+    if (resolution.renewable) {
       return null;
     }
     return (
       <p className="referral-muted">
-        {resolution.renewable
-          ? "Invites are not available yet"
+        {resolution.status === "active" || resolution.status === "exhausted"
+          ? `Next top up ${resolution.nextTopUpAt ? formatDateTime(resolution.nextTopUpAt) : "unavailable"}`
           : "Another invite code is active"}
-        {resolution.remainingRedemptions === 0 && resolution.nextRedemptionAt
-          ? ` · invites reopen ${formatDateTime(resolution.nextRedemptionAt)}`
-          : ""}
       </p>
     );
   }
   return (
     <p className="referral-error">
-      Owned by another wallet{resolution.status !== "inactive" && resolution.expiresAt
-        ? ` until ${formatDateTime(resolution.expiresAt)}`
-        : ""}
+      Permanently owned by another wallet
     </p>
   );
 }
@@ -2336,15 +2340,15 @@ export function referralValidationMessage(resolution: ReferralResolution): strin
   return resolution.status === "active"
     ? `Active · ${resolution.remainingRedemptions}/3 uses left.`
     : resolution.status === "inactive"
-      ? "Inactive · the code owner must renew it."
+      ? "Inactive · this wallet uses a different invite code."
       : resolution.status === "exhausted"
-        ? "No uses left · ask the code owner to renew it."
+        ? "No uses left · ask the code owner to top it up."
         : resolution.status === "self_invite"
           ? "This wallet can’t use its own invite code."
           : resolution.status === "already_redeemed"
             ? "This wallet already used an invite code."
             : resolution.status === "available"
-              ? "Not active · no referral benefit will be applied."
+              ? "Available to claim."
               : resolution.status === "unavailable"
                 ? "Invite pricing is unavailable. Try again later."
                 : "Invalid invite code · use 1–24 letters, numbers, underscores, or hyphens.";

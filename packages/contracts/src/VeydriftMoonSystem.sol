@@ -46,6 +46,7 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
     using SafeCast for uint256;
 
     uint16 internal constant MAX_LEVEL = 50;
+    bytes4 private constant GAME_PAUSED_SELECTOR = bytes4(keccak256("gamePaused()"));
     uint16 internal constant QUEUE_UNIVERSE_SPEED = 1;
     uint32 internal constant MIN_QUEUE_SECONDS = 1;
     bytes32 internal constant MOON_SEED_DOMAIN = keccak256("veydrift.moon.v1");
@@ -398,7 +399,10 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
         if (planetRef.owner != player) revert NotMoonOwner();
         if (_moons[planetId].exists) revert MoonAlreadyExists(planetId);
 
-        _moonGenerations[planetId] += 1;
+        // A uint64 generation cannot overflow under any feasible chain lifetime.
+        unchecked {
+            _moonGenerations[planetId] += 1;
+        }
         _moons[planetId] = Moon({
             exists: true,
             planetId: planetId,
@@ -504,7 +508,10 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
 
         chickenBurnMoonGranted[burnId] = true;
         uint8 currentCount = chickenBurnMoonGrantCountOf[player];
-        uint8 nextCount = currentCount == type(uint8).max ? currentCount : currentCount + 1;
+        uint8 nextCount;
+        unchecked {
+            nextCount = currentCount == type(uint8).max ? currentCount : currentCount + 1;
+        }
         chickenBurnMoonGrantCountOf[player] = nextCount;
 
         uint256 seed = uint256(
@@ -558,7 +565,11 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
         uint16 chanceBps = moonChanceBps(metalDebris, crystalDebris);
         if (chanceBps == 0) revert MoonChanceTooSmall(uint256(metalDebris) + crystalDebris);
 
-        outcomeId = nextMoonChanceId++;
+        outcomeId = nextMoonChanceId;
+        // A uint256 outcome counter cannot overflow under any feasible chain lifetime.
+        unchecked {
+            nextMoonChanceId = outcomeId + 1;
+        }
         bytes32 purposeHash = moonChancePurposeHash(
             outcomeId, battleId, targetPlanetId, metalDebris, crystalDebris, chanceBps
         );
@@ -618,7 +629,10 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
 
         uint16 moonDestructionBps = moonDestructionChanceBps(moonRef.diameterKm, deathstars);
         uint16 deathstarDestructionBps = moonDeathstarDestructionChanceBps(moonRef.diameterKm);
-        outcomeId = nextMoonDestructionId++;
+        outcomeId = nextMoonDestructionId;
+        unchecked {
+            nextMoonDestructionId = outcomeId + 1;
+        }
         bytes32 purposeHash = moonDestructionPurposeHash(
             outcomeId,
             battleId,
@@ -665,6 +679,7 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
     }
 
     function finalizeMoonChance(uint256 outcomeId) external returns (bool moonCreated) {
+        _requireGameActive();
         MoonChanceOutcome storage outcome = _moonChanceOutcomes[outcomeId];
         if (!outcome.active) revert UnknownMoonChanceOutcome(outcomeId);
         if (outcome.finalized) revert MoonChanceAlreadyFinalized(outcomeId);
@@ -703,6 +718,7 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
         external
         returns (bool moonDestroyed, bool deathstarsDestroyed)
     {
+        _requireGameActive();
         MoonDestructionOutcome storage outcome = _moonDestructionOutcomes[outcomeId];
         if (!outcome.active) revert UnknownMoonDestructionOutcome(outcomeId);
         if (outcome.finalized) revert MoonDestructionAlreadyFinalized(outcomeId);
@@ -750,7 +766,11 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
 
         uint64 readyAt =
             (uint256(_currentTimestamp()) + _moonBuildingDuration(planetId, cost)).toUint64();
-        uint16 targetLevel = currentLevel + 1;
+        uint16 targetLevel;
+        // currentLevel is checked against MAX_LEVEL above.
+        unchecked {
+            targetLevel = currentLevel + 1;
+        }
         moonBuildingConstructions[planetId] = MoonBuildingConstruction({
             active: true, building: building, targetLevel: targetLevel, readyAt: readyAt, cost: cost
         });
@@ -784,7 +804,9 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
         delete moonBuildingConstructions[planetId];
         _moonBuildingLevels[planetId][construction.building] = construction.targetLevel;
         if (construction.building == MoonBuilding.LunarBase) {
-            _moons[planetId].fields += 3;
+            unchecked {
+                _moons[planetId].fields += 3;
+            }
         }
         emit MoonBuildingCompleted(planetId, construction.building, construction.targetLevel);
     }
@@ -1323,7 +1345,9 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
     ) private returns (Moon memory createdMoon) {
         uint16 fields = _moonFields(randomWord);
         uint16 diameterKm = _moonDiameter(randomWord);
-        _moonGenerations[planetId] += 1;
+        unchecked {
+            _moonGenerations[planetId] += 1;
+        }
         createdMoon = Moon({
             exists: true,
             planetId: planetId,
@@ -1457,6 +1481,22 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
 
     function _currentTimestamp() private view returns (uint64) {
         return uint64(block.timestamp);
+    }
+
+    function _requireGameActive() private view {
+        address gameAddress = address(game);
+        bytes4 selector = GAME_PAUSED_SELECTOR;
+        bool paused;
+        bool ok;
+        assembly ("memory-safe") {
+            mstore(0, selector)
+            ok := staticcall(gas(), gameAddress, 0, 4, 0, 32)
+            if eq(returndatasize(), 32) {
+                returndatacopy(0, 0, 32)
+                paused := mload(0)
+            }
+        }
+        require(ok && !paused);
     }
 
     function _initializeMoonSystem(

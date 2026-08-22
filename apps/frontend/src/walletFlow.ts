@@ -148,13 +148,15 @@ export type ReferralInviteSummary = {
   codeHash: string;
   commitment: string;
   expired: boolean;
-  expiresAt: string;
+  expiresAt: string | null;
   link: string;
   nextRedemptionAt: string | null;
+  nextTopUpAt?: string;
   owner: string;
   redemptionCount: number;
   remainingRedemptions: number;
   renewable: boolean;
+  topUpAvailable?: boolean;
   status: "active" | "renewable" | "owned";
   txHash?: string | null;
 };
@@ -214,6 +216,8 @@ export type ReferralResolution = {
   commitment: string | null;
   expiresAt: string | null;
   nextRedemptionAt: string | null;
+  nextTopUpAt?: string | null;
+  topUpAvailable?: boolean;
   remainingRedemptions: number;
   startPriceWei: string | null;
   inviterRewardWei: string | null;
@@ -1699,8 +1703,11 @@ export const CONTRACT_REJECTED_NO_REASON_MESSAGE =
 export const GAME_BACKEND_UNAVAILABLE_MESSAGE =
   GAME_UNAVAILABLE_MESSAGE;
 export const REFERRAL_CODE_ALREADY_OWNED_REVERT_SELECTOR = "0xe1c8233f";
+export const REFERRAL_TOP_UP_UNAVAILABLE_REVERT_SELECTOR = "0xe6c55a82";
 export const REFERRAL_CODE_FRONT_RUN_MESSAGE =
   "Another player claimed this invite code before your transaction completed. Choose a different code and try again.";
+export const REFERRAL_TOP_UP_UNAVAILABLE_MESSAGE =
+  "Invite capacity can only be topped up once every 24 hours.";
 
 export function isGameBackendUnavailableMessage(message: string | undefined): boolean {
   return typeof message === "string" && (
@@ -1751,6 +1758,9 @@ export function walletRequestErrorMessage(error: unknown): string {
 export function referralClaimErrorMessage(error: unknown): string {
   if (revertSelector(error) === REFERRAL_CODE_ALREADY_OWNED_REVERT_SELECTOR) {
     return REFERRAL_CODE_FRONT_RUN_MESSAGE;
+  }
+  if (revertSelector(error) === REFERRAL_TOP_UP_UNAVAILABLE_REVERT_SELECTOR) {
+    return REFERRAL_TOP_UP_UNAVAILABLE_MESSAGE;
   }
   return walletRequestErrorMessage(error);
 }

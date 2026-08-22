@@ -11,22 +11,24 @@ the game/runtime pointer is switched.
    event from the emitting legacy referral contract. Derive the owner, code hash/commitment, and
    activation block timestamp from that receipt/event. JSON timestamps and owners are not
    authoritative.
-2. Exclude rows without a successful receipt or matching decoded claim event. The reviewed
-   production inventory is **6** confirmed valid codes, **10** confirmed 43-character legacy
-   codes, and **3** JSON-only rows with no transaction hash. The three JSON-only rows are not
-   migration entries.
-3. Reconstruct the historical commitment as `keccak256(originalCaseSensitiveCodeBytes)` and require
-   it to match the decoded event exactly. Legacy claim events did not bind the inviter into this
-   value. Separately normalize the code to lowercase and derive the canonical
-   ownership hash. Values in `[A-Za-z0-9_-]` with 1–24 characters are valid-code entries. The ten
-   successfully claimed 43-character values are hash-only entries; invalid characters, other
-   overlength sizes, or any receipt/owner/code/commitment mismatch stop the rollout.
+2. Exclude rows without a successful receipt or matching decoded claim event. The original
+   migration baseline was **6** confirmed valid codes, **10** confirmed 43-character legacy codes,
+   and **3** JSON-only rows with no transaction hash. The live replacement has accumulated more
+   claims and redemptions since then, so every later replacement must regenerate the complete
+   inventory from its own frozen source. JSON-only rows are never migration entries.
+3. Preserve the exact decoded source commitment. The original legacy claim events used
+   `keccak256(originalCaseSensitiveCodeBytes)`; replacement referral contracts use the canonical
+   `keccak256(abi.encode(inviter, normalizedCodeHash))` commitment. The importer accepts only those
+   two receipt-verifiable shapes. Separately normalize the code to lowercase and derive the
+   canonical ownership hash. Values in `[A-Za-z0-9_-]` with 1–24 characters are valid-code entries.
+   The ten successfully claimed 43-character values are hash-only entries; invalid characters,
+   other overlength sizes, or any receipt/owner/code/commitment mismatch stop the rollout.
 4. Group rows by normalized code hash. A hash with multiple distinct wallets is a pre-upgrade
    collision. Stop the rollout and record an explicit canonical owner decision for every collision.
    Never let list order choose the owner.
 5. Collapse repeated claims by the same owner/code to the latest authoritative activation
-   timestamp. Preserve all distinct codes owned by a wallet; only its latest still-unexpired
-   activation becomes the current window.
+   timestamp. Preserve all distinct code ownership, but only the wallet's latest activation is its
+   permanent usable code. That timestamp is the latest manual top-up boundary, not an expiry.
 6. Archive the reviewed manifest, receipt/event evidence, and its SHA-256 hash as deployment
    evidence. The manifest contains public codes/addresses/timestamps only; it must not contain keys,
    tokens, or RPC credentials.
@@ -99,8 +101,9 @@ migrateReferralCodes(
 )
 ```
 
-The contract lowercases and validates every valid code again, requires `legacyCommitment ==
-keccak256(originalCaseSensitiveCodeBytes)`, and reverts the entire batch with
+The contract lowercases and validates every valid code again, requires `legacyCommitment` to equal
+either the original raw-code commitment or the source replacement's canonical owner-bound
+commitment, and reverts the entire batch with
 `ReferralCodeAlreadyOwned(codeHash, owner)` if a normalized code is assigned to another wallet.
 The committed manifest leaf binds that receipt-proven value to the reviewed owner, normalized code
 hash, and activation timestamp. Altering an owner or timestamp changes the imported digest and makes
@@ -141,10 +144,10 @@ migrateReferralRedemptions(
 Each row must reference an already imported canonical commitment and matching inviter, contain a
 nonzero invitee and nonfuture timestamp, and be unique globally and for that commitment. Import sets
 both `referralInviteeRedeemed(invitee)` and `referralRedemptions(commitment, invitee)` so a wallet
-cannot receive a second referral after replacement. A timestamp consumes quota only when it belongs
-to the commitment's latest imported activation interval and is still inside its rolling 24-hour
-window at import time. Older rows still preserve replay protection but do not consume a renewed
-activation's fresh quota. More than three live timestamps for one commitment fail closed.
+cannot receive a second referral after replacement. A timestamp consumes capacity only when it is
+at or after the commitment's latest imported activation/top-up. Older rows still preserve replay
+protection but do not consume the current top-up's capacity. Capacity never refills with elapsed
+time; more than three current-epoch timestamps for one commitment fail closed.
 
 For every manifest row, verify `referralCodeOwner(codeHash)` and
 `referralCodeMigrationKind(codeHash)`. For each valid-code row, verify the emitted
@@ -172,16 +175,31 @@ script also enforces this gate and `REFERRAL_CODE_MAX_LENGTH() == 24`.
 
 ## Rollout order and rollback
 
-1. Deploy and wire the new referral system, but do not point production traffic at it.
-2. Import and collision-audit the ownership manifest; import every audited redemption replay row;
-   verify code, invitee, active-quota, and zero-outstanding-credit state; then finalize.
-3. Upgrade the game settlement module to the new referral address and verify proxy/module wiring,
-   game owner, start price, and resource invariants.
-4. Point the backend at the new referral address, rebuild from its deployment block, and verify
-   indexed ownership/window/quota state against contract views.
-5. Deploy the frontend and run `scripts/veydrift-postdeploy-smoke.mjs` before bounded Mimo QA.
+1. Pause the Game proxy. If the same release also activates moon-attack parity, keep it paused for
+   the complete MoonSystem → Game → application sequence. The upgraded MoonSystem explicitly
+   rejects permissionless moon creation/destruction while the Game is paused or still lacks the
+   pause-capability selector, so mixed moon generations cannot be written between proxy upgrades.
+2. Freeze the current source with `FreezeReferralSystem.s.sol` (`setGame(address(0))`). This blocks
+   both direct claims/top-ups and Game-authorized redemption. If any pre-switch step fails, restore
+   the source's Game pointer before unpausing.
+3. At the frozen source block, regenerate `veydrift-referral-migration-manifest.mjs` from the
+   caught-up index. Reverify every receipt/log, canonical block hash, current commitment, source
+   balance and outstanding credit. The earlier candidate manifest is evidence only and must not be
+   broadcast.
+4. Deploy the replacement with `DeployReferralSystem.s.sol`. Its Game pointer intentionally remains
+   zero. Run `MigrateReferralSystem.s.sol` against the final mode-0600 manifest; the resumable script
+   configures the three count/digest pairs, imports bounded batches, verifies all imported state,
+   and finalizes while claims/redemptions remain disabled.
+5. Dry-run the exact paused upgrade against live state. Upgrade MoonSystem first when needed, then
+   use `UpgradeGame.s.sol` to activate the finalized referral and switch the immutable settlement
+   modules in the Game proxy. Verify proxy/module wiring, Game/referral owners, start price,
+   moon-generation capability, and resource invariants.
+6. Point the backend at the new referral address, rebuild from its deployment block, and verify
+   permanent ownership, latest top-up timestamps, and capacity against contract views.
+7. Deploy the matching frontend/backend bundle, verify the permanent-code and top-up UI, then
+   unpause only after the complete cutover is healthy.
 
-For step 4, set `VEYDRIFT_REFERRAL_INDEX_FROM_BLOCK` on the Easypanel-managed backend service to the
+For step 6, set `VEYDRIFT_REFERRAL_INDEX_FROM_BLOCK` on the Easypanel-managed backend service to the
 replacement referral deployment block (or another reviewed safe boundary at or before its first
 canonical event). For the reviewed Base-mainnet migration, block `48689448` is an inclusive safe
 boundary because it contains the canonical migration batch. On the writer's first successful poll,

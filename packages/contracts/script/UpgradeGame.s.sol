@@ -16,6 +16,7 @@ import {VeydriftFirstPlanetSettlementModule} from "../src/VeydriftFirstPlanetSet
 import {VeydriftGame} from "../src/VeydriftGame.sol";
 import {VeydriftGameplayModule} from "../src/VeydriftGameplayModule.sol";
 import {VeydriftPlanetManagementModule} from "../src/VeydriftPlanetManagementModule.sol";
+import {VeydriftReferralSystem} from "../src/VeydriftReferralSystem.sol";
 import {VeydriftStateMigrationModule} from "../src/VeydriftStateMigrationModule.sol";
 
 /// @title UpgradeGame
@@ -29,9 +30,9 @@ import {VeydriftStateMigrationModule} from "../src/VeydriftStateMigrationModule.
 ///      never the proxy's owner — the proxy's existing owner is preserved.
 ///
 ///      This mirrors the proven Base mainnet upgrade flow: deploy
-///      fresh modules + game impl, then ProxyAdmin.upgradeAndCall(proxy, newImpl,
-///      initializeMoonAttackParity()) from the ProxyAdmin owner EOA. The one-time initializer
-///      records the cutover timestamp used to preserve an active legacy moon bashing window.
+///      fresh modules + game impl, then ProxyAdmin.upgradeAndCall(proxy, newImpl, calldata) from
+///      the ProxyAdmin owner EOA. The moon-parity initializer is included only for the first
+///      rollout; later upgrades preserve the existing cutover timestamp with empty calldata.
 ///
 ///      Required env:
 ///        PRIVATE_KEY        deployer EOA; MUST be the ProxyAdmin owner (asserted below)
@@ -59,6 +60,9 @@ contract UpgradeGame is Script {
         address proxyAdmin = vm.envAddress("GAME_PROXY_ADMIN");
         address moonProxy = vm.envAddress("MOON_PROXY_ADDRESS");
         address moduleAdmin = vm.envOr("ADMIN_ADDRESS", broadcaster);
+        bool initializeMoonParity = VeydriftGame(payable(proxy)).moonAttackParityActivatedAt() == 0;
+        address referralSystemAddress = vm.envAddress("VEYDRIFT_REFERRAL_SYSTEM_ADDRESS");
+        VeydriftReferralSystem referralSystem = VeydriftReferralSystem(referralSystemAddress);
 
         // The upgrade call is onlyOwner on the ProxyAdmin. Fail fast (before any deploy) if the
         // signer cannot actually execute the upgrade, so we never strand orphaned module deploys.
@@ -73,8 +77,19 @@ contract UpgradeGame is Script {
             gameOk && gameData.length >= 32 && abi.decode(gameData, (address)) == proxy,
             "MOON_GAME_MISMATCH"
         );
+        require(referralSystemAddress.code.length > 0, "REFERRAL_SYSTEM_NOT_CONTRACT");
+        require(referralSystem.owner() == broadcaster, "BROADCASTER_NOT_REFERRAL_OWNER");
+        require(referralSystem.referralMigrationFinalized(), "REFERRAL_MIGRATION_PENDING");
+        require(referralSystem.referralSigner() != address(0), "REFERRAL_SIGNER_REQUIRED");
+        address configuredReferralGame = referralSystem.game();
+        require(
+            configuredReferralGame == address(0) || configuredReferralGame == proxy,
+            "REFERRAL_GAME_MISMATCH"
+        );
 
         vm.startBroadcast(privateKey);
+
+        if (configuredReferralGame == address(0)) referralSystem.setGame(proxy);
 
         VeydriftCombatRapidfire rapidfire = new VeydriftCombatRapidfire();
         VeydriftCombatModule combatModule = new VeydriftCombatModule(address(rapidfire));
@@ -85,11 +100,10 @@ contract UpgradeGame is Script {
         VeydriftColonizationModule colonizationModule =
             new VeydriftColonizationModule(address(new VeydriftShipProductionModule()));
         VeydriftDefenseHoldModule defenseHoldModule = new VeydriftDefenseHoldModule();
-        address referralSystem = vm.envAddress("VEYDRIFT_REFERRAL_SYSTEM_ADDRESS");
         VeydriftStateMigrationModule stateMigrationModule =
-            new VeydriftStateMigrationModule(referralSystem);
+            new VeydriftStateMigrationModule(referralSystemAddress);
         VeydriftFirstPlanetSettlementModule firstPlanetSettlementModule =
-            new VeydriftFirstPlanetSettlementModule(referralSystem);
+            new VeydriftFirstPlanetSettlementModule(referralSystemAddress);
 
         VeydriftGame newImpl = new VeydriftGame(
             moduleAdmin,
@@ -104,12 +118,11 @@ contract UpgradeGame is Script {
         );
         newImplementation = address(newImpl);
 
+        bytes memory upgradeCall = initializeMoonParity
+            ? abi.encodeCall(VeydriftGame.initializeMoonAttackParity, ())
+            : bytes("");
         ProxyAdmin(proxyAdmin)
-            .upgradeAndCall(
-                ITransparentUpgradeableProxy(proxy),
-                newImplementation,
-                abi.encodeCall(VeydriftGame.initializeMoonAttackParity, ())
-            );
+            .upgradeAndCall(ITransparentUpgradeableProxy(proxy), newImplementation, upgradeCall);
 
         vm.stopBroadcast();
 

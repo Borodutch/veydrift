@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 interface IVeydriftReferralGame {
+    function gamePaused() external view returns (bool);
     function homePlanetOf(address player) external view returns (uint256);
     function startPrice() external view returns (uint256);
 }
@@ -14,7 +15,9 @@ contract VeydriftReferralSystem {
     uint8 public constant REFERRAL_MIGRATION_KIND_VALID = 1;
     uint8 public constant REFERRAL_MIGRATION_KIND_HASH_ONLY = 2;
     uint8 public constant REFERRAL_MIGRATION_KIND_REDEMPTION = 3;
-    uint64 public constant REFERRAL_CLAIM_WINDOW = 1 days;
+    uint64 public constant REFERRAL_TOP_UP_COOLDOWN = 1 days;
+    // Kept for ABI compatibility with existing clients and deployment smoke checks.
+    uint64 public constant REFERRAL_CLAIM_WINDOW = REFERRAL_TOP_UP_COOLDOWN;
     uint256 public constant DIRECT_PAYOUT_GAS = 30_000;
 
     struct ReferralInvite {
@@ -71,6 +74,7 @@ contract VeydriftReferralSystem {
     error ReferralCommitmentInvalid();
     error ReferralInviteInvalid(bytes32 commitment);
     error ReferralInviteAlreadyClaimed(address inviter, bytes32 commitment);
+    error ReferralInviteTopUpUnavailable(bytes32 commitment, uint64 availableAt);
     error ReferralInviteExpired(bytes32 commitment, uint64 expiredAt);
     error ReferralInviteeAlreadyRedeemed(bytes32 commitment, address invitee);
     error ReferralSignatureInvalid();
@@ -269,10 +273,16 @@ contract VeydriftReferralSystem {
                 revert ReferralMigrationTimestampInvalid(activatedAt);
             }
             (string memory normalizedCode, bytes32 codeHash) = _normalizedReferralCode(codes[index]);
-            bytes32 expectedCommitment = keccak256(bytes(codes[index]));
+            bytes32 rawLegacyCommitment = keccak256(bytes(codes[index]));
+            bytes32 canonicalSourceCommitment = referralCommitment(inviter, codeHash);
             bytes32 legacyCommitment = legacyCommitments[index];
-            if (legacyCommitment != expectedCommitment) {
-                revert ReferralMigrationCommitmentMismatch(expectedCommitment, legacyCommitment);
+            if (
+                legacyCommitment != rawLegacyCommitment
+                    && legacyCommitment != canonicalSourceCommitment
+            ) {
+                revert ReferralMigrationCommitmentMismatch(
+                    canonicalSourceCommitment, legacyCommitment
+                );
             }
             _claimCodeOwnership(inviter, codeHash, normalizedCode, activatedAt, true);
             _recordMigrationCode(codeHash, REFERRAL_MIGRATION_KIND_VALID);
@@ -402,20 +412,29 @@ contract VeydriftReferralSystem {
 
     function claimReferralCode(string calldata code) external {
         if (!referralMigrationFinalized) revert ReferralMigrationPending();
-        if (game == address(0) || IVeydriftReferralGame(game).homePlanetOf(msg.sender) == 0) {
+        if (
+            game == address(0) || IVeydriftReferralGame(game).gamePaused()
+                || IVeydriftReferralGame(game).homePlanetOf(msg.sender) == 0
+        ) {
             revert Unauthorized(msg.sender);
-        }
-
-        bytes32 existingCommitment = referralCommitmentOf[msg.sender];
-        if (existingCommitment != bytes32(0) && !_isExpired(existingCommitment)) {
-            revert ReferralInviteAlreadyClaimed(msg.sender, existingCommitment);
         }
 
         (string memory normalizedCode, bytes32 codeHash) = _normalizedReferralCode(code);
         if (referralCodeMigrationKind[codeHash] == REFERRAL_MIGRATION_KIND_HASH_ONLY) {
             revert ReferralCodeInvalid();
         }
+        bytes32 commitment = referralCommitment(msg.sender, codeHash);
+        bytes32 existingCommitment = referralCommitmentOf[msg.sender];
+        if (existingCommitment != bytes32(0) && existingCommitment != commitment) {
+            revert ReferralInviteAlreadyClaimed(msg.sender, existingCommitment);
+        }
         uint64 nowTimestamp = uint64(block.timestamp);
+        if (existingCommitment != bytes32(0)) {
+            uint64 availableAt = referralClaimedAt[existingCommitment] + REFERRAL_TOP_UP_COOLDOWN;
+            if (nowTimestamp < availableAt) {
+                revert ReferralInviteTopUpUnavailable(existingCommitment, availableAt);
+            }
+        }
         _claimCodeOwnership(msg.sender, codeHash, normalizedCode, nowTimestamp, false);
         _recordActivation(msg.sender, codeHash, normalizedCode, nowTimestamp, false);
     }
@@ -436,12 +455,8 @@ contract VeydriftReferralSystem {
         if (inviter == address(0)) revert ReferralInviteInvalid(commitment);
         uint64 nowTimestamp = uint64(block.timestamp);
         uint64 claimedAt = referralClaimedAt[commitment];
-        uint64 expiredAt = claimedAt + REFERRAL_CLAIM_WINDOW;
-        if (
-            claimedAt == 0 || nowTimestamp >= expiredAt
-                || referralCommitmentOf[inviter] != commitment
-        ) {
-            revert ReferralInviteExpired(commitment, expiredAt);
+        if (claimedAt == 0 || referralCommitmentOf[inviter] != commitment) {
+            revert ReferralInviteExpired(commitment, 0);
         }
         bytes32 codeHash = referralCodeHashOf[commitment];
         if (referralCodeOwner[codeHash] != inviter) revert ReferralInviteInvalid(commitment);
@@ -565,10 +580,8 @@ contract VeydriftReferralSystem {
         codeOwner = referralCodeOwner[codeHash];
         if (codeOwner == address(0)) return (address(0), bytes32(0), 0, false);
         commitment = referralCommitment(codeOwner, codeHash);
-        uint64 claimedAt = referralClaimedAt[commitment];
-        if (claimedAt != 0) activeUntil = claimedAt + REFERRAL_CLAIM_WINDOW;
-        // forge-lint: disable-next-line(block-timestamp)
-        active = referralCommitmentOf[codeOwner] == commitment && block.timestamp < activeUntil;
+        if (referralClaimedAt[commitment] != 0) activeUntil = type(uint64).max;
+        active = referralCommitmentOf[codeOwner] == commitment;
     }
 
     function referralInviteState(address inviter)
@@ -585,10 +598,8 @@ contract VeydriftReferralSystem {
     {
         commitment = referralCommitmentOf[inviter];
         codeHash = referralCodeHashOf[commitment];
-        uint64 claimedAt = referralClaimedAt[commitment];
-        if (claimedAt != 0) activeUntil = claimedAt + REFERRAL_CLAIM_WINDOW;
-        // forge-lint: disable-next-line(block-timestamp)
-        active = commitment != bytes32(0) && block.timestamp < activeUntil;
+        if (referralClaimedAt[commitment] != 0) activeUntil = type(uint64).max;
+        active = commitment != bytes32(0);
         (remainingRedemptions, nextRedemptionAt) = _referralRedemptionQuota(commitment);
     }
 
@@ -608,28 +619,35 @@ contract VeydriftReferralSystem {
         return _referralRedemptionQuota(referralCommitmentOf[inviter]);
     }
 
+    function referralTopUpState(address inviter)
+        external
+        view
+        returns (uint64 lastTopUpAt, uint64 nextTopUpAt, bool available)
+    {
+        bytes32 commitment = referralCommitmentOf[inviter];
+        lastTopUpAt = referralClaimedAt[commitment];
+        if (lastTopUpAt == 0) return (0, 0, false);
+        nextTopUpAt = lastTopUpAt + REFERRAL_TOP_UP_COOLDOWN;
+        // forge-lint: disable-next-line(block-timestamp)
+        available = block.timestamp >= nextTopUpAt;
+    }
+
     function _referralRedemptionQuota(bytes32 commitment)
         private
         view
         returns (uint8 remainingRedemptions, uint64 nextRedemptionAt)
     {
         ReferralRedemptionWindow storage window = _referralRedemptionWindows[commitment];
-        uint64 nowTimestamp = uint64(block.timestamp);
-        uint64 oldestActive = type(uint64).max;
-        uint8 active;
+        uint8 used;
 
         for (uint256 index = 0; index < REFERRAL_CLAIM_LIMIT; index++) {
             uint64 redeemedAt = window.redeemedAt[index];
-            if (redeemedAt == 0 || nowTimestamp >= redeemedAt + REFERRAL_CLAIM_WINDOW) {
-                continue;
-            }
-            active += 1;
-            if (redeemedAt < oldestActive) oldestActive = redeemedAt;
+            if (redeemedAt != 0) used += 1;
         }
 
-        remainingRedemptions = REFERRAL_CLAIM_LIMIT - active;
+        remainingRedemptions = REFERRAL_CLAIM_LIMIT - used;
         if (remainingRedemptions == 0) {
-            nextRedemptionAt = oldestActive + REFERRAL_CLAIM_WINDOW;
+            nextRedemptionAt = referralClaimedAt[commitment] + REFERRAL_TOP_UP_COOLDOWN;
         }
     }
 
@@ -709,11 +727,7 @@ contract VeydriftReferralSystem {
 
     function _importRedemptionWindowTimestamp(bytes32 commitment, uint64 redeemedAt) private {
         uint64 claimedAt = referralClaimedAt[commitment];
-        uint64 nowTimestamp = uint64(block.timestamp);
-        if (
-            redeemedAt < claimedAt || redeemedAt >= claimedAt + REFERRAL_CLAIM_WINDOW
-                || nowTimestamp >= redeemedAt + REFERRAL_CLAIM_WINDOW
-        ) {
+        if (redeemedAt < claimedAt) {
             return;
         }
 
@@ -752,7 +766,9 @@ contract VeydriftReferralSystem {
             referralCommitmentOf[inviter] = commitment;
         }
 
-        uint64 activeUntil = activatedAt + REFERRAL_CLAIM_WINDOW;
+        // Retain the legacy event field as the next top-up boundary so indexers can derive the
+        // cooldown without a new event topic. Invite validity itself is permanent.
+        uint64 activeUntil = activatedAt + REFERRAL_TOP_UP_COOLDOWN;
         emit ReferralInviteWindowActivated(
             inviter, codeHash, commitment, normalizedCode, activatedAt, activeUntil, migrated
         );
@@ -822,31 +838,17 @@ contract VeydriftReferralSystem {
     function _consumeRedemptionQuota(bytes32 commitment) private {
         ReferralRedemptionWindow storage window = _referralRedemptionWindows[commitment];
         uint64 nowTimestamp = uint64(block.timestamp);
-        uint256 oldestIndex = 0;
-        uint64 oldestActive = type(uint64).max;
 
         for (uint256 index = 0; index < REFERRAL_CLAIM_LIMIT; index++) {
             uint64 redeemedAt = window.redeemedAt[index];
-            if (redeemedAt == 0 || nowTimestamp >= redeemedAt + REFERRAL_CLAIM_WINDOW) {
+            if (redeemedAt == 0) {
                 window.redeemedAt[index] = nowTimestamp;
                 return;
             }
-            if (redeemedAt < oldestActive) {
-                oldestActive = redeemedAt;
-                oldestIndex = index;
-            }
         }
 
-        uint64 resetsAt = oldestActive + REFERRAL_CLAIM_WINDOW;
-        if (nowTimestamp < resetsAt) {
-            revert ReferralRedemptionQuotaExceeded(commitment, resetsAt);
-        }
-        window.redeemedAt[oldestIndex] = nowTimestamp;
-    }
-
-    function _isExpired(bytes32 commitment) private view returns (bool) {
-        uint64 claimedAt = referralClaimedAt[commitment];
-        uint64 nowTimestamp = uint64(block.timestamp);
-        return claimedAt == 0 || nowTimestamp >= claimedAt + REFERRAL_CLAIM_WINDOW;
+        revert ReferralRedemptionQuotaExceeded(
+            commitment, referralClaimedAt[commitment] + REFERRAL_TOP_UP_COOLDOWN
+        );
     }
 }

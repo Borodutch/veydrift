@@ -283,6 +283,30 @@ abstract contract VeydriftMoonSystemTestBase is Test {
         assertFalse(moons.moon(planetId).exists);
     }
 
+    function _testMoonGenerationWritesFailClosedAcrossPausedUpgradeBoundary() internal {
+        uint256 planetId = _startPlanet();
+
+        vm.prank(reporter);
+        (uint256 outcomeId, uint256 requestId) =
+            moons.requestMoonChanceFromBattle(10_001, planetId, 3_000_000, 0);
+        vm.prank(fulfiller);
+        randomness.fulfillRandomness(requestId, 7);
+
+        vm.prank(admin);
+        game.setGamePaused(true);
+        vm.expectRevert();
+        moons.finalizeMoonChance(outcomeId);
+
+        vm.prank(admin);
+        game.setGamePaused(false);
+        assertTrue(moons.finalizeMoonChance(outcomeId));
+
+        VeydriftMoonSystem legacyGameGap =
+            new VeydriftMoonSystem(address(0xBEEF), address(randomness));
+        vm.expectRevert();
+        legacyGameGap.finalizeMoonChance(1);
+    }
+
     function _testAdminMoonCreationAndLunarBaseFields() internal {
         uint256 planetId = _startPlanet();
 
@@ -2256,6 +2280,10 @@ contract VeydriftMoonSystemCoreTest is VeydriftMoonSystemTestBase {
 
     function testDirectPlayerMoonCreationReverts() public {
         _testDirectPlayerMoonCreationReverts();
+    }
+
+    function testMoonGenerationWritesFailClosedAcrossPausedUpgradeBoundary() public {
+        _testMoonGenerationWritesFailClosedAcrossPausedUpgradeBoundary();
     }
 
     function testAdminMoonCreationAndLunarBaseFields() public {

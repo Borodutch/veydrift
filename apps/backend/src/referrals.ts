@@ -52,7 +52,7 @@ export type ReferralInviteSummary = {
   owner: string;
   claimedAt: string;
   txHash: string;
-  expiresAt: string;
+  expiresAt: null;
   expired: boolean;
   link: string;
   remainingRedemptions: number;
@@ -60,6 +60,8 @@ export type ReferralInviteSummary = {
   redemptionCount: number;
   redemptions: ReferralRedemptionRecord[];
   renewable: boolean;
+  nextTopUpAt: string;
+  topUpAvailable: boolean;
   status: "active" | "renewable" | "owned";
 };
 
@@ -129,6 +131,8 @@ export type ReferralResolveResult = {
   commitment: Hex | null;
   expiresAt: string | null;
   nextRedemptionAt: string | null;
+  nextTopUpAt: string | null;
+  topUpAvailable: boolean;
   remainingRedemptions: number;
   startPriceWei: string | null;
   inviterRewardWei: string | null;
@@ -241,6 +245,8 @@ export function resolveReferralCode(input: {
       commitment: null,
       expiresAt: null,
       nextRedemptionAt: null,
+      nextTopUpAt: null,
+      topUpAvailable: false,
       remainingRedemptions: referralClaimsPerWindow,
       ...common
     });
@@ -260,6 +266,8 @@ export function resolveReferralCode(input: {
       commitment: null,
       expiresAt: null,
       nextRedemptionAt: null,
+      nextTopUpAt: null,
+      topUpAvailable: false,
       remainingRedemptions: referralClaimsPerWindow,
       ...common
     });
@@ -268,13 +276,11 @@ export function resolveReferralCode(input: {
   const owner = normalizeAddress(claim.inviter).toLowerCase() as `0x${string}`;
   const wallet = input.wallet ? normalizeAddress(input.wallet).toLowerCase() : null;
   const ownership: ReferralOwnershipState = wallet === owner ? "owned_by_you" : "reserved";
-  const expiresAt = new Date(Number(claim.activeUntil) * 1_000).toISOString();
+  const nextTopUpAt = referralTopUpAt(claim);
+  const topUpAvailable = now.getTime() >= Date.parse(nextTopUpAt);
+  const canTopUp = ownership === "owned_by_you" && topUpAvailable;
   const currentClaim = latestReferralClaims(input.index.referralClaims(owner)).at(-1);
-  const currentActive = Boolean(
-    currentClaim && now.getTime() < Number(currentClaim.activeUntil) * 1_000
-  );
-  const active = currentClaim?.commitment.toLowerCase() === claim.commitment.toLowerCase()
-    && now.getTime() < Number(claim.activeUntil) * 1_000;
+  const active = currentClaim?.commitment.toLowerCase() === claim.commitment.toLowerCase();
   const redemptions = referralRedemptionsForClaim(
     input.index.referralRedemptionsForInviter(owner),
     claim
@@ -282,22 +288,21 @@ export function resolveReferralCode(input: {
   const quota = referralQuota(redemptions.map(chainRedemptionTime), now);
 
   if (!active) {
-    const renewable = ownership === "owned_by_you" && !currentActive;
     return resolveResult({
       status: "inactive",
-      message: ownership === "owned_by_you" && renewable
-        ? "Referral code is owned by this wallet and can be renewed."
-        : ownership === "owned_by_you"
-          ? "Referral code is owned by this wallet, but another invite code is active."
-        : "Referral code is permanently reserved and its invite window is inactive.",
+      message: ownership === "owned_by_you"
+        ? "Referral code is owned by this wallet, but another invite code is active."
+        : "Referral code is permanently reserved by another wallet.",
       normalizedCode: code,
       codeHash,
       owner,
       ownership,
-      renewable,
+      renewable: false,
       commitment: claim.commitment,
-      expiresAt,
-      nextRedemptionAt: quota.nextClaimAt,
+      expiresAt: null,
+      nextRedemptionAt: null,
+      nextTopUpAt: null,
+      topUpAvailable: false,
       remainingRedemptions: quota.remainingClaims,
       ...common
     });
@@ -313,10 +318,12 @@ export function resolveReferralCode(input: {
         codeHash,
         owner,
         ownership,
-        renewable: false,
+        renewable: canTopUp,
         commitment: claim.commitment,
-        expiresAt,
-        nextRedemptionAt: quota.nextClaimAt,
+        expiresAt: null,
+        nextRedemptionAt: null,
+        nextTopUpAt,
+        topUpAvailable,
         remainingRedemptions: quota.remainingClaims,
         ...common
       });
@@ -329,10 +336,12 @@ export function resolveReferralCode(input: {
         codeHash,
         owner,
         ownership,
-        renewable: false,
+        renewable: canTopUp,
         commitment: claim.commitment,
-        expiresAt,
-        nextRedemptionAt: quota.nextClaimAt,
+        expiresAt: null,
+        nextRedemptionAt: null,
+        nextTopUpAt,
+        topUpAvailable,
         remainingRedemptions: quota.remainingClaims,
         ...common
       });
@@ -347,10 +356,12 @@ export function resolveReferralCode(input: {
       codeHash,
       owner,
       ownership,
-      renewable: false,
+      renewable: canTopUp,
       commitment: claim.commitment,
-      expiresAt,
-      nextRedemptionAt: quota.nextClaimAt,
+      expiresAt: null,
+      nextRedemptionAt: null,
+      nextTopUpAt,
+      topUpAvailable,
       remainingRedemptions: 0,
       ...common
     });
@@ -363,10 +374,12 @@ export function resolveReferralCode(input: {
       codeHash,
       owner,
       ownership,
-      renewable: false,
+      renewable: canTopUp,
       commitment: claim.commitment,
-      expiresAt,
-      nextRedemptionAt: quota.nextClaimAt,
+      expiresAt: null,
+      nextRedemptionAt: null,
+      nextTopUpAt,
+      topUpAvailable,
       remainingRedemptions: quota.remainingClaims,
       ...common
     });
@@ -378,10 +391,12 @@ export function resolveReferralCode(input: {
     codeHash,
     owner,
     ownership,
-    renewable: false,
+    renewable: canTopUp,
     commitment: claim.commitment,
-    expiresAt,
-    nextRedemptionAt: quota.nextClaimAt,
+    expiresAt: null,
+    nextRedemptionAt: null,
+    nextTopUpAt,
+    topUpAvailable,
     remainingRedemptions: quota.remainingClaims,
     ...common
   });
@@ -456,18 +471,15 @@ export function referralRedeemPayloadHash(input: {
 
 export function referralQuota(
   redemptions: Array<{ redeemedAt?: string; claimedAt?: string }>,
-  now = new Date()
+  _now = new Date()
 ): { remainingClaims: number; nextClaimAt: string | null } {
-  const active = redemptions
+  const used = redemptions
     .map((redemption) => new Date(redemption.redeemedAt ?? redemption.claimedAt ?? "").getTime())
-    .filter((timestamp) => Number.isFinite(timestamp) && now.getTime() - timestamp < referralClaimWindowMs)
-    .sort((a, b) => a - b);
-  const remainingClaims = Math.max(0, referralClaimsPerWindow - active.length);
+    .filter((timestamp) => Number.isFinite(timestamp));
+  const remainingClaims = Math.max(0, referralClaimsPerWindow - used.length);
   return {
     remainingClaims,
-    nextClaimAt: remainingClaims > 0 || active.length === 0
-      ? null
-      : new Date(active[0]! + referralClaimWindowMs).toISOString()
+    nextClaimAt: null
   };
 }
 
@@ -534,14 +546,10 @@ function canonicalReferralDashboard(input: {
     ? referralRedemptionsForClaim(redemptions, currentClaim)
     : [];
   const quota = referralQuota(currentRedemptions.map(chainRedemptionTime), input.now);
-  const currentActive = Boolean(
-    currentClaim && input.now.getTime() < Number(currentClaim.activeUntil) * 1_000
-  );
   const summaries = claims.map((claim) => {
     const claimRedemptions = referralRedemptionsForClaim(redemptions, claim);
     return chainInviteSummary({
       claim,
-      currentActive,
       currentCommitment: currentClaim?.commitment ?? null,
       now: input.now,
       owner,
@@ -562,8 +570,8 @@ function canonicalReferralDashboard(input: {
     configured: input.configured,
     invite,
     invites: summaries,
-    nextClaimAt: currentActive ? currentClaim ? new Date(Number(currentClaim.activeUntil) * 1_000).toISOString() : null : null,
-    nextRedemptionAt: quota.nextClaimAt,
+    nextClaimAt: currentClaim ? referralTopUpAt(currentClaim) : null,
+    nextRedemptionAt: null,
     remainingClaims: quota.remainingClaims,
     remainingRedemptions: quota.remainingClaims,
     rewardPerUseWei: price === null ? null : (price / 2n).toString(),
@@ -576,7 +584,6 @@ function canonicalReferralDashboard(input: {
 
 function chainInviteSummary(input: {
   claim: IndexedReferralClaimEvent;
-  currentActive: boolean;
   currentCommitment: string | null;
   now: Date;
   owner: string;
@@ -584,14 +591,12 @@ function chainInviteSummary(input: {
   redemptions: ReferralRedemptionRecord[];
 }): ReferralInviteSummary {
   const claimedAt = new Date(Number(input.claim.claimedAt) * 1_000).toISOString();
-  const expiresAt = new Date(Number(input.claim.activeUntil) * 1_000).toISOString();
-  const expired = input.now.getTime() >= Date.parse(expiresAt);
+  const nextTopUpAt = referralTopUpAt(input.claim);
+  const topUpAvailable = input.now.getTime() >= Date.parse(nextTopUpAt);
   const isCurrent = input.currentCommitment?.toLowerCase() === input.claim.commitment.toLowerCase();
-  const status = isCurrent && !expired
+  const status = isCurrent
     ? "active"
-    : !input.currentActive
-      ? "renewable"
-      : "owned";
+    : "owned";
   return {
     code: input.claim.code,
     codeHash: input.claim.codeHash,
@@ -599,14 +604,16 @@ function chainInviteSummary(input: {
     owner: input.owner,
     claimedAt,
     txHash: input.claim.transactionHash,
-    expiresAt,
-    expired,
+    expiresAt: null,
+    expired: false,
     link: `${referralInviteUrlBase}?ref=${encodeURIComponent(input.claim.code)}`,
     remainingRedemptions: input.quota.remainingClaims,
-    nextRedemptionAt: input.quota.nextClaimAt,
+    nextRedemptionAt: null,
     redemptionCount: input.redemptions.length,
     redemptions: input.redemptions,
-    renewable: status === "renewable",
+    renewable: isCurrent && topUpAvailable,
+    nextTopUpAt,
+    topUpAvailable: isCurrent && topUpAvailable,
     status
   };
 }
@@ -648,13 +655,14 @@ function referralRedemptionsForClaim(
 ): IndexedReferralRedemptionEvent[] {
   const commitment = claim.commitment.toLowerCase();
   const activatedAt = Number(claim.claimedAt);
-  const activeUntil = Number(claim.activeUntil);
   return redemptions.filter((event) => {
     const redeemedAt = Number(event.redeemedAt);
-    return event.commitment.toLowerCase() === commitment
-      && redeemedAt >= activatedAt
-      && redeemedAt < activeUntil;
+    return event.commitment.toLowerCase() === commitment && redeemedAt >= activatedAt;
   });
+}
+
+function referralTopUpAt(claim: IndexedReferralClaimEvent): string {
+  return new Date(Number(claim.claimedAt) * 1_000 + referralClaimWindowMs).toISOString();
 }
 
 function rewardKey(commitment: string, invitee: string): string {

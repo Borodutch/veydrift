@@ -14,6 +14,7 @@ import {
 import { referralCodeForLanding } from "../src/referralStorage";
 import {
   REFERRAL_CODE_FRONT_RUN_MESSAGE,
+  REFERRAL_TOP_UP_UNAVAILABLE_MESSAGE,
   referralClaimErrorMessage,
   type ReferralDashboard,
   type ReferralResolution,
@@ -26,15 +27,17 @@ function referralResolution(
   return {
     codeHash: `0x${"11".repeat(32)}`,
     commitment: `0x${"22".repeat(32)}`,
-    expiresAt: "2026-07-16T19:01:33.000Z",
+    expiresAt: null,
     inviterRewardWei: "6000000000000000",
     message: `Referral ${status}.`,
     nextRedemptionAt: "2026-07-17T19:01:33.000Z",
+    nextTopUpAt: "2026-07-16T19:01:33.000Z",
     normalizedCode: "borodutch",
     owner: "0xbf74483db914192bb0a9577f3d8fb29a6d4c08ee",
     ownership: "reserved",
     remainingRedemptions,
     renewable: false,
+    topUpAvailable: false,
     startPriceWei: "12000000000000000",
     status,
     valid: status === "active",
@@ -51,15 +54,17 @@ function referralDashboard(input: {
     code: input.code,
     codeHash: `0x${"11".repeat(32)}`,
     commitment: `0x${"22".repeat(32)}`,
-    expired: input.status !== "active",
-    expiresAt: "2026-07-16T19:01:33.000Z",
+    expired: false,
+    expiresAt: null,
     link: input.link,
     nextRedemptionAt: null,
+    nextTopUpAt: "2026-07-16T19:01:33.000Z",
     owner: "0xbf74483db914192bb0a9577f3d8fb29a6d4c08ee",
     redemptionCount: 0,
     remainingRedemptions: 3,
     renewable: input.status === "renewable",
-    status: input.status,
+    topUpAvailable: input.status === "renewable",
+    status: input.status === "renewable" ? "active" : input.status,
     txHash: `0x${"33".repeat(32)}`
   };
   return {
@@ -67,7 +72,7 @@ function referralDashboard(input: {
     configured: true,
     invite,
     invites: [invite],
-    nextClaimAt: input.status === "active" ? invite.expiresAt : null,
+    nextClaimAt: invite.nextTopUpAt,
     nextRedemptionAt: null,
     redemptions: [],
     remainingClaims: 3,
@@ -82,18 +87,18 @@ describe("referral hardening", () => {
   test("shows only the remaining-use count for active and exhausted invite codes", () => {
     expect(referralValidationMessage(referralResolution("active", 2))).toBe("Active · 2/3 uses left.");
     expect(referralValidationMessage(referralResolution("exhausted", 0)))
-      .toBe("No uses left · ask the code owner to renew it.");
+      .toBe("No uses left · ask the code owner to top it up.");
   });
 
   test("preserves distinct validation help for other invite-code states", () => {
     expect(referralValidationMessage(referralResolution("inactive", 0)))
-      .toBe("Inactive · the code owner must renew it.");
+      .toBe("Inactive · this wallet uses a different invite code.");
     expect(referralValidationMessage(referralResolution("self_invite", 0)))
       .toBe("This wallet can’t use its own invite code.");
     expect(referralValidationMessage(referralResolution("already_redeemed", 0)))
       .toBe("This wallet already used an invite code.");
     expect(referralValidationMessage(referralResolution("available", 3)))
-      .toBe("Not active · no referral benefit will be applied.");
+      .toBe("Available to claim.");
     expect(referralValidationMessage(referralResolution("unavailable", 0)))
       .toBe("Invite pricing is unavailable. Try again later.");
     expect(referralValidationMessage(referralResolution("invalid", 0)))
@@ -123,7 +128,7 @@ describe("referral hardening", () => {
       resolution: referralResolution("inactive", 0),
     })).toMatchObject({
       appliedLabel: "Invite code: borodutch",
-      status: "Inactive · the code owner must renew it.",
+      status: "Inactive · this wallet uses a different invite code.",
       tone: "warning",
     });
 
@@ -255,22 +260,22 @@ describe("referral hardening", () => {
     expect(referralClaimCodeAfterDashboard("new_code", expired)).toBe("borodutch");
   });
 
-  test("refreshes an active invite dashboard as soon as its window expires", () => {
+  test("refreshes an active invite dashboard when its next top-up opens", () => {
     const active = referralDashboard({
       code: "borodutch",
       link: "https://veydrift.com?ref=borodutch",
       status: "active"
     });
-    const expiresAt = Date.parse(active.invite!.expiresAt);
-    expect(referralInviteRefreshDelay(active, expiresAt - 60_000)).toBe(60_000);
-    expect(referralInviteRefreshDelay(active, expiresAt + 1)).toBe(1_000);
+    const nextTopUpAt = Date.parse(active.invite!.nextTopUpAt!);
+    expect(referralInviteRefreshDelay(active, nextTopUpAt - 60_000)).toBe(60_000);
+    expect(referralInviteRefreshDelay(active, nextTopUpAt + 1)).toBe(1_000);
 
     const renewable = referralDashboard({
       code: "borodutch",
       link: "https://veydrift.com?ref=borodutch",
       status: "renewable"
     });
-    expect(referralInviteRefreshDelay(renewable, expiresAt)).toBeUndefined();
+    expect(referralInviteRefreshDelay(renewable, nextTopUpAt)).toBeUndefined();
   });
 
   test("atomically installs the indexed renewal dashboard returned by claim recording", async () => {
@@ -282,14 +287,13 @@ describe("referral hardening", () => {
     expect(appSource).not.toContain("await refreshReferralProgram(wallet.account);");
   });
 
-  test("keeps the invite dashboard concise across active and renewable windows", async () => {
+  test("keeps the permanent invite dashboard concise across top-up states", async () => {
     const appSource = await Bun.file(new URL("../src/FirstPlanetSettlementApp.tsx", import.meta.url)).text();
     expect(appSource).toContain("Top up your invite code");
-    expect(appSource).toContain("3 invite uses every day");
-    expect(appSource).toContain("Your code stays reserved");
+    expect(appSource).toContain("Your invite code never expires");
+    expect(appSource).toContain("top it up to 3 available uses");
     expect(appSource).toContain("for inviting a friend");
     expect(appSource).toContain("Your friend gets");
-    expect(appSource).toContain("to start");
     expect(appSource).toContain("<RankingCommanderLink");
     expect(appSource).toContain("<RankingsTable");
     expect(appSource).toContain("expandedHistoryWallets");
@@ -310,7 +314,7 @@ describe("referral hardening", () => {
     expect(appSource).not.toContain("redemption.invitee.slice");
   });
 
-  test("blocks active-window rotation and enables expired-window claims", () => {
+  test("blocks code rotation and enables a 24-hour top-up on the permanent code", () => {
     const active = referralDashboard({
       code: "borodutch",
       link: "https://veydrift.com?ref=borodutch",
@@ -330,10 +334,16 @@ describe("referral hardening", () => {
     });
     expect(referralInviteActionAvailability({
       busy: false,
+      claimCode: "borodutch",
+      dashboard: expired,
+      selectedCodeClaimable: true
+    })).toEqual({ canClaim: true, inviteActive: true });
+    expect(referralInviteActionAvailability({
+      busy: false,
       claimCode: "new_code",
       dashboard: expired,
       selectedCodeClaimable: true
-    })).toEqual({ canClaim: true, inviteActive: false });
+    })).toEqual({ canClaim: false, inviteActive: true });
   });
 
   test("shows active invite details directly and removes the reveal gate", async () => {
@@ -358,6 +368,11 @@ describe("referral hardening", () => {
   test("shows a specific code-race error when another wallet claims first", () => {
     expect(referralClaimErrorMessage({ data: `0xe1c8233f${"00".repeat(64)}` }))
       .toBe(REFERRAL_CODE_FRONT_RUN_MESSAGE);
+  });
+
+  test("shows a specific cooldown error when a top-up races the 24-hour boundary", () => {
+    expect(referralClaimErrorMessage({ data: `0xe6c55a82${"00".repeat(64)}` }))
+      .toBe(REFERRAL_TOP_UP_UNAVAILABLE_MESSAGE);
   });
 
   test("persists referral intent and avoids hard-coded fiat or multiplier promises", async () => {

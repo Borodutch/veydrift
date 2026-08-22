@@ -1087,8 +1087,38 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           wallet,
           startPriceWei: indexer.currentStartPriceWei()
         });
+        const currentInvite = referralStore.dashboard(
+          wallet,
+          indexer,
+          indexer.currentStartPriceWei(),
+          referralConfigurationReady(loaded.config, indexer.currentStartPriceWei())
+        ).invite;
+        if (
+          currentInvite
+          && currentInvite.commitment.toLowerCase() !== expectedCommitment.toLowerCase()
+        ) {
+          return Response.json({
+            error: "referral_code_locked",
+            message: "Your existing invite code is permanent. Top up that code instead."
+          }, {
+            headers: corsHeaders,
+            status: 409
+          });
+        }
         if (resolution.ownership === "reserved") {
           return referralResolveErrorResponse({ ...resolution, valid: false });
+        }
+        if (resolution.ownership === "owned_by_you" && !resolution.renewable) {
+          return Response.json({
+            error: "referral_top_up_unavailable",
+            message: resolution.nextTopUpAt
+              ? `Referral capacity can be topped up after ${resolution.nextTopUpAt}.`
+              : "Referral capacity cannot be topped up yet.",
+            nextTopUpAt: resolution.nextTopUpAt
+          }, {
+            headers: corsHeaders,
+            status: 409
+          });
         }
         return Response.json({
           code,
