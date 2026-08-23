@@ -20,6 +20,13 @@ export type WriteTransactionDescriptor<IndexedSnapshot = void> = {
   errorLabel?: (error: unknown) => string;
   key: string;
   label: string;
+  /**
+   * A receipt can be final even when the indexed API has not caught up before
+   * this action's bounded wait expires.  Let the data owner invalidate the
+   * affected snapshots in that case so a confirmed write never leaves a view
+   * presenting its pre-transaction data as fresh.
+   */
+  onConfirmedIndexingFailure?: (error: unknown, txHash: string) => Promise<void> | void;
   onErrorRefresh?: (error: unknown) => Promise<void> | void;
   onStateChange?: (state: WriteTransactionState) => void;
   /**
@@ -104,6 +111,9 @@ export async function runWriteTransaction<IndexedSnapshot = void>(gate: Transact
       });
       completed = true;
     } catch (error) {
+      if (receiptConfirmed && txHash) {
+        await descriptor.onConfirmedIndexingFailure?.(error, txHash);
+      }
       await descriptor.onErrorRefresh?.(error);
       const indexingTimedOut = receiptConfirmed && isTransactionIndexingTimeout(error);
       setState({

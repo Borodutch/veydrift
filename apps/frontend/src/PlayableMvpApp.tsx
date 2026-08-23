@@ -4356,7 +4356,7 @@ export function PlayableMvpApp({
         send,
       });
     },
-    [backendData, confirmSubmittedTransaction],
+    [account, activePlanetId, backendData, confirmSubmittedTransaction],
   );
 
   const refreshInfrastructureState = useCallback(async () => {
@@ -6015,7 +6015,12 @@ export function PlayableMvpApp({
           if (!apiBaseUrl || !account) {
             throw new Error("Wallet or game API is unavailable while refreshing target protection.");
           }
-          await revalidateAttackProtectionBeforeSubmit(() => backendData!.attackProtection(account, targetPlanetId, targetIsMoon));
+          await revalidateAttackProtectionBeforeSubmit(() =>
+            backendData!.attackProtection(account, targetPlanetId, targetIsMoon, {
+              fresh: true,
+              priority: "transaction",
+            }),
+          );
           if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return false;
         }
         const affectedPlanetIds = [...new Set([activePlanetId, ...(options.affectedPlanetIds ?? [])])].filter((planetId): planetId is string => Boolean(planetId));
@@ -6036,8 +6041,8 @@ export function PlayableMvpApp({
           invalidateTags: [...(account ? [`wallet:${account.toLowerCase()}` as const] : []), ...affectedPlanetIds.map((planetId) => `planet:${planetId}` as const)],
           send,
           indexing: options.syncMissionLaunch
-            ? backendData!.indexing.all([
-                ...exactResourcePlans,
+            ? backendData!.indexing.sequence([
+                backendData!.indexing.all(exactResourcePlans),
                 backendData!.indexing.missionLaunch(account!, (txHash) => options.expectedMissionLaunch?.(txHash), [...refreshTags, "kind:fleet-visibility", "kind:global-active-missions"]),
               ])
             : exactResourcePlans.length > 0
@@ -6074,7 +6079,7 @@ export function PlayableMvpApp({
       }
       return completed;
     },
-    [account, apiBaseUrl, loadMissionLaunchSnapshot, refreshDefenseState, refreshInfrastructureState, refreshOnChainState, refreshShipyardState, runCoordinatedWriteTransaction, setMoonState],
+    [account, activePlanetId, apiBaseUrl, backendData, loadMissionLaunchSnapshot, refreshDefenseState, refreshInfrastructureState, refreshOnChainState, refreshShipyardState, runCoordinatedWriteTransaction, setMoonState],
   );
 
   const handleOpenBatchSupply = useCallback(

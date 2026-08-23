@@ -2125,22 +2125,38 @@ async function sendWalletTransaction(
   }
 
   // All wallet writes share this gate. Simulate the exact calldata with the
-  // connected account immediately before asking the wallet to submit it. This
-  // is intentionally an ordinary eth_call: it never reconciles game state in
-  // the browser, and only prevents a prompt for a transaction that the chain
-  // already knows will revert.
+  // connected account immediately before asking the wallet to submit it. Ask
+  // for the pending state so an RPC that can see local pending spends catches
+  // another tab/device's transaction before opening the wallet prompt. This
+  // remains an ordinary eth_call: it never reconciles game state in the
+  // browser.
   try {
     await provider.request<string>({
       method: "eth_call",
-      params: [transaction, "latest"],
+      params: [transaction, "pending"],
     });
   } catch (error) {
-    if (isFleetMissionTransactionData(transaction.data)) {
-      const reason = fleetMissionRevertReason(error, options.fleetMissionContext);
-      if (reason) throw new Error(reason);
+    // Some injected/mobile providers only accept latest. Preserve their write
+    // path, but use pending whenever the provider supports it; neither mode
+    // can reserve state against a transaction mined after the simulation.
+    if (pendingCallUnsupported(error)) {
+      try {
+        await provider.request<string>({
+          method: "eth_call",
+          params: [transaction, "latest"],
+        });
+      } catch (fallbackError) {
+        const message = walletRequestErrorMessage(fallbackError);
+        throw new Error(`Transaction simulation failed: ${message}`);
+      }
+    } else {
+      if (isFleetMissionTransactionData(transaction.data)) {
+        const reason = fleetMissionRevertReason(error, options.fleetMissionContext);
+        if (reason) throw new Error(reason);
+      }
+      const message = walletRequestErrorMessage(error);
+      throw new Error(`Transaction simulation failed: ${message}`);
     }
-    const message = walletRequestErrorMessage(error);
-    throw new Error(`Transaction simulation failed: ${message}`);
   }
 
   try {
@@ -2164,6 +2180,11 @@ async function sendWalletTransaction(
 
     throw error;
   }
+}
+
+function pendingCallUnsupported(error: unknown): boolean {
+  const message = walletRequestErrorMessage(error).toLowerCase();
+  return /pending/.test(message) && /unsupported|not supported|invalid|unknown|block tag|parameter/.test(message);
 }
 
 function isFleetMissionTransactionData(data: string): boolean {
