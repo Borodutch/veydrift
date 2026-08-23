@@ -39,8 +39,6 @@ import {
   isUserRejected,
   normalizeReferralClaimCode,
   configureWalletTransactionTransport,
-  readMigrationReservation,
-  readWalletNativeBalance,
   miniAppUnsupportedChainMessage,
   WALLET_BOOTSTRAP_READ_TIMEOUT_MS,
   requestAccounts,
@@ -48,13 +46,10 @@ import {
   referralCommitment,
   referralClaimErrorMessage,
   requestReferralWalletSignature,
-  redeemReferralCode,
-  redeemPaidAllianceInvite,
   paidAllianceInviteLocationState,
   sendReferralClaimTransaction,
   sendSettlementTransaction,
   settlementFundingShortfallWei,
-  settlementFundingWithWalletBalance,
   settlementContractConfigured,
   switchVeydriftNetwork,
   waitForVeydriftNetwork,
@@ -348,6 +343,9 @@ export function FirstPlanetSettlementApp() {
   const walletBootstrapAttempts = useRef(0);
   const walletBootstrapRetryTimer = useRef<ReturnType<typeof setTimeout> | undefined>();
   const currentChainId = useRef<string>();
+  /** Settlement combines indexed API data with provider reads. Reject an old
+   * aggregate if a reconnect, account switch, or a newer refresh wins. */
+  const settlementFundingEpoch = useRef(0);
 
   const account = "account" in wallet ? wallet.account : undefined;
   const hasOverview = planet.kind === "success" || planet.kind === "already-settled";
@@ -1057,16 +1055,20 @@ export function FirstPlanetSettlementApp() {
   }
 
   async function refreshSettlementFunding(walletProvider: Eip1193Provider | undefined, connectedAccount: string) {
+    const epoch = ++settlementFundingEpoch.current;
     setSettlementFunding({ status: "loading" });
     try {
       if (!settlementConfigState.apiUrl) {
         throw new Error("Settlement funding is unavailable because the game API is not configured.");
       }
+      const funding = await fetchSettlementFundingWithMigration(walletProvider, connectedAccount);
+      if (epoch !== settlementFundingEpoch.current || currentAccount.current?.toLowerCase() !== connectedAccount.toLowerCase()) return;
       setSettlementFunding({
         status: "ready",
-        funding: await fetchSettlementFundingWithMigration(walletProvider, connectedAccount),
+        funding,
       });
     } catch (error) {
+      if (epoch !== settlementFundingEpoch.current || currentAccount.current?.toLowerCase() !== connectedAccount.toLowerCase()) return;
       setSettlementFunding({
         status: "error",
         message: walletRequestErrorMessage(error),
@@ -1219,25 +1221,41 @@ export function FirstPlanetSettlementApp() {
     const funding = await refreshSettlementLaunchInfo(wallet.account, planet);
     if (!funding) return;
 
-    let allianceInvite: PaidAllianceInviteRedemption | undefined;
     try {
-      allianceInvite = paidAllianceInviteSecret ? await paidAllianceInviteRedemptionForSettlement(wallet.account) : undefined;
-      const referral = await referralRedemptionForSettlement(wallet.account);
-      const transactionOptions = allianceInvite ? settlementTransactionOptions(funding, referral, allianceInvite) : settlementTransactionOptions(funding, referral);
       const data = backendDataStoreFor(apiUrl);
+      let referralCode: string | undefined;
+      let transactionOptions: SettlementTransactionOptions | undefined;
       let submittedTxHash: string | undefined;
       playSfx("settle-launch");
       haptic("select");
       const completed = await data.runWriteTransaction({
         key: "settlement:first-planet",
         label,
+        prepare: async () => {
+          referralCode = paidAllianceInviteSecret ? undefined : referralCodeInput.trim() || undefined;
+          const redemptions = await data.prepareSettlementRedemptions(wallet.account, {
+            paidAllianceInviteSecret,
+            referralCode,
+          });
+          transactionOptions = redemptions.allianceInvite
+            ? settlementTransactionOptions(funding, redemptions.referral, redemptions.allianceInvite)
+            : settlementTransactionOptions(funding, redemptions.referral);
+        },
         send: async () => {
+          if (!transactionOptions) throw new Error("Settlement preparation did not complete.");
           submittedTxHash = await sendSettlementTransaction(provider, wallet.account, settlementConfig, transactionOptions);
           return submittedTxHash;
         },
         confirm: (txHash) => confirmTransactionReceiptForProviderSource(provider, walletProviderSource, requiredChain.rpcUrls[0], txHash),
         indexing: data.indexing.settledPlanet(wallet.account),
-        invalidateTags: [`wallet:${wallet.account.toLowerCase()}`, "kind:settlement", "kind:planets", "kind:queues"],
+        invalidateTags: [
+          `wallet:${wallet.account.toLowerCase()}`,
+          "kind:settlement",
+          "kind:planets",
+          "kind:queues",
+          "kind:referral-dashboard",
+          "kind:referral-history",
+        ],
         errorLabel: (error) => (isUserRejected(error) ? "Settlement transaction was rejected." : walletRequestErrorMessage(error)),
         onStateChange: (state) => {
           if (state.phase === "confirmed") playSfx("tx-confirm");
@@ -1267,9 +1285,9 @@ export function FirstPlanetSettlementApp() {
       if (indexedSettlement.kind !== "settled") {
         throw new Error(POST_SETTLEMENT_INDEXING_TIMEOUT_MESSAGE);
       }
-      if (referral && submittedTxHash) {
+      if (referralCode && submittedTxHash) {
         try {
-          await data.recordReferralRedemption(referral.code, wallet.account, submittedTxHash);
+          await data.recordReferralRedemption(referralCode, wallet.account, submittedTxHash);
         } catch (error) {
           console.error("Failed to record confirmed referral redemption", error);
         }
@@ -1281,28 +1299,6 @@ export function FirstPlanetSettlementApp() {
         message: isUserRejected(error) ? "Settlement transaction was rejected." : walletRequestErrorMessage(error),
       });
     }
-  }
-
-  async function referralRedemptionForSettlement(invitee: string): Promise<ReferralRedemption | undefined> {
-    if (paidAllianceInviteSecret) return undefined;
-    const code = referralCodeInput.trim();
-    if (!code) return undefined;
-    if (!settlementConfigState.apiUrl) {
-      throw new Error("Referral codes are unavailable because the game API is not configured.");
-    }
-    const resolution = await backendDataStoreFor(settlementConfigState.apiUrl).referralCodeValidation(code, invitee);
-    if (!resolution.valid) {
-      throw new Error(resolution.message);
-    }
-    return redeemReferralCode(settlementConfigState.apiUrl, code, invitee);
-  }
-
-  async function paidAllianceInviteRedemptionForSettlement(invitee: string): Promise<PaidAllianceInviteRedemption | undefined> {
-    if (!paidAllianceInviteSecret) return undefined;
-    if (!settlementConfigState.apiUrl) {
-      throw new Error("Alliance invites are unavailable because the game API is not configured.");
-    }
-    return redeemPaidAllianceInvite(settlementConfigState.apiUrl, paidAllianceInviteSecret, invitee);
   }
 
   async function claimReferralInvite() {
@@ -1347,6 +1343,7 @@ export function FirstPlanetSettlementApp() {
   }
 
   async function refreshSettlementLaunchInfo(connectedAccount: string, currentPlanet: PlanetState): Promise<SettlementFundingState | undefined> {
+    const epoch = ++settlementFundingEpoch.current;
     setSettlementFunding({ status: "loading" });
 
     try {
@@ -1356,6 +1353,7 @@ export function FirstPlanetSettlementApp() {
       }
 
       if (settlement.kind === "settled") {
+        if (epoch !== settlementFundingEpoch.current || currentAccount.current?.toLowerCase() !== connectedAccount.toLowerCase()) return undefined;
         setSettlementFunding({ status: "idle" });
         setPlanet({
           kind: "already-settled",
@@ -1365,6 +1363,7 @@ export function FirstPlanetSettlementApp() {
       }
 
       if (settlement.kind === "indexing") {
+        if (epoch !== settlementFundingEpoch.current || currentAccount.current?.toLowerCase() !== connectedAccount.toLowerCase()) return undefined;
         setSettlementFunding({ status: "idle" });
         setPlanet({
           kind: "pending",
@@ -1373,6 +1372,7 @@ export function FirstPlanetSettlementApp() {
         return undefined;
       }
 
+      if (epoch !== settlementFundingEpoch.current || currentAccount.current?.toLowerCase() !== connectedAccount.toLowerCase()) return undefined;
       setPlanet({ kind: "not-settled" });
       if (!settlementConfigState.apiUrl) {
         throw new Error("Settlement funding is unavailable because the game API is not configured.");
@@ -1381,10 +1381,12 @@ export function FirstPlanetSettlementApp() {
         status: "ready",
         funding: await fetchSettlementFundingWithMigration(provider, connectedAccount),
       };
+      if (epoch !== settlementFundingEpoch.current || currentAccount.current?.toLowerCase() !== connectedAccount.toLowerCase()) return undefined;
       setSettlementFunding(nextFunding);
 
       return settlementLaunchBlocker(settlementContractConfigured(settlementConfig), nextFunding, Boolean(paidAllianceInviteSecret)) === undefined ? nextFunding.funding : undefined;
     } catch (error) {
+      if (epoch !== settlementFundingEpoch.current || currentAccount.current?.toLowerCase() !== connectedAccount.toLowerCase()) return undefined;
       setPlanet(currentPlanet.kind === "legacy-settled" ? currentPlanet : { kind: "not-settled" });
       setSettlementFunding({
         status: "error",
@@ -1398,28 +1400,15 @@ export function FirstPlanetSettlementApp() {
     if (!walletProvider) {
       throw new Error("Wallet provider is unavailable. Reconnect your wallet, then retry.");
     }
-
-    const [backendFunding, walletBalanceWei, chainMigrationReservation] = await Promise.all([
-      backendDataStoreFor(settlementConfigState.apiUrl!).settlementFunding(connectedAccount),
-      readWalletNativeBalance(walletProvider, connectedAccount),
-      readMigrationReservation(walletProvider, settlementConfig.migrationAddress, connectedAccount),
-    ]);
-    const funding = settlementFundingWithWalletBalance(backendFunding, walletBalanceWei);
-    const migrationReservation = migrationReservationForSettlementFunding(chainMigrationReservation, funding.migrationReservation);
-    const activeMigration = Boolean(migrationReservation?.exists && !migrationReservation.claimed && settlementConfig.migrationAddress);
-    const migrationClaim = activeMigration ? (funding.migrationClaim ?? null) : null;
-    const unavailableReason = funding.unavailableReason ?? (activeMigration && !migrationClaim ? "Migration state snapshot is not ready for this wallet yet." : undefined);
-    return {
-      ...funding,
-      ...(activeMigration
-        ? {
-            migrationClaim,
-            migrationContractAddress: settlementConfig.migrationAddress,
-          }
-        : {}),
-      migrationReservation,
-      ...(unavailableReason ? { unavailableReason } : {}),
-    };
+    if (!settlementConfigState.apiUrl) {
+      throw new Error("Settlement funding is unavailable because the game API is not configured.");
+    }
+    return backendDataStoreFor(settlementConfigState.apiUrl).settlementFundingForProvider(
+      connectedAccount,
+      walletProvider,
+      settlementConfig.migrationAddress,
+      currentChainId.current,
+    );
   }
 
   const holdSuccessReveal = planet.kind === "success" && !successHoldElapsed;
@@ -2401,9 +2390,18 @@ function activeMigrationReservation(settlementFunding: SettlementFunding): Migra
   return reservation?.exists && !reservation.claimed ? reservation : null;
 }
 
-export function migrationReservationForSettlementFunding(chainReservation: MigrationReservation | null, backendReservation: MigrationReservation | null | undefined): MigrationReservation | null {
-  const reservation = chainReservation ?? backendReservation ?? null;
-  return reservation?.claimed ? null : reservation;
+/**
+ * Preserve the chain-backed migration reservation as the authoritative
+ * projection when one exists. The backend copy is only a fallback while the
+ * provider read is unavailable; a claimed chain reservation must never be
+ * revived from that older backend value.
+ */
+export function migrationReservationForSettlementFunding(
+  chainReservation: MigrationReservation | null,
+  backendReservation: MigrationReservation | null,
+): MigrationReservation | null {
+  if (chainReservation?.claimed) return null;
+  return chainReservation ?? backendReservation;
 }
 
 function settlementBody(

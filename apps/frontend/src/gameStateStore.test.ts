@@ -125,6 +125,27 @@ describe("GameStateStore", () => {
     expect(replacementStarted).toBe(true);
   });
 
+  test("keeps dedupe ownership until a deadline-aborted transport actually settles", async () => {
+    const store = new GameStateStore(new GameStateReadScheduler(1));
+    const slowTransport = deferred<string>();
+    let duplicateLoads = 0;
+    const first = store.read("slow", () => slowTransport.promise, { deadlineMs: 5 });
+
+    await expect(first).rejects.toThrow("including queue time");
+    expect(store.hasInFlight("slow")).toBe(true);
+    const duplicate = store.read("slow", async () => {
+      duplicateLoads += 1;
+      return "duplicate";
+    });
+    await expect(duplicate).rejects.toThrow("including queue time");
+    expect(duplicateLoads).toBe(0);
+
+    slowTransport.resolve("settled after timeout");
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(store.hasInFlight("slow")).toBe(false);
+    await expect(store.read("slow", async () => "fresh", { deadlineMs: 100 })).resolves.toBe("fresh");
+  });
+
   test("runs transaction convergence before selected and background refreshes", async () => {
     const scheduler = new GameStateReadScheduler(1);
     const blocker = deferred<string>();

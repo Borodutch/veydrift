@@ -12,7 +12,11 @@ describe("VEY-KANEO-836 Mission Control wallet scope", () => {
     expect(missionState).toContain("const missionArchiveSnapshot = useBackendDataSnapshot");
     expect(missionState).toContain("const allActiveMissionsSnapshot = useBackendDataSnapshot");
     expect(missionState).toContain("const globalMissionArchiveSnapshot = useBackendDataSnapshot");
-    expect(missionState).toContain("const [missionPlanetArchetypesByCoordinate, setMissionPlanetArchetypesByCoordinate] = useState");
+    // Archetypes are now derived from canonical system snapshots instead of
+    // a Mission Control-local response cache.
+    expect(appSource).toContain("const missionUniverseSnapshots = useBackendDataSnapshots<ApiSystemResponse>");
+    expect(appSource).toContain("const missionPlanetArchetypesByCoordinate = useMemo");
+    expect(appSource).not.toContain("setMissionPlanetArchetypesByCoordinate");
     expect(missionState).not.toContain("activePlanetSection");
     expect(missionState).not.toContain("activePlanetId");
     expect(missionState).not.toContain("setPlanetSection");

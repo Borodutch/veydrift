@@ -28,6 +28,11 @@ import {
   resolvePaidAllianceInvite,
   recordReferralClaimTransaction,
   recordReferralRedemptionTransaction,
+  readMigrationReservation,
+  readWalletNativeBalance,
+  settlementFundingWithWalletBalance,
+  redeemPaidAllianceInvite,
+  redeemReferralCode,
   storePaidAllianceInvite,
   fetchRiftState,
   fetchSettlementFundingState,
@@ -71,7 +76,10 @@ import {
   type ReferralHistoryResponse,
   type ReferralResolution,
   type PaidAllianceInviteResolution,
+  type PaidAllianceInviteRedemption,
+  type ReferralRedemption,
   type SettlementFundingState,
+  type MigrationReservation,
   type WalletOverviewSnapshotResponse,
   type WalletPlanetsResponse,
   type WalletSettlementResponse,
@@ -161,6 +169,38 @@ export type BackendWriteTransactionDescriptor = Omit<WriteTransactionDescriptor<
   indexing?: BackendIndexingPlan | undefined;
 };
 
+/** Backend reservations that must be prepared under the same wallet-scoped
+ * gate as first-planet settlement, so retries cannot race a second browser
+ * tab or a reconnect. */
+export type SettlementRedemptions = {
+  allianceInvite?: PaidAllianceInviteRedemption | undefined;
+  referral?: ReferralRedemption | undefined;
+};
+
+function settlementFundingWithMigrationReservation(
+  funding: SettlementFundingState,
+  chainReservation: MigrationReservation | null,
+  migrationAddress?: string,
+): SettlementFundingState {
+  const migrationReservation = (chainReservation ?? funding.migrationReservation ?? null)?.claimed
+    ? null
+    : (chainReservation ?? funding.migrationReservation ?? null);
+  const activeMigration = Boolean(migrationReservation?.exists && !migrationReservation.claimed && migrationAddress);
+  const migrationClaim = activeMigration ? (funding.migrationClaim ?? null) : null;
+  const unavailableReason = funding.unavailableReason ?? (activeMigration && !migrationClaim ? "Migration state snapshot is not ready for this wallet yet." : undefined);
+  return {
+    ...funding,
+    ...(activeMigration
+      ? {
+          migrationClaim,
+          migrationContractAddress: migrationAddress!,
+        }
+      : {}),
+    migrationReservation,
+    ...(unavailableReason ? { unavailableReason } : {}),
+  };
+}
+
 type RegisteredResource = {
   key: string;
   load: (signal: AbortSignal) => Promise<unknown>;
@@ -174,13 +214,21 @@ type RegisteredResource = {
   tags: ReadonlySet<BackendDataTag>;
 };
 
+type PollingLease = {
+  intervalMs: number;
+  priority: GameStatePriority;
+  tags: readonly BackendDataTag[];
+};
+
 type ManagedPoller = {
+  timer: ReturnType<typeof setInterval>;
+  leases: Map<symbol, PollingLease>;
+};
+
+type ActivityPresencePoller = {
   timer: ReturnType<typeof setInterval>;
   references: number;
   signature: string;
-};
-
-type ActivityPresencePoller = ManagedPoller & {
   handleExit: () => void;
   handleVisibility: () => void;
 };
@@ -276,6 +324,7 @@ export class BackendDataStore {
   /** EVM nonces must serialize per wallet, not across unrelated accounts that
    * happen to share this API-base store after a browser account switch. */
   private readonly transactionGates = new Map<string, TransactionActionGate>();
+  private readonly settlementReservationAttempts = new Map<string, Promise<SettlementRedemptions>>();
   /**
    * The one registry of backend reads. A view never owns a second cache: it
    * subscribes to a key and asks this registry to refetch it. The registry is
@@ -290,6 +339,7 @@ export class BackendDataStore {
    */
   private readonly trailingInvalidations = new Set<string>();
   private readonly trailingInvalidationTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly trailingInvalidationSettlements = new Set<string>();
   private readonly evictionTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly pollers = new Map<string, ManagedPoller>();
   private readonly activityPresencePollers = new Map<string, ActivityPresencePoller>();
@@ -298,6 +348,9 @@ export class BackendDataStore {
   private readonly activityPresenceClaims = new Map<string, ActivityPresenceClaim>();
   private readonly chainEventBridges = new Map<string, ChainEventBridge>();
   private readonly scheduledRefreshes = new Map<string, ReturnType<typeof setTimeout>>();
+  /** Refresh intent that became due while hidden. It is coalesced and resumed
+   * once, centrally, when the tab is visible again. */
+  private readonly deferredHiddenRefreshes = new Map<BackendDataTag, GameStatePriority>();
   private readonly indexingPlanRunners = new WeakMap<object, IndexingPlanRunner>();
   private contextWallet: string | undefined;
   /**
@@ -311,6 +364,9 @@ export class BackendDataStore {
 
   constructor(readonly apiBaseUrl: string, options: BackendDataStoreOptions = {}) {
     this.inactiveResourceRetentionMs = options.inactiveResourceRetentionMs ?? INACTIVE_RESOURCE_RETENTION_MS;
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", this.handleVisibilityChange);
+    }
   }
 
   /**
@@ -321,14 +377,22 @@ export class BackendDataStore {
   readonly queries = {
     alliance: (wallet: string) => this.query(this.key("alliance", wallet), () => this.alliance(wallet)),
     attackProtection: (wallet: string, planetId: string, targetIsMoon = false) => this.query(this.key("attack-protection", wallet, planetId, targetIsMoon), () => this.attackProtection(wallet, planetId, targetIsMoon)),
+    battleReports: () => this.query(this.key("battle-reports"), () => this.battleReports()),
+    burningChicken: (owner: string, tokenId: string, config: BurningChickenConfig) => this.query(this.key("burning-chicken", owner, tokenId, config), () => this.burningChicken(owner, tokenId, config)),
     defenses: (wallet: string, planetId: string) => this.query(this.key("defenses", wallet, planetId), () => this.defenses(wallet, planetId)),
     entityMedia: (kind: EntityMediaKind, entityId: string) => this.query(this.key("entity-media", kind, entityId), () => this.entityMedia(kind, entityId)),
+    fleetArchive: (wallet: string, options: FleetMissionArchiveOptions = {}) => this.query(this.key("fleet-archive", wallet, options), () => this.fleetArchive(wallet, options)),
+    fleetVisibility: (wallet: string, options: FleetMissionVisibilityOptions = {}) => this.query(this.key("fleet-visibility", wallet, options.includeArchive), () => this.fleetVisibility(wallet, options)),
     globalActiveMissions: () => this.query(this.key("global-active-missions"), () => this.globalActiveMissions()),
+    globalMissionArchive: (options: GlobalMissionArchiveOptions = {}) => this.query(this.key("global-mission-archive", options), () => this.globalMissionArchive(options)),
     highscores: (options: FetchHighscoreOptions = {}) => this.query(this.key("highscores", options), () => this.highscores(options)),
     infrastructure: (wallet: string, planetId: string) => this.query(this.key("infrastructure", wallet, planetId), () => this.infrastructure(wallet, planetId)),
     landingActiveMissions: <T>() => this.query(this.key("landing-active-missions"), () => this.landingActiveMissions<T>()),
     landingHighscores: <T>() => this.query(this.key("landing-highscores"), () => this.landingHighscores<T>()),
     moon: (wallet: string, planetId: string) => this.query(this.key("moon", wallet, planetId), () => this.moon(wallet, planetId)),
+    missileArchive: (wallet: string, options: { page?: number; pageSize?: number; planetId?: string } = {}) => this.query(this.key("missile-archive", wallet, options), () => this.missileArchive(wallet, options)),
+    mission: (missionId: string) => this.query(this.key("mission", missionId), () => this.mission(missionId)),
+    overview: (wallet: string, planetId?: string) => this.query(this.key("overview", wallet, planetId), () => this.overview(wallet, planetId)),
     paidAllianceInviteResolution: (secret: string) => this.query(this.key("paid-alliance-invite-resolution", secret), () => this.paidAllianceInviteResolution(secret)),
     playerActivity: (wallet: string, options: { page?: number; pageSize?: number; since?: number; includeProjected?: boolean } = {}) => this.query(this.key("player-activity", wallet, options), () => this.playerActivity(wallet, options)),
     playerHighscore: (wallet: string) => this.query(this.key("player-highscore", wallet), () => this.playerHighscore(wallet)),
@@ -345,7 +409,10 @@ export class BackendDataStore {
     rift: (wallet: string, planetId: string) => this.query(this.key("rift", wallet, planetId), () => this.rift(wallet, planetId)),
     runtimeConfig: <T>(url: string) => this.query(this.key("runtime-config", url), () => this.runtimeConfig<T>(url)),
     shipyard: (wallet: string, planetId: string) => this.query(this.key("shipyard", wallet, planetId), () => this.shipyard(wallet, planetId)),
+    settlement: (wallet: string) => this.query(this.key("settlement", wallet), () => this.settlement(wallet)),
+    settlementFunding: (wallet: string) => this.query(this.key("settlement-funding", wallet), () => this.settlementFunding(wallet)),
     system: <T = unknown>(galaxy: number, system: number, options: { detail?: "full" } = {}) => this.query(this.key("system", galaxy, system, options), () => this.system<T>(galaxy, system, options)),
+    watchedPlanets: (wallet: string, options: { page?: number; pageSize?: number } = {}) => this.query(this.key("watched-planets", wallet, options), () => this.watchedPlanets(wallet, options)),
   };
 
   /**
@@ -670,23 +737,21 @@ export class BackendDataStore {
    * not create timers or duplicate refresh loops themselves.
    */
   startPolling(name: string, tags: readonly BackendDataTag[], intervalMs: number, priority: GameStatePriority): () => void {
-    const signature = JSON.stringify({ intervalMs, priority, tags: [...tags].sort() });
+    const owner = Symbol(name);
     const existing = this.pollers.get(name);
     if (existing) {
-      if (existing.signature !== signature) {
-        clearInterval(existing.timer);
-        existing.timer = this.createPollTimer(tags, intervalMs, priority);
-        existing.signature = signature;
-      }
-      existing.references += 1;
-      return () => this.releasePolling(name);
+      existing.leases.set(owner, { intervalMs, priority, tags: [...tags] });
+      this.reconfigurePolling(existing);
+      return () => this.releasePolling(name, owner);
     }
-    this.pollers.set(name, {
-      timer: this.createPollTimer(tags, intervalMs, priority),
-      references: 1,
-      signature,
-    });
-    return () => this.releasePolling(name);
+    const poller: ManagedPoller = {
+      // Replaced immediately below by the effective lease configuration.
+      timer: undefined as unknown as ReturnType<typeof setInterval>,
+      leases: new Map([[owner, { intervalMs, priority, tags: [...tags] }]]),
+    };
+    this.pollers.set(name, poller);
+    this.reconfigurePolling(poller);
+    return () => this.releasePolling(name, owner);
   }
 
   /** Force-stop every owner of a named poller, for terminal teardown only. */
@@ -751,7 +816,10 @@ export class BackendDataStore {
       name,
       setTimeout(() => {
         this.scheduledRefreshes.delete(name);
-        if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+        if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+          this.deferHiddenRefresh(tags, priority);
+          return;
+        }
         void this.invalidate(tags, { activeOnly: true, priority });
       }, delayMs),
     );
@@ -884,11 +952,17 @@ export class BackendDataStore {
       this.cancelEviction(resource.key);
       this.resources.delete(resource.key);
       this.trailingInvalidations.delete(resource.key);
+      this.trailingInvalidationSettlements.delete(resource.key);
       const trailing = this.trailingInvalidationTimers.get(resource.key);
       if (trailing !== undefined) clearTimeout(trailing);
       this.trailingInvalidationTimers.delete(resource.key);
       this.state.clear(resource.key);
     }
+    // Some store projections publish canonical entries directly (overview
+    // fan-out, resource promotion, chain health, write state). They are still
+    // account-owned data and must not survive a wallet switch merely because
+    // no screen happened to register their source resource first.
+    this.state.clearWallet(previousWallet);
 
     // Provider/account effects release their own references as they rerender,
     // but an immediate close prevents an old wallet's EventSource from
@@ -897,6 +971,11 @@ export class BackendDataStore {
     bridge?.close();
     this.chainEventBridges.delete(previousWallet);
     this.activityPresenceClaims.delete(previousWallet);
+    for (const key of this.settlementReservationAttempts.keys()) {
+      if (key.startsWith(`settlement-reservation:${previousWallet}:`)) {
+        this.settlementReservationAttempts.delete(key);
+      }
+    }
     void planetId;
   }
 
@@ -922,8 +1001,12 @@ export class BackendDataStore {
   }
 
   private publishWriteTransactionState(state: WriteTransactionState, walletScope = "global"): void {
-    this.state.publish(this.writeTransactionKey(undefined, walletScope), state);
-    if (state.key) this.state.publish(this.writeTransactionKey(state.key, walletScope), state);
+    // Write status is UI state, but it is still scoped to the initiating
+    // wallet.  Without this metadata `clearWallet()` cannot retire a
+    // confirmed/failed action from a previous account after an account switch.
+    const options = walletScope === "global" ? undefined : { wallet: walletScope };
+    this.state.publish(this.writeTransactionKey(undefined, walletScope), state, options);
+    if (state.key) this.state.publish(this.writeTransactionKey(state.key, walletScope), state, options);
   }
 
   private transactionWalletScope(tags: readonly BackendDataTag[] | undefined): string {
@@ -1028,6 +1111,47 @@ export class BackendDataStore {
   }
 
   /**
+   * Reserve settlement-only referral/invite data while the caller is already
+   * inside `runWriteTransaction.prepare`. The cache makes the reservation
+   * idempotent for a repeated wallet prompt/retry, while `setContext` clears
+   * it when the account changes. This deliberately does not create a second
+   * transaction gate (which would deadlock the active settlement write).
+   */
+  prepareSettlementRedemptions(
+    wallet: string,
+    options: {
+      paidAllianceInviteSecret?: string | undefined;
+      referralCode?: string | undefined;
+    },
+  ): Promise<SettlementRedemptions> {
+    const normalizedWallet = wallet.toLowerCase();
+    const referralCode = options.referralCode?.trim();
+    const secret = options.paidAllianceInviteSecret?.trim();
+    const key = `settlement-reservation:${normalizedWallet}:${secret ?? ""}:${referralCode ?? ""}`;
+    const existing = this.settlementReservationAttempts.get(key);
+    if (existing) return existing;
+    const reservation = (async (): Promise<SettlementRedemptions> => {
+      if (secret) {
+        return { allianceInvite: await redeemPaidAllianceInvite(this.apiBaseUrl, secret, wallet) };
+      }
+      if (!referralCode) return {};
+      const resolution = await this.referralCodeValidation(referralCode, wallet);
+      if (!resolution.valid) throw new Error(resolution.message);
+      return { referral: await redeemReferralCode(this.apiBaseUrl, referralCode, wallet) };
+    })();
+    this.settlementReservationAttempts.set(key, reservation);
+    void reservation.catch(() => {
+      // A failed reservation is retryable. Keep successful reservations for
+      // the current wallet/session because the backend treats them as a
+      // settlement commitment that the later chain transaction consumes.
+      if (this.settlementReservationAttempts.get(key) === reservation) {
+        this.settlementReservationAttempts.delete(key);
+      }
+    });
+    return reservation;
+  }
+
+  /**
    * Polls only indexed API reads until a caller-provided indexed predicate is
    * true. Reconciliation itself remains exclusively backend-owned; this is
    * merely one shared way for mutations to observe its published result.
@@ -1081,12 +1205,28 @@ export class BackendDataStore {
       wallet?: string | undefined;
     } = {},
   ): void {
-    this.state.publish(cacheKey(kind, ...parts), data, options);
+    const key = cacheKey(kind, ...parts);
+    this.state.publish(key, data, options);
+    // Store projections (overview fan-out, chain health, successful signed
+    // mutations) do not always have a registered transport resource. They
+    // still need the same bounded lifecycle as descriptor-backed entries.
+    this.scheduleEviction(key);
   }
 
   /** Record a backend transport failure while retaining any last-good data. */
   private markBackendFailure(kind: string, error: string | undefined, parts: unknown[] = []): void {
-    this.state.fail(cacheKey(kind, ...parts), error);
+    const key = cacheKey(kind, ...parts);
+    this.state.fail(key, error);
+    this.scheduleEviction(key);
+  }
+
+  /**
+   * Publish an action-level failure into the canonical lifecycle instead of
+   * retaining a shell-local error state. Clearing it restores the latest
+   * canonical snapshot's normal freshness state.
+   */
+  setSnapshotError(kind: string, error: string | undefined, parts: unknown[] = []): void {
+    this.markBackendFailure(kind, error, parts);
   }
 
   /** Remove a canonical snapshot only when its source is no longer applicable. */
@@ -1103,6 +1243,7 @@ export class BackendDataStore {
         if (!this.state.forget(key)) return;
         this.resources.delete(key);
         this.trailingInvalidations.delete(key);
+        this.trailingInvalidationSettlements.delete(key);
         const trailing = this.trailingInvalidationTimers.get(key);
         if (trailing !== undefined) clearTimeout(trailing);
         this.trailingInvalidationTimers.delete(key);
@@ -1159,17 +1300,64 @@ export class BackendDataStore {
     existing.tags = new Set([...existing.tags, ...descriptor.tags]);
   }
 
-  private releasePolling(name: string): void {
+  private releasePolling(name: string, owner: symbol): void {
     const poller = this.pollers.get(name);
     if (!poller) return;
-    poller.references -= 1;
-    if (poller.references > 0) return;
-    this.stopPolling(name);
+    poller.leases.delete(owner);
+    if (poller.leases.size === 0) {
+      this.stopPolling(name);
+      return;
+    }
+    this.reconfigurePolling(poller);
   }
+
+  private reconfigurePolling(poller: ManagedPoller): void {
+    clearInterval(poller.timer);
+    const leases = [...poller.leases.values()];
+    const tags = [...new Set(leases.flatMap((lease) => lease.tags))];
+    const intervalMs = Math.min(...leases.map((lease) => lease.intervalMs));
+    const priority = leases.reduce<GameStatePriority>((effective, lease) => this.higherPriority(effective, lease.priority), "background");
+    poller.timer = this.createPollTimer(tags, intervalMs, priority);
+  }
+
+  private higherPriority(left: GameStatePriority, right: GameStatePriority): GameStatePriority {
+    const priority: Record<GameStatePriority, number> = {
+      transaction: 0,
+      "selected-planet": 1,
+      "mission-control": 2,
+      background: 3,
+    };
+    return priority[left] <= priority[right] ? left : right;
+  }
+
+  private deferHiddenRefresh(tags: readonly BackendDataTag[], priority: GameStatePriority): void {
+    for (const tag of tags) {
+      const current = this.deferredHiddenRefreshes.get(tag);
+      this.deferredHiddenRefreshes.set(tag, current ? this.higherPriority(current, priority) : priority);
+    }
+  }
+
+  private readonly handleVisibilityChange = (): void => {
+    if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+    if (this.deferredHiddenRefreshes.size === 0) return;
+    const byPriority = new Map<GameStatePriority, BackendDataTag[]>();
+    for (const [tag, priority] of this.deferredHiddenRefreshes) {
+      const tags = byPriority.get(priority) ?? [];
+      tags.push(tag);
+      byPriority.set(priority, tags);
+    }
+    this.deferredHiddenRefreshes.clear();
+    for (const [priority, tags] of byPriority) {
+      void this.invalidate(tags, { activeOnly: true, priority });
+    }
+  };
 
   private createPollTimer(tags: readonly BackendDataTag[], intervalMs: number, priority: GameStatePriority): ReturnType<typeof setInterval> {
     return setInterval(() => {
-      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        this.deferHiddenRefresh(tags, priority);
+        return;
+      }
       void this.invalidate(tags, { activeOnly: true, priority });
     }, intervalMs);
   }
@@ -1220,17 +1408,16 @@ export class BackendDataStore {
     if (!this.trailingInvalidations.delete(key)) return;
     if (this.state.hasInFlight(key)) {
       this.trailingInvalidations.add(key);
-      // A promise completion normally reaches this method after GameStateStore
-      // has removed its in-flight entry. Keep one bounded fallback for another
-      // consumer's overlapping read; never spin a zero-delay retry loop.
-      if (!this.trailingInvalidationTimers.has(key)) {
-        this.trailingInvalidationTimers.set(
-          key,
-          setTimeout(() => {
-            this.trailingInvalidationTimers.delete(key);
-            this.flushTrailingInvalidation(key);
-          }, 25),
-        );
+      // A consumer deadline can happen before a cooperative AbortSignal
+      // transport finishes. Wait for the real transport lifecycle instead of
+      // spinning timer retries or issuing a duplicate read under bad network.
+      const settled = this.state.inFlightSettled(key);
+      if (settled && !this.trailingInvalidationSettlements.has(key)) {
+        this.trailingInvalidationSettlements.add(key);
+        void settled.finally(() => {
+          this.trailingInvalidationSettlements.delete(key);
+          this.flushTrailingInvalidation(key);
+        });
       }
       return;
     }
@@ -1616,6 +1803,38 @@ export class BackendDataStore {
     return this.refresh(key, (signal) => fetchSettlementFundingState(this.apiBaseUrl, wallet, signal), { wallet });
   }
 
+  /** Store-owned projection for settlement funding. Backend funding and the
+   * wallet's chain-only balance/reservation are committed under one canonical
+   * identity so an old provider/network result cannot overwrite a newer
+   * wallet session in the settlement UI. */
+  settlementFundingForProvider(
+    wallet: string,
+    provider: Eip1193Provider,
+    migrationAddress: string | undefined,
+    providerIdentity: string | undefined,
+  ): Promise<SettlementFundingState> {
+    const key = cacheKey("settlement-funding-projection", wallet, migrationAddress, providerIdentity);
+    return this.refresh(
+      key,
+      async () => {
+        const [backendFunding, walletBalanceWei, chainMigrationReservation] = await Promise.all([
+          this.settlementFunding(wallet),
+          readWalletNativeBalance(provider, wallet),
+          readMigrationReservation(provider, migrationAddress, wallet),
+        ]);
+        return settlementFundingWithMigrationReservation(
+          settlementFundingWithWalletBalance(backendFunding, walletBalanceWei),
+          chainMigrationReservation,
+          migrationAddress,
+        );
+      },
+      {
+        priority: "selected-planet",
+        wallet,
+      },
+    );
+  }
+
   referralDashboard(wallet: string): Promise<ReferralDashboard> {
     const key = cacheKey("referral-dashboard", wallet);
     return this.refresh(key, (signal) => fetchReferralDashboard(this.apiBaseUrl, wallet, signal), { wallet });
@@ -1987,7 +2206,7 @@ export class BackendDataStore {
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       try {
         const dashboard = await recordReferralClaimTransaction(this.apiBaseUrl, wallet, code, commitment, txHash, signature);
-        this.commitBackendSnapshot("referral-dashboard", dashboard, [wallet]);
+        this.commitBackendSnapshot("referral-dashboard", dashboard, [wallet], { wallet });
         await this.invalidate([`wallet:${wallet.toLowerCase()}`, "kind:referral-dashboard", "kind:referral-history"], { activeOnly: true, priority: "transaction" });
         return dashboard;
       } catch (error) {

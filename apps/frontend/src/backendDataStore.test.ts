@@ -195,6 +195,30 @@ describe("BackendDataStore", () => {
     expect(store.refetch(walletKey)).toBeUndefined();
   });
 
+  test("clears account-owned snapshots published outside a registered resource on wallet switch", () => {
+    const store = new BackendDataStore("https://api.test");
+    const release = store.connectChainEvents("0xaaa");
+    const healthKey = store.key("chain-sync-health", "0xaaa");
+
+    store.setContext("0xaaa");
+    expect(store.snapshot(healthKey)).toBeDefined();
+    store.setContext("0xbbb");
+    expect(store.snapshot(healthKey)).toBeUndefined();
+    release();
+  });
+
+  test("clears wallet-scoped write status on account switch", async () => {
+    const store = new BackendDataStore("https://api.test");
+    store.setContext("0xaaa");
+
+    await store.runExclusiveTransaction("profile:0xaaa", "Save profile", async () => ({ ok: true }), "0xaaa");
+    expect(store.snapshot<WriteTransactionState>(store.writeTransactionKey("profile:0xaaa", "0xaaa"))?.data?.phase).toBe("success");
+
+    store.setContext("0xbbb");
+    expect(store.snapshot(store.writeTransactionKey("profile:0xaaa", "0xaaa"))).toBeUndefined();
+    expect(store.snapshot(store.writeTransactionKey(undefined, "0xaaa"))).toBeUndefined();
+  });
+
   test("reference-counts equivalent named pollers", async () => {
     const store = new BackendDataStore("https://api.test");
     const key = store.key("global-active-missions");
@@ -230,6 +254,81 @@ describe("BackendDataStore", () => {
       releaseSlow();
       releaseFast();
       unsubscribe();
+    }
+  });
+
+  test("restores the remaining owner's polling policy when a faster lease releases", async () => {
+    const store = new BackendDataStore("https://api.test");
+    const key = store.key("global-active-missions");
+    let loads = 0;
+    const unsubscribe = store.subscribeKey(key, () => {});
+    const releaseSlow = store.startPolling("mission-control", ["kind:global-active-missions"], 60_000, "background");
+    const releaseFast = store.startPolling("mission-control", ["kind:global-active-missions"], 5, "mission-control");
+
+    try {
+      await store.refresh(key, async () => ({ revision: ++loads }));
+      await new Promise<void>((resolve) => setTimeout(resolve, 20));
+      expect(loads).toBeGreaterThan(1);
+      releaseFast();
+      const afterFastLease = loads;
+      await new Promise<void>((resolve) => setTimeout(resolve, 20));
+      expect(loads).toBe(afterFastLease);
+    } finally {
+      releaseSlow();
+      unsubscribe();
+    }
+  });
+
+  test("deduplicates settlement invite reservation inside the store-owned write preparation boundary", async () => {
+    const originalFetch = globalThis.fetch;
+    let redemptions = 0;
+    globalThis.fetch = (async () => {
+      redemptions += 1;
+      return Response.json({ allianceId: "1", invitee: "0xabc" });
+    }) as unknown as typeof fetch;
+    const store = new BackendDataStore("https://api.test");
+
+    try {
+      const [first, second] = await Promise.all([
+        store.prepareSettlementRedemptions("0xabc", { paidAllianceInviteSecret: "secret" }),
+        store.prepareSettlementRedemptions("0xAbC", { paidAllianceInviteSecret: "secret" }),
+      ]);
+      expect(first).toEqual(second);
+      expect(redemptions).toBe(1);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("coalesces hidden scheduled refreshes into one foreground catch-up", async () => {
+    const originalDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
+    let visibilityListener: (() => void) | undefined;
+    const document = {
+      visibilityState: "hidden" as "hidden" | "visible",
+      addEventListener: (name: string, listener: () => void) => {
+        if (name === "visibilitychange") visibilityListener = listener;
+      },
+      removeEventListener() {},
+    };
+    Object.defineProperty(globalThis, "document", { configurable: true, value: document });
+    const store = new BackendDataStore("https://api.test");
+    const key = store.key("global-active-missions");
+    let loads = 0;
+    const unsubscribe = store.subscribeKey(key, () => {});
+
+    try {
+      await store.refresh(key, async () => ({ revision: ++loads }));
+      store.scheduleRefresh("hidden-refresh", ["kind:global-active-missions"], 1, "mission-control");
+      await new Promise<void>((resolve) => setTimeout(resolve, 5));
+      expect(loads).toBe(1);
+      document.visibilityState = "visible";
+      visibilityListener?.();
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      expect(loads).toBe(2);
+    } finally {
+      unsubscribe();
+      if (originalDocument) Object.defineProperty(globalThis, "document", originalDocument);
+      else Reflect.deleteProperty(globalThis, "document");
     }
   });
 
