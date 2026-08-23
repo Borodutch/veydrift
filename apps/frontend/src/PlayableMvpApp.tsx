@@ -67,6 +67,7 @@ import {
 } from "./inspectRoutes";
 import { resetDocumentTitle } from "./pageTitle";
 import { hasPlanetSelectorChoice, isPlanetSelectorParentSelected } from "./planetSelectorChoice";
+import { planetSelectorResearchProgressFor } from "./planetSelectorProgress";
 import {
   browserPlanetPickerOrderStorage,
   createPlanetPickerInteractionController,
@@ -8470,6 +8471,8 @@ export function PlayableMvpApp({
       onSelect={handleSelectManagedPlanet}
       planets={orderedWalletPlanets}
       progressState={constructionProgressState}
+      researchPlanetId={walletQueues?.homePlanetId ?? researchState?.homePlanetId}
+      researchProgress={walletResearchProgress}
       selectedPlanetId={activePlanetId}
     />
   ) : null;
@@ -8486,6 +8489,8 @@ export function PlayableMvpApp({
       onSelect={handleSelectManagedPlanet}
       planets={orderedWalletPlanets}
       progressState={constructionProgressState}
+      researchPlanetId={walletQueues?.homePlanetId ?? researchState?.homePlanetId}
+      researchProgress={walletResearchProgress}
       selectedPlanetId={activePlanetId}
     />
   ) : null;
@@ -9286,6 +9291,8 @@ function PlanetSelector({
   onSelect,
   planets,
   progressState,
+  researchPlanetId,
+  researchProgress,
   selectedPlanetId,
 }: {
   attackHighlights: PlanetPickerAttackHighlights;
@@ -9294,6 +9301,8 @@ function PlanetSelector({
   onSelect: (planetId: string, bodyKind?: OrbitBodyKind) => void;
   planets: ManagedPlanetResponse[];
   progressState: ConstructionProgressState;
+  researchPlanetId: string | null | undefined;
+  researchProgress: ConstructionProgress;
   selectedPlanetId: string | undefined;
 }) {
   const [draggingPlanetId, setDraggingPlanetId] = useState<string | undefined>();
@@ -9492,6 +9501,8 @@ function PlanetSelector({
       onSelect={onSelect}
       planet={planet}
       progressState={progressState}
+      researchPlanetId={researchPlanetId}
+      researchProgress={researchProgress}
       selectedPlanet={selectedPlanet}
       shouldPreventPlanetTouchMove={shouldPreventPlanetTouchMove}
     />
@@ -9533,6 +9544,8 @@ function PlanetSelectorItem({
   onSelect,
   planet,
   progressState,
+  researchPlanetId,
+  researchProgress,
   selectedPlanet,
   shouldPreventPlanetTouchMove,
 }: {
@@ -9550,6 +9563,8 @@ function PlanetSelectorItem({
   onSelect: (planetId: string, bodyKind?: OrbitBodyKind) => void;
   planet: ManagedPlanetResponse;
   progressState: ConstructionProgressState;
+  researchPlanetId: string | null | undefined;
+  researchProgress: ConstructionProgress;
   selectedPlanet: ManagedPlanetResponse;
   shouldPreventPlanetTouchMove: (planetId: string) => boolean;
 }) {
@@ -9592,6 +9607,8 @@ function PlanetSelectorItem({
         onSelect={onSelect}
         planet={planet}
         progressState={progressState}
+        researchPlanetId={researchPlanetId}
+        researchProgress={researchProgress}
         reordering={dragging}
         selected={selected}
         shouldPreventTouchMove={() => shouldPreventPlanetTouchMove(planet.planetId)}
@@ -9616,6 +9633,8 @@ function PlanetSelectorButton({
   onSelect,
   planet,
   progressState,
+  researchPlanetId,
+  researchProgress,
   reordering,
   selected,
   shouldPreventTouchMove,
@@ -9635,6 +9654,8 @@ function PlanetSelectorButton({
   onSelect: (planetId: string, bodyKind?: OrbitBodyKind) => void;
   planet: ManagedPlanetResponse;
   progressState: ConstructionProgressState;
+  researchPlanetId: string | null | undefined;
+  researchProgress: ConstructionProgress;
   reordering?: boolean;
   selected: boolean;
   shouldPreventTouchMove?: () => boolean;
@@ -9700,18 +9721,26 @@ function PlanetSelectorButton({
       </span>
       <span className="line-clamp-2 block max-w-full text-[0.68rem] font-medium leading-4 text-slate-200 [overflow-wrap:anywhere]">{planetDisplayName(planet)}</span>
       <span className="block max-w-full truncate font-mono text-[0.6rem] leading-3 text-slate-400">{planet.coordinates}</span>
-      <PlanetSelectorProgressBars planet={planet} progressState={progressState} />
+      <PlanetSelectorProgressBars
+        planet={planet}
+        progressState={progressState}
+        researchProgress={planetSelectorResearchProgressFor(planet.planetId, researchPlanetId, researchProgress)}
+      />
     </button>
   );
 }
 
-function PlanetSelectorProgressBars({ planet, progressState }: { planet: ManagedPlanetResponse; progressState: ConstructionProgressState }) {
-  const bars = planetSelectorQueueProgressBars(planet, progressState).filter((bar) => bar.active);
+function PlanetSelectorProgressBars({ planet, progressState, researchProgress }: {
+  planet: ManagedPlanetResponse;
+  progressState: ConstructionProgressState;
+  researchProgress?: ConstructionProgress | undefined;
+}) {
+  const bars = planetSelectorQueueProgressBars(planet, progressState, researchProgress).filter((bar) => bar.active);
   if (bars.length === 0) return null;
 
   const summary = bars.map((bar) => bar.title).join(". ");
   return (
-    <span aria-label={`Planet production progress. ${summary}`} className="grid w-full gap-1" data-planet-selector-progress-bars={planet.planetId}>
+    <span aria-label={`Planet progress. ${summary}`} className="grid w-full gap-1" data-planet-selector-progress-bars={planet.planetId}>
       {bars.map((bar) => (
         <span className="contents" data-planet-selector-progress={bar.kind} data-planet-selector-progress-active="true" key={bar.kind} title={bar.title}>
           <AnimatedProgressBar className="h-1.5 border border-white/5 bg-white/10 opacity-100" fillClassName={bar.color} indeterminate={bar.indeterminate} label={bar.title} value={bar.progress} />
@@ -9725,13 +9754,22 @@ type PlanetSelectorProgressBar = {
   active: boolean;
   color: string;
   indeterminate: boolean;
-  kind: "building" | "defense" | "ship";
+  kind: "building" | "defense" | "research" | "ship";
   progress: number;
   remaining: string;
   title: string;
 };
 
-function planetSelectorQueueProgressBars(planet: ManagedPlanetResponse, progressState: ConstructionProgressState): PlanetSelectorProgressBar[] {
+function researchQueuePreview(queue: QueueStateResponse | null | undefined): { label: string } {
+  const research = queue?.itemId === undefined ? undefined : researchCatalog.find((item) => item.id === queue.itemId);
+  return { label: research?.label ?? "Research" };
+}
+
+export function planetSelectorQueueProgressBars(
+  planet: ManagedPlanetResponse,
+  progressState: ConstructionProgressState,
+  researchProgress?: ConstructionProgress | undefined,
+): PlanetSelectorProgressBar[] {
   return [
     planetSelectorQueueProgressBar({
       color: "bg-amber-300",
@@ -9753,6 +9791,13 @@ function planetSelectorQueueProgressBars(planet: ManagedPlanetResponse, progress
       label: "Shipyard",
       preview: shipQueuePreview(progressState.get(constructionProgressKey(planet.planetId, "planet", "ship"))?.queue),
       progressState: progressState.get(constructionProgressKey(planet.planetId, "planet", "ship")),
+    }),
+    planetSelectorQueueProgressBar({
+      color: "bg-violet-300",
+      kind: "research",
+      label: "Research",
+      preview: researchQueuePreview(researchProgress?.queue),
+      progressState: researchProgress,
     }),
   ];
 }

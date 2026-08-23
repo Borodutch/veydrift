@@ -24,6 +24,7 @@ import {
   type PlayerActivityResponse,
 } from "../walletFlow";
 import { backendDataStoreFor } from "../backendDataStore";
+import { playerActivityAwaySince } from "../playerActivityPresence";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import { useBackendDataQuery } from "../useBackendDataQuery";
 import { Skeleton, SkeletonRegion, skeletonList } from "./Skeleton";
@@ -89,16 +90,29 @@ export function PlayerActivityCenter({
     if (!apiUrl || !wallet) return;
 
     let cancelled = false;
-    void backendDataStoreFor(apiUrl).recordPlayerActivityPresence(wallet).then((presence) => {
-      if (cancelled) return;
-      setPresenceReady(true);
-      const previous = presence.previousLastSeenAt === null ? null : Number(presence.previousLastSeenAt);
-      if (previous === null || !Number.isSafeInteger(previous) || previous <= 0) return;
-      setAwaySince(previous);
-    }).catch(() => {
-      // A failed check-in leaves the server marker unchanged, so a later load retries this window.
-    });
-    return () => { cancelled = true; };
+    const claimAwayWindow = () => {
+      void backendDataStoreFor(apiUrl).claimPlayerActivityAwayWindow(wallet).then((presence) => {
+        if (cancelled) return;
+        setPresenceReady(true);
+        if (!presence) return;
+        setAwaySince(playerActivityAwaySince(presence));
+      }).catch(() => {
+        // Start silent heartbeats even if this initial response was lost. A
+        // reconnect cannot turn a retry into a second dialog in this session.
+        if (!cancelled) setPresenceReady(true);
+      });
+    };
+    const handleVisibility = () => {
+      if (document.visibilityState !== "visible") return;
+      document.removeEventListener("visibilitychange", handleVisibility);
+      claimAwayWindow();
+    };
+    if (typeof document === "undefined" || document.visibilityState === "visible") claimAwayWindow();
+    else document.addEventListener("visibilitychange", handleVisibility);
+    return () => {
+      cancelled = true;
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
   }, [identityKey]);
 
   useEffect(() => {
