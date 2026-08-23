@@ -122,6 +122,7 @@ import {
   type ShipKey,
 } from "./playableMvp";
 import {
+  constructionProgressForQueue,
   constructionQueueState,
   constructionProgressKey,
   projectConstructionProgress,
@@ -1503,6 +1504,10 @@ const researchBackendSyncPausedLabel = "Research state is still syncing. Refresh
 
 function activeResearchQueue(queue: ChainResearchState["queue"] | PlayerQueuesResponse["research"] | undefined): QueueStateResponse | undefined {
   return queue?.active ? queue : undefined;
+}
+
+export function walletResearchQueueFor(queues: PlayerQueuesResponse | undefined): QueueStateResponse | null {
+  return activeResearchQueue(queues?.research) ?? null;
 }
 
 export function researchStateWithPreservedActiveQueue({
@@ -3468,6 +3473,8 @@ export function PlayableMvpApp({
   const queuesSnapshot = useBackendDataSnapshot<PlayerQueuesResponse>(backendData, backendData && account ? backendData.key("queues", account, activePlanetId) : undefined);
   const onChainQueuesState = queuesSnapshot?.data;
   const onChainQueues = onChainQueuesState;
+  const walletQueuesSnapshot = useBackendDataSnapshot<PlayerQueuesResponse>(backendData, backendData && account ? backendData.key("queues", account, undefined) : undefined);
+  const walletQueues = walletQueuesSnapshot?.data;
   const setOnChainQueues = useCallback((value: PlayerQueuesResponse | undefined | ((current: PlayerQueuesResponse | undefined) => PlayerQueuesResponse | undefined)) => {
     void value;
   }, []);
@@ -3913,6 +3920,12 @@ export function PlayableMvpApp({
     backendData && account ? backendData.key("research", account, activePlanetId) : undefined,
     backendData && account ? () => backendData.research(account, activePlanetId) : undefined,
     pageStateHydrationReady && page === "research",
+  );
+  useBackendDataQuery(
+    backendData,
+    backendData && account ? backendData.key("queues", account, undefined) : undefined,
+    backendData && account ? () => backendData.queues(account) : undefined,
+    pageStateHydrationReady,
   );
   useBackendDataQuery(
     backendData,
@@ -5355,16 +5368,10 @@ export function PlayableMvpApp({
 
     return settledState.queue?.kind === "building" ? settledState.queue : undefined;
   }, [activeBuildingQueue, now, settledState.queue]);
-  const attributedResearchQueue = researchQueueWithPlanetAttribution(
-    activeResearchQueue(researchState?.queue) ?? activeResearchQueue(onChainQueues?.research) ?? null,
-    researchState?.planetId ?? activePlanetId,
-  );
   const constructionQueueObservations = useMemo<ConstructionQueueObservation[]>(() => {
     const observations: ConstructionQueueObservation[] = [];
     for (const managedPlanet of walletPlanets) {
       const section = canonicalPlanetSections.get(managedPlanet.planetId) ?? {};
-      const queuesResearch = researchQueueWithPlanetAttribution(activeResearchQueue(section.queuesState?.research) ?? null, managedPlanet.planetId);
-      const sectionResearchQueue = researchQueueWithPlanetAttribution(activeResearchQueue(section.researchState?.queue) ?? null, section.researchState?.planetId ?? managedPlanet.planetId);
       observations.push(
         {
           bodyKind: "planet",
@@ -5394,16 +5401,6 @@ export function PlayableMvpApp({
             managedPlanet.queues.ship,
           ]),
         },
-        {
-          bodyKind: "planet",
-          kind: "research",
-          planetId: managedPlanet.planetId,
-          queue: selectActiveConstructionQueue([
-            researchQueueForPlanet(sectionResearchQueue, managedPlanet.planetId),
-            researchQueueForPlanet(queuesResearch, managedPlanet.planetId),
-            researchQueueForPlanet(attributedResearchQueue, managedPlanet.planetId),
-          ]),
-        },
       );
       if (section.moonState) {
         observations.push(
@@ -5423,7 +5420,7 @@ export function PlayableMvpApp({
       }
     }
     return observations;
-  }, [attributedResearchQueue, activePlanetId, canonicalPlanetSections, onChainQueues?.defense, onChainQueues?.ship, walletPlanets]);
+  }, [activePlanetId, canonicalPlanetSections, onChainQueues?.defense, onChainQueues?.ship, walletPlanets]);
   // Queue completion/settlement is canonical backend work. The frontend only
   // projects the currently served queue for display; it never retains, clears,
   // or reconciles a queue from an older response.
@@ -5434,25 +5431,44 @@ export function PlayableMvpApp({
       planetId ? constructionProgressState.get(constructionProgressKey(planetId, bodyKind, kind)) : undefined,
     [constructionProgressState],
   );
-  const centralizedResearchQueue = progressFor(activePlanetId, "planet", "research")?.queue ?? null;
-  const effectiveResearchState = researchState ? { ...researchState, queue: centralizedResearchQueue } : researchState;
+  // Research is a wallet-global queue. Its identity must not depend on the
+  // currently selected planet or on a per-planet snapshot becoming available
+  // during roster hydration. The stable wallet queues key is the sole queue
+  // source; selected-planet research data remains responsible only for lab,
+  // cost, resources, and transaction context.
+  const walletResearchQueue = walletResearchQueueFor(walletQueues);
+  const walletResearchProgress = useMemo(
+    () => constructionProgressForQueue({
+      bodyKind: "planet",
+      kind: "research",
+      now,
+      planetId: "wallet",
+      queue: walletResearchQueue,
+    }),
+    [now, walletResearchQueue],
+  );
+  const effectiveResearchState = researchState ? { ...researchState, queue: walletResearchQueue } : researchState;
   const overviewOnChainQueues = useMemo<PlayerQueuesResponse | undefined>(() => {
-    if (!onChainQueues || !activePlanetId) return onChainQueues;
+    const queues = onChainQueues ?? walletQueues;
+    if (!queues || !activePlanetId) return queues;
     return {
-      ...onChainQueues,
+      ...queues,
       building: progressFor(activePlanetId, "planet", "building")?.queue ?? null,
       defense: progressFor(activePlanetId, "planet", "defense")?.queue ?? null,
-      research: progressFor(activePlanetId, "planet", "research")?.queue ?? null,
+      research: walletResearchQueue,
       ship: progressFor(activePlanetId, "planet", "ship")?.queue ?? null,
     };
-  }, [activePlanetId, onChainQueues, progressFor]);
+  }, [activePlanetId, onChainQueues, progressFor, walletQueues, walletResearchQueue]);
 
   useEffect(() => {
     if (!apiBaseUrl || !account || !pageStateHydrationReady) {
       return;
     }
 
-    const nextEventMs = nextProductionQueueCompletionEventMs(Array.from(constructionQueues.values()), Date.now());
+    const nextEventMs = nextProductionQueueCompletionEventMs(
+      [...constructionQueues.values(), walletResearchQueue],
+      Date.now(),
+    );
     if (nextEventMs === undefined) {
       return;
     }
@@ -5464,7 +5480,7 @@ export function PlayableMvpApp({
       delay,
       "transaction",
     );
-  }, [account, apiBaseUrl, backendData, constructionQueues, pageStateHydrationReady, walletPlanets]);
+  }, [account, apiBaseUrl, backendData, constructionQueues, pageStateHydrationReady, walletPlanets, walletResearchQueue]);
 
   // Chime when an active production queue reaches completion.
   useEffect(() => {
@@ -8949,7 +8965,7 @@ export function PlayableMvpApp({
           onResearch={handleResearch}
           onSelectResearch={setSelectedResearchKey}
           productionRates={productionRatesForEta}
-          progressState={progressFor(activePlanetId, "planet", "research")}
+          progressState={walletResearchProgress}
           researchState={effectiveResearchState}
           selectedResearchKey={selectedResearchKey}
           spendableResources={spendableResources}
@@ -9164,7 +9180,7 @@ export function PlayableMvpApp({
         constructionProgress={{
           building: progressFor(activePlanetId, "planet", "building"),
           defense: progressFor(activePlanetId, "planet", "defense"),
-          research: progressFor(activePlanetId, "planet", "research"),
+          research: walletResearchProgress,
           ship: progressFor(activePlanetId, "planet", "ship"),
         }}
         isWalletConnected={isWalletConnected}
@@ -9727,18 +9743,11 @@ type PlanetSelectorProgressBar = {
   active: boolean;
   color: string;
   indeterminate: boolean;
-  kind: "building" | "defense" | "research" | "ship";
+  kind: "building" | "defense" | "ship";
   progress: number;
   remaining: string;
   title: string;
 };
-
-function researchQueuePreview(queue: QueueStateResponse | null | undefined): {
-  label: string;
-} {
-  const research = queue?.itemId === undefined ? undefined : researchCatalog.find((item) => item.id === queue.itemId);
-  return { label: research?.label ?? "Research" };
-}
 
 function planetSelectorQueueProgressBars(planet: ManagedPlanetResponse, progressState: ConstructionProgressState): PlanetSelectorProgressBar[] {
   return [
@@ -9763,33 +9772,7 @@ function planetSelectorQueueProgressBars(planet: ManagedPlanetResponse, progress
       preview: shipQueuePreview(progressState.get(constructionProgressKey(planet.planetId, "planet", "ship"))?.queue),
       progressState: progressState.get(constructionProgressKey(planet.planetId, "planet", "ship")),
     }),
-    planetSelectorQueueProgressBar({
-      color: "bg-violet-300",
-      kind: "research",
-      label: "Research",
-      preview: researchQueuePreview(progressState.get(constructionProgressKey(planet.planetId, "planet", "research"))?.queue),
-      progressState: progressState.get(constructionProgressKey(planet.planetId, "planet", "research")),
-    }),
   ];
-}
-
-export function researchQueueForPlanet(queue: QueueStateResponse | null | undefined, planetId: string): QueueStateResponse | null {
-  if (!queue?.active || !queue.planetId || queue.planetId !== planetId) return null;
-  return queue;
-}
-
-const selectorResearchOriginByQueueKey = new Map<string, string>();
-
-export function researchQueueWithPlanetAttribution(queue: QueueStateResponse | null | undefined, fallbackPlanetId: string | null | undefined): QueueStateResponse | null {
-  if (!queue?.active) return null;
-
-  const queueKey = [queue.kind ?? "research", queue.itemId ?? "unknown", queue.targetLevel ?? "unknown", queue.readyAt ?? "unknown"].join(":");
-  const planetId = queue.planetId ?? selectorResearchOriginByQueueKey.get(queueKey) ?? fallbackPlanetId ?? undefined;
-
-  if (!planetId) return queue;
-
-  selectorResearchOriginByQueueKey.set(queueKey, planetId);
-  return queue.planetId === planetId ? queue : { ...queue, planetId };
 }
 
 function planetSelectorQueueProgressBar({

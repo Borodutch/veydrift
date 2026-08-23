@@ -228,10 +228,10 @@ describe("navigation and planet selector UI source contracts", () => {
 
   test("asks the centralized backend-data store to refresh completed queues for unselected planets", () => {
     const completionRefreshSource = playableSource.slice(
-      playableSource.indexOf("const nextEventMs = nextProductionQueueCompletionEventMs(Array.from(constructionQueues.values())"),
+      playableSource.indexOf("const nextEventMs = nextProductionQueueCompletionEventMs("),
       playableSource.indexOf("// Chime when an active production queue reaches completion."),
     );
-    expect(completionRefreshSource).toContain("Array.from(constructionQueues.values())");
+    expect(completionRefreshSource).toContain("[...constructionQueues.values(), walletResearchQueue]");
     expect(completionRefreshSource).toContain('backendData!.scheduleRefresh(');
     expect(completionRefreshSource).toContain('"production-queue-completion"');
     expect(completionRefreshSource).toContain("`wallet:${account.toLowerCase()}`");
@@ -239,14 +239,15 @@ describe("navigation and planet selector UI source contracts", () => {
     expect(completionRefreshSource).not.toContain('document.visibilityState === "hidden"');
   });
 
-  test("renders research as the fourth progress bar only on its owning planet", () => {
-    expect(playableSource).toContain("const attributedResearchQueue = researchQueueWithPlanetAttribution(");
+  test("keeps research wallet-global instead of attributing it to a planet selector item", () => {
+    expect(playableSource).toContain('backendData.key("queues", account, undefined)');
+    expect(playableSource).toContain("const walletResearchQueue = walletResearchQueueFor(walletQueues)");
+    expect(playableSource).toContain("progressState={walletResearchProgress}");
     expect(playableSource).toContain("progressState={constructionProgressState}");
-    expect(playableSource).toContain("researchQueueForPlanet(attributedResearchQueue, managedPlanet.planetId)");
-    expect(playableSource).toContain('constructionProgressKey(planet.planetId, "planet", "research")');
-    expect(playableSource).toContain('kind: "research"');
-    expect(playableSource).toContain('color: "bg-violet-300"');
-    expect(playableSource).toContain("function researchQueuePreview(queue: QueueStateResponse | null | undefined)");
+    expect(playableSource).not.toContain("researchQueueWithPlanetAttribution");
+    expect(playableSource).not.toContain("researchQueueForPlanet");
+    expect(playableSource).not.toContain('constructionProgressKey(planet.planetId, "planet", "research")');
+    expect(playableSource).not.toContain("function researchQueuePreview(queue: QueueStateResponse | null | undefined)");
     expect(playableSource).not.toContain("<PlanetSelectorResearchProgress");
     expect(playableSource).not.toContain("data-planet-selector-research-progress");
     expect(playableSource).not.toContain("planet.queues.research");
