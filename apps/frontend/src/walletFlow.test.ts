@@ -1311,6 +1311,32 @@ describe("walletFlow", () => {
     await expect(sendStartBuildingUpgradeTransaction(provider, account, contract, "7", 0)).resolves.toBe("0xsimulated");
 
     expect(requests).toEqual([
+      { method: "eth_call", params: [transaction, "pending"] },
+      { method: "eth_sendTransaction", params: [transaction] },
+    ]);
+  });
+
+  test("falls back to latest only when a provider does not support pending simulation", async () => {
+    const requests: Array<{ method: string; params?: unknown[] }> = [];
+    const provider = mockProvider(
+      async ({ method, params }) => {
+        requests.push(params === undefined ? { method } : { method, params });
+        if (method === "eth_call" && params?.[1] === "pending") throw new Error("pending block tag is not supported");
+        if (method === "eth_call") return "0x";
+        if (method === "eth_sendTransaction") return "0xfallback";
+        throw new Error(`Unexpected method ${method}`);
+      },
+      { forwardSimulation: true },
+    );
+    const transaction = {
+      from: account,
+      to: contract,
+      data: encodeGameCall("0x165715e3", [7, 0]),
+    };
+
+    await expect(sendStartBuildingUpgradeTransaction(provider, account, contract, "7", 0)).resolves.toBe("0xfallback");
+    expect(requests).toEqual([
+      { method: "eth_call", params: [transaction, "pending"] },
       { method: "eth_call", params: [transaction, "latest"] },
       { method: "eth_sendTransaction", params: [transaction] },
     ]);

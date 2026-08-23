@@ -340,6 +340,71 @@ describe("BackendDataStore", () => {
     }
   });
 
+  test("forces affected resources stale and refreshes them when confirmed indexing times out", async () => {
+    const store = new BackendDataStore("https://api.test");
+    const key = store.key("shipyard", "0xabc", "planet-7");
+    let loads = 0;
+    const unsubscribe = store.subscribeKey(key, () => {});
+
+    try {
+      await store.refresh(key, async () => ({ revision: ++loads }), {
+        planetId: "planet-7",
+        wallet: "0xabc",
+      });
+      const timeoutPlan = (store as any).createIndexingPlan(async () => {
+        throw new Error("The confirmed resource change is still syncing with the game API.");
+      });
+
+      await expect(
+        store.runWriteTransaction({
+          confirm: async () => ({ status: "0x1" }),
+          invalidateTags: ["wallet:0xabc", "planet:planet-7"],
+          indexing: timeoutPlan,
+          key: "ship:start:planet-7",
+          label: "Ship production",
+          send: async () => "0xconfirmed",
+        }),
+      ).resolves.toBe(false);
+
+      expect(loads).toBe(2);
+      expect(store.snapshot<{ revision: number }>(key)?.data).toEqual({ revision: 2 });
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  test("runs independent indexing plans concurrently", async () => {
+    const store = new BackendDataStore("https://api.test");
+    let starts = 0;
+    let release!: () => void;
+    const barrier = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const createPlan = (store as any).createIndexingPlan.bind(store) as (runner: () => Promise<void>) => unknown;
+    const first = createPlan(async () => {
+      starts += 1;
+      await barrier;
+    });
+    const second = createPlan(async () => {
+      starts += 1;
+      await barrier;
+    });
+    const parallel = store.indexing.all([first as any, second as any]);
+
+    const pending = store.runWriteTransaction({
+      confirm: async () => ({ status: "0x1" }),
+      indexing: parallel,
+      key: "supply:batch",
+      label: "Supply 2 transports",
+      send: async () => "0xconfirmed",
+    });
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(starts).toBe(2);
+
+    release();
+    await expect(pending).resolves.toBe(true);
+  });
+
   test("marks inactive batch-mutation resources stale without pretending they refreshed", async () => {
     const store = new BackendDataStore("https://api.test");
     const key = store.key("shipyard", "0xabc", "planet-origin");

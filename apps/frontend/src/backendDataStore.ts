@@ -79,7 +79,7 @@ import {
   type WatchPlanetMutationResponse,
   REFERRAL_CODE_FRONT_RUN_MESSAGE,
 } from "./walletFlow";
-import { fetchEntityMedia, updateEntityMedia, type EntityMediaKind, type EntityMediaResponse } from "./entityMedia";
+import { fetchEntityMedia, normalizeEntityMediaId, updateEntityMedia, type EntityMediaKind, type EntityMediaResponse } from "./entityMedia";
 import type { Eip1193Provider } from "./walletFlow";
 import { GameStateStore, type GameStateEntry, type GameStatePriority } from "./gameStateStore";
 import { backendResourceSnapshot, promoteCanonicalPlanetResources, type BackendResourceState, type CanonicalPlanetResourceSnapshot, type CanonicalPlanetResourceStore } from "./planetResourceStore";
@@ -388,7 +388,20 @@ export class BackendDataStore {
           indexedExpectation,
         );
       }),
+    /** Independent indexed predicates can be observed together. */
     all: (plans: readonly BackendIndexingPlan[]): BackendIndexingPlan =>
+      this.createIndexingPlan(async (receipt, txHash) => {
+        const runners = plans.map((plan) => {
+          const run = this.indexingPlanRunners.get(plan as object);
+          if (!run) {
+            throw new Error("The write supplied an indexing plan from a different data store.");
+          }
+          return run;
+        });
+        await Promise.all(runners.map((run) => run(receipt, txHash)));
+      }),
+    /** Use this only where later visibility depends on earlier indexed state. */
+    sequence: (plans: readonly BackendIndexingPlan[]): BackendIndexingPlan =>
       this.createIndexingPlan(async (receipt, txHash) => {
         for (const plan of plans) {
           const run = this.indexingPlanRunners.get(plan as object);
@@ -800,6 +813,18 @@ export class BackendDataStore {
       onStateChange: (state) => {
         this.publishWriteTransactionState(state);
         descriptor.onStateChange?.(state);
+      },
+      onConfirmedIndexingFailure: async () => {
+        // The chain receipt is final even though the backend has not yet
+        // published a matching snapshot. Invalidate every affected resource
+        // and force an indexed re-read; this preserves the error state while
+        // ensuring no planet can keep displaying the pre-write value as fresh.
+        if (invalidateTags && invalidateTags.length > 0) {
+          await this.invalidate(invalidateTags, {
+            activeOnly: false,
+            priority: "transaction",
+          });
+        }
       },
     });
     if (completed && invalidateTags && invalidateTags.length > 0) {
@@ -1530,9 +1555,15 @@ export class BackendDataStore {
     });
   }
 
-  attackProtection(wallet: string, targetPlanetId: string, targetIsMoon = false): Promise<AttackProtectionStatus> {
+  attackProtection(wallet: string, targetPlanetId: string, targetIsMoon = false, options: WalletReadOptions = {}): Promise<AttackProtectionStatus> {
     const key = cacheKey("attack-protection", wallet, targetPlanetId, targetIsMoon);
-    return this.refresh(key, (signal) => fetchAttackProtectionStatus(this.apiBaseUrl, wallet, targetPlanetId, targetIsMoon, signal), { planetId: targetPlanetId, wallet });
+    return this.refresh(key, (signal) => fetchAttackProtectionStatus(this.apiBaseUrl, wallet, targetPlanetId, targetIsMoon, signal), {
+      dedupe: !options.fresh,
+      deadlineMs: options.timeoutMs,
+      planetId: targetPlanetId,
+      priority: options.priority ?? "transaction",
+      wallet,
+    });
   }
 
   fleetVisibility(wallet: string, options: FleetMissionVisibilityOptions = {}): Promise<FleetMissionVisibilityResponse> {
@@ -1668,9 +1699,14 @@ export class BackendDataStore {
   }
 
   async saveEntityMedia(provider: Eip1193Provider, wallet: string, entityKind: EntityMediaKind, entityId: string, mediaUrl: string): Promise<EntityMediaResponse> {
-    const response = await updateEntityMedia(this.apiBaseUrl, provider, wallet, entityKind, entityId, mediaUrl);
+    const response = await this.runExclusiveTransaction(
+      `entity-media:${entityKind}:${normalizeEntityMediaId(entityKind, entityId)}`,
+      "Save media",
+      () => updateEntityMedia(this.apiBaseUrl, provider, wallet, entityKind, entityId, mediaUrl),
+    );
+    if (!response) throw new Error("Another game action is already in progress.");
     this.commitBackendSnapshot("entity-media", response, [entityKind, entityId]);
-    void this.invalidate([`kind:entity-media`], {
+    await this.invalidate([`kind:entity-media`], {
       activeOnly: true,
       priority: "transaction",
     });
