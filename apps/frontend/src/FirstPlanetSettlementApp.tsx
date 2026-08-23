@@ -38,6 +38,7 @@ import {
   isTransientWalletBootstrapError,
   isUserRejected,
   normalizeReferralClaimCode,
+  configureWalletTransactionTransport,
   readMigrationReservation,
   readWalletNativeBalance,
   miniAppUnsupportedChainMessage,
@@ -785,6 +786,9 @@ export function FirstPlanetSettlementApp() {
 
   function bindWalletProviderDetails(walletProvider: WalletProviderDetails) {
     const injected = walletProvider?.provider;
+    if (injected && walletProvider?.source) {
+      configureWalletTransactionTransport(injected, walletProvider.source, requiredChain.rpcUrls[0]);
+    }
     setProvider(injected);
     setWalletProviderSource(walletProvider?.source);
     if (walletProvider?.source === "farcaster") {

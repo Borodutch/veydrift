@@ -1562,6 +1562,20 @@ export type AvailableWalletProviderOptions = {
   preferFarcasterProvider?: boolean;
 };
 
+type WalletTransactionTransport = {
+  simulationRpcUrl: string;
+  source: WalletProviderSource;
+};
+
+const walletTransactionTransports = new WeakMap<Eip1193Provider, WalletTransactionTransport>();
+
+export function configureWalletTransactionTransport(provider: Eip1193Provider, source: WalletProviderSource, simulationRpcUrl: string): void {
+  walletTransactionTransports.set(provider, {
+    simulationRpcUrl,
+    source,
+  });
+}
+
 export function getInjectedProvider(globalWindow: InjectedWindow | undefined): Eip1193Provider | undefined {
   const ethereum = globalWindow?.ethereum;
   const injectedProviders = ethereum?.providers?.filter(isEip1193Provider) ?? [];
@@ -1580,6 +1594,7 @@ export async function getAvailableWalletProviderDetails(
 ): Promise<AvailableWalletProvider | undefined> {
   const injected = getInjectedProvider(globalWindow);
   if (injected && !options.preferFarcasterProvider) {
+    configureWalletTransactionTransport(injected, "injected", defaultVeydriftChainForLocation().rpcUrls[0]);
     return {
       provider: injected,
       source: "injected",
@@ -1587,17 +1602,21 @@ export async function getAvailableWalletProviderDetails(
   }
 
   const farcasterProvider = await getFarcasterEthereumProvider(farcasterClient);
-  return farcasterProvider
-    ? {
-        provider: farcasterProvider,
-        source: "farcaster",
-      }
-    : injected
-      ? {
-          provider: injected,
-          source: "injected",
-        }
-      : undefined;
+  if (farcasterProvider) {
+    configureWalletTransactionTransport(farcasterProvider, "farcaster", defaultVeydriftChainForLocation().rpcUrls[0]);
+    return {
+      provider: farcasterProvider,
+      source: "farcaster",
+    };
+  }
+  if (injected) {
+    configureWalletTransactionTransport(injected, "injected", defaultVeydriftChainForLocation().rpcUrls[0]);
+    return {
+      provider: injected,
+      source: "injected",
+    };
+  }
+  return undefined;
 }
 
 export async function getAvailableWalletProvider(
@@ -2118,6 +2137,7 @@ async function sendWalletTransaction(
   options: {
     accountProbeReadyChecked?: boolean;
     fleetMissionContext?: FleetMissionRevertContext;
+    simulationRpcUrl?: string;
   } = {},
 ): Promise<string> {
   if (!options.accountProbeReadyChecked) {
@@ -2125,27 +2145,31 @@ async function sendWalletTransaction(
   }
 
   // All wallet writes share this gate. Simulate the exact calldata with the
-  // connected account immediately before asking the wallet to submit it. Ask
-  // for the pending state so an RPC that can see local pending spends catches
-  // another tab/device's transaction before opening the wallet prompt. This
-  // remains an ordinary eth_call: it never reconciles game state in the
-  // browser.
+  // connected account immediately before asking the wallet to submit it. The
+  // Farcaster provider is a host wallet bridge, not a public RPC transport, so
+  // keep its responsibility limited to wallet operations and use the app's
+  // read-only RPC for eth_call. Injected/Reown providers retain their existing
+  // provider-side preflight behavior.
+  const transport = walletTransactionTransports.get(provider);
+  const simulationRpcUrl = options.simulationRpcUrl ?? transport?.simulationRpcUrl;
+  const simulate =
+    transport?.source === "farcaster"
+      ? (blockTag: "pending" | "latest") => simulateTransactionFromRpc(simulationRpcUrl ?? "", transaction, blockTag)
+      : (blockTag: "pending" | "latest") => provider.request<string>({ method: "eth_call", params: [transaction, blockTag] });
   try {
-    await provider.request<string>({
-      method: "eth_call",
-      params: [transaction, "pending"],
-    });
+    await simulate("pending");
   } catch (error) {
     // Some injected/mobile providers only accept latest. Preserve their write
     // path, but use pending whenever the provider supports it; neither mode
     // can reserve state against a transaction mined after the simulation.
     if (pendingCallUnsupported(error)) {
       try {
-        await provider.request<string>({
-          method: "eth_call",
-          params: [transaction, "latest"],
-        });
+        await simulate("latest");
       } catch (fallbackError) {
+        if (isFleetMissionTransactionData(transaction.data)) {
+          const reason = fleetMissionRevertReason(fallbackError, options.fleetMissionContext);
+          if (reason) throw new Error(reason);
+        }
         const message = walletRequestErrorMessage(fallbackError);
         throw new Error(`Transaction simulation failed: ${message}`);
       }
@@ -2180,6 +2204,39 @@ async function sendWalletTransaction(
 
     throw error;
   }
+}
+
+async function simulateTransactionFromRpc(rpcUrl: string, transaction: TransactionRequest, blockTag: "pending" | "latest"): Promise<string> {
+  if (!rpcUrl.trim()) {
+    throw new Error("App RPC is unavailable while simulating the transaction.");
+  }
+  const response = await fetch(rpcUrl, {
+    body: JSON.stringify({
+      id: 1,
+      jsonrpc: "2.0",
+      method: "eth_call",
+      params: [transaction, blockTag],
+    }),
+    headers: {
+      accept: "application/json",
+      "content-type": "application/json",
+    },
+    method: "POST",
+  });
+  const body = (await response.json()) as {
+    error?: { code?: number; data?: unknown; message?: string };
+    result?: string;
+  };
+  if (!response.ok) {
+    throw new Error(`Transaction simulation RPC returned ${response.status}.`);
+  }
+  if (body.error) {
+    throw body.error;
+  }
+  if (typeof body.result !== "string") {
+    throw new Error("Transaction simulation RPC returned an invalid response.");
+  }
+  return body.result;
 }
 
 function pendingCallUnsupported(error: unknown): boolean {
@@ -3740,6 +3797,8 @@ export async function sendBurningChickenMoonTransaction(
     from: account,
     to: config.burnContractAddress,
     data: encodeBurningChickenMoonCall(config.burnSelector, tokenId, planetId, coordinates),
+  }, {
+    simulationRpcUrl: config.rpcUrl || BASE_MAINNET.rpcUrls[0],
   });
 }
 
