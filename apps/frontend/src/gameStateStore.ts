@@ -30,6 +30,7 @@ type ScheduledRead<T> = {
   run: (signal: AbortSignal) => Promise<T>;
   resolve: (value: T) => void;
   reject: (reason: unknown) => void;
+  settleTransport: () => void;
   released: boolean;
   started: boolean;
   timer: ReturnType<typeof setTimeout>;
@@ -40,6 +41,9 @@ type InFlightRead<T = unknown> = {
   generation: number;
   key: string;
   promise: Promise<T>;
+  /** The request consumer may time out before an AbortSignal-aware transport
+   * actually settles. Keep its canonical identity until then. */
+  settled: Promise<void>;
   scope?: string | undefined;
 };
 
@@ -57,11 +61,15 @@ export class GameStateReadScheduler {
 
   constructor(private readonly concurrency = 3) {}
 
-  schedule<T>(key: string, run: (signal: AbortSignal) => Promise<T>, options: Pick<GameStateReadOptions, "deadlineMs" | "priority"> = {}): { controller: AbortController; promise: Promise<T> } {
+  schedule<T>(key: string, run: (signal: AbortSignal) => Promise<T>, options: Pick<GameStateReadOptions, "deadlineMs" | "priority"> = {}): { controller: AbortController; promise: Promise<T>; settled: Promise<void> } {
     const controller = new AbortController();
     const deadlineMs = options.deadlineMs ?? 10_000;
     const deadlineAt = Date.now() + deadlineMs;
     let task!: ScheduledRead<T>;
+    let settleTransport!: () => void;
+    const settled = new Promise<void>((resolve) => {
+      settleTransport = resolve;
+    });
     const promise = new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => {
         const reason = gameStateDeadlineError(key, deadlineMs);
@@ -74,6 +82,7 @@ export class GameStateReadScheduler {
         // used to let a slow-to-abort fetch overlap a replacement request and
         // exceed the scheduler's real network limit.
         reject(reason);
+        if (!task.started) task.settleTransport();
       }, deadlineMs);
       task = {
         controller,
@@ -83,6 +92,7 @@ export class GameStateReadScheduler {
         run,
         resolve,
         reject,
+        settleTransport,
         released: false,
         timer,
         started: false,
@@ -92,7 +102,7 @@ export class GameStateReadScheduler {
       this.queue.sort((left, right) => left.priority - right.priority || left.deadlineAt - right.deadlineAt);
       this.drain();
     });
-    return { controller, promise };
+    return { controller, promise, settled };
   }
 
   cancel(controller: AbortController, reason = new DOMException("Request cancelled", "AbortError")): void {
@@ -106,6 +116,7 @@ export class GameStateReadScheduler {
     task.reject(reason);
     // See the deadline path above: a started read still owns its slot until
     // its promise settles, even after cancellation has rejected consumers.
+    if (!task.started) task.settleTransport();
   }
 
   private drain(): void {
@@ -125,6 +136,7 @@ export class GameStateReadScheduler {
             this.active = Math.max(0, this.active - 1);
             this.drain();
           }
+          task.settleTransport();
         });
     }
   }
@@ -170,6 +182,12 @@ export class GameStateStore {
   /** True while a transport for this canonical key is queued or running. */
   hasInFlight(key: string): boolean {
     return this.inFlight.has(key);
+  }
+
+  /** Resolves only when the underlying transport has settled, even if its
+   * route consumer already received a deadline/cancellation error. */
+  inFlightSettled(key: string): Promise<void> | undefined {
+    return this.inFlight.get(key)?.settled;
   }
 
   snapshot<T>(key: string): GameStateEntry<T> | undefined {
@@ -220,6 +238,22 @@ export class GameStateStore {
     this.nextGeneration(key);
     this.entries.delete(key);
     this.emit([key]);
+  }
+
+  /** Remove every account-owned snapshot, including values produced by store
+   * projections rather than a normal registered resource. Advancing each
+   * generation prevents an old account transport from republishing later. */
+  clearWallet(wallet: string): void {
+    const normalized = normalizeWallet(wallet);
+    if (!normalized) return;
+    const cleared: string[] = [];
+    for (const [key, entry] of this.entries) {
+      if (entry.wallet !== normalized) continue;
+      this.nextGeneration(key);
+      this.entries.delete(key);
+      cleared.push(key);
+    }
+    if (cleared.length > 0) this.emit(cleared);
   }
 
   /** Drop an inactive canonical key completely so dynamic route/query keys do
@@ -300,12 +334,14 @@ export class GameStateStore {
         },
       )
       .finally(() => {
-        if (this.inFlight.get(key)?.promise === promise) this.inFlight.delete(key);
         this.activeReads.delete(request as InFlightRead);
       });
-    request = { controller: scheduled.controller, generation, key, promise, scope: options.scope };
+    request = { controller: scheduled.controller, generation, key, promise, settled: scheduled.settled, scope: options.scope };
     this.inFlight.set(key, request);
     this.activeReads.add(request as InFlightRead);
+    void scheduled.settled.finally(() => {
+      if (this.inFlight.get(key) === request) this.inFlight.delete(key);
+    });
     return promise;
   }
 
@@ -316,7 +352,8 @@ export class GameStateStore {
       cancelledKeys.add(request.key);
       this.scheduler.cancel(request.controller, new DOMException(`Cancelled ${scope} request`, "AbortError"));
       this.activeReads.delete(request);
-      if (this.inFlight.get(request.key) === request) this.inFlight.delete(request.key);
+      // Keep the logical request until its underlying transport settles. A
+      // cancellation only ends this consumer; abort is cooperative.
     }
     for (const key of cancelledKeys) {
       const generation = this.nextGeneration(key);

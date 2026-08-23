@@ -1,0 +1,5 @@
+# Keep Bun's test transpiler aligned with the application's TypeScript/Vite
+# JSX settings. Without this, Bun 1.1 falls back to React's dev runtime for
+# TSX test imports even though the frontend is Preact-based.
+jsx = "react-jsx"
+jsxImportSource = "preact"

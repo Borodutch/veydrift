@@ -3559,8 +3559,22 @@ export function PlayableMvpApp({
   const globalMissionArchive = globalMissionArchiveSnapshot?.data;
   const globalMissionArchiveLoading = globalMissionArchiveSnapshot?.freshness === "refreshing";
   const globalMissionArchiveError = globalMissionArchiveSnapshot?.error;
-  const [globalMissionArchiveTotalEntries, setGlobalMissionArchiveTotalEntries] = useState<number | undefined>();
-  const [missionPlanetArchetypesByCoordinate, setMissionPlanetArchetypesByCoordinate] = useState<Map<string, PlanetType>>(() => new Map());
+  const globalMissionArchiveSummaryOptions = useMemo(
+    () => ({
+      missionNumber: normalizedMissionFilters.missionNumber,
+      missionType: normalizedMissionFilters.missionType,
+      page: 1,
+      pageSize: 1,
+      planetId: normalizedMissionFilters.planetId,
+      summaryOnly: true,
+    }),
+    [normalizedMissionFilters.missionNumber, normalizedMissionFilters.missionType, normalizedMissionFilters.planetId],
+  );
+  const globalMissionArchiveSummarySnapshot = useBackendDataSnapshot<GlobalMissionArchiveResponse>(
+    backendData,
+    backendData?.key("global-mission-archive", globalMissionArchiveSummaryOptions),
+  );
+  const globalMissionArchiveTotalEntries = globalMissionArchiveSummarySnapshot?.data?.pagination.totalEntries;
   const publicBattleReportsSnapshot = useBackendDataSnapshot<BattleReport[]>(backendData, backendData?.key("battle-reports"));
   const publicBattleReports = publicBattleReportsSnapshot?.data ?? [];
   const publicBattleReportsLoading = publicBattleReportsSnapshot?.freshness === "refreshing";
@@ -3575,23 +3589,31 @@ export function PlayableMvpApp({
   const setMissionDetail = useCallback((value: MissionDetailResponse | undefined | ((current: MissionDetailResponse | undefined) => MissionDetailResponse | undefined)) => {
     void value;
   }, []);
-  const [walletReadStatus, setWalletReadStatus] = useState<ChainLoadStatus>("local");
-  const [walletReadError, setWalletReadError] = useState<string | undefined>();
   const selectedPlanetOverviewSnapshot = useBackendDataSnapshot<WalletOverviewSnapshotResponse>(backendData, backendData && account ? backendData.key("overview", account, activePlanetId) : undefined);
-  const onChainStatus = isWalletConnected
-    ? selectedPlanetOverviewSnapshot?.freshness === "refreshing"
-      ? "loading"
+  const hasCanonicalWalletState = Boolean(settlementSnapshot?.data || walletPlanetsSnapshot?.data || selectedPlanetOverviewSnapshot?.data);
+  const onChainStatus = !isWalletConnected
+    ? "local"
+    // An aggregate overview can lag or omit a selected body while its
+    // descriptor-backed settlement/planet snapshots are already complete.
+    // Those snapshots are sufficient to render the app; never regress a
+    // hydrated wallet to the blocking shell just because one projection is
+    // refreshing in the background.
+    : hasCanonicalWalletState
+      ? "ready"
       : selectedPlanetOverviewSnapshot?.freshness === "failed"
         ? "error"
-        : (walletReadStatus ?? (settlementSnapshot?.data || walletPlanetsSnapshot?.data ? "ready" : "loading"))
-    : "local";
-  const onChainError = selectedPlanetOverviewSnapshot?.error ?? walletReadError;
+        : "loading";
+  const onChainError = selectedPlanetOverviewSnapshot?.error;
   const setOnChainStatus = useCallback((value: ChainLoadStatus | ((current: ChainLoadStatus) => ChainLoadStatus)) => {
-    setWalletReadStatus((current) => (typeof value === "function" ? value(current) : value));
+    // Loading/error state belongs to canonical overview/settlement/planet
+    // snapshots. Kept as a compatibility callback for action helpers that
+    // only need to request a fresh store read.
+    void value;
   }, []);
   const setOnChainError = useCallback((error: string | undefined) => {
-    setWalletReadError(error);
-  }, []);
+    if (!backendData || !account) return;
+    backendData.setSnapshotError("overview", error, [account, activePlanetId]);
+  }, [account, activePlanetId, backendData]);
   const [hydratedWalletSnapshotKey, setHydratedWalletSnapshotKey] = useState<string | undefined>();
   const chainSyncSnapshot = useBackendDataSnapshot<boolean>(backendData, backendData && account ? backendData.key("chain-sync-health", account) : undefined);
   const chainSyncHealthy = chainSyncSnapshot?.data ?? false;
@@ -3750,10 +3772,8 @@ export function PlayableMvpApp({
   const incomingAttackArchiveRefreshGate = useRef(0);
   const allActiveMissionsRefreshGate = useRef(0);
   const globalMissionArchiveRefreshGate = useRef(0);
-  const globalMissionArchiveSummaryRefreshGate = useRef(0);
   const planetSwitchGate = useRef(0);
   const pendingPlanetStateRefreshRef = useRef<string | undefined>();
-  const [homePlanetIdentity, setHomePlanetIdentity] = useState<Planet | undefined>();
 
   const runGatedTransaction = useCallback(
     async (key: string, action: () => Promise<void>) => {
@@ -3816,6 +3836,32 @@ export function PlayableMvpApp({
 
     return fallbackHomeCoords;
   }, [fallbackHomeCoords, onChainSettlement?.planet]);
+  const settlementPlanet = onChainSettlement?.planet;
+  // Detail/Galaxy surfaces treat the selected managed planet as their trusted
+  // identity. Derive that identity from the canonical wallet roster rather
+  // than retaining the last selected response in component state.
+  const selectedIdentityPlanet = selectedManagedPlanet ?? settlementPlanet;
+  const selectedIdentityCoords = selectedManagedPlanet
+    ? {
+        galaxy: selectedManagedPlanet.galaxy,
+        system: selectedManagedPlanet.system,
+        position: selectedManagedPlanet.position,
+      }
+    : homeCoords;
+  const { snapshot: homeSystemSnapshot } = useBackendDataQuery(
+    backendData && selectedIdentityCoords ? backendData.queries.system<ApiSystemResponse>(selectedIdentityCoords.galaxy, selectedIdentityCoords.system) : undefined,
+    Boolean(apiBaseUrl && selectedIdentityCoords),
+  );
+  const homePlanetIdentity = useMemo(() => {
+    const fallback = selectedIdentityPlanet ? planetFromSettlementPlanet(selectedIdentityPlanet) : undefined;
+    if (!selectedIdentityCoords) return undefined;
+    const systemPlanet = homeSystemSnapshot?.data
+      ? planetsFromSystemResponse(homeSystemSnapshot.data).find((item) => item.position === selectedIdentityCoords.position)
+      : undefined;
+    const basePlanet = systemPlanet ?? fallback;
+    const mergedPlanet = basePlanet && selectedIdentityPlanet ? mergePlanetWithSettlement(basePlanet, selectedIdentityPlanet) : basePlanet;
+    return namedSettlementPlanet(mergedPlanet, selectedIdentityPlanet?.name, playerProfile?.displayName);
+  }, [homeSystemSnapshot?.data, playerProfile?.displayName, selectedIdentityCoords?.galaxy, selectedIdentityCoords?.position, selectedIdentityCoords?.system, selectedIdentityPlanet]);
   const missionLaunchStateBlocker = missionLaunchSubmitBlocker({
     actionState: galaxyAction,
   });
@@ -3886,10 +3932,39 @@ export function PlayableMvpApp({
     [displayAllActiveMissions, displayFleetVisibility, globalMissionArchive, missionArchive],
   );
   const missionUniverseSystemKeys = useMemo(
+    () => missionSystemKeysMissingUniverseArchetypes(missionUniverseLookupMissions),
+    [missionUniverseLookupMissions],
+  );
+  const missionUniverseSystemKey = missionUniverseSystemKeys.join("|");
+  const missionUniverseSnapshotKeys = useMemo(
+    () =>
+      !backendData
+        ? []
+        : missionUniverseSystemKeys.flatMap((systemKey) => {
+            const [galaxy, system] = systemKey.split(":").map((part) => Number(part));
+            // Use the descriptor's key, not a hand-built approximation: the
+            // default query options are part of cache identity.
+            return Number.isInteger(galaxy) && Number.isInteger(system) ? [backendData.queries.system<ApiSystemResponse>(galaxy!, system!).key] : [];
+          }),
+    [backendData, missionUniverseSystemKey, missionUniverseSystemKeys],
+  );
+  const missionUniverseSnapshots = useBackendDataSnapshots<ApiSystemResponse>(backendData, missionUniverseSnapshotKeys);
+  const missionPlanetArchetypesByCoordinate = useMemo(() => {
+    const archetypes = new Map<string, PlanetType>();
+    for (const snapshot of missionUniverseSnapshots.values()) {
+      if (!snapshot?.data) continue;
+      for (const planet of planetsFromSystemResponse(snapshot.data)) {
+        archetypes.set(missionPlanetCoordinateKey(planet), planet.type);
+      }
+    }
+    return archetypes;
+  }, [missionUniverseSnapshots]);
+  const unresolvedMissionUniverseSystemKeys = useMemo(
     () => missionSystemKeysMissingUniverseArchetypes(missionUniverseLookupMissions, missionPlanetArchetypesByCoordinate),
     [missionPlanetArchetypesByCoordinate, missionUniverseLookupMissions],
   );
-  const missionUniverseSystemKey = missionUniverseSystemKeys.join("|");
+  const unresolvedMissionUniverseSystemKey = unresolvedMissionUniverseSystemKeys.join("|");
+  const requestedMissionUniverseSystemKey = useRef<string | undefined>();
   const pageStateHydrationReady = canLoadIndexedPageState({
     account,
     apiBaseUrl,
@@ -3934,65 +4009,18 @@ export function PlayableMvpApp({
     backendData && account ? backendData.queries.profile(account) : undefined,
     Boolean(apiBaseUrl && account),
   );
-  const settlementPlanet = onChainSettlement?.planet;
   const homeGalaxyNavSyncKey = homeGalaxySystemSyncKey(homeCoords);
-  const homePlanetIdentitySyncKey = homePlanetIdentityRefreshKey({
-    apiBaseUrl,
-    homeCoords,
-    ownerDisplayName: playerProfile?.displayName,
-    settlementPlanet,
-  });
-
-  const refreshMissionUniverseSystems = useCallback(
-    async (signal?: AbortSignal) => {
-      if (!apiBaseUrl || missionUniverseSystemKeys.length === 0) return;
-      try {
-        const systems = await Promise.all(
-          missionUniverseSystemKeys.map(async (systemKey) => {
-            const [galaxy, system] = systemKey.split(":").map((part) => Number(part));
-            if (!Number.isInteger(galaxy) || !Number.isInteger(system)) {
-              return {
-                systemKey,
-                payload: undefined,
-                archetypes: [] as Array<readonly [string, PlanetType]>,
-              };
-            }
-            const payload = await backendData!.system<ApiSystemResponse>(galaxy!, system!);
-            return {
-              systemKey,
-              payload,
-              archetypes: planetsFromSystemResponse(payload).map((planet) => [missionPlanetCoordinateKey(planet), planet.type] as const),
-            };
-          }),
-        );
-        if (signal?.aborted) return;
-        setMissionPlanetArchetypesByCoordinate((current) => {
-          let changed = false;
-          const next = new Map(current);
-          for (const [coordinateKey, archetype] of systems.flatMap((system) => system.archetypes)) {
-            if (next.get(coordinateKey) === archetype) continue;
-            next.set(coordinateKey, archetype);
-            changed = true;
-          }
-          return changed ? next : current;
-        });
-      } catch (error) {
-        if (signal?.aborted) return;
-        throw error;
-      }
-    },
-    [apiBaseUrl, backendData, missionUniverseSystemKey, missionUniverseSystemKeys],
-  );
 
   useEffect(() => {
-    if (!apiBaseUrl || missionUniverseSystemKeys.length === 0) return;
-
-    const abortController = new AbortController();
-    refreshMissionUniverseSystems(abortController.signal).catch((error) => {
-      if (!abortController.signal.aborted) console.error(error);
-    });
-    return () => abortController.abort();
-  }, [apiBaseUrl, missionUniverseSystemKeys.length, refreshMissionUniverseSystems]);
+    if (!backendData || unresolvedMissionUniverseSystemKeys.length === 0) return;
+    if (requestedMissionUniverseSystemKey.current === unresolvedMissionUniverseSystemKey) return;
+    requestedMissionUniverseSystemKey.current = unresolvedMissionUniverseSystemKey;
+    for (const systemKey of unresolvedMissionUniverseSystemKeys) {
+      const [galaxy = Number.NaN, system = Number.NaN] = systemKey.split(":").map((part) => Number(part));
+      if (!Number.isInteger(galaxy) || !Number.isInteger(system)) continue;
+      void backendData.queries.system<ApiSystemResponse>(galaxy, system).read().catch((error) => console.error(error));
+    }
+  }, [backendData, unresolvedMissionUniverseSystemKey]);
 
   const applyInspectRoute = useCallback((route: InspectRoute, options?: { planetBackRoute?: PlanetDetailBackRoute | null }) => {
     setPlanetBackRoute(options?.planetBackRoute ?? null);
@@ -4781,7 +4809,6 @@ export function PlayableMvpApp({
           planetId: normalizedMissionFilters.planetId,
         });
         if (!canApplyRefreshRequest(globalMissionArchiveRefreshGate, requestId)) return;
-        setGlobalMissionArchiveTotalEntries(nextArchive.pagination.totalEntries);
       } catch (error) {
         if (!canApplyRefreshRequest(globalMissionArchiveRefreshGate, requestId)) return;
         console.error(error);
@@ -4790,38 +4817,14 @@ export function PlayableMvpApp({
     [apiBaseUrl, backendData, normalizedMissionFilters.missionNumber, normalizedMissionFilters.missionType, normalizedMissionFilters.planetId],
   );
 
-  const loadGlobalMissionArchiveSummary = useCallback(async () => {
-    const requestId = beginRefreshRequest(globalMissionArchiveSummaryRefreshGate);
-    if (!apiBaseUrl) {
-      setGlobalMissionArchiveTotalEntries(undefined);
-      return;
-    }
-
-    try {
-      const summary = await backendData!.globalMissionArchive({
-        missionNumber: normalizedMissionFilters.missionNumber,
-        missionType: normalizedMissionFilters.missionType,
-        page: 1,
-        pageSize: 1,
-        planetId: normalizedMissionFilters.planetId,
-        summaryOnly: true,
-      });
-      if (!canApplyRefreshRequest(globalMissionArchiveSummaryRefreshGate, requestId)) return;
-      setGlobalMissionArchiveTotalEntries(summary.pagination.totalEntries);
-    } catch (error) {
-      if (!canApplyRefreshRequest(globalMissionArchiveSummaryRefreshGate, requestId)) return;
-      console.error("Universe mission archive total could not be loaded.", error);
-    }
-  }, [apiBaseUrl, normalizedMissionFilters.missionNumber, normalizedMissionFilters.missionType, normalizedMissionFilters.planetId]);
-
   useEffect(() => {
     if (!pageStateHydrationReady || page !== "mission-control") return;
     // The default visible scope. These are wallet-sized reads and make the initial screen useful
     // without waiting for the two universe/incoming archives behind hidden tabs.
     void loadMissionArchive(1);
     void loadMissileAttackArchive();
-    void loadGlobalMissionArchiveSummary();
-  }, [account, apiBaseUrl, loadGlobalMissionArchiveSummary, loadMissionArchive, loadMissileAttackArchive, page, pageStateHydrationReady]);
+    void backendData?.queries.globalMissionArchive(globalMissionArchiveSummaryOptions).read();
+  }, [account, apiBaseUrl, backendData, globalMissionArchiveSummaryOptions, loadMissionArchive, loadMissileAttackArchive, page, pageStateHydrationReady]);
 
   useEffect(() => {
     if (!pageStateHydrationReady || page !== "mission-control") return;
@@ -4873,15 +4876,16 @@ export function PlayableMvpApp({
     // Incoming tab remains live; switching tabs starts its own load through the tab callback.
     if (view.activeTab === "all") refreshes.push(loadAllActiveMissions());
     if (view.pastTab === "all") refreshes.push(loadGlobalMissionArchive(globalMissionArchivePage));
-    else refreshes.push(loadGlobalMissionArchiveSummary());
+    else if (backendData) refreshes.push(backendData.queries.globalMissionArchive(globalMissionArchiveSummaryOptions).read());
     if (view.pastTab === "incomingAttacks") refreshes.push(loadIncomingAttackArchive(incomingAttackArchivePage));
     await Promise.allSettled(refreshes);
   }, [
     globalMissionArchivePage,
+    globalMissionArchiveSummaryOptions,
+    backendData,
     incomingAttackArchivePage,
     loadAllActiveMissions,
     loadGlobalMissionArchive,
-    loadGlobalMissionArchiveSummary,
     loadIncomingAttackArchive,
     loadMissionArchive,
     loadMissileAttackArchive,
@@ -5056,39 +5060,6 @@ export function PlayableMvpApp({
       setGalaxyNav({ galaxy: homeCoords.galaxy, system: homeCoords.system });
     }
   }, [homeGalaxyNavSyncKey]);
-
-  useEffect(() => {
-    if (!homeCoords) {
-      setHomePlanetIdentity(undefined);
-      return;
-    }
-
-    if (!apiBaseUrl) {
-      setHomePlanetIdentity(namedSettlementPlanet(settlementPlanet ? planetFromSettlementPlanet(settlementPlanet) : undefined, settlementPlanet?.name, playerProfile?.displayName));
-      return;
-    }
-
-    let cancelled = false;
-    backendData!
-      .system<ApiSystemResponse>(homeCoords.galaxy, homeCoords.system)
-      .then((payload) => {
-        if (cancelled) return;
-        const systemPlanet = planetsFromSystemResponse(payload).find((item) => item.position === homeCoords.position);
-        const basePlanet = systemPlanet ?? (settlementPlanet ? planetFromSettlementPlanet(settlementPlanet) : undefined);
-        const mergedPlanet = basePlanet && settlementPlanet ? mergePlanetWithSettlement(basePlanet, settlementPlanet) : basePlanet;
-        setHomePlanetIdentity(namedSettlementPlanet(mergedPlanet, settlementPlanet?.name, playerProfile?.displayName));
-      })
-      .catch((error) => {
-        if (!cancelled) {
-          console.error(error);
-          setHomePlanetIdentity(namedSettlementPlanet(settlementPlanet ? planetFromSettlementPlanet(settlementPlanet) : undefined, settlementPlanet?.name, playerProfile?.displayName));
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [homePlanetIdentitySyncKey]);
 
   const initialPageRefreshRef = useRef({
     page,
@@ -7036,11 +7007,6 @@ export function PlayableMvpApp({
       setFailedBuildingFinishExpectation(undefined);
       setPlanetManagementAction({ status: "idle" });
       setPlanetRenameAction({ status: "idle" });
-      if (nextPlanet) {
-        setHomePlanetIdentity(namedSettlementPlanet(planetFromSettlementPlanet(nextPlanet), nextPlanet.name, playerProfile?.displayName));
-      } else {
-        setHomePlanetIdentity(undefined);
-      }
     },
     [
       account,
