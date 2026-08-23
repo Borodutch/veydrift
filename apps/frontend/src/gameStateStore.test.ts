@@ -102,6 +102,29 @@ describe("GameStateStore", () => {
     await active;
   });
 
+  test("does not start a replacement before a timed-out transport settles", async () => {
+    const scheduler = new GameStateReadScheduler(1);
+    const slowTransport = deferred<string>();
+    let replacementStarted = false;
+    const timedOut = scheduler.schedule("slow", () => slowTransport.promise, { deadlineMs: 5 }).promise;
+    const replacement = scheduler.schedule(
+      "replacement",
+      async () => {
+        replacementStarted = true;
+        return "replacement";
+      },
+      { deadlineMs: 100 },
+    ).promise;
+
+    await expect(timedOut).rejects.toThrow("including queue time");
+    await new Promise<void>((resolve) => setTimeout(resolve, 5));
+    expect(replacementStarted).toBe(false);
+
+    slowTransport.resolve("finished after abort");
+    await expect(replacement).resolves.toBe("replacement");
+    expect(replacementStarted).toBe(true);
+  });
+
   test("runs transaction convergence before selected and background refreshes", async () => {
     const scheduler = new GameStateReadScheduler(1);
     const blocker = deferred<string>();

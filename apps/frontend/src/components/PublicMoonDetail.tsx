@@ -73,9 +73,7 @@ export function PublicMoonDetail({
 }: PublicMoonDetailProps) {
   const backendData = useMemo(() => backendDataStoreFor(apiBaseUrl), [apiBaseUrl]);
   const systemQuery = useBackendDataQuery<ApiSystemResponse>(
-    backendData,
-    backendData.key("system", coords.galaxy, coords.system, { detail: "full" }),
-    () => backendData.system<ApiSystemResponse>(coords.galaxy, coords.system, { detail: "full" }),
+    backendData.queries.system<ApiSystemResponse>(coords.galaxy, coords.system, { detail: "full" }),
   );
   const systemSnapshot = systemQuery.snapshot;
   const loadedPlanet = systemSnapshot?.data
@@ -90,19 +88,13 @@ export function PublicMoonDetail({
   const targetPlanetId = planet?.occupiedBy?.planetId;
   const isHome = planet ? sameCoordinates(homeCoords, planet) : false;
   const attackProtectionQuery = useBackendDataQuery<AttackProtectionStatus>(
-    backendData,
     account && targetPlanetId && !isHome
-      ? backendData.key("attack-protection", account, targetPlanetId, true)
-      : undefined,
-    account && targetPlanetId && !isHome
-      ? () => backendData.attackProtection(account, targetPlanetId, true)
+      ? backendData.queries.attackProtection(account, targetPlanetId, true)
       : undefined,
   );
   const attackProtectionSnapshot = attackProtectionQuery.snapshot;
   const activeMissionQuery = useBackendDataQuery<GlobalActiveMissionsResponse>(
-    backendData,
-    targetPlanetId ? backendData.key("global-active-missions") : undefined,
-    targetPlanetId ? () => backendData.globalActiveMissions() : undefined,
+    targetPlanetId ? backendData.queries.globalActiveMissions() : undefined,
   );
   const activeMissionSnapshot = activeMissionQuery.snapshot;
   const attackProtection = attackProtectionSnapshot?.data ?? null;

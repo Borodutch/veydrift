@@ -207,11 +207,8 @@ export function GalaxyView({
   watchBusyPlanetId,
 }: Props) {
   const backendData = useMemo(() => backendDataStoreFor(apiBaseUrl), [apiBaseUrl]);
-  const systemSnapshotKey = backendData.key("system", galaxy, system, {});
   const systemQuery = useBackendDataQuery<ApiSystemResponse>(
-    backendData,
-    systemSnapshotKey,
-    () => backendData.system<ApiSystemResponse>(galaxy, system),
+    backendData.queries.system<ApiSystemResponse>(galaxy, system),
   );
   const systemSnapshot = systemQuery.snapshot;
   const systemPlanets = useMemo(
@@ -244,12 +241,13 @@ export function GalaxyView({
     () => galaxyAttackProtectionRequestSignature(protectionRequests),
     [protectionRequests],
   );
-  const protectionKeys = useMemo(
+  const protectionQueries = useMemo(
     () => protectionRequests.map(({ planetId, targetIsMoon }) => (
-      backendData.key("attack-protection", account!, planetId, targetIsMoon)
+      backendData.queries.attackProtection(account!, planetId, targetIsMoon)
     )),
     [account, backendData, protectionRequests],
   );
+  const protectionKeys = useMemo(() => protectionQueries.map((query) => query.key), [protectionQueries]);
   const protectionSnapshots = useBackendDataSnapshots<AttackProtectionStatus>(backendData, protectionKeys);
   const { attackProtection, moonAttackProtection } = useMemo(() => {
     const planet: Record<string, AttackProtectionStatus> = {};
@@ -266,12 +264,10 @@ export function GalaxyView({
 
   useEffect(() => {
     if (protectionRequests.length === 0) return;
-    void Promise.all(protectionRequests.map(({ planetId, targetIsMoon }) =>
-      backendData.attackProtection(account!, planetId, targetIsMoon)
-    )).catch(() => {
+    void Promise.all(protectionQueries.map((query) => query.read())).catch(() => {
       // Individual canonical snapshots expose a delayed/failed state.
     });
-  }, [account, backendData, protectionRequestSignature]);
+  }, [backendData, protectionRequestSignature]);
 
   const handlePrevSystem = () => {
     let newSystem = system - 1;

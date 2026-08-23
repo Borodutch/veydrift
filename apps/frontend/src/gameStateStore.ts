@@ -69,11 +69,10 @@ export class GameStateReadScheduler {
         const index = this.queue.indexOf(task as ScheduledRead<unknown>);
         if (index >= 0) this.queue.splice(index, 1);
         this.tasks.delete(controller);
-        if (task.started && !task.released) {
-          task.released = true;
-          this.active = Math.max(0, this.active - 1);
-          this.drain();
-        }
+        // Do not free a concurrency slot until the underlying transport has
+        // actually settled. AbortSignal is cooperative: freeing the slot here
+        // used to let a slow-to-abort fetch overlap a replacement request and
+        // exceed the scheduler's real network limit.
         reject(reason);
       }, deadlineMs);
       task = {
@@ -105,11 +104,8 @@ export class GameStateReadScheduler {
     if (index >= 0) this.queue.splice(index, 1);
     clearTimeout(task.timer);
     task.reject(reason);
-    if (task.started && !task.released) {
-      task.released = true;
-      this.active = Math.max(0, this.active - 1);
-      this.drain();
-    }
+    // See the deadline path above: a started read still owns its slot until
+    // its promise settles, even after cancellation has rejected consumers.
   }
 
   private drain(): void {
@@ -224,6 +220,16 @@ export class GameStateStore {
     this.nextGeneration(key);
     this.entries.delete(key);
     this.emit([key]);
+  }
+
+  /** Drop an inactive canonical key completely so dynamic route/query keys do
+   * not accumulate for the lifetime of a browser tab. */
+  forget(key: string): boolean {
+    if (this.inFlight.has(key) || this.subscriberCount(key) > 0) return false;
+    this.entries.delete(key);
+    this.generations.delete(key);
+    this.emit([key]);
+    return true;
   }
 
   /**

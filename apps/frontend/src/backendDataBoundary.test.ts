@@ -52,11 +52,12 @@ describe("frontend backend-data boundary", () => {
     const appSource = await Bun.file(new URL("./PlayableMvpApp.tsx", import.meta.url)).text();
     const storeSource = await Bun.file(new URL("./backendDataStore.ts", import.meta.url)).text();
 
-    expect(storeSource).toContain("private readonly transactionGate = createTransactionActionGate()");
+    expect(storeSource).toContain("private readonly transactionGates = new Map<string, TransactionActionGate>()");
+    expect(storeSource).toContain("private transactionGateFor(walletScope: string)");
     expect(storeSource).toContain("async runWriteTransaction(");
     expect(storeSource).toContain("waitForIndexedResource<T extends");
     expect(storeSource).toContain("waitForStartedDefenseProduction(");
-    expect(appSource).toContain("backendData?.writeTransactionKey()");
+    expect(appSource).toContain("backendData?.writeTransactionKey(undefined, account)");
     expect(appSource).toContain("backendData.runWriteTransaction({");
     expect(appSource).toContain("backendData!.indexing.startedDefenseProduction(");
     expect(appSource).toContain("backendData!.indexing.startedShipProduction(");
@@ -125,14 +126,31 @@ describe("frontend backend-data boundary", () => {
     expect(moonSource).not.toContain("useState<Planet | null>");
   });
 
+  test("keeps player inspection and alliance roster inspection on store descriptors", async () => {
+    const inspectSource = await Bun.file(new URL("./components/InspectPages.tsx", import.meta.url)).text();
+    const allianceSource = await Bun.file(new URL("./components/AlliancePage.tsx", import.meta.url)).text();
+    const querySource = await Bun.file(new URL("./useBackendDataQuery.ts", import.meta.url)).text();
+    const storeSource = await Bun.file(new URL("./backendDataStore.ts", import.meta.url)).text();
+
+    expect(inspectSource).toContain("backendData?.queries.planets(wallet)");
+    expect(inspectSource).toContain("useBackendDataQuery");
+    expect(inspectSource).not.toContain("Promise.allSettled");
+    expect(allianceSource).toContain("playerBackendData.queries.planets(selectedPlayer)");
+    expect(allianceSource).toContain("playerBackendData.queries.playerHighscore(selectedPlayer)");
+    expect(allianceSource).not.toContain("Promise.allSettled");
+    expect(querySource).toContain("BackendDataQueryDescriptor<T>");
+    expect(querySource).not.toContain("load: (() => Promise<T>)");
+    expect(storeSource).toContain("readonly queries = {");
+  });
+
   test("keeps settlement and referral reads on canonical store queries", async () => {
     const settlementSource = await Bun.file(new URL("./FirstPlanetSettlementApp.tsx", import.meta.url)).text();
     const storeSource = await Bun.file(new URL("./backendDataStore.ts", import.meta.url)).text();
 
     expect(settlementSource).toContain("useBackendDataQuery(");
-    expect(settlementSource).toContain("referralData.referralDashboard(account)");
-    expect(settlementSource).toContain("historyData.referralHistory(wallet, historyPage, 25)");
-    expect(settlementSource).toContain("referralData.referralCodeInspection(account, referralClaimCode)");
+    expect(settlementSource).toContain("referralData.queries.referralDashboard(account)");
+    expect(settlementSource).toContain("historyData.queries.referralHistory(wallet, historyPage, 25)");
+    expect(settlementSource).toContain("referralData.queries.referralCodeInspection(account, referralClaimCode)");
     expect(settlementSource).not.toContain("setTimeout(() => {\n      void inspectReferralCode");
     expect(settlementSource).not.toContain("setTimeout(loadRuntimeConfig");
     expect(settlementSource).not.toContain("createTransactionActionGate");

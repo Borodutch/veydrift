@@ -37,9 +37,7 @@ export function EntityMediaPanel({
   const heading = entityMediaHeading(entityKind);
   const backendData = useMemo(() => backendDataStoreFor(normalizedApiUrl), [normalizedApiUrl]);
   const mediaQuery = useBackendDataQuery<EntityMediaResponse>(
-    backendData,
-    backendData.key("entity-media", entityKind, entityId),
-    () => backendData.entityMedia(entityKind, entityId),
+    backendData.queries.entityMedia(entityKind, entityId),
   );
   const response = mediaQuery.snapshot?.data;
   const record = response?.media ?? null;

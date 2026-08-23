@@ -3259,7 +3259,7 @@ export function PlayableMvpApp({
     return runtimeConfig.status === "ready" ? apiBaseUrlForRuntimeConfig(runtimeConfig.config) : undefined;
   }, [runtimeConfig]);
   const backendData = useMemo(() => (apiBaseUrl ? backendDataStoreFor(apiBaseUrl) : undefined), [apiBaseUrl]);
-  const writeTransactionSnapshot = useBackendDataSnapshot<WriteTransactionState>(backendData, backendData?.writeTransactionKey());
+  const writeTransactionSnapshot = useBackendDataSnapshot<WriteTransactionState>(backendData, backendData?.writeTransactionKey(undefined, account));
   const writeTransactionState = writeTransactionSnapshot?.data ?? {
     phase: "idle" as const,
   };
@@ -3898,57 +3898,39 @@ export function PlayableMvpApp({
   // request lifecycle, errors, and deduplication. These queries replace the
   // page-local refresh effects that used to each start their own read.
   useBackendDataQuery(
-    backendData,
-    backendData && account ? backendData.key("shipyard", account, activePlanetId) : undefined,
-    backendData && account ? () => backendData.shipyard(account, activePlanetId) : undefined,
+    backendData && account && activePlanetId ? backendData.queries.shipyard(account, activePlanetId) : undefined,
     pageStateHydrationReady && shouldRefreshShipyardStateForPage(page),
   );
   useBackendDataQuery(
-    backendData,
-    backendData && account ? backendData.key("defenses", account, activePlanetId) : undefined,
-    backendData && account ? () => backendData.defenses(account, activePlanetId) : undefined,
+    backendData && account && activePlanetId ? backendData.queries.defenses(account, activePlanetId) : undefined,
     pageStateHydrationReady && (page === "defenses" || shouldRefreshMissionActionStateForPage(page)),
   );
   useBackendDataQuery(
-    backendData,
-    backendData && account ? backendData.key("alliance", account) : undefined,
-    backendData && account ? () => backendData.alliance(account) : undefined,
+    backendData && account ? backendData.queries.alliance(account) : undefined,
     pageStateHydrationReady && shouldRefreshAllianceStateForPage(page),
   );
   useBackendDataQuery(
-    backendData,
-    backendData && account ? backendData.key("research", account, activePlanetId) : undefined,
-    backendData && account ? () => backendData.research(account, activePlanetId) : undefined,
+    backendData && account && activePlanetId ? backendData.queries.research(account, activePlanetId) : undefined,
     pageStateHydrationReady && page === "research",
   );
   useBackendDataQuery(
-    backendData,
-    backendData && account ? backendData.key("queues", account, undefined) : undefined,
-    backendData && account ? () => backendData.queues(account) : undefined,
+    backendData && account ? backendData.queries.queues(account) : undefined,
     pageStateHydrationReady,
   );
   useBackendDataQuery(
-    backendData,
-    backendData && account ? backendData.key("rift", account, activePlanetId) : undefined,
-    backendData && account ? () => backendData.rift(account, activePlanetId) : undefined,
+    backendData && account && activePlanetId ? backendData.queries.rift(account, activePlanetId) : undefined,
     pageStateHydrationReady && page === "rift",
   );
   useBackendDataQuery(
-    backendData,
-    backendData && account ? backendData.key("infrastructure", account, activePlanetId) : undefined,
-    backendData && account ? () => backendData.infrastructure(account, activePlanetId) : undefined,
+    backendData && account && activePlanetId ? backendData.queries.infrastructure(account, activePlanetId) : undefined,
     pageStateHydrationReady && (page === "infrastructure" || page === "moon" || page === "overview"),
   );
   useBackendDataQuery(
-    backendData,
-    backendData && account ? backendData.key("moon", account, activePlanetId) : undefined,
-    backendData && account ? () => backendData.moon(account, activePlanetId) : undefined,
+    backendData && account && activePlanetId ? backendData.queries.moon(account, activePlanetId) : undefined,
     pageStateHydrationReady && page === "moon",
   );
   useBackendDataQuery(
-    backendData,
-    backendData && account ? backendData.key("profile", account) : undefined,
-    backendData && account ? () => backendData.profile(account) : undefined,
+    backendData && account ? backendData.queries.profile(account) : undefined,
     Boolean(apiBaseUrl && account),
   );
   const settlementPlanet = onChainSettlement?.planet;

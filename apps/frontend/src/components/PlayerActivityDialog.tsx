@@ -66,20 +66,12 @@ export function PlayerActivityCenter({
   const identityKey = apiUrl && wallet ? `${apiUrl}:${wallet.toLowerCase()}` : "";
   const backendData = useMemo(() => apiUrl ? backendDataStoreFor(apiUrl) : undefined, [apiUrl]);
   const historyQuery = useBackendDataQuery<PlayerActivityResponse>(
-    backendData,
-    backendData && wallet ? backendData.key("player-activity", wallet, { page: historyPage, pageSize: HISTORY_PAGE_SIZE }) : undefined,
-    backendData && wallet
-      ? () => backendData.playerActivity(wallet, { page: historyPage, pageSize: HISTORY_PAGE_SIZE })
-      : undefined,
+    backendData && wallet ? backendData.queries.playerActivity(wallet, { page: historyPage, pageSize: HISTORY_PAGE_SIZE }) : undefined,
     Boolean(historyOpen && wallet),
   );
   const awayQuery = useBackendDataQuery<PlayerActivityResponse>(
-    backendData,
     backendData && wallet && awaySince
-      ? backendData.key("player-activity", wallet, { page: 1, pageSize: AWAY_PAGE_SIZE, since: awaySince, includeProjected: true })
-      : undefined,
-    backendData && wallet && awaySince
-      ? () => backendData.playerActivity(wallet, {
+      ? backendData.queries.playerActivity(wallet, {
         page: 1,
         pageSize: AWAY_PAGE_SIZE,
         since: awaySince,
