@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { ComponentChildren, JSX } from "preact";
 import type { Coordinates, Planet, PlanetType, PublicStationedDefender } from "./types";
 import { haptic } from "./haptics";
@@ -296,7 +296,7 @@ import {
   type ResourceSnapshotMetadata,
   type TransactionReceipt,
 } from "./walletFlow";
-import { BackendDataStore, backendDataStoreFor, type BackendDataTag, type BackendIndexingPlan } from "./backendDataStore";
+import { BackendDataStore, backendDataStoreFor, retainBackendDataStore, type BackendDataTag, type BackendIndexingPlan } from "./backendDataStore";
 import { useBackendDataSnapshot, useBackendDataSnapshots } from "./useBackendDataSnapshot";
 import { useBackendDataQuery } from "./useBackendDataQuery";
 import { nextWatchedPlanetsPageAfterToggle } from "./watchedPlanetsView";
@@ -2512,6 +2512,12 @@ export async function loadWalletPlanetSyncSnapshot(
   sharedStore?: BackendDataStore,
 ): Promise<WalletPlanetSyncSnapshot> {
   const store = sharedStore ?? backendDataStoreFor(apiBaseUrl);
+  // Production reads are store-owned. The injectable legacy branch remains
+  // only for focused pure-function tests that deliberately emulate a partial
+  // backend; screens never install their own loaders.
+  if (Object.values(loaders).every((loader) => loader === undefined)) {
+    return store.walletPlanetSync(account, activePlanetId, options);
+  }
   const loadOverviewSnapshot: FetchWalletOverviewSnapshot = loaders.fetchWalletOverviewSnapshot ?? ((_apiUrl, wallet, planetId, readOptions) => store.overview(wallet, planetId, readOptions));
   const loadWalletPlanets: FetchWalletPlanets = loaders.fetchWalletPlanets ?? ((_apiUrl, wallet, readOptions) => store.planets(wallet, readOptions));
   const loadWalletQueues: FetchWalletQueues = loaders.fetchWalletQueues ?? ((_apiUrl, wallet, planetId, readOptions) => store.queues(wallet, planetId, readOptions));
@@ -3253,13 +3259,29 @@ export function PlayableMvpApp({
     });
   }, [connectMiniAppWallet, miniAppMode, providedAccount, providedProvider]);
   const [now, setNow] = useState(() => Date.now());
-  const [runtimeConfig, setRuntimeConfig] = useState<RuntimeConfigState>({
-    status: "loading",
-  });
+  const runtimeData = useMemo(() => backendDataStoreFor(""), []);
+  const runtimeConfigQuery = useBackendDataQuery<RuntimeConfig>(runtimeData.queries.runtimeConfig<RuntimeConfig>(runtimeConfigUrl()));
+  const runtimeConfig = useMemo(() => {
+    const config = runtimeConfigQuery.snapshot?.data;
+    if (config) return { config, status: "ready" as const };
+    return runtimeConfigQuery.snapshot?.freshness === "failed" ? { status: "error" as const } : { status: "loading" as const };
+  }, [runtimeConfigQuery.snapshot?.data, runtimeConfigQuery.snapshot?.freshness]);
   const apiBaseUrl = useMemo(() => {
     return runtimeConfig.status === "ready" ? apiBaseUrlForRuntimeConfig(runtimeConfig.config) : undefined;
   }, [runtimeConfig]);
   const backendData = useMemo(() => (apiBaseUrl ? backendDataStoreFor(apiBaseUrl) : undefined), [apiBaseUrl]);
+  // The API-base lease must become active in the same committed layout phase
+  // as the query descriptors. Otherwise a runtime-config update can schedule
+  // reads after this shell has already been replaced, leaving an obsolete
+  // store to issue background transport for a route that no longer exists.
+  useLayoutEffect(() => {
+    const releaseRuntime = retainBackendDataStore("");
+    const releaseApi = apiBaseUrl ? retainBackendDataStore(apiBaseUrl) : undefined;
+    return () => {
+      releaseApi?.();
+      releaseRuntime();
+    };
+  }, [apiBaseUrl]);
   const writeTransactionSnapshot = useBackendDataSnapshot<WriteTransactionState>(backendData, backendData?.writeTransactionKey(undefined, account));
   const writeTransactionState = writeTransactionSnapshot?.data ?? {
     phase: "idle" as const,
@@ -3287,9 +3309,11 @@ export function PlayableMvpApp({
   const [selectedDefenseKey, setSelectedDefenseKey] = useState<DefenseKey>("rocketLauncher");
   const [selectedShipKey, setSelectedShipKey] = useState<ShipKey>("smallCargo");
   const [selectedCoords, setSelectedCoords] = useState<Coordinates | undefined>(() => initialSelectedCoords());
-  const settlementSnapshot = useBackendDataSnapshot<WalletSettlementResponse>(backendData, backendData && account ? backendData.key("settlement", account) : undefined);
+  const settlementQuery = backendData && account ? backendData.queries.settlement(account) : undefined;
+  const settlementSnapshot = useBackendDataSnapshot<WalletSettlementResponse>(backendData, settlementQuery?.key);
   const onChainSettlementState = settlementSnapshot?.data;
-  const playerProfileSnapshot = useBackendDataSnapshot<PlayerProfile>(backendData, backendData && account ? backendData.key("profile", account) : undefined);
+  const playerProfileQuery = backendData && account ? backendData.queries.profile(account) : undefined;
+  const playerProfileSnapshot = useBackendDataSnapshot<PlayerProfile>(backendData, playerProfileQuery?.key);
   const playerProfile = playerProfileSnapshot?.data;
   const applyPlayerProfile = useCallback((value: PlayerProfile | undefined | ((current: PlayerProfile | undefined) => PlayerProfile | undefined)) => {
     // Query/mutation responses are committed by BackendDataStore before they
@@ -3298,10 +3322,11 @@ export function PlayableMvpApp({
   }, []);
   const canonicalPlanetResourcesSnapshot = useBackendDataSnapshot<CanonicalPlanetResourceStore>(
     backendData,
-    backendData && account ? backendData.key("canonical-planet-resources", account) : undefined,
+    backendData && account ? backendData.canonicalPlanetResourcesKey(account) : undefined,
   );
   const canonicalPlanetResources = canonicalPlanetResourcesSnapshot?.data ?? {};
-  const walletPlanetsSnapshot = useBackendDataSnapshot<WalletPlanetsResponse>(backendData, backendData && account ? backendData.key("planets", account) : undefined);
+  const walletPlanetsQuery = backendData && account ? backendData.queries.planets(account) : undefined;
+  const walletPlanetsSnapshot = useBackendDataSnapshot<WalletPlanetsResponse>(backendData, walletPlanetsQuery?.key);
   const walletPlanetsState = walletPlanetsSnapshot?.data?.planets ?? [];
   const walletPlanets = useMemo(() => walletPlanetsWithCanonicalPlanetResources(walletPlanetsState, canonicalPlanetResources, account), [account, canonicalPlanetResources, walletPlanetsState]);
   const setWalletPlanets = useCallback((value: ManagedPlanetResponse[] | ((current: ManagedPlanetResponse[]) => ManagedPlanetResponse[])) => {
@@ -3392,7 +3417,8 @@ export function PlayableMvpApp({
   );
   const [watchedPlanetsPage, setWatchedPlanetsPage] = useState(1);
   const watchedPlanetsOptions = useMemo(() => ({ page: watchedPlanetsPage, pageSize: 25 }), [watchedPlanetsPage]);
-  const watchedPlanetsSnapshot = useBackendDataSnapshot<WatchedPlanetsResponse>(backendData, backendData && account ? backendData.key("watched-planets", account, watchedPlanetsOptions) : undefined);
+  const watchedPlanetsQuery = backendData && account ? backendData.queries.watchedPlanets(account, watchedPlanetsOptions) : undefined;
+  const watchedPlanetsSnapshot = useBackendDataSnapshot<WatchedPlanetsResponse>(backendData, watchedPlanetsQuery?.key);
   const watchedPlanets = watchedPlanetsSnapshot?.data;
   const watchedPlanetsLoading = watchedPlanetsSnapshot?.freshness === "refreshing";
   const [watchedPlanetsMutationError, setWatchedPlanetsMutationError] = useState<string | undefined>();
@@ -3411,17 +3437,6 @@ export function PlayableMvpApp({
   );
   const selectedManagedPlanet = useMemo(() => walletPlanets.find((item) => item.planetId === resolvedSelectedPlanetId) ?? walletPlanets[0], [resolvedSelectedPlanetId, walletPlanets]);
   const activePlanetId = selectedManagedPlanet?.planetId ?? onChainSettlementState?.homePlanetId ?? undefined;
-  const [planetReadinessByKey, setPlanetReadinessByKey] = useState<Record<string, boolean>>({});
-  const activePlanetReadinessKey = account && activePlanetId ? `${account.toLowerCase()}:${activePlanetId}` : undefined;
-  const activePlanetStateFresh = activePlanetReadinessKey ? (planetReadinessByKey[activePlanetReadinessKey] ?? true) : true;
-  const setPlanetStateFresh = useCallback(
-    (planetId: string | undefined, fresh: boolean) => {
-      if (!account || !planetId) return;
-      const key = `${account.toLowerCase()}:${planetId}`;
-      setPlanetReadinessByKey((current) => (current[key] === fresh ? current : { ...current, [key]: fresh }));
-    },
-    [account],
-  );
   useEffect(() => {
     backendData?.setContext(account, activePlanetId);
   }, [account, activePlanetId, backendData]);
@@ -3433,13 +3448,13 @@ export function PlayableMvpApp({
   const planetResourceKeys = useMemo(() => {
     if (!backendData || !account) return [];
     return walletPlanets.flatMap((planet) => [
-      backendData.key("infrastructure", account, planet.planetId),
-      backendData.key("moon", account, planet.planetId),
-      backendData.key("defenses", account, planet.planetId),
-      backendData.key("shipyard", account, planet.planetId),
-      backendData.key("research", account, planet.planetId),
-      backendData.key("rift", account, planet.planetId),
-      backendData.key("queues", account, planet.planetId),
+      backendData.queries.infrastructure(account, planet.planetId).key,
+      backendData.queries.moon(account, planet.planetId).key,
+      backendData.queries.defenses(account, planet.planetId).key,
+      backendData.queries.shipyard(account, planet.planetId).key,
+      backendData.queries.research(account, planet.planetId).key,
+      backendData.queries.rift(account, planet.planetId).key,
+      backendData.queries.queues(account, planet.planetId).key,
     ]);
   }, [account, backendData, walletPlanets]);
   const planetResourceSnapshots = useBackendDataSnapshots<unknown>(backendData, planetResourceKeys);
@@ -3458,31 +3473,37 @@ export function PlayableMvpApp({
     >();
     if (!backendData || !account) return sections;
     for (const planet of walletPlanets) {
-      const snapshot = <T,>(kind: string) => planetResourceSnapshots.get(backendData.key(kind, account, planet.planetId))?.data as T | undefined;
+      const snapshot = <T,>(key: string) => planetResourceSnapshots.get(key)?.data as T | undefined;
       sections.set(planet.planetId, {
-        defenseState: snapshot<ChainDefenseState>("defenses"),
-        infrastructureChainState: snapshot<ChainInfrastructureState>("infrastructure"),
-        moonState: snapshot<ChainMoonState>("moon"),
-        queuesState: snapshot<PlayerQueuesResponse>("queues"),
-        researchState: snapshot<ChainResearchState>("research"),
-        riftState: snapshot<ChainRiftState>("rift"),
-        shipyardState: snapshot<ChainShipyardState>("shipyard"),
+        defenseState: snapshot<ChainDefenseState>(backendData.queries.defenses(account, planet.planetId).key),
+        infrastructureChainState: snapshot<ChainInfrastructureState>(backendData.queries.infrastructure(account, planet.planetId).key),
+        moonState: snapshot<ChainMoonState>(backendData.queries.moon(account, planet.planetId).key),
+        queuesState: snapshot<PlayerQueuesResponse>(backendData.queries.queues(account, planet.planetId).key),
+        researchState: snapshot<ChainResearchState>(backendData.queries.research(account, planet.planetId).key),
+        riftState: snapshot<ChainRiftState>(backendData.queries.rift(account, planet.planetId).key),
+        shipyardState: snapshot<ChainShipyardState>(backendData.queries.shipyard(account, planet.planetId).key),
       });
     }
     return sections;
   }, [account, backendData, planetResourceSnapshots, walletPlanets]);
-  const queuesSnapshot = useBackendDataSnapshot<PlayerQueuesResponse>(backendData, backendData && account ? backendData.key("queues", account, activePlanetId) : undefined);
+  const queuesQuery = backendData && account ? backendData.queries.queues(account, activePlanetId) : undefined;
+  const queuesSnapshot = useBackendDataSnapshot<PlayerQueuesResponse>(backendData, queuesQuery?.key);
   const onChainQueuesState = queuesSnapshot?.data;
   const onChainQueues = onChainQueuesState;
-  const walletQueuesSnapshot = useBackendDataSnapshot<PlayerQueuesResponse>(backendData, backendData && account ? backendData.key("queues", account, undefined) : undefined);
+  const walletQueuesQuery = backendData && account ? backendData.queries.queues(account) : undefined;
+  const walletQueuesSnapshot = useBackendDataSnapshot<PlayerQueuesResponse>(backendData, walletQueuesQuery?.key);
   const walletQueues = walletQueuesSnapshot?.data;
+  // Transaction availability follows canonical selected-planet snapshots,
+  // never a component-maintained hydration flag that can outlive eviction.
+  const activePlanetStateFresh = !account || !activePlanetId || (walletPlanetsSnapshot?.freshness === "fresh" && queuesSnapshot?.freshness === "fresh");
   const setOnChainQueues = useCallback((value: PlayerQueuesResponse | undefined | ((current: PlayerQueuesResponse | undefined) => PlayerQueuesResponse | undefined)) => {
     void value;
   }, []);
   // Mission Control is a commander-level surface. Keep its canonical mission feeds outside the
   // selected-planet section cache so changing launch origin cannot replace active or past rows with
   // a snapshot captured while another planet happened to be selected (VEY-KANEO-836).
-  const fleetVisibilitySnapshot = useBackendDataSnapshot<FleetMissionVisibilityResponse>(backendData, backendData && account ? backendData.key("fleet-visibility", account, false) : undefined);
+  const fleetVisibilityQuery = backendData && account ? backendData.queries.fleetVisibility(account) : undefined;
+  const fleetVisibilitySnapshot = useBackendDataSnapshot<FleetMissionVisibilityResponse>(backendData, fleetVisibilityQuery?.key);
   const fleetVisibility = fleetVisibilitySnapshot?.data;
   const setFleetVisibility = useCallback(
     (value: FleetMissionVisibilityResponse | undefined | ((current: FleetMissionVisibilityResponse | undefined) => FleetMissionVisibilityResponse | undefined)) => {
@@ -3507,18 +3528,14 @@ export function PlayableMvpApp({
     }),
     [missionArchivePage, normalizedMissionFilters.missionNumber, normalizedMissionFilters.missionType, normalizedMissionFilters.planetId],
   );
-  const missionArchiveSnapshot = useBackendDataSnapshot<FleetMissionArchiveResponse>(
-    backendData,
-    backendData && account ? backendData.key("fleet-archive", account, missionArchiveOptions) : undefined,
-  );
+  const missionArchiveQuery = backendData && account ? backendData.queries.fleetArchive(account, missionArchiveOptions) : undefined;
+  const missionArchiveSnapshot = useBackendDataSnapshot<FleetMissionArchiveResponse>(backendData, missionArchiveQuery?.key);
   const missionArchive = missionArchiveSnapshot?.data;
   const missionArchiveLoading = missionArchiveSnapshot?.freshness === "refreshing";
   const missionArchiveError = missionArchiveSnapshot?.error;
   const missileAttackArchiveOptions = useMemo(() => ({ page: 1, pageSize: 25 }), []);
-  const missileAttackArchiveSnapshot = useBackendDataSnapshot<MissileAttackArchiveResponse>(
-    backendData,
-    backendData && account ? backendData.key("missile-archive", account, missileAttackArchiveOptions) : undefined,
-  );
+  const missileAttackArchiveQuery = backendData && account ? backendData.queries.missileArchive(account, missileAttackArchiveOptions) : undefined;
+  const missileAttackArchiveSnapshot = useBackendDataSnapshot<MissileAttackArchiveResponse>(backendData, missileAttackArchiveQuery?.key);
   const missileAttackArchive = missileAttackArchiveSnapshot?.data;
   const missileAttackArchiveLoading = missileAttackArchiveSnapshot?.freshness === "refreshing";
   const missileAttackArchiveError = missileAttackArchiveSnapshot?.error;
@@ -3533,14 +3550,13 @@ export function PlayableMvpApp({
     }),
     [incomingAttackArchivePage, normalizedMissionFilters.missionNumber, normalizedMissionFilters.missionType, normalizedMissionFilters.planetId],
   );
-  const incomingAttackArchiveSnapshot = useBackendDataSnapshot<FleetMissionArchiveResponse>(
-    backendData,
-    backendData && account ? backendData.key("fleet-archive", account, incomingAttackArchiveOptions) : undefined,
-  );
+  const incomingAttackArchiveQuery = backendData && account ? backendData.queries.fleetArchive(account, incomingAttackArchiveOptions) : undefined;
+  const incomingAttackArchiveSnapshot = useBackendDataSnapshot<FleetMissionArchiveResponse>(backendData, incomingAttackArchiveQuery?.key);
   const incomingAttackArchive = incomingAttackArchiveSnapshot?.data;
   const incomingAttackArchiveLoading = incomingAttackArchiveSnapshot?.freshness === "refreshing";
   const incomingAttackArchiveError = incomingAttackArchiveSnapshot?.error;
-  const allActiveMissionsSnapshot = useBackendDataSnapshot<GlobalActiveMissionsResponse>(backendData, backendData?.key("global-active-missions"));
+  const allActiveMissionsQuery = backendData?.queries.globalActiveMissions();
+  const allActiveMissionsSnapshot = useBackendDataSnapshot<GlobalActiveMissionsResponse>(backendData, allActiveMissionsQuery?.key);
   const allActiveMissions = allActiveMissionsSnapshot?.data?.missions;
   const setAllActiveMissions = useCallback((value: FleetMissionSummary[] | undefined | ((current: FleetMissionSummary[] | undefined) => FleetMissionSummary[] | undefined)) => {
     void value;
@@ -3555,7 +3571,8 @@ export function PlayableMvpApp({
     }),
     [globalMissionArchivePage, normalizedMissionFilters.missionNumber, normalizedMissionFilters.missionType, normalizedMissionFilters.planetId],
   );
-  const globalMissionArchiveSnapshot = useBackendDataSnapshot<GlobalMissionArchiveResponse>(backendData, backendData?.key("global-mission-archive", globalMissionArchiveOptions));
+  const globalMissionArchiveQuery = backendData?.queries.globalMissionArchive(globalMissionArchiveOptions);
+  const globalMissionArchiveSnapshot = useBackendDataSnapshot<GlobalMissionArchiveResponse>(backendData, globalMissionArchiveQuery?.key);
   const globalMissionArchive = globalMissionArchiveSnapshot?.data;
   const globalMissionArchiveLoading = globalMissionArchiveSnapshot?.freshness === "refreshing";
   const globalMissionArchiveError = globalMissionArchiveSnapshot?.error;
@@ -3570,16 +3587,16 @@ export function PlayableMvpApp({
     }),
     [normalizedMissionFilters.missionNumber, normalizedMissionFilters.missionType, normalizedMissionFilters.planetId],
   );
-  const globalMissionArchiveSummarySnapshot = useBackendDataSnapshot<GlobalMissionArchiveResponse>(
-    backendData,
-    backendData?.key("global-mission-archive", globalMissionArchiveSummaryOptions),
-  );
+  const globalMissionArchiveSummaryQuery = backendData?.queries.globalMissionArchive(globalMissionArchiveSummaryOptions);
+  const globalMissionArchiveSummarySnapshot = useBackendDataSnapshot<GlobalMissionArchiveResponse>(backendData, globalMissionArchiveSummaryQuery?.key);
   const globalMissionArchiveTotalEntries = globalMissionArchiveSummarySnapshot?.data?.pagination.totalEntries;
-  const publicBattleReportsSnapshot = useBackendDataSnapshot<BattleReport[]>(backendData, backendData?.key("battle-reports"));
+  const publicBattleReportsQuery = backendData?.queries.battleReports();
+  const publicBattleReportsSnapshot = useBackendDataSnapshot<BattleReport[]>(backendData, publicBattleReportsQuery?.key);
   const publicBattleReports = publicBattleReportsSnapshot?.data ?? [];
   const publicBattleReportsLoading = publicBattleReportsSnapshot?.freshness === "refreshing";
   const publicBattleReportsError = publicBattleReportsSnapshot?.error;
-  const missionDetailSnapshot = useBackendDataSnapshot<MissionDetailResponse>(backendData, backendData && missionDetailId ? backendData.key("mission", missionDetailId) : undefined);
+  const missionDetailQuery = backendData && missionDetailId ? backendData.queries.mission(missionDetailId) : undefined;
+  const missionDetailSnapshot = useBackendDataSnapshot<MissionDetailResponse>(backendData, missionDetailQuery?.key);
   const missionDetail = missionDetailSnapshot?.data;
   const missionDetailLoading = missionDetailSnapshot?.freshness === "refreshing";
   const missionDetailError = missionDetailSnapshot?.error;
@@ -3589,8 +3606,10 @@ export function PlayableMvpApp({
   const setMissionDetail = useCallback((value: MissionDetailResponse | undefined | ((current: MissionDetailResponse | undefined) => MissionDetailResponse | undefined)) => {
     void value;
   }, []);
-  const selectedPlanetOverviewSnapshot = useBackendDataSnapshot<WalletOverviewSnapshotResponse>(backendData, backendData && account ? backendData.key("overview", account, activePlanetId) : undefined);
+  const selectedPlanetOverviewQuery = backendData && account ? backendData.queries.overview(account, activePlanetId) : undefined;
+  const selectedPlanetOverviewSnapshot = useBackendDataSnapshot<WalletOverviewSnapshotResponse>(backendData, selectedPlanetOverviewQuery?.key);
   const hasCanonicalWalletState = Boolean(settlementSnapshot?.data || walletPlanetsSnapshot?.data || selectedPlanetOverviewSnapshot?.data);
+  const hydratedWalletSnapshotKey = hasCanonicalWalletState ? walletSnapshotHydrationKey(apiBaseUrl, account) : undefined;
   const onChainStatus = !isWalletConnected
     ? "local"
     // An aggregate overview can lag or omit a selected body while its
@@ -3612,10 +3631,10 @@ export function PlayableMvpApp({
   }, []);
   const setOnChainError = useCallback((error: string | undefined) => {
     if (!backendData || !account) return;
-    backendData.setSnapshotError("overview", error, [account, activePlanetId]);
+    backendData.reportWalletPlanetSyncError(account, activePlanetId, error);
   }, [account, activePlanetId, backendData]);
-  const [hydratedWalletSnapshotKey, setHydratedWalletSnapshotKey] = useState<string | undefined>();
-  const chainSyncSnapshot = useBackendDataSnapshot<boolean>(backendData, backendData && account ? backendData.key("chain-sync-health", account) : undefined);
+  const chainSyncKey = backendData && account ? backendData.chainSyncHealthKey(account) : undefined;
+  const chainSyncSnapshot = useBackendDataSnapshot<boolean>(backendData, chainSyncKey);
   const chainSyncHealthy = chainSyncSnapshot?.data ?? false;
   const activePlanetResourceSnapshot = canonicalPlanetResourceSnapshotFor(canonicalPlanetResources, account, activePlanetId);
   const activeMoonResourceSnapshot = canonicalPlanetResourceSnapshotFor(canonicalPlanetResources, account, activePlanetId, "moon");
@@ -3629,7 +3648,8 @@ export function PlayableMvpApp({
   const updateOnChainSettlementSnapshot = useCallback((updater: (current: WalletSettlementResponse | undefined) => WalletSettlementResponse | undefined) => {
     void updater;
   }, []);
-  const infrastructureSnapshot = useBackendDataSnapshot<ChainInfrastructureState>(backendData, backendData && account ? backendData.key("infrastructure", account, activePlanetId) : undefined);
+  const infrastructureQuery = backendData && account && activePlanetId ? backendData.queries.infrastructure(account, activePlanetId) : undefined;
+  const infrastructureSnapshot = useBackendDataSnapshot<ChainInfrastructureState>(backendData, infrastructureQuery?.key);
   const infrastructureChainState = resourceStateWithCanonicalPlanetResources(infrastructureSnapshot?.data ?? null, activePlanetResourceSnapshot);
   const setInfrastructureChainState = useCallback((value: ChainInfrastructureState | null | ((current: ChainInfrastructureState | null) => ChainInfrastructureState | null)) => {
     void value;
@@ -3639,7 +3659,8 @@ export function PlayableMvpApp({
   const setInfrastructureError = useCallback((error: string | undefined) => {
     void error;
   }, []);
-  const moonSnapshot = useBackendDataSnapshot<ChainMoonState>(backendData, backendData && account ? backendData.key("moon", account, activePlanetId) : undefined);
+  const moonQuery = backendData && account && activePlanetId ? backendData.queries.moon(account, activePlanetId) : undefined;
+  const moonSnapshot = useBackendDataSnapshot<ChainMoonState>(backendData, moonQuery?.key);
   const moonState = resourceStateWithCanonicalPlanetResources(moonSnapshot?.data ?? null, activeMoonResourceSnapshot);
   const setMoonState = useCallback((value: ChainMoonState | null) => {
     void value;
@@ -3649,7 +3670,8 @@ export function PlayableMvpApp({
   const setMoonError = useCallback((error: string | undefined) => {
     void error;
   }, []);
-  const defenseSnapshot = useBackendDataSnapshot<ChainDefenseState>(backendData, backendData && account ? backendData.key("defenses", account, activePlanetId) : undefined);
+  const defenseQuery = backendData && account && activePlanetId ? backendData.queries.defenses(account, activePlanetId) : undefined;
+  const defenseSnapshot = useBackendDataSnapshot<ChainDefenseState>(backendData, defenseQuery?.key);
   const defenseState = resourceStateWithCanonicalPlanetResources(defenseSnapshot?.data ?? null, activePlanetResourceSnapshot);
   const setDefenseState = useCallback((value: ChainDefenseState | null) => {
     void value;
@@ -3662,7 +3684,8 @@ export function PlayableMvpApp({
   const [defenseAction, setDefenseAction] = useState<DefenseActionState>({
     status: "idle",
   });
-  const allianceSnapshot = useBackendDataSnapshot<ChainAllianceState>(backendData, backendData && account ? backendData.key("alliance", account) : undefined);
+  const allianceQuery = backendData && account ? backendData.queries.alliance(account) : undefined;
+  const allianceSnapshot = useBackendDataSnapshot<ChainAllianceState>(backendData, allianceQuery?.key);
   const allianceState = allianceSnapshot?.data ?? null;
   const allianceLoading = allianceSnapshot?.freshness === "refreshing";
   const allianceError = allianceSnapshot?.error;
@@ -3673,7 +3696,8 @@ export function PlayableMvpApp({
     status: "idle",
   });
   const [selectedAllianceId, setSelectedAllianceId] = useState<string | null>(null);
-  const shipyardSnapshot = useBackendDataSnapshot<ChainShipyardState>(backendData, backendData && account ? backendData.key("shipyard", account, activePlanetId) : undefined);
+  const shipyardQuery = backendData && account && activePlanetId ? backendData.queries.shipyard(account, activePlanetId) : undefined;
+  const shipyardSnapshot = useBackendDataSnapshot<ChainShipyardState>(backendData, shipyardQuery?.key);
   const shipyardState = resourceStateWithCanonicalPlanetResources(shipyardSnapshot?.data ?? null, activePlanetResourceSnapshot);
   const setShipyardState = useCallback((value: ChainShipyardState | null) => {
     void value;
@@ -3717,7 +3741,8 @@ export function PlayableMvpApp({
     depotLevel: number;
     coordinationBlocker?: string | undefined;
   } | null>(null);
-  const researchSnapshot = useBackendDataSnapshot<ChainResearchState>(backendData, backendData && account ? backendData.key("research", account, activePlanetId) : undefined);
+  const researchQuery = backendData && account && activePlanetId ? backendData.queries.research(account, activePlanetId) : undefined;
+  const researchSnapshot = useBackendDataSnapshot<ChainResearchState>(backendData, researchQuery?.key);
   const researchState = resourceStateWithCanonicalPlanetResources(researchSnapshot?.data ?? null, activePlanetResourceSnapshot);
   const setResearchState = useCallback((value: ChainResearchState | null | ((current: ChainResearchState | null) => ChainResearchState | null)) => {
     void value;
@@ -3730,7 +3755,8 @@ export function PlayableMvpApp({
   const [researchAction, setResearchAction] = useState<ResearchActionState>({
     status: "idle",
   });
-  const riftSnapshot = useBackendDataSnapshot<ChainRiftState>(backendData, backendData && account ? backendData.key("rift", account, activePlanetId) : undefined);
+  const riftQuery = backendData && account && activePlanetId ? backendData.queries.rift(account, activePlanetId) : undefined;
+  const riftSnapshot = useBackendDataSnapshot<ChainRiftState>(backendData, riftQuery?.key);
   const riftState = riftStateWithCanonicalPlanetResources(riftSnapshot?.data ?? null, activePlanetResourceSnapshot);
   const setRiftState = useCallback((value: ChainRiftState | null) => {
     void value;
@@ -4132,12 +4158,10 @@ export function PlayableMvpApp({
   useEffect(() => {
     setSelectedPlanetId(undefined);
     pendingPlanetStateRefreshRef.current = undefined;
-    setPlanetStateFresh(activePlanetId, true);
     setSelectedBodyKind("planet");
     setWalletPlanets([]);
     setOnChainQueues(undefined);
     setFleetVisibility(undefined);
-    setHydratedWalletSnapshotKey(undefined);
     setPlayerProfileAction({ status: "idle" });
   }, [account]);
 
@@ -4540,7 +4564,6 @@ export function PlayableMvpApp({
     async (
       renameExpectation?: { planetId: string; name: string },
       options: {
-        force?: boolean;
         forceHomePlanet?: boolean;
         forceWalletPlanets?: boolean;
       } = {},
@@ -4553,7 +4576,6 @@ export function PlayableMvpApp({
         setFleetVisibility(undefined);
         setOnChainError(undefined);
         setOnChainStatus(isWalletConnected ? "loading" : "local");
-        setHydratedWalletSnapshotKey(undefined);
         return;
       }
 
@@ -4569,18 +4591,11 @@ export function PlayableMvpApp({
           walletPlanets: walletPlanetsForRead,
         });
         const loadSnapshot = () =>
-          loadWalletPlanetSyncSnapshot(
-            apiBaseUrl,
-            account,
-            readPlanetId,
-            {
-              fresh: true,
-              ...(options.forceHomePlanet === undefined ? {} : { forceHomePlanet: options.forceHomePlanet }),
-              ...(options.forceWalletPlanets === undefined ? {} : { forceWalletPlanets: options.forceWalletPlanets }),
-            },
-            {},
-            backendData,
-          );
+          backendData!.walletPlanetSync(account, readPlanetId, {
+            fresh: true,
+            ...(options.forceHomePlanet === undefined ? {} : { forceHomePlanet: options.forceHomePlanet }),
+            ...(options.forceWalletPlanets === undefined ? {} : { forceWalletPlanets: options.forceWalletPlanets }),
+          });
         const snapshot = renameExpectation ? await waitForRenamedWalletPlanet(loadSnapshot, renameExpectation) : await waitForHydratedWalletPlanet(loadSnapshot, readPlanetId);
         const { planetsResponse, queues, settlement, selectedPlanet, fleetVisibility } = snapshot;
         const planets = planetsResponse.planets;
@@ -4618,10 +4633,8 @@ export function PlayableMvpApp({
         applyOnChainSettlementSnapshot(nextSettlement);
         if (pendingPlanetStateRefreshRef.current === nextSelectedPlanetId) {
           pendingPlanetStateRefreshRef.current = undefined;
-          setPlanetStateFresh(nextSelectedPlanetId, true);
         }
         applyPlayerProfile((current) => mergePlayerProfile(current, nextSettlement.player ?? planetsResponse.player));
-        setHydratedWalletSnapshotKey(walletSnapshotHydrationKey(apiBaseUrl, account));
       } catch (error) {
         if (!canApplyRefreshRequest(onChainRefreshGate, requestId)) {
           return;
@@ -5578,24 +5591,6 @@ export function PlayableMvpApp({
       setNow(Date.now());
     }, 1_000);
     return () => window.clearInterval(timer);
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    backendDataStoreFor("")
-      .runtimeConfig<RuntimeConfig>(runtimeConfigUrl())
-      .then((config) => {
-        if (!cancelled) setRuntimeConfig({ config, status: "ready" });
-      })
-      .catch((error) => {
-        if (!cancelled) {
-          console.error(error);
-          setRuntimeConfig({ status: "error" });
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
   }, []);
 
   const runBuildingTransaction = useCallback(
@@ -6973,7 +6968,6 @@ export function PlayableMvpApp({
       markFreshStateWrite(riftRefreshGate);
       if (planetId !== activePlanetId) {
         pendingPlanetStateRefreshRef.current = planetId;
-        setPlanetStateFresh(planetId, false);
       }
       setSelectedPlanetId(planetId);
       setSelectedBodyKind(nextBodyKind);
@@ -7573,10 +7567,7 @@ export function PlayableMvpApp({
           return;
         }
         try {
-          const readiness = await backendData!.randomnessReadiness<{
-            ready?: unknown;
-            reasons?: unknown;
-          }>();
+          const readiness = await backendData!.queries.randomnessReadiness().read();
           if (readiness.ready !== true) {
             const reason = Array.isArray(readiness.reasons) && typeof readiness.reasons[0] === "string" ? readiness.reasons[0] : "Randomness safety is not ready. New attacks are temporarily paused.";
             setGalaxyAction({ status: "error", label: reason });

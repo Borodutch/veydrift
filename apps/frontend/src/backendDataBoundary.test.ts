@@ -40,6 +40,9 @@ describe("frontend backend-data boundary", () => {
     expect(storeSource).toContain("invalidate(tags");
     expect(storeSource).toContain("subscribe(listener");
     expect(storeSource).toContain("snapshot<T>(key: string)");
+    expect(storeSource).toContain("retainBackendDataStore(");
+    expect(appSource).toContain("queries.runtimeConfig<RuntimeConfig>(runtimeConfigUrl())");
+    expect(appSource).not.toContain("backendData.key(");
     expect(appSource).not.toContain('from "./planetSectionStore"');
     expect(appSource).not.toContain("setPlanetSectionStore");
     expect(guide).toContain("canonical runtime owner");
@@ -86,6 +89,7 @@ describe("frontend backend-data boundary", () => {
     expect(appSource).toContain("backendData.waitForIndexedResource(load, expectation)");
     expect(appSource).not.toMatch(/\.(?:commitBackendSnapshot|markBackendFailure|discardBackendSnapshot)\(/);
     expect(appSource).not.toMatch(/backendData\.(?:setProfile|setWalletPlanets|setQueues|setShipyard|setResearch|setAlliance)\(/);
+    expect(appSource).not.toContain("backendData.setSnapshotError(");
     expect(appSource).not.toContain("waitForIndexed:");
     expect(storeSource).toContain("export type BackendIndexingPlan");
     expect(storeSource).toContain("private readonly indexingPlanRunners");

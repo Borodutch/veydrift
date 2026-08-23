@@ -69,7 +69,7 @@ import {
   type WalletProviderSource,
   type WalletSettlementResponse,
 } from "./walletFlow";
-import { backendDataStoreFor } from "./backendDataStore";
+import { backendDataStoreFor, retainBackendDataStore } from "./backendDataStore";
 import { useBackendDataQuery } from "./useBackendDataQuery";
 import { walletRecoveryCopy, walletRecoveryDeviceForNavigator, walletRecoveryPageUrl, type WalletRecoveryDevice } from "./walletRecovery";
 import { connectWalletConnect, walletConnectEnabled } from "./reownWallet";
@@ -323,7 +323,6 @@ export function FirstPlanetSettlementApp() {
   });
   const [miniAppMode, setMiniAppMode] = useState(() => (typeof window !== "undefined" ? hasMiniAppUrlHint(window.location) : false));
   const [miniAppPlatformType, setMiniAppPlatformType] = useState<FarcasterMiniAppPlatformType | undefined>();
-  const [settlementFunding, setSettlementFunding] = useState<SettlementFunding>({ status: "idle" });
   const [referralProgramPhase, setReferralProgramPhase] = useState<ReferralProgramPhase>({ status: "idle" });
   const [referralCodeInput, setReferralCodeInput] = useState(() => referralCodeFromCurrentUrl());
   const [paidAllianceInviteLocation] = useState(() => {
@@ -343,9 +342,6 @@ export function FirstPlanetSettlementApp() {
   const walletBootstrapAttempts = useRef(0);
   const walletBootstrapRetryTimer = useRef<ReturnType<typeof setTimeout> | undefined>();
   const currentChainId = useRef<string>();
-  /** Settlement combines indexed API data with provider reads. Reject an old
-   * aggregate if a reconnect, account switch, or a newer refresh wins. */
-  const settlementFundingEpoch = useRef(0);
 
   const account = "account" in wallet ? wallet.account : undefined;
   const hasOverview = planet.kind === "success" || planet.kind === "already-settled";
@@ -362,6 +358,14 @@ export function FirstPlanetSettlementApp() {
   const previousPlanetKind = useRef<PlanetState["kind"]>();
   const previousWalletKind = useRef<WalletState["kind"]>();
   const referralData = useMemo(() => (settlementConfigState.apiUrl ? backendDataStoreFor(settlementConfigState.apiUrl) : undefined), [settlementConfigState.apiUrl]);
+  useEffect(() => {
+    const releaseRuntime = retainBackendDataStore("");
+    const releaseApi = settlementConfigState.apiUrl ? retainBackendDataStore(settlementConfigState.apiUrl) : undefined;
+    return () => {
+      releaseApi?.();
+      releaseRuntime();
+    };
+  }, [settlementConfigState.apiUrl]);
   const referralDashboardQuery = useBackendDataQuery(
     referralData && account ? referralData.queries.referralDashboard(account) : undefined,
     Boolean(referralData && hasOverview && account),
@@ -442,6 +446,20 @@ export function FirstPlanetSettlementApp() {
         : { status: "loading" };
   const runtimeData = useMemo(() => backendDataStoreFor(""), []);
   const runtimeConfigQuery = useBackendDataQuery<RuntimeConfig>(runtimeData.queries.runtimeConfig<RuntimeConfig>(runtimeConfigUrl()));
+  const settlementFundingQuery = useBackendDataQuery<SettlementFundingState>(
+    referralData && account && provider
+      ? referralData.queries.settlementFundingProjection(account, provider, settlementConfig.migrationAddress, currentChainId.current)
+      : undefined,
+    Boolean(referralData && account && provider),
+  );
+  const settlementFunding: SettlementFunding = useMemo(() => {
+    if (!account || !provider) return { status: "idle" };
+    if (settlementFundingQuery.snapshot?.data) return { status: "ready", funding: settlementFundingQuery.snapshot.data };
+    if (settlementFundingQuery.snapshot?.freshness === "failed") {
+      return { status: "error", message: settlementFundingQuery.snapshot.error ?? "Could not verify settlement funding." };
+    }
+    return { status: "loading" };
+  }, [account, provider, settlementFundingQuery.snapshot?.data, settlementFundingQuery.snapshot?.error, settlementFundingQuery.snapshot?.freshness]);
 
   useEffect(() => {
     const previous = previousPlanetKind.current;
@@ -754,7 +772,6 @@ export function FirstPlanetSettlementApp() {
       kind: "error",
       message: farcasterMiniAppSupportErrorMessage(support),
     });
-    setSettlementFunding({ status: "idle" });
     return true;
   }
 
@@ -770,7 +787,6 @@ export function FirstPlanetSettlementApp() {
         support,
       }),
     });
-    setSettlementFunding({ status: "idle" });
   }
 
   async function setupVeydriftNetworkForWallet(walletProvider: Eip1193Provider, context: WalletProviderContext): Promise<void> {
@@ -819,7 +835,6 @@ export function FirstPlanetSettlementApp() {
         setPlanet({
           kind: "idle",
         });
-        setSettlementFunding({ status: "idle" });
       }
     };
 
@@ -859,7 +874,6 @@ export function FirstPlanetSettlementApp() {
       setWallet({
         kind: "no-wallet",
       });
-      setSettlementFunding({ status: "idle" });
       return;
     }
 
@@ -874,7 +888,6 @@ export function FirstPlanetSettlementApp() {
         setPlanet({
           kind: "idle",
         });
-        setSettlementFunding({ status: "idle" });
         return;
       }
 
@@ -943,7 +956,6 @@ export function FirstPlanetSettlementApp() {
                 error,
               }),
             });
-            setSettlementFunding({ status: "idle" });
           }
           return;
         }
@@ -956,7 +968,6 @@ export function FirstPlanetSettlementApp() {
         setPlanet({
           kind: "idle",
         });
-        setSettlementFunding({ status: "idle" });
         return;
       }
 
@@ -1000,7 +1011,6 @@ export function FirstPlanetSettlementApp() {
               })
             : walletRequestErrorMessage(error),
       });
-      setSettlementFunding({ status: "idle" });
     }
   }
 
@@ -1015,13 +1025,11 @@ export function FirstPlanetSettlementApp() {
         throw new Error("Settlement state is unavailable because the game API is not configured.");
       }
       if (indexedSettlement.kind === "settled") {
-        setSettlementFunding({ status: "idle" });
         setPlanet({
           kind: "already-settled",
           planet: indexedSettlement.planet,
         });
       } else if (indexedSettlement.kind === "indexing") {
-        setSettlementFunding({ status: "idle" });
         setPlanet({
           kind: "pending",
           label: POST_SETTLEMENT_INDEXING_LABEL,
@@ -1050,30 +1058,16 @@ export function FirstPlanetSettlementApp() {
         kind: "error",
         message: walletRequestErrorMessage(error),
       });
-      setSettlementFunding({ status: "idle" });
     }
   }
 
   async function refreshSettlementFunding(walletProvider: Eip1193Provider | undefined, connectedAccount: string) {
-    const epoch = ++settlementFundingEpoch.current;
-    setSettlementFunding({ status: "loading" });
-    try {
-      if (!settlementConfigState.apiUrl) {
-        throw new Error("Settlement funding is unavailable because the game API is not configured.");
-      }
-      const funding = await fetchSettlementFundingWithMigration(walletProvider, connectedAccount);
-      if (epoch !== settlementFundingEpoch.current || currentAccount.current?.toLowerCase() !== connectedAccount.toLowerCase()) return;
-      setSettlementFunding({
-        status: "ready",
-        funding,
-      });
-    } catch (error) {
-      if (epoch !== settlementFundingEpoch.current || currentAccount.current?.toLowerCase() !== connectedAccount.toLowerCase()) return;
-      setSettlementFunding({
-        status: "error",
-        message: walletRequestErrorMessage(error),
-      });
+    if (!settlementConfigState.apiUrl) {
+      throw new Error("Settlement funding is unavailable because the game API is not configured.");
     }
+    // The descriptor owns loading/error/identity lifecycle. This explicit
+    // refresh only asks it to re-read after a wallet/network transition.
+    await fetchSettlementFundingWithMigration(walletProvider, connectedAccount);
   }
 
   async function connectWallet() {
@@ -1343,9 +1337,8 @@ export function FirstPlanetSettlementApp() {
   }
 
   async function refreshSettlementLaunchInfo(connectedAccount: string, currentPlanet: PlanetState): Promise<SettlementFundingState | undefined> {
-    const epoch = ++settlementFundingEpoch.current;
-    setSettlementFunding({ status: "loading" });
-
+    const providerAtStart = provider;
+    const currentIdentity = () => provider === providerAtStart && currentAccount.current?.toLowerCase() === connectedAccount.toLowerCase();
     try {
       const settlement = await readIndexedSettlementState(settlementConfigState.apiUrl, connectedAccount);
       if (!settlement) {
@@ -1353,8 +1346,7 @@ export function FirstPlanetSettlementApp() {
       }
 
       if (settlement.kind === "settled") {
-        if (epoch !== settlementFundingEpoch.current || currentAccount.current?.toLowerCase() !== connectedAccount.toLowerCase()) return undefined;
-        setSettlementFunding({ status: "idle" });
+        if (!currentIdentity()) return undefined;
         setPlanet({
           kind: "already-settled",
           planet: settlement.planet,
@@ -1363,8 +1355,7 @@ export function FirstPlanetSettlementApp() {
       }
 
       if (settlement.kind === "indexing") {
-        if (epoch !== settlementFundingEpoch.current || currentAccount.current?.toLowerCase() !== connectedAccount.toLowerCase()) return undefined;
-        setSettlementFunding({ status: "idle" });
+        if (!currentIdentity()) return undefined;
         setPlanet({
           kind: "pending",
           label: "Settlement confirmed. Indexing starting resources before opening planetary overview.",
@@ -1372,7 +1363,7 @@ export function FirstPlanetSettlementApp() {
         return undefined;
       }
 
-      if (epoch !== settlementFundingEpoch.current || currentAccount.current?.toLowerCase() !== connectedAccount.toLowerCase()) return undefined;
+      if (!currentIdentity()) return undefined;
       setPlanet({ kind: "not-settled" });
       if (!settlementConfigState.apiUrl) {
         throw new Error("Settlement funding is unavailable because the game API is not configured.");
@@ -1381,17 +1372,12 @@ export function FirstPlanetSettlementApp() {
         status: "ready",
         funding: await fetchSettlementFundingWithMigration(provider, connectedAccount),
       };
-      if (epoch !== settlementFundingEpoch.current || currentAccount.current?.toLowerCase() !== connectedAccount.toLowerCase()) return undefined;
-      setSettlementFunding(nextFunding);
+      if (!currentIdentity()) return undefined;
 
       return settlementLaunchBlocker(settlementContractConfigured(settlementConfig), nextFunding, Boolean(paidAllianceInviteSecret)) === undefined ? nextFunding.funding : undefined;
     } catch (error) {
-      if (epoch !== settlementFundingEpoch.current || currentAccount.current?.toLowerCase() !== connectedAccount.toLowerCase()) return undefined;
+      if (!currentIdentity()) return undefined;
       setPlanet(currentPlanet.kind === "legacy-settled" ? currentPlanet : { kind: "not-settled" });
-      setSettlementFunding({
-        status: "error",
-        message: walletRequestErrorMessage(error),
-      });
       return undefined;
     }
   }
@@ -1403,12 +1389,14 @@ export function FirstPlanetSettlementApp() {
     if (!settlementConfigState.apiUrl) {
       throw new Error("Settlement funding is unavailable because the game API is not configured.");
     }
-    return backendDataStoreFor(settlementConfigState.apiUrl).settlementFundingForProvider(
-      connectedAccount,
-      walletProvider,
-      settlementConfig.migrationAddress,
-      currentChainId.current,
-    );
+    return backendDataStoreFor(settlementConfigState.apiUrl)
+      .queries.settlementFundingProjection(
+        connectedAccount,
+        walletProvider,
+        settlementConfig.migrationAddress,
+        currentChainId.current,
+      )
+      .read();
   }
 
   const holdSuccessReveal = planet.kind === "success" && !successHoldElapsed;

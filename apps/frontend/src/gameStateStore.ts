@@ -119,6 +119,24 @@ export class GameStateReadScheduler {
     if (!task.started) task.settleTransport();
   }
 
+  /** Cancel only a request that has not yet acquired a real transport slot.
+   * Route cleanup must retain an already-started shared transport for cache
+   * reuse, but there is no value in starting a stale view's queued request. */
+  cancelQueued(controller: AbortController): boolean {
+    const task = this.tasks.get(controller);
+    if (!task || task.started) return false;
+    this.tasks.delete(controller);
+    const index = this.queue.indexOf(task);
+    if (index >= 0) this.queue.splice(index, 1);
+    clearTimeout(task.timer);
+    // The route that initiated this read is already gone. Resolve the former
+    // consumer silently after invalidating its generation below, so cleanup
+    // never creates an error state or an unhandled rejection in the shell.
+    task.resolve(undefined);
+    task.settleTransport();
+    return true;
+  }
+
   private drain(): void {
     while (this.active < this.concurrency && this.queue.length > 0) {
       const task = this.queue.shift()!;
@@ -366,6 +384,43 @@ export class GameStateStore {
       });
     }
     if (cancelledKeys.size > 0) this.emit(cancelledKeys);
+  }
+
+  /** Drop a queued-only read when its final route subscriber unmounts. Active
+   * transports remain cache-owned and are deliberately not route-cancelled. */
+  cancelQueuedRead(key: string): boolean {
+    const request = this.inFlight.get(key);
+    if (!request) return false;
+    const cancelled = this.scheduler.cancelQueued(request.controller);
+    if (cancelled) {
+      this.activeReads.delete(request);
+      const generation = this.nextGeneration(key);
+      const current = this.entries.get(key);
+      this.entries.set(key, {
+        ...current,
+        error: undefined,
+        freshness: current?.data === undefined ? "delayed" : "fresh",
+        generation,
+      });
+      this.emit([key]);
+    }
+    return cancelled;
+  }
+
+  /** Terminal cleanup for a discarded API-base store. Abort queued and active
+   * reads so an obsolete runtime configuration cannot begin transport after
+   * its owning shell has unmounted. A transport that ignores abort is still
+   * generation-blocked, but no longer remains a live canonical request. */
+  dispose(): void {
+    for (const request of [...this.activeReads]) {
+      this.scheduler.cancel(request.controller, new DOMException("Game state store disposed", "AbortError"));
+    }
+    this.activeReads.clear();
+    this.inFlight.clear();
+    this.entries.clear();
+    this.generations.clear();
+    this.listeners.clear();
+    this.listenersByKey.clear();
   }
 
   private nextGeneration(key: string): number {

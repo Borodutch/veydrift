@@ -21,6 +21,7 @@ import {
 import {
   type PlayerActivityCategory,
   type PlayerActivityItem,
+  type PlayerActivityPresence,
   type PlayerActivityResponse,
 } from "../walletFlow";
 import { backendDataStoreFor } from "../backendDataStore";
@@ -61,15 +62,20 @@ export function PlayerActivityCenter({
   wallet?: string | undefined;
 }) {
   const [historyPage, setHistoryPage] = useState(1);
-  const [presenceReady, setPresenceReady] = useState(false);
-  const [awaySince, setAwaySince] = useState<number | undefined>();
   const [awayDismissed, setAwayDismissed] = useState(false);
+  const [tabVisible, setTabVisible] = useState(() => typeof document === "undefined" || document.visibilityState === "visible");
   const identityKey = apiUrl && wallet ? `${apiUrl}:${wallet.toLowerCase()}` : "";
   const backendData = useMemo(() => apiUrl ? backendDataStoreFor(apiUrl) : undefined, [apiUrl]);
   const historyQuery = useBackendDataQuery<PlayerActivityResponse>(
     backendData && wallet ? backendData.queries.playerActivity(wallet, { page: historyPage, pageSize: HISTORY_PAGE_SIZE }) : undefined,
     Boolean(historyOpen && wallet),
   );
+  const presenceQuery = useBackendDataQuery<PlayerActivityPresence | null>(
+    backendData && wallet && tabVisible ? backendData.queries.playerActivityAwayWindow(wallet) : undefined,
+    Boolean(backendData && wallet && tabVisible),
+  );
+  const presenceReady = presenceQuery.snapshot?.data !== undefined || presenceQuery.snapshot?.freshness === "failed";
+  const awaySince = presenceQuery.snapshot?.data ? playerActivityAwaySince(presenceQuery.snapshot.data) : undefined;
   const awayQuery = useBackendDataQuery<PlayerActivityResponse>(
     backendData && wallet && awaySince
       ? backendData.queries.playerActivity(wallet, {
@@ -84,35 +90,13 @@ export function PlayerActivityCenter({
 
   useEffect(() => {
     setHistoryPage(1);
-    setPresenceReady(false);
-    setAwaySince(undefined);
     setAwayDismissed(false);
-    if (!apiUrl || !wallet) return;
+  }, [identityKey]);
 
-    let cancelled = false;
-    const claimAwayWindow = () => {
-      void backendDataStoreFor(apiUrl).claimPlayerActivityAwayWindow(wallet).then((presence) => {
-        if (cancelled) return;
-        setPresenceReady(true);
-        if (!presence) return;
-        setAwaySince(playerActivityAwaySince(presence));
-      }).catch(() => {
-        // Start silent heartbeats even if this initial response was lost. A
-        // reconnect cannot turn a retry into a second dialog in this session.
-        if (!cancelled) setPresenceReady(true);
-      });
-    };
-    const handleVisibility = () => {
-      if (document.visibilityState !== "visible") return;
-      document.removeEventListener("visibilitychange", handleVisibility);
-      claimAwayWindow();
-    };
-    if (typeof document === "undefined" || document.visibilityState === "visible") claimAwayWindow();
-    else document.addEventListener("visibilitychange", handleVisibility);
-    return () => {
-      cancelled = true;
-      document.removeEventListener("visibilitychange", handleVisibility);
-    };
+  useEffect(() => {
+    const handleVisibility = () => setTabVisible(document.visibilityState === "visible");
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
   }, [identityKey]);
 
   useEffect(() => {

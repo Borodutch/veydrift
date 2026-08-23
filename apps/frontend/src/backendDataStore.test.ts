@@ -1,8 +1,38 @@
 import { describe, expect, test } from "bun:test";
-import { BackendDataStore } from "./backendDataStore";
+import { BackendDataStore, backendDataStoreFor, disposeBackendDataStoresExcept, retainBackendDataStore } from "./backendDataStore";
 import type { WriteTransactionState } from "./transactionActionGate";
 
 describe("BackendDataStore", () => {
+  test("disposes an unused shared API-base store after its last owner releases it", async () => {
+    const apiBaseUrl = "https://leased-store.test";
+    disposeBackendDataStoresExcept([]);
+    const first = backendDataStoreFor(apiBaseUrl);
+    const release = retainBackendDataStore(apiBaseUrl);
+
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 1));
+
+    const second = backendDataStoreFor(apiBaseUrl);
+    expect(second).not.toBe(first);
+    disposeBackendDataStoresExcept([]);
+  });
+
+  test("keeps a shared API-base store alive when strict-effect cleanup reacquires its lease", async () => {
+    const apiBaseUrl = "https://strict-lease.test";
+    disposeBackendDataStoresExcept([]);
+    const first = backendDataStoreFor(apiBaseUrl);
+    const releaseFirst = retainBackendDataStore(apiBaseUrl);
+
+    releaseFirst();
+    const releaseSecond = retainBackendDataStore(apiBaseUrl);
+    await new Promise((resolve) => setTimeout(resolve, 1));
+
+    expect(backendDataStoreFor(apiBaseUrl)).toBe(first);
+    releaseSecond();
+    await new Promise((resolve) => setTimeout(resolve, 1));
+    disposeBackendDataStoresExcept([]);
+  });
+
   test("reuses one in-flight request for the same stable key", async () => {
     const store = new BackendDataStore("https://api.test");
     let resolveRequest!: (value: { level: number }) => void;
@@ -425,6 +455,37 @@ describe("BackendDataStore", () => {
       });
 
       expect(store.snapshot<{ planets: unknown[]; revision: number }>(store.key("planets", "0xabc"))?.data).toEqual({ planets: [], revision: 2 });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("owns the wallet/planet aggregate and publishes its canonical projections", async () => {
+    const originalFetch = globalThis.fetch;
+    const wallet = "0xabc";
+    const planet = {
+      planetId: "planet-7",
+      galaxy: 1,
+      system: 2,
+      position: 3,
+      isHomePlanet: true,
+      queues: { building: null, defense: null, ship: null },
+      resources: { metal: "1", crystal: "1", deuterium: "1" },
+    };
+    const overview = {
+      fleetVisibility: { incoming: [], joinableAttacks: [], outgoing: [], returning: [] },
+      planetsResponse: { wallet, homePlanetId: "planet-7", planets: [planet] },
+      queues: { wallet, homePlanetId: "planet-7", building: null, defense: null, ship: null, research: null },
+      settlement: { wallet, hasFirstPlanet: true, homePlanetId: "planet-7", planet },
+    };
+    globalThis.fetch = (async () => Response.json(overview)) as unknown as typeof fetch;
+
+    try {
+      const store = new BackendDataStore("https://api.test");
+      await expect(store.walletPlanetSync(wallet, "planet-7")).resolves.toMatchObject({ settlement: { homePlanetId: "planet-7" } });
+      expect(store.snapshot(store.queries.planets(wallet).key)?.data).toMatchObject({ homePlanetId: "planet-7" });
+      expect(store.snapshot(store.queries.queues(wallet, "planet-7").key)?.data).toMatchObject({ homePlanetId: "planet-7" });
+      expect(store.snapshot(store.queries.fleetVisibility(wallet).key)?.data).toMatchObject({ incoming: [] });
     } finally {
       globalThis.fetch = originalFetch;
     }
