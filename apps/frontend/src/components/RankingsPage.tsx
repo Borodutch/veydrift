@@ -172,9 +172,7 @@ export function RankingsPage({ activeMissions, apiBaseUrl, currentAllianceId, cu
     pageSize: rankingsPageSize,
   }), [active, currentWallet, page]);
   const rankingsQuery = useBackendDataQuery<HighscoreResponse>(
-    backendData,
-    backendData?.key("highscores", requestOptions),
-    backendData ? () => backendData.highscores(requestOptions) : undefined,
+    backendData?.queries.highscores(requestOptions),
   );
   const dataSnapshot = rankingsQuery.snapshot;
   const data = dataSnapshot?.data ?? null;

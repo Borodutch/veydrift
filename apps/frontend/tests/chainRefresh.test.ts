@@ -286,8 +286,8 @@ describe("playable chain refresh", () => {
     const storeSource = await Bun.file(new URL("../src/backendDataStore.ts", import.meta.url)).text();
     expect(source).toContain("runCoordinatedWriteTransaction");
     expect(source).toContain("backendData.runWriteTransaction({");
-    expect(storeSource).toContain("readonly transactionGate = createTransactionActionGate()");
-    expect(storeSource).toContain("executeWriteTransaction(this.transactionGate, {");
+    expect(storeSource).toContain("readonly transactionGates = new Map<string, TransactionActionGate>()");
+    expect(storeSource).toContain("executeWriteTransaction(this.transactionGateFor(walletScope), {");
     expect(source).toContain("const gameContractTransactionInputsAvailable = Boolean(provider && account && gameContract)");
     expect(source).toContain("const gameMaintenancePaused = displayFleetVisibility?.gameMaintenance?.paused === true");
     expect(source).toContain("gameActionsAvailableForBody(");

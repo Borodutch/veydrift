@@ -363,11 +363,8 @@ export function FirstPlanetSettlementApp() {
   const previousPlanetKind = useRef<PlanetState["kind"]>();
   const previousWalletKind = useRef<WalletState["kind"]>();
   const referralData = useMemo(() => (settlementConfigState.apiUrl ? backendDataStoreFor(settlementConfigState.apiUrl) : undefined), [settlementConfigState.apiUrl]);
-  const referralDashboardKey = referralData && hasOverview && account ? referralData.key("referral-dashboard", account) : undefined;
   const referralDashboardQuery = useBackendDataQuery(
-    referralData,
-    referralDashboardKey,
-    referralData && account ? () => referralData.referralDashboard(account) : undefined,
+    referralData && account ? referralData.queries.referralDashboard(account) : undefined,
     Boolean(referralData && hasOverview && account),
   );
   const referralDashboard = referralDashboardQuery.snapshot?.data;
@@ -393,9 +390,7 @@ export function FirstPlanetSettlementApp() {
               : { status: "loading" };
   const referralClaimCode = referralClaimCodeInput.trim();
   const referralClaimInspectionQuery = useBackendDataQuery(
-    referralData,
-    referralData && hasOverview && account && referralClaimCode ? referralData.key("referral-code-inspection", account, referralClaimCode) : undefined,
-    referralData && account && referralClaimCode ? () => referralData.referralCodeInspection(account, referralClaimCode) : undefined,
+    referralData && account && referralClaimCode ? referralData.queries.referralCodeInspection(account, referralClaimCode) : undefined,
     Boolean(referralData && hasOverview && account && referralClaimCode),
   );
   const referralClaimInspection: ReferralValidationState = !referralClaimCode
@@ -413,9 +408,7 @@ export function FirstPlanetSettlementApp() {
         : { status: "loading" };
   const referralCode = referralCodeInput.trim();
   const referralValidationQuery = useBackendDataQuery(
-    referralData,
-    referralData && referralCode ? referralData.key("referral-code-validation", referralCode, account) : undefined,
-    referralData && referralCode ? () => referralData.referralCodeValidation(referralCode, account) : undefined,
+    referralData && referralCode ? referralData.queries.referralCodeValidation(referralCode, account) : undefined,
     Boolean(referralData && referralCode),
   );
   const referralValidation: ReferralValidationState = !referralCode
@@ -432,9 +425,7 @@ export function FirstPlanetSettlementApp() {
           }
         : { status: "loading" };
   const paidAllianceInviteQuery = useBackendDataQuery(
-    referralData,
-    referralData && paidAllianceInviteSecret ? referralData.key("paid-alliance-invite-resolution", paidAllianceInviteSecret) : undefined,
-    referralData && paidAllianceInviteSecret ? () => referralData.paidAllianceInviteResolution(paidAllianceInviteSecret) : undefined,
+    referralData && paidAllianceInviteSecret ? referralData.queries.paidAllianceInviteResolution(paidAllianceInviteSecret) : undefined,
     Boolean(referralData && paidAllianceInviteSecret),
   );
   const paidAllianceInviteValidation: PaidAllianceInviteValidationState = !paidAllianceInviteSecret
@@ -451,8 +442,7 @@ export function FirstPlanetSettlementApp() {
           }
         : { status: "loading" };
   const runtimeData = useMemo(() => backendDataStoreFor(""), []);
-  const runtimeConfigKey = runtimeData.key("runtime-config", runtimeConfigUrl());
-  const runtimeConfigQuery = useBackendDataQuery<RuntimeConfig>(runtimeData, runtimeConfigKey, () => runtimeData.runtimeConfig<RuntimeConfig>(runtimeConfigUrl()));
+  const runtimeConfigQuery = useBackendDataQuery<RuntimeConfig>(runtimeData.queries.runtimeConfig<RuntimeConfig>(runtimeConfigUrl()));
 
   useEffect(() => {
     const previous = previousPlanetKind.current;
@@ -1579,9 +1569,7 @@ function ReferralProgramPanel({
   const claimableRewards = dashboard ? BigInt(dashboard.claimableRewardsWei) : 0n;
   const historyData = useMemo(() => (apiBaseUrl ? backendDataStoreFor(apiBaseUrl) : undefined), [apiBaseUrl]);
   const referralHistoryQuery = useBackendDataQuery(
-    historyData,
-    historyData && wallet && dashboard ? historyData.key("referral-history", wallet, historyPage, 25) : undefined,
-    historyData && wallet && dashboard ? () => historyData.referralHistory(wallet, historyPage, 25) : undefined,
+    historyData && wallet && dashboard ? historyData.queries.referralHistory(wallet, historyPage, 25) : undefined,
     Boolean(historyData && wallet && dashboard),
   );
   const history = referralHistoryQuery.snapshot?.data ?? null;

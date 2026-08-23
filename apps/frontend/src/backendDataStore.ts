@@ -107,7 +107,7 @@ import {
   type StartedResearchExpectation,
   type StartedShipProductionExpectation,
 } from "./postTransactionRefresh";
-import { createTransactionActionGate, runWriteTransaction as executeWriteTransaction, type WriteTransactionDescriptor, type WriteTransactionState } from "./transactionActionGate";
+import { createTransactionActionGate, runWriteTransaction as executeWriteTransaction, type TransactionActionGate, type WriteTransactionDescriptor, type WriteTransactionState } from "./transactionActionGate";
 
 type WalletReadOptions = {
   source?: "indexed";
@@ -123,6 +123,14 @@ export type BackendDataRefreshOptions = {
   /** Only subscribed resources are refreshed by default. */
   activeOnly?: boolean;
   priority?: GameStatePriority;
+};
+
+/** A typed, store-owned backend read. UI code can subscribe/refetch it but
+ * cannot pair an arbitrary cache key with a different loader. */
+export type BackendDataQueryDescriptor<T> = {
+  readonly key: string;
+  readonly read: () => Promise<T>;
+  readonly store: BackendDataStore;
 };
 
 export type IndexedReadWaitOptions = {
@@ -169,11 +177,18 @@ type RegisteredResource = {
 type ManagedPoller = {
   timer: ReturnType<typeof setInterval>;
   references: number;
+  signature: string;
 };
 
 type ActivityPresencePoller = ManagedPoller & {
   handleExit: () => void;
   handleVisibility: () => void;
+};
+
+type ChainEventBridge = {
+  close: () => void;
+  references: number;
+  signature: string;
 };
 
 type IndexingPlanRunner = (receipt: unknown, txHash: string) => Promise<void>;
@@ -204,8 +219,25 @@ type GlobalMissionArchiveOptions = {
   summaryOnly?: boolean;
 };
 
+const INACTIVE_RESOURCE_RETENTION_MS = 120_000;
+
+type BackendDataStoreOptions = {
+  inactiveResourceRetentionMs?: number;
+};
+
+function normalizedCachePart(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(normalizedCachePart);
+  if (!value || typeof value !== "object") return value;
+  const record = value as Record<string, unknown>;
+  return Object.fromEntries(
+    Object.keys(record)
+      .sort()
+      .flatMap((key) => record[key] === undefined ? [] : [[key, normalizedCachePart(record[key])]]),
+  );
+}
+
 function cacheKey(kind: string, ...parts: unknown[]): string {
-  return `${kind}:${JSON.stringify(parts)}`;
+  return `${kind}:${JSON.stringify(parts.map(normalizedCachePart))}`;
 }
 
 function resourceTagsForKey(key: string, wallet?: string | undefined, planetId?: string | undefined): ReadonlySet<BackendDataTag> {
@@ -237,7 +269,9 @@ function hasIndexedSettlementResources(settlement: WalletSettlementResponse): bo
  */
 export class BackendDataStore {
   private readonly state = new GameStateStore();
-  private readonly transactionGate = createTransactionActionGate();
+  /** EVM nonces must serialize per wallet, not across unrelated accounts that
+   * happen to share this API-base store after a browser account switch. */
+  private readonly transactionGates = new Map<string, TransactionActionGate>();
   /**
    * The one registry of backend reads. A view never owns a second cache: it
    * subscribes to a key and asks this registry to refetch it. The registry is
@@ -252,10 +286,13 @@ export class BackendDataStore {
    */
   private readonly trailingInvalidations = new Set<string>();
   private readonly trailingInvalidationTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly evictionTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly pollers = new Map<string, ManagedPoller>();
   private readonly activityPresencePollers = new Map<string, ActivityPresencePoller>();
+  private readonly chainEventBridges = new Map<string, ChainEventBridge>();
   private readonly scheduledRefreshes = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly indexingPlanRunners = new WeakMap<object, IndexingPlanRunner>();
+  private contextWallet: string | undefined;
   /**
    * Detail endpoints are separate cache keys but project into one canonical
    * planet-resource entity. Track request start order per body so an earlier
@@ -263,7 +300,46 @@ export class BackendDataStore {
    */
   private readonly planetResourceReadGenerations = new Map<string, number>();
 
-  constructor(readonly apiBaseUrl: string) {}
+  private readonly inactiveResourceRetentionMs: number;
+
+  constructor(readonly apiBaseUrl: string, options: BackendDataStoreOptions = {}) {
+    this.inactiveResourceRetentionMs = options.inactiveResourceRetentionMs ?? INACTIVE_RESOURCE_RETENTION_MS;
+  }
+
+  /**
+   * The UI query catalogue. Each descriptor fixes one normalized identity to
+   * exactly one store-owned reader; components only declare whether it should
+   * be active and render the shared snapshot.
+   */
+  readonly queries = {
+    alliance: (wallet: string) => this.query(this.key("alliance", wallet), () => this.alliance(wallet)),
+    attackProtection: (wallet: string, planetId: string, targetIsMoon = false) => this.query(this.key("attack-protection", wallet, planetId, targetIsMoon), () => this.attackProtection(wallet, planetId, targetIsMoon)),
+    defenses: (wallet: string, planetId: string) => this.query(this.key("defenses", wallet, planetId), () => this.defenses(wallet, planetId)),
+    entityMedia: (kind: EntityMediaKind, entityId: string) => this.query(this.key("entity-media", kind, entityId), () => this.entityMedia(kind, entityId)),
+    globalActiveMissions: () => this.query(this.key("global-active-missions"), () => this.globalActiveMissions()),
+    highscores: (options: FetchHighscoreOptions = {}) => this.query(this.key("highscores", options), () => this.highscores(options)),
+    infrastructure: (wallet: string, planetId: string) => this.query(this.key("infrastructure", wallet, planetId), () => this.infrastructure(wallet, planetId)),
+    landingActiveMissions: <T>() => this.query(this.key("landing-active-missions"), () => this.landingActiveMissions<T>()),
+    landingHighscores: <T>() => this.query(this.key("landing-highscores"), () => this.landingHighscores<T>()),
+    moon: (wallet: string, planetId: string) => this.query(this.key("moon", wallet, planetId), () => this.moon(wallet, planetId)),
+    paidAllianceInviteResolution: (secret: string) => this.query(this.key("paid-alliance-invite-resolution", secret), () => this.paidAllianceInviteResolution(secret)),
+    playerActivity: (wallet: string, options: { page?: number; pageSize?: number; since?: number; includeProjected?: boolean } = {}) => this.query(this.key("player-activity", wallet, options), () => this.playerActivity(wallet, options)),
+    playerHighscore: (wallet: string) => this.query(this.key("player-highscore", wallet), () => this.playerHighscore(wallet)),
+    planets: (wallet: string) => this.query(this.key("planets", wallet), () => this.planets(wallet)),
+    profile: (wallet: string) => this.query(this.key("profile", wallet), () => this.profile(wallet)),
+    queues: (wallet: string, planetId?: string) => this.query(this.key("queues", wallet, planetId), () => this.queues(wallet, planetId)),
+    raidFinderDebris: (options: { limit?: number } = {}) => this.query(this.key("raid-finder-debris", options), () => this.raidFinderDebris(options)),
+    raidFinderRifters: (options: { limit?: number } = {}) => this.query(this.key("raid-finder-rifters", options), () => this.raidFinderRifters(options)),
+    referralCodeInspection: (wallet: string, code: string) => this.query(this.key("referral-code-inspection", wallet, code), () => this.referralCodeInspection(wallet, code)),
+    referralCodeValidation: (code: string, wallet?: string) => this.query(this.key("referral-code-validation", code, wallet), () => this.referralCodeValidation(code, wallet)),
+    referralDashboard: (wallet: string) => this.query(this.key("referral-dashboard", wallet), () => this.referralDashboard(wallet)),
+    referralHistory: (wallet: string, page: number, pageSize: number) => this.query(this.key("referral-history", wallet, page, pageSize), () => this.referralHistory(wallet, page, pageSize)),
+    research: (wallet: string, planetId: string) => this.query(this.key("research", wallet, planetId), () => this.research(wallet, planetId)),
+    rift: (wallet: string, planetId: string) => this.query(this.key("rift", wallet, planetId), () => this.rift(wallet, planetId)),
+    runtimeConfig: <T>(url: string) => this.query(this.key("runtime-config", url), () => this.runtimeConfig<T>(url)),
+    shipyard: (wallet: string, planetId: string) => this.query(this.key("shipyard", wallet, planetId), () => this.shipyard(wallet, planetId)),
+    system: <T = unknown>(galaxy: number, system: number, options: { detail?: "full" } = {}) => this.query(this.key("system", galaxy, system, options), () => this.system<T>(galaxy, system, options)),
+  };
 
   /**
    * Store-created plans are the only post-receipt convergence API exposed to
@@ -519,7 +595,14 @@ export class BackendDataStore {
       () => this.flushTrailingInvalidation(key),
       () => this.flushTrailingInvalidation(key),
     );
+    void read.finally(() => this.scheduleEviction(key)).catch(() => {
+      // The canonical entry carries the failure; eviction is best-effort.
+    });
     return read;
+  }
+
+  private query<T>(key: string, read: () => Promise<T>): BackendDataQueryDescriptor<T> {
+    return { key, read, store: this };
   }
 
   /**
@@ -580,18 +663,21 @@ export class BackendDataStore {
    * not create timers or duplicate refresh loops themselves.
    */
   startPolling(name: string, tags: readonly BackendDataTag[], intervalMs: number, priority: GameStatePriority): () => void {
+    const signature = JSON.stringify({ intervalMs, priority, tags: [...tags].sort() });
     const existing = this.pollers.get(name);
     if (existing) {
+      if (existing.signature !== signature) {
+        clearInterval(existing.timer);
+        existing.timer = this.createPollTimer(tags, intervalMs, priority);
+        existing.signature = signature;
+      }
       existing.references += 1;
       return () => this.releasePolling(name);
     }
-    const poll = () => {
-      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
-      void this.invalidate(tags, { activeOnly: true, priority });
-    };
     this.pollers.set(name, {
-      timer: setInterval(poll, intervalMs),
+      timer: this.createPollTimer(tags, intervalMs, priority),
       references: 1,
+      signature,
     });
     return () => this.releasePolling(name);
   }
@@ -607,6 +693,8 @@ export class BackendDataStore {
   stopAllPolling(): void {
     for (const name of this.pollers.keys()) this.stopPolling(name);
     for (const name of this.activityPresencePollers.keys()) this.stopPlayerActivityPresence(name);
+    for (const bridge of this.chainEventBridges.values()) bridge.close();
+    this.chainEventBridges.clear();
   }
 
   /** Public landing data has one store-owned refresh policy and SSE bridge. */
@@ -640,6 +728,7 @@ export class BackendDataStore {
     this.activityPresencePollers.set(name, {
       timer: setInterval(markPresent, 30_000),
       references: 1,
+      signature: "player-activity-presence:30000",
       handleExit,
       handleVisibility,
     });
@@ -677,6 +766,17 @@ export class BackendDataStore {
         wallet,
       });
       return () => {};
+    }
+
+    const normalizedWallet = wallet.toLowerCase();
+    const signature = JSON.stringify({ debounceMs: options.debounceMs ?? 500 });
+    const existing = this.chainEventBridges.get(normalizedWallet);
+    if (existing) {
+      if (existing.signature !== signature) {
+        throw new Error("Chain event bridge options must match for the same wallet.");
+      }
+      existing.references += 1;
+      return () => this.releaseChainEventBridge(normalizedWallet);
     }
 
     const events = new window.EventSource(`${this.apiBaseUrl}/chain/events`);
@@ -744,17 +844,48 @@ export class BackendDataStore {
       this.commitBackendSnapshot("chain-sync-health", false, [wallet], {
         wallet,
       });
-    return () => {
+    const close = () => {
       if (timer !== undefined) clearTimeout(timer);
       events.close();
     };
+    this.chainEventBridges.set(normalizedWallet, {
+      close,
+      references: 1,
+      signature,
+    });
+    return () => this.releaseChainEventBridge(normalizedWallet);
   }
 
   setContext(wallet?: string, planetId?: string): void {
-    // Context selects resource keys in callers. It must not cancel shared
-    // in-flight reads: a wallet/global resource stays valid across a planet
-    // switch, and a planet-key response is safe in its own canonical entry.
-    void wallet;
+    const nextWallet = wallet?.toLowerCase();
+    if (nextWallet === this.contextWallet) return;
+    const previousWallet = this.contextWallet;
+    this.contextWallet = nextWallet;
+
+    // An API-base store survives account switching. Retaining wallet A's
+    // canonical entries after moving to wallet B wastes the unbounded dynamic
+    // cache and makes accidental old-account projections possible. Clear only
+    // wallet-scoped entries; public/global feeds remain shared and an older
+    // in-flight wallet response is generation-blocked by `clear`.
+    if (!previousWallet) return;
+    const walletTag: BackendDataTag = `wallet:${previousWallet}`;
+    for (const resource of [...this.resources.values()]) {
+      if (!resource.tags.has(walletTag)) continue;
+      this.cancelEviction(resource.key);
+      this.resources.delete(resource.key);
+      this.trailingInvalidations.delete(resource.key);
+      const trailing = this.trailingInvalidationTimers.get(resource.key);
+      if (trailing !== undefined) clearTimeout(trailing);
+      this.trailingInvalidationTimers.delete(resource.key);
+      this.state.clear(resource.key);
+    }
+
+    // Provider/account effects release their own references as they rerender,
+    // but an immediate close prevents an old wallet's EventSource from
+    // continuing to publish into a newly selected session in the meantime.
+    const bridge = this.chainEventBridges.get(previousWallet);
+    bridge?.close();
+    this.chainEventBridges.delete(previousWallet);
     void planetId;
   }
 
@@ -763,20 +894,37 @@ export class BackendDataStore {
   }
 
   subscribeKey(key: string, listener: () => void): () => void {
-    return this.state.subscribeKey(key, listener);
+    this.cancelEviction(key);
+    const unsubscribe = this.state.subscribeKey(key, listener);
+    return () => {
+      unsubscribe();
+      this.scheduleEviction(key);
+    };
   }
 
   key(kind: string, ...parts: unknown[]): string {
     return cacheKey(kind, ...parts);
   }
 
-  writeTransactionKey(key?: string): string {
-    return cacheKey("write-transaction", key ?? "global");
+  writeTransactionKey(key?: string, wallet?: string): string {
+    return cacheKey("write-transaction", wallet?.toLowerCase() ?? "global", key ?? "global");
   }
 
-  private publishWriteTransactionState(state: WriteTransactionState): void {
-    this.state.publish(this.writeTransactionKey(), state);
-    if (state.key) this.state.publish(this.writeTransactionKey(state.key), state);
+  private publishWriteTransactionState(state: WriteTransactionState, walletScope = "global"): void {
+    this.state.publish(this.writeTransactionKey(undefined, walletScope), state);
+    if (state.key) this.state.publish(this.writeTransactionKey(state.key, walletScope), state);
+  }
+
+  private transactionWalletScope(tags: readonly BackendDataTag[] | undefined): string {
+    return tags?.find((tag): tag is `wallet:${string}` => tag.startsWith("wallet:"))?.slice("wallet:".length).toLowerCase() ?? "global";
+  }
+
+  private transactionGateFor(walletScope: string): TransactionActionGate {
+    const existing = this.transactionGates.get(walletScope);
+    if (existing) return existing;
+    const gate = createTransactionActionGate();
+    this.transactionGates.set(walletScope, gate);
+    return gate;
   }
 
   private createIndexingPlan(run: IndexingPlanRunner): BackendIndexingPlan {
@@ -801,7 +949,8 @@ export class BackendDataStore {
     if (indexing && !indexingRunner) {
       throw new Error("The write supplied an indexing plan from a different data store.");
     }
-    const completed = await executeWriteTransaction(this.transactionGate, {
+    const walletScope = this.transactionWalletScope(descriptor.invalidateTags);
+    const completed = await executeWriteTransaction(this.transactionGateFor(walletScope), {
       ...transaction,
       ...(indexingRunner
         ? {
@@ -811,7 +960,7 @@ export class BackendDataStore {
           }
         : {}),
       onStateChange: (state) => {
-        this.publishWriteTransactionState(state);
+        this.publishWriteTransactionState(state, walletScope);
         descriptor.onStateChange?.(state);
       },
       onConfirmedIndexingFailure: async () => {
@@ -836,14 +985,15 @@ export class BackendDataStore {
     return completed;
   }
 
-  async runExclusiveTransaction<T>(key: string, label: string, action: () => Promise<T>): Promise<T | undefined> {
-    return this.transactionGate.run(key, async () => {
+  async runExclusiveTransaction<T>(key: string, label: string, action: () => Promise<T>, wallet?: string): Promise<T | undefined> {
+    const walletScope = wallet?.toLowerCase() ?? "global";
+    return this.transactionGateFor(walletScope).run(key, async () => {
       this.publishWriteTransactionState({
         key,
         label,
         phase: "pending",
         stage: "wallet",
-      });
+      }, walletScope);
       try {
         const result = await action();
         this.publishWriteTransactionState({
@@ -851,7 +1001,7 @@ export class BackendDataStore {
           label,
           phase: "success",
           stage: "applied",
-        });
+        }, walletScope);
         return result;
       } catch (error) {
         this.publishWriteTransactionState({
@@ -860,7 +1010,7 @@ export class BackendDataStore {
           label,
           phase: "error",
           stage: "failed",
-        });
+        }, walletScope);
         throw error;
       }
     });
@@ -933,6 +1083,29 @@ export class BackendDataStore {
     this.state.clear(cacheKey(kind, ...parts));
   }
 
+  private scheduleEviction(key: string): void {
+    if (this.state.subscriberCount(key) > 0 || this.evictionTimers.has(key)) return;
+    this.evictionTimers.set(
+      key,
+      setTimeout(() => {
+        this.evictionTimers.delete(key);
+        if (!this.state.forget(key)) return;
+        this.resources.delete(key);
+        this.trailingInvalidations.delete(key);
+        const trailing = this.trailingInvalidationTimers.get(key);
+        if (trailing !== undefined) clearTimeout(trailing);
+        this.trailingInvalidationTimers.delete(key);
+      }, this.inactiveResourceRetentionMs),
+    );
+  }
+
+  private cancelEviction(key: string): void {
+    const timer = this.evictionTimers.get(key);
+    if (timer === undefined) return;
+    clearTimeout(timer);
+    this.evictionTimers.delete(key);
+  }
+
   coordinateRefresh<T>(key: string, priority: GameStatePriority, load: (signal: AbortSignal) => Promise<T>, deadlineMs = 10_000): Promise<T> {
     return this.refresh(cacheKey("coordinated-refresh", key), load, {
       deadlineMs,
@@ -983,12 +1156,28 @@ export class BackendDataStore {
     this.stopPolling(name);
   }
 
+  private createPollTimer(tags: readonly BackendDataTag[], intervalMs: number, priority: GameStatePriority): ReturnType<typeof setInterval> {
+    return setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      void this.invalidate(tags, { activeOnly: true, priority });
+    }, intervalMs);
+  }
+
   private releasePlayerActivityPresence(name: string): void {
     const poller = this.activityPresencePollers.get(name);
     if (!poller) return;
     poller.references -= 1;
     if (poller.references > 0) return;
     this.stopPlayerActivityPresence(name);
+  }
+
+  private releaseChainEventBridge(wallet: string): void {
+    const bridge = this.chainEventBridges.get(wallet);
+    if (!bridge) return;
+    bridge.references -= 1;
+    if (bridge.references > 0) return;
+    bridge.close();
+    this.chainEventBridges.delete(wallet);
   }
 
   private stopPlayerActivityPresence(name: string): void {
@@ -1594,7 +1783,6 @@ export class BackendDataStore {
           signal,
         }),
       {
-        dedupe: false,
         planetId: options.planetId,
         priority: "mission-control",
         wallet,
@@ -1612,7 +1800,6 @@ export class BackendDataStore {
           signal,
         }),
       {
-        dedupe: false,
         planetId: options.planetId,
         priority: "mission-control",
         wallet,
@@ -1623,7 +1810,6 @@ export class BackendDataStore {
   globalActiveMissions(): Promise<GlobalActiveMissionsResponse> {
     const key = cacheKey("global-active-missions");
     return this.refresh(key, (signal) => fetchGlobalActiveMissions(this.apiBaseUrl, signal), {
-      dedupe: false,
       priority: "mission-control",
     });
   }
@@ -1673,7 +1859,6 @@ export class BackendDataStore {
   globalMissionArchive(options: GlobalMissionArchiveOptions = {}): Promise<GlobalMissionArchiveResponse> {
     const key = cacheKey("global-mission-archive", options);
     return this.refresh(key, (signal) => fetchGlobalMissionArchive(this.apiBaseUrl, { ...options, signal }), {
-      dedupe: false,
       priority: "mission-control",
     });
   }
@@ -1681,7 +1866,6 @@ export class BackendDataStore {
   mission(missionId: string): Promise<MissionDetailResponse> {
     const key = cacheKey("mission", missionId);
     return this.refresh(key, (signal) => fetchMission(this.apiBaseUrl, missionId, signal), {
-      dedupe: false,
       priority: "mission-control",
     });
   }
@@ -1703,6 +1887,7 @@ export class BackendDataStore {
       `entity-media:${entityKind}:${normalizeEntityMediaId(entityKind, entityId)}`,
       "Save media",
       () => updateEntityMedia(this.apiBaseUrl, provider, wallet, entityKind, entityId, mediaUrl),
+      wallet,
     );
     if (!response) throw new Error("Another game action is already in progress.");
     this.commitBackendSnapshot("entity-media", response, [entityKind, entityId]);
@@ -1719,8 +1904,11 @@ export class BackendDataStore {
    * view instead of patching one component's local page in place.
    */
   async setPlanetWatched(provider: Eip1193Provider, wallet: string, planetId: string, watched: boolean): Promise<WatchPlanetMutationResponse> {
-    const response = await this.runExclusiveTransaction(`watched-planet:${wallet.toLowerCase()}:${planetId}`, watched ? "Unwatch planet" : "Watch planet", () =>
-      watched ? unwatchPlanet(this.apiBaseUrl, provider, wallet, planetId) : watchPlanet(this.apiBaseUrl, provider, wallet, planetId),
+    const response = await this.runExclusiveTransaction(
+      `watched-planet:${wallet.toLowerCase()}:${planetId}`,
+      watched ? "Unwatch planet" : "Watch planet",
+      () => watched ? unwatchPlanet(this.apiBaseUrl, provider, wallet, planetId) : watchPlanet(this.apiBaseUrl, provider, wallet, planetId),
+      wallet,
     );
     if (!response) throw new Error("Another game action is already in progress.");
     await this.invalidate([`wallet:${wallet.toLowerCase()}`, "kind:watched-planets"], { activeOnly: true, priority: "transaction" });
@@ -1729,7 +1917,12 @@ export class BackendDataStore {
 
   /** Signed profile updates share the store-owned mutation gate and refresh policy. */
   async savePlayerProfile(provider: Eip1193Provider, wallet: string, displayName: string, description: string | null): Promise<PlayerProfile> {
-    const profile = await this.runExclusiveTransaction(`profile:${wallet.toLowerCase()}`, "Save profile", () => updatePlayerProfile(this.apiBaseUrl, provider, wallet, displayName, description));
+    const profile = await this.runExclusiveTransaction(
+      `profile:${wallet.toLowerCase()}`,
+      "Save profile",
+      () => updatePlayerProfile(this.apiBaseUrl, provider, wallet, displayName, description),
+      wallet,
+    );
     if (!profile) throw new Error("Another game action is already in progress.");
     this.commitBackendSnapshot("profile", profile, [wallet], { wallet });
     await this.invalidate([`wallet:${wallet.toLowerCase()}`, "kind:profile", "kind:settlement", "kind:alliance"], { activeOnly: true, priority: "transaction" });

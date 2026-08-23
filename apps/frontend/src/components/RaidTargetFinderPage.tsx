@@ -156,19 +156,13 @@ export function RaidTargetFinderPage({
   }), [currentWallet]);
   const targetOptions = useMemo(() => ({ limit: raidTargetFinderPageSize }), []);
   const highscoreQuery = useBackendDataQuery<HighscoreResponse>(
-    backendData,
-    backendData?.key("highscores", highscoreOptions),
-    backendData ? () => backendData.highscores(highscoreOptions) : undefined,
+    backendData?.queries.highscores(highscoreOptions),
   );
   const debrisQuery = useBackendDataQuery<RaidFinderDebrisResponse>(
-    backendData,
-    backendData?.key("raid-finder-debris", targetOptions),
-    backendData ? () => backendData.raidFinderDebris(targetOptions) : undefined,
+    backendData?.queries.raidFinderDebris(targetOptions),
   );
   const rifterQuery = useBackendDataQuery<RaidFinderRiftersResponse>(
-    backendData,
-    backendData?.key("raid-finder-rifters", targetOptions),
-    backendData ? () => backendData.raidFinderRifters(targetOptions) : undefined,
+    backendData?.queries.raidFinderRifters(targetOptions),
   );
   const highscoreSnapshot = highscoreQuery.snapshot;
   const debrisSnapshot = debrisQuery.snapshot;

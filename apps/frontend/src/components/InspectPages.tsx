@@ -19,6 +19,7 @@ import {
   type WalletPlanetsResponse,
 } from "../walletFlow";
 import { backendDataStoreFor } from "../backendDataStore";
+import { useBackendDataQuery } from "../useBackendDataQuery";
 import {
   AllianceMemberActions,
   AllianceSummary,
@@ -72,39 +73,24 @@ export function PlayerInspectPage({
   provider?: Eip1193Provider | undefined;
   wallet: string;
 }) {
-  const [state, setState] = useState<PlayerInspectState>({ status: "loading" });
-
-  useEffect(() => {
-    if (!apiBaseUrl) {
-      setState({ status: "error", label: "Game API unavailable." });
-      return;
-    }
-
-    let disposed = false;
-    setState({ status: "loading" });
-    const backendData = backendDataStoreFor(apiBaseUrl);
-    Promise.allSettled([
-      backendData.planets(wallet),
-      backendData.highscores(),
-      backendData.profile(wallet),
-    ]).then(([planetsResult, highscoresResult, profileResult]) => {
-      if (disposed) return;
-      const planets = planetsResult.status === "fulfilled" ? planetsResult.value : null;
-      const highscore = highscoresResult.status === "fulfilled"
-        ? highscoresResult.value.rankings.total.find((entry) => entry.wallet.toLowerCase() === wallet.toLowerCase()) ?? null
-        : null;
-      const profile = profileResult.status === "fulfilled" ? profileResult.value : planets?.player ?? null;
-      if (!planets && !highscore && !profile) {
-        setState({ status: "error", label: "Public player profile could not be loaded." });
-        return;
-      }
-      setState({ status: "loaded", planets, highscore, profile });
-    });
-
-    return () => {
-      disposed = true;
-    };
-  }, [apiBaseUrl, wallet]);
+  const backendData = useMemo(() => apiBaseUrl ? backendDataStoreFor(apiBaseUrl) : undefined, [apiBaseUrl]);
+  const planetsQuery = useBackendDataQuery(backendData?.queries.planets(wallet), Boolean(apiBaseUrl));
+  const highscoreQuery = useBackendDataQuery(backendData?.queries.highscores());
+  const profileQuery = useBackendDataQuery(backendData?.queries.profile(wallet), Boolean(apiBaseUrl));
+  const planets = planetsQuery.snapshot?.data ?? null;
+  const highscore = highscoreQuery.snapshot?.data?.rankings.total.find((entry) => entry.wallet.toLowerCase() === wallet.toLowerCase()) ?? null;
+  const profile = profileQuery.snapshot?.data ?? planets?.player ?? null;
+  const loading = Boolean(apiBaseUrl && !planets && !highscore && !profile && [planetsQuery, highscoreQuery, profileQuery].some((query) => query.snapshot?.freshness !== "failed"));
+  const error = !apiBaseUrl
+    ? "Game API unavailable."
+    : !planets && !highscore && !profile && [planetsQuery, highscoreQuery, profileQuery].every((query) => query.snapshot?.freshness === "failed")
+      ? planetsQuery.snapshot?.error ?? highscoreQuery.snapshot?.error ?? profileQuery.snapshot?.error ?? "Public player profile could not be loaded."
+      : undefined;
+  const state: PlayerInspectState = error
+    ? { status: "error", label: error }
+    : loading
+      ? { status: "loading" }
+      : { status: "loaded", planets, highscore, profile };
 
   const displayName = state.status === "loaded"
     ? state.highscore?.displayName?.trim() || state.profile?.displayName?.trim() || state.planets?.player?.displayName?.trim() || shortAddress(wallet)

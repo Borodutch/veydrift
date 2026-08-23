@@ -1,5 +1,5 @@
 import { useCallback, useLayoutEffect, useRef } from "preact/hooks";
-import type { BackendDataStore } from "./backendDataStore";
+import type { BackendDataQueryDescriptor } from "./backendDataStore";
 import type { GameStateEntry } from "./gameStateStore";
 import { useBackendDataSnapshot } from "./useBackendDataSnapshot";
 
@@ -9,24 +9,25 @@ export type BackendDataQuery<T> = {
 };
 
 /**
- * The standard UI boundary for backend state. Components declare a canonical
- * key and loader; this hook owns subscription, cache-aware initial load and
- * loading/error snapshots. Components never keep a second response cache.
+ * The standard UI boundary for backend state. The data module supplies a
+ * typed descriptor with the canonical key and loader; components only choose
+ * whether that resource is currently needed and render its shared snapshot.
  */
 export function useBackendDataQuery<T>(
-  store: BackendDataStore | undefined,
-  key: string | undefined,
-  load: (() => Promise<T>) | undefined,
+  query: BackendDataQueryDescriptor<T> | undefined,
   enabled = true,
 ): BackendDataQuery<T> {
-  const loadRef = useRef(load);
-  loadRef.current = load;
+  const queryRef = useRef(query);
+  queryRef.current = query;
+  const store = query?.store;
+  const key = query?.key;
   const snapshot = useBackendDataSnapshot<T>(store, key);
 
   const refetch = useCallback(async (): Promise<T | undefined> => {
-    if (!enabled || !store || !key || !loadRef.current) return undefined;
+    const current = queryRef.current;
+    if (!enabled || !current) return undefined;
     try {
-      return await loadRef.current();
+      return await current.read();
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return undefined;
       throw error;
@@ -49,7 +50,7 @@ export function useBackendDataQuery<T>(
     // Canonical reads are cache-owned. Unmounting one surface must not abort a
     // transport that another subscriber (or the next route) can reuse.
     return undefined;
-  }, [refetch, store]);
+  }, [key, refetch, store]);
 
   return { refetch, snapshot };
 }

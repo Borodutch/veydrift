@@ -180,6 +180,21 @@ describe("BackendDataStore", () => {
     }
   });
 
+  test("tears down prior-wallet cache entries without clearing public resources on account switch", async () => {
+    const store = new BackendDataStore("https://api.test");
+    const walletKey = store.key("planets", "0xaaa");
+    const publicKey = store.key("global-active-missions");
+    await store.refresh(walletKey, async () => ({ planets: [] }), { wallet: "0xaaa" });
+    await store.refresh(publicKey, async () => ({ missions: [] }));
+
+    store.setContext("0xaaa");
+    store.setContext("0xbbb");
+
+    expect(store.snapshot(walletKey)).toBeUndefined();
+    expect(store.snapshot(publicKey)?.data).toEqual({ missions: [] });
+    expect(store.refetch(walletKey)).toBeUndefined();
+  });
+
   test("reference-counts equivalent named pollers", async () => {
     const store = new BackendDataStore("https://api.test");
     const key = store.key("global-active-missions");
@@ -196,6 +211,58 @@ describe("BackendDataStore", () => {
     } finally {
       releaseSecond();
       unsubscribe();
+    }
+  });
+
+  test("updates a shared poller's refresh policy when a later owner needs a different cadence", async () => {
+    const store = new BackendDataStore("https://api.test");
+    const key = store.key("global-active-missions");
+    let loads = 0;
+    const unsubscribe = store.subscribeKey(key, () => {});
+    const releaseSlow = store.startPolling("mission-control", ["kind:global-active-missions"], 60_000, "background");
+    const releaseFast = store.startPolling("mission-control", ["kind:global-active-missions"], 5, "mission-control");
+
+    try {
+      await store.refresh(key, async () => ({ revision: ++loads }));
+      await new Promise<void>((resolve) => setTimeout(resolve, 25));
+      expect(loads).toBeGreaterThan(1);
+    } finally {
+      releaseSlow();
+      releaseFast();
+      unsubscribe();
+    }
+  });
+
+  test("reference-counts one chain-event bridge per wallet", () => {
+    const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+    const sources: Array<{ closed: boolean }> = [];
+    class TestEventSource {
+      onerror: (() => void) | null = null;
+      constructor(_url: string) {
+        sources.push({ closed: false });
+      }
+      addEventListener() {}
+      close() {
+        sources.at(-1)!.closed = true;
+      }
+    }
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: { EventSource: TestEventSource },
+    });
+
+    try {
+      const store = new BackendDataStore("https://api.test");
+      const releaseFirst = store.connectChainEvents("0xabc");
+      const releaseSecond = store.connectChainEvents("0xAbC");
+      expect(sources).toHaveLength(1);
+      releaseFirst();
+      expect(sources[0]!.closed).toBe(false);
+      releaseSecond();
+      expect(sources[0]!.closed).toBe(true);
+    } finally {
+      if (originalWindow) Object.defineProperty(globalThis, "window", originalWindow);
+      else Reflect.deleteProperty(globalThis, "window");
     }
   });
 
@@ -454,5 +521,71 @@ describe("BackendDataStore", () => {
 
     release();
     await held;
+  });
+
+  test("normalizes equivalent query options into one canonical key", () => {
+    const store = new BackendDataStore("https://api.test");
+    expect(store.key("highscores", { page: 1, pageSize: 25, category: "total" })).toBe(
+      store.key("highscores", { category: "total", pageSize: 25, page: 1 }),
+    );
+  });
+
+  test("deduplicates concurrent global mission reads", async () => {
+    const originalFetch = globalThis.fetch;
+    let resolve!: (response: Response) => void;
+    let calls = 0;
+    globalThis.fetch = (() => {
+      calls += 1;
+      return new Promise<Response>((nextResolve) => {
+        resolve = nextResolve;
+      });
+    }) as unknown as typeof fetch;
+    try {
+      const store = new BackendDataStore("https://api.test");
+      const first = store.globalActiveMissions();
+      const second = store.globalActiveMissions();
+      expect(first).toBe(second);
+      await Promise.resolve();
+      expect(calls).toBe(1);
+      resolve(new Response(JSON.stringify({ missions: [] }), { headers: { "content-type": "application/json" } }));
+      await expect(first).resolves.toEqual({ missions: [] });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("releases inactive dynamic resources after the bounded retention window", async () => {
+    const store = new BackendDataStore("https://api.test", { inactiveResourceRetentionMs: 5 });
+    const key = store.key("system", 1, 2, { detail: "full" });
+    const unsubscribe = store.subscribeKey(key, () => {});
+    await store.refresh(key, async () => ({ planets: [] }));
+    unsubscribe();
+    await new Promise<void>((resolve) => setTimeout(resolve, 15));
+
+    expect(store.snapshot(key)).toBeUndefined();
+    expect(store.refetch(key)).toBeUndefined();
+  });
+
+  test("allows different wallet write scopes to progress independently", async () => {
+    const store = new BackendDataStore("https://api.test");
+    let releaseFirst!: () => void;
+    const first = store.runExclusiveTransaction(
+      "profile:0xaaa",
+      "Profile update",
+      () => new Promise<void>((resolve) => { releaseFirst = resolve; }),
+      "0xaaa",
+    );
+    await Promise.resolve();
+    let secondRan = false;
+    const second = store.runExclusiveTransaction(
+      "profile:0xbbb",
+      "Profile update",
+      async () => { secondRan = true; },
+      "0xbbb",
+    );
+    await second;
+    expect(secondRan).toBe(true);
+    releaseFirst();
+    await first;
   });
 });

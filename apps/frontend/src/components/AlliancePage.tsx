@@ -10,6 +10,7 @@ import type { AllianceDiplomacyStatus, AllianceRole, ChainAllianceState, Highsco
 import { generatePaidAllianceInviteSecret, paidAllianceInviteLink } from "../walletFlow";
 import { shortAddress } from "../walletFlow";
 import { backendDataStoreFor } from "../backendDataStore";
+import { useBackendDataQuery } from "../useBackendDataQuery";
 import { refreshButtonState } from "./PageHeader";
 import { VeydriftLoader } from "./VeydriftLoader";
 import { AllianceSkeleton } from "./LoadingSkeletons";
@@ -135,7 +136,6 @@ export function AlliancePage({
   const [inviteFormOpen, setInviteFormOpen] = useState(false);
   const [activeAllianceId, setActiveAllianceId] = useState<string | null>(selectedAllianceId ?? null);
   const [selectedPlayer, setSelectedPlayer] = useState<string | null>(null);
-  const [playerProfile, setPlayerProfile] = useState<PlayerProfileState>({ status: "idle" });
   const [paidInviteLink, setPaidInviteLink] = useState<string | null>(null);
   const [createAllianceDialogOpen, setCreateAllianceDialogOpen] = useState(false);
 
@@ -177,36 +177,24 @@ export function AlliancePage({
     setActiveAllianceId(selectedAllianceId ?? null);
   }, [selectedAllianceId]);
 
-  useEffect(() => {
-    if (!selectedPlayer || !apiBaseUrl) {
-      setPlayerProfile(selectedPlayer ? { status: "loaded", wallet: selectedPlayer, planets: null, highscore: null } : { status: "idle" });
-      return;
-    }
-
-    let disposed = false;
-    setPlayerProfile({ status: "loading", wallet: selectedPlayer });
-    const backendData = backendDataStoreFor(apiBaseUrl);
-    Promise.allSettled([
-      backendData.planets(selectedPlayer),
-      backendData.playerHighscore(selectedPlayer),
-    ]).then(([planetsResult, highscoreResult]) => {
-      if (disposed) return;
-      const planets = planetsResult.status === "fulfilled" ? planetsResult.value : null;
-      const highscore = highscoreResult.status === "fulfilled" ? highscoreResult.value : null;
-      if (!planets && !highscore) {
-        const reason = planetsResult.status === "rejected" && planetsResult.reason instanceof Error
-          ? planetsResult.reason.message
-          : "Player profile could not be loaded.";
-        setPlayerProfile({ status: "error", wallet: selectedPlayer, label: reason });
-        return;
-      }
-      setPlayerProfile({ status: "loaded", wallet: selectedPlayer, planets, highscore });
-    });
-
-    return () => {
-      disposed = true;
-    };
-  }, [apiBaseUrl, selectedPlayer]);
+  const playerBackendData = useMemo(() => apiBaseUrl ? backendDataStoreFor(apiBaseUrl) : undefined, [apiBaseUrl]);
+  const playerPlanetsQuery = useBackendDataQuery(
+    playerBackendData && selectedPlayer ? playerBackendData.queries.planets(selectedPlayer) : undefined,
+    Boolean(playerBackendData && selectedPlayer),
+  );
+  const playerHighscoreQuery = useBackendDataQuery(
+    playerBackendData && selectedPlayer ? playerBackendData.queries.playerHighscore(selectedPlayer) : undefined,
+    Boolean(playerBackendData && selectedPlayer),
+  );
+  const playerProfile: PlayerProfileState = !selectedPlayer
+    ? { status: "idle" }
+    : !apiBaseUrl
+      ? { status: "loaded", wallet: selectedPlayer, planets: null, highscore: null }
+      : playerPlanetsQuery.snapshot?.data || playerHighscoreQuery.snapshot?.data
+        ? { status: "loaded", wallet: selectedPlayer, planets: playerPlanetsQuery.snapshot?.data ?? null, highscore: playerHighscoreQuery.snapshot?.data ?? null }
+        : playerPlanetsQuery.snapshot?.freshness === "failed" && playerHighscoreQuery.snapshot?.freshness === "failed"
+          ? { status: "error", wallet: selectedPlayer, label: playerPlanetsQuery.snapshot.error ?? playerHighscoreQuery.snapshot.error ?? "Player profile could not be loaded." }
+          : { status: "loading", wallet: selectedPlayer };
 
   return (
     <section className="grid min-h-0 gap-4" data-alliance-page>
