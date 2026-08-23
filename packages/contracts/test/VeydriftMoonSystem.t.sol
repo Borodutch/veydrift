@@ -869,8 +869,10 @@ abstract contract VeydriftMoonSystemTestBase is Test {
 
         vm.warp(backlog[0].readyAt);
         uint256 packed = moons.moonDefensePacked(planetId);
-        assertEq(uint32(packed), 3);
-        assertEq(uint32(packed >> (uint256(uint8(Defense.LightLaser)) * 32)), 3);
+        assertEq(packed & uint256(type(uint32).max), 3);
+        assertEq(
+            (packed >> (uint256(uint8(Defense.LightLaser)) * 32)) & uint256(type(uint32).max), 3
+        );
 
         moons.setMoonShipCount(planetId, Ship.SmallCargo, 1);
         assertEq(moons.moonDefenseCount(planetId, Defense.LightLaser), 3);
