@@ -935,6 +935,62 @@ describe("Moon page helpers", () => {
     expect(moonPageSource).toContain("onStartDefense?.(item.id, item.label, item.quantity)");
   });
 
+  test("allows a different Moon defense type while another defense batch is active", () => {
+    const moonState = loadedMoonState({
+      moon: {
+        exists: true,
+        planetId: "7",
+        owner: "0x1111111111111111111111111111111111111111",
+        fields: 4,
+        diameterKm: 8774,
+        createdAt: "1770000000",
+        jumpGateReadyAt: "0",
+      },
+      resources: { metal: "999999", crystal: "999999", deuterium: "999999" },
+      resourcesAsOfNow: { metal: "999999", crystal: "999999", deuterium: "999999" },
+      buildings: [{ id: 3, key: "shipyard", label: "Shipyard", level: 2, cost: { metal: "800", crystal: "400", deuterium: "200" } }],
+      technologyLevels: { "0": 2, "1": 3 },
+      defenses: [
+        { id: 0, count: 3, cost: { metal: "2000", crystal: "0", deuterium: "0" }, durationSeconds: 20 },
+        { id: 1, count: 0, cost: { metal: "1500", crystal: "500", deuterium: "0" }, durationSeconds: 25 },
+      ],
+      defenseQueue: {
+        active: true,
+        kind: "moon-defense",
+        itemId: 0,
+        quantity: 2,
+        readyAt: "1770001200",
+        cost: { metal: "4000", crystal: "0", deuterium: "0" },
+        backlog: [{
+          active: true,
+          kind: "moon-defense",
+          itemId: 0,
+          quantity: 1,
+          readyAt: "1770001800",
+          cost: { metal: "2000", crystal: "0", deuterium: "0" },
+        }],
+      },
+    });
+
+    const items = moonDefenseProductionItems({
+      actionPending: false,
+      canTransact: true,
+      moonState,
+      quantities: { lightLaser: "3" },
+    });
+    const rocket = items.find((item) => item.id === 0);
+    const lightLaser = items.find((item) => item.id === 1);
+
+    expect(rocket).toMatchObject({ queued: 3 });
+    expect(lightLaser).toMatchObject({
+      blockedReason: undefined,
+      disabled: false,
+      quantity: 3,
+      quantityValid: true,
+    });
+    expect(moonPageSource).not.toContain("Moon defense queue is active");
+  });
+
   test("marks ready moon queues available for completion only after backend readiness", () => {
     expect(queueReady({
       active: true,

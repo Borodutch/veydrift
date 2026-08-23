@@ -953,7 +953,6 @@ export function moonDefenseProductionItems({
   quantities: Record<string, ProductionQuantityInput>;
   transactionUnavailableReason?: string | undefined;
 }): ProductionCatalogItem<DefenseKey>[] {
-  const queueBlocked = Boolean(moonState?.defenseQueue?.active && !queueReady(moonState.defenseQueue));
   const resources = toResources(moonState?.resourcesAsOfNow ?? moonState?.resources);
   const sharedItems = defenseProductionItems({
     actionPending,
@@ -985,9 +984,7 @@ export function moonDefenseProductionItems({
         ? "No selected moon"
         : moonState && !available
           ? "Defense unavailable on current moon deployment"
-          : queueBlocked
-            ? "Moon defense queue is active"
-            : undefined;
+          : undefined;
     const blockedReason = moonBlocker ?? item.blockedReason;
 
     return {

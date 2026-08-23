@@ -6,6 +6,8 @@ import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Ini
 import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
 import {VeydriftGameStorage} from "./VeydriftGameStorage.sol";
 import {VeydriftCatalog} from "./libraries/VeydriftCatalog.sol";
+import {VeydriftMoonDefenseBacklog} from "./libraries/VeydriftMoonDefenseBacklog.sol";
+import {VeydriftMoonMath} from "./libraries/VeydriftMoonMath.sol";
 import {VeydriftDependencies} from "./libraries/VeydriftDependencies.sol";
 import {VeydriftFormulas} from "./libraries/VeydriftFormulas.sol";
 import {Defense, MoonBuilding, Ship, Technology} from "./libraries/VeydriftTypes.sol";
@@ -75,14 +77,6 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
         VeydriftGameStorage.Resources cost;
     }
 
-    struct MoonDefenseQueue {
-        bool active;
-        Defense defense;
-        uint32 quantity;
-        uint64 readyAt;
-        VeydriftGameStorage.Resources cost;
-    }
-
     struct MoonChanceOutcome {
         bool active;
         bool finalized;
@@ -136,7 +130,7 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
     mapping(uint256 planetId => mapping(Ship ship => uint32 count)) internal _moonShipCounts;
     mapping(uint256 planetId => mapping(Defense defense => uint32 count)) internal
         _moonDefenseCounts;
-    mapping(uint256 planetId => MoonDefenseQueue queue) internal moonDefenseQueues;
+    mapping(uint256 planetId => VeydriftMoonDefenseBacklog.Entry queue) internal moonDefenseQueues;
     mapping(uint256 outcomeId => MoonChanceOutcome outcome) internal _moonChanceOutcomes;
     mapping(uint256 requestId => uint256 outcomeId) internal moonChanceOutcomeByRequestId;
     mapping(bytes32 battleKey => uint256 outcomeId) public moonChanceOutcomeByBattle;
@@ -148,7 +142,6 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
     // Append-only incarnation counter. Existing live moons are generation zero; every creation
     // after this upgrade advances the counter, so in-flight missions cannot bind to a replacement.
     mapping(uint256 planetId => uint64 generation) internal _moonGenerations;
-
     error ChickenBurnAlreadyGranted(bytes32 burnId);
     error ConstructionActive();
     error ConstructionInactive();
@@ -388,7 +381,7 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
         uint32[16] calldata shipCounts,
         uint32[10] calldata defenseCounts,
         MoonBuildingConstruction calldata buildingQueue,
-        MoonDefenseQueue calldata defenseQueue
+        VeydriftMoonDefenseBacklog.Entry calldata defenseQueue
     ) external {
         if (msg.sender != address(game)) {
             revert NotOwner(msg.sender);
@@ -474,7 +467,7 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
         }
 
         if (defenseQueue.active) {
-            moonDefenseQueues[planetId] = MoonDefenseQueue({
+            moonDefenseQueues[planetId] = VeydriftMoonDefenseBacklog.Entry({
                 active: true,
                 defense: defenseQueue.defense,
                 quantity: defenseQueue.quantity,
@@ -818,29 +811,24 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
         game.requireNoPendingMoonAttackResolution(planetId);
         _settleMoonStateDue(planetId);
         if (quantity == 0) revert InvalidQuantity();
-        if (moonDefenseQueues[planetId].active) revert ConstructionActive();
 
         _requireMoonDefenseDependencies(planetId, defense);
-        _requireMoonDefenseCapacity(planetId, defense, quantity);
+        VeydriftMoonDefenseBacklog.requireCapacity(
+            moonDefenseQueues, _moonDefenseCounts, planetId, defense, quantity
+        );
         VeydriftGameStorage.Resources memory unitCost = moonDefenseCost(defense);
-        VeydriftGameStorage.Resources memory totalCost = _multiplyResources(unitCost, quantity);
+        VeydriftGameStorage.Resources memory totalCost =
+            VeydriftMoonDefenseBacklog.multiply(unitCost, quantity);
         _spendMoonResources(planetId, totalCost);
 
-        uint64 readyAt = (uint256(_currentTimestamp())
-                + _moonDefenseDuration(planetId, unitCost, quantity))
-        .toUint64();
-        moonDefenseQueues[planetId] = MoonDefenseQueue({
-            active: true, defense: defense, quantity: quantity, readyAt: readyAt, cost: totalCost
-        });
-
-        emit MoonDefenseQueued(
+        VeydriftMoonDefenseBacklog.enqueue(
+            moonDefenseQueues,
             planetId,
             defense,
             quantity,
-            readyAt,
-            totalCost.metal,
-            totalCost.crystal,
-            totalCost.deuterium
+            _moonDefenseDuration(planetId, unitCost, quantity),
+            _currentTimestamp(),
+            totalCost
         );
     }
 
@@ -850,14 +838,9 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
     }
 
     function _settleMoonDefenseDue(uint256 planetId) internal {
-        MoonDefenseQueue memory queue = moonDefenseQueues[planetId];
-        if (!queue.active || _currentTimestamp() < queue.readyAt) {
-            return;
-        }
-        delete moonDefenseQueues[planetId];
-        uint32 total = _moonDefenseCounts[planetId][queue.defense] + queue.quantity;
-        _setMoonDefenseCount(planetId, queue.defense, total);
-        emit MoonDefenseCompleted(planetId, queue.defense, queue.quantity, total);
+        VeydriftMoonDefenseBacklog.settle(
+            moonDefenseQueues, _moonDefenseCounts, planetId, _currentTimestamp()
+        );
     }
 
     function jumpGateJump(uint256 originMoonPlanetId, uint256 destinationMoonPlanetId) external {
@@ -1023,9 +1006,17 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
     function activeMoonDefenseQueue(uint256 planetId)
         external
         view
-        returns (MoonDefenseQueue memory)
+        returns (VeydriftMoonDefenseBacklog.Entry memory)
     {
         return moonDefenseQueues[planetId];
+    }
+
+    function moonDefenseQueueBacklog(uint256 planetId)
+        external
+        view
+        returns (VeydriftMoonDefenseBacklog.Entry[] memory)
+    {
+        return VeydriftMoonDefenseBacklog.entries(planetId);
     }
 
     function moonDefenseCount(uint256 planetId, Defense defense) external view returns (uint32) {
@@ -1033,16 +1024,9 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
     }
 
     function moonDefensePacked(uint256 planetId) external view returns (uint256 packed) {
-        for (uint8 i = 0; i <= uint8(Defense.LargeShieldDome);) {
-            packed += uint256(_moonDefenseCounts[planetId][Defense(i)]) << (uint256(i) * 32);
-            unchecked {
-                ++i;
-            }
-        }
-        MoonDefenseQueue storage queue = moonDefenseQueues[planetId];
-        if (queue.active && queue.readyAt <= _currentTimestamp()) {
-            packed += uint256(queue.quantity) << (uint256(uint8(queue.defense)) * 32);
-        }
+        packed = VeydriftMoonDefenseBacklog.packed(
+            moonDefenseQueues, _moonDefenseCounts, planetId, _currentTimestamp()
+        );
     }
 
     function moonBuildingUpgradeCost(uint256 planetId, MoonBuilding building)
@@ -1070,11 +1054,7 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
         pure
         returns (uint16)
     {
-        uint256 debris = uint256(metalDebris) + crystalDebris;
-        uint256 debrisUnits = debris / MOON_CHANCE_DEBRIS_UNIT;
-        uint256 chanceBps = debrisUnits * 100;
-        if (chanceBps > MAX_MOON_CHANCE_BPS) return MAX_MOON_CHANCE_BPS;
-        return chanceBps.toUint16();
+        return VeydriftMoonMath.chanceBps(metalDebris, crystalDebris);
     }
 
     function moonChancePurposeHash(
@@ -1085,18 +1065,15 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
         uint128 crystalDebris,
         uint16 chanceBps
     ) public view returns (bytes32) {
-        return keccak256(
-            abi.encode(
-                MOON_CHANCE_DOMAIN,
-                block.chainid,
-                address(this),
-                outcomeId,
-                battleId,
-                targetPlanetId,
-                metalDebris,
-                crystalDebris,
-                chanceBps
-            )
+        return VeydriftMoonMath.chancePurposeHash(
+            block.chainid,
+            address(this),
+            outcomeId,
+            battleId,
+            targetPlanetId,
+            metalDebris,
+            crystalDebris,
+            chanceBps
         );
     }
 
@@ -1110,20 +1087,17 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
         uint16 moonDestructionBps,
         uint16 deathstarDestructionBps
     ) public view returns (bytes32) {
-        return keccak256(
-            abi.encode(
-                MOON_DESTRUCTION_DOMAIN,
-                block.chainid,
-                address(this),
-                outcomeId,
-                battleId,
-                targetPlanetId,
-                attacker,
-                deathstars,
-                moonDiameterKm,
-                moonDestructionBps,
-                deathstarDestructionBps
-            )
+        return VeydriftMoonMath.destructionPurposeHash(
+            block.chainid,
+            address(this),
+            outcomeId,
+            battleId,
+            targetPlanetId,
+            attacker,
+            deathstars,
+            moonDiameterKm,
+            moonDestructionBps,
+            deathstarDestructionBps
         );
     }
 
@@ -1132,18 +1106,11 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
         pure
         returns (uint16)
     {
-        if (deathstars == 0) return 0;
-        uint256 moonRoot = _sqrt(moonDiameterKm);
-        if (moonRoot >= 100) return 0;
-        uint256 chanceBps = (100 - moonRoot) * _sqrt(deathstars) * 100;
-        if (chanceBps > BPS) return BPS;
-        return chanceBps.toUint16();
+        return VeydriftMoonMath.destructionChanceBps(moonDiameterKm, deathstars);
     }
 
     function moonDeathstarDestructionChanceBps(uint16 moonDiameterKm) public pure returns (uint16) {
-        uint256 chanceBps = _sqrt(moonDiameterKm) * 50;
-        if (chanceBps > BPS) return BPS;
-        return chanceBps.toUint16();
+        return VeydriftMoonMath.deathstarDestructionChanceBps(moonDiameterKm);
     }
 
     function _requireMoonExists(uint256 planetId) private view {
@@ -1289,16 +1256,6 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
         );
     }
 
-    function _requireMoonDefenseCapacity(uint256 planetId, Defense defense, uint32 quantity)
-        private
-        view
-    {
-        if (!VeydriftCatalog.isShieldDome(defense)) return;
-        if (_moonDefenseCounts[planetId][defense] + quantity > 1) {
-            revert LevelTooHigh();
-        }
-    }
-
     function _moonBuildingDuration(uint256 planetId, VeydriftGameStorage.Resources memory cost)
         private
         view
@@ -1410,6 +1367,7 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
         delete _moons[planetId];
         delete moonBuildingConstructions[planetId];
         delete moonDefenseQueues[planetId];
+        VeydriftMoonDefenseBacklog.clear(planetId);
         game.clearMoonState(planetId);
         for (uint8 i = 0; i <= uint8(type(MoonBuilding).max);) {
             delete _moonBuildingLevels[planetId][MoonBuilding(i)];
@@ -1423,60 +1381,6 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
                 ++i;
             }
         }
-    }
-
-    function _multiplyResources(VeydriftGameStorage.Resources memory resources, uint32 quantity)
-        private
-        pure
-        returns (VeydriftGameStorage.Resources memory)
-    {
-        return VeydriftGameStorage.Resources({
-            metal: (uint256(resources.metal) * quantity).toUint128(),
-            crystal: (uint256(resources.crystal) * quantity).toUint128(),
-            deuterium: (uint256(resources.deuterium) * quantity).toUint128()
-        });
-    }
-
-    function _sqrt(uint256 value) private pure returns (uint256 result) {
-        if (value == 0) return 0;
-        uint256 candidate = value;
-        result = 1;
-        if (candidate >= 2 ** 128) {
-            candidate >>= 128;
-            result <<= 64;
-        }
-        if (candidate >= 2 ** 64) {
-            candidate >>= 64;
-            result <<= 32;
-        }
-        if (candidate >= 2 ** 32) {
-            candidate >>= 32;
-            result <<= 16;
-        }
-        if (candidate >= 2 ** 16) {
-            candidate >>= 16;
-            result <<= 8;
-        }
-        if (candidate >= 2 ** 8) {
-            candidate >>= 8;
-            result <<= 4;
-        }
-        if (candidate >= 2 ** 4) {
-            candidate >>= 4;
-            result <<= 2;
-        }
-        if (candidate >= 2 ** 2) {
-            result <<= 1;
-        }
-
-        for (uint8 i = 0; i < 7;) {
-            result = (result + value / result) >> 1;
-            unchecked {
-                ++i;
-            }
-        }
-        uint256 roundedDown = value / result;
-        return result < roundedDown ? result : roundedDown;
     }
 
     function _currentTimestamp() private view returns (uint64) {
