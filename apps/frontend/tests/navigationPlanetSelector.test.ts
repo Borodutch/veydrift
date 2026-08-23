@@ -240,7 +240,7 @@ describe("navigation and planet selector UI source contracts", () => {
   });
 
   test("keeps research wallet-global while projecting its progress onto the home selector item", () => {
-    expect(playableSource).toContain('backendData.key("queues", account, undefined)');
+    expect(playableSource).toContain("const walletQueuesQuery = backendData && account ? backendData.queries.queues(account) : undefined");
     expect(playableSource).toContain("const walletResearchQueue = walletResearchQueueFor(walletQueues)");
     expect(playableSource).toContain("progressState={walletResearchProgress}");
     expect(playableSource).toContain("progressState={constructionProgressState}");

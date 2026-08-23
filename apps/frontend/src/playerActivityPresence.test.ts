@@ -23,6 +23,9 @@ describe("player activity presence", () => {
       await expect(store.claimPlayerActivityAwayWindow(wallet)).resolves.toMatchObject({
         previousLastSeenAt: "1770000000",
       });
+      expect(store.snapshot(store.playerActivityAwayWindowKey(wallet))?.data).toMatchObject({
+        previousLastSeenAt: "1770000000",
+      });
       await expect(store.claimPlayerActivityAwayWindow(wallet)).resolves.toBeNull();
       expect(calls).toBe(1);
     } finally {
