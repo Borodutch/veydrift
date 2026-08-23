@@ -21,6 +21,7 @@ import {VeydriftStateMigrationModule} from "../src/VeydriftStateMigrationModule.
 import {VeydriftDependencies} from "../src/libraries/VeydriftDependencies.sol";
 import {VeydriftAntiRaidPrimitives} from "../src/libraries/VeydriftAntiRaidPrimitives.sol";
 import {VeydriftCatalog} from "../src/libraries/VeydriftCatalog.sol";
+import {VeydriftMoonDefenseBacklog} from "../src/libraries/VeydriftMoonDefenseBacklog.sol";
 import {VeydriftDefenseHoldStorage} from "../src/libraries/VeydriftDefenseHoldStorage.sol";
 import {VeydriftBodyAttackWindow} from "../src/libraries/VeydriftBodyAttackWindow.sol";
 import {
@@ -812,7 +813,7 @@ abstract contract VeydriftMoonSystemTestBase is Test {
 
         vm.prank(player);
         moons.startMoonDefenseProduction(planetId, Defense.RocketLauncher, 3);
-        VeydriftMoonSystem.MoonDefenseQueue memory queue = moons.activeMoonDefenseQueue(planetId);
+        VeydriftMoonDefenseBacklog.Entry memory queue = moons.activeMoonDefenseQueue(planetId);
         assertTrue(queue.active);
         assertEq(uint8(queue.defense), uint8(Defense.RocketLauncher));
         assertEq(queue.quantity, 3);
@@ -822,6 +823,85 @@ abstract contract VeydriftMoonSystemTestBase is Test {
         moons.finishMoonDefenseProduction(planetId);
         assertEq(moons.moonDefenseCount(planetId, Defense.RocketLauncher), 3);
         assertEq(game.defenseCount(planetId, Defense.RocketLauncher), 0);
+    }
+
+    function _testMoonDefenseBacklogQueuesMixedTypesAndDrainsFifo() internal {
+        uint256 planetId = _startPlanet();
+
+        _createMoon(planetId);
+        _fundPlanet(planetId, 10_000_000, 10_000_000, 10_000_000);
+        _buildMoon(planetId, MoonBuilding.LunarBase);
+        _buildMoon(planetId, MoonBuilding.LunarBase);
+        _buildMoon(planetId, MoonBuilding.RoboticsFactory);
+        _buildMoon(planetId, MoonBuilding.RoboticsFactory);
+        _buildMoon(planetId, MoonBuilding.Shipyard);
+        _buildMoon(planetId, MoonBuilding.Shipyard);
+        _setTechnologyLevel(player, Technology.Energy, 2);
+        _setTechnologyLevel(player, Technology.Laser, 3);
+
+        vm.startPrank(player);
+        moons.startMoonDefenseProduction(planetId, Defense.RocketLauncher, 2);
+        moons.startMoonDefenseProduction(planetId, Defense.LightLaser, 3);
+        moons.startMoonDefenseProduction(planetId, Defense.RocketLauncher, 1);
+        vm.stopPrank();
+
+        VeydriftMoonDefenseBacklog.Entry memory active = moons.activeMoonDefenseQueue(planetId);
+        VeydriftMoonDefenseBacklog.Entry[] memory backlog = moons.moonDefenseQueueBacklog(planetId);
+        assertEq(uint8(active.defense), uint8(Defense.RocketLauncher));
+        assertEq(active.quantity, 2);
+        assertEq(backlog.length, 2);
+        assertEq(uint8(backlog[0].defense), uint8(Defense.LightLaser));
+        assertEq(backlog[0].quantity, 3);
+        assertGt(backlog[0].readyAt, active.readyAt);
+        assertEq(uint8(backlog[1].defense), uint8(Defense.RocketLauncher));
+        assertEq(backlog[1].quantity, 1);
+        assertGt(backlog[1].readyAt, backlog[0].readyAt);
+
+        vm.warp(active.readyAt);
+        vm.prank(player);
+        moons.finishMoonDefenseProduction(planetId);
+        assertEq(moons.moonDefenseCount(planetId, Defense.RocketLauncher), 2);
+        active = moons.activeMoonDefenseQueue(planetId);
+        backlog = moons.moonDefenseQueueBacklog(planetId);
+        assertEq(uint8(active.defense), uint8(Defense.LightLaser));
+        assertEq(backlog.length, 1);
+        assertEq(uint8(backlog[0].defense), uint8(Defense.RocketLauncher));
+
+        vm.warp(backlog[0].readyAt);
+        uint256 packed = moons.moonDefensePacked(planetId);
+        assertEq(uint32(packed), 3);
+        assertEq(uint32(packed >> (uint256(uint8(Defense.LightLaser)) * 32)), 3);
+
+        moons.setMoonShipCount(planetId, Ship.SmallCargo, 1);
+        assertEq(moons.moonDefenseCount(planetId, Defense.LightLaser), 3);
+        assertEq(moons.moonDefenseCount(planetId, Defense.RocketLauncher), 3);
+        assertFalse(moons.activeMoonDefenseQueue(planetId).active);
+        assertEq(moons.moonDefenseQueueBacklog(planetId).length, 0);
+    }
+
+    function _testMoonDefenseBacklogCountsQueuedShieldCapacity() internal {
+        uint256 planetId = _startPlanet();
+
+        _createMoon(planetId);
+        _fundPlanet(planetId, 10_000_000, 10_000_000, 10_000_000);
+        _buildMoon(planetId, MoonBuilding.LunarBase);
+        _buildMoon(planetId, MoonBuilding.LunarBase);
+        _buildMoon(planetId, MoonBuilding.RoboticsFactory);
+        _buildMoon(planetId, MoonBuilding.RoboticsFactory);
+        _buildMoon(planetId, MoonBuilding.Shipyard);
+        _setTechnologyLevel(player, Technology.Shielding, 2);
+
+        vm.startPrank(player);
+        moons.startMoonDefenseProduction(planetId, Defense.RocketLauncher, 1);
+        moons.startMoonDefenseProduction(planetId, Defense.SmallShieldDome, 1);
+        vm.expectRevert(VeydriftMoonSystem.LevelTooHigh.selector);
+        moons.startMoonDefenseProduction(planetId, Defense.SmallShieldDome, 1);
+        vm.stopPrank();
+
+        VeydriftMoonDefenseBacklog.Entry[] memory backlog = moons.moonDefenseQueueBacklog(planetId);
+        assertEq(backlog.length, 1);
+        assertEq(uint8(backlog[0].defense), uint8(Defense.SmallShieldDome));
+        assertEq(backlog[0].quantity, 1);
     }
 
     function _testMoonDefenseIsEffectiveWhenDueAndReconcilesOnNextMutationOnce() internal {
@@ -836,7 +916,7 @@ abstract contract VeydriftMoonSystemTestBase is Test {
 
         vm.prank(player);
         moons.startMoonDefenseProduction(planetId, Defense.RocketLauncher, 3);
-        VeydriftMoonSystem.MoonDefenseQueue memory queue = moons.activeMoonDefenseQueue(planetId);
+        VeydriftMoonDefenseBacklog.Entry memory queue = moons.activeMoonDefenseQueue(planetId);
         vm.warp(queue.readyAt);
 
         // Combat snapshots include the elapsed queue even before the next Moon mutation materializes
@@ -877,7 +957,7 @@ abstract contract VeydriftMoonSystemTestBase is Test {
 
         VeydriftMoonSystem.MoonBuildingConstruction memory construction =
             moons.activeMoonBuildingConstruction(planetId);
-        VeydriftMoonSystem.MoonDefenseQueue memory queue = moons.activeMoonDefenseQueue(planetId);
+        VeydriftMoonDefenseBacklog.Entry memory queue = moons.activeMoonDefenseQueue(planetId);
         assertTrue(construction.active);
         assertTrue(queue.active);
         assertEq(moons.moonBuildingLevel(planetId, MoonBuilding.RoboticsFactory), 2);
@@ -2368,6 +2448,14 @@ contract VeydriftMoonSystemCoreTest is VeydriftMoonSystemTestBase {
 
     function testMoonDefenseConstructionUsesMoonShipyardAndSeparateCounts() public {
         _testMoonDefenseConstructionUsesMoonShipyardAndSeparateCounts();
+    }
+
+    function testMoonDefenseBacklogQueuesMixedTypesAndDrainsFifo() public {
+        _testMoonDefenseBacklogQueuesMixedTypesAndDrainsFifo();
+    }
+
+    function testMoonDefenseBacklogCountsQueuedShieldCapacity() public {
+        _testMoonDefenseBacklogCountsQueuedShieldCapacity();
     }
 
     function testMoonDefenseIsEffectiveWhenDueAndReconcilesOnNextMutationOnce() public {

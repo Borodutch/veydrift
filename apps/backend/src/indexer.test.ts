@@ -4764,6 +4764,30 @@ describe("SettlementIndexer", () => {
     });
 
     indexer.applyLog({
+      blockNumber: "0x8a",
+      transactionHash: "0xmoondefensebackloglight",
+      logIndex: "0x1",
+      topics: [moonDefenseQueuedTopic, topic(7n), topic(1n)],
+      data: abiWords(2n, 1770002400n, 3_000n, 1_000n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x8a",
+      transactionHash: "0xmoondefensebacklogrocket",
+      logIndex: "0x2",
+      topics: [moonDefenseQueuedTopic, topic(7n), topic(0n)],
+      data: abiWords(1n, 1770003000n, 2_000n, 0n, 0n)
+    });
+
+    expect(indexer.moonState(player, planet.planetId).defenseQueue).toMatchObject({
+      itemId: 0,
+      quantity: 3,
+      backlog: [
+        expect.objectContaining({ itemId: 1, quantity: 2, readyAt: "1770002400" }),
+        expect.objectContaining({ itemId: 0, quantity: 1, readyAt: "1770003000" })
+      ]
+    });
+
+    indexer.applyLog({
       blockNumber: "0x8b",
       transactionHash: "0xmoondefensedone",
       logIndex: "0x0",
@@ -4774,11 +4798,56 @@ describe("SettlementIndexer", () => {
       ],
       data: abiWords(3n, 3n)
     });
+    indexer.applyLog({
+      blockNumber: "0x8b",
+      transactionHash: "0xmoondefensedone",
+      logIndex: "0x1",
+      topics: [moonDefenseQueuedTopic, topic(7n), topic(1n)],
+      data: abiWords(2n, 1770002400n, 3_000n, 1_000n, 0n)
+    });
 
+    expect(indexer.moonState(player, planet.planetId)).toMatchObject({
+      defenseQueue: {
+        itemId: 1,
+        quantity: 2,
+        backlog: [expect.objectContaining({ itemId: 0, quantity: 1 })]
+      },
+      defenses: expect.arrayContaining([
+        expect.objectContaining({ id: 0, count: 3 })
+      ])
+    });
+
+    indexer.applyLog({
+      blockNumber: "0x8c",
+      transactionHash: "0xmoondefenselightdone",
+      logIndex: "0x0",
+      topics: [moonDefenseCompletedTopic, topic(7n), topic(1n)],
+      data: abiWords(2n, 2n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x8c",
+      transactionHash: "0xmoondefenselightdone",
+      logIndex: "0x1",
+      topics: [moonDefenseQueuedTopic, topic(7n), topic(0n)],
+      data: abiWords(1n, 1770003000n, 2_000n, 0n, 0n)
+    });
+    expect(indexer.moonState(player, planet.planetId)).toMatchObject({
+      defenseQueue: { itemId: 0, quantity: 1, backlog: [] },
+      defenses: expect.arrayContaining([expect.objectContaining({ id: 1, count: 2 })])
+    });
+
+    indexer.applyLog({
+      blockNumber: "0x8d",
+      transactionHash: "0xmoondefensefinaldone",
+      logIndex: "0x0",
+      topics: [moonDefenseCompletedTopic, topic(7n), topic(0n)],
+      data: abiWords(1n, 4n)
+    });
     expect(indexer.moonState(player, planet.planetId)).toMatchObject({
       defenseQueue: null,
       defenses: expect.arrayContaining([
-        expect.objectContaining({ id: 0, count: 3 })
+        expect.objectContaining({ id: 0, count: 4 }),
+        expect.objectContaining({ id: 1, count: 2 })
       ])
     });
   });
@@ -4935,7 +5004,11 @@ describe("SettlementIndexer", () => {
       resourcesAsOfNow: { metal: "1000", crystal: "1000", deuterium: "1000" },
       ships: [],
       launchableShips: [],
-      defenses: [],
+      defenses: [{
+        id: 0,
+        count: 4,
+        cost: { metal: "2000", crystal: "0", deuterium: "0" },
+      }],
       moon: {
         exists: true,
         planetId: planet.planetId,
@@ -4962,7 +5035,22 @@ describe("SettlementIndexer", () => {
         cost: { metal: "400", crystal: "120", deuterium: "200" },
       },
       technologyLevels: {},
-      defenseQueue: null,
+      defenseQueue: {
+        active: true,
+        kind: "moon-defense",
+        itemId: 0,
+        quantity: 2,
+        readyAt: "1770001800",
+        cost: { metal: "4000", crystal: "0", deuterium: "0" },
+        backlog: [{
+          active: true,
+          kind: "moon-defense",
+          itemId: 1,
+          quantity: 3,
+          readyAt: "1770002400",
+          cost: { metal: "4500", crystal: "1500", deuterium: "0" },
+        }],
+      },
     };
     const canonicalPlanet: CanonicalPlanetChainState = {
       planetId: planet.planetId,
@@ -4975,7 +5063,11 @@ describe("SettlementIndexer", () => {
     const indexer = new SettlementIndexer({
       async getBlockNumber() { return 0x88n; },
       async getCanonicalPlanetState() { return canonicalPlanet; },
-      async getMoonState() { return canonicalMoon; },
+      async getMoonState(owner, selectedPlanetId) {
+        expect(owner).toBe(player);
+        expect(selectedPlanetId).toBe(7n);
+        return canonicalMoon;
+      },
       async listContractLogs() { return []; },
       async listCurrentPlanets() { return [planet]; },
       async listDebrisFieldEvents() { return []; },
@@ -4999,6 +5091,14 @@ describe("SettlementIndexer", () => {
       readyAt: "1770001200",
       startedAt: "1770000000",
       targetLevel: 1,
+    });
+    expect(indexer.moonState(player, planet.planetId)).toMatchObject({
+      defenses: expect.arrayContaining([expect.objectContaining({ id: 0, count: 4 })]),
+      defenseQueue: {
+        itemId: 0,
+        quantity: 2,
+        backlog: [expect.objectContaining({ itemId: 1, quantity: 3 })],
+      },
     });
   });
 
