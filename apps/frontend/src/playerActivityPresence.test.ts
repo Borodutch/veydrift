@@ -86,8 +86,10 @@ describe("player activity presence", () => {
       release();
     } finally {
       globalThis.fetch = originalFetch;
-      runtime.document = originalDocument;
-      runtime.window = originalWindow;
+      if (originalDocument === undefined) delete runtime.document;
+      else runtime.document = originalDocument;
+      if (originalWindow === undefined) delete runtime.window;
+      else runtime.window = originalWindow;
     }
   });
 });
