@@ -40,16 +40,19 @@ export function useBackendDataQuery<T>(
   // the store. That lets the store preserve independent keys (and discard a
   // late response from an old view) without reintroducing page cancellation.
   useLayoutEffect(() => {
-    if (enabled && store && key && store.isFresh(key)) return;
+    if (!enabled || !store || !key || store.isFresh(key)) return;
     void refetch().catch(() => {
       // The data store owns the canonical failure state exposed by `snapshot`.
       // Avoid an unhandled rejection when a background query fails. Consumers
       // render the snapshot's error state, so background failures must not be
       // promoted to a window error.
     });
-    // Canonical reads are cache-owned. Unmounting one surface must not abort a
-    // transport that another subscriber (or the next route) can reuse.
-    return undefined;
+    // Canonical reads are cache-owned. Preserve an already-started transport
+    // for another subscriber (or the next route), but remove queued work that
+    // has never touched the network when this route is replaced.
+    return () => {
+      store.cancelQueuedRead(key);
+    };
   }, [key, refetch, store]);
 
   return { refetch, snapshot };

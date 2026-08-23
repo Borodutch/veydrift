@@ -79,6 +79,57 @@ describe("GameStateStore", () => {
     await expect(active).resolves.toBe("ready");
   });
 
+  test("route cleanup cancels queued reads but retains started shared transport", async () => {
+    const store = new GameStateStore(new GameStateReadScheduler(1));
+    const blocker = deferred<string>();
+    const active = store.read("active", () => blocker.promise);
+    const activeResult = active.then(
+      () => undefined,
+      (error) => error,
+    );
+    let queuedStarted = false;
+    const queued = store.read("queued", async () => {
+      queuedStarted = true;
+      return "queued";
+    });
+
+    await Promise.resolve();
+    expect(store.cancelQueuedRead("active")).toBe(false);
+    expect(store.cancelQueuedRead("queued")).toBe(true);
+    blocker.resolve("active");
+
+    await expect(activeResult).resolves.toBeUndefined();
+    await expect(queued).resolves.toBeUndefined();
+    expect(queuedStarted).toBe(false);
+  });
+
+  test("terminal disposal cancels queued reads before they begin transport", async () => {
+    const store = new GameStateStore(new GameStateReadScheduler(1));
+    const blocker = deferred<string>();
+    const active = store.read("active", () => blocker.promise);
+    let queuedStarted = false;
+    const queued = store.read("queued", async () => {
+      queuedStarted = true;
+      return "queued";
+    });
+    const activeResult = active.then(
+      () => undefined,
+      (error) => error,
+    );
+    const queuedResult = queued.then(
+      () => undefined,
+      (error) => error,
+    );
+
+    await Promise.resolve();
+    store.dispose();
+    blocker.resolve("active");
+
+    await expect(activeResult).resolves.toMatchObject({ name: "AbortError" });
+    await expect(queuedResult).resolves.toMatchObject({ name: "AbortError" });
+    expect(queuedStarted).toBe(false);
+  });
+
   test("enforces an end-to-end deadline while a read is queued", async () => {
     const store = new GameStateStore(new GameStateReadScheduler(1));
     const blocker = deferred<string>();

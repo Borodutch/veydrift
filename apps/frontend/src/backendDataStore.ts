@@ -93,6 +93,7 @@ import { GameStateStore, type GameStateEntry, type GameStatePriority } from "./g
 import { backendResourceSnapshot, promoteCanonicalPlanetResources, type BackendResourceState, type CanonicalPlanetResourceSnapshot, type CanonicalPlanetResourceStore } from "./planetResourceStore";
 import {
   isResourceSnapshotIndexedAfterTransaction,
+  hydratedWalletPlanetSnapshot,
   resourceIndexingExpectationForTransaction,
   waitForAllianceApplicationCleared,
   waitForAllianceCreationState,
@@ -114,7 +115,9 @@ import {
   type StartedDefenseProductionSnapshot,
   type StartedResearchExpectation,
   type StartedShipProductionExpectation,
+  type WalletPlanetSyncSnapshot,
 } from "./postTransactionRefresh";
+import { confirmedFleetVisibility } from "./missionVisibilityRefresh";
 import { createTransactionActionGate, runWriteTransaction as executeWriteTransaction, type TransactionActionGate, type WriteTransactionDescriptor, type WriteTransactionState } from "./transactionActionGate";
 
 type WalletReadOptions = {
@@ -146,6 +149,17 @@ export type IndexedReadWaitOptions = {
   intervalMs?: number;
   delay?: (ms: number) => Promise<void>;
   timeoutError?: string;
+};
+
+export type WalletPlanetSyncOptions = {
+  forceHomePlanet?: boolean;
+  forceWalletPlanets?: boolean;
+  fresh?: boolean;
+};
+
+export type RandomnessReadiness = {
+  ready: boolean;
+  reasons?: string[];
 };
 
 declare const backendIndexingPlanBrand: unique symbol;
@@ -234,7 +248,7 @@ type ActivityPresencePoller = {
 };
 
 type ActivityPresenceClaim =
-  | { promise: Promise<PlayerActivityPresence>; status: "pending" }
+  | { promise: Promise<PlayerActivityPresence | null>; status: "pending" }
   | { status: "consumed" };
 
 type ChainEventBridge = {
@@ -382,7 +396,10 @@ export class BackendDataStore {
     defenses: (wallet: string, planetId: string) => this.query(this.key("defenses", wallet, planetId), () => this.defenses(wallet, planetId)),
     entityMedia: (kind: EntityMediaKind, entityId: string) => this.query(this.key("entity-media", kind, entityId), () => this.entityMedia(kind, entityId)),
     fleetArchive: (wallet: string, options: FleetMissionArchiveOptions = {}) => this.query(this.key("fleet-archive", wallet, options), () => this.fleetArchive(wallet, options)),
-    fleetVisibility: (wallet: string, options: FleetMissionVisibilityOptions = {}) => this.query(this.key("fleet-visibility", wallet, options.includeArchive), () => this.fleetVisibility(wallet, options)),
+    fleetVisibility: (wallet: string, options: FleetMissionVisibilityOptions = {}) => {
+      const includeArchive = options.includeArchive === true;
+      return this.query(this.key("fleet-visibility", wallet, includeArchive), () => this.fleetVisibility(wallet, { ...options, includeArchive }));
+    },
     globalActiveMissions: () => this.query(this.key("global-active-missions"), () => this.globalActiveMissions()),
     globalMissionArchive: (options: GlobalMissionArchiveOptions = {}) => this.query(this.key("global-mission-archive", options), () => this.globalMissionArchive(options)),
     highscores: (options: FetchHighscoreOptions = {}) => this.query(this.key("highscores", options), () => this.highscores(options)),
@@ -395,10 +412,12 @@ export class BackendDataStore {
     overview: (wallet: string, planetId?: string) => this.query(this.key("overview", wallet, planetId), () => this.overview(wallet, planetId)),
     paidAllianceInviteResolution: (secret: string) => this.query(this.key("paid-alliance-invite-resolution", secret), () => this.paidAllianceInviteResolution(secret)),
     playerActivity: (wallet: string, options: { page?: number; pageSize?: number; since?: number; includeProjected?: boolean } = {}) => this.query(this.key("player-activity", wallet, options), () => this.playerActivity(wallet, options)),
+    playerActivityAwayWindow: (wallet: string) => this.query(this.playerActivityAwayWindowKey(wallet), () => this.claimPlayerActivityAwayWindow(wallet)),
     playerHighscore: (wallet: string) => this.query(this.key("player-highscore", wallet), () => this.playerHighscore(wallet)),
     planets: (wallet: string) => this.query(this.key("planets", wallet), () => this.planets(wallet)),
     profile: (wallet: string) => this.query(this.key("profile", wallet), () => this.profile(wallet)),
     queues: (wallet: string, planetId?: string) => this.query(this.key("queues", wallet, planetId), () => this.queues(wallet, planetId)),
+    randomnessReadiness: () => this.query(this.key("randomness-readiness"), () => this.randomnessReadiness()),
     raidFinderDebris: (options: { limit?: number } = {}) => this.query(this.key("raid-finder-debris", options), () => this.raidFinderDebris(options)),
     raidFinderRifters: (options: { limit?: number } = {}) => this.query(this.key("raid-finder-rifters", options), () => this.raidFinderRifters(options)),
     referralCodeInspection: (wallet: string, code: string) => this.query(this.key("referral-code-inspection", wallet, code), () => this.referralCodeInspection(wallet, code)),
@@ -411,7 +430,11 @@ export class BackendDataStore {
     shipyard: (wallet: string, planetId: string) => this.query(this.key("shipyard", wallet, planetId), () => this.shipyard(wallet, planetId)),
     settlement: (wallet: string) => this.query(this.key("settlement", wallet), () => this.settlement(wallet)),
     settlementFunding: (wallet: string) => this.query(this.key("settlement-funding", wallet), () => this.settlementFunding(wallet)),
+    settlementFundingProjection: (wallet: string, provider: Eip1193Provider, migrationAddress: string | undefined, providerIdentity: string | undefined) =>
+      this.query(this.key("settlement-funding-projection", wallet, migrationAddress, providerIdentity), () => this.settlementFundingForProvider(wallet, provider, migrationAddress, providerIdentity)),
     system: <T = unknown>(galaxy: number, system: number, options: { detail?: "full" } = {}) => this.query(this.key("system", galaxy, system, options), () => this.system<T>(galaxy, system, options)),
+    walletPlanetSync: (wallet: string, planetId?: string, options: WalletPlanetSyncOptions = {}) =>
+      this.query(this.key("wallet-planet-sync", wallet, planetId, options), () => this.walletPlanetSync(wallet, planetId, options)),
     watchedPlanets: (wallet: string, options: { page?: number; pageSize?: number } = {}) => this.query(this.key("watched-planets", wallet, options), () => this.watchedPlanets(wallet, options)),
   };
 
@@ -769,6 +792,29 @@ export class BackendDataStore {
     this.chainEventBridges.clear();
   }
 
+  /** Terminal lifecycle cleanup for an unused API-base store. Components do
+   * not call this during ordinary navigation; the shared registry releases
+   * stores only when their base URL is no longer retained by the app shell. */
+  dispose(): void {
+    if (typeof document !== "undefined") document.removeEventListener("visibilitychange", this.handleVisibilityChange);
+    this.stopAllPolling();
+    for (const timer of this.scheduledRefreshes.values()) clearTimeout(timer);
+    this.scheduledRefreshes.clear();
+    for (const timer of this.evictionTimers.values()) clearTimeout(timer);
+    this.evictionTimers.clear();
+    for (const timer of this.trailingInvalidationTimers.values()) clearTimeout(timer);
+    this.trailingInvalidationTimers.clear();
+    this.resources.clear();
+    this.trailingInvalidations.clear();
+    this.trailingInvalidationSettlements.clear();
+    this.deferredHiddenRefreshes.clear();
+    this.activityPresenceClaims.clear();
+    this.settlementReservationAttempts.clear();
+    this.transactionGates.clear();
+    this.planetResourceReadGenerations.clear();
+    this.state.dispose();
+  }
+
   /** Public landing data has one store-owned refresh policy and SSE bridge. */
   startLandingFeedPolling(): () => void {
     return this.startPolling("landing-active-missions", ["kind:landing-active-missions"], 60_000, "background");
@@ -992,8 +1038,25 @@ export class BackendDataStore {
     };
   }
 
+  /** A component may unmount before its descriptor gets a scheduler slot.
+   * Preserve started canonical transports, but avoid issuing stale queued
+   * reads from a route that no longer exists. */
+  cancelQueuedRead(key: string): boolean {
+    return this.state.cancelQueuedRead(key);
+  }
+
   key(kind: string, ...parts: unknown[]): string {
     return cacheKey(kind, ...parts);
+  }
+
+  /** Event-bridge health is a store projection, so it has a typed key even
+   * though no HTTP loader owns it. */
+  chainSyncHealthKey(wallet: string): string {
+    return this.key("chain-sync-health", wallet);
+  }
+
+  canonicalPlanetResourcesKey(wallet: string): string {
+    return this.key("canonical-planet-resources", wallet);
   }
 
   writeTransactionKey(key?: string, wallet?: string): string {
@@ -1227,6 +1290,13 @@ export class BackendDataStore {
    */
   setSnapshotError(kind: string, error: string | undefined, parts: unknown[] = []): void {
     this.markBackendFailure(kind, error, parts);
+  }
+
+  /** Shell-level wallet synchronization errors are a named store action, not
+   * a component-owned cache mutation. A later canonical overview read clears
+   * or replaces this status through the same snapshot lifecycle. */
+  reportWalletPlanetSyncError(wallet: string, planetId: string | undefined, error: string | undefined): void {
+    this.markBackendFailure("overview", error, [wallet, planetId]);
   }
 
   /** Remove a canonical snapshot only when its source is no longer applicable. */
@@ -1539,6 +1609,111 @@ export class BackendDataStore {
         this.publishOverviewSnapshot(wallet, planetId, snapshot);
       }
       return snapshot;
+    });
+  }
+
+  /**
+   * The app-shell wallet/planet projection. This is deliberately a store
+   * read, rather than a component-level Promise.all tree: it has one
+   * canonical identity, publishes every constituent snapshot, and remains
+   * invalidatable by normal backend/chain events.
+   */
+  walletPlanetSync(wallet: string, activePlanetId?: string, options: WalletPlanetSyncOptions = {}): Promise<WalletPlanetSyncSnapshot> {
+    const readPlanetId = options.forceHomePlanet || options.forceWalletPlanets ? undefined : activePlanetId;
+    const key = cacheKey("wallet-planet-sync", wallet, readPlanetId, {
+      forceHomePlanet: options.forceHomePlanet,
+      forceWalletPlanets: options.forceWalletPlanets,
+    });
+    return this.refresh(
+      key,
+      () => this.readWalletPlanetSync(wallet, activePlanetId, options),
+      {
+        dedupe: !options.fresh,
+        planetId: readPlanetId,
+        priority: "selected-planet",
+        wallet,
+      },
+    ).then((snapshot) => {
+      // Only the generation that GameStateStore accepted may fan out into the
+      // canonical projections. A slow older wallet sync must never overwrite
+      // the selected planet after navigation.
+      if (this.value<WalletPlanetSyncSnapshot>("wallet-planet-sync", wallet, readPlanetId, {
+        forceHomePlanet: options.forceHomePlanet,
+        forceWalletPlanets: options.forceWalletPlanets,
+      }) === snapshot) {
+        this.publishWalletPlanetSyncSnapshot(wallet, readPlanetId, snapshot);
+      }
+      return snapshot;
+    });
+  }
+
+  private async readWalletPlanetSync(wallet: string, activePlanetId: string | undefined, options: WalletPlanetSyncOptions): Promise<WalletPlanetSyncSnapshot> {
+    const readPlanetId = options.forceHomePlanet || options.forceWalletPlanets ? undefined : activePlanetId;
+    const overviewPlanetId = options.forceHomePlanet ? undefined : activePlanetId;
+    const freshReadOptions = options.fresh === undefined ? {} : { fresh: options.fresh };
+
+    if (!options.forceWalletPlanets) {
+      try {
+        const overview = await this.overview(wallet, overviewPlanetId, {
+          ...freshReadOptions,
+          timeoutMs: 2_500,
+        });
+        if (hydratedWalletPlanetSnapshot(overview, overviewPlanetId)) return overview;
+      } catch (error) {
+        if (!isRecoverableOverviewSyncError(error)) throw error;
+      }
+    }
+
+    const planetsResult = await settleBackendPromise(this.planets(wallet, freshReadOptions));
+    const indexedSettlement = settlementFromIndexedPlanetsResponse(wallet, planetsResult.status === "fulfilled" ? planetsResult.value : undefined);
+    if (indexedSettlement) {
+      const indexedQueues = queuesFromIndexedPlanets(wallet, indexedSettlement.homePlanetId, readPlanetId, planetsResult.status === "fulfilled" ? planetsResult.value : undefined);
+      const queuesResultPromise = indexedPlanetsExposeResearchQueueResponse(planetsResult)
+        ? Promise.resolve({ status: "fulfilled", value: indexedQueues } satisfies PromiseSettledResult<PlayerQueuesResponse>)
+        : settleBackendPromise(this.queues(wallet, readPlanetId, freshReadOptions));
+      const visibilityResultPromise = settleBackendPromise(
+        this.fleetVisibility(wallet, {
+          includeArchive: false,
+          ...freshReadOptions,
+          timeoutMs: 1_200,
+        }),
+      );
+      const [queuesResult, visibilityResult] = await Promise.all([queuesResultPromise, visibilityResultPromise]);
+      return walletPlanetSyncFromResults(
+        wallet,
+        indexedSettlement,
+        planetsResult,
+        queuesResult.status === "fulfilled"
+          ? { status: "fulfilled", value: mergeIndexedQueues(indexedQueues, queuesResult.value) }
+          : { status: "fulfilled", value: indexedQueues },
+        visibilityResult,
+      );
+    }
+
+    const [settlementResult, queuesResult, visibilityResult] = await Promise.allSettled([
+      this.settlement(wallet, freshReadOptions),
+      this.queues(wallet, readPlanetId, freshReadOptions),
+      this.fleetVisibility(wallet, {
+        includeArchive: false,
+        ...freshReadOptions,
+        timeoutMs: 1_200,
+      }),
+    ]);
+    const settlement = settlementResult.status === "fulfilled" ? settlementResult.value : undefined;
+    if (!settlement) throw settlementResult.status === "rejected" ? settlementResult.reason : new Error("Settlement state could not be loaded.");
+    return walletPlanetSyncFromResults(wallet, settlement, planetsResult, queuesResult, visibilityResult);
+  }
+
+  private publishWalletPlanetSyncSnapshot(wallet: string, planetId: string | undefined, snapshot: WalletPlanetSyncSnapshot): void {
+    this.commitBackendSnapshot("planets", snapshot.planetsResponse, [wallet], { wallet });
+    this.commitBackendSnapshot("settlement", snapshot.settlement, [wallet], { wallet });
+    this.commitBackendSnapshot("queues", snapshot.queues, [wallet, planetId], { planetId, wallet });
+    if (snapshot.fleetVisibility) this.commitBackendSnapshot("fleet-visibility", snapshot.fleetVisibility, [wallet, false], { wallet });
+    this.promoteWalletPlanetResources(wallet, snapshot.planetsResponse.planets);
+    this.promoteResourceState(snapshot.settlement.planet, {
+      planetId: snapshot.settlement.homePlanetId,
+      sourcePriority: 20,
+      wallet,
     });
   }
 
@@ -1896,6 +2071,10 @@ export class BackendDataStore {
     return recordPlayerActivityPresence(this.apiBaseUrl, wallet);
   }
 
+  playerActivityAwayWindowKey(wallet: string): string {
+    return this.key("player-activity-away-window", wallet);
+  }
+
   /**
    * Atomically advances the shared server watermark and returns an away window
    * at most once for this wallet in this browser session. Retried background
@@ -1909,12 +2088,14 @@ export class BackendDataStore {
 
     const promise = this.recordPlayerActivityPresence(wallet).then((presence) => {
       this.activityPresenceClaims.set(normalizedWallet, { status: "consumed" });
+      this.commitBackendSnapshot("player-activity-away-window", presence, [wallet], { wallet });
       return presence;
     }).catch((error: unknown) => {
       const current = this.activityPresenceClaims.get(normalizedWallet);
       if (current?.status === "pending" && current.promise === promise) {
         this.activityPresenceClaims.delete(normalizedWallet);
       }
+      this.markBackendFailure("player-activity-away-window", error instanceof Error ? error.message : String(error), [wallet]);
       throw error;
     });
     this.activityPresenceClaims.set(normalizedWallet, { promise, status: "pending" });
@@ -1970,7 +2151,7 @@ export class BackendDataStore {
     );
   }
 
-  randomnessReadiness<T = unknown>(): Promise<T> {
+  randomnessReadiness(): Promise<RandomnessReadiness> {
     const key = cacheKey("randomness-readiness");
     return this.refresh(key, async (signal) => {
       const response = await fetch(`${this.apiBaseUrl}/randomness-readiness`, {
@@ -1978,12 +2159,15 @@ export class BackendDataStore {
         headers: { accept: "application/json" },
         signal,
       });
-      const payload = (await response.json()) as T & { reasons?: unknown };
+      const payload = (await response.json()) as { ready?: unknown; reasons?: unknown };
       if (!response.ok) {
         const reason = Array.isArray(payload.reasons) && typeof payload.reasons[0] === "string" ? payload.reasons[0] : `Randomness readiness API failed: ${response.status}`;
         throw new Error(reason);
       }
-      return payload;
+      return {
+        ready: payload.ready === true,
+        ...(Array.isArray(payload.reasons) ? { reasons: payload.reasons.filter((reason): reason is string => typeof reason === "string") } : {}),
+      };
     });
   }
 
@@ -2011,12 +2195,14 @@ export class BackendDataStore {
   }
 
   fleetVisibility(wallet: string, options: FleetMissionVisibilityOptions = {}): Promise<FleetMissionVisibilityResponse> {
-    const key = cacheKey("fleet-visibility", wallet, options.includeArchive);
+    const includeArchive = options.includeArchive === true;
+    const key = cacheKey("fleet-visibility", wallet, includeArchive);
     return this.refresh(
       key,
       (signal) =>
         fetchFleetMissionVisibility(this.apiBaseUrl, wallet, {
           ...options,
+          includeArchive,
           signal,
         }),
       {
@@ -2245,7 +2431,82 @@ function waitForBackendIndexing(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function emptyWalletQueues(wallet: string, homePlanetId: string | null): PlayerQueuesResponse {
+  return { wallet, homePlanetId, building: null, defense: null, ship: null, research: null };
+}
+
+function indexedPlanetsExposeResearchQueueResponse(result: PromiseSettledResult<WalletPlanetsResponse>): boolean {
+  return result.status === "fulfilled" && result.value.queues !== undefined && "research" in result.value.queues;
+}
+
+function mergeIndexedQueues(indexedQueues: PlayerQueuesResponse, fetchedQueues: PlayerQueuesResponse): PlayerQueuesResponse {
+  return {
+    ...indexedQueues,
+    ...fetchedQueues,
+    building: fetchedQueues.building ?? indexedQueues.building,
+    defense: fetchedQueues.defense ?? indexedQueues.defense,
+    ship: fetchedQueues.ship ?? indexedQueues.ship,
+    research: fetchedQueues.research ?? indexedQueues.research,
+  };
+}
+
+function queuesFromIndexedPlanets(wallet: string, homePlanetId: string | null, activePlanetId: string | undefined, planetsResponse: WalletPlanetsResponse | undefined): PlayerQueuesResponse {
+  const planets = planetsResponse?.planets;
+  const queuePlanetId = activePlanetId ?? homePlanetId;
+  const selectedPlanet = planets?.find((planet) => planet.planetId === queuePlanetId) ?? planets?.find((planet) => planet.planetId === homePlanetId || planet.isHomePlanet) ?? planets?.[0];
+  return {
+    ...emptyWalletQueues(wallet, selectedPlanet?.planetId ?? queuePlanetId ?? homePlanetId),
+    building: selectedPlanet?.queues.building ?? null,
+    defense: selectedPlanet?.queues.defense ?? null,
+    ship: selectedPlanet?.queues.ship ?? null,
+    research: planetsResponse?.queues?.research ?? null,
+  };
+}
+
+function settlementFromIndexedPlanetsResponse(wallet: string, planetsResponse: WalletPlanetsResponse | undefined): WalletSettlementResponse | undefined {
+  const selectedPlanet = planetsResponse?.planets.find((planet) => planet.planetId === planetsResponse.homePlanetId || planet.isHomePlanet) ?? planetsResponse?.planets[0];
+  if (!selectedPlanet || !planetsResponse) return undefined;
+  return {
+    wallet: planetsResponse.wallet ?? wallet,
+    hasFirstPlanet: true,
+    homePlanetId: planetsResponse.homePlanetId ?? selectedPlanet.planetId,
+    planet: selectedPlanet,
+  };
+}
+
+function walletPlanetSyncFromResults(
+  wallet: string,
+  settlement: WalletSettlementResponse,
+  planetsResult: PromiseSettledResult<WalletPlanetsResponse>,
+  queuesResult: PromiseSettledResult<PlayerQueuesResponse>,
+  visibilityResult: PromiseSettledResult<FleetMissionVisibilityResponse>,
+): WalletPlanetSyncSnapshot {
+  const planetsResponse = planetsResult.status === "fulfilled"
+    ? planetsResult.value
+    : { wallet, homePlanetId: settlement.homePlanetId, planets: [] };
+  return {
+    fleetVisibility: confirmedFleetVisibility(visibilityResult),
+    planetsResponse,
+    queues: queuesResult.status === "fulfilled" ? queuesResult.value : emptyWalletQueues(wallet, settlement.homePlanetId),
+    settlement,
+  };
+}
+
+function settleBackendPromise<T>(promise: Promise<T>): Promise<PromiseSettledResult<T>> {
+  return promise.then(
+    (value) => ({ status: "fulfilled", value }),
+    (reason) => ({ status: "rejected", reason }),
+  );
+}
+
+function isRecoverableOverviewSyncError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return /Overview snapshot API failed: 404\b/.test(error.message) || /Timed out reading overview snapshot from the game API/i.test(error.message) || /Game servers are unavailable while loading overview snapshot/i.test(error.message);
+}
+
 const sharedBackendDataStores = new Map<string, BackendDataStore>();
+const sharedBackendDataStoreLeases = new Map<string, number>();
+const sharedBackendDataStoreDisposals = new Map<string, ReturnType<typeof setTimeout>>();
 
 export function backendDataStoreFor(apiBaseUrl: string): BackendDataStore {
   const normalizedApiBaseUrl = apiBaseUrl.replace(/\/+$/, "");
@@ -2254,4 +2515,58 @@ export function backendDataStoreFor(apiBaseUrl: string): BackendDataStore {
   const store = createBackendDataStore(normalizedApiBaseUrl);
   sharedBackendDataStores.set(normalizedApiBaseUrl, store);
   return store;
+}
+
+/** Keep an API-base store alive while a mounted application surface depends on
+ * it. Releasing the last lease tears down listeners, pollers, and caches; this
+ * prevents config changes from retaining obsolete stores without allowing one
+ * surface to dispose another surface's active store. */
+export function retainBackendDataStore(apiBaseUrl: string): () => void {
+  const normalizedApiBaseUrl = apiBaseUrl.replace(/\/+$/, "");
+  const pendingDisposal = sharedBackendDataStoreDisposals.get(normalizedApiBaseUrl);
+  if (pendingDisposal) {
+    clearTimeout(pendingDisposal);
+    sharedBackendDataStoreDisposals.delete(normalizedApiBaseUrl);
+  }
+  backendDataStoreFor(normalizedApiBaseUrl);
+  sharedBackendDataStoreLeases.set(normalizedApiBaseUrl, (sharedBackendDataStoreLeases.get(normalizedApiBaseUrl) ?? 0) + 1);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    const remaining = (sharedBackendDataStoreLeases.get(normalizedApiBaseUrl) ?? 1) - 1;
+    if (remaining > 0) {
+      sharedBackendDataStoreLeases.set(normalizedApiBaseUrl, remaining);
+      return;
+    }
+    sharedBackendDataStoreLeases.delete(normalizedApiBaseUrl);
+    // Defer final disposal through the current turn. This preserves a store
+    // across development strict-effect cleanup/reacquire while still releasing
+    // it promptly after a real unmount or runtime-config transition.
+    const timer = setTimeout(() => {
+      sharedBackendDataStoreDisposals.delete(normalizedApiBaseUrl);
+      if ((sharedBackendDataStoreLeases.get(normalizedApiBaseUrl) ?? 0) > 0) return;
+      const store = sharedBackendDataStores.get(normalizedApiBaseUrl);
+      store?.dispose();
+      sharedBackendDataStores.delete(normalizedApiBaseUrl);
+    }, 0);
+    sharedBackendDataStoreDisposals.set(normalizedApiBaseUrl, timer);
+  };
+}
+
+/** Release API-base stores that are not reachable from the current runtime
+ * configuration. This prevents preview/config transitions from retaining
+ * document listeners, timers, and response maps for the life of the tab. */
+export function disposeBackendDataStoresExcept(apiBaseUrls: readonly (string | undefined)[]): void {
+  const retained = new Set(apiBaseUrls.filter((value): value is string => value !== undefined).map((value) => value.replace(/\/+$/, "")));
+  for (const [apiBaseUrl, store] of sharedBackendDataStores) {
+    if (retained.has(apiBaseUrl) || (sharedBackendDataStoreLeases.get(apiBaseUrl) ?? 0) > 0) continue;
+    const pendingDisposal = sharedBackendDataStoreDisposals.get(apiBaseUrl);
+    if (pendingDisposal) {
+      clearTimeout(pendingDisposal);
+      sharedBackendDataStoreDisposals.delete(apiBaseUrl);
+    }
+    store.dispose();
+    sharedBackendDataStores.delete(apiBaseUrl);
+  }
 }
