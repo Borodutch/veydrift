@@ -167,7 +167,7 @@ export function PlanetDetail({
   );
   const backendData = useMemo(() => backendDataStoreFor(apiBaseUrl), [apiBaseUrl]);
   const systemQuery = useBackendDataQuery<ApiSystemResponse>(
-    backendData.queries.system<ApiSystemResponse>(coords.galaxy, coords.system, { detail: "full" }),
+    backendData.queries.system<ApiSystemResponse>(coords.galaxy, coords.system, { detail: "full", priority: "selected-planet" }),
   );
   const systemSnapshot = systemQuery.snapshot;
   const apiPlanet = systemSnapshot?.data

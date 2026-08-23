@@ -125,13 +125,16 @@ export class GameStateReadScheduler {
   cancelQueued(controller: AbortController): boolean {
     const task = this.tasks.get(controller);
     if (!task || task.started) return false;
+    const reason = new DOMException("Request cancelled", "AbortError");
+    if (!controller.signal.aborted) controller.abort(reason);
     this.tasks.delete(controller);
     const index = this.queue.indexOf(task);
     if (index >= 0) this.queue.splice(index, 1);
     clearTimeout(task.timer);
-    // The route that initiated this read is already gone. Resolve the former
-    // consumer silently after invalidating its generation below, so cleanup
-    // never creates an error state or an unhandled rejection in the shell.
+    // This queue-only cancellation is normal route lifecycle, not a backend
+    // failure. Resolve the former unobserved consumer silently; typed store
+    // adapters must still treat an absent value as unavailable before they
+    // dereference it.
     task.resolve(undefined);
     task.settleTransport();
     return true;
@@ -405,6 +408,13 @@ export class GameStateStore {
       this.emit([key]);
     }
     return cancelled;
+  }
+
+  /** A queued transport belongs to the canonical resource, not an individual
+   * component. It may be discarded only once its final subscriber is gone. */
+  cancelQueuedReadIfUnobserved(key: string): boolean {
+    if (this.subscriberCount(key) > 0) return false;
+    return this.cancelQueuedRead(key);
   }
 
   /** Terminal cleanup for a discarded API-base store. Abort queued and active

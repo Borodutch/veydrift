@@ -245,7 +245,6 @@ import {
   sendWithdrawPaidAllianceBonusTransaction,
   paidAllianceInviteCommitment,
   paidAllianceInviteLink,
-  recoverPaidAllianceInvites,
   PAID_ALLIANCE_INVITE_PRICE_WEI,
   sendBurningChickenMoonTransaction,
   defaultVeydriftChainForLocation,
@@ -3493,9 +3492,14 @@ export function PlayableMvpApp({
   const walletQueuesQuery = backendData && account ? backendData.queries.queues(account) : undefined;
   const walletQueuesSnapshot = useBackendDataSnapshot<PlayerQueuesResponse>(backendData, walletQueuesQuery?.key);
   const walletQueues = walletQueuesSnapshot?.data;
-  // Transaction availability follows canonical selected-planet snapshots,
-  // never a component-maintained hydration flag that can outlive eviction.
-  const activePlanetStateFresh = !account || !activePlanetId || (walletPlanetsSnapshot?.freshness === "fresh" && queuesSnapshot?.freshness === "fresh");
+  // Transaction availability follows canonical indexed snapshots, never a
+  // component-maintained hydration flag that can outlive eviction. A
+  // background refresh may temporarily mark one fanned-out selected-planet
+  // queue as refreshing while its last indexed value (or the wallet queue
+  // projection) is still valid; do not trap the player behind a permanently
+  // disabled action. Every write still performs its forced transaction read
+  // and exact-call preflight immediately before wallet submission.
+  const activePlanetStateFresh = !account || !activePlanetId || Boolean(walletPlanetsSnapshot?.data && (queuesSnapshot?.data ?? walletQueuesSnapshot?.data));
   const setOnChainQueues = useCallback((value: PlayerQueuesResponse | undefined | ((current: PlayerQueuesResponse | undefined) => PlayerQueuesResponse | undefined)) => {
     void value;
   }, []);
@@ -3729,7 +3733,6 @@ export function PlayableMvpApp({
     targetPlanetId: string;
     coords: Coordinates;
     mission: FleetMissionSummary;
-    target: Planet | undefined;
   } | null>(null);
   // VEY-KANEO-440: an ACS Defend ("Defend planet") counterplay awaiting fleet selection. When set, the
   // mission compose picker opens with a hold-duration / holding-fuel / Alliance Depot preview so the
@@ -3875,8 +3878,23 @@ export function PlayableMvpApp({
       }
     : homeCoords;
   const { snapshot: homeSystemSnapshot } = useBackendDataQuery(
-    backendData && selectedIdentityCoords ? backendData.queries.system<ApiSystemResponse>(selectedIdentityCoords.galaxy, selectedIdentityCoords.system) : undefined,
+    backendData && selectedIdentityCoords
+      ? backendData.queries.system<ApiSystemResponse>(selectedIdentityCoords.galaxy, selectedIdentityCoords.system, { priority: "selected-planet" })
+      : undefined,
     Boolean(apiBaseUrl && selectedIdentityCoords),
+  );
+  const { snapshot: pendingJoinAttackSystemSnapshot } = useBackendDataQuery(
+    backendData && pendingJoinAttack && pendingJoinAttack.coords.galaxy > 0 && pendingJoinAttack.coords.system > 0
+      ? backendData.queries.system<ApiSystemResponse>(pendingJoinAttack.coords.galaxy, pendingJoinAttack.coords.system, { detail: "full" })
+      : undefined,
+    Boolean(backendData && pendingJoinAttack),
+  );
+  const pendingJoinAttackTarget = useMemo(
+    () =>
+      pendingJoinAttack
+        ? joinAttackTargetFromSystemPayload(pendingJoinAttackSystemSnapshot?.data, pendingJoinAttack.targetPlanetId, pendingJoinAttack.coords)
+        : undefined,
+    [pendingJoinAttack, pendingJoinAttackSystemSnapshot?.data],
   );
   const homePlanetIdentity = useMemo(() => {
     const fallback = selectedIdentityPlanet ? planetFromSettlementPlanet(selectedIdentityPlanet) : undefined;
@@ -5084,22 +5102,14 @@ export function PlayableMvpApp({
     refreshInfrastructureState,
     refreshOnChainState,
   };
-  const previousOnChainRefreshIdentityRef = useRef({
-    account,
-    activePlanetId,
-    apiBaseUrl,
-  });
-  const previousInfrastructureRefreshIdentityRef = useRef({
-    account,
-    activePlanetId,
-    apiBaseUrl,
-  });
+  const previousOnChainRefreshIdentityRef = useRef<{ account: string | undefined; activePlanetId: string | undefined; apiBaseUrl: string | undefined }>();
+  const previousInfrastructureRefreshIdentityRef = useRef<{ account: string | undefined; activePlanetId: string | undefined; apiBaseUrl: string | undefined }>();
 
   useEffect(() => {
     const previous = previousOnChainRefreshIdentityRef.current;
     const current = { account, activePlanetId, apiBaseUrl };
     previousOnChainRefreshIdentityRef.current = current;
-    if (!shouldRefreshPlanetStateForIdentityChange(initialPageRefreshRef.current.page, previous, current)) return;
+    if (previous && !shouldRefreshPlanetStateForIdentityChange(initialPageRefreshRef.current.page, previous, current)) return;
     void initialPageRefreshRef.current.refreshOnChainState();
   }, [account, activePlanetId, apiBaseUrl]);
 
@@ -5108,7 +5118,7 @@ export function PlayableMvpApp({
     const previous = previousInfrastructureRefreshIdentityRef.current;
     const current = { account, activePlanetId, apiBaseUrl };
     previousInfrastructureRefreshIdentityRef.current = current;
-    if (!shouldRefreshPlanetStateForIdentityChange(initialPageRefreshRef.current.page, previous, current)) return;
+    if (previous && !shouldRefreshPlanetStateForIdentityChange(initialPageRefreshRef.current.page, previous, current)) return;
     void initialPageRefreshRef.current.refreshInfrastructureState();
   }, [account, activePlanetId, apiBaseUrl, pageStateHydrationReady]);
 
@@ -6384,10 +6394,10 @@ export function PlayableMvpApp({
 
   const handleRecoverPaidAllianceInvites = useCallback(async () => {
     if (!provider || !account || !apiBaseUrl) return null;
-    const invites = await recoverPaidAllianceInvites(apiBaseUrl, provider, account);
+    const invites = await backendData!.recoverPaidAllianceInvites(account, provider);
     const links = invites.map((invite) => paidAllianceInviteLink(invite.secret, window.location.origin));
     return links.length ? links.join("\n") : null;
-  }, [account, apiBaseUrl, provider]);
+  }, [account, apiBaseUrl, backendData, provider]);
 
   const handleWithdrawPaidAllianceBonus = useCallback(
     (amount: PaidAllianceBonusAmount) => {
@@ -8133,26 +8143,14 @@ export function PlayableMvpApp({
       // fleet to commit, rather than sending a default counterplay fleet on click.
       setGalaxyAction({ status: "idle" });
       const coords = targetCoords ?? { galaxy: 0, system: 0, position: 0 };
-      const cachedPayload = backendData?.value<ApiSystemResponse>("system", coords.galaxy, coords.system, { detail: "full" });
-      const cachedTarget = joinAttackTargetFromSystemPayload(cachedPayload, mission.targetPlanetId, coords);
       setPendingJoinAttack({
         attackMissionId: mission.missionId,
         targetPlanetId: mission.targetPlanetId,
         coords,
         mission,
-        target: cachedTarget,
       });
-
-      if (cachedTarget || !apiBaseUrl || coords.galaxy <= 0 || coords.system <= 0) return;
-      void backendData!
-        .system(coords.galaxy, coords.system, { detail: "full" })
-        .then((payload) => {
-          const target = joinAttackTargetFromSystemPayload(payload, mission.targetPlanetId, coords);
-          setPendingJoinAttack((current) => (current?.attackMissionId === mission.missionId ? { ...current, target } : current));
-        })
-        .catch((error) => console.error(error));
     },
-    [account, apiBaseUrl, backendData, gameContract, onChainSettlement?.homePlanetId, provider],
+    [account, gameContract, onChainSettlement?.homePlanetId, provider],
   );
 
   const handleConfirmJoinAttack = useCallback(
@@ -8205,7 +8203,7 @@ export function PlayableMvpApp({
               account,
               originPlanet: selectedManagedPlanet,
               originPlanetId,
-              targetPlanet: pending.target,
+              targetPlanet: pendingJoinAttackTarget,
               targetPlanetId: pending.targetPlanetId,
               targetCoords: pending.coords,
               missionType: "AcsAttack",
@@ -8232,7 +8230,7 @@ export function PlayableMvpApp({
         if (completed) closeJoinAttack();
       })();
     },
-    [account, activePlanetId, gameContract, moonAttackParityEnabled, pendingJoinAttack, provider, runGalaxyTransaction, selectedManagedPlanet, shipyardState?.technologyLevels],
+    [account, activePlanetId, gameContract, moonAttackParityEnabled, pendingJoinAttack, pendingJoinAttackTarget, provider, runGalaxyTransaction, selectedManagedPlanet, shipyardState?.technologyLevels],
   );
 
   const handleNavigate = useCallback(
@@ -8652,7 +8650,7 @@ export function PlayableMvpApp({
               moonState,
               shipyardState,
             }),
-            targetMoonAvailable: pendingJoinAttack.mission.targetIsMoon === true ? Boolean(pendingJoinAttack.target?.hasMoon) : false,
+            targetMoonAvailable: pendingJoinAttack.mission.targetIsMoon === true ? Boolean(pendingJoinAttackTarget?.hasMoon) : false,
             targetSelectionLocked: true,
           }}
           coords={pendingJoinAttack.coords}
@@ -8668,7 +8666,7 @@ export function PlayableMvpApp({
           resources={originMissionResources}
           shipyardState={shipyardState}
           submitBlocker={missionLaunchBlocker}
-          target={pendingJoinAttack.target}
+          target={pendingJoinAttackTarget}
         />
       );
     }

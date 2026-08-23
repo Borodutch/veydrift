@@ -103,6 +103,25 @@ describe("GameStateStore", () => {
     expect(queuedStarted).toBe(false);
   });
 
+  test("does not cancel a queued canonical read while another subscriber remains", async () => {
+    const store = new GameStateStore(new GameStateReadScheduler(1));
+    const blocker = deferred<string>();
+    const active = store.read("active", () => blocker.promise);
+    let queuedStarted = false;
+    const queued = store.read("shared", async () => {
+      queuedStarted = true;
+      return "shared";
+    });
+    const unsubscribe = store.subscribeKey("shared", () => {});
+
+    expect(store.cancelQueuedReadIfUnobserved("shared")).toBe(false);
+    blocker.resolve("active");
+    await expect(active).resolves.toBe("active");
+    await expect(queued).resolves.toBe("shared");
+    expect(queuedStarted).toBe(true);
+    unsubscribe();
+  });
+
   test("terminal disposal cancels queued reads before they begin transport", async () => {
     const store = new GameStateStore(new GameStateReadScheduler(1));
     const blocker = deferred<string>();

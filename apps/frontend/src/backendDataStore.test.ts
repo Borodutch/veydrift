@@ -423,7 +423,7 @@ describe("BackendDataStore", () => {
     }
   });
 
-  test("does not fan an older overview response into newer canonical snapshots", async () => {
+  test("joins an in-flight overview transport for an exact fresh read", async () => {
     const originalFetch = globalThis.fetch;
     let resolveOlder!: (response: Response) => void;
     const olderResponse = new Promise<Response>((resolve) => {
@@ -446,15 +446,16 @@ describe("BackendDataStore", () => {
       const older = store.overview("0xabc", "planet-7");
       await Promise.resolve();
       const newer = store.overview("0xabc", "planet-7", { fresh: true });
-      await expect(newer).resolves.toMatchObject({
-        planetsResponse: { revision: 2 },
-      });
+      expect(requests).toBe(1);
       resolveOlder(Response.json(overview(1)));
       await expect(older).resolves.toMatchObject({
         planetsResponse: { revision: 1 },
       });
+      await expect(newer).resolves.toMatchObject({
+        planetsResponse: { revision: 1 },
+      });
 
-      expect(store.snapshot<{ planets: unknown[]; revision: number }>(store.key("planets", "0xabc"))?.data).toEqual({ planets: [], revision: 2 });
+      expect(store.snapshot<{ planets: unknown[]; revision: number }>(store.key("planets", "0xabc"))?.data).toEqual({ planets: [], revision: 1 });
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -486,6 +487,30 @@ describe("BackendDataStore", () => {
       expect(store.snapshot(store.queries.planets(wallet).key)?.data).toMatchObject({ homePlanetId: "planet-7" });
       expect(store.snapshot(store.queries.queues(wallet, "planet-7").key)?.data).toMatchObject({ homePlanetId: "planet-7" });
       expect(store.snapshot(store.queries.fleetVisibility(wallet).key)?.data).toMatchObject({ incoming: [] });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("keeps the prior canonical settlement when an aggregate overview is incomplete", async () => {
+    const originalFetch = globalThis.fetch;
+    const wallet = "0xabc";
+    const settlement = { wallet, hasFirstPlanet: true, homePlanetId: "planet-7", planet: { planetId: "planet-7" } };
+    const overview = {
+      fleetVisibility: { incoming: [], joinableAttacks: [], outgoing: [], returning: [] },
+      planetsResponse: { wallet, homePlanetId: "planet-7", planets: [] },
+      queues: { wallet, homePlanetId: "planet-7", building: null, defense: null, ship: null, research: null },
+    };
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const path = new URL(String(input)).pathname;
+      return Response.json(path.endsWith("/settlement") ? settlement : overview);
+    }) as unknown as typeof fetch;
+
+    try {
+      const store = new BackendDataStore("https://api.test");
+      await store.settlement(wallet);
+      await expect(store.overview(wallet, "planet-7")).resolves.toMatchObject({ planetsResponse: { homePlanetId: "planet-7" } });
+      expect(store.snapshot(store.queries.settlement(wallet).key)?.data).toMatchObject({ homePlanetId: "planet-7" });
     } finally {
       globalThis.fetch = originalFetch;
     }

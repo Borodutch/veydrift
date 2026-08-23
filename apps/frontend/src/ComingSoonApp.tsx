@@ -17,7 +17,7 @@ import {
 import { RetroCdBoxHero, type CdView } from "./components/RetroCdBoxHero";
 import { TELEGRAM_SUPPORT_URL, WHITEPAPER_URL } from "./supportLinks";
 import { playableApiUrl } from "./runtimeConfig";
-import { backendDataStoreFor } from "./backendDataStore";
+import { backendDataStoreFor, retainBackendDataStore } from "./backendDataStore";
 import { useBackendDataQuery } from "./useBackendDataQuery";
 
 const alphaUrl = "https://test.veydrift.com";
@@ -149,6 +149,11 @@ export function ComingSoonApp({
   useLandingReveals();
   useLandingCardTilt();
   const backendData = useMemo(() => backendDataStoreFor(playableApiUrl), []);
+
+  // The public landing surface is a full application root too. Retain its
+  // store so a remount/config transition releases listeners, pollers and
+  // cached resources through the same lifecycle as the playable client.
+  useEffect(() => retainBackendDataStore(playableApiUrl), []);
 
   useEffect(() => backendData.connectChainEvents("public"), [backendData]);
 

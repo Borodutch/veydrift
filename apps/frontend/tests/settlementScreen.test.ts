@@ -251,6 +251,7 @@ describe("settlement screen mode", () => {
         planet: null,
       }),
     ).toEqual({ kind: "not-settled" });
+    expect(indexedSettlementState(undefined)).toEqual({ kind: "indexing" });
   });
 
   test("keeps post-settlement zero-resource placeholders in indexing state", () => {
@@ -784,7 +785,7 @@ describe("settlement screen mode", () => {
   test("uses backend settlement state instead of Mini App read-provider fallbacks", async () => {
     const source = await Bun.file(new URL("../src/FirstPlanetSettlementApp.tsx", import.meta.url)).text();
 
-    expect(source).toContain("readIndexedSettlementState");
+    expect(source).toContain("referralData.queries.settlement(account)");
     expect(source).toContain("queries.settlementFundingProjection(");
     expect(source).toContain("settlementTransactionOptions(funding, redemptions.referral, redemptions.allianceInvite)");
     expect(source).not.toContain("readSettlementStateWithMiniAppFallback");

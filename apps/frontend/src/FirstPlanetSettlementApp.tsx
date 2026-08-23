@@ -342,6 +342,11 @@ export function FirstPlanetSettlementApp() {
   const walletBootstrapAttempts = useRef(0);
   const walletBootstrapRetryTimer = useRef<ReturnType<typeof setTimeout> | undefined>();
   const currentChainId = useRef<string>();
+  // Every provider/account/chain refresh advances this epoch before it starts
+  // I/O. Settlement screens may keep UI-only animation/form state locally,
+  // but an old identity must never publish an indexed backend projection into
+  // the newly selected wallet session.
+  const settlementIdentityEpoch = useRef(0);
 
   const account = "account" in wallet ? wallet.account : undefined;
   const hasOverview = planet.kind === "success" || planet.kind === "already-settled";
@@ -366,6 +371,26 @@ export function FirstPlanetSettlementApp() {
       releaseRuntime();
     };
   }, [settlementConfigState.apiUrl]);
+  // Indexed settlement is a canonical store descriptor. `planet` below now
+  // carries only presentation/transaction phase; it is reconciled from this
+  // snapshot instead of owning a second backend cache or poller.
+  const settlementQuery = useBackendDataQuery<WalletSettlementResponse>(
+    referralData && account && !hasOverview ? referralData.queries.settlement(account) : undefined,
+    Boolean(referralData && account && !hasOverview),
+  );
+  useEffect(() => {
+    if (!account || !settlementQuery.snapshot?.data) return;
+    const indexed = indexedSettlementState(settlementQuery.snapshot.data);
+    if (indexed.kind === "settled") {
+      setPlanet((current) => current.kind === "success" ? current : { kind: "already-settled", planet: indexed.planet });
+      return;
+    }
+    if (indexed.kind === "indexing") {
+      setPlanet((current) => current.kind === "success" ? current : { kind: "pending", label: POST_SETTLEMENT_INDEXING_LABEL });
+      return;
+    }
+    setPlanet((current) => current.kind === "success" || current.kind === "pending" ? current : { kind: "not-settled" });
+  }, [account, settlementQuery.snapshot?.data]);
   const referralDashboardQuery = useBackendDataQuery(
     referralData && account ? referralData.queries.referralDashboard(account) : undefined,
     Boolean(referralData && hasOverview && account),
@@ -869,6 +894,7 @@ export function FirstPlanetSettlementApp() {
   }
 
   async function refreshWallet(injected = provider, preferredAccount?: string, context = walletProviderContext()) {
+    const identityEpoch = ++settlementIdentityEpoch.current;
     if (!injected) {
       walletBootstrapAttempts.current = 0;
       setWallet({
@@ -881,6 +907,7 @@ export function FirstPlanetSettlementApp() {
       const accounts = preferredAccount ? [preferredAccount] : await getCurrentAccounts(injected, WALLET_BOOTSTRAP_READ_TIMEOUT_MS);
 
       if (!accounts[0]) {
+        currentAccount.current = undefined;
         walletBootstrapAttempts.current = 0;
         setWallet({
           kind: "disconnected",
@@ -903,6 +930,7 @@ export function FirstPlanetSettlementApp() {
       }
 
       const chainId = await getChainId(injected, WALLET_BOOTSTRAP_READ_TIMEOUT_MS);
+      if (identityEpoch !== settlementIdentityEpoch.current) return;
       currentChainId.current = chainId;
       // The flaky wallet reads (accounts + chain) both succeeded; stop counting
       // bootstrap retries.
@@ -974,11 +1002,12 @@ export function FirstPlanetSettlementApp() {
       setPlanet({
         kind: "checking",
       });
+      currentAccount.current = accounts[0];
       setWallet({
         kind: "connected",
         account: accounts[0],
       });
-      await refreshPlanet(injected, accounts[0]);
+      await refreshPlanet(injected, accounts[0], identityEpoch);
     } catch (error) {
       console.error("Wallet bootstrap failed", error);
 
@@ -1014,13 +1043,17 @@ export function FirstPlanetSettlementApp() {
     }
   }
 
-  async function refreshPlanet(injected: Eip1193Provider, connectedAccount: string) {
+  async function refreshPlanet(injected: Eip1193Provider, connectedAccount: string, identityEpoch = settlementIdentityEpoch.current) {
+    const isCurrentIdentity = () =>
+      identityEpoch === settlementIdentityEpoch.current && currentAccount.current?.toLowerCase() === connectedAccount.toLowerCase();
     setPlanet({
       kind: "checking",
     });
 
     try {
-      const indexedSettlement = await readIndexedSettlementState(settlementConfigState.apiUrl, connectedAccount);
+      const settlement = await referralData?.queries.settlement(connectedAccount).read();
+      if (!isCurrentIdentity()) return;
+      const indexedSettlement = settlement ? indexedSettlementState(settlement) : undefined;
       if (!indexedSettlement) {
         throw new Error("Settlement state is unavailable because the game API is not configured.");
       }
@@ -1036,11 +1069,13 @@ export function FirstPlanetSettlementApp() {
         });
         try {
           const settled = await waitForIndexedSettledPlanet(settlementConfigState.apiUrl, connectedAccount);
+          if (!isCurrentIdentity()) return;
           setPlanet({
             kind: "already-settled",
             planet: settled.planet,
           });
         } catch (error) {
+          if (!isCurrentIdentity()) return;
           setPlanet({
             kind: "error",
             message: walletRequestErrorMessage(error),
@@ -1053,6 +1088,8 @@ export function FirstPlanetSettlementApp() {
         await refreshSettlementFunding(injected, connectedAccount);
       }
     } catch (error) {
+      if (!isCurrentIdentity()) return;
+      if (error instanceof DOMException && error.name === "AbortError") return;
       console.error("Indexed settlement state read failed", error);
       setPlanet({
         kind: "error",
@@ -1271,10 +1308,13 @@ export function FirstPlanetSettlementApp() {
       });
       if (!completed) return;
 
-      const settlement = data.value<WalletSettlementResponse>("settlement", wallet.account);
-      if (!settlement) {
-        throw new Error(POST_SETTLEMENT_INDEXING_TIMEOUT_MESSAGE);
-      }
+      // Read through the named descriptor instead of reaching into the raw
+      // snapshot map. The indexing plan above already waited for this API
+      // state; the fresh read simply joins any trailing canonical transport.
+      const settlement = await data.settlement(wallet.account, {
+        fresh: true,
+        priority: "transaction",
+      });
       const indexedSettlement = indexedSettlementState(settlement);
       if (indexedSettlement.kind !== "settled") {
         throw new Error(POST_SETTLEMENT_INDEXING_TIMEOUT_MESSAGE);
@@ -1337,10 +1377,14 @@ export function FirstPlanetSettlementApp() {
   }
 
   async function refreshSettlementLaunchInfo(connectedAccount: string, currentPlanet: PlanetState): Promise<SettlementFundingState | undefined> {
+    const identityEpoch = settlementIdentityEpoch.current;
     const providerAtStart = provider;
-    const currentIdentity = () => provider === providerAtStart && currentAccount.current?.toLowerCase() === connectedAccount.toLowerCase();
+    const currentIdentity = () =>
+      identityEpoch === settlementIdentityEpoch.current && provider === providerAtStart && currentAccount.current?.toLowerCase() === connectedAccount.toLowerCase();
     try {
-      const settlement = await readIndexedSettlementState(settlementConfigState.apiUrl, connectedAccount);
+      const settlementSnapshot = await referralData?.queries.settlement(connectedAccount).read();
+      if (!currentIdentity()) return undefined;
+      const settlement = settlementSnapshot ? indexedSettlementState(settlementSnapshot) : undefined;
       if (!settlement) {
         throw new Error("Settlement state is unavailable because the game API is not configured.");
       }
@@ -2461,13 +2505,11 @@ function formatEth(wei: bigint): string {
 
 type IndexedSettlementState = { kind: "settled"; planet: PlanetSummary } | { kind: "indexing" } | { kind: "not-settled" };
 
-async function readIndexedSettlementState(apiUrl: string | undefined, account: string): Promise<IndexedSettlementState | undefined> {
-  if (!apiUrl) return undefined;
-
-  return indexedSettlementState(await backendDataStoreFor(apiUrl).settlement(account));
-}
-
-export function indexedSettlementState(settlement: WalletSettlementResponse): IndexedSettlementState {
+/** An unavailable indexed response is never treated as permission to settle
+ * again. Keep the launch gate in indexing until the canonical descriptor has
+ * a complete response. */
+export function indexedSettlementState(settlement: WalletSettlementResponse | null | undefined): IndexedSettlementState {
+  if (!settlement) return { kind: "indexing" };
   if (settlement.homePlanetId || settlement.hasFirstPlanet) {
     if (!hasHydratedIndexedSettlementResources(settlement)) {
       return { kind: "indexing" };

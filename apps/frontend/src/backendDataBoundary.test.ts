@@ -96,6 +96,24 @@ describe("frontend backend-data boundary", () => {
     expect(violations).toEqual([]);
   });
 
+  test("keeps fresh reads, session presence and invite recovery in the canonical store", async () => {
+    const appSource = await Bun.file(new URL("./PlayableMvpApp.tsx", import.meta.url)).text();
+    const activitySource = await Bun.file(new URL("./components/PlayerActivityDialog.tsx", import.meta.url)).text();
+    const landingSource = await Bun.file(new URL("./ComingSoonApp.tsx", import.meta.url)).text();
+    const storeSource = await Bun.file(new URL("./backendDataStore.ts", import.meta.url)).text();
+
+    expect(storeSource).toContain("dedupe: true");
+    expect(storeSource).toContain("cancelQueuedReadIfUnobserved(key)");
+    expect(storeSource).toContain("dismissPlayerActivityAwayWindow(wallet: string)");
+    expect(storeSource).toContain("activityAwayWindowConsumedInSession(wallet)");
+    expect(storeSource).toContain("async recoverPaidAllianceInvites(wallet: string, provider: Eip1193Provider)");
+    expect(activitySource).toContain("backendData?.dismissPlayerActivityAwayWindow(wallet)");
+    expect(landingSource).toContain("retainBackendDataStore(playableApiUrl)");
+    expect(appSource).toContain("backendData!.recoverPaidAllianceInvites(account, provider)");
+    expect(appSource).not.toContain('backendData?.value<ApiSystemResponse>("system"');
+    expect(appSource).toContain("pendingJoinAttackSystemSnapshot");
+  });
+
   test("migrated surfaces subscribe to canonical snapshots without response shadow state", async () => {
     const appSource = await Bun.file(new URL("./PlayableMvpApp.tsx", import.meta.url)).text();
     const galaxySource = await Bun.file(new URL("./components/GalaxyView.tsx", import.meta.url)).text();

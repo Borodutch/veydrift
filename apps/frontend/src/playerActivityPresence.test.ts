@@ -8,6 +8,19 @@ const wallet = "0x2222222222222222222222222222222222222222";
 describe("player activity presence", () => {
   test("consumes one dialog claim per wallet while retaining silent heartbeats", async () => {
     const originalFetch = globalThis.fetch;
+    const runtime = globalThis as typeof globalThis & { sessionStorage?: Storage };
+    const originalSessionStorage = runtime.sessionStorage;
+    const session = new Map<string, string>();
+    runtime.sessionStorage = {
+      clear: () => session.clear(),
+      getItem: (key) => session.get(key) ?? null,
+      key: () => null,
+      get length() {
+        return session.size;
+      },
+      removeItem: (key) => session.delete(key),
+      setItem: (key, value) => session.set(key, value),
+    } as Storage;
     let calls = 0;
     globalThis.fetch = (async () => {
       calls += 1;
@@ -28,8 +41,15 @@ describe("player activity presence", () => {
       });
       await expect(store.claimPlayerActivityAwayWindow(wallet)).resolves.toBeNull();
       expect(calls).toBe(1);
+
+      // Store disposal/remount must not replay a previously claimed window.
+      const remounted = new BackendDataStore("https://api.example.test");
+      await expect(remounted.claimPlayerActivityAwayWindow(wallet)).resolves.toBeNull();
+      expect(calls).toBe(1);
     } finally {
       globalThis.fetch = originalFetch;
+      if (originalSessionStorage === undefined) delete runtime.sessionStorage;
+      else runtime.sessionStorage = originalSessionStorage;
     }
   });
 

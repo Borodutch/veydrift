@@ -62,7 +62,6 @@ export function PlayerActivityCenter({
   wallet?: string | undefined;
 }) {
   const [historyPage, setHistoryPage] = useState(1);
-  const [awayDismissed, setAwayDismissed] = useState(false);
   const [tabVisible, setTabVisible] = useState(() => typeof document === "undefined" || document.visibilityState === "visible");
   const identityKey = apiUrl && wallet ? `${apiUrl}:${wallet.toLowerCase()}` : "";
   const backendData = useMemo(() => apiUrl ? backendDataStoreFor(apiUrl) : undefined, [apiUrl]);
@@ -85,12 +84,11 @@ export function PlayerActivityCenter({
         includeProjected: true,
       })
       : undefined,
-    Boolean(presenceReady && wallet && awaySince && !awayDismissed),
+    Boolean(presenceReady && wallet && awaySince),
   );
 
   useEffect(() => {
     setHistoryPage(1);
-    setAwayDismissed(false);
   }, [identityKey]);
 
   useEffect(() => {
@@ -108,12 +106,12 @@ export function PlayerActivityCenter({
   const awayResponse = awayQuery.snapshot?.data;
   const state: ActivityDialogState | null = historyOpen
     ? { mode: "history", response: historyQuery.snapshot?.data }
-    : !awayDismissed && awaySince && awayResponse?.items.length
+    : awaySince && awayResponse?.items.length
       ? { mode: "away", response: awayResponse, since: awaySince }
       : null;
   if (!state) return null;
 
-  const close = state.mode === "history" ? onHistoryClose : () => setAwayDismissed(true);
+  const close = state.mode === "history" ? onHistoryClose : () => backendData?.dismissPlayerActivityAwayWindow(wallet);
   return (
     <PlayerActivityDialog
       error={state.mode === "history" ? historyQuery.snapshot?.error : undefined}
