@@ -33,6 +33,7 @@ import {
   settlementFundingWithWalletBalance,
   redeemPaidAllianceInvite,
   redeemReferralCode,
+  recoverPaidAllianceInvites,
   storePaidAllianceInvite,
   fetchRiftState,
   fetchSettlementFundingState,
@@ -90,6 +91,7 @@ import {
 import { fetchEntityMedia, normalizeEntityMediaId, updateEntityMedia, type EntityMediaKind, type EntityMediaResponse } from "./entityMedia";
 import type { Eip1193Provider } from "./walletFlow";
 import { GameStateStore, type GameStateEntry, type GameStatePriority } from "./gameStateStore";
+import { playerActivityAwaySince } from "./playerActivityPresence";
 import { backendResourceSnapshot, promoteCanonicalPlanetResources, type BackendResourceState, type CanonicalPlanetResourceSnapshot, type CanonicalPlanetResourceStore } from "./planetResourceStore";
 import {
   isResourceSnapshotIndexedAfterTransaction,
@@ -125,6 +127,12 @@ type WalletReadOptions = {
   timeoutMs?: number;
   fresh?: boolean;
   signal?: AbortSignal;
+  priority?: GameStatePriority;
+};
+
+type SystemReadOptions = {
+  detail?: "full";
+  /** Scheduling policy belongs to the store, never the backend request/key. */
   priority?: GameStatePriority;
 };
 
@@ -432,7 +440,10 @@ export class BackendDataStore {
     settlementFunding: (wallet: string) => this.query(this.key("settlement-funding", wallet), () => this.settlementFunding(wallet)),
     settlementFundingProjection: (wallet: string, provider: Eip1193Provider, migrationAddress: string | undefined, providerIdentity: string | undefined) =>
       this.query(this.key("settlement-funding-projection", wallet, migrationAddress, providerIdentity), () => this.settlementFundingForProvider(wallet, provider, migrationAddress, providerIdentity)),
-    system: <T = unknown>(galaxy: number, system: number, options: { detail?: "full" } = {}) => this.query(this.key("system", galaxy, system, options), () => this.system<T>(galaxy, system, options)),
+    system: <T = unknown>(galaxy: number, system: number, options: SystemReadOptions = {}) => {
+      const { priority: _priority, ...identity } = options;
+      return this.query(this.key("system", galaxy, system, identity), () => this.system<T>(galaxy, system, options));
+    },
     walletPlanetSync: (wallet: string, planetId?: string, options: WalletPlanetSyncOptions = {}) =>
       this.query(this.key("wallet-planet-sync", wallet, planetId, options), () => this.walletPlanetSync(wallet, planetId, options)),
     watchedPlanets: (wallet: string, options: { page?: number; pageSize?: number } = {}) => this.query(this.key("watched-planets", wallet, options), () => this.watchedPlanets(wallet, options)),
@@ -749,7 +760,7 @@ export class BackendDataStore {
         this.trailingInvalidations.add(resource.key);
         continue;
       }
-      const refresh = this.readRegisteredResource(resource, options, false);
+      const refresh = this.readRegisteredResource(resource, options, true);
       if (refresh) reads.push(refresh);
     }
     return Promise.allSettled(reads);
@@ -1045,6 +1056,10 @@ export class BackendDataStore {
     return this.state.cancelQueuedRead(key);
   }
 
+  cancelQueuedReadIfUnobserved(key: string): boolean {
+    return this.state.cancelQueuedReadIfUnobserved(key);
+  }
+
   key(kind: string, ...parts: unknown[]): string {
     return cacheKey(kind, ...parts);
   }
@@ -1212,6 +1227,30 @@ export class BackendDataStore {
       }
     });
     return reservation;
+  }
+
+  /** Recover paid-invite secrets through the same wallet-scoped action gate
+   * as contract writes. The response is a short-lived canonical snapshot and
+   * is cleared with its wallet context. */
+  async recoverPaidAllianceInvites(wallet: string, provider: Eip1193Provider): Promise<Array<{ commitment: string; secret: string }>> {
+    const normalizedWallet = wallet.toLowerCase();
+    const recovered = await this.runExclusiveTransaction(
+      "paid-alliance-invite-recovery",
+      "Paid alliance invite recovery",
+      async () => {
+        if (this.contextWallet && this.contextWallet !== normalizedWallet) {
+          throw new Error("Wallet changed before invite recovery could begin.");
+        }
+        const invites = await recoverPaidAllianceInvites(this.apiBaseUrl, provider, wallet);
+        if (this.contextWallet && this.contextWallet !== normalizedWallet) {
+          throw new Error("Wallet changed while invite recovery was in progress.");
+        }
+        this.commitBackendSnapshot("paid-alliance-invite-recovery", invites, [wallet], { wallet });
+        return invites;
+      },
+      wallet,
+    );
+    return recovered ?? [];
   }
 
   /**
@@ -1493,7 +1532,7 @@ export class BackendDataStore {
     }
     const resource = this.resources.get(key);
     if (!resource) return;
-    void this.readRegisteredResource(resource, { priority: "transaction" }, false).catch(() => {
+    void this.readRegisteredResource(resource, { priority: "transaction" }, true).catch(() => {
       // The canonical resource snapshot keeps last-good data and its normal
       // failure state. A later poll/manual retry can recover transient errors.
     });
@@ -1565,11 +1604,27 @@ export class BackendDataStore {
   settlement(wallet: string, options: WalletReadOptions = {}): Promise<WalletSettlementResponse> {
     const key = cacheKey("settlement", wallet);
     return this.refresh(key, (signal) => fetchWalletSettlement(this.apiBaseUrl, wallet, { ...options, signal }), {
-      dedupe: !options.fresh,
+      // Fresh means "do not trust a previously completed snapshot". It must
+      // not mean "issue a second physical request" when the same canonical
+      // descriptor is already reading.
+      dedupe: true,
       deadlineMs: options.timeoutMs,
       priority: "selected-planet",
       wallet,
     }).then((state) => {
+      // A queued-only resource can be retired after its final subscriber
+      // leaves before transport starts. Treat that normal lifecycle outcome
+      // as an unavailable indexed settlement, never as a real payload to
+      // dereference or permission to launch another settlement.
+      if (!state) {
+        return {
+          hasFirstPlanet: true,
+          homePlanetId: null,
+          indexer: { indexedState: "reconciling", safeToServeIndexedState: false },
+          planet: null,
+          wallet,
+        } satisfies WalletSettlementResponse;
+      }
       this.promoteResourceState(state.planet, {
         planetId: state.homePlanetId,
         sourcePriority: 20,
@@ -1591,7 +1646,7 @@ export class BackendDataStore {
           signal,
         }),
       {
-        dedupe: !options.fresh,
+        dedupe: true,
         deadlineMs: options.timeoutMs,
         planetId,
         priority: "selected-planet",
@@ -1628,7 +1683,7 @@ export class BackendDataStore {
       key,
       () => this.readWalletPlanetSync(wallet, activePlanetId, options),
       {
-        dedupe: !options.fresh,
+        dedupe: true,
         planetId: readPlanetId,
         priority: "selected-planet",
         wallet,
@@ -1706,23 +1761,25 @@ export class BackendDataStore {
 
   private publishWalletPlanetSyncSnapshot(wallet: string, planetId: string | undefined, snapshot: WalletPlanetSyncSnapshot): void {
     this.commitBackendSnapshot("planets", snapshot.planetsResponse, [wallet], { wallet });
-    this.commitBackendSnapshot("settlement", snapshot.settlement, [wallet], { wallet });
     this.commitBackendSnapshot("queues", snapshot.queues, [wallet, planetId], { planetId, wallet });
     if (snapshot.fleetVisibility) this.commitBackendSnapshot("fleet-visibility", snapshot.fleetVisibility, [wallet, false], { wallet });
     this.promoteWalletPlanetResources(wallet, snapshot.planetsResponse.planets);
-    this.promoteResourceState(snapshot.settlement.planet, {
-      planetId: snapshot.settlement.homePlanetId,
-      sourcePriority: 20,
-      wallet,
-    });
+    // An aggregate may be intentionally partial while the index catches up.
+    // Never erase or dereference the canonical settlement descriptor until its
+    // own indexed subdocument is present.
+    if (snapshot.settlement) {
+      this.commitBackendSnapshot("settlement", snapshot.settlement, [wallet], { wallet });
+      this.promoteResourceState(snapshot.settlement.planet, {
+        planetId: snapshot.settlement.homePlanetId,
+        sourcePriority: 20,
+        wallet,
+      });
+    }
   }
 
   private publishOverviewSnapshot(wallet: string, planetId: string | undefined, snapshot: WalletOverviewSnapshotResponse): void {
     const normalizedWallet = wallet.toLowerCase();
     this.commitBackendSnapshot("planets", snapshot.planetsResponse, [wallet], {
-      wallet,
-    });
-    this.commitBackendSnapshot("settlement", snapshot.settlement, [wallet], {
       wallet,
     });
     this.commitBackendSnapshot("queues", snapshot.queues, [wallet, planetId], {
@@ -1731,17 +1788,22 @@ export class BackendDataStore {
     });
     this.commitBackendSnapshot("fleet-visibility", snapshot.fleetVisibility, [wallet, false], { wallet });
     this.promoteWalletPlanetResources(normalizedWallet, snapshot.planetsResponse.planets);
-    this.promoteResourceState(snapshot.settlement.planet, {
-      planetId: snapshot.settlement.homePlanetId,
-      sourcePriority: 20,
-      wallet: normalizedWallet,
-    });
+    if (snapshot.settlement) {
+      this.commitBackendSnapshot("settlement", snapshot.settlement, [wallet], {
+        wallet,
+      });
+      this.promoteResourceState(snapshot.settlement.planet, {
+        planetId: snapshot.settlement.homePlanetId,
+        sourcePriority: 20,
+        wallet: normalizedWallet,
+      });
+    }
   }
 
   planets(wallet: string, options: WalletReadOptions = {}): Promise<WalletPlanetsResponse> {
     const key = cacheKey("planets", wallet);
     return this.refresh(key, (signal) => fetchWalletPlanets(this.apiBaseUrl, wallet, { ...options, signal }), {
-      dedupe: !options.fresh,
+      dedupe: true,
       deadlineMs: options.timeoutMs,
       priority: "selected-planet",
       wallet,
@@ -1773,7 +1835,7 @@ export class BackendDataStore {
           signal,
         }),
       {
-        dedupe: !options.fresh,
+        dedupe: true,
         deadlineMs: options.timeoutMs,
         planetId,
         priority: options.priority ?? "selected-planet",
@@ -1793,7 +1855,7 @@ export class BackendDataStore {
           signal,
         }),
       {
-        dedupe: !options.fresh,
+        dedupe: true,
         deadlineMs: options.timeoutMs,
         planetId,
         priority: "selected-planet",
@@ -1820,7 +1882,7 @@ export class BackendDataStore {
           signal,
         }),
       {
-        dedupe: !options.fresh,
+        dedupe: true,
         deadlineMs: options.timeoutMs,
         planetId,
         priority: "selected-planet",
@@ -1848,7 +1910,7 @@ export class BackendDataStore {
           signal,
         }),
       {
-        dedupe: !options.fresh,
+        dedupe: true,
         deadlineMs: options.timeoutMs,
         planetId,
         priority: "selected-planet",
@@ -1875,7 +1937,7 @@ export class BackendDataStore {
           signal,
         }),
       {
-        dedupe: !options.fresh,
+        dedupe: true,
         deadlineMs: options.timeoutMs,
         planetId,
         priority: options.priority ?? "selected-planet",
@@ -1924,7 +1986,7 @@ export class BackendDataStore {
           signal,
         }),
       {
-        dedupe: !options.fresh,
+        dedupe: true,
         deadlineMs: options.timeoutMs,
         planetId,
         priority: "selected-planet",
@@ -1961,7 +2023,7 @@ export class BackendDataStore {
   alliance(wallet: string, options: WalletReadOptions = {}): Promise<ChainAllianceState> {
     const key = cacheKey("alliance", wallet);
     return this.refresh(key, (signal) => fetchAllianceState(this.apiBaseUrl, wallet, { ...options, signal }), {
-      dedupe: !options.fresh,
+      dedupe: true,
       deadlineMs: options.timeoutMs,
       priority: "background",
       wallet,
@@ -2075,6 +2137,26 @@ export class BackendDataStore {
     return this.key("player-activity-away-window", wallet);
   }
 
+  private playerActivityAwaySessionKey(wallet: string): string {
+    return `veydrift:activity-away-window:${this.apiBaseUrl}:${wallet.toLowerCase()}`;
+  }
+
+  private activityAwayWindowConsumedInSession(wallet: string): boolean {
+    try {
+      return typeof sessionStorage !== "undefined" && sessionStorage.getItem(this.playerActivityAwaySessionKey(wallet)) === "1";
+    } catch {
+      return false;
+    }
+  }
+
+  private markActivityAwayWindowConsumedInSession(wallet: string): void {
+    try {
+      if (typeof sessionStorage !== "undefined") sessionStorage.setItem(this.playerActivityAwaySessionKey(wallet), "1");
+    } catch {
+      // Private browsing/storage policy must not prevent normal activity tracking.
+    }
+  }
+
   /**
    * Atomically advances the shared server watermark and returns an away window
    * at most once for this wallet in this browser session. Retried background
@@ -2083,11 +2165,20 @@ export class BackendDataStore {
   claimPlayerActivityAwayWindow(wallet: string): Promise<PlayerActivityPresence | null> {
     const normalizedWallet = wallet.toLowerCase();
     const existing = this.activityPresenceClaims.get(normalizedWallet);
-    if (existing?.status === "consumed") return Promise.resolve(null);
+    if (existing?.status === "consumed" || this.activityAwayWindowConsumedInSession(wallet)) {
+      this.activityPresenceClaims.set(normalizedWallet, { status: "consumed" });
+      this.commitBackendSnapshot("player-activity-away-window", null, [wallet], { wallet });
+      return Promise.resolve(null);
+    }
     if (existing?.status === "pending") return existing.promise;
 
     const promise = this.recordPlayerActivityPresence(wallet).then((presence) => {
       this.activityPresenceClaims.set(normalizedWallet, { status: "consumed" });
+      // A real window is consumed at claim time, not only after the dialog
+      // closes. Route changes/remounts must never replay the same window.
+      if (playerActivityAwaySince(presence) !== undefined) {
+        this.markActivityAwayWindowConsumedInSession(wallet);
+      }
       this.commitBackendSnapshot("player-activity-away-window", presence, [wallet], { wallet });
       return presence;
     }).catch((error: unknown) => {
@@ -2100,6 +2191,15 @@ export class BackendDataStore {
     });
     this.activityPresenceClaims.set(normalizedWallet, { promise, status: "pending" });
     return promise;
+  }
+
+  /** Consume a claimed away window across dialog remounts and disposable API
+   * stores for this wallet/browser session. */
+  dismissPlayerActivityAwayWindow(wallet: string): void {
+    const normalizedWallet = wallet.toLowerCase();
+    this.markActivityAwayWindowConsumedInSession(wallet);
+    this.activityPresenceClaims.set(normalizedWallet, { status: "consumed" });
+    this.commitBackendSnapshot("player-activity-away-window", null, [wallet], { wallet });
   }
 
   recordPlayerActivityPresenceOnExit(wallet: string): void {
@@ -2136,17 +2236,18 @@ export class BackendDataStore {
     });
   }
 
-  system<T = unknown>(galaxy: number, system: number, options: { detail?: "full" } = {}): Promise<T> {
-    const key = cacheKey("system", galaxy, system, options);
+  system<T = unknown>(galaxy: number, system: number, options: SystemReadOptions = {}): Promise<T> {
+    const { priority = "background", ...requestOptions } = options;
+    const key = cacheKey("system", galaxy, system, requestOptions);
     return this.refresh(
       key,
       (signal) =>
         fetchSystemData(this.apiBaseUrl, galaxy, system, {
-          ...options,
+          ...requestOptions,
           signal,
         }) as Promise<T>,
       {
-        priority: "background",
+        priority,
       },
     );
   }
@@ -2186,7 +2287,7 @@ export class BackendDataStore {
   attackProtection(wallet: string, targetPlanetId: string, targetIsMoon = false, options: WalletReadOptions = {}): Promise<AttackProtectionStatus> {
     const key = cacheKey("attack-protection", wallet, targetPlanetId, targetIsMoon);
     return this.refresh(key, (signal) => fetchAttackProtectionStatus(this.apiBaseUrl, wallet, targetPlanetId, targetIsMoon, signal), {
-      dedupe: !options.fresh,
+      dedupe: true,
       deadlineMs: options.timeoutMs,
       planetId: targetPlanetId,
       priority: options.priority ?? "transaction",
@@ -2206,7 +2307,7 @@ export class BackendDataStore {
           signal,
         }),
       {
-        dedupe: !options.fresh,
+        dedupe: true,
         deadlineMs: options.timeoutMs,
         priority: "mission-control",
         wallet,

@@ -51,7 +51,12 @@ export function useBackendDataQuery<T>(
     // for another subscriber (or the next route), but remove queued work that
     // has never touched the network when this route is replaced.
     return () => {
-      store.cancelQueuedRead(key);
+      // `useBackendDataSnapshot` releases its subscription from a passive
+      // effect. Let that cleanup run first, then cancel only if this was the
+      // final consumer of a request that has not started transport yet.
+      // Otherwise a route transition can cancel a shared descriptor while an
+      // already-mounted screen is still waiting on it.
+      setTimeout(() => store.cancelQueuedReadIfUnobserved(key), 0);
     };
   }, [key, refetch, store]);
 

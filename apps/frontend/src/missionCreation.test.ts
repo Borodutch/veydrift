@@ -395,7 +395,7 @@ describe("mission creation", () => {
     expect(playableMvpAppSource).toContain("originIsMoon,");
     expect(playableMvpAppSource).toContain("validateAttackProtection:");
     expect(playableMvpAppSource).toContain("targetIsMoon,");
-    expect(playableMvpAppSource).toContain("targetPlanet: pending.target");
+    expect(playableMvpAppSource).toContain("targetPlanet: pendingJoinAttackTarget");
     expect(playableMvpAppSource).toContain("const targetIsMoon = pending.mission.targetIsMoon === true;");
 
     const target = targetPlanet({
