@@ -519,6 +519,78 @@ describe("attack protection reads", () => {
   });
 });
 
+describe("Moon defense queue reads", () => {
+  const moonContractAddress = "0x2222222222222222222222222222222222222222" as Address;
+  const moonReaderConfig = (): BackendConfig => ({ ...readerConfig, moonContractAddress });
+
+  function moonDefenseQueueReader(reader: VeydriftGameReader) {
+    return reader as unknown as {
+      readMoonDefenseQueue(planetId: bigint): Promise<{
+        active: boolean;
+        itemId?: number;
+        quantity?: number;
+        backlog?: Array<{ itemId?: number; quantity?: number; readyAt: string | null }>;
+      }>;
+    };
+  }
+
+  test("attaches the Moon defense FIFO backlog to the canonical active queue", async () => {
+    const selectors: string[] = [];
+    const reader = new VeydriftGameReader(moonReaderConfig(), {
+      async request<T>(method: string, params: unknown[]): Promise<T> {
+        expect(method).toBe("eth_call");
+        const [call] = params as [{ to: string; data: string }];
+        expect(call.to.toLowerCase()).toBe(moonContractAddress.toLowerCase());
+        const selector = call.data.slice(0, 10);
+        selectors.push(selector);
+        if (selector === "0x5171acb6") {
+          return dataWords([
+            word(1n), word(0n), word(2n), word(1770001200n),
+            word(4000n), word(0n), word(0n)
+          ]) as T;
+        }
+        expect(selector).toBe("0xcef70717");
+        return dataWords([
+          word(32n), word(2n),
+          word(1n), word(1n), word(3n), word(1770001800n), word(4500n), word(1500n), word(0n),
+          word(1n), word(0n), word(1n), word(1770002400n), word(2000n), word(0n), word(0n)
+        ]) as T;
+      }
+    });
+
+    await expect(moonDefenseQueueReader(reader).readMoonDefenseQueue(7n)).resolves.toMatchObject({
+      active: true,
+      itemId: 0,
+      quantity: 2,
+      backlog: [
+        { itemId: 1, quantity: 3, readyAt: "1770001800" },
+        { itemId: 0, quantity: 1, readyAt: "1770002400" }
+      ]
+    });
+    expect(selectors).toEqual(["0x5171acb6", "0xcef70717"]);
+  });
+
+  test("treats the pre-upgrade missing backlog selector as an empty FIFO", async () => {
+    const reader = new VeydriftGameReader(moonReaderConfig(), {
+      async request<T>(_method: string, params: unknown[]): Promise<T> {
+        const [call] = params as [{ data: string }];
+        if (call.data.startsWith("0xcef70717")) throw new Error("execution reverted");
+        return dataWords([
+          word(1n), word(0n), word(2n), word(1770001200n),
+          word(4000n), word(0n), word(0n)
+        ]) as T;
+      }
+    });
+
+    await expect(moonDefenseQueueReader(reader).readMoonDefenseQueue(7n)).resolves.toMatchObject({
+      active: true,
+      itemId: 0,
+      quantity: 2
+    });
+    expect((await moonDefenseQueueReader(reader).readMoonDefenseQueue(7n)).backlog).toBeUndefined();
+  });
+});
+
 describe("planet rename event decoding", () => {
   test("decodes planet rename logs", () => {
     const log = makeLog({

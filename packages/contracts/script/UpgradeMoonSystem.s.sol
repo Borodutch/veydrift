@@ -12,9 +12,10 @@ import {
 /// proxy. The broadcasting account must be the proxy owner because
 /// `_authorizeUpgrade` is owner-gated.
 contract UpgradeMoonSystem is Script {
-    // Stable VeydriftGame proxy-storage slot verified by scripts/check-storage-layout.mjs. The
-    // Game must remain paused from before this upgrade until the matching Game implementation and
-    // body-aware application runtime are live, preventing mixed-generation moon missions.
+    // Stable VeydriftGame proxy-storage slot verified by scripts/check-storage-layout.mjs.
+    // Coordinated breaking Moon upgrades keep the default pause requirement. A storage-compatible
+    // upgrade whose old/new application paths have already passed an exact live-fork proof may opt
+    // out explicitly with ALLOW_UNPAUSED_MOON_UPGRADE=true to avoid global gameplay downtime.
     bytes32 private constant GAME_PAUSED_SLOT = bytes32(uint256(52));
 
     event MoonSystemUpgraded(address indexed proxy, address indexed implementation);
@@ -30,7 +31,11 @@ contract UpgradeMoonSystem is Script {
         require(address(game) != address(0), "MOON_GAME_NOT_CONFIGURED");
         require(address(randomness) != address(0), "MOON_RANDOMNESS_NOT_CONFIGURED");
         require(broadcaster == proxied.owner(), "BROADCASTER_MUST_BE_PROXY_OWNER");
-        require(uint256(vm.load(address(game), GAME_PAUSED_SLOT)) != 0, "GAME_MUST_BE_PAUSED");
+        bool allowUnpausedUpgrade = vm.envOr("ALLOW_UNPAUSED_MOON_UPGRADE", false);
+        require(
+            allowUnpausedUpgrade || uint256(vm.load(address(game), GAME_PAUSED_SLOT)) != 0,
+            "GAME_MUST_BE_PAUSED"
+        );
 
         vm.startBroadcast(privateKey);
         VeydriftMoonSystem implementation =

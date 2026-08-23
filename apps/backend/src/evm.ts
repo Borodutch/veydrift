@@ -4135,17 +4135,23 @@ export class VeydriftGameReader implements ChainReader {
   private async readProductionQueueBacklog(
     selector: string,
     planetId: bigint,
-    kind: "defense" | "ship"
+    kind: "defense" | "ship" | "moon-defense"
   ): Promise<QueueState[]> {
     try {
-      return this.decodeProductionQueueBacklogResult(await this.call(selector, [encodeUint(planetId)]), kind);
+      const result = kind === "moon-defense"
+        ? await this.moonCall(selector, [encodeUint(planetId)])
+        : await this.call(selector, [encodeUint(planetId)]);
+      return this.decodeProductionQueueBacklogResult(result, kind);
     } catch (error) {
       if (isRpcRevert(error)) return [];
       throw error;
     }
   }
 
-  private decodeProductionQueueBacklogResult(result: string, kind: "defense" | "ship"): QueueState[] {
+  private decodeProductionQueueBacklogResult(
+    result: string,
+    kind: "defense" | "ship" | "moon-defense"
+  ): QueueState[] {
     const words = splitWords(result);
     const length = Number(decodeUintWord(wordAt(words, 1)));
     const backlog: QueueState[] = [];
@@ -4180,7 +4186,7 @@ export class VeydriftGameReader implements ChainReader {
   private async readMoonDefenseQueue(planetId: bigint): Promise<QueueState> {
     const words = splitWords(await this.moonCall("0x5171acb6", [encodeUint(planetId)]));
     const active = decodeBoolWord(wordAt(words, 0));
-    return {
+    const queue: QueueState = {
       active,
       kind: active ? "moon-defense" : null,
       ...(active ? { itemId: Number(decodeUintWord(wordAt(words, 1))) } : {}),
@@ -4188,6 +4194,16 @@ export class VeydriftGameReader implements ChainReader {
       readyAt: active ? decodeUintWord(wordAt(words, 3)).toString() : null,
       cost: decodeResources(words.slice(4, 7))
     };
+    // Older Moon implementations do not expose this selector. Treat that
+    // specific revert as an empty backlog so backend rollout can safely precede
+    // the proxy upgrade; every other RPC failure still propagates.
+    const backlog = await this.readProductionQueueBacklog(
+      "0xcef70717",
+      planetId,
+      "moon-defense"
+    );
+    if (backlog.length > 0) queue.backlog = backlog;
+    return queue;
   }
 
   private async readMoonDefenseRows(planetId: bigint): Promise<MoonState["defenses"]> {
