@@ -185,6 +185,10 @@ type ActivityPresencePoller = ManagedPoller & {
   handleVisibility: () => void;
 };
 
+type ActivityPresenceClaim =
+  | { promise: Promise<PlayerActivityPresence>; status: "pending" }
+  | { status: "consumed" };
+
 type ChainEventBridge = {
   close: () => void;
   references: number;
@@ -289,6 +293,9 @@ export class BackendDataStore {
   private readonly evictionTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly pollers = new Map<string, ManagedPoller>();
   private readonly activityPresencePollers = new Map<string, ActivityPresencePoller>();
+  /** A dialog may remount during route/network churn. Its away window is a
+   * one-time session claim, while ordinary heartbeats remain silent. */
+  private readonly activityPresenceClaims = new Map<string, ActivityPresenceClaim>();
   private readonly chainEventBridges = new Map<string, ChainEventBridge>();
   private readonly scheduledRefreshes = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly indexingPlanRunners = new WeakMap<object, IndexingPlanRunner>();
@@ -715,13 +722,16 @@ export class BackendDataStore {
       return () => this.releasePlayerActivityPresence(name);
     }
     const markPresent = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
       void this.recordPlayerActivityPresence(wallet).catch(() => {
         // A later heartbeat retries transient API failures without poisoning a
         // dialog-local loading state.
       });
     };
-    markPresent();
-    const handleVisibility = () => markPresent();
+    const handleVisibility = () => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+      markPresent();
+    };
     const handleExit = () => this.recordPlayerActivityPresenceOnExit(wallet);
     document.addEventListener("visibilitychange", handleVisibility);
     window.addEventListener("pagehide", handleExit);
@@ -886,6 +896,7 @@ export class BackendDataStore {
     const bridge = this.chainEventBridges.get(previousWallet);
     bridge?.close();
     this.chainEventBridges.delete(previousWallet);
+    this.activityPresenceClaims.delete(previousWallet);
     void planetId;
   }
 
@@ -1664,6 +1675,31 @@ export class BackendDataStore {
 
   recordPlayerActivityPresence(wallet: string): Promise<PlayerActivityPresence> {
     return recordPlayerActivityPresence(this.apiBaseUrl, wallet);
+  }
+
+  /**
+   * Atomically advances the shared server watermark and returns an away window
+   * at most once for this wallet in this browser session. Retried background
+   * heartbeats intentionally never become dialog claims.
+   */
+  claimPlayerActivityAwayWindow(wallet: string): Promise<PlayerActivityPresence | null> {
+    const normalizedWallet = wallet.toLowerCase();
+    const existing = this.activityPresenceClaims.get(normalizedWallet);
+    if (existing?.status === "consumed") return Promise.resolve(null);
+    if (existing?.status === "pending") return existing.promise;
+
+    const promise = this.recordPlayerActivityPresence(wallet).then((presence) => {
+      this.activityPresenceClaims.set(normalizedWallet, { status: "consumed" });
+      return presence;
+    }).catch((error: unknown) => {
+      const current = this.activityPresenceClaims.get(normalizedWallet);
+      if (current?.status === "pending" && current.promise === promise) {
+        this.activityPresenceClaims.delete(normalizedWallet);
+      }
+      throw error;
+    });
+    this.activityPresenceClaims.set(normalizedWallet, { promise, status: "pending" });
+    return promise;
   }
 
   recordPlayerActivityPresenceOnExit(wallet: string): void {
