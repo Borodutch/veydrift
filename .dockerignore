@@ -1,0 +1,4 @@
+# Frontend builds run before Nixpacks' final source copy. Excluding this
+# generated output prevents a stale workspace artifact from overwriting the
+# freshly built bundle in the runtime image.
+apps/frontend/dist/
