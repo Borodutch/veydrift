@@ -605,7 +605,7 @@ export class BackendDataStore {
             }),
           (receipt as ReceiptBlock).blockNumber,
         );
-        await this.refreshIndexedTags(tags);
+        this.refreshIndexedTagsAfterConvergence(tags);
       }),
     missionLaunch: (wallet: string, expectedMission: (txHash: string) => import("./walletFlow").FleetMissionSummary | undefined, tags: readonly BackendDataTag[] = []): BackendIndexingPlan =>
       this.createIndexingPlan(async (_receipt, txHash) => {
@@ -620,7 +620,7 @@ export class BackendDataStore {
           txHash,
           { expectedMission: expectedMission(txHash) },
         );
-        await this.refreshIndexedTags(tags);
+        this.refreshIndexedTagsAfterConvergence(tags);
       }),
     alliance: (wallet: string, expectation?: AllianceApplicationExpectation | AllianceProfileExpectation | AllianceCreationExpectation): BackendIndexingPlan =>
       this.createIndexingPlan(async () => {
@@ -1113,6 +1113,19 @@ export class BackendDataStore {
     });
     const rejected = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
     if (rejected) throw rejected.reason;
+  }
+
+  /**
+   * Exact indexed predicates already proved the confirmed write is visible.
+   * Keep broad canonical invalidation centralized, but do not turn an
+   * incidental aggregate refresh failure into a false transaction failure.
+   */
+  private refreshIndexedTagsAfterConvergence(tags: readonly BackendDataTag[]): void {
+    if (tags.length === 0) return;
+    void this.invalidate(tags, {
+      activeOnly: false,
+      priority: "transaction",
+    });
   }
 
   async runWriteTransaction(descriptor: BackendWriteTransactionDescriptor): Promise<boolean> {
