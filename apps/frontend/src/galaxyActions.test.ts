@@ -155,7 +155,7 @@ describe("galaxyActions", () => {
     });
   });
 
-  test("requires target-specific verification before advertising a ranked active-war attack", () => {
+  test("keeps ranked active-war verification internal to the attack flow", () => {
     const attack = galaxyActionsForSlot({
       account,
       attackProtection: {
@@ -172,7 +172,7 @@ describe("galaxyActions", () => {
 
     expect(attack).toMatchObject({
       enabled: true,
-      label: "Verify war attack",
+      label: "Attack",
     });
   });
 
