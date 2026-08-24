@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { BackendDataStore, backendDataStoreFor, disposeBackendDataStoresExcept, retainBackendDataStore } from "./backendDataStore";
 import type { WriteTransactionState } from "./transactionActionGate";
+import type { FleetMissionSummary } from "./walletFlow";
 
 describe("BackendDataStore", () => {
   test("disposes an unused shared API-base store after its last owner releases it", async () => {
@@ -589,6 +590,104 @@ describe("BackendDataStore", () => {
       expect(loads).toBe(2);
     } finally {
       unsubscribe();
+    }
+  });
+
+  test("keeps broad refreshes centralized without blocking an exactly converged write", async () => {
+    const originalFetch = globalThis.fetch;
+    const wallet = "0x2222222222222222222222222222222222222222";
+    const txHash = "0xconfirmed";
+    const mission: FleetMissionSummary = {
+      missionId: "24",
+      status: "Outbound",
+      missionType: "Transport",
+      owner: wallet,
+      originPlanetId: "7",
+      targetPlanetId: "9",
+      arrivalAt: "1770000300",
+      returnAt: "1770000600",
+      fuelCost: "100",
+      recallCost: "50",
+      attackGroupId: null,
+      joinedAttackMissionIds: [],
+      cargo: { metal: "10", crystal: "0", deuterium: "0" },
+      returnCargo: null,
+      ships: { smallCargo: "1" },
+      transactionHash: txHash,
+      blockNumber: "123",
+    };
+    const visibility = {
+      wallet,
+      homePlanetId: "7",
+      incoming: [],
+      outgoing: [mission],
+      returning: [],
+      joinableAttacks: [],
+      completedMissions: [],
+      battleReports: [],
+    };
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      return Response.json(url.pathname.endsWith("/missions") ? { missions: [mission] } : visibility);
+    }) as unknown as typeof fetch;
+
+    let releaseOverview!: () => void;
+    let markOverviewRefreshStarted!: () => void;
+    const overviewRefreshStarted = new Promise<void>((resolve) => {
+      markOverviewRefreshStarted = resolve;
+    });
+    let overviewLoads = 0;
+    let unsubscribe = () => {};
+
+    try {
+      const store = new BackendDataStore("https://api.test");
+      const key = store.key("overview", wallet, "7");
+      unsubscribe = store.subscribeKey(key, () => {});
+      const loadOverview = async () => {
+        overviewLoads += 1;
+        if (overviewLoads === 1) return { revision: 1 };
+        if (overviewLoads === 2) {
+          markOverviewRefreshStarted();
+          await new Promise<void>((resolve) => {
+            releaseOverview = resolve;
+          });
+        }
+        return { revision: overviewLoads };
+      };
+      await store.refresh(key, loadOverview, {
+        planetId: "7",
+        wallet,
+      });
+
+      await expect(
+        store.runWriteTransaction({
+          confirm: async () => ({ status: "0x1", blockNumber: "0x7b" }),
+          indexing: store.indexing.missionLaunch(wallet, () => undefined, ["kind:overview"]),
+          invalidateTags: [`wallet:${wallet}`, "planet:7"],
+          key: "galaxy:Transport",
+          label: "Transport",
+          send: async () => txHash,
+        }),
+      ).resolves.toBe(true);
+      await overviewRefreshStarted;
+
+      expect(store.snapshot<{ revision: number }>(key)).toMatchObject({
+        data: { revision: 1 },
+        freshness: "delayed",
+      });
+      releaseOverview();
+      for (let attempt = 0; attempt < 20 && store.snapshot(key)?.freshness !== "fresh"; attempt += 1) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 5));
+      }
+      expect(overviewLoads).toBe(3);
+      expect(store.snapshot<{ revision: number }>(key)).toMatchObject({
+        data: { revision: 3 },
+        freshness: "fresh",
+      });
+    } finally {
+      if (releaseOverview) releaseOverview();
+      unsubscribe();
+      globalThis.fetch = originalFetch;
     }
   });
 
