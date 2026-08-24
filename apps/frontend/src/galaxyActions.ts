@@ -226,7 +226,9 @@ export function galaxyActionsForSlot({
       enabled: {
         enabled: true,
         kind: "attack",
-        label: attackProtection?.warEligibilityNeedsCheck ? "Verify war attack" : "Attack",
+        // Target-specific war eligibility is verified by the canonical attack
+        // preflight before confirmation. It is not a separate player action.
+        label: "Attack",
         mode: "mission",
         mission: "attack",
         ships: emptyMissionShips(),
