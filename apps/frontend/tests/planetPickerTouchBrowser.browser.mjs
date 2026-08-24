@@ -596,6 +596,7 @@ test("desktop selector atomically replaces an unrelated inspector with one owned
     throw new Error(`${error.message}\nPost-click diagnostics: ${JSON.stringify(diagnostics)}`);
   }
 
+  await waitForExpression("document.querySelector('main')?.textContent?.includes('Add media') === true");
   const snapshot = await inspectorSnapshot();
   assert.equal(snapshot.path, "/planet/4/5/6");
   assert.equal(snapshot.heading, "Owned Beta");
