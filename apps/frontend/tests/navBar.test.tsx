@@ -172,6 +172,8 @@ describe("NavBar section navigation", () => {
       isPrimary: true,
       metaKey: false,
       pointerId: 7,
+      preventDefaultCalls: 0,
+      preventDefault() { this.preventDefaultCalls += 1; },
       shiftKey: false,
     };
 
@@ -180,6 +182,19 @@ describe("NavBar section navigation", () => {
     expect(navigations).toBe(1);
     expect(location.href).toBe(`https://veydrift.test${href}`);
     expect(assignedUrls).toEqual([]);
+    expect(pointerEvent.preventDefaultCalls).toBe(1);
+
+    // The following click must not activate whatever replaced this link after
+    // the pointer-release navigation (notably a first Raid Finder target on
+    // Android). The original link consumes it when it remains mounted.
+    const trailingClick = {
+      ...pointerEvent,
+      preventDefaultCalls: 0,
+      preventDefault() { this.preventDefaultCalls += 1; },
+    };
+    (link.props.onClick as (event: typeof trailingClick) => void)(trailingClick);
+    expect(navigations).toBe(1);
+    expect(trailingClick.preventDefaultCalls).toBe(1);
   });
 
   test.each([
