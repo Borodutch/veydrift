@@ -832,6 +832,22 @@ describe("post-transaction refresh reconciliation", () => {
     expect(result.queues.research?.targetLevel).toBe(2);
   });
 
+  test("accepts an indexed research queue while wallet and resource snapshots catch up", () => {
+    const snapshot = startedResearchSnapshot();
+    snapshot.queues.research = null;
+    const baseline = resourceSnapshot("7", "0xold", "0x10", { metal: "10000", crystal: "10000", deuterium: "10000" });
+
+    expect(isStartedResearchStateVisible(snapshot, {
+      itemId: 4,
+      targetLevel: 2,
+      resourceIndexing: {
+        baseline,
+        receiptBlockNumber: "0x20",
+        transactionHash: "0xresearch",
+      },
+    })).toBe(true);
+  });
+
   test("polls until finished research is visible on Research and Overview state", async () => {
     expect(isFinishedResearchStateVisible(staleFinishedResearchSnapshot(), {
       itemId: 4,
