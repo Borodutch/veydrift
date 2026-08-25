@@ -967,7 +967,7 @@ export function researchActionStatus({
   const occupiedQueueLabel = state.researchQueue?.label ?? activeQueueResearch?.label;
   const reason = actionPending
     ? actionPendingLabel ?? "Awaiting wallet"
-    : loading
+    : loading && !researchState
       ? "Loading research state"
       : error
         ? "Research state unavailable"
@@ -996,7 +996,6 @@ export function researchActionStatus({
                         : `Ready for Level ${targetLevel}`;
 
   const resourceShortfall = !actionPending
-    && !loading
     && !error
     && Boolean(researchState)
     && researchState?.researchAvailable !== false

@@ -137,6 +137,33 @@ describe("Research page load-error display", () => {
     expect(researchRefreshButtonState(true)).toEqual({ disabled: true, label: "Refreshing" });
   });
 
+  test("keeps a loaded research action available during a background refresh", () => {
+    const base = createInitialPlayableState(10_000);
+    const state = {
+      ...base,
+      buildings: { ...base.buildings, researchLab: 1 },
+      resources: { metal: 10_000, crystal: 10_000, deuterium: 10_000 },
+    };
+
+    const status = researchActionStatus({
+      actionPending: false,
+      canTransact: true,
+      chainCost: { metal: 0, crystal: 800, deuterium: 400 },
+      error: undefined,
+      key: "energy",
+      loading: true,
+      now: 1_700_000_000_000,
+      researchState: researchState(),
+      state,
+    });
+
+    expect(status).toMatchObject({
+      disabled: false,
+      reason: "Ready for Level 1",
+      tileStatus: "Ready",
+    });
+  });
+
   test("labels refresh errors as stale-data notices when research state remains loaded", () => {
     expect(researchRefreshErrorLabel({
       error: "Research request failed with 503",
