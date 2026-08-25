@@ -283,15 +283,13 @@ export function isStartedResearchStateVisible(
   snapshot: StartedResearchSnapshot,
   expectation: StartedResearchExpectation,
 ): boolean {
-  if (expectation.resourceIndexing && !isResourceSnapshotIndexedAfterTransaction(
-    snapshot.research.resourceSnapshot,
-    expectation.resourceIndexing,
-  )) {
-    return false;
-  }
-
+  // ResearchStarted is the authoritative indexed record for this global queue.
+  // The wallet queue projection and resource metadata are separate indexer
+  // snapshots; waiting for both after the exact queue is visible produces a
+  // misleading client-side loading state even though the research has started.
+  // Resource freshness is still enforced before a later spend is submitted.
   return researchQueueMatches(snapshot.research.queue, expectation)
-    && researchQueueMatches(snapshot.queues.research, expectation);
+    || researchQueueMatches(snapshot.queues.research, expectation);
 }
 
 export function isResourceSnapshotIndexedAfterTransaction(
