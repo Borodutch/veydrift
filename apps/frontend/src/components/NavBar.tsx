@@ -154,9 +154,25 @@ export function NavBar({
     }
   }, []);
 
+  const closeMobileMenuAfterNavigation = () => {
+    const view = mobileNavigationDetails.current?.ownerDocument.defaultView;
+    if (typeof view?.requestAnimationFrame === "function") {
+      view.requestAnimationFrame(closeMobileMenu);
+      return;
+    }
+    if (typeof view?.setTimeout === "function") {
+      view.setTimeout(closeMobileMenu, 0);
+      return;
+    }
+    closeMobileMenu();
+  };
+
   const handleMobileNavigate = (page: Page) => {
     onNavigate(page);
-    closeMobileMenu();
+    // Keep the tapped anchor mounted through the browser's trailing click.
+    // Pointer release has already committed the page, so closing synchronously
+    // can turn that same gesture into a click on a newly rendered raid target.
+    closeMobileMenuAfterNavigation();
   };
 
   useEffect(() => {
@@ -857,6 +873,14 @@ function handleSectionLinkPointerUp(
   const view = link.ownerDocument.defaultView;
   const targetUrl = link.href;
   if (!view || view.location.href === targetUrl) return;
+
+  // Committing this callback can unmount a mobile section link immediately
+  // (the menu closes as its destination renders). Consume the browser's
+  // trailing click *before* that happens: Android otherwise retargets that
+  // click at whatever just appeared under the finger, such as the first Raid
+  // Finder target, and opens it without a second intentional tap.
+  event.preventDefault();
+  suppressSectionLinkFollowupClick(link);
 
   // Commit on pointer release, before the browser's later click phase. Chrome
   // can lose that click when another first-gesture listener fails or consumes
