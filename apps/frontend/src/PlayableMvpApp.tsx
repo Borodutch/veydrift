@@ -2385,7 +2385,11 @@ function driveLevelsFromTechnologyLevels(levels: Record<string, number> | undefi
   };
 }
 
-export function batchSupplySourceForPlanet(planet: ManagedPlanetResponse, shipyard: ChainShipyardState | undefined): BatchSupplySource {
+export function batchSupplySourceForPlanet(
+  planet: ManagedPlanetResponse,
+  shipyard: ChainShipyardState | undefined,
+  readUnavailableReason?: string,
+): BatchSupplySource {
   // Supply opens with a fresh shipyard snapshot for every origin. Prefer its
   // as-of-now resources over the roster object captured before those reads;
   // otherwise a Max shipment can include resources already spent on-chain.
@@ -2395,11 +2399,12 @@ export function batchSupplySourceForPlanet(planet: ManagedPlanetResponse, shipya
     ships[row.key] = Math.max(0, Math.trunc((shipyard?.launchableShips ?? shipyard?.ships ?? []).find((item) => item.id === row.id)?.count ?? 0));
   }
   const fleetUnavailable =
-    shipyard?.fleetLaunchAvailable === false
+    readUnavailableReason
+    ?? (shipyard?.fleetLaunchAvailable === false
       ? (shipyard.fleetLaunchUnavailableReason ?? shipyard.unavailableReason ?? "Fleet slots are unavailable.")
       : shipyard && !hasUsableSupplyCargoFleet(ships)
         ? "No usable cargo ships are available on this planet."
-        : undefined;
+        : undefined);
   return {
     planetId: planet.planetId,
     label: planet.name?.trim() || planet.coordinates,
@@ -3720,6 +3725,7 @@ export function PlayableMvpApp({
   const [batchSupplyTarget, setBatchSupplyTarget] = useState<ManagedPlanetResponse | null>(null);
   const [batchSupplySources, setBatchSupplySources] = useState<BatchSupplySource[]>([]);
   const [batchSupplyMaxSources, setBatchSupplyMaxSources] = useState(0);
+  const [batchSupplyFleetSlotsKnown, setBatchSupplyFleetSlotsKnown] = useState(false);
   const [batchSupplyLoading, setBatchSupplyLoading] = useState(false);
   const [batchSupplyError, setBatchSupplyError] = useState<string | undefined>();
   const [pendingGalaxyMission, setPendingGalaxyMission] = useState<PendingGalaxyMission | null>(null);
@@ -6069,25 +6075,31 @@ export function PlayableMvpApp({
       setBatchSupplyTarget(target);
       setBatchSupplySources([]);
       setBatchSupplyError(undefined);
+      setBatchSupplyFleetSlotsKnown(false);
       setBatchSupplyLoading(true);
-      void Promise.all(
-        origins.map(
-          async (planet) =>
-            [
-              planet,
-              await backendData.shipyard(account, planet.planetId, {
-                fresh: true,
-              }),
-            ] as const,
-        ),
+      void Promise.allSettled(
+        origins.map(async (planet) => [
+          planet,
+          await backendData.shipyard(account, planet.planetId, { fresh: true }),
+        ] as const),
       )
-        .then((rows) => {
+        .then((results) => {
+          const rows = results.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
+          const shipyardsByPlanetId = new Map(rows.map(([planet, shipyard]) => [planet.planetId, shipyard]));
+          const failedPlanetIds = new Set(
+            results.flatMap((result, index) => result.status === "rejected" ? [origins[index]!.planetId] : []),
+          );
           const fleetSource = rows.map(([, shipyard]) => shipyard).find((shipyard) => shipyard.fleetSlots);
           const freeSlots = fleetSource?.fleetSlots ? Math.max(0, fleetSource.fleetSlots.limit - fleetSource.fleetSlots.active) : 0;
+          setBatchSupplyFleetSlotsKnown(Boolean(fleetSource?.fleetSlots));
           setBatchSupplyMaxSources(freeSlots);
           setBatchSupplySources(
-            rows
-              .map(([planet, shipyard]) => batchSupplySourceForPlanet(planet, shipyard))
+            origins
+              .map((planet) => batchSupplySourceForPlanet(
+                planet,
+                shipyardsByPlanetId.get(planet.planetId),
+                failedPlanetIds.has(planet.planetId) ? "Could not read this source's cargo fleet. Refresh and try again." : undefined,
+              ))
               .sort(
                 (left, right) =>
                   fleetMissionDistance(left.coordinates, {
@@ -6102,12 +6114,11 @@ export function PlayableMvpApp({
                   }),
               ),
           );
-        })
-        .catch((error) => {
-          console.error(error);
-          setBatchSupplyError("Could not read source cargo fleets. Refresh and try again.");
-          setBatchSupplySources(origins.map((planet) => batchSupplySourceForPlanet(planet, undefined)));
-          setBatchSupplyMaxSources(0);
+          if (failedPlanetIds.size === results.length) {
+            setBatchSupplyError("Could not read source cargo fleets. Refresh and try again.");
+          } else if (failedPlanetIds.size > 0) {
+            setBatchSupplyError("Some source cargo fleets could not be read. The affected sources are unavailable; refresh and try again.");
+          }
         })
         .finally(() => setBatchSupplyLoading(false));
     },
@@ -9224,6 +9235,7 @@ export function PlayableMvpApp({
         <BatchSupplyModal
           actionPending={galaxyAction.status === "pending"}
           error={batchSupplyError}
+          fleetSlotsKnown={batchSupplyFleetSlotsKnown}
           loading={batchSupplyLoading}
           maxSources={batchSupplyMaxSources}
           onClose={() => {
