@@ -220,16 +220,18 @@ export function isStartedBuildingStateVisible(
     if (planetId && planetId !== expectation.planetId) return false;
   }
 
-  if (expectation.resourceIndexing && !isResourceSnapshotIndexedAfterTransaction(
-    snapshot.infrastructure.resourceSnapshot,
-    expectation.resourceIndexing,
-  )) {
-    return false;
-  }
-
-  return buildingQueueMatches(snapshot.infrastructure.queue, expectation)
+  const queueVisible = buildingQueueMatches(snapshot.infrastructure.queue, expectation)
     || buildingQueueMatches(snapshot.queues.building, expectation)
     || Boolean(startedBuildingQueueFromWalletPlanets(snapshot.planetsResponse, expectation));
+
+  // BuildingStarted is the exact event emitted by the confirmed upgrade and
+  // its item/target combination cannot be produced by a different pending
+  // upgrade on this planet. Resource snapshots can legitimately be published
+  // by a later settlement event, so requiring their separate metadata here
+  // leaves an already-indexed queue stuck in the client-side "syncing" state.
+  // Keep resource freshness for future spend preflights; queue visibility is
+  // the authoritative post-receipt completion condition for this action.
+  return queueVisible;
 }
 
 export function startedBuildingQueueFromWalletPlanets(

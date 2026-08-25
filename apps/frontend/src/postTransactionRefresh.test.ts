@@ -634,6 +634,21 @@ describe("post-transaction refresh reconciliation", () => {
     })).toBe(true);
   });
 
+  test("accepts an indexed started building queue while resource metadata catches up separately", () => {
+    const baseline = resourceSnapshot("7", "0xold", "0x10", { metal: "10000", crystal: "10000", deuterium: "10000" });
+
+    expect(isStartedBuildingStateVisible(startedBuildingSnapshot(), {
+      itemId: 3,
+      planetId: "7",
+      targetLevel: 2,
+      resourceIndexing: {
+        baseline,
+        receiptBlockNumber: "0x20",
+        transactionHash: "0xbuilding",
+      },
+    })).toBe(true);
+  });
+
   test("accepts started building while the Infrastructure page endpoint catches up", () => {
     const snapshot = startedBuildingSnapshot();
 
