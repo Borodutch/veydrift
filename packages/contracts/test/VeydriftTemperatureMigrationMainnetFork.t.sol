@@ -67,10 +67,24 @@ contract VeydriftTemperatureMigrationMainnetForkTest is Test {
         vm.expectRevert(VeydriftGameStorage.PlanetTemperatureMigrationPending.selector);
         game.setGamePaused(false);
 
-        vm.prank(owner);
-        uint256 gasBeforeMigration = gasleft();
-        uint256 migrated = game.migratePlanetTemperatures();
-        emit log_named_uint("temperature migration gas", gasBeforeMigration - gasleft());
+        uint256 migrated;
+        uint256 batches;
+        while (game.planetTemperatureGenerationVersion() < 2) {
+            vm.prank(owner);
+            uint256 gasBeforeMigration = gasleft();
+            migrated += game.migratePlanetTemperatures();
+            uint256 batchGas = gasBeforeMigration - gasleft();
+            emit log_named_uint("temperature migration batch gas", batchGas);
+            assertLt(batchGas, 12_000_000, "temperature migration batch exceeds safe gas budget");
+            batches += 1;
+            if (game.planetTemperatureGenerationVersion() < 2) {
+                assertTrue(game.gamePaused());
+                vm.prank(owner);
+                vm.expectRevert(VeydriftGameStorage.PlanetTemperatureMigrationPending.selector);
+                game.setGamePaused(false);
+            }
+        }
+        assertGt(batches, 1, "live migration should exercise resumable batches");
         assertEq(migrated, activeCount);
         assertEq(game.planetTemperatureGenerationVersion(), 2);
         assertTrue(game.gamePaused());

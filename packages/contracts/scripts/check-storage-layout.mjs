@@ -125,6 +125,18 @@ const reviewedStorageAppend = [
     offset: 0,
     type: "uint8",
   },
+  {
+    label: "_planetTemperatureMigrationCursor",
+    slot: "65",
+    offset: 0,
+    type: "uint256",
+  },
+  {
+    label: "_planetTemperatureMigratedCount",
+    slot: "66",
+    offset: 0,
+    type: "uint256",
+  },
 ];
 const riftExtractionStruct = [
   {label: "active", slot: "0", offset: 0, type: "bool"},

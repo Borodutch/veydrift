@@ -29,6 +29,8 @@ interface IVeydriftPaidAllianceInviteSystem {
 
 /// @notice Delegatecall target for first-planet settlement and referral settlement.
 contract VeydriftFirstPlanetSettlementModule is VeydriftResourceReserves {
+    uint256 private constant TEMPERATURE_MIGRATION_BATCH_SIZE = 64;
+
     address private immutable _referralSystem;
     address private immutable _migrationColonizationModule;
 
@@ -65,8 +67,12 @@ contract VeydriftFirstPlanetSettlementModule is VeydriftResourceReserves {
         }
 
         uint256 end = nextPlanetId;
+        uint256 start = _planetTemperatureMigrationCursor;
+        if (start == 0) start = 1;
+        uint256 stop = start + TEMPERATURE_MIGRATION_BATCH_SIZE;
+        if (stop > end) stop = end;
         uint64 migratedAt = uint64(block.timestamp);
-        for (uint256 planetId = 1; planetId < end;) {
+        for (uint256 planetId = start; planetId < stop;) {
             Planet storage planetRef = _planets[planetId];
             if (planetRef.owner != address(0)) {
                 _requireNoPendingMissionResolutionForPlanet(planetId);
@@ -91,8 +97,12 @@ contract VeydriftFirstPlanetSettlementModule is VeydriftResourceReserves {
             }
         }
 
-        _planetTemperatureGenerationVersion = 2;
-        emit PlanetTemperatureGenerationMigrated(migrated);
+        _planetTemperatureMigrationCursor = stop;
+        _planetTemperatureMigratedCount += migrated;
+        if (stop >= end) {
+            _planetTemperatureGenerationVersion = 2;
+            emit PlanetTemperatureGenerationMigrated(_planetTemperatureMigratedCount);
+        }
     }
 
     /// @dev Migration runs while the public Game facade is paused, so its normal self-call queue

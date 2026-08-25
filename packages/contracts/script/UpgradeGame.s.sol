@@ -139,8 +139,8 @@ contract UpgradeGame is Script {
         ProxyAdmin(proxyAdmin)
             .upgradeAndCall(ITransparentUpgradeableProxy(proxy), newImplementation, upgradeCall);
         uint256 migratedPlanets;
-        if (VeydriftGame(payable(proxy)).planetTemperatureGenerationVersion() < 2) {
-            migratedPlanets = VeydriftGame(payable(proxy)).migratePlanetTemperatures();
+        while (VeydriftGame(payable(proxy)).planetTemperatureGenerationVersion() < 2) {
+            migratedPlanets += VeydriftGame(payable(proxy)).migratePlanetTemperatures();
         }
 
         vm.stopBroadcast();
