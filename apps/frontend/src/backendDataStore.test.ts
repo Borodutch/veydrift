@@ -211,6 +211,30 @@ describe("BackendDataStore", () => {
     }
   });
 
+  test("mission-scoped polling leaves active wallet projections alone", async () => {
+    const store = new BackendDataStore("https://api.test");
+    const wallet = "0xabc";
+    const overviewKey = store.key("overview", wallet);
+    const fleetKey = store.key("fleet-visibility", wallet, false);
+    let overviewLoads = 0;
+    let fleetLoads = 0;
+    const unsubscribeOverview = store.subscribeKey(overviewKey, () => {});
+    const unsubscribeFleet = store.subscribeKey(fleetKey, () => {});
+
+    try {
+      await store.refresh(overviewKey, async () => ({ revision: ++overviewLoads }), { wallet });
+      await store.refresh(fleetKey, async () => ({ revision: ++fleetLoads }), { wallet });
+
+      await store.invalidate(["kind:fleet-visibility"], { priority: "mission-control" });
+
+      expect(overviewLoads).toBe(1);
+      expect(fleetLoads).toBe(2);
+    } finally {
+      unsubscribeOverview();
+      unsubscribeFleet();
+    }
+  });
+
   test("tears down prior-wallet cache entries without clearing public resources on account switch", async () => {
     const store = new BackendDataStore("https://api.test");
     const walletKey = store.key("planets", "0xaaa");

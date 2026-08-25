@@ -5146,10 +5146,9 @@ export function PlayableMvpApp({
     return backendData!.startPolling("top-bar-selected-planet", [`planet:${onChainSettlement.planet.planetId}`], TOP_BAR_RESOURCE_POLL_INTERVAL_MS, "selected-planet");
   }, [account, apiBaseUrl, backendData, onChainSettlement?.planet?.planetId, pageStateHydrationReady]);
 
-  // VEY-KANEO-433: while Mission Control is open, poll its full data set on the same cadence as the
-  // top bar so resolutions, loot, and battle reports surface without a manual Refresh. This is the
-  // same work the Refresh button does (fleet visibility + the past-mission archives + the universe
-  // active feed), guarded against overlapping refreshes and paused while the tab is hidden.
+  // While Mission Control is open, poll only its mission feeds on the same cadence as the top bar.
+  // Never include the broad wallet tag here: that would invalidate every active wallet snapshot
+  // (overview, queues, buildings, etc.) on every tick and make the screen visibly churn.
   useEffect(() => {
     if (!apiBaseUrl || !account || !pageStateHydrationReady || !shouldAutoPollMissionControlForPage(page)) {
       return;
@@ -5157,7 +5156,7 @@ export function PlayableMvpApp({
 
     return backendData!.startPolling(
       "mission-control",
-      [`wallet:${account.toLowerCase()}`, "kind:fleet-visibility", "kind:fleet-archive", "kind:missile-archive", "kind:global-active-missions", "kind:global-mission-archive", "kind:mission"],
+      ["kind:fleet-visibility", "kind:fleet-archive", "kind:missile-archive", "kind:global-active-missions", "kind:global-mission-archive", "kind:mission"],
       TOP_BAR_RESOURCE_POLL_INTERVAL_MS,
       "mission-control",
     );
@@ -5178,7 +5177,7 @@ export function PlayableMvpApp({
     const delay = Math.max(0, nextEventMs - Date.now()) + MISSION_RESOLUTION_REFRESH_BUFFER_MS;
     return backendData!.scheduleRefresh(
       "mission-control-resolution",
-      [`wallet:${account.toLowerCase()}`, "kind:fleet-visibility", "kind:fleet-archive", "kind:global-active-missions", "kind:global-mission-archive", "kind:mission"],
+      ["kind:fleet-visibility", "kind:fleet-archive", "kind:global-active-missions", "kind:global-mission-archive", "kind:mission"],
       delay,
       "transaction",
     );
