@@ -141,6 +141,11 @@ describe("VEY-KANEO-433 Mission Control auto-poll wiring", () => {
     expect(source).toContain('backendData!.startPolling(\n      "mission-control"');
     expect(source).toContain('"kind:fleet-visibility"');
     expect(source).toContain('"kind:global-mission-archive"');
+    const missionPoll = source.slice(
+      source.indexOf('backendData!.startPolling(\n      "mission-control"'),
+      source.indexOf("\n  }, [account, apiBaseUrl, backendData, page, pageStateHydrationReady]);", source.indexOf('backendData!.startPolling(\n      "mission-control"')),
+    );
+    expect(missionPoll).not.toContain("wallet:${account.toLowerCase()}");
     expect(source).not.toContain("const pollMissionControl = () =>");
     // VEY-KANEO-783: the shared Mission Control refresher also reloads canonical alliance
     // membership, so dissolve/leave/removal hides Alliance without reconnecting or reloading.
@@ -173,6 +178,11 @@ describe("VEY-KANEO-433 Mission Control auto-poll wiring", () => {
     expect(source).toContain("const missionDetailSnapshot = useBackendDataSnapshot<MissionDetailResponse>");
     // The ETA-tightened transaction-priority refresh is also store-owned.
     expect(source).toContain('backendData!.scheduleRefresh(\n      "mission-control-resolution"');
+    const resolutionRefresh = source.slice(
+      source.indexOf('backendData!.scheduleRefresh(\n      "mission-control-resolution"'),
+      source.indexOf("\n  }, [account, apiBaseUrl, backendData, fleetVisibility, page, pageStateHydrationReady]);", source.indexOf('backendData!.scheduleRefresh(\n      "mission-control-resolution"')),
+    );
+    expect(resolutionRefresh).not.toContain("wallet:${account.toLowerCase()}");
   });
 });
 
