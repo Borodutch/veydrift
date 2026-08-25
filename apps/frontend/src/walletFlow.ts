@@ -2146,14 +2146,16 @@ async function sendWalletTransaction(
 
   // All wallet writes share this gate. Simulate the exact calldata with the
   // connected account immediately before asking the wallet to submit it. The
-  // Farcaster provider is a host wallet bridge, not a public RPC transport, so
-  // keep its responsibility limited to wallet operations and use the app's
-  // read-only RPC for eth_call. Injected/Reown providers retain their existing
-  // provider-side preflight behavior.
+  // Farcaster and Reown providers are host wallet bridges, not public RPC
+  // transports, so keep their responsibility limited to wallet operations and
+  // use the app's read-only RPC for eth_call. Injected providers retain their
+  // existing provider-side preflight behavior.
   const transport = walletTransactionTransports.get(provider);
   const simulationRpcUrl = options.simulationRpcUrl ?? transport?.simulationRpcUrl;
+  const simulateThroughAppRpc =
+    transport?.source === "farcaster" || transport?.source === "reown";
   const simulate =
-    transport?.source === "farcaster"
+    simulateThroughAppRpc
       ? (blockTag: "pending" | "latest") => simulateTransactionFromRpc(simulationRpcUrl ?? "", transaction, blockTag)
       : (blockTag: "pending" | "latest") => provider.request<string>({ method: "eth_call", params: [transaction, blockTag] });
   try {
