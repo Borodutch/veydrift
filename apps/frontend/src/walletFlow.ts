@@ -2146,14 +2146,14 @@ async function sendWalletTransaction(
 
   // All wallet writes share this gate. Simulate the exact calldata with the
   // connected account immediately before asking the wallet to submit it. The
-  // Farcaster and Reown providers are host wallet bridges, not public RPC
-  // transports, so keep their responsibility limited to wallet operations and
-  // use the app's read-only RPC for eth_call. Injected providers retain their
-  // existing provider-side preflight behavior.
+  // Connected wallet providers are signing/submission transports, not the
+  // app's chain-read authority. Mobile injected providers can reject eth_call
+  // depending on their current wallet tab/network state, so every configured
+  // wallet uses the app's read-only RPC for simulation. Keep a provider fallback
+  // only for unconfigured integrations and focused sender tests.
   const transport = walletTransactionTransports.get(provider);
   const simulationRpcUrl = options.simulationRpcUrl ?? transport?.simulationRpcUrl;
-  const simulateThroughAppRpc =
-    transport?.source === "farcaster" || transport?.source === "reown";
+  const simulateThroughAppRpc = Boolean(simulationRpcUrl?.trim());
   const simulate =
     simulateThroughAppRpc
       ? (blockTag: "pending" | "latest") => simulateTransactionFromRpc(simulationRpcUrl ?? "", transaction, blockTag)

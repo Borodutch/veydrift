@@ -123,10 +123,20 @@ const provider: Eip1193Provider = {
   },
 };
 
-globalThis.fetch = (async (input) => {
+globalThis.fetch = (async (input, init) => {
   const url = new URL(String(input), window.location.origin);
   fixtureRequests.push(`${url.pathname}${url.search}`);
   const systemMatch = url.pathname.match(/\/universe\/galaxies\/(\d+)\/systems\/(\d+)/);
+
+  if (url.origin !== window.location.origin) {
+    const body = JSON.parse(String(init?.body ?? "{}")) as { id?: unknown; method?: unknown };
+    if (body.method === "eth_call") return Response.json({ id: body.id, jsonrpc: "2.0", result: "0x" });
+    return Response.json({
+      error: { code: -32601, message: `Fixture JSON-RPC method not implemented: ${String(body.method)}` },
+      id: body.id,
+      jsonrpc: "2.0",
+    });
+  }
 
   if (stallMissionBackgroundReads && (
     url.pathname.endsWith(`/wallet/${account}/missions`)

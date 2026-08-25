@@ -1317,6 +1317,82 @@ describe("walletFlow", () => {
     ]);
   });
 
+  test("simulates configured injected ship production through the app RPC and uses the wallet only for submission", async () => {
+    const originalFetch = globalThis.fetch;
+    const walletRequests: Array<{ method: string; params?: unknown[] }> = [];
+    const rpcRequests: Array<{ input: string; body: unknown }> = [];
+    const transaction = {
+      from: account,
+      to: contract,
+      data: encodeGameCall("0x13aed9a2", [7, 0, 1]),
+    };
+    const injectedProvider = mockProvider(
+      async ({ method, params }) => {
+        walletRequests.push(params === undefined ? { method } : { method, params });
+        if (method === "eth_call") throw {};
+        if (method === "eth_sendTransaction") return "0xmetamask";
+        throw new Error(`Unexpected method ${method}`);
+      },
+      { forwardSimulation: true },
+    );
+    configureWalletTransactionTransport(injectedProvider, "injected", "https://base-rpc.example.test");
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      rpcRequests.push({
+        input: String(input),
+        body: JSON.parse(String(init?.body ?? "{}")),
+      });
+      return Response.json({ result: "0x" });
+    }) as unknown as typeof fetch;
+
+    try {
+      await expect(sendStartShipProductionTransaction(injectedProvider, account, contract, "7", 0, 1)).resolves.toBe("0xmetamask");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    expect(walletRequests).toEqual([{ method: "eth_sendTransaction", params: [transaction] }]);
+    expect(rpcRequests).toEqual([
+      {
+        input: "https://base-rpc.example.test",
+        body: {
+          id: 1,
+          jsonrpc: "2.0",
+          method: "eth_call",
+          params: [transaction, "pending"],
+        },
+      },
+    ]);
+  });
+
+  test("blocks a configured injected wallet prompt when app RPC simulation returns a decoded revert", async () => {
+    const originalFetch = globalThis.fetch;
+    const walletMethods: string[] = [];
+    const provider = mockProvider(
+      async ({ method }) => {
+        walletMethods.push(method);
+        throw new Error(`${method} should not be called`);
+      },
+      { forwardSimulation: true },
+    );
+    configureWalletTransactionTransport(provider, "injected", "https://base-rpc.example.test");
+    globalThis.fetch = (async () =>
+      Response.json({
+        error: {
+          code: 3,
+          message: "execution reverted",
+          data: customErrorData("0x705f508b", [3, 0, 1]),
+        },
+      })) as unknown as typeof fetch;
+
+    try {
+      await expect(sendCreateColonyTransaction(provider, account, contract, "7", 2, 44, 10, 40)).rejects.toThrow("Build or keep a Colony Ship");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    expect(walletMethods).toEqual([]);
+  });
+
   test("simulates Farcaster writes through the app RPC and uses the host provider only for submission", async () => {
     const originalFetch = globalThis.fetch;
     const walletRequests: Array<{ method: string; params?: unknown[] }> = [];

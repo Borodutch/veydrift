@@ -205,7 +205,7 @@ describe("frontend backend-data boundary", () => {
     expect(storeSource).toContain("isFresh(key");
   });
 
-  test("simulates every EVM write through the single source-aware wallet submission gateway", async () => {
+  test("simulates every EVM write through the single configured wallet submission gateway", async () => {
     const walletFlowSource = await Bun.file(new URL("./walletFlow.ts", import.meta.url)).text();
     const sendOccurrences = walletFlowSource.match(/method:\s*["']eth_sendTransaction["']/g) ?? [];
     const gatewayStart = walletFlowSource.indexOf("async function sendWalletTransaction");
@@ -213,7 +213,8 @@ describe("frontend backend-data boundary", () => {
     const gatewaySource = walletFlowSource.slice(gatewayStart, gatewayEnd);
 
     expect(sendOccurrences).toHaveLength(1);
-    expect(gatewaySource).toContain('transport?.source === "farcaster"');
+    expect(gatewaySource).toContain("Boolean(simulationRpcUrl?.trim())");
+    expect(gatewaySource).not.toContain('transport?.source === "farcaster"');
     expect(gatewaySource).toContain("simulateTransactionFromRpc");
     expect(gatewaySource).toContain('method: "eth_call"');
     expect(gatewaySource.indexOf('await simulate("pending")')).toBeLessThan(gatewaySource.indexOf('method: "eth_sendTransaction"'));
