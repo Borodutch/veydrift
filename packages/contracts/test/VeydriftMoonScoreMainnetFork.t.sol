@@ -95,7 +95,7 @@ contract VeydriftMoonScoreMainnetForkTest is Test {
         VeydriftStateMigrationModule stateMigrationModule =
             new VeydriftStateMigrationModule(REFERRAL_SYSTEM);
         VeydriftFirstPlanetSettlementModule firstPlanetSettlementModule =
-            new VeydriftFirstPlanetSettlementModule(REFERRAL_SYSTEM);
+            new VeydriftFirstPlanetSettlementModule(REFERRAL_SYSTEM, address(colonizationModule));
         implementation = new VeydriftGame(
             PROXY_ADMIN_OWNER,
             address(firstPlanetSettlementModule),

@@ -1,4 +1,4 @@
-import { listPopulatedPlanetSlots } from "@veydrift/universe";
+import { getSlotProfile, listPopulatedPlanetSlots } from "@veydrift/universe";
 import type { PlanetSlot } from "@veydrift/universe";
 import { encodeAbiParameters, keccak256, stringToHex } from "viem";
 
@@ -28,7 +28,7 @@ export type PlanetArchetype =
   | "scorching-molten";
 
 export type SystemSnapshot = {
-  generatorVersion: "veydrift-universe-v1";
+  generatorVersion: "veydrift-universe-v2";
   chainId: number;
   settlementContractAddress: string;
   galaxy: number;
@@ -75,7 +75,7 @@ export function systemSnapshot(
   const seed = universeSeed(chainId, settlementContractAddress);
 
   return {
-    generatorVersion: "veydrift-universe-v1",
+    generatorVersion: "veydrift-universe-v2",
     chainId,
     settlementContractAddress,
     galaxy,
@@ -180,11 +180,8 @@ function slotTemperature(
 }
 
 function slotMaxTemperatureProfile(position: number): readonly [number, number] {
-  if (position <= 3) return [40, 120];
-  if (position <= 6) return [-10, 80];
-  if (position <= 9) return [-40, 40];
-  if (position <= 12) return [-80, 10];
-  return [-120, -20];
+  const profile = getSlotProfile(position as PlanetSlot);
+  return [profile.minMaxTemperatureC, profile.maxMaxTemperatureC];
 }
 
 function intInRange(min: number, max: number, roll: bigint): number {

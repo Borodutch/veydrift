@@ -397,6 +397,10 @@ abstract contract VeydriftGameStorage is Initializable {
     uint64 internal _moonAttackParityActivatedAt;
     mapping(uint256 missionId => bool recorded) internal _missionOriginMoonGenerationRecorded;
     mapping(uint256 missionId => bool recorded) internal _missionTargetMoonGenerationRecorded;
+    // Append-only generation marker for the classic per-slot planet temperature rollout. Fresh
+    // deployments initialize at V2; the live proxy starts at zero and is migrated once while
+    // paused, preserving each planet's original centered temperature roll.
+    uint8 internal _planetTemperatureGenerationVersion;
 
     error AlreadyStarted();
     error BadStartPayment();
@@ -468,6 +472,9 @@ abstract contract VeydriftGameStorage is Initializable {
         uint256 available
     );
     error UnsupportedGameplayModule();
+    error GameMustBePaused();
+    error PlanetTemperatureMigrationPending();
+    error PlanetTemperatureMigrationCompleted();
     error DefenseLimitReached(Defense defense);
     error MissileSiloCapacityExceeded(uint32 requiredSlots, uint32 availableSlots);
     error InvalidMissileTarget(Defense defense);
@@ -830,6 +837,10 @@ abstract contract VeydriftGameStorage is Initializable {
         uint128 deuterium
     );
     event PlanetRenamed(address indexed player, uint256 indexed planetId, string name);
+    event PlanetTemperatureChanged(
+        uint256 indexed planetId, int16 previousTemperature, int16 newTemperature
+    );
+    event PlanetTemperatureGenerationMigrated(uint256 planetCount);
     event PlanetAbandoned(
         address indexed player,
         uint256 indexed planetId,
@@ -854,6 +865,7 @@ abstract contract VeydriftGameStorage is Initializable {
         nextPlanetId = 1;
         nextFleetId = 1;
         _moonAttackParityActivatedAt = uint64(block.timestamp);
+        _planetTemperatureGenerationVersion = 2;
     }
 
     modifier onlyOwner() {

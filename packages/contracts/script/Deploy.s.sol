@@ -91,8 +91,9 @@ contract Deploy is ResourceTokenDeployment {
         VeydriftReferralSystem referralSystem = new VeydriftReferralSystem(admin);
         VeydriftStateMigrationModule stateMigrationModule =
             new VeydriftStateMigrationModule(address(referralSystem));
-        VeydriftFirstPlanetSettlementModule firstPlanetSettlementModule =
-            new VeydriftFirstPlanetSettlementModule(address(referralSystem));
+        VeydriftFirstPlanetSettlementModule firstPlanetSettlementModule = new VeydriftFirstPlanetSettlementModule(
+            address(referralSystem), address(colonizationModule)
+        );
         VeydriftGame game = new VeydriftGame(
             admin,
             address(firstPlanetSettlementModule),

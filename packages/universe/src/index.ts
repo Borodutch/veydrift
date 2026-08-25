@@ -357,7 +357,7 @@ function slotProfile(
   };
 }
 
-function getSlotProfile(slot: PlanetSlot): PlanetSlotProfile {
+export function getSlotProfile(slot: PlanetSlot): PlanetSlotProfile {
   const profile = SLOT_PROFILES[slot - 1];
 
   if (!profile) {

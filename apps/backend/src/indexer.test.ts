@@ -22,6 +22,7 @@ const fullStateMigrationClaimedTopic = "0xc1eb9069a8811bc656d30388efd94a0e3d2c23
 const planetSettledTopic = "0x7faee98c7c745f9c9fb2117a44185f57454dac3013383364df4c22b5f9bc4077";
 const moonResourcesSettledTopic = "0xb20fd9e652e1b740544f362fb3047c43a7bf0d6c7fbf0f5cab5f1f939aac6917";
 const planetRenamedTopic = "0x2b772c1fa271aad466ce009b6b5824b2ad6ccd942d21efc686513ffa8eb166cd";
+const planetTemperatureChangedTopic = "0x41f73695c2664b2bf09d0ffdfe2f0eae7ef9927957a0aef393a38ebcd7fa0fa6";
 const buildingStartedTopic = "0x48456f4ba6902f09ee7c2958aca9c9d1f8a5920c8affef08667504670f8bba1b";
 const buildingCompletedTopic = "0xa2543cf02e1a3601ccdc4fff81d99ff1225eaf4ad629fbd0f724d61db252c370";
 const defenseQueuedTopic = "0xc3dcdf6abcac9fc4831745727e78f808922f43da079b984420ef70c97cff0f5b";
@@ -3665,6 +3666,44 @@ describe("SettlementIndexer", () => {
     });
     expect(indexer.settledPlanetsInSystem(planet.galaxy, planet.system)[0]).toMatchObject({
       name: "New Eos"
+    });
+  });
+
+  test("applies migrated planet temperatures to every indexed planet read model", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+
+    expect(indexer.applyLog({
+      blockNumber: "0x82",
+      transactionHash: "0xtemperature-migration",
+      logIndex: "0x0",
+      topics: [planetTemperatureChangedTopic, topic(7n)],
+      data: abiWords(BigInt.asUintN(256, -8n), 52n)
+    })).toMatchObject({
+      applied: true,
+      duplicate: false,
+      snapshot: {
+        indexedEventLogs: 1,
+        indexedPlanets: 1,
+        latestIndexedBlock: "130"
+      }
+    });
+
+    expect(indexer.walletSettlement(player).planet).toMatchObject({
+      planetId: planet.planetId,
+      temperature: 52
+    });
+    expect(indexer.walletPlanets(player).planets[0]).toMatchObject({
+      planetId: planet.planetId,
+      temperature: 52
+    });
+    expect(indexer.planet(planet.planetId)).toMatchObject({ temperature: 52 });
+    expect(indexer.settledPlanetsInSystem(planet.galaxy, planet.system)[0]).toMatchObject({
+      temperature: 52
     });
   });
 

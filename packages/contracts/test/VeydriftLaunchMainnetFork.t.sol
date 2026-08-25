@@ -63,13 +63,19 @@ contract VeydriftLaunchMainnetForkTest is Test {
 
         VeydriftCombatModule combatModule =
             new VeydriftCombatModule(address(new VeydriftCombatRapidfire()));
+        VeydriftColonizationModule colonizationModule =
+            new VeydriftColonizationModule(address(new VeydriftShipProductionModule()));
         VeydriftGame newImplementation = new VeydriftGame(
             proxyAdminOwner,
-            address(new VeydriftFirstPlanetSettlementModule(address(0xBEEF))),
+            address(
+                new VeydriftFirstPlanetSettlementModule(
+                    address(0xBEEF), address(colonizationModule)
+                )
+            ),
             address(new VeydriftGameplayModule(address(combatModule))),
             address(new VeydriftPlanetManagementModule()),
             address(new VeydriftAttackProtectionModule()),
-            address(new VeydriftColonizationModule(address(new VeydriftShipProductionModule()))),
+            address(colonizationModule),
             address(new VeydriftDefenseHoldModule()),
             address(new VeydriftStateMigrationModule(address(0xBEEF))),
             address(new VeydriftAcsAttackModule())

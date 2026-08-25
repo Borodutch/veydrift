@@ -1358,6 +1358,15 @@ export type PlanetRenamedEvent = {
   name: string;
 };
 
+export type PlanetTemperatureChangedEvent = {
+  eventName: "PlanetTemperatureChanged";
+  transactionHash: string;
+  blockNumber: string;
+  planetId: string;
+  previousTemperature: number;
+  newTemperature: number;
+};
+
 export type IndexedReferralClaimEvent = {
   eventName: "ReferralInviteWindowActivated";
   transactionHash: string;
@@ -5862,6 +5871,8 @@ const planetSettledTopic = "0x7faee98c7c745f9c9fb2117a44185f57454dac3013383364df
 export const inviteeProductionBoostActivatedTopic = "0x6083ebfcba8b43e5215a2535637493040233665ead2fde14e38b622597b62860";
 const moonResourcesSettledTopic = "0xb20fd9e652e1b740544f362fb3047c43a7bf0d6c7fbf0f5cab5f1f939aac6917";
 const planetRenamedTopic = "0x2b772c1fa271aad466ce009b6b5824b2ad6ccd942d21efc686513ffa8eb166cd";
+const planetTemperatureChangedTopic = "0x41f73695c2664b2bf09d0ffdfe2f0eae7ef9927957a0aef393a38ebcd7fa0fa6";
+const planetTemperatureGenerationMigratedTopic = "0x3803de58665f5a31a1fb4f3bcf20c64fd9ffea33d3b2725507f336c46942dfcd";
 const buildingStartedTopic = "0x48456f4ba6902f09ee7c2958aca9c9d1f8a5920c8affef08667504670f8bba1b";
 const buildingCompletedTopic = "0xa2543cf02e1a3601ccdc4fff81d99ff1225eaf4ad629fbd0f724d61db252c370";
 export const defenseQueuedTopic = "0xc3dcdf6abcac9fc4831745727e78f808922f43da079b984420ef70c97cff0f5b";
@@ -5959,6 +5970,8 @@ const eventNamesByTopic = new Map<string, string>([
   [inviteeProductionBoostActivatedTopic, "InviteeProductionBoostActivated"],
   [moonResourcesSettledTopic, "MoonResourcesSettled"],
   [planetRenamedTopic, "PlanetRenamed"],
+  [planetTemperatureChangedTopic, "PlanetTemperatureChanged"],
+  [planetTemperatureGenerationMigratedTopic, "PlanetTemperatureGenerationMigrated"],
   [buildingStartedTopic, "BuildingStarted"],
   [buildingCompletedTopic, "BuildingCompleted"],
   [defenseQueuedTopic, "DefenseQueued"],
@@ -6169,6 +6182,10 @@ export function isMoonResourcesSettledLog(log: RpcLog): boolean {
 
 export function isPlanetRenamedLog(log: RpcLog): boolean {
   return topicAt(log.topics, 0) === planetRenamedTopic;
+}
+
+export function isPlanetTemperatureChangedLog(log: RpcLog): boolean {
+  return topicAt(log.topics, 0) === planetTemperatureChangedTopic;
 }
 
 export function isDebrisFieldLog(log: RpcLog): boolean {
@@ -6652,6 +6669,18 @@ export function decodePlanetRenamedLog(log: RpcLog): PlanetRenamedEvent {
     owner: decodeAddressWord(topicAt(log.topics, 1)),
     planetId: decodeUint(topicAt(log.topics, 2)).toString(),
     name: decodeStringResult(log.data)
+  };
+}
+
+export function decodePlanetTemperatureChangedLog(log: RpcLog): PlanetTemperatureChangedEvent {
+  const words = splitWords(log.data);
+  return {
+    eventName: "PlanetTemperatureChanged",
+    transactionHash: log.transactionHash,
+    blockNumber: BigInt(log.blockNumber).toString(),
+    planetId: decodeUint(topicAt(log.topics, 1)).toString(),
+    previousTemperature: Number(decodeSignedWord(wordAt(words, 0))),
+    newTemperature: Number(decodeSignedWord(wordAt(words, 1)))
   };
 }
 
