@@ -74,6 +74,12 @@ describe("loadWalletPlanetSyncSnapshot", () => {
     expect(source.resources).toEqual({ metal: 420, crystal: 69, deuterium: 17 });
   });
 
+  test("keeps a failed Supply source explicitly unavailable instead of treating it as an empty fleet", () => {
+    const unavailable = batchSupplySourceForPlanet(planet() as any, undefined, "Could not read this source's cargo fleet. Refresh and try again.");
+
+    expect(unavailable.unavailableReason).toBe("Could not read this source's cargo fleet. Refresh and try again.");
+  });
+
   test("uses the overview fast path before an active planet is known", async () => {
     let overviewCalled = false;
     const result = await loadWalletPlanetSyncSnapshot("https://api.test", wallet, undefined, {}, {

@@ -50,6 +50,7 @@ export function batchSupplySourceLimitReason({
 export function BatchSupplyModal({
   actionPending = false,
   error,
+  fleetSlotsKnown = true,
   loading = false,
   onClose,
   onConfirm,
@@ -59,6 +60,7 @@ export function BatchSupplyModal({
 }: {
   actionPending?: boolean | undefined;
   error?: string | undefined;
+  fleetSlotsKnown?: boolean | undefined;
   loading?: boolean | undefined;
   onClose: () => void;
   onConfirm: (orders: BatchSupplyOrder[]) => void;
@@ -268,7 +270,7 @@ export function BatchSupplyModal({
         </section>
 
         <div className="grid gap-3">
-          {!loading && maxSources === 0 ? <p className="rounded border border-amber-300/30 bg-amber-300/10 p-2 text-sm text-amber-100">All fleet slots are currently occupied. Wait for a fleet to return or research Computer Technology before supplying this planet.</p> : null}
+          {!loading && fleetSlotsKnown && maxSources === 0 ? <p className="rounded border border-amber-300/30 bg-amber-300/10 p-2 text-sm text-amber-100">All fleet slots are currently occupied. Wait for a fleet to return or research Computer Technology before supplying this planet.</p> : null}
           {plan.sourceLimitReached ? <p className="rounded border border-amber-300/30 bg-amber-300/10 p-2 text-sm text-amber-100">Select at most {maxSources} sources because that is your current fleet-slot capacity.</p> : null}
           {plan.blockedSources.length > 0 ? <p className="rounded border border-amber-300/30 bg-amber-300/10 p-2 text-sm text-amber-100">Some selected sources cannot launch: {plan.blockedSources.map((source) => source.reason).join(" ")}</p> : null}
           {missingTotal > 0 ? <p className="rounded border border-amber-300/30 bg-amber-300/10 p-2 text-sm text-amber-100">Missing: M {format(plan.missing.metal)} · C {format(plan.missing.crystal)} · D {format(plan.missing.deuterium)}. Select more sources or reduce the request.</p> : null}

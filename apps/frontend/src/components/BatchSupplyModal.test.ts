@@ -37,6 +37,10 @@ describe("Batch Supply source row presentation", () => {
     expect(batchSupplyModalSource).not.toContain('<h2 className="translate-y-px');
   });
 
+  test("does not misreport unreadable fleet capacity as every slot being occupied", () => {
+    expect(batchSupplyModalSource).toContain("fleetSlotsKnown && maxSources === 0");
+  });
+
   test("shows the canonical remaining cargo fleet for an unplanned partially committed source", () => {
     const astro = source({ smallCargo: 4, largeCargo: 1 });
 
