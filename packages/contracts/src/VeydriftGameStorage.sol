@@ -401,6 +401,10 @@ abstract contract VeydriftGameStorage is Initializable {
     // deployments initialize at V2; the live proxy starts at zero and is migrated once while
     // paused, preserving each planet's original centered temperature roll.
     uint8 internal _planetTemperatureGenerationVersion;
+    // Append-only resumable migration progress. Bounded batches stay below Base's per-transaction
+    // gas ceiling; a rolled-back implementation can later resume without remigrating any planet.
+    uint256 internal _planetTemperatureMigrationCursor;
+    uint256 internal _planetTemperatureMigratedCount;
 
     error AlreadyStarted();
     error BadStartPayment();
