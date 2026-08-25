@@ -30,9 +30,13 @@ interface IVeydriftPaidAllianceInviteSystem {
 /// @notice Delegatecall target for first-planet settlement and referral settlement.
 contract VeydriftFirstPlanetSettlementModule is VeydriftResourceReserves {
     address private immutable _referralSystem;
+    address private immutable _migrationColonizationModule;
 
-    constructor(address referralSystemAddress) VeydriftResourceReserves(address(0)) {
+    constructor(address referralSystemAddress, address colonizationModule)
+        VeydriftResourceReserves(address(0))
+    {
         _referralSystem = referralSystemAddress;
+        _migrationColonizationModule = colonizationModule;
     }
 
     /// @dev Kept on the Game proxy ABI but delegated here to leave upgrade bytecode headroom.
@@ -48,7 +52,78 @@ contract VeydriftFirstPlanetSettlementModule is VeydriftResourceReserves {
     }
 
     function setGamePaused(bool paused) external onlyOwner {
+        if (!paused && _planetTemperatureGenerationVersion < 2) {
+            revert PlanetTemperatureMigrationPending();
+        }
         _gamePaused = paused ? 1 : 0;
+    }
+
+    function migratePlanetTemperatures() external onlyOwner returns (uint256 migrated) {
+        if (_gamePaused == 0) revert GameMustBePaused();
+        if (_planetTemperatureGenerationVersion >= 2) {
+            revert PlanetTemperatureMigrationCompleted();
+        }
+
+        uint256 end = nextPlanetId;
+        uint64 migratedAt = uint64(block.timestamp);
+        for (uint256 planetId = 1; planetId < end;) {
+            Planet storage planetRef = _planets[planetId];
+            if (planetRef.owner != address(0)) {
+                _requireNoPendingMissionResolutionForPlanet(planetId);
+                BuildingConstruction memory construction = buildingConstructions[planetId];
+                if (construction.active && construction.readyAt <= migratedAt) {
+                    _settleProductionUntil(planetId, construction.readyAt);
+                    _completeMigrationBuilding(planetId, construction);
+                }
+                _settleProductionUntil(planetId, migratedAt);
+                _settleMigrationDuePlanet(planetId, migratedAt);
+                _emitPlanetSettled(planetId);
+
+                int16 previous = planetRef.temperature;
+                int16 current =
+                    VeydriftPlanetGeneration.migrateLegacyTemperature(planetRef.position, previous);
+                planetRef.temperature = current;
+                emit PlanetTemperatureChanged(planetId, previous, current);
+                migrated += 1;
+            }
+            unchecked {
+                ++planetId;
+            }
+        }
+
+        _planetTemperatureGenerationVersion = 2;
+        emit PlanetTemperatureGenerationMigrated(migrated);
+    }
+
+    /// @dev Migration runs while the public Game facade is paused, so its normal self-call queue
+    /// settler is intentionally unavailable. Delegate directly into the same canonical queue
+    /// settlement module instead; this preserves due research/ship/defense completions without
+    /// temporarily reopening gameplay.
+    function _settleMigrationDuePlanet(uint256 planetId, uint64 migratedAt) private {
+        (bool ok, bytes memory result) = _migrationColonizationModule.delegatecall(
+            abi.encodeWithSignature(
+                "completeAttackTargetSnapshotQueues(uint256,uint64)", planetId, migratedAt
+            )
+        );
+        if (!ok) {
+            assembly ("memory-safe") {
+                revert(add(result, 32), mload(result))
+            }
+        }
+    }
+
+    function _completeMigrationBuilding(uint256 planetId, BuildingConstruction memory construction)
+        private
+    {
+        Building building = construction.building;
+        delete buildingConstructions[planetId];
+        _buildingLevels[planetId][building] = construction.targetLevel;
+        if (building == Building.Terraformer) {
+            unchecked {
+                _planets[planetId].fields += 5;
+            }
+        }
+        emit BuildingCompleted(planetId, building, construction.targetLevel);
     }
 
     /// @dev Kept behind the proxy fallback because the Game facade is at the EIP-170 size limit.
@@ -80,6 +155,10 @@ contract VeydriftFirstPlanetSettlementModule is VeydriftResourceReserves {
 
     /// @dev The facade checks that this is a self-call before it delegates here.
     function settleProductionUntil(uint256 planetId, uint64 settledAt) external {
+        _settleProductionUntil(planetId, settledAt);
+    }
+
+    function _settleProductionUntil(uint256 planetId, uint64 settledAt) private {
         Planet storage planetRef = _planets[planetId];
         if (settledAt <= planetRef.lastSettledAt) return;
 

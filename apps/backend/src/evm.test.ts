@@ -11,11 +11,13 @@ import {
   decodeFirstPlanetSettledLog,
   decodePlayerMigrationLog,
   decodePlanetRenamedLog,
+  decodePlanetTemperatureChangedLog,
   decodeMoonChanceReportLog,
   HttpJsonRpcTransport,
   isBattleReportLog,
   isFirstPlanetSettledLog,
   isPlanetRenamedLog,
+  isPlanetTemperatureChangedLog,
   isMoonChanceReportLog,
   isPlayerMigrationLog,
   RpcResponseParseError,
@@ -32,6 +34,7 @@ const requestedTopic = "0x8969f3a52192b4b918b49219d60ea0b68d3f5fd8b70c4691b297a5
 const finalizedTopic = "0xd485b8634099625ba076107f73a9ea0e95b3f6ac18d76e501b618572e6705d04";
 const skippedTopic = "0x93793f9a66f3a0a4cea93b7eb92e142d7283b5b33f657e14277879f2f8e7ab4e";
 const planetRenamedTopic = "0x2b772c1fa271aad466ce009b6b5824b2ad6ccd942d21efc686513ffa8eb166cd";
+const planetTemperatureChangedTopic = "0x41f73695c2664b2bf09d0ffdfe2f0eae7ef9927957a0aef393a38ebcd7fa0fa6";
 const moonDestructionRequestedTopic = "0x719ab77026e22a766a85f5c32e5294b20e76b8a0490812761ab98ab3a1739884";
 const moonDestructionFinalizedTopic = "0xdac71b69e1912e36573457fd7e6227e8b5ac86e9e011bd7eddc6c104221ed803";
 const fleetMissionLaunchedTopic = "0x95e2cb506aa14052bac412e42f47fb34d9234819a960761a7bc7f1920c0ab456";
@@ -610,6 +613,25 @@ describe("planet rename event decoding", () => {
       owner: "0x0000000000000000000000000000000000000def",
       planetId: "7",
       name: "New Eos"
+    });
+  });
+});
+
+describe("planet temperature event decoding", () => {
+  test("decodes signed legacy and classic temperatures", () => {
+    const log = makeLog({
+      topics: [planetTemperatureChangedTopic, topic(7n)],
+      data: dataWords([word(BigInt.asUintN(256, -40n)), word(30n)])
+    });
+
+    expect(isPlanetTemperatureChangedLog(log)).toBe(true);
+    expect(decodePlanetTemperatureChangedLog(log)).toEqual({
+      eventName: "PlanetTemperatureChanged",
+      transactionHash: "0xtx",
+      blockNumber: "16",
+      planetId: "7",
+      previousTemperature: -40,
+      newTemperature: 30
     });
   });
 });

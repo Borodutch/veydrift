@@ -4817,11 +4817,11 @@ describe("Veydrift backend", () => {
       system: 439,
       position: 5,
       fields: 176,
-      temperature: 26,
+      temperature: 96,
       metalMultiplierBps: 10_000,
       crystalMultiplierBps: 10_000,
-      deuteriumMultiplierBps: 12_280,
-      archetype: "warm-terracotta",
+      deuteriumMultiplierBps: 10_880,
+      archetype: "scorching-molten",
       occupiedBy: null
     });
     expect(unoccupied).not.toMatchObject({

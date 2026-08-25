@@ -1,29 +1,34 @@
 import { describe, expect, test } from "bun:test";
-import { planetMetadata } from "./universe";
+import { planetMetadata, systemSnapshot } from "./universe";
 
 const chainId = 84532;
 const settlementContractAddress = "0x1111111111111111111111111111111111111111";
 
 const slotTemperatureProfiles = [
-  [1, 40, 120],
-  [2, 40, 120],
-  [3, 40, 120],
-  [4, -10, 80],
-  [5, -10, 80],
-  [6, -10, 80],
-  [7, -40, 40],
-  [8, -40, 40],
-  [9, -40, 40],
-  [10, -80, 10],
-  [11, -80, 10],
-  [12, -80, 10],
-  [13, -120, -20],
-  [14, -120, -20],
-  [15, -120, -20]
+  [1, 220, 260],
+  [2, 170, 210],
+  [3, 120, 160],
+  [4, 70, 110],
+  [5, 60, 100],
+  [6, 50, 90],
+  [7, 40, 80],
+  [8, 30, 70],
+  [9, 20, 60],
+  [10, 10, 50],
+  [11, 0, 40],
+  [12, -10, 30],
+  [13, -50, -10],
+  [14, -90, -50],
+  [15, -130, -90]
 ] as const;
 
 describe("backend universe metadata", () => {
-  test("uses Veydrift contract temperature bands for every planet position", () => {
+  test("advertises the classic temperature generator version", () => {
+    expect(systemSnapshot(chainId, settlementContractAddress, 2, 44).generatorVersion)
+      .toBe("veydrift-universe-v2");
+  });
+
+  test("uses classic contract temperature bands for every planet position", () => {
     for (const [position, minTemperatureC, maxTemperatureC] of slotTemperatureProfiles) {
       const planet = planetMetadata(chainId, settlementContractAddress, {
         galaxy: 2,
@@ -66,34 +71,31 @@ describe("backend universe metadata", () => {
 
     expect(planet).toMatchObject({
       fields: 176,
-      temperature: 26,
+      temperature: 96,
       metalMultiplierBps: 10_000,
       crystalMultiplierBps: 10_000,
-      deuteriumMultiplierBps: 12_280,
-      archetype: "warm-terracotta"
+      deuteriumMultiplierBps: 10_880,
+      archetype: "scorching-molten"
     });
-    expect(planet.fields).not.toBe(237);
-    expect(planet.temperature).not.toBe(63);
-    expect(planet.archetype).not.toBe("scorching-molten");
   });
 
   test("keeps preview metadata pinned to contract-derived golden coordinates", () => {
     const cases = [
       {
         coordinates: { galaxy: 1, system: 1, position: 1 },
-        expected: { fields: 167, temperature: 70, deuteriumMultiplierBps: 11_400, archetype: "scorching-molten" }
+        expected: { fields: 167, temperature: 250, deuteriumMultiplierBps: 7_800, archetype: "scorching-molten" }
       },
       {
         coordinates: { galaxy: 2, system: 44, position: 8 },
-        expected: { fields: 218, temperature: -29, deuteriumMultiplierBps: 13_380, archetype: "cold-tundra" }
+        expected: { fields: 218, temperature: 41, deuteriumMultiplierBps: 11_980, archetype: "hot-desert" }
       },
       {
         coordinates: { galaxy: 9, system: 499, position: 15 },
-        expected: { fields: 175, temperature: -110, deuteriumMultiplierBps: 15_000, archetype: "frozen-ice" }
+        expected: { fields: 175, temperature: -120, deuteriumMultiplierBps: 15_200, archetype: "frozen-ice" }
       },
       {
         coordinates: { galaxy: 4, system: 250, position: 10 },
-        expected: { fields: 195, temperature: -56, deuteriumMultiplierBps: 13_920, archetype: "frozen-ice" }
+        expected: { fields: 195, temperature: 34, deuteriumMultiplierBps: 12_120, archetype: "warm-terracotta" }
       }
     ] as const;
 

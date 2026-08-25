@@ -84,6 +84,10 @@ contract VeydriftGame is VeydriftResourceReserves {
         return _gamePaused != 0;
     }
 
+    function planetTemperatureGenerationVersion() external view returns (uint8) {
+        return _planetTemperatureGenerationVersion;
+    }
+
     function transferOwnership(address nextOwner) external onlyOwner {
         if (nextOwner == address(0)) revert Unauthorized(nextOwner);
         address oldOwner = _owner;
@@ -272,6 +276,10 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function setGamePaused(bool) external {
+        _delegateToFirstPlanetSettlementModule();
+    }
+
+    function migratePlanetTemperatures() external returns (uint256) {
         _delegateToFirstPlanetSettlementModule();
     }
 

@@ -9,6 +9,7 @@ library VeydriftPlanetGeneration {
     using SafeCast for uint256;
 
     error InvalidCoordinates();
+    error LegacyTemperatureOutOfRange(uint8 position, int16 temperature);
 
     uint64 private constant FNV_OFFSET_BASIS_64 = 0xcbf29ce484222325;
     uint64 private constant FNV_PRIME_64 = 0x100000001b3;
@@ -83,11 +84,52 @@ library VeydriftPlanetGeneration {
         pure
         returns (int16 minValue, int16 maxValue)
     {
-        if (position <= 3) return (40, 120);
-        if (position <= 6) return (-10, 80);
-        if (position <= 9) return (-40, 40);
-        if (position <= 12) return (-80, 10);
-        return (-120, -20);
+        // Classic OGame assigns each individual slot a 40-degree range of possible maximum
+        // temperatures. `slotTemperature` adds two 0..20 rolls, so every value from the minimum
+        // through maximum remains reachable with a centered distribution.
+        int256 slot = int256(uint256(position));
+        int256 minimum;
+        if (position <= 4) {
+            minimum = 270 - 50 * slot;
+        } else if (position <= 12) {
+            minimum = 110 - 10 * slot;
+        } else {
+            minimum = 470 - 40 * slot;
+        }
+        minValue = minimum.toInt16();
+        maxValue = (minimum + 40).toInt16();
+    }
+
+    /// @notice Converts the live V1 grouped-slot temperature into the classic per-slot profile
+    ///         without rerolling. V1 stored `legacyMinimum + (lowRoll + highRoll)`, so the exact
+    ///         original 0..40 centered-roll offset is recoverable from every valid planet.
+    function migrateLegacyTemperature(uint8 position, int16 temperature)
+        internal
+        pure
+        returns (int16)
+    {
+        int256 legacyMinimum;
+        if (position <= 3) {
+            legacyMinimum = 40;
+        } else if (position <= 6) {
+            legacyMinimum = -10;
+        } else if (position <= 9) {
+            legacyMinimum = -40;
+        } else if (position <= 12) {
+            legacyMinimum = -80;
+        } else if (position <= 15) {
+            legacyMinimum = -120;
+        } else {
+            revert InvalidCoordinates();
+        }
+
+        int256 offset = int256(temperature) - legacyMinimum;
+        if (offset < 0 || offset > 40) {
+            revert LegacyTemperatureOutOfRange(position, temperature);
+        }
+
+        (int16 classicMinimum,) = slotMaxTemperatureProfile(position);
+        return (int256(classicMinimum) + offset).toInt16();
     }
 
     function validateCoordinates(

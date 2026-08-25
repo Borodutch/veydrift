@@ -102,8 +102,9 @@ contract UpgradeGame is Script {
         VeydriftDefenseHoldModule defenseHoldModule = new VeydriftDefenseHoldModule();
         VeydriftStateMigrationModule stateMigrationModule =
             new VeydriftStateMigrationModule(referralSystemAddress);
-        VeydriftFirstPlanetSettlementModule firstPlanetSettlementModule =
-            new VeydriftFirstPlanetSettlementModule(referralSystemAddress);
+        VeydriftFirstPlanetSettlementModule firstPlanetSettlementModule = new VeydriftFirstPlanetSettlementModule(
+            referralSystemAddress, address(colonizationModule)
+        );
 
         VeydriftGame newImpl = new VeydriftGame(
             moduleAdmin,
@@ -123,6 +124,10 @@ contract UpgradeGame is Script {
             : bytes("");
         ProxyAdmin(proxyAdmin)
             .upgradeAndCall(ITransparentUpgradeableProxy(proxy), newImplementation, upgradeCall);
+        uint256 migratedPlanets;
+        if (VeydriftGame(payable(proxy)).planetTemperatureGenerationVersion() < 2) {
+            migratedPlanets = VeydriftGame(payable(proxy)).migratePlanetTemperatures();
+        }
 
         vm.stopBroadcast();
 
@@ -131,5 +136,6 @@ contract UpgradeGame is Script {
         console2.log("Gameplay module:   ", address(gameplayModule));
         console2.log("Combat module:     ", address(combatModule));
         console2.log("ACS attack module: ", address(acsAttackModule));
+        console2.log("Migrated planets:  ", migratedPlanets);
     }
 }

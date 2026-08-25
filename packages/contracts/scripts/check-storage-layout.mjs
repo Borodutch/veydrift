@@ -119,6 +119,12 @@ const reviewedStorageAppend = [
     offset: 0,
     type: "mapping(uint256 => bool)",
   },
+  {
+    label: "_planetTemperatureGenerationVersion",
+    slot: "64",
+    offset: 0,
+    type: "uint8",
+  },
 ];
 const riftExtractionStruct = [
   {label: "active", slot: "0", offset: 0, type: "bool"},

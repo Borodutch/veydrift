@@ -47,7 +47,7 @@ contract VeydriftSpaceDockSystemTest is Test {
         VeydriftStateMigrationModule stateMigrationModule =
             new VeydriftStateMigrationModule(address(0xBEEF));
         VeydriftFirstPlanetSettlementModule firstPlanetSettlementModule =
-            new VeydriftFirstPlanetSettlementModule(address(0xBEEF));
+            new VeydriftFirstPlanetSettlementModule(address(0xBEEF), address(colonizationModule));
         game = new VeydriftGame(
             admin,
             address(firstPlanetSettlementModule),

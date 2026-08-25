@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
+import {VeydriftFormulas} from "../src/libraries/VeydriftFormulas.sol";
 import {VeydriftPlanetGeneration} from "../src/libraries/VeydriftPlanetGeneration.sol";
 
 contract VeydriftPlanetGenerationHarness {
@@ -62,6 +63,22 @@ contract VeydriftPlanetGenerationHarness {
 
     function slotMaxTemperatureProfile(uint8 position) external pure returns (int16, int16) {
         return VeydriftPlanetGeneration.slotMaxTemperatureProfile(position);
+    }
+
+    function slotTemperature(uint8 position, uint256 lowRoll, uint256 highRoll)
+        external
+        pure
+        returns (int16)
+    {
+        return VeydriftPlanetGeneration.slotTemperature(position, lowRoll, highRoll);
+    }
+
+    function migrateLegacyTemperature(uint8 position, int16 temperature)
+        external
+        pure
+        returns (int16)
+    {
+        return VeydriftPlanetGeneration.migrateLegacyTemperature(position, temperature);
     }
 }
 
@@ -126,19 +143,53 @@ contract VeydriftPlanetGenerationTest is Test {
         assertEq(temperature, sameTemperature);
     }
 
-    function testSlotTemperatureProfilesKeepVeydriftBands() public view {
-        (int16 innerMin, int16 innerMax) = harness.slotMaxTemperatureProfile(1);
-        (int16 middleMin, int16 middleMax) = harness.slotMaxTemperatureProfile(8);
-        (int16 outerMin, int16 outerMax) = harness.slotMaxTemperatureProfile(15);
+    function testSlotTemperatureProfilesMatchClassicPerSlotRanges() public view {
+        int16[15] memory expectedMinimums =
+            [int16(220), 170, 120, 70, 60, 50, 40, 30, 20, 10, 0, -10, -50, -90, -130];
 
-        assertEq(innerMin, 40);
-        assertEq(innerMax, 120);
-        assertEq(middleMin, -40);
-        assertEq(middleMax, 40);
-        assertEq(outerMin, -120);
-        assertEq(outerMax, -20);
-        assertGt(innerMax, middleMax);
-        assertGt(middleMax, outerMax);
+        for (uint8 position = 1; position <= 15; ++position) {
+            (int16 minValue, int16 maxValue) = harness.slotMaxTemperatureProfile(position);
+            int16 expectedMinimum = expectedMinimums[position - 1];
+            assertEq(minValue, expectedMinimum);
+            assertEq(maxValue, expectedMinimum + 40);
+            assertEq(harness.slotTemperature(position, 0, 0), minValue);
+            assertEq(harness.slotTemperature(position, 10, 10), minValue + 20);
+            assertEq(harness.slotTemperature(position, 20, 20), maxValue);
+        }
+    }
+
+    function testClassicHotSlotsYieldMoreThanThirtySixSolarSatelliteEnergy() public view {
+        assertEq(VeydriftFormulas.solarSatelliteEnergy(harness.slotTemperature(1, 0, 0)), 60);
+        assertEq(VeydriftFormulas.solarSatelliteEnergy(harness.slotTemperature(1, 20, 20)), 65);
+        assertEq(VeydriftFormulas.solarSatelliteEnergy(harness.slotTemperature(2, 0, 0)), 51);
+        assertEq(VeydriftFormulas.solarSatelliteEnergy(harness.slotTemperature(3, 0, 0)), 43);
+    }
+
+    function testLegacyMigrationPreservesTheOriginalCenteredRollForEverySlot() public view {
+        int16[5] memory legacyMinimums = [int16(40), -10, -40, -80, -120];
+        int16[15] memory classicMinimums =
+            [int16(220), 170, 120, 70, 60, 50, 40, 30, 20, 10, 0, -10, -50, -90, -130];
+
+        for (uint8 position = 1; position <= 15; ++position) {
+            int16 legacyMinimum = legacyMinimums[(position - 1) / 3];
+            int16 classicMinimum = classicMinimums[position - 1];
+            assertEq(harness.migrateLegacyTemperature(position, legacyMinimum), classicMinimum);
+            assertEq(
+                harness.migrateLegacyTemperature(position, legacyMinimum + 20), classicMinimum + 20
+            );
+            assertEq(
+                harness.migrateLegacyTemperature(position, legacyMinimum + 40), classicMinimum + 40
+            );
+        }
+    }
+
+    function testLegacyMigrationRejectsAValueThatCannotComeFromV1() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftPlanetGeneration.LegacyTemperatureOutOfRange.selector, 1, int16(81)
+            )
+        );
+        harness.migrateLegacyTemperature(1, 81);
     }
 
     function testCoordinateHelpersValidateBounds() public {

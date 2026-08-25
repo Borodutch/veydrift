@@ -412,6 +412,7 @@ contract VeydriftGameTest is Test {
         assertEq(game.owner(), admin);
         assertEq(game.startPrice(), 0.05 ether);
         assertEq(game.nextPlanetId(), 1);
+        assertEq(game.planetTemperatureGenerationVersion(), 2);
 
         vm.prank(player);
         vm.expectRevert(abi.encodeWithSelector(VeydriftGameStorage.Unauthorized.selector, player));
@@ -10923,8 +10924,9 @@ contract VeydriftGameTest is Test {
         VeydriftReferralSystem deployedReferralSystem = new VeydriftReferralSystem(owner);
         VeydriftStateMigrationModule stateMigrationModule =
             new VeydriftStateMigrationModule(address(deployedReferralSystem));
-        VeydriftFirstPlanetSettlementModule firstPlanetSettlementModule =
-            new VeydriftFirstPlanetSettlementModule(address(deployedReferralSystem));
+        VeydriftFirstPlanetSettlementModule firstPlanetSettlementModule = new VeydriftFirstPlanetSettlementModule(
+            address(deployedReferralSystem), address(colonizationModule)
+        );
         VeydriftGame deployedGame = new VeydriftGame(
             owner,
             address(firstPlanetSettlementModule),

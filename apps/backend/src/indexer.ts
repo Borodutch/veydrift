@@ -37,6 +37,7 @@ import {
   decodePlanetSettledLog,
   decodeInviteeProductionBoostLog,
   decodePlanetRenamedLog,
+  decodePlanetTemperatureChangedLog,
   decodeFleetMissionLogs,
   decodeFleetMissionBodyIdentity,
   decodeFirstPlanetSettledLog,
@@ -81,6 +82,7 @@ import {
   isPlanetSettledLog,
   isInviteeProductionBoostLog,
   isPlanetRenamedLog,
+  isPlanetTemperatureChangedLog,
   isPlayerMigrationLog,
   isReferralClaimLog,
   isReferralRedemptionLog,
@@ -140,6 +142,7 @@ import {
   type PlanetSettledEvent,
   type InviteeProductionBoostEvent,
   type PlanetRenamedEvent,
+  type PlanetTemperatureChangedEvent,
   type PlayerQueues,
   type QueueState,
   type ResearchState,
@@ -4272,6 +4275,10 @@ export class SettlementIndexer {
       this.applyPlanetRenamedEvent(decodePlanetRenamedLog(log));
       return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
     }
+    if (isPlanetTemperatureChangedLog(log)) {
+      this.applyPlanetTemperatureChangedEvent(decodePlanetTemperatureChangedLog(log));
+      return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
+    }
     if (isDebrisFieldLog(log)) {
       this.applyDebrisEvent(decodeDebrisFieldLog(log));
       return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
@@ -6937,6 +6944,8 @@ export class SettlementIndexer {
       this.applyMoonResourcesSettledEvent(decodeMoonResourcesSettledLog(log));
     } else if (isPlanetRenamedLog(log)) {
       this.applyPlanetRenamedEvent(decodePlanetRenamedLog(log));
+    } else if (isPlanetTemperatureChangedLog(log)) {
+      this.applyPlanetTemperatureChangedEvent(decodePlanetTemperatureChangedLog(log));
     } else if (isDebrisFieldLog(log)) {
       this.applyDebrisEvent(decodeDebrisFieldLog(log));
     } else if (isShipCountChangedLog(log)) {
@@ -7998,8 +8007,11 @@ export class SettlementIndexer {
     }
   }
 
-  private upsertPlanet(event: SettledPlanetEvent): void {
-    const planetEvent = this.withExistingPlanetIdentity(this.withKnownPlanetResources(event));
+  private upsertPlanet(event: SettledPlanetEvent, identityAlreadyLoaded = false): void {
+    const withResources = this.withKnownPlanetResources(event);
+    const planetEvent = identityAlreadyLoaded
+      ? withResources
+      : this.withExistingPlanetIdentity(withResources);
     const placeholderResources = isZeroResourcePlaceholder(planetEvent);
     this.db.query(`
       INSERT INTO indexed_planets (planet_id, owner, galaxy, system, position, event_json)
@@ -8342,6 +8354,23 @@ export class SettlementIndexer {
       owner: event.owner,
       name: event.name.length > 0 ? event.name : null
     });
+    this.touch();
+  }
+
+  private applyPlanetTemperatureChangedEvent(event: PlanetTemperatureChangedEvent): void {
+    const row = this.db.query("SELECT event_json FROM contract_planets WHERE planet_id = ?").get(event.planetId) as EventRow | null;
+    if (!row) {
+      this.markStale("planet temperature change for unknown planet");
+      return;
+    }
+
+    const planet = parseEvent<SettledPlanetEvent>(row.event_json);
+    this.upsertPlanet({
+      ...planet,
+      transactionHash: event.transactionHash,
+      blockNumber: event.blockNumber,
+      temperature: event.newTemperature
+    }, true);
     this.touch();
   }
 
