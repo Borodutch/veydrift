@@ -744,6 +744,64 @@ describe("ViemMissionResolutionChainClient", () => {
     expect(peakBroadcasts).toBe(1);
   });
 
+  test("replaces an underpriced mission transaction at the same nonce with bumped fees", async () => {
+    const account = privateKeyToAccount(`0x${"1".repeat(64)}`);
+    const firstHash = `0x${"a".repeat(64)}` as const;
+    const replacementHash = `0x${"b".repeat(64)}` as const;
+    let latestNonce = 7;
+    let pendingNonce = 7;
+    const writes: Array<Record<string, unknown>> = [];
+    const publicClient = {
+      async getTransactionCount(input: { blockTag: "latest" | "pending" }) {
+        return input.blockTag === "latest" ? latestNonce : pendingNonce;
+      },
+      async getStorageAt() { return `0x${"0".repeat(64)}`; },
+      async getTransaction() {
+        return { gasPrice: null, maxFeePerGas: 80n, maxPriorityFeePerGas: 8n };
+      },
+      async getBlock() { return { baseFeePerGas: 90n }; },
+      async estimateFeesPerGas() { return { maxFeePerGas: 90n, maxPriorityFeePerGas: 12n }; },
+      async waitForTransactionReceipt({ hash }: { hash: string }) {
+        if (hash === firstHash) throw new Error("receipt RPC timed out");
+        latestNonce = 8;
+        pendingNonce = 8;
+        return { status: "success" };
+      }
+    } as unknown as PublicClient;
+    const walletClient = {
+      async writeContract(input: Record<string, unknown>) {
+        writes.push(input);
+        pendingNonce = 8;
+        return writes.length === 1 ? firstHash : replacementHash;
+      }
+    } as unknown as WalletClient;
+    const client = new ViemMissionResolutionChainClient(
+      {
+        async listResolvableFleetMissions() { return []; },
+        async listReturnableFleetMissions() { return []; }
+      },
+      config.gameContractAddress!,
+      account,
+      publicClient,
+      walletClient,
+      { id: 8453 } as never,
+      config.rpcUrl,
+      new ResolverTransactionCoordinator(":memory:")
+    );
+
+    await expect(client.resolveFleetMission("45237")).rejects.toThrow("receipt RPC timed out");
+    await expect(client.resolveFleetMission("45237")).resolves.toBe(replacementHash);
+
+    expect(writes).toHaveLength(2);
+    expect(writes[0]).toMatchObject({ gas: 16_777_216n, nonce: 7 });
+    expect(writes[1]).toMatchObject({
+      gas: 16_777_216n,
+      maxFeePerGas: 100n,
+      maxPriorityFeePerGas: 12n,
+      nonce: 7
+    });
+  });
+
   test("supplies the same explicit combat gas envelope to unlocked-account submissions", async () => {
     const previousFetch = globalThis.fetch;
     const transactions: Array<Record<string, unknown>> = [];

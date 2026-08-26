@@ -11,6 +11,9 @@ export type ResolverTransactionRequest = {
   operationId: string;
   getTransactionCount: (blockTag: "latest" | "pending") => Promise<number>;
   submit: (nonce: number) => Promise<Hex>;
+  shouldReplace?: (hash: Hex) => Promise<boolean>;
+  replace?: (nonce: number, previousHash: Hex) => Promise<Hex>;
+  cancelStale?: (nonce: number, previousHash: Hex) => Promise<Hex>;
   confirm: (hash: Hex) => Promise<void>;
 };
 
@@ -35,14 +38,17 @@ export type ResolverTransactionCoordinatorOptions = {
   leaseWaitMs?: number;
   replacementWaitMs?: number;
   replacementPollMs?: number;
+  staleTransactionMs?: number;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
 };
 
 type StoredAttempt = {
+  operationId?: string;
   nonce: number;
-  status: "allocating" | "ambiguous" | "submitted" | "confirmed" | "reverted" | "rejected";
+  status: "allocating" | "ambiguous" | "submitted" | "confirmed" | "reverted" | "rejected" | "cancelled";
   transactionHash: Hex | null;
+  updatedAt: string;
 };
 
 const defaultLeaseDurationMs = 90_000;
@@ -50,6 +56,7 @@ const defaultLeaseRenewIntervalMs = 15_000;
 const defaultLeaseWaitMs = 60_000;
 const defaultReplacementWaitMs = 15_000;
 const defaultReplacementPollMs = 250;
+const defaultStaleTransactionMs = 5 * 60_000;
 
 /**
  * Serializes every transaction signed by one resolver EOA, including across rolling backend
@@ -63,6 +70,7 @@ export class ResolverTransactionCoordinator {
   private readonly leaseWaitMs: number;
   private readonly replacementWaitMs: number;
   private readonly replacementPollMs: number;
+  private readonly staleTransactionMs: number;
   private readonly now: () => number;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly localTails = new Map<string, Promise<void>>();
@@ -76,6 +84,7 @@ export class ResolverTransactionCoordinator {
     this.leaseWaitMs = options.leaseWaitMs ?? defaultLeaseWaitMs;
     this.replacementWaitMs = options.replacementWaitMs ?? defaultReplacementWaitMs;
     this.replacementPollMs = options.replacementPollMs ?? defaultReplacementPollMs;
+    this.staleTransactionMs = options.staleTransactionMs ?? defaultStaleTransactionMs;
     this.now = options.now ?? Date.now;
     this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
 
@@ -232,33 +241,152 @@ export class ResolverTransactionCoordinator {
       }
     }
     if (previous?.status === "submitted" && previous.transactionHash) {
-      try {
-        await request.confirm(previous.transactionHash);
-        this.recordAttempt(
-          request.chainId,
-          request.address,
-          request.operationId,
-          previous.nonce,
-          previous.transactionHash,
-          "confirmed"
-        );
-        return previous.transactionHash;
-      } catch (error) {
-        if (!isRevertedTransactionError(error)) throw error;
-        this.recordAttempt(
-          request.chainId,
-          request.address,
-          request.operationId,
-          previous.nonce,
-          previous.transactionHash,
-          "reverted"
-        );
-        throw error;
+      const replaceImmediately = this.isStale(previous)
+        || (await request.shouldReplace?.(previous.transactionHash) ?? false);
+      let confirmationError: unknown;
+      if (!replaceImmediately) {
+        try {
+          await request.confirm(previous.transactionHash);
+          this.recordAttempt(
+            request.chainId,
+            request.address,
+            request.operationId,
+            previous.nonce,
+            previous.transactionHash,
+            "confirmed"
+          );
+          return previous.transactionHash;
+        } catch (error) {
+          if (isRevertedTransactionError(error)) {
+            this.recordAttempt(
+              request.chainId,
+              request.address,
+              request.operationId,
+              previous.nonce,
+              previous.transactionHash,
+              "reverted"
+            );
+            throw error;
+          }
+          confirmationError = error;
+        }
       }
+
+      const latest = await request.getTransactionCount("latest");
+      if (latest > previous.nonce) {
+        throw new ResolverSubmissionAmbiguousError(
+          request.chainId,
+          request.address,
+          previous.nonce,
+          "the nonce was mined by another hash; refresh canonical operation state"
+        );
+      }
+      if (!request.replace) {
+        throw confirmationError ?? new Error("resolver transaction requires replacement but no replacement writer is configured");
+      }
+
+      assertLease();
+      let replacementHash: Hex;
+      try {
+        replacementHash = await request.replace(previous.nonce, previous.transactionHash);
+      } catch (replacementError) {
+        if (isReplacementUnderpricedError(replacementError)) {
+          throw new ResolverNonceStalledError(
+            request.chainId,
+            request.address,
+            previous.nonce
+          );
+        }
+        throw replacementError;
+      }
+      this.recordAttempt(
+        request.chainId,
+        request.address,
+        request.operationId,
+        previous.nonce,
+        replacementHash,
+        "submitted"
+      );
+      try {
+        await request.confirm(replacementHash);
+      } catch (replacementError) {
+        if (isRevertedTransactionError(replacementError)) {
+          this.recordAttempt(
+            request.chainId,
+            request.address,
+            request.operationId,
+            previous.nonce,
+            replacementHash,
+            "reverted"
+          );
+        }
+        throw replacementError;
+      }
+      this.recordAttempt(
+        request.chainId,
+        request.address,
+        request.operationId,
+        previous.nonce,
+        replacementHash,
+        "confirmed"
+      );
+      return replacementHash;
     }
 
     for (let collision = 0; collision < 2; collision += 1) {
-      const nonce = await request.getTransactionCount("pending");
+      const [latest, pending] = await Promise.all([
+        request.getTransactionCount("latest"),
+        request.getTransactionCount("pending")
+      ]);
+      if (pending > latest) {
+        // The persisted operation may already be resolved elsewhere, so clear its earliest nonce without replaying stale calldata.
+        const stale = this.loadSubmittedAttemptAtNonce(request.chainId, request.address, latest);
+        if (
+          stale?.operationId
+          && stale.transactionHash
+          && request.shouldReplace
+          && request.cancelStale
+          && (this.isStale(stale) || await request.shouldReplace(stale.transactionHash))
+        ) {
+          assertLease();
+          const cancellationHash = await request.cancelStale(latest, stale.transactionHash);
+          this.recordAttempt(
+            request.chainId,
+            request.address,
+            stale.operationId,
+            latest,
+            cancellationHash,
+            "submitted"
+          );
+          try {
+            await request.confirm(cancellationHash);
+          } catch (error) {
+            if (isRevertedTransactionError(error)) {
+              this.recordAttempt(
+                request.chainId,
+                request.address,
+                stale.operationId,
+                latest,
+                cancellationHash,
+                "reverted"
+              );
+            }
+            throw error;
+          }
+          this.recordAttempt(
+            request.chainId,
+            request.address,
+            stale.operationId,
+            latest,
+            cancellationHash,
+            "cancelled"
+          );
+          collision -= 1;
+          continue;
+        }
+        throw new ResolverNonceStalledError(request.chainId, request.address, latest);
+      }
+      const nonce = pending;
       this.recordAttempt(request.chainId, request.address, request.operationId, nonce, null, "allocating");
       assertLease();
       let hash: Hex;
@@ -402,10 +530,30 @@ export class ResolverTransactionCoordinator {
     operationId: string
   ): StoredAttempt | null {
     return this.database.query(`
-      SELECT nonce, transaction_hash AS transactionHash, status
+      SELECT nonce, transaction_hash AS transactionHash, status, updated_at AS updatedAt
       FROM resolver_transaction_attempts
       WHERE chain_id = ? AND resolver_address = ? AND operation_id = ?
     `).get(chainId, normalizeAddress(address), operationId) as StoredAttempt | null;
+  }
+
+  private loadSubmittedAttemptAtNonce(
+    chainId: number,
+    address: `0x${string}`,
+    nonce: number
+  ): StoredAttempt | null {
+    return this.database.query(`
+      SELECT operation_id AS operationId, nonce, transaction_hash AS transactionHash, status,
+        updated_at AS updatedAt
+      FROM resolver_transaction_attempts
+      WHERE chain_id = ? AND resolver_address = ? AND nonce = ? AND status = 'submitted'
+      ORDER BY updated_at DESC
+      LIMIT 1
+    `).get(chainId, normalizeAddress(address), nonce) as StoredAttempt | null;
+  }
+
+  private isStale(attempt: StoredAttempt): boolean {
+    const updatedAtMs = Date.parse(attempt.updatedAt);
+    return Number.isFinite(updatedAtMs) && this.now() - updatedAtMs >= this.staleTransactionMs;
   }
 
   private recordAttempt(
