@@ -51,21 +51,25 @@ describe("frontend backend-data boundary", () => {
     expect(playerGuide).toContain("the same stored responses");
   });
 
-  test("keeps the write gate, write lifecycle, and defense reconciliation in the canonical store", async () => {
+  test("keeps the write gate and backend-owned write lifecycle in the canonical store", async () => {
     const appSource = await Bun.file(new URL("./PlayableMvpApp.tsx", import.meta.url)).text();
     const storeSource = await Bun.file(new URL("./backendDataStore.ts", import.meta.url)).text();
 
     expect(storeSource).toContain("private readonly transactionGates = new Map<string, TransactionActionGate>()");
     expect(storeSource).toContain("private transactionGateFor(walletScope: string)");
     expect(storeSource).toContain("async runWriteTransaction(");
-    expect(storeSource).toContain("waitForIndexedResource<T extends");
-    expect(storeSource).toContain("waitForStartedDefenseProduction(");
+    expect(storeSource).toContain("/transactions/${encodeURIComponent(transactionHash)}/status");
+    expect(storeSource).toContain("writePendingTransaction");
+    expect(storeSource).toContain("resumePendingTransactions");
+    expect(storeSource).not.toContain("waitForIndexedResource<T extends");
+    expect(storeSource).not.toContain("waitForStartedDefenseProduction(");
     expect(appSource).toContain("backendData?.writeTransactionKey(undefined, account)");
     expect(appSource).toContain("backendData.runWriteTransaction({");
     expect(appSource).toContain("backendData!.indexing.startedDefenseProduction(");
     expect(appSource).toContain("backendData!.indexing.startedShipProduction(");
     expect(appSource).toContain("backendData!.indexing.startedResearch(");
     expect(appSource).not.toContain("useRef(createTransactionActionGate())");
+    expect(appSource).not.toContain("confirmTransactionReceiptForProviderSource(");
     expect(appSource).not.toMatch(/useState<WriteTransactionState>/);
     expect(appSource).not.toContain("waitForStartedDefenseProductionState(");
     expect(appSource).not.toContain("waitForIndexedResourceState(");
@@ -86,7 +90,7 @@ describe("frontend backend-data boundary", () => {
       if (/\/index\/(?:rebuild|verify)/.test(source)) violations.push(file);
     }
 
-    expect(appSource).toContain("backendData.waitForIndexedResource(load, expectation)");
+    expect(appSource).not.toContain("backendData.waitForIndexedResource(");
     expect(appSource).not.toMatch(/\.(?:commitBackendSnapshot|markBackendFailure|discardBackendSnapshot)\(/);
     expect(appSource).not.toMatch(/backendData\.(?:setProfile|setWalletPlanets|setQueues|setShipyard|setResearch|setAlliance)\(/);
     expect(appSource).not.toContain("backendData.setSnapshotError(");
@@ -222,7 +226,7 @@ describe("frontend backend-data boundary", () => {
     expect(walletFlowSource).toContain("Transaction simulation failed:");
   });
 
-  test("keeps post-write convergence as opaque store plans", async () => {
+  test("keeps post-application refresh and auxiliary actions as opaque store plans", async () => {
     const appSource = await Bun.file(new URL("./PlayableMvpApp.tsx", import.meta.url)).text();
     const storeSource = await Bun.file(new URL("./backendDataStore.ts", import.meta.url)).text();
 

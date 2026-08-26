@@ -26,7 +26,6 @@ import {
   type FarcasterMiniAppWalletSupport,
 } from "./farcasterReady";
 import {
-  confirmTransactionReceiptForProviderSource,
   defaultVeydriftChainForLocation,
   ensureVeydriftNetwork,
   farcasterChainFor,
@@ -70,7 +69,9 @@ import {
   type WalletSettlementResponse,
 } from "./walletFlow";
 import { backendDataStoreFor, retainBackendDataStore } from "./backendDataStore";
+import type { WriteTransactionState } from "./transactionActionGate";
 import { useBackendDataQuery } from "./useBackendDataQuery";
+import { useBackendDataSnapshot } from "./useBackendDataSnapshot";
 import { walletRecoveryCopy, walletRecoveryDeviceForNavigator, walletRecoveryPageUrl, type WalletRecoveryDevice } from "./walletRecovery";
 import { connectWalletConnect, walletConnectEnabled } from "./reownWallet";
 
@@ -364,6 +365,9 @@ export function FirstPlanetSettlementApp() {
   const previousWalletKind = useRef<WalletState["kind"]>();
   const referralData = useMemo(() => (settlementConfigState.apiUrl ? backendDataStoreFor(settlementConfigState.apiUrl) : undefined), [settlementConfigState.apiUrl]);
   useEffect(() => {
+    referralData?.setContext(account);
+  }, [account, referralData]);
+  useEffect(() => {
     const releaseRuntime = retainBackendDataStore("");
     const releaseApi = settlementConfigState.apiUrl ? retainBackendDataStore(settlementConfigState.apiUrl) : undefined;
     return () => {
@@ -371,6 +375,42 @@ export function FirstPlanetSettlementApp() {
       releaseRuntime();
     };
   }, [settlementConfigState.apiUrl]);
+  const writeTransactionSnapshot = useBackendDataSnapshot<WriteTransactionState>(
+    referralData,
+    referralData && account ? referralData.writeTransactionKey(undefined, account) : undefined,
+  );
+  const writeTransactionState = writeTransactionSnapshot?.data;
+  useEffect(() => {
+    if (!writeTransactionState?.key) return;
+    const pending = !["idle", "success", "error"].includes(writeTransactionState.phase);
+    if (writeTransactionState.key === "settlement:first-planet") {
+      if (pending) {
+        setPlanet({
+          kind: "pending",
+          label: writeTransactionState.label ?? "First planet settlement is syncing.",
+          ...(writeTransactionState.txHash ? { txHash: writeTransactionState.txHash } : {}),
+        });
+      } else if (writeTransactionState.phase === "error") {
+        setPlanet({
+          kind: "error",
+          message: writeTransactionState.label ?? "First planet settlement confirmation is delayed.",
+        });
+      }
+      return;
+    }
+    if (writeTransactionState.key === "referral:claim") {
+      if (pending) {
+        setReferralProgramPhase({ status: "claiming" });
+      } else if (writeTransactionState.phase === "success") {
+        setReferralProgramPhase({ status: "idle" });
+      } else if (writeTransactionState.phase === "error") {
+        setReferralProgramPhase({
+          status: "error",
+          message: writeTransactionState.label ?? "Referral reward claim confirmation is delayed.",
+        });
+      }
+    }
+  }, [writeTransactionState]);
   // Indexed settlement is a canonical store descriptor. `planet` below now
   // carries only presentation/transaction phase; it is reconciled from this
   // snapshot instead of owning a second backend cache or poller.
@@ -1277,7 +1317,7 @@ export function FirstPlanetSettlementApp() {
           submittedTxHash = await sendSettlementTransaction(provider, wallet.account, settlementConfig, transactionOptions);
           return submittedTxHash;
         },
-        confirm: (txHash) => confirmTransactionReceiptForProviderSource(provider, walletProviderSource, requiredChain.rpcUrls[0], txHash),
+        chainId: requiredChain.chainIdHex,
         indexing: data.indexing.settledPlanet(wallet.account),
         invalidateTags: [
           `wallet:${wallet.account.toLowerCase()}`,
@@ -1355,7 +1395,7 @@ export function FirstPlanetSettlementApp() {
         await data.persistReferralClaimIntent(wallet.account, inviteCode, commitment, signature);
       },
       send: () => sendReferralClaimTransaction(provider, wallet.account, settlementConfig, inviteCode),
-      confirm: (txHash) => confirmTransactionReceiptForProviderSource(provider, walletProviderSource, requiredChain.rpcUrls[0], txHash),
+      chainId: requiredChain.chainIdHex,
       indexing: data.indexing.referralClaim(wallet.account, inviteCode, commitment, () => signature ?? ""),
       invalidateTags: [`wallet:${wallet.account.toLowerCase()}`, "kind:referral-dashboard", "kind:referral-history"],
       errorLabel: (error) => (isUserRejected(error) ? referralRejectedRequestMessage(waitingForSignature ? "signature" : "claim-transaction") : referralClaimErrorMessage(error)),

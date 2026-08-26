@@ -145,17 +145,17 @@ describe("playable chain refresh", () => {
     expect(promoted?.planet?.resourceSnapshot?.transactionHash).toBe("0xspend");
   });
 
-  test("uses one confirmed-resource promotion path for all shared production spends", async () => {
+  test("uses backend application plus one-shot canonical refreshes for production spends", async () => {
     const storeSource = await Bun.file(new URL("../src/backendDataStore.ts", import.meta.url)).text();
-    // Transaction convergence belongs to the data store.  The shell only
-    // selects an opaque indexing plan, so all production spends share the
-    // same receipt/indexed-resource ordering.
+    // Transaction convergence belongs to the backend status boundary. The
+    // store plans below can only perform one-shot canonical refreshes after
+    // application and cannot install a second frontend predicate loop.
     expect(storeSource).toContain("resourceChange:");
     expect(storeSource).toContain("startedBuilding:");
     expect(storeSource).toContain("startedShipProduction:");
     expect(storeSource).toContain("startedResearch:");
-    expect(storeSource).toContain("waitForStartedDefenseProductionState(");
-    expect(storeSource).toContain("resourceIndexingExpectationForTransaction(txHash, baseline");
+    expect(storeSource).not.toContain("waitForStartedDefenseProductionState(");
+    expect(storeSource).not.toContain("resourceIndexingExpectationForTransaction(txHash, baseline");
   });
 
   test("promotes every indexed planet or moon resource transaction from the chain event stream", async () => {
@@ -270,7 +270,9 @@ describe("playable chain refresh", () => {
     expect(walletFlowSource).not.toContain("eth_estimateGas");
     expect(walletFlowSource).not.toContain("waitForReceipt(");
     expect(walletFlowSource).toContain("eth_getTransactionReceipt");
-    expect(source).toContain("confirm: confirmSubmittedTransaction");
+    expect(source).not.toContain("confirm: confirmSubmittedTransaction");
+    const storeSource = await Bun.file(new URL("../src/backendDataStore.ts", import.meta.url)).text();
+    expect(storeSource).toContain("/transactions/${encodeURIComponent(transactionHash)}/status");
     expect(walletFlowSource).toContain('method: "eth_call"');
     expect(walletFlowSource).toContain('method: "eth_sendTransaction"');
     expect(source).not.toContain("building,\n          { readProvider },");
@@ -297,7 +299,8 @@ describe("playable chain refresh", () => {
     expect(source).toContain("const canSubmitGameTransaction = gameTransactionInputsAvailable && !transactionActionPending");
     expect(source).toContain("const canSubmitMissionTransaction = missionTransactionInputsAvailable && !transactionActionPending");
     expect(source).toContain("runCoordinatedWriteTransaction");
-    expect(storeSource).toContain("resourceIndexingExpectationForTransaction(txHash, baseline");
+    expect(storeSource).toContain("waitForBackendTransactionStatus(");
+    expect(storeSource).toContain("writePendingTransaction(");
     expect(source).toContain("const allianceTransactionUnavailableReason = transactionUnavailableReasonFor({");
     expect(source).toContain("const moonTransactionUnavailableReason = transactionUnavailableReasonFor({");
     expect(source).toContain("setRiftAction((current) => clearRecoveredWalletContractUnavailableAction(current, true));");
@@ -313,10 +316,12 @@ describe("playable chain refresh", () => {
 
     expect(source).toContain("const runGalaxyTransaction = useCallback(");
     expect(source).toContain("let completed = false;");
-    expect(source).toContain("confirm: confirmSubmittedTransaction");
+    expect(source).not.toContain("confirm: confirmSubmittedTransaction");
     const storeSource = await Bun.file(new URL("../src/backendDataStore.ts", import.meta.url)).text();
-    expect(storeSource).toContain("waitForMissionLaunchState(");
+    expect(storeSource).toContain("waitForBackendTransactionStatus(");
+    expect(storeSource).not.toContain("waitForMissionLaunchState(");
     expect(storeSource).toContain("missionLaunch:");
+    expect(storeSource).toContain("this.globalActiveMissions()");
     expect(source).toContain('if (state.phase === "success")');
     expect(source).toContain("label: `${label} confirmed.`");
     expect(source).toContain("completed = result;");

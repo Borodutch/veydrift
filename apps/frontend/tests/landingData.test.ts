@@ -36,7 +36,7 @@ describe("landing backend data", () => {
     expect(landingSource).not.toContain("new window.EventSource");
     expect(backendDataStoreSource).toContain("/missions?status=active&live=1");
     expect(backendDataStoreSource).toContain('live: "1"');
-    expect(backendDataStoreSource.match(/cache: "no-store"/g)).toHaveLength(3);
+    expect(backendDataStoreSource.match(/cache: "no-store"/g)).toHaveLength(4);
   });
 
   test("points production visitors at the on-page settlement hero", () => {

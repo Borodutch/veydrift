@@ -280,6 +280,11 @@ describe("Rift requirement projection", () => {
 
 class MockChainReader implements ChainReader {
   rebuildCalls = 0;
+  transactionReceipt: Awaited<ReturnType<NonNullable<ChainReader["getTransactionReceipt"]>>> = null;
+
+  async getTransactionReceipt() {
+    return this.transactionReceipt;
+  }
 
   async getStartPrice() {
     return configuredTestConfig.settlementStartPriceWei ?? null;
@@ -956,6 +961,85 @@ describe("Veydrift backend", () => {
       service: "veydrift-backend"
     });
     expect(response.status).toBe(503);
+  });
+
+  test("reports submitted, confirmed, applied, and reverted transaction lifecycle from backend state", async () => {
+    const transactionHash = `0x${"ab".repeat(32)}`;
+    const reader = new MockChainReader();
+    const indexer = new SettlementIndexer(reader, configuredTestConfig.indexFromBlock);
+    let latestSyncedBlock: string | null = null;
+    const chainSync = {
+      start() {},
+      snapshot() {
+        return { latestSyncedBlock };
+      },
+    } as unknown as import("./chainSync").ChainSyncService;
+    const transactionHandler = createRequestHandler({
+      chainReader: reader,
+      chainSync,
+      config: configuredTestConfig,
+      indexer,
+    });
+    const status = () => transactionHandler(new Request(`http://localhost/transactions/${transactionHash}/status`));
+
+    await expect((await status()).json()).resolves.toMatchObject({ phase: "submitted" });
+
+    reader.transactionReceipt = {
+      blockNumber: "0x78",
+      logs: [],
+      status: "0x1",
+      transactionHash,
+    };
+    await expect((await status()).json()).resolves.toMatchObject({
+      phase: "confirmed",
+      receiptBlock: "120",
+    });
+
+    latestSyncedBlock = "120";
+    await expect((await status()).json()).resolves.toMatchObject({
+      indexedEventCount: 0,
+      latestSyncedBlock: "120",
+      phase: "applied",
+    });
+
+    latestSyncedBlock = "121";
+    reader.transactionReceipt = {
+      ...reader.transactionReceipt,
+      blockNumber: "0x79",
+      logs: [{
+        blockNumber: "0x79",
+        data: "0x",
+        logIndex: "0x0",
+        topics: [`0x${"00".repeat(32)}`],
+        transactionHash,
+      }],
+    };
+    indexer.applyLog({
+      blockNumber: "0x79",
+      data: "0x",
+      logIndex: "0x0",
+      topics: [`0x${"00".repeat(32)}`],
+      transactionHash,
+    });
+    await expect((await status()).json()).resolves.toMatchObject({
+      indexedEventCount: 1,
+      latestIndexedBlock: "121",
+      phase: "applied",
+    });
+    const firstRevision = BigInt(indexer.snapshot().indexedRevision);
+    indexer.applyLog({
+      blockNumber: "0x79",
+      data: "0x",
+      logIndex: "0x1",
+      topics: [`0x${"11".repeat(32)}`],
+      transactionHash: `0x${"cd".repeat(32)}`,
+    });
+    expect(BigInt(indexer.snapshot().indexedRevision)).toBe(firstRevision + 1n);
+    expect(indexer.snapshot().latestIndexedBlock).toBe("121");
+
+    reader.transactionReceipt = { ...reader.transactionReceipt, status: "0x0" };
+    await expect((await status()).json()).resolves.toMatchObject({ phase: "reverted" });
+    expect((await transactionHandler(new Request("http://localhost/transactions/not-a-hash/status"))).status).toBe(400);
   });
 
   test("returns immediately for requests already aborted by the client", async () => {

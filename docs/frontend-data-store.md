@@ -14,7 +14,7 @@ Low-level request encoding and response validation remain in `walletFlow.ts` and
 4. UI components contain no raw `fetch()` calls.
 5. `GameStateStore` is the canonical owner of response data and `fresh`, `refreshing`, `delayed`, or `failed` freshness. Screen and planet-section state is a render projection, not another authoritative response copy.
 6. A failed refresh must not clear the last confirmed view projection. The projection owner records the error while retaining its previous data.
-7. A wallet transaction is successful in the UI only after its exact transaction or expected state transition is visible in indexed data.
+7. A wallet transaction is successful in the UI only after the backend reports its receipt block indexed and every indexed-contract receipt log materialized atomically.
 8. UI components submit writes and request reconciliation through `BackendDataStore`; they do not own a second transaction gate, write lifecycle, reservation retry, or post-write response cache.
 9. Browser state is a light-client projection of backend-indexed responses. Frontend reads, polls, foreground catch-up, and writes never trigger chain reconciliation. Lazy/as-of-now reconciliation belongs to backend writer/indexer work only.
 10. Shared API-base stores have mount leases and dispose after their final owner releases them. They must not retain listeners, pollers, or cached wallet state across an obsolete runtime configuration.
@@ -37,8 +37,9 @@ Wallet mutations use the same boundary:
 ```text
 component action
   -> BackendDataStore shared write gate
-  -> wallet submission + receipt confirmation
-  -> transaction-priority reconciliation of canonical response keys
+  -> wallet submission + minimal store-owned pending journal
+  -> backend transaction status (submitted -> confirmed -> applied/reverted)
+  -> transaction-priority refresh of canonical response keys
   -> shared write lifecycle becomes applied/timed-out/failed
   -> all subscribed components rerender from those same store entries
 ```
@@ -68,7 +69,7 @@ The planet section store never performs network requests or owns backend loading
 
 `planetResourceStore.ts` is the only frontend owner of connected-wallet resource balances. It is keyed by wallet, orbit-body kind, and planet ID. Wallet settlement, the planet roster/navigation cache, Infrastructure, Research, Shipyard, Defenses, Rift, moons, the top bar, and mission affordability all overlay resource values from this store instead of retaining competing balance projections.
 
-Every value promoted into the store comes from a backend-indexed response. Receipt confirmation starts a bounded aggressive convergence read; it does not debit, credit, or roll back a balance in the browser. The indexed response must prove inclusion with the transaction hash or receipt block. Poll, EventSource, navigation, and in-flight responses are ordered by indexed block and settlement metadata, and an older response cannot replace the confirmed floor. Same-version responses may only advance backend-computed production accrual; a same-version decrease is rejected.
+Every value promoted into the store comes from a backend-indexed response. Backend-reported transaction application starts one canonical refresh; it does not debit, credit, roll back, or reconcile a balance in the browser. Poll, EventSource, navigation, and in-flight responses are ordered by indexed block and settlement metadata, and an older response cannot replace the confirmed floor. Same-version responses may only advance backend-computed production accrual; a same-version decrease is rejected.
 
 Resource-affecting action UIs remain in the explicit `indexing` phase until shared convergence promotes the proven backend snapshot. A bounded timeout becomes a visible retryable action error while the last confirmed balance stays rendered.
 
@@ -87,10 +88,10 @@ Calling a descriptor's `read`/`refetch` or a named store action means “refresh
 
 Hidden documents defer refresh work into store-owned tags. Visibility return performs one canonical foreground catch-up; components must not add their own visibility timers or stale-response recovery loops.
 
-The underlying wallet API client also has a very short recent-response window to collapse immediate duplicate HTTP work. Post-transaction reconciliation still polls until it observes the exact indexed change, so a receipt alone never promotes stale balances or queue state.
+The underlying wallet API client also has a very short recent-response window to collapse immediate duplicate HTTP work. Transaction completion polling targets the backend transaction-status endpoint; components never poll receipts or domain state themselves. SSE sync status carries a durable monotonic index revision (separate from block height, so same-block events cannot collapse together), and the store performs one canonical catch-up if that revision advanced while its stream was disconnected.
 
 ## Mutations
 
-Wallet provider calls and receipt confirmation remain transaction-helper concerns, but `BackendDataStore` owns their wallet-scoped gate and publishes every write phase into `GameStateStore`. Components subscribe to that shared write entry just like read entries. The shared state records wallet submission, confirmation, waiting for index, and the visible terminal outcome (`applied`, `timed-out`, or `failed`). A timeout releases that wallet's gate while preserving its transaction hash and retry context.
+Wallet provider calls stop at submission. `BackendDataStore` owns receipt/indexing observation through the backend, its wallet-scoped gate, and every write phase published into `GameStateStore`. Components subscribe to that shared write entry just like read entries. The shared state records wallet submission, confirmation, waiting for index, and the visible terminal outcome (`applied`, `timed-out`, or `failed`). Each backend status request has an abort deadline; the overall wait is bounded. A delayed outcome preserves the minimal wallet/chain/hash/action journal, and store bootstrap resumes it before another write can be submitted for that wallet.
 
-Post-write reconciliation also belongs to this boundary. For example, defense production polls `defenses(wallet, planetId)` and `queues(wallet, planetId)` at transaction priority. Those exact canonical entries drive the Defenses page, Overview, queue widgets, and transaction feedback; the initiating component does not manually copy the response into separate local state or run an additional resource poll.
+The backend writer/indexer is the only reconciliation owner. Its transaction endpoint reports `applied` only after the successful receipt's block is behind the atomic indexed high-water mark and all relevant receipt logs exist in the event ledger. The frontend then refreshes affected canonical store entries once at transaction priority. Those entries drive every page and widget; the initiating component does not copy responses, poll receipts, or run another state machine.
