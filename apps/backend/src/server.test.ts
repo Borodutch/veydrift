@@ -280,12 +280,7 @@ describe("Rift requirement projection", () => {
 
 class MockChainReader implements ChainReader {
   rebuildCalls = 0;
-  transactionKnown = false;
   transactionReceipt: Awaited<ReturnType<NonNullable<ChainReader["getTransactionReceipt"]>>> = null;
-
-  async getTransactionByHash(transactionHash: string) {
-    return this.transactionKnown ? { hash: transactionHash } : null;
-  }
 
   async getTransactionReceipt() {
     return this.transactionReceipt;
@@ -987,16 +982,7 @@ describe("Veydrift backend", () => {
     });
     const status = () => transactionHandler(new Request(`http://localhost/transactions/${transactionHash}/status`));
 
-    await expect((await status()).json()).resolves.toMatchObject({
-      knownOnConfiguredChain: false,
-      phase: "submitted",
-    });
-
-    reader.transactionKnown = true;
-    await expect((await status()).json()).resolves.toMatchObject({
-      knownOnConfiguredChain: true,
-      phase: "submitted",
-    });
+    await expect((await status()).json()).resolves.toMatchObject({ phase: "submitted" });
 
     reader.transactionReceipt = {
       blockNumber: "0x78",
@@ -1005,7 +991,6 @@ describe("Veydrift backend", () => {
       transactionHash,
     };
     await expect((await status()).json()).resolves.toMatchObject({
-      knownOnConfiguredChain: true,
       phase: "confirmed",
       receiptBlock: "120",
     });

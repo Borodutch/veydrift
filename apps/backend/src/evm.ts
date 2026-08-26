@@ -1510,7 +1510,6 @@ export interface ChainReader {
   listReferralLogs?(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
   failoverRpc?(reason: string): boolean;
   getBlockNumber?(): Promise<bigint>;
-  getTransactionByHash?(transactionHash: string): Promise<RpcTransaction | null>;
   getTransactionReceipt?(transactionHash: string): Promise<RpcTransactionReceipt | null>;
   rpcMetrics?(): RpcMetrics;
 }
@@ -1520,10 +1519,6 @@ export type RpcTransactionReceipt = {
   logs?: RpcLog[];
   status: string;
   transactionHash: string;
-};
-
-export type RpcTransaction = {
-  hash: string;
 };
 
 export type RpcMetrics = {
@@ -3911,10 +3906,6 @@ export class VeydriftGameReader implements ChainReader {
       ...receipt,
       logs: receipt.logs.filter((log) => typeof log.address === "string" && indexedAddresses.has(log.address.toLowerCase()))
     };
-  }
-
-  async getTransactionByHash(transactionHash: string): Promise<RpcTransaction | null> {
-    return this.transport.request<RpcTransaction | null>("eth_getTransactionByHash", [transactionHash]);
   }
 
   async listContractLogs(fromBlock: bigint, toBlock: bigint | "latest" = "latest"): Promise<RpcLog[]> {

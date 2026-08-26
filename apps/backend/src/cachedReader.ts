@@ -21,7 +21,6 @@ import type {
   RiftState,
   RpcLog,
   RpcMetrics,
-  RpcTransaction,
   RpcTransactionReceipt,
   SettledPlanetEvent,
   SettlementFundingState,
@@ -49,10 +48,6 @@ export class CachedChainReader implements ChainReader {
 
   getTransactionReceipt(transactionHash: string): Promise<RpcTransactionReceipt | null> {
     return this.inner.getTransactionReceipt?.(transactionHash) ?? Promise.resolve(null);
-  }
-
-  getTransactionByHash(transactionHash: string): Promise<RpcTransaction | null> {
-    return this.inner.getTransactionByHash?.(transactionHash) ?? Promise.resolve(null);
   }
 
   getWalletSettlement(wallet: Address): Promise<WalletSettlement> {

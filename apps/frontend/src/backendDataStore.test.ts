@@ -787,15 +787,14 @@ describe("BackendDataStore", () => {
     }
   });
 
-  test("releases an old unknown-chain hash absent from Base, then permits exactly one later Base submission", async () => {
+  test("retains a Base-labeled legacy journal when discard is rejected and blocks duplicate submissions", async () => {
     const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
     const staleHash = `0x${"ba".repeat(32)}`;
-    const baseHash = `0x${"bb".repeat(32)}`;
     const values = new Map<string, string>([[
       "veydrift:pending-transactions:https://api.test",
       JSON.stringify([{
         actionId: "fleet:supply",
-        chainId: "unknown",
+        chainId: "0x2105",
         submittedAt: Date.now() - 300_000,
         transactionHash: staleHash,
         wallet: "0xabc",
@@ -815,28 +814,22 @@ describe("BackendDataStore", () => {
     try {
       let submissions = 0;
       let staleStatusReads = 0;
+      const discardConfirmations: string[] = [];
       const store = new BackendDataStore("https://api.test", {
+        confirmPendingTransactionDiscard: async (entry) => {
+          discardConfirmations.push(entry.transactionHash);
+          return false;
+        },
         transactionPollIntervalMs: 0,
+        transactionStatusTimeoutMs: 5,
         transactionStatusReader: async (transactionHash) => {
-          if (transactionHash === staleHash) {
-            staleStatusReads += 1;
-            return {
-              events: [],
-              indexedEventCount: 0,
-              knownOnConfiguredChain: false,
-              latestIndexedBlock: null,
-              phase: "submitted" as const,
-              receiptBlock: null,
-              transactionHash,
-            };
-          }
+          staleStatusReads += 1;
           return {
             events: [],
             indexedEventCount: 0,
-            knownOnConfiguredChain: true,
-            latestIndexedBlock: "20",
-            phase: "applied" as const,
-            receiptBlock: "20",
+            latestIndexedBlock: null,
+            phase: "submitted" as const,
+            receiptBlock: null,
             transactionHash,
           };
         },
@@ -848,18 +841,100 @@ describe("BackendDataStore", () => {
         label: "Supply",
         send: async () => {
           submissions += 1;
-          return baseHash;
+          return `0x${"bb".repeat(32)}`;
         },
       };
 
       await expect(store.runWriteTransaction(descriptor)).resolves.toBe(false);
       expect(submissions).toBe(0);
-      expect(staleStatusReads).toBe(3);
-      expect(values.size).toBe(0);
+      expect(staleStatusReads).toBeGreaterThan(1);
+      expect(discardConfirmations).toEqual([staleHash]);
+      expect(values.get("veydrift:pending-transactions:https://api.test")).toContain(staleHash);
+
+      const readsAfterFirstRecovery = staleStatusReads;
+      await expect(store.runWriteTransaction(descriptor)).resolves.toBe(false);
+      expect(staleStatusReads).toBeGreaterThan(readsAfterFirstRecovery);
+      expect(submissions).toBe(0);
+      expect(discardConfirmations).toEqual([staleHash, staleHash]);
+      expect(values.get("veydrift:pending-transactions:https://api.test")).toContain(staleHash);
+    } finally {
+      if (originalWindow) Object.defineProperty(globalThis, "window", originalWindow);
+      else Reflect.deleteProperty(globalThis, "window");
+    }
+  });
+
+  test("discards a Base-labeled unresolved journal only after confirmation and sends exactly once on a later Base retry", async () => {
+    const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+    const staleHash = `0x${"ca".repeat(32)}`;
+    const baseHash = `0x${"cb".repeat(32)}`;
+    const journalKey = "veydrift:pending-transactions:https://api.test";
+    const discardPrompts: string[] = [];
+    const values = new Map<string, string>([[
+      journalKey,
+      JSON.stringify([{
+        actionId: "building:start:metalStorage",
+        chainId: "0x2105",
+        submittedAt: Date.now() - 300_000,
+        transactionHash: staleHash,
+        wallet: "0xabc",
+      }]),
+    ]]);
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: {
+        confirm: (message: string) => {
+          discardPrompts.push(message);
+          return true;
+        },
+        localStorage: {
+          getItem: (key: string) => values.get(key) ?? null,
+          removeItem: (key: string) => { values.delete(key); },
+          setItem: (key: string, value: string) => { values.set(key, value); },
+        },
+      },
+    });
+
+    try {
+      let submissions = 0;
+      const store = new BackendDataStore("https://api.test", {
+        transactionPollIntervalMs: 0,
+        transactionStatusTimeoutMs: 5,
+        transactionStatusReader: async (transactionHash) => ({
+          events: [],
+          indexedEventCount: 0,
+          latestIndexedBlock: transactionHash === baseHash ? "20" : null,
+          phase: transactionHash === baseHash ? "applied" as const : "submitted" as const,
+          receiptBlock: transactionHash === baseHash ? "20" : null,
+          transactionHash,
+        }),
+      });
+      const descriptor = {
+        chainId: "0x2105",
+        invalidateTags: ["wallet:0xabc"] as const,
+        key: "building:start:metalStorage",
+        label: "Metal Storage",
+        send: async () => {
+          submissions += 1;
+          return baseHash;
+        },
+      };
+
+      await expect(store.runWriteTransaction(descriptor)).resolves.toBe(false);
+      expect(discardPrompts).toHaveLength(1);
+      expect(discardPrompts[0]).toContain(staleHash.slice(0, 10));
+      expect(discardPrompts[0]).toContain("It may still confirm later");
+      expect(discardPrompts[0]).toContain("next retry");
+      expect(submissions).toBe(0);
+      expect(values.has(journalKey)).toBe(false);
+      expect(store.snapshot<WriteTransactionState>(store.writeTransactionKey("building:start:metalStorage", "0xabc"))?.data).toMatchObject({
+        phase: "error",
+        stage: "failed",
+      });
 
       await expect(store.runWriteTransaction(descriptor)).resolves.toBe(true);
       expect(submissions).toBe(1);
-      expect(values.size).toBe(0);
+      expect(discardPrompts).toHaveLength(1);
+      expect(values.has(journalKey)).toBe(false);
     } finally {
       if (originalWindow) Object.defineProperty(globalThis, "window", originalWindow);
       else Reflect.deleteProperty(globalThis, "window");
