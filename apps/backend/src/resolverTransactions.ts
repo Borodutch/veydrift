@@ -339,6 +339,7 @@ export class ResolverTransactionCoordinator {
         request.getTransactionCount("pending")
       ]);
       if (pending > latest) {
+        // The persisted operation may already be resolved elsewhere, so clear its earliest nonce without replaying stale calldata.
         const stale = this.loadSubmittedAttemptAtNonce(request.chainId, request.address, latest);
         if (
           stale?.operationId
