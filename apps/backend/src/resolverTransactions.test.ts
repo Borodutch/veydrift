@@ -185,6 +185,119 @@ describe("ResolverTransactionCoordinator", () => {
     });
   });
 
+  test("replaces the same durable operation at its original nonce after receipt timeout", async () => {
+    await withDatabase(async (databasePath) => {
+      const operationId = "mission:resolve:stale-fee";
+      let latest = 12;
+      let pending = 12;
+      const first = new ResolverTransactionCoordinator(databasePath);
+      await expect(first.submit({
+        chainId,
+        address,
+        operationId,
+        getTransactionCount: async (blockTag) => blockTag === "latest" ? latest : pending,
+        submit: async (nonce) => {
+          pending = nonce + 1;
+          return hash(nonce);
+        },
+        confirm: async () => { throw new Error("receipt RPC timed out"); }
+      })).rejects.toThrow("receipt RPC timed out");
+
+      const replacements: Array<{ nonce: number; previousHash: string }> = [];
+      const replacementHash = `0x${"f".repeat(64)}` as const;
+      const restarted = new ResolverTransactionCoordinator(databasePath);
+      const result = await restarted.submit({
+        chainId,
+        address,
+        operationId,
+        getTransactionCount: async (blockTag) => blockTag === "latest" ? latest : pending,
+        submit: async () => { throw new Error("must not allocate a future nonce"); },
+        shouldReplace: async () => true,
+        replace: async (nonce, previousHash) => {
+          replacements.push({ nonce, previousHash });
+          return replacementHash;
+        },
+        confirm: async (transactionHash) => {
+          if (transactionHash === replacementHash) {
+            latest = 13;
+            pending = 13;
+            return;
+          }
+          throw new Error("receipt RPC timed out");
+        }
+      });
+
+      expect(result).toBe(replacementHash);
+      expect(replacements).toEqual([{ nonce: 12, previousHash: hash(12) }]);
+    });
+  });
+
+  test("does not allocate beyond an earlier pending nonce owned by another operation", async () => {
+    const coordinator = new ResolverTransactionCoordinator(":memory:");
+    let broadcasts = 0;
+    await expect(coordinator.submit({
+      chainId,
+      address,
+      operationId: "randomness:commit:later",
+      getTransactionCount: async (blockTag) => blockTag === "latest" ? 12 : 18,
+      submit: async (nonce) => {
+        broadcasts += 1;
+        return hash(nonce);
+      },
+      confirm: async () => {}
+    })).rejects.toBeInstanceOf(ResolverNonceStalledError);
+    expect(broadcasts).toBe(0);
+  });
+
+  test("cancels a stale orphaned operation before allocating the next canonical operation", async () => {
+    let latest = 12;
+    let pending = 12;
+    const coordinator = new ResolverTransactionCoordinator(":memory:", { staleTransactionMs: 0 });
+    await expect(coordinator.submit({
+      chainId,
+      address,
+      operationId: "mission:resolve:already-manually-resolved",
+      getTransactionCount: async (blockTag) => blockTag === "latest" ? latest : pending,
+      submit: async (nonce) => {
+        pending = nonce + 1;
+        return hash(nonce);
+      },
+      confirm: async () => { throw new Error("receipt RPC timed out"); }
+    })).rejects.toThrow("receipt RPC timed out");
+
+    const cancellations: number[] = [];
+    const submissions: number[] = [];
+    const cancellationHash = `0x${"e".repeat(64)}` as const;
+    const result = await coordinator.submit({
+      chainId,
+      address,
+      operationId: "mission:resolve:still-due",
+      getTransactionCount: async (blockTag) => blockTag === "latest" ? latest : pending,
+      submit: async (nonce) => {
+        submissions.push(nonce);
+        pending = nonce + 1;
+        return hash(nonce);
+      },
+      shouldReplace: async () => false,
+      cancelStale: async (nonce) => {
+        cancellations.push(nonce);
+        return cancellationHash;
+      },
+      confirm: async (transactionHash) => {
+        if (transactionHash === cancellationHash) {
+          latest = 13;
+          pending = 13;
+          return;
+        }
+        latest = pending;
+      }
+    });
+
+    expect(cancellations).toEqual([12]);
+    expect(submissions).toEqual([13]);
+    expect(result).toBe(hash(13));
+  });
+
   test("returns a confirmed operation idempotently without allocating another nonce", async () => {
     const coordinator = new ResolverTransactionCoordinator(":memory:");
     let pending = 4;

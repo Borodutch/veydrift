@@ -44,6 +44,9 @@ export type InjectedWindow = {
 };
 
 const WALLET_READ_TIMEOUT_MS = 10_000;
+// Base caps one transaction at 2^24 gas. Supplying that envelope avoids wallet/Reth estimation
+// falsely rejecting a valid bounded multi-round fleet resolution at an inner delegatecall.
+const FLEET_MISSION_RESOLUTION_GAS = "0x1000000";
 // Initial first-planet bootstrap reads use a shorter timeout so a stalled
 // mobile wallet provider (e.g. Trust Wallet on Android intermittently not
 // answering the first eth_accounts/eth_chainId) is detected and retried
@@ -218,6 +221,7 @@ type TransactionRequest = {
   from: string;
   to: string;
   data: string;
+  gas?: string;
   value?: string;
 };
 
@@ -3997,6 +4001,7 @@ export async function sendResolveFleetMissionTransaction(provider: Eip1193Provid
     from: account,
     to: contractAddress,
     data: encodeGameCall(GAME_SELECTORS.resolveFleetMission, [missionId]),
+    gas: FLEET_MISSION_RESOLUTION_GAS,
   });
 }
 

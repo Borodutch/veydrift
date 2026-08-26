@@ -22,6 +22,7 @@ import {
   type RandomnessCommitmentStore,
   type RandomnessRequestEvent
 } from "./randomness";
+import { resolverReplacementFees, resolverTransactionNeedsReplacement } from "./resolverReplacementFees";
 import { ResolverTransactionCoordinator } from "./resolverTransactions";
 
 /**
@@ -180,6 +181,25 @@ export class ViemRandomnessCommitmentChainClient implements RandomnessCommitment
         args: [commitments as Hex[]],
         nonce
       }),
+      shouldReplace: (hash) => resolverTransactionNeedsReplacement(this.publicClient, hash),
+      replace: async (nonce, previousHash) => this.walletClient.writeContract({
+        abi: randomnessEngineAbi,
+        account: this.account,
+        address: this.engineAddress,
+        chain: this.chain,
+        functionName: "commitRandomnessBatch",
+        args: [commitments as Hex[]],
+        nonce,
+        ...await resolverReplacementFees(this.publicClient, previousHash)
+      }),
+      cancelStale: async (nonce, previousHash) => this.walletClient.sendTransaction({
+        account: this.account,
+        chain: this.chain,
+        nonce,
+        to: this.account.address,
+        value: 0n,
+        ...await resolverReplacementFees(this.publicClient, previousHash)
+      }),
       confirm: (hash) => this.confirm(hash)
     });
   }
@@ -201,6 +221,25 @@ export class ViemRandomnessCommitmentChainClient implements RandomnessCommitment
         functionName: "fulfillRandomness",
         args: [requestId, randomWord],
         nonce
+      }),
+      shouldReplace: (hash) => resolverTransactionNeedsReplacement(this.publicClient, hash),
+      replace: async (nonce, previousHash) => this.walletClient.writeContract({
+        abi: randomnessEngineAbi,
+        account: this.account,
+        address: this.engineAddress,
+        chain: this.chain,
+        functionName: "fulfillRandomness",
+        args: [requestId, randomWord],
+        nonce,
+        ...await resolverReplacementFees(this.publicClient, previousHash)
+      }),
+      cancelStale: async (nonce, previousHash) => this.walletClient.sendTransaction({
+        account: this.account,
+        chain: this.chain,
+        nonce,
+        to: this.account.address,
+        value: 0n,
+        ...await resolverReplacementFees(this.publicClient, previousHash)
       }),
       confirm: (hash) => this.confirm(hash)
     });

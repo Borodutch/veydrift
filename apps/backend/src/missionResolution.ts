@@ -15,6 +15,11 @@ import type { BackendConfig } from "./config";
 import type { Address, GameMaintenanceState, ResolvableFleetMission, ReturnableFleetMission } from "./evm";
 import { VeydriftGameReader } from "./evm";
 import { emitObservabilityEvent } from "./observability";
+import {
+  resolverReplacementFees,
+  resolverTransactionNeedsReplacement,
+  type ResolverReplacementFees
+} from "./resolverReplacementFees";
 import { ResolverTransactionCoordinator } from "./resolverTransactions";
 
 const missionResolutionIntervalMs = 5_000;
@@ -597,6 +602,26 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
           nonce,
           ...(functionName === "resolveFleetMission" ? { gas: fleetMissionResolutionGas } : {})
         }),
+        shouldReplace: (hash) => resolverTransactionNeedsReplacement(this.publicClient!, hash),
+        replace: async (nonce, previousHash) => this.walletClient!.writeContract({
+          abi: veydriftGameResolutionAbi,
+          account,
+          address: this.gameAddress,
+          chain: this.chain!,
+          functionName,
+          args: [BigInt(missionId)],
+          nonce,
+          ...(functionName === "resolveFleetMission" ? { gas: fleetMissionResolutionGas } : {}),
+          ...await resolverReplacementFees(this.publicClient!, previousHash)
+        }),
+        cancelStale: async (nonce, previousHash) => this.walletClient!.sendTransaction({
+          account,
+          chain: this.chain!,
+          nonce,
+          to: account.address,
+          value: 0n,
+          ...await resolverReplacementFees(this.publicClient!, previousHash)
+        }),
         confirm: (hash) => this.confirm(hash)
       });
     }
@@ -618,6 +643,14 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
         nonce,
         functionName === "resolveFleetMission" ? fleetMissionResolutionGas : undefined
       ),
+      shouldReplace: (hash) => resolverTransactionNeedsReplacement(this.publicClient!, hash),
+      replace: async (nonce, previousHash) => this.sendUnlockedTransaction(
+        from,
+        data,
+        nonce,
+        functionName === "resolveFleetMission" ? fleetMissionResolutionGas : undefined,
+        await resolverReplacementFees(this.publicClient!, previousHash)
+      ),
       confirm: (hash) => this.confirm(hash)
     });
   }
@@ -630,7 +663,13 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     }
   }
 
-  private async sendUnlockedTransaction(from: Address, data: Hex, nonce: number, gas?: bigint): Promise<Hex> {
+  private async sendUnlockedTransaction(
+    from: Address,
+    data: Hex,
+    nonce: number,
+    gas?: bigint,
+    fees?: ResolverReplacementFees
+  ): Promise<Hex> {
     const response = await fetch(this.rpcUrl!, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -643,7 +682,11 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
           to: this.gameAddress,
           data,
           nonce: `0x${nonce.toString(16)}`,
-          ...(gas === undefined ? {} : { gas: `0x${gas.toString(16)}` })
+          ...(gas === undefined ? {} : { gas: `0x${gas.toString(16)}` }),
+          ...(fees === undefined ? {} : {
+            maxFeePerGas: `0x${fees.maxFeePerGas.toString(16)}`,
+            maxPriorityFeePerGas: `0x${fees.maxPriorityFeePerGas.toString(16)}`
+          })
         }]
       })
     });

@@ -2359,6 +2359,7 @@ describe("walletFlow", () => {
             from: account,
             to: contract,
             data: encodeGameCall("0xde09e7cf", ["11"]),
+            gas: "0x1000000",
           },
         ],
       },
