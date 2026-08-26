@@ -106,7 +106,7 @@ function infrastructureSnapshotPlanetId(snapshot: ChainInfrastructureState | nul
 function defenseSnapshotPlanetId(snapshot: ChainDefenseState | null | undefined, fallbackPlanetId: string | null | undefined): string | undefined {
   return snapshot?.homePlanetId ?? fallbackPlanetId ?? undefined;
 }
-import { mergePlanetWithSettlement, planetFromSettlementPlanet, planetImageForType, planetsFromSystemResponse, planetTypeFromTemperature, type ApiSystemResponse } from "./data/mockUniverse";
+import { mergePlanetWithSettlement, planetArtTypeForCoordinates, planetFromSettlementPlanet, planetImageForType, planetsFromSystemResponse, type ApiSystemResponse } from "./data/mockUniverse";
 import {
   buildingContractIds,
   canAfford,
@@ -483,7 +483,6 @@ function combatTechResearchRowsForMission(levels: { weapons: number; shielding: 
 
 type TacticalMissionTarget = {
   alliance: Planet["alliance"];
-  archetype: Planet["type"];
   combatTechLevels?: { weapons: number; shielding: number; armor: number } | null | undefined;
   coordinates: Coordinates;
   defenseUnits: Array<{ id: number; count: number }>;
@@ -506,12 +505,13 @@ function tacticalPlanetForMission(target: TacticalMissionTarget): Planet {
   const resources = target.resources ?? null;
   const research = combatTechResearchRowsForMission(target.combatTechLevels);
   const hasPublicIntel = Boolean(resources || target.fleetUnits.length > 0 || target.defenseUnits.length > 0 || target.hasAggregateIntel || research);
+  const type = planetArtTypeForCoordinates(target.coordinates);
 
   return {
     id: target.id,
     name: target.name?.trim() || `Planet ${target.id}`,
-    type: target.archetype,
-    image: planetImageForType(target.archetype),
+    type,
+    image: planetImageForType(type),
     position: target.coordinates.position,
     galaxy: target.coordinates.galaxy,
     system: target.coordinates.system,
@@ -570,7 +570,6 @@ function tacticalPlanetForMission(target: TacticalMissionTarget): Planet {
 export function raidTargetPlanetForMission(target: RaidTarget): Planet {
   return tacticalPlanetForMission({
     alliance: target.alliance,
-    archetype: target.archetype,
     combatTechLevels: target.combatTechLevels,
     coordinates: target.coordinates,
     defenseUnits: target.defenseUnits,
@@ -591,11 +590,12 @@ export function raidTargetPlanetForMission(target: RaidTarget): Planet {
 }
 
 export function debrisTargetPlanetForMission(target: DebrisFinderTarget): Planet {
+  const type = planetArtTypeForCoordinates(target.coordinates);
   return {
     id: target.planetId,
     name: target.name?.trim() || `Planet ${target.planetId}`,
-    type: target.archetype,
-    image: planetImageForType(target.archetype),
+    type,
+    image: planetImageForType(type),
     position: target.coordinates.position,
     galaxy: target.coordinates.galaxy,
     system: target.coordinates.system,
@@ -2248,7 +2248,6 @@ export function highscorePlanetForMission(planet: HighscorePlanet, entry: Highsc
   const tactical = planet.tactical;
   return tacticalPlanetForMission({
     alliance: entry.alliance ?? null,
-    archetype: planet.archetype,
     combatTechLevels: tactical?.combatTechLevels,
     coordinates: planet.coordinates,
     defenseUnits: tactical?.defenses.units ?? [],
@@ -2840,7 +2839,7 @@ function missionReferenceFromManagedPlanet(planet: ManagedPlanetResponse | undef
     system: planet.system,
     position: planet.position,
     coordinates: planet.coordinates,
-    archetype: planetTypeFromTemperature(planet.temperature),
+    archetype: planetArtTypeForCoordinates(planet),
     allianceDepotLevel: null,
   };
 }
@@ -8725,7 +8724,7 @@ export function PlayableMvpApp({
           onStartBuilding={handleStartMoonBuilding}
           onStartDefense={handleStartMoonDefense}
           parentPlanetLabel={selectedManagedPlanet?.name ?? selectedManagedPlanet?.coordinates}
-          parentPlanetType={selectedManagedPlanet ? planetTypeFromTemperature(selectedManagedPlanet.temperature) : undefined}
+          parentPlanetType={selectedManagedPlanet ? planetArtTypeForCoordinates(selectedManagedPlanet) : undefined}
           transactionUnavailableReason={moonTransactionUnavailableReason}
         />
       );
@@ -9561,7 +9560,7 @@ function PlanetSelectorButton({
         <span className="block h-14 w-14 overflow-hidden rounded-full bg-black/30">
           <img alt="" className="h-full w-full object-cover" loading="lazy" src={planetImage(planet)} />
         </span>
-        {showMoonIndicator ? <PlanetMoonIndicator className="!-right-1 !-top-1 !h-5 !w-5 xl:!h-5 xl:!w-5" compact planetType={planetTypeFromTemperature(planet.temperature)} /> : null}
+        {showMoonIndicator ? <PlanetMoonIndicator className="!-right-1 !-top-1 !h-5 !w-5 xl:!h-5 xl:!w-5" compact planetType={planetArtTypeForCoordinates(planet)} /> : null}
         {hasIncomingAttack ? (
           <span
             aria-hidden="true"
@@ -9706,7 +9705,7 @@ function planetDisplayName(planet: ManagedPlanetResponse): string {
 }
 
 function planetImage(planet: ManagedPlanetResponse): string {
-  return planetImageForType(planetTypeFromTemperature(planet.temperature));
+  return planetImageForType(planetArtTypeForCoordinates(planet));
 }
 
 function namedSettlementPlanet(planet: Planet | undefined, name: string | null | undefined, ownerDisplayName?: string | null | undefined): Planet | undefined {

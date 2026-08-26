@@ -20,6 +20,7 @@ import {
 // The per-planet mission subtext helpers live in their own module (unit-tested in
 // planetMissionSubtext.test.ts); the Rankings tests only need the planet-keyed grouping here.
 import { activeMissionsByPlanetId } from "../src/planetMissionSubtext";
+import { planetArtTypeForCoordinates, planetImageForType } from "../src/data/mockUniverse";
 import type { FleetMissionSummary, HighscoreEntry, HighscoreResponse } from "../src/walletFlow";
 
 describe("RankingsPage", () => {
@@ -613,13 +614,16 @@ describe("RankingsPage", () => {
   });
 
   test("serves ranked home planet thumbnails through responsive variants", () => {
-    const table = RankingsTable({ entries: [rankingEntry()], loading: false });
+    const entry = rankingEntry();
+    const planetType = planetArtTypeForCoordinates(entry.homePlanet!.coordinates);
+    const imagePath = planetImageForType(planetType);
+    const table = RankingsTable({ entries: [entry], loading: false });
     const image = elementNodes(table).find((item) => item.type === "img" && item.props?.alt === "");
 
-    expect(image?.props?.src).toBe("/assets/game/style-pass/generated/planets/temperate-ocean.webp");
+    expect(image?.props?.src).toBe(imagePath);
     expect(image?.props?.sizes).toBe("40px");
-    expect(image?.props?.srcSet).toContain("/assets/game/sizes/64/style-pass/generated/planets/temperate-ocean.webp 64w");
-    expect(image?.props?.srcSet).toContain("/assets/game/style-pass/generated/planets/temperate-ocean.webp 1024w");
+    expect(image?.props?.srcSet).toContain(`/assets/game/sizes/64/style-pass/generated/planets/${planetType}.webp 64w`);
+    expect(image?.props?.srcSet).toContain(`${imagePath} 1024w`);
   });
 
   test("reads the canonical total ranking from the existing highscore payload", () => {

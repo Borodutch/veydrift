@@ -100,16 +100,26 @@ export function planetImageForType(type: PlanetType): string {
   return PLANET_IMAGES[type];
 }
 
-// Shared planet-art-type resolution for the mission route visuals (VEY-403): prefer the indexed
-// archetype (derived from temperature) and otherwise fall back to a deterministic coordinate-derived
-// type so uncharted colonization targets still render real planet art rather than a generic icon.
+// Planet artwork is a coordinate/slot property. Temperature remains an economic and climate-label
+// input, but its absolute Celsius value spans a different range in every classic slot and therefore
+// must not select the art family. Prefer coordinates whenever they exist so stale backend archetypes
+// from the pre-classic temperature scale cannot make every inner/middle planet look molten.
+// Backend archetypes remain a compatibility fallback only for historical records without coordinates.
+export function planetArtTypeForCoordinates(
+  coords: { galaxy: number; position: number; system: number },
+): PlanetType {
+  return planetTypeFromCoordinates(coords.galaxy, coords.system, coords.position);
+}
+
+// Shared planet-art-type resolution for mission/inspect surfaces. A backend archetype is retained
+// only as a last-resort compatibility fallback for incomplete historical records with no coordinates.
 // Used by both the Mission Control cards and the Mission detail Route so the two stay in lockstep.
 // Returns null only when no planet can be resolved at all (e.g. an attacker with no coordinates).
 export function planetArtTypeFromArchetypeOrCoords(
   archetype: PlanetType | null | undefined,
   coords: { galaxy: number; position: number; system: number } | null,
 ): PlanetType | null {
-  return archetype ?? (coords ? planetTypeFromCoordinates(coords.galaxy, coords.system, coords.position) : null);
+  return coords ? planetArtTypeForCoordinates(coords) : archetype ?? null;
 }
 
 export function formatPlanetType(type: PlanetType): string {
@@ -154,7 +164,6 @@ export function planetFromSettlementPlanet(planet: SettlementPlanetIdentity): Pl
     metalMultiplierBps: planet.metalMultiplierBps,
     crystalMultiplierBps: planet.crystalMultiplierBps,
     deuteriumMultiplierBps: planet.deuteriumMultiplierBps,
-    archetype: planetTypeFromTemperature(planet.temperature),
     occupiedBy: {
       planetId: planet.planetId,
       owner: planet.owner,
@@ -170,7 +179,7 @@ export function planetFromSettlementPlanet(planet: SettlementPlanetIdentity): Pl
 }
 
 export function mergePlanetWithSettlement(planet: Planet, settlement: SettlementPlanetIdentity): Planet {
-  const type = planetTypeFromTemperature(settlement.temperature);
+  const type = planetArtTypeForCoordinates(settlement);
   const existingOccupant = planet.occupiedBy?.owner.toLowerCase() === settlement.owner.toLowerCase()
     ? planet.occupiedBy
     : null;
@@ -219,8 +228,7 @@ function planetFromApi(planet: ApiPlanet): Planet | null {
     return null;
   }
 
-  const type = planet.archetype
-    ?? planetTypeFromTemperature(temperature);
+  const type = planetArtTypeForCoordinates(planet);
   const occupiedBy = planet.occupiedBy ?? null;
   const alliance = occupiedBy?.alliance ?? null;
 

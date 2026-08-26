@@ -3,7 +3,7 @@ import type { ComponentChildren } from "preact";
 
 import { ActionReasonNote } from "./ActionReasonNote";
 import { galaxyActionIcon } from "./GalaxyActionIcon";
-import { planetTypeFromTemperature } from "../data/mockUniverse";
+import { planetArtTypeForCoordinates } from "../data/mockUniverse";
 import { formatDuration, formatDurationUntil } from "../durationFormat";
 import { acsHoldingFuelRatePerHour, allianceDepotSustainSeconds } from "../fleetMissionRules";
 import { shipAssetByKey } from "../gameAssets";
@@ -3672,7 +3672,7 @@ function planetLookupFromMissionData(
 
 function identityFromManagedPlanet(planet: ManagedPlanetResponse): MissionPlanetIdentity {
   return {
-    archetype: planetTypeFromTemperature(planet.temperature),
+    archetype: planetArtTypeForCoordinates(planet),
     coordinates: planet.coordinates,
     displayName: planet.name?.trim() || `Planet [${planet.coordinates}]`,
     hasMoon: Boolean(planet.moon?.exists),
@@ -3687,7 +3687,7 @@ function identityFromMissionPlanet(
 ): MissionPlanetIdentity {
   const coords = { galaxy: planet.galaxy, position: planet.position, system: planet.system };
   return {
-    archetype: planet.archetype ?? planetArchetypesByCoordinate.get(missionPlanetCoordinateKey(coords)) ?? null,
+    archetype: planetArchetypesByCoordinate.get(missionPlanetCoordinateKey(coords)) ?? planetArtTypeForCoordinates(coords),
     coordinates: planet.coordinates,
     displayName: planet.name?.trim() || `Planet [${planet.coordinates}]`,
     hasMoon: Boolean(planet.hasMoon),
