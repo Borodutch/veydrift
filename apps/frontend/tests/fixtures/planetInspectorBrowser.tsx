@@ -130,6 +130,9 @@ globalThis.fetch = (async (input, init) => {
 
   if (url.origin !== window.location.origin) {
     const body = JSON.parse(String(init?.body ?? "{}")) as { id?: unknown; method?: unknown };
+    if (body.method === "eth_chainId") {
+      return Response.json({ id: body.id, jsonrpc: "2.0", result: settlementShell ? "0x2105" : "0x14a34" });
+    }
     if (body.method === "eth_call") return Response.json({ id: body.id, jsonrpc: "2.0", result: "0x" });
     return Response.json({
       error: { code: -32601, message: `Fixture JSON-RPC method not implemented: ${String(body.method)}` },

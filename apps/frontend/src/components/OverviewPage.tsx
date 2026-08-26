@@ -592,7 +592,7 @@ export function OverviewPage({
               />
             </label>
             <p className="text-[11px] leading-4 text-slate-300">
-              Renaming this planet is an onchain transaction. Your wallet will ask for confirmation, and gas may be required.
+              Renaming this planet is an onchain transaction. Your wallet will ask for confirmation, and ETH gas on Base may be required; Ethereum Mainnet is not used.
             </p>
             {(renameValidation || renameStatusLabel) && (
               <p className={`break-words text-[11px] leading-4 ${renameValidation ? "text-amber-200" : renameStatusTone}`}>

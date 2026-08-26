@@ -218,6 +218,7 @@ export type ReferralRedemption = {
 export type ReferralWalletAction = "claim-transaction";
 
 type TransactionRequest = {
+  chainId?: string;
   from: string;
   to: string;
   data: string;
@@ -1567,14 +1568,21 @@ export type AvailableWalletProviderOptions = {
 };
 
 type WalletTransactionTransport = {
+  requiredChain: VeydriftWalletChain;
   simulationRpcUrl: string;
   source: WalletProviderSource;
 };
 
 const walletTransactionTransports = new WeakMap<Eip1193Provider, WalletTransactionTransport>();
 
-export function configureWalletTransactionTransport(provider: Eip1193Provider, source: WalletProviderSource, simulationRpcUrl: string): void {
+export function configureWalletTransactionTransport(
+  provider: Eip1193Provider,
+  source: WalletProviderSource,
+  simulationRpcUrl: string,
+  requiredChain: VeydriftWalletChain = defaultVeydriftChainForLocation(),
+): void {
   walletTransactionTransports.set(provider, {
+    requiredChain,
     simulationRpcUrl,
     source,
   });
@@ -2141,6 +2149,7 @@ async function sendWalletTransaction(
   options: {
     accountProbeReadyChecked?: boolean;
     fleetMissionContext?: FleetMissionRevertContext;
+    requiredChain?: VeydriftWalletChain;
     simulationRpcUrl?: string;
   } = {},
 ): Promise<string> {
@@ -2154,10 +2163,23 @@ async function sendWalletTransaction(
   // app's chain-read authority. Mobile injected providers can reject eth_call
   // depending on their current wallet tab/network state, so every configured
   // wallet uses the app's read-only RPC for simulation. Keep a provider fallback
-  // only for unconfigured integrations and focused sender tests.
+  // only for unconfigured integrations and focused sender tests, but never let
+  // missing transport metadata bypass wallet-chain enforcement.
   const transport = walletTransactionTransports.get(provider);
+  const requiredChain = options.requiredChain ?? transport?.requiredChain ?? defaultVeydriftChainForLocation();
   const simulationRpcUrl = options.simulationRpcUrl ?? transport?.simulationRpcUrl;
   const simulateThroughAppRpc = Boolean(simulationRpcUrl?.trim());
+
+  // Connection-time network setup is only a convenience. The wallet can
+  // change networks at any point after connecting, so the shared write
+  // boundary must establish the required chain again before simulation and
+  // submission. Every app-bound provider also has configured app-RPC
+  // authority; the provider fallback exists only for focused sender tests and
+  // legacy integrations.
+  await prepareWalletTransactionNetwork(provider, requiredChain);
+  if (simulateThroughAppRpc) {
+    await assertSimulationRpcNetwork(simulationRpcUrl ?? "", requiredChain);
+  }
   const simulate =
     simulateThroughAppRpc
       ? (blockTag: "pending" | "latest") => simulateTransactionFromRpc(simulationRpcUrl ?? "", transaction, blockTag)
@@ -2190,9 +2212,13 @@ async function sendWalletTransaction(
   }
 
   try {
+    // This is deliberately the final awaited preflight before submission.
+    // Include chainId in the transaction too so a provider that changes
+    // networks after this read must reject rather than reinterpret calldata.
+    await assertWalletTransactionNetwork(provider, requiredChain);
     return await provider.request<string>({
       method: "eth_sendTransaction",
-      params: [transaction],
+      params: [{ ...transaction, chainId: requiredChain.chainIdHex }],
     });
   } catch (error) {
     if (isFleetMissionTransactionData(transaction.data)) {
@@ -2212,16 +2238,65 @@ async function sendWalletTransaction(
   }
 }
 
+async function prepareWalletTransactionNetwork(provider: Eip1193Provider, chain: VeydriftWalletChain): Promise<void> {
+  try {
+    const activeChainId = await getChainId(provider);
+    if (!isVeydriftChain(activeChainId, chain)) {
+      await ensureVeydriftNetwork(provider, chain);
+      await waitForVeydriftNetwork(provider, chain);
+    }
+  } catch (error) {
+    throw walletTransactionNetworkError(chain, error);
+  }
+}
+
+async function assertWalletTransactionNetwork(provider: Eip1193Provider, chain: VeydriftWalletChain): Promise<void> {
+  let activeChainId: string;
+  try {
+    activeChainId = await getChainId(provider);
+  } catch (error) {
+    throw walletTransactionNetworkError(chain, error);
+  }
+  if (!isVeydriftChain(activeChainId, chain)) {
+    throw walletTransactionNetworkError(chain, new Error(`Wallet reported chain ${activeChainId} at submission.`));
+  }
+}
+
+function walletTransactionNetworkError(chain: VeydriftWalletChain, cause: unknown): Error {
+  const chainLabel = walletTransactionChainLabel(chain);
+  const message = `Veydrift transactions require ${chainLabel} (chain ID ${chain.chainId} / ${chain.chainIdHex}). Switch the wallet to ${chainLabel} and try again. The transaction was not sent.`;
+  const error = new Error(message, { cause });
+  if (cause && typeof cause === "object" && "code" in cause) {
+    Object.assign(error, { code: (cause as { code?: unknown }).code });
+  }
+  return error;
+}
+
+async function assertSimulationRpcNetwork(rpcUrl: string, chain: VeydriftWalletChain): Promise<void> {
+  const chainId = await transactionRpcRequest<string>(rpcUrl, "eth_chainId", []);
+  if (!isVeydriftChain(chainId, chain)) {
+    throw new Error(`Configured transaction RPC reports chain ${chainId}, but wallet writes require ${walletTransactionChainLabel(chain)} (${chain.chainIdHex}). The transaction was not sent.`);
+  }
+}
+
+function walletTransactionChainLabel(chain: VeydriftWalletChain): string {
+  return chain.chainId === BASE_MAINNET.chainId ? "Base Mainnet" : chain.chainName;
+}
+
 async function simulateTransactionFromRpc(rpcUrl: string, transaction: TransactionRequest, blockTag: "pending" | "latest"): Promise<string> {
+  return transactionRpcRequest<string>(rpcUrl, "eth_call", [transaction, blockTag]);
+}
+
+async function transactionRpcRequest<T>(rpcUrl: string, method: string, params: unknown[]): Promise<T> {
   if (!rpcUrl.trim()) {
-    throw new Error("App RPC is unavailable while simulating the transaction.");
+    throw new Error("App RPC is unavailable for the transaction preflight.");
   }
   const response = await fetch(rpcUrl, {
     body: JSON.stringify({
       id: 1,
       jsonrpc: "2.0",
-      method: "eth_call",
-      params: [transaction, blockTag],
+      method,
+      params,
     }),
     headers: {
       accept: "application/json",
@@ -2231,7 +2306,7 @@ async function simulateTransactionFromRpc(rpcUrl: string, transaction: Transacti
   });
   const body = (await response.json()) as {
     error?: { code?: number; data?: unknown; message?: string };
-    result?: string;
+    result?: T;
   };
   if (!response.ok) {
     throw new Error(`Transaction simulation RPC returned ${response.status}.`);
@@ -2239,8 +2314,8 @@ async function simulateTransactionFromRpc(rpcUrl: string, transaction: Transacti
   if (body.error) {
     throw body.error;
   }
-  if (typeof body.result !== "string") {
-    throw new Error("Transaction simulation RPC returned an invalid response.");
+  if (body.result === undefined) {
+    throw new Error(`Transaction RPC returned an invalid ${method} response.`);
   }
   return body.result;
 }
@@ -3804,6 +3879,7 @@ export async function sendBurningChickenMoonTransaction(
     to: config.burnContractAddress,
     data: encodeBurningChickenMoonCall(config.burnSelector, tokenId, planetId, coordinates),
   }, {
+    requiredChain: BASE_MAINNET,
     simulationRpcUrl: config.rpcUrl || BASE_MAINNET.rpcUrls[0],
   });
 }

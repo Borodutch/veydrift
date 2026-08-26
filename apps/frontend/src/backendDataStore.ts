@@ -269,6 +269,18 @@ type PendingTransactionJournalEntry = {
   wallet: string;
 };
 
+type PendingTransactionDiscardConfirmation = (
+  entry: Readonly<PendingTransactionJournalEntry>,
+) => boolean | Promise<boolean>;
+
+function sameChainId(left: string, right: string): boolean {
+  try {
+    return BigInt(left) === BigInt(right);
+  } catch {
+    return left.trim().toLowerCase() === right.trim().toLowerCase();
+  }
+}
+
 type IndexingPlanRunner = (receipt: unknown, txHash: string) => Promise<void>;
 
 type ReceiptBlock = {
@@ -300,6 +312,7 @@ type GlobalMissionArchiveOptions = {
 const INACTIVE_RESOURCE_RETENTION_MS = 120_000;
 
 type BackendDataStoreOptions = {
+  confirmPendingTransactionDiscard?: PendingTransactionDiscardConfirmation;
   inactiveResourceRetentionMs?: number;
   transactionPollIntervalMs?: number;
   transactionRequestTimeoutMs?: number;
@@ -384,12 +397,19 @@ export class BackendDataStore {
   private readonly planetResourceReadGenerations = new Map<string, number>();
 
   private readonly inactiveResourceRetentionMs: number;
+  private readonly confirmPendingTransactionDiscard: PendingTransactionDiscardConfirmation;
   private readonly transactionPollIntervalMs: number;
   private readonly transactionRequestTimeoutMs: number;
   private readonly transactionStatusTimeoutMs: number;
   private readonly transactionStatusReader: ((transactionHash: string) => Promise<BackendTransactionStatus>) | undefined;
 
   constructor(readonly apiBaseUrl: string, options: BackendDataStoreOptions = {}) {
+    this.confirmPendingTransactionDiscard = options.confirmPendingTransactionDiscard ?? ((entry) => {
+      if (typeof window === "undefined" || typeof window.confirm !== "function") return false;
+      return window.confirm(
+        `Veydrift could not verify saved transaction ${entry.transactionHash.slice(0, 10)}... on Base. It may still confirm later. Discard this legacy recovery record and allow one new Base transaction on your next retry?`,
+      );
+    });
     this.inactiveResourceRetentionMs = options.inactiveResourceRetentionMs ?? INACTIVE_RESOURCE_RETENTION_MS;
     this.transactionPollIntervalMs = options.transactionPollIntervalMs ?? 1_000;
     this.transactionRequestTimeoutMs = options.transactionRequestTimeoutMs ?? 10_000;
@@ -1082,7 +1102,7 @@ export class BackendDataStore {
     );
   }
 
-  private async resumePendingTransactions(wallet: string): Promise<void> {
+  private async resumePendingTransactions(wallet: string, expectedChainId?: string): Promise<void> {
     const normalizedWallet = wallet.toLowerCase();
     const existing = this.transactionRecoveries.get(normalizedWallet);
     if (existing) return existing;
@@ -1099,6 +1119,10 @@ export class BackendDataStore {
             txHash: entry.transactionHash,
           }, normalizedWallet);
           try {
+            if (expectedChainId && entry.chainId !== "unknown" && !sameChainId(entry.chainId, expectedChainId)) {
+              this.removePendingTransaction(entry.transactionHash);
+              throw new Error(`Released a stale transaction journal from chain ${entry.chainId}; this action requires ${expectedChainId}. Nothing was submitted on the required Base network. Retry the action.`);
+            }
             const status = await this.waitForBackendTransactionStatus(
               entry.transactionHash,
               (candidate) => candidate.phase === "applied" || candidate.phase === "reverted",
@@ -1117,12 +1141,26 @@ export class BackendDataStore {
               txHash: entry.transactionHash,
             }, normalizedWallet);
           } catch (error) {
+            let recoveryError = error;
+            if (isTransactionIndexingTimeout(error)) {
+              let discardConfirmed = false;
+              try {
+                discardConfirmed = await this.confirmPendingTransactionDiscard({ ...entry });
+              } catch {
+                // Confirmation failures are cancellations: retain the journal
+                // and continue blocking any duplicate submission.
+              }
+              if (discardConfirmed) {
+                this.removePendingTransaction(entry.transactionHash);
+                recoveryError = new Error("Discarded the unverifiable legacy transaction journal after your confirmation. Nothing was submitted. Retry the action to create one new Base transaction.");
+              }
+            }
             this.publishWriteTransactionState({
-              error,
+              error: recoveryError,
               key: entry.actionId,
-              label: error instanceof Error ? error.message : "Transaction confirmation is delayed.",
+              label: recoveryError instanceof Error ? recoveryError.message : "Transaction confirmation is delayed.",
               phase: "error",
-              stage: isTransactionIndexingTimeout(error) ? "timed-out" : "failed",
+              stage: isTransactionIndexingTimeout(recoveryError) ? "timed-out" : "failed",
               txHash: entry.transactionHash,
             }, normalizedWallet);
           }
@@ -1177,7 +1215,7 @@ export class BackendDataStore {
         // A retry after reload may be the first interaction that resumes the
         // journal. Even when recovery proves the old hash applied and removes
         // it, this click must not continue into a duplicate submission.
-        await this.resumePendingTransactions(walletScope);
+        await this.resumePendingTransactions(walletScope, chainId);
         return false;
       }
     }
