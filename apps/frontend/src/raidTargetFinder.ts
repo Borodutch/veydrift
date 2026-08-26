@@ -19,6 +19,7 @@ import {
   fleetMissionTravelSeconds,
   type FleetDriveLevels,
 } from "./fleetMissionRules";
+import { planetArtTypeForCoordinates } from "./data/mockUniverse";
 import type { Coordinates, PlanetType, PublicStationedDefender } from "./types";
 import { emptyMissionShips } from "./galaxyActions";
 import type {
@@ -416,7 +417,7 @@ export function buildRaidTargets({
         planetId: planet.planetId,
         name: planet.name,
         coordinates: planet.coordinates,
-        archetype: planet.archetype,
+        archetype: planetArtTypeForCoordinates(planet.coordinates),
         owner: entry.wallet,
         ownerDisplayName: entry.displayName ?? null,
         alliance,
@@ -601,7 +602,7 @@ export function buildDebrisTargets({
       planetId: target.planetId,
       name: target.name,
       coordinates: target.coordinates,
-      archetype: target.archetype,
+      archetype: planetArtTypeForCoordinates(target.coordinates),
       owner: target.owner,
       hasMoon: Boolean(target.hasMoon),
       metal,

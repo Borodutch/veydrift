@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import sharp from "sharp";
+import { planetArtTypeForCoordinates } from "../src/data/mockUniverse";
 import { paidAllianceInviteCommitment, paidAllianceInviteLink } from "../src/walletFlow";
 import {
   allianceInviteCommitmentForCanonical,
@@ -16,6 +17,7 @@ import {
   inviteAppRouteForPathname,
   ogPng,
   ogSvg,
+  planetTypeFromCoordinates,
   referralMiniAppImageVersion,
   referralMiniAppLayout,
   referralOgLayout,
@@ -26,6 +28,18 @@ import {
 } from "../scripts/serve.mjs";
 
 describe("frontend static server headers", () => {
+  test("keeps social planet art on the same deterministic slot palette as the app", () => {
+    for (const galaxy of [1, 6]) {
+      for (const system of [1, 407]) {
+        for (let position = 1; position <= 15; position += 1) {
+          expect(planetTypeFromCoordinates(galaxy, system, position)).toBe(
+            planetArtTypeForCoordinates({ galaxy, system, position }),
+          );
+        }
+      }
+    }
+  });
+
   test("caches responsive game size variants with content type", () => {
     const headers = responseHeadersFor("/assets/game/sizes/64/style-pass/generated/ships/small-cargo.webp");
 

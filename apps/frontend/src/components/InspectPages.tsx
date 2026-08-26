@@ -1,7 +1,7 @@
 import type { ComponentChildren } from "preact";
 import { ArrowLeft, Crown, UserRound } from "lucide-preact";
 import { useEffect, useMemo, useState } from "preact/hooks";
-import { planetImageForType, planetTypeFromTemperature } from "../data/mockUniverse";
+import { planetArtTypeForCoordinates, planetImageForType } from "../data/mockUniverse";
 import { descriptionLinkParts, isSafeDescriptionUrl, type DescriptionLinkPart } from "../descriptionLinks";
 import { fleetMissionDistance } from "../fleetMissionRules";
 import type { Coordinates } from "../types";
@@ -249,7 +249,7 @@ function PlayerPlanetRow({
             sizes="icon"
             src={playerInspectPlanetImage(planet)}
           />
-          {planet.moon?.exists ? <PlanetMoonIndicator compact planetType={planetTypeFromTemperature(planet.temperature)} /> : null}
+          {planet.moon?.exists ? <PlanetMoonIndicator compact planetType={planetArtTypeForCoordinates(planet)} /> : null}
         </span>
         <span className="grid min-w-0 gap-2">
           <span className="flex flex-wrap items-center justify-between gap-2">
@@ -270,7 +270,7 @@ function PlayerPlanetRow({
           <PlanetMoonSubsection
             label="Moon"
             onClick={() => onSelectMoon(coords)}
-            planetType={planetTypeFromTemperature(planet.temperature)}
+            planetType={planetArtTypeForCoordinates(planet)}
             title={`Open moon at [${coords.galaxy}:${coords.system}:${coords.position}]`}
           />
         </span>
@@ -807,8 +807,8 @@ export function playerPlanetTacticalSignals(
   ];
 }
 
-export function playerInspectPlanetImage(planet: Pick<ManagedPlanetResponse, "temperature">): string {
-  return planetImageForType(planetTypeFromTemperature(planet.temperature));
+export function playerInspectPlanetImage(planet: Pick<ManagedPlanetResponse, "galaxy" | "position" | "system">): string {
+  return planetImageForType(planetArtTypeForCoordinates(planet));
 }
 
 function coordinateLabel(coordinates: Coordinates): string {

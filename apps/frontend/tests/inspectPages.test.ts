@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { playerInspectPlanetImage, playerInspectScoreItems, playerPlanetTacticalSignals } from "../src/components/InspectPages";
+import { planetArtTypeForCoordinates, planetImageForType } from "../src/data/mockUniverse";
 import type { HighscoreEntry, ManagedPlanetResponse } from "../src/walletFlow";
 
 describe("inspect pages", () => {
@@ -65,8 +66,9 @@ describe("inspect pages", () => {
     expect(signals.some((signal) => signal.value === "Attackable")).toBe(false);
   });
 
-  test("uses compact planet imagery based on indexed temperature", () => {
-    expect(playerInspectPlanetImage(managedPlanet())).toBe("/assets/game/style-pass/generated/planets/hot-desert.webp");
+  test("uses compact planet imagery from the shared slot-aware resolver", () => {
+    const planet = managedPlanet();
+    expect(playerInspectPlanetImage(planet)).toBe(planetImageForType(planetArtTypeForCoordinates(planet)));
   });
 
   test("keeps player inspect wording aligned with the shared page treatment", () => {
