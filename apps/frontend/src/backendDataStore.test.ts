@@ -670,6 +670,66 @@ describe("BackendDataStore", () => {
     }
   });
 
+  test("does not submit a duplicate when a retry click recovers an applied journal entry", async () => {
+    const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+    const transactionHash = `0x${"de".repeat(32)}`;
+    const values = new Map<string, string>([[
+      "veydrift:pending-transactions:https://api.test",
+      JSON.stringify([{
+        actionId: "settlement:first-planet",
+        chainId: "0x2105",
+        submittedAt: Date.now(),
+        transactionHash,
+        wallet: "0xabc",
+      }]),
+    ]]);
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: {
+        localStorage: {
+          getItem: (key: string) => values.get(key) ?? null,
+          removeItem: (key: string) => { values.delete(key); },
+          setItem: (key: string, value: string) => { values.set(key, value); },
+        },
+      },
+    });
+
+    try {
+      const store = new BackendDataStore("https://api.test", {
+        transactionPollIntervalMs: 0,
+        transactionStatusReader: async () => ({
+          events: [],
+          indexedEventCount: 0,
+          latestIndexedBlock: "18",
+          phase: "applied" as const,
+          receiptBlock: "18",
+          transactionHash,
+        }),
+      });
+      let submissions = 0;
+      await expect(store.runWriteTransaction({
+        chainId: "0x2105",
+        invalidateTags: ["wallet:0xabc"],
+        key: "settlement:first-planet",
+        label: "First planet settlement",
+        send: async () => {
+          submissions += 1;
+          return `0x${"ef".repeat(32)}`;
+        },
+      })).resolves.toBe(false);
+
+      expect(submissions).toBe(0);
+      expect(values.size).toBe(0);
+      expect(store.snapshot<WriteTransactionState>(store.writeTransactionKey("settlement:first-planet", "0xabc"))?.data).toMatchObject({
+        phase: "success",
+        txHash: transactionHash,
+      });
+    } finally {
+      if (originalWindow) Object.defineProperty(globalThis, "window", originalWindow);
+      else Reflect.deleteProperty(globalThis, "window");
+    }
+  });
+
   test("performs one centralized catch-up when the SSE indexed revision advances", async () => {
     const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
     const listeners = new Map<string, (event: MessageEvent) => void>();

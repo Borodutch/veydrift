@@ -1172,9 +1172,13 @@ export class BackendDataStore {
     }
     const walletScope = this.transactionWalletScope(descriptor.invalidateTags);
     if (walletScope !== "global") {
-      await this.resumePendingTransactions(walletScope);
-      if (this.pendingTransactions().some((entry) => entry.wallet === walletScope)) {
-        throw new Error("A previous wallet transaction is still awaiting backend confirmation.");
+      const submittedBeforeThisAction = this.pendingTransactions().some((entry) => entry.wallet === walletScope);
+      if (submittedBeforeThisAction) {
+        // A retry after reload may be the first interaction that resumes the
+        // journal. Even when recovery proves the old hash applied and removes
+        // it, this click must not continue into a duplicate submission.
+        await this.resumePendingTransactions(walletScope);
+        return false;
       }
     }
     let latestStatus: BackendTransactionStatus | undefined;
