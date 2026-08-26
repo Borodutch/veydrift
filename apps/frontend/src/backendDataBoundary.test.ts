@@ -211,6 +211,8 @@ describe("frontend backend-data boundary", () => {
 
   test("simulates every EVM write through the single configured wallet submission gateway", async () => {
     const walletFlowSource = await Bun.file(new URL("./walletFlow.ts", import.meta.url)).text();
+    const appSource = await Bun.file(new URL("./PlayableMvpApp.tsx", import.meta.url)).text();
+    const settlementSource = await Bun.file(new URL("./FirstPlanetSettlementApp.tsx", import.meta.url)).text();
     const sendOccurrences = walletFlowSource.match(/method:\s*["']eth_sendTransaction["']/g) ?? [];
     const gatewayStart = walletFlowSource.indexOf("async function sendWalletTransaction");
     const gatewayEnd = walletFlowSource.indexOf("function pendingCallUnsupported", gatewayStart);
@@ -220,10 +222,17 @@ describe("frontend backend-data boundary", () => {
     expect(gatewaySource).toContain("Boolean(simulationRpcUrl?.trim())");
     expect(gatewaySource).not.toContain('transport?.source === "farcaster"');
     expect(gatewaySource).toContain("simulateTransactionFromRpc");
+    expect(gatewaySource).toContain("prepareWalletTransactionNetwork(provider, requiredChain)");
+    expect(gatewaySource).toContain("assertSimulationRpcNetwork(simulationRpcUrl");
+    expect(gatewaySource).toContain("assertWalletTransactionNetwork(provider, requiredChain)");
+    expect(gatewaySource).toContain("chainId: requiredChain.chainIdHex");
     expect(gatewaySource).toContain('method: "eth_call"');
     expect(gatewaySource.indexOf('await simulate("pending")')).toBeLessThan(gatewaySource.indexOf('method: "eth_sendTransaction"'));
+    expect(gatewaySource.indexOf("assertWalletTransactionNetwork(provider, requiredChain)")).toBeLessThan(gatewaySource.indexOf('method: "eth_sendTransaction"'));
     expect(walletFlowSource).toContain('method: "eth_call"');
     expect(walletFlowSource).toContain("Transaction simulation failed:");
+    expect(appSource).toContain("configureWalletTransactionTransport(provider, walletProviderSource, gameWalletChain.rpcUrls[0], gameWalletChain)");
+    expect(settlementSource).toContain("configureWalletTransactionTransport(injected, walletProvider.source, requiredChain.rpcUrls[0], requiredChain)");
   });
 
   test("keeps post-application refresh and auxiliary actions as opaque store plans", async () => {

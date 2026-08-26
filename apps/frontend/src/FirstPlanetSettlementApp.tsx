@@ -866,7 +866,7 @@ export function FirstPlanetSettlementApp() {
   function bindWalletProviderDetails(walletProvider: WalletProviderDetails) {
     const injected = walletProvider?.provider;
     if (injected && walletProvider?.source) {
-      configureWalletTransactionTransport(injected, walletProvider.source, requiredChain.rpcUrls[0]);
+      configureWalletTransactionTransport(injected, walletProvider.source, requiredChain.rpcUrls[0], requiredChain);
     }
     setProvider(injected);
     setWalletProviderSource(walletProvider?.source);
@@ -2387,7 +2387,7 @@ function AllianceInviteWelcome() {
         <span>Free first planet</span>
         <span>2× starter resources</span>
         <span>2× production · 7 days</span>
-        <span>Gas only</span>
+        <span>ETH gas on Base only — not Ethereum Mainnet</span>
       </div>
     </div>
   );
@@ -2422,7 +2422,7 @@ export function settlementLaunchBlocker(settlementReady: boolean, settlementFund
   if (!prepaidAllianceInvite && !settlementFunding.funding.affordable) {
     const shortfallWei = settlementFundingShortfallWei(settlementFunding.funding);
     return shortfallWei !== null && shortfallWei > 0n
-      ? `This wallet needs at least ${formatEth(shortfallWei)} more ETH on Base, plus gas, before launching settlement.`
+      ? `This wallet needs at least ${formatEth(shortfallWei)} more ETH on Base, plus ETH gas on Base (not Ethereum Mainnet), before launching settlement.`
       : "This wallet needs more ETH before launching settlement.";
   }
 
@@ -2527,7 +2527,9 @@ function settlementBody(
     const balance = formatEth(settlementFunding.funding.balanceWei);
     const shortfallWei = settlementFundingShortfallWei(settlementFunding.funding);
     const shortfall =
-      shortfallWei !== null && shortfallWei > 0n ? ` It needs at least ${formatEth(shortfallWei)} more ETH, plus gas, before settlement can launch.` : " Keep a little extra ETH available for gas.";
+      shortfallWei !== null && shortfallWei > 0n
+        ? ` It needs at least ${formatEth(shortfallWei)} more ETH on Base, plus ETH gas on Base (not Ethereum Mainnet), before settlement can launch.`
+        : " Keep a little extra ETH on Base available for Base gas; Ethereum Mainnet ETH is not used.";
     return `${prefix} Settlement costs ${startPrice} ETH; this wallet has ${balance} ETH on ${networkName}.${shortfall}${referralPreview}`;
   }
 

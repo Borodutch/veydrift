@@ -187,6 +187,7 @@ import type { DebrisFinderTarget, RaidTarget } from "./raidTargetFinder";
 import { type FleetDriveLevels, fleetMissionDistance, fleetMissionDistanceForMission, fleetMissionFuelCost, fleetMissionTravelSeconds } from "./fleetMissionRules";
 import {
   mergePlayerProfile,
+  configureWalletTransactionTransport,
   walletRequestErrorMessage,
   walletRecoveryActionMessage,
   spendTransactionErrorMessage,
@@ -3956,6 +3957,10 @@ export function PlayableMvpApp({
   const gameWalletChain = useMemo<VeydriftWalletChain>(() => {
     return runtimeConfig.status === "ready" ? veydriftChainForChainId(runtimeConfig.config.chainId) : defaultVeydriftChainForLocation();
   }, [runtimeConfig]);
+  useEffect(() => {
+    if (!provider || !walletProviderSource) return;
+    configureWalletTransactionTransport(provider, walletProviderSource, gameWalletChain.rpcUrls[0], gameWalletChain);
+  }, [gameWalletChain, provider, walletProviderSource]);
   const missionUniverseLookupMissions = useMemo(
     () =>
       missionArchetypeLookupMissions({

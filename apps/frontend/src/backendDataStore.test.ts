@@ -730,6 +730,142 @@ describe("BackendDataStore", () => {
     }
   });
 
+  test("releases a wrong-chain journal without submitting on the recovery click", async () => {
+    const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+    const transactionHash = `0x${"ac".repeat(32)}`;
+    const values = new Map<string, string>([[
+      "veydrift:pending-transactions:https://api.test",
+      JSON.stringify([{
+        actionId: "building:start:metalStorage",
+        chainId: "0x1",
+        submittedAt: Date.now() - 300_000,
+        transactionHash,
+        wallet: "0xabc",
+      }]),
+    ]]);
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: {
+        localStorage: {
+          getItem: (key: string) => values.get(key) ?? null,
+          removeItem: (key: string) => { values.delete(key); },
+          setItem: (key: string, value: string) => { values.set(key, value); },
+        },
+      },
+    });
+
+    try {
+      let statusReads = 0;
+      let submissions = 0;
+      const store = new BackendDataStore("https://api.test", {
+        transactionStatusReader: async () => {
+          statusReads += 1;
+          throw new Error("wrong-chain journals must not query Base status");
+        },
+      });
+      await expect(store.runWriteTransaction({
+        chainId: "0x2105",
+        invalidateTags: ["wallet:0xabc"],
+        key: "building:start:metalStorage",
+        label: "Metal Storage",
+        send: async () => {
+          submissions += 1;
+          return `0x${"ad".repeat(32)}`;
+        },
+      })).resolves.toBe(false);
+
+      expect(statusReads).toBe(0);
+      expect(submissions).toBe(0);
+      expect(values.size).toBe(0);
+      expect(store.snapshot<WriteTransactionState>(store.writeTransactionKey("building:start:metalStorage", "0xabc"))?.data).toMatchObject({
+        phase: "error",
+        stage: "failed",
+      });
+    } finally {
+      if (originalWindow) Object.defineProperty(globalThis, "window", originalWindow);
+      else Reflect.deleteProperty(globalThis, "window");
+    }
+  });
+
+  test("releases an old unknown-chain hash absent from Base, then permits exactly one later Base submission", async () => {
+    const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+    const staleHash = `0x${"ba".repeat(32)}`;
+    const baseHash = `0x${"bb".repeat(32)}`;
+    const values = new Map<string, string>([[
+      "veydrift:pending-transactions:https://api.test",
+      JSON.stringify([{
+        actionId: "fleet:supply",
+        chainId: "unknown",
+        submittedAt: Date.now() - 300_000,
+        transactionHash: staleHash,
+        wallet: "0xabc",
+      }]),
+    ]]);
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: {
+        localStorage: {
+          getItem: (key: string) => values.get(key) ?? null,
+          removeItem: (key: string) => { values.delete(key); },
+          setItem: (key: string, value: string) => { values.set(key, value); },
+        },
+      },
+    });
+
+    try {
+      let submissions = 0;
+      let staleStatusReads = 0;
+      const store = new BackendDataStore("https://api.test", {
+        transactionPollIntervalMs: 0,
+        transactionStatusReader: async (transactionHash) => {
+          if (transactionHash === staleHash) {
+            staleStatusReads += 1;
+            return {
+              events: [],
+              indexedEventCount: 0,
+              knownOnConfiguredChain: false,
+              latestIndexedBlock: null,
+              phase: "submitted" as const,
+              receiptBlock: null,
+              transactionHash,
+            };
+          }
+          return {
+            events: [],
+            indexedEventCount: 0,
+            knownOnConfiguredChain: true,
+            latestIndexedBlock: "20",
+            phase: "applied" as const,
+            receiptBlock: "20",
+            transactionHash,
+          };
+        },
+      });
+      const descriptor = {
+        chainId: "0x2105",
+        invalidateTags: ["wallet:0xabc"] as const,
+        key: "fleet:supply",
+        label: "Supply",
+        send: async () => {
+          submissions += 1;
+          return baseHash;
+        },
+      };
+
+      await expect(store.runWriteTransaction(descriptor)).resolves.toBe(false);
+      expect(submissions).toBe(0);
+      expect(staleStatusReads).toBe(3);
+      expect(values.size).toBe(0);
+
+      await expect(store.runWriteTransaction(descriptor)).resolves.toBe(true);
+      expect(submissions).toBe(1);
+      expect(values.size).toBe(0);
+    } finally {
+      if (originalWindow) Object.defineProperty(globalThis, "window", originalWindow);
+      else Reflect.deleteProperty(globalThis, "window");
+    }
+  });
+
   test("performs one centralized catch-up when the SSE indexed revision advances", async () => {
     const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
     const listeners = new Map<string, (event: MessageEvent) => void>();

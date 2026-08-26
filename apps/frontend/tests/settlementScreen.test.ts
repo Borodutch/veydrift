@@ -418,7 +418,7 @@ describe("settlement screen mode", () => {
           startPriceWei: 12_000_000_000_000_000n,
         },
       }),
-    ).toBe("This wallet needs at least 0.005584730377242819 more ETH on Base, plus gas, before launching settlement.");
+    ).toBe("This wallet needs at least 0.005584730377242819 more ETH on Base, plus ETH gas on Base (not Ethereum Mainnet), before launching settlement.");
     expect(
       settlementLaunchBlocker(true, {
         status: "ready",

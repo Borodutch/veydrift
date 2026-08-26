@@ -2582,7 +2582,7 @@ function AlliancePrivateInviteExplanation() {
       </li>
       <li className="flex items-start gap-2 leading-relaxed">
         <Check className="mt-0.5 shrink-0 text-cyan-200" size={14} />
-        <span>The invited commander joins the game for free (Base gas only), starts with 2× resources, and produces 2× resources for their first 7 days.</span>
+        <span>The invited commander joins the game for free (ETH gas on Base only, not Ethereum Mainnet), starts with 2× resources, and produces 2× resources for their first 7 days.</span>
       </li>
     </ul>
   );

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  BASE_SEPOLIA,
   generatePaidAllianceInviteSecret,
   paidAllianceInviteCommitment,
   paidAllianceInviteCommitmentFromPathname,
@@ -30,7 +31,7 @@ describe("paid alliance invite frontend flow", () => {
     expect(source).toContain("Any alliance member can buy a private invite for 0.006 ETH.");
     expect(source).toContain("Only alliance officers and owners can view or recover invite links.");
     expect(source).toContain("Each link is unique and single-use; share it only with its intended invitee.");
-    expect(source).toContain("The invited commander joins the game for free (Base gas only), starts with 2× resources, and produces 2× resources for their first 7 days.");
+    expect(source).toContain("The invited commander joins the game for free (ETH gas on Base only, not Ethereum Mainnet), starts with 2× resources, and produces 2× resources for their first 7 days.");
     expect(source).toContain("Invited by {playerLabel(member.invitedByDisplayName, member.invitedBy)}");
     expect(source).toContain("canManageMembers && paidInviteLinks.length");
     expect(source).toContain("Private invite ready");
@@ -210,6 +211,7 @@ describe("paid alliance invite frontend flow", () => {
 function providerRecording(requests: unknown[]): Eip1193Provider {
   return {
     async request({ method, params }) {
+      if (method === "eth_chainId") return BASE_SEPOLIA.chainIdHex as never;
       requests.push({ method, params });
       return "0xabc" as never;
     },

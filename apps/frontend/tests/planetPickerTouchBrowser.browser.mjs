@@ -1183,6 +1183,7 @@ for (const width of [1280, 390]) {
     const result = await evaluate(`(() => {
       const request = window.inspectorProof.walletRequests.find((candidate) => candidate.method === 'eth_sendTransaction');
       return {
+        chainId: request?.params?.[0]?.chainId ?? null,
         data: request?.params?.[0]?.data ?? null,
         from: request?.params?.[0]?.from ?? null,
         interaction: window.inspectorProof.interactions.findLast((event) => event.type === 'pointerdown' && event.target === 'button:Build') ?? null,
@@ -1192,6 +1193,7 @@ for (const width of [1280, 390]) {
       };
     })()`);
     assert.deepEqual(result, {
+      chainId: "0x14a34",
       data: "0x13aed9a2" + "0".repeat(63) + "1" + "0".repeat(64) + "0".repeat(63) + "1",
       from: "0x1111111111111111111111111111111111111111",
       interaction: {

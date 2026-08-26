@@ -6902,9 +6902,13 @@ async function transactionStatusResponse(
     const receipt = await chainReader.getTransactionReceipt(transactionHash);
     const indexed = indexer.transactionIndexingSummary(transactionHash);
     if (!receipt) {
+      const knownOnConfiguredChain = chainReader.getTransactionByHash
+        ? Boolean(await chainReader.getTransactionByHash(transactionHash))
+        : null;
       return Response.json({
         transactionHash,
         phase: "submitted",
+        knownOnConfiguredChain,
         receiptBlock: null,
         latestIndexedBlock: indexed.latestIndexedBlock,
         indexedEventCount: indexed.eventCount,
@@ -6925,6 +6929,7 @@ async function transactionStatusResponse(
     return Response.json({
       transactionHash,
       phase: reverted ? "reverted" : materialized ? "applied" : "confirmed",
+      knownOnConfiguredChain: true,
       receiptBlock: receiptBlock.toString(),
       latestIndexedBlock: indexed.latestIndexedBlock,
       latestSyncedBlock,

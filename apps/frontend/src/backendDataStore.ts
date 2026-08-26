@@ -256,6 +256,7 @@ type BackendTransactionStatus = {
   indexedEventCount: number;
   latestIndexedBlock: string | null;
   latestSyncedBlock?: string | null;
+  knownOnConfiguredChain?: boolean | null;
   phase: "submitted" | "confirmed" | "applied" | "reverted";
   receiptBlock: string | null;
   transactionHash: string;
@@ -268,6 +269,17 @@ type PendingTransactionJournalEntry = {
   transactionHash: string;
   wallet: string;
 };
+
+const STALE_UNKNOWN_CHAIN_JOURNAL_GRACE_MS = 120_000;
+const STALE_UNKNOWN_CHAIN_ABSENT_READS = 3;
+
+function sameChainId(left: string, right: string): boolean {
+  try {
+    return BigInt(left) === BigInt(right);
+  } catch {
+    return left.trim().toLowerCase() === right.trim().toLowerCase();
+  }
+}
 
 type IndexingPlanRunner = (receipt: unknown, txHash: string) => Promise<void>;
 
@@ -1082,7 +1094,7 @@ export class BackendDataStore {
     );
   }
 
-  private async resumePendingTransactions(wallet: string): Promise<void> {
+  private async resumePendingTransactions(wallet: string, expectedChainId?: string): Promise<void> {
     const normalizedWallet = wallet.toLowerCase();
     const existing = this.transactionRecoveries.get(normalizedWallet);
     if (existing) return existing;
@@ -1099,11 +1111,29 @@ export class BackendDataStore {
             txHash: entry.transactionHash,
           }, normalizedWallet);
           try {
+            if (expectedChainId && entry.chainId !== "unknown" && !sameChainId(entry.chainId, expectedChainId)) {
+              this.removePendingTransaction(entry.transactionHash);
+              throw new Error(`Released a stale transaction journal from chain ${entry.chainId}; this action requires ${expectedChainId}. Nothing was submitted on the required Base network. Retry the action.`);
+            }
+            let absentConfiguredChainReads = 0;
             const status = await this.waitForBackendTransactionStatus(
               entry.transactionHash,
-              (candidate) => candidate.phase === "applied" || candidate.phase === "reverted",
+              (candidate) => {
+                absentConfiguredChainReads = candidate.knownOnConfiguredChain === false
+                  ? absentConfiguredChainReads + 1
+                  : 0;
+                return candidate.phase === "applied"
+                  || candidate.phase === "reverted"
+                  || (
+                    absentConfiguredChainReads >= STALE_UNKNOWN_CHAIN_ABSENT_READS
+                    && Date.now() - entry.submittedAt >= STALE_UNKNOWN_CHAIN_JOURNAL_GRACE_MS
+                  );
+              },
             );
             this.removePendingTransaction(entry.transactionHash);
+            if (status.knownOnConfiguredChain === false) {
+              throw new Error("Released a stale transaction journal whose hash is not present on the configured Base network. Nothing was submitted on Base. Retry the action.");
+            }
             if (status.phase === "reverted") throw new Error("The transaction reverted.");
             await this.invalidate([`wallet:${normalizedWallet}`], {
               activeOnly: false,
@@ -1177,7 +1207,7 @@ export class BackendDataStore {
         // A retry after reload may be the first interaction that resumes the
         // journal. Even when recovery proves the old hash applied and removes
         // it, this click must not continue into a duplicate submission.
-        await this.resumePendingTransactions(walletScope);
+        await this.resumePendingTransactions(walletScope, chainId);
         return false;
       }
     }
