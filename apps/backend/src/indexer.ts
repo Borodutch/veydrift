@@ -258,6 +258,7 @@ export type IndexerSnapshot = {
   indexedMoons: number;
   indexedPlanets: number;
   indexedState: "healthy" | "reconciling" | "stale";
+  indexedRevision: string;
   indexedRiftBalances: number;
   fromBlock: string;
   lastRebuiltAt: string | null;
@@ -301,6 +302,7 @@ export type IndexerSnapshot = {
 };
 
 const writerChainSyncDiagnosticsMetadataKey = "writerChainSyncDiagnostics";
+const indexedRevisionMetadataKey = "indexedRevision";
 const gameMaintenanceStateMetadataKey = "gameMaintenanceState";
 const startPriceWeiMetadataKey = "canonicalStartPriceWei";
 const startPriceSourceMetadataKey = "canonicalStartPriceSource";
@@ -691,6 +693,16 @@ export type IndexedRpcLog = RpcLog & {
   removed?: boolean;
 };
 
+export type IndexedTransactionSummary = {
+  eventCount: number;
+  events: Array<{
+    blockNumber: string;
+    eventName: string;
+    logIndex: string;
+  }>;
+  latestIndexedBlock: string | null;
+};
+
 export type PlayerActivityCategory =
   | "combat"
   | "infrastructure"
@@ -1025,6 +1037,7 @@ export class SettlementIndexer {
       indexedMoons: counts.indexedMoons,
       indexedPlanets,
       indexedState: safeToServeIndexedState ? "healthy" : reconciliationInProgress ? "reconciling" : "stale",
+      indexedRevision: metadataValue(indexedRevisionMetadataKey) ?? "0",
       indexedRiftBalances: counts.indexedRiftBalances,
       fromBlock: this.fromBlock.toString(),
       lastRebuiltAt: metadataValue("lastRebuiltAt"),
@@ -4139,6 +4152,7 @@ export class SettlementIndexer {
     const existing = this.db.query("SELECT event_json, removed FROM indexed_event_logs WHERE event_id = ?").get(eventId) as (EventRow & { removed: number }) | null;
     if (existing) {
       if (log.removed) {
+        this.advanceIndexedRevision();
         this.markReorgDetected();
         this.db.query("UPDATE indexed_event_logs SET removed = 1 WHERE event_id = ?").run(eventId);
         this.removeMissionEventLog(eventId);
@@ -4165,6 +4179,7 @@ export class SettlementIndexer {
         return { applied: false, duplicate: false, ignored: false, removed: true, snapshot: this.snapshot() };
       }
       if (existing.removed && isPaidAllianceInviteProjectionLog(log)) {
+        this.advanceIndexedRevision();
         this.db.query(`
           UPDATE indexed_event_logs
           SET removed = 0, event_json = ?, block_number = ?, received_at = ?
@@ -4175,6 +4190,7 @@ export class SettlementIndexer {
         return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
       }
       if (existing.removed && isInviteeProductionBoostLog(log)) {
+        this.advanceIndexedRevision();
         this.db.query(`
           UPDATE indexed_event_logs
           SET removed = 0, event_json = ?, block_number = ?, received_at = ?
@@ -4185,6 +4201,7 @@ export class SettlementIndexer {
         return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
       }
       if (existing.removed && this.isMoonStateProjectionLog(log)) {
+        this.advanceIndexedRevision();
         this.db.query(`
           UPDATE indexed_event_logs
           SET removed = 0, event_json = ?, block_number = ?, received_at = ?
@@ -4196,6 +4213,7 @@ export class SettlementIndexer {
         return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
       }
       if (existing.removed && this.missionEventKind(log)) {
+        this.advanceIndexedRevision();
         this.db.query(`
           UPDATE indexed_event_logs
           SET removed = 0, event_json = ?, block_number = ?, received_at = ?
@@ -4209,6 +4227,7 @@ export class SettlementIndexer {
       }
       const repairedDerivedRows = this.repairDerivedRowsForExistingLog(eventId, parseEvent<IndexedRpcLog>(existing.event_json));
       if (repairedDerivedRows > 0) {
+        this.advanceIndexedRevision();
         if (isFleetMissionLog(log)) {
           if (this.applyFleetMissionCompatibilityEvent(log) > 0) {
             this.touch();
@@ -9649,6 +9668,19 @@ export class SettlementIndexer {
     }
   }
 
+  transactionIndexingSummary(transactionHash: string): IndexedTransactionSummary {
+    const logs = this.indexedLogsForTransaction(transactionHash);
+    return {
+      eventCount: logs.length,
+      events: logs.map((log) => ({
+        blockNumber: blockNumberToDecimal(log.blockNumber),
+        eventName: eventNameForTopic(log.topics[0]) ?? "Unknown",
+        logIndex: log.logIndex ?? "0x0"
+      })),
+      latestIndexedBlock: this.snapshot().latestIndexedBlock
+    };
+  }
+
   private indexedLogsForTransaction(transactionHash: string): IndexedRpcLog[] {
     const rows = this.db.query(`
       SELECT event_json
@@ -10648,12 +10680,26 @@ export class SettlementIndexer {
       new Date().toISOString()
     );
     if (result.changes > 0) {
+      this.advanceIndexedRevision();
       this.recordMissionEventLog(eventId, log);
       this.recordUnitCountEventLog(eventId, log);
       this.recordMissileAttackEvent(eventId, log);
       this.recordMoonStateEventLog(eventId, log);
     }
     return result.changes > 0;
+  }
+
+  private advanceIndexedRevision(): void {
+    const current = this.metadata(indexedRevisionMetadataKey);
+    let next = 1n;
+    if (current !== null) {
+      try {
+        next = BigInt(current) + 1n;
+      } catch {
+        // Repair malformed legacy metadata by restarting at a valid positive revision.
+      }
+    }
+    this.setMetadata(indexedRevisionMetadataKey, next.toString());
   }
 
   private recordMoonStateEventLog(eventId: string, log: IndexedRpcLog): void {

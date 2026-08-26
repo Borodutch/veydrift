@@ -26,7 +26,6 @@ import {
   type FarcasterMiniAppWalletSupport,
 } from "./farcasterReady";
 import {
-  confirmTransactionReceiptForProviderSource,
   defaultVeydriftChainForLocation,
   ensureVeydriftNetwork,
   farcasterChainFor,
@@ -1277,7 +1276,7 @@ export function FirstPlanetSettlementApp() {
           submittedTxHash = await sendSettlementTransaction(provider, wallet.account, settlementConfig, transactionOptions);
           return submittedTxHash;
         },
-        confirm: (txHash) => confirmTransactionReceiptForProviderSource(provider, walletProviderSource, requiredChain.rpcUrls[0], txHash),
+        chainId: requiredChain.chainIdHex,
         indexing: data.indexing.settledPlanet(wallet.account),
         invalidateTags: [
           `wallet:${wallet.account.toLowerCase()}`,
@@ -1355,7 +1354,7 @@ export function FirstPlanetSettlementApp() {
         await data.persistReferralClaimIntent(wallet.account, inviteCode, commitment, signature);
       },
       send: () => sendReferralClaimTransaction(provider, wallet.account, settlementConfig, inviteCode),
-      confirm: (txHash) => confirmTransactionReceiptForProviderSource(provider, walletProviderSource, requiredChain.rpcUrls[0], txHash),
+      chainId: requiredChain.chainIdHex,
       indexing: data.indexing.referralClaim(wallet.account, inviteCode, commitment, () => signature ?? ""),
       invalidateTags: [`wallet:${wallet.account.toLowerCase()}`, "kind:referral-dashboard", "kind:referral-history"],
       errorLabel: (error) => (isUserRejected(error) ? referralRejectedRequestMessage(waitingForSignature ? "signature" : "claim-transaction") : referralClaimErrorMessage(error)),

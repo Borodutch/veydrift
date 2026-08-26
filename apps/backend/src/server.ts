@@ -758,6 +758,11 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       });
     }
 
+    if (request.method === "GET" && url.pathname.match(/^\/transactions\/[^/]+\/status$/)) {
+      const transactionHash = url.pathname.split("/")[2] ?? "";
+      return transactionStatusResponse(chainReader, indexer, chainSync, transactionHash);
+    }
+
     if (
       request.method === "GET"
       && url.pathname.match(/^\/entity-media\/(planet|moon|player|alliance)\/[^/]+\/challenge$/)
@@ -6868,6 +6873,73 @@ function badRequest(message: string): Response {
       status: 400
     }
   );
+}
+
+async function transactionStatusResponse(
+  chainReader: ChainReader | undefined,
+  indexer: SettlementIndexer | undefined,
+  chainSync: ChainSyncService | undefined,
+  transactionHash: string
+): Promise<Response> {
+  const headers = {
+    ...corsHeaders,
+    "cache-control": "no-store"
+  };
+  if (!/^0x[0-9a-fA-F]{64}$/.test(transactionHash)) {
+    return Response.json({ error: "transactionHash must be a 0x-prefixed 32-byte transaction hash." }, {
+      headers,
+      status: 400
+    });
+  }
+  if (!chainReader?.getTransactionReceipt || !indexer) {
+    return Response.json({ error: "Transaction status is unavailable." }, {
+      headers,
+      status: 503
+    });
+  }
+
+  try {
+    const receipt = await chainReader.getTransactionReceipt(transactionHash);
+    const indexed = indexer.transactionIndexingSummary(transactionHash);
+    if (!receipt) {
+      return Response.json({
+        transactionHash,
+        phase: "submitted",
+        receiptBlock: null,
+        latestIndexedBlock: indexed.latestIndexedBlock,
+        indexedEventCount: indexed.eventCount,
+        events: indexed.events
+      }, { headers });
+    }
+
+    const reverted = BigInt(receipt.status) === 0n;
+    const receiptBlock = BigInt(receipt.blockNumber);
+    const writerChainSync = chainSync?.snapshot()
+      ?? indexer.writerChainSyncDiagnostics()?.chainSync;
+    const latestSyncedBlock = stringSnapshotField(writerChainSync, "latestSyncedBlock")
+      ?? indexed.latestIndexedBlock;
+    const indexedThroughReceipt = latestSyncedBlock !== null
+      && BigInt(latestSyncedBlock) >= receiptBlock;
+    const expectedIndexedEventCount = receipt.logs?.length ?? 0;
+    const materialized = indexedThroughReceipt && indexed.eventCount >= expectedIndexedEventCount;
+    return Response.json({
+      transactionHash,
+      phase: reverted ? "reverted" : materialized ? "applied" : "confirmed",
+      receiptBlock: receiptBlock.toString(),
+      latestIndexedBlock: indexed.latestIndexedBlock,
+      latestSyncedBlock,
+      indexedEventCount: indexed.eventCount,
+      expectedIndexedEventCount,
+      events: indexed.events
+    }, { headers });
+  } catch (error) {
+    return Response.json({
+      error: error instanceof Error ? error.message : "Transaction status read failed."
+    }, {
+      headers,
+      status: 502
+    });
+  }
 }
 
 async function handleGraphQLRequest(request: Request, workerRole: WorkerRole): Promise<Response> {

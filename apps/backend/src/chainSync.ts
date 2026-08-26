@@ -82,6 +82,10 @@ export type ChainSyncSnapshot = {
   lastGetLogsDurationMs: number | null;
   lastGetLogsRange: { fromBlock: string; toBlock: string } | null;
   latestHeadBlock: string | null;
+  /** Latest block containing indexed state. */
+  latestIndexedBlock: string | null;
+  /** Durable monotonic materialized-state revision, including same-block logs. */
+  indexedRevision: string;
   lastHeadAdvancedAt: string | null;
   latestSyncedBlock: string | null;
   pollBacklogBlocks: string | null;
@@ -267,6 +271,8 @@ export class ChainSyncService {
       lastGetLogsDurationMs: this.lastGetLogsDurationMs,
       lastGetLogsRange: this.lastGetLogsRange,
       latestHeadBlock: this.latestHeadBlock,
+      latestIndexedBlock: this.indexer?.snapshot?.().latestIndexedBlock ?? null,
+      indexedRevision: this.indexer?.snapshot?.().indexedRevision ?? "0",
       latestSyncedBlock: this.latestSyncedBlock,
       pollBacklogBlocks: this.pollBacklogBlocks(),
       pollBacklogMs: this.pollBacklogMs(),

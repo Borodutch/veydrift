@@ -115,7 +115,11 @@ export async function runWriteTransaction<IndexedSnapshot = void>(gate: Transact
         await descriptor.onConfirmedIndexingFailure?.(error, txHash);
       }
       await descriptor.onErrorRefresh?.(error);
-      const indexingTimedOut = receiptConfirmed && isTransactionIndexingTimeout(error);
+      // Once a hash exists, a bounded backend-status timeout is a delayed
+      // outcome whether or not the receipt phase was observed first. The
+      // durable store journal keeps retry recovery authoritative and blocks an
+      // unsafe duplicate submission.
+      const indexingTimedOut = Boolean(txHash) && isTransactionIndexingTimeout(error);
       setState({
         error,
         key: descriptor.key,

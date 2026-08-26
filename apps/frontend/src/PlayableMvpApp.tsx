@@ -171,16 +171,12 @@ import {
   missionLaunchMissionsForTransaction,
   waitForFinishedResearchState,
   queuedDefenseProductionQuantity,
-  waitForStartedBuildingState,
-  startedBuildingQueueFromWalletPlanets,
   waitForFinishedBuildingState,
   waitForHydratedWalletPlanet,
-  waitForMissionLaunchState,
   waitForFleetVisibilityIndexedThrough,
   waitForRenamedWalletPlanet,
   type FinishedResearchExpectation,
   type MissionLaunchSnapshot,
-  type ResourceIndexingExpectation,
   type StartedBuildingExpectation,
   type WalletPlanetSyncSnapshot,
   type FinishedBuildingExpectation,
@@ -194,7 +190,6 @@ import {
   walletRequestErrorMessage,
   walletRecoveryActionMessage,
   spendTransactionErrorMessage,
-  confirmTransactionReceiptForProviderSource,
   getAvailableWalletProviderDetails,
   parseRiftTokenAmount,
   requestAccounts,
@@ -293,7 +288,6 @@ import {
   type WalletSettlementResponse,
   type PaidAllianceBonusAmount,
   type ResourceSnapshotMetadata,
-  type TransactionReceipt,
 } from "./walletFlow";
 import { BackendDataStore, backendDataStoreFor, retainBackendDataStore, type BackendDataTag, type BackendIndexingPlan } from "./backendDataStore";
 import { useBackendDataSnapshot, useBackendDataSnapshots } from "./useBackendDataSnapshot";
@@ -441,15 +435,6 @@ const CHICKEN_MOON_CONFIRM_POLL_MS = 3_000;
 
 type RefreshFreshnessGate = { current: number };
 type ChainResourceShape = { metal: string; crystal: string; deuterium: string };
-export type BackendConfirmedResourceState = {
-  homePlanetId: string | null;
-  planetId?: string | null;
-  planetLastSettledAt?: string | null;
-  resources?: OnChainResources | null;
-  resourcesAsOfNow?: OnChainResources | null;
-  resourceSnapshot?: ResourceSnapshotMetadata | null;
-};
-
 function combatTechLevelForKey(key: "5" | "6" | "7", primaryLevels: Record<string, number> | undefined, fallbackLevels: Record<string, number> | undefined): number {
   return safeResourceNumber(primaryLevels?.[key]) ?? safeResourceNumber(fallbackLevels?.[key]) ?? 0;
 }
@@ -4331,9 +4316,6 @@ export function PlayableMvpApp({
   const chickenBurnConfig = useMemo(() => {
     return runtimeConfig.status === "ready" ? burningChickenConfig(runtimeConfig.config) : undefined;
   }, [runtimeConfig]);
-  const transactionReceiptRpcUrl = useMemo(() => {
-    return runtimeConfig.status === "ready" ? veydriftChainForChainId(runtimeConfig.config.chainId).rpcUrls[0] : "";
-  }, [runtimeConfig]);
   const gameActionInputsAvailable = currentPlanetTransactionInputsAvailable(
     gameActionsAvailableForBody(activeBodyKind, Boolean(provider && account && gameContract && (activePlanetId ?? onChainSettlement?.homePlanetId))),
     activePlanetStateFresh,
@@ -4375,16 +4357,6 @@ export function PlayableMvpApp({
     setMoonAction((current) => clearRecoveredWalletContractUnavailableAction(current, true));
   }, [moonActionInputsAvailable, transactionActionPending]);
 
-  const confirmSubmittedTransaction = useCallback(
-    async (txHash: string): Promise<TransactionReceipt> => {
-      if (!provider) {
-        throw new Error("Wallet provider is unavailable while confirming the transaction.");
-      }
-      return confirmTransactionReceiptForProviderSource(provider, walletProviderSource, transactionReceiptRpcUrl, txHash);
-    },
-    [provider, transactionReceiptRpcUrl, walletProviderSource],
-  );
-
   const runCoordinatedWriteTransaction = useCallback(
     async ({
       errorLabel,
@@ -4407,7 +4379,7 @@ export function PlayableMvpApp({
     }) => {
       if (!backendData) throw new Error("Game state store is unavailable.");
       return backendData.runWriteTransaction({
-        confirm: confirmSubmittedTransaction,
+        chainId: gameWalletChain.chainIdHex,
         ...(errorLabel ? { errorLabel } : {}),
         key,
         label,
@@ -4428,7 +4400,7 @@ export function PlayableMvpApp({
         send,
       });
     },
-    [account, activePlanetId, backendData, confirmSubmittedTransaction],
+    [account, activePlanetId, backendData, gameWalletChain.chainIdHex],
   );
 
   const refreshInfrastructureState = useCallback(async () => {
@@ -4684,58 +4656,6 @@ export function PlayableMvpApp({
       selectedPlanetId,
       walletPlanets,
     ],
-  );
-
-  const applyBackendConfirmedResourceState = useCallback(
-    (state: BackendConfirmedResourceState) => {
-      // This backend snapshot is proven to include the write transaction. Promote
-      // it synchronously into the canonical resource store and invalidate
-      // any older wallet/infrastructure request that was already in flight.
-      markFreshStateWrite(onChainRefreshGate);
-      markFreshStateWrite(infrastructureRefreshGate);
-      promoteBackendResourceState(state, { confirmedTransaction: true });
-      return true;
-    },
-    [promoteBackendResourceState],
-  );
-
-  const applyBackendConfirmedMoonResourceState = useCallback(
-    (state: ChainMoonState) => {
-      const planetId = state.resourceSnapshot?.planetId ?? state.parentPlanetId ?? state.homePlanetId;
-      if (!planetId) return false;
-      markFreshStateWrite(infrastructureRefreshGate);
-      promoteBackendResourceState(state, {
-        bodyKind: "moon",
-        confirmedTransaction: true,
-        planetId,
-      });
-      if (activePlanetId === planetId) {
-        setMoonState(state);
-      }
-      return true;
-    },
-    [activePlanetId, promoteBackendResourceState, setMoonState],
-  );
-
-  const convergeBackendIndexedResourceState = useCallback(
-    async <State extends BackendResourceState>(
-      load: () => Promise<State>,
-      expectation: ResourceIndexingExpectation,
-      options: {
-        bodyKind?: OrbitBodyKind;
-        planetId?: string | null | undefined;
-      } = {},
-    ): Promise<State> => {
-      if (!backendData) throw new Error("Game state store is unavailable.");
-      const state = await backendData.waitForIndexedResource(load, expectation);
-      if (options.bodyKind === "moon") {
-        applyBackendConfirmedMoonResourceState(state as unknown as ChainMoonState);
-      } else {
-        applyBackendConfirmedResourceState(state as unknown as BackendConfirmedResourceState);
-      }
-      return state;
-    },
-    [applyBackendConfirmedMoonResourceState, applyBackendConfirmedResourceState, backendData],
   );
 
   const loadMissionArchive = useCallback(
@@ -5000,57 +4920,6 @@ export function PlayableMvpApp({
       }
     },
     [account, activePlanetId, apiBaseUrl, applyOnChainSettlementSnapshot, infrastructureChainState, promoteBackendResourceState, refreshInfrastructureState, refreshOnChainState],
-  );
-
-  const refreshStartedBuildingState = useCallback(
-    async (expectation: StartedBuildingExpectation) => {
-      const planetSwitchRequestId = planetSwitchGate.current;
-      if (!apiBaseUrl || !account) {
-        await Promise.allSettled([refreshOnChainState(), refreshInfrastructureState()]);
-        return;
-      }
-
-      setOnChainStatus(keepGlobalReadStateDuringTransaction);
-      setInfrastructureError(undefined);
-
-      try {
-        const snapshot = await waitForStartedBuildingState(async () => {
-          const [infrastructure, queues, planetsResponse] = await Promise.all([
-            backendData!.infrastructure(account, activePlanetId),
-            backendData!.queues(account, activePlanetId),
-            backendData!.planets(account).catch(() => undefined),
-          ]);
-
-          return { infrastructure, planetsResponse, queues };
-        }, expectation);
-        if (expectation.resourceIndexing) {
-          await convergeBackendIndexedResourceState(() => backendData!.infrastructure(account, activePlanetId), expectation.resourceIndexing, { planetId: activePlanetId });
-        }
-
-        if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
-        const walletPlanetQueue = startedBuildingQueueFromWalletPlanets(snapshot.planetsResponse, expectation);
-        const visibleBuildingQueue = snapshot.infrastructure.queue?.active ? snapshot.infrastructure.queue : (walletPlanetQueue ?? snapshot.queues.building);
-        setInfrastructureChainState(snapshot.infrastructure);
-        if (snapshot.planetsResponse) {
-          promoteWalletPlanetResourceStates(snapshot.planetsResponse.planets);
-          setWalletPlanets(snapshot.planetsResponse.planets);
-        }
-        setOnChainQueues(visibleBuildingQueue === snapshot.queues.building ? snapshot.queues : { ...snapshot.queues, building: visibleBuildingQueue ?? null });
-        setOnChainError(undefined);
-        setOnChainStatus("ready");
-      } catch (error) {
-        if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
-        const message = error instanceof Error ? error.message : "Failed to load started building state.";
-        setOnChainError(message);
-        setOnChainStatus(globalReadStatusAfterTransactionRefreshFailure);
-        setInfrastructureError(message);
-        throw error;
-      } finally {
-        if (canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) {
-        }
-      }
-    },
-    [account, activePlanetId, apiBaseUrl, convergeBackendIndexedResourceState, promoteWalletPlanetResourceStates, refreshInfrastructureState, refreshOnChainState],
   );
 
   const refreshFinishedResearchState = useCallback(
@@ -5719,7 +5588,6 @@ export function PlayableMvpApp({
       account,
       activePlanetId,
       apiBaseUrl,
-      confirmSubmittedTransaction,
       gameContract,
       infrastructureUnavailableReason,
       isWalletConnected,
@@ -5727,7 +5595,6 @@ export function PlayableMvpApp({
       onChainSettlement?.homePlanetId,
       provider,
       refreshLiveInfrastructureState,
-      refreshStartedBuildingState,
       runtimeConfig.status,
       selectedManagedPlanet?.isHomePlanet,
       runCoordinatedWriteTransaction,

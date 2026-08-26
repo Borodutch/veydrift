@@ -3,6 +3,15 @@ import { BackendDataStore, backendDataStoreFor, disposeBackendDataStoresExcept, 
 import type { WriteTransactionState } from "./transactionActionGate";
 import type { FleetMissionSummary } from "./walletFlow";
 
+const appliedTransactionStatusReader = async (transactionHash: string) => ({
+  events: [],
+  indexedEventCount: 0,
+  latestIndexedBlock: "123",
+  phase: "applied" as const,
+  receiptBlock: "123",
+  transactionHash,
+});
+
 describe("BackendDataStore", () => {
   test("disposes an unused shared API-base store after its last owner releases it", async () => {
     const apiBaseUrl = "https://leased-store.test";
@@ -542,7 +551,7 @@ describe("BackendDataStore", () => {
   });
 
   test("publishes one shared write lifecycle to every subscriber", async () => {
-    const store = new BackendDataStore("https://api.test");
+    const store = new BackendDataStore("https://api.test", { transactionStatusReader: appliedTransactionStatusReader });
     const phases: string[] = [];
     const unsubscribe = store.subscribe(() => {
       const phase = store.snapshot<WriteTransactionState>(store.writeTransactionKey())?.data?.phase;
@@ -552,7 +561,6 @@ describe("BackendDataStore", () => {
     try {
       await expect(
         store.runWriteTransaction({
-          confirm: async () => ({ status: "0x1" }),
           key: "defense:start:4",
           label: "Defense production",
           send: async () => "0xabc",
@@ -572,26 +580,136 @@ describe("BackendDataStore", () => {
     });
   });
 
-  test("waits only for a backend-published resource revision after a confirmed write", async () => {
-    const store = new BackendDataStore("https://api.test");
+  test("uses backend confirmation and materialization as the write completion boundary", async () => {
+    const phases = ["submitted", "confirmed", "applied"] as const;
     let reads = 0;
-
-    await expect(
-      store.waitForIndexedResource(
-        async () => ({
-          resourceSnapshot: reads++ === 0 ? { blockNumber: "10", transactionHash: "0xolder" } : { blockNumber: "11", transactionHash: "0xconfirmed" },
-        }),
-        { receiptBlockNumber: "11", transactionHash: "0xconfirmed" },
-        { attempts: 2, intervalMs: 0 },
-      ),
-    ).resolves.toMatchObject({
-      resourceSnapshot: { transactionHash: "0xconfirmed" },
+    const store = new BackendDataStore("https://api.test", {
+      transactionPollIntervalMs: 0,
+      transactionStatusReader: async (transactionHash) => ({
+        events: [],
+        indexedEventCount: 0,
+        latestIndexedBlock: phases[reads] === "applied" ? "13" : "12",
+        phase: phases[reads++] ?? "applied",
+        receiptBlock: reads > 1 ? "13" : null,
+        transactionHash,
+      }),
     });
-    expect(reads).toBe(2);
+
+    await expect(store.runWriteTransaction({
+      chainId: "0x2105",
+      invalidateTags: ["wallet:0xabc"],
+      key: "building:start:7",
+      label: "Building upgrade",
+      send: async () => `0x${"ab".repeat(32)}`,
+    })).resolves.toBe(true);
+
+    expect(reads).toBe(3);
+    expect(store.snapshot<WriteTransactionState>(store.writeTransactionKey("building:start:7", "0xabc"))?.data).toMatchObject({
+      phase: "success",
+      stage: "applied",
+    });
+  });
+
+  test("recovers a submitted journal entry through the store after reload", async () => {
+    const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+    const values = new Map<string, string>();
+    const localStorage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      removeItem: (key: string) => { values.delete(key); },
+      setItem: (key: string, value: string) => { values.set(key, value); },
+    };
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: { localStorage },
+    });
+
+    try {
+      const transactionHash = `0x${"cd".repeat(32)}`;
+      const first = new BackendDataStore("https://api.test", {
+        transactionPollIntervalMs: 0,
+        transactionStatusTimeoutMs: 0,
+        transactionStatusReader: async () => { throw new Error("status transport failed"); },
+      });
+      await expect(first.runWriteTransaction({
+        chainId: "0x2105",
+        invalidateTags: ["wallet:0xabc"],
+        key: "moon:build:7",
+        label: "Moon construction",
+        send: async () => transactionHash,
+      })).resolves.toBe(false);
+      expect(first.snapshot<WriteTransactionState>(first.writeTransactionKey("moon:build:7", "0xabc"))?.data).toMatchObject({
+        phase: "error",
+        stage: "timed-out",
+        txHash: transactionHash,
+      });
+      expect([...values.values()].join("")).toContain(transactionHash);
+
+      const recovered = new BackendDataStore("https://api.test", {
+        transactionPollIntervalMs: 0,
+        transactionStatusReader: async () => ({
+          events: [],
+          indexedEventCount: 0,
+          latestIndexedBlock: "14",
+          phase: "applied" as const,
+          receiptBlock: "14",
+          transactionHash,
+        }),
+      });
+      recovered.setContext("0xabc");
+      for (let attempt = 0; attempt < 20 && values.size > 0; attempt += 1) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      }
+      expect(values.size).toBe(0);
+      expect(recovered.snapshot<WriteTransactionState>(recovered.writeTransactionKey("moon:build:7", "0xabc"))?.data).toMatchObject({
+        phase: "success",
+        txHash: transactionHash,
+      });
+    } finally {
+      if (originalWindow) Object.defineProperty(globalThis, "window", originalWindow);
+      else Reflect.deleteProperty(globalThis, "window");
+    }
+  });
+
+  test("performs one centralized catch-up when the SSE indexed revision advances", async () => {
+    const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+    const listeners = new Map<string, (event: MessageEvent) => void>();
+    class TestEventSource {
+      onerror: (() => void) | null = null;
+      addEventListener(name: string, listener: (event: MessageEvent) => void) { listeners.set(name, listener); }
+      close() {}
+    }
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: { EventSource: TestEventSource },
+    });
+
+    try {
+      const store = new BackendDataStore("https://api.test");
+      const key = store.key("planets", "0xabc");
+      let loads = 0;
+      const unsubscribe = store.subscribeKey(key, () => {});
+      await store.refresh(key, async () => ({ revision: ++loads }), { wallet: "0xabc" });
+      const release = store.connectChainEvents("0xabc", { debounceMs: 0 });
+      const syncStatus = listeners.get("sync-status")!;
+      const payload = (indexedRevision: string) => ({
+        data: JSON.stringify({ connected: true, indexedRevision, subscribedToHeads: true, subscribedToLogs: true }),
+      } as MessageEvent);
+      syncStatus(payload("20"));
+      syncStatus(payload("21"));
+      for (let attempt = 0; attempt < 20 && loads < 2; attempt += 1) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      }
+      expect(loads).toBe(2);
+      release();
+      unsubscribe();
+    } finally {
+      if (originalWindow) Object.defineProperty(globalThis, "window", originalWindow);
+      else Reflect.deleteProperty(globalThis, "window");
+    }
   });
 
   test("invalidates subscribed canonical resources after indexed write convergence", async () => {
-    const store = new BackendDataStore("https://api.test");
+    const store = new BackendDataStore("https://api.test", { transactionStatusReader: appliedTransactionStatusReader });
     const key = store.key("infrastructure", "0xabc", "planet-7");
     let loads = 0;
     const unsubscribe = store.subscribeKey(key, () => {});
@@ -603,7 +721,6 @@ describe("BackendDataStore", () => {
       });
       await expect(
         store.runWriteTransaction({
-          confirm: async () => ({ status: "0x1" }),
           invalidateTags: ["wallet:0xabc", "planet:planet-7"],
           key: "building:start:planet-7",
           label: "Building upgrade",
@@ -664,7 +781,7 @@ describe("BackendDataStore", () => {
     let unsubscribe = () => {};
 
     try {
-      const store = new BackendDataStore("https://api.test");
+      const store = new BackendDataStore("https://api.test", { transactionStatusReader: appliedTransactionStatusReader });
       const key = store.key("overview", wallet, "7");
       unsubscribe = store.subscribeKey(key, () => {});
       const loadOverview = async () => {
@@ -685,7 +802,6 @@ describe("BackendDataStore", () => {
 
       await expect(
         store.runWriteTransaction({
-          confirm: async () => ({ status: "0x1", blockNumber: "0x7b" }),
           indexing: store.indexing.missionLaunch(wallet, () => undefined, ["kind:overview"]),
           invalidateTags: [`wallet:${wallet}`, "planet:7"],
           key: "galaxy:Transport",
@@ -715,10 +831,13 @@ describe("BackendDataStore", () => {
     }
   });
 
-  test("forces affected resources stale and refreshes them when confirmed indexing times out", async () => {
-    const store = new BackendDataStore("https://api.test");
+  test("keeps an applied transaction successful when a trailing canonical refresh fails", async () => {
+    const store = new BackendDataStore("https://api.test", { transactionStatusReader: appliedTransactionStatusReader });
     const key = store.key("shipyard", "0xabc", "planet-7");
     let loads = 0;
+    const warnings: unknown[][] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => warnings.push(args);
     const unsubscribe = store.subscribeKey(key, () => {});
 
     try {
@@ -732,24 +851,29 @@ describe("BackendDataStore", () => {
 
       await expect(
         store.runWriteTransaction({
-          confirm: async () => ({ status: "0x1" }),
           invalidateTags: ["wallet:0xabc", "planet:planet-7"],
           indexing: timeoutPlan,
           key: "ship:start:planet-7",
           label: "Ship production",
           send: async () => "0xconfirmed",
         }),
-      ).resolves.toBe(false);
+      ).resolves.toBe(true);
 
       expect(loads).toBe(2);
       expect(store.snapshot<{ revision: number }>(key)?.data).toEqual({ revision: 2 });
+      expect(store.snapshot<WriteTransactionState>(store.writeTransactionKey("ship:start:planet-7", "0xabc"))?.data).toMatchObject({
+        phase: "success",
+        stage: "applied",
+      });
+      expect(warnings).toHaveLength(1);
     } finally {
+      console.warn = originalWarn;
       unsubscribe();
     }
   });
 
   test("runs independent indexing plans concurrently", async () => {
-    const store = new BackendDataStore("https://api.test");
+    const store = new BackendDataStore("https://api.test", { transactionStatusReader: appliedTransactionStatusReader });
     let starts = 0;
     let release!: () => void;
     const barrier = new Promise<void>((resolve) => {
@@ -767,7 +891,6 @@ describe("BackendDataStore", () => {
     const parallel = store.indexing.all([first as any, second as any]);
 
     const pending = store.runWriteTransaction({
-      confirm: async () => ({ status: "0x1" }),
       indexing: parallel,
       key: "supply:batch",
       label: "Supply 2 transports",
@@ -816,7 +939,6 @@ describe("BackendDataStore", () => {
     let sent = false;
     await expect(
       store.runWriteTransaction({
-        confirm: async () => ({}),
         key: "defense:start:4",
         label: "Defense production",
         send: async () => {
