@@ -405,6 +405,10 @@ abstract contract VeydriftGameStorage is Initializable {
     // gas ceiling; a rolled-back implementation can later resume without remigrating any planet.
     uint256 internal _planetTemperatureMigrationCursor;
     uint256 internal _planetTemperatureMigratedCount;
+    // Append-only pre-combat raid basis. Separate mappings preserve the already-deployed
+    // BattleResolutionProgress value layout while carrying protection state across combat chunks.
+    mapping(uint256 missionId => uint16 plunderBps) internal _battleRaidPlunderBps;
+    mapping(uint256 missionId => bool snapshotted) internal _battleRaidProtectionSnapshotted;
 
     error AlreadyStarted();
     error BadStartPayment();

@@ -8,6 +8,8 @@ import {Ship} from "./libraries/VeydriftTypes.sol";
 
 /// @notice Delegatecall target for post-battle raid settlement, split out of combat bytecode.
 contract VeydriftCombatRaidModule is VeydriftResourceReserves {
+    error MissingRaidProtectionSnapshot(uint256 missionId);
+
     constructor() VeydriftResourceReserves(address(0)) {}
 
     function settleAttackGroupRaid(uint256 attackMissionId) external {
@@ -15,6 +17,10 @@ contract VeydriftCombatRaidModule is VeydriftResourceReserves {
         // arrived battle. Leaving it public through the proxy fallback lets anyone settle an
         // outbound attack early and credit its cargo without combat.
         if (msg.sender != address(this)) revert Unauthorized(msg.sender);
+        if (!_battleRaidProtectionSnapshotted[attackMissionId]) {
+            revert MissingRaidProtectionSnapshot(attackMissionId);
+        }
+        uint16 plunderBps = _battleRaidPlunderBps[attackMissionId];
         FleetMission storage mission = _fleetMissions[attackMissionId];
         uint256 totalCapacity =
             _remainingCargoCapacity(mission.ships, mission.cargo, mission.fuelCost);
@@ -32,14 +38,6 @@ contract VeydriftCombatRaidModule is VeydriftResourceReserves {
         }
         if (totalCapacity == 0) return;
 
-        (AttackBlockReason reason, uint16 plunderBps) =
-            _attackProtectionPreview(mission.owner, mission.targetPlanetId, mission.targetIsMoon);
-        // Bashing is enforced at launch, after which a within-cap attack must retain its
-        // ordinary 50% raid settlement. Unlike score protection, it must not zero plunder
-        // merely because the launch filled the rolling bashing window before impact.
-        if (reason == AttackBlockReason.ScoreProtection) {
-            plunderBps = 0;
-        }
         Resources memory loot = mission.targetIsMoon
             ? _raidMoonResources(
                 mission.targetPlanetId, totalCapacity, plunderBps, mission.lootRatio
@@ -207,25 +205,5 @@ contract VeydriftCombatRaidModule is VeydriftResourceReserves {
             && joined.randomnessRequestId == attackMissionId
             && joined.targetPlanetId == attack.targetPlanetId
             && joined.missionType == FleetMissionType.AcsAttack;
-    }
-
-    function _attackProtectionPreview(address attacker, uint256 targetPlanetId, bool targetIsMoon)
-        private
-        view
-        returns (AttackBlockReason reason, uint16 plunderBps)
-    {
-        assembly ("memory-safe") {
-            let ptr := mload(0x40)
-            mstore(ptr, shl(224, 0xdca08aaf))
-            mstore(add(ptr, 4), attacker)
-            mstore(add(ptr, 36), targetPlanetId)
-            mstore(add(ptr, 68), targetIsMoon)
-            switch staticcall(gas(), address(), ptr, 100, ptr, 96)
-            case 0 { plunderBps := 5000 }
-            default {
-                reason := mload(ptr)
-                plunderBps := mload(add(ptr, 64))
-            }
-        }
     }
 }

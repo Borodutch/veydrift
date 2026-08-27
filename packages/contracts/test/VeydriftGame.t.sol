@@ -10,6 +10,7 @@ import {RandomnessEngine} from "../src/RandomnessEngine.sol";
 import {VeydriftAttackProtectionModule} from "../src/VeydriftAttackProtectionModule.sol";
 import {VeydriftAcsAttackModule} from "../src/VeydriftAcsAttackModule.sol";
 import {VeydriftCombatModule, VeydriftCombatRapidfire} from "../src/VeydriftCombatModule.sol";
+import {VeydriftCombatRaidModule} from "../src/VeydriftCombatRaidModule.sol";
 import {VeydriftColonizationModule} from "../src/VeydriftColonizationModule.sol";
 import {VeydriftShipProductionModule} from "../src/VeydriftShipProductionModule.sol";
 import {VeydriftDefenseHoldModule} from "../src/VeydriftDefenseHoldModule.sol";
@@ -5734,6 +5735,81 @@ contract VeydriftGameTest is Test {
         assertEq(game.shipCount(targetPlanetId, Ship.SmallCargo), defenderShipsBefore);
     }
 
+    function testAttackRaidKeepsPreCombatPlunderWhenDefenderScoreDropsDuringBattle() public {
+        vm.prevrandao(keccak256("pre-combat score snapshot"));
+        (uint256 originPlanetId, uint256 targetPlanetId, address defender) = _seedAttackPlanets();
+
+        // Reproduce the live edge case closely: the attack is legal at impact, then destroying the
+        // target fleet and defenses drops the defender below the 1.5x newbie-protection boundary.
+        // The stable research score keeps the attacker near that boundary without changing combat.
+        _setTechnologyLevel(player, Technology.IntergalacticResearchNetwork, 7);
+        // Extra disposable cargos put the pre-combat scores just inside the legal boundary. The
+        // Deathstar makes the casualty outcome deterministic without changing the score premise.
+        _setShipCount(originPlanetId, Ship.LargeCargo, 4);
+        _setShipCount(originPlanetId, Ship.HeavyFighter, 3);
+        _setShipCount(originPlanetId, Ship.Cruiser, 3);
+        _setShipCount(originPlanetId, Ship.Bomber, 3);
+        _setShipCount(originPlanetId, Ship.Battlecruiser, 3);
+        _setShipCount(originPlanetId, Ship.Deathstar, 10);
+
+        _setShipCount(targetPlanetId, Ship.SmallCargo, 236);
+        _setShipCount(targetPlanetId, Ship.LightFighter, 1);
+        _setShipCount(targetPlanetId, Ship.LargeCargo, 1);
+        _setShipCount(targetPlanetId, Ship.HeavyFighter, 2);
+        _setShipCount(targetPlanetId, Ship.Destroyer, 22);
+        _setDefenseCount(targetPlanetId, Defense.RocketLauncher, 2);
+        _setDefenseCount(targetPlanetId, Defense.LightLaser, 3);
+        _setDefenseCount(targetPlanetId, Defense.SmallShieldDome, 1);
+        _setResources(originPlanetId, 1_000_000, 1_000_000, 1_000_000);
+        _setResources(targetPlanetId, 100_000, 100_000, 100_000);
+
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.largeCargo = 4;
+        ships.heavyFighter = 3;
+        ships.cruiser = 3;
+        ships.bomber = 3;
+        ships.battlecruiser = 3;
+        ships.deathstar = 10;
+        vm.prank(player);
+        uint256 missionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            11016
+        );
+
+        (, uint64 arrivalAt,,) = _fleetMission(missionId);
+        vm.warp(arrivalAt);
+        _fulfillAttackBattleRandomness(missionId, 11016);
+        uint256 attackerScoreAtImpact = game.playerScore(player);
+        uint256 defenderScoreAtImpact = game.playerScore(defender);
+        (VeydriftGameStorage.AttackBlockReason impactReason,, uint16 impactPlunderBps) =
+            _attackProtectionStatus(player, targetPlanetId);
+        assertEq(uint8(impactReason), uint8(VeydriftGameStorage.AttackBlockReason.None));
+        assertEq(impactPlunderBps, 5_000);
+        _resolveAttackFully(missionId);
+
+        uint256 defenderScoreAfterBattle = game.playerScore(defender);
+        (VeydriftGameStorage.AttackBlockReason postBattleReason,,) =
+            _attackProtectionStatus(player, targetPlanetId);
+        assertLt(defenderScoreAfterBattle, defenderScoreAtImpact);
+        assertEq(
+            uint8(postBattleReason), uint8(VeydriftGameStorage.AttackBlockReason.ScoreProtection)
+        );
+        assertEq(game.playerScore(player), attackerScoreAtImpact);
+
+        (
+            VeydriftGameStorage.FleetMissionStatus status,,,
+            VeydriftGameStorage.Resources memory cargo
+        ) = _fleetMission(missionId);
+        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
+        assertGt(uint256(cargo.metal) + cargo.crystal + cargo.deuterium, 0);
+        (uint8 roundsCompleted,) = game.battleResolutionProgress(missionId);
+        assertEq(roundsCompleted, 0, "completed battle snapshot must be cleared");
+    }
+
     function testRiftLockBypassesScoreProtectionAtAttackResolution() public {
         vm.warp(8 days);
         (uint256 originPlanetId, uint256 targetPlanetId, address defender) = _seedAttackPlanets();
@@ -9589,6 +9665,19 @@ contract VeydriftGameTest is Test {
         vm.prank(player);
         vm.expectRevert(abi.encodeWithSelector(VeydriftGameStorage.Unauthorized.selector, player));
         settlement.settleAttackGroupRaid(0);
+    }
+
+    function testInternalRaidSettlementFailsClosedWithoutPreCombatSnapshot() public {
+        IRiftSettlementEntrypoints settlement = IRiftSettlementEntrypoints(address(game));
+        uint256 missionId = 77;
+
+        vm.prank(address(game));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftCombatRaidModule.MissingRaidProtectionSnapshot.selector, missionId
+            )
+        );
+        settlement.settleAttackGroupRaid(missionId);
     }
 
     function testPublicSettlementCannotDrainLiveRiftOrPreSettleOutboundAttack() public {

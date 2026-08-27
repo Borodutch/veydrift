@@ -1621,14 +1621,14 @@ abstract contract VeydriftMoonSystemTestBase is Test {
         assertEq(parentAfter.resources.deuterium, parentBefore.resources.deuterium);
     }
 
-    function _testPostBattleScoreProtectionSuppressesPlanetAndMoonLoot() internal {
+    function _testPostBattleScoreProtectionKeepsPreCombatPlanetAndMoonPlunder() internal {
         uint256 snapshot = vm.snapshotState();
-        _assertPostBattleScoreProtectionSuppressesLoot(false);
+        _assertPostBattleScoreProtectionKeepsPreCombatPlunder(false);
         assertTrue(vm.revertToState(snapshot));
-        _assertPostBattleScoreProtectionSuppressesLoot(true);
+        _assertPostBattleScoreProtectionKeepsPreCombatPlunder(true);
     }
 
-    function _assertPostBattleScoreProtectionSuppressesLoot(bool targetIsMoon) internal {
+    function _assertPostBattleScoreProtectionKeepsPreCombatPlunder(bool targetIsMoon) internal {
         (uint256 originPlanetId, uint256 targetPlanetId,) = _seedMoonAttackPlanets();
         _fundPlanet(originPlanetId, 100_000, 100_000, 100_000);
         if (targetIsMoon) _fundMoon(targetPlanetId, 30_000, 30_000, 30_000);
@@ -1675,9 +1675,11 @@ abstract contract VeydriftMoonSystemTestBase is Test {
         );
 
         (,,, VeydriftGameStorage.Resources memory cargo) = _fleetMission(missionId);
-        assertEq(cargo.metal, 0, "score-protected settlement looted metal");
-        assertEq(cargo.crystal, 0, "score-protected settlement looted crystal");
-        assertEq(cargo.deuterium, 0, "score-protected settlement looted deuterium");
+        assertGt(
+            uint256(cargo.metal) + cargo.crystal + cargo.deuterium,
+            0,
+            "post-combat score change erased the pre-combat plunder rate"
+        );
     }
 
     function _testPlanetToMoonAttackLootCapacityIncludesFuel() internal {
@@ -2554,8 +2556,8 @@ contract VeydriftMoonAttackParityTest is VeydriftMoonSystemTestBase {
         _testMoonAttackRaidsMoonResourcesWithoutTouchingParentPlanet();
     }
 
-    function testPostBattleScoreProtectionSuppressesPlanetAndMoonLoot() public {
-        _testPostBattleScoreProtectionSuppressesPlanetAndMoonLoot();
+    function testPostBattleScoreProtectionKeepsPreCombatPlanetAndMoonPlunder() public {
+        _testPostBattleScoreProtectionKeepsPreCombatPlanetAndMoonPlunder();
     }
 
     function testPlanetToMoonAttackLootCapacityIncludesFuel() public {

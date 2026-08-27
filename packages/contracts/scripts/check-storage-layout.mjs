@@ -137,6 +137,18 @@ const reviewedStorageAppend = [
     offset: 0,
     type: "uint256",
   },
+  {
+    label: "_battleRaidPlunderBps",
+    slot: "67",
+    offset: 0,
+    type: "mapping(uint256 => uint16)",
+  },
+  {
+    label: "_battleRaidProtectionSnapshotted",
+    slot: "68",
+    offset: 0,
+    type: "mapping(uint256 => bool)",
+  },
 ];
 const riftExtractionStruct = [
   {label: "active", slot: "0", offset: 0, type: "bool"},

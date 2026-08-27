@@ -501,7 +501,8 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
 
     function resolveFleetMissionCombatRound(uint256 missionId) external returns (bool complete) {
         FleetMission storage mission = _fleetMissions[missionId];
-        if (_battleResolutionProgress[missionId].rounds == 0) {
+        BattleResolutionProgress storage progress = _battleResolutionProgress[missionId];
+        if (progress.rounds == 0) {
             if (
                 mission.targetIsMoon
                     && !_missionMoonExistsForOwner(
@@ -519,7 +520,7 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
             // Attack protection is rechecked once, before the first combat round, to close the
             // launch->impact gap. It must not be re-evaluated between gas-bounded rounds after
             // casualties have already changed both players' scores.
-            (AttackBlockReason protectionReason,) = _attackProtectionPreview(
+            (AttackBlockReason protectionReason, uint16 plunderBps) = _attackProtectionPreview(
                 mission.owner, mission.targetPlanetId, mission.targetIsMoon
             );
             Resources storage locked = _riftLockedResources[mission.targetPlanetId];
@@ -533,6 +534,14 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
                 mission.status = FleetMissionStatus.Returning;
                 return true;
             }
+
+            // The protection decision and ordinary raid rate belong to the pre-combat state.
+            // Persist that basis before round 1 because casualties immediately change the score
+            // inputs, and a battle can span several resolver transactions. A score-protected live
+            // Rift attack may still fight for the lock, but cannot loot ordinary body resources.
+            _battleRaidPlunderBps[missionId] =
+                protectionReason == AttackBlockReason.ScoreProtection ? 0 : plunderBps;
+            _battleRaidProtectionSnapshotted[missionId] = true;
         }
 
         (BattleSettlement memory settlement, bool battleComplete) = _runBattle(missionId, mission);
@@ -541,6 +550,9 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         if (settlement.outcome == BattleOutcome.AttackerWin) {
             _settleAttackGroupRaid(missionId);
         }
+        delete _battleResolutionProgress[missionId];
+        delete _battleRaidPlunderBps[missionId];
+        delete _battleRaidProtectionSnapshotted[missionId];
         _returnLinkedMissions(missionId, mission);
 
         bool returning = _missionShipTotal(mission.ships) != 0;
@@ -642,7 +654,6 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         } else {
             settlement.outcome = BattleOutcome.Draw;
         }
-        delete _battleResolutionProgress[missionId];
         complete = true;
     }
 
