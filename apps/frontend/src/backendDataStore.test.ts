@@ -1249,6 +1249,64 @@ describe("BackendDataStore", () => {
     }
   });
 
+  test("keeps backend-applied recovery successful when canonical refresh rejects", async () => {
+    const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+    const staleHash = `0x${"ec".repeat(32)}`;
+    const journalKey = "veydrift:pending-transactions:https://api.test";
+    const values = new Map<string, string>([[
+      journalKey,
+      JSON.stringify([{
+        actionId: "building:start:metalStorage",
+        chainId: "0x2105",
+        submittedAt: Date.now() - 300_000,
+        transactionHash: staleHash,
+        wallet: "0xabc",
+      }]),
+    ]]);
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: {
+        localStorage: {
+          getItem: (key: string) => values.get(key) ?? null,
+          removeItem: (key: string) => { values.delete(key); },
+          setItem: (key: string, value: string) => { values.set(key, value); },
+        },
+      },
+    });
+
+    try {
+      const store = new BackendDataStore("https://api.test", {
+        transactionStatusReader: async (transactionHash) => ({
+          events: [],
+          indexedEventCount: 1,
+          latestIndexedBlock: "26",
+          phase: "applied",
+          receiptBlock: "26",
+          transactionHash,
+        }),
+      });
+      (store as unknown as { invalidate: () => Promise<never> }).invalidate = async () => {
+        throw new Error("canonical refresh failed");
+      };
+      store.setContext("0xabc");
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+      await store.discardPendingTransactionRecovery("0xabc", staleHash);
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+      expect(values.has(journalKey)).toBe(false);
+      expect(store.snapshot(store.pendingTransactionRecoveryKey("0xabc"))).toBeUndefined();
+      expect(store.snapshot<WriteTransactionState>(store.writeTransactionKey("building:start:metalStorage", "0xabc"))?.data).toMatchObject({
+        phase: "success",
+        stage: "applied",
+        txHash: staleHash,
+      });
+    } finally {
+      if (originalWindow) Object.defineProperty(globalThis, "window", originalWindow);
+      else Reflect.deleteProperty(globalThis, "window");
+    }
+  });
+
   test("performs one centralized catch-up when the SSE indexed revision advances", async () => {
     const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
     const listeners = new Map<string, (event: MessageEvent) => void>();

@@ -1166,10 +1166,15 @@ export class BackendDataStore {
         if (status.phase === "applied") {
           this.removePendingTransaction(entry.transactionHash);
           this.clearPendingTransactionRecovery(normalizedWallet);
-          await this.invalidate([`wallet:${normalizedWallet}`], {
-            activeOnly: false,
-            priority: "transaction",
-          });
+          try {
+            void this.invalidate([`wallet:${normalizedWallet}`], {
+              activeOnly: false,
+              priority: "transaction",
+            }).catch(() => undefined);
+          } catch {
+            // Backend-applied is authoritative. Canonical refresh is
+            // best-effort here and must never resurrect a removed journal.
+          }
           this.publishWriteTransactionState({
             key: entry.actionId,
             label: `${entry.actionId} confirmed.`,
