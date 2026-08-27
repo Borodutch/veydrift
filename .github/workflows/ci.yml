@@ -53,6 +53,8 @@ jobs:
       - name: Set up Foundry
         if: steps.scope.outputs.contracts == 'true' && runner.name != 'veydrift-mac-backmeupplz-ci'
         uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.7.1
 
       - name: Verify Foundry on self-hosted runner
         if: steps.scope.outputs.contracts == 'true' && runner.name == 'veydrift-mac-backmeupplz-ci'
