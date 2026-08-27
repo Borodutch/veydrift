@@ -82,6 +82,7 @@ import {
 import { derivePlanetPickerAttackHighlights, planetPickerHasIncomingAttack, type PlanetPickerAttackHighlights } from "./planetPickerAttackHighlights";
 import { ShareDialog } from "./components/ShareDialog";
 import { PlayerActivityCenter } from "./components/PlayerActivityDialog";
+import { PendingTransactionRecoveryDialog } from "./components/PendingTransactionRecoveryDialog";
 import { rankingsAttackProtectionForEntry } from "./rankingsAttackProtection";
 import {
   buildingKeyForContractId,
@@ -290,7 +291,7 @@ import {
   type PaidAllianceBonusAmount,
   type ResourceSnapshotMetadata,
 } from "./walletFlow";
-import { BackendDataStore, backendDataStoreFor, retainBackendDataStore, type BackendDataTag, type BackendIndexingPlan } from "./backendDataStore";
+import { BackendDataStore, backendDataStoreFor, retainBackendDataStore, type BackendDataTag, type BackendIndexingPlan, type PendingTransactionRecoveryDecision } from "./backendDataStore";
 import { useBackendDataSnapshot, useBackendDataSnapshots } from "./useBackendDataSnapshot";
 import { useBackendDataQuery } from "./useBackendDataQuery";
 import { nextWatchedPlanetsPageAfterToggle } from "./watchedPlanetsView";
@@ -3273,6 +3274,11 @@ export function PlayableMvpApp({
     };
   }, [apiBaseUrl]);
   const writeTransactionSnapshot = useBackendDataSnapshot<WriteTransactionState>(backendData, backendData?.writeTransactionKey(undefined, account));
+  const pendingTransactionRecoverySnapshot = useBackendDataSnapshot<PendingTransactionRecoveryDecision>(
+    backendData,
+    backendData && account ? backendData.pendingTransactionRecoveryKey(account) : undefined,
+  );
+  const pendingTransactionRecovery = pendingTransactionRecoverySnapshot?.data;
   const writeTransactionState = writeTransactionSnapshot?.data ?? {
     phase: "idle" as const,
   };
@@ -9096,6 +9102,17 @@ export function PlayableMvpApp({
       </div>
 
       {shareDialogUrl ? <ShareDialog onClose={() => setShareDialogUrl(null)} url={shareDialogUrl} /> : null}
+      {backendData && account && pendingTransactionRecovery ? (
+        <PendingTransactionRecoveryDialog
+          decision={pendingTransactionRecovery}
+          onDiscard={() => {
+            void backendData.discardPendingTransactionRecovery(account, pendingTransactionRecovery.transactionHash);
+          }}
+          onKeepWaiting={() => {
+            void backendData.keepPendingTransactionRecovery(account, pendingTransactionRecovery.transactionHash);
+          }}
+        />
+      ) : null}
       <PlayerActivityCenter
         apiUrl={apiBaseUrl}
         explorerUrl={gameWalletChain.blockExplorerUrls[0]}

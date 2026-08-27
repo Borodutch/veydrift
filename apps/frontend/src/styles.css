@@ -4327,3 +4327,111 @@ h4 {
 :root[data-sfx-muted="1"] .sound-toggle-icon-off {
   display: block;
 }
+
+.pending-transaction-recovery-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+  background: rgba(2, 6, 15, 0.82);
+  backdrop-filter: blur(8px);
+}
+
+.pending-transaction-recovery-dialog {
+  width: min(100%, 32rem);
+  max-height: 100%;
+  overflow-y: auto;
+  border: 1px solid rgba(103, 232, 249, 0.24);
+  border-radius: 18px;
+  padding: clamp(18px, 5vw, 28px);
+  background: linear-gradient(145deg, rgba(8, 20, 34, 0.99), rgba(4, 10, 22, 0.99));
+  color: #e2e8f0;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55);
+}
+
+.pending-transaction-recovery-kicker {
+  color: #67e8f9;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.pending-transaction-recovery-dialog h2 {
+  margin: 8px 0 10px;
+  color: #f8fafc;
+  font-size: clamp(1.25rem, 5vw, 1.65rem);
+  line-height: 1.2;
+}
+
+.pending-transaction-recovery-dialog p {
+  margin: 0;
+  color: #cbd5e1;
+  line-height: 1.55;
+}
+
+.pending-transaction-recovery-dialog code {
+  color: #a5f3fc;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.pending-transaction-recovery-error {
+  margin-top: 14px !important;
+  border: 1px solid rgba(251, 191, 36, 0.28);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: rgba(120, 53, 15, 0.22);
+  color: #fde68a !important;
+  font-size: 0.88rem;
+}
+
+.pending-transaction-recovery-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.pending-transaction-recovery-actions button {
+  min-height: 44px;
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-weight: 800;
+  transition: border-color 150ms ease, background 150ms ease, opacity 150ms ease;
+}
+
+.pending-transaction-recovery-actions button:focus-visible {
+  outline: 3px solid rgba(103, 232, 249, 0.55);
+  outline-offset: 2px;
+}
+
+.pending-transaction-recovery-actions button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.pending-transaction-recovery-keep {
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  background: rgba(30, 41, 59, 0.78);
+  color: #f8fafc;
+}
+
+.pending-transaction-recovery-discard {
+  border: 1px solid rgba(251, 146, 60, 0.46);
+  background: rgba(154, 52, 18, 0.72);
+  color: #fff7ed;
+}
+
+.pending-transaction-recovery-footnote {
+  margin-top: 14px !important;
+  color: #94a3b8 !important;
+  font-size: 0.78rem;
+}
+
+@media (max-width: 440px) {
+  .pending-transaction-recovery-actions {
+    grid-template-columns: 1fr;
+  }
+}

@@ -261,7 +261,7 @@ type BackendTransactionStatus = {
   transactionHash: string;
 };
 
-type PendingTransactionJournalEntry = {
+export type PendingTransactionJournalEntry = {
   actionId: string;
   chainId: string;
   submittedAt: number;
@@ -269,9 +269,10 @@ type PendingTransactionJournalEntry = {
   wallet: string;
 };
 
-type PendingTransactionDiscardConfirmation = (
-  entry: Readonly<PendingTransactionJournalEntry>,
-) => boolean | Promise<boolean>;
+export type PendingTransactionRecoveryDecision = Readonly<PendingTransactionJournalEntry> & {
+  error?: string | undefined;
+  phase: "decision" | "checking";
+};
 
 function sameChainId(left: string, right: string): boolean {
   try {
@@ -312,8 +313,8 @@ type GlobalMissionArchiveOptions = {
 const INACTIVE_RESOURCE_RETENTION_MS = 120_000;
 
 type BackendDataStoreOptions = {
-  confirmPendingTransactionDiscard?: PendingTransactionDiscardConfirmation;
   inactiveResourceRetentionMs?: number;
+  now?: () => number;
   transactionPollIntervalMs?: number;
   transactionRequestTimeoutMs?: number;
   transactionStatusTimeoutMs?: number;
@@ -397,20 +398,15 @@ export class BackendDataStore {
   private readonly planetResourceReadGenerations = new Map<string, number>();
 
   private readonly inactiveResourceRetentionMs: number;
-  private readonly confirmPendingTransactionDiscard: PendingTransactionDiscardConfirmation;
+  private readonly now: () => number;
   private readonly transactionPollIntervalMs: number;
   private readonly transactionRequestTimeoutMs: number;
   private readonly transactionStatusTimeoutMs: number;
   private readonly transactionStatusReader: ((transactionHash: string) => Promise<BackendTransactionStatus>) | undefined;
 
   constructor(readonly apiBaseUrl: string, options: BackendDataStoreOptions = {}) {
-    this.confirmPendingTransactionDiscard = options.confirmPendingTransactionDiscard ?? ((entry) => {
-      if (typeof window === "undefined" || typeof window.confirm !== "function") return false;
-      return window.confirm(
-        `Veydrift could not verify saved transaction ${entry.transactionHash.slice(0, 10)}... on Base. It may still confirm later. Discard this legacy recovery record and allow one new Base transaction on your next retry?`,
-      );
-    });
     this.inactiveResourceRetentionMs = options.inactiveResourceRetentionMs ?? INACTIVE_RESOURCE_RETENTION_MS;
+    this.now = options.now ?? Date.now;
     this.transactionPollIntervalMs = options.transactionPollIntervalMs ?? 1_000;
     this.transactionRequestTimeoutMs = options.transactionRequestTimeoutMs ?? 10_000;
     this.transactionStatusTimeoutMs = options.transactionStatusTimeoutMs ?? 120_000;
@@ -1032,6 +1028,10 @@ export class BackendDataStore {
     return cacheKey("write-transaction", wallet?.toLowerCase() ?? "global", key ?? "global");
   }
 
+  pendingTransactionRecoveryKey(wallet: string): string {
+    return cacheKey("pending-transaction-recovery", wallet.toLowerCase());
+  }
+
   private publishWriteTransactionState(state: WriteTransactionState, walletScope = "global"): void {
     // Write status is UI state, but it is still scoped to the initiating
     // wallet.  Without this metadata `clearWallet()` cannot retire a
@@ -1102,14 +1102,157 @@ export class BackendDataStore {
     );
   }
 
-  private async resumePendingTransactions(wallet: string, expectedChainId?: string): Promise<void> {
+  private publishPendingTransactionRecovery(
+    entry: PendingTransactionJournalEntry,
+    phase: PendingTransactionRecoveryDecision["phase"],
+    error?: string,
+  ): void {
+    const wallet = entry.wallet.toLowerCase();
+    this.state.publish(this.pendingTransactionRecoveryKey(wallet), {
+      ...entry,
+      ...(error ? { error } : {}),
+      phase,
+      wallet,
+    } satisfies PendingTransactionRecoveryDecision, { wallet });
+  }
+
+  private clearPendingTransactionRecovery(wallet: string): void {
+    this.state.clear(this.pendingTransactionRecoveryKey(wallet));
+  }
+
+  async keepPendingTransactionRecovery(wallet: string, transactionHash: string): Promise<void> {
+    const normalizedWallet = wallet.toLowerCase();
+    const entry = this.pendingTransactions().find((candidate) =>
+      candidate.wallet === normalizedWallet
+      && candidate.transactionHash.toLowerCase() === transactionHash.toLowerCase()
+    );
+    if (!entry) {
+      this.clearPendingTransactionRecovery(normalizedWallet);
+      return;
+    }
+    this.clearPendingTransactionRecovery(normalizedWallet);
+    await this.resumePendingTransactions(normalizedWallet, entry.chainId, {
+      allowAgedPolling: true,
+      transactionHash: entry.transactionHash,
+    });
+  }
+
+  async discardPendingTransactionRecovery(wallet: string, transactionHash: string): Promise<void> {
     const normalizedWallet = wallet.toLowerCase();
     const existing = this.transactionRecoveries.get(normalizedWallet);
     if (existing) return existing;
-    const entries = this.pendingTransactions().filter((entry) => entry.wallet === normalizedWallet);
+    const entry = this.pendingTransactions().find((candidate) =>
+      candidate.wallet === normalizedWallet
+      && candidate.transactionHash.toLowerCase() === transactionHash.toLowerCase()
+    );
+    if (!entry) {
+      this.clearPendingTransactionRecovery(normalizedWallet);
+      return;
+    }
+
+    const recovery = (async () => {
+      this.publishPendingTransactionRecovery(entry, "checking");
+      try {
+        const status = await this.readBackendTransactionStatus(entry.transactionHash);
+        const currentEntry = this.pendingTransactions().find((candidate) =>
+          candidate.wallet === normalizedWallet
+          && candidate.transactionHash.toLowerCase() === transactionHash.toLowerCase()
+        );
+        if (!currentEntry) {
+          this.clearPendingTransactionRecovery(normalizedWallet);
+          return;
+        }
+
+        if (status.phase === "applied") {
+          this.removePendingTransaction(entry.transactionHash);
+          this.clearPendingTransactionRecovery(normalizedWallet);
+          await this.invalidate([`wallet:${normalizedWallet}`], {
+            activeOnly: false,
+            priority: "transaction",
+          });
+          this.publishWriteTransactionState({
+            key: entry.actionId,
+            label: `${entry.actionId} confirmed.`,
+            phase: "success",
+            stage: "applied",
+            txHash: entry.transactionHash,
+          }, normalizedWallet);
+          return;
+        }
+        if (status.phase === "reverted") {
+          this.removePendingTransaction(entry.transactionHash);
+          this.clearPendingTransactionRecovery(normalizedWallet);
+          this.publishWriteTransactionState({
+            error: new Error("The transaction reverted."),
+            key: entry.actionId,
+            label: "The saved transaction reverted. Its recovery record was removed.",
+            phase: "error",
+            stage: "failed",
+            txHash: entry.transactionHash,
+          }, normalizedWallet);
+          return;
+        }
+
+        if (status.phase === "confirmed") {
+          this.publishPendingTransactionRecovery(
+            entry,
+            "decision",
+            "Veydrift has confirmed this transaction onchain, so its recovery record cannot be discarded while indexed state is still catching up.",
+          );
+          return;
+        }
+
+        this.removePendingTransaction(entry.transactionHash);
+        this.clearPendingTransactionRecovery(normalizedWallet);
+        const discarded = new Error("Discarded the unverifiable saved transaction record. Nothing was submitted. Retry the action to create one new Base transaction.");
+        this.publishWriteTransactionState({
+          error: discarded,
+          key: entry.actionId,
+          label: discarded.message,
+          phase: "error",
+          stage: "failed",
+          txHash: entry.transactionHash,
+        }, normalizedWallet);
+      } catch (error) {
+        this.publishPendingTransactionRecovery(
+          entry,
+          "decision",
+          error instanceof Error
+            ? `Could not recheck the saved transaction: ${error.message}`
+            : "Could not recheck the saved transaction. Try again before discarding it.",
+        );
+      }
+    })().finally(() => {
+      this.transactionRecoveries.delete(normalizedWallet);
+    });
+    this.transactionRecoveries.set(normalizedWallet, recovery);
+    return recovery;
+  }
+
+  private async resumePendingTransactions(
+    wallet: string,
+    expectedChainId?: string,
+    options: { allowAgedPolling?: boolean; transactionHash?: string } = {},
+  ): Promise<void> {
+    const normalizedWallet = wallet.toLowerCase();
+    const existing = this.transactionRecoveries.get(normalizedWallet);
+    if (existing) return existing;
+    const entries = this.pendingTransactions().filter((entry) =>
+      entry.wallet === normalizedWallet
+      && (!options.transactionHash || entry.transactionHash.toLowerCase() === options.transactionHash.toLowerCase())
+    );
     if (entries.length === 0) return;
     const recovery = (async () => {
       for (const entry of entries.sort((left, right) => left.submittedAt - right.submittedAt)) {
+        const deterministicallyWrongChain = Boolean(
+          expectedChainId
+          && entry.chainId !== "unknown"
+          && !sameChainId(entry.chainId, expectedChainId),
+        );
+        if (!deterministicallyWrongChain && !options.allowAgedPolling && this.now() - entry.submittedAt >= this.transactionStatusTimeoutMs) {
+          this.publishPendingTransactionRecovery(entry, "decision");
+          break;
+        }
         await this.transactionGateFor(normalizedWallet).run(`recover:${entry.transactionHash}`, async () => {
           this.publishWriteTransactionState({
             key: entry.actionId,
@@ -1126,6 +1269,9 @@ export class BackendDataStore {
             const status = await this.waitForBackendTransactionStatus(
               entry.transactionHash,
               (candidate) => candidate.phase === "applied" || candidate.phase === "reverted",
+              options.allowAgedPolling
+                ? undefined
+                : { deadlineMs: entry.submittedAt + this.transactionStatusTimeoutMs },
             );
             this.removePendingTransaction(entry.transactionHash);
             if (status.phase === "reverted") throw new Error("The transaction reverted.");
@@ -1141,26 +1287,15 @@ export class BackendDataStore {
               txHash: entry.transactionHash,
             }, normalizedWallet);
           } catch (error) {
-            let recoveryError = error;
             if (isTransactionIndexingTimeout(error)) {
-              let discardConfirmed = false;
-              try {
-                discardConfirmed = await this.confirmPendingTransactionDiscard({ ...entry });
-              } catch {
-                // Confirmation failures are cancellations: retain the journal
-                // and continue blocking any duplicate submission.
-              }
-              if (discardConfirmed) {
-                this.removePendingTransaction(entry.transactionHash);
-                recoveryError = new Error("Discarded the unverifiable legacy transaction journal after your confirmation. Nothing was submitted. Retry the action to create one new Base transaction.");
-              }
+              this.publishPendingTransactionRecovery(entry, "decision");
             }
             this.publishWriteTransactionState({
-              error: recoveryError,
+              error,
               key: entry.actionId,
-              label: recoveryError instanceof Error ? recoveryError.message : "Transaction confirmation is delayed.",
+              label: error instanceof Error ? error.message : "Transaction confirmation is delayed.",
               phase: "error",
-              stage: isTransactionIndexingTimeout(recoveryError) ? "timed-out" : "failed",
+              stage: isTransactionIndexingTimeout(error) ? "timed-out" : "failed",
               txHash: entry.transactionHash,
             }, normalizedWallet);
           }
@@ -1229,7 +1364,7 @@ export class BackendDataStore {
           this.writePendingTransaction({
             actionId: descriptor.key,
             chainId: chainId ?? "unknown",
-            submittedAt: Date.now(),
+            submittedAt: this.now(),
             transactionHash,
             wallet: walletScope,
           });
@@ -1325,8 +1460,9 @@ export class BackendDataStore {
   private async waitForBackendTransactionStatus(
     transactionHash: string,
     accepted: (status: BackendTransactionStatus) => boolean,
+    options: { deadlineMs?: number } = {},
   ): Promise<BackendTransactionStatus> {
-    const deadline = Date.now() + this.transactionStatusTimeoutMs;
+    const deadline = options.deadlineMs ?? this.now() + this.transactionStatusTimeoutMs;
     let lastError: unknown;
     while (true) {
       try {
@@ -1336,7 +1472,7 @@ export class BackendDataStore {
       } catch (error) {
         lastError = error;
       }
-      if (Date.now() >= deadline) {
+      if (this.now() >= deadline) {
         const detail = lastError instanceof Error ? ` ${lastError.message}` : "";
         throw new Error(`The transaction is confirmed or submitted, but backend indexing is still syncing.${detail}`);
       }
