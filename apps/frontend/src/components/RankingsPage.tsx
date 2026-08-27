@@ -1,7 +1,7 @@
 import type { ComponentChildren } from "preact";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { ChevronDown, ChevronLeft, ChevronRight, UserRound } from "lucide-preact";
-import { planetImageForType } from "../data/mockUniverse";
+import { planetArtTypeForCoordinates, planetImageForType } from "../data/mockUniverse";
 import { fleetMissionDistance } from "../fleetMissionRules";
 import { activeMissionsByPlanetId, planetMissionSubtext } from "../planetMissionSubtext";
 import type { GalaxyAction } from "../galaxyActions";
@@ -732,6 +732,7 @@ function RankingRow({
             const isHomePlanet = entry.homePlanetId === planet.planetId;
             const missionLines = planetMissionSubtext(planet.planetId, entry.wallet, missionsByPlanetId?.get(planet.planetId) ?? [], now ?? Date.now());
             const hasMoon = Boolean(planet.hasMoon || planet.moon?.exists);
+            const planetType = planetArtTypeForCoordinates(planet.coordinates);
             const moonActions = hasMoon ? moonActionsForPlanet?.(planet, entry) ?? [] : [];
             const planetActions = planetActionsForPlanet?.(planet, entry) ?? [];
             return (
@@ -754,7 +755,7 @@ function RankingRow({
                         className="h-full w-full object-cover"
                         loading="lazy"
                         sizes="icon"
-                        src={planetImageForType(planet.archetype)}
+                        src={planetImageForType(planetType)}
                       />
                     </span>
                     <span className="min-w-0 truncate text-slate-200">
@@ -813,7 +814,7 @@ function RankingRow({
                       className="min-w-0"
                       label="Moon"
                       onClick={onSelectMoon ? () => onSelectMoon(planet.coordinates) : undefined}
-                      planetType={planet.archetype}
+                      planetType={planetType}
                       title={`Open moon at ${homePlanetCoordinatesLabel(planet)}`}
                     />
                   </div>

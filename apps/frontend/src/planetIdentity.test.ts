@@ -3,6 +3,8 @@ import {
   formatPlanetType,
   mergePlanetAtCoordinates,
   mergePlanetWithSettlement,
+  planetArtTypeFromArchetypeOrCoords,
+  planetArtTypeForCoordinates,
   planetFromSettlementPlanet,
   planetsFromSystemResponse,
 } from "./data/mockUniverse";
@@ -73,6 +75,36 @@ function managedPlanet(overrides: Partial<ManagedPlanetResponse> = {}): ManagedP
 }
 
 describe("planet identity", () => {
+  test("uses one slot-aware art resolver instead of stale absolute-temperature archetypes", () => {
+    const planets = planetsFromSystemResponse({
+      galaxy: 1,
+      system: 1,
+      planets: [
+        { galaxy: 1, system: 1, position: 1, fields: 134, temperature: 248, metalMultiplierBps: 10_000, crystalMultiplierBps: 14_000, deuteriumMultiplierBps: 7_840, archetype: "scorching-molten" },
+        { galaxy: 1, system: 1, position: 4, fields: 163, temperature: 98, metalMultiplierBps: 10_000, crystalMultiplierBps: 10_000, deuteriumMultiplierBps: 10_840, archetype: "scorching-molten" },
+        { galaxy: 1, system: 1, position: 8, fields: 204, temperature: 59, metalMultiplierBps: 13_500, crystalMultiplierBps: 10_000, deuteriumMultiplierBps: 11_620, archetype: "scorching-molten" },
+        { galaxy: 1, system: 1, position: 13, fields: 143, temperature: -38, metalMultiplierBps: 10_000, crystalMultiplierBps: 10_000, deuteriumMultiplierBps: 13_560, archetype: "frozen-ice" },
+      ],
+    });
+
+    expect(planets.map((planet) => planet.type)).toEqual([
+      planetArtTypeForCoordinates({ galaxy: 1, system: 1, position: 1 }),
+      planetArtTypeForCoordinates({ galaxy: 1, system: 1, position: 4 }),
+      planetArtTypeForCoordinates({ galaxy: 1, system: 1, position: 8 }),
+      planetArtTypeForCoordinates({ galaxy: 1, system: 1, position: 13 }),
+    ]);
+    expect(new Set(planets.map((planet) => planet.type)).size).toBe(4);
+    expect(planets.slice(1).every((planet) => planet.type !== "scorching-molten")).toBe(true);
+  });
+
+  test("normalizes mission and historical archetypes through coordinates", () => {
+    const coordinates = { galaxy: 1, system: 1, position: 8 };
+    expect(planetArtTypeFromArchetypeOrCoords("scorching-molten", coordinates)).toBe(
+      planetArtTypeForCoordinates(coordinates),
+    );
+    expect(planetArtTypeFromArchetypeOrCoords("scorching-molten", null)).toBe("scorching-molten");
+  });
+
   test("uses settlement stats and art family for the home planet identity", () => {
     const [systemPlanet] = planetsFromSystemResponse({
       galaxy: 6,
@@ -101,15 +133,15 @@ describe("planet identity", () => {
       system: 407,
       position: 15,
       fields: 196,
-      type: "frozen-ice",
+      type: planetArtTypeForCoordinates(settlementPlanet),
       temperature: {
         min: -75,
         max: -35,
       },
       diameter: 14_000,
-      image: "/assets/game/style-pass/generated/planets/frozen-ice.webp",
+      image: `/assets/game/style-pass/generated/planets/${planetArtTypeForCoordinates(settlementPlanet)}.webp`,
     });
-    expect(formatPlanetType(identity.type)).toBe("Frozen Ice");
+    expect(formatPlanetType(identity.type)).toBe(formatPlanetType(planetArtTypeForCoordinates(settlementPlanet)));
   });
 
   test("preserves moon presence on settlement-derived planet identity", () => {
@@ -198,7 +230,7 @@ describe("planet identity", () => {
     expect(merged).toHaveLength(1);
     expect(merged[0]).toMatchObject({
       fields: 196,
-      type: "frozen-ice",
+      type: planetArtTypeForCoordinates(settlementPlanet),
       occupiedBy: {
         planetId: "2",
         owner: settlementPlanet.owner,

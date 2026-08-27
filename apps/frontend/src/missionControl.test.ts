@@ -2566,23 +2566,25 @@ describe("Mission Control battle reports", () => {
     expect(text).not.toContain("Origin");
     expect(text).not.toContain("Destination");
 
-    // Both endpoints render their real planet art (Galaxy thumbnail assets), keyed by archetype.
+    // Both endpoints render the same coordinate-derived slot art as Galaxy, ignoring stale feed archetypes.
     const planetImages = findElements(tree, "img").filter((node) => node.props?.["data-planet-art"] !== undefined);
     const arts = planetImages.map((node) => node.props?.["data-planet-art"]);
-    expect(arts).toContain("temperate-ocean");
-    expect(arts).toContain("frozen-ice");
+    const originType = planetTypeFromCoordinates(6, 9, 1);
+    const targetType = planetTypeFromCoordinates(5, 407, 4);
+    expect(arts).toContain(originType);
+    expect(arts).toContain(targetType);
     const sources = planetImages.map((node) => node.props?.src);
-    expect(sources).toContain(planetImageForType("temperate-ocean"));
-    expect(sources).toContain(planetImageForType("frozen-ice"));
+    expect(sources).toContain(planetImageForType(originType));
+    expect(sources).toContain(planetImageForType(targetType));
   });
 
-  test("uses canonical universe art for mission targets when the mission feed lacks an archetype", () => {
+  test("uses slot-aware coordinate art when mission and universe archetypes are stale", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
     const owner = "0x1111111111111111111111111111111111111111";
     const defender = "0x2222222222222222222222222222222222222222";
     const targetCoords = { galaxy: 5, system: 314, position: 14 };
-    const canonicalTargetType = "frozen-ice";
-    expect(planetTypeFromCoordinates(targetCoords.galaxy, targetCoords.system, targetCoords.position)).toBe("metal-planetoid");
+    const targetType = planetTypeFromCoordinates(targetCoords.galaxy, targetCoords.system, targetCoords.position);
+    expect(targetType).toBe("metal-planetoid");
 
     const outbound: FleetMissionSummary = {
       ...mission("82", "Attack", "Outbound", owner, "7", "9", now + 30_000),
@@ -2598,16 +2600,17 @@ describe("Mission Control battle reports", () => {
     };
     const tree = MissionControlPage({
       ...missionControlProps(now, { outgoing: [outbound] }),
-      planetArchetypesByCoordinate: new Map([[missionPlanetCoordinateKey(targetCoords), canonicalTargetType]]),
+      planetArchetypesByCoordinate: new Map([[missionPlanetCoordinateKey(targetCoords), "frozen-ice"]]),
     });
 
     const planetImages = findElements(tree, "img").filter((node) => node.props?.["data-planet-art"] !== undefined);
     const arts = planetImages.map((node) => node.props?.["data-planet-art"]);
-    expect(arts).toContain("temperate-ocean");
-    expect(arts).toContain(canonicalTargetType);
+    const originType = planetTypeFromCoordinates(6, 9, 1);
+    expect(arts).toContain(originType);
+    expect(arts).toContain(targetType);
     const sources = planetImages.map((node) => node.props?.src);
-    expect(sources).toContain(planetImageForType(canonicalTargetType));
-    expect(sources).not.toContain(planetImageForType("metal-planetoid"));
+    expect(sources).toContain(planetImageForType(targetType));
+    expect(sources).not.toContain(planetImageForType("frozen-ice"));
   });
 
   test("returning Mission Control rows point the arrow home and keep the full timings expanded", () => {

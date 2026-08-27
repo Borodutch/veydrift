@@ -357,8 +357,8 @@ async function missionMeta(id) {
   const route = `${originName} -> ${targetName}`;
   const type = missionTypeLabel(mission.missionType);
   const status = missionStatusLabel(mission, report);
-  const originAsset = planetAssetFor(origin?.archetype);
-  const targetAsset = planetAssetFor(target?.archetype);
+  const originAsset = planetAssetFor(planetTypeForPlanet(origin));
+  const targetAsset = planetAssetFor(planetTypeForPlanet(target));
 
   return {
     kind: "mission",
@@ -378,7 +378,7 @@ async function planetMeta(route) {
   if (planet.occupiedBy?.planetId) {
     settled = await fetchJson(`/planets/${encodeURIComponent(planet.occupiedBy.planetId)}`).catch(() => null);
   }
-  const archetype = settled?.archetype ?? planet.archetype ?? planetTypeFromTemperature(settled?.temperature ?? planet.temperature);
+  const archetype = planetTypeFromCoordinates(route.galaxy, route.system, route.position);
   const name = (settled?.name || planet.name || "").trim() || `Planet ${route.galaxy}:${route.system}:${route.position}`;
   const type = formatPlanetType(archetype);
 
@@ -396,7 +396,7 @@ async function planetMeta(route) {
 async function moonMeta(route) {
   const system = await fetchJson(`/universe/galaxies/${route.galaxy}/systems/${route.system}`);
   const planet = system?.planets?.find((candidate) => Number(candidate.position) === route.position) ?? {};
-  const archetype = planet.archetype ?? planetTypeFromTemperature(planet.temperature);
+  const archetype = planetTypeFromCoordinates(route.galaxy, route.system, route.position);
   const parentName = (planet.name || "").trim() || `Planet ${route.galaxy}:${route.system}:${route.position}`;
   const moonName = (planet.moonName || "").trim() || "Moon";
   const type = formatPlanetType(archetype);
@@ -473,7 +473,7 @@ function fallbackMeta(route) {
       status: "PLANET",
       subtitle: `${route.galaxy}:${route.system}:${route.position}`,
       accent: "#67e8f9",
-      planetAssets: [planetAssets["frozen-ice"]],
+      planetAssets: [planetAssetFor(planetTypeFromCoordinates(route.galaxy, route.system, route.position))],
     };
   }
   if (route.kind === "moon") {
@@ -484,7 +484,7 @@ function fallbackMeta(route) {
       status: "MOON",
       subtitle: `${route.galaxy}:${route.system}:${route.position}`,
       accent: "#67e8f9",
-      planetAssets: [planetAssets["frozen-ice"]],
+      planetAssets: [planetAssetFor(planetTypeFromCoordinates(route.galaxy, route.system, route.position))],
     };
   }
   if (route.kind === "player") {
@@ -564,16 +564,26 @@ function planetAssetFor(archetype) {
   return planetAssets[archetype] ?? planetAssets["temperate-ocean"];
 }
 
-function planetTypeFromTemperature(temperature) {
-  const numeric = Number(temperature);
-  if (!Number.isFinite(numeric)) return "temperate-ocean";
-  if (numeric <= -35) return "frozen-ice";
-  if (numeric <= -10) return "cold-tundra";
-  if (numeric <= 10) return "temperate-ocean";
-  if (numeric <= 25) return "lush-temperate";
-  if (numeric <= 40) return "warm-terracotta";
-  if (numeric <= 55) return "hot-desert";
-  return "scorching-molten";
+function planetTypeForPlanet(planet) {
+  const galaxy = Number(planet?.galaxy);
+  const system = Number(planet?.system);
+  const position = Number(planet?.position);
+  if (Number.isInteger(galaxy) && Number.isInteger(system) && Number.isInteger(position)) {
+    return planetTypeFromCoordinates(galaxy, system, position);
+  }
+  return planet?.archetype ?? "temperate-ocean";
+}
+
+export function planetTypeFromCoordinates(galaxy, system, position) {
+  const seed = Number(galaxy) * 10_000 + Number(system) * 100 + Number(position) + 1;
+  const hot = ["scorching-molten", "hot-desert", "warm-terracotta"];
+  const temperate = ["temperate-ocean", "lush-temperate"];
+  const cool = ["cool-misty-blue", "cold-tundra"];
+  const cold = ["frozen-ice", "outer-cryo"];
+  const special = ["metal-planetoid", "crystal-violet", "deuterium-blue"];
+  const types = position <= 3 ? hot : position <= 6 ? temperate : position <= 9 ? cool : position <= 12 ? cold : special;
+  const random = Math.sin(seed * 9301 + 49297) * 233280;
+  return types[Math.floor((random - Math.floor(random)) * types.length)] ?? "temperate-ocean";
 }
 
 function formatPlanetType(type) {
