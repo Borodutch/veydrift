@@ -4387,6 +4387,20 @@ h4 {
   font-size: 0.88rem;
 }
 
+.pending-transaction-recovery-checking {
+  margin-top: 14px !important;
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: rgba(14, 116, 144, 0.2);
+  color: #a5f3fc !important;
+  font-size: 0.88rem;
+}
+
+.pending-transaction-recovery-checking:focus-visible {
+  outline: 3px solid rgba(103, 232, 249, 0.55);
+  outline-offset: 2px;
+}
+
 .pending-transaction-recovery-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;

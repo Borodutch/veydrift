@@ -18,6 +18,13 @@ describe("pending transaction recovery dialog", () => {
 
     expect(component).toContain('role="alertdialog"');
     expect(component).toContain('aria-modal="true"');
+    expect(component).toContain('role="status"');
+    expect(component).toContain("tabIndex={0}");
+    expect(component).toContain('document.addEventListener("focusin", containFocus, true)');
+    expect(component).toContain('document.addEventListener("keydown", trapTab, true)');
+    expect(component).toContain("sibling.inert = true");
+    expect(component).toContain('sibling.setAttribute("aria-hidden", "true")');
+    expect(component).toContain("if (previouslyFocused?.isConnected) previouslyFocused.focus()");
     expect(component).toContain("Keep waiting");
     expect(component).toContain("Discard saved record");
     expect(mainShell).toContain("<PendingTransactionRecoveryDialog");
