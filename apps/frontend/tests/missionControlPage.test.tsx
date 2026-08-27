@@ -678,7 +678,7 @@ describe("MissionControlPage", () => {
     expect(text).toContain("Resolve");
   });
 
-  test("explains maintenance instead of presenting overdue missions as normally resolving", () => {
+  test("keeps overdue mission resolution available despite legacy maintenance telemetry", () => {
     const page = missionControlPage({
       fleetVisibility: {
         wallet: "0x1111111111111111111111111111111111111111",
@@ -696,16 +696,13 @@ describe("MissionControlPage", () => {
         completedMissions: [],
         battleReports: [],
       },
-      canTransact: false,
+      canTransact: true,
       now: 1_770_000_700_000,
-      transactionUnavailableReason: "Game maintenance is active."
     });
 
-    expect(visibleText(page)).toContain(
-      "Game maintenance is active. Mission arrivals, returns, and game actions will resume automatically after maintenance."
-    );
-    expect(visibleAttributeValues(page, "data-mission-status")).toEqual(["Paused for maintenance"]);
-    expect(visibleAttributeValues(page, "data-mission-status-action")).toEqual([]);
+    expect(visibleText(page)).not.toContain("Game maintenance is active");
+    expect(visibleAttributeValues(page, "data-mission-status")).toEqual(["Resolving"]);
+    expect(visibleAttributeValues(page, "data-mission-status-action")).toEqual(["resolve"]);
   });
 
   test("stacks the overdue Resolve action below Resolving without changing disabled or terminal states", () => {

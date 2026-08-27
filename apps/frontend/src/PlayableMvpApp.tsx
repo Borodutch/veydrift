@@ -251,7 +251,6 @@ import {
   isUserRejected,
   switchVeydriftNetwork,
   veydriftChainForChainId,
-  GAME_MAINTENANCE_MESSAGE,
   WALLET_BOOTSTRAP_READ_TIMEOUT_MS,
   type VeydriftWalletChain,
   type ChainDefenseState,
@@ -8340,10 +8339,9 @@ export function PlayableMvpApp({
   const missionDetailShareUrl = typeof window === "undefined" || !missionDetailId ? "" : `${window.location.origin}/mission/${encodeURIComponent(missionDetailId)}`;
   const battleReportsShareUrl = typeof window === "undefined" ? "" : `${window.location.origin}${buildInspectPath({ kind: "page", page: "battle-reports" })}`;
   const gameContractTransactionInputsAvailable = Boolean(provider && account && gameContract);
-  const gameMaintenancePaused = displayFleetVisibility?.gameMaintenance?.paused === true;
   const gameTransactionInputsAvailable =
-    currentPlanetTransactionInputsAvailable(gameActionsAvailableForBody(activeBodyKind, gameContractTransactionInputsAvailable), activePlanetStateFresh) && !gameMaintenancePaused;
-  const missionTransactionInputsAvailable = currentPlanetTransactionInputsAvailable(gameContractTransactionInputsAvailable, activePlanetStateFresh) && !gameMaintenancePaused;
+    currentPlanetTransactionInputsAvailable(gameActionsAvailableForBody(activeBodyKind, gameContractTransactionInputsAvailable), activePlanetStateFresh);
+  const missionTransactionInputsAvailable = currentPlanetTransactionInputsAvailable(gameContractTransactionInputsAvailable, activePlanetStateFresh);
   const allianceTransactionInputsAvailable = Boolean(provider && account && allianceContract);
   const moonTransactionInputsAvailable = currentPlanetTransactionInputsAvailable(Boolean(provider && account && moonContract), activePlanetStateFresh);
   const chickenBurnTransactionInputsAvailable = currentPlanetTransactionInputsAvailable(Boolean(provider && account && chickenBurnConfig), activePlanetStateFresh);
@@ -8353,21 +8351,17 @@ export function PlayableMvpApp({
       writeTransactionState.label,
     inputsAvailable: gameTransactionInputsAvailable,
     transactionPending: transactionActionPending,
-    unavailableReason: gameMaintenancePaused
-      ? GAME_MAINTENANCE_MESSAGE
-      : gameContractTransactionInputsAvailable && !activePlanetStateFresh
-        ? "Loading the selected planet's latest state."
-        : "Wallet or game contract unavailable",
+    unavailableReason: gameContractTransactionInputsAvailable && !activePlanetStateFresh
+      ? "Loading the selected planet's latest state."
+      : "Wallet or game contract unavailable",
   });
   const missionTransactionUnavailableReason = transactionUnavailableReasonFor({
     activeActionLabel: pendingActionLabel(galaxyAction, missionAction) ?? writeTransactionState.label,
     inputsAvailable: missionTransactionInputsAvailable,
     transactionPending: transactionActionPending,
-    unavailableReason: gameMaintenancePaused
-      ? GAME_MAINTENANCE_MESSAGE
-      : gameContractTransactionInputsAvailable && !activePlanetStateFresh
-        ? "Loading the selected planet's latest state."
-        : "Wallet or game contract unavailable",
+    unavailableReason: gameContractTransactionInputsAvailable && !activePlanetStateFresh
+      ? "Loading the selected planet's latest state."
+      : "Wallet or game contract unavailable",
   });
   const allianceTransactionUnavailableReason = transactionUnavailableReasonFor({
     activeActionLabel: pendingActionLabel(allianceAction) ?? writeTransactionState.label,

@@ -291,11 +291,11 @@ describe("playable chain refresh", () => {
     expect(storeSource).toContain("readonly transactionGates = new Map<string, TransactionActionGate>()");
     expect(storeSource).toContain("executeWriteTransaction(this.transactionGateFor(walletScope), {");
     expect(source).toContain("const gameContractTransactionInputsAvailable = Boolean(provider && account && gameContract)");
-    expect(source).toContain("const gameMaintenancePaused = displayFleetVisibility?.gameMaintenance?.paused === true");
+    expect(source).not.toContain("gameMaintenancePaused");
     expect(source).toContain("gameActionsAvailableForBody(");
     expect(source).toContain("activePlanetStateFresh");
     expect(source).toContain("const missionTransactionInputsAvailable = currentPlanetTransactionInputsAvailable(");
-    expect(source).toContain("unavailableReason: gameMaintenancePaused\n      ? GAME_MAINTENANCE_MESSAGE");
+    expect(source).not.toContain("GAME_MAINTENANCE_MESSAGE");
     expect(source).toContain("const canSubmitGameTransaction = gameTransactionInputsAvailable && !transactionActionPending");
     expect(source).toContain("const canSubmitMissionTransaction = missionTransactionInputsAvailable && !transactionActionPending");
     expect(source).toContain("runCoordinatedWriteTransaction");

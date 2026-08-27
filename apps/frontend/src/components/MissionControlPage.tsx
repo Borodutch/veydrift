@@ -23,7 +23,6 @@ import {
   type ManagedPlanetResponse,
   type MissileAttackArchiveResponse,
   type StationedDefenderSummary,
-  GAME_MAINTENANCE_MESSAGE,
   decodeColonizationTargetId,
 } from "../walletFlow";
 import {
@@ -214,7 +213,6 @@ export function MissionControlPage({
   const incoming = fleetVisibility?.incoming ?? [];
   const outgoing = fleetVisibility?.outgoing ?? [];
   const returning = fleetVisibility?.returning ?? [];
-  const gamePaused = fleetVisibility?.gameMaintenance?.paused === true;
   // Current backends return a viewer-qualified cooperative projection: membership, attacks, and
   // defenses all come from one indexed revision. During a rolling deploy, legacy responses omit
   // allianceId/joinableDefenses and retain the former roster-intersection fallback.
@@ -366,11 +364,6 @@ export function MissionControlPage({
           {actionState.label}
         </Notice>
       )}
-      {gamePaused ? (
-        <Notice tone="info">
-          {GAME_MAINTENANCE_MESSAGE}
-        </Notice>
-      ) : null}
       {initialLoading ? (
         <MissionControlSkeleton />
       ) : (
@@ -393,7 +386,6 @@ export function MissionControlPage({
             allianceRows={filteredAllianceMissionRows}
             showAllianceTab={showAllianceTab}
             canTransact={canTransact}
-            gamePaused={gamePaused}
             hasAvailableMissionFleet={hasAvailableMissionFleet}
             lootByMissionId={lootByMissionId}
             lossesByMissionId={lossesByMissionId}
@@ -970,7 +962,6 @@ function ActiveMissionSection({
   allRows,
   allianceRows,
   canTransact,
-  gamePaused,
   hasAvailableMissionFleet,
   incomingRows,
   lootByMissionId,
@@ -997,7 +988,6 @@ function ActiveMissionSection({
   allRows: ActiveMissionRow[];
   allianceRows: ActiveMissionRow[];
   canTransact: boolean;
-  gamePaused: boolean;
   hasAvailableMissionFleet?: boolean | undefined;
   incomingRows: ActiveMissionRow[];
   lootByMissionId: ReadonlyMap<string, BattleReport["loot"]>;
@@ -1028,7 +1018,6 @@ function ActiveMissionSection({
   const sharedRowProps = {
     activePlanetId,
     canTransact,
-    gamePaused,
     hasAvailableMissionFleet,
     lootByMissionId,
     lossesByMissionId,
@@ -1336,7 +1325,6 @@ function missionFilterEmptyLabel(filters: MissionControlFilters): string {
 function ActiveMissionList({
   activePlanetId,
   canTransact,
-  gamePaused,
   hasAvailableMissionFleet,
   emptyLabel,
   initialPage = 0,
@@ -1355,7 +1343,6 @@ function ActiveMissionList({
 }: {
   activePlanetId?: string | undefined;
   canTransact: boolean;
-  gamePaused: boolean;
   hasAvailableMissionFleet?: boolean | undefined;
   emptyLabel: string;
   initialPage?: number | undefined;
@@ -1400,7 +1387,6 @@ function ActiveMissionList({
             <MissionRow
               activePlanetId={activePlanetId}
               canTransact={canTransact}
-              gamePaused={gamePaused}
               context={context}
               direction={direction}
               harvested={returnPhaseHarvestedResources(mission)}
@@ -1430,7 +1416,6 @@ function ActiveMissionList({
 function MissionRow({
   activePlanetId,
   canTransact,
-  gamePaused,
   context,
   direction,
   harvested,
@@ -1450,7 +1435,6 @@ function MissionRow({
 }: {
   activePlanetId?: string | undefined;
   canTransact: boolean;
-  gamePaused: boolean;
   context: ActiveMissionContext;
   direction: string;
   harvested?: FleetMissionSummary["returnCargo"] | undefined;
@@ -1476,7 +1460,7 @@ function MissionRow({
   const target = missionEndpoint(mission, "target", planetLookup);
   const noFleetReturned = isNoFleetReturned(mission);
   const directionSubtext = direction && !["Joinable attack", "Joinable defense"].includes(direction) ? direction : undefined;
-  const resolutionKind = gamePaused ? undefined : manualMissionResolutionKind(mission, now);
+  const resolutionKind = manualMissionResolutionKind(mission, now);
   // A hostile attack heading for the player's planet is the one row that must not hide its
   // counterplay behind a click: flag it red and start it expanded.
   const hostileInbound = missionDirection === "incoming" && isOffensiveMissionType(mission.missionType);
@@ -1527,7 +1511,7 @@ function MissionRow({
       missionId={mission.missionId}
       progressPercent={missionProgressPercent(mission, now)}
       routeSubtext={directionSubtext}
-      statusPill={missionStatusPill(mission, now, gamePaused)}
+      statusPill={missionStatusPill(mission, now)}
       statusAction={resolutionKind ? (
         <button
           className="inline-flex h-6 w-full items-center justify-center rounded border border-amber-300/30 bg-amber-300/10 px-2 text-[11px] font-semibold text-amber-100 transition hover:bg-amber-300/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300/50 disabled:cursor-not-allowed disabled:text-slate-500"
@@ -1729,19 +1713,12 @@ export function returnPhaseLosses(
 // Lifecycle state is backend-authoritative. The browser may render countdowns, but it must never
 // manufacture a mission transition from its own clock. `needsResolution` and `asOfNow` are computed
 // by the indexed backend; live chain events refetch those fields after the index transaction commits.
-export function missionStatusPill(mission: FleetMissionSummary, _now: number, gamePaused = false): MissionStatusPill {
+export function missionStatusPill(mission: FleetMissionSummary, _now: number): MissionStatusPill {
   if (mission.resolutionBlocker === "randomness_pending") {
     return { label: "Awaiting randomness", tone: "border-amber-300/25 bg-amber-300/10 text-amber-100" };
   }
   if (mission.missionType === "DefenseHold" && mission.defenseHoldOutcome === "Recalled") {
     return { label: "Recalled", tone: "border-amber-300/25 bg-amber-300/10 text-amber-100" };
-  }
-  if (
-    gamePaused
-    && (mission.needsResolution === true
-      || ((mission.status === "Returning" || mission.status === "Recalled") && mission.asOfNow?.returned === true))
-  ) {
-    return { label: "Paused for maintenance", tone: "border-amber-300/25 bg-amber-300/10 text-amber-100" };
   }
   if (mission.needsResolution === true) {
     const progress = mission.combatResolutionProgress;
