@@ -26,6 +26,7 @@ let devToolsTargetsUrl;
 let fixtureUrl;
 let inspectorFixtureUrl;
 let pageTargetId;
+let recoveryFixtureUrl;
 let server;
 
 const INSPECTOR_APP_READY_TIMEOUT_MS = 30_000;
@@ -238,6 +239,7 @@ before(async () => {
   }
   fixtureUrl = `http://127.0.0.1:${address.port}/tests/fixtures/planetPickerTouchBrowser.html`;
   inspectorFixtureUrl = `http://127.0.0.1:${address.port}/tests/fixtures/planetInspectorBrowser.html`;
+  recoveryFixtureUrl = `http://127.0.0.1:${address.port}/tests/fixtures/pendingTransactionRecoveryBrowser.html`;
 
   cdp = await launchChrome();
   await configurePageTarget(cdp);
@@ -400,6 +402,38 @@ async function loadInspectorFixture(route, width, options = {}) {
     })`);
     throw new Error(`${error.message}\nInspector diagnostics: ${JSON.stringify(diagnostics)}`);
   }
+}
+
+async function loadRecoveryFixture() {
+  await replacePageTarget();
+  await cdp.send("Emulation.setDeviceMetricsOverride", {
+    deviceScaleFactor: 1,
+    height: 720,
+    mobile: false,
+    width: 1024,
+  });
+  await cdp.send("Page.navigate", { url: recoveryFixtureUrl });
+  await waitForExpression("window.recoveryProofReady === true && document.querySelector('[role=alertdialog]') !== null");
+}
+
+async function pressTab(shiftKey = false) {
+  const modifiers = shiftKey ? 8 : 0;
+  await cdp.send("Input.dispatchKeyEvent", {
+    code: "Tab",
+    key: "Tab",
+    modifiers,
+    nativeVirtualKeyCode: 9,
+    type: "keyDown",
+    windowsVirtualKeyCode: 9,
+  });
+  await cdp.send("Input.dispatchKeyEvent", {
+    code: "Tab",
+    key: "Tab",
+    modifiers,
+    nativeVirtualKeyCode: 9,
+    type: "keyUp",
+    windowsVirtualKeyCode: 9,
+  });
 }
 
 async function clickExpression(expression) {
@@ -1299,3 +1333,76 @@ for (const kind of ["planet", "moon"]) {
     assert.doesNotMatch(text, /Stale|7,001|7,002|7,003/);
   });
 }
+
+test("transaction recovery modal traps forward and reverse keyboard focus and isolates background controls", async () => {
+  await loadRecoveryFixture();
+  await waitForExpression("document.activeElement?.classList.contains('pending-transaction-recovery-keep') === true");
+
+  const snapshot = await evaluate(`({
+    activeClass: document.activeElement?.className ?? null,
+    backgroundAriaHidden: document.querySelector('#background')?.getAttribute('aria-hidden'),
+    backgroundInert: document.querySelector('#background')?.inert ?? false,
+  })`);
+  assert.deepEqual(snapshot, {
+    activeClass: "pending-transaction-recovery-keep",
+    backgroundAriaHidden: "true",
+    backgroundInert: true,
+  });
+
+  await pressTab();
+  assert.equal(await evaluate("document.activeElement?.classList.contains('pending-transaction-recovery-discard')"), true);
+  await pressTab();
+  assert.equal(await evaluate("document.activeElement?.classList.contains('pending-transaction-recovery-keep')"), true);
+  await pressTab(true);
+  assert.equal(await evaluate("document.activeElement?.classList.contains('pending-transaction-recovery-discard')"), true);
+
+  await evaluate("document.querySelector('#background-action').focus()");
+  assert.equal(await evaluate("document.querySelector('[role=alertdialog]')?.contains(document.activeElement)"), true);
+
+  const backgroundCenter = await expressionCenter("document.querySelector('#background-action')");
+  await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", button: "left", clickCount: 1, x: backgroundCenter.x, y: backgroundCenter.y });
+  await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", button: "left", clickCount: 1, x: backgroundCenter.x, y: backgroundCenter.y });
+  assert.equal(await evaluate("window.recoveryProof.activations()"), 0);
+});
+
+test("transaction recovery checking state keeps a focusable in-dialog status target", async () => {
+  await loadRecoveryFixture();
+  await evaluate("window.recoveryProof.show('checking')");
+  await waitForExpression("document.activeElement?.classList.contains('pending-transaction-recovery-checking') === true");
+
+  const snapshot = await evaluate(`({
+    activeRole: document.activeElement?.getAttribute('role'),
+    buttonsDisabled: [...document.querySelectorAll('[data-pending-transaction-recovery] button')].every((button) => button.disabled),
+    statusTabIndex: document.querySelector('.pending-transaction-recovery-checking')?.tabIndex,
+  })`);
+  assert.deepEqual(snapshot, {
+    activeRole: "status",
+    buttonsDisabled: true,
+    statusTabIndex: 0,
+  });
+
+  await pressTab();
+  assert.equal(await evaluate("document.activeElement?.classList.contains('pending-transaction-recovery-checking')"), true);
+  await pressTab(true);
+  assert.equal(await evaluate("document.activeElement?.classList.contains('pending-transaction-recovery-checking')"), true);
+});
+
+test("transaction recovery close restores prior focus and background operation", async () => {
+  await loadRecoveryFixture();
+  await evaluate("window.recoveryProof.close()");
+  await waitForExpression("document.querySelector('[role=alertdialog]') === null");
+
+  const snapshot = await evaluate(`({
+    activeId: document.activeElement?.id ?? null,
+    backgroundAriaHidden: document.querySelector('#background')?.getAttribute('aria-hidden'),
+    backgroundInert: document.querySelector('#background')?.inert ?? false,
+  })`);
+  assert.deepEqual(snapshot, {
+    activeId: "background-action",
+    backgroundAriaHidden: null,
+    backgroundInert: false,
+  });
+
+  await clickExpressionWithTrustedPointer("document.querySelector('#background-action')");
+  assert.equal(await evaluate("window.recoveryProof.activations()"), 1);
+});

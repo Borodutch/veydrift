@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks"
 import { ChevronDown, Coins, Copy, FileText, Gift, Link, RefreshCw, Share2, TicketCheck, UserRound } from "lucide-preact";
 import { ComingSoonApp } from "./ComingSoonApp";
 import { TelegramIcon } from "./components/TelegramIcon";
+import { PendingTransactionRecoveryDialog } from "./components/PendingTransactionRecoveryDialog";
 import { PlayableMvpApp } from "./PlayableMvpApp";
 import { RankingCommanderLink, RankingsPagination, RankingsTable } from "./components/RankingsPage";
 import { Skeleton, SkeletonRegion } from "./components/Skeleton";
@@ -68,7 +69,7 @@ import {
   type WalletProviderSource,
   type WalletSettlementResponse,
 } from "./walletFlow";
-import { backendDataStoreFor, retainBackendDataStore } from "./backendDataStore";
+import { backendDataStoreFor, retainBackendDataStore, type PendingTransactionRecoveryDecision } from "./backendDataStore";
 import type { WriteTransactionState } from "./transactionActionGate";
 import { useBackendDataQuery } from "./useBackendDataQuery";
 import { useBackendDataSnapshot } from "./useBackendDataSnapshot";
@@ -380,6 +381,11 @@ export function FirstPlanetSettlementApp() {
     referralData && account ? referralData.writeTransactionKey(undefined, account) : undefined,
   );
   const writeTransactionState = writeTransactionSnapshot?.data;
+  const pendingTransactionRecoverySnapshot = useBackendDataSnapshot<PendingTransactionRecoveryDecision>(
+    referralData,
+    referralData && account ? referralData.pendingTransactionRecoveryKey(account) : undefined,
+  );
+  const pendingTransactionRecovery = pendingTransactionRecoverySnapshot?.data;
   useEffect(() => {
     if (!writeTransactionState?.key) return;
     const pending = !["idle", "success", "error"].includes(writeTransactionState.phase);
@@ -1512,82 +1518,95 @@ export function FirstPlanetSettlementApp() {
   const mode = preSettlementMode(wallet, planet);
 
   return (
-    <ComingSoonApp
-      heroViewSignal={planet.kind === "success" ? "open" : undefined}
-      hero={
-        invalidPaidAllianceInvite ? (
-          <StateMessage title="Invalid alliance invite" body="This link is incomplete or does not match its private invite key. Ask the alliance member for a fresh invite link." tone="warning" />
-        ) : (
-          <>
-            {paidAllianceInviteSecret ? (
-              paidAllianceInviteValidation.status === "resolved" && !paidAllianceInviteValidation.resolution.valid ? (
-                <PaidAllianceInviteUnavailable resolution={paidAllianceInviteValidation.resolution} />
-              ) : paidAllianceInviteValidation.status === "error" ? (
-                <StateMessage
-                  title="Invitation unavailable"
-                  body={`Could not verify this alliance invitation: ${paidAllianceInviteValidation.message}`}
-                  tone="warning"
-                  action={
-                    <PrimaryButton
-                      onClick={() => {
-                        void refreshPaidAllianceInviteValidation();
-                      }}
-                    >
-                      Retry invitation
-                    </PrimaryButton>
-                  }
-                />
-              ) : paidAllianceInviteValidation.status === "idle" || paidAllianceInviteValidation.status === "loading" ? (
-                <StateMessage title="Checking invitation" body="Verifying this private alliance invitation before connecting your wallet." tone="scanning" />
-              ) : (
-                <>
-                  <AllianceInviteWelcome />
-                  <FlowBody
-                    mode={mode}
-                    referralCodeInput={referralCodeInput}
-                    referralValidation={referralValidation}
-                    prepaidAllianceInvite
-                    onConnect={connectWallet}
-                    onSettle={settlePlanet}
-                    onSwitchNetwork={switchNetwork}
-                    planet={planet}
-                    settlementFunding={settlementFunding}
-                    settlementReady={settlementContractConfigured(settlementConfig)}
-                    wallet={wallet}
-                    networkSwitchPending={networkSwitchPending}
-                    miniAppMode={miniAppMode}
-                    walletRecoveryDevice={walletRecoveryDeviceForNavigator()}
-                    requiredChain={requiredChain}
+    <>
+      <ComingSoonApp
+        heroViewSignal={planet.kind === "success" ? "open" : undefined}
+        hero={
+          invalidPaidAllianceInvite ? (
+            <StateMessage title="Invalid alliance invite" body="This link is incomplete or does not match its private invite key. Ask the alliance member for a fresh invite link." tone="warning" />
+          ) : (
+            <>
+              {paidAllianceInviteSecret ? (
+                paidAllianceInviteValidation.status === "resolved" && !paidAllianceInviteValidation.resolution.valid ? (
+                  <PaidAllianceInviteUnavailable resolution={paidAllianceInviteValidation.resolution} />
+                ) : paidAllianceInviteValidation.status === "error" ? (
+                  <StateMessage
+                    title="Invitation unavailable"
+                    body={`Could not verify this alliance invitation: ${paidAllianceInviteValidation.message}`}
+                    tone="warning"
+                    action={
+                      <PrimaryButton
+                        onClick={() => {
+                          void refreshPaidAllianceInviteValidation();
+                        }}
+                      >
+                        Retry invitation
+                      </PrimaryButton>
+                    }
                   />
-                </>
-              )
-            ) : (
-              <ReferralCodeField disabled={planet.kind === "pending"} onChange={setReferralCodeInput} validation={referralValidation} value={referralCodeInput} />
-            )}
-            {!paidAllianceInviteSecret ? (
-              <FlowBody
-                mode={mode}
-                referralCodeInput={referralCodeInput}
-                referralValidation={referralValidation}
-                prepaidAllianceInvite={false}
-                onConnect={connectWallet}
-                onSettle={settlePlanet}
-                onSwitchNetwork={switchNetwork}
-                planet={planet}
-                settlementFunding={settlementFunding}
-                settlementReady={settlementContractConfigured(settlementConfig)}
-                wallet={wallet}
-                networkSwitchPending={networkSwitchPending}
-                miniAppMode={miniAppMode}
-                walletRecoveryDevice={walletRecoveryDeviceForNavigator()}
-                requiredChain={requiredChain}
-              />
-            ) : null}
-          </>
-        )
-      }
-      heroSupport={<SettlementSupportLinks />}
-    />
+                ) : paidAllianceInviteValidation.status === "idle" || paidAllianceInviteValidation.status === "loading" ? (
+                  <StateMessage title="Checking invitation" body="Verifying this private alliance invitation before connecting your wallet." tone="scanning" />
+                ) : (
+                  <>
+                    <AllianceInviteWelcome />
+                    <FlowBody
+                      mode={mode}
+                      referralCodeInput={referralCodeInput}
+                      referralValidation={referralValidation}
+                      prepaidAllianceInvite
+                      onConnect={connectWallet}
+                      onSettle={settlePlanet}
+                      onSwitchNetwork={switchNetwork}
+                      planet={planet}
+                      settlementFunding={settlementFunding}
+                      settlementReady={settlementContractConfigured(settlementConfig)}
+                      wallet={wallet}
+                      networkSwitchPending={networkSwitchPending}
+                      miniAppMode={miniAppMode}
+                      walletRecoveryDevice={walletRecoveryDeviceForNavigator()}
+                      requiredChain={requiredChain}
+                    />
+                  </>
+                )
+              ) : (
+                <ReferralCodeField disabled={planet.kind === "pending"} onChange={setReferralCodeInput} validation={referralValidation} value={referralCodeInput} />
+              )}
+              {!paidAllianceInviteSecret ? (
+                <FlowBody
+                  mode={mode}
+                  referralCodeInput={referralCodeInput}
+                  referralValidation={referralValidation}
+                  prepaidAllianceInvite={false}
+                  onConnect={connectWallet}
+                  onSettle={settlePlanet}
+                  onSwitchNetwork={switchNetwork}
+                  planet={planet}
+                  settlementFunding={settlementFunding}
+                  settlementReady={settlementContractConfigured(settlementConfig)}
+                  wallet={wallet}
+                  networkSwitchPending={networkSwitchPending}
+                  miniAppMode={miniAppMode}
+                  walletRecoveryDevice={walletRecoveryDeviceForNavigator()}
+                  requiredChain={requiredChain}
+                />
+              ) : null}
+            </>
+          )
+        }
+        heroSupport={<SettlementSupportLinks />}
+      />
+      {referralData && account && pendingTransactionRecovery ? (
+        <PendingTransactionRecoveryDialog
+          decision={pendingTransactionRecovery}
+          onDiscard={() => {
+            void referralData.discardPendingTransactionRecovery(account, pendingTransactionRecovery.transactionHash);
+          }}
+          onKeepWaiting={() => {
+            void referralData.keepPendingTransactionRecovery(account, pendingTransactionRecovery.transactionHash);
+          }}
+        />
+      ) : null}
+    </>
   );
 }
 

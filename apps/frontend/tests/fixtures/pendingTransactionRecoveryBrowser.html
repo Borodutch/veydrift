@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Pending transaction recovery accessibility proof</title>
+  </head>
+  <body>
+    <main id="background">
+      <button id="background-action" type="button">Background action</button>
+    </main>
+    <div id="modal-root"></div>
+    <script type="module">
+      import { h, render } from "preact";
+      import { PendingTransactionRecoveryDialog } from "/src/components/PendingTransactionRecoveryDialog.tsx";
+      import "/src/styles.css";
+
+      const backgroundAction = document.querySelector("#background-action");
+      const modalRoot = document.querySelector("#modal-root");
+      let activations = 0;
+      let phase = "decision";
+
+      backgroundAction.addEventListener("click", () => {
+        activations += 1;
+      });
+
+      const decision = () => ({
+        actionId: "building:start:metalStorage",
+        chainId: "0x2105",
+        phase,
+        submittedAt: Date.now() - 300_000,
+        transactionHash: `0x${"ab".repeat(32)}`,
+        wallet: "0x1111111111111111111111111111111111111111",
+      });
+
+      const close = () => render(null, modalRoot);
+      const show = (nextPhase = "decision") => {
+        phase = nextPhase;
+        render(h(PendingTransactionRecoveryDialog, {
+          decision: decision(),
+          onDiscard: () => show("checking"),
+          onKeepWaiting: close,
+        }), modalRoot);
+      };
+
+      backgroundAction.focus();
+      show();
+      window.recoveryProof = {
+        activations: () => activations,
+        close,
+        show,
+      };
+      window.recoveryProofReady = true;
+    </script>
+  </body>
+</html>
