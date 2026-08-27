@@ -601,8 +601,6 @@ export type GameMaintenanceState = {
   pauseAgeSeconds: number;
 };
 
-export const GAME_MAINTENANCE_MESSAGE = "Game maintenance is active. Mission arrivals, returns, and game actions will resume automatically after maintenance.";
-
 export type WalletOverviewSnapshotResponse = {
   fleetVisibility: FleetMissionVisibilityResponse;
   planetsResponse: WalletPlanetsResponse;

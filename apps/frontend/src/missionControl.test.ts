@@ -3030,6 +3030,32 @@ describe("Ready to resolve is gated on randomness for combat missions (VEY-KANEO
     expect(missionReport(transport, now, planetLookup).outcome).toBe("en route");
     expect(missionReport({ ...transport, needsResolution: true }, now, planetLookup).outcome).toBe("Ready to resolve.");
   });
+
+  test("keeps mission actions available when legacy maintenance telemetry says paused", () => {
+    const dueAttack = {
+      ...mission("94", "Attack", "Outbound", undefined, "7", "9", now - 4 * 60_000),
+      needsResolution: true,
+    };
+    const baseProps = missionControlProps(now, { outgoing: [dueAttack] });
+    const text = collectText(MissionControlPage({
+      ...baseProps,
+      fleetVisibility: {
+        ...baseProps.fleetVisibility!,
+        gameMaintenance: {
+          paused: true,
+          observedAt: new Date(now).toISOString(),
+          pausedSince: new Date(now - 60_000).toISOString(),
+          pauseAgeSeconds: 60,
+        },
+      },
+    })).join(" ");
+
+    expect(text).not.toContain("Game maintenance is active");
+    expect(text).not.toContain("Paused for maintenance");
+    expect(text).toContain("Resolving");
+    expect(text).toContain("Resolve");
+    expect(missionControlSource).not.toContain("GAME_MAINTENANCE_MESSAGE");
+  });
 });
 
 describe("Harvest mission reports (VEY-KANEO-538)", () => {

@@ -14,7 +14,6 @@ import {VeydriftShipProductionModule} from "../src/VeydriftShipProductionModule.
 import {VeydriftDefenseHoldModule} from "../src/VeydriftDefenseHoldModule.sol";
 import {VeydriftFirstPlanetSettlementModule} from "../src/VeydriftFirstPlanetSettlementModule.sol";
 import {VeydriftGame} from "../src/VeydriftGame.sol";
-import {VeydriftGameStorage} from "../src/VeydriftGameStorage.sol";
 import {VeydriftGameplayModule} from "../src/VeydriftGameplayModule.sol";
 import {
     IVeydriftMoonGame,
@@ -23,33 +22,35 @@ import {
 } from "../src/VeydriftMoonSystem.sol";
 import {VeydriftPlanetManagementModule} from "../src/VeydriftPlanetManagementModule.sol";
 import {VeydriftStateMigrationModule} from "../src/VeydriftStateMigrationModule.sol";
+import {VeydriftLiveUpgradePolicy} from "../src/libraries/VeydriftLiveUpgradePolicy.sol";
 import {Ship} from "../src/libraries/VeydriftTypes.sol";
 
-/// @notice Live-fork verification of the VeydriftGame proxy upgrade (VEY-468).
-/// @dev Runs ONLY when BASE_SEPOLIA_RPC is set, so it is inert in the default `forge test` suite:
-///        BASE_SEPOLIA_RPC=https://sepolia.base.org forge test --match-contract UpgradeGameFork -vv
-///      It forks live Base Sepolia, performs the exact UpgradeGame.s.sol upgrade as the real
-///      ProxyAdmin owner (via prank — no private key needed), and asserts the proxy implementation
-///      slot flips while owner + game storage (a real planet's ship count) are preserved.
+/// @notice Live-fork verification of the VeydriftGame proxy upgrade.
+/// @dev Runs ONLY when BASE_MAINNET_RPC is set, so it is inert in the default `forge test` suite:
+///        BASE_MAINNET_RPC=<base-mainnet-rpc> forge test --match-contract UpgradeGameFork -vv
+///      It forks live Base mainnet after live-migration prerequisites are satisfied, performs the
+///      exact empty-calldata UpgradeGame.s.sol proxy switch as the real ProxyAdmin owner (via prank
+///      — no private key needed), and asserts gameplay remains live while owner + game storage (a
+///      real planet's ship count) are preserved.
 contract UpgradeGameForkTest is Test {
     // EIP-1967 implementation slot.
     bytes32 internal constant IMPL_SLOT =
         0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
 
-    address internal constant PROXY = 0xf12f31734868F1089d9d6514D7F19a31Ec5e00e2;
-    address internal constant PROXY_ADMIN = 0xef1570EC118de0c3dC2219C1ee3B731b46f6F54B;
-    address internal constant PROXY_ADMIN_OWNER = 0xC2142A4918754abe5975ecD486A66DfeBA39A419;
+    address internal constant PROXY = 0xf397910F005151b09644228573a4353818D3755d;
+    address internal constant PROXY_ADMIN = 0xc81609E77b5ea79d0CdA9794b75B65D567535cb9;
+    address internal constant PROXY_ADMIN_OWNER = 0x4755D28078442cb7E7Ac2409868fb3Ff1B9fA73B;
     address payable internal constant MOON_PROXY =
-        payable(0xe65eF3415fA875666AEDF033616c43e61F368c96);
+        payable(0x4935f1E0024F1Ea07877a583F89A51BF3d91Cf5C);
 
     function _addrFromSlot(bytes32 slot) private view returns (address) {
         return address(uint160(uint256(vm.load(PROXY, slot))));
     }
 
     function testForkUpgradePreservesStateAndFlipsImplementation() external {
-        string memory rpc = vm.envOr("BASE_SEPOLIA_RPC", string(""));
+        string memory rpc = vm.envOr("BASE_MAINNET_RPC", string(""));
         if (bytes(rpc).length == 0) {
-            emit log("BASE_SEPOLIA_RPC unset - skipping live fork upgrade verification");
+            emit log("BASE_MAINNET_RPC unset - skipping live fork upgrade verification");
             return;
         }
         vm.createSelectFork(rpc);
@@ -60,8 +61,12 @@ contract UpgradeGameForkTest is Test {
         address oldImpl = _addrFromSlot(IMPL_SLOT);
         address ownerBefore = VeydriftGame(PROXY).owner();
         uint32 shipBefore = VeydriftGame(PROXY).shipCount(1, Ship.SmallCargo);
+        assertFalse(VeydriftGame(PROXY).gamePaused(), "game unexpectedly paused before upgrade");
 
         _upgradeMoonSystem();
+        // Exercise the same live/migration preflight as UpgradeGame.s.sol. The fork must fail
+        // rather than silently perform a proxy switch when any pause-only migration is pending.
+        VeydriftLiveUpgradePolicy.requireGameUpgradeReady(PROXY);
 
         // Deploy the fresh module set + implementation exactly like UpgradeGame.s.sol.
         VeydriftCombatRapidfire rapidfire = new VeydriftCombatRapidfire();
@@ -91,11 +96,7 @@ contract UpgradeGameForkTest is Test {
         // Perform the upgrade as the real ProxyAdmin owner.
         vm.prank(PROXY_ADMIN_OWNER);
         ProxyAdmin(PROXY_ADMIN)
-            .upgradeAndCall(
-                ITransparentUpgradeableProxy(PROXY),
-                address(newImpl),
-                abi.encodeCall(VeydriftGame.initializeMoonAttackParity, ())
-            );
+            .upgradeAndCall(ITransparentUpgradeableProxy(PROXY), address(newImpl), "");
 
         // Implementation flipped to the new code.
         address implAfter = _addrFromSlot(IMPL_SLOT);
@@ -105,9 +106,7 @@ contract UpgradeGameForkTest is Test {
         // Proxy storage (owner + a real planet's ship count) survives the upgrade unchanged.
         assertEq(VeydriftGame(PROXY).owner(), ownerBefore, "owner not preserved");
         assertEq(VeydriftGame(PROXY).shipCount(1, Ship.SmallCargo), shipBefore, "ship count drift");
-
-        _assertMoonAttackMissionNotStuck(8328);
-        _assertMoonAttackMissionNotStuck(8336);
+        assertFalse(VeydriftGame(PROXY).gamePaused(), "game paused by upgrade");
     }
 
     function _upgradeMoonSystem() private {
@@ -119,20 +118,5 @@ contract UpgradeGameForkTest is Test {
 
         vm.prank(owner);
         proxied.upgradeToAndCall(implementation, "");
-    }
-
-    function _assertMoonAttackMissionNotStuck(uint256 missionId) private {
-        (VeydriftGameStorage.FleetMissionStatus statusBefore,,,,,,,,,,) =
-            VeydriftGame(PROXY).fleetMission(missionId);
-        if (statusBefore == VeydriftGameStorage.FleetMissionStatus.Outbound) {
-            VeydriftGame(PROXY).resolveFleetMission(missionId);
-        }
-
-        (VeydriftGameStorage.FleetMissionStatus statusAfter,,,,,,,,,,) =
-            VeydriftGame(PROXY).fleetMission(missionId);
-        assertTrue(
-            statusAfter != VeydriftGameStorage.FleetMissionStatus.Outbound,
-            "moon attack mission still stuck outbound after upgrade"
-        );
     }
 }
