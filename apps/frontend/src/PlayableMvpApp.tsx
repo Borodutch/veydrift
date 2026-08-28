@@ -302,7 +302,7 @@ type FetchWalletOverviewSnapshot = typeof import("./walletFlow").fetchWalletOver
 type FetchWalletPlanets = typeof import("./walletFlow").fetchWalletPlanets;
 type FetchFleetMissionVisibility = typeof import("./walletFlow").fetchFleetMissionVisibility;
 type FetchWalletSettlement = typeof import("./walletFlow").fetchWalletSettlement;
-import { transactionAwaitingWalletLabel, transactionSyncingLabel, type WriteTransactionState } from "./transactionActionGate";
+import { transactionAwaitingWalletLabel, transactionSyncingLabel, type WriteTransactionOutcome, type WriteTransactionState } from "./transactionActionGate";
 import { timestampToMs } from "./timestampFormat";
 import { scheduleActionNoticeAutoDismiss, type ActionStateSetter, type AutoDismissableActionState } from "./actionNoticeAutoDismiss";
 
@@ -3280,7 +3280,9 @@ export function PlayableMvpApp({
   const writeTransactionState = writeTransactionSnapshot?.data ?? {
     phase: "idle" as const,
   };
-  const transactionActionPending = writeTransactionState.phase !== "idle" && writeTransactionState.phase !== "success" && writeTransactionState.phase !== "error";
+  const transactionActionPending = writeTransactionState.outcome === "submitted"
+    || writeTransactionState.outcome === "confirmed"
+    || (writeTransactionState.phase !== "idle" && writeTransactionState.phase !== "success" && writeTransactionState.phase !== "error");
   const [page, setPage] = useState<Page>(() => initialInspectPageState().page);
   // Mission Control used to fetch and mount every All/Incoming archive before the default My
   // missions view could become interactive. Keep the persisted deep-link selection working while
@@ -5824,8 +5826,7 @@ export function PlayableMvpApp({
             }
           | undefined;
       } = {},
-    ): Promise<boolean> => {
-      let completed = false;
+    ): Promise<WriteTransactionOutcome> => {
       const planetSwitchRequestId = planetSwitchGate.current;
       setGalaxyAction({
         status: "pending",
@@ -5844,7 +5845,7 @@ export function PlayableMvpApp({
             backendData!.shipyard(account, options.validateShipInventory.originPlanetId),
             options.validateShipInventory.originIsMoon ? backendData!.moon(account, options.validateShipInventory.originPlanetId) : Promise.resolve(null),
           ]);
-          if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return false;
+          if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return { outcome: "not-submitted" };
           setShipyardState(freshShipyardState);
           if (freshMoonState) setMoonState(freshMoonState);
           const freshOriginInventoryState = options.validateShipInventory.originIsMoon
@@ -5877,7 +5878,7 @@ export function PlayableMvpApp({
               priority: "transaction",
             }),
           );
-          if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return false;
+          if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return { outcome: "not-submitted" };
         }
         const affectedPlanetIds = [...new Set([activePlanetId, ...(options.affectedPlanetIds ?? [])])].filter((planetId): planetId is string => Boolean(planetId));
         const refreshTags = [
@@ -5907,10 +5908,15 @@ export function PlayableMvpApp({
           errorLabel: (error) => galaxyMissionActionErrorLabel(label, error),
           onStateChange: (state) => {
             if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
-            if (state.phase === "success")
+            if (state.outcome === "indexed" || state.phase === "success")
               setGalaxyAction({
                 status: "success",
                 label: `${label} confirmed.`,
+              });
+            else if (state.outcome === "submitted" || state.outcome === "confirmed")
+              setGalaxyAction({
+                status: "pending",
+                label: state.label ?? transactionSyncingLabel(label),
               });
             else if (state.phase === "error")
               setGalaxyAction({
@@ -5924,16 +5930,16 @@ export function PlayableMvpApp({
               });
           },
         });
-        completed = result;
+        return result;
       } catch (error) {
         console.error(error);
-        if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return false;
+        if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return { error, outcome: "not-submitted" };
         setGalaxyAction({
           status: "error",
           label: galaxyMissionActionErrorLabel(label, error),
         });
+        return { error, outcome: "not-submitted" };
       }
-      return completed;
     },
     [account, activePlanetId, apiBaseUrl, backendData, loadMissionLaunchSnapshot, refreshDefenseState, refreshInfrastructureState, refreshOnChainState, refreshShipyardState, runCoordinatedWriteTransaction, setMoonState],
   );
@@ -6040,7 +6046,7 @@ export function PlayableMvpApp({
             setBatchSupplyError("Supply inventory changed while this plan was open. The sources were refreshed; review the updated Max amounts before confirming again.");
             return;
           }
-          const completed = await runGalaxyTransaction(
+          const outcome = await runGalaxyTransaction(
             `Supply ${refreshedPlan.orders.length} transport${refreshedPlan.orders.length === 1 ? "" : "s"}`,
             () =>
               sendLaunchTransportBatchTransaction(provider, account, gameContract, {
@@ -6065,8 +6071,7 @@ export function PlayableMvpApp({
               syncMissionLaunch: true,
             },
           );
-          if (completed) setBatchSupplyTarget(null);
-          else setBatchSupplyError("The simulated Supply transaction was not sent. Check the wallet error and try again.");
+          if (outcome.outcome === "indexed") setBatchSupplyTarget(null);
         } catch (error) {
           setBatchSupplyError(error instanceof Error ? error.message : "Could not refresh Supply sources before sending the transaction.");
         } finally {
@@ -7536,9 +7541,9 @@ export function PlayableMvpApp({
         setPendingJoinAttack(null);
         setPendingAcsDefend(null);
       };
-      const closeMissionCreationWhenComplete = (transaction: Promise<boolean>) => {
+      const closeMissionCreationWhenComplete = (transaction: Promise<WriteTransactionOutcome>) => {
         void (async () => {
-          if (await transaction) closeMissionCreation();
+          if ((await transaction).outcome === "indexed") closeMissionCreation();
         })();
       };
 
@@ -7966,9 +7971,9 @@ export function PlayableMvpApp({
         return;
       }
 
-      const closeAcsDefendWhenComplete = (transaction: Promise<boolean>) => {
+      const closeAcsDefendWhenComplete = (transaction: Promise<WriteTransactionOutcome>) => {
         void (async () => {
-          if (await transaction) setPendingAcsDefend(null);
+          if ((await transaction).outcome === "indexed") setPendingAcsDefend(null);
         })();
       };
       const driveLevels = driveLevelsFromTechnologyLevels(shipyardState?.technologyLevels);
@@ -8083,7 +8088,7 @@ export function PlayableMvpApp({
                 targetPlanetId: pending.targetPlanetId,
                 ships: draft.ships,
               });
-        const completed = await runGalaxyTransaction("Group attack join", sendJoin, {
+        const outcome = await runGalaxyTransaction("Group attack join", sendJoin, {
           expectedMissionLaunch: (txHash) =>
             expectedMissionLaunchForDraft(txHash, {
               account,
@@ -8113,7 +8118,7 @@ export function PlayableMvpApp({
             ships: draft.ships,
           },
         });
-        if (completed) closeJoinAttack();
+        if (outcome.outcome === "indexed") closeJoinAttack();
       })();
     },
     [account, activePlanetId, gameContract, moonAttackParityEnabled, pendingJoinAttack, pendingJoinAttackTarget, provider, runGalaxyTransaction, selectedManagedPlanet, shipyardState?.technologyLevels],
@@ -9126,6 +9131,7 @@ export function PlayableMvpApp({
           onConfirm={handleConfirmBatchSupply}
           sources={batchSupplySources}
           target={batchSupplyTarget}
+          transactionState={writeTransactionState.key?.startsWith("galaxy:Supply ") ? writeTransactionState : undefined}
         />
       ) : null}
     </div>

@@ -315,25 +315,25 @@ describe("playable chain refresh", () => {
     const source = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.url)).text();
 
     expect(source).toContain("const runGalaxyTransaction = useCallback(");
-    expect(source).toContain("let completed = false;");
+    expect(source).toContain("): Promise<WriteTransactionOutcome> => {");
     expect(source).not.toContain("confirm: confirmSubmittedTransaction");
     const storeSource = await Bun.file(new URL("../src/backendDataStore.ts", import.meta.url)).text();
     expect(storeSource).toContain("waitForBackendTransactionStatus(");
     expect(storeSource).not.toContain("waitForMissionLaunchState(");
     expect(storeSource).toContain("missionLaunch:");
     expect(storeSource).toContain("this.globalActiveMissions()");
-    expect(source).toContain('if (state.phase === "success")');
+    expect(source).toContain('if (state.outcome === "indexed" || state.phase === "success")');
     expect(source).toContain("label: `${label} confirmed.`");
-    expect(source).toContain("completed = result;");
-    expect(source).toContain("const closeMissionCreationWhenComplete = (transaction: Promise<boolean>) => {");
-    expect(source).toContain("if (await transaction) closeMissionCreation();");
+    expect(source).toContain("return result;");
+    expect(source).toContain("const closeMissionCreationWhenComplete = (transaction: Promise<WriteTransactionOutcome>) => {");
+    expect(source).toContain("if ((await transaction).outcome === \"indexed\") closeMissionCreation();");
     expect(source).toContain('"Colony mission"');
     expect(source).toContain('"Missile attack"');
     expect(source).toContain('"Stationed defense"');
     expect(source).toContain("closeMissionCreationWhenComplete(runMission());");
-    expect(source).toContain("const closeAcsDefendWhenComplete = (transaction: Promise<boolean>) => {");
-    expect(source).toContain("if (await transaction) setPendingAcsDefend(null);");
-    expect(source).toContain("if (completed) closeJoinAttack();");
+    expect(source).toContain("const closeAcsDefendWhenComplete = (transaction: Promise<WriteTransactionOutcome>) => {");
+    expect(source).toContain("if ((await transaction).outcome === \"indexed\") setPendingAcsDefend(null);");
+    expect(source).toContain("if (outcome.outcome === \"indexed\") closeJoinAttack();");
     expect(source.match(/actionPendingLabel=\{galaxyAction\.status === "pending" \? galaxyAction\.label : undefined\}/g) ?? [])
       .toHaveLength(3);
     expect(source).not.toContain("setPendingGalaxyMission(null);\n    setPendingJoinAttack(null);\n    setPendingAcsDefend(null);\n    if (action.kind === \"attack\"");

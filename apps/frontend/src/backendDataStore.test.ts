@@ -566,7 +566,7 @@ describe("BackendDataStore", () => {
           send: async () => "0xabc",
           indexing: store.indexing.refresh([]),
         }),
-      ).resolves.toBe(true);
+      ).resolves.toMatchObject({ outcome: "indexed" });
     } finally {
       unsubscribe();
     }
@@ -601,7 +601,7 @@ describe("BackendDataStore", () => {
       key: "building:start:7",
       label: "Building upgrade",
       send: async () => `0x${"ab".repeat(32)}`,
-    })).resolves.toBe(true);
+    })).resolves.toMatchObject({ outcome: "indexed" });
 
     expect(reads).toBe(3);
     expect(store.snapshot<WriteTransactionState>(store.writeTransactionKey("building:start:7", "0xabc"))?.data).toMatchObject({
@@ -636,8 +636,9 @@ describe("BackendDataStore", () => {
         key: "moon:build:7",
         label: "Moon construction",
         send: async () => transactionHash,
-      })).resolves.toBe(false);
+      })).resolves.toMatchObject({ outcome: "submitted", txHash: transactionHash });
       expect(first.snapshot<WriteTransactionState>(first.writeTransactionKey("moon:build:7", "0xabc"))?.data).toMatchObject({
+        outcome: "submitted",
         phase: "error",
         stage: "timed-out",
         txHash: transactionHash,
@@ -716,7 +717,7 @@ describe("BackendDataStore", () => {
           submissions += 1;
           return `0x${"ef".repeat(32)}`;
         },
-      })).resolves.toBe(false);
+      })).resolves.toMatchObject({ outcome: "indexed", txHash: transactionHash });
 
       expect(submissions).toBe(0);
       expect(values.size).toBe(0);
@@ -772,7 +773,7 @@ describe("BackendDataStore", () => {
           submissions += 1;
           return `0x${"ad".repeat(32)}`;
         },
-      })).resolves.toBe(false);
+      })).resolves.toMatchObject({ outcome: "not-submitted", txHash: transactionHash });
 
       expect(statusReads).toBe(0);
       expect(submissions).toBe(0);
@@ -858,7 +859,7 @@ describe("BackendDataStore", () => {
         transactionHash: staleHash,
       });
 
-      await expect(store.runWriteTransaction(descriptor)).resolves.toBe(false);
+      await expect(store.runWriteTransaction(descriptor)).resolves.toMatchObject({ outcome: "submitted", txHash: staleHash });
       expect(submissions).toBe(0);
       expect(staleStatusReads).toBe(0);
       expect(values.get("veydrift:pending-transactions:https://api.test")).toContain(staleHash);
@@ -1010,7 +1011,7 @@ describe("BackendDataStore", () => {
         receiptBlock: "25",
         transactionHash: staleHash,
       });
-      await expect(Promise.all([keeping, blockedClick])).resolves.toEqual([undefined, false]);
+      await expect(Promise.all([keeping, blockedClick])).resolves.toMatchObject([undefined, { outcome: "indexed", txHash: staleHash }]);
       expect(submissions).toBe(0);
       expect(values.size).toBe(0);
     } finally {
@@ -1107,7 +1108,7 @@ describe("BackendDataStore", () => {
         receiptBlock: null,
         transactionHash: staleHash,
       });
-      await expect(Promise.all([discarding, blockedClick])).resolves.toEqual([undefined, false]);
+      await expect(Promise.all([discarding, blockedClick])).resolves.toMatchObject([undefined, { outcome: "not-submitted", txHash: staleHash }]);
       expect(values.has(journalKey)).toBe(false);
       expect(store.snapshot(store.pendingTransactionRecoveryKey("0xabc"))).toBeUndefined();
       expect(store.snapshot<WriteTransactionState>(store.writeTransactionKey("building:start:metalStorage", "0xabc"))?.data).toMatchObject({
@@ -1115,7 +1116,7 @@ describe("BackendDataStore", () => {
         stage: "failed",
       });
 
-      await expect(store.runWriteTransaction(descriptor)).resolves.toBe(true);
+      await expect(store.runWriteTransaction(descriptor)).resolves.toMatchObject({ outcome: "indexed" });
       expect(submissions).toBe(1);
       expect(values.has(journalKey)).toBe(false);
     } finally {
@@ -1174,7 +1175,7 @@ describe("BackendDataStore", () => {
           submissions += 1;
           return `0x${"eb".repeat(32)}`;
         },
-      })).resolves.toBe(false);
+      })).resolves.toMatchObject({ outcome: "submitted", txHash: staleHash });
       expect(submissions).toBe(0);
       expect(values.get(journalKey)).toContain(staleHash);
     } finally {
@@ -1240,7 +1241,7 @@ describe("BackendDataStore", () => {
           submissions += 1;
           return `0x${"eb".repeat(32)}`;
         },
-      })).resolves.toBe(false);
+      })).resolves.toMatchObject({ outcome: "submitted", txHash: staleHash });
       expect(submissions).toBe(0);
       expect(values.get(journalKey)).toContain(staleHash);
     } finally {
@@ -1364,7 +1365,7 @@ describe("BackendDataStore", () => {
           send: async () => "0xabc",
           indexing: store.indexing.refresh([]),
         }),
-      ).resolves.toBe(true);
+      ).resolves.toMatchObject({ outcome: "indexed" });
       expect(loads).toBe(2);
     } finally {
       unsubscribe();
@@ -1445,7 +1446,7 @@ describe("BackendDataStore", () => {
           label: "Transport",
           send: async () => txHash,
         }),
-      ).resolves.toBe(true);
+      ).resolves.toMatchObject({ outcome: "indexed" });
       await overviewRefreshStarted;
 
       expect(store.snapshot<{ revision: number }>(key)).toMatchObject({
@@ -1494,7 +1495,7 @@ describe("BackendDataStore", () => {
           label: "Ship production",
           send: async () => "0xconfirmed",
         }),
-      ).resolves.toBe(true);
+      ).resolves.toMatchObject({ outcome: "indexed" });
 
       expect(loads).toBe(2);
       expect(store.snapshot<{ revision: number }>(key)?.data).toEqual({ revision: 2 });
@@ -1537,7 +1538,7 @@ describe("BackendDataStore", () => {
     expect(starts).toBe(2);
 
     release();
-    await expect(pending).resolves.toBe(true);
+    await expect(pending).resolves.toMatchObject({ outcome: "indexed" });
   });
 
   test("marks inactive batch-mutation resources stale without pretending they refreshed", async () => {
@@ -1583,7 +1584,7 @@ describe("BackendDataStore", () => {
           return "0xabc";
         },
       }),
-    ).resolves.toBe(false);
+    ).resolves.toMatchObject({ outcome: "not-submitted" });
     expect(sent).toBe(false);
 
     release();

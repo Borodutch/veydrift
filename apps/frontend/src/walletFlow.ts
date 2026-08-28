@@ -1854,6 +1854,7 @@ const fleetMissionTransactionSelectors = new Set<string>([
   GAME_SELECTORS.launchBodyAttackMission,
   GAME_SELECTORS.launchBodyFleetMission,
   GAME_SELECTORS.launchFleetMission,
+  GAME_SELECTORS.launchTransportBatch,
   GAME_SELECTORS.recallFleetMission,
   GAME_SELECTORS.resolveFleetMission,
 ]);

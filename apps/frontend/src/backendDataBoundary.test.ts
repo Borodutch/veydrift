@@ -61,6 +61,8 @@ describe("frontend backend-data boundary", () => {
     expect(storeSource).toContain("/transactions/${encodeURIComponent(transactionHash)}/status");
     expect(storeSource).toContain("writePendingTransaction");
     expect(storeSource).toContain("resumePendingTransactions");
+    expect(storeSource).toContain('outcome: "submitted"');
+    expect(storeSource).toContain("writeTransactionOutcomeFromState");
     expect(storeSource).not.toContain("waitForIndexedResource<T extends");
     expect(storeSource).not.toContain("waitForStartedDefenseProduction(");
     expect(appSource).toContain("backendData?.writeTransactionKey(undefined, account)");
@@ -71,6 +73,7 @@ describe("frontend backend-data boundary", () => {
     expect(appSource).not.toContain("useRef(createTransactionActionGate())");
     expect(appSource).not.toContain("confirmTransactionReceiptForProviderSource(");
     expect(appSource).not.toMatch(/useState<WriteTransactionState>/);
+    expect(appSource).not.toContain("The simulated Supply transaction was not sent");
     expect(appSource).not.toContain("waitForStartedDefenseProductionState(");
     expect(appSource).not.toContain("waitForIndexedResourceState(");
   });
