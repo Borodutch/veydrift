@@ -41,6 +41,13 @@ describe("Batch Supply source row presentation", () => {
     expect(batchSupplyModalSource).toContain("fleetSlotsKnown && maxSources === 0");
   });
 
+  test("keeps a hash-bearing Supply transaction in the canonical submitted state", () => {
+    expect(batchSupplyModalSource).toContain('transactionState?.outcome === "submitted" || transactionState?.outcome === "confirmed"');
+    expect(batchSupplyModalSource).toContain('transactionState?.outcome === "not-submitted" || transactionState?.outcome === "reverted"');
+    expect(batchSupplyModalSource).toContain("Supply submitted — syncing indexed missions.");
+    expect(batchSupplyModalSource).not.toContain("simulated Supply transaction was not sent");
+  });
+
   test("shows the canonical remaining cargo fleet for an unplanned partially committed source", () => {
     const astro = source({ smallCargo: 4, largeCargo: 1 });
 

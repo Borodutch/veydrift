@@ -1305,7 +1305,7 @@ export function FirstPlanetSettlementApp() {
       let submittedTxHash: string | undefined;
       playSfx("settle-launch");
       haptic("select");
-      const completed = await data.runWriteTransaction({
+      const outcome = await data.runWriteTransaction({
         key: "settlement:first-planet",
         label,
         prepare: async () => {
@@ -1336,7 +1336,7 @@ export function FirstPlanetSettlementApp() {
         errorLabel: (error) => (isUserRejected(error) ? "Settlement transaction was rejected." : walletRequestErrorMessage(error)),
         onStateChange: (state) => {
           if (state.phase === "confirmed") playSfx("tx-confirm");
-          if (state.phase === "error") {
+          if (state.phase === "error" && state.outcome !== "submitted" && state.outcome !== "confirmed") {
             setPlanet({
               kind: isUserRejected(state.error) ? "rejected" : "error",
               message: state.label ?? "First planet settlement transaction failed.",
@@ -1352,7 +1352,7 @@ export function FirstPlanetSettlementApp() {
           }
         },
       });
-      if (!completed) return;
+      if (outcome.outcome !== "indexed") return;
 
       // Read through the named descriptor instead of reaching into the raw
       // snapshot map. The indexing plan above already waited for this API
@@ -1392,7 +1392,7 @@ export function FirstPlanetSettlementApp() {
     setReferralClaimCodeInput(inviteCode);
     setReferralProgramPhase({ status: "claiming" });
     const data = backendDataStoreFor(apiUrl);
-    const completed = await data.runWriteTransaction({
+    const outcome = await data.runWriteTransaction({
       key: "referral:claim",
       label: "Referral reward claim",
       prepare: async () => {
@@ -1410,7 +1410,7 @@ export function FirstPlanetSettlementApp() {
           setReferralProgramPhase({ status: "idle" });
           return;
         }
-        if (state.phase === "error") {
+        if (state.phase === "error" && state.outcome !== "submitted" && state.outcome !== "confirmed") {
           terminalError = true;
           setReferralProgramPhase({
             status: "error",
@@ -1419,7 +1419,7 @@ export function FirstPlanetSettlementApp() {
         }
       },
     });
-    if (!completed && !terminalError) setReferralProgramPhase({ status: "idle" });
+    if (outcome.outcome === "not-submitted" && !terminalError) setReferralProgramPhase({ status: "idle" });
   }
 
   async function refreshSettlementLaunchInfo(connectedAccount: string, currentPlanet: PlanetState): Promise<SettlementFundingState | undefined> {

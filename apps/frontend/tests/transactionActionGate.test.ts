@@ -116,7 +116,7 @@ describe("transaction action gate", () => {
       },
     });
 
-    expect(completed).toBe(true);
+    expect(completed).toMatchObject({ outcome: "indexed", txHash: "0xship" });
     expect(phases).toEqual(["pending", "confirming", "confirmed", "indexing", "success"]);
   });
 
@@ -145,10 +145,10 @@ describe("transaction action gate", () => {
       confirm: async () => ({}),
     });
 
-    await expect(second).resolves.toBe(false);
+    await expect(second).resolves.toMatchObject({ outcome: "not-submitted" });
     expect(steps).toEqual(["prepare"]);
     prepared.resolve();
-    await expect(first).resolves.toBe(true);
+    await expect(first).resolves.toMatchObject({ outcome: "indexed", txHash: "0xclaim" });
     expect(steps).toEqual(["prepare", "send"]);
   });
 
@@ -181,12 +181,12 @@ describe("transaction action gate", () => {
       onStateChange: () => undefined,
     });
 
-    await expect(second).resolves.toBe(false);
+    await expect(second).resolves.toMatchObject({ outcome: "not-submitted" });
     expect(calls).toBe(0);
     expect(gate.isRunning()).toBe(true);
 
     indexed.resolve();
-    await expect(first).resolves.toBe(true);
+    await expect(first).resolves.toMatchObject({ outcome: "indexed", txHash: "0xresearch" });
     expect(gate.isRunning()).toBe(false);
   });
 
@@ -208,9 +208,10 @@ describe("transaction action gate", () => {
         },
         onStateChange: (state) => states.push(state),
       }),
-    ).resolves.toBe(false);
+    ).resolves.toMatchObject({ outcome: "confirmed", txHash: "0xtimeout" });
 
     expect(states.at(-1)).toMatchObject({
+      outcome: "confirmed",
       phase: "error",
       stage: "timed-out",
       txHash: "0xtimeout",
@@ -258,8 +259,8 @@ describe("transaction action gate", () => {
       },
     });
 
-    expect(first).toBe(true);
-    expect(second).toBe(true);
+    expect(first).toMatchObject({ outcome: "indexed" });
+    expect(second).toMatchObject({ outcome: "indexed" });
     expect(walletReceiptReads).toBe(0);
     expect(confirmedTransactions).toEqual([`0x${"11".repeat(32)}`, `0x${"22".repeat(32)}`]);
     expect(gate.isRunning()).toBe(false);

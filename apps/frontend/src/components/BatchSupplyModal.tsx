@@ -14,6 +14,7 @@ import {
 import { shipAssetByKey } from "../gameAssets";
 import type { MissionShipKey, MissionShips } from "../galaxyActions";
 import type { ManagedPlanetResponse } from "../walletFlow";
+import type { WriteTransactionState } from "../transactionActionGate";
 
 const supplyCargoShips: Array<{ key: MissionShipKey; label: string }> = [
   { key: "largeCargo", label: "Large Cargo" },
@@ -57,6 +58,7 @@ export function BatchSupplyModal({
   sources,
   maxSources,
   target,
+  transactionState,
 }: {
   actionPending?: boolean | undefined;
   error?: string | undefined;
@@ -67,6 +69,7 @@ export function BatchSupplyModal({
   sources: readonly BatchSupplySource[];
   maxSources: number;
   target: ManagedPlanetResponse;
+  transactionState?: Pick<WriteTransactionState, "label" | "outcome" | "txHash"> | undefined;
 }) {
   const [requested, setRequested] = useState<Record<keyof SupplyResources, string>>({
     metal: "",
@@ -106,7 +109,11 @@ export function BatchSupplyModal({
   const orderByOrigin = useMemo(() => new Map(plan.orders.map((order) => [order.originPlanetId, order])), [plan.orders]);
 
   const missingTotal = resourceTotal(plan.missing);
-  const canSubmit = !loading && !actionPending && plan.orders.length > 0 && missingTotal === 0 && !plan.sourceLimitReached;
+  const transactionPending = transactionState?.outcome === "submitted" || transactionState?.outcome === "confirmed";
+  const canonicalTransactionError = transactionState?.outcome === "not-submitted" || transactionState?.outcome === "reverted"
+    ? transactionState.label
+    : undefined;
+  const canSubmit = !loading && !actionPending && !transactionPending && plan.orders.length > 0 && missingTotal === 0 && !plan.sourceLimitReached;
   const targetLabel = target.name?.trim() || target.coordinates;
   const etaRange = plan.orders.length > 0
     ? {
@@ -274,7 +281,8 @@ export function BatchSupplyModal({
           {plan.sourceLimitReached ? <p className="rounded border border-amber-300/30 bg-amber-300/10 p-2 text-sm text-amber-100">Select at most {maxSources} sources because that is your current fleet-slot capacity.</p> : null}
           {plan.blockedSources.length > 0 ? <p className="rounded border border-amber-300/30 bg-amber-300/10 p-2 text-sm text-amber-100">Some selected sources cannot launch: {plan.blockedSources.map((source) => source.reason).join(" ")}</p> : null}
           {missingTotal > 0 ? <p className="rounded border border-amber-300/30 bg-amber-300/10 p-2 text-sm text-amber-100">Missing: M {format(plan.missing.metal)} · C {format(plan.missing.crystal)} · D {format(plan.missing.deuterium)}. Select more sources or reduce the request.</p> : null}
-          {error ? <p className="rounded border border-red-300/30 bg-red-300/10 p-2 text-sm text-red-100">{error}</p> : null}
+          {transactionPending ? <p className="rounded border border-cyan-300/30 bg-cyan-300/10 p-2 text-sm text-cyan-100">{transactionState?.outcome === "confirmed" ? "Supply submitted — syncing indexed missions." : "Supply submitted — waiting for Base confirmation."}{transactionState?.txHash ? ` ${transactionState.txHash.slice(0, 10)}…` : ""}</p> : null}
+          {(error ?? canonicalTransactionError) ? <p className="rounded border border-red-300/30 bg-red-300/10 p-2 text-sm text-red-100">{error ?? canonicalTransactionError}</p> : null}
 
           <footer className="grid gap-3 border-t border-white/10 pt-3">
             <div className="text-sm text-slate-300">
@@ -284,7 +292,7 @@ export function BatchSupplyModal({
             </div>
             <button className="inline-flex w-full items-center justify-center gap-2 whitespace-nowrap rounded bg-cyan-300 px-4 py-2 text-xs font-bold text-slate-950 disabled:cursor-not-allowed disabled:opacity-50 sm:text-sm" disabled={!canSubmit} onClick={() => onConfirm(plan.orders)} type="button">
               <Check aria-hidden="true" size={16} />
-              {actionPending ? "Launching…" : `Launch ${plan.orders.length} transport${plan.orders.length === 1 ? "" : "s"} in one call`}
+              {transactionPending ? "Supply submitted — syncing…" : actionPending ? "Launching…" : `Launch ${plan.orders.length} transport${plan.orders.length === 1 ? "" : "s"} in one call`}
             </button>
           </footer>
         </div>

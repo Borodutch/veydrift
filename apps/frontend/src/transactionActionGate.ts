@@ -5,10 +5,25 @@ export type TransactionActionGate = {
 
 export type WriteTransactionPhase = "idle" | "pending" | "confirming" | "confirmed" | "indexing" | "success" | "error";
 
+/**
+ * The canonical write outcome is deliberately independent from the visual
+ * phase. A delayed indexed read may put the UI in an error-looking phase for
+ * legacy consumers, but a transaction hash still proves that it was submitted
+ * and must never be presented as "not sent".
+ */
+export type WriteTransactionOutcomeKind = "not-submitted" | "submitted" | "confirmed" | "indexed" | "reverted";
+
+export type WriteTransactionOutcome = {
+  error?: unknown;
+  outcome: WriteTransactionOutcomeKind;
+  txHash?: string | undefined;
+};
+
 export type WriteTransactionState = {
   error?: unknown;
   key?: string;
   label?: string;
+  outcome?: WriteTransactionOutcomeKind;
   phase: WriteTransactionPhase;
   stage?: "wallet" | "confirmed" | "waiting-for-index" | "applied" | "timed-out" | "failed";
   txHash?: string | undefined;
@@ -57,14 +72,15 @@ export function createTransactionActionGate(): TransactionActionGate {
   };
 }
 
-export async function runWriteTransaction<IndexedSnapshot = void>(gate: TransactionActionGate, descriptor: WriteTransactionDescriptor<IndexedSnapshot>): Promise<boolean> {
-  let completed = false;
+export async function runWriteTransaction<IndexedSnapshot = void>(gate: TransactionActionGate, descriptor: WriteTransactionDescriptor<IndexedSnapshot>): Promise<WriteTransactionOutcome> {
+  let outcome: WriteTransactionOutcome = { outcome: "not-submitted" };
   let didRun = false;
   const result = await gate.run(descriptor.key, async () => {
     didRun = true;
     const setState = (state: WriteTransactionState) => descriptor.onStateChange?.(state);
     setState({
       key: descriptor.key,
+      outcome: "not-submitted",
       phase: "pending",
       stage: "wallet",
       label: transactionAwaitingWalletLabel(descriptor.label),
@@ -77,6 +93,7 @@ export async function runWriteTransaction<IndexedSnapshot = void>(gate: Transact
       txHash = await descriptor.send();
       setState({
         key: descriptor.key,
+        outcome: "submitted",
         phase: "confirming",
         stage: "wallet",
         label: transactionConfirmingLabel(descriptor.label, txHash),
@@ -86,6 +103,7 @@ export async function runWriteTransaction<IndexedSnapshot = void>(gate: Transact
       receiptConfirmed = true;
       setState({
         key: descriptor.key,
+        outcome: "confirmed",
         phase: "confirmed",
         stage: "confirmed",
         label: transactionConfirmedLabel(descriptor.label),
@@ -93,6 +111,7 @@ export async function runWriteTransaction<IndexedSnapshot = void>(gate: Transact
       });
       setState({
         key: descriptor.key,
+        outcome: "confirmed",
         phase: "indexing",
         stage: "waiting-for-index",
         label: transactionSyncingLabel(descriptor.label),
@@ -104,12 +123,13 @@ export async function runWriteTransaction<IndexedSnapshot = void>(gate: Transact
       }
       setState({
         key: descriptor.key,
+        outcome: "indexed",
         phase: "success",
         stage: "applied",
         label: `${descriptor.label} confirmed.`,
         txHash,
       });
-      completed = true;
+      outcome = { outcome: "indexed", txHash };
     } catch (error) {
       if (receiptConfirmed && txHash) {
         await descriptor.onConfirmedIndexingFailure?.(error, txHash);
@@ -120,18 +140,46 @@ export async function runWriteTransaction<IndexedSnapshot = void>(gate: Transact
       // durable store journal keeps retry recovery authoritative and blocks an
       // unsafe duplicate submission.
       const indexingTimedOut = Boolean(txHash) && isTransactionIndexingTimeout(error);
+      const failedOutcome = transactionFailureOutcome(error, txHash, receiptConfirmed);
+      outcome = { error, outcome: failedOutcome, txHash };
       setState({
         error,
         key: descriptor.key,
+        outcome: failedOutcome,
         phase: "error",
         stage: indexingTimedOut ? "timed-out" : "failed",
-        label: descriptor.errorLabel?.(error) ?? (error instanceof Error ? error.message : `${descriptor.label} failed.`),
+        label: failedOutcome === "confirmed"
+          ? transactionSyncingLabel(descriptor.label)
+          : failedOutcome === "submitted"
+            ? transactionConfirmingLabel(descriptor.label, txHash!)
+            : descriptor.errorLabel?.(error) ?? (error instanceof Error ? error.message : `${descriptor.label} failed.`),
         txHash,
       });
     }
   });
 
-  return result === undefined && !didRun ? false : completed;
+  return result === undefined && !didRun ? { outcome: "not-submitted" } : outcome;
+}
+
+export function writeTransactionOutcomeFromState(
+  state: WriteTransactionState | undefined,
+  fallbackTxHash?: string | undefined,
+): WriteTransactionOutcome {
+  const txHash = state?.txHash ?? fallbackTxHash;
+  if (state?.outcome) return { error: state.error, outcome: state.outcome, txHash };
+  if (state?.phase === "success") return { outcome: "indexed", txHash };
+  return { error: state?.error, outcome: txHash ? "submitted" : "not-submitted", txHash };
+}
+
+function transactionFailureOutcome(
+  error: unknown,
+  txHash: string | undefined,
+  receiptConfirmed: boolean,
+): WriteTransactionOutcomeKind {
+  if (!txHash) return "not-submitted";
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  if (/transaction reverted|\breverted\b/i.test(message)) return "reverted";
+  return receiptConfirmed ? "confirmed" : "submitted";
 }
 
 export function isTransactionIndexingTimeout(error: unknown): boolean {

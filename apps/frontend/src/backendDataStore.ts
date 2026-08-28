@@ -105,7 +105,7 @@ import {
   type WalletPlanetSyncSnapshot,
 } from "./postTransactionRefresh";
 import { confirmedFleetVisibility } from "./missionVisibilityRefresh";
-import { createTransactionActionGate, isTransactionIndexingTimeout, runWriteTransaction as executeWriteTransaction, type TransactionActionGate, type WriteTransactionDescriptor, type WriteTransactionState } from "./transactionActionGate";
+import { createTransactionActionGate, isTransactionIndexingTimeout, runWriteTransaction as executeWriteTransaction, writeTransactionOutcomeFromState, type TransactionActionGate, type WriteTransactionDescriptor, type WriteTransactionOutcome, type WriteTransactionState } from "./transactionActionGate";
 
 type WalletReadOptions = {
   source?: "indexed";
@@ -1178,6 +1178,7 @@ export class BackendDataStore {
           this.publishWriteTransactionState({
             key: entry.actionId,
             label: `${entry.actionId} confirmed.`,
+            outcome: "indexed",
             phase: "success",
             stage: "applied",
             txHash: entry.transactionHash,
@@ -1191,6 +1192,7 @@ export class BackendDataStore {
             error: new Error("The transaction reverted."),
             key: entry.actionId,
             label: "The saved transaction reverted. Its recovery record was removed.",
+            outcome: "reverted",
             phase: "error",
             stage: "failed",
             txHash: entry.transactionHash,
@@ -1214,6 +1216,7 @@ export class BackendDataStore {
           error: discarded,
           key: entry.actionId,
           label: discarded.message,
+          outcome: "not-submitted",
           phase: "error",
           stage: "failed",
           txHash: entry.transactionHash,
@@ -1262,6 +1265,7 @@ export class BackendDataStore {
           this.publishWriteTransactionState({
             key: entry.actionId,
             label: `${entry.actionId}: recovering submitted transaction...`,
+            outcome: "submitted",
             phase: "confirming",
             stage: "wallet",
             txHash: entry.transactionHash,
@@ -1287,6 +1291,7 @@ export class BackendDataStore {
             this.publishWriteTransactionState({
               key: entry.actionId,
               label: `${entry.actionId} confirmed.`,
+              outcome: "indexed",
               phase: "success",
               stage: "applied",
               txHash: entry.transactionHash,
@@ -1298,7 +1303,14 @@ export class BackendDataStore {
             this.publishWriteTransactionState({
               error,
               key: entry.actionId,
-              label: error instanceof Error ? error.message : "Transaction confirmation is delayed.",
+              label: isTransactionIndexingTimeout(error)
+                ? `${entry.actionId}: syncing indexed state...`
+                : error instanceof Error ? error.message : "Transaction confirmation is delayed.",
+              outcome: error instanceof Error && /Nothing was submitted/i.test(error.message)
+                ? "not-submitted"
+                : error instanceof Error && /transaction reverted|\breverted\b/i.test(error.message)
+                  ? "reverted"
+                  : "submitted",
               phase: "error",
               stage: isTransactionIndexingTimeout(error) ? "timed-out" : "failed",
               txHash: entry.transactionHash,
@@ -1342,7 +1354,7 @@ export class BackendDataStore {
     });
   }
 
-  async runWriteTransaction(descriptor: BackendWriteTransactionDescriptor): Promise<boolean> {
+  async runWriteTransaction(descriptor: BackendWriteTransactionDescriptor): Promise<WriteTransactionOutcome> {
     const { chainId, indexing, invalidateTags, send, ...transaction } = descriptor;
     const indexingRunner = indexing ? this.indexingPlanRunners.get(indexing as object) : undefined;
     if (indexing && !indexingRunner) {
@@ -1350,18 +1362,21 @@ export class BackendDataStore {
     }
     const walletScope = this.transactionWalletScope(descriptor.invalidateTags);
     if (walletScope !== "global") {
-      const submittedBeforeThisAction = this.pendingTransactions().some((entry) => entry.wallet === walletScope);
+      const submittedBeforeThisAction = this.pendingTransactions().find((entry) => entry.wallet === walletScope);
       if (submittedBeforeThisAction) {
         // A retry after reload may be the first interaction that resumes the
         // journal. Even when recovery proves the old hash applied and removes
         // it, this click must not continue into a duplicate submission.
         await this.resumePendingTransactions(walletScope, chainId);
-        return false;
+        return writeTransactionOutcomeFromState(
+          this.snapshot<WriteTransactionState>(this.writeTransactionKey(submittedBeforeThisAction.actionId, walletScope))?.data,
+          submittedBeforeThisAction.transactionHash,
+        );
       }
     }
     let latestStatus: BackendTransactionStatus | undefined;
     let appliedReceipt: ReceiptBlock | undefined;
-    const completed = await executeWriteTransaction(this.transactionGateFor(walletScope), {
+    const outcome = await executeWriteTransaction(this.transactionGateFor(walletScope), {
       ...transaction,
       send: async () => {
         const transactionHash = await send();
@@ -1414,7 +1429,7 @@ export class BackendDataStore {
         }
       },
     });
-    if (completed) {
+    if (outcome.outcome === "indexed") {
       const transactionHash = this.snapshot<WriteTransactionState>(this.writeTransactionKey(descriptor.key, walletScope))?.data?.txHash;
       if (transactionHash) {
         this.removePendingTransaction(transactionHash);
@@ -1431,13 +1446,13 @@ export class BackendDataStore {
         }
       }
     }
-    if (completed && invalidateTags && invalidateTags.length > 0) {
+    if (outcome.outcome === "indexed" && invalidateTags && invalidateTags.length > 0) {
       await this.invalidate(invalidateTags, {
         activeOnly: true,
         priority: "transaction",
       });
     }
-    return completed;
+    return outcome;
   }
 
   private async readBackendTransactionStatus(transactionHash: string): Promise<BackendTransactionStatus> {
