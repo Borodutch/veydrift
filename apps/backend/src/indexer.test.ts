@@ -10210,7 +10210,9 @@ describe("SettlementIndexer", () => {
           arrivalAt: "1800000000",
           returnAt: "1800000300",
           fuelCost: "4",
-          cargo: { metal: "10", crystal: "20", deuterium: "30" },
+          // Terminal contract storage has cleared the transport payload after crediting the target.
+          // The immutable FleetMissionCargo launch event below must remain the archive payload.
+          cargo: { metal: "0", crystal: "0", deuterium: "0" },
           randomnessRequestId: null
         }];
       }
@@ -10246,6 +10248,7 @@ describe("SettlementIndexer", () => {
         expect.objectContaining({
           missionId: "91",
           status: "Returned",
+          cargo: { metal: "10", crystal: "20", deuterium: "30" },
           ships: expect.objectContaining({ smallCargo: "2" })
         })
       ])

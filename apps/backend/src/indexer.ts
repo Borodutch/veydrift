@@ -11976,7 +11976,7 @@ export class SettlementIndexer {
   }
 
   private canonicalFleetMissionSummary(row: ContractFleetMissionRow, eventMission?: FleetMissionSummary): FleetMissionSummary {
-    const cargo = {
+    const canonicalCargo = {
       metal: row.metal_cargo,
       crystal: row.crystal_cargo,
       deuterium: row.deuterium_cargo
@@ -12037,6 +12037,11 @@ export class SettlementIndexer {
         targetIsMoon: canonicalStorageDetails.targetIsMoon
       }
       : mergedBase;
+    // Mission storage is mutable: when a Transport finishes, the contract clears its cargo slot
+    // after crediting the target. The indexed FleetMissionCargo launch event is immutable and is
+    // therefore the authoritative payload for history. Prefer it whenever the event ledger has a
+    // complete mission; use canonical storage only for legacy rows whose launch event is unavailable.
+    const cargo = eventMission?.cargo ?? canonicalEventMission?.cargo ?? canonicalCargo;
     const fuelCost = eventDerivedFuelCost(row, canonicalEventMission ?? eventMission);
     return {
       ...detailedBase,
