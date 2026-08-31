@@ -114,15 +114,47 @@ describe("derive*Rows expose predicted durations (VEY-KANEO-472)", () => {
     expect(withLevels.find((row) => row.id === 0)!.durationSeconds).toBeGreaterThan(0);
   });
 
-  test("technology rows expose research durations only when the lab level is provided", () => {
+  test("technology rows expose research durations only when duration levels are provided", () => {
     expect(deriveTechnologyRows(() => 0).every((row) => row.durationSeconds === undefined)).toBe(true);
-    const withLab = deriveTechnologyRows(() => 0, 4);
+    const withLab = deriveTechnologyRows(() => 0, {
+      localLabLevel: 4,
+      networkLevel: 0,
+      researchNetworkLabLevels: []
+    });
     const first = withLab.find((row) => row.id === 0)!;
     expect(first.durationSeconds).toBe(
       researchDurationSeconds(4, {
         metal: Number(first.cost.metal),
         crystal: Number(first.cost.crystal),
         deuterium: Number(first.cost.deuterium)
+      })
+    );
+  });
+
+  test("technology rows use the contract-parity IRN lab selection per research requirement", () => {
+    const rows = deriveTechnologyRows((id) => (id === 13 ? 1 : 0), {
+      localLabLevel: 10,
+      networkLevel: 1,
+      researchNetworkLabLevels: [7]
+    });
+
+    const energy = rows.find((row) => row.id === 0)!;
+    // Energy requires Lab 1, so IRN 1 links the other Lab 7: 10 + 7 = 17.
+    expect(energy.durationSeconds).toBe(
+      researchDurationSeconds(17, {
+        metal: Number(energy.cost.metal),
+        crystal: Number(energy.cost.crystal),
+        deuterium: Number(energy.cost.deuterium)
+      })
+    );
+
+    const network = rows.find((row) => row.id === 13)!;
+    // The linked Lab 7 cannot contribute to the next IRN level, which requires Lab 10.
+    expect(network.durationSeconds).toBe(
+      researchDurationSeconds(10, {
+        metal: Number(network.cost.metal),
+        crystal: Number(network.cost.crystal),
+        deuterium: Number(network.cost.deuterium)
       })
     );
   });
