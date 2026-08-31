@@ -292,7 +292,7 @@ import {
   type ResourceSnapshotMetadata,
 } from "./walletFlow";
 import { BackendDataStore, backendDataStoreFor, retainBackendDataStore, type BackendDataTag, type BackendIndexingPlan, type PendingTransactionRecoveryDecision } from "./backendDataStore";
-import { useBackendDataSnapshot, useBackendDataSnapshots } from "./useBackendDataSnapshot";
+import { isBackendDataSnapshotLoading, useBackendDataSnapshot, useBackendDataSnapshots } from "./useBackendDataSnapshot";
 import { useBackendDataQuery } from "./useBackendDataQuery";
 import { nextWatchedPlanetsPageAfterToggle } from "./watchedPlanetsView";
 
@@ -3678,7 +3678,7 @@ export function PlayableMvpApp({
   const setDefenseState = useCallback((value: ChainDefenseState | null) => {
     void value;
   }, []);
-  const defenseLoading = defenseSnapshot?.freshness === "refreshing";
+  const defenseLoading = isBackendDataSnapshotLoading(defenseSnapshot, defenseQuery !== undefined);
   const defenseError = defenseSnapshot?.error;
   const setDefenseError = useCallback((error: string | undefined) => {
     void error;
