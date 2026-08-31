@@ -124,6 +124,19 @@ export function parseInspectPath(pathname: string): InspectRoute | null {
   return parseInspectPathValue(pathname);
 }
 
+/**
+ * Returns a detail route that the already-mounted playable client can handle
+ * without a document navigation. Page routes deliberately return null because
+ * the navigation bar owns those transitions and their query-string state.
+ */
+export function parseInternalDetailRoute(href: string, origin: string): InspectRoute | null {
+  const destination = new URL(href, origin);
+  if (destination.origin !== new URL(origin).origin) return null;
+
+  const route = parseInspectPath(destination.pathname);
+  return route && route.kind !== "page" ? route : null;
+}
+
 export function parseInspectRouteFromLocation(location: Pick<Location, "hash" | "pathname">): InspectRoute {
   const pathRoute = parseInspectPath(location.pathname);
   if (pathRoute) return pathRoute;

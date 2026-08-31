@@ -60,6 +60,7 @@ import {
   hasUsefulPlanetDetailBackRoute,
   inspectRouteForManagedPlanetSelection,
   managedPlanetSelectionForInspectRoute,
+  parseInternalDetailRoute,
   parseInspectRouteFromLocation,
   planetDetailBackRouteForCurrentScreen,
   type InspectRoute,
@@ -4158,6 +4159,51 @@ export function PlayableMvpApp({
     },
     [applyInspectRoute],
   );
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handleRouteChange = () => {
+      replaceLegacyHashRoute();
+      resetDocumentTitle();
+      applyInspectRoute(parseInspectRouteFromLocation(window.location));
+    };
+    handleRouteChange();
+    window.addEventListener("hashchange", handleRouteChange);
+    window.addEventListener("popstate", handleRouteChange);
+    return () => {
+      window.removeEventListener("hashchange", handleRouteChange);
+      window.removeEventListener("popstate", handleRouteChange);
+    };
+  }, [applyInspectRoute]);
+
+  const handleClientDetailLinkClick = useCallback((event: JSX.TargetedMouseEvent<HTMLDivElement>) => {
+    if (
+      event.defaultPrevented
+      || event.button !== 0
+      || event.altKey
+      || event.ctrlKey
+      || event.metaKey
+      || event.shiftKey
+      || typeof window === "undefined"
+    ) return;
+
+    const anchor = (event.target as Element | null)?.closest?.("a[href]") as HTMLAnchorElement | null | undefined;
+    if (!anchor || anchor.hasAttribute("download") || (anchor.target && anchor.target !== "_self")) return;
+
+    // Section navigation already has its own handler. This closes the gap for
+    // entity-detail anchors (planet, moon, player, alliance, and mission)
+    // emitted by lists, reports, and embedded cards.
+    const destination = new URL(anchor.href, window.location.href);
+    const route = parseInternalDetailRoute(destination.href, window.location.origin);
+    if (!route) return;
+
+    event.preventDefault();
+    const targetPath = `${destination.pathname}${destination.search}${destination.hash}`;
+    const currentPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    if (currentPath !== targetPath) window.history.pushState(null, "", targetPath);
+    applyInspectRoute(route);
+    resetDocumentTitle();
+  }, [applyInspectRoute]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -9065,7 +9111,10 @@ export function PlayableMvpApp({
   })();
 
   return (
-    <div className="playable-starfield relative isolate min-h-dvh w-full max-w-full overflow-x-clip bg-[#05070f] text-slate-100">
+    <div
+      className="playable-starfield relative isolate min-h-dvh w-full max-w-full overflow-x-clip bg-[#05070f] text-slate-100"
+      onClick={handleClientDetailLinkClick}
+    >
       {topBar}
 
       {/* overflow-x-clip (not overflow-hidden): a hidden overflow would make
