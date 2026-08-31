@@ -72,6 +72,16 @@ describe("Defense status panel surfaces only failures", () => {
     });
     expect(visibleText(panel)).toContain("No VeydriftGame home planet");
   });
+
+  test("does not mistake a not-yet-loaded selected-planet snapshot for a missing home planet", () => {
+    const panel = StatusPanel({
+      actionState: { status: "idle" },
+      defenseState: null,
+      error: undefined,
+      loading: false,
+    });
+    expect(visibleText(panel)).toBe("");
+  });
 });
 
 function visibleText(node: ComponentChildren): string {

@@ -167,6 +167,11 @@ export function StatusPanel({
     return <Notice tone="danger">Defense state could not be loaded. Refresh or try again in a moment.</Notice>;
   }
 
+  // A planet switch can briefly have no cache entry before the canonical store
+  // begins its selected-planet read. That is pending state, never evidence that
+  // this wallet has no home planet.
+  if (!defenseState) return null;
+
   if (defenseState?.productionAvailable === false) {
     return (
       <Notice tone="neutral">
@@ -175,7 +180,7 @@ export function StatusPanel({
     );
   }
 
-  if (!defenseState?.homePlanetId) {
+  if (!defenseState.homePlanetId) {
     return (
       <Notice tone="danger">
         No VeydriftGame home planet was found for this wallet. Defense counts and production are not shown from local state.

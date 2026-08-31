@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { BackendDataStore } from "./backendDataStore";
 import { GameStateReadScheduler, GameStateStore } from "./gameStateStore";
-import { backendDataProjection } from "./useBackendDataSnapshot";
+import { backendDataProjection, isBackendDataSnapshotLoading } from "./useBackendDataSnapshot";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -14,6 +14,14 @@ function deferred<T>() {
 }
 
 describe("GameStateStore", () => {
+  test("treats an unseeded selected-resource snapshot as pending, not failed", () => {
+    expect(isBackendDataSnapshotLoading(undefined, true)).toBe(true);
+    expect(isBackendDataSnapshotLoading({ freshness: "refreshing", generation: 1 }, true)).toBe(true);
+    expect(isBackendDataSnapshotLoading({ freshness: "delayed", generation: 1 }, true)).toBe(true);
+    expect(isBackendDataSnapshotLoading({ freshness: "failed", generation: 1, error: "offline" }, true)).toBe(false);
+    expect(isBackendDataSnapshotLoading(undefined, false)).toBe(false);
+  });
+
   test("keeps the newest generation when responses resolve out of order", async () => {
     const store = new GameStateStore();
     const older = deferred<{ revision: number }>();

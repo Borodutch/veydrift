@@ -38,6 +38,22 @@ export function useBackendDataSnapshot<T>(
   return projection?.getSnapshot();
 }
 
+/**
+ * A selected resource has not failed merely because its new cache key has no
+ * entry yet. This is normal while a planet switch schedules the first read.
+ */
+export function isBackendDataSnapshotLoading<T>(
+  snapshot: GameStateEntry<T> | undefined,
+  enabled: boolean,
+): boolean {
+  if (!enabled) return false;
+  return (
+    snapshot === undefined ||
+    snapshot.freshness === "refreshing" ||
+    (snapshot.data === undefined && snapshot.freshness === "delayed")
+  );
+}
+
 export function useBackendDataSnapshots<T>(
   store: BackendDataStore | undefined,
   keys: readonly string[],
