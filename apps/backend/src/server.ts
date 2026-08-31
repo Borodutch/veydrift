@@ -4328,6 +4328,8 @@ function indexedResearchState(
   indexer: SettlementIndexer
 ): ResearchState {
   const buildings = planet ? indexer.infrastructureRows(planet.planetId) : [];
+  const researchLabLevel = buildings.find((building) => building.id === 6)?.level ?? 0;
+  const researchNetworkLabLevels = indexer.researchNetworkLabLevels(wallet, planet?.planetId ?? null);
 
   return {
     wallet,
@@ -4338,10 +4340,10 @@ function indexedResearchState(
     resources: planet?.resources ?? null,
     resourcesAsOfNow: indexedCurrentResourcesForPlanet(indexer, planet),
     resourceSnapshot: resourceSnapshotMetadataForPlanet(planet),
-    researchLabLevel: buildings.find((building) => building.id === 6)?.level ?? 0,
-    researchNetworkLabLevels: [],
+    researchLabLevel,
+    researchNetworkLabLevels,
     technologyLevels: indexer.technologyLevels(wallet),
-    technologies: indexer.technologyRows(wallet, buildings.find((building) => building.id === 6)?.level ?? 0),
+    technologies: indexer.technologyRows(wallet, { localLabLevel: researchLabLevel, researchNetworkLabLevels }),
     queue: indexer.researchQueue(wallet)
   };
 }

@@ -2,7 +2,14 @@ import { solarSatelliteEnergy } from "@veydrift/universe";
 import { encodeAbiParameters, keccak256 } from "viem";
 import type { BackendConfig } from "./config";
 import { calculateHighscore, type HighscoreEntry } from "./highscores";
-import { buildingDurationSeconds, deriveDefenseRows, deriveShipRows, usedFieldsFromBuildingRows } from "./readModels";
+import {
+  buildingDurationSeconds,
+  deriveDefenseRows,
+  deriveShipRows,
+  effectiveResearchLabLevel,
+  researchDurationSeconds,
+  usedFieldsFromBuildingRows
+} from "./readModels";
 import type { Coordinates, PlanetArchetype } from "./universe";
 import { planetMetadata, planetMultipliers } from "./universe";
 
@@ -2862,14 +2869,18 @@ export class VeydriftGameReader implements ChainReader {
     }
 
     const planetId = BigInt(settlement.homePlanetId);
-    const [resources, researchLabLevel, researchNetworkLabLevels, queue, technologyLevels, technologies] = await Promise.all([
+    const [resources, researchLabLevel, researchNetworkLabLevels, queue, technologyLevels] = await Promise.all([
       this.readResources("0x0adbf924", planetId),
       this.readUintCall("0xd9b24865", [encodeUint(planetId), encodeUint(6n)]),
       this.hydrateQueueStartedAt ? this.readResearchNetworkLabLevels(wallet, planetId) : Promise.resolve([]),
       this.readResearchQueue(wallet),
-      this.readTechnologyLevels(wallet),
-      this.readTechnologyRows(wallet)
+      this.readTechnologyLevels(wallet)
     ]);
+    const technologies = await this.readTechnologyRows(wallet, {
+      localLabLevel: Number(researchLabLevel),
+      networkLevel: technologyLevels["13"] ?? 0,
+      researchNetworkLabLevels
+    });
 
     return {
       wallet,
@@ -4700,7 +4711,14 @@ export class VeydriftGameReader implements ChainReader {
     return rows;
   }
 
-  private async readTechnologyRows(wallet: Address): Promise<ResearchState["technologies"]> {
+  private async readTechnologyRows(
+    wallet: Address,
+    durationLevels?: {
+      localLabLevel: number;
+      networkLevel: number;
+      researchNetworkLabLevels: readonly number[];
+    }
+  ): Promise<ResearchState["technologies"]> {
     const results = await this.batchCallContract(
       this.gameContractAddress,
       supportedTechnologyIds.flatMap((id) => ([
@@ -4715,12 +4733,31 @@ export class VeydriftGameReader implements ChainReader {
       ]))
     );
 
-    return supportedTechnologyIds.map((id, index) => ({
-      id,
-      level: Number(decodeUintWord(wordAt(splitWords(results[index * 2] ?? "0x"), 0))),
-      cost: decodeResources(splitWords(results[index * 2 + 1] ?? "0x"))
-    })
-    );
+    return supportedTechnologyIds.map((id, index) => {
+      const cost = decodeResources(splitWords(results[index * 2 + 1] ?? "0x"));
+      const effectiveLabLevel = durationLevels
+        ? effectiveResearchLabLevel(
+            durationLevels.localLabLevel,
+            durationLevels.networkLevel,
+            durationLevels.researchNetworkLabLevels,
+            id
+          )
+        : undefined;
+      return {
+        id,
+        level: Number(decodeUintWord(wordAt(splitWords(results[index * 2] ?? "0x"), 0))),
+        cost,
+        ...(effectiveLabLevel === undefined
+          ? {}
+          : {
+              durationSeconds: researchDurationSeconds(effectiveLabLevel, {
+                metal: Number(cost.metal),
+                crystal: Number(cost.crystal),
+                deuterium: Number(cost.deuterium)
+              })
+            })
+      };
+    });
   }
 
   private async readRiftResources(

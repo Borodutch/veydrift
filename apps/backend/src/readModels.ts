@@ -260,19 +260,65 @@ export function deriveDefenseRows(
   });
 }
 
-// Optional effective research-lab level enables the predicted research time on each
-// technology row (VEY-KANEO-472); the detail (Research) payload passes it.
+// Mirrors VeydriftCatalog.researchLabRequirement. Keeping this next to the duration
+// projection ensures the indexed Research payload applies the same per-technology
+// IRN eligibility rule as VeydriftPlanetManagementModule._effectiveResearchLabLevel.
+const researchLabRequirements = [1, 1, 4, 1, 1, 4, 6, 2, 7, 2, 7, 4, 3, 10, 12] as const;
+
+export type ResearchDurationLevels = {
+  localLabLevel: number;
+  networkLevel: number;
+  researchNetworkLabLevels: readonly number[];
+};
+
+export function researchLabRequirementForTechnology(id: number): number {
+  return researchLabRequirements[id] ?? 0;
+}
+
+export function effectiveResearchLabLevel(
+  localLabLevel: number,
+  networkLevel: number,
+  researchNetworkLabLevels: readonly number[],
+  technologyId: number
+): number {
+  const local = Math.max(0, Math.floor(localLabLevel));
+  const required = researchLabRequirementForTechnology(technologyId);
+  if (local < required) return local;
+
+  const linkedCount = Math.max(0, Math.floor(networkLevel));
+  if (linkedCount === 0) return local;
+
+  const linkedLabTotal = [...researchNetworkLabLevels]
+    .map((level) => Math.max(0, Math.floor(level)))
+    .filter((level) => level >= required)
+    .sort((left, right) => right - left)
+    .slice(0, linkedCount)
+    .reduce((total, level) => total + level, 0);
+  return local + linkedLabTotal;
+}
+
+// Optional duration levels enable the predicted research time on each technology
+// row. IRN applies a distinct effective lab total to each technology because its
+// remote-lab eligibility depends on that technology's Research Lab requirement.
 export function deriveTechnologyRows(
   levelFor: (id: number) => number,
-  labLevel?: number
+  durationLevels?: ResearchDurationLevels
 ): ResearchState["technologies"] {
   return supportedTechnologyIds.map((id) => {
     const cost = researchCost(id, levelFor(id));
+    const effectiveLabLevel = durationLevels
+      ? effectiveResearchLabLevel(
+          durationLevels.localLabLevel,
+          durationLevels.networkLevel,
+          durationLevels.researchNetworkLabLevels,
+          id
+        )
+      : undefined;
     return {
       id,
       level: levelFor(id),
       cost: toResources(cost),
-      ...(labLevel === undefined ? {} : { durationSeconds: researchDurationSeconds(labLevel, cost) })
+      ...(effectiveLabLevel === undefined ? {} : { durationSeconds: researchDurationSeconds(effectiveLabLevel, cost) })
     };
   });
 }

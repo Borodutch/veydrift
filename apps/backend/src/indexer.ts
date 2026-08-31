@@ -3414,9 +3414,31 @@ export class SettlementIndexer {
     };
   }
 
-  technologyRows(wallet: `0x${string}`, labLevel?: number): ResearchState["technologies"] {
+  researchNetworkLabLevels(wallet: `0x${string}`, selectedPlanetId: string | null): number[] {
+    return this.settledPlanetsForOwner(wallet)
+      .filter((planet) => planet.planetId !== selectedPlanetId)
+      // startResearch settles the selected planet's building queue, but it does
+      // not settle every remote queue before reading linked labs. Use canonical
+      // remote levels so the display cannot promise a not-yet-settled lab.
+      .map((planet) => this.contractInfrastructureRows(planet.planetId).find((building) => building.id === 6)?.level ?? 0)
+      .filter((level) => level > 0)
+      .sort((left, right) => right - left);
+  }
+
+  technologyRows(
+    wallet: `0x${string}`,
+    durationLevels?: { localLabLevel: number; researchNetworkLabLevels: readonly number[] }
+  ): ResearchState["technologies"] {
     const levels = this.technologyLevels(wallet);
-    return deriveTechnologyRows((id) => levels[String(id)] ?? 0, labLevel);
+    return deriveTechnologyRows(
+      (id) => levels[String(id)] ?? 0,
+      durationLevels
+        ? {
+            ...durationLevels,
+            networkLevel: levels["13"] ?? 0
+          }
+        : undefined
+    );
   }
 
   private queueSettlement(queueKeyValue: string, nowSec = nowSeconds()) {

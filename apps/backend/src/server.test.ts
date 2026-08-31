@@ -7856,6 +7856,20 @@ describe("Veydrift backend", () => {
       ],
       data: abiWords(6n)
     });
+    indexer.applyLog({
+      blockNumber: "0x85",
+      transactionHash: "0xhome-lab",
+      logIndex: "0x0",
+      topics: [buildingCompletedTopic, topic(7n), topic(6n)],
+      data: abiWords(7n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x86",
+      transactionHash: "0xirn",
+      logIndex: "0x0",
+      topics: [researchCompletedTopic, addressTopic(wallet), topic(13n)],
+      data: abiWords(1n)
+    });
     const handler = createRequestHandler({
       config: configuredTestConfig,
       chainReader,
@@ -7869,8 +7883,12 @@ describe("Veydrift backend", () => {
     expect(body).toMatchObject({
       source: "contract-state-indexer",
       planetId: "10",
-      researchLabLevel: 6
+      researchLabLevel: 6,
+      researchNetworkLabLevels: [7]
     });
+    const energy = body.technologies.find((technology: { id: number }) => technology.id === 0);
+    // Selected Lab 6 + the IRN-linked Lab 7, matching startResearch's effective lab.
+    expect(energy.durationSeconds).toBe(205);
   });
 
   test("serves shipyard ships from the indexed roster without a per-request chain read (VEY-KANEO-461)", async () => {
