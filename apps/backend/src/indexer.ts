@@ -1176,6 +1176,7 @@ export class SettlementIndexer {
 
   invalidateResourceProjectionWatermark(reason: string): void {
     this.db.transaction(() => {
+      const pendingReconciliationReason = this.metadata("pendingReconciliationReason");
       this.db.query(`
         DELETE FROM indexer_metadata
         WHERE key IN (?, ?, ?, ?)
@@ -1185,7 +1186,9 @@ export class SettlementIndexer {
         resourceProjectionRevisionMetadataKey,
         resourceProjectionTimestampMetadataKey
       );
-      this.markStale(`resource_projection_invalidated: ${reason}`);
+      if (pendingReconciliationReason === null) {
+        this.markStale(`resource_projection_invalidated: ${reason}`);
+      }
       this.snapshotCache = null;
     })();
   }
@@ -10942,11 +10945,18 @@ export class SettlementIndexer {
     `).get(missionId) as ContractFleetMissionRow | null;
     if (!row) return;
 
+    const eventMission = this.eventDerivedFleetMissionForMissionId(missionId);
+    const marker = parseJson<{ source?: string }>(row.event_json ?? "{}", {});
+    if (!eventMission && marker.source === "indexed_mission_event_logs") {
+      this.db.query("DELETE FROM contract_fleet_missions WHERE mission_id = ?").run(missionId);
+      this.touchMissionReadModel();
+      return;
+    }
+
     const rebuilt = { ...this.canonicalFleetMissionSummary(row) } as FleetMissionSummary;
     delete rebuilt.originIsMoon;
     delete rebuilt.targetIsMoon;
     delete rebuilt.lootRatio;
-    const eventMission = this.eventDerivedFleetMissionForMissionId(missionId);
     if (eventMission?.originIsMoon !== undefined) rebuilt.originIsMoon = eventMission.originIsMoon;
     if (eventMission?.targetIsMoon !== undefined) rebuilt.targetIsMoon = eventMission.targetIsMoon;
     if (eventMission?.lootRatio) rebuilt.lootRatio = eventMission.lootRatio;

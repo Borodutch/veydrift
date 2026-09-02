@@ -344,6 +344,141 @@ describe("ChainSyncService (polling)", () => {
     service.stop();
   });
 
+  test("coalesces a burst of per-log websocket wakeups into one active scan plus one rerun", async () => {
+    const indexer = makeIndexer();
+    let releaseNotifiedScan!: () => void;
+    const notifiedScanBlocked = new Promise<void>((resolve) => {
+      releaseNotifiedScan = resolve;
+    });
+    let listCalls = 0;
+    const canonicalLogs = Array.from({ length: 24 }, (_, index) => ({
+      ...planetStartedLog("0x181", BigInt(index + 1), `0xcanonical-${index}`),
+      address: config.gameContractAddress!,
+      logIndex: `0x${index.toString(16)}`
+    }));
+    const backfiller = new MockBackfiller(0x180n, () => canonicalLogs);
+    const originalList = backfiller.listContractLogs.bind(backfiller);
+    backfiller.listContractLogs = async (from, to = "latest") => {
+      listCalls += 1;
+      if (listCalls === 2) await notifiedScanBlocked;
+      return originalList(from, to);
+    };
+    const liveLogs = new MockLiveLogSubscriber();
+    const service = new ChainSyncService({ ...config, pollIntervalMs: 60_000 }, indexer, {
+      liveLogSubscriber: liveLogs,
+      logBackfiller: backfiller
+    });
+
+    service.start();
+    await waitFor(() => liveLogs.subscription !== null && service.snapshot().lastPolledAt !== null);
+    backfiller.head = 0x181n;
+    liveLogs.emit([canonicalLogs[0]!]);
+    await waitFor(() => listCalls === 2);
+    for (const log of canonicalLogs.slice(1)) liveLogs.emit([log]);
+    releaseNotifiedScan();
+
+    await waitFor(() => listCalls === 3 && indexer.snapshot().indexedPlanets === canonicalLogs.length);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(listCalls).toBe(3);
+    expect(backfiller.ranges).toHaveLength(3);
+    service.stop();
+  });
+
+  test("retires a websocket-removed mission log before indexing its canonical replacement", async () => {
+    const indexer = makeIndexer();
+    const orphanedLaunch: TestLog = {
+      blockNumber: "0x181",
+      transactionHash: "0xorphaned-mission-launch",
+      logIndex: "0x0",
+      topics: [fleetMissionLaunchedTopic, topicWord(16512n), ownerTopic(player), topicWord(0n)],
+      data: abiWords(7n, 99n, 4_000_000_000n, 4_000_000_100n, 0n)
+    };
+    const replacementLaunch: TestLog = {
+      blockNumber: "0x181",
+      transactionHash: "0xcanonical-mission-launch",
+      logIndex: "0x0",
+      topics: [fleetMissionLaunchedTopic, topicWord(16513n), ownerTopic(player), topicWord(0n)],
+      data: abiWords(8n, 100n, 4_000_000_000n, 4_000_000_100n, 0n)
+    };
+    let canonicalLogs: TestLog[] = [orphanedLaunch];
+    const backfiller = new MockBackfiller(0x181n, (from, to) => {
+      if (to === "latest") return [];
+      return canonicalLogs.filter((log) => BigInt(log.blockNumber) >= from && BigInt(log.blockNumber) <= to);
+    });
+    const liveLogs = new MockLiveLogSubscriber();
+    const service = new ChainSyncService({ ...config, pollIntervalMs: 60_000 }, indexer, {
+      liveLogSubscriber: liveLogs,
+      logBackfiller: backfiller
+    });
+
+    service.start();
+    await waitFor(() => indexer.fleetMission("16512") !== null && indexer.resourceProjectionContext().safeToProject);
+    canonicalLogs = [replacementLaunch];
+    backfiller.head = 0x182n;
+    liveLogs.emit([{ ...orphanedLaunch, removed: true }, replacementLaunch]);
+
+    await waitFor(() => indexer.fleetMission("16513") !== null);
+    await waitFor(() => indexer.resourceProjectionContext().safeToProject);
+    const db = (indexer as unknown as { db: Database }).db;
+    const orphanedRow = db.query(`
+      SELECT removed
+      FROM indexed_event_logs
+      WHERE transaction_hash = ? AND log_index = ?
+    `).get(orphanedLaunch.transactionHash, "0x0") as { removed: number } | null;
+    const orphanedMissionRows = db.query(`
+      SELECT COUNT(*) AS count
+      FROM indexed_mission_event_logs
+      WHERE event_id = ?
+    `).get(`${orphanedLaunch.transactionHash}:0x0`) as { count: number };
+    expect(orphanedRow).toEqual({ removed: 1 });
+    expect(orphanedMissionRows.count).toBe(0);
+    expect(indexer.fleetMission("16512")).toBeNull();
+    expect(indexer.fleetMission("16513")).toMatchObject({ missionId: "16513" });
+    expect(indexer.snapshot().pendingReconciliationReason).toBeNull();
+    service.stop();
+  });
+
+  test("keeps an unrelated stale reason while reconciling a websocket removal", async () => {
+    const indexer = makeIndexer();
+    const orphanedLaunch: TestLog = {
+      blockNumber: "0x181",
+      transactionHash: "0xorphaned-launch-with-existing-stale-reason",
+      logIndex: "0x0",
+      topics: [fleetMissionLaunchedTopic, topicWord(16514n), ownerTopic(player), topicWord(0n)],
+      data: abiWords(7n, 99n, 4_000_000_000n, 4_000_000_100n, 0n)
+    };
+    const replacementLaunch: TestLog = {
+      blockNumber: "0x181",
+      transactionHash: "0xreplacement-with-existing-stale-reason",
+      logIndex: "0x0",
+      topics: [fleetMissionLaunchedTopic, topicWord(16515n), ownerTopic(player), topicWord(0n)],
+      data: abiWords(8n, 100n, 4_000_000_000n, 4_000_000_100n, 0n)
+    };
+    let canonicalLogs: TestLog[] = [orphanedLaunch];
+    const backfiller = new MockBackfiller(0x181n, (from, to) => {
+      if (to === "latest") return [];
+      return canonicalLogs.filter((log) => BigInt(log.blockNumber) >= from && BigInt(log.blockNumber) <= to);
+    });
+    const liveLogs = new MockLiveLogSubscriber();
+    const service = new ChainSyncService({ ...config, pollIntervalMs: 60_000 }, indexer, {
+      liveLogSubscriber: liveLogs,
+      logBackfiller: backfiller
+    });
+
+    service.start();
+    await waitFor(() => indexer.fleetMission("16514") !== null && indexer.resourceProjectionContext().safeToProject);
+    indexer.markStale("planet_resources_pending:7");
+    canonicalLogs = [replacementLaunch];
+    backfiller.head = 0x182n;
+    liveLogs.emit([{ ...orphanedLaunch, removed: true }, replacementLaunch]);
+
+    await waitFor(() => indexer.fleetMission("16515") !== null);
+    expect(indexer.fleetMission("16514")).toBeNull();
+    expect(indexer.snapshot().pendingReconciliationReason).toBe("planet_resources_pending:7");
+    expect(indexer.resourceProjectionContext().safeToProject).toBe(false);
+    service.stop();
+  });
+
   test("uses one complete HTTP range for a websocket-notified head and its cursor gap", async () => {
     const indexer = makeIndexer();
     const gapLog = {
