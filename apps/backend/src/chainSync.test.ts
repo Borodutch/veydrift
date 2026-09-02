@@ -251,9 +251,16 @@ describe("ChainSyncService (polling)", () => {
     service.stop();
   });
 
-  test("uses the viem websocket subscriber as the live ingestion source when available", async () => {
+  test("uses websocket notifications to wake the canonical HTTP ingestion path", async () => {
     const indexer = makeIndexer();
-    const backfiller = new MockBackfiller(0x180n);
+    const canonicalLog = {
+      ...planetStartedLog("0x181", 7n, "0xlive"),
+      address: config.gameContractAddress!,
+      logIndex: "0x0"
+    };
+    const backfiller = new MockBackfiller(0x180n, (from, to) =>
+      from <= 0x181n && to !== "latest" && to >= 0x181n ? [canonicalLog] : []
+    );
     const liveLogs = new MockLiveLogSubscriber();
     const service = new ChainSyncService(config, indexer, {
       liveLogSubscriber: liveLogs,
@@ -263,11 +270,8 @@ describe("ChainSyncService (polling)", () => {
     service.start();
     await waitFor(() => liveLogs.subscription !== null && service.snapshot().liveListenerConnected);
     await waitFor(() => service.snapshot().latestSyncedBlock === String(0x180n));
-    liveLogs.emit([{
-      ...planetStartedLog("0x181", 7n, "0xlive"),
-      address: config.gameContractAddress!,
-      logIndex: "0x0"
-    }]);
+    backfiller.head = 0x181n;
+    liveLogs.emit([canonicalLog]);
 
     await waitFor(() => indexer.snapshot().indexedPlanets === 1);
     expect(service.snapshot()).toMatchObject({
@@ -278,12 +282,12 @@ describe("ChainSyncService (polling)", () => {
       pollingEnabled: true,
       subscribedToLogs: true
     });
-    expect(backfiller.ranges).toEqual([{ from: 100n, to: 0x180n }]);
+    expect(backfiller.ranges.at(-1)).toEqual({ from: 0x141n, to: 0x181n });
     service.stop();
     expect(liveLogs.unsubscribeCalls).toBe(1);
   });
 
-  test("does not let delayed startup catch-up regress the cursor after a websocket log", async () => {
+  test("does not apply an unverified websocket payload while the canonical scan is in progress", async () => {
     const indexer = makeIndexer();
     let resolveCatchUp!: () => void;
     const catchUpBlocked = new Promise<void>((resolve) => {
@@ -291,9 +295,15 @@ describe("ChainSyncService (polling)", () => {
     });
     const ranges: Array<{ from: bigint; to: bigint | "latest" }> = [];
     let listCalls = 0;
+    let head = 0x180n;
+    const canonicalLog = {
+      ...planetStartedLog("0x181", 7n, "0xcanonical-after-catch-up"),
+      address: config.gameContractAddress!,
+      logIndex: "0x0"
+    };
     const backfiller = {
       async getHeadBlock() {
-        return 0x180n;
+        return head;
       },
       async listContractLogs(from: bigint, to: bigint | "latest" = "latest") {
         ranges.push({ from, to });
@@ -301,7 +311,7 @@ describe("ChainSyncService (polling)", () => {
         if (listCalls === 1) {
           await catchUpBlocked;
         }
-        return [];
+        return from <= 0x181n && to !== "latest" && to >= 0x181n ? [canonicalLog] : [];
       }
     };
     const liveLogs = new MockLiveLogSubscriber();
@@ -313,20 +323,19 @@ describe("ChainSyncService (polling)", () => {
     service.start();
     await waitFor(() => liveLogs.subscription !== null && ranges.length === 1);
     liveLogs.emit([{
-      ...planetStartedLog("0x181", 7n, "0xlive-before-catch-up-finishes"),
+      ...planetStartedLog("0x181", 7n, "0xunverified-websocket-payload"),
       address: config.gameContractAddress!,
       logIndex: "0x0"
     }]);
-
-    await waitFor(() => service.snapshot().latestSyncedBlock === String(0x181n));
-    expect(service.snapshot().pollBacklogBlocks).toBe("0");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(indexer.snapshot().indexedPlanets).toBe(0);
     resolveCatchUp();
     await waitFor(() => service.snapshot().lastPollDurationMs !== null);
+    head = 0x181n;
+    liveLogs.emit([canonicalLog]);
+    await waitFor(() => indexer.snapshot().indexedPlanets === 1);
 
-    expect(ranges).toEqual([
-      { from: 100n, to: 0x180n },
-      { from: 100n, to: 0x180n }
-    ]);
+    expect(indexer.planet("7")?.transactionHash).toBe("0xcanonical-after-catch-up");
     expect(service.snapshot()).toMatchObject({
       latestHeadBlock: String(0x181n),
       latestSyncedBlock: String(0x181n),
@@ -335,15 +344,24 @@ describe("ChainSyncService (polling)", () => {
     service.stop();
   });
 
-  test("uses HTTP getLogs only to catch up cursor gaps before a websocket log", async () => {
+  test("uses one complete HTTP range for a websocket-notified head and its cursor gap", async () => {
     const indexer = makeIndexer();
     const gapLog = {
       ...planetStartedLog("0x181", 7n, "0xgap"),
       logIndex: "0x0"
     };
-    const backfiller = new MockBackfiller(0x180n, (from, to) =>
-      from === 0x181n && to === 0x181n ? [gapLog] : []
-    );
+    const canonicalLiveLog = {
+      ...planetStartedLog("0x182", 8n, "0xlive-after-gap"),
+      address: config.gameContractAddress!,
+      logIndex: "0x0"
+    };
+    const backfiller = new MockBackfiller(0x180n, (from, to) => {
+      if (to === "latest") return [];
+      return [gapLog, canonicalLiveLog].filter((log) => {
+        const block = BigInt(log.blockNumber);
+        return block >= from && block <= to;
+      });
+    });
     const liveLogs = new MockLiveLogSubscriber();
     const service = new ChainSyncService(config, indexer, {
       liveLogSubscriber: liveLogs,
@@ -352,17 +370,11 @@ describe("ChainSyncService (polling)", () => {
 
     service.start();
     await waitFor(() => service.snapshot().latestSyncedBlock === String(0x180n));
-    liveLogs.emit([{
-      ...planetStartedLog("0x182", 8n, "0xlive-after-gap"),
-      address: config.gameContractAddress!,
-      logIndex: "0x0"
-    }]);
+    backfiller.head = 0x182n;
+    liveLogs.emit([canonicalLiveLog]);
 
     await waitFor(() => indexer.snapshot().indexedPlanets === 2);
-    expect(backfiller.ranges).toEqual([
-      { from: 100n, to: 0x180n },
-      { from: 0x181n, to: 0x181n }
-    ]);
+    expect(backfiller.ranges.at(-1)).toEqual({ from: 0x141n, to: 0x182n });
     expect(service.snapshot()).toMatchObject({
       activeSource: "viem_ws",
       latestSyncedBlock: String(0x182n),
@@ -391,6 +403,12 @@ describe("ChainSyncService (polling)", () => {
       expect(indexer.fleetMission("16511")).toMatchObject({ status: "Returning" });
 
       let exposeMissedSibling = false;
+      let exposeNotifiedSibling = false;
+      const notifiedSibling = {
+        ...planetStartedLog("0x181", 8n, "0xwebsocket-notified-sibling"),
+        address: config.gameContractAddress!,
+        logIndex: "0x0"
+      };
       const missedReturn: TestLog = {
         blockNumber: "0x181",
         transactionHash: "0xmission-16511-returned",
@@ -398,9 +416,13 @@ describe("ChainSyncService (polling)", () => {
         topics: [fleetMissionReturnedTopic, topicWord(16511n), ownerTopic(player), topicWord(7n)],
         data: "0x"
       };
-      const backfiller = new MockBackfiller(0x180n, (from, to) =>
-        exposeMissedSibling && from <= 0x181n && to !== "latest" && to >= 0x181n ? [missedReturn] : []
-      );
+      const backfiller = new MockBackfiller(0x180n, (from, to) => {
+        if (to === "latest" || from > 0x181n || to < 0x181n) return [];
+        return [
+          ...(exposeNotifiedSibling ? [notifiedSibling] : []),
+          ...(exposeMissedSibling ? [missedReturn] : [])
+        ];
+      });
       const liveLogs = new MockLiveLogSubscriber();
       const service = new ChainSyncService({ ...config, pollIntervalMs: 60_000 }, indexer, {
         liveLogSubscriber: liveLogs,
@@ -409,11 +431,9 @@ describe("ChainSyncService (polling)", () => {
 
       service.start();
       await waitFor(() => liveLogs.subscription !== null && service.snapshot().lastPolledAt !== null);
-      liveLogs.emit([{
-        ...planetStartedLog("0x181", 8n, "0xwebsocket-only-sibling"),
-        address: config.gameContractAddress!,
-        logIndex: "0x0"
-      }]);
+      exposeNotifiedSibling = true;
+      backfiller.head = 0x181n;
+      liveLogs.emit([notifiedSibling]);
       await waitFor(() => service.snapshot().latestSyncedBlock === String(0x181n));
 
       exposeMissedSibling = true;
@@ -455,7 +475,7 @@ describe("ChainSyncService (polling)", () => {
     service.stop();
   });
 
-  test("does not canonical-heal combat logs during websocket handling", async () => {
+  test("does not canonical-heal combat logs during websocket-triggered canonical polling", async () => {
     const indexer = {
       applyLog: () => ({
         applied: true,
@@ -484,6 +504,8 @@ describe("ChainSyncService (polling)", () => {
       ],
       data: abiWords(1n, 2n, 3n, 4n)
     };
+    backfiller.head = 0x181n;
+    backfiller.logsFor = () => [combatLog];
 
     service.start();
     await waitFor(() => liveLogs.subscription !== null && service.snapshot().liveListenerConnected);
@@ -498,7 +520,7 @@ describe("ChainSyncService (polling)", () => {
     service.stop();
   });
 
-  test("keeps websocket handler latency scoped to event indexing", async () => {
+  test("keeps websocket-triggered canonical poll latency scoped to event indexing", async () => {
     const indexer = {
       applyLog: () => ({
         applied: true,
@@ -527,6 +549,8 @@ describe("ChainSyncService (polling)", () => {
       ],
       data: abiWords(1n, 2n, 3n, 4n)
     };
+    backfiller.head = 0x181n;
+    backfiller.logsFor = () => [combatLog];
 
     service.start();
     await waitFor(() => liveLogs.subscription !== null && service.snapshot().liveListenerConnected);
@@ -541,7 +565,7 @@ describe("ChainSyncService (polling)", () => {
     service.stop();
   });
 
-  test("logs handler completion timing and warns for slow websocket handlers", async () => {
+  test("logs handler completion timing and warns for slow websocket-triggered canonical handlers", async () => {
     const backfiller = new MockBackfiller(0x180n);
     const liveLogs = new MockLiveLogSubscriber();
     const warnings: string[] = [];
@@ -567,15 +591,18 @@ describe("ChainSyncService (polling)", () => {
       liveLogSubscriber: liveLogs,
       logBackfiller: backfiller
     });
+    const slowLog = {
+      ...planetStartedLog("0x181", 7n, "0xslow"),
+      address: config.gameContractAddress!,
+      logIndex: "0x0"
+    };
+    backfiller.head = 0x181n;
+    backfiller.logsFor = () => [slowLog];
 
     try {
       service.start();
       await waitFor(() => liveLogs.subscription !== null);
-      liveLogs.emit([{
-        ...planetStartedLog("0x181", 7n, "0xslow"),
-        address: config.gameContractAddress!,
-        logIndex: "0x0"
-      }]);
+      liveLogs.emit([slowLog]);
 
       await waitFor(() => service.snapshot().slowHandlerCount300Ms === 1);
       expect(service.snapshot()).toMatchObject({
@@ -588,7 +615,7 @@ describe("ChainSyncService (polling)", () => {
       expect(warnings.length).toBeGreaterThan(0);
       expect(JSON.parse(warnings.at(-1) ?? "{}")).toMatchObject({
         msg: "Veydrift chain event handled",
-        source: "viem_ws",
+        source: "fallback_poll",
         eventTopic: planetStartedTopic,
         contractAddress: config.gameContractAddress,
         transactionHash: "0xslow",
@@ -638,11 +665,14 @@ describe("ChainSyncService (polling)", () => {
       await waitFor(() => liveLogs.subscription !== null);
 
       setSystemTime(new Date(baseTime));
-      liveLogs.emit([{
+      const oldSlowLog = {
         ...planetStartedLog("0x181", 7n, "0xold-slow"),
         address: config.gameContractAddress!,
         logIndex: "0x0"
-      }]);
+      };
+      backfiller.head = 0x181n;
+      backfiller.logsFor = () => [oldSlowLog];
+      liveLogs.emit([oldSlowLog]);
       await waitFor(() => applyCalls === 1);
       expect(service.snapshot()).toMatchObject({
         maxHandlerDurationMs: 1500,
@@ -651,11 +681,14 @@ describe("ChainSyncService (polling)", () => {
       });
 
       setSystemTime(new Date(baseTime + 62_000));
-      liveLogs.emit([{
+      const freshFastLog = {
         ...planetStartedLog("0x182", 8n, "0xfresh-fast"),
         address: config.gameContractAddress!,
         logIndex: "0x0"
-      }]);
+      };
+      backfiller.head = 0x182n;
+      backfiller.logsFor = () => [oldSlowLog, freshFastLog];
+      liveLogs.emit([freshFastLog]);
       await waitFor(() => applyCalls === 2);
 
       expect(service.snapshot()).toMatchObject({

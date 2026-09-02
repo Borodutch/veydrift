@@ -706,35 +706,14 @@ export class ChainSyncService {
   }
 
   private async handleLiveLogs(logs: RpcLog[]): Promise<void> {
-    const applyLog = this.indexer?.applyLog;
-    if (this.stopped || !applyLog || logs.length === 0) return;
-    if (this.cursor === null) {
-      this.cursor = this.initialCursor();
-    }
-
-    const sortedLogs = sortRpcLogs(logs).filter(isRpcLog);
-    for (const log of sortedLogs) {
-      const block = BigInt(log.blockNumber);
-      if (this.cursor !== null && block > this.cursor + 1n) {
-        await this.catchUpRange(this.cursor + 1n, block - 1n);
-      }
-      const { applied, lastHash, resourceChanges, walletPlanetsChanged } = await this.applyLogs([log], applyLog, "viem_ws");
-      this.cursor = maxBigInt(this.cursor, block);
-      this.latestHeadBlock = maxBlockString(this.latestHeadBlock, block);
-      this.latestSyncedBlock = maxBlockString(this.latestSyncedBlock, block);
-      if (this.paidAllianceInviteHistoryReady()) this.markConnected();
-      if (applied > 0) {
-        this.notify({
-          kind: "chain-event",
-          blockNumber: this.latestSyncedBlock,
-          ...(lastHash ? { transactionHash: lastHash } : {}),
-          ...(resourceChanges.length > 0 ? { resourceChanges } : {}),
-          ...(walletPlanetsChanged ? { walletPlanetsChanged } : {})
-        });
-      }
-    }
-    this.notify({ kind: "sync-status", blockNumber: this.latestSyncedBlock });
-    this.publishDiagnostics();
+    if (this.stopped || logs.length === 0) return;
+    // A websocket callback is only a low-latency wake-up hint. Providers may split one block's logs
+    // across callbacks, so applying the callback directly exposes a partially indexed block until
+    // the next HTTP safety scan. That made transaction-facing reads fail closed on every active
+    // block. Let the bounded HTTP poll fetch the complete canonical range, verify its block anchor,
+    // and publish state + projection clock together instead. If a poll is already in progress, its
+    // one-second timer will immediately close any head it captured before this notification.
+    await this.poll();
   }
 
   private paidAllianceInviteHistoryReady(): boolean {
