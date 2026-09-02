@@ -64,6 +64,7 @@ const GENERIC_POLL_REPLAY_BLOCKS = 64n;
 // a bounded in-process ledger of successfully handled non-removed logs so the second source can skip the
 // exact same event while still admitting a sibling the websocket did not deliver.
 const RECENT_LOG_IDENTITY_LIMIT = 16_384;
+const WEBSOCKET_REMOVAL_RECONCILIATION_REASON = "resource_projection_invalidated: websocket removed log";
 
 export type ReferralHistoryBackfillSnapshot = {
   completedAt: string | null;
@@ -229,7 +230,11 @@ export class ChainSyncService {
   private liveListenerErrorCount = 0;
   private liveListenerLastError: string | null = null;
   private liveUnsubscribe: (() => void) | undefined;
-  private liveLogQueue: Promise<void> = Promise.resolve();
+  private livePollWakePending = false;
+  private livePollWakeDrain: Promise<void> | null = null;
+  private readonly liveRemovedLogs = new Map<string, RpcLog>();
+  private pollCompletion: Promise<void> = Promise.resolve();
+  private resolvePollCompletion: (() => void) | null = null;
   private lastHandlerDurationMs: number | null = null;
   private maxHandlerDurationMs: number | null = null;
   private slowHandlerCount300Ms = 0;
@@ -410,6 +415,9 @@ export class ChainSyncService {
       return;
     }
     this.pollInProgress = true;
+    this.pollCompletion = new Promise<void>((resolve) => {
+      this.resolvePollCompletion = resolve;
+    });
     const pollStartedAt = Date.now();
     try {
       const head = await backfiller.getHeadBlock();
@@ -491,11 +499,14 @@ export class ChainSyncService {
         if (verifiedHeadAnchor.hash.toLowerCase() !== headAnchor.hash.toLowerCase()) {
           this.indexer?.invalidateResourceProjectionWatermark?.("canonical head changed during scan");
         } else {
-          this.indexer?.recordResourceProjectionWatermark?.(
+          const watermarkRecorded = this.indexer?.recordResourceProjectionWatermark?.(
             head.toString(),
             verifiedHeadAnchor.timestamp,
             verifiedHeadAnchor.hash
           );
+          if (watermarkRecorded) {
+            this.indexer?.clearPendingReconciliationReason?.(WEBSOCKET_REMOVAL_RECONCILIATION_REASON);
+          }
         }
       }
       this.markConnected();
@@ -513,6 +524,8 @@ export class ChainSyncService {
     } finally {
       this.lastPollDurationMs = Date.now() - pollStartedAt;
       this.pollInProgress = false;
+      this.resolvePollCompletion?.();
+      this.resolvePollCompletion = null;
       this.publishDiagnostics();
     }
   }
@@ -697,44 +710,55 @@ export class ChainSyncService {
   }
 
   private enqueueLiveLogs(logs: RpcLog[]): void {
-    this.liveLogQueue = this.liveLogQueue
-      .then(() => this.handleLiveLogs(logs))
+    if (this.stopped || logs.length === 0) return;
+    for (const log of logs) {
+      if (isRpcLog(log) && Boolean((log as RpcLog & { removed?: boolean }).removed)) {
+        this.liveRemovedLogs.set(rpcLogIdentity(log), log);
+      }
+    }
+    this.livePollWakePending = true;
+    this.startLivePollWakeDrain();
+  }
+
+  private startLivePollWakeDrain(): void {
+    if (this.livePollWakeDrain) return;
+    this.livePollWakeDrain = this.drainLivePollWakeups()
       .catch((error) => {
         this.lastError = error instanceof Error ? error.message : "Failed to handle live chain logs.";
         this.publishDiagnostics();
+      })
+      .finally(() => {
+        this.livePollWakeDrain = null;
+        if (this.livePollWakePending && !this.stopped) this.startLivePollWakeDrain();
       });
   }
 
-  private async handleLiveLogs(logs: RpcLog[]): Promise<void> {
-    const applyLog = this.indexer?.applyLog;
-    if (this.stopped || !applyLog || logs.length === 0) return;
-    if (this.cursor === null) {
-      this.cursor = this.initialCursor();
-    }
-
-    const sortedLogs = sortRpcLogs(logs).filter(isRpcLog);
-    for (const log of sortedLogs) {
-      const block = BigInt(log.blockNumber);
-      if (this.cursor !== null && block > this.cursor + 1n) {
-        await this.catchUpRange(this.cursor + 1n, block - 1n);
+  private async drainLivePollWakeups(): Promise<void> {
+    // A websocket callback is only a low-latency wake-up hint. Providers may split one block's logs
+    // across callbacks, so applying the callback directly exposes a partially indexed block until
+    // the next HTTP safety scan. That made transaction-facing reads fail closed on every active
+    // block. Let the bounded HTTP poll fetch the complete canonical range, verify its block anchor,
+    // and publish state + projection clock together instead. If a poll is already in progress, its
+    // one-second timer will immediately close any head it captured before this notification.
+    while (!this.stopped && this.livePollWakePending) {
+      this.livePollWakePending = false;
+      if (this.pollInProgress) await this.pollCompletion;
+      if (this.stopped) return;
+      const removedLogs = [...this.liveRemovedLogs.values()];
+      this.liveRemovedLogs.clear();
+      if (removedLogs.length > 0) {
+        const applyLog = this.indexer?.applyLog;
+        if (applyLog) {
+          // Canonical eth_getLogs can reveal replacement logs, but it cannot identify persisted logs
+          // that disappeared from a reorganized block. Apply only WS removal notices directly, after
+          // any in-flight canonical scan has finished, then run a fresh bounded HTTP scan below.
+          // Transaction-facing projections remain frozen until that scan publishes a verified anchor.
+          this.indexer?.invalidateResourceProjectionWatermark?.("websocket removed log");
+          await this.applyLogs(removedLogs, applyLog, "viem_ws");
+        }
       }
-      const { applied, lastHash, resourceChanges, walletPlanetsChanged } = await this.applyLogs([log], applyLog, "viem_ws");
-      this.cursor = maxBigInt(this.cursor, block);
-      this.latestHeadBlock = maxBlockString(this.latestHeadBlock, block);
-      this.latestSyncedBlock = maxBlockString(this.latestSyncedBlock, block);
-      if (this.paidAllianceInviteHistoryReady()) this.markConnected();
-      if (applied > 0) {
-        this.notify({
-          kind: "chain-event",
-          blockNumber: this.latestSyncedBlock,
-          ...(lastHash ? { transactionHash: lastHash } : {}),
-          ...(resourceChanges.length > 0 ? { resourceChanges } : {}),
-          ...(walletPlanetsChanged ? { walletPlanetsChanged } : {})
-        });
-      }
+      await this.poll();
     }
-    this.notify({ kind: "sync-status", blockNumber: this.latestSyncedBlock });
-    this.publishDiagnostics();
   }
 
   private paidAllianceInviteHistoryReady(): boolean {
