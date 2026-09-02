@@ -2813,6 +2813,101 @@ describe("SettlementIndexer", () => {
     expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(5);
   });
 
+  test("persists a monotonic fully-indexed resource projection watermark", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+
+    expect(indexer.recordResourceProjectionWatermark("0x90", "0x6987f4c0", `0x${"9".repeat(64)}`)).toBe(true);
+    expect(indexer.snapshot()).toMatchObject({
+      resourceProjectionBlock: "144",
+      resourceProjectionHash: `0x${"9".repeat(64)}`,
+      resourceProjectionRevision: "0",
+      resourceProjectionTimestamp: "1770517696"
+    });
+
+    expect(indexer.recordResourceProjectionWatermark("0x80", "0x1", `0x${"8".repeat(64)}`)).toBe(false);
+    expect(indexer.snapshot()).toMatchObject({
+      resourceProjectionBlock: "144",
+      resourceProjectionTimestamp: "1770517696"
+    });
+  });
+
+  test("refuses to couple an older poll timestamp to websocket state from a later block", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+
+    indexer.applyLog({
+      blockNumber: "0x91",
+      transactionHash: "0xws-ahead",
+      logIndex: "0x0",
+      topics: [planetSettledTopic, topic(7n)],
+      data: abiWords(1000n, 900n, 800n, 1770000101n)
+    });
+
+    expect(indexer.recordResourceProjectionWatermark("0x90", "1770000100", `0x${"9".repeat(64)}`)).toBe(false);
+    expect(indexer.resourceProjectionContext()).toMatchObject({
+      block: null,
+      safeToProject: false,
+      timestamp: null
+    });
+  });
+
+  test("reads resource rows and their projection watermark from one SQLite snapshot", () => {
+    const dir = mkdtempSync(join(tmpdir(), "veydrift-resource-projection-snapshot-"));
+    const databasePath = join(dir, "contract-state.sqlite");
+    try {
+      const chainReader = {
+        async listDebrisFieldEvents() { return []; },
+        async listMoonChanceReportEvents() { return []; },
+        async listSettledPlanetEvents() { return []; }
+      };
+      const writer = new SettlementIndexer(chainReader, 100n, { databasePath });
+      writer.applyEvent(planet);
+      writer.recordResourceProjectionWatermark("144", "1770000100", `0x${"a".repeat(64)}`);
+      const reader = new SettlementIndexer(chainReader, 100n, {
+        assumeSchemaReady: true,
+        databasePath,
+        readOnly: true
+      });
+
+      const duringWriterCommit = reader.readConsistentSnapshot(() => {
+        const beforeSpend = reader.planet(planet.planetId);
+        writer.applyLog({
+          blockNumber: "0x91",
+          transactionHash: "0xconcurrent-spend",
+          logIndex: "0x0",
+          topics: [planetSettledTopic, topic(BigInt(planet.planetId))],
+          data: abiWords(1000n, 900n, 800n, 1770000101n)
+        });
+        return {
+          context: reader.resourceProjectionContext(),
+          resources: beforeSpend?.resources
+        };
+      });
+
+      expect(duringWriterCommit.resources?.metal).toBe("5000");
+      expect(duringWriterCommit.context).toMatchObject({
+        indexedRevision: "0",
+        projectionRevision: "0",
+        safeToProject: true
+      });
+      expect(reader.planet(planet.planetId)?.resources.metal).toBe("1000");
+      expect(reader.resourceProjectionContext()).toMatchObject({
+        indexedRevision: "1",
+        projectionRevision: "0",
+        safeToProject: false
+      });
+    } finally {
+      rmSync(dir, { force: true, recursive: true });
+    }
+  });
+
   test("applyLog is atomic: a handler that throws rolls back the event row and the indexed head, so the log is not poisoned as a duplicate (VEY-KANEO-460)", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },

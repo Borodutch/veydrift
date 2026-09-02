@@ -94,6 +94,8 @@ class MockBackfiller {
   referralRanges: Array<{ from: bigint; to: bigint | "latest" }> = [];
   paidAllianceInviteRanges: Array<{ from: bigint; to: bigint | "latest" }> = [];
   headCalls = 0;
+  timestampCalls: bigint[] = [];
+  anchorHashFor: (blockNumber: bigint) => string = (blockNumber) => `0x${blockNumber.toString(16).padStart(64, "0")}`;
   logsFor: (from: bigint, to: bigint | "latest") => TestLog[];
   referralLogsFor: (from: bigint, to: bigint | "latest") => TestLog[] = () => [];
   paidAllianceInviteLogsFor: (from: bigint, to: bigint | "latest") => TestLog[] = () => [];
@@ -107,6 +109,14 @@ class MockBackfiller {
     this.headCalls += 1;
     if (this.headError) throw this.headError;
     return this.head;
+  }
+
+  async getBlockProjectionAnchor(blockNumber: bigint): Promise<{ hash: string; timestamp: string }> {
+    this.timestampCalls.push(blockNumber);
+    return {
+      hash: this.anchorHashFor(blockNumber),
+      timestamp: (1_770_000_000n + blockNumber).toString()
+    };
   }
 
   async listContractLogs(from: bigint, to: bigint | "latest" = "latest"): Promise<RpcLog[]> {
@@ -732,12 +742,24 @@ describe("ChainSyncService (polling)", () => {
     expect(service.snapshot().latestSyncedBlock).toBe(String(0x192n));
     expect(service.snapshot().connected).toBe(true);
     expect(service.snapshot().eventsReceived).toBeGreaterThanOrEqual(1);
+    expect(indexer.snapshot()).toMatchObject({
+      resourceProjectionBlock: String(0x192n),
+      resourceProjectionHash: `0x${(0x192n).toString(16).padStart(64, "0")}`,
+      resourceProjectionTimestamp: String(1_770_000_000n + 0x192n)
+    });
+    // The writer reads the anchor before and after scanning so a same-height reorg cannot publish
+    // the pre-scan hash/timestamp against post-scan state.
+    expect(backfiller.timestampCalls).toEqual([0x192n, 0x192n]);
 
     // Head advances; the next poll overlaps the last 64 cursor blocks through the new head.
     backfiller.head = 0x193n;
     await service.poll();
     expect(backfiller.ranges.at(-1)).toEqual({ from: 0x153n, to: 0x193n });
     expect(service.snapshot().latestSyncedBlock).toBe(String(0x193n));
+    expect(indexer.snapshot()).toMatchObject({
+      resourceProjectionBlock: String(0x193n),
+      resourceProjectionTimestamp: String(1_770_000_000n + 0x193n)
+    });
 
     service.stop();
   });
@@ -1095,6 +1117,7 @@ describe("ChainSyncService (polling)", () => {
     const service = new ChainSyncService(config, indexer, { logBackfiller: backfiller });
 
     await service.poll(); // replay through 0x180, no logs
+    expect(indexer.snapshot().resourceProjectionBlock).toBe(String(0x180n));
     // Head moved, but the ingest getLogs fails transiently. Cursor must NOT advance.
     backfiller.head = 0x182n;
     backfiller.logsError = new Error("Unexpected end of JSON input");
@@ -1102,13 +1125,98 @@ describe("ChainSyncService (polling)", () => {
     expect(service.snapshot().lastError).toContain("Unexpected end of JSON input");
     expect(service.snapshot().connected).toBe(true); // one blip never flaps readiness
     expect(indexer.snapshot().indexedPlanets).toBe(0); // nothing applied
+    expect(indexer.snapshot().resourceProjectionBlock).toBe(String(0x180n));
 
     // RPC recovers; the same range is retried and the log is finally applied — no event lost.
     backfiller.logsError = null;
     await service.poll();
     expect(backfiller.ranges.at(-1)).toEqual({ from: 0x141n, to: 0x182n });
     expect(indexer.snapshot().indexedPlanets).toBeGreaterThanOrEqual(1);
+    expect(indexer.snapshot().resourceProjectionBlock).toBe(String(0x182n));
     expect(service.snapshot().lastError).toBeNull();
+    service.stop();
+  });
+
+  test("invalidates spendable projections when the canonical head rolls back", async () => {
+    const indexer = makeIndexer();
+    const backfiller = new MockBackfiller(0x180n);
+    const service = new ChainSyncService(config, indexer, { logBackfiller: backfiller });
+
+    await service.poll();
+    expect(indexer.resourceProjectionContext().safeToProject).toBe(true);
+
+    backfiller.head = 0x17fn;
+    await service.poll();
+
+    expect(indexer.snapshot()).toMatchObject({
+      pendingReconciliationReason: "resource_projection_invalidated: canonical block anchor changed",
+      resourceProjectionBlock: String(0x17fn)
+    });
+    expect(indexer.resourceProjectionContext().safeToProject).toBe(false);
+    service.stop();
+  });
+
+  test("invalidates spendable projections when a same-height canonical block hash changes", async () => {
+    const indexer = makeIndexer();
+    const backfiller = new MockBackfiller(0x180n);
+    const service = new ChainSyncService(config, indexer, { logBackfiller: backfiller });
+
+    await service.poll();
+    expect(indexer.resourceProjectionContext().safeToProject).toBe(true);
+
+    backfiller.anchorHashFor = () => `0x${"f".repeat(64)}`;
+    await service.poll();
+
+    expect(indexer.snapshot()).toMatchObject({
+      pendingReconciliationReason: "resource_projection_invalidated: canonical block anchor changed",
+      resourceProjectionHash: `0x${"f".repeat(64)}`
+    });
+    expect(indexer.resourceProjectionContext().safeToProject).toBe(false);
+    service.stop();
+  });
+
+  test("does not publish a projection watermark when the canonical head changes during the scan", async () => {
+    const indexer = makeIndexer();
+    const backfiller = new MockBackfiller(0x180n);
+    let anchorReads = 0;
+    backfiller.anchorHashFor = () => {
+      anchorReads += 1;
+      return anchorReads === 1 ? `0x${"1".repeat(64)}` : `0x${"2".repeat(64)}`;
+    };
+    const service = new ChainSyncService(config, indexer, { logBackfiller: backfiller });
+
+    await service.poll();
+
+    expect(indexer.snapshot()).toMatchObject({
+      pendingReconciliationReason: "resource_projection_invalidated: canonical head changed during scan",
+      resourceProjectionBlock: null,
+      resourceProjectionHash: null
+    });
+    expect(indexer.resourceProjectionContext().safeToProject).toBe(false);
+    service.stop();
+  });
+
+  test("does not publish an older poll clock when websocket ingestion advances during verification", async () => {
+    const indexer = makeIndexer();
+    const backfiller = new MockBackfiller(0x180n);
+    let anchorReads = 0;
+    backfiller.anchorHashFor = (blockNumber) => {
+      anchorReads += 1;
+      if (anchorReads === 2) {
+        indexer.applyLog(planetStartedLog("0x181", 7n, "0xws-ahead-during-poll"));
+      }
+      return `0x${blockNumber.toString(16).padStart(64, "0")}`;
+    };
+    const service = new ChainSyncService(config, indexer, { logBackfiller: backfiller });
+
+    await service.poll();
+
+    expect(indexer.snapshot().latestIndexedBlock).toBe(String(0x181n));
+    expect(indexer.resourceProjectionContext()).toMatchObject({
+      block: null,
+      safeToProject: false,
+      timestamp: null
+    });
     service.stop();
   });
 

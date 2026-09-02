@@ -2262,6 +2262,7 @@ export function deriveLogBackfiller(
   | {
       failoverRpc?: (reason: string) => boolean;
       getHeadBlock: () => Promise<bigint>;
+      getBlockProjectionAnchor?: (blockNumber: bigint) => Promise<{ hash: string; timestamp: string }>;
       listContractLogs: (fromBlock: bigint, toBlock?: bigint | "latest") => Promise<RpcLog[]>;
       listReferralLogs?: (fromBlock: bigint, toBlock?: bigint | "latest") => Promise<RpcLog[]>;
       listPaidAllianceInviteLogs?: (fromBlock: bigint, toBlock?: bigint | "latest") => Promise<RpcLog[]>;
@@ -2276,6 +2277,9 @@ export function deriveLogBackfiller(
     return {
       ...(typeof reader.failoverRpc === "function" ? { failoverRpc: reader.failoverRpc.bind(reader) } : {}),
       getHeadBlock: reader.getBlockNumber.bind(reader),
+      ...(typeof reader.getBlockProjectionAnchor === "function"
+        ? { getBlockProjectionAnchor: reader.getBlockProjectionAnchor.bind(reader) }
+        : {}),
       listContractLogs: reader.listContractLogs.bind(reader),
       ...(typeof reader.listReferralLogs === "function"
         ? { listReferralLogs: reader.listReferralLogs.bind(reader) }
@@ -3420,10 +3424,23 @@ function indexedWalletPlanetsWarmResponse(
   indexer: SettlementIndexer | undefined,
   wallet: `0x${string}`
 ): Response | null {
-  if (!indexer || !hasWarmPlanetIndex(indexer)) return null;
-
-  const snapshot = indexedReadSnapshot(indexer);
-  return indexedWarmJsonResponse(withPlayerProfile(indexedWalletPlanets(indexer, wallet), indexer, wallet), "wallet planets", snapshot);
+  if (!indexer) return null;
+  return indexer.readConsistentSnapshot(() => {
+    if (!hasWarmPlanetIndex(indexer)) return null;
+    const projection = indexer.resourceProjectionContext();
+    if (projection.timestamp !== null && !projection.safeToProject) {
+      return indexedReadNotReadyResponse("wallet planets", indexer, {
+        wallet,
+        reason: "resource_projection_not_ready"
+      });
+    }
+    const snapshot = indexedReadSnapshot(indexer);
+    return indexedWarmJsonResponse(
+      withPlayerProfile(indexedWalletPlanetsSnapshot(indexer, wallet), indexer, wallet),
+      "wallet planets",
+      snapshot
+    );
+  });
 }
 
 async function indexedWalletOverviewWarmResponse(
@@ -3436,7 +3453,15 @@ async function indexedWalletOverviewWarmResponse(
   if (!indexer || !hasWarmPlanetIndex(indexer)) return null;
   const warmAt = performance.now();
 
-  return indexer.readSnapshot(() => {
+  return indexer.readConsistentSnapshot(() => {
+    const projection = indexer.resourceProjectionContext();
+    if (projection.timestamp !== null && !projection.safeToProject) {
+      return indexedReadNotReadyResponse("overview snapshot", indexer, {
+        wallet,
+        ...(selectedPlanetId !== undefined ? { selectedPlanetId: selectedPlanetId.toString() } : {}),
+        reason: "resource_projection_not_ready"
+      });
+    }
     const snapshot = indexedReadSnapshot(indexer);
     const snapshotAt = performance.now();
     const selectedSettlement = indexedWalletSettlement(indexer, wallet, selectedPlanetId);
@@ -3556,17 +3581,28 @@ function indexedWarmResponse<T extends object>(
 ): Response | null {
   if (!indexer) return null;
 
-  if (!hasWarmPlanetIndex(indexer)) return null;
-  const settlement = indexedWalletSettlement(indexer, wallet, selectedPlanetId);
-  if (!settlement?.planet) return null;
+  return indexer.readConsistentSnapshot(() => {
+    if (!hasWarmPlanetIndex(indexer)) return null;
+    const projection = indexer.resourceProjectionContext();
+    const requiresSpendableResources = ["infrastructure", "shipyard", "defenses", "research"].includes(surface);
+    if (requiresSpendableResources && projection.timestamp !== null && !projection.safeToProject) {
+      return indexedReadNotReadyResponse(surface, indexer, {
+        wallet,
+        ...(selectedPlanetId !== undefined ? { selectedPlanetId: selectedPlanetId.toString() } : {}),
+        reason: "resource_projection_not_ready"
+      });
+    }
+    const settlement = indexedWalletSettlement(indexer, wallet, selectedPlanetId);
+    if (!settlement?.planet) return null;
 
-  const detail = indexedWarmDetail(surface);
-  return indexedWarmJsonResponse(
-    build(wallet, settlement.settlement, settlement.planet, detail, indexer),
-    surface,
-    indexedReadSnapshot(indexer),
-    detail
-  );
+    const detail = indexedWarmDetail(surface);
+    return indexedWarmJsonResponse(
+      build(wallet, settlement.settlement, settlement.planet, detail, indexer),
+      surface,
+      indexedReadSnapshot(indexer),
+      detail
+    );
+  });
 }
 
 function indexedWarmJsonResponse<T extends object>(
@@ -3707,6 +3743,13 @@ function indexedWalletSettlementPlanetState(
 }
 
 function indexedWalletPlanets(
+  indexer: SettlementIndexer,
+  wallet: `0x${string}`
+): ReturnType<SettlementIndexer["walletPlanets"]> {
+  return indexer.readConsistentSnapshot(() => indexedWalletPlanetsSnapshot(indexer, wallet));
+}
+
+function indexedWalletPlanetsSnapshot(
   indexer: SettlementIndexer,
   wallet: `0x${string}`
 ): ReturnType<SettlementIndexer["walletPlanets"]> {
@@ -3889,18 +3932,21 @@ function resourceSnapshotMetadataForPlanet(planet: PlanetState | null): Resource
 
 function accruedPlanetState<T extends PlanetState | null>(
   indexer: SettlementIndexer,
-  planet: T
+  planet: T,
+  projectionTimeMs: number
 ): T {
   if (!planet) return planet;
 
   return {
     ...planet,
-    resources: accruedResourcesWithBuildingQueue(indexer, planet)
+    // Never project from a reader worker's wall clock. Until the writer publishes its first fully
+    // indexed block timestamp, freeze at the canonical settled balance rather than overstate funds.
+    resources: accruedResourcesWithBuildingQueue(indexer, planet, projectionTimeMs)
   };
 }
 
 // Single current-resource source of truth for wallet, public, and intel resource surfaces (VEY-KANEO-517):
-// canonical settled `resources` projected forward to now at the planet's production rate,
+// canonical settled `resources` projected forward to the latest fully indexed block timestamp,
 // capped at storage. Every endpoint serving "current resources" should call this helper
 // instead of re-running `resourcesWithClaimableAccrual` locally, so endpoint values cannot
 // diverge or accidentally project an already-current balance a second time.
@@ -3918,8 +3964,28 @@ function indexedCurrentPlanetState<T extends PlanetState>(
   options: { allowPendingResources?: boolean } = {}
 ): T | null {
   if (!planet) return null;
-  if (!options.allowPendingResources && indexer.hasPendingPlanetResources(planet.planetId)) return null;
-  return accruedPlanetState(indexer, planet);
+  return indexer.readConsistentSnapshot(() => {
+    const canonicalPlanet = indexer.planet(planet.planetId);
+    if (!canonicalPlanet) return null;
+    if (!options.allowPendingResources && indexer.hasPendingPlanetResources(planet.planetId)) return null;
+    const projection = indexer.resourceProjectionContext();
+    const projectionTimestamp = projection.timestamp === null ? Number.NaN : Number(projection.timestamp);
+    if (projection.timestamp === null) {
+      return accruedPlanetState(
+        indexer,
+        { ...planet, ...canonicalPlanet } as T,
+        Number(canonicalPlanet.lastSettledAt) * 1_000
+      );
+    }
+    if (!projection.safeToProject || !Number.isSafeInteger(projectionTimestamp) || projectionTimestamp < 0) {
+      return null;
+    }
+    return accruedPlanetState(
+      indexer,
+      { ...planet, ...canonicalPlanet } as T,
+      projectionTimestamp * 1_000
+    );
+  });
 }
 
 function indexedPlayerQueues(
@@ -4818,7 +4884,7 @@ function resourcesWithClaimableAccrual(
   productionPerHour: Resources | null,
   storageCaps: Resources | null,
   lastSettledAt: string,
-  now = Date.now(),
+  now: number,
   inviteeProductionBoostExpiresAt?: string | null
 ): Resources {
   if (!productionPerHour || !storageCaps) return current;
@@ -4873,7 +4939,7 @@ function boostedProductionSeconds(
 function accruedResourcesWithBuildingQueue(
   indexer: SettlementIndexer,
   planet: SettledPlanetEvent | PlanetState,
-  now = Date.now()
+  now: number
 ): Resources {
   const lastSettledAtSeconds = Number(planet.lastSettledAt);
   if (!Number.isFinite(lastSettledAtSeconds) || lastSettledAtSeconds <= 0) return planet.resources;

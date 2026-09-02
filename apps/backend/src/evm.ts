@@ -57,8 +57,8 @@ export type PlanetState = Coordinates & {
   deuteriumMultiplierBps: number;
   lastSettledAt: string;
   resources: Resources;
-  // Live, settled-to-now balance (canonical `resources` projected forward at the
-  // production rate, capped at storage — the chain's `previewResources`). Optional
+  // Spendable balance at the backend's fully indexed chain timestamp (canonical `resources`
+  // projected at the production rate and capped at storage — the chain's `previewResources`). Optional
   // because the canonical settled snapshot is the load-bearing value; serializers
   // that expose a live balance populate it alongside `resources` rather than
   // overwriting the settled snapshot (VEY-KANEO-488).
@@ -1517,6 +1517,7 @@ export interface ChainReader {
   listReferralLogs?(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
   failoverRpc?(reason: string): boolean;
   getBlockNumber?(): Promise<bigint>;
+  getBlockProjectionAnchor?(blockNumber: bigint): Promise<{ hash: string; timestamp: string }>;
   getTransactionReceipt?(transactionHash: string): Promise<RpcTransactionReceipt | null>;
   rpcMetrics?(): RpcMetrics;
 }
@@ -1594,6 +1595,7 @@ type RpcLogFilter = {
 };
 
 export type RpcBlock = {
+  hash?: string | null;
   timestamp: string;
 };
 
@@ -3907,6 +3909,19 @@ export class VeydriftGameReader implements ChainReader {
   /** Current chain head (eth_blockNumber). Drives the chain-sync poll cursor. */
   async getBlockNumber(): Promise<bigint> {
     return decodeUint(await this.transport.request<string>("eth_blockNumber", []));
+  }
+
+  /** Canonical identity and timestamp for a block used to anchor indexed resource projections. */
+  async getBlockProjectionAnchor(blockNumber: bigint): Promise<{ hash: string; timestamp: string }> {
+    const block = await this.transport.request<RpcBlock>("eth_getBlockByNumber", [
+      toQuantity(blockNumber),
+      false
+    ]);
+    if (!block.hash) throw new Error(`Block ${blockNumber.toString()} has no canonical hash.`);
+    return {
+      hash: block.hash.toLowerCase(),
+      timestamp: decodeUint(block.timestamp).toString()
+    };
   }
 
   async getTransactionReceipt(transactionHash: string): Promise<RpcTransactionReceipt | null> {

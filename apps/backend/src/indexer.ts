@@ -290,6 +290,10 @@ export type IndexerSnapshot = {
   currentStateHealInProgress: boolean;
   currentStateHealRunId: string | null;
   latestIndexedBlock: string | null;
+  resourceProjectionBlock: string | null;
+  resourceProjectionHash: string | null;
+  resourceProjectionRevision: string | null;
+  resourceProjectionTimestamp: string | null;
   pendingReconciliationReason: string | null;
   reconciliationInProgress: boolean;
   reorgDetectedAt: string | null;
@@ -301,8 +305,21 @@ export type IndexerSnapshot = {
   startPriceWei: string | null;
 };
 
+type ResourceProjectionContext = {
+  block: string | null;
+  hash: string | null;
+  indexedRevision: string;
+  projectionRevision: string | null;
+  safeToProject: boolean;
+  timestamp: string | null;
+};
+
 const writerChainSyncDiagnosticsMetadataKey = "writerChainSyncDiagnostics";
 const indexedRevisionMetadataKey = "indexedRevision";
+const resourceProjectionBlockMetadataKey = "resourceProjectionBlock";
+const resourceProjectionHashMetadataKey = "resourceProjectionHash";
+const resourceProjectionRevisionMetadataKey = "resourceProjectionRevision";
+const resourceProjectionTimestampMetadataKey = "resourceProjectionTimestamp";
 const gameMaintenanceStateMetadataKey = "gameMaintenanceState";
 const startPriceWeiMetadataKey = "canonicalStartPriceWei";
 const startPriceSourceMetadataKey = "canonicalStartPriceSource";
@@ -979,6 +996,7 @@ export class SettlementIndexer {
   // VEY-KANEO-485: see SettlementIndexerOptions. 0 = no cold-rebuild deadline.
   private readonly rebuildDeadlineMs: number;
   private readSnapshotDepth = 0;
+  private readSnapshotResourceProjectionContext: ResourceProjectionContext | null = null;
   private readSnapshotStateVersion: string | null = null;
 
   snapshot(): IndexerSnapshot {
@@ -1069,6 +1087,10 @@ export class SettlementIndexer {
       currentStateHealInProgress,
       currentStateHealRunId: this.currentStateHealRunId,
       latestIndexedBlock: metadataValue("latestIndexedBlock"),
+      resourceProjectionBlock: metadataValue(resourceProjectionBlockMetadataKey),
+      resourceProjectionHash: metadataValue(resourceProjectionHashMetadataKey),
+      resourceProjectionRevision: metadataValue(resourceProjectionRevisionMetadataKey),
+      resourceProjectionTimestamp: metadataValue(resourceProjectionTimestampMetadataKey),
       pendingReconciliationReason,
       reconciliationInProgress,
       reorgDetectedAt: metadataValue("reorgDetectedAt"),
@@ -1098,18 +1120,134 @@ export class SettlementIndexer {
     this.setMetadata(gameMaintenanceStateMetadataKey, JSON.stringify(state), { invalidateSnapshot: false });
   }
 
+  /**
+   * Record the chain clock whose complete log range has been applied to this database.
+   * The caller must invoke this only after ingesting every indexed contract through blockNumber.
+   * The block, hash, timestamp, and indexed revision share one SQLite commit.
+   */
+  recordResourceProjectionWatermark(blockNumber: string, blockTimestamp: string, blockHash: string): boolean {
+    const nextBlock = blockNumberToDecimal(blockNumber);
+    const nextTimestamp = blockNumberToDecimal(blockTimestamp);
+    const nextBlockValue = BigInt(nextBlock);
+    const nextTimestampValue = BigInt(nextTimestamp);
+    const normalizedHash = blockHash.toLowerCase();
+    if (
+      nextBlockValue < 0n
+      || nextTimestampValue < 0n
+      || nextTimestampValue > BigInt(Number.MAX_SAFE_INTEGER)
+      || !/^0x[0-9a-f]{64}$/.test(normalizedHash)
+    ) {
+      throw new Error("Resource projection watermark must contain a non-negative block and safe timestamp.");
+    }
+    const currentBlock = this.metadata(resourceProjectionBlockMetadataKey);
+    if (currentBlock !== null) {
+      try {
+        if (nextBlockValue < BigInt(currentBlock)) return false;
+      } catch {
+        // Malformed legacy metadata is replaced by the validated incoming watermark.
+      }
+    }
+    return this.db.transaction(() => {
+      // Websocket ingestion and the HTTP safety poll intentionally overlap. If websocket delivery
+      // has already applied a later block, publishing this older poll head would couple its timestamp
+      // to state from the future block. Leave projections frozen until a poll catches that head.
+      const latestIndexedBlock = this.metadata("latestIndexedBlock");
+      if (latestIndexedBlock !== null && BigInt(latestIndexedBlock) > nextBlockValue) {
+        this.db.query(`
+          DELETE FROM indexer_metadata
+          WHERE key IN (?, ?, ?, ?)
+        `).run(
+          resourceProjectionBlockMetadataKey,
+          resourceProjectionHashMetadataKey,
+          resourceProjectionRevisionMetadataKey,
+          resourceProjectionTimestampMetadataKey
+        );
+        this.snapshotCache = null;
+        return false;
+      }
+      const indexedRevision = this.metadata(indexedRevisionMetadataKey) ?? "0";
+      this.setMetadata(resourceProjectionBlockMetadataKey, nextBlock);
+      this.setMetadata(resourceProjectionHashMetadataKey, normalizedHash);
+      this.setMetadata(resourceProjectionRevisionMetadataKey, indexedRevision);
+      this.setMetadata(resourceProjectionTimestampMetadataKey, nextTimestamp);
+      return true;
+    })();
+  }
+
+  invalidateResourceProjectionWatermark(reason: string): void {
+    this.db.transaction(() => {
+      this.db.query(`
+        DELETE FROM indexer_metadata
+        WHERE key IN (?, ?, ?, ?)
+      `).run(
+        resourceProjectionBlockMetadataKey,
+        resourceProjectionHashMetadataKey,
+        resourceProjectionRevisionMetadataKey,
+        resourceProjectionTimestampMetadataKey
+      );
+      this.markStale(`resource_projection_invalidated: ${reason}`);
+      this.snapshotCache = null;
+    })();
+  }
+
+  resourceProjectionContext(): ResourceProjectionContext {
+    if (this.readSnapshotDepth > 0 && this.readSnapshotResourceProjectionContext) {
+      return this.readSnapshotResourceProjectionContext;
+    }
+    const metadata = this.snapshotMetadata();
+    const value = (key: string): string | null => metadata.get(key) ?? null;
+    const indexedRevision = value(indexedRevisionMetadataKey) ?? "0";
+    const projectionRevision = value(resourceProjectionRevisionMetadataKey);
+    const lastReconciledAt = value("lastReconciledAt");
+    const lastReconciliationError = value("lastReconciliationError");
+    const pendingReconciliationReason = value("pendingReconciliationReason");
+    const reconciliationInProgress = this.rebuildPromise !== null
+      || this.planetRebuildPromise !== null
+      || this.currentStateHealPromise !== null;
+    // A completed log scan plus matching revision is itself a complete projection baseline, even
+    // before an optional canonical rebuild has stamped lastReconciledAt. Explicit stale/reconcile
+    // signals still fail closed: no transaction-facing resource response may use the anchor while
+    // state repair is pending or running, or after a cold reconciliation failure.
+    const projectionStateSafe = !reconciliationInProgress
+      && pendingReconciliationReason === null
+      && (lastReconciliationError === null || lastReconciledAt !== null);
+    const block = value(resourceProjectionBlockMetadataKey);
+    const hash = value(resourceProjectionHashMetadataKey);
+    const timestamp = value(resourceProjectionTimestampMetadataKey);
+    const context: ResourceProjectionContext = {
+      block,
+      hash,
+      indexedRevision,
+      projectionRevision,
+      safeToProject: projectionStateSafe
+        && block !== null
+        && hash !== null
+        && timestamp !== null
+        && projectionRevision === indexedRevision,
+      timestamp
+    };
+    if (this.readSnapshotDepth > 0) this.readSnapshotResourceProjectionContext = context;
+    return context;
+  }
+
   // API projections frequently ask for the indexed state version while composing one screen.
   // Reuse that metadata value only for the synchronous projection call: this removes repeated
   // SQLite metadata reads without delaying cross-process event freshness beyond that one request.
   readSnapshot<T>(read: () => T): T {
     const outermost = this.readSnapshotDepth === 0;
-    if (outermost) this.readSnapshotStateVersion = null;
+    if (outermost) {
+      this.readSnapshotResourceProjectionContext = null;
+      this.readSnapshotStateVersion = null;
+    }
     this.readSnapshotDepth += 1;
     try {
       return read();
     } finally {
       this.readSnapshotDepth -= 1;
-      if (outermost) this.readSnapshotStateVersion = null;
+      if (outermost) {
+        this.readSnapshotResourceProjectionContext = null;
+        this.readSnapshotStateVersion = null;
+      }
     }
   }
 
