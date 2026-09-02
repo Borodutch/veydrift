@@ -4681,6 +4681,7 @@ function targetCombatIntelForMission(
   mission: FleetMissionSummary
 ): Pick<RankedHighscorePlanet["tactical"], "combatPower" | "combatShips" | "defenses"> & {
   planetId: string;
+  targetIsMoon: boolean;
   activeMissions: FleetMissionSummary[];
   queues: {
     defense: PlayerQueues["defense"];
@@ -4690,25 +4691,35 @@ function targetCombatIntelForMission(
   const planet = indexer.planet(mission.targetPlanetId);
   if (!planet) return null;
 
+  const targetIsMoon = mission.targetIsMoon === true;
+  // Planet and moon inventories share the parent planet id but live in distinct
+  // canonical tables. A mission to a moon must never fall back to the parent
+  // planet's defenses, otherwise Target Combat Intel contradicts the battle-time
+  // moon snapshot shown directly below it.
+  const moon = targetIsMoon ? indexer.moonState(planet.owner, planet.planetId) : null;
+  if (targetIsMoon && !moon?.moon) return null;
+
   const accrued = indexedCurrentPlanetState(indexer, planet, { allowPendingResources: true }) ?? planet;
+  const targetState = moon ? { ...accrued, resources: moon.resources } : accrued;
   const tactical = indexedPlanetTacticalSummary(
-    accrued,
-    indexer.infrastructureRows(planet.planetId),
-    indexer.shipRows(planet.planetId),
-    indexer.defenseRows(planet.planetId),
+    targetState,
+    targetIsMoon ? [] : indexer.infrastructureRows(planet.planetId),
+    moon ? moon.ships : indexer.shipRows(planet.planetId),
+    moon ? moon.defenses : indexer.defenseRows(planet.planetId),
     indexer.technologyLevels(planet.owner),
     indexer
   );
 
   return {
     planetId: planet.planetId,
-    activeMissions: indexer.activeFleetMissionsForTarget(planet.planetId),
+    targetIsMoon,
+    activeMissions: indexer.activeFleetMissionsForTarget(planet.planetId, targetIsMoon),
     combatPower: tactical.combatPower,
     combatShips: tactical.combatShips,
     defenses: tactical.defenses,
     queues: {
-      defense: indexer.planetQueue(planet.planetId, "defense"),
-      ship: indexer.planetQueue(planet.planetId, "ship")
+      defense: moon ? moon.defenseQueue : indexer.planetQueue(planet.planetId, "defense"),
+      ship: targetIsMoon ? null : indexer.planetQueue(planet.planetId, "ship")
     }
   };
 }
