@@ -1125,7 +1125,7 @@ export class SettlementIndexer {
    * The caller must invoke this only after ingesting every indexed contract through blockNumber.
    * The block, hash, timestamp, and indexed revision share one SQLite commit.
    */
-  recordResourceProjectionWatermark(blockNumber: string, blockTimestamp: string, blockHash: string): void {
+  recordResourceProjectionWatermark(blockNumber: string, blockTimestamp: string, blockHash: string): boolean {
     const nextBlock = blockNumberToDecimal(blockNumber);
     const nextTimestamp = blockNumberToDecimal(blockTimestamp);
     const nextBlockValue = BigInt(nextBlock);
@@ -1142,17 +1142,35 @@ export class SettlementIndexer {
     const currentBlock = this.metadata(resourceProjectionBlockMetadataKey);
     if (currentBlock !== null) {
       try {
-        if (nextBlockValue < BigInt(currentBlock)) return;
+        if (nextBlockValue < BigInt(currentBlock)) return false;
       } catch {
         // Malformed legacy metadata is replaced by the validated incoming watermark.
       }
     }
-    this.db.transaction(() => {
+    return this.db.transaction(() => {
+      // Websocket ingestion and the HTTP safety poll intentionally overlap. If websocket delivery
+      // has already applied a later block, publishing this older poll head would couple its timestamp
+      // to state from the future block. Leave projections frozen until a poll catches that head.
+      const latestIndexedBlock = this.metadata("latestIndexedBlock");
+      if (latestIndexedBlock !== null && BigInt(latestIndexedBlock) > nextBlockValue) {
+        this.db.query(`
+          DELETE FROM indexer_metadata
+          WHERE key IN (?, ?, ?, ?)
+        `).run(
+          resourceProjectionBlockMetadataKey,
+          resourceProjectionHashMetadataKey,
+          resourceProjectionRevisionMetadataKey,
+          resourceProjectionTimestampMetadataKey
+        );
+        this.snapshotCache = null;
+        return false;
+      }
       const indexedRevision = this.metadata(indexedRevisionMetadataKey) ?? "0";
       this.setMetadata(resourceProjectionBlockMetadataKey, nextBlock);
       this.setMetadata(resourceProjectionHashMetadataKey, normalizedHash);
       this.setMetadata(resourceProjectionRevisionMetadataKey, indexedRevision);
       this.setMetadata(resourceProjectionTimestampMetadataKey, nextTimestamp);
+      return true;
     })();
   }
 

@@ -483,12 +483,20 @@ export class ChainSyncService {
       // Publish the projection clock only after every indexed log source has durably scanned through
       // this block. A crash/failure before here leaves the old timestamp in place (conservative),
       // while publishing it earlier could combine block-N time with pre-N resource state.
-      if (headAnchor !== null) {
-        this.indexer?.recordResourceProjectionWatermark?.(
-          head.toString(),
-          headAnchor.timestamp,
-          headAnchor.hash
-        );
+      if (headAnchor !== null && backfiller.getBlockProjectionAnchor) {
+        // Re-read the exact head after ingestion. A same-height reorg during getLogs must not publish
+        // the pre-scan block timestamp/hash against post-scan state. The indexer additionally rejects
+        // this publication atomically if websocket ingestion has already advanced beyond `head`.
+        const verifiedHeadAnchor = await backfiller.getBlockProjectionAnchor(head);
+        if (verifiedHeadAnchor.hash.toLowerCase() !== headAnchor.hash.toLowerCase()) {
+          this.indexer?.invalidateResourceProjectionWatermark?.("canonical head changed during scan");
+        } else {
+          this.indexer?.recordResourceProjectionWatermark?.(
+            head.toString(),
+            verifiedHeadAnchor.timestamp,
+            verifiedHeadAnchor.hash
+          );
+        }
       }
       this.markConnected();
       this.clearRecoveredHeadStall();

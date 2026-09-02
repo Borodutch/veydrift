@@ -747,7 +747,9 @@ describe("ChainSyncService (polling)", () => {
       resourceProjectionHash: `0x${(0x192n).toString(16).padStart(64, "0")}`,
       resourceProjectionTimestamp: String(1_770_000_000n + 0x192n)
     });
-    expect(backfiller.timestampCalls).toEqual([0x192n]);
+    // The writer reads the anchor before and after scanning so a same-height reorg cannot publish
+    // the pre-scan hash/timestamp against post-scan state.
+    expect(backfiller.timestampCalls).toEqual([0x192n, 0x192n]);
 
     // Head advances; the next poll overlaps the last 64 cursor blocks through the new head.
     backfiller.head = 0x193n;
@@ -1170,6 +1172,51 @@ describe("ChainSyncService (polling)", () => {
       resourceProjectionHash: `0x${"f".repeat(64)}`
     });
     expect(indexer.resourceProjectionContext().safeToProject).toBe(false);
+    service.stop();
+  });
+
+  test("does not publish a projection watermark when the canonical head changes during the scan", async () => {
+    const indexer = makeIndexer();
+    const backfiller = new MockBackfiller(0x180n);
+    let anchorReads = 0;
+    backfiller.anchorHashFor = () => {
+      anchorReads += 1;
+      return anchorReads === 1 ? `0x${"1".repeat(64)}` : `0x${"2".repeat(64)}`;
+    };
+    const service = new ChainSyncService(config, indexer, { logBackfiller: backfiller });
+
+    await service.poll();
+
+    expect(indexer.snapshot()).toMatchObject({
+      pendingReconciliationReason: "resource_projection_invalidated: canonical head changed during scan",
+      resourceProjectionBlock: null,
+      resourceProjectionHash: null
+    });
+    expect(indexer.resourceProjectionContext().safeToProject).toBe(false);
+    service.stop();
+  });
+
+  test("does not publish an older poll clock when websocket ingestion advances during verification", async () => {
+    const indexer = makeIndexer();
+    const backfiller = new MockBackfiller(0x180n);
+    let anchorReads = 0;
+    backfiller.anchorHashFor = (blockNumber) => {
+      anchorReads += 1;
+      if (anchorReads === 2) {
+        indexer.applyLog(planetStartedLog("0x181", 7n, "0xws-ahead-during-poll"));
+      }
+      return `0x${blockNumber.toString(16).padStart(64, "0")}`;
+    };
+    const service = new ChainSyncService(config, indexer, { logBackfiller: backfiller });
+
+    await service.poll();
+
+    expect(indexer.snapshot().latestIndexedBlock).toBe(String(0x181n));
+    expect(indexer.resourceProjectionContext()).toMatchObject({
+      block: null,
+      safeToProject: false,
+      timestamp: null
+    });
     service.stop();
   });
 

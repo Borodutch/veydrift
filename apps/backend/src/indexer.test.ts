@@ -2820,7 +2820,7 @@ describe("SettlementIndexer", () => {
       async listSettledPlanetEvents() { return []; }
     }, 100n);
 
-    indexer.recordResourceProjectionWatermark("0x90", "0x6987f4c0", `0x${"9".repeat(64)}`);
+    expect(indexer.recordResourceProjectionWatermark("0x90", "0x6987f4c0", `0x${"9".repeat(64)}`)).toBe(true);
     expect(indexer.snapshot()).toMatchObject({
       resourceProjectionBlock: "144",
       resourceProjectionHash: `0x${"9".repeat(64)}`,
@@ -2828,10 +2828,33 @@ describe("SettlementIndexer", () => {
       resourceProjectionTimestamp: "1770517696"
     });
 
-    indexer.recordResourceProjectionWatermark("0x80", "0x1", `0x${"8".repeat(64)}`);
+    expect(indexer.recordResourceProjectionWatermark("0x80", "0x1", `0x${"8".repeat(64)}`)).toBe(false);
     expect(indexer.snapshot()).toMatchObject({
       resourceProjectionBlock: "144",
       resourceProjectionTimestamp: "1770517696"
+    });
+  });
+
+  test("refuses to couple an older poll timestamp to websocket state from a later block", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+
+    indexer.applyLog({
+      blockNumber: "0x91",
+      transactionHash: "0xws-ahead",
+      logIndex: "0x0",
+      topics: [planetSettledTopic, topic(7n)],
+      data: abiWords(1000n, 900n, 800n, 1770000101n)
+    });
+
+    expect(indexer.recordResourceProjectionWatermark("0x90", "1770000100", `0x${"9".repeat(64)}`)).toBe(false);
+    expect(indexer.resourceProjectionContext()).toMatchObject({
+      block: null,
+      safeToProject: false,
+      timestamp: null
     });
   });
 
