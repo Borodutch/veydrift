@@ -63,6 +63,7 @@ const configuredTestConfig: BackendConfig = {
 };
 
 const player = "0x2222222222222222222222222222222222222222" as Address;
+const resourceProjectionTestHash = `0x${"a".repeat(64)}`;
 const planetStartedTopic = "0xef2d7a7105128f441ebc83d8e2e87960a9b0dfdfa02cc68769872b2c52a431f3";
 const startPriceUpdatedTopic = "0xdbcd6a03cdadcd71beb97d41ac0c321148e2556e112a52663ba4c94ff84d6717";
 const buildingStartedTopic = "0x48456f4ba6902f09ee7c2958aca9c9d1f8a5920c8affef08667504670f8bba1b";
@@ -869,7 +870,7 @@ describe("chain-sync log backfill wiring", () => {
     const reader = new VeydriftGameReader(configuredTestConfig);
     const backfiller = deriveLogBackfiller(reader);
     expect(backfiller).toBeDefined();
-    expect(typeof backfiller?.getBlockTimestamp).toBe("function");
+    expect(typeof backfiller?.getBlockProjectionAnchor).toBe("function");
     expect(typeof backfiller?.listContractLogs).toBe("function");
     expect(typeof backfiller?.listReferralLogs).toBe("function");
     expect(typeof backfiller?.failoverRpc).toBe("function");
@@ -7631,7 +7632,8 @@ describe("Veydrift backend", () => {
     });
     indexer.recordResourceProjectionWatermark(
       "130",
-      Math.floor(Date.now() / 1_000).toString()
+      Math.floor(Date.now() / 1_000).toString(),
+      resourceProjectionTestHash
     );
     const handler = createRequestHandler({
       config: configuredTestConfig,
@@ -7709,7 +7711,7 @@ describe("Veydrift backend", () => {
     const handler = createRequestHandler({ config: configuredTestConfig, chainReader, indexer });
 
     const beforeWatermark = await (await handler(new Request(`http://localhost/wallet/${player}/infrastructure`))).json();
-    indexer.recordResourceProjectionWatermark("130", chainTimestamp.toString());
+    indexer.recordResourceProjectionWatermark("130", chainTimestamp.toString(), resourceProjectionTestHash);
     const projected = await (await handler(new Request(`http://localhost/wallet/${player}/infrastructure`))).json();
 
     expect(beforeWatermark.resourcesAsOfNow.metal).toBe("5000");
@@ -7719,6 +7721,21 @@ describe("Veydrift backend", () => {
       resourceProjectionBlock: "130",
       resourceProjectionTimestamp: chainTimestamp.toString()
     });
+
+    indexer.applyLog({
+      blockNumber: "0x83",
+      transactionHash: "0xchain-clock-spend",
+      logIndex: "0x0",
+      topics: [planetSettledTopic, topic(7n)],
+      data: abiWords(1000n, 900n, 800n, BigInt(chainTimestamp))
+    });
+    const whileWatermarkLags = await handler(new Request(`http://localhost/wallet/${player}/infrastructure`));
+    expect(whileWatermarkLags.status).toBe(503);
+
+    indexer.recordResourceProjectionWatermark("131", chainTimestamp.toString(), `0x${"b".repeat(64)}`);
+    const afterPublication = await handler(new Request(`http://localhost/wallet/${player}/infrastructure`));
+    expect(afterPublication.status).toBe(200);
+    expect((await afterPublication.json()).resourcesAsOfNow.metal).toBe("1000");
   });
 
   test("personal indexed resource endpoints derive resourcesAsOfNow exactly once (VEY-KANEO-517)", async () => {
@@ -7765,7 +7782,7 @@ describe("Veydrift backend", () => {
       topics: [buildingCompletedTopic, topic(7n), topic(3n)],
       data: abiWords(1n)
     });
-    indexer.recordResourceProjectionWatermark("130", Math.floor(Date.now() / 1_000).toString());
+    indexer.recordResourceProjectionWatermark("130", Math.floor(Date.now() / 1_000).toString(), resourceProjectionTestHash);
     const handler = createRequestHandler({
       config: configuredTestConfig,
       chainReader,
@@ -7837,7 +7854,7 @@ describe("Veydrift backend", () => {
       topics: [buildingStartedTopic, topic(7n), topic(0n)],
       data: abiWords(10n, BigInt(readyAt), 0n, 0n, 0n)
     });
-    indexer.recordResourceProjectionWatermark("130", Math.floor(Date.now() / 1_000).toString());
+    indexer.recordResourceProjectionWatermark("130", Math.floor(Date.now() / 1_000).toString(), resourceProjectionTestHash);
     const handler = createRequestHandler({ config: configuredTestConfig, chainReader, indexer });
 
     const infrastructureBody = await (await handler(new Request(`http://localhost/wallet/${player}/infrastructure`))).json();
@@ -7947,7 +7964,7 @@ describe("Veydrift backend", () => {
       topics: [buildingCompletedTopic, topic(7n), topic(3n)],
       data: abiWords(1n)
     });
-    indexer.recordResourceProjectionWatermark("130", Math.floor(Date.now() / 1_000).toString());
+    indexer.recordResourceProjectionWatermark("130", Math.floor(Date.now() / 1_000).toString(), resourceProjectionTestHash);
     const handler = createRequestHandler({ config: configuredTestConfig, chainReader, indexer });
 
     const planetsResponse = await handler(new Request(`http://localhost/wallet/${player}/planets`));
@@ -8795,7 +8812,7 @@ describe("Veydrift backend", () => {
       topics: [buildingStartedTopic, topic(7n), topic(9n)],
       data: abiWords(1n, readyAt, 1000n, 1000n, 0n)
     });
-    indexer.recordResourceProjectionWatermark("131", now.toString());
+    indexer.recordResourceProjectionWatermark("131", now.toString(), resourceProjectionTestHash);
     const handler = createRequestHandler({
       config: configuredTestConfig,
       chainReader,
@@ -10308,7 +10325,7 @@ describe("Veydrift backend", () => {
       topics: [buildingCompletedTopic, topic(7n), topic(3n)],
       data: abiWords(1n)
     });
-    indexer.recordResourceProjectionWatermark("130", Math.floor(Date.now() / 1_000).toString());
+    indexer.recordResourceProjectionWatermark("130", Math.floor(Date.now() / 1_000).toString(), resourceProjectionTestHash);
     const handler = createRequestHandler({
       config: configuredTestConfig,
       chainReader,
@@ -10363,7 +10380,7 @@ describe("Veydrift backend", () => {
       topics: [buildingCompletedTopic, topic(7n), topic(3n)],
       data: abiWords(1n)
     });
-    indexer.recordResourceProjectionWatermark("130", Math.floor(Date.now() / 1_000).toString());
+    indexer.recordResourceProjectionWatermark("130", Math.floor(Date.now() / 1_000).toString(), resourceProjectionTestHash);
     const handler = createRequestHandler({
       config: configuredTestConfig,
       chainReader,

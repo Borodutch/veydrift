@@ -22,7 +22,7 @@ import { emitObservabilityEvent } from "./observability";
 type LogBackfiller = {
   failoverRpc?(reason: string): boolean;
   getHeadBlock(): Promise<bigint>;
-  getBlockTimestamp?(blockNumber: bigint): Promise<string>;
+  getBlockProjectionAnchor?(blockNumber: bigint): Promise<{ hash: string; timestamp: string }>;
   listContractLogs(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
   listReferralLogs?(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
   listPaidAllianceInviteLogs?(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
@@ -49,6 +49,7 @@ type ChainSyncIndexer = Partial<Pick<SettlementIndexer,
   | "paidAllianceInviteHistoryBackfillStatus"
   | "reconcilePaidAllianceInviteHistory"
   | "snapshot"
+  | "invalidateResourceProjectionWatermark"
   | "recordResourceProjectionWatermark"
 >>;
 
@@ -412,9 +413,29 @@ export class ChainSyncService {
     const pollStartedAt = Date.now();
     try {
       const head = await backfiller.getHeadBlock();
-      const headTimestamp = backfiller.getBlockTimestamp
-        ? await backfiller.getBlockTimestamp(head)
+      const headAnchor = backfiller.getBlockProjectionAnchor
+        ? await backfiller.getBlockProjectionAnchor(head)
         : null;
+      if (headAnchor && this.indexer?.snapshot && this.indexer.invalidateResourceProjectionWatermark) {
+        const projection = this.indexer.snapshot();
+        const projectionBlock = projection.resourceProjectionBlock === null
+          ? null
+          : BigInt(projection.resourceProjectionBlock);
+        if (projectionBlock !== null && projection.resourceProjectionHash) {
+          const canonicalProjectionAnchor = projectionBlock === head
+            ? headAnchor
+            : projectionBlock < head
+              ? await backfiller.getBlockProjectionAnchor?.(projectionBlock) ?? null
+              : null;
+          if (
+            projectionBlock > head
+            || canonicalProjectionAnchor === null
+            || canonicalProjectionAnchor.hash.toLowerCase() !== projection.resourceProjectionHash.toLowerCase()
+          ) {
+            this.indexer.invalidateResourceProjectionWatermark("canonical block anchor changed");
+          }
+        }
+      }
       this.lastPolledAt = new Date().toISOString();
       if (this.isHeadStalled(head)) {
         this.markHeadStalled(head);
@@ -462,8 +483,12 @@ export class ChainSyncService {
       // Publish the projection clock only after every indexed log source has durably scanned through
       // this block. A crash/failure before here leaves the old timestamp in place (conservative),
       // while publishing it earlier could combine block-N time with pre-N resource state.
-      if (headTimestamp !== null) {
-        this.indexer?.recordResourceProjectionWatermark?.(head.toString(), headTimestamp);
+      if (headAnchor !== null) {
+        this.indexer?.recordResourceProjectionWatermark?.(
+          head.toString(),
+          headAnchor.timestamp,
+          headAnchor.hash
+        );
       }
       this.markConnected();
       this.clearRecoveredHeadStall();

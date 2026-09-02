@@ -95,6 +95,7 @@ class MockBackfiller {
   paidAllianceInviteRanges: Array<{ from: bigint; to: bigint | "latest" }> = [];
   headCalls = 0;
   timestampCalls: bigint[] = [];
+  anchorHashFor: (blockNumber: bigint) => string = (blockNumber) => `0x${blockNumber.toString(16).padStart(64, "0")}`;
   logsFor: (from: bigint, to: bigint | "latest") => TestLog[];
   referralLogsFor: (from: bigint, to: bigint | "latest") => TestLog[] = () => [];
   paidAllianceInviteLogsFor: (from: bigint, to: bigint | "latest") => TestLog[] = () => [];
@@ -110,9 +111,12 @@ class MockBackfiller {
     return this.head;
   }
 
-  async getBlockTimestamp(blockNumber: bigint): Promise<string> {
+  async getBlockProjectionAnchor(blockNumber: bigint): Promise<{ hash: string; timestamp: string }> {
     this.timestampCalls.push(blockNumber);
-    return (1_770_000_000n + blockNumber).toString();
+    return {
+      hash: this.anchorHashFor(blockNumber),
+      timestamp: (1_770_000_000n + blockNumber).toString()
+    };
   }
 
   async listContractLogs(from: bigint, to: bigint | "latest" = "latest"): Promise<RpcLog[]> {
@@ -740,6 +744,7 @@ describe("ChainSyncService (polling)", () => {
     expect(service.snapshot().eventsReceived).toBeGreaterThanOrEqual(1);
     expect(indexer.snapshot()).toMatchObject({
       resourceProjectionBlock: String(0x192n),
+      resourceProjectionHash: `0x${(0x192n).toString(16).padStart(64, "0")}`,
       resourceProjectionTimestamp: String(1_770_000_000n + 0x192n)
     });
     expect(backfiller.timestampCalls).toEqual([0x192n]);
@@ -1127,6 +1132,44 @@ describe("ChainSyncService (polling)", () => {
     expect(indexer.snapshot().indexedPlanets).toBeGreaterThanOrEqual(1);
     expect(indexer.snapshot().resourceProjectionBlock).toBe(String(0x182n));
     expect(service.snapshot().lastError).toBeNull();
+    service.stop();
+  });
+
+  test("invalidates spendable projections when the canonical head rolls back", async () => {
+    const indexer = makeIndexer();
+    const backfiller = new MockBackfiller(0x180n);
+    const service = new ChainSyncService(config, indexer, { logBackfiller: backfiller });
+
+    await service.poll();
+    expect(indexer.resourceProjectionContext().safeToProject).toBe(true);
+
+    backfiller.head = 0x17fn;
+    await service.poll();
+
+    expect(indexer.snapshot()).toMatchObject({
+      pendingReconciliationReason: "resource_projection_invalidated: canonical block anchor changed",
+      resourceProjectionBlock: String(0x17fn)
+    });
+    expect(indexer.resourceProjectionContext().safeToProject).toBe(false);
+    service.stop();
+  });
+
+  test("invalidates spendable projections when a same-height canonical block hash changes", async () => {
+    const indexer = makeIndexer();
+    const backfiller = new MockBackfiller(0x180n);
+    const service = new ChainSyncService(config, indexer, { logBackfiller: backfiller });
+
+    await service.poll();
+    expect(indexer.resourceProjectionContext().safeToProject).toBe(true);
+
+    backfiller.anchorHashFor = () => `0x${"f".repeat(64)}`;
+    await service.poll();
+
+    expect(indexer.snapshot()).toMatchObject({
+      pendingReconciliationReason: "resource_projection_invalidated: canonical block anchor changed",
+      resourceProjectionHash: `0x${"f".repeat(64)}`
+    });
+    expect(indexer.resourceProjectionContext().safeToProject).toBe(false);
     service.stop();
   });
 

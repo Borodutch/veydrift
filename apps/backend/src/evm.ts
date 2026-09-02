@@ -1517,7 +1517,7 @@ export interface ChainReader {
   listReferralLogs?(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
   failoverRpc?(reason: string): boolean;
   getBlockNumber?(): Promise<bigint>;
-  getBlockTimestamp?(blockNumber: bigint): Promise<string>;
+  getBlockProjectionAnchor?(blockNumber: bigint): Promise<{ hash: string; timestamp: string }>;
   getTransactionReceipt?(transactionHash: string): Promise<RpcTransactionReceipt | null>;
   rpcMetrics?(): RpcMetrics;
 }
@@ -1595,6 +1595,7 @@ type RpcLogFilter = {
 };
 
 export type RpcBlock = {
+  hash?: string | null;
   timestamp: string;
 };
 
@@ -3910,13 +3911,17 @@ export class VeydriftGameReader implements ChainReader {
     return decodeUint(await this.transport.request<string>("eth_blockNumber", []));
   }
 
-  /** Timestamp for a specific chain block, used to anchor backend projections to indexed state. */
-  async getBlockTimestamp(blockNumber: bigint): Promise<string> {
+  /** Canonical identity and timestamp for a block used to anchor indexed resource projections. */
+  async getBlockProjectionAnchor(blockNumber: bigint): Promise<{ hash: string; timestamp: string }> {
     const block = await this.transport.request<RpcBlock>("eth_getBlockByNumber", [
       toQuantity(blockNumber),
       false
     ]);
-    return decodeUint(block.timestamp).toString();
+    if (!block.hash) throw new Error(`Block ${blockNumber.toString()} has no canonical hash.`);
+    return {
+      hash: block.hash.toLowerCase(),
+      timestamp: decodeUint(block.timestamp).toString()
+    };
   }
 
   async getTransactionReceipt(transactionHash: string): Promise<RpcTransactionReceipt | null> {

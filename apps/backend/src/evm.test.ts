@@ -1561,6 +1561,30 @@ describe("canonical fleet mission details", () => {
   });
 });
 
+describe("resource projection block anchor", () => {
+  test("reads the timestamp and canonical hash from one pinned block", async () => {
+    const calls: Array<{ method: string; params: unknown[] }> = [];
+    const reader = new VeydriftGameReader(readerConfig, {
+      async request<T>(method: string, params: unknown[]): Promise<T> {
+        calls.push({ method, params });
+        return {
+          hash: `0x${"a".repeat(64)}`,
+          timestamp: "0x6987f4c0"
+        } as T;
+      }
+    });
+
+    await expect(reader.getBlockProjectionAnchor(144n)).resolves.toEqual({
+      hash: `0x${"a".repeat(64)}`,
+      timestamp: "1770517696"
+    });
+    expect(calls).toEqual([{
+      method: "eth_getBlockByNumber",
+      params: ["0x90", false]
+    }]);
+  });
+});
+
 describe("player queue startedAt", () => {
   const shipQueuedTopic = "0x2751e0f30801101b5ffa9787644ace0da334023e4c4376f1133f5608ec9e1118";
 
