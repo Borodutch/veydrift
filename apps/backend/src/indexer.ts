@@ -290,6 +290,8 @@ export type IndexerSnapshot = {
   currentStateHealInProgress: boolean;
   currentStateHealRunId: string | null;
   latestIndexedBlock: string | null;
+  resourceProjectionBlock: string | null;
+  resourceProjectionTimestamp: string | null;
   pendingReconciliationReason: string | null;
   reconciliationInProgress: boolean;
   reorgDetectedAt: string | null;
@@ -303,6 +305,8 @@ export type IndexerSnapshot = {
 
 const writerChainSyncDiagnosticsMetadataKey = "writerChainSyncDiagnostics";
 const indexedRevisionMetadataKey = "indexedRevision";
+const resourceProjectionBlockMetadataKey = "resourceProjectionBlock";
+const resourceProjectionTimestampMetadataKey = "resourceProjectionTimestamp";
 const gameMaintenanceStateMetadataKey = "gameMaintenanceState";
 const startPriceWeiMetadataKey = "canonicalStartPriceWei";
 const startPriceSourceMetadataKey = "canonicalStartPriceSource";
@@ -1069,6 +1073,8 @@ export class SettlementIndexer {
       currentStateHealInProgress,
       currentStateHealRunId: this.currentStateHealRunId,
       latestIndexedBlock: metadataValue("latestIndexedBlock"),
+      resourceProjectionBlock: metadataValue(resourceProjectionBlockMetadataKey),
+      resourceProjectionTimestamp: metadataValue(resourceProjectionTimestampMetadataKey),
       pendingReconciliationReason,
       reconciliationInProgress,
       reorgDetectedAt: metadataValue("reorgDetectedAt"),
@@ -1096,6 +1102,33 @@ export class SettlementIndexer {
 
   recordGameMaintenanceState(state: GameMaintenanceState): void {
     this.setMetadata(gameMaintenanceStateMetadataKey, JSON.stringify(state), { invalidateSnapshot: false });
+  }
+
+  /**
+   * Record the chain clock whose complete log range has been applied to this database.
+   * The caller must invoke this only after ingesting every indexed contract through blockNumber.
+   * Both values share one SQLite commit so readers cannot observe a mismatched block/timestamp pair.
+   */
+  recordResourceProjectionWatermark(blockNumber: string, blockTimestamp: string): void {
+    const nextBlock = blockNumberToDecimal(blockNumber);
+    const nextTimestamp = blockNumberToDecimal(blockTimestamp);
+    const nextBlockValue = BigInt(nextBlock);
+    const nextTimestampValue = BigInt(nextTimestamp);
+    if (nextBlockValue < 0n || nextTimestampValue < 0n || nextTimestampValue > BigInt(Number.MAX_SAFE_INTEGER)) {
+      throw new Error("Resource projection watermark must contain a non-negative block and safe timestamp.");
+    }
+    const currentBlock = this.metadata(resourceProjectionBlockMetadataKey);
+    if (currentBlock !== null) {
+      try {
+        if (nextBlockValue < BigInt(currentBlock)) return;
+      } catch {
+        // Malformed legacy metadata is replaced by the validated incoming watermark.
+      }
+    }
+    this.db.transaction(() => {
+      this.setMetadata(resourceProjectionBlockMetadataKey, nextBlock);
+      this.setMetadata(resourceProjectionTimestampMetadataKey, nextTimestamp);
+    })();
   }
 
   // API projections frequently ask for the indexed state version while composing one screen.

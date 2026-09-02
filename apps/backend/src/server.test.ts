@@ -869,6 +869,7 @@ describe("chain-sync log backfill wiring", () => {
     const reader = new VeydriftGameReader(configuredTestConfig);
     const backfiller = deriveLogBackfiller(reader);
     expect(backfiller).toBeDefined();
+    expect(typeof backfiller?.getBlockTimestamp).toBe("function");
     expect(typeof backfiller?.listContractLogs).toBe("function");
     expect(typeof backfiller?.listReferralLogs).toBe("function");
     expect(typeof backfiller?.failoverRpc).toBe("function");
@@ -7628,6 +7629,10 @@ describe("Veydrift backend", () => {
       ],
       data: abiWords(1n)
     });
+    indexer.recordResourceProjectionWatermark(
+      "130",
+      Math.floor(Date.now() / 1_000).toString()
+    );
     const handler = createRequestHandler({
       config: configuredTestConfig,
       chainReader,
@@ -7667,6 +7672,53 @@ describe("Veydrift backend", () => {
     expect(infrastructureBody.resourceSnapshot).toMatchObject(planetsBody.planets[0].resourceSnapshot);
     // Raidable loot reflects ~50% of resources (RAID_PLUNDER_BPS), not the full 5064 (VEY-451).
     expect(infrastructureBody.raidableResources.metal).toBe("2532");
+  });
+
+  test("projects spendable resources to the fully indexed Base block timestamp, never the server clock", async () => {
+    const chainReader = new MockChainReader();
+    chainReader.getInfrastructureState = async () => {
+      throw new Error("resource projection must remain indexed");
+    };
+    chainReader.listSettledPlanetEvents = async () => {
+      throw new Error("warm resource projection must not rebuild from chain");
+    };
+    const wallClockSeconds = Math.floor(Date.now() / 1_000);
+    const chainTimestamp = wallClockSeconds - 3_600;
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    indexer.applyEvent({
+      ...planet,
+      eventName: "PlanetStarted",
+      transactionHash: "0xchain-clock",
+      blockNumber: "123",
+      lastSettledAt: (chainTimestamp - 3_600).toString()
+    });
+    indexer.applyLog({
+      blockNumber: "0x81",
+      transactionHash: "0xchain-clock-mine",
+      logIndex: "0x0",
+      topics: [buildingCompletedTopic, topic(7n), topic(0n)],
+      data: abiWords(1n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x82",
+      transactionHash: "0xchain-clock-solar",
+      logIndex: "0x0",
+      topics: [buildingCompletedTopic, topic(7n), topic(3n)],
+      data: abiWords(1n)
+    });
+    const handler = createRequestHandler({ config: configuredTestConfig, chainReader, indexer });
+
+    const beforeWatermark = await (await handler(new Request(`http://localhost/wallet/${player}/infrastructure`))).json();
+    indexer.recordResourceProjectionWatermark("130", chainTimestamp.toString());
+    const projected = await (await handler(new Request(`http://localhost/wallet/${player}/infrastructure`))).json();
+
+    expect(beforeWatermark.resourcesAsOfNow.metal).toBe("5000");
+    expect(projected.resourcesAsOfNow.metal).toBe("5032");
+    expect(projected.resourcesAsOfNow.metal).not.toBe("5064");
+    expect(indexer.snapshot()).toMatchObject({
+      resourceProjectionBlock: "130",
+      resourceProjectionTimestamp: chainTimestamp.toString()
+    });
   });
 
   test("personal indexed resource endpoints derive resourcesAsOfNow exactly once (VEY-KANEO-517)", async () => {
@@ -7713,6 +7765,7 @@ describe("Veydrift backend", () => {
       topics: [buildingCompletedTopic, topic(7n), topic(3n)],
       data: abiWords(1n)
     });
+    indexer.recordResourceProjectionWatermark("130", Math.floor(Date.now() / 1_000).toString());
     const handler = createRequestHandler({
       config: configuredTestConfig,
       chainReader,
@@ -7784,6 +7837,7 @@ describe("Veydrift backend", () => {
       topics: [buildingStartedTopic, topic(7n), topic(0n)],
       data: abiWords(10n, BigInt(readyAt), 0n, 0n, 0n)
     });
+    indexer.recordResourceProjectionWatermark("130", Math.floor(Date.now() / 1_000).toString());
     const handler = createRequestHandler({ config: configuredTestConfig, chainReader, indexer });
 
     const infrastructureBody = await (await handler(new Request(`http://localhost/wallet/${player}/infrastructure`))).json();
@@ -7893,6 +7947,7 @@ describe("Veydrift backend", () => {
       topics: [buildingCompletedTopic, topic(7n), topic(3n)],
       data: abiWords(1n)
     });
+    indexer.recordResourceProjectionWatermark("130", Math.floor(Date.now() / 1_000).toString());
     const handler = createRequestHandler({ config: configuredTestConfig, chainReader, indexer });
 
     const planetsResponse = await handler(new Request(`http://localhost/wallet/${player}/planets`));
@@ -8740,6 +8795,7 @@ describe("Veydrift backend", () => {
       topics: [buildingStartedTopic, topic(7n), topic(9n)],
       data: abiWords(1n, readyAt, 1000n, 1000n, 0n)
     });
+    indexer.recordResourceProjectionWatermark("131", now.toString());
     const handler = createRequestHandler({
       config: configuredTestConfig,
       chainReader,
@@ -10252,6 +10308,7 @@ describe("Veydrift backend", () => {
       topics: [buildingCompletedTopic, topic(7n), topic(3n)],
       data: abiWords(1n)
     });
+    indexer.recordResourceProjectionWatermark("130", Math.floor(Date.now() / 1_000).toString());
     const handler = createRequestHandler({
       config: configuredTestConfig,
       chainReader,
@@ -10306,6 +10363,7 @@ describe("Veydrift backend", () => {
       topics: [buildingCompletedTopic, topic(7n), topic(3n)],
       data: abiWords(1n)
     });
+    indexer.recordResourceProjectionWatermark("130", Math.floor(Date.now() / 1_000).toString());
     const handler = createRequestHandler({
       config: configuredTestConfig,
       chainReader,

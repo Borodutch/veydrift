@@ -94,6 +94,7 @@ class MockBackfiller {
   referralRanges: Array<{ from: bigint; to: bigint | "latest" }> = [];
   paidAllianceInviteRanges: Array<{ from: bigint; to: bigint | "latest" }> = [];
   headCalls = 0;
+  timestampCalls: bigint[] = [];
   logsFor: (from: bigint, to: bigint | "latest") => TestLog[];
   referralLogsFor: (from: bigint, to: bigint | "latest") => TestLog[] = () => [];
   paidAllianceInviteLogsFor: (from: bigint, to: bigint | "latest") => TestLog[] = () => [];
@@ -107,6 +108,11 @@ class MockBackfiller {
     this.headCalls += 1;
     if (this.headError) throw this.headError;
     return this.head;
+  }
+
+  async getBlockTimestamp(blockNumber: bigint): Promise<string> {
+    this.timestampCalls.push(blockNumber);
+    return (1_770_000_000n + blockNumber).toString();
   }
 
   async listContractLogs(from: bigint, to: bigint | "latest" = "latest"): Promise<RpcLog[]> {
@@ -732,12 +738,21 @@ describe("ChainSyncService (polling)", () => {
     expect(service.snapshot().latestSyncedBlock).toBe(String(0x192n));
     expect(service.snapshot().connected).toBe(true);
     expect(service.snapshot().eventsReceived).toBeGreaterThanOrEqual(1);
+    expect(indexer.snapshot()).toMatchObject({
+      resourceProjectionBlock: String(0x192n),
+      resourceProjectionTimestamp: String(1_770_000_000n + 0x192n)
+    });
+    expect(backfiller.timestampCalls).toEqual([0x192n]);
 
     // Head advances; the next poll overlaps the last 64 cursor blocks through the new head.
     backfiller.head = 0x193n;
     await service.poll();
     expect(backfiller.ranges.at(-1)).toEqual({ from: 0x153n, to: 0x193n });
     expect(service.snapshot().latestSyncedBlock).toBe(String(0x193n));
+    expect(indexer.snapshot()).toMatchObject({
+      resourceProjectionBlock: String(0x193n),
+      resourceProjectionTimestamp: String(1_770_000_000n + 0x193n)
+    });
 
     service.stop();
   });
@@ -1095,6 +1110,7 @@ describe("ChainSyncService (polling)", () => {
     const service = new ChainSyncService(config, indexer, { logBackfiller: backfiller });
 
     await service.poll(); // replay through 0x180, no logs
+    expect(indexer.snapshot().resourceProjectionBlock).toBe(String(0x180n));
     // Head moved, but the ingest getLogs fails transiently. Cursor must NOT advance.
     backfiller.head = 0x182n;
     backfiller.logsError = new Error("Unexpected end of JSON input");
@@ -1102,12 +1118,14 @@ describe("ChainSyncService (polling)", () => {
     expect(service.snapshot().lastError).toContain("Unexpected end of JSON input");
     expect(service.snapshot().connected).toBe(true); // one blip never flaps readiness
     expect(indexer.snapshot().indexedPlanets).toBe(0); // nothing applied
+    expect(indexer.snapshot().resourceProjectionBlock).toBe(String(0x180n));
 
     // RPC recovers; the same range is retried and the log is finally applied — no event lost.
     backfiller.logsError = null;
     await service.poll();
     expect(backfiller.ranges.at(-1)).toEqual({ from: 0x141n, to: 0x182n });
     expect(indexer.snapshot().indexedPlanets).toBeGreaterThanOrEqual(1);
+    expect(indexer.snapshot().resourceProjectionBlock).toBe(String(0x182n));
     expect(service.snapshot().lastError).toBeNull();
     service.stop();
   });

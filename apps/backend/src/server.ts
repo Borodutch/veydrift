@@ -2262,6 +2262,7 @@ export function deriveLogBackfiller(
   | {
       failoverRpc?: (reason: string) => boolean;
       getHeadBlock: () => Promise<bigint>;
+      getBlockTimestamp?: (blockNumber: bigint) => Promise<string>;
       listContractLogs: (fromBlock: bigint, toBlock?: bigint | "latest") => Promise<RpcLog[]>;
       listReferralLogs?: (fromBlock: bigint, toBlock?: bigint | "latest") => Promise<RpcLog[]>;
       listPaidAllianceInviteLogs?: (fromBlock: bigint, toBlock?: bigint | "latest") => Promise<RpcLog[]>;
@@ -2276,6 +2277,9 @@ export function deriveLogBackfiller(
     return {
       ...(typeof reader.failoverRpc === "function" ? { failoverRpc: reader.failoverRpc.bind(reader) } : {}),
       getHeadBlock: reader.getBlockNumber.bind(reader),
+      ...(typeof reader.getBlockTimestamp === "function"
+        ? { getBlockTimestamp: reader.getBlockTimestamp.bind(reader) }
+        : {}),
       listContractLogs: reader.listContractLogs.bind(reader),
       ...(typeof reader.listReferralLogs === "function"
         ? { listReferralLogs: reader.listReferralLogs.bind(reader) }
@@ -3893,14 +3897,22 @@ function accruedPlanetState<T extends PlanetState | null>(
 ): T {
   if (!planet) return planet;
 
+  const projectionTimestampRaw = indexer.snapshot().resourceProjectionTimestamp;
+  const projectionTimestamp = projectionTimestampRaw === null ? Number.NaN : Number(projectionTimestampRaw);
+  const projectionTimeMs = Number.isSafeInteger(projectionTimestamp) && projectionTimestamp >= 0
+    ? projectionTimestamp * 1_000
+    : Number(planet.lastSettledAt) * 1_000;
+
   return {
     ...planet,
-    resources: accruedResourcesWithBuildingQueue(indexer, planet)
+    // Never project from a reader worker's wall clock. Until the writer publishes its first fully
+    // indexed block timestamp, freeze at the canonical settled balance rather than overstate funds.
+    resources: accruedResourcesWithBuildingQueue(indexer, planet, projectionTimeMs)
   };
 }
 
 // Single current-resource source of truth for wallet, public, and intel resource surfaces (VEY-KANEO-517):
-// canonical settled `resources` projected forward to now at the planet's production rate,
+// canonical settled `resources` projected forward to the latest fully indexed block timestamp,
 // capped at storage. Every endpoint serving "current resources" should call this helper
 // instead of re-running `resourcesWithClaimableAccrual` locally, so endpoint values cannot
 // diverge or accidentally project an already-current balance a second time.
@@ -4818,7 +4830,7 @@ function resourcesWithClaimableAccrual(
   productionPerHour: Resources | null,
   storageCaps: Resources | null,
   lastSettledAt: string,
-  now = Date.now(),
+  now: number,
   inviteeProductionBoostExpiresAt?: string | null
 ): Resources {
   if (!productionPerHour || !storageCaps) return current;
@@ -4873,7 +4885,7 @@ function boostedProductionSeconds(
 function accruedResourcesWithBuildingQueue(
   indexer: SettlementIndexer,
   planet: SettledPlanetEvent | PlanetState,
-  now = Date.now()
+  now: number
 ): Resources {
   const lastSettledAtSeconds = Number(planet.lastSettledAt);
   if (!Number.isFinite(lastSettledAtSeconds) || lastSettledAtSeconds <= 0) return planet.resources;

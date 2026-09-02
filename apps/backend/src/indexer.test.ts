@@ -2813,6 +2813,26 @@ describe("SettlementIndexer", () => {
     expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(5);
   });
 
+  test("persists a monotonic fully-indexed resource projection watermark", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+
+    indexer.recordResourceProjectionWatermark("0x90", "0x6987f4c0");
+    expect(indexer.snapshot()).toMatchObject({
+      resourceProjectionBlock: "144",
+      resourceProjectionTimestamp: "1770517696"
+    });
+
+    indexer.recordResourceProjectionWatermark("0x80", "0x1");
+    expect(indexer.snapshot()).toMatchObject({
+      resourceProjectionBlock: "144",
+      resourceProjectionTimestamp: "1770517696"
+    });
+  });
+
   test("applyLog is atomic: a handler that throws rolls back the event row and the indexed head, so the log is not poisoned as a duplicate (VEY-KANEO-460)", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },

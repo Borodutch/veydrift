@@ -22,6 +22,7 @@ import { emitObservabilityEvent } from "./observability";
 type LogBackfiller = {
   failoverRpc?(reason: string): boolean;
   getHeadBlock(): Promise<bigint>;
+  getBlockTimestamp?(blockNumber: bigint): Promise<string>;
   listContractLogs(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
   listReferralLogs?(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
   listPaidAllianceInviteLogs?(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
@@ -48,6 +49,7 @@ type ChainSyncIndexer = Partial<Pick<SettlementIndexer,
   | "paidAllianceInviteHistoryBackfillStatus"
   | "reconcilePaidAllianceInviteHistory"
   | "snapshot"
+  | "recordResourceProjectionWatermark"
 >>;
 
 const PAID_ALLIANCE_REORG_OVERLAP_BLOCKS = 64n;
@@ -410,6 +412,9 @@ export class ChainSyncService {
     const pollStartedAt = Date.now();
     try {
       const head = await backfiller.getHeadBlock();
+      const headTimestamp = backfiller.getBlockTimestamp
+        ? await backfiller.getBlockTimestamp(head)
+        : null;
       this.lastPolledAt = new Date().toISOString();
       if (this.isHeadStalled(head)) {
         this.markHeadStalled(head);
@@ -454,6 +459,12 @@ export class ChainSyncService {
 
       await this.ensureReferralHistoryBackfilled(head, backfiller, applyLog);
       await this.ensurePaidAllianceInviteHistoryBackfilled(head, backfiller, applyLog);
+      // Publish the projection clock only after every indexed log source has durably scanned through
+      // this block. A crash/failure before here leaves the old timestamp in place (conservative),
+      // while publishing it earlier could combine block-N time with pre-N resource state.
+      if (headTimestamp !== null) {
+        this.indexer?.recordResourceProjectionWatermark?.(head.toString(), headTimestamp);
+      }
       this.markConnected();
       this.clearRecoveredHeadStall();
       this.notify({ kind: "sync-status", blockNumber: this.latestSyncedBlock });
