@@ -77,6 +77,9 @@ const planetSettledTopic = "0x7faee98c7c745f9c9fb2117a44185f57454dac3013383364df
 const planetShipCountChangedTopic = "0x6a0fc6b08970eb9f7e15767e6902471ca8731c57dbe4577c76021e1f9d6762cf";
 const planetDefenseCountChangedTopic = "0xe861e6f62777a3f6ea372d2892ead2d43e27d726e0ae4a2e39e5c3b682a7bbd3";
 const moonCreatedTopic = "0x395ddd11cfc613034fc4941029df5968212af4a52ba611d84d3257824c81f4a4";
+const moonShipCountChangedTopic = "0xbd55c2b529f64f3a888d38432d6c54b03515f3de3f0114255cb36620f5df1257";
+const moonDefenseCountChangedTopic = "0x0bf9a31209477c6f81619cdd411e232ee9a5b64ec763c598ce43d938cc6194a2";
+const moonDefenseQueuedTopic = "0xa53d76ce638ebf6aee45c30e9622beeafc4e9c2c9bcd3122a72a3a7e00500637";
 const moonResourcesSettledTopic = "0xb20fd9e652e1b740544f362fb3047c43a7bf0d6c7fbf0f5cab5f1f939aac6917";
 const researchQueuedTopic = "0x2c3d4c823cd097fa6cbea60fb91c561d6a497270c397a8c8258170458fe69e73";
 const fleetMissionLaunchedTopic = "0x95e2cb506aa14052bac412e42f47fb34d9234819a960761a7bc7f1920c0ab456";
@@ -4268,6 +4271,141 @@ describe("Veydrift backend", () => {
       }
     });
     expect(body.defenderPlanetState).toBeNull();
+  });
+
+  test("mission detail projects moon Target Combat Intel from moon defenses, not its parent planet", async () => {
+    const attacker = "0x3333333333333333333333333333333333333333" as Address;
+    const defender = "0x4444444444444444444444444444444444444444" as Address;
+    const indexer = new SettlementIndexer(new MockChainReader(), configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    indexer.applyEvent({
+      ...planet,
+      planetId: "9",
+      owner: defender,
+      eventName: "PlanetStarted",
+      transactionHash: "0xmoonintelparent",
+      blockNumber: "100"
+    });
+    // The parent planet owns a different defense roster. This is the state the
+    // old Target Combat Intel path incorrectly exposed for moon-bound attacks.
+    indexer.applyLog({
+      blockNumber: "0x65",
+      transactionHash: "0xparent-defense",
+      logIndex: "0x0",
+      removed: false,
+      topics: [planetDefenseCountChangedTopic, topic(9n), topic(0n)],
+      data: abiWords(9n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x65",
+      transactionHash: "0xparent-ships",
+      logIndex: "0x1",
+      removed: false,
+      topics: [planetShipCountChangedTopic, topic(9n), topic(1n)],
+      data: abiWords(12n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x65",
+      transactionHash: "0xparent-defense-queue",
+      logIndex: "0x2",
+      removed: false,
+      topics: [defenseQueuedTopic, topic(9n), topic(0n)],
+      data: abiWords(9n, 1_800_000_400n, 9_000n, 0n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x66",
+      transactionHash: "0xmoon-created",
+      logIndex: "0x0",
+      removed: false,
+      topics: [moonCreatedTopic, addressTopic(defender), topic(9n)],
+      data: abiWords(2n, 44n, 9n, 12n, 8_777n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x67",
+      transactionHash: "0xmoon-defense",
+      logIndex: "0x0",
+      removed: false,
+      topics: [moonDefenseCountChangedTopic, topic(9n), topic(4n)],
+      data: abiWords(3n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x67",
+      transactionHash: "0xmoon-ships",
+      logIndex: "0x1",
+      removed: false,
+      topics: [moonShipCountChangedTopic, topic(9n), topic(3n)],
+      data: abiWords(2n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x67",
+      transactionHash: "0xmoon-defense-queue",
+      logIndex: "0x2",
+      removed: false,
+      topics: [moonDefenseQueuedTopic, topic(9n), topic(4n)],
+      data: abiWords(3n, 1_800_000_500n, 3_000n, 0n, 0n)
+    });
+    indexer.applyLog(fleetMissionLog({
+      topics: [fleetMissionLaunchedTopic, topic(51n), addressTopic(attacker), topic(3n)],
+      data: abiWords(7n, 9n, 1_800_000_000n, 1_800_000_300n),
+      logIndex: 510
+    }));
+    indexer.applyLog(fleetMissionLog({
+      topics: [fleetMissionBodiesTopic, topic(51n)],
+      data: abiWords(0n, 1n),
+      logIndex: 511
+    }));
+    indexer.applyLog(fleetMissionLog({
+      topics: [fleetMissionLaunchedTopic, topic(52n), addressTopic("0x5555555555555555555555555555555555555555"), topic(3n)],
+      data: abiWords(8n, 9n, 1_800_000_100n, 1_800_000_400n),
+      logIndex: 520
+    }));
+
+    const response = await createRequestHandler({
+      config: configuredTestConfig,
+      chainReader: new MockChainReader(),
+      indexer
+    })(new Request("http://localhost/mission/51"));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.targetCombatIntel).toMatchObject({
+      planetId: "9",
+      targetIsMoon: true,
+      activeMissions: [expect.objectContaining({ missionId: "51", targetIsMoon: true })],
+      combatShips: {
+        count: 2,
+        units: [expect.objectContaining({ id: 3, count: 2 })]
+      },
+      defenses: {
+        count: 3,
+        units: [expect.objectContaining({ id: 4, count: 3 })]
+      },
+      queues: {
+        defense: expect.objectContaining({ itemId: 4, quantity: 3 }),
+        ship: null
+      }
+    });
+    expect(body.targetCombatIntel.defenses.units).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: 0, count: 9 })])
+    );
+    expect(body.targetCombatIntel.combatShips.units).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: 1, count: 12 })])
+    );
+
+    const parentResponse = await createRequestHandler({
+      config: configuredTestConfig,
+      chainReader: new MockChainReader(),
+      indexer
+    })(new Request("http://localhost/mission/52"));
+    const parentBody = await parentResponse.json();
+    expect(parentResponse.status).toBe(200);
+    expect(parentBody.targetCombatIntel).toMatchObject({
+      targetIsMoon: false,
+      activeMissions: [expect.objectContaining({ missionId: "52" })],
+      combatShips: { count: 12, units: [expect.objectContaining({ id: 1, count: 12 })] },
+      defenses: { count: 9, units: [expect.objectContaining({ id: 0, count: 9 })] },
+      queues: { defense: expect.objectContaining({ itemId: 0, quantity: 9 }) }
+    });
   });
 
   test("mission detail exposes battle-time DefenseHold defenders when planet fleet and defenses are zero (VEY-498)", async () => {

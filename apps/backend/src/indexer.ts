@@ -3136,8 +3136,10 @@ export class SettlementIndexer {
     return this.indexedFleetMissionReferenceIndex().completed;
   }
 
-  activeFleetMissionsForTarget(planetId: string): FleetMissionSummary[] {
-    return this.activeFleetMissionsFromCanonicalRowsForTarget(planetId);
+  activeFleetMissionsForTarget(planetId: string, targetIsMoon = false): FleetMissionSummary[] {
+    return this.activeFleetMissionsFromCanonicalRowsForTarget(planetId).filter((mission) =>
+      targetIsMoon ? mission.targetIsMoon === true : mission.targetIsMoon !== true
+    );
   }
 
   dueUnresolvedFleetMissionsForPlanet(planetId: string, asOfSeconds = nowSeconds()): FleetMissionSummary[] {
