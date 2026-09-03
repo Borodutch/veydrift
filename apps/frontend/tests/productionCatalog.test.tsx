@@ -16,6 +16,31 @@ const productionCatalogSource = await Bun.file(
 ).text();
 
 describe("ProductionCatalog selected panel", () => {
+  test("renders Supply immediately after Build and forwards the exact shortfall", () => {
+    const supplied: Array<{ metal: number; crystal: number; deuterium: number }> = [];
+    const catalog = ProductionCatalog({
+      actionPending: false,
+      canTransact: true,
+      emptyLabel: "Select an item.",
+      items: [catalogItem({
+        disabled: true,
+        supplyRequest: { metal: 5_000, crystal: 750, deuterium: 0 },
+      })],
+      onBuild: () => undefined,
+      onQuantity: () => undefined,
+      onSelect: () => undefined,
+      onSupply: (resources) => supplied.push(resources),
+      selectedKey: "rocketLauncher",
+    });
+    const actionButtons = elementNodes(catalog)
+      .filter((node) => node.type === "button")
+      .filter((node) => ["Build", "Supply"].includes(visibleText(node)));
+
+    expect(actionButtons.map(visibleText)).toEqual(["Build", "Supply"]);
+    actionButtons[1]?.props.onClick();
+    expect(supplied).toEqual([{ metal: 5_000, crystal: 750, deuterium: 0 }]);
+  });
+
   test("exposes every catalog row as an explicit selection control", () => {
     const selected: string[] = [];
     const solarSatellite: ProductionCatalogItem<"solarSatellite"> = {

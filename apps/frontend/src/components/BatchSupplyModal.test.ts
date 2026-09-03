@@ -4,6 +4,7 @@ import type { BatchSupplyOrder, BatchSupplySource } from "../batchSupplyPlanner"
 import {
   batchSupplyFleetPresentation,
   batchSupplySourceLimitReason,
+  supplyResourceInputValues,
 } from "./BatchSupplyModal";
 
 const batchSupplyModalSource = await Bun.file(new URL("./BatchSupplyModal.tsx", import.meta.url)).text();
@@ -31,6 +32,18 @@ function order(ships: BatchSupplyOrder["ships"]): BatchSupplyOrder {
 }
 
 describe("Batch Supply source row presentation", () => {
+  test("prefills only the missing resources supplied by an action", () => {
+    expect(supplyResourceInputValues({
+      metal: 197_455,
+      crystal: 48_857,
+      deuterium: 0,
+    })).toEqual({
+      metal: "197455",
+      crystal: "48857",
+      deuterium: "",
+    });
+  });
+
   test("vertically centers the Supply title with its header icon", () => {
     expect(batchSupplyModalSource).toContain('className="flex items-center gap-2 text-cyan-100"');
     expect(batchSupplyModalSource).toContain('<h2 className="text-lg font-semibold">Supply {targetLabel}</h2>');

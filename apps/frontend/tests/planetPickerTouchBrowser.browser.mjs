@@ -998,6 +998,63 @@ test("Infrastructure renders its indexed planet snapshot while wallet overview h
   assert.deepEqual(rendered.errors, []);
 });
 
+test("Infrastructure Supply opens for the current planet with its exact missing resources prefilled", async () => {
+  await loadInspectorFixture("/infrastructure", 1280, {
+    shell: "settlement",
+    shortResources: "true",
+  });
+  await waitForExpression(`location.pathname === '/infrastructure'
+    && [...document.querySelectorAll('main button')].some((button) => button.textContent?.trim() === 'Supply')`);
+
+  const actionOrder = await evaluate(`[...document.querySelectorAll('main button')]
+    .filter((button) => ['Upgrade Level 5', 'Supply'].includes(button.textContent?.trim() ?? ''))
+    .map((button) => button.textContent?.trim())`);
+  assert.deepEqual(actionOrder, ["Upgrade Level 5", "Supply"]);
+
+  await clickExpression("[...document.querySelectorAll('main button')].find((button) => button.textContent?.trim() === 'Supply')");
+  await waitForExpression("document.querySelector('[role=dialog][aria-label=\"Supply Owned Alpha\"]') !== null");
+  const request = await evaluate(`({
+    crystal: document.querySelector('input[aria-label="crystal to send"]')?.value,
+    deuterium: document.querySelector('input[aria-label="deuterium to send"]')?.value,
+    metal: document.querySelector('input[aria-label="metal to send"]')?.value,
+  })`);
+  assert.deepEqual(request, { crystal: "25", deuterium: "", metal: "110" });
+});
+
+test("mobile Shipyard keeps Supply immediately right of Build and prefills quantity-scaled deficits", async () => {
+  await loadInspectorFixture("/shipyard", 390, {
+    shell: "settlement",
+    shortResources: "true",
+  });
+  await waitForExpression(`location.pathname === '/shipyard'
+    && [...document.querySelectorAll('main button')].some((button) => button.textContent?.trim() === 'Supply')`);
+
+  const alignment = await evaluate(`(() => {
+    const buttons = [...document.querySelectorAll('main button')];
+    const build = buttons.find((button) => button.textContent?.trim() === 'Build');
+    const supply = buttons.find((button) => button.textContent?.trim() === 'Supply');
+    const buildRect = build?.getBoundingClientRect();
+    const supplyRect = supply?.getBoundingClientRect();
+    return {
+      buildTop: Math.round(buildRect?.top ?? -1),
+      supplyLeft: Math.round(supplyRect?.left ?? -1),
+      supplyTop: Math.round(supplyRect?.top ?? -1),
+      buildRight: Math.round(buildRect?.right ?? -1),
+    };
+  })()`);
+  assert.equal(alignment.supplyTop, alignment.buildTop);
+  assert.ok(alignment.supplyLeft >= alignment.buildRight, JSON.stringify(alignment));
+
+  await clickExpression("[...document.querySelectorAll('main button')].find((button) => button.textContent?.trim() === 'Supply')");
+  await waitForExpression("document.querySelector('[role=dialog][aria-label=\"Supply Owned Alpha\"]') !== null");
+  const request = await evaluate(`({
+    crystal: document.querySelector('input[aria-label="crystal to send"]')?.value,
+    deuterium: document.querySelector('input[aria-label="deuterium to send"]')?.value,
+    metal: document.querySelector('input[aria-label="metal to send"]')?.value,
+  })`);
+  assert.deepEqual(request, { crystal: "1995", deuterium: "", metal: "1990" });
+});
+
 test("mobile Defenses renders its indexed planet snapshot while wallet overview hydration is incomplete", async () => {
   await loadInspectorFixture("/defenses", 390, {
     incompleteOverview: "true",

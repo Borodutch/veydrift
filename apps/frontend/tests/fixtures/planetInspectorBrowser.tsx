@@ -34,6 +34,10 @@ const incompleteOverview = fixtureParams.get("incompleteOverview") === "true";
 const stallMissionBackgroundReads = fixtureParams.get("stallMissionBackgroundReads") === "true";
 const walletEventOnPointerDown = fixtureParams.get("walletEventOnPointerDown");
 const audioContextFailure = fixtureParams.get("audioContextFailure") === "true";
+const shortResources = fixtureParams.get("shortResources") === "true";
+const selectedPlanetResources = shortResources
+  ? { crystal: "5", deuterium: "2", metal: "10" }
+  : { crystal: "3873", deuterium: "102", metal: "10313" };
 
 const ownedPlanets = [
   managedPlanet({
@@ -42,7 +46,7 @@ const ownedPlanets = [
     name: "Owned Alpha",
     planetId: "owned-a",
     position: 3,
-    resources: { crystal: "3873", deuterium: "102", metal: "10313" },
+    resources: selectedPlanetResources,
     system: 2,
   }),
   managedPlanet({
@@ -257,8 +261,8 @@ globalThis.fetch = (async (input, init) => {
       homePlanetId: "1",
       planetId: "1",
       productionAvailable: true,
-      resources: { crystal: "3873", deuterium: "0", metal: "10313" },
-      resourcesAsOfNow: { crystal: "3873", deuterium: "0", metal: "10313" },
+      resources: shortResources ? selectedPlanetResources : { crystal: "3873", deuterium: "0", metal: "10313" },
+      resourcesAsOfNow: shortResources ? selectedPlanetResources : { crystal: "3873", deuterium: "0", metal: "10313" },
       fleetSlots: { active: 0, limit: 1 },
       shipyardLevel: 5,
       naniteLevel: 0,
@@ -285,8 +289,8 @@ globalThis.fetch = (async (input, init) => {
       planetId: "owned-a",
       productionPerHour: { crystal: "238", deuterium: "71", metal: "620" },
       queue: null,
-      resources: { crystal: "3873", deuterium: "102", metal: "10313" },
-      resourcesAsOfNow: { crystal: "3873", deuterium: "102", metal: "10313" },
+      resources: selectedPlanetResources,
+      resourcesAsOfNow: selectedPlanetResources,
       storageCaps: { crystal: "10000", deuterium: "10000", metal: "10000" },
       wallet: account,
     });

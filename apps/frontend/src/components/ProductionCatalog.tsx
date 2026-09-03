@@ -5,6 +5,7 @@ import { formatDuration } from "../durationFormat";
 import type { Resources } from "../playableMvp";
 import type { QueueStateResponse } from "../walletFlow";
 import { constructionQueueForDisplay, type ConstructionProgress } from "../constructionProgress";
+import type { SupplyResources } from "../batchSupplyPlanner";
 import { OptimizedImage } from "./OptimizedImage";
 import {
   formatQueueEta,
@@ -69,6 +70,7 @@ export type ProductionCatalogItem<Key extends string = string> = {
   detailSections?: ProductionDetailSection[] | undefined;
   readOnly?: boolean | undefined;
   notes?: string[] | undefined;
+  supplyRequest?: SupplyResources | undefined;
   thumbnailStyle?: Record<string, string> | undefined;
 };
 
@@ -176,6 +178,7 @@ export type ProductionCatalogProps<Key extends string> = {
   onQuantity: (key: Key, quantity: ProductionQuantityInput) => void;
   onRefreshQueue?: (() => void) | undefined;
   onSelect: (key: Key) => void;
+  onSupply?: ((resources: SupplyResources) => void) | undefined;
   queue?: ProductionQueue | undefined;
   queueProgress?: ConstructionProgress | undefined;
   queueTone?: QueueProgressTone | undefined;
@@ -216,6 +219,7 @@ export function ProductionCatalog<Key extends string>({
   onOpenRequirement,
   onQuantity,
   onSelect,
+  onSupply,
   queue,
   queueProgress,
   queueTone = "cyan",
@@ -253,6 +257,7 @@ export function ProductionCatalog<Key extends string>({
           onBuild={onBuild}
           onOpenRequirement={onOpenRequirement}
           onQuantity={onQuantity}
+          onSupply={onSupply}
         />
 
         <div className="grid gap-3 xl:order-1">
@@ -428,6 +433,7 @@ function SelectedProductionPanel<Key extends string>({
   onBuild,
   onOpenRequirement,
   onQuantity,
+  onSupply,
 }: {
   emptyLabel: string;
   id: string;
@@ -435,6 +441,7 @@ function SelectedProductionPanel<Key extends string>({
   onBuild: (item: ProductionCatalogItem<Key>) => void;
   onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
   onQuantity: (key: Key, quantity: ProductionQuantityInput) => void;
+  onSupply?: ((resources: SupplyResources) => void) | undefined;
 }) {
   if (!item) {
     return (
@@ -530,14 +537,26 @@ function SelectedProductionPanel<Key extends string>({
               +
             </button>
           </div>
-          <button
-            className="h-11 rounded-md border border-signal/40 bg-signal/10 px-3 text-sm font-semibold text-signal transition hover:bg-signal/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500 sm:h-9"
-            disabled={item.disabled || quantityInvalid}
-            onClick={() => onBuild(item)}
-            type="button"
-          >
-            {item.actionLabel}
-          </button>
+          <div className={`grid flex-none gap-2 ${item.supplyRequest && onSupply ? "grid-cols-2" : "grid-cols-1"}`}>
+            <button
+              className="h-11 rounded-md border border-signal/40 bg-signal/10 px-3 text-sm font-semibold text-signal transition hover:bg-signal/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500 sm:h-9"
+              disabled={item.disabled || quantityInvalid}
+              onClick={() => onBuild(item)}
+              type="button"
+            >
+              {item.actionLabel}
+            </button>
+            {item.supplyRequest && onSupply ? (
+              <button
+                aria-label={`Supply missing resources for ${item.label}`}
+                className="h-11 rounded-md border border-cyan-300/40 bg-cyan-300/10 px-3 text-sm font-semibold text-cyan-200 transition hover:bg-cyan-300/20 sm:h-9"
+                onClick={() => onSupply(item.supplyRequest!)}
+                type="button"
+              >
+                Supply
+              </button>
+            ) : null}
+          </div>
           <button
             aria-label={`${item.label} maximum affordable quantity`}
             className="h-11 rounded border border-white/10 bg-white/[0.03] px-2 text-xs font-semibold text-slate-300 transition hover:border-white/20 hover:text-white disabled:cursor-not-allowed disabled:text-slate-600 sm:h-9"
