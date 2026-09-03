@@ -32,12 +32,15 @@ describe("ProductionCatalog selected panel", () => {
       onSupply: (resources) => supplied.push(resources),
       selectedKey: "rocketLauncher",
     });
-    const actionButtons = elementNodes(catalog)
-      .filter((node) => node.type === "button")
-      .filter((node) => ["Build", "Supply"].includes(visibleText(node)));
+    const actionButtons = elementNodes(catalog).filter((node) => node.type === "button");
+    const buildButton = actionButtons.find((node) => visibleText(node) === "Build");
+    const supplyButton = actionButtons.find((node) => node.props["aria-label"] === "Supply missing resources for Rocket Launcher");
 
-    expect(actionButtons.map(visibleText)).toEqual(["Build", "Supply"]);
-    actionButtons[1]?.props.onClick();
+    expect(buildButton).toBeDefined();
+    expect(supplyButton).toBeDefined();
+    expect(actionButtons.indexOf(buildButton!)).toBeLessThan(actionButtons.indexOf(supplyButton!));
+    expect(visibleText(supplyButton!)).toBe("");
+    supplyButton?.props.onClick();
     expect(supplied).toEqual([{ metal: 5_000, crystal: 750, deuterium: 0 }]);
   });
 
@@ -466,6 +469,7 @@ function visibleText(node: ComponentChildren): string {
   if (Array.isArray(node)) return node.map(visibleText).join(" ");
   const vnode = node as VNode;
   if (typeof vnode.type === "function") {
+    if (vnode.props?.["aria-hidden"]) return "";
     const Component = vnode.type as (props: Record<string, unknown>) => ComponentChildren;
     return visibleText(Component(vnode.props ?? {}));
   }
@@ -478,6 +482,7 @@ function elementNodes(node: ComponentChildren): VNode[] {
   if (Array.isArray(node)) return node.flatMap(elementNodes);
   const vnode = node as VNode;
   if (typeof vnode.type === "function") {
+    if (vnode.props?.["aria-hidden"]) return [vnode];
     const Component = vnode.type as (props: Record<string, unknown>) => ComponentChildren;
     return elementNodes(Component(vnode.props ?? {}));
   }

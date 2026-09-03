@@ -1,4 +1,5 @@
 import type { ComponentChildren } from "preact";
+import { PackagePlus } from "lucide-preact";
 import { useState } from "preact/hooks";
 import { formatCost } from "../buildingDetails";
 import { formatDuration } from "../durationFormat";
@@ -537,7 +538,7 @@ function SelectedProductionPanel<Key extends string>({
               +
             </button>
           </div>
-          <div className={`grid flex-none gap-2 ${item.supplyRequest && onSupply ? "grid-cols-2" : "grid-cols-1"}`}>
+          <div className="flex flex-none gap-2">
             <button
               className="h-11 rounded-md border border-signal/40 bg-signal/10 px-3 text-sm font-semibold text-signal transition hover:bg-signal/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500 sm:h-9"
               disabled={item.disabled || quantityInvalid}
@@ -549,11 +550,12 @@ function SelectedProductionPanel<Key extends string>({
             {item.supplyRequest && onSupply ? (
               <button
                 aria-label={`Supply missing resources for ${item.label}`}
-                className="h-11 rounded-md border border-cyan-300/40 bg-cyan-300/10 px-3 text-sm font-semibold text-cyan-200 transition hover:bg-cyan-300/20 sm:h-9"
+                className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md border border-cyan-300/40 bg-cyan-300/10 text-cyan-200 transition hover:bg-cyan-300/20 sm:h-9 sm:w-9"
                 onClick={() => onSupply(item.supplyRequest!)}
+                title={`Supply missing resources for ${item.label}`}
                 type="button"
               >
-                Supply
+                <PackagePlus aria-hidden="true" size={16} strokeWidth={1.9} />
               </button>
             ) : null}
           </div>
