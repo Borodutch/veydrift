@@ -168,12 +168,12 @@ export function BatchSupplyModal({
     >
       <div className="grid max-h-[calc(100dvh-1.5rem)] w-full max-w-3xl grid-rows-[auto_auto_minmax(0,1fr)_auto] gap-4 overflow-hidden rounded-xl border border-cyan-300/25 bg-[#101827] p-4 shadow-2xl sm:max-h-[calc(100dvh-3rem)] sm:p-6">
         <header className="flex items-start justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2 text-cyan-100">
+          <h2 className="flex h-5 items-center gap-2 text-lg font-semibold leading-none text-cyan-100">
+            <span className="flex size-5 items-center justify-center">
               <PackagePlus aria-hidden="true" size={20} />
-              <h2 className="relative top-[2px] text-lg font-semibold leading-5">Supply {targetLabel}</h2>
-            </div>
-          </div>
+            </span>
+            <span className="flex h-5 items-center">Supply {targetLabel}</span>
+          </h2>
           <button aria-label="Close supply resources" className="rounded border border-white/15 p-2 text-slate-300 hover:bg-white/10" disabled={actionPending} onClick={onClose} type="button">
             <X aria-hidden="true" size={18} />
           </button>
