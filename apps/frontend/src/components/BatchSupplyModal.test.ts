@@ -46,8 +46,7 @@ describe("Batch Supply source row presentation", () => {
 
   test("vertically centers the Supply title with its header icon", () => {
     expect(batchSupplyModalSource).toContain('className="flex items-center gap-2 text-cyan-100"');
-    expect(batchSupplyModalSource).toContain('<h2 className="text-lg font-semibold leading-5">Supply {targetLabel}</h2>');
-    expect(batchSupplyModalSource).not.toContain('<h2 className="translate-y-px');
+    expect(batchSupplyModalSource).toContain('<h2 className="relative top-[2px] text-lg font-semibold leading-5">Supply {targetLabel}</h2>');
   });
 
   test("does not misreport unreadable fleet capacity as every slot being occupied", () => {
