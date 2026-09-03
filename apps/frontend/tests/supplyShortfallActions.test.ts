@@ -19,9 +19,11 @@ describe("resource-shortfall Supply actions", () => {
 
   test("keeps Infrastructure and Research Supply inline to the right of the primary action", () => {
     expect(infrastructureSource).toContain("secondaryAction={supplyShortfall && onSupply");
-    expect(structureSource).toContain('secondaryAction ? "grid-cols-2" : "grid-cols-1"');
-    expect(researchSource).toContain('supplyRequest && onSupply ? "grid-cols-2" : "grid-cols-1"');
-    expect(researchSource.indexOf("{status.actionLabel}")).toBeLessThan(researchSource.indexOf(">\n            Supply\n"));
+    expect(structureSource).toContain('className="mt-3 flex gap-2"');
+    expect(structureSource).toContain('className="inline-flex h-10 w-10 shrink-0');
+    expect(researchSource).toContain('className="mt-3 flex gap-2"');
+    expect(researchSource).toContain('className="inline-flex h-10 w-10 shrink-0');
+    expect(researchSource.indexOf("{status.actionLabel}")).toBeLessThan(researchSource.indexOf("<PackagePlus"));
   });
 
   test("requires authoritative Infrastructure and Research costs and balances", () => {

@@ -1,4 +1,4 @@
-import { Info, X } from "lucide-preact";
+import { Info, PackagePlus, X } from "lucide-preact";
 import { useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 import { escapeCloseRef } from "./modalDismiss";
@@ -471,10 +471,10 @@ function ResearchDetailPanel({
 
       <ResearchActionReasonNotice disabled={status.disabled} reason={status.reason} />
 
-      <div className={`mt-3 grid gap-2 ${supplyRequest && onSupply ? "grid-cols-2" : "grid-cols-1"}`}>
+      <div className="mt-3 flex gap-2">
         <button
           aria-label={`Research ${research.label} to Level ${status.targetLevel}`}
-          className="h-10 w-full rounded-md border border-cyan-300/40 bg-cyan-300/10 px-3 text-sm font-semibold text-cyan-200 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
+          className="h-10 min-w-0 flex-1 rounded-md border border-cyan-300/40 bg-cyan-300/10 px-3 text-sm font-semibold text-cyan-200 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
           disabled={status.disabled}
           onClick={onResearch}
           type="button"
@@ -484,11 +484,12 @@ function ResearchDetailPanel({
         {supplyRequest && onSupply ? (
           <button
             aria-label={`Supply missing resources for ${research.label}`}
-            className="h-10 w-full rounded-md border border-sky-300/40 bg-sky-300/10 px-3 text-sm font-semibold text-sky-200 transition hover:bg-sky-300/20"
+            className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-sky-300/40 bg-sky-300/10 text-sky-200 transition hover:bg-sky-300/20"
             onClick={() => onSupply(supplyRequest)}
+            title={`Supply missing resources for ${research.label}`}
             type="button"
           >
-            Supply
+            <PackagePlus aria-hidden="true" size={16} strokeWidth={1.9} />
           </button>
         ) : null}
       </div>

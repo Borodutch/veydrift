@@ -1,4 +1,5 @@
 import type { ComponentChildren } from "preact";
+import { PackagePlus } from "lucide-preact";
 import { useState } from "preact/hooks";
 import type { QueueTimeline } from "../playableMvp";
 import {
@@ -111,7 +112,7 @@ export function StructureDetail({
   levelInfo?: StructureLevelInfo | undefined;
   notice?: { label: string; tone: "error" | "success" } | undefined;
   queue?: StructureQueue | undefined;
-  secondaryAction?: { ariaLabel: string; label: string; onClick: () => void } | undefined;
+  secondaryAction?: { ariaLabel: string; onClick: () => void } | undefined;
   statusReason?: { disabled: boolean; label: string; supportingLabel?: string | undefined } | undefined;
   summary: string;
 }) {
@@ -164,10 +165,10 @@ export function StructureDetail({
       ) : null}
 
       {action ? (
-        <div className={`mt-3 grid gap-2 ${secondaryAction ? "grid-cols-2" : "grid-cols-1"}`}>
+        <div className="mt-3 flex gap-2">
           <button
             aria-label={action.ariaLabel}
-            className="h-10 w-full rounded-md border border-signal/40 bg-signal/10 px-3 text-sm font-semibold text-signal transition hover:bg-signal/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
+            className="h-10 min-w-0 flex-1 rounded-md border border-signal/40 bg-signal/10 px-3 text-sm font-semibold text-signal transition hover:bg-signal/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
             disabled={action.disabled}
             onClick={action.onClick}
             type="button"
@@ -177,11 +178,12 @@ export function StructureDetail({
           {secondaryAction ? (
             <button
               aria-label={secondaryAction.ariaLabel}
-              className="h-10 w-full rounded-md border border-cyan-300/40 bg-cyan-300/10 px-3 text-sm font-semibold text-cyan-200 transition hover:bg-cyan-300/20"
+              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-cyan-300/40 bg-cyan-300/10 text-cyan-200 transition hover:bg-cyan-300/20"
               onClick={secondaryAction.onClick}
+              title={secondaryAction.ariaLabel}
               type="button"
             >
-              {secondaryAction.label}
+              <PackagePlus aria-hidden="true" size={16} strokeWidth={1.9} />
             </button>
           ) : null}
         </div>

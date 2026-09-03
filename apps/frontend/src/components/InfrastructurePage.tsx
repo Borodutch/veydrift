@@ -421,7 +421,6 @@ function BuildingDetailPanel({
       }}
       secondaryAction={supplyShortfall && onSupply ? {
         ariaLabel: `Supply missing resources for ${building.label}`,
-        label: "Supply",
         onClick: () => onSupply(supplyShortfall),
       } : undefined}
       summary={binary ? (built ? "Built on this planet" : "Build on this planet") : currentLevel === 0 ? `Build Level ${status.targetLevel}` : `Level ${currentLevel} to ${status.targetLevel}`}
