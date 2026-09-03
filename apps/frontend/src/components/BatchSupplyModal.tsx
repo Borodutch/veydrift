@@ -7,6 +7,7 @@ import {
 import {
   buildBatchSupplyPlan,
   emptySupplyResources,
+  normalizeSupplyResources,
   type BatchSupplyOrder,
   type BatchSupplySource,
   type SupplyResources,
@@ -52,6 +53,7 @@ export function BatchSupplyModal({
   actionPending = false,
   error,
   fleetSlotsKnown = true,
+  initialRequested,
   loading = false,
   onClose,
   onConfirm,
@@ -63,6 +65,7 @@ export function BatchSupplyModal({
   actionPending?: boolean | undefined;
   error?: string | undefined;
   fleetSlotsKnown?: boolean | undefined;
+  initialRequested?: Partial<SupplyResources> | undefined;
   loading?: boolean | undefined;
   onClose: () => void;
   onConfirm: (orders: BatchSupplyOrder[]) => void;
@@ -71,19 +74,15 @@ export function BatchSupplyModal({
   target: ManagedPlanetResponse;
   transactionState?: Pick<WriteTransactionState, "label" | "outcome" | "txHash"> | undefined;
 }) {
-  const [requested, setRequested] = useState<Record<keyof SupplyResources, string>>({
-    metal: "",
-    crystal: "",
-    deuterium: "",
-  });
+  const [requested, setRequested] = useState<Record<keyof SupplyResources, string>>(() => supplyResourceInputValues(initialRequested));
   const [selectedSourceIds, setSelectedSourceIds] = useState<Set<string>>(new Set());
   const [sourceCargoOverrides, setSourceCargoOverrides] = useState<Record<string, Partial<SupplyResources>>>({});
 
   useEffect(() => {
-    setRequested({ metal: "", crystal: "", deuterium: "" });
+    setRequested(supplyResourceInputValues(initialRequested));
     setSelectedSourceIds(new Set());
     setSourceCargoOverrides({});
-  }, [target.planetId]);
+  }, [initialRequested?.crystal, initialRequested?.deuterium, initialRequested?.metal, target.planetId]);
 
   useEffect(() => {
     if (sources.length === 0) return;
@@ -299,6 +298,17 @@ export function BatchSupplyModal({
       </div>
     </div>
   );
+}
+
+export function supplyResourceInputValues(
+  resources: Partial<SupplyResources> | undefined,
+): Record<keyof SupplyResources, string> {
+  const normalized = resources ? normalizeSupplyResources(resources) : emptySupplyResources();
+  return {
+    metal: normalized.metal > 0 ? String(normalized.metal) : "",
+    crystal: normalized.crystal > 0 ? String(normalized.crystal) : "",
+    deuterium: normalized.deuterium > 0 ? String(normalized.deuterium) : "",
+  };
 }
 
 function SupplyFleetIcons({ ships }: { ships: Partial<MissionShips> | undefined }) {

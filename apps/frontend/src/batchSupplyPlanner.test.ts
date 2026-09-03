@@ -2,11 +2,38 @@ import { describe, expect, test } from "bun:test";
 import {
   buildBatchSupplyPlan,
   hasUsableSupplyCargoFleet,
+  supplyResourceShortfall,
   type BatchSupplySource,
 } from "./batchSupplyPlanner";
 
 const target = { galaxy: 1, system: 100, position: 8 };
 const drives = { combustionDrive: 6, impulseDrive: 4, hyperspaceDrive: 0 };
+
+describe("supplyResourceShortfall", () => {
+  test("returns the exact whole-resource deficit for a selected action", () => {
+    expect(supplyResourceShortfall(
+      { metal: 2_060.25, crystal: 1_021, deuterium: 52 },
+      { metal: 199_515, crystal: 49_878, deuterium: 52 },
+    )).toEqual({ metal: 197_455, crystal: 48_857, deuterium: 0 });
+  });
+
+  test("omits Supply when the action is affordable or its state is unknown", () => {
+    expect(supplyResourceShortfall(
+      { metal: 2_000, crystal: 1_000, deuterium: 500 },
+      { metal: 2_000, crystal: 1_000, deuterium: 500 },
+    )).toBeUndefined();
+    expect(supplyResourceShortfall(undefined, { metal: 1 })).toBeUndefined();
+    expect(supplyResourceShortfall({ metal: 0 }, undefined)).toBeUndefined();
+    expect(supplyResourceShortfall(
+      { metal: 0, crystal: 0, deuterium: 0 },
+      { metal: 10, crystal: 5 },
+    )).toBeUndefined();
+    expect(supplyResourceShortfall(
+      { metal: Number.NaN, crystal: 0, deuterium: 0 },
+      { metal: 10, crystal: 5, deuterium: 0 },
+    )).toBeUndefined();
+  });
+});
 
 function source(overrides: Partial<BatchSupplySource> = {}): BatchSupplySource {
   return {

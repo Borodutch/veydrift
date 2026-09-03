@@ -36,6 +36,7 @@ import { constructionQueueForDisplay, type ConstructionProgress } from "../const
 import { RequirementFlairs, type RequirementFlair, type RequirementTarget } from "./RequirementFlairs";
 import { CatalogSkeleton } from "./LoadingSkeletons";
 import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailableNotice";
+import { supplyResourceShortfall, type SupplyResources } from "../batchSupplyPlanner";
 
 const formatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 const researchGroups = ["Basic", "Drive", "Advanced", "Combat"];
@@ -78,6 +79,7 @@ interface ResearchPageProps {
   onRefresh: () => void;
   onResearch: (technologyId: number, key: ResearchKey) => void;
   onSelectResearch?: ((key: ResearchKey) => void) | undefined;
+  onSupply?: ((resources: SupplyResources) => void) | undefined;
   productionRates?: Resources | undefined;
   progressState?: ConstructionProgress | undefined;
   researchState: ChainResearchState | null;
@@ -98,6 +100,7 @@ export function ResearchPage({
   onOpenRequirement,
   onResearch,
   onSelectResearch,
+  onSupply,
   productionRates,
   progressState,
   researchState,
@@ -204,6 +207,7 @@ export function ResearchPage({
             now={now}
             onResearch={() => onResearch(selectedResearch.id, selectedResearch.key)}
             onOpenRequirement={onOpenRequirement}
+            onSupply={onSupply}
             research={selectedResearch}
             researchState={researchState}
             productionRates={productionRates}
@@ -368,6 +372,7 @@ function ResearchDetailPanel({
   now,
   onResearch,
   onOpenRequirement,
+  onSupply,
   research,
   researchState,
   productionRates,
@@ -383,6 +388,7 @@ function ResearchDetailPanel({
   now: number;
   onResearch: () => void;
   onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
+  onSupply?: ((resources: SupplyResources) => void) | undefined;
   research: (typeof researchCatalog)[number];
   researchState: ChainResearchState | null;
   productionRates?: Resources | undefined;
@@ -390,11 +396,12 @@ function ResearchDetailPanel({
   state: PlayableState;
   transactionUnavailableReason?: string | undefined;
 }) {
+  const chainCost = chainCostFor(researchState, research.id);
   const status = researchActionStatus({
     actionPending,
     actionPendingLabel,
     canTransact,
-    chainCost: chainCostFor(researchState, research.id),
+    chainCost,
     chainDurationSeconds: chainDurationFor(researchState, research.id),
     error,
     key: research.key,
@@ -415,6 +422,7 @@ function ResearchDetailPanel({
     researchNetworkLabLevels: researchState?.researchNetworkLabLevels,
   });
   const [isInfoOpen, setIsInfoOpen] = useState(false);
+  const supplyRequest = supplyResourceShortfall(spendableResources, chainCost);
 
   return (
     <InspectDetailShell>
@@ -463,15 +471,27 @@ function ResearchDetailPanel({
 
       <ResearchActionReasonNotice disabled={status.disabled} reason={status.reason} />
 
-      <button
-        aria-label={`Research ${research.label} to Level ${status.targetLevel}`}
-        className="mt-3 h-10 w-full rounded-md border border-cyan-300/40 bg-cyan-300/10 px-3 text-sm font-semibold text-cyan-200 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
-        disabled={status.disabled}
-        onClick={onResearch}
-        type="button"
-      >
-        {status.actionLabel}
-      </button>
+      <div className={`mt-3 grid gap-2 ${supplyRequest && onSupply ? "grid-cols-2" : "grid-cols-1"}`}>
+        <button
+          aria-label={`Research ${research.label} to Level ${status.targetLevel}`}
+          className="h-10 w-full rounded-md border border-cyan-300/40 bg-cyan-300/10 px-3 text-sm font-semibold text-cyan-200 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
+          disabled={status.disabled}
+          onClick={onResearch}
+          type="button"
+        >
+          {status.actionLabel}
+        </button>
+        {supplyRequest && onSupply ? (
+          <button
+            aria-label={`Supply missing resources for ${research.label}`}
+            className="h-10 w-full rounded-md border border-sky-300/40 bg-sky-300/10 px-3 text-sm font-semibold text-sky-200 transition hover:bg-sky-300/20"
+            onClick={() => onSupply(supplyRequest)}
+            type="button"
+          >
+            Supply
+          </button>
+        ) : null}
+      </div>
 
       {isInfoOpen && (
         <ResearchLevelInfoModal

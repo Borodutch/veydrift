@@ -32,6 +32,7 @@ import { constructionQueueForDisplay, type ConstructionProgress } from "../const
 import { RequirementFlairs, type RequirementFlair, type RequirementTarget } from "./RequirementFlairs";
 import { LevelInfoButton, LevelInfoModal, type LevelInfoColumn, type LevelInfoRow } from "./LevelInfoModal";
 import { StructureCatalog, StructureDetail, type StructureLevelInfo } from "./StructureCatalog";
+import { supplyResourceShortfall, type SupplyResources } from "../batchSupplyPlanner";
 
 const shortResourceLabels: Record<keyof Resources, string> = {
   metal: "Metal",
@@ -79,6 +80,7 @@ interface InfrastructurePageProps {
   onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
   onRefresh?: (() => void) | undefined;
   onSelectBuilding?: ((key: BuildingKey) => void) | undefined;
+  onSupply?: ((resources: SupplyResources) => void) | undefined;
   planetProductionProfile?: PlanetProductionProfile | undefined;
   productionRates?: Resources | undefined;
   selectedBuildingKey?: BuildingKey | undefined;
@@ -103,6 +105,7 @@ export function InfrastructurePage({
   now = Date.now(),
   onOpenRequirement,
   onSelectBuilding,
+  onSupply,
   planetProductionProfile,
   productionRates,
   selectedBuildingKey,
@@ -189,6 +192,7 @@ export function InfrastructurePage({
             chainCost={chainCosts?.[selectedBuilding.key]}
             chainDuration={chainDurations?.[selectedBuilding.key]}
             onOpenRequirement={onOpenRequirement}
+            onSupply={onSupply}
             onUpgrade={() => onUpgrade(selectedBuilding.key)}
             now={now}
             planetProductionProfile={planetProductionProfile}
@@ -276,6 +280,7 @@ function BuildingDetailPanel({
   chainCost,
   chainDuration,
   onOpenRequirement,
+  onSupply,
   onUpgrade,
   now,
   planetProductionProfile,
@@ -292,6 +297,7 @@ function BuildingDetailPanel({
   chainDuration?: number | undefined;
   now: number;
   onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
+  onSupply?: ((resources: SupplyResources) => void) | undefined;
   onUpgrade: () => void;
   planetProductionProfile?: PlanetProductionProfile | undefined;
   productionRates?: Resources | undefined;
@@ -360,6 +366,10 @@ function BuildingDetailPanel({
   const isSelectedBuildingQueued = state.queue?.kind === "building"
     && state.queue.key === building.key;
   const requirementStates = getBuildingRequirementStates(state, building.key, { starterPlanet });
+  // Supply must reflect backend-authoritative cost and spendable balance. The
+  // local playable fallback is useful for disconnected previews, but must never
+  // fabricate a transport request before indexed state is known.
+  const supplyShortfall = supplyResourceShortfall(spendableResources, chainCost);
 
   return (
     <StructureDetail
@@ -409,6 +419,11 @@ function BuildingDetailPanel({
         label: status.reason,
         supportingLabel: queuedResourceShortfall,
       }}
+      secondaryAction={supplyShortfall && onSupply ? {
+        ariaLabel: `Supply missing resources for ${building.label}`,
+        label: "Supply",
+        onClick: () => onSupply(supplyShortfall),
+      } : undefined}
       summary={binary ? (built ? "Built on this planet" : "Build on this planet") : currentLevel === 0 ? `Build Level ${status.targetLevel}` : `Level ${currentLevel} to ${status.targetLevel}`}
     />
   );

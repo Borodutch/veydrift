@@ -3,6 +3,7 @@ import type { BuildingKey, DefenseKey, ResearchKey, Resources, UnlockRequirement
 import { canAfford, defenseCatalog, defenseCombatStats, missingUnlockRequirements } from "../playableMvp";
 import { formatMissingResources } from "../buildingDetails";
 import { activeProductionQueue } from "../productionQueueFallback";
+import { supplyResourceShortfall, type SupplyResources } from "../batchSupplyPlanner";
 import { walletRecoveryActionMessage, type ChainDefenseState } from "../walletFlow";
 import {
   adaptProductionItems,
@@ -38,6 +39,7 @@ interface DefensePageProps {
   onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
   onRefresh: () => void;
   onSelectDefense?: ((key: DefenseKey) => void) | undefined;
+  onSupply?: ((resources: SupplyResources) => void) | undefined;
   overviewQueue?: ChainDefenseState["queue"] | undefined;
   productionRates?: Resources | undefined;
   progressState?: ConstructionProgress | undefined;
@@ -77,6 +79,7 @@ export function DefensePage({
   onBuild,
   onOpenRequirement,
   onSelectDefense,
+  onSupply,
   overviewQueue,
   productionRates,
   progressState,
@@ -128,6 +131,7 @@ export function DefensePage({
             setLocalSelectedKey(key);
             onSelectDefense?.(key);
           }}
+          onSupply={onSupply}
           queue={productionQueueViewModel(queue, defenseCatalog)}
           queueProgress={progressState}
           queueTone="rose"
@@ -284,6 +288,7 @@ export function defenseProductionItems({
       requirements,
       status: queued > 0 ? "queued" : missing.length === 0 ? "ready" : "locked",
       statusLabel: undefined,
+      supplyRequest: supplyResourceShortfall(resources, totalCost),
     };
   });
 }

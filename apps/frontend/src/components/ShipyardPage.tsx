@@ -3,6 +3,7 @@ import type { BuildingKey, ResearchKey, Resources, ShipKey, UnlockRequirement } 
 import { canAfford, missingUnlockRequirements, shipCatalog, shipyardCatalog, shipCombatStats, shipSpecRows } from "../playableMvp";
 import { formatMissingResources } from "../buildingDetails";
 import { formatDuration } from "../durationFormat";
+import { supplyResourceShortfall, type SupplyResources } from "../batchSupplyPlanner";
 import { activeProductionQueue } from "../productionQueueFallback";
 import { walletRecoveryActionMessage, type ChainShipyardState } from "../walletFlow";
 import {
@@ -41,6 +42,7 @@ interface ShipyardPageProps {
   onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
   onRefresh: () => void;
   onSelectShip?: ((key: ShipKey) => void) | undefined;
+  onSupply?: ((resources: SupplyResources) => void) | undefined;
   overviewQueue?: ChainShipyardState["queue"] | undefined;
   productionRates?: Resources | undefined;
   progressState?: ConstructionProgress | undefined;
@@ -80,6 +82,7 @@ export function ShipyardPage({
   onCollect,
   onOpenRequirement,
   onSelectShip,
+  onSupply,
   overviewQueue,
   productionRates,
   progressState,
@@ -135,6 +138,7 @@ export function ShipyardPage({
             setLocalSelectedKey(key);
             onSelectShip?.(key);
           }}
+          onSupply={onSupply}
           queue={productionQueueViewModel(queue, shipCatalog)}
           queueProgress={progressState}
           queueTone="sky"
@@ -302,6 +306,7 @@ export function shipProductionItems({
       requirements,
       status: queued > 0 ? "queued" : shipUnavailable ? "unavailable" : missing.length === 0 ? "ready" : "locked",
       statusLabel: undefined,
+      supplyRequest: supplyResourceShortfall(resources, totalCost),
     };
   });
 }

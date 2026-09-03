@@ -66,6 +66,24 @@ export function normalizeSupplyResources(resources: Partial<SupplyResources>): S
   };
 }
 
+export function supplyResourceShortfall(
+  resources: Partial<SupplyResources> | null | undefined,
+  cost: Partial<SupplyResources> | null | undefined,
+): SupplyResources | undefined {
+  if (!resources || !cost) return undefined;
+  const resourceKeys = ["metal", "crystal", "deuterium"] as const;
+  if (resourceKeys.some((key) => !isKnownResourceAmount(resources[key]) || !isKnownResourceAmount(cost[key]))) {
+    return undefined;
+  }
+
+  const missing = {
+    metal: resourceDeficit(resources.metal, cost.metal),
+    crystal: resourceDeficit(resources.crystal, cost.crystal),
+    deuterium: resourceDeficit(resources.deuterium, cost.deuterium),
+  };
+  return resourceTotal(missing) > 0 ? missing : undefined;
+}
+
 export function buildBatchSupplyPlan({
   targetCoordinates,
   requested,
@@ -261,6 +279,14 @@ function minimumCargoFleet(
 
 function resourceTotal(resources: SupplyResources): number {
   return resources.metal + resources.crystal + resources.deuterium;
+}
+
+function resourceDeficit(available: number | undefined, required: number | undefined): number {
+  return Math.max(0, Math.ceil((required ?? 0) - (available ?? 0)));
+}
+
+function isKnownResourceAmount(value: number | undefined): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
 }
 
 function safeAmount(value: number | undefined): number {

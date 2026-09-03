@@ -10,7 +10,7 @@ import { TopBar } from "./components/TopBar";
 import { NavBar, type Page } from "./components/NavBar";
 import { isOverviewResearchReadyToFinish, OverviewPage, type OverviewMyPlanetActionGroup, type PlanetRenameActionState } from "./components/OverviewPage";
 import { BatchSupplyModal } from "./components/BatchSupplyModal";
-import { buildBatchSupplyPlan, hasUsableSupplyCargoFleet, type BatchSupplyPlan, type BatchSupplyOrder, type BatchSupplySource } from "./batchSupplyPlanner";
+import { buildBatchSupplyPlan, hasUsableSupplyCargoFleet, type BatchSupplyPlan, type BatchSupplyOrder, type BatchSupplySource, type SupplyResources } from "./batchSupplyPlanner";
 import { InfrastructurePage } from "./components/InfrastructurePage";
 import { DefensePage } from "./components/DefensePage";
 import {
@@ -3716,11 +3716,17 @@ export function PlayableMvpApp({
     status: "idle",
   });
   const [batchSupplyTarget, setBatchSupplyTarget] = useState<ManagedPlanetResponse | null>(null);
+  const [batchSupplyInitialRequested, setBatchSupplyInitialRequested] = useState<SupplyResources>({
+    metal: 0,
+    crystal: 0,
+    deuterium: 0,
+  });
   const [batchSupplySources, setBatchSupplySources] = useState<BatchSupplySource[]>([]);
   const [batchSupplyMaxSources, setBatchSupplyMaxSources] = useState(0);
   const [batchSupplyFleetSlotsKnown, setBatchSupplyFleetSlotsKnown] = useState(false);
   const [batchSupplyLoading, setBatchSupplyLoading] = useState(false);
   const [batchSupplyError, setBatchSupplyError] = useState<string | undefined>();
+  const batchSupplySourceLoadIdRef = useRef(0);
   const [pendingGalaxyMission, setPendingGalaxyMission] = useState<PendingGalaxyMission | null>(null);
   const [pendingAttackProtection, setPendingAttackProtection] = useState<PendingAttackProtection | null>(null);
   const missionComposerRefreshKeyRef = useRef<string | null>(null);
@@ -5991,7 +5997,7 @@ export function PlayableMvpApp({
   );
 
   const handleOpenBatchSupply = useCallback(
-    (target: ManagedPlanetResponse) => {
+    (target: ManagedPlanetResponse, initialRequested?: SupplyResources) => {
       if (!account || !backendData) {
         setGalaxyAction({
           status: "error",
@@ -5999,8 +6005,10 @@ export function PlayableMvpApp({
         });
         return;
       }
+      const sourceLoadId = ++batchSupplySourceLoadIdRef.current;
       const origins = walletPlanets.filter((planet) => planet.planetId !== target.planetId);
       setBatchSupplyTarget(target);
+      setBatchSupplyInitialRequested(initialRequested ?? { metal: 0, crystal: 0, deuterium: 0 });
       setBatchSupplySources([]);
       setBatchSupplyError(undefined);
       setBatchSupplyFleetSlotsKnown(false);
@@ -6012,6 +6020,7 @@ export function PlayableMvpApp({
         ] as const),
       )
         .then((results) => {
+          if (batchSupplySourceLoadIdRef.current !== sourceLoadId) return;
           const rows = results.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
           const shipyardsByPlanetId = new Map(rows.map(([planet, shipyard]) => [planet.planetId, shipyard]));
           const failedPlanetIds = new Set(
@@ -6048,9 +6057,25 @@ export function PlayableMvpApp({
             setBatchSupplyError("Some source cargo fleets could not be read. The affected sources are unavailable; refresh and try again.");
           }
         })
-        .finally(() => setBatchSupplyLoading(false));
+        .finally(() => {
+          if (batchSupplySourceLoadIdRef.current === sourceLoadId) setBatchSupplyLoading(false);
+        });
     },
     [account, backendData, walletPlanets],
+  );
+
+  const handleSupplyCurrentPlanet = useCallback(
+    (resources: SupplyResources) => {
+      if (!selectedManagedPlanet) {
+        setGalaxyAction({
+          status: "error",
+          label: "Select a planet before planning a supply transport.",
+        });
+        return;
+      }
+      handleOpenBatchSupply(selectedManagedPlanet, resources);
+    },
+    [handleOpenBatchSupply, selectedManagedPlanet],
   );
 
   const handleConfirmBatchSupply = useCallback(
@@ -6058,6 +6083,10 @@ export function PlayableMvpApp({
       const target = batchSupplyTarget;
       if (!provider || !account || !backendData || !gameContract || !target) {
         setBatchSupplyError("Wallet or target planet is unavailable.");
+        return;
+      }
+      if (orders.some((order) => order.originPlanetId === target.planetId)) {
+        setBatchSupplyError("The target planet cannot also be a Supply origin.");
         return;
       }
       setBatchSupplyError(undefined);
@@ -8733,6 +8762,7 @@ export function PlayableMvpApp({
           onOpenRequirement={handleOpenRequirement}
           onRefresh={refreshInfrastructureState}
           onSelectBuilding={setSelectedBuildingKey}
+          onSupply={handleSupplyCurrentPlanet}
           onUpgrade={handleUpgrade}
           planetProductionProfile={planetProductionProfile}
           productionRates={productionRatesForEta}
@@ -8838,6 +8868,7 @@ export function PlayableMvpApp({
           onRefresh={refreshResearchState}
           onResearch={handleResearch}
           onSelectResearch={setSelectedResearchKey}
+          onSupply={handleSupplyCurrentPlanet}
           productionRates={productionRatesForEta}
           progressState={walletResearchProgress}
           researchState={effectiveResearchState}
@@ -8864,6 +8895,7 @@ export function PlayableMvpApp({
           onOpenRequirement={handleOpenRequirement}
           onRefresh={refreshDefenseState}
           onSelectDefense={setSelectedDefenseKey}
+          onSupply={handleSupplyCurrentPlanet}
           overviewQueue={progressFor(activePlanetId, "planet", "defense")?.queue ?? undefined}
           productionRates={productionRatesForEta}
           progressState={progressFor(activePlanetId, "planet", "defense")}
@@ -8974,6 +9006,7 @@ export function PlayableMvpApp({
           onOpenRequirement={handleOpenRequirement}
           onRefresh={refreshShipyardState}
           onSelectShip={setSelectedShipKey}
+          onSupply={handleSupplyCurrentPlanet}
           overviewQueue={progressFor(activePlanetId, "planet", "ship")?.queue ?? undefined}
           productionRates={productionRatesForEta}
           progressState={progressFor(activePlanetId, "planet", "ship")}
@@ -9174,8 +9207,12 @@ export function PlayableMvpApp({
           fleetSlotsKnown={batchSupplyFleetSlotsKnown}
           loading={batchSupplyLoading}
           maxSources={batchSupplyMaxSources}
+          initialRequested={batchSupplyInitialRequested}
           onClose={() => {
-            if (galaxyAction.status !== "pending") setBatchSupplyTarget(null);
+            if (galaxyAction.status !== "pending") {
+              batchSupplySourceLoadIdRef.current += 1;
+              setBatchSupplyTarget(null);
+            }
           }}
           onConfirm={handleConfirmBatchSupply}
           sources={batchSupplySources}
