@@ -391,6 +391,11 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
         uint64 holdUntil = _defenseHoldUntil[missionId];
         if (_currentTimestamp() < holdUntil) revert DefenseHoldStillActive(holdUntil);
 
+        // Planet DefenseHold resolution settles the target through the current timestamp. Do not
+        // let it complete defenses ahead of an earlier missile's historical impact snapshot.
+        if (!mission.targetIsMoon) {
+            _requireEarliestPendingMissionForPlanet(missionId, mission.targetPlanetId);
+        }
         _settleResources(mission.targetPlanetId);
         mission.status = FleetMissionStatus.Returning;
         VeydriftDefenseHoldStorage.endHold(

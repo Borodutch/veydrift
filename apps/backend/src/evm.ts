@@ -379,7 +379,7 @@ export type InterplanetaryMissileAttackEvent = {
   destroyedPrimary: number;
 };
 
-/** A completed, immediate missile strike. Unlike FleetMission this is emitted and settled in one transaction. */
+/** A completed missile impact. New strikes emit this after their timed FleetMission arrives. */
 export type IndexedMissileAttack = InterplanetaryMissileAttackEvent & {
   eventId: string;
   logIndex: string;
@@ -682,6 +682,8 @@ export type FleetMissionSummary = {
   // Exact append order in the contract's combined AcsAttack/AcsDefend link array.
   // Combat random lanes depend on this position, so the two filtered id arrays are not enough.
   linkedMissionIds?: string[];
+  missilePrimaryTargetId?: number;
+  missileQuantity?: number;
   // Public participant projection for a player composing another join.
   attackPreview?: JoinAttackPreviewSummary;
   // VEY-KANEO-442: ACS Defend stationed-defense links. For an AcsDefend mission, `defendsMissionId`
@@ -2358,6 +2360,7 @@ export class VeydriftGameReader implements ChainReader {
               || mission.missionType === "Colonize"
               || mission.missionType === "Transport"
               || mission.missionType === "Deploy"
+              || mission.missionType === "MissileAttack"
               || mission.missionType === "DefenseHold"
           )
       )
@@ -5162,6 +5165,7 @@ export class VeydriftGameReader implements ChainReader {
         fleetMissionShipsTopic,
         fleetMissionBodiesTopic,
         fleetMissionLootRatioTopic,
+        interplanetaryMissileLaunchedTopic,
         fleetMissionRecalledTopic,
         fleetMissionResolvedTopic,
         fleetMissionReturnExposedTopic,
@@ -5558,6 +5562,10 @@ export function decodeFleetMissionLogs(logs: RpcLog[]): Map<string, MutableFleet
         crystalBps: Number(decodeUintWord(wordAt(words, 1))),
         deuteriumBps: Number(decodeUintWord(wordAt(words, 2)))
       };
+    } else if (topic === interplanetaryMissileLaunchedTopic) {
+      const words = splitWords(log.data);
+      mission.missilePrimaryTargetId = Number(decodeUintWord(wordAt(words, 0)));
+      mission.missileQuantity = Number(decodeUintWord(wordAt(words, 1)));
     } else if (topic === fleetMissionRecalledTopic) {
       const words = splitWords(log.data);
       mission.owner = decodeAddressWord(topicAt(log.topics, 2));
@@ -5968,6 +5976,7 @@ const fleetMissionCargoTopic = "0x3daa6311ecdadad6781f70e5d285e7150f9dc165db88d2
 const fleetMissionShipsTopic = "0xf581cbe97357884794500d80286cfbe823fed3b5d77446e477aa694ce89fc82d";
 export const fleetMissionBodiesTopic = "0xfa464e2180f08e3e4d8c4247566d0616a5e1ab845d1678c47fedae6d44e9c502";
 export const fleetMissionLootRatioTopic = "0xa6846d64330aacb1675d30a3535ea36822060fb38252cbb6b358bec4149767ff";
+export const interplanetaryMissileLaunchedTopic = "0x604ad2c11139a5c17dc4ad536be44e0decb1a46637bc3a7497c4e049e9ad3bd2";
 const fleetMissionRecalledTopic = "0x2c9b31f1abc732f3b6d28e7724439ea4713ae516632088b8c4dc0211479dc6ca";
 const fleetMissionResolvedTopic = "0xcb928b431ffcdbe55fddc2bf06967951efb3dfe87d14bc436d546fdbbee9cb2d";
 const fleetMissionReturnExposedTopic = "0x27a083519451f4434cd1f93497fb93689a906d3b982a3f127cb236aa24356afa";
@@ -6068,6 +6077,7 @@ const eventNamesByTopic = new Map<string, string>([
   [fleetMissionShipsTopic, "FleetMissionShips"],
   [fleetMissionBodiesTopic, "FleetMissionBodies"],
   [fleetMissionLootRatioTopic, "FleetMissionLootRatio"],
+  [interplanetaryMissileLaunchedTopic, "InterplanetaryMissileLaunched"],
   [fleetMissionRecalledTopic, "FleetMissionRecalled"],
   [fleetMissionResolvedTopic, "FleetMissionResolved"],
   [fleetMissionReturnExposedTopic, "FleetMissionReturnExposed"],
@@ -6385,6 +6395,7 @@ export function isFleetMissionLog(log: RpcLog): boolean {
     || topic === fleetMissionShipsTopic
     || topic === fleetMissionBodiesTopic
     || topic === fleetMissionLootRatioTopic
+    || topic === interplanetaryMissileLaunchedTopic
     || topic === fleetMissionRecalledTopic
     || topic === fleetMissionResolvedTopic
     || topic === fleetMissionReturnExposedTopic

@@ -10,6 +10,7 @@ import {
   fleetMissionTravelSeconds,
   interplanetaryMissileRange,
   interplanetaryMissileSystemDistance,
+  interplanetaryMissileTravelSeconds,
 } from "./fleetMissionRules";
 import type { MissionShips } from "./galaxyActions";
 
@@ -103,5 +104,14 @@ describe("interplanetaryMissileRange", () => {
       { galaxy: 2, system: 7, position: 4 },
       { galaxy: 3, system: 7, position: 4 },
     )).toBeNull();
+  });
+});
+
+describe("interplanetaryMissileTravelSeconds", () => {
+  test("matches classic OGame same-system and cross-system flight times", () => {
+    expect(interplanetaryMissileTravelSeconds(0)).toBe(30);
+    expect(interplanetaryMissileTravelSeconds(1)).toBe(90);
+    expect(interplanetaryMissileTravelSeconds(10)).toBe(630);
+    expect(interplanetaryMissileTravelSeconds(10, 2)).toBe(315);
   });
 });

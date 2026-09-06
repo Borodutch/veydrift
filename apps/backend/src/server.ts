@@ -4031,7 +4031,7 @@ function indexedFleetVisibility(
 }
 
 function expectsBattleReport(mission: FleetMissionSummary): boolean {
-  if (!["Attack", "AcsAttack", "Intercept", "MissileAttack"].includes(mission.missionType)) return false;
+  if (!["Attack", "AcsAttack", "Intercept"].includes(mission.missionType)) return false;
   if (mission.status === "Recalled" || mission.recallProvenance === "FleetMissionRecalled") return false;
   if (mission.status === "Outbound" && Number(mission.arrivalAt) > Math.floor(Date.now() / 1_000)) return false;
   return true;

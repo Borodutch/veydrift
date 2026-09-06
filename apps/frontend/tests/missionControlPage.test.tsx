@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import type { ComponentChildren, VNode } from "preact";
-import { MissionControlPage, StationedDefenseSection, classifyAllianceCooperativeMissions, formatMissionTime, manualMissionResolutionKind, missionControlRefreshButtonState, missionDisplayStatusLabel, missionLifecycleActions, missionStatusPill, returnPhaseHarvestedResources, returnPhaseLoot, returnPhaseLosses } from "../src/components/MissionControlPage";
+import { MissionControlPage, StationedDefenseSection, classifyAllianceCooperativeMissions, formatMissionTime, isFleetRecallable, manualMissionResolutionKind, missionControlRefreshButtonState, missionDisplayStatusLabel, missionLifecycleActions, missionStatusPill, returnPhaseHarvestedResources, returnPhaseLoot, returnPhaseLosses } from "../src/components/MissionControlPage";
 import { encodeColonizationTargetId } from "../src/walletFlow";
 import type { BattleReport, FleetMissionSummary, ManagedPlanetResponse } from "../src/walletFlow";
 
@@ -13,6 +13,38 @@ describe("MissionControlPage", () => {
 
     expect(visibleText(page)).not.toContain("Immediate combat");
     expect(visibleText(page)).not.toContain("Missile strikes");
+  });
+
+  test("renders timed one-way missile payload without a recall action", () => {
+    const now = 1_770_000_100_000;
+    const missile = mission({
+      arrivalAt: "1770000300",
+      returnAt: "1770000300",
+      missionId: "901",
+      missionType: "MissileAttack",
+      missilePrimaryTargetId: 4,
+      missileQuantity: 12,
+      ships: {},
+    });
+    const text = visibleText(missionControlPage({
+      fleetVisibility: {
+        wallet: missile.owner,
+        homePlanetId: missile.originPlanetId,
+        incoming: [],
+        outgoing: [missile],
+        returning: [],
+        joinableAttacks: [],
+        completedMissions: [],
+        battleReports: [],
+      },
+      now,
+    }));
+
+    expect(text).toContain("12 interplanetary missiles");
+    expect(text).toContain("Gauss Cannon");
+    expect(text).toContain("Arrives");
+    expect(text).not.toContain("Recall");
+    expect(isFleetRecallable(missile, now)).toBe(false);
   });
 
   test("renders mission timing with relative and exact local timestamps", () => {

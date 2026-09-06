@@ -385,6 +385,9 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
 
     function recallFleetMission(uint256 missionId) external {
         FleetMission storage mission = _fleetMissions[missionId];
+        if (mission.missionType == FleetMissionType.MissileAttack) {
+            revert InvalidMissionType(mission.missionType);
+        }
         _requireActiveMissionOwner(mission);
         if (mission.status == FleetMissionStatus.Returning) revert FleetAlreadyReturning();
         if (mission.status != FleetMissionStatus.Outbound) {
@@ -434,6 +437,13 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         if (mission.status != FleetMissionStatus.Outbound) return;
         if (_currentTimestamp() < mission.arrivalAt) revert FleetNotArrived(mission.arrivalAt);
         FleetMissionType missionType = mission.missionType;
+
+        // Any planet arrival that settles target queues must respect an earlier missile impact.
+        // Otherwise a later Transport/Deploy could complete ABMs through the resolver's current
+        // timestamp before the earlier missile snapshots defenses at its historical arrival time.
+        // The helper only orders pairs where either mission is a MissileAttack, so ordinary fleet
+        // missions retain their existing permissionless resolution behavior.
+        _requireEarliestPendingMissionForPlanet(missionId, mission.targetPlanetId);
 
         if (missionType == FleetMissionType.Attack) {
             _settleAttackTargetSnapshot(mission.targetPlanetId, mission.arrivalAt);

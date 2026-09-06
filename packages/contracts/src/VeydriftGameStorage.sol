@@ -409,6 +409,10 @@ abstract contract VeydriftGameStorage is Initializable {
     // BattleResolutionProgress value layout while carrying protection state across combat chunks.
     mapping(uint256 missionId => uint16 plunderBps) internal _battleRaidPlunderBps;
     mapping(uint256 missionId => bool snapshotted) internal _battleRaidProtectionSnapshotted;
+    // Append-only payload for timed, one-way interplanetary missile missions. Existing historical
+    // strikes were atomic and therefore leave no pending mission state to migrate.
+    mapping(uint256 missionId => Defense primaryTarget) internal _missileMissionPrimaryTarget;
+    mapping(uint256 missionId => uint32 quantity) internal _missileMissionQuantity;
 
     error AlreadyStarted();
     error BadStartPayment();
@@ -780,6 +784,9 @@ abstract contract VeydriftGameStorage is Initializable {
         uint32 intercepted,
         uint32 hits,
         uint32 destroyedPrimary
+    );
+    event InterplanetaryMissileLaunched(
+        uint256 indexed missionId, Defense primaryTarget, uint32 quantity
     );
     event RaidLootResolved(
         uint256 indexed targetPlanetId,

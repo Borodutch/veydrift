@@ -112,13 +112,16 @@ export const keeperResolvableMissionTypes = new Set<number>(Object.values(Missio
 
 /**
  * Mission types that can legitimately infer a return leg from `FleetMissionResolved.returnAt`.
- * Deploy and successful Colonize are terminal at arrival even though their resolution events can
- * carry a nonzero stored timestamp. Blocked Colonize returns are queued by the authoritative
- * `FleetMissionReturnExposed` event or by status reconciliation, not by `returnAt` alone.
+ * Deploy, successful Colonize, and MissileAttack are terminal at arrival even though their
+ * resolution events can carry a nonzero stored timestamp. Blocked Colonize returns are queued by
+ * the authoritative `FleetMissionReturnExposed` event or by status reconciliation, not by
+ * `returnAt` alone.
  */
 export const returnLegMissionTypes = new Set<number>(
   Object.values(MissionType).filter(
-    (missionType) => missionType !== MissionType.Deploy && missionType !== MissionType.Colonize
+    (missionType) => missionType !== MissionType.Deploy
+      && missionType !== MissionType.Colonize
+      && missionType !== MissionType.MissileAttack
   )
 );
 

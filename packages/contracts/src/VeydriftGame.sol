@@ -238,19 +238,9 @@ contract VeydriftGame is VeydriftResourceReserves {
         }
     }
 
-    function settleDuePlayerColonizeArrivals(address) external {
-        if (msg.sender != address(this)) revert Unauthorized(msg.sender);
-        _delegateToColonizationModule();
-    }
-
     function settleDuePlayerCombatArrivals(address) external {
         if (msg.sender != address(this)) revert Unauthorized(msg.sender);
         _delegateToPlanetManagementModule();
-    }
-
-    function untrackResolvedFleetMission(uint256) external {
-        if (msg.sender != address(this)) revert Unauthorized(msg.sender);
-        _delegateToColonizationModule();
     }
 
     function startResearch(uint256, Technology) external {
@@ -502,6 +492,9 @@ contract VeydriftGame is VeydriftResourceReserves {
         if (missionType == FleetMissionType.DefenseHold) {
             _delegateToDefenseHoldModule();
         }
+        if (missionType == FleetMissionType.MissileAttack) {
+            _delegateToPlanetManagementModule();
+        }
         _delegateToPlayModule();
     }
 
@@ -528,8 +521,10 @@ contract VeydriftGame is VeydriftResourceReserves {
         _delegateToPlanetManagementModule();
     }
 
-    function launchInterplanetaryMissileAttack(uint256, uint256, Defense, uint32) external {
-        _touchPlayer(msg.sender);
+    function launchInterplanetaryMissileAttack(uint256, uint256, Defense, uint32)
+        external
+        returns (uint256)
+    {
         _delegateToPlanetManagementModule();
     }
 
@@ -586,6 +581,9 @@ contract VeydriftGame is VeydriftResourceReserves {
             // expose that parameterized enforcement helper as a public fallback selector.
             if (msg.sender != address(this)) revert Unauthorized(msg.sender);
             _delegateToStateMigrationModule();
+        } else if (msg.sig == 0x8bd85c0e || msg.sig == 0xdd3aff23) {
+            if (msg.sender != address(this)) revert Unauthorized(msg.sender);
+            _delegateToColonizationModule();
         } else {
             _delegateToStateMigrationModule();
         }

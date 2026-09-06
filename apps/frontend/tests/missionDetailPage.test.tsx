@@ -425,6 +425,32 @@ describe("MissionDetailPage ACS attack group (VEY-KANEO-432)", () => {
 });
 
 describe("MissionDetailPage Route timing copy", () => {
+  test("shows a timed missile impact without cargo, fuel, return, recall, or battle-report noise", () => {
+    const text = renderDetailText({
+      mission: combatMission({
+        status: "Outbound",
+        missionType: "MissileAttack",
+        arrivalAt: "1770002000",
+        returnAt: "1770002000",
+        missilePrimaryTargetId: 4,
+        missileQuantity: 12,
+        ships: {},
+      }),
+      battleReport: null,
+      defenderPlanetState: null,
+    });
+
+    expect(text).toContain("12 interplanetary missiles");
+    expect(text).toContain("Gauss Cannon");
+    expect(text).toMatch(/Arrival .+\(/);
+    expect(text).not.toMatch(/Return .+\(/);
+    expect(text).not.toContain("Cargo");
+    expect(text).not.toContain("Fuel cost");
+    expect(text).not.toContain("Recall");
+    expect(text).not.toContain("Battle Report");
+    expect(text).not.toContain("Report generating");
+  });
+
   test("renders selected moon bodies distinctly in the route hero", () => {
     const text = renderDetailText({
       mission: combatMission({

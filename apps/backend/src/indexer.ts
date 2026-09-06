@@ -2562,7 +2562,7 @@ export class SettlementIndexer {
         // the fleet lands so Overview/Mission Control do not develop a post-arrival disappearance gap.
         && (mission.status === "Outbound" || mission.status === "Returning")
       )
-      .map((mission) => ["Attack", "AcsAttack", "MissileAttack"].includes(mission.missionType)
+      .map((mission) => ["Attack", "AcsAttack"].includes(mission.missionType)
         ? {
             ...mission,
             stationedDefenders: this.stationedDefendersForAttack(mission, summariesById, nowSeconds)
@@ -3299,7 +3299,8 @@ export class SettlementIndexer {
       "Colonize",
       "Transport",
       "Deploy",
-      "DefenseHold"
+      "DefenseHold",
+      "MissileAttack"
     ]);
 
     const arrivals = missions
@@ -3307,12 +3308,14 @@ export class SettlementIndexer {
         resolvableTypes.has(mission.missionType)
           && fleetMissionNeedsResolution(mission, asOfSeconds, fulfilledRandomnessRequestIds)
       )
-      .map(({ arrivalAt, missionId, missionType, originPlanetId, targetPlanetId }) => ({
-        arrivalAt,
-        missionId,
-        missionType,
-        originPlanetId,
-        targetPlanetId
+      .map((mission) => ({
+        arrivalAt: mission.missionType === "DefenseHold"
+          ? mission.defenseHoldUntil ?? mission.returnAt
+          : mission.arrivalAt,
+        missionId: mission.missionId,
+        missionType: mission.missionType,
+        originPlanetId: mission.originPlanetId,
+        targetPlanetId: mission.targetPlanetId
       }));
     const returns = missions
       .filter((mission) =>
@@ -3625,6 +3628,7 @@ export class SettlementIndexer {
     const active = this.activeFleetMissionsFromCanonicalRowsForOwner(wallet)
       .filter((mission) =>
         mission.owner.toLowerCase() === walletLower
+        && mission.missionType !== "MissileAttack"
         && !fleetSlotFreedByLazyLaunchSettlement(mission, asOfSeconds)
       )
       .length;
@@ -4400,6 +4404,7 @@ export class SettlementIndexer {
         this.markReorgDetected();
         this.db.query("UPDATE indexed_event_logs SET removed = 1 WHERE event_id = ?").run(eventId);
         this.removeMissionEventLog(eventId);
+        this.removeMissileAttackEvent(eventId);
         const removedMissionId = fleetMissionLogMissionId(log);
         if (removedMissionId) this.rebuildMissionBodyProjection(removedMissionId);
         this.recordMoonStateEventLog(eventId, log);
@@ -4453,6 +4458,52 @@ export class SettlementIndexer {
         `).run(JSON.stringify(log), blockNumberToDecimal(log.blockNumber), new Date().toISOString(), eventId);
         this.recordMoonStateEventLog(eventId, log);
         this.repairIndexedMoonStateFromEventLogs(this.moonStatePlanetIds(log));
+        this.recordLatestBlock(log.blockNumber);
+        return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
+      }
+      if (
+        existing.removed
+        && (
+          isShipCountChangedLog(log)
+          || isDefenseCountChangedLog(log)
+          || isMoonShipCountChangedLog(log)
+          || isMoonDefenseCountChangedLog(log)
+        )
+      ) {
+        this.advanceIndexedRevision();
+        this.db.query(`
+          UPDATE indexed_event_logs
+          SET removed = 0, event_json = ?, block_number = ?, received_at = ?
+          WHERE event_id = ?
+        `).run(JSON.stringify(log), blockNumberToDecimal(log.blockNumber), new Date().toISOString(), eventId);
+        this.recordUnitCountEventLog(eventId, log);
+        this.recordPlayerActivityFromLog(eventId, log);
+        this.recordPlayerActivityFeedFromLog(eventId, log);
+        if (isShipCountChangedLog(log)) {
+          this.applyShipCountChangedEvent(decodeShipCountChangedLog(log));
+        } else if (isDefenseCountChangedLog(log)) {
+          this.applyDefenseCountChangedEvent(decodeDefenseCountChangedLog(log));
+        } else if (isMoonShipCountChangedLog(log)) {
+          this.applyMoonShipCountChangedEvent(decodeMoonShipCountChangedLog(log));
+        } else {
+          this.applyMoonDefenseCountChangedEvent(decodeMoonDefenseCountChangedLog(log));
+        }
+        this.recordLatestBlock(log.blockNumber);
+        return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
+      }
+      if (existing.removed && isInterplanetaryMissileAttackLog(log)) {
+        this.advanceIndexedRevision();
+        this.db.query(`
+          UPDATE indexed_event_logs
+          SET removed = 0, event_json = ?, block_number = ?, received_at = ?
+          WHERE event_id = ?
+        `).run(JSON.stringify(log), blockNumberToDecimal(log.blockNumber), new Date().toISOString(), eventId);
+        this.recordMissileAttackEvent(eventId, log);
+        this.recordPlayerActivityFromLog(eventId, log);
+        this.recordPlayerActivityFeedFromLog(eventId, log);
+        this.applyInterplanetaryMissileAttackCompatibilityEvent(
+          decodeInterplanetaryMissileAttackLog(log)
+        );
         this.recordLatestBlock(log.blockNumber);
         return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
       }
@@ -6182,6 +6233,10 @@ export class SettlementIndexer {
     this.backfillStartPriceProjection();
     this.backfillDefenseHoldEndedMissionEvents();
     this.backfillBattleReportStationedDefenderIndex();
+    // This narrow purge must also run on the production writer, which intentionally disables the
+    // broad startup backfill. Older builds could leave an archive row behind after its raw impact
+    // log was removed by a reorg.
+    this.repairRemovedMissileAttackRows();
     if (runStartupBackfill) {
       this.backfillMissionEventLogs();
       this.backfillUnitCountEventLogs();
@@ -6981,6 +7036,15 @@ export class SettlementIndexer {
     this.db.transaction(() => {
       for (const row of rows) this.recordMissileAttackEvent(row.event_id, parseEvent<IndexedRpcLog>(row.event_json));
     })();
+  }
+
+  private repairRemovedMissileAttackRows(): void {
+    this.db.query(`
+      DELETE FROM indexed_missile_attacks
+      WHERE event_id NOT IN (
+        SELECT event_id FROM indexed_event_logs WHERE removed = 0
+      )
+    `).run();
   }
 
   private queueDefenderLossBreakdownBackfill(): void {
@@ -11008,6 +11072,10 @@ export class SettlementIndexer {
     );
   }
 
+  private removeMissileAttackEvent(eventId: string): void {
+    this.db.query("DELETE FROM indexed_missile_attacks WHERE event_id = ?").run(eventId);
+  }
+
   private recordMissionEventLog(eventId: string, log: IndexedRpcLog): void {
     if (log.removed) return;
     const eventKind = this.missionEventKind(log);
@@ -11030,7 +11098,7 @@ export class SettlementIndexer {
     if (result.changes > 0) this.touchMissionReadModel();
   }
 
-  /** Rebuild event-derived body/loot fields after a canonical log is removed or restored.
+  /** Rebuild event-derived body, loot, and missile-payload fields after a canonical log is removed or restored.
    * Canonical reconciliation deliberately preserves these fields, so simply deleting the ledger
    * row would otherwise leave a reorged FleetMissionBodies value stuck in event_json forever. */
   private rebuildMissionBodyProjection(missionId: string): void {
@@ -11053,9 +11121,17 @@ export class SettlementIndexer {
     delete rebuilt.originIsMoon;
     delete rebuilt.targetIsMoon;
     delete rebuilt.lootRatio;
+    delete rebuilt.missilePrimaryTargetId;
+    delete rebuilt.missileQuantity;
     if (eventMission?.originIsMoon !== undefined) rebuilt.originIsMoon = eventMission.originIsMoon;
     if (eventMission?.targetIsMoon !== undefined) rebuilt.targetIsMoon = eventMission.targetIsMoon;
     if (eventMission?.lootRatio) rebuilt.lootRatio = eventMission.lootRatio;
+    if (eventMission?.missilePrimaryTargetId !== undefined) {
+      rebuilt.missilePrimaryTargetId = eventMission.missilePrimaryTargetId;
+    }
+    if (eventMission?.missileQuantity !== undefined) {
+      rebuilt.missileQuantity = eventMission.missileQuantity;
+    }
     this.db.query(`
       UPDATE contract_fleet_missions
       SET event_json = ?
@@ -12294,7 +12370,13 @@ export class SettlementIndexer {
         ...(canonicalEventMission.defenseHoldUntil ? { defenseHoldUntil: canonicalEventMission.defenseHoldUntil } : {}),
         ...(canonicalEventMission.defenseHoldOutcome ? { defenseHoldOutcome: canonicalEventMission.defenseHoldOutcome } : {}),
         ...(canonicalEventMission.recallProvenance ? { recallProvenance: canonicalEventMission.recallProvenance } : {}),
-        ...(canonicalEventMission.randomnessRequestId ? { randomnessRequestId: canonicalEventMission.randomnessRequestId } : {})
+        ...(canonicalEventMission.randomnessRequestId ? { randomnessRequestId: canonicalEventMission.randomnessRequestId } : {}),
+        ...(canonicalEventMission.missilePrimaryTargetId !== undefined
+          ? { missilePrimaryTargetId: canonicalEventMission.missilePrimaryTargetId }
+          : {}),
+        ...(canonicalEventMission.missileQuantity !== undefined
+          ? { missileQuantity: canonicalEventMission.missileQuantity }
+          : {})
       }
       : base;
     const detailedBase = canonicalStorageDetails
@@ -14117,6 +14199,9 @@ function fleetSlotSettlementDue(mission: FleetMissionSummary, asOfSeconds: numbe
 }
 
 function fleetSlotSettlementBlocksLaunch(mission: FleetMissionSummary, asOfSeconds: number): boolean {
+  // Timed missiles intentionally consume no fleet slot and therefore must never participate in
+  // the separate launch-blocker projection, even while their permissionless arrival is overdue.
+  if (mission.missionType === "MissileAttack") return false;
   if (!isActiveFleetMissionStatus(mission.status) || !fleetSlotSettlementDue(mission, asOfSeconds)) return false;
   return !fleetSlotFreedByLazyLaunchSettlement(mission, asOfSeconds);
 }

@@ -264,9 +264,9 @@ Colonize spends a colony ship and sends it to a target slot. If the slot is vali
 
 ### Launch Missile
 
-Missile attacks are immediate contract actions, not fleet missions: they use no ships, fuel, fleet slot, travel time, or return flight. The origin and target must be in the same galaxy. With Impulse Drive level `d`, the exact maximum system distance is `5 × d − 1`; level 0 has no missile range.
+Missile attacks are timed, one-way missions. They use no ships, fuel, or fleet slot and have no return flight. Their classic travel time is `(30 + 60 × system distance) / universe speed` seconds, so at 1× speed they take 30 seconds within the same system and 90 seconds to an adjacent system. The origin and target must be in the same galaxy. With Impulse Drive level `d`, the exact maximum system distance is `5 × d − 1`; level 0 has no missile range.
 
-Choose a normal defense as the primary target (Rocket Launcher through Large Shield Dome). Anti-Ballistic Missiles and Interplanetary Missiles cannot be selected as targets. The contract first consumes `min(target anti-ballistic missiles, missiles launched)` anti-ballistic missiles; each intercepts exactly one incoming missile. Every remaining hit removes one unit of the selected primary defense, capped by that defense's current count. Missile results are indexed immediately and appear in Mission Control's **Missile strikes** history.
+Choose a normal defense as the primary target (Rocket Launcher through Large Shield Dome). Anti-Ballistic Missiles and Interplanetary Missiles cannot be selected as targets. At arrival, the contract first consumes `min(target anti-ballistic missiles, missiles launched)` anti-ballistic missiles; each intercepts exactly one incoming missile. Every remaining hit removes one unit of the selected primary defense, capped by that defense's count at impact. Active flights appear in Mission Control, and resolved results remain in **Missile impacts** history.
 
 ### ACS Attack
 

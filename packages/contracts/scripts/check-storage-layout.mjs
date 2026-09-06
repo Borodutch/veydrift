@@ -149,6 +149,18 @@ const reviewedStorageAppend = [
     offset: 0,
     type: "mapping(uint256 => bool)",
   },
+  {
+    label: "_missileMissionPrimaryTarget",
+    slot: "69",
+    offset: 0,
+    type: "mapping(uint256 => enum Defense)",
+  },
+  {
+    label: "_missileMissionQuantity",
+    slot: "70",
+    offset: 0,
+    type: "mapping(uint256 => uint32)",
+  },
 ];
 const riftExtractionStruct = [
   {label: "active", slot: "0", offset: 0, type: "bool"},

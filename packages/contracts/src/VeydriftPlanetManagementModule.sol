@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
+import {VeydriftMissileModule} from "./VeydriftMissileModule.sol";
 import {VeydriftAntiRaidPrimitives} from "./libraries/VeydriftAntiRaidPrimitives.sol";
 import {VeydriftCatalog} from "./libraries/VeydriftCatalog.sol";
 import {VeydriftDependencies} from "./libraries/VeydriftDependencies.sol";
@@ -24,14 +25,17 @@ interface IVeydriftResolvedMissionUntracker {
 
 /// @notice Delegatecall target for colony and planet metadata/destruction paths.
 contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
-    bytes4 private constant ATTACK_PROTECTION_STATUS_SELECTOR = 0x8a6b2246;
+    address private immutable _missileModule;
 
-    constructor() VeydriftResourceReserves(address(0)) {}
+    constructor() VeydriftResourceReserves(address(0)) {
+        _missileModule = address(new VeydriftMissileModule());
+    }
 
     /// @notice Lazy fleet reconcile, direct mission leg (VEY-590). Self-only via the facade gate.
-    ///         Resolves every due Transport/Deploy/Attack/Harvest mission `player` owns (attacker or
-    ///         targeted defender) whose battle randomness is committed, so arrivals land on the
-    ///         player's next mutating call — no keeper/resolve tx.
+    ///         Resolves every due Transport/Deploy/Attack/Harvest/MissileAttack mission `player` owns (attacker or
+    ///         targeted defender) that can be resolved now. Combat arrivals still require committed
+    ///         randomness; deterministic missile arrivals do not. Arrivals land on the player's next
+    ///         mutating call without requiring a keeper transaction.
     /// @dev Iterates a memory snapshot of the player's tracked mission ids, so the swap-and-pop
     ///      untrack inside `resolveFleetMission` cannot disturb iteration. Each resolve is wrapped in
     ///      try/catch: a `PendingRandomness` revert (seed not yet committed) is swallowed, leaving the
@@ -48,7 +52,8 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
                     && (mission.missionType == FleetMissionType.Transport
                         || mission.missionType == FleetMissionType.Deploy
                         || mission.missionType == FleetMissionType.Attack
-                        || mission.missionType == FleetMissionType.Harvest)
+                        || mission.missionType == FleetMissionType.Harvest
+                        || mission.missionType == FleetMissionType.MissileAttack)
                     && nowTimestamp >= mission.arrivalAt
             ) {
                 try IVeydriftCombatMissionResolver(address(this))
@@ -73,63 +78,15 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
         }
     }
 
-    function launchInterplanetaryMissileAttack(
-        uint256 originPlanetId,
-        uint256 targetPlanetId,
-        Defense primaryTarget,
-        uint32 quantity
-    ) external {
-        Planet storage origin = _planets[originPlanetId];
-        if (origin.owner == address(0)) revert NoPlanet();
-        if (origin.owner != msg.sender) revert NotPlanetOwner();
-        if (originPlanetId == targetPlanetId) revert SamePlanet();
-        Planet storage target = _planets[targetPlanetId];
-        if (target.owner == address(0)) revert NoPlanet();
-        _settleDueCombatArrivals(msg.sender);
-        _requireNoPendingMissionResolutionForPlanet(originPlanetId);
-        _requireNoPendingMissionResolutionForPlanet(targetPlanetId);
-        // Lazy on-chain reconciliation (VEY-KANEO-477): complete both planets' ready DEFENSE production
-        // queues BEFORE reading `_defenseCounts` below, so the missile/intercept math runs against
-        // current counts (an origin missile batch or a target ABM/defense that just finished is
-        // included). `_settleDuePlanet` settles ship/defense/research queues only — it does NOT advance
-        // resource production, so missiling a target never moves the victim's resource clock, and
-        // defenses do not affect production rate, so no settled window is rescaled.
-        _settleDuePlanet(originPlanetId);
-        _settleDuePlanet(targetPlanetId);
-        if (primaryTarget > Defense.LargeShieldDome) revert InvalidMissileTarget(primaryTarget);
-        _enforceAttackProtection(msg.sender, targetPlanetId, false);
+    function launchInterplanetaryMissileAttack(uint256, uint256, Defense, uint32)
+        external
+        returns (uint256)
+    {
+        _delegateToMissileModule();
+    }
 
-        uint256 range = _interplanetaryMissileRange(msg.sender);
-        if (
-            origin.galaxy != target.galaxy
-                || _systemDistanceForMissiles(origin.system, target.system) > range
-        ) {
-            revert InterplanetaryMissileOutOfRange(origin.system, target.system, range);
-        }
-
-        uint32 available = _defenseCounts[originPlanetId][Defense.InterplanetaryMissile];
-        if (quantity == 0 || available < quantity) revert InvalidQuantity();
-        _debitPlanetDefenses(originPlanetId, Defense.InterplanetaryMissile, quantity);
-
-        uint32 antiBallistic = _defenseCounts[targetPlanetId][Defense.AntiBallisticMissile];
-        uint32 intercepted = antiBallistic < quantity ? antiBallistic : quantity;
-        _debitPlanetDefenses(targetPlanetId, Defense.AntiBallisticMissile, intercepted);
-
-        uint32 hits = quantity - intercepted;
-        uint32 targetDefense = _defenseCounts[targetPlanetId][primaryTarget];
-        uint32 destroyedPrimary = targetDefense < hits ? targetDefense : hits;
-        _debitPlanetDefenses(targetPlanetId, primaryTarget, destroyedPrimary);
-
-        emit InterplanetaryMissileAttack(
-            msg.sender,
-            originPlanetId,
-            targetPlanetId,
-            primaryTarget,
-            quantity,
-            intercepted,
-            hits,
-            destroyedPrimary
-        );
+    function resolveFleetMission(uint256) external {
+        _delegateToMissileModule();
     }
 
     function renamePlanet(uint256 planetId, string calldata name) external {
@@ -147,6 +104,7 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
         _requirePlanetOwner(planetId);
         _settleDueCombatArrivals(msg.sender);
         _requireNoPendingMissionResolutionForPlanet(planetId);
+        _requireNoInboundMissionForPlanet(planetId);
         if (homePlanetOf[msg.sender] == planetId) revert CannotAbandonHomePlanet();
         // Lazy on-chain reconciliation (VEY-KANEO-477): settle BEFORE the active-queue check so ready
         // ship/defense production queues complete (via `_settleDuePlanet`) and stop reading as active —
@@ -746,43 +704,16 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
         );
     }
 
-    function _enforceAttackProtection(address attacker, uint256 targetPlanetId, bool countsBashing)
-        private
-        view
-    {
-        if (_planets[targetPlanetId].owner == attacker) revert SelfAttack();
-        (bool ok, bytes memory data) = address(this)
-            .staticcall(
-                abi.encodeWithSelector(ATTACK_PROTECTION_STATUS_SELECTOR, attacker, targetPlanetId)
-            );
+    function _delegateToMissileModule() private {
+        (bool ok, bytes memory result) = _missileModule.delegatecall(msg.data);
         if (!ok) {
             assembly ("memory-safe") {
-                revert(add(data, 32), mload(data))
+                revert(add(result, 32), mload(result))
             }
         }
-        if (data.length < 32) return;
-        AttackBlockReason reason = abi.decode(data, (AttackBlockReason));
-        if (countsBashing && reason == AttackBlockReason.BashingLimit) {
-            revert AttackBashingLimitReached();
+        assembly ("memory-safe") {
+            return(add(result, 32), mload(result))
         }
-        if (reason == AttackBlockReason.ScoreProtection) revert AttackScoreProtection();
-        if (reason == AttackBlockReason.SameAlliance) revert SameAllianceAttack();
-    }
-
-    function _interplanetaryMissileRange(address attacker) private view returns (uint256) {
-        uint16 impulseDrive = _technologyLevels[attacker][Technology.ImpulseDrive];
-        if (impulseDrive == 0) return 0;
-        return uint256(impulseDrive) * 5 - 1;
-    }
-
-    function _systemDistanceForMissiles(uint16 originSystem, uint16 targetSystem)
-        private
-        pure
-        returns (uint256)
-    {
-        return originSystem > targetSystem
-            ? uint256(originSystem - targetSystem)
-            : uint256(targetSystem - originSystem);
     }
 
     function _currentTimestamp() private view returns (uint64) {

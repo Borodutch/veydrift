@@ -112,6 +112,16 @@ describe("BattleKeeper pending tracking", () => {
     expect(keeper.snapshot().pendingCount).toBe(0);
   });
 
+  test("recordArrivalResolved treats a one-way missile as terminal at impact", async () => {
+    const { keeper, resolver } = makeKeeper(async () => "0xhash", { now: () => 1_000 });
+    keeper.recordLaunched(launch("7", MissionType.MissileAttack, 900, 900));
+    await keeper.tick();
+    expect(resolver.calls).toEqual(["7:arrival"]);
+    expect(keeper.snapshot().pendingCount).toBe(0);
+    await keeper.tick();
+    expect(resolver.calls).toEqual(["7:arrival"]);
+  });
+
   test("recordArrivalResolved treats successful Colonize as terminal even when returnAt is nonzero", () => {
     const { keeper } = makeKeeper(async () => "0xhash");
     keeper.recordLaunched(launch("5", MissionType.Colonize, 500, 900));

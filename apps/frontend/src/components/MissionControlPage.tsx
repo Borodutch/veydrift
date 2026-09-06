@@ -489,16 +489,16 @@ function MissileStrikeSection({
   loading: boolean;
 }) {
   const rows = archive?.rows ?? [];
-  // Background polling previously set `loading` before every request, briefly mounting this card
-  // as “Immediate combat / Missile strikes”, then unmounting it again when an empty archive arrived.
+  // Background polling previously set `loading` before every request, briefly mounting this card,
+  // then unmounting it again when an empty archive arrived.
   // Empty history is stable UI: show this section only when it has a strike or an actionable error.
   if (!shouldRenderMissileStrikeHistory({ error, rowCount: rows.length })) return null;
   return (
     <section className="grid gap-2 rounded-lg border border-amber-300/15 bg-amber-300/[0.03] p-3" data-missile-strike-history>
       <div className="flex items-center justify-between gap-2">
         <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-amber-200/70">Immediate combat</p>
-          <h2 className="text-sm font-semibold text-amber-100">Missile strikes</h2>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-amber-200/70">Resolved ordnance</p>
+          <h2 className="text-sm font-semibold text-amber-100">Missile impacts</h2>
         </div>
         <span className="text-[11px] tabular-nums text-slate-400">{archive?.pagination.totalEntries ?? 0}</span>
       </div>
@@ -1587,6 +1587,7 @@ function missionDetailTimings(mission: FleetMissionSummary, now: number): Endpoi
   const timings: EndpointTiming[] = [
     { label: isFutureMoment(mission.arrivalAt, now) ? "Arrives" : "Arrived", value: compactMissionTime(mission.arrivalAt, now) },
   ];
+  if (mission.missionType === "MissileAttack") return timings;
   if (mission.missionType === "DefenseHold") {
     timings.push({ label: "Holds until", value: compactMissionTime(defenseHoldRecallUntil(mission), now) });
   }
@@ -1603,6 +1604,9 @@ function isFutureMoment(value: string, now: number): boolean {
 }
 
 function pastMissionHeaderTiming(mission: FleetMissionSummary, now: number): EndpointTiming {
+  if (mission.missionType === "MissileAttack") {
+    return { label: "Impacted", value: compactMissionTime(mission.arrivalAt, now) };
+  }
   return { label: "Returned", value: compactMissionTime(mission.returnAt, now) };
 }
 
@@ -1648,7 +1652,13 @@ function MissionFleet({
   return (
     <div className="contents">
       <MissionDetailGroup title="Fleet">
-        <FleetIcons ships={ships} />
+        {mission?.missionType === "MissileAttack" ? (
+          detailRow(
+            "Payload",
+            `${(mission.missileQuantity ?? 0).toLocaleString()} interplanetary missile${mission.missileQuantity === 1 ? "" : "s"} · ${defenseCatalog.find((defense) => defense.id === mission.missilePrimaryTargetId)?.label ?? "selected defense"}`,
+            "text-slate-400",
+          )
+        ) : <FleetIcons ships={ships} />}
         {historicalDefenseHold ? (
           <>
             {detailRow("Stationed", formatShips(historicalDefenseHold.originalShips ?? historicalDefenseHold.ships), "text-slate-400")}
@@ -3167,6 +3177,7 @@ export function isCooperativeJoinOpen(mission: FleetMissionSummary, now: number)
 }
 
 export function isFleetRecallable(mission: FleetMissionSummary, now: number): boolean {
+  if (mission.missionType === "MissileAttack") return false;
   if (mission.missionType === "DefenseHold") {
     return mission.status === "Outbound" && now < defenseHoldRecallUntilMs(mission);
   }
