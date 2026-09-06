@@ -19,6 +19,15 @@ export type RandomnessRequestEvent = {
   randomnessCommitment?: string;
 };
 
+export type RandomnessRequestCandidates = {
+  highestIndexedRequestId: string;
+  pendingRequestIds: string[];
+};
+
+export interface RandomnessRequestCandidateSource {
+  randomnessRequestCandidates(): RandomnessRequestCandidates | Promise<RandomnessRequestCandidates>;
+}
+
 export type RandomnessFulfillmentRecord = RandomnessRequestEvent & {
   fulfilledAt: string;
   randomWord: string;
@@ -515,6 +524,7 @@ export type RandomnessCommitmentStatus = {
   readyCommitments: number;
   targetCommitments: number;
   trackedCommitments: number;
+  readinessReasons: string[];
   alerts: string[];
 };
 
@@ -539,6 +549,7 @@ export class RandomnessCommitmentWorker {
   private readonly failures: RandomnessFailureRecord[] = [];
   private readonly fulfilled: RandomnessFulfillmentRecord[] = [];
   private lastCommitError: string | null = null;
+  private missingRevealMappings: string[] = [];
 
   constructor(
     private readonly chainClient: RandomnessCommitmentChainClient,
@@ -583,7 +594,7 @@ export class RandomnessCommitmentWorker {
 
     return this.status({
       pendingRequests: stillPending,
-      pendingCommitmentAvailable: inventory.commitments.length > 0,
+      pendingCommitmentAvailable: inventory.readyCommitments > 0,
       pendingCommitmentAgeBlocks: front ? Math.max(blockNumber - front.committedAtBlock, 0) : null,
       commitmentInventory: inventory.commitments.length,
       readyCommitments: inventory.readyCommitments,
@@ -708,10 +719,7 @@ export class RandomnessCommitmentWorker {
         unknown.push(normalized);
       }
     }
-    if (unknown.length > 0) {
-      this.lastCommitError =
-        "on-chain randomness commitments have no tracked reveal words: " + unknown.join(", ");
-    }
+    this.missingRevealMappings = unknown;
   }
 
   private dropRecord(records: RandomnessCommitmentRecord[], commitment: string | undefined): void {
@@ -739,10 +747,14 @@ export class RandomnessCommitmentWorker {
     const oldestPendingRequestAgeSeconds = pendingAges.length > 0 ? Math.max(...pendingAges) : null;
     const maxPendingAgeSeconds = this.options.maxPendingAgeSeconds ?? defaultMaxPendingAgeSeconds;
     const alerts: string[] = [];
+    const readinessReasons: string[] = [];
 
     if (!input.pendingCommitmentAvailable) {
       alerts.push(
-        "no pending randomness commitment available; randomness-consuming actions will revert"
+        "no block-activated randomness commitment available; randomness-consuming actions will revert"
+      );
+      readinessReasons.push(
+        "Randomness commitments are activating. New attacks are temporarily paused."
       );
     }
     if (input.commitmentInventory < input.targetCommitments) {
@@ -764,6 +776,15 @@ export class RandomnessCommitmentWorker {
     if (this.lastCommitError) {
       alerts.push(this.lastCommitError);
     }
+    if (this.missingRevealMappings.length > 0) {
+      alerts.push(
+        "on-chain randomness commitments have no tracked reveal words: " +
+          this.missingRevealMappings.join(", ")
+      );
+      readinessReasons.push(
+        "A required randomness reveal mapping is unavailable. New attacks are temporarily paused."
+      );
+    }
     if (this.failures.length > 0) {
       const lastFailure = this.failures[this.failures.length - 1]!;
       alerts.push(
@@ -772,6 +793,11 @@ export class RandomnessCommitmentWorker {
           ": " +
           lastFailure.error
       );
+      if (lastFailure.error.includes("no tracked random word")) {
+        readinessReasons.push(
+          "A required randomness reveal mapping is unavailable. New attacks are temporarily paused."
+        );
+      }
     }
 
     return {
@@ -786,6 +812,7 @@ export class RandomnessCommitmentWorker {
       readyCommitments: input.readyCommitments,
       targetCommitments: input.targetCommitments,
       trackedCommitments: input.trackedCommitments,
+      readinessReasons: [...new Set(readinessReasons)],
       alerts
     };
   }

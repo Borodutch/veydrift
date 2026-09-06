@@ -436,6 +436,9 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       // VEY-KANEO-479: when the randomness engine is configured, gate an arrived Attack's readiness on
       // its battle randomness being fulfilled (derived from ingested RandomnessFulfilled logs).
       randomnessEngineConfigured: Boolean(loaded.config.randomnessEngineAddress),
+      ...(loaded.config.randomnessEngineAddress
+        ? { randomnessEngineAddress: loaded.config.randomnessEngineAddress }
+        : {}),
       ...(loaded.config.settlementStartPriceWei
         ? { settlementStartPriceWei: loaded.config.settlementStartPriceWei }
         : {}),
@@ -486,6 +489,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     dependencies.randomnessCommitter ??
     (isWriter && loaded.problems.length === 0
       ? new RandomnessCommitterService(loaded.config, {
+        ...(indexer ? { candidateSource: indexer } : {}),
         ...(resolverTransactions ? { transactionCoordinator: resolverTransactions } : {})
       })
       : undefined);

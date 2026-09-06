@@ -81,6 +81,33 @@ describe("BackendDataStore", () => {
     expect(loads).toBe(2);
   });
 
+  test("starts the Attack randomness safety probe outside saturated gameplay reads", async () => {
+    const originalFetch = globalThis.fetch;
+    const store = new BackendDataStore("https://api.test");
+    const releases: Array<() => void> = [];
+    const blockers = [1, 2, 3].map((id) => store.refresh(`background:${id}`, () =>
+      new Promise<{ id: number }>((resolve) => {
+        releases.push(() => resolve({ id }));
+      })
+    ));
+    let readinessRequests = 0;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      expect(String(input)).toBe("https://api.test/randomness-readiness");
+      readinessRequests += 1;
+      return Response.json({ ready: true, reasons: [] });
+    }) as unknown as typeof fetch;
+
+    try {
+      await Promise.resolve();
+      await expect(store.randomnessReadiness()).resolves.toEqual({ ready: true, reasons: [] });
+      expect(readinessRequests).toBe(1);
+    } finally {
+      for (const release of releases) release();
+      await Promise.all(blockers);
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   test("does not reuse an older in-flight request for an authoritative refresh", async () => {
     const store = new BackendDataStore("https://api.test");
     let loads = 0;

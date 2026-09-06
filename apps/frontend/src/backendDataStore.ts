@@ -2559,12 +2559,15 @@ export class BackendDataStore {
   }
 
   randomnessReadiness(): Promise<RandomnessReadiness> {
-    const key = cacheKey("randomness-readiness");
-    return this.refresh(key, async (signal) => {
+    // This is a transaction safety probe, not canonical cached gameplay state. Start it directly so
+    // unrelated background reads can never delay an Attack behind the shared read scheduler.
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10_000);
+    return (async () => {
       const response = await fetch(`${this.apiBaseUrl}/randomness-readiness`, {
         cache: "no-store",
         headers: { accept: "application/json" },
-        signal,
+        signal: controller.signal,
       });
       const payload = (await response.json()) as { ready?: unknown; reasons?: unknown };
       if (!response.ok) {
@@ -2575,7 +2578,7 @@ export class BackendDataStore {
         ready: payload.ready === true,
         ...(Array.isArray(payload.reasons) ? { reasons: payload.reasons.filter((reason): reason is string => typeof reason === "string") } : {}),
       };
-    });
+    })().finally(() => clearTimeout(timeout));
   }
 
   runtimeConfig<T>(url: string): Promise<T> {

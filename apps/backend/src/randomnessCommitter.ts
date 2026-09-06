@@ -20,6 +20,7 @@ import {
   type RandomnessCommitmentInventory,
   type RandomnessCommitmentStatus,
   type RandomnessCommitmentStore,
+  type RandomnessRequestCandidateSource,
   type RandomnessRequestEvent
 } from "./randomness";
 import { resolverReplacementFees, resolverTransactionNeedsReplacement } from "./resolverReplacementFees";
@@ -113,6 +114,7 @@ type EngineRequest = {
 export class ViemRandomnessCommitmentChainClient implements RandomnessCommitmentChainClient {
   private scanFloorId = 1n;
   private lastFullRescanAt = Date.now();
+  private historicalAuditCursorId = 1n;
 
   constructor(
     private readonly publicClient: PublicClient,
@@ -120,7 +122,8 @@ export class ViemRandomnessCommitmentChainClient implements RandomnessCommitment
     private readonly engineAddress: `0x${string}`,
     private readonly account: ReturnType<typeof privateKeyToAccount>,
     private readonly chain: ReturnType<typeof defineChain>,
-    private readonly transactionCoordinator = new ResolverTransactionCoordinator(":memory:")
+    private readonly transactionCoordinator = new ResolverTransactionCoordinator(":memory:"),
+    private readonly candidateSource?: RandomnessRequestCandidateSource
   ) {}
 
   get fulfillerAddress(): `0x${string}` {
@@ -252,23 +255,59 @@ export class ViemRandomnessCommitmentChainClient implements RandomnessCommitment
       functionName: "nextRequestId"
     })) as bigint;
 
-    const now = Date.now();
-    if (now - this.lastFullRescanAt >= fullRandomnessRequestRescanIntervalMs) {
+    const indexed = await this.candidateSource?.randomnessRequestCandidates();
+    let nextHistoricalAuditCursorId = this.historicalAuditCursorId;
+    if (!indexed && Date.now() - this.lastFullRescanAt >= fullRandomnessRequestRescanIntervalMs) {
+      // The standalone/fallback client has no canonical event ledger. Preserve its periodic reorg
+      // safety scan; the production backend always supplies candidateSource and never enters here.
       this.scanFloorId = 1n;
-      this.lastFullRescanAt = now;
+      this.lastFullRescanAt = Date.now();
+    }
+    const requestIds = new Set<bigint>();
+    for (const requestId of indexed?.pendingRequestIds ?? []) {
+      const id = BigInt(requestId);
+      if (id > 0n && id < nextRequestId) requestIds.add(id);
+    }
+    if (indexed && nextRequestId > 1n) {
+      if (nextHistoricalAuditCursorId >= nextRequestId) nextHistoricalAuditCursorId = 1n;
+      for (
+        let audited = 0;
+        audited < historicalRandomnessRequestAuditBatchSize && nextHistoricalAuditCursorId < nextRequestId;
+        audited += 1
+      ) {
+        requestIds.add(nextHistoricalAuditCursorId);
+        nextHistoricalAuditCursorId += 1n;
+      }
+    }
+    const tailStart = indexed
+      ? BigInt(indexed.highestIndexedRequestId) + 1n
+      : this.scanFloorId;
+    const directTailSize = nextRequestId > tailStart ? nextRequestId - tailStart : 0n;
+    const boundedTailStart = indexed && directTailSize > maxDirectRandomnessRequestTail
+      ? nextRequestId - maxDirectRandomnessRequestTail
+      : tailStart;
+    for (let id = boundedTailStart; id < nextRequestId; id += 1n) requestIds.add(id);
+
+    const orderedRequestIds = [...requestIds].sort(
+      (left, right) => left < right ? -1 : left > right ? 1 : 0
+    );
+    const requests: Array<{ id: bigint; request: EngineRequest }> = [];
+    for (let offset = 0; offset < orderedRequestIds.length; offset += maxConcurrentRandomnessRequestReads) {
+      const batch = orderedRequestIds.slice(offset, offset + maxConcurrentRandomnessRequestReads);
+      requests.push(...await Promise.all(batch.map(async (id) => ({
+        id,
+        request: (await this.publicClient.readContract({
+            abi: randomnessEngineAbi,
+            address: this.engineAddress,
+            functionName: "request",
+            args: [id]
+          })) as EngineRequest
+      }))));
     }
 
     const pending: RandomnessRequestEvent[] = [];
     let oldestUnfulfilled = nextRequestId;
-
-    for (let id = this.scanFloorId; id < nextRequestId; id += 1n) {
-      const request = (await this.publicClient.readContract({
-        abi: randomnessEngineAbi,
-        address: this.engineAddress,
-        functionName: "request",
-        args: [id]
-      })) as EngineRequest;
-
+    for (const { id, request } of requests) {
       if (request.requester === zeroAddress || request.fulfilledAt !== 0n) {
         continue;
       }
@@ -285,9 +324,8 @@ export class ViemRandomnessCommitmentChainClient implements RandomnessCommitment
       });
     }
 
-    // Advance the scan floor to the oldest still-unfulfilled id so future ticks don't re-read the
-    // ever-growing prefix of already-revealed requests.
-    this.scanFloorId = oldestUnfulfilled;
+    if (indexed) this.historicalAuditCursorId = nextHistoricalAuditCursorId;
+    if (!indexed) this.scanFloorId = oldestUnfulfilled;
     return pending;
   }
 
@@ -322,6 +360,7 @@ export type RandomnessCommitterOptions = {
   fulfillerAddress?: string;
   logger?: RandomnessCommitterLogger;
   transactionCoordinator?: ResolverTransactionCoordinator;
+  candidateSource?: RandomnessRequestCandidateSource;
 };
 
 const consoleLogger: RandomnessCommitterLogger = {
@@ -330,9 +369,10 @@ const consoleLogger: RandomnessCommitterLogger = {
 };
 
 const defaultCommitIntervalMs = 1_000;
-// Keep the safety rescan wall-clock based. Tying it to ticks made the one-second refill cadence
-// rescan the full, ever-growing request history every 20 seconds instead of every five minutes.
 const fullRandomnessRequestRescanIntervalMs = 5 * 60 * 1_000;
+const historicalRandomnessRequestAuditBatchSize = 8;
+const maxConcurrentRandomnessRequestReads = 8;
+const maxDirectRandomnessRequestTail = 16n;
 
 /**
  * Long-running service that keeps a burst inventory ready on-chain. The one-second interval is a
@@ -364,7 +404,11 @@ export class RandomnessCommitterService {
     let chainClient = options.chainClient;
     let fulfillerAddress = options.fulfillerAddress ?? null;
     if (!chainClient) {
-      const built = buildViemChainClient(config, options.transactionCoordinator);
+      const built = buildViemChainClient(
+        config,
+        options.transactionCoordinator,
+        options.candidateSource
+      );
       if (built) {
         chainClient = built;
         fulfillerAddress = built.fulfillerAddress;
@@ -456,13 +500,7 @@ export class RandomnessCommitterService {
   private persistReadiness(status: RandomnessCommitmentStatus | null, tickError?: string): void {
     const reasons = tickError
       ? ["The randomness safety check is unavailable. New attacks are temporarily paused."]
-      : (status?.alerts ?? [])
-          .filter((alert) =>
-            alert.includes("no tracked random word")
-            || alert.includes("on-chain randomness commitments have no tracked reveal words")
-            || alert.includes("no pending randomness commitment available")
-          )
-          .map(() => "A required randomness reveal mapping is unavailable. New attacks are temporarily paused.");
+      : (status?.readinessReasons ?? []);
     const uniqueReasons = [...new Set(reasons)];
     const ready = uniqueReasons.length === 0;
     const fingerprint = JSON.stringify({ ready, reasons: uniqueReasons });
@@ -488,7 +526,8 @@ function randomnessAlertKey(alert: string): string {
 
 function buildViemChainClient(
   config: BackendConfig,
-  transactionCoordinator?: ResolverTransactionCoordinator
+  transactionCoordinator?: ResolverTransactionCoordinator,
+  candidateSource?: RandomnessRequestCandidateSource
 ): ViemRandomnessCommitmentChainClient | undefined {
   if (!config.randomnessEngineAddress || !config.randomnessFulfillerPrivateKey || !config.rpcUrl) {
     return undefined;
@@ -501,7 +540,7 @@ function buildViemChainClient(
     rpcUrls: { default: { http: [config.rpcUrl] } }
   });
   const account = privateKeyToAccount(config.randomnessFulfillerPrivateKey);
-  const transport = http(config.rpcUrl);
+  const transport = http(config.rpcUrl, { timeout: 10_000 });
   const publicClient = createPublicClient({ chain, transport });
   const walletClient = createWalletClient({ account, chain, transport });
 
@@ -513,7 +552,8 @@ function buildViemChainClient(
     chain,
     transactionCoordinator ?? new ResolverTransactionCoordinator(
       config.resolverTransactionStorePath ?? ".data/resolver-transactions.sqlite"
-    )
+    ),
+    candidateSource
   );
 }
 

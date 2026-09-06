@@ -84,6 +84,7 @@ const combatRoundResolvedTopic = "0xad3481558e72184b0d73a624579c0f1fc7db867024ac
 const combatLossesTopic = "0xe31518e93e94d23864fa76375f560d4ef2b4288dca5a5f1204f71d1d363d3704";
 const interplanetaryMissileAttackTopic = "0x44a8c2b7632935050468ed4d9acfb1e99a09cec32fd65811964b95b3693f872c";
 const randomnessFulfilledTopic = "0x864b23caf5999ffe7e7b5bc685db237bcef9eb7bd6423c2fd395d9b4663372f5";
+const randomnessRequestedTopic = "0xe2ec99af60fc175bd25db4013e7f8c318414937ee9b321210fc9db428afd1ee7";
 const startPriceUpdatedTopic = "0xdbcd6a03cdadcd71beb97d41ac0c321148e2556e112a52663ba4c94ff84d6717";
 const referralInviteWindowActivatedTopic = "0xd51c9643dafa95fcfa30d65f2b6576bc03873e2630d73fc523daf87a7158d589";
 const referralInviteRedeemedTopic = "0xf0e76a5aa6e423f978c7616fd6933b5d376a32654fc67c6fad0afdbc744ccce1";
@@ -169,6 +170,94 @@ describe("SettlementIndexer", () => {
       WHERE type = 'index' AND name = 'indexed_event_logs_queue_topics_idx'
     `).get()).toEqual({ name: "indexed_event_logs_queue_topics_idx" });
     database.close();
+  });
+
+  test("derives pending randomness requests from canonical logs and follows removals", () => {
+    const database = new Database(":memory:");
+    const engineAddress = "0x51a5faba3fa903edcecdebceea3865bd63d359bb";
+    const oldEngineAddress = "0x9999999999999999999999999999999999999999";
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n, { database, randomnessEngineAddress: engineAddress });
+    const insert = database.query(`
+      INSERT INTO indexed_event_logs
+        (event_id, transaction_hash, log_index, block_number, removed, event_json, received_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+    const add = (
+      eventId: string,
+      eventTopic: string,
+      requestId: bigint,
+      blockNumber: number,
+      removed = 0,
+      address = engineAddress
+    ) => insert.run(
+      eventId,
+      `0x${eventId.padStart(64, "0")}`,
+      "0",
+      blockNumber.toString(),
+      removed,
+      JSON.stringify({ address, topics: [eventTopic, topic(requestId)] }),
+      new Date().toISOString()
+    );
+
+    add("1", randomnessRequestedTopic, 1n, 101);
+    add("2", randomnessRequestedTopic, 2n, 102);
+    add("3", randomnessFulfilledTopic, 1n, 103);
+    add("4", randomnessFulfilledTopic, 2n, 104, 1);
+    add("5", randomnessRequestedTopic, 3n, 105, 0, oldEngineAddress);
+    add("6", randomnessFulfilledTopic, 2n, 106, 0, oldEngineAddress);
+
+    expect(indexer.randomnessRequestCandidates()).toEqual({
+      highestIndexedRequestId: "2",
+      pendingRequestIds: ["2"]
+    });
+
+    database.query("UPDATE indexed_event_logs SET removed = 1 WHERE event_id = '2'").run();
+    expect(indexer.randomnessRequestCandidates()).toEqual({
+      highestIndexedRequestId: "1",
+      pendingRequestIds: []
+    });
+
+    database.query("UPDATE indexed_event_logs SET removed = 1 WHERE event_id = '1'").run();
+    database.query("UPDATE indexed_event_logs SET removed = 0 WHERE event_id = '2'").run();
+    expect(indexer.randomnessRequestCandidates()).toEqual({
+      highestIndexedRequestId: "2",
+      pendingRequestIds: ["2"]
+    });
+  });
+
+  test("restores a re-included randomness request to the canonical ledger", () => {
+    const database = new Database(":memory:");
+    const engineAddress = "0x51a5faba3fa903edcecdebceea3865bd63d359bb";
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n, { database, randomnessEngineAddress: engineAddress });
+    const log = {
+      address: engineAddress,
+      blockNumber: "0x65",
+      transactionHash: `0x${"ab".repeat(32)}`,
+      logIndex: "0x0",
+      topics: [randomnessRequestedTopic, topic(1n)],
+      data: "0x"
+    };
+
+    indexer.applyLog(log);
+    indexer.applyLog({ ...log, removed: true });
+    expect(indexer.randomnessRequestCandidates()).toEqual({
+      highestIndexedRequestId: "0",
+      pendingRequestIds: []
+    });
+
+    indexer.applyLog(log);
+    expect(indexer.randomnessRequestCandidates()).toEqual({
+      highestIndexedRequestId: "1",
+      pendingRequestIds: ["1"]
+    });
   });
 
   test("projects all due resolver legs from canonical active rows without history reconstruction", () => {
