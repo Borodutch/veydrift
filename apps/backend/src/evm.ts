@@ -5984,7 +5984,8 @@ export const interplanetaryMissileAttackTopic = "0x44a8c2b7632935050468ed4d9acfb
 // bytes32 indexed purposeHash, uint64 fulfilledAt, uint256 randomWord). Emitted when the fulfiller
 // reveals the random word for a request — the moment a randomness-gated mission (an Attack battle)
 // actually becomes resolvable (consumeRandomness reverts with PendingRandomness until then).
-const randomnessFulfilledTopic = "0x864b23caf5999ffe7e7b5bc685db237bcef9eb7bd6423c2fd395d9b4663372f5";
+export const randomnessRequestedTopic = "0xe2ec99af60fc175bd25db4013e7f8c318414937ee9b321210fc9db428afd1ee7";
+export const randomnessFulfilledTopic = "0x864b23caf5999ffe7e7b5bc685db237bcef9eb7bd6423c2fd395d9b4663372f5";
 export const startPriceUpdatedEventTopic = "0xdbcd6a03cdadcd71beb97d41ac0c321148e2556e112a52663ba4c94ff84d6717";
 const referralInviteWindowActivatedTopic = "0xd51c9643dafa95fcfa30d65f2b6576bc03873e2630d73fc523daf87a7158d589";
 const referralInviteRedeemedTopic = "0xf0e76a5aa6e423f978c7616fd6933b5d376a32654fc67c6fad0afdbc744ccce1";
@@ -6079,6 +6080,7 @@ const eventNamesByTopic = new Map<string, string>([
   [combatLossesTopic, "CombatLosses"],
   [combatDebrisSignaledTopic, "CombatDebrisSignaled"],
   [interplanetaryMissileAttackTopic, "InterplanetaryMissileAttack"],
+  [randomnessRequestedTopic, "RandomnessRequested"],
   [randomnessFulfilledTopic, "RandomnessFulfilled"],
   [startPriceUpdatedEventTopic, "StartPriceUpdated"],
   [referralInviteWindowActivatedTopic, "ReferralInviteWindowActivated"],

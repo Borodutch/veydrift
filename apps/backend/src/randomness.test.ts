@@ -245,9 +245,11 @@ describe("Randomness commitment worker", () => {
     engine.block = 1;
     let status = await worker.tick();
     expect(engine.pendingCommitment).toBe(fakeCommitment(100n));
-    expect(status.pendingCommitmentAvailable).toBe(true);
+    expect(status.pendingCommitmentAvailable).toBe(false);
     expect(status.pendingCommitmentAgeBlocks).toBe(0);
-    expect(status.alerts).toEqual([]);
+    expect(status.readinessReasons).toEqual([
+      "Randomness commitments are activating. New attacks are temporarily paused."
+    ]);
     expect(store.load()).toHaveLength(1);
 
     // Same-block consumption is rejected on-chain; only after a block can a request consume it.
@@ -259,11 +261,13 @@ describe("Randomness commitment worker", () => {
     expect(engine.requestFulfilledWith("42")).toBe(100n);
     expect(worker.fulfillmentHistory().map((entry) => entry.randomWord)).toEqual(["100"]);
     expect(engine.pendingCommitment).toBe(fakeCommitment(200n));
-    expect(status.pendingCommitmentAvailable).toBe(true);
+    expect(status.pendingCommitmentAvailable).toBe(false);
     expect(status.fulfilled).toBe(1);
     expect(store.load()).toHaveLength(1);
     expect(store.load()[0]?.word).toBe("200");
-    expect(status.alerts).toEqual([]);
+    expect(status.readinessReasons).toEqual([
+      "Randomness commitments are activating. New attacks are temporarily paused."
+    ]);
   });
 
   test("does not post a second commitment while one is still pending", async () => {
@@ -312,7 +316,9 @@ describe("Randomness commitment worker", () => {
     expect(engine.requestFulfilledWith("7")).toBe(500n);
     expect(after.fulfillmentHistory()[0]?.randomWord).toBe("500");
     expect(engine.pendingCommitment).toBe(fakeCommitment(600n));
-    expect(status.alerts).toEqual([]);
+    expect(status.readinessReasons).toEqual([
+      "Randomness commitments are activating. New attacks are temporarily paused."
+    ]);
   });
 
   test("reloads durable secrets on every tick instead of overwriting a newer replica", async () => {
@@ -357,7 +363,7 @@ describe("Randomness commitment worker", () => {
     expect(status.pendingCommitmentAvailable).toBe(false);
     expect(status.pendingCommitmentAgeBlocks).toBeNull();
     expect(status.alerts).toContain(
-      "no pending randomness commitment available; randomness-consuming actions will revert"
+      "no block-activated randomness commitment available; randomness-consuming actions will revert"
     );
     expect(
       status.alerts.some((alert) =>
@@ -426,7 +432,9 @@ describe("Randomness commitment worker", () => {
       const status = await after.tick();
 
       expect(engine.requestFulfilledWith("8")).toBe(4242n);
-      expect(status.alerts).toEqual([]);
+      expect(status.readinessReasons).toEqual([
+        "Randomness commitments are activating. New attacks are temporarily paused."
+      ]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

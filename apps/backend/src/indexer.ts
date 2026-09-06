@@ -163,6 +163,8 @@ import {
   defenseQueueTimingSetTopic,
   paidAllianceInvitePurchasedTopic,
   paidAllianceInviteRedeemedTopic,
+  randomnessFulfilledTopic,
+  randomnessRequestedTopic,
   researchQueuedTopic,
   researchQueuedV2Topic,
   shipCompletedTopic,
@@ -173,6 +175,7 @@ import {
   startPriceUpdatedEventTopic,
   interplanetaryMissileAttackTopic
 } from "./evm";
+import type { RandomnessRequestCandidates } from "./randomness";
 import {
   calculateIndexedHighscore,
   deriveInfrastructureFields,
@@ -398,6 +401,7 @@ export type SettlementIndexerOptions = {
   // ingested RandomnessFulfilled logs. When false, no randomness data is expected and readiness stays
   // on the plain arrival check, preserving behaviour for deployments without the engine.
   randomnessEngineConfigured?: boolean;
+  randomnessEngineAddress?: string;
   // VEY-KANEO-485: hard deadline (ms) for the chain-read phase of a full cold rebuild. The self-hosted
   // node is the only RPC and caps eth_getLogs at 100k blocks; if the deploy->head backfill stalls, the
   // rebuild rejects with a real error (recorded as lastReconciliationError, retried by the boot-time
@@ -979,6 +983,7 @@ export class SettlementIndexer {
     );
     this.qaSyntheticStationedDefenders = options.qaSyntheticStationedDefenders ?? false;
     this.randomnessEngineConfigured = options.randomnessEngineConfigured ?? false;
+    this.randomnessEngineAddress = options.randomnessEngineAddress?.toLowerCase() ?? null;
     this.rebuildDeadlineMs = options.rebuildDeadlineMs && options.rebuildDeadlineMs > 0 ? options.rebuildDeadlineMs : 0;
     if (!options.readOnly && !options.assumeSchemaReady) {
       this.migrate(options.runStartupBackfill ?? true);
@@ -993,6 +998,7 @@ export class SettlementIndexer {
   private readonly qaSyntheticStationedDefenders: boolean;
   // VEY-KANEO-479: see SettlementIndexerOptions. Gates arrived-Attack readiness on randomness.
   private readonly randomnessEngineConfigured: boolean;
+  private readonly randomnessEngineAddress: string | null;
   // VEY-KANEO-485: see SettlementIndexerOptions. 0 = no cold-rebuild deadline.
   private readonly rebuildDeadlineMs: number;
   private readSnapshotDepth = 0;
@@ -3191,6 +3197,70 @@ export class SettlementIndexer {
     return this.activeFleetMissionsFromCanonicalRows();
   }
 
+  /**
+   * Canonical pending randomness requests from the reorg-aware raw event ledger. The committer
+   * uses this for historical state and reads only the small not-yet-indexed tail from the chain.
+   */
+  randomnessRequestCandidates(): RandomnessRequestCandidates {
+    return this.readConsistentSnapshot(() => {
+      const addressFilter = this.randomnessEngineAddress
+        ? "AND lower(json_extract(event_json, '$.address')) = ?"
+        : "";
+      const addressParameters = this.randomnessEngineAddress ? [this.randomnessEngineAddress] : [];
+      const requestedRows = this.db.query(`
+        SELECT json_extract(event_json, '$.topics[1]') AS request_id
+        FROM indexed_event_logs AS requested
+        WHERE requested.removed = 0
+          AND lower(json_extract(requested.event_json, '$.topics[0]')) = ?
+          ${addressFilter.replaceAll("event_json", "requested.event_json")}
+          AND NOT EXISTS (
+            SELECT 1
+            FROM indexed_event_logs AS fulfilled
+            WHERE fulfilled.removed = 0
+              AND lower(json_extract(fulfilled.event_json, '$.topics[0]')) = ?
+              ${addressFilter.replaceAll("event_json", "fulfilled.event_json")}
+              AND lower(json_extract(fulfilled.event_json, '$.topics[1]')) =
+                  lower(json_extract(requested.event_json, '$.topics[1]'))
+          )
+      `).all(
+        randomnessRequestedTopic,
+        ...addressParameters,
+        randomnessFulfilledTopic,
+        ...addressParameters
+      ) as Array<{ request_id: string | null }>;
+      const highestRows = this.db.query(`
+        SELECT json_extract(event_json, '$.topics[1]') AS request_id
+        FROM indexed_event_logs
+        WHERE removed = 0
+          AND lower(json_extract(event_json, '$.topics[0]')) = ?
+          ${addressFilter}
+          AND CAST(block_number AS INTEGER) = (
+            SELECT MAX(CAST(block_number AS INTEGER))
+            FROM indexed_event_logs
+            WHERE removed = 0
+              AND lower(json_extract(event_json, '$.topics[0]')) = ?
+              ${addressFilter}
+          )
+      `).all(
+        randomnessRequestedTopic,
+        ...addressParameters,
+        randomnessRequestedTopic,
+        ...addressParameters
+      ) as Array<{ request_id: string | null }>;
+      const highestIndexedRequestId = highestRows.reduce((highest, row) => {
+        const requestId = missionIdFromTopic(row.request_id);
+        if (requestId === null) return highest;
+        return BigInt(requestId) > BigInt(highest) ? requestId : highest;
+      }, "0");
+      return {
+        highestIndexedRequestId,
+        pendingRequestIds: requestedRows
+          .map((row) => missionIdFromTopic(row.request_id))
+          .filter((requestId): requestId is string => requestId !== null)
+      };
+    });
+  }
+
   // Bounded resolver-facing projection over the canonical active-mission table. Unlike the public
   // Mission Control projection, this deliberately keeps overdue return rows in their on-chain
   // Returning/Recalled status and never reconstructs mission history from logs.
@@ -4396,6 +4466,23 @@ export class SettlementIndexer {
         this.recordMissionEventLog(eventId, log);
         const restoredMissionId = fleetMissionLogMissionId(log);
         if (restoredMissionId) this.rebuildMissionBodyProjection(restoredMissionId);
+        this.recordLatestBlock(log.blockNumber);
+        return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
+      }
+      if (
+        existing.removed
+        && (
+          log.topics[0]?.toLowerCase() === randomnessRequestedTopic
+          || isRandomnessFulfilledLog(log)
+        )
+      ) {
+        this.advanceIndexedRevision();
+        this.db.query(`
+          UPDATE indexed_event_logs
+          SET removed = 0, event_json = ?, block_number = ?, received_at = ?
+          WHERE event_id = ?
+        `).run(JSON.stringify(log), blockNumberToDecimal(log.blockNumber), new Date().toISOString(), eventId);
+        if (isRandomnessFulfilledLog(log)) this.touch();
         this.recordLatestBlock(log.blockNumber);
         return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
       }

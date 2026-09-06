@@ -204,6 +204,8 @@ describe("RandomnessCommitterService", () => {
       return "0xcommit";
     };
     await service.tick();
+    engine.block += 1;
+    await service.tick();
     expect(service.snapshot().status?.alerts).toEqual([]);
   });
 
@@ -248,10 +250,11 @@ describe("RandomnessCommitterService", () => {
         chainClient: engine
       });
       await service.tick();
-      expect(loadRandomnessReadinessSnapshot(config.randomnessCommitmentStorePath)).toMatchObject({
-        ready: false,
-        reasons: ["A required randomness reveal mapping is unavailable. New attacks are temporarily paused."]
-      });
+      const readiness = loadRandomnessReadinessSnapshot(config.randomnessCommitmentStorePath);
+      expect(readiness?.ready).toBe(false);
+      expect(readiness?.reasons).toContain(
+        "A required randomness reveal mapping is unavailable. New attacks are temporarily paused."
+      );
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -259,6 +262,211 @@ describe("RandomnessCommitterService", () => {
 });
 
 describe("ViemRandomnessCommitmentChainClient", () => {
+  test("reads only indexed pending requests and the unindexed chain tail", async () => {
+    const account = privateKeyToAccount(`0x${"2".repeat(64)}`);
+    const requestReads: bigint[] = [];
+    const publicClient = {
+      async readContract(input: { functionName: string; args?: readonly [bigint] }) {
+        if (input.functionName === "nextRequestId") return 15_001n;
+        const requestId = input.args?.[0] ?? 0n;
+        requestReads.push(requestId);
+        return {
+          requester: "0x1111111111111111111111111111111111111111",
+          purposeHash: `0x${"aa".repeat(32)}`,
+          randomnessCommitment: `0x${"bb".repeat(32)}`,
+          createdAt: 1_000n,
+          fulfilledAt: 0n,
+          randomWord: 0n
+        };
+      }
+    } as unknown as PublicClient;
+    const client = new ViemRandomnessCommitmentChainClient(
+      publicClient,
+      {} as WalletClient,
+      baseConfig.randomnessEngineAddress!,
+      account,
+      { id: baseConfig.chainId } as never,
+      new ResolverTransactionCoordinator(":memory:"),
+      {
+        randomnessRequestCandidates: () => ({
+          highestIndexedRequestId: "14999",
+          pendingRequestIds: ["42"]
+        })
+      }
+    );
+
+    const pending = await client.listPendingRequests();
+
+    expect(requestReads).toEqual([1n, 2n, 3n, 4n, 5n, 6n, 7n, 8n, 42n, 15_000n]);
+    expect(pending.map((request) => request.requestId)).toEqual([
+      "1", "2", "3", "4", "5", "6", "7", "8", "42", "15000"
+    ]);
+  });
+
+  test("bounds a large unindexed tail while auditing historical requests", async () => {
+    const account = privateKeyToAccount(`0x${"2".repeat(64)}`);
+    const requestReads: bigint[] = [];
+    const publicClient = {
+      async readContract(input: { functionName: string; args?: readonly bigint[] }) {
+        if (input.functionName === "nextRequestId") return 15_001n;
+        const requestId = input.args?.[0] ?? 0n;
+        requestReads.push(requestId);
+        return {
+          requester: "0x1111111111111111111111111111111111111111",
+          purposeHash: `0x${"aa".repeat(32)}`,
+          randomnessCommitment: `0x${"bb".repeat(32)}`,
+          createdAt: 1_000n,
+          fulfilledAt: 1n,
+          randomWord: 1n
+        };
+      }
+    } as unknown as PublicClient;
+    const client = new ViemRandomnessCommitmentChainClient(
+      publicClient,
+      {} as WalletClient,
+      baseConfig.randomnessEngineAddress!,
+      account,
+      { id: baseConfig.chainId } as never,
+      new ResolverTransactionCoordinator(":memory:"),
+      {
+        randomnessRequestCandidates: () => ({
+          highestIndexedRequestId: "0",
+          pendingRequestIds: []
+        })
+      }
+    );
+
+    await expect(client.listPendingRequests()).resolves.toEqual([]);
+    expect(requestReads).toEqual([
+      1n, 2n, 3n, 4n, 5n, 6n, 7n, 8n,
+      14_985n, 14_986n, 14_987n, 14_988n, 14_989n, 14_990n, 14_991n, 14_992n,
+      14_993n, 14_994n, 14_995n, 14_996n, 14_997n, 14_998n, 14_999n, 15_000n
+    ]);
+  });
+
+  test("rotates a bounded historical audit even when the ledger suppresses a pending request", async () => {
+    const account = privateKeyToAccount(`0x${"2".repeat(64)}`);
+    const requestReads: bigint[] = [];
+    const publicClient = {
+      async readContract(input: { functionName: string; args?: readonly bigint[] }) {
+        if (input.functionName === "nextRequestId") return 18n;
+        const requestId = input.args?.[0] ?? 0n;
+        requestReads.push(requestId);
+        return {
+          requester: "0x1111111111111111111111111111111111111111",
+          purposeHash: `0x${"aa".repeat(32)}`,
+          randomnessCommitment: `0x${"bb".repeat(32)}`,
+          createdAt: 1_000n,
+          fulfilledAt: requestId === 9n ? 0n : 1n,
+          randomWord: 0n
+        };
+      }
+    } as unknown as PublicClient;
+    const client = new ViemRandomnessCommitmentChainClient(
+      publicClient,
+      {} as WalletClient,
+      baseConfig.randomnessEngineAddress!,
+      account,
+      { id: baseConfig.chainId } as never,
+      new ResolverTransactionCoordinator(":memory:"),
+      {
+        randomnessRequestCandidates: () => ({
+          highestIndexedRequestId: "17",
+          pendingRequestIds: []
+        })
+      }
+    );
+
+    expect(await client.listPendingRequests()).toEqual([]);
+    const secondAudit = await client.listPendingRequests();
+
+    expect(requestReads).toEqual([
+      1n, 2n, 3n, 4n, 5n, 6n, 7n, 8n,
+      9n, 10n, 11n, 12n, 13n, 14n, 15n, 16n
+    ]);
+    expect(secondAudit.map((request) => request.requestId)).toEqual(["9"]);
+  });
+
+  test("preserves periodic reorg rescans for a source-less client", async () => {
+    const account = privateKeyToAccount(`0x${"2".repeat(64)}`);
+    const pending = new Set([3n]);
+    const requestReads: bigint[] = [];
+    const publicClient = {
+      async readContract(input: { functionName: string; args?: readonly bigint[] }) {
+        if (input.functionName === "nextRequestId") return 4n;
+        const requestId = input.args?.[0] ?? 0n;
+        requestReads.push(requestId);
+        return {
+          requester: "0x1111111111111111111111111111111111111111",
+          purposeHash: `0x${"aa".repeat(32)}`,
+          randomnessCommitment: `0x${"bb".repeat(32)}`,
+          createdAt: 1_000n,
+          fulfilledAt: pending.has(requestId) ? 0n : 1n,
+          randomWord: 0n
+        };
+      }
+    } as unknown as PublicClient;
+    const client = new ViemRandomnessCommitmentChainClient(
+      publicClient,
+      {} as WalletClient,
+      baseConfig.randomnessEngineAddress!,
+      account,
+      { id: baseConfig.chainId } as never
+    );
+
+    await client.listPendingRequests();
+    expect(requestReads).toEqual([1n, 2n, 3n]);
+
+    requestReads.length = 0;
+    pending.add(1n);
+    (client as unknown as { lastFullRescanAt: number }).lastFullRescanAt = 0;
+    const rescanned = await client.listPendingRequests();
+
+    expect(requestReads).toEqual([1n, 2n, 3n]);
+    expect(rescanned.map((request) => request.requestId)).toEqual(["1", "3"]);
+  });
+
+  test("bounds concurrent request reads during large candidate scans", async () => {
+    const account = privateKeyToAccount(`0x${"2".repeat(64)}`);
+    let activeReads = 0;
+    let maximumActiveReads = 0;
+    const publicClient = {
+      async readContract(input: { functionName: string; args?: readonly bigint[] }) {
+        if (input.functionName === "nextRequestId") return 25n;
+        activeReads += 1;
+        maximumActiveReads = Math.max(maximumActiveReads, activeReads);
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        activeReads -= 1;
+        return {
+          requester: "0x1111111111111111111111111111111111111111",
+          purposeHash: `0x${"aa".repeat(32)}`,
+          randomnessCommitment: `0x${"bb".repeat(32)}`,
+          createdAt: 1_000n,
+          fulfilledAt: 0n,
+          randomWord: 0n
+        };
+      }
+    } as unknown as PublicClient;
+    const client = new ViemRandomnessCommitmentChainClient(
+      publicClient,
+      {} as WalletClient,
+      baseConfig.randomnessEngineAddress!,
+      account,
+      { id: baseConfig.chainId } as never,
+      new ResolverTransactionCoordinator(":memory:"),
+      {
+        randomnessRequestCandidates: () => ({
+          highestIndexedRequestId: "24",
+          pendingRequestIds: Array.from({ length: 24 }, (_, index) => String(index + 1))
+        })
+      }
+    );
+
+    await client.listPendingRequests();
+
+    expect(maximumActiveReads).toBe(8);
+  });
+
   test("routes commit and fulfillment writes through explicit serialized nonces", async () => {
     const account = privateKeyToAccount(`0x${"2".repeat(64)}`);
     let pendingNonce = 21;

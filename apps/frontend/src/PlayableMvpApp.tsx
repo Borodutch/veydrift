@@ -7549,10 +7549,14 @@ export function PlayableMvpApp({
             setGalaxyAction({ status: "error", label: reason });
             return;
           }
-        } catch {
+        } catch (error) {
+          const reason = error instanceof Error
+            && error.message.endsWith("New attacks are temporarily paused.")
+            ? error.message
+            : "Randomness safety status is unavailable. New attacks are temporarily paused.";
           setGalaxyAction({
             status: "error",
-            label: "Randomness safety status is unavailable. New attacks are temporarily paused.",
+            label: reason,
           });
           return;
         }
