@@ -344,6 +344,38 @@ describe("SettlementIndexer", () => {
     database.close();
   });
 
+  test("pending-randomness attacks cannot starve a later missile and return", () => {
+    const database = new Database(":memory:");
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n, { database, randomnessEngineConfigured: true });
+    const insert = database.query(`
+      INSERT INTO contract_fleet_missions (
+        mission_id, status_id, mission_type_id, owner, origin_planet_id, target_planet_id,
+        departure_at, arrival_at, return_at, fuel_cost,
+        metal_cargo, crystal_cargo, deuterium_cargo, ships_json, randomness_request_id, event_json
+      ) VALUES (?, ?, ?, ?, '85', '86', '1', ?, ?, '0', '0', '0', '0', '{}', ?, NULL)
+    `);
+    database.transaction(() => {
+      for (let index = 1; index <= 501; index += 1) {
+        insert.run(String(index), 1, 3, player, String(index), "1200", String(index));
+      }
+      insert.run("1000", 1, 7, player, "900", "900", null);
+      insert.run("1001", 2, 0, player, "800", "950", null);
+    })();
+
+    const candidates = indexer.missionResolutionCandidates(1_000, 2);
+    expect(candidates.arrivals).toEqual([
+      expect.objectContaining({ missionId: "1000", missionType: "MissileAttack" })
+    ]);
+    expect(candidates.returns).toEqual([
+      expect.objectContaining({ missionId: "1001", missionType: "Transport" })
+    ]);
+    database.close();
+  });
+
   test("persists indexed contract state for read-side reuse", async () => {
     const dir = mkdtempSync(join(tmpdir(), "veydrift-indexer-"));
     const databasePath = join(dir, "contract-state.sqlite");

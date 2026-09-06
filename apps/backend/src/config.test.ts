@@ -98,6 +98,7 @@ describe("backend config", () => {
 
     expect(result.problems).toEqual([]);
     expect(result.config.timedMissileIndexFromBlock).toBe(50_960_000n);
+    expect(result.config.timedMissileStandby).toBe(false);
     expect(safeConfigSummary(result.config).timedMissileIndexFromBlock).toBe("50960000");
   });
 
@@ -117,9 +118,29 @@ describe("backend config", () => {
         VEYDRIFT_DEPLOYMENT_MODE: mode,
         VEYDRIFT_TIMED_MISSILE_INDEX_FROM_BLOCK: "50960000"
       }).problems).toEqual([]);
+      expect(loadBackendConfig({
+        ...baseEnv,
+        VEYDRIFT_DEPLOYMENT_MODE: mode,
+        VEYDRIFT_TIMED_MISSILE_STANDBY: "true"
+      }).problems).toEqual([]);
     }
 
     expect(loadBackendConfig({ ...baseEnv, VEYDRIFT_DEPLOYMENT_MODE: "test" }).problems).toEqual([]);
+  });
+
+  test("rejects combining timed missile standby with an invented replay boundary", () => {
+    const result = loadBackendConfig({
+      VEYDRIFT_DEPLOYMENT_MODE: "production",
+      VEYDRIFT_GAME_CONTRACT_ADDRESS: "0x3333333333333333333333333333333333333333",
+      VEYDRIFT_RPC_URL: "https://example.invalid/rpc",
+      VEYDRIFT_TIMED_MISSILE_INDEX_FROM_BLOCK: "50960000",
+      VEYDRIFT_TIMED_MISSILE_STANDBY: "true"
+    });
+
+    expect(result.problems).toContainEqual({
+      field: "VEYDRIFT_TIMED_MISSILE_STANDBY",
+      message: "Standby cannot be combined with an exact timed-missile replay boundary."
+    });
   });
 
   test("accepts an explicit durable resolver transaction coordinator path", () => {

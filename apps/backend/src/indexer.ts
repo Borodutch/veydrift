@@ -341,6 +341,7 @@ const fleetMissionLootRatioProjectionBackfillMetadataKey = "fleetMissionLootRati
 const moonStateEventLedgerBackfillMetadataKey = "moonStateEventLedgerBackfillV1";
 const destroyedMoonStateRepairMetadataKey = "destroyedMoonStateRepairV3";
 const removedMissionEventLedgerRepairMetadataKey = "removedMissionEventLedgerRepairV1";
+const fulfilledRandomnessProjectionBackfillMetadataKey = "fulfilledRandomnessProjectionBackfillV1";
 const paidAllianceInviteProjectionTopics = [
   paidAllianceInvitePurchasedTopic,
   paidAllianceInviteRedeemedTopic,
@@ -3324,8 +3325,19 @@ export class SettlementIndexer {
       SELECT *
       FROM contract_fleet_missions
       WHERE (
-          status_id = 1
-          AND CAST(arrival_at AS INTEGER) <= ?
+        status_id = 1
+        AND CAST(arrival_at AS INTEGER) <= ?
+        AND (
+            mission_type_id != 3
+            OR ? = 0
+            OR randomness_request_id IS NULL
+            OR randomness_request_id = '0'
+            OR EXISTS (
+              SELECT 1
+              FROM indexed_fulfilled_randomness_requests
+              WHERE request_id = contract_fleet_missions.randomness_request_id
+            )
+          )
         ) OR (
           status_id IN (2, 5)
           AND CAST(return_at AS INTEGER) > 0
@@ -3335,16 +3347,13 @@ export class SettlementIndexer {
         CASE WHEN status_id = 1 THEN CAST(arrival_at AS INTEGER) ELSE CAST(return_at AS INTEGER) END ASC,
         CAST(mission_id AS INTEGER) ASC
       LIMIT ?
-    `).all(asOfSeconds, asOfSeconds, boundedLimit) as ContractFleetMissionRow[];
+    `).all(
+      asOfSeconds,
+      this.randomnessEngineConfigured ? 1 : 0,
+      asOfSeconds,
+      boundedLimit
+    ) as ContractFleetMissionRow[];
     const missions = rows.map((row) => this.canonicalFleetMissionSummary(row));
-    const arrivedAttacks = missions.filter(
-      (mission) => mission.status === "Outbound"
-        && mission.missionType === "Attack"
-        && missionBattleRandomnessRequestId(mission) !== null
-    );
-    const fulfilledRandomnessRequestIds = this.randomnessEngineConfigured && arrivedAttacks.length > 0
-      ? this.fulfilledRandomnessRequestIds()
-      : null;
     const resolvableTypes = new Set([
       "Attack",
       "Harvest",
@@ -3358,7 +3367,7 @@ export class SettlementIndexer {
     const arrivals = missions
       .filter((mission) =>
         resolvableTypes.has(mission.missionType)
-          && fleetMissionNeedsResolution(mission, asOfSeconds, fulfilledRandomnessRequestIds)
+          && fleetMissionNeedsResolution(mission, asOfSeconds, null)
       )
       .map((mission) => ({
         arrivalAt: mission.missionType === "DefenseHold"
@@ -5985,6 +5994,11 @@ export class SettlementIndexer {
         ON indexed_mission_event_logs (event_kind, block_number);
       CREATE INDEX IF NOT EXISTS indexed_mission_event_logs_kind_topic1_block_idx
         ON indexed_mission_event_logs (event_kind, json_extract(event_json, '$.topics[1]'), block_number);
+      CREATE TABLE IF NOT EXISTS indexed_fulfilled_randomness_requests (
+        request_id TEXT PRIMARY KEY,
+        event_id TEXT NOT NULL,
+        block_number TEXT NOT NULL
+      );
       -- Attack-protection previews only need Attack launches from one attacker. Without this
       -- expression index, every personalized Rankings/Raid Finder request loaded and decoded the
       -- entire fleet-event ledger (86k+ rows in production) just to find a few matching launches.
@@ -6343,6 +6357,10 @@ export class SettlementIndexer {
         ON contract_fleet_missions (origin_planet_id, status_id);
       CREATE INDEX IF NOT EXISTS contract_fleet_missions_status_type_idx
         ON contract_fleet_missions (status_id, mission_type_id);
+      CREATE INDEX IF NOT EXISTS contract_fleet_missions_resolver_arrival_idx
+        ON contract_fleet_missions (status_id, CAST(arrival_at AS INTEGER), CAST(mission_id AS INTEGER));
+      CREATE INDEX IF NOT EXISTS contract_fleet_missions_resolver_return_idx
+        ON contract_fleet_missions (status_id, CAST(return_at AS INTEGER), CAST(mission_id AS INTEGER));
       CREATE INDEX IF NOT EXISTS contract_fleet_missions_completed_archive_idx
         ON contract_fleet_missions (
           CAST(CASE WHEN status_id = 4 THEN return_at ELSE arrival_at END AS INTEGER) DESC,
@@ -6503,6 +6521,7 @@ export class SettlementIndexer {
       this.backfillCanonicalTables();
       this.replayFleetMissionRowsFromEventLogs();
     }
+    this.backfillFulfilledRandomnessProjection();
     // Unlike the broad materialized-state repairs above, this versioned feed migration must run on
     // the production writer. Production intentionally passes runStartupBackfill=false, while the
     // activity feed still needs one bounded replay of the already-durable raw event ledger.
@@ -7112,6 +7131,36 @@ export class SettlementIndexer {
         this.recordMissionEventLog(row.event_id, log);
         this.applyFleetMissionCompatibilityEvent(log);
       }
+    })();
+  }
+
+  /// Materialize fulfilled request ids once for indexed resolver joins. Resolver ticks must never
+  /// decode the historical randomness ledger or let an earlier unfulfilled attack consume their
+  /// bounded candidate window.
+  private backfillFulfilledRandomnessProjection(): void {
+    if (this.metadata(fulfilledRandomnessProjectionBackfillMetadataKey) !== null) return;
+    const rows = this.db.query(`
+      SELECT event_id, block_number, event_json
+      FROM indexed_mission_event_logs
+      WHERE event_kind = 'randomness'
+      ORDER BY CAST(block_number AS INTEGER) ASC
+    `).all() as Array<EventRow & { event_id: string; block_number: string }>;
+    const insert = this.db.query(`
+      INSERT OR REPLACE INTO indexed_fulfilled_randomness_requests
+        (request_id, event_id, block_number)
+      VALUES (?, ?, ?)
+    `);
+    this.db.transaction(() => {
+      for (const row of rows) {
+        const requestId = decodeRandomnessFulfilledRequestId(
+          parseEvent<IndexedRpcLog>(row.event_json)
+        );
+        insert.run(requestId, row.event_id, row.block_number);
+      }
+      this.setMetadata(
+        fulfilledRandomnessProjectionBackfillMetadataKey,
+        new Date().toISOString()
+      );
     })();
   }
 
@@ -11556,6 +11605,17 @@ export class SettlementIndexer {
       INSERT OR REPLACE INTO indexed_mission_event_logs (event_id, event_kind, block_number, event_json)
       VALUES (?, ?, ?, ?)
     `).run(eventId, eventKind, blockNumberToDecimal(log.blockNumber), JSON.stringify(log));
+    if (eventKind === "randomness") {
+      this.db.query(`
+        INSERT OR REPLACE INTO indexed_fulfilled_randomness_requests
+          (request_id, event_id, block_number)
+        VALUES (?, ?, ?)
+      `).run(
+        decodeRandomnessFulfilledRequestId(log),
+        eventId,
+        blockNumberToDecimal(log.blockNumber)
+      );
+    }
     if (eventKind === "battle") {
       const missionId = battleLogMissionId(log);
       if (missionId) this.markBattleReportMaterializationPending(missionId, blockNumberToDecimal(log.blockNumber));
@@ -11564,9 +11624,38 @@ export class SettlementIndexer {
   }
 
   private removeMissionEventLog(eventId: string): void {
+    const existing = this.db.query(`
+      SELECT event_kind, event_json
+      FROM indexed_mission_event_logs
+      WHERE event_id = ?
+    `).get(eventId) as { event_kind: string; event_json: string } | null;
     const result = this.db
       .query("DELETE FROM indexed_mission_event_logs WHERE event_id = ?")
       .run(eventId);
+    if (existing?.event_kind === "randomness") {
+      const log = parseEvent<IndexedRpcLog>(existing.event_json);
+      const requestId = decodeRandomnessFulfilledRequestId(log);
+      const requestTopic = log.topics[1]?.toLowerCase() ?? "";
+      const replacement = this.db.query(`
+        SELECT event_id, block_number
+        FROM indexed_mission_event_logs
+        WHERE event_kind = 'randomness'
+          AND lower(json_extract(event_json, '$.topics[1]')) = ?
+        ORDER BY CAST(block_number AS INTEGER) DESC
+        LIMIT 1
+      `).get(requestTopic) as { event_id: string; block_number: string } | null;
+      if (replacement) {
+        this.db.query(`
+          INSERT OR REPLACE INTO indexed_fulfilled_randomness_requests
+            (request_id, event_id, block_number)
+          VALUES (?, ?, ?)
+        `).run(requestId, replacement.event_id, replacement.block_number);
+      } else {
+        this.db.query(
+          "DELETE FROM indexed_fulfilled_randomness_requests WHERE request_id = ?"
+        ).run(requestId);
+      }
+    }
     if (result.changes > 0) this.touchMissionReadModel();
   }
 

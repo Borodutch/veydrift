@@ -4143,6 +4143,62 @@ contract VeydriftGameTest is Test {
         assertEq(game.defenseCount(targetPlanetId, Defense.LightLaser), 0);
     }
 
+    function testMissileImpactResumesAcrossWorstCaseTargetProductionBacklogs() public {
+        (uint256 originPlanetId, uint256 targetPlanetId, address defender) =
+            _seedMissileAttackPlanetsWithoutScoreProtection();
+        uint32 queueCount = 80;
+        _setTechnologyLevel(player, Technology.ImpulseDrive, 3);
+        _setTechnologyLevel(defender, Technology.CombustionDrive, 1);
+        _setBuildingLevel(targetPlanetId, Building.Shipyard, 20);
+        _setBuildingLevel(targetPlanetId, Building.NaniteFactory, 20);
+        _setResources(targetPlanetId, 1_000_000_000, 1_000_000_000, 1_000_000_000);
+        for (uint32 index = 0; index < queueCount; ++index) {
+            vm.startPrank(defender);
+            game.startShipProduction(targetPlanetId, Ship.LightFighter, 1);
+            game.startDefenseProduction(targetPlanetId, Defense.RocketLauncher, 1);
+            vm.stopPrank();
+        }
+        assertEq(game.shipQueueBacklog(targetPlanetId).length, queueCount - 1);
+        assertEq(game.defenseQueueBacklog(targetPlanetId).length, queueCount - 1);
+
+        _setPlanetCoordinates(targetPlanetId, 1, 114, 9);
+        _setDefenseCount(originPlanetId, Defense.InterplanetaryMissile, 1);
+        vm.prank(player);
+        uint256 missionId = game.launchInterplanetaryMissileAttack(
+            originPlanetId, targetPlanetId, Defense.RocketLauncher, 1
+        );
+        (, uint64 arrivalAt,,) = _fleetMission(missionId);
+        vm.warp(arrivalAt);
+
+        uint256 gasBefore = gasleft();
+        game.resolveFleetMission(missionId);
+        uint256 maximumChunkGas = gasBefore - gasleft();
+        (VeydriftGameStorage.FleetMissionStatus firstChunkStatus,,,) = _fleetMission(missionId);
+        assertEq(uint8(firstChunkStatus), uint8(VeydriftGameStorage.FleetMissionStatus.Outbound));
+        vm.prank(defender);
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftGameStorage.FleetMissionNotResolved.selector, arrivalAt)
+        );
+        game.startDefenseProduction(targetPlanetId, Defense.RocketLauncher, 1);
+
+        for (uint256 attempt = 1; attempt < 80; ++attempt) {
+            gasBefore = gasleft();
+            game.resolveFleetMission(missionId);
+            uint256 gasUsed = gasBefore - gasleft();
+            if (gasUsed > maximumChunkGas) maximumChunkGas = gasUsed;
+            (VeydriftGameStorage.FleetMissionStatus currentStatus,,,) = _fleetMission(missionId);
+            if (currentStatus == VeydriftGameStorage.FleetMissionStatus.Resolved) break;
+        }
+
+        (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(missionId);
+        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Resolved));
+        assertLt(maximumChunkGas, 2_000_000);
+        assertEq(game.shipCount(targetPlanetId, Ship.LightFighter), queueCount);
+        assertEq(game.defenseCount(targetPlanetId, Defense.RocketLauncher), queueCount - 1);
+        assertEq(game.shipQueueBacklog(targetPlanetId).length, 0);
+        assertEq(game.defenseQueueBacklog(targetPlanetId).length, 0);
+    }
+
     function testPlanetCannotBeAbandonedWhileIncomingMissileIsInFlight() public {
         (uint256 originPlanetId, uint256 defenderHomePlanetId, address defender) =
             _seedMissileAttackPlanetsWithoutScoreProtection();

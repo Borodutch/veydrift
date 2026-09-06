@@ -14,6 +14,10 @@ export type BackendConfig = {
   // independent of the generic cursor so a temporary rollback to an older backend cannot strand
   // event-only missile payloads outside the normal 64-block overlap.
   timedMissileIndexFromBlock?: bigint;
+  // Pre-upgrade rollout mode. It lets the compatible writer run against the old implementation
+  // without inventing a replay boundary before the upgrade receipt exists. Final rollout config
+  // must replace standby with the exact receipt block.
+  timedMissileStandby?: boolean;
   currentStateHealRunId?: string;
   fullCanonicalStateHealRunId?: string;
   researchQueueStartedAtRepairRunId?: string;
@@ -113,6 +117,7 @@ export type SafeConfigSummary = {
   referralIndexFromBlock: string;
   paidAllianceInviteIndexFromBlock: string | null;
   timedMissileIndexFromBlock: string | null;
+  timedMissileStandby: boolean;
   resourceTokensConfigured: {
     crystal: boolean;
     deuterium: boolean;
@@ -188,13 +193,21 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
     "VEYDRIFT_TIMED_MISSILE_INDEX_FROM_BLOCK",
     problems
   );
+  const timedMissileStandby = parseBooleanFlag(env.VEYDRIFT_TIMED_MISSILE_STANDBY);
   if (
     (deploymentMode === "staging" || deploymentMode === "production")
     && timedMissileIndexFromBlock === undefined
+    && !timedMissileStandby
   ) {
     problems.push({
       field: "VEYDRIFT_TIMED_MISSILE_INDEX_FROM_BLOCK",
       message: "Required in staging and production for timed-missile payload recovery."
+    });
+  }
+  if (timedMissileStandby && timedMissileIndexFromBlock !== undefined) {
+    problems.push({
+      field: "VEYDRIFT_TIMED_MISSILE_STANDBY",
+      message: "Standby cannot be combined with an exact timed-missile replay boundary."
     });
   }
   const parsedLogChunkSpan = parseBigInt(env.VEYDRIFT_LOG_CHUNK_SPAN, "VEYDRIFT_LOG_CHUNK_SPAN", problems);
@@ -410,6 +423,7 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
       indexDbPath,
       indexFromBlock,
       ...(timedMissileIndexFromBlock !== undefined ? { timedMissileIndexFromBlock } : {}),
+      timedMissileStandby,
       ...(currentStateHealRunId ? { currentStateHealRunId } : {}),
       ...(fullCanonicalStateHealRunId ? { fullCanonicalStateHealRunId } : {}),
       ...(researchQueueStartedAtRepairRunId ? { researchQueueStartedAtRepairRunId } : {}),
@@ -476,6 +490,7 @@ export function safeConfigSummary(config: BackendConfig): SafeConfigSummary {
     referralIndexFromBlock: (config.referralIndexFromBlock ?? config.indexFromBlock).toString(),
     paidAllianceInviteIndexFromBlock: config.paidAllianceInviteIndexFromBlock?.toString() ?? null,
     timedMissileIndexFromBlock: config.timedMissileIndexFromBlock?.toString() ?? null,
+    timedMissileStandby: Boolean(config.timedMissileStandby),
     resourceTokensConfigured: {
       crystal: Boolean(config.resourceTokenAddresses.crystal),
       deuterium: Boolean(config.resourceTokenAddresses.deuterium),

@@ -125,9 +125,11 @@ VEYDRIFT_CRYSTAL_TOKEN_ADDRESS=0x...
 VEYDRIFT_DEUTERIUM_TOKEN_ADDRESS=0x...
 VEYDRIFT_INDEX_DB_PATH=.data/contract-state.sqlite
 VEYDRIFT_INDEX_FROM_BLOCK=0
-# Exact Game upgrade boundary retained for rollback-safe timed-missile payload replay; required in
-# staging and production.
+# Final rollout: exact confirmed Game upgrade receipt block for rollback-safe timed-missile replay.
 VEYDRIFT_TIMED_MISSILE_INDEX_FROM_BLOCK=
+# Pre-upgrade only: set true while the compatible writer runs before the receipt block exists. Never
+# combine with VEYDRIFT_TIMED_MISSILE_INDEX_FROM_BLOCK; remove after the upgrade.
+VEYDRIFT_TIMED_MISSILE_STANDBY=false
 # Required when VEYDRIFT_PAID_ALLIANCE_INVITE_ADDRESS is set; use the treasury deployment block.
 VEYDRIFT_PAID_ALLIANCE_INVITE_INDEX_FROM_BLOCK=
 VEYDRIFT_MISSION_RESOLVER_PRIVATE_KEY=0x...

@@ -281,11 +281,16 @@ Veydrift is in open alpha as of 2026-05-29, so contract deployments must preserv
 existing player state. Read `../../docs/open-alpha-state-preservation.md` before
 running any deploy or upgrade command.
 
-Timed-missile rollout has a strict compatibility order: record the current Base block, configure it
-as `VEYDRIFT_TIMED_MISSILE_INDEX_FROM_BLOCK`, then deploy and verify the backend/indexer build that
-ingests and replays `InterplanetaryMissileLaunched`. Upgrade the live Game proxy without pausing only
-after that writer is healthy and caught up, then deploy the frontend. The narrow replay remains active
-after rollout so a temporary backend rollback cannot strand the event-only immutable missile payload.
+Timed-missile rollout has a strict compatibility order. First deploy and verify the compatible backend
+writer and keeper with `VEYDRIFT_TIMED_MISSILE_STANDBY=true` and no replay boundary. Upgrade the live
+Transparent Game proxy through `UpgradeGame.s.sol` without pausing. Only after the receipt confirms,
+replace standby with `VEYDRIFT_TIMED_MISSILE_INDEX_FROM_BLOCK` equal to that exact receipt block and
+redeploy the same writer/keeper build. Verify lifecycle replay through the current synchronized head,
+then deploy the frontend last. Never pre-record or estimate the boundary, run `Deploy.s.sol`, roll back
+to an old writer, or pause gameplay for this upgrade. The narrow replay remains active after rollout so
+a temporary process restart cannot strand the event-only immutable missile payload. The canonical
+commands and implementation/code-hash smoke proof are in
+[`../../docs/veydrift-contract-redeploy-runbook.md`](../../docs/veydrift-contract-redeploy-runbook.md).
 
 ## VEYDRIFT Uniswap CCA/v4 launch
 

@@ -4,13 +4,14 @@ import { encodeAbiParameters, keccak256, parseAbiParameters, toHex } from "viem"
 import { ChainSyncService } from "./chainSync";
 import type { LiveLogSubscriber } from "./chainSync";
 import type { BackendConfig } from "./config";
-import type { CanonicalPlanetChainState, QueueState, RpcLog, SettledPlanetEvent } from "./evm";
+import type { CanonicalPlanetChainState, QueueState, ResearchState, RpcLog, SettledPlanetEvent } from "./evm";
 import { SettlementIndexer } from "./indexer";
 
 const player = "0x2222222222222222222222222222222222222222";
 const planetStartedTopic = "0xef2d7a7105128f441ebc83d8e2e87960a9b0dfdfa02cc68769872b2c52a431f3";
 const shipCompletedTopic = "0xd261dd8008086de5ef74708b23f5f21be1962fee33795961e03a5750c4897785";
 const defenseCompletedTopic = "0xcc99fccb631bf08aef4833c0cbd43ed8d19a40eacce0fe225beff1693a903aa6";
+const researchCompletedTopic = "0x93dffeb1ed0a05133592cf6d82b9a200c2ac72b521497b81cef83ac57cb84b4f";
 // Authoritative per-mutation count events the contract emits on EVERY ship/defense count change,
 // including combat losses (overwrite-to-total).
 const planetShipCountChangedTopic = "0x6a0fc6b08970eb9f7e15767e6902471ca8731c57dbe4577c76021e1f9d6762cf";
@@ -656,6 +657,63 @@ describe("ChainSyncService (polling)", () => {
       SELECT removed FROM indexed_event_logs
       WHERE transaction_hash = ? AND log_index = ?
     `).get(orphanedCompletion.transactionHash, "0x0")).toEqual({ removed: 1 });
+    service.stop();
+  });
+
+  test("canonically heals research after a live completion removal", async () => {
+    let canonicalReads = 0;
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents(): Promise<SettledPlanetEvent[]> { return []; },
+      async getResearchState(): Promise<ResearchState> {
+        canonicalReads += 1;
+        return {
+          wallet: player,
+          homePlanetId: null,
+          researchAvailable: true,
+          resources: null,
+          researchLabLevel: 0,
+          researchNetworkLabLevels: [],
+          technologyLevels: { "4": 1 },
+          technologies: [{
+            id: 4,
+            level: 1,
+            cost: { metal: "0", crystal: "0", deuterium: "0" }
+          }],
+          queue: null
+        };
+      }
+    }, 100n);
+    const orphanedCompletion: TestLog = {
+      address: config.gameContractAddress!,
+      blockNumber: "0x181",
+      transactionHash: "0xmissile-impact-research-completion",
+      logIndex: "0x0",
+      topics: [researchCompletedTopic, ownerTopic(player), topicWord(4n)],
+      data: abiWords(4n)
+    };
+    indexer.applyLog(orphanedCompletion);
+    expect(indexer.technologyLevels(player)["4"]).toBe(4);
+
+    let canonicalLogs: RpcLog[] = [orphanedCompletion];
+    const backfiller = new MockBackfiller(0x181n, () => canonicalLogs);
+    backfiller.timedMissilePayloadLogsFor = () => canonicalLogs;
+    const liveLogs = new MockLiveLogSubscriber();
+    const service = new ChainSyncService({
+      ...config,
+      pollIntervalMs: 60_000,
+      timedMissileIndexFromBlock: 100n
+    }, indexer, { liveLogSubscriber: liveLogs, logBackfiller: backfiller });
+
+    service.start();
+    await waitFor(() => service.snapshot().connected);
+    canonicalLogs = [];
+    backfiller.head = 0x182n;
+    liveLogs.emit([{ ...orphanedCompletion, removed: true }]);
+
+    await waitFor(() => indexer.technologyLevels(player)["4"] === 1);
+    expect(canonicalReads).toBe(1);
     service.stop();
   });
 
@@ -1518,6 +1576,32 @@ describe("ChainSyncService (polling)", () => {
       liveListenerConnected: true,
       timedMissilePayloadHistoryBackfill: {
         lastError: "timed missile replay unavailable"
+      }
+    });
+    service.stop();
+  });
+
+  test("pre-upgrade standby runs the compatible writer without inventing a replay boundary", async () => {
+    const backfiller = new MockBackfiller(300n);
+    backfiller.listTimedMissileLifecycleLogs = async () => {
+      throw new Error("standby must not query post-upgrade lifecycle history");
+    };
+    const service = new ChainSyncService({
+      ...config,
+      timedMissileStandby: true
+    }, makeIndexer(), { logBackfiller: backfiller });
+
+    await service.poll();
+
+    expect(backfiller.timedMissilePayloadRanges).toEqual([]);
+    expect(service.snapshot()).toMatchObject({
+      connected: true,
+      lastError: null,
+      timedMissilePayloadHistoryBackfill: {
+        fromBlock: null,
+        inProgress: false,
+        lastError: null,
+        throughBlock: null
       }
     });
     service.stop();

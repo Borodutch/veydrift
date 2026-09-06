@@ -7,6 +7,7 @@ import {
   isMoonResourcesChangedLog,
   isMoonResourcesSettledLog,
   isPlanetSettledLog,
+  isIndexedQueueCompletedLog,
   isSettledPlanetLog
 } from "./evm";
 import type { RpcLog } from "./evm";
@@ -266,6 +267,7 @@ export class ChainSyncService {
   private readonly recentEventReceiveLagsMs: number[] = [];
   private readonly recentHandlerDurationsMs: Array<{ durationMs: number; sampledAtMs: number }> = [];
   private readonly recentHandledLogIdentities = new Map<string, undefined>();
+  private readonly pendingCompletionReconciliationLogs = new Map<string, RpcLog>();
 
   constructor(
     private readonly config: BackendConfig,
@@ -506,9 +508,7 @@ export class ChainSyncService {
           await this.applyLogs(missingCanonicalLogs, applyLog, "fallback_poll");
         }
         const { applied, lastHash, resourceChanges, walletPlanetsChanged } = await this.applyLogs(logs, applyLog);
-        if (missingCanonicalLogs.length > 0) {
-          await this.indexer?.reconcileTimedMissileCompletionState?.(missingCanonicalLogs);
-        }
+        await this.reconcileRemovedCompletionLogs(missingCanonicalLogs);
         // Advance the generic cursor before specialized history scans. Both share the raw ledger, so
         // a process crash after a specialized scan must never leave latestIndexedBlock ahead of a
         // generic range that was not durably ingested.
@@ -695,6 +695,7 @@ export class ChainSyncService {
     backfiller: LogBackfiller,
     applyLog: NonNullable<SettlementIndexer["applyLog"]>
   ): Promise<void> {
+    if (this.config.timedMissileStandby) return;
     const contractAddress = this.config.gameContractAddress;
     const fromBlock = this.config.timedMissileIndexFromBlock;
     const listLogs = backfiller.listTimedMissileLifecycleLogs;
@@ -759,12 +760,10 @@ export class ChainSyncService {
       const removedCompletionLogs = isStartupVerification
         ? this.indexer?.removedTimedMissileCompletionLogs?.(contractAddress, fromBlock, head) ?? []
         : [];
-      if (missingCanonicalLogs.length > 0 || removedCompletionLogs.length > 0) {
-        await this.indexer?.reconcileTimedMissileCompletionState?.([
-          ...missingCanonicalLogs,
-          ...removedCompletionLogs
-        ]);
-      }
+      await this.reconcileRemovedCompletionLogs([
+        ...missingCanonicalLogs,
+        ...removedCompletionLogs
+      ]);
       const marker = record.call(this.indexer, contractAddress, fromBlock, head);
       this.timedMissilePayloadHistoryVerifiedThisRun = true;
       this.timedMissilePayloadHistoryBackfill = {
@@ -962,6 +961,9 @@ export class ChainSyncService {
           // A reorg-removed log. The contract re-emits the canonical post-state on the new chain, and
           // the next poll re-scans head, so we only record it for observability — no reconcile sweep.
           this.reorgDetectedAt = new Date().toISOString();
+          if (isIndexedQueueCompletedLog(log)) {
+            this.pendingCompletionReconciliationLogs.set(logIdentity, log);
+          }
         }
       } catch (error) {
         this.lastError =
@@ -972,6 +974,21 @@ export class ChainSyncService {
       }
     }
     return { applied, lastHash, resourceChanges: [...resourceChanges.values()], walletPlanetsChanged };
+  }
+
+  private async reconcileRemovedCompletionLogs(logs: readonly RpcLog[]): Promise<void> {
+    const pending = [...this.pendingCompletionReconciliationLogs.entries()];
+    const completionLogs = [
+      ...logs.filter((log) => isIndexedQueueCompletedLog(log)),
+      ...pending.map(([, log]) => log)
+    ];
+    if (completionLogs.length === 0) return;
+    const reconcile = this.indexer?.reconcileTimedMissileCompletionState;
+    if (!reconcile) {
+      throw new Error("removed queue completion reconciliation capability is unavailable");
+    }
+    await reconcile.call(this.indexer, completionLogs);
+    for (const [identity] of pending) this.pendingCompletionReconciliationLogs.delete(identity);
   }
 
   private rememberHandledLogIdentity(identity: string): void {

@@ -136,6 +136,17 @@ abstract contract VeydriftGameStorage is Initializable {
         uint256 rate;
     }
 
+    /// @dev Resumable target-queue settlement for one timed missile impact. The active queue is
+    ///      advanced one entry at a time, then the consumed prefix of each legacy backlog array is
+    ///      compacted and popped in bounded steps before damage is applied.
+    struct MissileQueueSettlementProgress {
+        uint32 shipBacklogConsumed;
+        uint32 shipBacklogCompacted;
+        uint32 defenseBacklogConsumed;
+        uint32 defenseBacklogCompacted;
+        uint8 stage;
+    }
+
     struct ResearchQueue {
         bool active;
         Technology technology;
@@ -420,6 +431,8 @@ abstract contract VeydriftGameStorage is Initializable {
     mapping(uint256 planetId => uint256[] missionIds) internal _missileArrivalHeapByPlanet;
     mapping(uint256 planetId => mapping(uint256 missionId => uint256 indexPlusOne)) internal
         _missileArrivalHeapIndexByPlanet;
+    mapping(uint256 missionId => MissileQueueSettlementProgress progress) internal
+        _missileQueueSettlementProgress;
 
     error AlreadyStarted();
     error BadStartPayment();

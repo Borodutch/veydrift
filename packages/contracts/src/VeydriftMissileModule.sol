@@ -4,13 +4,10 @@ pragma solidity ^0.8.28;
 import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
 import {Defense, Technology} from "./libraries/VeydriftTypes.sol";
 
-interface IVeydriftMissileTargetQueueSettler {
-    function completeAttackTargetSnapshotQueues(uint256 planetId, uint64 cutoffAt) external;
-}
-
 /// @notice Delegatecall target for timed, one-way interplanetary missile missions.
 contract VeydriftMissileModule is VeydriftResourceReserves {
     bytes4 private constant ATTACK_PROTECTION_STATUS_SELECTOR = 0x8a6b2246;
+    uint256 private constant MAX_QUEUE_SETTLEMENT_OPERATIONS = 12;
 
     constructor() VeydriftResourceReserves(address(0)) {}
 
@@ -112,8 +109,9 @@ contract VeydriftMissileModule is VeydriftResourceReserves {
 
         _requireEarliestPendingMissionForPlanet(missionId, mission.targetPlanetId);
 
-        IVeydriftMissileTargetQueueSettler(address(this))
-            .completeAttackTargetSnapshotQueues(mission.targetPlanetId, mission.arrivalAt);
+        if (!_settleMissileTargetQueues(missionId, mission.targetPlanetId, mission.arrivalAt)) {
+            return;
+        }
         Defense primaryTarget = _missileMissionPrimaryTarget[missionId];
         uint32 quantity = _missileMissionQuantity[missionId];
         uint32 antiBallistic = _defenseCounts[mission.targetPlanetId][Defense.AntiBallisticMissile];
@@ -126,6 +124,7 @@ contract VeydriftMissileModule is VeydriftResourceReserves {
         _debitPlanetDefenses(mission.targetPlanetId, primaryTarget, destroyedPrimary);
 
         mission.status = FleetMissionStatus.Resolved;
+        delete _missileQueueSettlementProgress[missionId];
         _removeMissileArrival(mission.targetPlanetId, missionId);
         // The historical impact event predates timed missions and its indexer fallback subtracts
         // launched IPMs when no authoritative origin total exists in the same transaction. Repeat
@@ -148,6 +147,225 @@ contract VeydriftMissileModule is VeydriftResourceReserves {
         emit FleetMissionResolved(
             missionId, msg.sender, FleetMissionType.MissileAttack, mission.arrivalAt
         );
+    }
+
+    /// @dev A target can have an arbitrarily long pre-upgrade ship/defense backlog. Resolve at most a
+    ///      fixed number of queue/compaction operations per transaction and retain the impact's
+    ///      immutable arrival cutoff until every by-arrival completion has been applied. The earliest
+    ///      mission guard freezes target queue mutations between chunks.
+    function _settleMissileTargetQueues(uint256 missionId, uint256 planetId, uint64 cutoffAt)
+        private
+        returns (bool)
+    {
+        MissileQueueSettlementProgress storage progress = _missileQueueSettlementProgress[missionId];
+        uint256 operations;
+        while (operations < MAX_QUEUE_SETTLEMENT_OPERATIONS && progress.stage < 6) {
+            if (progress.stage == 0) {
+                _settleResearchDue(_planets[planetId].owner, cutoffAt);
+                if (_settleOneMissileShipQueue(planetId, cutoffAt, progress)) {
+                    progress.stage = 1;
+                } else {
+                    unchecked {
+                        ++operations;
+                    }
+                }
+            } else if (progress.stage == 1) {
+                ShipQueue[] storage backlog = _shipQueueBacklogs[planetId];
+                if (progress.shipBacklogConsumed == 0) {
+                    progress.stage = 3;
+                } else if (
+                    uint256(progress.shipBacklogConsumed) + progress.shipBacklogCompacted
+                        < backlog.length
+                ) {
+                    backlog[progress.shipBacklogCompacted] = backlog[
+                        uint256(progress.shipBacklogConsumed) + progress.shipBacklogCompacted
+                    ];
+                    unchecked {
+                        ++progress.shipBacklogCompacted;
+                        ++operations;
+                    }
+                } else {
+                    progress.stage = 2;
+                }
+            } else if (progress.stage == 2) {
+                ShipQueue[] storage backlog = _shipQueueBacklogs[planetId];
+                if (backlog.length > progress.shipBacklogCompacted) {
+                    backlog.pop();
+                    unchecked {
+                        ++operations;
+                    }
+                } else {
+                    progress.stage = 3;
+                }
+            } else if (progress.stage == 3) {
+                if (_settleOneMissileDefenseQueue(planetId, cutoffAt, progress)) {
+                    progress.stage = 4;
+                } else {
+                    unchecked {
+                        ++operations;
+                    }
+                }
+            } else if (progress.stage == 4) {
+                DefenseQueue[] storage backlog = _defenseQueueBacklogs[planetId];
+                if (progress.defenseBacklogConsumed == 0) {
+                    progress.stage = 6;
+                } else if (
+                    uint256(progress.defenseBacklogConsumed) + progress.defenseBacklogCompacted
+                        < backlog.length
+                ) {
+                    backlog[progress.defenseBacklogCompacted] = backlog[
+                        uint256(progress.defenseBacklogConsumed) + progress.defenseBacklogCompacted
+                    ];
+                    unchecked {
+                        ++progress.defenseBacklogCompacted;
+                        ++operations;
+                    }
+                } else {
+                    progress.stage = 5;
+                }
+            } else {
+                DefenseQueue[] storage backlog = _defenseQueueBacklogs[planetId];
+                if (backlog.length > progress.defenseBacklogCompacted) {
+                    backlog.pop();
+                    unchecked {
+                        ++operations;
+                    }
+                } else {
+                    progress.stage = 6;
+                }
+            }
+        }
+        return progress.stage == 6;
+    }
+
+    /// @return complete True when no ship completion remains at or before `cutoffAt`.
+    function _settleOneMissileShipQueue(
+        uint256 planetId,
+        uint64 cutoffAt,
+        MissileQueueSettlementProgress storage progress
+    ) private returns (bool complete) {
+        ShipQueue memory queue = shipQueues[planetId];
+        if (!queue.active) return true;
+        ProductionQueueTiming memory timing = _shipQueueTimings[planetId][queue.readyAt];
+        uint32 newlyCompleted = queue.quantity;
+        if (timing.startedAt == 0) {
+            if (cutoffAt < queue.readyAt) return true;
+        } else {
+            uint32 previouslyCompleted = timing.originalQuantity >= queue.quantity
+                ? timing.originalQuantity - queue.quantity
+                : 0;
+            uint32 completedAsOf = _completedProductionQuantity(queue.readyAt, timing, cutoffAt);
+            if (completedAsOf <= previouslyCompleted) return true;
+            newlyCompleted = completedAsOf - previouslyCompleted;
+            if (newlyCompleted > queue.quantity) newlyCompleted = queue.quantity;
+        }
+
+        uint32 total = _shipCounts[planetId][queue.ship] + newlyCompleted;
+        _shipCounts[planetId][queue.ship] = total;
+        emit ShipCompleted(planetId, queue.ship, newlyCompleted, total);
+        if (newlyCompleted != queue.quantity) {
+            ShipQueue storage active = shipQueues[planetId];
+            active.cost
+            .metal -= uint128((uint256(active.cost.metal) * newlyCompleted) / active.quantity);
+            active.cost
+            .crystal -= uint128((uint256(active.cost.crystal) * newlyCompleted) / active.quantity);
+            active.cost
+            .deuterium -= uint128(
+                (uint256(active.cost.deuterium) * newlyCompleted) / active.quantity
+            );
+            active.quantity -= newlyCompleted;
+            return true;
+        }
+
+        delete _shipQueueTimings[planetId][queue.readyAt];
+        ShipQueue[] storage backlog = _shipQueueBacklogs[planetId];
+        uint256 nextIndex = progress.shipBacklogConsumed;
+        if (nextIndex >= backlog.length) {
+            delete shipQueues[planetId];
+            return true;
+        }
+        ShipQueue memory promoted = backlog[nextIndex];
+        shipQueues[planetId] = promoted;
+        // The cursor cannot exceed the array length, and creating 2^32 backlog entries is
+        // impossible within the chain's lifetime/gas limits.
+        // forge-lint: disable-next-line(unsafe-typecast)
+        progress.shipBacklogConsumed = uint32(nextIndex + 1);
+        emit ShipQueued(
+            planetId,
+            promoted.ship,
+            promoted.quantity,
+            promoted.readyAt,
+            promoted.cost.metal,
+            promoted.cost.crystal,
+            promoted.cost.deuterium
+        );
+        _emitShipQueueTiming(planetId, promoted);
+        return false;
+    }
+
+    /// @return complete True when no defense completion remains at or before `cutoffAt`.
+    function _settleOneMissileDefenseQueue(
+        uint256 planetId,
+        uint64 cutoffAt,
+        MissileQueueSettlementProgress storage progress
+    ) private returns (bool complete) {
+        DefenseQueue memory queue = defenseQueues[planetId];
+        if (!queue.active) return true;
+        ProductionQueueTiming memory timing = _defenseQueueTimings[planetId][queue.readyAt];
+        uint32 newlyCompleted = queue.quantity;
+        if (timing.startedAt == 0) {
+            if (cutoffAt < queue.readyAt) return true;
+        } else {
+            uint32 previouslyCompleted = timing.originalQuantity >= queue.quantity
+                ? timing.originalQuantity - queue.quantity
+                : 0;
+            uint32 completedAsOf = _completedProductionQuantity(queue.readyAt, timing, cutoffAt);
+            if (completedAsOf <= previouslyCompleted) return true;
+            newlyCompleted = completedAsOf - previouslyCompleted;
+            if (newlyCompleted > queue.quantity) newlyCompleted = queue.quantity;
+        }
+
+        uint32 total = _defenseCounts[planetId][queue.defense] + newlyCompleted;
+        _defenseCounts[planetId][queue.defense] = total;
+        emit DefenseCompleted(planetId, queue.defense, newlyCompleted, total);
+        if (newlyCompleted != queue.quantity) {
+            DefenseQueue storage active = defenseQueues[planetId];
+            active.cost
+            .metal -= uint128((uint256(active.cost.metal) * newlyCompleted) / active.quantity);
+            active.cost
+            .crystal -= uint128((uint256(active.cost.crystal) * newlyCompleted) / active.quantity);
+            active.cost
+            .deuterium -= uint128(
+                (uint256(active.cost.deuterium) * newlyCompleted) / active.quantity
+            );
+            active.quantity -= newlyCompleted;
+            return true;
+        }
+
+        delete _defenseQueueTimings[planetId][queue.readyAt];
+        DefenseQueue[] storage backlog = _defenseQueueBacklogs[planetId];
+        uint256 nextIndex = progress.defenseBacklogConsumed;
+        if (nextIndex >= backlog.length) {
+            delete defenseQueues[planetId];
+            return true;
+        }
+        DefenseQueue memory promoted = backlog[nextIndex];
+        defenseQueues[planetId] = promoted;
+        // The cursor cannot exceed the array length, and creating 2^32 backlog entries is
+        // impossible within the chain's lifetime/gas limits.
+        // forge-lint: disable-next-line(unsafe-typecast)
+        progress.defenseBacklogConsumed = uint32(nextIndex + 1);
+        emit DefenseQueued(
+            planetId,
+            promoted.defense,
+            promoted.quantity,
+            promoted.readyAt,
+            promoted.cost.metal,
+            promoted.cost.crystal,
+            promoted.cost.deuterium
+        );
+        _emitDefenseQueueTiming(planetId, promoted);
+        return false;
     }
 
     function _addMissileArrival(uint256 planetId, uint256 missionId) private {

@@ -173,6 +173,12 @@ const reviewedStorageAppend = [
     offset: 0,
     type: "mapping(uint256 => mapping(uint256 => uint256))",
   },
+  {
+    label: "_missileQueueSettlementProgress",
+    slot: "73",
+    offset: 0,
+    type: "mapping(uint256 => struct MissileQueueSettlementProgress)",
+  },
 ];
 const riftExtractionStruct = [
   {label: "active", slot: "0", offset: 0, type: "bool"},
@@ -187,6 +193,13 @@ const battleResolutionProgressStruct = [
   {label: "defenderDefenseDestroyed", slot: "5", offset: 0, type: "uint256"},
   {label: "rounds", slot: "6", offset: 0, type: "uint8"},
 ];
+const missileQueueSettlementProgressStruct = [
+  {label: "shipBacklogConsumed", slot: "0", offset: 0, type: "uint32"},
+  {label: "shipBacklogCompacted", slot: "0", offset: 4, type: "uint32"},
+  {label: "defenseBacklogConsumed", slot: "0", offset: 8, type: "uint32"},
+  {label: "defenseBacklogCompacted", slot: "0", offset: 12, type: "uint32"},
+  {label: "stage", slot: "0", offset: 16, type: "uint8"},
+];
 const currentV1Prefix = {
   storage: current.storage.slice(0, expected.storage.length),
   structs: Object.fromEntries(
@@ -198,6 +211,7 @@ const hasReviewedStorageAppend = (
   && stableStringify(current.storage.slice(expected.storage.length)) === stableStringify(reviewedStorageAppend)
   && stableStringify(current.structs.RiftExtraction) === stableStringify(riftExtractionStruct)
   && stableStringify(current.structs.BattleResolutionProgress) === stableStringify(battleResolutionProgressStruct)
+  && stableStringify(current.structs.MissileQueueSettlementProgress) === stableStringify(missileQueueSettlementProgressStruct)
 );
 
 if (currentJson !== expectedJson && !hasReviewedStorageAppend) {

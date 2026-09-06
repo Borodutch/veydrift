@@ -4,6 +4,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { execSync } from "node:child_process";
 
 const addressPattern = /^0x[a-fA-F0-9]{40}$/;
+const hashPattern = /^0x[a-fA-F0-9]{64}$/;
 
 const options = parseArgs(process.argv.slice(2));
 const fromEnv = Boolean(options["from-env"]);
@@ -24,6 +25,17 @@ const manifest = {
     ),
     commit: value("commit") ?? gitCommit(),
     abiHash: value("abi-hash") ?? abiHash(value("abi-file") ?? "packages/contracts/out/VeydriftGame.sol/VeydriftGame.json"),
+    activation: {
+      transactionHash: requiredHash(value("upgrade-tx", "VEYDRIFT_UPGRADE_TRANSACTION_HASH"), "upgrade-tx"),
+      gameImplementation: requiredAddress(
+        value("game-implementation", "VEYDRIFT_EXPECTED_GAME_IMPLEMENTATION"),
+        "game-implementation"
+      ),
+      gameImplementationCodeHash: requiredHash(
+        value("game-implementation-code-hash", "VEYDRIFT_EXPECTED_GAME_IMPLEMENTATION_CODE_HASH"),
+        "game-implementation-code-hash"
+      )
+    },
     deployer: {
       label: value("deployer-label", "VEYDRIFT_DEPLOYER_LABEL") ?? "Veydrift deployer wallet",
       address: optionalAddress(value("deployer-address", "VEYDRIFT_DEPLOYER_ADDRESS"), "deployer-address")
@@ -120,6 +132,14 @@ function requiredAddress(address, field) {
   return address;
 }
 
+function requiredHash(hash, field) {
+  if (!hash) fail(`Missing required hash: ${field}.`);
+  if (!hashPattern.test(hash)) {
+    fail(`${field} must be a 0x-prefixed 32-byte hash.`);
+  }
+  return hash;
+}
+
 function auxiliaryContracts(args) {
   const entries = {};
   for (const [key, current] of Object.entries(args)) {
@@ -158,13 +178,13 @@ function validateManifest(current) {
   if (BigInt(current.deployment.indexFromBlock) > BigInt(current.deployment.blockNumber)) {
     fail("index-from-block cannot be greater than deploy-block.");
   }
-  if (BigInt(current.deployment.timedMissileIndexFromBlock) > BigInt(current.deployment.blockNumber)) {
-    fail("timed-missile-index-from-block cannot be greater than deploy-block.");
+  if (current.deployment.timedMissileIndexFromBlock !== current.deployment.blockNumber) {
+    fail("timed-missile-index-from-block must equal the exact upgrade receipt block.");
   }
 }
 
 function usage(message) {
-  const text = `Usage: node scripts/veydrift-deployment-manifest.mjs --deploy-block <block> --game <address> --metal <address> --crystal <address> --deuterium <address> --alliance <address> --randomness <address> --moon <address> [--settlement <address>] [--referral <address>] [--timed-missile-index-from-block <block>] [--from-env] [--out <file>]`;
+  const text = `Usage: node scripts/veydrift-deployment-manifest.mjs --deploy-block <exact-upgrade-receipt-block> --upgrade-tx <hash> --game-implementation <address> --game-implementation-code-hash <hash> --game <address> --metal <address> --crystal <address> --deuterium <address> --alliance <address> --randomness <address> --moon <address> [--settlement <address>] [--referral <address>] [--timed-missile-index-from-block <exact-upgrade-receipt-block>] [--from-env] [--out <file>]`;
   fail(`${message}\n${text}`);
 }
 
