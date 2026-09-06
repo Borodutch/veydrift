@@ -4404,7 +4404,9 @@ export class SettlementIndexer {
         this.markReorgDetected();
         this.db.query("UPDATE indexed_event_logs SET removed = 1 WHERE event_id = ?").run(eventId);
         this.removeMissionEventLog(eventId);
+        this.removeUnitCountEventLog(eventId, log);
         this.removeMissileAttackEvent(eventId);
+        this.removeInterplanetaryMissileAttackCompatibilityEvent(log);
         const removedMissionId = fleetMissionLogMissionId(log);
         if (removedMissionId) this.rebuildMissionBodyProjection(removedMissionId);
         this.recordMoonStateEventLog(eventId, log);
@@ -4515,8 +4517,11 @@ export class SettlementIndexer {
           WHERE event_id = ?
         `).run(JSON.stringify(log), blockNumberToDecimal(log.blockNumber), new Date().toISOString(), eventId);
         this.recordMissionEventLog(eventId, log);
-        const restoredMissionId = fleetMissionLogMissionId(log);
-        if (restoredMissionId) this.rebuildMissionBodyProjection(restoredMissionId);
+        // A complete transaction reorg can remove every launch log and therefore delete an
+        // event-sourced mission row. Re-run the normal compatibility/upsert path so the row is
+        // recreated as soon as the restored log set becomes complete; projection-only rebuilding
+        // cannot recreate a row that no longer exists.
+        this.applyFleetMissionCompatibilityEvent(log);
         this.recordLatestBlock(log.blockNumber);
         return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
       }
@@ -6236,6 +6241,7 @@ export class SettlementIndexer {
     // This narrow purge must also run on the production writer, which intentionally disables the
     // broad startup backfill. Older builds could leave an archive row behind after its raw impact
     // log was removed by a reorg.
+    this.repairRemovedUnitProjectionRows();
     this.repairRemovedMissileAttackRows();
     if (runStartupBackfill) {
       this.backfillMissionEventLogs();
@@ -7047,6 +7053,32 @@ export class SettlementIndexer {
     `).run();
   }
 
+  /** Purge specialized rows left behind by older reorg handling and rebuild only the affected
+   * body/unit projections. This runs even when the production writer disables broad startup
+   * backfills, so an orphaned missile launch/impact cannot survive a restart. */
+  private repairRemovedUnitProjectionRows(): void {
+    const removedUnitRows = this.db.query(`
+      SELECT indexed_unit_count_event_logs.event_id, indexed_unit_count_event_logs.event_json
+      FROM indexed_unit_count_event_logs
+      INNER JOIN indexed_event_logs
+        ON indexed_event_logs.event_id = indexed_unit_count_event_logs.event_id
+      WHERE indexed_event_logs.removed != 0
+    `).all() as Array<EventRow & { event_id: string }>;
+    for (const row of removedUnitRows) {
+      this.removeUnitCountEventLog(row.event_id, parseEvent<IndexedRpcLog>(row.event_json));
+    }
+
+    const removedMissileRows = this.db.query(`
+      SELECT event_json
+      FROM indexed_event_logs
+      WHERE removed != 0
+        AND lower(json_extract(event_json, '$.topics[0]')) = lower(?)
+    `).all(interplanetaryMissileAttackTopic) as EventRow[];
+    for (const row of removedMissileRows) {
+      this.removeInterplanetaryMissileAttackCompatibilityEvent(parseEvent<IndexedRpcLog>(row.event_json));
+    }
+  }
+
   private queueDefenderLossBreakdownBackfill(): void {
     const migrationKey = "defenderLossBreakdownBackfillV1";
     if (this.metadata(migrationKey) !== null) return;
@@ -7141,6 +7173,16 @@ export class SettlementIndexer {
   }
 
   private absoluteUnitCountProjection(log: IndexedRpcLog): AbsoluteUnitCountProjection | null {
+    if (isIndexedQueueCompletedLog(log)) {
+      const event = decodeIndexedQueueCompletedLog(log);
+      if (!event.planetId || event.total === undefined) return null;
+      if (event.eventName === "ShipCompleted") {
+        return { body: "planet", kind: "ship", planetId: event.planetId, itemId: event.itemId, total: event.total };
+      }
+      if (event.eventName === "DefenseCompleted") {
+        return { body: "planet", kind: "defense", planetId: event.planetId, itemId: event.itemId, total: event.total };
+      }
+    }
     if (isShipCountChangedLog(log)) {
       const event = decodeShipCountChangedLog(log);
       return { body: "planet", kind: "ship", planetId: event.planetId, itemId: event.shipId, total: event.total };
@@ -7184,6 +7226,43 @@ export class SettlementIndexer {
       this.upsertIndexedLevel(table, idColumn, "count", projection.planetId, projection.itemId, projection.total);
     }
     return true;
+  }
+
+  private removeUnitCountEventLog(eventId: string, log: IndexedRpcLog): void {
+    const removed = this.absoluteUnitCountProjection(log);
+    if (!removed) return;
+    this.db.query("DELETE FROM indexed_unit_count_event_logs WHERE event_id = ?").run(eventId);
+    this.restoreLatestAbsoluteUnitCountProjection(removed);
+    this.touchBattleReportReadModel();
+  }
+
+  private restoreLatestAbsoluteUnitCountProjection(affected: AbsoluteUnitCountProjection): void {
+    const rows = this.db.query(`
+      SELECT event_json
+      FROM indexed_unit_count_event_logs
+      ORDER BY CAST(block_number AS INTEGER) DESC, length(log_index) DESC, log_index DESC
+    `).all() as EventRow[];
+    const affectedKey = this.absoluteUnitCountProjectionKey(affected);
+    for (const row of rows) {
+      const candidate = this.absoluteUnitCountProjection(parseEvent<IndexedRpcLog>(row.event_json));
+      if (!candidate || this.absoluteUnitCountProjectionKey(candidate) !== affectedKey) continue;
+      this.applyAbsoluteUnitCountProjectionIfStale(candidate);
+      this.touch();
+      return;
+    }
+
+    // With no earlier canonical snapshot, the event-sourced baseline for a unit is zero. Remove
+    // both public and canonical rows instead of retaining the orphaned total.
+    const idColumn = affected.kind === "ship" ? "ship_id" : "defense_id";
+    const tables = affected.body === "moon"
+      ? [affected.kind === "ship" ? "contract_moon_ship_counts" : "contract_moon_defense_counts"]
+      : affected.kind === "ship"
+        ? ["indexed_ship_counts", "contract_ship_counts"]
+        : ["indexed_defense_counts", "contract_defense_counts"];
+    for (const table of tables) {
+      this.db.query(`DELETE FROM ${table} WHERE planet_id = ? AND ${idColumn} = ?`).run(affected.planetId, affected.itemId);
+    }
+    this.touch();
   }
 
   private replayMaterializedStateFromEventLogs(): void {
@@ -9088,6 +9167,25 @@ export class SettlementIndexer {
     this.applyLegacyUnitMutationsOnce(`legacy:ipm:${event.transactionHash.toLowerCase()}`, mutations, event);
   }
 
+  private removeInterplanetaryMissileAttackCompatibilityEvent(log: IndexedRpcLog): void {
+    if (!isInterplanetaryMissileAttackLog(log)) return;
+    const event = decodeInterplanetaryMissileAttackLog(log);
+    const mutationKey = `legacy:ipm:${event.transactionHash.toLowerCase()}`;
+    const mutations = this.storedLegacyUnitMutations(mutationKey);
+    if (!mutations) return;
+
+    this.db.query("DELETE FROM indexed_legacy_unit_mutations WHERE mutation_key = ?").run(mutationKey);
+    for (const mutation of mutations) {
+      this.restoreLatestAbsoluteUnitCountProjection({
+        body: "planet",
+        kind: mutation.kind,
+        planetId: mutation.planetId,
+        itemId: mutation.itemId,
+        total: 0
+      });
+    }
+  }
+
   private applyGuardedInterplanetaryMissileAttackCompatibilityEvent(
     event: InterplanetaryMissileAttackEvent,
     latestAbsoluteUnitTotals: Map<string, LegacyAbsoluteUnitTotal>,
@@ -9150,17 +9248,20 @@ export class SettlementIndexer {
     `).get(missionId) as EventRow | null;
     if (!row) return 0;
     const payload = parseJson<Record<string, unknown>>(row.event_json ?? "{}", {});
-    const previous = JSON.stringify(payload.combatResolutionProgress ?? null);
+    const progressPayload = payload.mission && typeof payload.mission === "object"
+      ? payload.mission as Record<string, unknown>
+      : payload;
+    const previous = JSON.stringify(progressPayload.combatResolutionProgress ?? null);
     if (terminal) {
-      delete payload.combatResolutionProgress;
+      delete progressPayload.combatResolutionProgress;
     } else if (progress) {
       const current = parseCombatResolutionProgress(JSON.stringify(payload));
-      payload.combatResolutionProgress = {
+      progressPayload.combatResolutionProgress = {
         roundsCompleted: Math.max(current?.roundsCompleted ?? 0, progress.roundsCompleted),
         totalRounds: 6
       };
     }
-    if (JSON.stringify(payload.combatResolutionProgress ?? null) === previous) return 0;
+    if (JSON.stringify(progressPayload.combatResolutionProgress ?? null) === previous) return 0;
     return this.db.query(`
       UPDATE contract_fleet_missions
       SET event_json = ?
@@ -9198,13 +9299,16 @@ export class SettlementIndexer {
     `).get(missionId) as EventRow | null;
     if (!row) return 0;
     const payload = parseJson<Record<string, unknown>>(row.event_json ?? "{}", {});
-    const previous = JSON.stringify(payload.combatResolutionProgress ?? null);
+    const progressPayload = payload.mission && typeof payload.mission === "object"
+      ? payload.mission as Record<string, unknown>
+      : payload;
+    const previous = JSON.stringify(progressPayload.combatResolutionProgress ?? null);
     if (!terminal && roundsCompleted > 0) {
-      payload.combatResolutionProgress = { roundsCompleted, totalRounds: 6 };
+      progressPayload.combatResolutionProgress = { roundsCompleted, totalRounds: 6 };
     } else {
-      delete payload.combatResolutionProgress;
+      delete progressPayload.combatResolutionProgress;
     }
-    if (JSON.stringify(payload.combatResolutionProgress ?? null) === previous) return 0;
+    if (JSON.stringify(progressPayload.combatResolutionProgress ?? null) === previous) return 0;
     return this.db.query(`
       UPDATE contract_fleet_missions
       SET event_json = ?
@@ -11136,7 +11240,14 @@ export class SettlementIndexer {
       UPDATE contract_fleet_missions
       SET event_json = ?
       WHERE mission_id = ?
-    `).run(JSON.stringify(rebuilt), missionId);
+    `).run(
+      JSON.stringify(
+        marker.source === "indexed_mission_event_logs"
+          ? { source: "indexed_mission_event_logs", mission: rebuilt }
+          : rebuilt
+      ),
+      missionId
+    );
     this.touchMissionReadModel();
   }
 

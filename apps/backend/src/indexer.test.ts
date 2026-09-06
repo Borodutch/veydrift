@@ -2374,8 +2374,14 @@ describe("SettlementIndexer", () => {
     };
     indexer.applyLog({ ...impactLog, removed: true });
     expect(indexer.missileAttackArchivePage(player, { page: 1, pageSize: 25 }).rows).toEqual([]);
+    expect(indexer.defenseRows("7").find((defense) => defense.id === 9)?.count).toBe(3);
+    expect(indexer.defenseRows("8").find((defense) => defense.id === 8)?.count).toBe(1);
+    expect(indexer.defenseRows("8").find((defense) => defense.id === 1)?.count).toBe(5);
     indexer.applyLog(impactLog);
     expect(indexer.missileAttackArchivePage(player, { page: 1, pageSize: 25 }).rows).toHaveLength(1);
+    expect(indexer.defenseRows("7").find((defense) => defense.id === 9)?.count).toBe(0);
+    expect(indexer.defenseRows("8").find((defense) => defense.id === 8)?.count).toBe(0);
+    expect(indexer.defenseRows("8").find((defense) => defense.id === 1)?.count).toBe(3);
   });
 
   test("timed missile impact remains exact across remove and reinclude", () => {
@@ -2451,6 +2457,9 @@ describe("SettlementIndexer", () => {
     expect(indexer.defenseRows("8").find((defense) => defense.id === 1)?.count).toBe(3);
 
     for (const log of impactLogs) indexer.applyLog({ ...log, removed: true });
+    expect(indexer.defenseRows("7").find((defense) => defense.id === 9)?.count).toBe(0);
+    expect(indexer.defenseRows("8").find((defense) => defense.id === 8)?.count).toBe(2);
+    expect(indexer.defenseRows("8").find((defense) => defense.id === 1)?.count).toBe(5);
     for (const log of impactLogs) indexer.applyLog(log);
 
     expect(indexer.defenseRows("7").find((defense) => defense.id === 9)?.count).toBe(0);
@@ -2483,6 +2492,66 @@ describe("SettlementIndexer", () => {
       runStartupBackfill: false
     });
     expect(restarted.missileAttackArchivePage(player, { page: 1, pageSize: 25 }).rows).toEqual([]);
+    database.close();
+  });
+
+  test("writer startup rolls back stale missile unit projections and legacy mutation markers", () => {
+    const database = new Database(":memory:");
+    const reader = {
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    };
+    const indexer = new SettlementIndexer(reader, 100n, { database });
+    indexer.applyEvent(planet);
+    indexer.applyEvent({ ...planet, planetId: "8" });
+    for (const log of [
+      {
+        blockNumber: "0x83",
+        transactionHash: "0xstartup-origin-ipm",
+        logIndex: "0x0",
+        topics: [defenseCompletedTopic, topic(7n), topic(9n)],
+        data: abiWords(3n, 3n)
+      },
+      {
+        blockNumber: "0x83",
+        transactionHash: "0xstartup-target-abm",
+        logIndex: "0x1",
+        topics: [defenseCompletedTopic, topic(8n), topic(8n)],
+        data: abiWords(1n, 1n)
+      },
+      {
+        blockNumber: "0x83",
+        transactionHash: "0xstartup-target-laser",
+        logIndex: "0x2",
+        topics: [defenseCompletedTopic, topic(8n), topic(1n)],
+        data: abiWords(5n, 5n)
+      }
+    ]) indexer.applyLog(log);
+    const impactLog = {
+      blockNumber: "0x90",
+      transactionHash: "0xstartup-legacy-ipm",
+      logIndex: "0x0",
+      topics: [interplanetaryMissileAttackTopic, addressTopic(player), topic(7n), topic(8n)],
+      data: abiWords(1n, 3n, 1n, 2n, 2n)
+    };
+    indexer.applyLog(impactLog);
+    database.query("UPDATE indexed_event_logs SET removed = 1 WHERE transaction_hash = ?").run(impactLog.transactionHash);
+
+    expect(indexer.defenseRows("7").find((defense) => defense.id === 9)?.count).toBe(0);
+    expect(indexer.defenseRows("8").find((defense) => defense.id === 8)?.count).toBe(0);
+    expect(indexer.defenseRows("8").find((defense) => defense.id === 1)?.count).toBe(3);
+
+    const restarted = new SettlementIndexer(reader, 100n, {
+      database,
+      runStartupBackfill: false
+    });
+    expect(restarted.defenseRows("7").find((defense) => defense.id === 9)?.count).toBe(3);
+    expect(restarted.defenseRows("8").find((defense) => defense.id === 8)?.count).toBe(1);
+    expect(restarted.defenseRows("8").find((defense) => defense.id === 1)?.count).toBe(5);
+    expect(database.query(
+      "SELECT * FROM indexed_legacy_unit_mutations WHERE mutation_key = ?"
+    ).all(`legacy:ipm:${impactLog.transactionHash}`)).toEqual([]);
     database.close();
   });
 
@@ -8192,6 +8261,78 @@ describe("SettlementIndexer", () => {
       missilePrimaryTargetId: 4,
       missileQuantity: 3
     });
+  });
+
+  test("recreates a timed missile after its complete launch transaction is removed and re-included", () => {
+    const attacker = "0x3333333333333333333333333333333333333333" as Address;
+    const database = new Database(":memory:");
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n, { database });
+    indexer.applyEvent(planet);
+    indexer.applyEvent({ ...planet, planetId: "99", owner: attacker, system: 34 });
+    const launchLogs = [
+      {
+        blockNumber: "0x90",
+        transactionHash: "0xmissile-reorg",
+        logIndex: "0x0",
+        topics: [fleetMissionLaunchedTopic, topic(52n), addressTopic(attacker), topic(7n)],
+        data: abiWords(99n, 7n, 1770001200n, 1770001200n, 0n)
+      },
+      {
+        blockNumber: "0x90",
+        transactionHash: "0xmissile-reorg",
+        logIndex: "0x1",
+        topics: [fleetMissionCargoTopic, topic(52n)],
+        data: abiWords(0n, 0n, 0n, 0n)
+      },
+      {
+        blockNumber: "0x90",
+        transactionHash: "0xmissile-reorg",
+        logIndex: "0x2",
+        topics: [fleetMissionShipsTopic, topic(52n)],
+        data: abiWords(0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n)
+      },
+      {
+        blockNumber: "0x90",
+        transactionHash: "0xmissile-reorg",
+        logIndex: "0x3",
+        topics: [interplanetaryMissileLaunchedTopic, topic(52n)],
+        data: abiWords(4n, 3n)
+      }
+    ];
+
+    for (const log of launchLogs) indexer.applyLog(log);
+    expect(indexer.fleetMission("52")).toMatchObject({
+      missionType: "MissileAttack",
+      missilePrimaryTargetId: 4,
+      missileQuantity: 3
+    });
+
+    for (const log of launchLogs) indexer.applyLog({ ...log, removed: true });
+    expect(database.query("SELECT * FROM indexed_mission_event_logs").all()).toEqual([]);
+    expect(database.query(
+      "SELECT mission_id, event_json FROM contract_fleet_missions WHERE mission_id = '52'"
+    ).all()).toEqual([]);
+    expect(indexer.fleetMission("52")).toBeNull();
+
+    for (const log of launchLogs) indexer.applyLog(log);
+    expect(indexer.fleetMission("52")).toMatchObject({
+      status: "Outbound",
+      missionType: "MissileAttack",
+      owner: attacker,
+      originPlanetId: "99",
+      targetPlanetId: "7",
+      missilePrimaryTargetId: 4,
+      missileQuantity: 3
+    });
+    expect(indexer.fleetMissionVisibility(attacker).outgoing).toContainEqual(expect.objectContaining({
+      missionId: "52",
+      missionType: "MissileAttack"
+    }));
+    database.close();
   });
 
   test("serves joinable attack participants with owner tech and exact interleaved lane groups", () => {
