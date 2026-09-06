@@ -8263,6 +8263,55 @@ describe("SettlementIndexer", () => {
     });
   });
 
+  test("repairs a raw-only timed missile payload on production-writer startup", () => {
+    const database = new Database(":memory:");
+    const reader = {
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    };
+    const indexer = new SettlementIndexer(reader, 100n, { database, runStartupBackfill: false });
+    const attacker = "0x3333333333333333333333333333333333333333" as Address;
+    const tx = "0xmissile-old-writer";
+    for (const log of [
+      {
+        blockNumber: "0x90", transactionHash: tx, logIndex: "0x0",
+        topics: [fleetMissionLaunchedTopic, topic(53n), addressTopic(attacker), topic(7n)],
+        data: abiWords(99n, 7n, 1770001200n, 1770001200n, 0n)
+      },
+      {
+        blockNumber: "0x90", transactionHash: tx, logIndex: "0x1",
+        topics: [fleetMissionCargoTopic, topic(53n)], data: abiWords(0n, 0n, 0n, 0n)
+      },
+      {
+        blockNumber: "0x90", transactionHash: tx, logIndex: "0x2",
+        topics: [fleetMissionShipsTopic, topic(53n)],
+        data: abiWords(0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n)
+      }
+    ]) indexer.applyLog(log);
+    const payloadLog = {
+      blockNumber: "0x90", transactionHash: tx, logIndex: "0x3",
+      topics: [interplanetaryMissileLaunchedTopic, topic(53n)], data: abiWords(5n, 4n)
+    };
+    database.query(`
+      INSERT INTO indexed_event_logs
+        (event_id, transaction_hash, log_index, block_number, removed, event_json, received_at)
+      VALUES (?, ?, ?, ?, 0, ?, ?)
+    `).run(`${tx}:0x3`, tx, "0x3", "144", JSON.stringify(payloadLog), new Date().toISOString());
+    expect(indexer.fleetMission("53")).not.toHaveProperty("missileQuantity");
+
+    const restarted = new SettlementIndexer(reader, 100n, { database, runStartupBackfill: false });
+
+    expect(database.query(`
+      SELECT event_kind FROM indexed_mission_event_logs WHERE event_id = ?
+    `).get(`${tx}:0x3`)).toEqual({ event_kind: "fleet" });
+    expect(restarted.fleetMission("53")).toMatchObject({
+      missilePrimaryTargetId: 5,
+      missileQuantity: 4
+    });
+    database.close();
+  });
+
   test("recreates a timed missile after its complete launch transaction is removed and re-included", () => {
     const attacker = "0x3333333333333333333333333333333333333333" as Address;
     const database = new Database(":memory:");

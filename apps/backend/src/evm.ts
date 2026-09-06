@@ -1518,6 +1518,7 @@ export interface ChainReader {
   listDebrisFieldEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<DebrisFieldEvent[]>;
   listAllianceLogs?(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
   listPaidAllianceInviteLogs?(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
+  listTimedMissilePayloadLogs?(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
   listContractLogs?(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
   listReferralLogs?(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
   failoverRpc?(reason: string): boolean;
@@ -1583,6 +1584,7 @@ type JsonRpcResponse<T> = {
 
 export type RpcLog = {
   address?: string;
+  blockHash?: string;
   blockNumber: string;
   blockTimestamp?: string;
   logIndex?: string;
@@ -3904,6 +3906,19 @@ export class VeydriftGameReader implements ChainReader {
         allianceProductionBonusDeferredTopic,
         allianceBonusWithdrawnTopic
       ]]
+    });
+  }
+
+  async listTimedMissilePayloadLogs(
+    fromBlock: bigint,
+    toBlock: bigint | "latest" = "latest"
+  ): Promise<RpcLog[]> {
+    if (!this.gameContractAddress) return [];
+    return this.getLogs({
+      address: this.gameContractAddress,
+      fromBlock: toQuantity(fromBlock),
+      toBlock: toBlock === "latest" ? "latest" : toQuantity(toBlock),
+      topics: [[interplanetaryMissileLaunchedTopic]]
     });
   }
 

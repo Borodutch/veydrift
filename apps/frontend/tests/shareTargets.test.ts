@@ -48,6 +48,14 @@ describe("shareTargets", () => {
     }
   });
 
+  test("uses missile-impact semantics for every social intent", () => {
+    const targets = shareTargets(URL, "Veydrift missile impact");
+    for (const target of targets) {
+      expect(target.href).toContain(encodeURIComponent("Veydrift missile impact"));
+      expect(target.href).not.toContain(encodeURIComponent("Veydrift battle report"));
+    }
+  });
+
   test("every target carries a human label", () => {
     for (const target of shareTargets(URL)) {
       expect(target.label.length).toBeGreaterThan(0);

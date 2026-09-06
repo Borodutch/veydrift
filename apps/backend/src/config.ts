@@ -10,6 +10,10 @@ export type BackendConfig = {
   migrationContractAddress?: `0x${string}`;
   indexDbPath: string;
   indexFromBlock: bigint;
+  // Exact Game-upgrade boundary for the narrow timed-missile payload replay. The writer keeps this
+  // independent of the generic cursor so a temporary rollback to an older backend cannot strand
+  // event-only missile payloads outside the normal 64-block overlap.
+  timedMissileIndexFromBlock?: bigint;
   currentStateHealRunId?: string;
   fullCanonicalStateHealRunId?: string;
   researchQueueStartedAtRepairRunId?: string;
@@ -108,6 +112,7 @@ export type SafeConfigSummary = {
   referralSignerConfigured: boolean;
   referralIndexFromBlock: string;
   paidAllianceInviteIndexFromBlock: string | null;
+  timedMissileIndexFromBlock: string | null;
   resourceTokensConfigured: {
     crystal: boolean;
     deuterium: boolean;
@@ -176,6 +181,11 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
   const paidAllianceInviteIndexFromBlock = parseBigInt(
     env.VEYDRIFT_PAID_ALLIANCE_INVITE_INDEX_FROM_BLOCK,
     "VEYDRIFT_PAID_ALLIANCE_INVITE_INDEX_FROM_BLOCK",
+    problems
+  );
+  const timedMissileIndexFromBlock = parseBigInt(
+    env.VEYDRIFT_TIMED_MISSILE_INDEX_FROM_BLOCK,
+    "VEYDRIFT_TIMED_MISSILE_INDEX_FROM_BLOCK",
     problems
   );
   const parsedLogChunkSpan = parseBigInt(env.VEYDRIFT_LOG_CHUNK_SPAN, "VEYDRIFT_LOG_CHUNK_SPAN", problems);
@@ -390,6 +400,7 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
       ...(gameContractAddress ? { gameContractAddress } : {}),
       indexDbPath,
       indexFromBlock,
+      ...(timedMissileIndexFromBlock !== undefined ? { timedMissileIndexFromBlock } : {}),
       ...(currentStateHealRunId ? { currentStateHealRunId } : {}),
       ...(fullCanonicalStateHealRunId ? { fullCanonicalStateHealRunId } : {}),
       ...(researchQueueStartedAtRepairRunId ? { researchQueueStartedAtRepairRunId } : {}),
@@ -455,6 +466,7 @@ export function safeConfigSummary(config: BackendConfig): SafeConfigSummary {
     referralSignerConfigured: Boolean(config.referralSignerPrivateKey),
     referralIndexFromBlock: (config.referralIndexFromBlock ?? config.indexFromBlock).toString(),
     paidAllianceInviteIndexFromBlock: config.paidAllianceInviteIndexFromBlock?.toString() ?? null,
+    timedMissileIndexFromBlock: config.timedMissileIndexFromBlock?.toString() ?? null,
     resourceTokensConfigured: {
       crystal: Boolean(config.resourceTokenAddresses.crystal),
       deuterium: Boolean(config.resourceTokenAddresses.deuterium),

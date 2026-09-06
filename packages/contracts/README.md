@@ -281,11 +281,11 @@ Veydrift is in open alpha as of 2026-05-29, so contract deployments must preserv
 existing player state. Read `../../docs/open-alpha-state-preservation.md` before
 running any deploy or upgrade command.
 
-Timed-missile rollout has a strict compatibility order: deploy and verify the backend/indexer build
-that ingests `InterplanetaryMissileLaunched` first, then upgrade the live Game proxy without pausing,
-then deploy the frontend. Never upgrade the contract first: the immutable missile payload is emitted
-at launch and an older backend cannot resolve a launch it did not ingest. Abort before the proxy
-upgrade unless the new backend is healthy, subscribed, and caught up to the current chain head.
+Timed-missile rollout has a strict compatibility order: record the current Base block, configure it
+as `VEYDRIFT_TIMED_MISSILE_INDEX_FROM_BLOCK`, then deploy and verify the backend/indexer build that
+ingests and replays `InterplanetaryMissileLaunched`. Upgrade the live Game proxy without pausing only
+after that writer is healthy and caught up, then deploy the frontend. The narrow replay remains active
+after rollout so a temporary backend rollback cannot strand the event-only immutable missile payload.
 
 ## VEYDRIFT Uniswap CCA/v4 launch
 

@@ -57,6 +57,7 @@ import {
   fleetMissionLaunchedTopic,
   fleetMissionBodiesTopic,
   fleetMissionLootRatioTopic,
+  interplanetaryMissileLaunchedTopic,
   inviteeProductionBoostActivatedTopic,
   jumpGateJumpedTopic,
   missionBattleRandomnessRequestId,
@@ -332,6 +333,7 @@ const startPriceBlockMetadataKey = "canonicalStartPriceBlock";
 const startPriceLogIndexMetadataKey = "canonicalStartPriceLogIndex";
 const referralHistoryBackfillMetadataKey = "referralHistoryBackfillV1";
 const paidAllianceInviteHistoryBackfillMetadataKey = "paidAllianceInviteHistoryBackfillV1";
+const timedMissilePayloadHistoryBackfillMetadataKey = "timedMissilePayloadHistoryBackfillV1";
 const paidAllianceInviteProjectionBackfillMetadataKey = "paidAllianceInviteProjectionBackfillV1";
 const productionQueueProjectionBackfillMetadataKey = "productionQueueProjectionBackfillV1";
 const fleetMissionLootRatioProjectionBackfillMetadataKey = "fleetMissionLootRatioProjectionBackfillV1";
@@ -354,6 +356,13 @@ export type ReferralHistoryBackfillMarker = {
 };
 
 export type PaidAllianceInviteHistoryBackfillMarker = {
+  completedAt: string;
+  contractAddress: string;
+  fromBlock: string;
+  throughBlock: string;
+};
+
+export type TimedMissilePayloadHistoryBackfillMarker = {
   completedAt: string;
   contractAddress: string;
   fromBlock: string;
@@ -1332,6 +1341,46 @@ export class SettlementIndexer {
       || marker.contractAddress.toLowerCase() !== contractAddress.toLowerCase()
       || marker.fromBlock !== fromBlock.toString();
     return { marker, required };
+  }
+
+  timedMissilePayloadHistoryBackfillStatus(
+    contractAddress: `0x${string}`,
+    fromBlock: bigint
+  ): { marker: TimedMissilePayloadHistoryBackfillMarker | null; required: boolean } {
+    const raw = this.metadata(timedMissilePayloadHistoryBackfillMetadataKey);
+    let marker: TimedMissilePayloadHistoryBackfillMarker | null = null;
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw) as Partial<TimedMissilePayloadHistoryBackfillMarker>;
+        if (
+          typeof parsed.completedAt === "string"
+          && typeof parsed.contractAddress === "string"
+          && typeof parsed.fromBlock === "string"
+          && typeof parsed.throughBlock === "string"
+        ) marker = parsed as TimedMissilePayloadHistoryBackfillMarker;
+      } catch {
+        // A malformed marker is untrusted; the narrow replay repairs it.
+      }
+    }
+    const required = marker === null
+      || marker.contractAddress.toLowerCase() !== contractAddress.toLowerCase()
+      || marker.fromBlock !== fromBlock.toString();
+    return { marker, required };
+  }
+
+  recordTimedMissilePayloadHistoryBackfill(
+    contractAddress: `0x${string}`,
+    fromBlock: bigint,
+    throughBlock: bigint
+  ): TimedMissilePayloadHistoryBackfillMarker {
+    const marker: TimedMissilePayloadHistoryBackfillMarker = {
+      completedAt: new Date().toISOString(),
+      contractAddress: contractAddress.toLowerCase(),
+      fromBlock: fromBlock.toString(),
+      throughBlock: throughBlock.toString()
+    };
+    this.setMetadata(timedMissilePayloadHistoryBackfillMetadataKey, JSON.stringify(marker));
+    return marker;
   }
 
   recordPaidAllianceInviteHistoryBackfill(
@@ -4412,10 +4461,10 @@ export class SettlementIndexer {
   ): IndexedRpcLog[] {
     if (toBlock < fromBlock) return [];
     const normalizedAddress = gameContractAddress.toLowerCase();
-    const canonicalEventIds = new Set(
+    const canonicalByEventId = new Map(
       canonicalLogs
         .filter((log) => log.address?.toLowerCase() === normalizedAddress && !log.removed)
-        .map((log) => indexedLogKey(log))
+        .map((log) => [indexedLogKey(log), log] as const)
     );
     const rows = this.db.query(`
       SELECT event_json
@@ -4427,7 +4476,10 @@ export class SettlementIndexer {
 
     return rows
       .map((row) => parseEvent<IndexedRpcLog>(row.event_json))
-      .filter((log) => !canonicalEventIds.has(indexedLogKey(log)))
+      .filter((log) => {
+        const canonical = canonicalByEventId.get(indexedLogKey(log));
+        return !canonical || indexedLogFingerprint(log) !== indexedLogFingerprint(canonical);
+      })
       .map((log) => ({ ...log, removed: true }));
   }
 
@@ -4439,6 +4491,7 @@ export class SettlementIndexer {
         this.advanceIndexedRevision();
         this.markReorgDetected();
         this.db.query("UPDATE indexed_event_logs SET removed = 1 WHERE event_id = ?").run(eventId);
+        const affectedQueue = productionQueueProjectionIdentity(log);
         this.removeMissionEventLog(eventId);
         this.removeUnitCountEventLog(eventId, log);
         this.removeMissileAttackEvent(eventId);
@@ -4463,7 +4516,43 @@ export class SettlementIndexer {
         if (this.isMoonStateProjectionLog(log)) {
           this.repairIndexedMoonStateFromEventLogs(this.moonStatePlanetIds(log));
         }
+        if (affectedQueue) {
+          this.rebuildProductionQueueProjectionFromEventLogs(
+            affectedQueue.queueKind,
+            affectedQueue.planetId
+          );
+        }
         return { applied: false, duplicate: false, ignored: false, removed: true, snapshot: this.snapshot() };
+      }
+      if (existing.removed && isPlanetSettledLog(log)) {
+        this.advanceIndexedRevision();
+        this.db.query(`
+          UPDATE indexed_event_logs
+          SET removed = 0, event_json = ?, block_number = ?, received_at = ?
+          WHERE event_id = ?
+        `).run(JSON.stringify(log), blockNumberToDecimal(log.blockNumber), new Date().toISOString(), eventId);
+        this.recordPlayerActivityFromLog(eventId, log);
+        this.recordPlayerActivityFeedFromLog(eventId, log);
+        this.applyPlanetSettledEvent(decodePlanetSettledLog(log));
+        this.recordLatestBlock(log.blockNumber);
+        return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
+      }
+      if (existing.removed && productionQueueProjectionIdentity(log)) {
+        this.advanceIndexedRevision();
+        this.db.query(`
+          UPDATE indexed_event_logs
+          SET removed = 0, event_json = ?, block_number = ?, received_at = ?
+          WHERE event_id = ?
+        `).run(JSON.stringify(log), blockNumberToDecimal(log.blockNumber), new Date().toISOString(), eventId);
+        this.recordPlayerActivityFromLog(eventId, log);
+        this.recordPlayerActivityFeedFromLog(eventId, log);
+        const affectedQueue = productionQueueProjectionIdentity(log)!;
+        this.rebuildProductionQueueProjectionFromEventLogs(
+          affectedQueue.queueKind,
+          affectedQueue.planetId
+        );
+        this.recordLatestBlock(log.blockNumber);
+        return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
       }
       if (existing.removed && isPaidAllianceInviteProjectionLog(log)) {
         this.advanceIndexedRevision();
@@ -6279,6 +6368,10 @@ export class SettlementIndexer {
     // log was removed by a reorg.
     this.repairRemovedUnitProjectionRows();
     this.repairRemovedMissileAttackRows();
+    // Missile payloads are event-only. This narrow repair must run even when production disables the
+    // broad startup backfill, because an older writer can journal the new launch event without adding
+    // it to the specialized mission ledger during a rollback window.
+    this.backfillTimedMissilePayloadMissionEvents();
     if (runStartupBackfill) {
       this.backfillMissionEventLogs();
       this.backfillUnitCountEventLogs();
@@ -6357,6 +6450,41 @@ export class SettlementIndexer {
       this.setMetadata(productionQueueProjectionBackfillMetadataKey, new Date().toISOString());
       this.touch();
     })();
+  }
+
+  private rebuildProductionQueueProjectionFromEventLogs(
+    queueKind: "defense" | "ship",
+    planetId: string
+  ): void {
+    const rows = this.db.query(`
+      SELECT event_json
+      FROM indexed_event_logs
+      WHERE removed = 0
+        AND lower(json_extract(indexed_event_logs.event_json, '$.topics[0]')) IN (?, ?, ?, ?, ?, ?)
+    `).all(
+      defenseQueuedTopic,
+      shipQueuedTopic,
+      defenseQueueTimingSetTopic,
+      shipQueueTimingSetTopic,
+      defenseCompletedTopic,
+      shipCompletedTopic
+    ) as EventRow[];
+
+    const key = `${queueKind}:${planetId}`;
+    this.db.query("DELETE FROM indexed_planet_queues WHERE queue_key = ?").run(key);
+    this.db.query("DELETE FROM contract_production_queues WHERE queue_key = ?").run(key);
+    for (const log of sortedEventRows(rows)) {
+      const identity = productionQueueProjectionIdentity(log);
+      if (!identity || identity.queueKind !== queueKind || identity.planetId !== planetId) continue;
+      if (isIndexedQueueStartedLog(log)) {
+        this.applyQueueStartedEvent(decodeIndexedQueueStartedLog(log), { settleResources: false });
+      } else if (isProductionQueueTimingLog(log)) {
+        this.applyProductionQueueTimingEvent(decodeProductionQueueTimingLog(log));
+      } else if (isIndexedQueueCompletedLog(log)) {
+        this.applyQueueCompletedEvent(decodeIndexedQueueCompletedLog(log), { applyEffects: false });
+      }
+    }
+    this.touch();
   }
 
   private repairPaidAllianceInviteProjectionsFromEventLogs(
@@ -6805,6 +6933,30 @@ export class SettlementIndexer {
         const eventKind = this.missionEventKind(log);
         if (!eventKind) continue;
         insert.run(row.event_id, eventKind, blockNumberToDecimal(log.blockNumber), row.event_json);
+      }
+    })();
+  }
+
+  private backfillTimedMissilePayloadMissionEvents(): void {
+    const rows = this.db.query(`
+      SELECT indexed_event_logs.event_id, indexed_event_logs.event_json
+      FROM indexed_event_logs
+      LEFT JOIN indexed_mission_event_logs
+        ON indexed_mission_event_logs.event_id = indexed_event_logs.event_id
+      WHERE indexed_event_logs.removed = 0
+        AND indexed_mission_event_logs.event_id IS NULL
+        AND lower(json_extract(indexed_event_logs.event_json, '$.topics[0]')) = ?
+      ORDER BY CAST(indexed_event_logs.block_number AS INTEGER) ASC,
+        length(indexed_event_logs.log_index) ASC,
+        indexed_event_logs.log_index ASC
+    `).all(interplanetaryMissileLaunchedTopic) as Array<EventRow & { event_id: string }>;
+    if (rows.length === 0) return;
+
+    this.db.transaction(() => {
+      for (const row of rows) {
+        const log = parseEvent<IndexedRpcLog>(row.event_json);
+        this.recordMissionEventLog(row.event_id, log);
+        this.applyFleetMissionCompatibilityEvent(log);
       }
     })();
   }
@@ -15177,6 +15329,40 @@ const riftResourceRows = [
 
 function indexedLogKey(log: IndexedRpcLog): string {
   return `${log.transactionHash.toLowerCase()}:${log.logIndex ?? fallbackLogIndex(log)}`;
+}
+
+function indexedLogFingerprint(log: IndexedRpcLog): string {
+  return JSON.stringify({
+    address: log.address?.toLowerCase() ?? null,
+    blockHash: log.blockHash?.toLowerCase() ?? null,
+    blockNumber: blockNumberToDecimal(log.blockNumber),
+    data: log.data.toLowerCase(),
+    topics: log.topics.map((topic) => topic.toLowerCase())
+  });
+}
+
+function productionQueueProjectionIdentity(
+  log: IndexedRpcLog
+): { queueKind: "defense" | "ship"; planetId: string } | null {
+  let queueKind: IndexedQueueStartedEvent["queueKind"];
+  let planetId: string | undefined;
+  if (isIndexedQueueStartedLog(log)) {
+    const event = decodeIndexedQueueStartedLog(log);
+    queueKind = event.queueKind;
+    planetId = event.planetId;
+  } else if (isProductionQueueTimingLog(log)) {
+    const event = decodeProductionQueueTimingLog(log);
+    queueKind = event.queueKind;
+    planetId = event.planetId;
+  } else if (isIndexedQueueCompletedLog(log)) {
+    const event = decodeIndexedQueueCompletedLog(log);
+    queueKind = event.queueKind;
+    planetId = event.planetId;
+  } else {
+    return null;
+  }
+  if ((queueKind !== "defense" && queueKind !== "ship") || !planetId) return null;
+  return { queueKind, planetId };
 }
 
 function paidAllianceInviteLogFingerprint(log: IndexedRpcLog): string {

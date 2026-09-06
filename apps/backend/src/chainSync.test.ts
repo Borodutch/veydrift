@@ -19,6 +19,10 @@ const planetSettledTopic = "0x7faee98c7c745f9c9fb2117a44185f57454dac3013383364df
 const moonResourcesChangedTopic = "0xd1823653b6a3910ee502390b5bf01f05a3b571dc81899a6ac3af3f01fae05c26";
 const attackBattleResolvedTopic = "0xc0d98d89682d12d3fe90cd0786b9320015ab3950de5f4ae3f54ca0fe9b660d1b";
 const fleetMissionLaunchedTopic = "0x95e2cb506aa14052bac412e42f47fb34d9234819a960761a7bc7f1920c0ab456";
+const fleetMissionCargoTopic = "0x3daa6311ecdadad6781f70e5d285e7150f9dc165db88d23be8867be4de33ff29";
+const fleetMissionShipsTopic = "0xf581cbe97357884794500d80286cfbe823fed3b5d77446e477aa694ce89fc82d";
+const interplanetaryMissileLaunchedTopic = "0x604ad2c11139a5c17dc4ad536be44e0decb1a46637bc3a7497c4e049e9ad3bd2";
+const defenseQueuedTopic = "0xc3dcdf6abcac9fc4831745727e78f808922f43da079b984420ef70c97cff0f5b";
 const fleetMissionReturnExposedTopic = "0x27a083519451f4434cd1f93497fb93689a906d3b982a3f127cb236aa24356afa";
 const fleetMissionReturnedTopic = "0xbb4a50257c10524783e403a4e0db9c4c3e9378c2e398ec5de34281be1aa97b06";
 const referralInviteWindowActivatedTopic = "0xd51c9643dafa95fcfa30d65f2b6576bc03873e2630d73fc523daf87a7158d589";
@@ -93,12 +97,14 @@ class MockBackfiller {
   ranges: Array<{ from: bigint; to: bigint | "latest" }> = [];
   referralRanges: Array<{ from: bigint; to: bigint | "latest" }> = [];
   paidAllianceInviteRanges: Array<{ from: bigint; to: bigint | "latest" }> = [];
+  timedMissilePayloadRanges: Array<{ from: bigint; to: bigint | "latest" }> = [];
   headCalls = 0;
   timestampCalls: bigint[] = [];
   anchorHashFor: (blockNumber: bigint) => string = (blockNumber) => `0x${blockNumber.toString(16).padStart(64, "0")}`;
   logsFor: (from: bigint, to: bigint | "latest") => TestLog[];
   referralLogsFor: (from: bigint, to: bigint | "latest") => TestLog[] = () => [];
   paidAllianceInviteLogsFor: (from: bigint, to: bigint | "latest") => TestLog[] = () => [];
+  timedMissilePayloadLogsFor: (from: bigint, to: bigint | "latest") => TestLog[] = () => [];
 
   constructor(head: bigint, logsFor: (from: bigint, to: bigint | "latest") => TestLog[] = () => []) {
     this.head = head;
@@ -139,6 +145,13 @@ class MockBackfiller {
     this.paidAllianceInviteRanges.push({ from, to });
     if (this.logsError) throw this.logsError;
     return this.paidAllianceInviteLogsFor(from, to);
+  }
+
+  async listTimedMissilePayloadLogs(from: bigint, to: bigint | "latest" = "latest"): Promise<RpcLog[]> {
+    this.calls.push("timed-missile");
+    this.timedMissilePayloadRanges.push({ from, to });
+    if (this.logsError) throw this.logsError;
+    return this.timedMissilePayloadLogsFor(from, to);
   }
 
   failoverRpc(reason: string): boolean {
@@ -502,6 +515,99 @@ describe("ChainSyncService (polling)", () => {
       SELECT removed FROM indexed_event_logs
       WHERE transaction_hash = ? AND log_index = ?
     `).get(orphanedImpact.transactionHash, "0x0")).toEqual({ removed: 1 });
+    service.stop();
+  });
+
+  test("replaces a same-ID Game log when a reorg changes its canonical block and payload", async () => {
+    const indexer = makeIndexer();
+    const orphaned: TestLog = {
+      address: config.gameContractAddress!,
+      blockHash: `0x${"11".repeat(32)}`,
+      blockNumber: "0x181",
+      transactionHash: "0xsame-id-defense-reorg",
+      logIndex: "0x0",
+      topics: [planetDefenseCountChangedTopic, topicWord(7n), topicWord(1n)],
+      data: abiWords(3n)
+    };
+    const canonical: TestLog = {
+      ...orphaned,
+      blockHash: `0x${"22".repeat(32)}`,
+      blockNumber: "0x182",
+      data: abiWords(4n)
+    };
+    indexer.applyLog(orphaned);
+    expect(indexer.defenseRows("7").find((defense) => defense.id === 1)?.count).toBe(3);
+
+    const service = new ChainSyncService(
+      config,
+      indexer,
+      { logBackfiller: new MockBackfiller(0x182n, () => [canonical]) }
+    );
+    await service.poll();
+
+    expect(indexer.defenseRows("7").find((defense) => defense.id === 1)?.count).toBe(4);
+    const db = (indexer as unknown as { db: Database }).db;
+    const stored = db.query(`
+      SELECT event_json, removed FROM indexed_event_logs
+      WHERE transaction_hash = ? AND log_index = ?
+    `).get(orphaned.transactionHash, "0x0") as { event_json: string; removed: number };
+    expect(stored.removed).toBe(0);
+    expect(JSON.parse(stored.event_json)).toMatchObject({
+      blockHash: canonical.blockHash,
+      blockNumber: canonical.blockNumber,
+      data: canonical.data
+    });
+    service.stop();
+  });
+
+  test("restores a defense queue settled by an offline-reorged missile impact", async () => {
+    const indexer = makeIndexer();
+    indexer.applyLog({
+      ...planetStartedLog("0x17f", 7n, "0xplanet"),
+      address: config.gameContractAddress!,
+      logIndex: "0x0"
+    });
+    const activeQueue: TestLog = {
+      address: config.gameContractAddress!,
+      blockNumber: "0x180",
+      transactionHash: "0xqueue-active",
+      logIndex: "0x0",
+      topics: [defenseQueuedTopic, topicWord(7n), topicWord(1n)],
+      data: abiWords(2n, 2_000_001_000n, 100n, 50n, 0n)
+    };
+    const backlogQueue: TestLog = {
+      address: config.gameContractAddress!,
+      blockNumber: "0x180",
+      transactionHash: "0xqueue-backlog",
+      logIndex: "0x1",
+      topics: [defenseQueuedTopic, topicWord(7n), topicWord(0n)],
+      data: abiWords(3n, 2_000_001_600n, 200n, 0n, 0n)
+    };
+    const orphanedCompletion: TestLog = {
+      address: config.gameContractAddress!,
+      blockNumber: "0x181",
+      transactionHash: "0xmissile-impact-settled-queue",
+      logIndex: "0x0",
+      topics: [defenseCompletedTopic, topicWord(7n), topicWord(1n)],
+      data: abiWords(2n, 2n)
+    };
+    for (const log of [activeQueue, backlogQueue, orphanedCompletion]) indexer.applyLog(log);
+    expect(indexer.playerQueues(player, "7").defense).toMatchObject({ itemId: 0, quantity: 3 });
+
+    const backfiller = new MockBackfiller(0x182n, () => [activeQueue, backlogQueue]);
+    const service = new ChainSyncService(config, indexer, { logBackfiller: backfiller });
+    await service.poll();
+
+    expect(indexer.playerQueues(player, "7").defense).toMatchObject({
+      itemId: 1,
+      quantity: 2,
+      backlog: [expect.objectContaining({ itemId: 0, quantity: 3 })]
+    });
+    const db = (indexer as unknown as { db: Database }).db;
+    expect(db.query(`
+      SELECT removed FROM indexed_event_logs
+      WHERE transaction_hash = ? AND log_index = ?
+    `).get(orphanedCompletion.transactionHash, "0x0")).toEqual({ removed: 1 });
     service.stop();
   });
 
@@ -1220,6 +1326,100 @@ describe("ChainSyncService (polling)", () => {
 
     expect(backfiller.paidAllianceInviteRanges.at(-1)).toEqual({ from: 150n, to: 198n });
     expect(indexer.paidAllianceInviteSummaries().get("7")).toBeUndefined();
+    service.stop();
+  });
+
+  test("replays timed missile payloads from the upgrade boundary after an old-backend rollback", async () => {
+    const database = new Database(":memory:");
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents(): Promise<SettledPlanetEvent[]> { return []; }
+    }, 100n, { database, runStartupBackfill: false });
+    const tx = "0xmissile-rollback";
+    const launchLogs: TestLog[] = [
+      {
+        address: config.gameContractAddress!,
+        blockNumber: "0xa0",
+        transactionHash: tx,
+        logIndex: "0x0",
+        topics: [fleetMissionLaunchedTopic, topicWord(51n), ownerTopic(player), topicWord(7n)],
+        data: abiWords(99n, 7n, 1770001200n, 1770001200n, 0n)
+      },
+      {
+        address: config.gameContractAddress!,
+        blockNumber: "0xa0",
+        transactionHash: tx,
+        logIndex: "0x1",
+        topics: [fleetMissionCargoTopic, topicWord(51n)],
+        data: abiWords(0n, 0n, 0n, 0n)
+      },
+      {
+        address: config.gameContractAddress!,
+        blockNumber: "0xa0",
+        transactionHash: tx,
+        logIndex: "0x2",
+        topics: [fleetMissionShipsTopic, topicWord(51n)],
+        data: abiWords(0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n)
+      }
+    ];
+    for (const log of launchLogs) indexer.applyLog(log);
+    const payloadLog: TestLog = {
+      address: config.gameContractAddress!,
+      blockNumber: "0xa0",
+      transactionHash: tx,
+      logIndex: "0x3",
+      topics: [interplanetaryMissileLaunchedTopic, topicWord(51n)],
+      data: abiWords(4n, 3n)
+    };
+    database.query(`
+      INSERT INTO indexed_event_logs
+        (event_id, transaction_hash, log_index, block_number, removed, event_json, received_at)
+      VALUES (?, ?, ?, ?, 0, ?, ?)
+    `).run(
+      `${tx}:0x3`,
+      tx,
+      "0x3",
+      "160",
+      JSON.stringify(payloadLog),
+      new Date().toISOString()
+    );
+    const headLog = {
+      ...planetStartedLog("0x12c", 88n, "0xhead"),
+      address: config.gameContractAddress!,
+      logIndex: "0x0"
+    };
+    indexer.applyLog(headLog);
+    expect(indexer.fleetMission("51")).not.toHaveProperty("missileQuantity");
+
+    const backfiller = new MockBackfiller(300n, (from, to) => (
+      from <= 300n && to !== "latest" && to >= 300n ? [headLog] : []
+    ));
+    backfiller.timedMissilePayloadLogsFor = () => [payloadLog];
+    const service = new ChainSyncService({
+      ...config,
+      timedMissileIndexFromBlock: 150n
+    }, indexer, { logBackfiller: backfiller });
+
+    await service.poll();
+
+    expect(backfiller.timedMissilePayloadRanges).toEqual([{ from: 150n, to: 300n }]);
+    expect(indexer.fleetMission("51")).toMatchObject({
+      missilePrimaryTargetId: 4,
+      missileQuantity: 3
+    });
+    expect(service.snapshot().timedMissilePayloadHistoryBackfill).toMatchObject({
+      contractAddress: config.gameContractAddress,
+      fromBlock: "150",
+      inProgress: false,
+      lastError: null,
+      throughBlock: "300"
+    });
+
+    backfiller.head = 316n;
+    backfiller.timedMissilePayloadLogsFor = () => [];
+    await service.poll();
+    expect(backfiller.timedMissilePayloadRanges.at(-1)).toEqual({ from: 236n, to: 316n });
     service.stop();
   });
 

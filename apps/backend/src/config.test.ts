@@ -89,6 +89,18 @@ describe("backend config", () => {
     expect(result.config.resolverTransactionStorePath).toBe("/tmp/resolver-transactions.sqlite");
   });
 
+  test("accepts and safely exposes the timed missile upgrade replay boundary", () => {
+    const result = loadBackendConfig({
+      VEYDRIFT_GAME_CONTRACT_ADDRESS: "0x3333333333333333333333333333333333333333",
+      VEYDRIFT_RPC_URL: "https://example.invalid/rpc",
+      VEYDRIFT_TIMED_MISSILE_INDEX_FROM_BLOCK: "50960000"
+    });
+
+    expect(result.problems).toEqual([]);
+    expect(result.config.timedMissileIndexFromBlock).toBe(50_960_000n);
+    expect(safeConfigSummary(result.config).timedMissileIndexFromBlock).toBe("50960000");
+  });
+
   test("accepts an explicit durable resolver transaction coordinator path", () => {
     const result = loadBackendConfig({
       VEYDRIFT_GAME_CONTRACT_ADDRESS: "0x3333333333333333333333333333333333333333",

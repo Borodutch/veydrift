@@ -1651,7 +1651,7 @@ function MissionFleet({
   // display:contents — each group participates directly in the expanded panel's fact-group row.
   return (
     <div className="contents">
-      <MissionDetailGroup title="Fleet">
+      <MissionDetailGroup title={mission?.missionType === "MissileAttack" ? "Missile payload" : "Fleet"}>
         {mission?.missionType === "MissileAttack" ? (
           detailRow(
             "Payload",

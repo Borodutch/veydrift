@@ -2270,6 +2270,7 @@ export function deriveLogBackfiller(
       listContractLogs: (fromBlock: bigint, toBlock?: bigint | "latest") => Promise<RpcLog[]>;
       listReferralLogs?: (fromBlock: bigint, toBlock?: bigint | "latest") => Promise<RpcLog[]>;
       listPaidAllianceInviteLogs?: (fromBlock: bigint, toBlock?: bigint | "latest") => Promise<RpcLog[]>;
+      listTimedMissilePayloadLogs?: (fromBlock: bigint, toBlock?: bigint | "latest") => Promise<RpcLog[]>;
       rpcMetrics?: () => unknown;
     }
   | undefined {
@@ -2290,6 +2291,9 @@ export function deriveLogBackfiller(
         : {}),
       ...(typeof reader.listPaidAllianceInviteLogs === "function"
         ? { listPaidAllianceInviteLogs: reader.listPaidAllianceInviteLogs.bind(reader) }
+        : {}),
+      ...(typeof reader.listTimedMissilePayloadLogs === "function"
+        ? { listTimedMissilePayloadLogs: reader.listTimedMissilePayloadLogs.bind(reader) }
         : {}),
       ...(typeof reader.rpcMetrics === "function" ? { rpcMetrics: reader.rpcMetrics.bind(reader) } : {})
     };
@@ -2356,6 +2360,7 @@ async function normalizeViemLog(
   if (log.blockNumber === null || log.transactionHash === null) return null;
   const blockTimestamp = await timestampForBlock(log.blockNumber);
   return {
+    ...(log.blockHash ? { blockHash: log.blockHash } : {}),
     blockNumber: toQuantity(log.blockNumber),
     transactionHash: log.transactionHash,
     topics: log.topics.filter((topic): topic is `0x${string}` => typeof topic === "string"),

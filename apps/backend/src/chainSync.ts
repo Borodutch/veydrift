@@ -26,6 +26,7 @@ type LogBackfiller = {
   listContractLogs(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
   listReferralLogs?(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
   listPaidAllianceInviteLogs?(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
+  listTimedMissilePayloadLogs?(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
   rpcMetrics?(): unknown;
 };
 
@@ -48,6 +49,8 @@ type ChainSyncIndexer = Partial<Pick<SettlementIndexer,
   | "recordPaidAllianceInviteHistoryBackfill"
   | "paidAllianceInviteHistoryBackfillStatus"
   | "reconcilePaidAllianceInviteHistory"
+  | "recordTimedMissilePayloadHistoryBackfill"
+  | "timedMissilePayloadHistoryBackfillStatus"
   | "snapshot"
   | "invalidateResourceProjectionWatermark"
   | "missingCanonicalGameLogs"
@@ -56,6 +59,8 @@ type ChainSyncIndexer = Partial<Pick<SettlementIndexer,
 
 const PAID_ALLIANCE_REORG_OVERLAP_BLOCKS = 64n;
 const PAID_ALLIANCE_REORG_CHECK_INTERVAL_BLOCKS = 16n;
+const TIMED_MISSILE_PAYLOAD_REPLAY_BLOCKS = 64n;
+const TIMED_MISSILE_PAYLOAD_REPLAY_INTERVAL_BLOCKS = 16n;
 // Re-read the latest complete generic range on every HTTP poll. A websocket callback can contain only
 // some logs from a block; txHash:logIndex dedupe makes this bounded replay cheap and idempotent while
 // ensuring a sibling omitted from that callback is still collected by HTTP even when head has not moved.
@@ -130,6 +135,7 @@ export type ChainSyncSnapshot = {
   pollingEnabled: boolean;
   referralHistoryBackfill: ReferralHistoryBackfillSnapshot;
   paidAllianceInviteHistoryBackfill: ReferralHistoryBackfillSnapshot;
+  timedMissilePayloadHistoryBackfill: ReferralHistoryBackfillSnapshot;
 };
 
 export type ChainSyncEvent = {
@@ -227,6 +233,14 @@ export class ChainSyncService {
     lastError: null,
     throughBlock: null
   };
+  private timedMissilePayloadHistoryBackfill: ReferralHistoryBackfillSnapshot = {
+    completedAt: null,
+    contractAddress: null,
+    fromBlock: null,
+    inProgress: false,
+    lastError: null,
+    throughBlock: null
+  };
   private liveListenerConnected = false;
   private liveListenerErrorCount = 0;
   private liveListenerLastError: string | null = null;
@@ -303,7 +317,8 @@ export class ChainSyncService {
       subscribedToLogs: this.liveListenerConnected || this.connected,
       pollingEnabled: Boolean(this.options.logBackfiller) && Boolean(this.pollTimer),
       referralHistoryBackfill: { ...this.referralHistoryBackfill },
-      paidAllianceInviteHistoryBackfill: { ...this.paidAllianceInviteHistoryBackfill }
+      paidAllianceInviteHistoryBackfill: { ...this.paidAllianceInviteHistoryBackfill },
+      timedMissilePayloadHistoryBackfill: { ...this.timedMissilePayloadHistoryBackfill }
     };
   }
 
@@ -503,6 +518,7 @@ export class ChainSyncService {
 
       await this.ensureReferralHistoryBackfilled(head, backfiller, applyLog);
       await this.ensurePaidAllianceInviteHistoryBackfilled(head, backfiller, applyLog);
+      await this.ensureTimedMissilePayloadHistoryBackfilled(head, backfiller, applyLog);
       // Publish the projection clock only after every indexed log source has durably scanned through
       // this block. A crash/failure before here leaves the old timestamp in place (conservative),
       // while publishing it earlier could combine block-N time with pre-N resource state.
@@ -660,6 +676,67 @@ export class ChainSyncService {
       this.paidAllianceInviteHistoryBackfill.lastError = error instanceof Error
         ? error.message
         : "Paid alliance invite history backfill failed.";
+      this.connected = false;
+      throw error;
+    }
+  }
+
+  private async ensureTimedMissilePayloadHistoryBackfilled(
+    head: bigint,
+    backfiller: LogBackfiller,
+    applyLog: NonNullable<SettlementIndexer["applyLog"]>
+  ): Promise<void> {
+    const contractAddress = this.config.gameContractAddress;
+    const fromBlock = this.config.timedMissileIndexFromBlock;
+    const listLogs = backfiller.listTimedMissilePayloadLogs;
+    const status = this.indexer?.timedMissilePayloadHistoryBackfillStatus;
+    const record = this.indexer?.recordTimedMissilePayloadHistoryBackfill;
+    if (!contractAddress || fromBlock === undefined || !listLogs || !status || !record) return;
+
+    const current = status.call(this.indexer, contractAddress, fromBlock);
+    this.timedMissilePayloadHistoryBackfill = {
+      completedAt: current.marker?.completedAt ?? null,
+      contractAddress,
+      fromBlock: fromBlock.toString(),
+      inProgress: false,
+      lastError: null,
+      throughBlock: current.marker?.throughBlock ?? null
+    };
+    const markerThroughBlock = current.marker ? BigInt(current.marker.throughBlock) : null;
+    if (
+      !current.required
+      && markerThroughBlock !== null
+      && head < markerThroughBlock + TIMED_MISSILE_PAYLOAD_REPLAY_INTERVAL_BLOCKS
+    ) return;
+
+    const scanFrom = current.required || markerThroughBlock === null
+      ? fromBlock
+      : maxBigInt(
+          fromBlock,
+          markerThroughBlock > TIMED_MISSILE_PAYLOAD_REPLAY_BLOCKS
+            ? markerThroughBlock - TIMED_MISSILE_PAYLOAD_REPLAY_BLOCKS
+            : 0n
+        );
+
+    this.timedMissilePayloadHistoryBackfill.inProgress = true;
+    if (current.required) this.connected = false;
+    try {
+      const logs = await listLogs.call(backfiller, scanFrom, head);
+      await this.applyLogs(logs, applyLog);
+      const marker = record.call(this.indexer, contractAddress, fromBlock, head);
+      this.timedMissilePayloadHistoryBackfill = {
+        completedAt: marker.completedAt,
+        contractAddress: marker.contractAddress,
+        fromBlock: marker.fromBlock,
+        inProgress: false,
+        lastError: null,
+        throughBlock: marker.throughBlock
+      };
+    } catch (error) {
+      this.timedMissilePayloadHistoryBackfill.inProgress = false;
+      this.timedMissilePayloadHistoryBackfill.lastError = error instanceof Error
+        ? error.message
+        : "Timed missile payload history backfill failed.";
       this.connected = false;
       throw error;
     }

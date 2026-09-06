@@ -9188,8 +9188,8 @@ export function PlayableMvpApp({
 
       {shareDialogUrl ? (
         <ShareDialog
+          kind={missionDetail?.mission.missionType === "MissileAttack" ? "missile" : "battle"}
           onClose={() => setShareDialogUrl(null)}
-          title={missionDetail?.mission.missionType === "MissileAttack" ? "Share missile impact" : undefined}
           url={shareDialogUrl}
         />
       ) : null}

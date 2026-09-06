@@ -917,6 +917,7 @@ describe("Veydrift backend", () => {
         randomnessEngineConfigured: false,
         randomnessCommitterConfigured: false,
         paidAllianceInviteIndexFromBlock: null,
+        timedMissileIndexFromBlock: null,
         referralIndexFromBlock: "0",
         referralSignerConfigured: false,
         gameContractConfigured: false,
