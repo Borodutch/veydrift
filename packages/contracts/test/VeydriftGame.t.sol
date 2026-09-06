@@ -4529,6 +4529,25 @@ contract VeydriftGameTest is Test {
         );
     }
 
+    function testInterplanetaryMissileAttackRequiresImpulseDriveWithinSameSystem() public {
+        (uint256 originPlanetId, uint256 targetPlanetId,) =
+            _seedMissileAttackPlanetsWithoutScoreProtection();
+        _setPlanetCoordinates(originPlanetId, 1, 6, 8);
+        _setPlanetCoordinates(targetPlanetId, 1, 6, 9);
+        _setTechnologyLevel(player, Technology.ImpulseDrive, 0);
+        _setDefenseCount(originPlanetId, Defense.InterplanetaryMissile, 1);
+
+        vm.prank(player);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftGameStorage.InterplanetaryMissileOutOfRange.selector, 6, 6, 0
+            )
+        );
+        game.launchInterplanetaryMissileAttack(
+            originPlanetId, targetPlanetId, Defense.RocketLauncher, 1
+        );
+    }
+
     function testInterplanetaryMissileAttackRejectsCrossGalaxyTarget() public {
         (uint256 originPlanetId, uint256 targetPlanetId,) =
             _seedMissileAttackPlanetsWithoutScoreProtection();

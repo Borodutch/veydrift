@@ -5,7 +5,7 @@ import { afterAll, describe, expect, setSystemTime, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { encodeAbiParameters, keccak256, parseAbiParameters, toHex } from "viem";
 import { canonicalContractTables } from "./contractStateSchema";
-import { inviteeProductionBoostActivatedTopic, type Address, type AllianceState, type CanonicalFleetMissionDetails, type CanonicalFleetMissionSnapshot, type CanonicalPlanetChainState, type DebrisFieldEvent, type DefenseState, type InfrastructureState, type MoonChanceReportEvent, type MoonState, type PlayerQueues, type ResearchState, type ShipyardState, type SettledPlanetEvent } from "./evm";
+import { inviteeProductionBoostActivatedTopic, type Address, type AllianceState, type CanonicalFleetMissionDetails, type CanonicalFleetMissionSnapshot, type CanonicalPlanetChainState, type DebrisFieldEvent, type DefenseState, type InfrastructureState, type MoonChanceReportEvent, type MoonState, type PlayerQueues, type ResearchState, type RpcLog, type ShipyardState, type SettledPlanetEvent } from "./evm";
 import { SettlementIndexer } from "./indexer";
 import { deriveBuildingRows, deriveDefenseRows, deriveInfrastructureFields, deriveShipRows } from "./readModels";
 
@@ -320,6 +320,8 @@ describe("SettlementIndexer", () => {
       expect.objectContaining({ missionId: "8", missionType: "Attack", returnAt: "850" }),
       expect.objectContaining({ missionId: "7", missionType: "Transport", returnAt: "900" })
     ]);
+    const bounded = indexer.missionResolutionCandidates(1_000, 2);
+    expect(bounded.arrivals.length + bounded.returns.length).toBeLessThanOrEqual(2);
     database.close();
   });
 
@@ -4534,6 +4536,63 @@ describe("SettlementIndexer", () => {
     expect(indexer.technologyLevels(player)).toMatchObject({
       "4": 2
     });
+  });
+
+  test("canonically restores ship, defense, and research effects removed with a missile impact", async () => {
+    const canonicalPlanet: CanonicalPlanetChainState = {
+      planetId: planet.planetId,
+      resources: planet.resources,
+      buildings: [],
+      defenses: [{ id: 1, count: 3, cost: { metal: "0", crystal: "0", deuterium: "0" } }],
+      ships: [{ id: 3, count: 2, cost: { metal: "0", crystal: "0", deuterium: "0" } }],
+      queues: { building: null, defense: null, ship: null },
+    };
+    const canonicalResearch = {
+      wallet: player,
+      technologies: [{ id: 4, level: 1, cost: { metal: "0", crystal: "0", deuterium: "0" } }],
+      queue: null,
+    } as ResearchState;
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; },
+      async getCanonicalPlanetState() { return canonicalPlanet; },
+      async getResearchState() { return canonicalResearch; },
+    }, 100n);
+    indexer.applyEvent(planet);
+    const completions: RpcLog[] = [
+      {
+        blockNumber: "0x85",
+        transactionHash: "0xmissile-ship-completion",
+        logIndex: "0x0",
+        topics: [shipCompletedTopic, topic(7n), topic(3n)],
+        data: abiWords(5n, 7n),
+      },
+      {
+        blockNumber: "0x85",
+        transactionHash: "0xmissile-defense-completion",
+        logIndex: "0x1",
+        topics: [defenseCompletedTopic, topic(7n), topic(1n)],
+        data: abiWords(2n, 5n),
+      },
+      {
+        blockNumber: "0x85",
+        transactionHash: "0xmissile-research-completion",
+        logIndex: "0x2",
+        topics: [researchCompletedTopic, addressTopic(player), topic(4n)],
+        data: abiWords(4n),
+      },
+    ];
+    for (const log of completions) indexer.applyLog(log);
+    expect(indexer.shipRows("7").find((ship) => ship.id === 3)?.count).toBe(7);
+    expect(indexer.defenseRows("7").find((defense) => defense.id === 1)?.count).toBe(5);
+    expect(indexer.technologyLevels(player)["4"]).toBe(4);
+
+    await indexer.reconcileTimedMissileCompletionState(completions);
+
+    expect(indexer.shipRows("7").find((ship) => ship.id === 3)?.count).toBe(2);
+    expect(indexer.defenseRows("7").find((defense) => defense.id === 1)?.count).toBe(3);
+    expect(indexer.technologyLevels(player)["4"]).toBe(1);
   });
 
   test("candidate current-state heals preserve only the same research queue start", async () => {

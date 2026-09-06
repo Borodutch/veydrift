@@ -52,6 +52,8 @@ type ChainSyncIndexer = Partial<Pick<SettlementIndexer,
   | "recordTimedMissilePayloadHistoryBackfill"
   | "timedMissilePayloadHistoryBackfillStatus"
   | "missingCanonicalTimedMissileLifecycleLogs"
+  | "removedTimedMissileCompletionLogs"
+  | "reconcileTimedMissileCompletionState"
   | "snapshot"
   | "invalidateResourceProjectionWatermark"
   | "missingCanonicalGameLogs"
@@ -504,6 +506,9 @@ export class ChainSyncService {
           await this.applyLogs(missingCanonicalLogs, applyLog, "fallback_poll");
         }
         const { applied, lastHash, resourceChanges, walletPlanetsChanged } = await this.applyLogs(logs, applyLog);
+        if (missingCanonicalLogs.length > 0) {
+          await this.indexer?.reconcileTimedMissileCompletionState?.(missingCanonicalLogs);
+        }
         // Advance the generic cursor before specialized history scans. Both share the raw ledger, so
         // a process crash after a specialized scan must never leave latestIndexedBlock ahead of a
         // generic range that was not durably ingested.
@@ -739,6 +744,7 @@ export class ChainSyncService {
     this.timedMissilePayloadHistoryBackfill.inProgress = true;
     if (current.required) this.connected = false;
     try {
+      const isStartupVerification = !this.timedMissilePayloadHistoryVerifiedThisRun;
       const logs = await listLogs.call(backfiller, scanFrom, head);
       const missingCanonicalLogs = this.indexer?.missingCanonicalTimedMissileLifecycleLogs?.(
         contractAddress,
@@ -750,6 +756,15 @@ export class ChainSyncService {
         await this.applyLogs(missingCanonicalLogs, applyLog, "fallback_poll");
       }
       await this.applyLogs(logs, applyLog);
+      const removedCompletionLogs = isStartupVerification
+        ? this.indexer?.removedTimedMissileCompletionLogs?.(contractAddress, fromBlock, head) ?? []
+        : [];
+      if (missingCanonicalLogs.length > 0 || removedCompletionLogs.length > 0) {
+        await this.indexer?.reconcileTimedMissileCompletionState?.([
+          ...missingCanonicalLogs,
+          ...removedCompletionLogs
+        ]);
+      }
       const marker = record.call(this.indexer, contractAddress, fromBlock, head);
       this.timedMissilePayloadHistoryVerifiedThisRun = true;
       this.timedMissilePayloadHistoryBackfill = {

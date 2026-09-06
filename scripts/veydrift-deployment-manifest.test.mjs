@@ -7,6 +7,14 @@ import { spawnSync } from "node:child_process";
 
 const address = (digit) => `0x${digit.repeat(40)}`;
 
+test("postdeploy smoke fails closed until timed-missile replay covers chain sync", () => {
+  const source = readFileSync("scripts/veydrift-postdeploy-smoke.mjs", "utf8");
+  assert.match(source, /timedMissileIndexFromBlock === manifest\.deployment\.timedMissileIndexFromBlock/);
+  assert.match(source, /replay\.throughBlock\) >= BigInt\(body\.chainSync\.latestSyncedBlock\)/);
+  assert.match(source, /timed missile replay must be complete/);
+  assert.match(source, /timed missile replay must be error-free/);
+});
+
 test("deployment manifest carries referral system into backend env", () => {
   const tempDir = mkdtempSync(join(tmpdir(), "veydrift-manifest-"));
   const manifestPath = join(tempDir, "manifest.json");

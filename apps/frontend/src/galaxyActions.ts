@@ -220,7 +220,9 @@ export function galaxyActionsForSlot({
   const attackBlocker = commonBlocker ?? attackProtectionBlocker(attackProtection) ?? firstAvailableFleetShipBlocker(shipyardState);
   // IPMs are one-way ordnance and consume no fleet slot. Their availability depends on wallet,
   // origin, and defense readiness only; an unrelated fleet-settlement backlog must not disable them.
-  const missileBlocker = originBlocker ?? interplanetaryMissileBlocker(defenseState);
+  const missileBlocker = originBlocker
+    ?? missileAttackProtectionBlocker(attackProtection)
+    ?? interplanetaryMissileBlocker(defenseState);
 
   return [
     ...(isAllyTarget ? [defenseHoldAction(commonBlocker, shipyardState)] : []),
@@ -447,6 +449,11 @@ function attackProtectionBlocker(status: GalaxyAttackProtectionStatus | null | u
   if (status.blockedReason === "score_protection") return "Attack blocked by newbie or score-ratio protection.";
   if (status.blockedReason === "same_alliance") return "Attack blocked: target belongs to your alliance.";
   return "Attack blocked.";
+}
+
+function missileAttackProtectionBlocker(status: GalaxyAttackProtectionStatus | null | undefined): string | undefined {
+  if (status?.blockedReason === "bashing_limit") return undefined;
+  return attackProtectionBlocker(status);
 }
 
 function firstAvailableCargoShip(shipyardState: ChainShipyardState | null): MissionShipKey | undefined {

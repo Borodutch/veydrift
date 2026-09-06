@@ -4,7 +4,7 @@ import { encodeAbiParameters, keccak256, parseAbiParameters, toHex } from "viem"
 import { ChainSyncService } from "./chainSync";
 import type { LiveLogSubscriber } from "./chainSync";
 import type { BackendConfig } from "./config";
-import type { RpcLog, SettledPlanetEvent } from "./evm";
+import type { CanonicalPlanetChainState, QueueState, RpcLog, SettledPlanetEvent } from "./evm";
 import { SettlementIndexer } from "./indexer";
 
 const player = "0x2222222222222222222222222222222222222222";
@@ -561,8 +561,26 @@ describe("ChainSyncService (polling)", () => {
     service.stop();
   });
 
-  test("restores a defense queue settled by an offline-reorged missile impact", async () => {
-    const indexer = makeIndexer();
+  test("finishes canonical defense repair after an older writer removed a missile impact", async () => {
+    let canonicalDefenseQueue: QueueState | null = null;
+    let canonicalReads = 0;
+    const database = new Database(":memory:");
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents(): Promise<SettledPlanetEvent[]> { return []; },
+      async getCanonicalPlanetState(): Promise<CanonicalPlanetChainState> {
+        canonicalReads += 1;
+        return {
+          planetId: "7",
+          resources: { metal: "0", crystal: "0", deuterium: "0" },
+          buildings: [],
+          defenses: [{ id: 1, count: 5, cost: { metal: "0", crystal: "0", deuterium: "0" } }],
+          ships: [],
+          queues: { building: null, defense: canonicalDefenseQueue, ship: null }
+        };
+      }
+    }, 100n, { database });
     indexer.applyLog({
       ...planetStartedLog("0x17f", 7n, "0xplanet"),
       address: config.gameContractAddress!,
@@ -592,11 +610,39 @@ describe("ChainSyncService (polling)", () => {
       topics: [defenseCompletedTopic, topicWord(7n), topicWord(1n)],
       data: abiWords(2n, 2n)
     };
-    for (const log of [activeQueue, backlogQueue, orphanedCompletion]) indexer.applyLog(log);
+    for (const log of [activeQueue, backlogQueue]) indexer.applyLog(log);
+    canonicalDefenseQueue = indexer.playerQueues(player, "7").defense;
+    indexer.applyLog({
+      address: config.gameContractAddress!,
+      blockNumber: "0x180",
+      transactionHash: "0xdefense-before-impact",
+      logIndex: "0x2",
+      topics: [planetDefenseCountChangedTopic, topicWord(7n), topicWord(1n)],
+      data: abiWords(5n)
+    });
+    indexer.applyLog(orphanedCompletion);
     expect(indexer.playerQueues(player, "7").defense).toMatchObject({ itemId: 0, quantity: 3 });
+    expect(indexer.defenseRows("7").find((defense) => defense.id === 1)?.count).toBe(2);
+    // Simulate an older writer persisting the removal and crashing before it could hydrate the
+    // materialized defense count. Queue chronology is rebuilt from logs, but the count is stale.
+    indexer.applyLog({ ...orphanedCompletion, removed: true });
+    for (const table of ["indexed_defense_counts", "contract_defense_counts"]) {
+      database.query(`UPDATE ${table} SET count = 2 WHERE planet_id = '7' AND defense_id = 1`).run();
+    }
+    expect(indexer.playerQueues(player, "7").defense).toMatchObject({
+      itemId: 1,
+      quantity: 2,
+      backlog: [expect.objectContaining({ itemId: 0, quantity: 3 })]
+    });
+    expect(indexer.defenseRows("7").find((defense) => defense.id === 1)?.count).toBe(2);
 
     const backfiller = new MockBackfiller(0x182n, () => [activeQueue, backlogQueue]);
-    const service = new ChainSyncService(config, indexer, { logBackfiller: backfiller });
+    backfiller.timedMissilePayloadLogsFor = () => [activeQueue, backlogQueue];
+    const service = new ChainSyncService(
+      { ...config, timedMissileIndexFromBlock: 100n },
+      indexer,
+      { logBackfiller: backfiller }
+    );
     await service.poll();
 
     expect(indexer.playerQueues(player, "7").defense).toMatchObject({
@@ -604,8 +650,9 @@ describe("ChainSyncService (polling)", () => {
       quantity: 2,
       backlog: [expect.objectContaining({ itemId: 0, quantity: 3 })]
     });
-    const db = (indexer as unknown as { db: Database }).db;
-    expect(db.query(`
+    expect(indexer.defenseRows("7").find((defense) => defense.id === 1)?.count).toBe(5);
+    expect(canonicalReads).toBe(1);
+    expect(database.query(`
       SELECT removed FROM indexed_event_logs
       WHERE transaction_hash = ? AND log_index = ?
     `).get(orphanedCompletion.transactionHash, "0x0")).toEqual({ removed: 1 });

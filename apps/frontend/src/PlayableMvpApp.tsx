@@ -1121,8 +1121,12 @@ export function galaxyMissionActionErrorLabel(label: string, error: unknown): st
   return message || `${label} failed.`;
 }
 
-export function attackProtectionSubmitBlocker(status: Pick<AttackProtectionStatus, "allowed" | "blockedReason" | "blockedReasonLabel"> | null | undefined): string | undefined {
+export function attackProtectionSubmitBlocker(
+  status: Pick<AttackProtectionStatus, "allowed" | "blockedReason" | "blockedReasonLabel"> | null | undefined,
+  options: { ignoreBashingLimit?: boolean } = {},
+): string | undefined {
   if (!status || status.allowed || status.blockedReason === "none") return undefined;
+  if (options.ignoreBashingLimit && status.blockedReason === "bashing_limit") return undefined;
   if (status.blockedReasonLabel) return status.blockedReasonLabel;
   if (status.blockedReason === "bashing_limit") return "Attack blocked by bashing limit.";
   if (status.blockedReason === "score_protection") return "Attack blocked: score protection allows a 1.5× gap below 50,000 score and a 10× gap below 500,000.";
@@ -1130,9 +1134,12 @@ export function attackProtectionSubmitBlocker(status: Pick<AttackProtectionStatu
   return "Attack blocked.";
 }
 
-export async function revalidateAttackProtectionBeforeSubmit<T extends Pick<AttackProtectionStatus, "allowed" | "blockedReason" | "blockedReasonLabel">>(loadStatus: () => Promise<T>): Promise<T> {
+export async function revalidateAttackProtectionBeforeSubmit<T extends Pick<AttackProtectionStatus, "allowed" | "blockedReason" | "blockedReasonLabel">>(
+  loadStatus: () => Promise<T>,
+  options: { ignoreBashingLimit?: boolean } = {},
+): Promise<T> {
   const status = await loadStatus();
-  const blocker = attackProtectionSubmitBlocker(status);
+  const blocker = attackProtectionSubmitBlocker(status, options);
   if (blocker) throw new Error(blocker);
   return status;
 }
@@ -5864,7 +5871,11 @@ export function PlayableMvpApp({
       label: string,
       send: () => Promise<string>,
       options: {
-        validateAttackProtection?: { targetPlanetId: string; targetIsMoon?: boolean | undefined } | undefined;
+        validateAttackProtection?: {
+          targetPlanetId: string;
+          targetIsMoon?: boolean | undefined;
+          ignoreBashingLimit?: boolean | undefined;
+        } | undefined;
         expectedMissionLaunch?: (txHash: string) => FleetMissionSummary;
         affectedPlanetIds?: readonly string[];
         resourceChange?: Pick<ChainResourceChange, "bodyKind" | "planetId">;
@@ -5916,7 +5927,7 @@ export function PlayableMvpApp({
           }
         }
         if (options.validateAttackProtection) {
-          const { targetPlanetId, targetIsMoon = false } = options.validateAttackProtection;
+          const { targetPlanetId, targetIsMoon = false, ignoreBashingLimit = false } = options.validateAttackProtection;
           setGalaxyAction({
             status: "pending",
             label: `${label}: refreshing target protection.`,
@@ -5924,11 +5935,12 @@ export function PlayableMvpApp({
           if (!apiBaseUrl || !account) {
             throw new Error("Wallet or game API is unavailable while refreshing target protection.");
           }
-          await revalidateAttackProtectionBeforeSubmit(() =>
-            backendData!.attackProtection(account, targetPlanetId, targetIsMoon, {
+          await revalidateAttackProtectionBeforeSubmit(
+            () => backendData!.attackProtection(account, targetPlanetId, targetIsMoon, {
               fresh: true,
               priority: "transaction",
             }),
+            { ignoreBashingLimit },
           );
           if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return { outcome: "not-submitted" };
         }
@@ -7362,7 +7374,12 @@ export function PlayableMvpApp({
         .then((payload) => {
           const hydratedTarget = joinAttackTargetFromSystemPayload(payload, targetPlanetId, coords);
           if (!hydratedTarget) return;
-          setPendingGalaxyMission((current) => (current?.action.kind === "attack" && current.target?.id === targetPlanetId ? { ...current, target: hydratedTarget } : current));
+          setPendingGalaxyMission((current) => (
+            (current?.action.kind === "attack" || current?.action.kind === "missileAttack")
+              && current.target?.id === targetPlanetId
+              ? { ...current, target: hydratedTarget }
+              : current
+          ));
         })
         .catch((error) => console.error(error));
       void backendData!
@@ -7379,7 +7396,10 @@ export function PlayableMvpApp({
   );
 
   useEffect(() => {
-    const targetPlanetId = pendingGalaxyMission?.action.kind === "attack" ? pendingGalaxyMission.target?.occupiedBy?.planetId : undefined;
+    const targetPlanetId = pendingGalaxyMission
+      && (pendingGalaxyMission.action.kind === "attack" || pendingGalaxyMission.action.kind === "missileAttack")
+      ? pendingGalaxyMission.target?.occupiedBy?.planetId
+      : undefined;
     if (!targetPlanetId || !pendingGalaxyMission) {
       if (pendingAttackProtection !== null) setPendingAttackProtection(null);
       return;
@@ -7399,7 +7419,7 @@ export function PlayableMvpApp({
         originPlanet: selectedManagedPlanet,
         target: highscorePlanetForMission(planet, entry),
       });
-      if (action.kind === "attack") hydratePendingAttackTarget(planet.planetId, planet.coordinates);
+      if (action.kind === "attack" || action.kind === "missileAttack") hydratePendingAttackTarget(planet.planetId, planet.coordinates);
     },
     [hydratePendingAttackTarget, selectedManagedPlanet],
   );
@@ -7414,7 +7434,7 @@ export function PlayableMvpApp({
         originPlanet: selectedManagedPlanet,
         target: highscorePlanetForMission(planet, entry),
       });
-      if (action.kind === "attack") hydratePendingAttackTarget(planet.planetId, planet.coordinates);
+      if (action.kind === "attack" || action.kind === "missileAttack") hydratePendingAttackTarget(planet.planetId, planet.coordinates);
     },
     [hydratePendingAttackTarget, selectedManagedPlanet],
   );
@@ -7582,7 +7602,11 @@ export function PlayableMvpApp({
         targetCoords: Coordinates;
         originIsMoon?: boolean | undefined;
         targetIsMoon?: boolean | undefined;
-        validateAttackProtection?: { targetPlanetId: string; targetIsMoon?: boolean | undefined } | undefined;
+        validateAttackProtection?: {
+          targetPlanetId: string;
+          targetIsMoon?: boolean | undefined;
+          ignoreBashingLimit?: boolean | undefined;
+        } | undefined;
         validateShipInventory?:
           | {
               originIsMoon?: boolean | undefined;
@@ -7670,12 +7694,20 @@ export function PlayableMvpApp({
 
       if (action.mode === "missile") {
         closeMissionCreationWhenComplete(
-          runGalaxyTransaction("Missile attack", () =>
-            sendLaunchInterplanetaryMissileAttackTransaction(provider, account, gameContract, {
-              originPlanetId,
+          runGalaxyTransaction(
+            "Missile attack",
+            () => sendLaunchInterplanetaryMissileAttackTransaction(provider, account, gameContract, {
+                originPlanetId,
+                targetPlanetId,
+                primaryTargetId: draft.primaryTargetId ?? action.primaryTargetId,
+                quantity: draft.quantity ?? action.quantity,
+              }),
+            pendingLaunchOptions({
+              missionType: "MissileAttack",
+              targetPlanet: target,
               targetPlanetId,
-              primaryTargetId: draft.primaryTargetId ?? action.primaryTargetId,
-              quantity: draft.quantity ?? action.quantity,
+              targetCoords: coords,
+              validateAttackProtection: { targetPlanetId, ignoreBashingLimit: true },
             }),
           ),
         );
@@ -8519,13 +8551,19 @@ export function PlayableMvpApp({
 
     if (pendingGalaxyMission) {
       const pendingMissionOriginPlanet = pendingGalaxyMission.originPlanet ?? selectedManagedPlanet;
-      const pendingAttackTargetId = pendingGalaxyMission.action.kind === "attack" ? pendingGalaxyMission.target?.occupiedBy?.planetId : undefined;
+      const pendingAttackTargetId = pendingGalaxyMission.action.kind === "attack"
+        || pendingGalaxyMission.action.kind === "missileAttack"
+        ? pendingGalaxyMission.target?.occupiedBy?.planetId
+        : undefined;
       const pendingAttackProtectionBlocker = pendingAttackTargetId
         ? pendingAttackProtection?.targetPlanetId !== pendingAttackTargetId || pendingAttackProtection?.status === "checking"
           ? "Checking this target's active-war roster and protection rules."
           : pendingAttackProtection?.status === "error"
             ? "Could not verify this target's active-war protection. Retry before launching an attack."
-            : attackProtectionSubmitBlocker(pendingAttackProtection?.protection)
+            : attackProtectionSubmitBlocker(
+                pendingAttackProtection?.protection,
+                { ignoreBashingLimit: pendingGalaxyMission.action.kind === "missileAttack" },
+              )
         : undefined;
       const pendingAttackWarNotice =
         Boolean(pendingAttackTargetId) && pendingAttackProtection?.targetPlanetId === pendingAttackTargetId && pendingAttackProtection?.status === "ready" && pendingAttackProtection.protection?.atWar
@@ -9188,7 +9226,7 @@ export function PlayableMvpApp({
 
       {shareDialogUrl ? (
         <ShareDialog
-          kind={missionDetail?.mission.missionType === "MissileAttack" ? "missile" : "battle"}
+          kind="battle"
           onClose={() => setShareDialogUrl(null)}
           url={shareDialogUrl}
         />

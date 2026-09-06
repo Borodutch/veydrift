@@ -141,6 +141,7 @@ Apply every generated backend variable to the `veydrift_backend-test` EasyPanel 
 - `VEYDRIFT_CRYSTAL_TOKEN_ADDRESS`
 - `VEYDRIFT_DEUTERIUM_TOKEN_ADDRESS`
 - `VEYDRIFT_INDEX_FROM_BLOCK`
+- `VEYDRIFT_TIMED_MISSILE_INDEX_FROM_BLOCK` (required; exact Game upgrade block for rollback-safe timed-missile lifecycle replay)
 - `VEYDRIFT_DEPLOYMENT_COMMIT`
 - `VEYDRIFT_DEPLOYMENT_ABI_HASH`
 - `VEYDRIFT_DEPLOYMENT_TIMESTAMP`

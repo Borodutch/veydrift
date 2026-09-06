@@ -553,7 +553,9 @@ export function MissionCreationPage({
   const missileRangeBlocker = action.mode !== "missile" ? undefined
     : missileSystemDistance === null
       ? "Interplanetary missiles cannot cross galaxies."
-      : missileSystemDistance > missileRange
+      : missileRange === 0
+        ? "Interplanetary missiles require Impulse Drive level 1."
+        : missileSystemDistance > missileRange
         ? `Target is ${missileSystemDistance} systems away; Impulse Drive ${Math.max(0, Math.trunc(driveLevels.impulseDrive ?? 0))} reaches ${missileRange}.`
         : undefined;
   const missileTargetOptions = defenseCatalog.filter((defense) => defense.id >= 0 && defense.id <= 7);

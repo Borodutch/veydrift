@@ -2269,7 +2269,7 @@ describe("Mission Control battle reports", () => {
     expect(failed).toContain("transaction failed");
   });
 
-  test("uses missile-impact sharing without battle, fleet, return, cargo, fuel, loss, or debris copy", () => {
+  test("keeps missile impacts out of battle-report sharing", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
     const missile = {
       ...mission("77", "MissileAttack", "Resolved", undefined, "7", "9", now - 30_000),
@@ -2283,7 +2283,7 @@ describe("Mission Control battle reports", () => {
       mission: missile,
       battleReport: null,
     }))).join(" ");
-    expect(detailText).toContain("Share missile impact");
+    expect(detailText).not.toContain("Share missile impact");
     expect(detailText).not.toContain("Share battle report");
 
     const sharedText = collectText(MissionReportDetail({
@@ -2293,14 +2293,10 @@ describe("Mission Control battle reports", () => {
       planetLookup: new Map(),
       reportUrl: "https://veydrift.com/mission/77",
     })).join(" ").replace(/\s+/g, " ");
-    expect(sharedText).toContain("Shareable missile impact");
-    expect(sharedText).toContain("Missile payload");
-    expect(sharedText).toContain("Missiles 3");
-    expect(sharedText).toContain("Primary target Light Laser");
-    expect(sharedText).not.toContain("Return");
-    expect(sharedText).not.toContain("Fleets and cargo");
-    expect(sharedText).not.toContain("Fuel burned");
-    expect(sharedText).not.toContain("Losses and debris");
+    expect(sharedText).toContain("Missile impact reports are private");
+    expect(sharedText).toContain("do not create shareable battle reports");
+    expect(sharedText).not.toContain("Copy link");
+    expect(sharedText).not.toContain("Shareable missile impact");
   });
 
   test("uses mission-neutral copy when a shared missile report is unavailable", () => {

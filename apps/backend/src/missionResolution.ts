@@ -70,7 +70,7 @@ export type MissionResolutionCandidates = {
 };
 
 export type MissionResolutionCandidateSource = {
-  missionResolutionCandidates(): MissionResolutionCandidates | Promise<MissionResolutionCandidates>;
+  missionResolutionCandidates(asOfSeconds?: number, limit?: number): MissionResolutionCandidates | Promise<MissionResolutionCandidates>;
   /**
    * A resolver settlement can expose a stale event-indexed mission status, including when a durable
    * coordinator reuses a previously confirmed operation. Re-read just that candidate from canonical
@@ -321,7 +321,7 @@ export class MissionResolutionService {
 
   private async listCandidates(): Promise<MissionResolutionCandidates> {
     if (this.candidateSource) {
-      return this.candidateSource.missionResolutionCandidates();
+      return this.candidateSource.missionResolutionCandidates(undefined, this.maxMissionsPerTick * 5);
     }
     if (!this.chainClient) return { arrivals: [], returns: [] };
     const [arrivals, returns] = await Promise.all([

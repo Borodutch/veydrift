@@ -168,6 +168,7 @@ import {
   randomnessRequestedTopic,
   researchQueuedTopic,
   researchQueuedV2Topic,
+  researchCompletedTopic,
   shipCompletedTopic,
   shipQueuedTopic,
   shipQueueTimingSetTopic,
@@ -3313,11 +3314,12 @@ export class SettlementIndexer {
   // Bounded resolver-facing projection over the canonical active-mission table. Unlike the public
   // Mission Control projection, this deliberately keeps overdue return rows in their on-chain
   // Returning/Recalled status and never reconstructs mission history from logs.
-  missionResolutionCandidates(asOfSeconds = nowSeconds()): {
+  missionResolutionCandidates(asOfSeconds = nowSeconds(), limit = 500): {
     arrivals: ResolvableFleetMission[];
     returns: ReturnableFleetMission[];
   } {
     this.currentMissionReadModelDbVersion();
+    const boundedLimit = Math.max(1, Math.min(5_000, Math.floor(limit)));
     const rows = this.db.query(`
       SELECT *
       FROM contract_fleet_missions
@@ -3332,7 +3334,8 @@ export class SettlementIndexer {
       ORDER BY
         CASE WHEN status_id = 1 THEN CAST(arrival_at AS INTEGER) ELSE CAST(return_at AS INTEGER) END ASC,
         CAST(mission_id AS INTEGER) ASC
-    `).all(asOfSeconds, asOfSeconds) as ContractFleetMissionRow[];
+      LIMIT ?
+    `).all(asOfSeconds, asOfSeconds, boundedLimit) as ContractFleetMissionRow[];
     const missions = rows.map((row) => this.canonicalFleetMissionSummary(row));
     const arrivedAttacks = missions.filter(
       (mission) => mission.status === "Outbound"
@@ -3392,6 +3395,45 @@ export class SettlementIndexer {
     const canonical = await this.chainReader.getCanonicalFleetMission(BigInt(missionId));
     if (!canonical) return;
     await this.upsertCanonicalFleetMissions([canonical], `resolver candidate ${missionId}`);
+  }
+
+  /**
+   * A missile impact settles ready ship, defense, and research queues before damage. When that
+   * impact is later removed by an offline reorg, replaying the event ledger can reconstruct queue
+   * chronology but cannot infer the pre-completion unit/technology totals. Re-read only the bodies
+   * and owners named by removed completion logs so readiness is restored from canonical storage.
+   */
+  async reconcileTimedMissileCompletionState(logs: readonly IndexedRpcLog[]): Promise<void> {
+    const planetIds = new Set<string>();
+    const owners = new Set<Address>();
+    for (const log of logs) {
+      if (!isIndexedQueueCompletedLog(log)) continue;
+      const event = decodeIndexedQueueCompletedLog(log);
+      if ((event.queueKind === "defense" || event.queueKind === "ship") && event.planetId) {
+        planetIds.add(event.planetId);
+      } else if (event.queueKind === "research" && event.owner) {
+        owners.add(event.owner.toLowerCase() as Address);
+      }
+    }
+
+    const readPlanet = this.chainReader.getCanonicalPlanetState;
+    if (planetIds.size > 0 && !readPlanet) {
+      throw new Error("timed missile completion reconciliation requires canonical planet reads");
+    }
+    for (const planetId of planetIds) {
+      const row = await readPlanet!.call(this.chainReader, BigInt(planetId));
+      await this.healPlanetShips(row);
+      await this.healPlanetDefenses(row);
+      await this.healPlanetQueues(row);
+    }
+    const readResearch = this.chainReader.getResearchState;
+    if (owners.size > 0 && !readResearch) {
+      throw new Error("timed missile completion reconciliation requires canonical research reads");
+    }
+    for (const owner of owners) {
+      const research = await readResearch!.call(this.chainReader, owner);
+      await this.healOwnerResearch(owner, research);
+    }
   }
 
   // Every completed mission across the universe (all players), newest-first, for the past "All" tab.
@@ -4520,6 +4562,32 @@ export class SettlementIndexer {
       .map((log) => ({ ...log, removed: true }));
   }
 
+  /** Return completion logs already marked removed by an older writer. A crash can occur after the
+   * durable removal but before canonical unit/research hydration; the first timed-missile replay of
+   * every process run uses these rows to finish that interrupted repair. */
+  removedTimedMissileCompletionLogs(
+    gameContractAddress: string,
+    fromBlock: bigint,
+    toBlock: bigint
+  ): IndexedRpcLog[] {
+    if (toBlock < fromBlock) return [];
+    return (this.db.query(`
+      SELECT event_json
+      FROM indexed_event_logs
+      WHERE removed != 0
+        AND CAST(block_number AS INTEGER) BETWEEN ? AND ?
+        AND lower(json_extract(event_json, '$.address')) = ?
+        AND lower(json_extract(event_json, '$.topics[0]')) IN (?, ?, ?)
+    `).all(
+      fromBlock.toString(),
+      toBlock.toString(),
+      gameContractAddress.toLowerCase(),
+      defenseCompletedTopic,
+      shipCompletedTopic,
+      researchCompletedTopic
+    ) as EventRow[]).map((row) => parseEvent<IndexedRpcLog>(row.event_json));
+  }
+
   private applyLogAtomic(log: IndexedRpcLog): ApplyLogResult {
     const eventId = indexedLogKey(log);
     const existing = this.db.query("SELECT event_json, removed FROM indexed_event_logs WHERE event_id = ?").get(eventId) as (EventRow & { removed: number }) | null;
@@ -4571,6 +4639,23 @@ export class SettlementIndexer {
         this.recordPlayerActivityFromLog(eventId, log);
         this.recordPlayerActivityFeedFromLog(eventId, log);
         this.applyPlanetSettledEvent(decodePlanetSettledLog(log));
+        this.recordLatestBlock(log.blockNumber);
+        return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
+      }
+      if (
+        existing.removed
+        && isIndexedQueueCompletedLog(log)
+        && decodeIndexedQueueCompletedLog(log).queueKind === "research"
+      ) {
+        this.advanceIndexedRevision();
+        this.db.query(`
+          UPDATE indexed_event_logs
+          SET removed = 0, event_json = ?, block_number = ?, received_at = ?
+          WHERE event_id = ?
+        `).run(JSON.stringify(log), blockNumberToDecimal(log.blockNumber), new Date().toISOString(), eventId);
+        this.recordPlayerActivityFromLog(eventId, log);
+        this.recordPlayerActivityFeedFromLog(eventId, log);
+        this.applyQueueCompletedEvent(decodeIndexedQueueCompletedLog(log));
         this.recordLatestBlock(log.blockNumber);
         return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
       }

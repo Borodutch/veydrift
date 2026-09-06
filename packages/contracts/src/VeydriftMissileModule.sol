@@ -38,7 +38,7 @@ contract VeydriftMissileModule is VeydriftResourceReserves {
 
         uint256 systemDistance = _systemDistance(origin.system, target.system);
         uint256 range = _interplanetaryMissileRange(msg.sender);
-        if (origin.galaxy != target.galaxy || systemDistance > range) {
+        if (range == 0 || origin.galaxy != target.galaxy || systemDistance > range) {
             revert InterplanetaryMissileOutOfRange(origin.system, target.system, range);
         }
 

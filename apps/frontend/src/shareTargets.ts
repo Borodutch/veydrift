@@ -13,10 +13,10 @@ export type ShareTarget = {
   href: string;
 };
 
-export type ShareTargetKind = "battle" | "missile";
+export type ShareTargetKind = "battle";
 
-export function shareTargetText(kind: ShareTargetKind = "battle"): string {
-  return kind === "missile" ? "Veydrift missile impact" : "Veydrift battle report";
+export function shareTargetText(_kind: ShareTargetKind = "battle"): string {
+  return "Veydrift battle report";
 }
 
 // Builds the X / Telegram / Farcaster share-intent URLs for a battle-report link. Returns an empty

@@ -464,11 +464,15 @@ describe("MissionResolutionService", () => {
   test("drains a burst with bounded concurrency", async () => {
     let active = 0;
     let peak = 0;
+    let candidateLimit: number | undefined;
     const settled: string[] = [];
     const arrivals = Array.from({ length: 24 }, (_, index) => arrival(String(index + 1), "Transport", "950"));
     const service = new MissionResolutionService(config, {
       candidateSource: {
-        missionResolutionCandidates: () => ({ arrivals, returns: [] })
+        missionResolutionCandidates: (_asOfSeconds, limit) => {
+          candidateLimit = limit;
+          return { arrivals, returns: [] };
+        }
       },
       chainClient: {
         async listResolvableFleetMissions() { return []; },
@@ -489,6 +493,8 @@ describe("MissionResolutionService", () => {
     });
 
     await service.tick();
+
+    expect(candidateLimit).toBe(500);
 
     expect(settled).toHaveLength(24);
     expect(peak).toBe(4);

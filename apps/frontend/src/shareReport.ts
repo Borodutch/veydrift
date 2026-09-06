@@ -17,10 +17,10 @@ export interface ShareCapableNavigator {
   clipboard?: { writeText: (text: string) => Promise<void> };
 }
 
-export type ShareReportKind = "battle" | "missile";
+export type ShareReportKind = "battle";
 
-export function shareReportTitle(kind: ShareReportKind = "battle"): string {
-  return kind === "missile" ? "Veydrift missile impact" : "Veydrift battle report";
+export function shareReportTitle(_kind: ShareReportKind = "battle"): string {
+  return "Veydrift battle report";
 }
 
 export async function shareReportUrl(

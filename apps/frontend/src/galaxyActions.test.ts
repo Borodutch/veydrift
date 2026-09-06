@@ -622,6 +622,32 @@ describe("galaxyActions", () => {
     });
   });
 
+  test("applies score and alliance protection to Missile but ignores fleet bashing limits", () => {
+    const actionsFor = (blockedReason: "score_protection" | "same_alliance" | "bashing_limit") =>
+      galaxyActionsForSlot({
+        account,
+        attackProtection: {
+          allowed: false,
+          blockedReason,
+          blockedReasonLabel: blockedReason === "bashing_limit" ? "Attack blocked by bashing limit." : null,
+        },
+        defenseState: defenseState([{ id: 9, count: 1 }]),
+        homePlanetId: "7",
+        planet: planet(),
+        shipyardState: shipyardState([{ id: 1, count: 1 }]),
+      }).find((action) => action.kind === "missileAttack");
+
+    expect(actionsFor("score_protection")).toMatchObject({
+      enabled: false,
+      reason: "Attack blocked by newbie or score-ratio protection.",
+    });
+    expect(actionsFor("same_alliance")).toMatchObject({
+      enabled: false,
+      reason: "Attack blocked: target belongs to your alliance.",
+    });
+    expect(actionsFor("bashing_limit")).toMatchObject({ enabled: true });
+  });
+
   test("planet detail reuses galaxy mission actions for occupied, owned, origin, and empty targets", () => {
     const homeCoords = { galaxy: 2, system: 44, position: 7 };
     const enemyActions = planetDetailGalaxyActions({

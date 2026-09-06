@@ -16,13 +16,13 @@ import { shareTargetText, shareTargets } from "../shareTargets";
 
 export type ShareDialogCopyState = "copied" | "error" | "idle";
 
-export function shareDialogSemantics(kind: ShareReportKind, url: string) {
-  const subject = kind === "missile" ? "missile impact" : "battle report";
+export function shareDialogSemantics(_kind: ShareReportKind, url: string) {
+  const subject = "battle report";
   return {
     dialogTitle: `Share ${subject}`,
     linkAriaLabel: `Shareable ${subject} link`,
     subject,
-    targets: shareTargets(url, shareTargetText(kind)),
+    targets: shareTargets(url, shareTargetText(_kind)),
   };
 }
 

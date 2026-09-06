@@ -30,11 +30,28 @@ await checkJson("health", "/health", (body) => {
   if (manifest) {
     expect(body.chain?.chainId === manifest.network.chainId, "health chain id must match manifest");
     expect(body.chain?.indexFromBlock === manifest.deployment.indexFromBlock, "health indexFromBlock must match manifest");
+    expect(
+      body.chain?.timedMissileIndexFromBlock === manifest.deployment.timedMissileIndexFromBlock,
+      "health timedMissileIndexFromBlock must match the exact upgrade boundary"
+    );
     expect(body.chain?.gameContractConfigured === true, "health must report game contract configured");
     expect(body.chain?.resourceTokenAddressesConfigured === true, "health must report resource tokens configured");
     expect(body.chain?.allianceContractConfigured === true, "health must report alliance configured");
     expect(body.chain?.moonContractConfigured === true, "health must report moon configured");
     expect(body.chain?.randomnessEngineConfigured === true, "health must report randomness configured");
+    const replay = body.chainSync?.timedMissilePayloadHistoryBackfill;
+    expect(replay?.fromBlock === manifest.deployment.timedMissileIndexFromBlock, "timed missile replay must start at the manifest boundary");
+    expect(replay?.inProgress === false, "timed missile replay must be complete");
+    expect(replay?.lastError === null, "timed missile replay must be error-free");
+    expect(Boolean(replay?.completedAt), "timed missile replay must report completion evidence");
+    expect(/^\d+$/.test(replay?.throughBlock ?? ""), "timed missile replay must report its through-block");
+    expect(/^\d+$/.test(body.chainSync?.latestSyncedBlock ?? ""), "chain sync must report its latest block");
+    if (/^\d+$/.test(replay?.throughBlock ?? "") && /^\d+$/.test(body.chainSync?.latestSyncedBlock ?? "")) {
+      expect(
+        BigInt(replay.throughBlock) >= BigInt(body.chainSync.latestSyncedBlock),
+        "timed missile replay must cover the latest synchronized block"
+      );
+    }
   }
 });
 
