@@ -573,6 +573,31 @@ describe("galaxyActions", () => {
     });
   });
 
+  test("enables Missile from a defense queue that the next contract call will lazily settle", () => {
+    const canonical = defenseState([{ id: 9, count: 1 }]);
+    const actions = galaxyActionsForSlot({
+      account,
+      defenseState: {
+        ...canonical,
+        launchableDefenses: [
+          {
+            id: 9,
+            count: 2,
+            cost: { metal: "0", crystal: "0", deuterium: "0" },
+          },
+        ],
+      },
+      homePlanetId: "7",
+      planet: planet(),
+      shipyardState: shipyardState([{ id: 1, count: 1 }]),
+    });
+
+    expect(actions.find((action) => action.kind === "missileAttack")).toMatchObject({
+      enabled: true,
+      quantity: 1,
+    });
+  });
+
   test("planet detail reuses galaxy mission actions for occupied, owned, origin, and empty targets", () => {
     const homeCoords = { galaxy: 2, system: 44, position: 7 };
     const enemyActions = planetDetailGalaxyActions({

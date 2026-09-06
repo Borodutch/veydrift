@@ -906,6 +906,7 @@ export type ChainDefenseState = {
     // Backend-sourced predicted per-unit build time (VEY-KANEO-472).
     durationSeconds?: number;
   }>;
+  launchableDefenses?: ChainDefenseState["defenses"];
   queue: QueueStateResponse | null;
   resourcesAsOfNow?: OnChainResources | null;
   resourceSnapshot?: ResourceSnapshotMetadata | null;

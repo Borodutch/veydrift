@@ -8577,7 +8577,8 @@ export function PlayableMvpApp({
           onConfirm={handleConfirmGalaxyMission}
           originCoords={pendingMissionOriginCoords}
           originLabel={pendingMissionOriginLabel}
-          missileInventory={defenseState?.defenses?.find((defense) => defense.id === 9)?.count ?? 0}
+          missileInventory={(defenseState?.launchableDefenses ?? defenseState?.defenses ?? [])
+            .find((defense) => defense.id === 9)?.count ?? 0}
           resources={pendingMissionOriginResources}
           shipyardState={shipyardState}
           submitBlocker={pendingAttackProtectionBlocker ?? missionLaunchBlocker}

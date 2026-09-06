@@ -971,6 +971,9 @@ export type DefenseState = {
     // Defense detail payload, omitted on count-only projections.
     durationSeconds?: number;
   }>;
+  // Inventory the next missile-launch transaction can use after the contract's
+  // deterministic lazy defense-production settlement prologue.
+  launchableDefenses?: DefenseState["defenses"];
   queue: QueueState | null;
 };
 
