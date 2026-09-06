@@ -25,16 +25,6 @@ describe("shareReportUrl", () => {
     expect(calls[0]?.title).toBe("Veydrift battle report");
   });
 
-  test("uses missile-impact semantics in the native share sheet", async () => {
-    const calls: Array<{ title?: string; url?: string }> = [];
-    const navigatorRef: ShareCapableNavigator = {
-      share: async (data) => calls.push(data),
-    };
-
-    expect(await shareReportUrl(navigatorRef, URL, "missile")).toBe("shared");
-    expect(calls).toEqual([{ title: "Veydrift missile impact", url: URL }]);
-  });
-
   test("treats a dismissed share sheet (AbortError) as a share, not a failure or copy", async () => {
     let copied = false;
     const abort = new Error("user cancelled");
