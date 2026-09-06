@@ -350,6 +350,7 @@ describe("MissionResolutionService", () => {
     const publicClient = {
       async getTransactionCount() { return pendingNonce; },
       async getStorageAt() { return `0x${"0".repeat(64)}`; },
+      async getTransactionReceipt() { return { status: "success" }; },
       async waitForTransactionReceipt() { return { status: "success" }; }
     } as unknown as PublicClient;
     const walletClient = {

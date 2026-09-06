@@ -84,7 +84,7 @@ contract VeydriftMissileModule is VeydriftResourceReserves {
         });
         _missileMissionPrimaryTarget[missionId] = primaryTarget;
         _missileMissionQuantity[missionId] = quantity;
-        _trackMissionResolution(missionId, _fleetMissions[missionId]);
+        _addMissileArrival(targetPlanetId, missionId);
 
         emit FleetMissionLaunched(
             missionId,
@@ -126,7 +126,7 @@ contract VeydriftMissileModule is VeydriftResourceReserves {
         _debitPlanetDefenses(mission.targetPlanetId, primaryTarget, destroyedPrimary);
 
         mission.status = FleetMissionStatus.Resolved;
-        _untrackMissionResolution(missionId, mission);
+        _removeMissileArrival(mission.targetPlanetId, missionId);
         // The historical impact event predates timed missions and its indexer fallback subtracts
         // launched IPMs when no authoritative origin total exists in the same transaction. Repeat
         // the unchanged post-launch total here so new two-transaction strikes cannot be debited twice.
@@ -148,6 +148,103 @@ contract VeydriftMissileModule is VeydriftResourceReserves {
         emit FleetMissionResolved(
             missionId, msg.sender, FleetMissionType.MissileAttack, mission.arrivalAt
         );
+    }
+
+    function _addMissileArrival(uint256 planetId, uint256 missionId) private {
+        uint256[] storage heap = _missileArrivalHeapByPlanet[planetId];
+        if (_missileArrivalHeapIndexByPlanet[planetId][missionId] != 0) return;
+        uint256 previousHead = heap.length == 0 ? 0 : heap[0];
+        heap.push(missionId);
+        uint256 index = heap.length - 1;
+        _missileArrivalHeapIndexByPlanet[planetId][missionId] = index + 1;
+        while (index != 0) {
+            uint256 parent = (index - 1) / 2;
+            if (!_missileArrivalPrecedes(heap[index], heap[parent])) break;
+            _swapMissileArrivals(planetId, heap, index, parent);
+            index = parent;
+        }
+        _replaceMissileArrivalHead(planetId, previousHead, heap[0]);
+    }
+
+    function _removeMissileArrival(uint256 planetId, uint256 missionId) private {
+        uint256 indexPlusOne = _missileArrivalHeapIndexByPlanet[planetId][missionId];
+        if (indexPlusOne == 0) return;
+        uint256[] storage heap = _missileArrivalHeapByPlanet[planetId];
+        uint256 previousHead = heap[0];
+        uint256 index = indexPlusOne - 1;
+        uint256 lastIndex = heap.length - 1;
+        delete _missileArrivalHeapIndexByPlanet[planetId][missionId];
+        if (index == lastIndex) {
+            heap.pop();
+            _replaceMissileArrivalHead(planetId, previousHead, heap.length == 0 ? 0 : heap[0]);
+            return;
+        }
+
+        uint256 movedMissionId = heap[lastIndex];
+        heap[index] = movedMissionId;
+        heap.pop();
+        _missileArrivalHeapIndexByPlanet[planetId][movedMissionId] = index + 1;
+
+        if (index != 0) {
+            uint256 parent = (index - 1) / 2;
+            if (_missileArrivalPrecedes(heap[index], heap[parent])) {
+                while (index != 0) {
+                    parent = (index - 1) / 2;
+                    if (!_missileArrivalPrecedes(heap[index], heap[parent])) break;
+                    _swapMissileArrivals(planetId, heap, index, parent);
+                    index = parent;
+                }
+                return;
+            }
+        }
+
+        while (true) {
+            uint256 left = index * 2 + 1;
+            if (left >= heap.length) break;
+            uint256 right = left + 1;
+            uint256 next = right < heap.length && _missileArrivalPrecedes(heap[right], heap[left])
+                ? right
+                : left;
+            if (!_missileArrivalPrecedes(heap[next], heap[index])) break;
+            _swapMissileArrivals(planetId, heap, index, next);
+            index = next;
+        }
+        _replaceMissileArrivalHead(planetId, previousHead, heap[0]);
+    }
+
+    /// @dev The shared resolution list retains exactly one missile per target: the heap head. This
+    /// keeps every legacy guard fleet-slot-bounded while preserving its existing ordering logic.
+    function _replaceMissileArrivalHead(uint256 planetId, uint256 previousHead, uint256 nextHead)
+        private
+    {
+        if (previousHead == nextHead) return;
+        if (previousHead != 0) _removeResolutionMissionForPlanet(planetId, previousHead);
+        if (nextHead != 0) _addResolutionMissionForPlanet(planetId, nextHead);
+    }
+
+    function _swapMissileArrivals(
+        uint256 planetId,
+        uint256[] storage heap,
+        uint256 first,
+        uint256 second
+    ) private {
+        uint256 firstMissionId = heap[first];
+        uint256 secondMissionId = heap[second];
+        heap[first] = secondMissionId;
+        heap[second] = firstMissionId;
+        _missileArrivalHeapIndexByPlanet[planetId][secondMissionId] = first + 1;
+        _missileArrivalHeapIndexByPlanet[planetId][firstMissionId] = second + 1;
+    }
+
+    function _missileArrivalPrecedes(uint256 firstMissionId, uint256 secondMissionId)
+        private
+        view
+        returns (bool)
+    {
+        uint64 firstArrival = _fleetMissions[firstMissionId].arrivalAt;
+        uint64 secondArrival = _fleetMissions[secondMissionId].arrivalAt;
+        return firstArrival < secondArrival
+            || (firstArrival == secondArrival && firstMissionId < secondMissionId);
     }
 
     function _enforceAttackProtection(address attacker, uint256 targetPlanetId) private view {

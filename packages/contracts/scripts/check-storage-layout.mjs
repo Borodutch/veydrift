@@ -161,6 +161,18 @@ const reviewedStorageAppend = [
     offset: 0,
     type: "mapping(uint256 => uint32)",
   },
+  {
+    label: "_missileArrivalHeapByPlanet",
+    slot: "71",
+    offset: 0,
+    type: "mapping(uint256 => uint256[])",
+  },
+  {
+    label: "_missileArrivalHeapIndexByPlanet",
+    slot: "72",
+    offset: 0,
+    type: "mapping(uint256 => mapping(uint256 => uint256))",
+  },
 ];
 const riftExtractionStruct = [
   {label: "active", slot: "0", offset: 0, type: "bool"},

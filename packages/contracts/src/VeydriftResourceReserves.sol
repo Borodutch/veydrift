@@ -656,14 +656,14 @@ abstract contract VeydriftResourceReserves is VeydriftGameStorage {
             missionType <= FleetMissionType.Harvest || missionType == FleetMissionType.MissileAttack;
     }
 
-    function _addResolutionMissionForPlanet(uint256 planetId, uint256 missionId) private {
+    function _addResolutionMissionForPlanet(uint256 planetId, uint256 missionId) internal {
         if (_resolutionMissionIndexByPlanet[planetId][missionId] != 0) return;
         _resolutionMissionIdsByPlanet[planetId].push(missionId);
         _resolutionMissionIndexByPlanet[planetId][missionId] =
         _resolutionMissionIdsByPlanet[planetId].length;
     }
 
-    function _removeResolutionMissionForPlanet(uint256 planetId, uint256 missionId) private {
+    function _removeResolutionMissionForPlanet(uint256 planetId, uint256 missionId) internal {
         uint256 indexPlusOne = _resolutionMissionIndexByPlanet[planetId][missionId];
         if (indexPlusOne == 0) return;
 

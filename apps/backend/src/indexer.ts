@@ -4486,7 +4486,7 @@ export class SettlementIndexer {
   /** Retire persisted timed-missile payload logs that disappeared from the canonical specialized
    * replay range. The generic poll only overlaps the recent chain tip, while this replay can reach
    * back to the immutable upgrade block after an offline reorg. */
-  missingCanonicalTimedMissilePayloadLogs(
+  missingCanonicalTimedMissileLifecycleLogs(
     gameContractAddress: string,
     canonicalLogs: readonly IndexedRpcLog[],
     fromBlock: bigint,
@@ -4505,12 +4505,10 @@ export class SettlementIndexer {
       WHERE removed = 0
         AND CAST(block_number AS INTEGER) BETWEEN ? AND ?
         AND lower(json_extract(event_json, '$.address')) = ?
-        AND lower(json_extract(event_json, '$.topics[0]')) = ?
     `).all(
       fromBlock.toString(),
       toBlock.toString(),
-      normalizedAddress,
-      interplanetaryMissileLaunchedTopic
+      normalizedAddress
     ) as EventRow[];
 
     return rows
@@ -8416,7 +8414,10 @@ export class SettlementIndexer {
     return sortedEventRows(rows);
   }
 
-  private upsertEventDerivedFleetMissionRow(mission: FleetMissionSummary): number {
+  private upsertEventDerivedFleetMissionRow(
+    mission: FleetMissionSummary,
+    options: { allowLifecycleRollback?: boolean } = {}
+  ): number {
     const statusId = fleetMissionStatusId(mission.status);
     const missionTypeId = fleetMissionTypeId(mission.missionType);
     if (statusId === null || missionTypeId === null) return 0;
@@ -8427,7 +8428,11 @@ export class SettlementIndexer {
       WHERE mission_id = ?
     `).get(mission.missionId) as (EventRow & { status_id: number }) | null;
     if (existing) {
-      if (fleetMissionStatusProgressRank(fleetMissionStatusLabel(existing.status_id)) > fleetMissionStatusProgressRank(mission.status)) return 0;
+      if (
+        !options.allowLifecycleRollback
+          && fleetMissionStatusProgressRank(fleetMissionStatusLabel(existing.status_id))
+            > fleetMissionStatusProgressRank(mission.status)
+      ) return 0;
       const marker = parseJson<{ source?: string }>(existing.event_json, {});
       const baselineBlock = safeBigInt(this.metadata("lastReconciledBlock"), 0n);
       if (marker.source !== "indexed_mission_event_logs" && safeBigInt(mission.blockNumber, 0n) <= baselineBlock) return 0;
@@ -11499,21 +11504,22 @@ export class SettlementIndexer {
       return;
     }
 
+    // A removed FleetMissionResolved/Returned/Recalled event is a genuine lifecycle rollback.
+    // Rebuild every SQL column from the remaining canonical event ledger and explicitly bypass the
+    // normal forward-only progress guard, so an orphaned resolution becomes Outbound/resolvable
+    // again instead of retaining stale status_id/return_at columns.
+    if (eventMission) {
+      this.upsertEventDerivedFleetMissionRow(eventMission, { allowLifecycleRollback: true });
+      this.touchMissionReadModel();
+      return;
+    }
+
     const rebuilt = { ...this.canonicalFleetMissionSummary(row) } as FleetMissionSummary;
     delete rebuilt.originIsMoon;
     delete rebuilt.targetIsMoon;
     delete rebuilt.lootRatio;
     delete rebuilt.missilePrimaryTargetId;
     delete rebuilt.missileQuantity;
-    if (eventMission?.originIsMoon !== undefined) rebuilt.originIsMoon = eventMission.originIsMoon;
-    if (eventMission?.targetIsMoon !== undefined) rebuilt.targetIsMoon = eventMission.targetIsMoon;
-    if (eventMission?.lootRatio) rebuilt.lootRatio = eventMission.lootRatio;
-    if (eventMission?.missilePrimaryTargetId !== undefined) {
-      rebuilt.missilePrimaryTargetId = eventMission.missilePrimaryTargetId;
-    }
-    if (eventMission?.missileQuantity !== undefined) {
-      rebuilt.missileQuantity = eventMission.missileQuantity;
-    }
     this.db.query(`
       UPDATE contract_fleet_missions
       SET event_json = ?

@@ -21,6 +21,7 @@ const attackBattleResolvedTopic = "0xc0d98d89682d12d3fe90cd0786b9320015ab3950de5
 const fleetMissionLaunchedTopic = "0x95e2cb506aa14052bac412e42f47fb34d9234819a960761a7bc7f1920c0ab456";
 const fleetMissionCargoTopic = "0x3daa6311ecdadad6781f70e5d285e7150f9dc165db88d23be8867be4de33ff29";
 const fleetMissionShipsTopic = "0xf581cbe97357884794500d80286cfbe823fed3b5d77446e477aa694ce89fc82d";
+const fleetMissionResolvedTopic = "0xcb928b431ffcdbe55fddc2bf06967951efb3dfe87d14bc436d546fdbbee9cb2d";
 const interplanetaryMissileLaunchedTopic = "0x604ad2c11139a5c17dc4ad536be44e0decb1a46637bc3a7497c4e049e9ad3bd2";
 const defenseQueuedTopic = "0xc3dcdf6abcac9fc4831745727e78f808922f43da079b984420ef70c97cff0f5b";
 const fleetMissionReturnExposedTopic = "0x27a083519451f4434cd1f93497fb93689a906d3b982a3f127cb236aa24356afa";
@@ -147,7 +148,7 @@ class MockBackfiller {
     return this.paidAllianceInviteLogsFor(from, to);
   }
 
-  async listTimedMissilePayloadLogs(from: bigint, to: bigint | "latest" = "latest"): Promise<RpcLog[]> {
+  async listTimedMissileLifecycleLogs(from: bigint, to: bigint | "latest" = "latest"): Promise<RpcLog[]> {
     this.calls.push("timed-missile");
     this.timedMissilePayloadRanges.push({ from, to });
     if (this.logsError) throw this.logsError;
@@ -1329,7 +1330,7 @@ describe("ChainSyncService (polling)", () => {
     service.stop();
   });
 
-  test("replays timed missile payloads from the upgrade boundary after an old-backend rollback", async () => {
+  test("replays and reconciles the full timed missile lifecycle from the upgrade boundary", async () => {
     const database = new Database(":memory:");
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
@@ -1384,6 +1385,15 @@ describe("ChainSyncService (polling)", () => {
       JSON.stringify(payloadLog),
       new Date().toISOString()
     );
+    const resolvedLog: TestLog = {
+      address: config.gameContractAddress!,
+      blockNumber: "0xa1",
+      transactionHash: "0xmissile-impact-reorg",
+      logIndex: "0x4",
+      topics: [fleetMissionResolvedTopic, topicWord(51n), ownerTopic(player), topicWord(7n)],
+      data: abiWords(1770001200n)
+    };
+    indexer.applyLog(resolvedLog);
     const headLog = {
       ...planetStartedLog("0x12c", 88n, "0xhead"),
       address: config.gameContractAddress!,
@@ -1395,7 +1405,7 @@ describe("ChainSyncService (polling)", () => {
     const backfiller = new MockBackfiller(300n, (from, to) => (
       from <= 300n && to !== "latest" && to >= 300n ? [headLog] : []
     ));
-    backfiller.timedMissilePayloadLogsFor = () => [payloadLog];
+    backfiller.timedMissilePayloadLogsFor = () => [...launchLogs, payloadLog, resolvedLog];
     const service = new ChainSyncService({
       ...config,
       timedMissileIndexFromBlock: 150n
@@ -1405,6 +1415,7 @@ describe("ChainSyncService (polling)", () => {
 
     expect(backfiller.timedMissilePayloadRanges).toEqual([{ from: 150n, to: 300n }]);
     expect(indexer.fleetMission("51")).toMatchObject({
+      status: "Resolved",
       missilePrimaryTargetId: 4,
       missileQuantity: 3
     });
@@ -1418,24 +1429,31 @@ describe("ChainSyncService (polling)", () => {
 
     service.stop();
     backfiller.head = 316n;
-    backfiller.timedMissilePayloadLogsFor = () => [];
+    // The launch remains canonical but the impact transaction disappeared outside the generic
+    // 64-block overlap while the writer was offline. Full lifecycle replay must retire the
+    // resolution and make the same mission id outbound/resolvable again.
+    backfiller.timedMissilePayloadLogsFor = () => [...launchLogs, payloadLog];
     const restarted = new ChainSyncService({
       ...config,
       timedMissileIndexFromBlock: 150n
     }, indexer, { logBackfiller: backfiller });
     await restarted.poll();
     expect(backfiller.timedMissilePayloadRanges.at(-1)).toEqual({ from: 150n, to: 316n });
-    expect(indexer.fleetMission("51")).not.toHaveProperty("missileQuantity");
+    expect(indexer.fleetMission("51")).toMatchObject({
+      status: "Outbound",
+      missilePrimaryTargetId: 4,
+      missileQuantity: 3
+    });
     expect(database.query(
       "SELECT removed FROM indexed_event_logs WHERE event_id = ?"
-    ).get(`${tx}:0x3`)).toEqual({ removed: 1 });
+    ).get("0xmissile-impact-reorg:0x4")).toEqual({ removed: 1 });
     restarted.stop();
   });
 
   test("websocket setup cannot clear a timed missile replay readiness failure", async () => {
     const indexer = makeIndexer();
     const backfiller = new MockBackfiller(300n);
-    backfiller.listTimedMissilePayloadLogs = async () => {
+    backfiller.listTimedMissileLifecycleLogs = async () => {
       throw new Error("timed missile replay unavailable");
     };
     const liveLogs = new MockLiveLogSubscriber();
@@ -2063,5 +2081,42 @@ describe("ChainSyncService (polling)", () => {
     service.stop();
     await service.poll();
     expect(backfiller.headCalls).toBe(callsBefore); // stopped: no further head fetch
+  });
+
+  test("a delayed websocket setup cannot revive a stopped service", async () => {
+    const indexer = makeIndexer();
+    const backfiller = new MockBackfiller(0x180n);
+    let callbacks: Parameters<LiveLogSubscriber["subscribe"]>[0] | undefined;
+    let resolveSubscription: ((unsubscribe: () => void) => void) | undefined;
+    let unsubscribeCalls = 0;
+    const liveLogs: LiveLogSubscriber = {
+      subscribe(options) {
+        callbacks = options;
+        return new Promise<() => void>((resolve) => {
+          resolveSubscription = resolve;
+        });
+      }
+    };
+    const service = new ChainSyncService(config, indexer, {
+      logBackfiller: backfiller,
+      liveLogSubscriber: liveLogs
+    });
+
+    service.start();
+    service.stop();
+    resolveSubscription?.(() => { unsubscribeCalls += 1; });
+    await Promise.resolve();
+    await Promise.resolve();
+    callbacks?.onError(new Error("stale websocket failure"));
+    callbacks?.onLogs([planetStartedLog("0x181", 77n, "0xstale-websocket")]);
+    await Promise.resolve();
+
+    expect(unsubscribeCalls).toBe(1);
+    expect(service.snapshot()).toMatchObject({
+      eventsReceived: 0,
+      liveListenerConnected: false,
+      liveListenerErrorCount: 0,
+      pollingEnabled: false
+    });
   });
 });

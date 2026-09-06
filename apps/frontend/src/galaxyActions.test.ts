@@ -598,6 +598,30 @@ describe("galaxyActions", () => {
     });
   });
 
+  test("keeps no-slot Missile available while fleet-slot readiness blocks fleet actions", () => {
+    const unavailableFleet = {
+      ...shipyardState([{ id: 1, count: 1 }]),
+      fleetLaunchAvailable: false,
+      fleetLaunchUnavailableReason: "Fleet slot state is still syncing.",
+    };
+    const actions = galaxyActionsForSlot({
+      account,
+      defenseState: defenseState([{ id: 9, count: 1 }]),
+      homePlanetId: "7",
+      planet: planet(),
+      shipyardState: unavailableFleet,
+    });
+
+    expect(actions.find((action) => action.kind === "attack")).toMatchObject({
+      enabled: false,
+      reason: "Fleet slot state is still syncing.",
+    });
+    expect(actions.find((action) => action.kind === "missileAttack")).toMatchObject({
+      enabled: true,
+      quantity: 1,
+    });
+  });
+
   test("planet detail reuses galaxy mission actions for occupied, owned, origin, and empty targets", () => {
     const homeCoords = { galaxy: 2, system: 44, position: 7 };
     const enemyActions = planetDetailGalaxyActions({

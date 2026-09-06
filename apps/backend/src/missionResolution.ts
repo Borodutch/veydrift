@@ -602,6 +602,7 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
           nonce,
           ...(functionName === "resolveFleetMission" ? { gas: fleetMissionResolutionGas } : {})
         }),
+        isConfirmedCanonical: (hash) => this.isConfirmedCanonical(hash),
         shouldReplace: (hash) => resolverTransactionNeedsReplacement(this.publicClient!, hash),
         replace: async (nonce, previousHash) => this.walletClient!.writeContract({
           abi: veydriftGameResolutionAbi,
@@ -643,6 +644,7 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
         nonce,
         functionName === "resolveFleetMission" ? fleetMissionResolutionGas : undefined
       ),
+      isConfirmedCanonical: (hash) => this.isConfirmedCanonical(hash),
       shouldReplace: (hash) => resolverTransactionNeedsReplacement(this.publicClient!, hash),
       replace: async (nonce, previousHash) => this.sendUnlockedTransaction(
         from,
@@ -660,6 +662,16 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     const receipt = await this.publicClient.waitForTransactionReceipt({ hash });
     if (receipt.status !== "success") {
       throw new Error(`transaction ${hash} reverted`);
+    }
+  }
+
+  private async isConfirmedCanonical(hash: Hex): Promise<boolean> {
+    if (!this.publicClient) return false;
+    try {
+      const receipt = await this.publicClient.getTransactionReceipt({ hash });
+      return receipt.status === "success";
+    } catch {
+      return false;
     }
   }
 

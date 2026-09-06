@@ -4109,6 +4109,40 @@ contract VeydriftGameTest is Test {
         assertEq(game.defenseCount(targetPlanetId, Defense.LightLaser), 8);
     }
 
+    function testMissileSpamKeepsEachImpactGasBoundedWithOneTrackedHeapHead() public {
+        (uint256 originPlanetId, uint256 targetPlanetId,) =
+            _seedMissileAttackPlanetsWithoutScoreProtection();
+        uint256 missionCount = 128;
+        _setTechnologyLevel(player, Technology.ImpulseDrive, 3);
+        _setDefenseCount(originPlanetId, Defense.InterplanetaryMissile, uint32(missionCount));
+        _setDefenseCount(targetPlanetId, Defense.LightLaser, uint32(missionCount));
+
+        uint256 firstMissionId;
+        uint64 arrivalAt;
+        for (uint256 index = 0; index < missionCount; ++index) {
+            vm.prank(player);
+            uint256 missionId = game.launchInterplanetaryMissileAttack(
+                originPlanetId, targetPlanetId, Defense.LightLaser, 1
+            );
+            if (index == 0) {
+                firstMissionId = missionId;
+                (, arrivalAt,,) = _fleetMission(missionId);
+            }
+        }
+
+        vm.warp(arrivalAt);
+        uint256 maximumImpactGas;
+        for (uint256 index = 0; index < missionCount; ++index) {
+            uint256 gasBefore = gasleft();
+            game.resolveFleetMission(firstMissionId + index);
+            uint256 gasUsed = gasBefore - gasleft();
+            if (gasUsed > maximumImpactGas) maximumImpactGas = gasUsed;
+        }
+
+        assertLt(maximumImpactGas, 500_000);
+        assertEq(game.defenseCount(targetPlanetId, Defense.LightLaser), 0);
+    }
+
     function testPlanetCannotBeAbandonedWhileIncomingMissileIsInFlight() public {
         (uint256 originPlanetId, uint256 defenderHomePlanetId, address defender) =
             _seedMissileAttackPlanetsWithoutScoreProtection();

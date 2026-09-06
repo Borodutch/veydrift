@@ -320,6 +320,31 @@ describe("ResolverTransactionCoordinator", () => {
     expect(broadcasts).toBe(1);
   });
 
+  test("re-broadcasts a confirmed operation when its receipt is no longer canonical", async () => {
+    const coordinator = new ResolverTransactionCoordinator(":memory:");
+    let pending = 4;
+    let confirmedCanonical = true;
+    const broadcasts: number[] = [];
+    const request = () => coordinator.submit({
+      chainId,
+      address,
+      operationId: "mission:resolve:reorged-confirmation",
+      getTransactionCount: async () => pending,
+      submit: async (nonce) => {
+        broadcasts.push(nonce);
+        pending = nonce + 1;
+        return hash(nonce);
+      },
+      isConfirmedCanonical: async () => confirmedCanonical,
+      confirm: async () => {}
+    });
+
+    expect(await request()).toBe(hash(4));
+    confirmedCanonical = false;
+    expect(await request()).toBe(hash(5));
+    expect(broadcasts).toEqual([4, 5]);
+  });
+
   test("defers a crash-after-broadcast ambiguity until canonical state refreshes", async () => {
     await withDatabase(async (databasePath) => {
       const coordinator = new ResolverTransactionCoordinator(databasePath);

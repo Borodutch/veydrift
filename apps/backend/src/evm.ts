@@ -1518,7 +1518,7 @@ export interface ChainReader {
   listDebrisFieldEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<DebrisFieldEvent[]>;
   listAllianceLogs?(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
   listPaidAllianceInviteLogs?(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
-  listTimedMissilePayloadLogs?(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
+  listTimedMissileLifecycleLogs?(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
   listContractLogs?(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
   listReferralLogs?(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
   failoverRpc?(reason: string): boolean;
@@ -3909,7 +3909,7 @@ export class VeydriftGameReader implements ChainReader {
     });
   }
 
-  async listTimedMissilePayloadLogs(
+  async listTimedMissileLifecycleLogs(
     fromBlock: bigint,
     toBlock: bigint | "latest" = "latest"
   ): Promise<RpcLog[]> {
@@ -3918,7 +3918,11 @@ export class VeydriftGameReader implements ChainReader {
       address: this.gameContractAddress,
       fromBlock: toQuantity(fromBlock),
       toBlock: toBlock === "latest" ? "latest" : toQuantity(toBlock),
-      topics: [[interplanetaryMissileLaunchedTopic]]
+      // Reconcile the complete Game transaction surface from the immutable upgrade boundary.
+      // Missile impact state spans FleetMissionResolved, defense/queue snapshots, and the legacy
+      // impact event; filtering only the launch payload would leave orphaned sibling projections
+      // after an offline reorg outside the generic tip overlap.
+      topics: []
     });
   }
 

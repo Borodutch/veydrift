@@ -26,7 +26,7 @@ type LogBackfiller = {
   listContractLogs(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
   listReferralLogs?(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
   listPaidAllianceInviteLogs?(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
-  listTimedMissilePayloadLogs?(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
+  listTimedMissileLifecycleLogs?(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
   rpcMetrics?(): unknown;
 };
 
@@ -51,7 +51,7 @@ type ChainSyncIndexer = Partial<Pick<SettlementIndexer,
   | "reconcilePaidAllianceInviteHistory"
   | "recordTimedMissilePayloadHistoryBackfill"
   | "timedMissilePayloadHistoryBackfillStatus"
-  | "missingCanonicalTimedMissilePayloadLogs"
+  | "missingCanonicalTimedMissileLifecycleLogs"
   | "snapshot"
   | "invalidateResourceProjectionWatermark"
   | "missingCanonicalGameLogs"
@@ -247,6 +247,7 @@ export class ChainSyncService {
   private liveListenerErrorCount = 0;
   private liveListenerLastError: string | null = null;
   private liveUnsubscribe: (() => void) | undefined;
+  private liveListenerGeneration = 0;
   private livePollWakePending = false;
   private livePollWakeDrain: Promise<void> | null = null;
   private readonly liveRemovedLogs = new Map<string, RpcLog>();
@@ -349,6 +350,7 @@ export class ChainSyncService {
 
   stop(): void {
     this.stopped = true;
+    this.liveListenerGeneration += 1;
     this.liveUnsubscribe?.();
     this.liveUnsubscribe = undefined;
     this.liveListenerConnected = false;
@@ -690,7 +692,7 @@ export class ChainSyncService {
   ): Promise<void> {
     const contractAddress = this.config.gameContractAddress;
     const fromBlock = this.config.timedMissileIndexFromBlock;
-    const listLogs = backfiller.listTimedMissilePayloadLogs;
+    const listLogs = backfiller.listTimedMissileLifecycleLogs;
     const status = this.indexer?.timedMissilePayloadHistoryBackfillStatus;
     const record = this.indexer?.recordTimedMissilePayloadHistoryBackfill;
     if (!contractAddress || fromBlock === undefined) return;
@@ -738,7 +740,7 @@ export class ChainSyncService {
     if (current.required) this.connected = false;
     try {
       const logs = await listLogs.call(backfiller, scanFrom, head);
-      const missingCanonicalLogs = this.indexer?.missingCanonicalTimedMissilePayloadLogs?.(
+      const missingCanonicalLogs = this.indexer?.missingCanonicalTimedMissileLifecycleLogs?.(
         contractAddress,
         logs,
         scanFrom,
@@ -784,16 +786,20 @@ export class ChainSyncService {
   private startLiveListener(): boolean {
     const subscriber = this.options.liveLogSubscriber;
     if (!subscriber) return false;
+    const generation = this.liveListenerGeneration + 1;
+    this.liveListenerGeneration = generation;
 
     try {
       const unsubscribe = subscriber.subscribe({
         addresses: this.subscribedAddresses(),
-        onError: (error) => this.handleLiveListenerError(error),
-        onLogs: (logs) => this.enqueueLiveLogs(logs)
+        onError: (error) => this.handleLiveListenerError(error, generation),
+        onLogs: (logs) => {
+          if (generation === this.liveListenerGeneration) this.enqueueLiveLogs(logs);
+        }
       });
       void Promise.resolve(unsubscribe)
         .then((resolvedUnsubscribe) => {
-          if (this.stopped) {
+          if (this.stopped || generation !== this.liveListenerGeneration) {
             resolvedUnsubscribe();
             return;
           }
@@ -802,15 +808,16 @@ export class ChainSyncService {
           this.liveListenerLastError = null;
           this.publishDiagnostics();
         })
-        .catch((error) => this.handleLiveListenerError(error));
+        .catch((error) => this.handleLiveListenerError(error, generation));
       return true;
     } catch (error) {
-      this.handleLiveListenerError(error);
+      this.handleLiveListenerError(error, generation);
       return false;
     }
   }
 
-  private handleLiveListenerError(error: unknown): void {
+  private handleLiveListenerError(error: unknown, generation: number): void {
+    if (this.stopped || generation !== this.liveListenerGeneration) return;
     const message = error instanceof Error ? error.message : "Viem websocket live listener failed.";
     this.liveListenerConnected = false;
     this.liveListenerErrorCount += 1;

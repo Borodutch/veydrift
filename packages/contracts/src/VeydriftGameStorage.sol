@@ -413,6 +413,13 @@ abstract contract VeydriftGameStorage is Initializable {
     // strikes were atomic and therefore leave no pending mission state to migrate.
     mapping(uint256 missionId => Defense primaryTarget) internal _missileMissionPrimaryTarget;
     mapping(uint256 missionId => uint32 quantity) internal _missileMissionQuantity;
+    // Timed missiles do not consume fleet slots, so an attacker may have many in flight. Keep them
+    // out of the legacy fleet-resolution arrays (whose linear scans are bounded by fleet slots) and
+    // maintain one arrival-ordered min-heap per target planet instead. Resolution/guards inspect the
+    // head in O(1), while launch/removal update the heap in O(log n).
+    mapping(uint256 planetId => uint256[] missionIds) internal _missileArrivalHeapByPlanet;
+    mapping(uint256 planetId => mapping(uint256 missionId => uint256 indexPlusOne)) internal
+        _missileArrivalHeapIndexByPlanet;
 
     error AlreadyStarted();
     error BadStartPayment();
