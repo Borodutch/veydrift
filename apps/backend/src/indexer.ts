@@ -3511,6 +3511,15 @@ export class SettlementIndexer {
     );
   }
 
+  availableDefenseRows(planetId: string, durationLevels?: { shipyardLevel: number; naniteLevel: number }): DefenseState["defenses"] {
+    const counts = this.indexedLevelsById("contract_defense_counts", "defense_id", "count", planetId);
+    const completedQueueQuantities = this.completedQueueQuantities(`defense:${planetId}`);
+    return deriveDefenseRows(
+      (id) => (counts.get(id) ?? 0) + (completedQueueQuantities.get(id) ?? 0),
+      durationLevels
+    );
+  }
+
   technologyLevels(wallet: `0x${string}`): Record<string, number> {
     const levels = this.contractTechnologyLevels(wallet);
     for (const queue of this.queueSettlement(`research:${wallet.toLowerCase()}`).completed) {

@@ -3635,8 +3635,16 @@ describe("Veydrift backend", () => {
       transactionHash: "0xdefense-count-before",
       logIndex: "0x1",
       removed: false,
-      topics: [planetDefenseCountChangedTopic, topic(7n), topic(1n)],
-      data: abiWords(3n)
+      topics: [planetDefenseCountChangedTopic, topic(7n), topic(9n)],
+      data: abiWords(1n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x80",
+      transactionHash: "0xdefense-queue-ready",
+      logIndex: "0x2",
+      removed: false,
+      topics: [defenseQueuedTopic, topic(7n), topic(9n)],
+      data: abiWords(1n, BigInt(Math.floor(Date.now() / 1_000) - 1), 12_500n, 2_500n, 10_000n)
     });
     const handler = createRequestHandler({
       config: configuredTestConfig,
@@ -3650,7 +3658,8 @@ describe("Veydrift backend", () => {
     expect(warmShipyardBody.ships.find((ship) => ship.id === 0)?.count).toBe(5);
     const warmDefenses = await handler(new Request(`http://localhost/wallet/${player}/defenses?planetId=7`));
     const warmDefensesBody = await warmDefenses.json() as DefenseState;
-    expect(warmDefensesBody.defenses.find((defense) => defense.id === 1)?.count).toBe(3);
+    expect(warmDefensesBody.defenses.find((defense) => defense.id === 9)?.count).toBe(1);
+    expect(warmDefensesBody.launchableDefenses?.find((defense) => defense.id === 9)?.count).toBe(2);
 
     indexer.applyLog({
       blockNumber: "0x81",
@@ -3665,8 +3674,8 @@ describe("Veydrift backend", () => {
       transactionHash: "0xdefense-count-after",
       logIndex: "0x1",
       removed: false,
-      topics: [planetDefenseCountChangedTopic, topic(7n), topic(1n)],
-      data: abiWords(4n)
+      topics: [defenseCompletedTopic, topic(7n), topic(9n)],
+      data: abiWords(1n, 2n)
     });
 
     const freshShipyard = await handler(new Request(`http://localhost/wallet/${player}/shipyard?planetId=7`));
@@ -3674,7 +3683,8 @@ describe("Veydrift backend", () => {
     expect(freshShipyardBody.ships.find((ship) => ship.id === 0)?.count).toBe(0);
     const freshDefenses = await handler(new Request(`http://localhost/wallet/${player}/defenses?planetId=7`));
     const freshDefensesBody = await freshDefenses.json() as DefenseState;
-    expect(freshDefensesBody.defenses.find((defense) => defense.id === 1)?.count).toBe(4);
+    expect(freshDefensesBody.defenses.find((defense) => defense.id === 9)?.count).toBe(2);
+    expect(freshDefensesBody.launchableDefenses?.find((defense) => defense.id === 9)?.count).toBe(2);
   });
 
   test("refreshes reader-worker cached mission detail after another process indexes resolved attack logs", async () => {
@@ -9614,6 +9624,10 @@ describe("Veydrift backend", () => {
     expect(defensesBody.queue).toBeNull();
     expect(defensesBody.defenses.filter((defense: { count: number }) => defense.count > 0).map(({ id, count }: { id: number; count: number }) => ({ id, count }))).toEqual([
       { id: 0, count: 10 }
+    ]);
+    expect(defensesBody.launchableDefenses.filter((defense: { count: number }) => defense.count > 0).map(({ id, count }: { id: number; count: number }) => ({ id, count }))).toEqual([
+      { id: 0, count: 15 },
+      { id: 1, count: 2 }
     ]);
   });
 

@@ -4382,6 +4382,12 @@ function indexedDefenseState(
           naniteLevel: buildings.find((building) => building.id === 11)?.level ?? 0
         })
       : [],
+    launchableDefenses: planet
+      ? indexer.availableDefenseRows(planet.planetId, {
+          shipyardLevel: buildings.find((building) => building.id === 5)?.level ?? 0,
+          naniteLevel: buildings.find((building) => building.id === 11)?.level ?? 0
+        })
+      : [],
     queue: planet ? indexer.planetQueue(planet.planetId, "defense") : null
   };
 }

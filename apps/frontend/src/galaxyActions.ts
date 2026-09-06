@@ -419,7 +419,8 @@ function interplanetaryMissileBlocker(defenseState: ChainDefenseState | null | u
     return defenseState.unavailableReason ?? "Missile actions are unavailable on this deployment.";
   }
 
-  const interplanetaryMissiles = defenseState.defenses.find((defense) => defense.id === 9)?.count ?? 0;
+  const interplanetaryMissiles = (defenseState.launchableDefenses ?? defenseState.defenses)
+    .find((defense) => defense.id === 9)?.count ?? 0;
   return interplanetaryMissiles > 0 ? undefined : "Requires an interplanetary missile on your active planet.";
 }
 
