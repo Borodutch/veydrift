@@ -1423,6 +1423,33 @@ describe("ChainSyncService (polling)", () => {
     service.stop();
   });
 
+  test("keeps readiness disconnected when timed missile payload replay capability is unavailable", async () => {
+    const service = new ChainSyncService({
+      ...config,
+      timedMissileIndexFromBlock: 150n
+    }, makeIndexer(), {
+      logBackfiller: {
+        async getHeadBlock() { return 300n; },
+        async listContractLogs() { return []; }
+      }
+    });
+
+    await service.poll();
+
+    expect(service.snapshot()).toMatchObject({
+      connected: false,
+      lastError: "Timed missile payload history backfill capability is unavailable.",
+      timedMissilePayloadHistoryBackfill: {
+        contractAddress: config.gameContractAddress,
+        fromBlock: "150",
+        inProgress: false,
+        lastError: "Timed missile payload history backfill capability is unavailable.",
+        throughBlock: null
+      }
+    });
+    service.stop();
+  });
+
   test("keeps readiness disconnected and retries when referral history backfill fails", async () => {
     const indexer = makeIndexer();
     const referralConfig: BackendConfig = {

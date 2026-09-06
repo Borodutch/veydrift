@@ -6299,6 +6299,61 @@ describe("SettlementIndexer", () => {
     });
   });
 
+  test("repairs a defense queue after an older writer persisted an orphaned completion", () => {
+    const database = new Database(":memory:");
+    const reader = {
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    };
+    const indexer = new SettlementIndexer(reader, 100n, { database, runStartupBackfill: false });
+    indexer.applyEvent(planet);
+    const active = {
+      blockNumber: "0xa0",
+      transactionHash: "0xdefense-active-before-missile",
+      logIndex: "0x0",
+      topics: [defenseQueuedTopic, topic(7n), topic(1n)],
+      data: abiWords(2n, 1770001000n, 100n, 50n, 0n)
+    };
+    const backlog = {
+      blockNumber: "0xa1",
+      transactionHash: "0xdefense-backlog-before-missile",
+      logIndex: "0x0",
+      topics: [defenseQueuedTopic, topic(7n), topic(0n)],
+      data: abiWords(3n, 1770001600n, 200n, 0n, 0n)
+    };
+    const orphanedCompletion = {
+      blockNumber: "0xa2",
+      transactionHash: "0xorphaned-missile-defense-completion",
+      logIndex: "0x0",
+      topics: [defenseCompletedTopic, topic(7n), topic(1n)],
+      data: abiWords(2n, 2n)
+    };
+    for (const log of [active, backlog, orphanedCompletion]) indexer.applyLog(log);
+    expect(indexer.playerQueues(player, planet.planetId).defense).toMatchObject({
+      itemId: 0,
+      quantity: 3
+    });
+
+    database.query(`
+      UPDATE indexed_event_logs
+      SET removed = 1
+      WHERE transaction_hash = lower(?) AND log_index = ?
+    `).run(orphanedCompletion.transactionHash, orphanedCompletion.logIndex);
+    expect(database.query(
+      "SELECT value FROM indexer_metadata WHERE key = 'productionQueueProjectionBackfillV1'"
+    ).get()).not.toBeNull();
+
+    const restarted = new SettlementIndexer(reader, 100n, { database, runStartupBackfill: false });
+
+    expect(restarted.playerQueues(player, planet.planetId).defense).toMatchObject({
+      itemId: 1,
+      quantity: 2,
+      backlog: [{ itemId: 0, quantity: 3, readyAt: "1770001600" }]
+    });
+    database.close();
+  });
+
   test("indexes rift deposits and withdrawal lifecycle", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },

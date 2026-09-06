@@ -691,7 +691,20 @@ export class ChainSyncService {
     const listLogs = backfiller.listTimedMissilePayloadLogs;
     const status = this.indexer?.timedMissilePayloadHistoryBackfillStatus;
     const record = this.indexer?.recordTimedMissilePayloadHistoryBackfill;
-    if (!contractAddress || fromBlock === undefined || !listLogs || !status || !record) return;
+    if (!contractAddress || fromBlock === undefined) return;
+    if (!listLogs || !status || !record) {
+      const message = "Timed missile payload history backfill capability is unavailable.";
+      this.timedMissilePayloadHistoryBackfill = {
+        completedAt: null,
+        contractAddress,
+        fromBlock: fromBlock.toString(),
+        inProgress: false,
+        lastError: message,
+        throughBlock: null
+      };
+      this.connected = false;
+      throw new Error(message);
+    }
 
     const current = status.call(this.indexer, contractAddress, fromBlock);
     this.timedMissilePayloadHistoryBackfill = {

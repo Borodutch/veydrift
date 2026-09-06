@@ -101,6 +101,27 @@ describe("backend config", () => {
     expect(safeConfigSummary(result.config).timedMissileIndexFromBlock).toBe("50960000");
   });
 
+  test("requires the timed missile replay boundary outside local and test deployments", () => {
+    const baseEnv = {
+      VEYDRIFT_GAME_CONTRACT_ADDRESS: "0x3333333333333333333333333333333333333333",
+      VEYDRIFT_RPC_URL: "https://example.invalid/rpc"
+    };
+
+    for (const mode of ["staging", "production"]) {
+      expect(loadBackendConfig({ ...baseEnv, VEYDRIFT_DEPLOYMENT_MODE: mode }).problems).toContainEqual({
+        field: "VEYDRIFT_TIMED_MISSILE_INDEX_FROM_BLOCK",
+        message: "Required in staging and production for timed-missile payload recovery."
+      });
+      expect(loadBackendConfig({
+        ...baseEnv,
+        VEYDRIFT_DEPLOYMENT_MODE: mode,
+        VEYDRIFT_TIMED_MISSILE_INDEX_FROM_BLOCK: "50960000"
+      }).problems).toEqual([]);
+    }
+
+    expect(loadBackendConfig({ ...baseEnv, VEYDRIFT_DEPLOYMENT_MODE: "test" }).problems).toEqual([]);
+  });
+
   test("accepts an explicit durable resolver transaction coordinator path", () => {
     const result = loadBackendConfig({
       VEYDRIFT_GAME_CONTRACT_ADDRESS: "0x3333333333333333333333333333333333333333",
@@ -322,6 +343,7 @@ describe("backend config", () => {
       VEYDRIFT_DEPLOYMENT_MODE: "production",
       VEYDRIFT_GAME_CONTRACT_ADDRESS: "0x3333333333333333333333333333333333333333",
       VEYDRIFT_MISSION_RESOLVER_ADDRESS: "0x4444444444444444444444444444444444444444",
+      VEYDRIFT_TIMED_MISSILE_INDEX_FROM_BLOCK: "50960000",
       VEYDRIFT_RPC_URL: "https://example.invalid/rpc"
     }).config.missionResolutionEnabled).toBe(true);
   });
@@ -344,6 +366,7 @@ describe("backend config", () => {
   test("gates the synthetic stationed-defense QA flag on opt-in and non-production", () => {
     const baseEnv = {
       VEYDRIFT_GAME_CONTRACT_ADDRESS: "0x3333333333333333333333333333333333333333",
+      VEYDRIFT_TIMED_MISSILE_INDEX_FROM_BLOCK: "50960000",
       VEYDRIFT_RPC_URL: "https://example.invalid/rpc"
     };
 

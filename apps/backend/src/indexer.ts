@@ -6367,6 +6367,7 @@ export class SettlementIndexer {
     // broad startup backfill. Older builds could leave an archive row behind after its raw impact
     // log was removed by a reorg.
     this.repairRemovedUnitProjectionRows();
+    this.repairRemovedProductionQueueCompletionProjections();
     this.repairRemovedMissileAttackRows();
     // Missile payloads are event-only. This narrow repair must run even when production disables the
     // broad startup backfill, because an older writer can journal the new launch event without adding
@@ -6450,6 +6451,26 @@ export class SettlementIndexer {
       this.setMetadata(productionQueueProjectionBackfillMetadataKey, new Date().toISOString());
       this.touch();
     })();
+  }
+
+  private repairRemovedProductionQueueCompletionProjections(): void {
+    const rows = this.db.query(`
+      SELECT event_json
+      FROM indexed_event_logs
+      WHERE removed != 0
+        AND lower(json_extract(event_json, '$.topics[0]')) IN (?, ?)
+    `).all(
+      defenseCompletedTopic,
+      shipCompletedTopic
+    ) as EventRow[];
+    const affected = new Map<string, { queueKind: "defense" | "ship"; planetId: string }>();
+    for (const row of rows) {
+      const identity = productionQueueProjectionIdentity(parseEvent<IndexedRpcLog>(row.event_json));
+      if (identity) affected.set(`${identity.queueKind}:${identity.planetId}`, identity);
+    }
+    for (const identity of affected.values()) {
+      this.rebuildProductionQueueProjectionFromEventLogs(identity.queueKind, identity.planetId);
+    }
   }
 
   private rebuildProductionQueueProjectionFromEventLogs(

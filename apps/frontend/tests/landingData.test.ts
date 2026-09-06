@@ -61,6 +61,18 @@ describe("landing backend data", () => {
     const now = Date.UTC(2026, 0, 1, 0, 0, 0);
     const feed = landingFeedFromMissions([
       {
+        arrivalAt: String(Math.floor((now + 15 * 60 * 1_000) / 1_000)),
+        missionId: "3",
+        missionType: "MissileAttack",
+        originPlanet: { coordinates: "2:39:6" },
+        originPlanetId: "6",
+        owner: "0x3333333333333333333333333333333333333333",
+        returnAt: String(Math.floor((now + 15 * 60 * 1_000) / 1_000)),
+        status: "Outbound",
+        targetPlanet: { coordinates: "2:41:8", name: "Vey Prime" },
+        targetPlanetId: "8",
+      },
+      {
         arrivalAt: String(Math.floor((now + 90 * 60 * 1_000) / 1_000)),
         missionId: "2",
         missionType: "Transport",
@@ -87,6 +99,11 @@ describe("landing backend data", () => {
     ], now);
 
     expect(feed).toEqual([
+      {
+        label: "Missile Attack",
+        tone: "rose",
+        value: "0x3333...3333: missile strike inbound to Vey Prime, arrives in 15m",
+      },
       {
         label: "Attack",
         tone: "rose",

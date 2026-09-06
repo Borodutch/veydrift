@@ -188,6 +188,15 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
     "VEYDRIFT_TIMED_MISSILE_INDEX_FROM_BLOCK",
     problems
   );
+  if (
+    (deploymentMode === "staging" || deploymentMode === "production")
+    && timedMissileIndexFromBlock === undefined
+  ) {
+    problems.push({
+      field: "VEYDRIFT_TIMED_MISSILE_INDEX_FROM_BLOCK",
+      message: "Required in staging and production for timed-missile payload recovery."
+    });
+  }
   const parsedLogChunkSpan = parseBigInt(env.VEYDRIFT_LOG_CHUNK_SPAN, "VEYDRIFT_LOG_CHUNK_SPAN", problems);
   const logChunkSpan = parsedLogChunkSpan && parsedLogChunkSpan > 0n ? parsedLogChunkSpan : defaultLogChunkSpan;
   const settlementStartPriceWei = parseBigInt(
