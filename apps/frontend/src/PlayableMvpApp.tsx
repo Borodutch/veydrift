@@ -813,7 +813,7 @@ export function shouldAutoPollMissionControlForPage(page: Page): boolean {
 
 export function shouldPollPendingMissionReport(detail: MissionDetailResponse | undefined, now = Date.now()): boolean {
   if (!detail || detail.battleReport) return false;
-  if (!["Attack", "AcsAttack", "Intercept", "MissileAttack"].includes(detail.mission.missionType)) return false;
+  if (!["Attack", "AcsAttack", "Intercept"].includes(detail.mission.missionType)) return false;
   if (detail.battleReportMaterialization?.status === "ready") return false;
   if (detail.mission.status === "Recalled" || detail.mission.recallProvenance === "FleetMissionRecalled") return false;
   if (detail.mission.status === "Outbound" && Number(detail.mission.arrivalAt) * 1_000 > now) return false;
@@ -9186,7 +9186,13 @@ export function PlayableMvpApp({
         {planetSidebar}
       </div>
 
-      {shareDialogUrl ? <ShareDialog onClose={() => setShareDialogUrl(null)} url={shareDialogUrl} /> : null}
+      {shareDialogUrl ? (
+        <ShareDialog
+          onClose={() => setShareDialogUrl(null)}
+          title={missionDetail?.mission.missionType === "MissileAttack" ? "Share missile impact" : undefined}
+          url={shareDialogUrl}
+        />
+      ) : null}
       {backendData && account && pendingTransactionRecovery ? (
         <PendingTransactionRecoveryDialog
           decision={pendingTransactionRecovery}

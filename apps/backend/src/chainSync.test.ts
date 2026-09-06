@@ -438,6 +438,73 @@ describe("ChainSyncService (polling)", () => {
     service.stop();
   });
 
+  test("retires a Game launch removed while the writer was offline before indexing its replacement", async () => {
+    const indexer = makeIndexer();
+    const orphanedLaunch: TestLog = {
+      address: config.gameContractAddress!,
+      blockNumber: "0x181",
+      transactionHash: "0xoffline-orphaned-launch",
+      logIndex: "0x0",
+      topics: [fleetMissionLaunchedTopic, topicWord(16516n), ownerTopic(player), topicWord(7n)],
+      data: abiWords(7n, 99n, 4_000_000_000n, 4_000_000_100n, 0n)
+    };
+    const replacementLaunch: TestLog = {
+      ...orphanedLaunch,
+      transactionHash: "0xoffline-canonical-launch",
+      topics: [fleetMissionLaunchedTopic, topicWord(16517n), ownerTopic(player), topicWord(7n)]
+    };
+    indexer.applyLog(orphanedLaunch);
+    expect(indexer.fleetMission("16516")).not.toBeNull();
+
+    const backfiller = new MockBackfiller(0x182n, () => [replacementLaunch]);
+    const service = new ChainSyncService(config, indexer, { logBackfiller: backfiller });
+    await service.poll();
+
+    expect(indexer.fleetMission("16516")).toBeNull();
+    expect(indexer.fleetMission("16517")).toMatchObject({ missionId: "16517" });
+    const db = (indexer as unknown as { db: Database }).db;
+    expect(db.query(`
+      SELECT removed FROM indexed_event_logs
+      WHERE transaction_hash = ? AND log_index = ?
+    `).get(orphanedLaunch.transactionHash, "0x0")).toEqual({ removed: 1 });
+    service.stop();
+  });
+
+  test("rolls back a missile defense total removed while the writer was offline", async () => {
+    const indexer = makeIndexer();
+    const baseline: TestLog = {
+      address: config.gameContractAddress!,
+      blockNumber: "0x180",
+      transactionHash: "0xcanonical-defense-baseline",
+      logIndex: "0x0",
+      topics: [planetDefenseCountChangedTopic, topicWord(7n), topicWord(1n)],
+      data: abiWords(5n)
+    };
+    const orphanedImpact: TestLog = {
+      address: config.gameContractAddress!,
+      blockNumber: "0x181",
+      transactionHash: "0xoffline-orphaned-missile-impact",
+      logIndex: "0x0",
+      topics: [planetDefenseCountChangedTopic, topicWord(7n), topicWord(1n)],
+      data: abiWords(3n)
+    };
+    indexer.applyLog(baseline);
+    indexer.applyLog(orphanedImpact);
+    expect(indexer.defenseRows("7").find((defense) => defense.id === 1)?.count).toBe(3);
+
+    const backfiller = new MockBackfiller(0x182n, () => [baseline]);
+    const service = new ChainSyncService(config, indexer, { logBackfiller: backfiller });
+    await service.poll();
+
+    expect(indexer.defenseRows("7").find((defense) => defense.id === 1)?.count).toBe(5);
+    const db = (indexer as unknown as { db: Database }).db;
+    expect(db.query(`
+      SELECT removed FROM indexed_event_logs
+      WHERE transaction_hash = ? AND log_index = ?
+    `).get(orphanedImpact.transactionHash, "0x0")).toEqual({ removed: 1 });
+    service.stop();
+  });
+
   test("keeps an unrelated stale reason while reconciling a websocket removal", async () => {
     const indexer = makeIndexer();
     const orphanedLaunch: TestLog = {

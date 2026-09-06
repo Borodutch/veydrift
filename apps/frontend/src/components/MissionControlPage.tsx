@@ -2154,7 +2154,7 @@ function OpenMissionButton({ onClick }: { onClick: () => void }) {
   );
 }
 
-function MissionReportDetail({
+export function MissionReportDetail({
   mission,
   now,
   onBack,
@@ -2186,11 +2186,14 @@ function MissionReportDetail({
   }
 
   const report = missionReport(mission, now, planetLookup);
+  const isMissileAttack = mission.missionType === "MissileAttack";
   return (
     <section className="rounded-lg border border-cyan-300/20 bg-cyan-300/10 p-3">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-cyan-200/80">Shareable mission report</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-cyan-200/80">
+            {isMissileAttack ? "Shareable missile impact" : "Shareable mission report"}
+          </p>
           <h3 className="mt-1 text-base font-semibold text-white">{report.title}</h3>
           <p className="mt-1 text-xs text-cyan-100/80">{report.routeSummary}</p>
         </div>
@@ -2215,31 +2218,43 @@ function MissionReportDetail({
       </div>
 
       <div className="mt-4 grid gap-3 lg:grid-cols-2">
-        <ReportPanel title="Battle time">
+        <ReportPanel title={isMissileAttack ? "Flight" : "Battle time"}>
           <ReportLine label="Arrival" value={report.battleTime} />
           <ReportLine label="Status" value={missionDisplayStatusLabel(mission, now)} />
-          <ReportLine label="Outcome" value={report.outcome} />
-        </ReportPanel>
-        <ReportPanel title="Commanders">
-          <ReportLine label="Attacker" value={report.attacker} />
-          <ReportLine label="Defender" value={report.defender} />
-          <ReportLine label="Group combat" value={report.acs} />
+          {isMissileAttack ? null : <ReportLine label="Outcome" value={report.outcome} />}
         </ReportPanel>
         <ReportPanel title="Coordinates">
           <ReportLine label="Origin" value={report.origin} />
           <ReportLine label="Target" value={report.target} />
-          <ReportLine label="Return" value={formatMissionTime(mission.returnAt, now)} />
+          {isMissileAttack ? null : <ReportLine label="Return" value={formatMissionTime(mission.returnAt, now)} />}
         </ReportPanel>
-        <ReportPanel title="Fleets and cargo">
-          <ReportLine label="Attacker fleet" value={formatShips(mission.ships)} />
-          <ReportLine label="Cargo carried" value={formatCargo(mission.cargo)} />
-          <ReportLine label="Fuel burned" value={`${formatResource(mission.fuelCost)} deuterium`} />
-        </ReportPanel>
-        <ReportPanel title="Losses and debris">
-          <ReportLine label="Fleet losses" value={report.losses} />
-          <ReportLine label="Defense losses" value={report.losses} />
-          <ReportLine label={mission.missionType === "Harvest" ? "Debris collected" : "Debris field"} value={report.debris} />
-        </ReportPanel>
+        {isMissileAttack ? (
+          <ReportPanel title="Missile payload">
+            <ReportLine label="Missiles" value={(mission.missileQuantity ?? 0).toLocaleString()} />
+            <ReportLine
+              label="Primary target"
+              value={defenseCatalog.find((defense) => defense.id === mission.missilePrimaryTargetId)?.label ?? "Selected defense"}
+            />
+          </ReportPanel>
+        ) : (
+          <>
+            <ReportPanel title="Commanders">
+              <ReportLine label="Attacker" value={report.attacker} />
+              <ReportLine label="Defender" value={report.defender} />
+              <ReportLine label="Group combat" value={report.acs} />
+            </ReportPanel>
+            <ReportPanel title="Fleets and cargo">
+              <ReportLine label="Attacker fleet" value={formatShips(mission.ships)} />
+              <ReportLine label="Cargo carried" value={formatCargo(mission.cargo)} />
+              <ReportLine label="Fuel burned" value={`${formatResource(mission.fuelCost)} deuterium`} />
+            </ReportPanel>
+            <ReportPanel title="Losses and debris">
+              <ReportLine label="Fleet losses" value={report.losses} />
+              <ReportLine label="Defense losses" value={report.losses} />
+              <ReportLine label={mission.missionType === "Harvest" ? "Debris collected" : "Debris field"} value={report.debris} />
+            </ReportPanel>
+          </>
+        )}
         <ReportPanel title="Public proof">
           <ReportLine label="Transaction" value={mission.transactionHash || "Pending chain proof"} />
           <ReportLine label="Block" value={mission.blockNumber || "Pending chain proof"} />
@@ -3802,6 +3817,18 @@ function missionReportText(
   planetLookup: ReadonlyMap<string, MissionPlanetIdentity>
 ): string {
   const report = missionReport(mission, now, planetLookup);
+  if (mission.missionType === "MissileAttack") {
+    const primaryTarget = defenseCatalog.find((defense) => defense.id === mission.missilePrimaryTargetId)?.label ?? "Selected defense";
+    return [
+      `Veydrift missile impact: ${report.title}`,
+      `Arrival: ${report.battleTime}`,
+      `Status: ${missionDisplayStatusLabel(mission, now)}`,
+      `Route: ${report.routeSummary}`,
+      `Missiles: ${(mission.missileQuantity ?? 0).toLocaleString()}`,
+      `Primary target: ${primaryTarget}`,
+      mission.transactionHash ? `Tx: ${mission.transactionHash}` : null,
+    ].filter(Boolean).join("\n");
+  }
   const joinedAttackMissionIds = mission.joinedAttackMissionIds ?? [];
   return [
     `Veydrift mission report: ${report.title}`,

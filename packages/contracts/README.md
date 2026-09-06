@@ -116,7 +116,7 @@ Colonies:
 
 Fleet missions:
 
-- `launchFleetMission(originPlanetId, targetPlanetId, missionType, ships, cargo, randomnessRequestId)` is the generic contract-backed fleet lifecycle for transport, deploy, colonize, attack, harvest, ACS defend, and intercept mission types. Missile attacks use `launchInterplanetaryMissileAttack(...)`.
+- `launchFleetMission(originPlanetId, targetPlanetId, missionType, ships, cargo, randomnessRequestId)` is the generic contract-backed fleet lifecycle for transport, deploy, colonize, attack, harvest, ACS defend, and intercept mission types. Missile attacks use `launchInterplanetaryMissileAttack(...)` and fly one way for `(30 + 60 × system distance) / universe speed` seconds before interception and defense damage resolve at arrival. They consume no fleet slot, fuel, cargo, randomness, return leg, or recall path.
 - Departure settles involved planets, enforces fleet slots, removes launched ships from the origin, checks cargo capacity, and spends cargo plus fuel/deuterium.
 - For `AcsDefend` and `Intercept`, the `targetPlanetId` argument is the hostile attack mission id. The contract resolves the actual defended planet from that mission, requires alliance defense permission from `VeydriftAllianceSystem`, and links the launched fleet into the combat module's defender-side battle resolution.
 - Release-slice parity note: Veydrift currently treats ACS defend and intercept as hostile-mission counterplay, launched from indexed inbound attack rows by mission id. They are not Galaxy planet-slot actions and are not a claim of full classic OGame ACS parity.
@@ -280,6 +280,12 @@ Scripts require a funded deployer key in the shell environment. Do not commit or
 Veydrift is in open alpha as of 2026-05-29, so contract deployments must preserve
 existing player state. Read `../../docs/open-alpha-state-preservation.md` before
 running any deploy or upgrade command.
+
+Timed-missile rollout has a strict compatibility order: deploy and verify the backend/indexer build
+that ingests `InterplanetaryMissileLaunched` first, then upgrade the live Game proxy without pausing,
+then deploy the frontend. Never upgrade the contract first: the immutable missile payload is emitted
+at launch and an older backend cannot resolve a launch it did not ingest. Abort before the proxy
+upgrade unless the new backend is healthy, subscribed, and caught up to the current chain head.
 
 ## VEYDRIFT Uniswap CCA/v4 launch
 

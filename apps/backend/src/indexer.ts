@@ -4395,6 +4395,42 @@ export class SettlementIndexer {
     return this.db.transaction(() => this.applyLogAtomic(log))();
   }
 
+  /**
+   * Return active Game-proxy logs in a verified HTTP range that are absent from the canonical
+   * `eth_getLogs` response. Websocket `removed` notifications are best effort and can be missed
+   * while the writer is offline, so every bounded HTTP replay must explicitly retire these rows
+   * through `applyLog`'s normal removal path before applying canonical replacements.
+   *
+   * Scope this to the stable Game proxy address: other indexed addresses can legitimately be
+   * replaced in configuration while their historical logs remain canonical.
+   */
+  missingCanonicalGameLogs(
+    gameContractAddress: string,
+    canonicalLogs: readonly IndexedRpcLog[],
+    fromBlock: bigint,
+    toBlock: bigint
+  ): IndexedRpcLog[] {
+    if (toBlock < fromBlock) return [];
+    const normalizedAddress = gameContractAddress.toLowerCase();
+    const canonicalEventIds = new Set(
+      canonicalLogs
+        .filter((log) => log.address?.toLowerCase() === normalizedAddress && !log.removed)
+        .map((log) => indexedLogKey(log))
+    );
+    const rows = this.db.query(`
+      SELECT event_json
+      FROM indexed_event_logs
+      WHERE removed = 0
+        AND CAST(block_number AS INTEGER) BETWEEN ? AND ?
+        AND lower(json_extract(event_json, '$.address')) = ?
+    `).all(fromBlock.toString(), toBlock.toString(), normalizedAddress) as EventRow[];
+
+    return rows
+      .map((row) => parseEvent<IndexedRpcLog>(row.event_json))
+      .filter((log) => !canonicalEventIds.has(indexedLogKey(log)))
+      .map((log) => ({ ...log, removed: true }));
+  }
+
   private applyLogAtomic(log: IndexedRpcLog): ApplyLogResult {
     const eventId = indexedLogKey(log);
     const existing = this.db.query("SELECT event_json, removed FROM indexed_event_logs WHERE event_id = ?").get(eventId) as (EventRow & { removed: number }) | null;

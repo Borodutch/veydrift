@@ -50,6 +50,7 @@ type ChainSyncIndexer = Partial<Pick<SettlementIndexer,
   | "reconcilePaidAllianceInviteHistory"
   | "snapshot"
   | "invalidateResourceProjectionWatermark"
+  | "missingCanonicalGameLogs"
   | "recordResourceProjectionWatermark"
 >>;
 
@@ -468,6 +469,20 @@ export class ChainSyncService {
           logs = await backfiller.listContractLogs(fromBlock, head);
         } finally {
           this.lastGetLogsDurationMs = Date.now() - getLogsStartedAt;
+        }
+        const missingCanonicalLogs = this.config.gameContractAddress
+          ? this.indexer?.missingCanonicalGameLogs?.(
+              this.config.gameContractAddress,
+              logs,
+              fromBlock,
+              head
+            ) ?? []
+          : [];
+        if (missingCanonicalLogs.length > 0) {
+          // A writer that was offline during a reorg never receives websocket `removed` notices.
+          // Retire missing persisted Game logs through the same removal handlers before replaying
+          // canonical replacements, including missile defense totals and complete launch rows.
+          await this.applyLogs(missingCanonicalLogs, applyLog, "fallback_poll");
         }
         const { applied, lastHash, resourceChanges, walletPlanetsChanged } = await this.applyLogs(logs, applyLog);
         // Advance the generic cursor before specialized history scans. Both share the raw ledger, so

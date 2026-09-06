@@ -83,6 +83,7 @@ export function MissionDetailPage({
   const report = detail?.battleReport ?? undefined;
   const resolutionKind = mission ? manualMissionResolutionKind(mission, now) : undefined;
   const statusPill = mission ? missionStatusPill(mission, now) : undefined;
+  const shareLabel = mission?.missionType === "MissileAttack" ? "Share missile impact" : "Share battle report";
 
   return (
     <section className="grid gap-4">
@@ -95,7 +96,7 @@ export function MissionDetailPage({
         )}
         actions={(
           <button
-              aria-label="Share battle report"
+              aria-label={shareLabel}
               className="inline-flex h-11 w-11 items-center justify-center rounded border border-cyan-300/30 bg-cyan-300/10 text-sm font-medium text-cyan-100 transition hover:bg-cyan-300/20 sm:h-9 sm:w-9"
               onClick={(event) => {
                 // A plain button never navigates, but stop the event before any ancestor handler can
@@ -104,7 +105,7 @@ export function MissionDetailPage({
                 event.stopPropagation();
                 onShareReport();
               }}
-              title="Share battle report"
+              title={shareLabel}
               type="button"
             >
               <Share2 aria-hidden="true" size={15} />
