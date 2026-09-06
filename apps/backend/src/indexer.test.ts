@@ -6354,6 +6354,108 @@ describe("SettlementIndexer", () => {
     database.close();
   });
 
+  test("startup queue repair preserves a newer canonical queue snapshot outside retained logs", () => {
+    const database = new Database(":memory:");
+    const reader = {
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    };
+    const indexer = new SettlementIndexer(reader, 100n, { database, runStartupBackfill: false });
+    indexer.applyEvent(planet);
+    const orphanedCompletion = {
+      blockNumber: "0xa2",
+      transactionHash: "0xhistorical-orphaned-completion",
+      logIndex: "0x0",
+      topics: [defenseCompletedTopic, topic(7n), topic(1n)],
+      data: abiWords(2n, 2n)
+    };
+    indexer.applyLog(orphanedCompletion);
+    const canonicalQueueSeed = {
+      blockNumber: "0xa3",
+      transactionHash: "0xcanonical-queue-seed",
+      logIndex: "0x0",
+      topics: [defenseQueuedTopic, topic(7n), topic(6n)],
+      data: abiWords(4n, 1770005000n, 400n, 200n, 0n)
+    };
+    indexer.applyLog(canonicalQueueSeed);
+    const canonicalEvent = JSON.stringify({
+      eventName: "DefenseQueued",
+      transactionHash: "0x",
+      queueKind: "defense",
+      planetId: "7",
+      itemId: 6,
+      quantity: 4,
+      readyAt: "1770005000",
+      cost: { metal: "400", crystal: "200", deuterium: "0" },
+      canonicalSnapshot: true,
+      blockNumber: "200"
+    });
+    database.query(`
+      UPDATE indexed_planet_queues
+      SET item_id = 6, quantity = 4, ready_at = '1770005000', event_json = ?
+      WHERE queue_key = 'defense:7'
+    `).run(canonicalEvent);
+    database.query(`
+      UPDATE contract_production_queues
+      SET item_id = 6, quantity = 4, ready_at = '1770005000'
+      WHERE queue_key = 'defense:7'
+    `).run();
+    database.query(`
+      DELETE FROM indexed_event_logs
+      WHERE transaction_hash = lower(?) AND log_index = ?
+    `).run(canonicalQueueSeed.transactionHash, canonicalQueueSeed.logIndex);
+    database.query(`
+      UPDATE indexed_event_logs
+      SET removed = 1
+      WHERE transaction_hash = lower(?) AND log_index = ?
+    `).run(orphanedCompletion.transactionHash, orphanedCompletion.logIndex);
+
+    const restarted = new SettlementIndexer(reader, 100n, { database, runStartupBackfill: false });
+
+    expect(restarted.playerQueues(player, planet.planetId).defense).toMatchObject({
+      itemId: 6,
+      quantity: 4,
+      readyAt: "1770005000"
+    });
+    database.close();
+  });
+
+  test("startup unit rollback preserves a canonical heal when retained history has no baseline", () => {
+    const database = new Database(":memory:");
+    const reader = {
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    };
+    const indexer = new SettlementIndexer(reader, 100n, { database, runStartupBackfill: false });
+    indexer.applyEvent(planet);
+    const orphanedCount = {
+      blockNumber: "0xa2",
+      transactionHash: "0xorphaned-defense-count",
+      logIndex: "0x0",
+      topics: [planetDefenseCountChangedTopic, topic(7n), topic(1n)],
+      data: abiWords(3n)
+    };
+    indexer.applyLog(orphanedCount);
+    database.query("UPDATE indexed_defense_counts SET count = 9 WHERE planet_id = '7' AND defense_id = 1").run();
+    database.query("UPDATE contract_defense_counts SET count = 9 WHERE planet_id = '7' AND defense_id = 1").run();
+    database.query(`
+      UPDATE indexed_event_logs
+      SET removed = 1
+      WHERE transaction_hash = lower(?) AND log_index = ?
+    `).run(orphanedCount.transactionHash, orphanedCount.logIndex);
+
+    const restarted = new SettlementIndexer(reader, 100n, { database, runStartupBackfill: false });
+
+    expect(restarted.defenseRows("7").find((defense) => defense.id === 1)?.count).toBe(9);
+    expect(restarted.snapshot()).toMatchObject({
+      safeToServeIndexedState: false,
+      pendingReconciliationReason: "unit_count_projection_reconciliation_required:planet:defense:7:1"
+    });
+    database.close();
+  });
+
   test("indexes rift deposits and withdrawal lifecycle", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },

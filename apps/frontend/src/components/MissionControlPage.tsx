@@ -2170,7 +2170,7 @@ export function MissionReportDetail({
   if (!mission) {
     return (
       <section className="rounded-lg border border-amber-300/25 bg-amber-300/10 p-3">
-        <h3 className="text-sm font-semibold text-white">Battle report unavailable</h3>
+        <h3 className="text-sm font-semibold text-white">Mission report unavailable</h3>
         <p className="mt-1 text-xs leading-5 text-amber-100/80">
           This share link does not match a mission visible to the connected wallet right now.
         </p>
@@ -2179,7 +2179,7 @@ export function MissionReportDetail({
           onClick={onBack}
           type="button"
         >
-          Back to reports
+          Back to missions
         </button>
       </section>
     );

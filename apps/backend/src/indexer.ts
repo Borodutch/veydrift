@@ -4483,6 +4483,45 @@ export class SettlementIndexer {
       .map((log) => ({ ...log, removed: true }));
   }
 
+  /** Retire persisted timed-missile payload logs that disappeared from the canonical specialized
+   * replay range. The generic poll only overlaps the recent chain tip, while this replay can reach
+   * back to the immutable upgrade block after an offline reorg. */
+  missingCanonicalTimedMissilePayloadLogs(
+    gameContractAddress: string,
+    canonicalLogs: readonly IndexedRpcLog[],
+    fromBlock: bigint,
+    toBlock: bigint
+  ): IndexedRpcLog[] {
+    if (toBlock < fromBlock) return [];
+    const normalizedAddress = gameContractAddress.toLowerCase();
+    const canonicalByEventId = new Map(
+      canonicalLogs
+        .filter((log) => log.address?.toLowerCase() === normalizedAddress && !log.removed)
+        .map((log) => [indexedLogKey(log), log] as const)
+    );
+    const rows = this.db.query(`
+      SELECT event_json
+      FROM indexed_event_logs
+      WHERE removed = 0
+        AND CAST(block_number AS INTEGER) BETWEEN ? AND ?
+        AND lower(json_extract(event_json, '$.address')) = ?
+        AND lower(json_extract(event_json, '$.topics[0]')) = ?
+    `).all(
+      fromBlock.toString(),
+      toBlock.toString(),
+      normalizedAddress,
+      interplanetaryMissileLaunchedTopic
+    ) as EventRow[];
+
+    return rows
+      .map((row) => parseEvent<IndexedRpcLog>(row.event_json))
+      .filter((log) => {
+        const canonical = canonicalByEventId.get(indexedLogKey(log));
+        return !canonical || indexedLogFingerprint(log) !== indexedLogFingerprint(canonical);
+      })
+      .map((log) => ({ ...log, removed: true }));
+  }
+
   private applyLogAtomic(log: IndexedRpcLog): ApplyLogResult {
     const eventId = indexedLogKey(log);
     const existing = this.db.query("SELECT event_json, removed FROM indexed_event_logs WHERE event_id = ?").get(eventId) as (EventRow & { removed: number }) | null;
@@ -6477,6 +6516,17 @@ export class SettlementIndexer {
     queueKind: "defense" | "ship",
     planetId: string
   ): void {
+    const current = this.db.query(`
+      SELECT event_json
+      FROM indexed_planet_queues
+      WHERE queue_key = ?
+    `).get(`${queueKind}:${planetId}`) as EventRow | null;
+    if (current) {
+      const event = parseEvent<QueueUpsertEvent>(current.event_json);
+      // A canonical snapshot may be newer than the retained raw log window. Never replace it with
+      // an incomplete event-only replay merely because an older writer left a removed completion.
+      if (event.canonicalSnapshot === true) return;
+    }
     const rows = this.db.query(`
       SELECT event_json
       FROM indexed_event_logs
@@ -7274,7 +7324,11 @@ export class SettlementIndexer {
       WHERE indexed_event_logs.removed != 0
     `).all() as Array<EventRow & { event_id: string }>;
     for (const row of removedUnitRows) {
-      this.removeUnitCountEventLog(row.event_id, parseEvent<IndexedRpcLog>(row.event_json));
+      this.removeUnitCountEventLog(
+        row.event_id,
+        parseEvent<IndexedRpcLog>(row.event_json),
+        { preserveWithoutBaseline: true }
+      );
     }
 
     const removedMissileRows = this.db.query(`
@@ -7437,15 +7491,22 @@ export class SettlementIndexer {
     return true;
   }
 
-  private removeUnitCountEventLog(eventId: string, log: IndexedRpcLog): void {
+  private removeUnitCountEventLog(
+    eventId: string,
+    log: IndexedRpcLog,
+    options: { preserveWithoutBaseline?: boolean } = {}
+  ): void {
     const removed = this.absoluteUnitCountProjection(log);
     if (!removed) return;
     this.db.query("DELETE FROM indexed_unit_count_event_logs WHERE event_id = ?").run(eventId);
-    this.restoreLatestAbsoluteUnitCountProjection(removed);
+    this.restoreLatestAbsoluteUnitCountProjection(removed, options);
     this.touchBattleReportReadModel();
   }
 
-  private restoreLatestAbsoluteUnitCountProjection(affected: AbsoluteUnitCountProjection): void {
+  private restoreLatestAbsoluteUnitCountProjection(
+    affected: AbsoluteUnitCountProjection,
+    options: { preserveWithoutBaseline?: boolean } = {}
+  ): void {
     const rows = this.db.query(`
       SELECT event_json
       FROM indexed_unit_count_event_logs
@@ -7460,8 +7521,16 @@ export class SettlementIndexer {
       return;
     }
 
-    // With no earlier canonical snapshot, the event-sourced baseline for a unit is zero. Remove
-    // both public and canonical rows instead of retaining the orphaned total.
+    if (options.preserveWithoutBaseline) {
+      // A production database can retain only a bounded raw log history while a canonical heal has
+      // already restored this row. Absence of an older event is not proof that the on-chain count is
+      // zero: retain the snapshot and fail readiness closed until an operator reconciliation.
+      this.markStale(`unit_count_projection_reconciliation_required:${affectedKey}`);
+      return;
+    }
+
+    // A live removal with complete local history has no earlier snapshot, so its event-sourced
+    // baseline is zero.
     const idColumn = affected.kind === "ship" ? "ship_id" : "defense_id";
     const tables = affected.body === "moon"
       ? [affected.kind === "ship" ? "contract_moon_ship_counts" : "contract_moon_defense_counts"]

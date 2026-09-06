@@ -1416,10 +1416,45 @@ describe("ChainSyncService (polling)", () => {
       throughBlock: "300"
     });
 
+    service.stop();
     backfiller.head = 316n;
     backfiller.timedMissilePayloadLogsFor = () => [];
-    await service.poll();
-    expect(backfiller.timedMissilePayloadRanges.at(-1)).toEqual({ from: 236n, to: 316n });
+    const restarted = new ChainSyncService({
+      ...config,
+      timedMissileIndexFromBlock: 150n
+    }, indexer, { logBackfiller: backfiller });
+    await restarted.poll();
+    expect(backfiller.timedMissilePayloadRanges.at(-1)).toEqual({ from: 150n, to: 316n });
+    expect(indexer.fleetMission("51")).not.toHaveProperty("missileQuantity");
+    expect(database.query(
+      "SELECT removed FROM indexed_event_logs WHERE event_id = ?"
+    ).get(`${tx}:0x3`)).toEqual({ removed: 1 });
+    restarted.stop();
+  });
+
+  test("websocket setup cannot clear a timed missile replay readiness failure", async () => {
+    const indexer = makeIndexer();
+    const backfiller = new MockBackfiller(300n);
+    backfiller.listTimedMissilePayloadLogs = async () => {
+      throw new Error("timed missile replay unavailable");
+    };
+    const liveLogs = new MockLiveLogSubscriber();
+    const service = new ChainSyncService({
+      ...config,
+      timedMissileIndexFromBlock: 150n
+    }, indexer, { liveLogSubscriber: liveLogs, logBackfiller: backfiller });
+
+    service.start();
+    await waitFor(() => service.snapshot().timedMissilePayloadHistoryBackfill.lastError !== null);
+
+    expect(service.snapshot()).toMatchObject({
+      connected: false,
+      lastError: "timed missile replay unavailable",
+      liveListenerConnected: true,
+      timedMissilePayloadHistoryBackfill: {
+        lastError: "timed missile replay unavailable"
+      }
+    });
     service.stop();
   });
 

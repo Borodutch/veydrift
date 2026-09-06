@@ -18,6 +18,10 @@ const manifest = {
   deployment: {
     blockNumber: stringValue("deploy-block", "VEYDRIFT_DEPLOY_BLOCK"),
     indexFromBlock: stringValue("index-from-block", "VEYDRIFT_INDEX_FROM_BLOCK"),
+    timedMissileIndexFromBlock: stringValue(
+      "timed-missile-index-from-block",
+      "VEYDRIFT_TIMED_MISSILE_INDEX_FROM_BLOCK"
+    ),
     commit: value("commit") ?? gitCommit(),
     abiHash: value("abi-hash") ?? abiHash(value("abi-file") ?? "packages/contracts/out/VeydriftGame.sol/VeydriftGame.json"),
     deployer: {
@@ -148,13 +152,19 @@ function validateManifest(current) {
   if (!current.deployment.indexFromBlock) {
     current.deployment.indexFromBlock = current.deployment.blockNumber;
   }
+  if (!current.deployment.timedMissileIndexFromBlock) {
+    current.deployment.timedMissileIndexFromBlock = current.deployment.blockNumber;
+  }
   if (BigInt(current.deployment.indexFromBlock) > BigInt(current.deployment.blockNumber)) {
     fail("index-from-block cannot be greater than deploy-block.");
+  }
+  if (BigInt(current.deployment.timedMissileIndexFromBlock) > BigInt(current.deployment.blockNumber)) {
+    fail("timed-missile-index-from-block cannot be greater than deploy-block.");
   }
 }
 
 function usage(message) {
-  const text = `Usage: node scripts/veydrift-deployment-manifest.mjs --deploy-block <block> --game <address> --metal <address> --crystal <address> --deuterium <address> --alliance <address> --randomness <address> --moon <address> [--settlement <address>] [--referral <address>] [--from-env] [--out <file>]`;
+  const text = `Usage: node scripts/veydrift-deployment-manifest.mjs --deploy-block <block> --game <address> --metal <address> --crystal <address> --deuterium <address> --alliance <address> --randomness <address> --moon <address> [--settlement <address>] [--referral <address>] [--timed-missile-index-from-block <block>] [--from-env] [--out <file>]`;
   fail(`${message}\n${text}`);
 }
 

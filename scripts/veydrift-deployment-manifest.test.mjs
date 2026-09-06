@@ -15,6 +15,7 @@ test("deployment manifest carries referral system into backend env", () => {
   runNode([
     "scripts/veydrift-deployment-manifest.mjs",
     "--deploy-block", "123",
+    "--timed-missile-index-from-block", "120",
     "--chain-id", "84532",
     "--game", address("1"),
     "--settlement", address("1"),
@@ -31,6 +32,7 @@ test("deployment manifest carries referral system into backend env", () => {
 
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
   assert.equal(manifest.contracts.referralSystem, address("5"));
+  assert.equal(manifest.deployment.timedMissileIndexFromBlock, "120");
 
   runNode([
     "scripts/veydrift-apply-deployment-manifest.mjs",
@@ -40,6 +42,7 @@ test("deployment manifest carries referral system into backend env", () => {
 
   const backendEnv = readFileSync(backendEnvPath, "utf8");
   assert.match(backendEnv, new RegExp(`^VEYDRIFT_REFERRAL_SYSTEM_ADDRESS=${address("5")}$`, "m"));
+  assert.match(backendEnv, /^VEYDRIFT_TIMED_MISSILE_INDEX_FROM_BLOCK=120$/m);
 });
 
 test("deployment manifest omits referral system when not configured", () => {
@@ -65,6 +68,7 @@ test("deployment manifest omits referral system when not configured", () => {
 
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
   assert.equal(Object.hasOwn(manifest.contracts, "referralSystem"), false);
+  assert.equal(manifest.deployment.timedMissileIndexFromBlock, "123");
 
   runNode([
     "scripts/veydrift-apply-deployment-manifest.mjs",

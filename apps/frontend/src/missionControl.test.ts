@@ -2303,6 +2303,19 @@ describe("Mission Control battle reports", () => {
     expect(sharedText).not.toContain("Losses and debris");
   });
 
+  test("uses mission-neutral copy when a shared missile report is unavailable", () => {
+    const text = collectText(MissionReportDetail({
+      mission: undefined,
+      now: Date.parse("2026-06-05T12:00:00.000Z"),
+      onBack: () => undefined,
+      planetLookup: new Map(),
+    })).join(" ");
+
+    expect(text).toContain("Mission report unavailable");
+    expect(text).toContain("Back to missions");
+    expect(text).not.toContain("Battle report");
+  });
+
   test("renders the route as origin -> target with clickable coordinates and commanders", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
     const owner = "0x1111111111111111111111111111111111111111";

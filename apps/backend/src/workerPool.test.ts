@@ -234,11 +234,11 @@ describe("createForwardingFetch", () => {
     await expect(response.text()).resolves.toBe("event: sync-status\n\n");
   });
 
-  test("serves health readiness reads locally on readers", async () => {
+  test("forwards health readiness reads to the writer", async () => {
     const calls: Array<{ url: string; body: BodyInit | null | undefined }> = [];
     const fetchImpl = (async (input: string | URL, init?: RequestInit) => {
       calls.push({ url: String(input), body: init?.body });
-      return Response.json({ error: "writer should not receive health" }, { status: 503 });
+      return Response.json({ ok: true, backend: { worker: { role: "writer" } } });
     }) as unknown as typeof fetch;
 
     const local = async () => Response.json({ ok: true, readiness: { ready: true } });
@@ -246,9 +246,12 @@ describe("createForwardingFetch", () => {
 
     const response = await handler(new Request("http://localhost/health"));
 
-    expect(calls).toEqual([]);
+    expect(calls).toEqual([{ url: "http://127.0.0.1:4001/health", body: undefined }]);
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({ ok: true });
+    await expect(response.json()).resolves.toMatchObject({
+      ok: true,
+      backend: { worker: { role: "writer" } }
+    });
   });
 
   test("serves runtime-config bootstrap reads locally on readers", async () => {
@@ -354,11 +357,11 @@ describe("createForwardingFetch", () => {
     }
   });
 
-  test("serves health bootstrap reads before initializing the local reader handler", async () => {
+  test("bypasses reader bootstrap for writer-owned health", async () => {
     const calls: Array<{ url: string; body: BodyInit | null | undefined }> = [];
     const fetchImpl = (async (input: string | URL, init?: RequestInit) => {
       calls.push({ url: String(input), body: init?.body });
-      return Response.json({ error: "writer should not receive health" }, { status: 503 });
+      return Response.json({ ok: true, backend: { worker: { role: "writer" } } });
     }) as unknown as typeof fetch;
 
     let localInitialized = false;
@@ -376,9 +379,9 @@ describe("createForwardingFetch", () => {
     const response = await handler(new Request("http://localhost/health"));
 
     expect(localInitialized).toBe(false);
-    expect(calls).toEqual([]);
+    expect(calls).toEqual([{ url: "http://127.0.0.1:4001/health", body: undefined }]);
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ ok: true, backend: { worker: { role: "reader" } } });
+    await expect(response.json()).resolves.toEqual({ ok: true, backend: { worker: { role: "writer" } } });
   });
 
   test("serves indexed gameplay reads locally on reader workers", async () => {
@@ -429,27 +432,21 @@ describe("createForwardingFetch", () => {
     });
   });
 
-  test("keeps health local when the writer is busy", async () => {
-    const fetchImpl = (async () => {
-      await new Promise((resolve) => setTimeout(resolve, 60_000));
-      return Response.json({ error: "late writer response" }, { status: 503 });
-    }) as unknown as typeof fetch;
+  test("forwards health to the writer and surfaces writer unavailability", async () => {
+    const fetchImpl = (async () => Response.json(
+      { error: "writer unavailable" },
+      { status: 503 }
+    )) as unknown as typeof fetch;
 
     const local = async () => Response.json({
-      ok: true,
-      backend: { worker: { role: "reader" } },
-      readiness: { ready: true }
+      error: "reader handler should not serve writer readiness"
     });
     const handler = createForwardingFetch(local, "http://127.0.0.1:4001", fetchImpl);
 
     const response = await handler(new Request("http://localhost/health"));
 
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({
-      ok: true,
-      backend: { worker: { role: "reader" } },
-      readiness: { ready: true }
-    });
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toEqual({ error: "writer unavailable" });
   });
 
   test("keeps bootstrap reads local while a writer-owned read is waiting on the writer", async () => {
@@ -457,9 +454,11 @@ describe("createForwardingFetch", () => {
     const writerReady = new Promise<void>((resolve) => {
       releaseWriter = resolve;
     });
-    const fetchImpl = (async () => {
+    const fetchImpl = (async (input: string | URL | Request) => {
       await writerReady;
-      return Response.json({ rankings: {} });
+      return new URL(input instanceof Request ? input.url : input).pathname === "/health"
+        ? Response.json({ ok: true, backend: { worker: { role: "writer" } } })
+        : Response.json({ rankings: {} });
     }) as unknown as typeof fetch;
 
     const local = async () => Response.json({ error: "reader handler should not initialize" }, { status: 503 });
@@ -472,18 +471,19 @@ describe("createForwardingFetch", () => {
     const handler = createForwardingFetch(local, "http://127.0.0.1:4001", fetchImpl, bootstrap);
 
     const indexedRead = handler(new Request("http://localhost/chain/events"));
+    const health = handler(new Request("http://localhost/health"));
     await Promise.resolve();
 
     const runtime = await handler(new Request("http://localhost/runtime-config"));
-    const health = await handler(new Request("http://localhost/health"));
-
     expect(runtime.status).toBe(200);
-    expect(health.status).toBe(200);
     await expect(runtime.json()).resolves.toMatchObject({ backend: { worker: { role: "reader" } } });
-    await expect(health.json()).resolves.toMatchObject({ ok: true, backend: { worker: { role: "reader" } } });
 
     releaseWriter();
     await expect(indexedRead.then((response) => response.json())).resolves.toEqual({ rankings: {} });
+    await expect(health.then((response) => response.json())).resolves.toMatchObject({
+      ok: true,
+      backend: { worker: { role: "writer" } }
+    });
   });
 
   test("aborts the writer SSE request when the client cancels the forwarded stream", async () => {

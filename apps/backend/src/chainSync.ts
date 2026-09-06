@@ -51,6 +51,7 @@ type ChainSyncIndexer = Partial<Pick<SettlementIndexer,
   | "reconcilePaidAllianceInviteHistory"
   | "recordTimedMissilePayloadHistoryBackfill"
   | "timedMissilePayloadHistoryBackfillStatus"
+  | "missingCanonicalTimedMissilePayloadLogs"
   | "snapshot"
   | "invalidateResourceProjectionWatermark"
   | "missingCanonicalGameLogs"
@@ -241,6 +242,7 @@ export class ChainSyncService {
     lastError: null,
     throughBlock: null
   };
+  private timedMissilePayloadHistoryVerifiedThisRun = false;
   private liveListenerConnected = false;
   private liveListenerErrorCount = 0;
   private liveListenerLastError: string | null = null;
@@ -717,12 +719,13 @@ export class ChainSyncService {
     };
     const markerThroughBlock = current.marker ? BigInt(current.marker.throughBlock) : null;
     if (
-      !current.required
+      this.timedMissilePayloadHistoryVerifiedThisRun
+      && !current.required
       && markerThroughBlock !== null
       && head < markerThroughBlock + TIMED_MISSILE_PAYLOAD_REPLAY_INTERVAL_BLOCKS
     ) return;
 
-    const scanFrom = current.required || markerThroughBlock === null
+    const scanFrom = !this.timedMissilePayloadHistoryVerifiedThisRun || current.required || markerThroughBlock === null
       ? fromBlock
       : maxBigInt(
           fromBlock,
@@ -735,8 +738,18 @@ export class ChainSyncService {
     if (current.required) this.connected = false;
     try {
       const logs = await listLogs.call(backfiller, scanFrom, head);
+      const missingCanonicalLogs = this.indexer?.missingCanonicalTimedMissilePayloadLogs?.(
+        contractAddress,
+        logs,
+        scanFrom,
+        head
+      ) ?? [];
+      if (missingCanonicalLogs.length > 0) {
+        await this.applyLogs(missingCanonicalLogs, applyLog, "fallback_poll");
+      }
       await this.applyLogs(logs, applyLog);
       const marker = record.call(this.indexer, contractAddress, fromBlock, head);
+      this.timedMissilePayloadHistoryVerifiedThisRun = true;
       this.timedMissilePayloadHistoryBackfill = {
         completedAt: marker.completedAt,
         contractAddress: marker.contractAddress,
@@ -786,12 +799,7 @@ export class ChainSyncService {
           }
           this.liveUnsubscribe = resolvedUnsubscribe;
           this.liveListenerConnected = true;
-          if (this.paidAllianceInviteHistoryReady()) {
-            this.connected = true;
-            this.lastConnectedAt ??= new Date().toISOString();
-          }
           this.liveListenerLastError = null;
-          this.lastError = null;
           this.publishDiagnostics();
         })
         .catch((error) => this.handleLiveListenerError(error));
@@ -864,15 +872,6 @@ export class ChainSyncService {
       }
       await this.poll();
     }
-  }
-
-  private paidAllianceInviteHistoryReady(): boolean {
-    const contractAddress = this.config.paidAllianceInviteAddress;
-    const fromBlock = this.config.paidAllianceInviteIndexFromBlock;
-    const status = this.indexer?.paidAllianceInviteHistoryBackfillStatus;
-    if (!contractAddress || fromBlock === undefined) return true;
-    if (!status) return false;
-    return !status.call(this.indexer, contractAddress, fromBlock).required;
   }
 
   private async catchUpRange(fromBlock: bigint, toBlock: bigint): Promise<void> {

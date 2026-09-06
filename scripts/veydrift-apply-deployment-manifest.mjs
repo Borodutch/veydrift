@@ -23,6 +23,7 @@ const backendEnv = {
   VEYDRIFT_CRYSTAL_TOKEN_ADDRESS: manifest.contracts.resourceTokens.crystal,
   VEYDRIFT_DEUTERIUM_TOKEN_ADDRESS: manifest.contracts.resourceTokens.deuterium,
   VEYDRIFT_INDEX_FROM_BLOCK: manifest.deployment.indexFromBlock,
+  VEYDRIFT_TIMED_MISSILE_INDEX_FROM_BLOCK: manifest.deployment.timedMissileIndexFromBlock,
   VEYDRIFT_DEPLOYMENT_MANIFEST_SCHEMA: manifest.schema,
   VEYDRIFT_DEPLOYMENT_COMMIT: manifest.deployment.commit,
   VEYDRIFT_DEPLOYMENT_ABI_HASH: manifest.deployment.abiHash,
@@ -65,6 +66,9 @@ function validateManifest(current) {
   if (!current.network?.name) fail("Missing network.name.");
   if (!/^[0-9]+$/.test(current.deployment?.blockNumber ?? "")) fail("Invalid deployment.blockNumber.");
   if (!/^[0-9]+$/.test(current.deployment?.indexFromBlock ?? "")) fail("Invalid deployment.indexFromBlock.");
+  if (!/^[0-9]+$/.test(current.deployment?.timedMissileIndexFromBlock ?? "")) {
+    fail("Invalid deployment.timedMissileIndexFromBlock.");
+  }
   if (!current.deployment?.commit) fail("Missing deployment.commit.");
   if (!current.deployment?.abiHash) fail("Missing deployment.abiHash.");
   for (const [label, address] of Object.entries({
