@@ -4112,10 +4112,10 @@ contract VeydriftGameTest is Test {
     function testMissileSpamKeepsEachImpactGasBoundedWithOneTrackedHeapHead() public {
         (uint256 originPlanetId, uint256 targetPlanetId,) =
             _seedMissileAttackPlanetsWithoutScoreProtection();
-        uint256 missionCount = 128;
+        uint32 missionCount = 128;
         _setTechnologyLevel(player, Technology.ImpulseDrive, 3);
-        _setDefenseCount(originPlanetId, Defense.InterplanetaryMissile, uint32(missionCount));
-        _setDefenseCount(targetPlanetId, Defense.LightLaser, uint32(missionCount));
+        _setDefenseCount(originPlanetId, Defense.InterplanetaryMissile, missionCount);
+        _setDefenseCount(targetPlanetId, Defense.LightLaser, missionCount);
 
         uint256 firstMissionId;
         uint64 arrivalAt;
@@ -4152,6 +4152,8 @@ contract VeydriftGameTest is Test {
         _setDebrisField(targetPlanetId, 1_000_000, 1_000_000);
 
         for (uint256 index = 0; index < 48; ++index) {
+            // Safe because this test bounds index below 48.
+            // forge-lint: disable-next-line(unsafe-typecast)
             address sender = address(uint160(0x10000 + index));
             vm.deal(sender, 0.05 ether);
             vm.prank(sender);
