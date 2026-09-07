@@ -846,6 +846,61 @@ describe("Mission Control battle reports", () => {
     expect(joinCalls).toEqual([[joinable, { galaxy: 4, system: 5, position: 6 }]]);
   });
 
+  test("offers Join Attack for an own attack when another colony is selected", () => {
+    const now = Date.parse("2026-09-07T12:00:00.000Z");
+    const ownAttack = {
+      ...mission("19186", "Attack", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now + 900_000),
+      targetPlanet: planetReference("9", "0x3333333333333333333333333333333333333333", "Target", "4:5:9"),
+    };
+    const joinCalls: Array<[FleetMissionSummary, { galaxy: number; system: number; position: number } | null]> = [];
+    const tree = MissionControlPage({
+      ...missionControlProps(now, { outgoing: [ownAttack] }),
+      activePlanetId: "8",
+      hasAvailableMissionFleet: true,
+      onJoinAttack: (mission, targetCoords) => joinCalls.push([mission, targetCoords]),
+    });
+
+    const joinButton = findElements(tree, "button").find(
+      (element) => element.props?.["aria-label"] === "Join Attack",
+    );
+    expect(joinButton).toBeDefined();
+    (joinButton?.props?.onClick as (() => void) | undefined)?.();
+    expect(joinCalls).toEqual([[ownAttack, { galaxy: 4, system: 5, position: 9 }]]);
+  });
+
+  test("hides own-attack Join Attack for the launch planet, missing fleets, and closed cutoff", () => {
+    const now = Date.parse("2026-09-07T12:00:00.000Z");
+    const openAttack = mission(
+      "19187",
+      "Attack",
+      "Outbound",
+      "0x1111111111111111111111111111111111111111",
+      "7",
+      "9",
+      now + 900_000,
+    );
+    const closedAttack = { ...openAttack, arrivalAt: Math.floor((now + 300_000) / 1_000).toString() };
+    const actionLabels = (tree: ComponentChildren) => findElements(tree, "button")
+      .map((element) => element.props?.["aria-label"])
+      .filter(Boolean);
+
+    expect(actionLabels(MissionControlPage({
+      ...missionControlProps(now, { outgoing: [openAttack] }),
+      activePlanetId: "7",
+      hasAvailableMissionFleet: true,
+    }))).not.toContain("Join Attack");
+    expect(actionLabels(MissionControlPage({
+      ...missionControlProps(now, { outgoing: [openAttack] }),
+      activePlanetId: "8",
+      hasAvailableMissionFleet: false,
+    }))).not.toContain("Join Attack");
+    expect(actionLabels(MissionControlPage({
+      ...missionControlProps(now, { outgoing: [closedAttack] }),
+      activePlanetId: "8",
+      hasAvailableMissionFleet: true,
+    }))).not.toContain("Join Attack");
+  });
+
   test("VEY-KANEO-805: renders icon-only Join Attack and Join Defense for the live alliance roster", () => {
     const now = Date.parse("2026-08-05T19:30:00.000Z");
     const wallet = "0x1111111111111111111111111111111111111111";
