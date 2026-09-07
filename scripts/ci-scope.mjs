@@ -88,6 +88,14 @@ export function filesRequireBackendChecks(files) {
     );
 }
 
+export function filesRequireContractChecks(files) {
+  return anyMatch(files, /^packages\/contracts\//)
+    || anyMatch(
+      files,
+      /^scripts\/veydrift-(apply-deployment-manifest|deployment-manifest|postdeploy-smoke|upgrade-receipt)(\.test)?\.mjs$/,
+    );
+}
+
 export function computeScope(options = {}) {
   const eventName = options.eventName || process.env.EVENT_NAME || process.env.GITHUB_EVENT_NAME || "local";
   const base =
@@ -131,7 +139,7 @@ export function computeScope(options = {}) {
     scope.frontend = anyMatch(files, /^(apps\/(frontend|stats)|packages\/universe)\//);
     scope.backend = filesRequireBackendChecks(files);
     scope.universe = anyMatch(files, /^packages\/universe\//);
-    scope.contracts = anyMatch(files, /^packages\/contracts\//);
+    scope.contracts = filesRequireContractChecks(files);
     scope.circuits = anyMatch(files, /^packages\/circuits\//);
   }
 

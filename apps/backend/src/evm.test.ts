@@ -208,7 +208,13 @@ describe("HTTP JSON-RPC transport", () => {
     const previousFetch = globalThis.fetch;
     let attempts = 0;
 
-    globalThis.fetch = (async () => {
+    globalThis.fetch = (async (
+      input: Parameters<typeof fetch>[0],
+      init?: Parameters<typeof fetch>[1]
+    ) => {
+      if (String(input) !== "https://rpc.example") {
+        return previousFetch(input, init);
+      }
       attempts += 1;
       // First response is a truncated body (the self-hosted node cutting the stream short → would throw
       // "Unexpected end of JSON input"); the retry returns a valid body.
@@ -232,8 +238,14 @@ describe("HTTP JSON-RPC transport", () => {
     const previousFetch = globalThis.fetch;
     const seenUrls: string[] = [];
 
-    globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+    globalThis.fetch = (async (
+      input: Parameters<typeof fetch>[0],
+      init?: Parameters<typeof fetch>[1]
+    ) => {
       const url = String(input);
+      if (url !== "https://primary.example/rpc" && url !== "https://fallback.example/rpc") {
+        return previousFetch(input, init);
+      }
       seenUrls.push(url);
       if (url === "https://primary.example/rpc") {
         return new Response("overloaded", { status: 503 });
@@ -269,7 +281,13 @@ describe("HTTP JSON-RPC transport", () => {
     const previousFetch = globalThis.fetch;
     let attempts = 0;
 
-    globalThis.fetch = (async () => {
+    globalThis.fetch = (async (
+      input: Parameters<typeof fetch>[0],
+      init?: Parameters<typeof fetch>[1]
+    ) => {
+      if (String(input) !== "https://rpc.example") {
+        return previousFetch(input, init);
+      }
       attempts += 1;
       // Every attempt truncates — an oversized batch the node can never return intact.
       return new Response("[{\"jsonrpc\":\"2.0\",\"id\":1,\"resu", { status: 200 });

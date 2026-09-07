@@ -310,9 +310,15 @@ describe("SettlementIndexer", () => {
 
     const candidates = indexer.missionResolutionCandidates(1_000);
 
-    expect(candidates.arrivals.map((mission) => mission.missionType)).toEqual(
-      arrivalTypes.map(([, , missionType]) => missionType)
-    );
+    expect(candidates.arrivals.map((mission) => mission.missionType)).toEqual([
+      "Transport",
+      "Deploy",
+      "Colonize",
+      "Attack",
+      "Harvest",
+      "MissileAttack",
+      "DefenseHold"
+    ]);
     expect(candidates.arrivals.find((mission) => mission.missionId === "6")).toEqual(
       expect.objectContaining({ missionType: "DefenseHold", arrivalAt: "950" })
     );
@@ -372,6 +378,51 @@ describe("SettlementIndexer", () => {
     ]);
     expect(candidates.returns).toEqual([
       expect.objectContaining({ missionId: "1001", missionType: "Transport" })
+    ]);
+    database.close();
+  });
+
+  test("unsupported arrivals and active DefenseHolds cannot consume the SQL candidate limit", () => {
+    const database = new Database(":memory:");
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n, { database });
+    const insert = database.query(`
+      INSERT INTO contract_fleet_missions (
+        mission_id, status_id, mission_type_id, owner, origin_planet_id, target_planet_id,
+        departure_at, arrival_at, return_at, fuel_cost,
+        metal_cargo, crystal_cargo, deuterium_cargo, ships_json,
+        randomness_request_id, event_json
+      ) VALUES (?, ?, ?, ?, '85', '86', '1', ?, ?, '0', '0', '0', '0', '{}', NULL, ?)
+    `);
+    database.transaction(() => {
+      for (let index = 1; index <= 501; index += 1) {
+        const unsupportedType = [5, 6, 8][index % 3]!;
+        insert.run(String(index), 1, unsupportedType, player, String(index), "0", null);
+      }
+      for (let index = 502; index <= 1_002; index += 1) {
+        insert.run(
+          String(index),
+          1,
+          9,
+          player,
+          "2",
+          "5000",
+          JSON.stringify({ defenseHoldUntil: "5000" })
+        );
+      }
+      insert.run("2000", 1, 7, player, "900", "900", null);
+      insert.run("2001", 2, 0, player, "800", "950", null);
+    })();
+
+    const candidates = indexer.missionResolutionCandidates(1_000, 2);
+    expect(candidates.arrivals).toEqual([
+      expect.objectContaining({ missionId: "2000", missionType: "MissileAttack" })
+    ]);
+    expect(candidates.returns).toEqual([
+      expect.objectContaining({ missionId: "2001", missionType: "Transport" })
     ]);
     database.close();
   });

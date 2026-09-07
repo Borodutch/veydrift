@@ -2,6 +2,8 @@
 import { readFileSync } from "node:fs";
 import { keccak256 } from "viem";
 
+import { receiptActivatesImplementation } from "./veydrift-upgrade-receipt.mjs";
+
 const eip1967ImplementationSlot = "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc";
 const gamePausedSelector = "0xc3de1ab9";
 const launchMissileSelector = "0xa72cd29a";
@@ -23,6 +25,9 @@ const evidence = [];
 let walletHomePlanetId = null;
 
 if (manifest && !rpcUrl) usage("A deployment manifest requires --rpc-url for active implementation checks.");
+if (manifest && manifest.deployment.timedMissileIndexFromBlock !== manifest.deployment.blockNumber) {
+  usage("The timed missile replay boundary must equal the exact upgrade receipt block.");
+}
 
 if (manifest?.contracts.referralSystem) {
   if (!referralSigner || !referralStartPriceWei) {
@@ -109,6 +114,11 @@ async function checkGameActivationOnChain() {
     const runtimeCodeHash = keccak256(runtimeCode);
     const receiptBlock = receipt?.blockNumber ? BigInt(receipt.blockNumber).toString() : null;
     const receiptSucceeded = receipt?.status === "0x1";
+    const receiptActivatedExpectedImplementation = receiptActivatesImplementation(
+      receipt,
+      manifest.contracts.game,
+      activation.gameImplementation
+    );
     const hasTimedMissileSelectors = [launchMissileSelector, resolveMissionSelector]
       .every((selector) => runtimeCode.toLowerCase().includes(selector.slice(2)));
     evidence.push({
@@ -119,6 +129,7 @@ async function checkGameActivationOnChain() {
       upgradeTransactionHash: activation.transactionHash,
       receiptBlock,
       receiptSucceeded,
+      receiptActivatedExpectedImplementation,
       gamePaused: BigInt(pausedWord) !== 0n,
       hasTimedMissileSelectors
     });
@@ -126,6 +137,10 @@ async function checkGameActivationOnChain() {
     expect(eqHex(runtimeCodeHash, activation.gameImplementationCodeHash), "active Game runtime code hash must match manifest");
     expect(receiptSucceeded, "Game upgrade transaction receipt must have status 1");
     expect(receiptBlock === manifest.deployment.blockNumber, "Game upgrade receipt block must match exact manifest boundary");
+    expect(
+      receiptActivatedExpectedImplementation,
+      "Game upgrade receipt must emit Upgraded(expected implementation) from the proxy"
+    );
     expect(BigInt(pausedWord) === 0n, "Game must remain unpaused after upgrade");
     expect(hasTimedMissileSelectors, "active Game runtime must contain timed missile launch and resolution selectors");
   } catch (error) {

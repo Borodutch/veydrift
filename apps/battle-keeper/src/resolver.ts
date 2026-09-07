@@ -1,4 +1,4 @@
-import { encodeFunctionData, type Abi } from "viem";
+import { decodeFunctionResult, encodeFunctionData, type Abi } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 
 import type { JsonRpcTransport } from "./transport";
@@ -37,6 +37,15 @@ export const completeFleetMissionReturnSelector = "0xc2472852";
 /** Which leg of a mission's lifecycle a resolve targets. */
 export type MissionLeg = "arrival" | "return";
 
+export type CanonicalMissionStatus = {
+  missionId: string;
+  status: number;
+  missionType: number;
+  arrivalAt: number;
+  returnAt: number;
+  randomnessRequestId: string;
+};
+
 /** Raised when an attempted resolve reverts on simulation — almost always "randomness not committed
  * yet". The keeper catches this and retries on the next tick/event rather than crashing. */
 export class MissionNotResolvableError extends Error {
@@ -55,8 +64,40 @@ export type MissionResolver = {
    * Throws {@link MissionNotResolvableError} when the call reverts (retry later) or any other error
    * on transport/timeout failure. */
   resolveMission(missionId: string, leg: MissionLeg): Promise<string>;
+  /** Canonical post-receipt state; bounded missile settlement can require several receipts. */
+  missionStatus?(missionId: string): Promise<CanonicalMissionStatus>;
   keeperAddress(): string;
 };
+
+const fleetMissionStatusAbi = [
+  {
+    type: "function",
+    name: "fleetMission",
+    stateMutability: "view",
+    inputs: [{ name: "missionId", type: "uint256" }],
+    outputs: [
+      { name: "status", type: "uint8" },
+      { name: "missionType", type: "uint8" },
+      { name: "owner", type: "address" },
+      { name: "originPlanetId", type: "uint256" },
+      { name: "targetPlanetId", type: "uint256" },
+      { name: "departureAt", type: "uint64" },
+      { name: "arrivalAt", type: "uint64" },
+      { name: "returnAt", type: "uint64" },
+      { name: "fuelCost", type: "uint128" },
+      {
+        name: "cargo",
+        type: "tuple",
+        components: [
+          { name: "metal", type: "uint128" },
+          { name: "crystal", type: "uint128" },
+          { name: "deuterium", type: "uint128" }
+        ]
+      },
+      { name: "randomnessRequestId", type: "uint256" }
+    ]
+  }
+] as const satisfies Abi;
 
 export function encodeResolveFleetMissionCall(missionId: bigint): `0x${string}` {
   return encodeFunctionData({
@@ -152,6 +193,31 @@ export class ViemMissionResolver implements MissionResolver {
     const hash = await this.transport.request<`0x${string}`>("eth_sendRawTransaction", [signed]);
     await this.waitForSuccessfulReceipt(hash, missionId);
     return hash;
+  }
+
+  async missionStatus(missionId: string): Promise<CanonicalMissionStatus> {
+    const data = encodeFunctionData({
+      abi: fleetMissionStatusAbi,
+      functionName: "fleetMission",
+      args: [BigInt(missionId)]
+    });
+    const encoded = await this.transport.request<`0x${string}`>("eth_call", [
+      { to: this.to, data },
+      "latest"
+    ]);
+    const decoded = decodeFunctionResult({
+      abi: fleetMissionStatusAbi,
+      functionName: "fleetMission",
+      data: encoded
+    });
+    return {
+      missionId,
+      status: Number(decoded[0]),
+      missionType: Number(decoded[1]),
+      arrivalAt: Number(decoded[6]),
+      returnAt: Number(decoded[7]),
+      randomnessRequestId: decoded[10].toString()
+    };
   }
 
   private async resolveFees(): Promise<{ maxFeePerGas: bigint; maxPriorityFeePerGas: bigint }> {

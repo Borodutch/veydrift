@@ -382,55 +382,12 @@ abstract contract VeydriftResourceReserves is VeydriftGameStorage {
         if (missionId != 0) revert FleetMissionNotResolved(_fleetMissions[missionId].arrivalAt);
     }
 
-    /// @dev Missile/attack defense mutations execute in canonical timestamp/id order. Once a
-    ///      missile is due it also takes priority over non-combat arrivals: those paths settle the
-    ///      target through the current timestamp and could otherwise complete defenses that did not
-    ///      exist at the missile's historical impact time.
-    function _requireEarliestPendingMissionForPlanet(uint256 missionId, uint256 planetId)
-        internal
-        view
-    {
-        FleetMission storage current = _fleetMissions[missionId];
-        uint256[] storage missionIds = _resolutionMissionIdsByPlanet[planetId];
-        for (uint256 index = 0; index < missionIds.length;) {
-            uint256 otherMissionId = missionIds[index];
-            FleetMission storage other = _fleetMissions[otherMissionId];
-            if (otherMissionId != missionId && _isPendingResolutionMission(other)) {
-                bool otherPrecedesCurrent = other.arrivalAt < current.arrivalAt
-                    || (other.arrivalAt == current.arrivalAt && otherMissionId < missionId);
-                if (other.missionType == FleetMissionType.MissileAttack) {
-                    if (
-                        (current.missionType != FleetMissionType.MissileAttack
-                                && current.missionType != FleetMissionType.Attack)
-                            || otherPrecedesCurrent
-                    ) revert FleetMissionNotResolved(other.arrivalAt);
-                } else if (
-                    current.missionType == FleetMissionType.MissileAttack
-                        && other.missionType == FleetMissionType.Attack && otherPrecedesCurrent
-                ) {
-                    revert FleetMissionNotResolved(other.arrivalAt);
-                }
-            }
-            unchecked {
-                ++index;
-            }
-        }
-    }
-
     /// @dev A planet cannot disappear while another player still has an outbound arrival targeting
     ///      it. Besides preserving impact semantics, this keeps defender-side resolution indexes
     ///      removable without adding a historical-owner storage slot.
     function _requireNoInboundMissionForPlanet(uint256 planetId) internal view {
-        uint256[] storage missionIds = _resolutionMissionIdsByPlanet[planetId];
-        for (uint256 index = 0; index < missionIds.length;) {
-            FleetMission storage mission = _fleetMissions[missionIds[index]];
-            if (
-                mission.status == FleetMissionStatus.Outbound && mission.targetPlanetId == planetId
-                    && mission.originPlanetId != planetId
-            ) revert PlanetHasActiveFleetMissions();
-            unchecked {
-                ++index;
-            }
+        if (_resolutionMissionIdsByPlanet[planetId].length != 0) {
+            revert PlanetHasActiveFleetMissions();
         }
     }
 
@@ -661,6 +618,7 @@ abstract contract VeydriftResourceReserves is VeydriftGameStorage {
         _resolutionMissionIdsByPlanet[planetId].push(missionId);
         _resolutionMissionIndexByPlanet[planetId][missionId] =
         _resolutionMissionIdsByPlanet[planetId].length;
+        _invalidateArrivalOrderIndex(planetId);
     }
 
     function _removeResolutionMissionForPlanet(uint256 planetId, uint256 missionId) internal {
@@ -677,6 +635,11 @@ abstract contract VeydriftResourceReserves is VeydriftGameStorage {
         }
         missionIds.pop();
         delete _resolutionMissionIndexByPlanet[planetId][missionId];
+        _invalidateArrivalOrderIndex(planetId);
+    }
+
+    function _invalidateArrivalOrderIndex(uint256 planetId) private {
+        delete _arrivalOrderIndexByPlanet[planetId];
     }
 
     function _addResolutionMissionForPlayer(address player, uint256 missionId) private {

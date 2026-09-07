@@ -534,7 +534,10 @@ function needsCanonicalMissionReconciliation(error: unknown): boolean {
 
 export class ViemMissionResolutionChainClient implements MissionResolutionChainClient {
   constructor(
-    private readonly reader: Pick<VeydriftGameReader, "listResolvableFleetMissions" | "listReturnableFleetMissions">,
+    private readonly reader: Pick<
+      VeydriftGameReader,
+      "listResolvableFleetMissions" | "listReturnableFleetMissions"
+    > & Partial<Pick<VeydriftGameReader, "getCanonicalFleetMission">>,
     private readonly gameAddress: Address,
     private readonly sender: Address | ReturnType<typeof privateKeyToAccount>,
     private readonly publicClient?: PublicClient,
@@ -603,6 +606,7 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
           ...(functionName === "resolveFleetMission" ? { gas: fleetMissionResolutionGas } : {})
         }),
         isConfirmedCanonical: (hash) => this.isConfirmedCanonical(hash),
+        isOperationComplete: () => this.isMissionOperationComplete(functionName, missionId),
         shouldReplace: (hash) => resolverTransactionNeedsReplacement(this.publicClient!, hash),
         replace: async (nonce, previousHash) => this.walletClient!.writeContract({
           abi: veydriftGameResolutionAbi,
@@ -645,6 +649,7 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
         functionName === "resolveFleetMission" ? fleetMissionResolutionGas : undefined
       ),
       isConfirmedCanonical: (hash) => this.isConfirmedCanonical(hash),
+      isOperationComplete: () => this.isMissionOperationComplete(functionName, missionId),
       shouldReplace: (hash) => resolverTransactionNeedsReplacement(this.publicClient!, hash),
       replace: async (nonce, previousHash) => this.sendUnlockedTransaction(
         from,
@@ -655,6 +660,16 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
       ),
       confirm: (hash) => this.confirm(hash)
     });
+  }
+
+  private async isMissionOperationComplete(
+    functionName: "resolveFleetMission" | "completeFleetMissionReturn",
+    missionId: string
+  ): Promise<boolean> {
+    const mission = await this.reader.getCanonicalFleetMission?.(BigInt(missionId));
+    if (!mission) return true;
+    if (functionName === "resolveFleetMission") return mission.status !== "Outbound";
+    return mission.status !== "Returning" && mission.status !== "Recalled";
   }
 
   private async confirm(hash: Hex): Promise<void> {

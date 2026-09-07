@@ -3326,30 +3326,57 @@ export class SettlementIndexer {
       FROM contract_fleet_missions
       WHERE (
         status_id = 1
-        AND CAST(arrival_at AS INTEGER) <= ?
         AND (
-            mission_type_id != 3
-            OR ? = 0
-            OR randomness_request_id IS NULL
-            OR randomness_request_id = '0'
-            OR EXISTS (
-              SELECT 1
-              FROM indexed_fulfilled_randomness_requests
-              WHERE request_id = contract_fleet_missions.randomness_request_id
+          (
+            mission_type_id IN (0, 1, 2, 4, 7)
+            AND CAST(arrival_at AS INTEGER) <= ?
+          ) OR (
+            mission_type_id = 3
+            AND CAST(arrival_at AS INTEGER) <= ?
+            AND (
+              ? = 0
+              OR randomness_request_id IS NULL
+              OR randomness_request_id = '0'
+              OR EXISTS (
+                SELECT 1
+                FROM indexed_fulfilled_randomness_requests
+                WHERE request_id = contract_fleet_missions.randomness_request_id
+              )
             )
+          ) OR (
+            mission_type_id = 9
+            AND CAST(COALESCE(
+              json_extract(event_json, '$.mission.defenseHoldUntil'),
+              json_extract(event_json, '$.defenseHoldUntil'),
+              return_at,
+              arrival_at
+            ) AS INTEGER) <= ?
           )
         ) OR (
           status_id IN (2, 5)
           AND CAST(return_at AS INTEGER) > 0
           AND CAST(return_at AS INTEGER) <= ?
         )
+      )
       ORDER BY
-        CASE WHEN status_id = 1 THEN CAST(arrival_at AS INTEGER) ELSE CAST(return_at AS INTEGER) END ASC,
+        CASE
+          WHEN status_id = 1 AND mission_type_id = 9
+            THEN CAST(COALESCE(
+              json_extract(event_json, '$.mission.defenseHoldUntil'),
+              json_extract(event_json, '$.defenseHoldUntil'),
+              return_at,
+              arrival_at
+            ) AS INTEGER)
+          WHEN status_id = 1 THEN CAST(arrival_at AS INTEGER)
+          ELSE CAST(return_at AS INTEGER)
+        END ASC,
         CAST(mission_id AS INTEGER) ASC
       LIMIT ?
     `).all(
       asOfSeconds,
+      asOfSeconds,
       this.randomnessEngineConfigured ? 1 : 0,
+      asOfSeconds,
       asOfSeconds,
       boundedLimit
     ) as ContractFleetMissionRow[];

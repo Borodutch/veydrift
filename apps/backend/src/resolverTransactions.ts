@@ -13,6 +13,8 @@ export type ResolverTransactionRequest = {
   submit: (nonce: number) => Promise<Hex>;
   /** A persisted confirmation is reusable only while its receipt remains canonical. */
   isConfirmedCanonical?: (hash: Hex) => Promise<boolean>;
+  /** A canonical receipt can be one bounded chunk of a larger logical operation. */
+  isOperationComplete?: () => Promise<boolean>;
   shouldReplace?: (hash: Hex) => Promise<boolean>;
   replace?: (nonce: number, previousHash: Hex) => Promise<Hex>;
   cancelStale?: (nonce: number, previousHash: Hex) => Promise<Hex>;
@@ -196,12 +198,14 @@ export class ResolverTransactionCoordinator {
   ): Promise<Hex> {
     const previous = this.loadAttempt(request.chainId, request.address, request.operationId);
     if (previous?.status === "confirmed" && previous.transactionHash) {
-      if (!request.isConfirmedCanonical || await request.isConfirmedCanonical(previous.transactionHash)) {
-        return previous.transactionHash;
+      const isCanonical = !request.isConfirmedCanonical
+        || await request.isConfirmedCanonical(previous.transactionHash);
+      if (isCanonical) {
+        const isComplete = !request.isOperationComplete || await request.isOperationComplete();
+        if (isComplete) return previous.transactionHash;
       }
-      // A reorg removed the previously confirmed transition. Retire only this operation record and
-      // allocate at the account's current pending nonce below; the old nonce may already belong to
-      // another canonical transaction after the reorg.
+      // Either a reorg removed the confirmation or the receipt completed only one bounded chunk.
+      // Retire this attempt and allocate at the current pending nonce; never replay the old nonce.
       this.recordAttempt(
         request.chainId,
         request.address,

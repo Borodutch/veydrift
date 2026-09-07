@@ -8,6 +8,7 @@ import {Defense, Technology} from "./libraries/VeydriftTypes.sol";
 contract VeydriftMissileModule is VeydriftResourceReserves {
     bytes4 private constant ATTACK_PROTECTION_STATUS_SELECTOR = 0x8a6b2246;
     uint256 private constant MAX_QUEUE_SETTLEMENT_OPERATIONS = 12;
+    uint256 private constant MAX_ARRIVAL_ORDER_SCAN_OPERATIONS = 12;
 
     constructor() VeydriftResourceReserves(address(0)) {}
 
@@ -17,6 +18,12 @@ contract VeydriftMissileModule is VeydriftResourceReserves {
         Defense primaryTarget,
         uint32 quantity
     ) external returns (uint256 missionId) {
+        // Gameplay and DefenseHold already reach this module through the public missile facade.
+        // A self-call with zero quantity reuses that route to advance the bounded arrival-order
+        // index without adding another selector to the EIP-170-constrained Game implementation.
+        if (msg.sender == address(this) && quantity == 0) {
+            return _prepareMissionArrivalOrder(originPlanetId, targetPlanetId) ? 1 : 0;
+        }
         _touchPlayer(msg.sender);
         Planet storage origin = _planets[originPlanetId];
         if (origin.owner == address(0)) revert NoPlanet();
@@ -107,7 +114,7 @@ contract VeydriftMissileModule is VeydriftResourceReserves {
         }
         if (_currentTimestamp() < mission.arrivalAt) revert FleetNotArrived(mission.arrivalAt);
 
-        _requireEarliestPendingMissionForPlanet(missionId, mission.targetPlanetId);
+        if (!_prepareMissionArrivalOrder(missionId, mission.targetPlanetId)) return;
 
         if (!_settleMissileTargetQueues(missionId, mission.targetPlanetId, mission.arrivalAt)) {
             return;
@@ -147,6 +154,91 @@ contract VeydriftMissileModule is VeydriftResourceReserves {
         emit FleetMissionResolved(
             missionId, msg.sender, FleetMissionType.MissileAttack, mission.arrivalAt
         );
+    }
+
+    function _prepareMissionArrivalOrder(uint256 missionId, uint256 planetId)
+        private
+        returns (bool)
+    {
+        ArrivalOrderIndex storage arrivalOrder = _arrivalOrderIndexByPlanet[planetId];
+        uint256 headMissionId = arrivalOrder.headMissionId;
+        if (arrivalOrder.ready && headMissionId != 0) {
+            FleetMission storage cachedHead = _fleetMissions[headMissionId];
+            if (!_isHostileArrivalForPlanet(cachedHead, planetId)) {
+                delete _arrivalOrderIndexByPlanet[planetId];
+                headMissionId = 0;
+            }
+        }
+
+        if (!arrivalOrder.ready) {
+            uint256[] storage missionIds = _resolutionMissionIdsByPlanet[planetId];
+            uint256 cursor = arrivalOrder.cursor;
+            uint256 end = cursor + MAX_ARRIVAL_ORDER_SCAN_OPERATIONS;
+            if (end > missionIds.length) end = missionIds.length;
+            for (; cursor < end;) {
+                uint256 candidateMissionId = missionIds[cursor];
+                FleetMission storage candidate = _fleetMissions[candidateMissionId];
+                if (
+                    _isHostileArrivalForPlanet(candidate, planetId)
+                        && (headMissionId == 0
+                            || _arrivalPrecedes(candidateMissionId, headMissionId))
+                ) {
+                    headMissionId = candidateMissionId;
+                }
+                unchecked {
+                    ++cursor;
+                }
+            }
+            // A single planet cannot accumulate 2^64 stored missions within any feasible chain
+            // lifetime, so the packed cursor cannot truncate a reachable array index.
+            // forge-lint: disable-next-line(unsafe-typecast)
+            arrivalOrder.cursor = uint64(cursor);
+            // Mission ids are sequential and likewise cannot approach the packed 2^184 bound.
+            // forge-lint: disable-next-line(unsafe-typecast)
+            arrivalOrder.headMissionId = uint184(headMissionId);
+            if (cursor < missionIds.length) return false;
+            arrivalOrder.ready = true;
+        }
+
+        if (headMissionId == 0 || headMissionId == missionId) return true;
+        FleetMission storage head = _fleetMissions[headMissionId];
+        FleetMission storage current = _fleetMissions[missionId];
+        // Preserve the existing permissionless ordering between ordinary fleet missions. This
+        // index exists only to keep missile defense snapshots chronological with other arrivals.
+        if (
+            head.missionType != FleetMissionType.MissileAttack
+                && current.missionType != FleetMissionType.MissileAttack
+        ) return true;
+        if (_currentTimestamp() < head.arrivalAt) return true;
+        if (
+            current.missionType != FleetMissionType.Attack
+                && current.missionType != FleetMissionType.MissileAttack
+        ) revert FleetMissionNotResolved(head.arrivalAt);
+        if (_arrivalPrecedes(headMissionId, missionId)) {
+            revert FleetMissionNotResolved(head.arrivalAt);
+        }
+        return true;
+    }
+
+    function _isHostileArrivalForPlanet(FleetMission storage mission, uint256 planetId)
+        private
+        view
+        returns (bool)
+    {
+        return mission.status == FleetMissionStatus.Outbound && mission.targetPlanetId == planetId
+            && (mission.missionType == FleetMissionType.Attack
+                || mission.missionType == FleetMissionType.MissileAttack);
+    }
+
+    function _arrivalPrecedes(uint256 firstMissionId, uint256 secondMissionId)
+        private
+        view
+        returns (bool)
+    {
+        uint64 firstArrival = _fleetMissions[firstMissionId].arrivalAt;
+        uint64 secondArrival = _fleetMissions[secondMissionId].arrivalAt;
+        return firstArrival < secondArrival
+            || (firstArrival == secondArrival && firstMissionId < secondMissionId);
     }
 
     /// @dev A target can have an arbitrarily long pre-upgrade ship/defense backlog. Resolve at most a

@@ -2,7 +2,12 @@ import { describe, expect, test } from "bun:test";
 
 import { FleetMissionStatus, MissionType } from "./events";
 import { BattleKeeper, type KeeperLogger } from "./keeper";
-import { MissionNotResolvableError, type MissionLeg, type MissionResolver } from "./resolver";
+import {
+  MissionNotResolvableError,
+  type CanonicalMissionStatus,
+  type MissionLeg,
+  type MissionResolver
+} from "./resolver";
 
 const silentLogger: KeeperLogger = {
   info: () => {},
@@ -11,13 +16,26 @@ const silentLogger: KeeperLogger = {
 };
 
 type ResolveBehavior = (missionId: string, leg: MissionLeg, callIndex: number) => Promise<string>;
+type StatusBehavior = (missionId: string, callIndex: number) => Promise<CanonicalMissionStatus>;
 
 class MockResolver implements MissionResolver {
   /** All resolve attempts, in order, as "missionId:leg". */
   calls: string[] = [];
   private callCount = new Map<string, number>();
 
-  constructor(private readonly behavior: ResolveBehavior) {}
+  private statusCallCount = 0;
+
+  constructor(
+    private readonly behavior: ResolveBehavior,
+    private readonly statusBehavior: StatusBehavior = async (missionId) => ({
+      missionId,
+      status: FleetMissionStatus.Resolved,
+      missionType: MissionType.MissileAttack,
+      arrivalAt: 900,
+      returnAt: 0,
+      randomnessRequestId: "0"
+    })
+  ) {}
 
   keeperAddress(): string {
     return "0x000000000000000000000000000000000000dEaD";
@@ -30,13 +48,24 @@ class MockResolver implements MissionResolver {
     this.callCount.set(key, index + 1);
     return this.behavior(missionId, leg, index);
   }
+
+  missionStatus(missionId: string): Promise<CanonicalMissionStatus> {
+    const index = this.statusCallCount;
+    this.statusCallCount += 1;
+    return this.statusBehavior(missionId, index);
+  }
 }
 
 function makeKeeper(
   behavior: ResolveBehavior,
-  options: { now?: () => number; maxConcurrency?: number; acsJoinerRetryDelaySeconds?: number } = {}
+  options: {
+    now?: () => number;
+    maxConcurrency?: number;
+    acsJoinerRetryDelaySeconds?: number;
+    statusBehavior?: StatusBehavior;
+  } = {}
 ): { keeper: BattleKeeper; resolver: MockResolver } {
-  const resolver = new MockResolver(behavior);
+  const resolver = new MockResolver(behavior, options.statusBehavior);
   const keeperOptions = {
     now: options.now ?? (() => 1_000),
     maxConcurrency: options.maxConcurrency ?? 3,
@@ -120,6 +149,27 @@ describe("BattleKeeper pending tracking", () => {
     expect(keeper.snapshot().pendingCount).toBe(0);
     await keeper.tick();
     expect(resolver.calls).toEqual(["7:arrival"]);
+  });
+
+  test("keeps a bounded missile pending until canonical status becomes terminal", async () => {
+    const { keeper, resolver } = makeKeeper(async (_missionId, _leg, callIndex) => `0xhash${callIndex}`, {
+      now: () => 1_000,
+      statusBehavior: async (missionId, callIndex) => ({
+        missionId,
+        status: callIndex === 0 ? FleetMissionStatus.Outbound : FleetMissionStatus.Resolved,
+        missionType: MissionType.MissileAttack,
+        arrivalAt: 900,
+        returnAt: 0,
+        randomnessRequestId: "0"
+      })
+    });
+    keeper.recordLaunched(launch("70", MissionType.MissileAttack, 900, 0));
+
+    await keeper.tick();
+    expect(keeper.snapshot().pendingMissionIds).toEqual(["70"]);
+    await keeper.tick();
+    expect(keeper.snapshot().pendingCount).toBe(0);
+    expect(resolver.calls).toEqual(["70:arrival", "70:arrival"]);
   });
 
   test("status reconciliation reopens a missile whose terminal impact was reorged out", async () => {

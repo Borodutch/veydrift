@@ -147,6 +147,14 @@ abstract contract VeydriftGameStorage is Initializable {
         uint8 stage;
     }
 
+    struct ArrivalOrderIndex {
+        uint64 cursor;
+        bool ready;
+        // Mission ids cannot approach 2^184 within any feasible chain lifetime; packing the cached
+        // head with the cursor keeps invalidation to one slot in the size-constrained facade.
+        uint184 headMissionId;
+    }
+
     struct ResearchQueue {
         bool active;
         Technology technology;
@@ -433,6 +441,10 @@ abstract contract VeydriftGameStorage is Initializable {
         _missileArrivalHeapIndexByPlanet;
     mapping(uint256 missionId => MissileQueueSettlementProgress progress) internal
         _missileQueueSettlementProgress;
+    // Append-only bounded reconstruction of the earliest hostile arrival for each planet. The
+    // legacy resolution array can contain arbitrarily many inbound missions from distinct players,
+    // so a resolver advances this cursor in small chunks instead of scanning the array in one call.
+    mapping(uint256 planetId => ArrivalOrderIndex index) internal _arrivalOrderIndexByPlanet;
 
     error AlreadyStarted();
     error BadStartPayment();

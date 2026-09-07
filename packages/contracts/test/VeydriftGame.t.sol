@@ -4143,6 +4143,60 @@ contract VeydriftGameTest is Test {
         assertEq(game.defenseCount(targetPlanetId, Defense.LightLaser), 0);
     }
 
+    function testMissileArrivalOrderScanIsBoundedWithManyDistinctInboundSenders() public {
+        (uint256 originPlanetId, uint256 targetPlanetId,) =
+            _seedMissileAttackPlanetsWithoutScoreProtection();
+        _setTechnologyLevel(player, Technology.ImpulseDrive, 3);
+        _setDefenseCount(originPlanetId, Defense.InterplanetaryMissile, 1);
+        _setDefenseCount(targetPlanetId, Defense.LightLaser, 1);
+        _setDebrisField(targetPlanetId, 1_000_000, 1_000_000);
+
+        for (uint256 index = 0; index < 48; ++index) {
+            address sender = address(uint160(0x10000 + index));
+            vm.deal(sender, 0.05 ether);
+            vm.prank(sender);
+            uint256 senderPlanetId = game.startPlanet{value: 0.05 ether}();
+            _setPlanetCoordinates(senderPlanetId, 1, 103, uint8((index % 15) + 1));
+            _setTechnologyLevel(sender, Technology.CombustionDrive, 6);
+            _setShipCount(senderPlanetId, Ship.Recycler, 1);
+            _setResources(senderPlanetId, 100_000, 100_000, 100_000);
+            VeydriftGameStorage.MissionShips memory recycler;
+            recycler.recycler = 1;
+            vm.prank(sender);
+            game.launchFleetMission(
+                senderPlanetId,
+                targetPlanetId,
+                VeydriftGameStorage.FleetMissionType.Harvest,
+                recycler,
+                VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+                100
+            );
+        }
+
+        vm.prank(player);
+        uint256 missileMissionId = game.launchInterplanetaryMissileAttack(
+            originPlanetId, targetPlanetId, Defense.LightLaser, 1
+        );
+        (, uint64 arrivalAt,,) = _fleetMission(missileMissionId);
+        vm.warp(arrivalAt);
+
+        uint256 maximumChunkGas;
+        for (uint256 attempt = 0; attempt < 10; ++attempt) {
+            uint256 gasBefore = gasleft();
+            game.resolveFleetMission(missileMissionId);
+            uint256 gasUsed = gasBefore - gasleft();
+            if (gasUsed > maximumChunkGas) maximumChunkGas = gasUsed;
+            (VeydriftGameStorage.FleetMissionStatus currentStatus,,,) =
+                _fleetMission(missileMissionId);
+            if (currentStatus == VeydriftGameStorage.FleetMissionStatus.Resolved) break;
+        }
+
+        (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(missileMissionId);
+        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Resolved));
+        assertLt(maximumChunkGas, 2_000_000);
+        assertEq(game.defenseCount(targetPlanetId, Defense.LightLaser), 0);
+    }
+
     function testMissileImpactResumesAcrossWorstCaseTargetProductionBacklogs() public {
         (uint256 originPlanetId, uint256 targetPlanetId, address defender) =
             _seedMissileAttackPlanetsWithoutScoreProtection();

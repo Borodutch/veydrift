@@ -73,6 +73,9 @@ function validateManifest(current) {
   if (!/^[0-9]+$/.test(current.deployment?.timedMissileIndexFromBlock ?? "")) {
     fail("Invalid deployment.timedMissileIndexFromBlock.");
   }
+  if (current.deployment.timedMissileIndexFromBlock !== current.deployment.blockNumber) {
+    fail("deployment.timedMissileIndexFromBlock must equal the exact upgrade receipt block.");
+  }
   if (!current.deployment?.commit) fail("Missing deployment.commit.");
   if (!current.deployment?.abiHash) fail("Missing deployment.abiHash.");
   if (!/^0x[a-fA-F0-9]{64}$/.test(current.deployment?.activation?.transactionHash ?? "")) {

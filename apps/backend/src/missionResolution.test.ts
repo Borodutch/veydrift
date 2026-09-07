@@ -700,6 +700,65 @@ describe("MissionResolutionService", () => {
 });
 
 describe("ViemMissionResolutionChainClient", () => {
+  test("submits successive bounded missile chunks until canonical status leaves Outbound", async () => {
+    const account = privateKeyToAccount(`0x${"1".repeat(64)}`);
+    let pendingNonce = 7;
+    let canonicalStatus = "Outbound";
+    const nonces: number[] = [];
+    const reader = {
+      async listResolvableFleetMissions() { return []; },
+      async listReturnableFleetMissions() { return []; },
+      async getCanonicalFleetMission(missionId: bigint) {
+        return {
+          missionId: missionId.toString(),
+          statusId: canonicalStatus === "Outbound" ? 1 : 3,
+          missionTypeId: 7,
+          status: canonicalStatus,
+          missionType: "MissileAttack",
+          owner: account.address,
+          originPlanetId: "1",
+          targetPlanetId: "2",
+          departureAt: "1",
+          arrivalAt: "2",
+          returnAt: "2",
+          fuelCost: "0",
+          cargo: { metal: "0", crystal: "0", deuterium: "0" },
+          randomnessRequestId: null
+        };
+      }
+    };
+    const publicClient = {
+      async getTransactionCount() { return pendingNonce; },
+      async getStorageAt() { return `0x${"0".repeat(64)}`; },
+      async getTransactionReceipt() { return { status: "success" }; },
+      async waitForTransactionReceipt() { return { status: "success" }; }
+    } as unknown as PublicClient;
+    const walletClient = {
+      async writeContract(input: { nonce: number }) {
+        nonces.push(input.nonce);
+        pendingNonce = input.nonce + 1;
+        return `0x${input.nonce.toString(16).padStart(64, "0")}`;
+      }
+    } as unknown as WalletClient;
+    const client = new ViemMissionResolutionChainClient(
+      reader,
+      config.gameContractAddress!,
+      account,
+      publicClient,
+      walletClient,
+      { id: 8453 } as never,
+      config.rpcUrl,
+      new ResolverTransactionCoordinator(":memory:")
+    );
+
+    await client.resolveFleetMission("77");
+    await client.resolveFleetMission("77");
+    canonicalStatus = "Resolved";
+    await client.resolveFleetMission("77");
+
+    expect(nonces).toEqual([7, 8]);
+  });
+
   test("serializes broadcasts and confirmations while assigning pending nonces", async () => {
     const account = privateKeyToAccount(`0x${"1".repeat(64)}`);
     const broadcasts: Array<{ functionName: string; gas: bigint | undefined; nonce: number }> = [];

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -17,6 +17,7 @@ test("postdeploy smoke fails closed until timed-missile replay covers chain sync
   assert.match(source, /EIP-1967 Game implementation must match manifest/);
   assert.match(source, /active Game runtime code hash must match manifest/);
   assert.match(source, /Game upgrade receipt block must match exact manifest boundary/);
+  assert.match(source, /Game upgrade receipt must emit Upgraded\(expected implementation\) from the proxy/);
   assert.match(source, /Game must remain unpaused after upgrade/);
   assert.match(source, /running backend build SHA must match manifest commit/);
   assert.match(source, /final health must not remain in timed-missile standby/);
@@ -127,6 +128,39 @@ test("deployment manifest rejects a guessed timed missile replay boundary", () =
     "--abi-hash", "sha256:test",
   ], { cwd: process.cwd(), encoding: "utf8" });
 
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /must equal the exact upgrade receipt block/);
+});
+
+test("deployment manifest consumer rejects a replay boundary changed after generation", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "veydrift-manifest-"));
+  const manifestPath = join(tempDir, "manifest.json");
+  runNode([
+    "scripts/veydrift-deployment-manifest.mjs",
+    "--deploy-block", "123",
+    "--chain-id", "84532",
+    "--upgrade-tx", hash("a"),
+    "--game-implementation", address("9"),
+    "--game-implementation-code-hash", hash("b"),
+    "--game", address("1"),
+    "--settlement", address("1"),
+    "--alliance", address("2"),
+    "--randomness", address("3"),
+    "--moon", address("4"),
+    "--metal", address("6"),
+    "--crystal", address("7"),
+    "--deuterium", address("8"),
+    "--abi-hash", "sha256:test",
+    "--out", manifestPath
+  ]);
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+  manifest.deployment.timedMissileIndexFromBlock = "122";
+  writeFileSync(manifestPath, JSON.stringify(manifest));
+
+  const result = spawnSync(process.execPath, [
+    "scripts/veydrift-apply-deployment-manifest.mjs",
+    "--manifest", manifestPath
+  ], { cwd: process.cwd(), encoding: "utf8" });
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /must equal the exact upgrade receipt block/);
 });
