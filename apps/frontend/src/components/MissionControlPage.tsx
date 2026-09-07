@@ -845,6 +845,14 @@ export function missionLifecycleActions({
         reason: walletReason(canTransact, transactionUnavailableReason),
       });
     }
+    if (mission.missionType === "Attack" && activePlanetId && activePlanetId !== mission.originPlanetId) {
+      actions.push({
+        enabled: cooperativeEnabled,
+        kind: "joinAttack",
+        label: "Join Attack",
+        reason: cooperativeReason,
+      });
+    }
   }
 
   // VEY-KANEO-465: fleet returns reconcile automatically — the backend mission
