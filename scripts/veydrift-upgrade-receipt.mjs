@@ -1,4 +1,4 @@
-const upgradedEventTopic = "0xbc7cd75a20ee27fd9adebab32041f755214907a5e5bad2d344f9b2146899d2bc";
+const upgradedEventTopic = "0xbc7cd75a20ee27fd9adebab32041f755214dbc6bffa90cc0225b39da2e5c2d3b";
 
 export function receiptActivatesImplementation(receipt, proxy, implementation) {
   const expectedProxy = proxy.toLowerCase();
