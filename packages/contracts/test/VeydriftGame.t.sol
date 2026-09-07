@@ -379,6 +379,9 @@ contract VeydriftGameTest is Test {
         uint32 hits,
         uint32 destroyedPrimary
     );
+    event InterplanetaryMissileLaunched(
+        uint256 indexed missionId, Defense primaryTarget, uint32 quantity
+    );
 
     function setUp() public {
         game = _newGame(admin);
@@ -4007,19 +4010,44 @@ contract VeydriftGameTest is Test {
         _setDefenseCount(targetPlanetId, Defense.LightLaser, 10);
         _setDefenseCount(targetPlanetId, Defense.RocketLauncher, 20);
 
-        vm.expectEmit(true, true, true, true, address(game));
-        emit InterplanetaryMissileAttack(
-            player, originPlanetId, targetPlanetId, Defense.LightLaser, 5, 2, 3, 3
-        );
         vm.prank(player);
-        game.launchInterplanetaryMissileAttack(
+        uint256 missionId = game.launchInterplanetaryMissileAttack(
             originPlanetId, targetPlanetId, Defense.LightLaser, 5
         );
 
         assertEq(game.defenseCount(originPlanetId, Defense.InterplanetaryMissile), 0);
+        assertEq(game.defenseCount(targetPlanetId, Defense.AntiBallisticMissile), 2);
+        assertEq(game.defenseCount(targetPlanetId, Defense.LightLaser), 10);
+        assertEq(game.activeFleetMissionCount(player), 0);
+        (
+            VeydriftGameStorage.FleetMissionStatus status,
+            VeydriftGameStorage.FleetMissionType missionType,,,,
+            uint64 departureAt,
+            uint64 arrivalAt,
+            uint64 returnAt,,,
+        ) = game.fleetMission(missionId);
+        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Outbound));
+        assertEq(uint8(missionType), uint8(VeydriftGameStorage.FleetMissionType.MissileAttack));
+        assertEq(arrivalAt, departureAt + 270);
+        assertEq(returnAt, arrivalAt);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftGameStorage.FleetNotArrived.selector, arrivalAt)
+        );
+        game.resolveFleetMission(missionId);
+
+        vm.warp(arrivalAt);
+        vm.expectEmit(true, true, true, true, address(game));
+        emit InterplanetaryMissileAttack(
+            player, originPlanetId, targetPlanetId, Defense.LightLaser, 5, 2, 3, 3
+        );
+        game.resolveFleetMission(missionId);
+
         assertEq(game.defenseCount(targetPlanetId, Defense.AntiBallisticMissile), 0);
         assertEq(game.defenseCount(targetPlanetId, Defense.LightLaser), 7);
         assertEq(game.defenseCount(targetPlanetId, Defense.RocketLauncher), 20);
+        (status,,,) = _fleetMission(missionId);
+        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Resolved));
     }
 
     function testInterplanetaryMissileEmitsDefenseCountChangedForEveryLoss() public {
@@ -4028,18 +4056,395 @@ contract VeydriftGameTest is Test {
         _setDefenseCount(targetPlanetId, Defense.AntiBallisticMissile, 2);
         _setDefenseCount(targetPlanetId, Defense.LightLaser, 10);
 
-        // The silo debit, the interception debit, and the primary-target hit each emit the
-        // resulting stored total so the backend can index defense state without polling.
+        // Launch only debits the silo; interception and impact emit when the flight arrives.
         vm.expectEmit(true, true, false, true, address(game));
         emit PlanetDefenseCountChanged(originPlanetId, Defense.InterplanetaryMissile, 0);
+        vm.prank(player);
+        uint256 missionId = game.launchInterplanetaryMissileAttack(
+            originPlanetId, targetPlanetId, Defense.LightLaser, 5
+        );
+
+        (, uint64 arrivalAt,,) = _fleetMission(missionId);
+        vm.warp(arrivalAt);
         vm.expectEmit(true, true, false, true, address(game));
         emit PlanetDefenseCountChanged(targetPlanetId, Defense.AntiBallisticMissile, 0);
         vm.expectEmit(true, true, false, true, address(game));
         emit PlanetDefenseCountChanged(targetPlanetId, Defense.LightLaser, 7);
+        vm.expectEmit(true, true, false, true, address(game));
+        emit PlanetDefenseCountChanged(originPlanetId, Defense.InterplanetaryMissile, 0);
+        game.resolveFleetMission(missionId);
+    }
+
+    function testInterplanetaryMissilesResolveInScheduledArrivalOrder() public {
+        (uint256 originPlanetId, uint256 targetPlanetId,) =
+            _seedMissileAttackPlanetsWithoutScoreProtection();
+        _setTechnologyLevel(player, Technology.ImpulseDrive, 3);
+        _setDefenseCount(originPlanetId, Defense.InterplanetaryMissile, 2);
+        _setDefenseCount(targetPlanetId, Defense.LightLaser, 10);
+
+        _setPlanetCoordinates(targetPlanetId, 1, 110, 9);
+        vm.prank(player);
+        uint256 longRangeMission = game.launchInterplanetaryMissileAttack(
+            originPlanetId, targetPlanetId, Defense.LightLaser, 1
+        );
+        _setPlanetCoordinates(targetPlanetId, 1, 101, 9);
+        vm.prank(player);
+        uint256 shortRangeMission = game.launchInterplanetaryMissileAttack(
+            originPlanetId, targetPlanetId, Defense.LightLaser, 1
+        );
+
+        (, uint64 longArrival,,) = _fleetMission(longRangeMission);
+        (, uint64 shortArrival,,) = _fleetMission(shortRangeMission);
+        assertLt(shortArrival, longArrival);
+        vm.warp(longArrival);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftGameStorage.FleetMissionNotResolved.selector, shortArrival
+            )
+        );
+        game.resolveFleetMission(longRangeMission);
+
+        game.resolveFleetMission(shortRangeMission);
+        game.resolveFleetMission(longRangeMission);
+        assertEq(game.defenseCount(targetPlanetId, Defense.LightLaser), 8);
+    }
+
+    function testMissileSpamKeepsEachImpactGasBoundedWithOneTrackedHeapHead() public {
+        (uint256 originPlanetId, uint256 targetPlanetId,) =
+            _seedMissileAttackPlanetsWithoutScoreProtection();
+        uint256 missionCount = 128;
+        _setTechnologyLevel(player, Technology.ImpulseDrive, 3);
+        _setDefenseCount(originPlanetId, Defense.InterplanetaryMissile, uint32(missionCount));
+        _setDefenseCount(targetPlanetId, Defense.LightLaser, uint32(missionCount));
+
+        uint256 firstMissionId;
+        uint64 arrivalAt;
+        for (uint256 index = 0; index < missionCount; ++index) {
+            vm.prank(player);
+            uint256 missionId = game.launchInterplanetaryMissileAttack(
+                originPlanetId, targetPlanetId, Defense.LightLaser, 1
+            );
+            if (index == 0) {
+                firstMissionId = missionId;
+                (, arrivalAt,,) = _fleetMission(missionId);
+            }
+        }
+
+        vm.warp(arrivalAt);
+        uint256 maximumImpactGas;
+        for (uint256 index = 0; index < missionCount; ++index) {
+            uint256 gasBefore = gasleft();
+            game.resolveFleetMission(firstMissionId + index);
+            uint256 gasUsed = gasBefore - gasleft();
+            if (gasUsed > maximumImpactGas) maximumImpactGas = gasUsed;
+        }
+
+        assertLt(maximumImpactGas, 500_000);
+        assertEq(game.defenseCount(targetPlanetId, Defense.LightLaser), 0);
+    }
+
+    function testMissileArrivalOrderScanIsBoundedWithManyDistinctInboundSenders() public {
+        (uint256 originPlanetId, uint256 targetPlanetId,) =
+            _seedMissileAttackPlanetsWithoutScoreProtection();
+        _setTechnologyLevel(player, Technology.ImpulseDrive, 3);
+        _setDefenseCount(originPlanetId, Defense.InterplanetaryMissile, 1);
+        _setDefenseCount(targetPlanetId, Defense.LightLaser, 1);
+        _setDebrisField(targetPlanetId, 1_000_000, 1_000_000);
+
+        for (uint256 index = 0; index < 48; ++index) {
+            address sender = address(uint160(0x10000 + index));
+            vm.deal(sender, 0.05 ether);
+            vm.prank(sender);
+            uint256 senderPlanetId = game.startPlanet{value: 0.05 ether}();
+            _setPlanetCoordinates(senderPlanetId, 1, 103, uint8((index % 15) + 1));
+            _setTechnologyLevel(sender, Technology.CombustionDrive, 6);
+            _setShipCount(senderPlanetId, Ship.Recycler, 1);
+            _setResources(senderPlanetId, 100_000, 100_000, 100_000);
+            VeydriftGameStorage.MissionShips memory recycler;
+            recycler.recycler = 1;
+            vm.prank(sender);
+            game.launchFleetMission(
+                senderPlanetId,
+                targetPlanetId,
+                VeydriftGameStorage.FleetMissionType.Harvest,
+                recycler,
+                VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+                100
+            );
+        }
+
+        vm.prank(player);
+        uint256 missileMissionId = game.launchInterplanetaryMissileAttack(
+            originPlanetId, targetPlanetId, Defense.LightLaser, 1
+        );
+        (, uint64 arrivalAt,,) = _fleetMission(missileMissionId);
+        vm.warp(arrivalAt);
+
+        uint256 maximumChunkGas;
+        for (uint256 attempt = 0; attempt < 10; ++attempt) {
+            uint256 gasBefore = gasleft();
+            game.resolveFleetMission(missileMissionId);
+            uint256 gasUsed = gasBefore - gasleft();
+            if (gasUsed > maximumChunkGas) maximumChunkGas = gasUsed;
+            (VeydriftGameStorage.FleetMissionStatus currentStatus,,,) =
+                _fleetMission(missileMissionId);
+            if (currentStatus == VeydriftGameStorage.FleetMissionStatus.Resolved) break;
+        }
+
+        (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(missileMissionId);
+        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Resolved));
+        assertLt(maximumChunkGas, 2_000_000);
+        assertEq(game.defenseCount(targetPlanetId, Defense.LightLaser), 0);
+    }
+
+    function testMissileImpactResumesAcrossWorstCaseTargetProductionBacklogs() public {
+        (uint256 originPlanetId, uint256 targetPlanetId, address defender) =
+            _seedMissileAttackPlanetsWithoutScoreProtection();
+        uint32 queueCount = 80;
+        _setTechnologyLevel(player, Technology.ImpulseDrive, 3);
+        _setTechnologyLevel(defender, Technology.CombustionDrive, 1);
+        _setBuildingLevel(targetPlanetId, Building.Shipyard, 20);
+        _setBuildingLevel(targetPlanetId, Building.NaniteFactory, 20);
+        _setResources(targetPlanetId, 1_000_000_000, 1_000_000_000, 1_000_000_000);
+        for (uint32 index = 0; index < queueCount; ++index) {
+            vm.startPrank(defender);
+            game.startShipProduction(targetPlanetId, Ship.LightFighter, 1);
+            game.startDefenseProduction(targetPlanetId, Defense.RocketLauncher, 1);
+            vm.stopPrank();
+        }
+        assertEq(game.shipQueueBacklog(targetPlanetId).length, queueCount - 1);
+        assertEq(game.defenseQueueBacklog(targetPlanetId).length, queueCount - 1);
+
+        _setPlanetCoordinates(targetPlanetId, 1, 114, 9);
+        _setDefenseCount(originPlanetId, Defense.InterplanetaryMissile, 1);
+        vm.prank(player);
+        uint256 missionId = game.launchInterplanetaryMissileAttack(
+            originPlanetId, targetPlanetId, Defense.RocketLauncher, 1
+        );
+        (, uint64 arrivalAt,,) = _fleetMission(missionId);
+        vm.warp(arrivalAt);
+
+        uint256 gasBefore = gasleft();
+        game.resolveFleetMission(missionId);
+        uint256 maximumChunkGas = gasBefore - gasleft();
+        (VeydriftGameStorage.FleetMissionStatus firstChunkStatus,,,) = _fleetMission(missionId);
+        assertEq(uint8(firstChunkStatus), uint8(VeydriftGameStorage.FleetMissionStatus.Outbound));
+        vm.prank(defender);
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftGameStorage.FleetMissionNotResolved.selector, arrivalAt)
+        );
+        game.startDefenseProduction(targetPlanetId, Defense.RocketLauncher, 1);
+
+        for (uint256 attempt = 1; attempt < 80; ++attempt) {
+            gasBefore = gasleft();
+            game.resolveFleetMission(missionId);
+            uint256 gasUsed = gasBefore - gasleft();
+            if (gasUsed > maximumChunkGas) maximumChunkGas = gasUsed;
+            (VeydriftGameStorage.FleetMissionStatus currentStatus,,,) = _fleetMission(missionId);
+            if (currentStatus == VeydriftGameStorage.FleetMissionStatus.Resolved) break;
+        }
+
+        (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(missionId);
+        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Resolved));
+        assertLt(maximumChunkGas, 2_000_000);
+        assertEq(game.shipCount(targetPlanetId, Ship.LightFighter), queueCount);
+        assertEq(game.defenseCount(targetPlanetId, Defense.RocketLauncher), queueCount - 1);
+        assertEq(game.shipQueueBacklog(targetPlanetId).length, 0);
+        assertEq(game.defenseQueueBacklog(targetPlanetId).length, 0);
+    }
+
+    function testPlanetCannotBeAbandonedWhileIncomingMissileIsInFlight() public {
+        (uint256 originPlanetId, uint256 defenderHomePlanetId, address defender) =
+            _seedMissileAttackPlanetsWithoutScoreProtection();
+        _setTechnologyLevel(defender, Technology.Astrophysics, 1);
+        _setShipCount(defenderHomePlanetId, Ship.ColonyShip, 1);
+        uint256 targetPlanetId = _createResolvedColony(defender, defenderHomePlanetId, 83);
+        _setPlanetCoordinates(targetPlanetId, 1, 104, 9);
+        _setDefenseCount(originPlanetId, Defense.InterplanetaryMissile, 1);
+        _setResources(targetPlanetId, 0, 0, 0);
+
         vm.prank(player);
         game.launchInterplanetaryMissileAttack(
-            originPlanetId, targetPlanetId, Defense.LightLaser, 5
+            originPlanetId, targetPlanetId, Defense.RocketLauncher, 1
         );
+
+        vm.prank(defender);
+        vm.expectRevert(VeydriftGameStorage.PlanetHasActiveFleetMissions.selector);
+        game.abandonPlanet(targetPlanetId);
+    }
+
+    function testInterplanetaryMissileFlightUsesClassicOGameTimingAndCannotBeRecalled() public {
+        (uint256 originPlanetId, uint256 targetPlanetId,) =
+            _seedMissileAttackPlanetsWithoutScoreProtection();
+        _setTechnologyLevel(player, Technology.ImpulseDrive, 3);
+        _setDefenseCount(originPlanetId, Defense.InterplanetaryMissile, 3);
+
+        uint64 launchedAt = uint64(block.timestamp);
+        _setPlanetCoordinates(targetPlanetId, 1, 100, 9);
+        vm.prank(player);
+        uint256 sameSystem = game.launchInterplanetaryMissileAttack(
+            originPlanetId, targetPlanetId, Defense.RocketLauncher, 1
+        );
+        _setPlanetCoordinates(targetPlanetId, 1, 101, 9);
+        vm.prank(player);
+        uint256 oneSystem = game.launchInterplanetaryMissileAttack(
+            originPlanetId, targetPlanetId, Defense.RocketLauncher, 1
+        );
+        _setPlanetCoordinates(targetPlanetId, 1, 110, 9);
+        vm.prank(player);
+        uint256 tenSystems = game.launchInterplanetaryMissileAttack(
+            originPlanetId, targetPlanetId, Defense.RocketLauncher, 1
+        );
+
+        (, uint64 sameArrival, uint64 sameReturn,) = _fleetMission(sameSystem);
+        (, uint64 oneArrival, uint64 oneReturn,) = _fleetMission(oneSystem);
+        (, uint64 tenArrival, uint64 tenReturn,) = _fleetMission(tenSystems);
+        assertEq(sameArrival, launchedAt + 30);
+        assertEq(oneArrival, launchedAt + 90);
+        assertEq(tenArrival, launchedAt + 630);
+        assertEq(sameReturn, sameArrival);
+        assertEq(oneReturn, oneArrival);
+        assertEq(tenReturn, tenArrival);
+        assertEq(game.activeFleetMissionCount(player), 0);
+
+        vm.prank(player);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftGameStorage.InvalidMissionType.selector,
+                VeydriftGameStorage.FleetMissionType.MissileAttack
+            )
+        );
+        game.recallFleetMission(sameSystem);
+    }
+
+    function testInterplanetaryMissileImpactUsesDefensesCompletedByArrivalNotLateResolution()
+        public
+    {
+        (uint256 originPlanetId, uint256 targetPlanetId, address defender) =
+            _seedMissileAttackPlanetsWithoutScoreProtection();
+        _setPlanetCoordinates(targetPlanetId, 1, 110, 9);
+        _setTechnologyLevel(player, Technology.ImpulseDrive, 3);
+        _setTechnologyLevel(defender, Technology.Astrophysics, 1);
+        _setShipCount(targetPlanetId, Ship.ColonyShip, 1);
+        uint256 transportOriginPlanetId = _createResolvedColony(defender, targetPlanetId, 91);
+        _setPlanetCoordinates(transportOriginPlanetId, 1, 110, 8);
+        _setShipCount(transportOriginPlanetId, Ship.SmallCargo, 1);
+        _setResources(transportOriginPlanetId, 100_000, 100_000, 100_000);
+        _setDefenseCount(originPlanetId, Defense.InterplanetaryMissile, 3);
+        _setDefenseCount(targetPlanetId, Defense.LightLaser, 10);
+        _setBuildingLevel(targetPlanetId, Building.Shipyard, 8);
+        _setBuildingLevel(targetPlanetId, Building.NaniteFactory, 2);
+        _setBuildingLevel(targetPlanetId, Building.MissileSilo, 2);
+        _setResources(targetPlanetId, 100_000, 100_000, 100_000);
+
+        vm.prank(player);
+        uint256 missionId = game.launchInterplanetaryMissileAttack(
+            originPlanetId, targetPlanetId, Defense.LightLaser, 3
+        );
+        (, uint64 arrivalAt,,) = _fleetMission(missionId);
+
+        // Two ABMs take 640 seconds here: one completes before the 630-second impact and one after.
+        // A late resolver must snapshot the queue at impact, intercept with exactly one, and leave the
+        // second ABM queued instead of retroactively letting it defend an already-arrived strike.
+        vm.prank(defender);
+        game.startDefenseProduction(targetPlanetId, Defense.AntiBallisticMissile, 2);
+        VeydriftGameStorage.DefenseQueue memory queue = game.defenseQueue(targetPlanetId);
+        assertEq(queue.readyAt, arrivalAt + 10);
+
+        vm.prank(defender);
+        uint256 transportMissionId = game.launchFleetMission(
+            transportOriginPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Transport,
+            _smallCargoManifest(),
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            0
+        );
+        (, uint64 transportArrivalAt,,) = _fleetMission(transportMissionId);
+        assertLt(transportArrivalAt, arrivalAt);
+
+        // Even though this non-combat arrival was scheduled first, resolving it after the missile's
+        // impact time would settle the defense queue through the late resolver timestamp. The due
+        // missile therefore has priority so the second, post-impact ABM cannot intercept it.
+        vm.warp(arrivalAt + 1_000);
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftGameStorage.FleetMissionNotResolved.selector, arrivalAt)
+        );
+        game.resolveFleetMission(transportMissionId);
+        assertEq(game.defenseCount(targetPlanetId, Defense.AntiBallisticMissile), 0);
+        queue = game.defenseQueue(targetPlanetId);
+        assertTrue(queue.active);
+        assertEq(queue.quantity, 2);
+
+        game.resolveFleetMission(missionId);
+
+        assertEq(game.defenseCount(targetPlanetId, Defense.AntiBallisticMissile), 0);
+        assertEq(game.defenseCount(targetPlanetId, Defense.LightLaser), 8);
+        queue = game.defenseQueue(targetPlanetId);
+        assertTrue(queue.active);
+        assertEq(queue.quantity, 1);
+
+        game.resolveFleetMission(transportMissionId);
+        assertEq(game.defenseCount(targetPlanetId, Defense.AntiBallisticMissile), 1);
+    }
+
+    function testDueMissileResolvesBeforeDefenseHoldExpirySettlesLaterDefenses() public {
+        (address ally, uint256 originPlanetId, uint256 targetPlanetId, uint256 allyPlanetId) =
+            _seedDefenseHold();
+        address defender = address(0xDEF);
+        _setPlanetCoordinates(originPlanetId, 1, 100, 8);
+        _setPlanetCoordinates(targetPlanetId, 1, 110, 9);
+        _setPlanetCoordinates(allyPlanetId, 1, 110, 10);
+        _setTechnologyLevel(player, Technology.ImpulseDrive, 3);
+        _setDefenseCount(originPlanetId, Defense.InterplanetaryMissile, 3);
+        _setDefenseCount(targetPlanetId, Defense.LightLaser, 10);
+        _setShipCount(allyPlanetId, Ship.Battleship, 1);
+        _setResources(originPlanetId, 100_000, 100_000, 100_000);
+        _setResources(allyPlanetId, 100_000, 100_000, 100_000);
+        _setResources(targetPlanetId, 100_000, 100_000, 100_000);
+        _setBuildingLevel(targetPlanetId, Building.Shipyard, 8);
+        _setBuildingLevel(targetPlanetId, Building.NaniteFactory, 2);
+        _setBuildingLevel(targetPlanetId, Building.MissileSilo, 2);
+
+        VeydriftGameStorage.MissionShips memory defenders;
+        defenders.battleship = 1;
+        vm.prank(ally);
+        uint256 holdMissionId = game.launchDefenseHold(
+            allyPlanetId, targetPlanetId, defenders, _noCargo(), 100, 1 hours
+        );
+        (, uint64 holdArrivalAt,,) = _fleetMission(holdMissionId);
+        uint64 holdUntil = holdArrivalAt + 1 hours;
+
+        vm.prank(player);
+        uint256 missileMissionId = game.launchInterplanetaryMissileAttack(
+            originPlanetId, targetPlanetId, Defense.LightLaser, 3
+        );
+        (, uint64 missileArrivalAt,,) = _fleetMission(missileMissionId);
+        assertLt(holdArrivalAt, missileArrivalAt);
+        assertLt(missileArrivalAt, holdUntil);
+
+        vm.prank(defender);
+        game.startDefenseProduction(targetPlanetId, Defense.AntiBallisticMissile, 2);
+        VeydriftGameStorage.DefenseQueue memory queue = game.defenseQueue(targetPlanetId);
+        assertEq(queue.readyAt, missileArrivalAt + 10);
+
+        vm.warp(holdUntil);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftGameStorage.FleetMissionNotResolved.selector, missileArrivalAt
+            )
+        );
+        game.resolveFleetMission(holdMissionId);
+
+        game.resolveFleetMission(missileMissionId);
+        assertEq(game.defenseCount(targetPlanetId, Defense.AntiBallisticMissile), 0);
+        assertEq(game.defenseCount(targetPlanetId, Defense.LightLaser), 8);
+        queue = game.defenseQueue(targetPlanetId);
+        assertTrue(queue.active);
+        assertEq(queue.quantity, 1);
+
+        game.resolveFleetMission(holdMissionId);
+        assertEq(game.defenseCount(targetPlanetId, Defense.AntiBallisticMissile), 1);
     }
 
     function testFleetLaunchAndReturnEmitShipCountChanged() public {
@@ -4144,14 +4549,22 @@ contract VeydriftGameTest is Test {
         );
 
         _setShipCount(targetPlanetId, Ship.SmallCargo, 300_000);
+        uint256[] memory missionIds =
+            new uint256[](VeydriftAntiRaidPrimitives.MAX_ATTACKS_PER_BASHING_WINDOW + 1);
         for (uint256 i = 0; i < VeydriftAntiRaidPrimitives.MAX_ATTACKS_PER_BASHING_WINDOW + 1; i++) {
             vm.prank(player);
-            game.launchInterplanetaryMissileAttack(
+            missionIds[i] = game.launchInterplanetaryMissileAttack(
                 originPlanetId, targetPlanetId, Defense.LightLaser, 1
             );
         }
 
         assertEq(game.defenseCount(originPlanetId, Defense.InterplanetaryMissile), 1);
+        assertEq(game.defenseCount(targetPlanetId, Defense.LightLaser), 10);
+        (, uint64 arrivalAt,,) = _fleetMission(missionIds[0]);
+        vm.warp(arrivalAt);
+        for (uint256 i = 0; i < missionIds.length; i++) {
+            game.resolveFleetMission(missionIds[i]);
+        }
         assertEq(game.defenseCount(targetPlanetId, Defense.LightLaser), 3);
     }
 
@@ -4163,16 +4576,21 @@ contract VeydriftGameTest is Test {
         _setDefenseCount(targetPlanetId, Defense.AntiBallisticMissile, 3);
         _setDefenseCount(targetPlanetId, Defense.PlasmaTurret, 2);
 
-        vm.expectEmit(true, true, true, true, address(game));
-        emit InterplanetaryMissileAttack(
-            player, originPlanetId, targetPlanetId, Defense.PlasmaTurret, 8, 3, 5, 2
-        );
         vm.prank(player);
-        game.launchInterplanetaryMissileAttack(
+        uint256 missionId = game.launchInterplanetaryMissileAttack(
             originPlanetId, targetPlanetId, Defense.PlasmaTurret, 8
         );
 
         assertEq(game.defenseCount(originPlanetId, Defense.InterplanetaryMissile), 0);
+        assertEq(game.defenseCount(targetPlanetId, Defense.AntiBallisticMissile), 3);
+        assertEq(game.defenseCount(targetPlanetId, Defense.PlasmaTurret), 2);
+        (, uint64 arrivalAt,,) = _fleetMission(missionId);
+        vm.warp(arrivalAt);
+        vm.expectEmit(true, true, true, true, address(game));
+        emit InterplanetaryMissileAttack(
+            player, originPlanetId, targetPlanetId, Defense.PlasmaTurret, 8, 3, 5, 2
+        );
+        game.resolveFleetMission(missionId);
         assertEq(game.defenseCount(targetPlanetId, Defense.AntiBallisticMissile), 0);
         assertEq(game.defenseCount(targetPlanetId, Defense.PlasmaTurret), 0);
     }
@@ -4214,6 +4632,25 @@ contract VeydriftGameTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(
                 VeydriftGameStorage.InterplanetaryMissileOutOfRange.selector, 1, 6, 4
+            )
+        );
+        game.launchInterplanetaryMissileAttack(
+            originPlanetId, targetPlanetId, Defense.RocketLauncher, 1
+        );
+    }
+
+    function testInterplanetaryMissileAttackRequiresImpulseDriveWithinSameSystem() public {
+        (uint256 originPlanetId, uint256 targetPlanetId,) =
+            _seedMissileAttackPlanetsWithoutScoreProtection();
+        _setPlanetCoordinates(originPlanetId, 1, 6, 8);
+        _setPlanetCoordinates(targetPlanetId, 1, 6, 9);
+        _setTechnologyLevel(player, Technology.ImpulseDrive, 0);
+        _setDefenseCount(originPlanetId, Defense.InterplanetaryMissile, 1);
+
+        vm.prank(player);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftGameStorage.InterplanetaryMissileOutOfRange.selector, 6, 6, 0
             )
         );
         game.launchInterplanetaryMissileAttack(
@@ -4323,14 +4760,22 @@ contract VeydriftGameTest is Test {
         _setDefenseCount(originPlanetId, Defense.InterplanetaryMissile, 7);
         _setDefenseCount(targetPlanetId, Defense.RocketLauncher, 10);
 
+        uint256[] memory missionIds =
+            new uint256[](VeydriftAntiRaidPrimitives.MAX_ATTACKS_PER_BASHING_WINDOW + 1);
         for (uint256 i = 0; i < VeydriftAntiRaidPrimitives.MAX_ATTACKS_PER_BASHING_WINDOW + 1; i++) {
             vm.prank(player);
-            game.launchInterplanetaryMissileAttack(
+            missionIds[i] = game.launchInterplanetaryMissileAttack(
                 originPlanetId, targetPlanetId, Defense.RocketLauncher, 1
             );
         }
 
         assertEq(game.defenseCount(originPlanetId, Defense.InterplanetaryMissile), 0);
+        assertEq(game.defenseCount(targetPlanetId, Defense.RocketLauncher), 10);
+        (, uint64 arrivalAt,,) = _fleetMission(missionIds[0]);
+        vm.warp(arrivalAt);
+        for (uint256 i = 0; i < missionIds.length; i++) {
+            game.resolveFleetMission(missionIds[i]);
+        }
         assertEq(game.defenseCount(targetPlanetId, Defense.RocketLauncher), 3);
     }
 
@@ -6482,11 +6927,15 @@ contract VeydriftGameTest is Test {
         vm.warp(queue.readyAt);
 
         vm.prank(player);
-        game.launchInterplanetaryMissileAttack(
+        uint256 missionId = game.launchInterplanetaryMissileAttack(
             originPlanetId, targetPlanetId, Defense.LightLaser, 3
         );
 
         assertEq(game.defenseCount(originPlanetId, Defense.InterplanetaryMissile), 0);
+        assertEq(game.defenseCount(targetPlanetId, Defense.LightLaser), 10);
+        (, uint64 arrivalAt,,) = _fleetMission(missionId);
+        vm.warp(arrivalAt);
+        game.resolveFleetMission(missionId);
         assertEq(game.defenseCount(targetPlanetId, Defense.LightLaser), 7);
     }
 

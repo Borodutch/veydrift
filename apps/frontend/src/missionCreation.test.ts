@@ -46,6 +46,7 @@ import {
   targetResourceIntel,
 } from "./components/MissionCreationPage";
 import {
+  attackProtectionSubmitBlocker,
   cargoForCargoMissionLaunch,
   joinAttackTargetFromSystemPayload,
   missionComposerIdentity,
@@ -57,6 +58,12 @@ import type { Planet } from "./types";
 
 const missionCreationSource = await Bun.file(new URL("./components/MissionCreationPage.tsx", import.meta.url)).text();
 const playableMvpAppSource = await Bun.file(new URL("./PlayableMvpApp.tsx", import.meta.url)).text();
+
+test("missile submit protection ignores only the fleet bashing limit", () => {
+  expect(attackProtectionSubmitBlocker({ allowed: false, blockedReason: "bashing_limit", blockedReasonLabel: "Bashing" }, { ignoreBashingLimit: true })).toBeUndefined();
+  expect(attackProtectionSubmitBlocker({ allowed: false, blockedReason: "score_protection", blockedReasonLabel: null }, { ignoreBashingLimit: true })).toContain("score protection");
+  expect(attackProtectionSubmitBlocker({ allowed: false, blockedReason: "same_alliance", blockedReasonLabel: null }, { ignoreBashingLimit: true })).toContain("alliance");
+});
 
 test("shows canonical active-war eligibility and persistent mission errors in the composer", () => {
   expect(missionCreationSource).toContain("warProtectionNotice");
@@ -2573,6 +2580,8 @@ describe("mission creation", () => {
   });
 
   test("checks fuel for fleet missions and missile quantity for missile missions", () => {
+    expect(missionCreationSource).toContain("missileRange === 0");
+    expect(missionCreationSource).toContain("Interplanetary missiles require Impulse Drive level 1.");
     expect(missionDraftBlocker({
       action: attackAction,
       cargoCapacity: 0,

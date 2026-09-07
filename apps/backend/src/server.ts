@@ -2270,6 +2270,7 @@ export function deriveLogBackfiller(
       listContractLogs: (fromBlock: bigint, toBlock?: bigint | "latest") => Promise<RpcLog[]>;
       listReferralLogs?: (fromBlock: bigint, toBlock?: bigint | "latest") => Promise<RpcLog[]>;
       listPaidAllianceInviteLogs?: (fromBlock: bigint, toBlock?: bigint | "latest") => Promise<RpcLog[]>;
+      listTimedMissileLifecycleLogs?: (fromBlock: bigint, toBlock?: bigint | "latest") => Promise<RpcLog[]>;
       rpcMetrics?: () => unknown;
     }
   | undefined {
@@ -2290,6 +2291,9 @@ export function deriveLogBackfiller(
         : {}),
       ...(typeof reader.listPaidAllianceInviteLogs === "function"
         ? { listPaidAllianceInviteLogs: reader.listPaidAllianceInviteLogs.bind(reader) }
+        : {}),
+      ...(typeof reader.listTimedMissileLifecycleLogs === "function"
+        ? { listTimedMissileLifecycleLogs: reader.listTimedMissileLifecycleLogs.bind(reader) }
         : {}),
       ...(typeof reader.rpcMetrics === "function" ? { rpcMetrics: reader.rpcMetrics.bind(reader) } : {})
     };
@@ -2356,6 +2360,7 @@ async function normalizeViemLog(
   if (log.blockNumber === null || log.transactionHash === null) return null;
   const blockTimestamp = await timestampForBlock(log.blockNumber);
   return {
+    ...(log.blockHash ? { blockHash: log.blockHash } : {}),
     blockNumber: toQuantity(log.blockNumber),
     transactionHash: log.transactionHash,
     topics: log.topics.filter((topic): topic is `0x${string}` => typeof topic === "string"),
@@ -4031,7 +4036,7 @@ function indexedFleetVisibility(
 }
 
 function expectsBattleReport(mission: FleetMissionSummary): boolean {
-  if (!["Attack", "AcsAttack", "Intercept", "MissileAttack"].includes(mission.missionType)) return false;
+  if (!["Attack", "AcsAttack", "Intercept"].includes(mission.missionType)) return false;
   if (mission.status === "Recalled" || mission.recallProvenance === "FleetMissionRecalled") return false;
   if (mission.status === "Outbound" && Number(mission.arrivalAt) > Math.floor(Date.now() / 1_000)) return false;
   return true;

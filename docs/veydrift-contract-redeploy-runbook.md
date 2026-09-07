@@ -10,6 +10,45 @@ The goal is to keep contract addresses, backend runtime config, frontend
 ABI/runtime assumptions, migration evidence, and tab smoke checks in one
 repeatable path.
 
+## Production Timed-Missile Upgrade (Only Approved Path)
+
+The timed-missile release is an **in-place Transparent ProxyAdmin upgrade**. Do not run
+`Deploy.s.sol`, do not replace the Game proxy, and do not pause the Game. The only approved order is:
+
+1. Build the exact merged commit and pass contract, storage-layout, backend, keeper, and frontend gates.
+2. Deploy that backend writer and battle-keeper build first with
+   `VEYDRIFT_TIMED_MISSILE_STANDBY=true` and with
+   `VEYDRIFT_TIMED_MISSILE_INDEX_FROM_BLOCK` absent. Verify `/health` reports the expected build SHA,
+   `timedMissileStandby=true`, a connected/caught-up writer, and an unpaused Game. Do not deploy the
+   frontend yet.
+3. From `packages/contracts`, simulate and then broadcast exactly:
+
+   ```sh
+   forge script script/UpgradeGame.s.sol:UpgradeGame --rpc-url "$BASE_RPC_URL"
+   forge script script/UpgradeGame.s.sol:UpgradeGame --rpc-url "$BASE_RPC_URL" --broadcast --slow
+   ```
+
+   The script must use empty upgrade calldata and must reject a paused Game. Capture the confirmed
+   upgrade transaction hash, its exact receipt block, the EIP-1967 implementation address, and the
+   implementation runtime code hash. The receipt block—not a pre-upgrade estimate—is the immutable
+   timed-missile replay boundary.
+4. Generate the final manifest with `--deploy-block` and `--timed-missile-index-from-block` both set
+   to that exact receipt block, plus `--upgrade-tx`, `--game-implementation`, and
+   `--game-implementation-code-hash` from the confirmed chain state.
+5. Replace standby config on the backend writer with the manifest-rendered exact boundary and proof
+   variables; `VEYDRIFT_TIMED_MISSILE_STANDBY` must be absent/false. Redeploy the same exact backend
+   and keeper image. Wait until the narrow lifecycle replay is complete through the latest synchronized
+   block. A rollback to an older writer is forbidden after the proxy upgrade.
+6. Run `veydrift-postdeploy-smoke.mjs`. It must prove the upgrade receipt/block, active EIP-1967
+   implementation and runtime hash, unpaused Game, timed-missile selectors, exact backend build/ABI,
+   and replay coverage through the synchronized head.
+7. Deploy the frontend last, then verify a real timed one-way missile launch and arrival without
+   submitting any unrelated player action.
+
+Any failed step leaves the frontend on the previous feature set. Repair or roll forward the compatible
+backend and implementation; never solve rollout uncertainty by pausing gameplay or using the fresh
+deploy path below.
+
 ## 0. Migration Verification Gate
 
 Before broadcasting a full deploy:
@@ -66,7 +105,7 @@ export VEYDRIFT_ALPHA_REDEPLOY_ACK="I have verified Veydrift alpha state migrati
 This acknowledgement prevents accidental script use. It does not replace the
 Kaneo/PR evidence required by the policy.
 
-## 1. Build And Deploy
+## 1. Full Redeploy Only: Build And Deploy
 
 Run contract validation before broadcasting:
 
@@ -75,7 +114,7 @@ bun run check:contracts
 bun run test:contracts
 ```
 
-Deploy from `packages/contracts` with the funded deployer wallet and the intended RPC. Do not print
+This section is not the timed-missile rollout. Deploy from `packages/contracts` with the funded deployer wallet and the intended RPC. Do not print
 or commit `PRIVATE_KEY`. Only run this full deploy path after section 0 is
 complete.
 
@@ -98,6 +137,9 @@ Run `forge build` first so the VeydriftGame ABI artifact exists, then write a ma
 ```sh
 node scripts/veydrift-deployment-manifest.mjs \
   --deploy-block 41848281 \
+  --upgrade-tx 0x... \
+  --game-implementation 0x... \
+  --game-implementation-code-hash 0x... \
   --index-from-block 41848281 \
   --game 0x... \
   --settlement 0x... \
@@ -141,11 +183,19 @@ Apply every generated backend variable to the `veydrift_backend-test` EasyPanel 
 - `VEYDRIFT_CRYSTAL_TOKEN_ADDRESS`
 - `VEYDRIFT_DEUTERIUM_TOKEN_ADDRESS`
 - `VEYDRIFT_INDEX_FROM_BLOCK`
+- `VEYDRIFT_TIMED_MISSILE_INDEX_FROM_BLOCK` (required; exact Game upgrade block for rollback-safe timed-missile lifecycle replay)
+- `VEYDRIFT_UPGRADE_TRANSACTION_HASH`
+- `VEYDRIFT_EXPECTED_GAME_IMPLEMENTATION`
+- `VEYDRIFT_EXPECTED_GAME_IMPLEMENTATION_CODE_HASH`
 - `VEYDRIFT_DEPLOYMENT_COMMIT`
 - `VEYDRIFT_DEPLOYMENT_ABI_HASH`
 - `VEYDRIFT_DEPLOYMENT_TIMESTAMP`
 
 Preserve existing secret/runtime values such as RPC URLs and Alchemy keys. Then rebuild/restart:
+
+For the timed-missile in-place upgrade, use the production ordering above: compatible writer/keeper in
+standby, proxy upgrade, exact-boundary writer/keeper, smoke, then frontend. The generic full-redeploy
+order below applies only to this full-redeploy section:
 
 1. `veydrift_backend-test`
 2. any indexer/worker process attached to the backend service

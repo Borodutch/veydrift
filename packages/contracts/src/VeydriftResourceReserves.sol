@@ -382,6 +382,15 @@ abstract contract VeydriftResourceReserves is VeydriftGameStorage {
         if (missionId != 0) revert FleetMissionNotResolved(_fleetMissions[missionId].arrivalAt);
     }
 
+    /// @dev A planet cannot disappear while another player still has an outbound arrival targeting
+    ///      it. Besides preserving impact semantics, this keeps defender-side resolution indexes
+    ///      removable without adding a historical-owner storage slot.
+    function _requireNoInboundMissionForPlanet(uint256 planetId) internal view {
+        if (_resolutionMissionIdsByPlanet[planetId].length != 0) {
+            revert PlanetHasActiveFleetMissions();
+        }
+    }
+
     /// @notice Earliest arrival timestamp among the planet's missions that have arrived but are not
     ///         yet resolved, or `type(uint64).max` when none are pending.
     /// @dev Used by passive resource collection to settle production only up to (and never across) an
@@ -572,8 +581,8 @@ abstract contract VeydriftResourceReserves is VeydriftGameStorage {
         return 0;
     }
 
-    /// @dev Only Attack and Harvest gate settlement: their resolution mutates an involved planet's
-    ///      resources at `arrivalAt` (combat losses, looted/harvested debris), so production/body
+    /// @dev Attack, Harvest, and MissileAttack gate settlement: their resolution mutates an involved
+    ///      planet at `arrivalAt` (combat, debris, or defenses), so production/body
     ///      mutations must not settle across an unresolved planet or moon arrival. Colonize is excluded —
     ///      resolving a
     ///      Colonize neither reads nor mutates the origin planet (it only creates a brand-new colony
@@ -587,7 +596,8 @@ abstract contract VeydriftResourceReserves is VeydriftGameStorage {
     {
         return mission.status == FleetMissionStatus.Outbound
             && (mission.missionType == FleetMissionType.Harvest
-                || mission.missionType == FleetMissionType.Attack)
+                || mission.missionType == FleetMissionType.Attack
+                || mission.missionType == FleetMissionType.MissileAttack)
             // forge-lint: disable-next-line(block-timestamp)
             && block.timestamp >= mission.arrivalAt;
     }
@@ -597,22 +607,21 @@ abstract contract VeydriftResourceReserves is VeydriftGameStorage {
         pure
         returns (bool)
     {
-        // Transport/Deploy/Colonize/Attack/Harvest are enum values 0..4 (VeydriftGameStorage). All
-        // five are resolution-tracked (VEY-KANEO-468 Phase 2c enrolls Transport/Deploy so their
-        // arrivals and every return leg stay enumerable for the lazy settlers); the trailing
-        // counterplay/missile types (AcsDefend..DefenseHold) are not directly tracked. A single range
-        // check is cheaper than the per-type comparisons, clawing back bytecode at each inline site.
-        return missionType <= FleetMissionType.Harvest;
+        // Transport/Deploy/Colonize/Attack/Harvest are enum values 0..4. MissileAttack is also a
+        // directly resolved arrival, while the remaining trailing types are linked counterplay.
+        return
+            missionType <= FleetMissionType.Harvest || missionType == FleetMissionType.MissileAttack;
     }
 
-    function _addResolutionMissionForPlanet(uint256 planetId, uint256 missionId) private {
+    function _addResolutionMissionForPlanet(uint256 planetId, uint256 missionId) internal {
         if (_resolutionMissionIndexByPlanet[planetId][missionId] != 0) return;
         _resolutionMissionIdsByPlanet[planetId].push(missionId);
         _resolutionMissionIndexByPlanet[planetId][missionId] =
         _resolutionMissionIdsByPlanet[planetId].length;
+        _invalidateArrivalOrderIndex(planetId);
     }
 
-    function _removeResolutionMissionForPlanet(uint256 planetId, uint256 missionId) private {
+    function _removeResolutionMissionForPlanet(uint256 planetId, uint256 missionId) internal {
         uint256 indexPlusOne = _resolutionMissionIndexByPlanet[planetId][missionId];
         if (indexPlusOne == 0) return;
 
@@ -626,6 +635,11 @@ abstract contract VeydriftResourceReserves is VeydriftGameStorage {
         }
         missionIds.pop();
         delete _resolutionMissionIndexByPlanet[planetId][missionId];
+        _invalidateArrivalOrderIndex(planetId);
+    }
+
+    function _invalidateArrivalOrderIndex(uint256 planetId) private {
+        delete _arrivalOrderIndexByPlanet[planetId];
     }
 
     function _addResolutionMissionForPlayer(address player, uint256 missionId) private {

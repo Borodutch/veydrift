@@ -904,7 +904,13 @@ export function planetFleetActivityRows(
         .filter((entry) => Number.isFinite(entry.count) && entry.count > 0)
         .sort((left, right) => right.count - left.count);
       const shipCount = shipEntries.reduce((total, entry) => total + entry.count, 0);
-      const hostile = direction === "Inbound" && (mission.missionType === "Attack" || mission.missionType === "AcsAttack");
+      const missileAttack = mission.missionType === "MissileAttack";
+      const missileQuantity = mission.missileQuantity ?? 0;
+      const hostile = direction === "Inbound" && (
+        mission.missionType === "Attack"
+        || mission.missionType === "AcsAttack"
+        || missileAttack
+      );
 
       return {
         ...(shipEntries[0]?.ship.asset ? { asset: shipEntries[0].ship.asset } : {}),
@@ -915,7 +921,9 @@ export function planetFleetActivityRows(
         routeLabel: direction === "Local"
           ? planetFleetEndpointLabel(endpoint, endpointId, endpointIsMoon)
           : `${direction === "Inbound" ? "From" : "To"} ${planetFleetEndpointLabel(endpoint, endpointId, endpointIsMoon)}`,
-        shipCountLabel: `${shipCount.toLocaleString()} ${shipCount === 1 ? "ship" : "ships"}`,
+        shipCountLabel: missileAttack
+          ? `${missileQuantity.toLocaleString()} ${missileQuantity === 1 ? "missile" : "missiles"}`
+          : `${shipCount.toLocaleString()} ${shipCount === 1 ? "ship" : "ships"}`,
         tone: hostile ? "danger" as const : "accent" as const,
       };
     })
@@ -958,9 +966,9 @@ export function PlanetFleetActivityPanel({
 
   return (
     <section className="overflow-hidden rounded-lg border border-white/10 bg-[#101624]">
-      <SectionHeading icon={<Rocket aria-hidden="true" size={17} />} title="Fleet activity" />
+      <SectionHeading icon={<Rocket aria-hidden="true" size={17} />} title="Mission activity" />
       {loading ? (
-        <SkeletonRegion className="grid gap-2 p-3 sm:grid-cols-2" label="Loading fleet activity">
+        <SkeletonRegion className="grid gap-2 p-3 sm:grid-cols-2" label="Loading mission activity">
           {skeletonList(2, (index) => (
             <div className="grid min-h-14 grid-cols-[2.5rem_minmax(0,1fr)] items-center gap-2 rounded border border-white/[0.08] bg-black/20 p-1.5" key={index}>
               <Skeleton className="h-10 w-10 rounded" />
@@ -996,7 +1004,7 @@ export function PlanetFleetActivityPanel({
               </a>
             );
           })}
-          {overflow > 0 ? <p className="px-1 text-xs text-slate-500 sm:col-span-2">{overflow.toLocaleString()} more active {overflow === 1 ? "fleet" : "fleets"}</p> : null}
+          {overflow > 0 ? <p className="px-1 text-xs text-slate-500 sm:col-span-2">{overflow.toLocaleString()} more active {overflow === 1 ? "mission" : "missions"}</p> : null}
         </div>
       )}
     </section>

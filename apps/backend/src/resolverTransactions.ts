@@ -11,6 +11,10 @@ export type ResolverTransactionRequest = {
   operationId: string;
   getTransactionCount: (blockTag: "latest" | "pending") => Promise<number>;
   submit: (nonce: number) => Promise<Hex>;
+  /** A persisted confirmation is reusable only while its receipt remains canonical. */
+  isConfirmedCanonical?: (hash: Hex) => Promise<boolean>;
+  /** A canonical receipt can be one bounded chunk of a larger logical operation. */
+  isOperationComplete?: () => Promise<boolean>;
   shouldReplace?: (hash: Hex) => Promise<boolean>;
   replace?: (nonce: number, previousHash: Hex) => Promise<Hex>;
   cancelStale?: (nonce: number, previousHash: Hex) => Promise<Hex>;
@@ -193,7 +197,24 @@ export class ResolverTransactionCoordinator {
     assertLease: () => void
   ): Promise<Hex> {
     const previous = this.loadAttempt(request.chainId, request.address, request.operationId);
-    if (previous?.status === "confirmed" && previous.transactionHash) return previous.transactionHash;
+    if (previous?.status === "confirmed" && previous.transactionHash) {
+      const isCanonical = !request.isConfirmedCanonical
+        || await request.isConfirmedCanonical(previous.transactionHash);
+      if (isCanonical) {
+        const isComplete = !request.isOperationComplete || await request.isOperationComplete();
+        if (isComplete) return previous.transactionHash;
+      }
+      // Either a reorg removed the confirmation or the receipt completed only one bounded chunk.
+      // Retire this attempt and allocate at the current pending nonce; never replay the old nonce.
+      this.recordAttempt(
+        request.chainId,
+        request.address,
+        request.operationId,
+        previous.nonce,
+        previous.transactionHash,
+        "rejected"
+      );
+    }
     if (previous?.status === "allocating" || previous?.status === "ambiguous") {
       const [latest, pending] = await Promise.all([
         request.getTransactionCount("latest"),

@@ -1,8 +1,8 @@
 import { Check, Copy, Link2, Share2, X } from "lucide-preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 
-import { shareReportUrl } from "../shareReport";
-import { shareTargets } from "../shareTargets";
+import { shareReportUrl, type ShareReportKind } from "../shareReport";
+import { shareTargetText, shareTargets } from "../shareTargets";
 
 // In-app share dialog for a battle-report link (VEY-KANEO-339).
 //
@@ -16,6 +16,16 @@ import { shareTargets } from "../shareTargets";
 
 export type ShareDialogCopyState = "copied" | "error" | "idle";
 
+export function shareDialogSemantics(_kind: ShareReportKind, url: string) {
+  const subject = "battle report";
+  return {
+    dialogTitle: `Share ${subject}`,
+    linkAriaLabel: `Shareable ${subject} link`,
+    subject,
+    targets: shareTargets(url, shareTargetText(_kind)),
+  };
+}
+
 function copyToClipboard(url: string): Promise<ShareDialogCopyState> {
   if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
     return Promise.resolve("error");
@@ -28,16 +38,16 @@ function copyToClipboard(url: string): Promise<ShareDialogCopyState> {
 
 export function ShareDialog({
   onClose,
-  title = "Share battle report",
+  kind = "battle",
   url,
 }: {
   onClose: () => void;
-  title?: string | undefined;
+  kind?: ShareReportKind | undefined;
   url: string;
 }) {
   const [copyState, setCopyState] = useState<ShareDialogCopyState>("idle");
   const urlInputRef = useRef<HTMLInputElement>(null);
-  const targets = shareTargets(url);
+  const semantics = shareDialogSemantics(kind, url);
   // The native share sheet is only offered where the platform actually has one (mobile browsers and
   // the Farcaster webview); on desktop it would silently fall back to a clipboard copy, so it is
   // hidden there and the explicit Copy link / social targets carry the dialog instead.
@@ -71,7 +81,7 @@ export function ShareDialog({
   };
 
   const handleNativeShare = () => {
-    void shareReportUrl(typeof navigator === "undefined" ? undefined : navigator, url);
+    void shareReportUrl(typeof navigator === "undefined" ? undefined : navigator, url, kind);
   };
 
   const copyLabel = copyState === "copied" ? "Copied!" : copyState === "error" ? "Copy failed" : "Copy link";
@@ -95,7 +105,7 @@ export function ShareDialog({
               <Share2 aria-hidden="true" size={16} />
             </span>
             <h3 id="share-dialog-title" className="break-words text-base font-semibold text-white">
-              {title}
+              {semantics.dialogTitle}
             </h3>
           </div>
           <button
@@ -110,14 +120,14 @@ export function ShareDialog({
 
         <div className="grid gap-4 p-4">
           <p className="text-sm text-slate-400">
-            Anyone with this link can open the battle report — no wallet required.
+            Anyone with this link can open the {semantics.subject} — no wallet required.
           </p>
 
           <div className="flex items-stretch gap-2">
             <div className="flex min-w-0 flex-1 items-center gap-2 rounded border border-white/10 bg-black/30 px-2.5">
               <Link2 aria-hidden="true" className="shrink-0 text-slate-500" size={15} />
               <input
-                aria-label="Shareable battle report link"
+                aria-label={semantics.linkAriaLabel}
                 className="min-w-0 flex-1 bg-transparent py-2 text-sm text-slate-200 outline-none"
                 onFocus={(event) => event.currentTarget.select()}
                 readOnly
@@ -145,7 +155,7 @@ export function ShareDialog({
           <div className="grid gap-2">
             <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">Share to</p>
             <div className="flex flex-wrap gap-2">
-              {targets.map((target) => (
+              {semantics.targets.map((target) => (
                 <a
                   className="inline-flex h-9 items-center justify-center gap-2 rounded border border-white/10 bg-white/5 px-3 text-sm font-medium text-slate-200 transition hover:bg-white/10"
                   href={target.href}

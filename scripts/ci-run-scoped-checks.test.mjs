@@ -1,6 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { outputContainsFlaggedOutput } from "./ci-run-scoped-checks.mjs";
+import { filesRequireContractChecks } from "./ci-scope.mjs";
+
+test("routes deployment proof changes through blocking contract CI", () => {
+  assert.equal(filesRequireContractChecks(["scripts/veydrift-postdeploy-smoke.mjs"]), true);
+  assert.equal(filesRequireContractChecks(["scripts/veydrift-upgrade-receipt.test.mjs"]), true);
+  assert.equal(filesRequireContractChecks(["docs/deployment.md"]), false);
+});
 
 test("allows Foundry dependency bootstrap notice", () => {
   const output = [

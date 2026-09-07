@@ -13,11 +13,15 @@ export type ShareTarget = {
   href: string;
 };
 
-const SHARE_TEXT = "Veydrift battle report";
+export type ShareTargetKind = "battle";
+
+export function shareTargetText(_kind: ShareTargetKind = "battle"): string {
+  return "Veydrift battle report";
+}
 
 // Builds the X / Telegram / Farcaster share-intent URLs for a battle-report link. Returns an empty
 // list for an empty URL so the dialog can omit the social row instead of emitting broken links.
-export function shareTargets(url: string, text: string = SHARE_TEXT): ShareTarget[] {
+export function shareTargets(url: string, text: string = shareTargetText()): ShareTarget[] {
   if (!url) return [];
   const encodedUrl = encodeURIComponent(url);
   const encodedText = encodeURIComponent(text);

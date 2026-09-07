@@ -9,7 +9,7 @@ import {VeydriftDefenseHoldStorage} from "./libraries/VeydriftDefenseHoldStorage
 import {VeydriftFleetFuel} from "./libraries/VeydriftFleetFuel.sol";
 import {VeydriftFormulas} from "./libraries/VeydriftFormulas.sol";
 import {IVeydriftAttackRandomnessEngine} from "./interfaces/IVeydriftAttackRandomnessEngine.sol";
-import {Building, Ship, Technology} from "./libraries/VeydriftTypes.sol";
+import {Building, Defense, Ship, Technology} from "./libraries/VeydriftTypes.sol";
 
 interface IVeydriftProductionSettler {
     function settleProductionUntil(uint256 planetId, uint64 settledAt) external;
@@ -27,6 +27,15 @@ interface IVeydriftCounterplayAllianceSystem {
 
 interface IVeydriftAttackTargetQueueSettler {
     function completeAttackTargetSnapshotQueues(uint256 planetId, uint64 cutoffAt) external;
+}
+
+interface IVeydriftArrivalOrderPreparer {
+    function launchInterplanetaryMissileAttack(
+        uint256 missionId,
+        uint256 planetId,
+        Defense internalMarker,
+        uint32 quantity
+    ) external returns (uint256);
 }
 
 /// @notice Delegatecall target for stateful gameplay paths that would push VeydriftGame over EIP-170.
@@ -385,6 +394,9 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
 
     function recallFleetMission(uint256 missionId) external {
         FleetMission storage mission = _fleetMissions[missionId];
+        if (mission.missionType == FleetMissionType.MissileAttack) {
+            revert InvalidMissionType(mission.missionType);
+        }
         _requireActiveMissionOwner(mission);
         if (mission.status == FleetMissionStatus.Returning) revert FleetAlreadyReturning();
         if (mission.status != FleetMissionStatus.Outbound) {
@@ -434,6 +446,18 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         if (mission.status != FleetMissionStatus.Outbound) return;
         if (_currentTimestamp() < mission.arrivalAt) revert FleetNotArrived(mission.arrivalAt);
         FleetMissionType missionType = mission.missionType;
+
+        // Any planet arrival that settles target queues must respect an earlier missile impact.
+        // Otherwise a later Transport/Deploy could complete ABMs through the resolver's current
+        // timestamp before the earlier missile snapshots defenses at its historical arrival time.
+        // The helper only orders pairs where either mission is a MissileAttack, so ordinary fleet
+        // missions retain their existing permissionless resolution behavior.
+        if (
+            IVeydriftArrivalOrderPreparer(address(this))
+                    .launchInterplanetaryMissileAttack(
+                        missionId, mission.targetPlanetId, Defense.RocketLauncher, 0
+                    ) == 0
+        ) return;
 
         if (missionType == FleetMissionType.Attack) {
             _settleAttackTargetSnapshot(mission.targetPlanetId, mission.arrivalAt);

@@ -136,6 +136,25 @@ abstract contract VeydriftGameStorage is Initializable {
         uint256 rate;
     }
 
+    /// @dev Resumable target-queue settlement for one timed missile impact. The active queue is
+    ///      advanced one entry at a time, then the consumed prefix of each legacy backlog array is
+    ///      compacted and popped in bounded steps before damage is applied.
+    struct MissileQueueSettlementProgress {
+        uint32 shipBacklogConsumed;
+        uint32 shipBacklogCompacted;
+        uint32 defenseBacklogConsumed;
+        uint32 defenseBacklogCompacted;
+        uint8 stage;
+    }
+
+    struct ArrivalOrderIndex {
+        uint64 cursor;
+        bool ready;
+        // Mission ids cannot approach 2^184 within any feasible chain lifetime; packing the cached
+        // head with the cursor keeps invalidation to one slot in the size-constrained facade.
+        uint184 headMissionId;
+    }
+
     struct ResearchQueue {
         bool active;
         Technology technology;
@@ -409,6 +428,23 @@ abstract contract VeydriftGameStorage is Initializable {
     // BattleResolutionProgress value layout while carrying protection state across combat chunks.
     mapping(uint256 missionId => uint16 plunderBps) internal _battleRaidPlunderBps;
     mapping(uint256 missionId => bool snapshotted) internal _battleRaidProtectionSnapshotted;
+    // Append-only payload for timed, one-way interplanetary missile missions. Existing historical
+    // strikes were atomic and therefore leave no pending mission state to migrate.
+    mapping(uint256 missionId => Defense primaryTarget) internal _missileMissionPrimaryTarget;
+    mapping(uint256 missionId => uint32 quantity) internal _missileMissionQuantity;
+    // Timed missiles do not consume fleet slots, so an attacker may have many in flight. Keep them
+    // out of the legacy fleet-resolution arrays (whose linear scans are bounded by fleet slots) and
+    // maintain one arrival-ordered min-heap per target planet instead. Resolution/guards inspect the
+    // head in O(1), while launch/removal update the heap in O(log n).
+    mapping(uint256 planetId => uint256[] missionIds) internal _missileArrivalHeapByPlanet;
+    mapping(uint256 planetId => mapping(uint256 missionId => uint256 indexPlusOne)) internal
+        _missileArrivalHeapIndexByPlanet;
+    mapping(uint256 missionId => MissileQueueSettlementProgress progress) internal
+        _missileQueueSettlementProgress;
+    // Append-only bounded reconstruction of the earliest hostile arrival for each planet. The
+    // legacy resolution array can contain arbitrarily many inbound missions from distinct players,
+    // so a resolver advances this cursor in small chunks instead of scanning the array in one call.
+    mapping(uint256 planetId => ArrivalOrderIndex index) internal _arrivalOrderIndexByPlanet;
 
     error AlreadyStarted();
     error BadStartPayment();
@@ -780,6 +816,9 @@ abstract contract VeydriftGameStorage is Initializable {
         uint32 intercepted,
         uint32 hits,
         uint32 destroyedPrimary
+    );
+    event InterplanetaryMissileLaunched(
+        uint256 indexed missionId, Defense primaryTarget, uint32 quantity
     );
     event RaidLootResolved(
         uint256 indexed targetPlanetId,

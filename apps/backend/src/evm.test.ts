@@ -20,6 +20,7 @@ import {
   isPlanetTemperatureChangedLog,
   isMoonChanceReportLog,
   isPlayerMigrationLog,
+  fleetMissionNeedsResolution,
   RpcResponseParseError,
   decodeDefenseCountChangedLog,
   isDefenseCountChangedLog,
@@ -42,6 +43,7 @@ const fleetMissionCargoTopic = "0x3daa6311ecdadad6781f70e5d285e7150f9dc165db88d2
 const fleetMissionShipsTopic = "0xf581cbe97357884794500d80286cfbe823fed3b5d77446e477aa694ce89fc82d";
 const fleetMissionBodiesTopic = "0xfa464e2180f08e3e4d8c4247566d0616a5e1ab845d1678c47fedae6d44e9c502";
 const fleetMissionLootRatioTopic = "0xa6846d64330aacb1675d30a3535ea36822060fb38252cbb6b358bec4149767ff";
+const interplanetaryMissileLaunchedTopic = "0x604ad2c11139a5c17dc4ad536be44e0decb1a46637bc3a7497c4e049e9ad3bd2";
 const fleetMissionReturnExposedTopic = "0x27a083519451f4434cd1f93497fb93689a906d3b982a3f127cb236aa24356afa";
 const fleetMissionRecalledTopic = "0x2c9b31f1abc732f3b6d28e7724439ea4713ae516632088b8c4dc0211479dc6ca";
 const fleetMissionResolvedTopic = "0xcb928b431ffcdbe55fddc2bf06967951efb3dfe87d14bc436d546fdbbee9cb2d";
@@ -206,7 +208,13 @@ describe("HTTP JSON-RPC transport", () => {
     const previousFetch = globalThis.fetch;
     let attempts = 0;
 
-    globalThis.fetch = (async () => {
+    globalThis.fetch = (async (
+      input: Parameters<typeof fetch>[0],
+      init?: Parameters<typeof fetch>[1]
+    ) => {
+      if (String(input) !== "https://rpc.example") {
+        return previousFetch(input, init);
+      }
       attempts += 1;
       // First response is a truncated body (the self-hosted node cutting the stream short → would throw
       // "Unexpected end of JSON input"); the retry returns a valid body.
@@ -230,8 +238,14 @@ describe("HTTP JSON-RPC transport", () => {
     const previousFetch = globalThis.fetch;
     const seenUrls: string[] = [];
 
-    globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+    globalThis.fetch = (async (
+      input: Parameters<typeof fetch>[0],
+      init?: Parameters<typeof fetch>[1]
+    ) => {
       const url = String(input);
+      if (url !== "https://primary.example/rpc" && url !== "https://fallback.example/rpc") {
+        return previousFetch(input, init);
+      }
       seenUrls.push(url);
       if (url === "https://primary.example/rpc") {
         return new Response("overloaded", { status: 503 });
@@ -267,7 +281,13 @@ describe("HTTP JSON-RPC transport", () => {
     const previousFetch = globalThis.fetch;
     let attempts = 0;
 
-    globalThis.fetch = (async () => {
+    globalThis.fetch = (async (
+      input: Parameters<typeof fetch>[0],
+      init?: Parameters<typeof fetch>[1]
+    ) => {
+      if (String(input) !== "https://rpc.example") {
+        return previousFetch(input, init);
+      }
       attempts += 1;
       // Every attempt truncates — an oversized batch the node can never return intact.
       return new Response("[{\"jsonrpc\":\"2.0\",\"id\":1,\"resu", { status: 200 });
@@ -2003,20 +2023,28 @@ describe("fleet mission resolution scheduling", () => {
     });
   }
 
-  test("includes transport, deploy, and DefenseHold arrivals while excluding unsupported and not-yet-due missions", async () => {
+  test("includes transport, deploy, missile, and DefenseHold arrivals while excluding unsupported and not-yet-due missions", async () => {
     const reader = readerFor([
       ...outboundMissionLogs({ missionId: 1n, missionType: 0n, arrivalAt: pastSeconds }), // Transport
       ...outboundMissionLogs({ missionId: 2n, missionType: 1n, arrivalAt: pastSeconds }), // Deploy
       ...outboundMissionLogs({ missionId: 3n, missionType: 3n, arrivalAt: pastSeconds }), // Attack
       ...outboundMissionLogs({ missionId: 4n, missionType: 6n, arrivalAt: pastSeconds }), // Intercept (unsupported)
       ...outboundMissionLogs({ missionId: 5n, missionType: 0n, arrivalAt: futureSeconds }), // Transport, not yet arrived
-      ...outboundMissionLogs({ missionId: 6n, missionType: 9n, arrivalAt: pastSeconds }) // DefenseHold
+      ...outboundMissionLogs({ missionId: 6n, missionType: 9n, arrivalAt: pastSeconds }), // DefenseHold
+      ...outboundMissionLogs({ missionId: 7n, missionType: 7n, arrivalAt: pastSeconds }), // MissileAttack
+      ...outboundMissionLogs({ missionId: 8n, missionType: 7n, arrivalAt: futureSeconds }) // MissileAttack, not yet arrived
     ]);
 
     const resolvable = await reader.listResolvableFleetMissions();
 
-    expect(resolvable.map((mission) => mission.missionId)).toEqual(["1", "2", "3", "6"]);
-    expect(resolvable.map((mission) => mission.missionType)).toEqual(["Transport", "Deploy", "Attack", "DefenseHold"]);
+    expect(resolvable.map((mission) => mission.missionId)).toEqual(["1", "2", "3", "6", "7"]);
+    expect(resolvable.map((mission) => mission.missionType)).toEqual([
+      "Transport",
+      "Deploy",
+      "Attack",
+      "DefenseHold",
+      "MissileAttack"
+    ]);
   });
 
   test("surfaces returning and recalled missions whose return leg is due across all mission types", async () => {
@@ -2109,6 +2137,42 @@ describe("attack resolution is gated on battle randomness (VEY-KANEO-479)", () =
 });
 
 describe("fleet mission cargo vs loot", () => {
+  test("decodes timed missile payload and marks it resolvable only at impact", () => {
+    const owner = "0x0000000000000000000000000000000000000abc" as Address;
+    const missionId = 901n;
+    const arrivalAt = 1_900_000_630n;
+    const mission = decodeFleetMissionLogs([
+      makeLog({
+        topics: [fleetMissionLaunchedTopic, topic(missionId), addressTopic(owner), topic(7n)],
+        data: dataWords([word(41n), word(99n), word(arrivalAt), word(arrivalAt), word(0n)])
+      }),
+      makeLog({
+        topics: [fleetMissionCargoTopic, topic(missionId)],
+        data: dataWords([word(0n), word(0n), word(0n), word(0n)])
+      }),
+      makeLog({
+        topics: [fleetMissionShipsTopic, topic(missionId)],
+        data: dataWords(Array.from({ length: 14 }, () => word(0n)))
+      }),
+      makeLog({
+        topics: [interplanetaryMissileLaunchedTopic, topic(missionId)],
+        data: dataWords([word(4n), word(12n)])
+      })
+    ]).get(missionId.toString());
+
+    expect(mission).toMatchObject({
+      missionType: "MissileAttack",
+      status: "Outbound",
+      arrivalAt: arrivalAt.toString(),
+      returnAt: arrivalAt.toString(),
+      missilePrimaryTargetId: 4,
+      missileQuantity: 12
+    });
+    const completeMission = mission as FleetMissionSummary;
+    expect(fleetMissionNeedsResolution(completeMission, Number(arrivalAt - 1n), null)).toBe(false);
+    expect(fleetMissionNeedsResolution(completeMission, Number(arrivalAt), null)).toBe(true);
+  });
+
   test("decodes body identity used to separate planet and moon protection windows", () => {
     expect(decodeFleetMissionBodyIdentity(makeLog({
       topics: [fleetMissionBodiesTopic, topic(77n)],

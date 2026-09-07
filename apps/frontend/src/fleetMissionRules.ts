@@ -10,12 +10,22 @@ export const DEFAULT_MISSION_SPEED_PERCENT = 100;
 export const LOCAL_HARVEST_DISTANCE = 5;
 export const MISSION_SPEED_OPTIONS = [100, 90, 80, 70, 60, 50, 40, 30, 20, 10] as const;
 
-// Exact VeydriftPlanetManagementModule._interplanetaryMissileRange math. Interplanetary
-// missiles are immediate contract actions (not fleet missions): same galaxy only, with a
-// system-range of Impulse Drive × 5 − 1. Level zero has no range.
+// Exact VeydriftPlanetManagementModule missile math. Interplanetary missiles are timed one-way
+// missions within one galaxy. Range is Impulse Drive × 5 − 1; level zero has no range.
 export function interplanetaryMissileRange(impulseDrive: number | undefined): number {
   const level = Math.max(0, Math.trunc(impulseDrive ?? 0));
   return level === 0 ? 0 : level * 5 - 1;
+}
+
+// Classic IPM timing: (30 + 60 × system distance) / universe speed seconds. The contract
+// rounds to the nearest whole second because mission timestamps are integer seconds.
+export function interplanetaryMissileTravelSeconds(
+  systemDistance: number,
+  universeSpeed: number = DEFAULT_FLEET_UNIVERSE_SPEED,
+): number {
+  const distance = Math.max(0, Math.trunc(systemDistance));
+  const speed = Math.max(1, Math.trunc(universeSpeed));
+  return Math.max(1, Math.round((30 + 60 * distance) / speed));
 }
 
 export function interplanetaryMissileSystemDistance(origin: Coordinates, target: Coordinates): number | null {

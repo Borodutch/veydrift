@@ -759,7 +759,8 @@ function landingFeedItemFromMission(mission: LandingFleetMission, now: number): 
 }
 
 function landingMissionMovementCopy(missionType: string, origin: string, target: string): string {
-  if (["Attack", "AcsAttack", "MissileAttack"].includes(missionType)) return `strike fleet inbound to ${target}`;
+  if (missionType === "MissileAttack") return `missile strike inbound to ${target}`;
+  if (["Attack", "AcsAttack"].includes(missionType)) return `strike fleet inbound to ${target}`;
   if (missionType === "Harvest") return `recyclers moving toward ${target}`;
   if (missionType === "Transport") return `transport convoy crossing from ${origin} to ${target}`;
   if (missionType === "Deploy") return `deployment moving from ${origin} to ${target}`;

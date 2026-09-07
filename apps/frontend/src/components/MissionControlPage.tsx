@@ -489,16 +489,16 @@ function MissileStrikeSection({
   loading: boolean;
 }) {
   const rows = archive?.rows ?? [];
-  // Background polling previously set `loading` before every request, briefly mounting this card
-  // as “Immediate combat / Missile strikes”, then unmounting it again when an empty archive arrived.
+  // Background polling previously set `loading` before every request, briefly mounting this card,
+  // then unmounting it again when an empty archive arrived.
   // Empty history is stable UI: show this section only when it has a strike or an actionable error.
   if (!shouldRenderMissileStrikeHistory({ error, rowCount: rows.length })) return null;
   return (
     <section className="grid gap-2 rounded-lg border border-amber-300/15 bg-amber-300/[0.03] p-3" data-missile-strike-history>
       <div className="flex items-center justify-between gap-2">
         <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-amber-200/70">Immediate combat</p>
-          <h2 className="text-sm font-semibold text-amber-100">Missile strikes</h2>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-amber-200/70">Resolved ordnance</p>
+          <h2 className="text-sm font-semibold text-amber-100">Missile impacts</h2>
         </div>
         <span className="text-[11px] tabular-nums text-slate-400">{archive?.pagination.totalEntries ?? 0}</span>
       </div>
@@ -1587,6 +1587,7 @@ function missionDetailTimings(mission: FleetMissionSummary, now: number): Endpoi
   const timings: EndpointTiming[] = [
     { label: isFutureMoment(mission.arrivalAt, now) ? "Arrives" : "Arrived", value: compactMissionTime(mission.arrivalAt, now) },
   ];
+  if (mission.missionType === "MissileAttack") return timings;
   if (mission.missionType === "DefenseHold") {
     timings.push({ label: "Holds until", value: compactMissionTime(defenseHoldRecallUntil(mission), now) });
   }
@@ -1603,6 +1604,9 @@ function isFutureMoment(value: string, now: number): boolean {
 }
 
 function pastMissionHeaderTiming(mission: FleetMissionSummary, now: number): EndpointTiming {
+  if (mission.missionType === "MissileAttack") {
+    return { label: "Impacted", value: compactMissionTime(mission.arrivalAt, now) };
+  }
   return { label: "Returned", value: compactMissionTime(mission.returnAt, now) };
 }
 
@@ -1647,8 +1651,14 @@ function MissionFleet({
   // display:contents — each group participates directly in the expanded panel's fact-group row.
   return (
     <div className="contents">
-      <MissionDetailGroup title="Fleet">
-        <FleetIcons ships={ships} />
+      <MissionDetailGroup title={mission?.missionType === "MissileAttack" ? "Missile payload" : "Fleet"}>
+        {mission?.missionType === "MissileAttack" ? (
+          detailRow(
+            "Payload",
+            `${(mission.missileQuantity ?? 0).toLocaleString()} interplanetary missile${mission.missileQuantity === 1 ? "" : "s"} · ${defenseCatalog.find((defense) => defense.id === mission.missilePrimaryTargetId)?.label ?? "selected defense"}`,
+            "text-slate-400",
+          )
+        ) : <FleetIcons ships={ships} />}
         {historicalDefenseHold ? (
           <>
             {detailRow("Stationed", formatShips(historicalDefenseHold.originalShips ?? historicalDefenseHold.ships), "text-slate-400")}
@@ -2144,7 +2154,7 @@ function OpenMissionButton({ onClick }: { onClick: () => void }) {
   );
 }
 
-function MissionReportDetail({
+export function MissionReportDetail({
   mission,
   now,
   onBack,
@@ -2160,7 +2170,7 @@ function MissionReportDetail({
   if (!mission) {
     return (
       <section className="rounded-lg border border-amber-300/25 bg-amber-300/10 p-3">
-        <h3 className="text-sm font-semibold text-white">Battle report unavailable</h3>
+        <h3 className="text-sm font-semibold text-white">Mission report unavailable</h3>
         <p className="mt-1 text-xs leading-5 text-amber-100/80">
           This share link does not match a mission visible to the connected wallet right now.
         </p>
@@ -2169,7 +2179,25 @@ function MissionReportDetail({
           onClick={onBack}
           type="button"
         >
-          Back to reports
+          Back to missions
+        </button>
+      </section>
+    );
+  }
+
+  if (mission.missionType === "MissileAttack") {
+    return (
+      <section className="rounded-lg border border-amber-300/25 bg-amber-300/10 p-3">
+        <h3 className="text-sm font-semibold text-white">Missile impact reports are private</h3>
+        <p className="mt-1 text-xs leading-5 text-amber-100/80">
+          Missile strikes appear in Mission Control, but do not create shareable battle reports.
+        </p>
+        <button
+          className="mt-3 rounded border border-white/10 bg-white/5 px-2 py-1 text-xs font-medium text-slate-200 transition hover:bg-white/10"
+          onClick={onBack}
+          type="button"
+        >
+          Back to missions
         </button>
       </section>
     );
@@ -2180,7 +2208,9 @@ function MissionReportDetail({
     <section className="rounded-lg border border-cyan-300/20 bg-cyan-300/10 p-3">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-cyan-200/80">Shareable mission report</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-cyan-200/80">
+            Shareable mission report
+          </p>
           <h3 className="mt-1 text-base font-semibold text-white">{report.title}</h3>
           <p className="mt-1 text-xs text-cyan-100/80">{report.routeSummary}</p>
         </div>
@@ -2210,26 +2240,28 @@ function MissionReportDetail({
           <ReportLine label="Status" value={missionDisplayStatusLabel(mission, now)} />
           <ReportLine label="Outcome" value={report.outcome} />
         </ReportPanel>
-        <ReportPanel title="Commanders">
-          <ReportLine label="Attacker" value={report.attacker} />
-          <ReportLine label="Defender" value={report.defender} />
-          <ReportLine label="Group combat" value={report.acs} />
-        </ReportPanel>
         <ReportPanel title="Coordinates">
           <ReportLine label="Origin" value={report.origin} />
           <ReportLine label="Target" value={report.target} />
           <ReportLine label="Return" value={formatMissionTime(mission.returnAt, now)} />
         </ReportPanel>
-        <ReportPanel title="Fleets and cargo">
-          <ReportLine label="Attacker fleet" value={formatShips(mission.ships)} />
-          <ReportLine label="Cargo carried" value={formatCargo(mission.cargo)} />
-          <ReportLine label="Fuel burned" value={`${formatResource(mission.fuelCost)} deuterium`} />
-        </ReportPanel>
-        <ReportPanel title="Losses and debris">
-          <ReportLine label="Fleet losses" value={report.losses} />
-          <ReportLine label="Defense losses" value={report.losses} />
-          <ReportLine label={mission.missionType === "Harvest" ? "Debris collected" : "Debris field"} value={report.debris} />
-        </ReportPanel>
+        <>
+            <ReportPanel title="Commanders">
+              <ReportLine label="Attacker" value={report.attacker} />
+              <ReportLine label="Defender" value={report.defender} />
+              <ReportLine label="Group combat" value={report.acs} />
+            </ReportPanel>
+            <ReportPanel title="Fleets and cargo">
+              <ReportLine label="Attacker fleet" value={formatShips(mission.ships)} />
+              <ReportLine label="Cargo carried" value={formatCargo(mission.cargo)} />
+              <ReportLine label="Fuel burned" value={`${formatResource(mission.fuelCost)} deuterium`} />
+            </ReportPanel>
+            <ReportPanel title="Losses and debris">
+              <ReportLine label="Fleet losses" value={report.losses} />
+              <ReportLine label="Defense losses" value={report.losses} />
+              <ReportLine label={mission.missionType === "Harvest" ? "Debris collected" : "Debris field"} value={report.debris} />
+            </ReportPanel>
+        </>
         <ReportPanel title="Public proof">
           <ReportLine label="Transaction" value={mission.transactionHash || "Pending chain proof"} />
           <ReportLine label="Block" value={mission.blockNumber || "Pending chain proof"} />
@@ -3167,6 +3199,7 @@ export function isCooperativeJoinOpen(mission: FleetMissionSummary, now: number)
 }
 
 export function isFleetRecallable(mission: FleetMissionSummary, now: number): boolean {
+  if (mission.missionType === "MissileAttack") return false;
   if (mission.missionType === "DefenseHold") {
     return mission.status === "Outbound" && now < defenseHoldRecallUntilMs(mission);
   }

@@ -83,6 +83,7 @@ export function MissionDetailPage({
   const report = detail?.battleReport ?? undefined;
   const resolutionKind = mission ? manualMissionResolutionKind(mission, now) : undefined;
   const statusPill = mission ? missionStatusPill(mission, now) : undefined;
+  const canShareReport = Boolean(mission && mission.missionType !== "MissileAttack");
 
   return (
     <section className="grid gap-4">
@@ -93,7 +94,7 @@ export function MissionDetailPage({
             Mission Control
           </button>
         )}
-        actions={(
+        actions={canShareReport ? (
           <button
               aria-label="Share battle report"
               className="inline-flex h-11 w-11 items-center justify-center rounded border border-cyan-300/30 bg-cyan-300/10 text-sm font-medium text-cyan-100 transition hover:bg-cyan-300/20 sm:h-9 sm:w-9"
@@ -109,7 +110,7 @@ export function MissionDetailPage({
             >
               <Share2 aria-hidden="true" size={15} />
             </button>
-        )}
+        ) : null}
         title={(
           <span className="inline-flex flex-wrap items-center gap-2">
             {missionId ? `Mission #${missionId}` : "Mission"}
@@ -329,8 +330,13 @@ function MissionFacts({
           report, so the standalone panel is suppressed to avoid duplicating it. Non-combat / unresolved
           missions keep it as the only place this fleet/cargo detail is shown. */}
       {hideFleetAndCargo ? null : (
-        <Panel title="Fleet And Cargo">
-          {mission.missionType === "DefenseHold" ? (
+        <Panel title={mission.missionType === "MissileAttack" ? "Missile Payload" : "Fleet And Cargo"}>
+          {mission.missionType === "MissileAttack" ? (
+            <Row
+              label="Payload"
+              value={`${(mission.missileQuantity ?? 0).toLocaleString()} interplanetary missile${mission.missileQuantity === 1 ? "" : "s"} · ${defenseCatalog.find((defense) => defense.id === mission.missilePrimaryTargetId)?.label ?? "selected defense"}`}
+            />
+          ) : mission.missionType === "DefenseHold" ? (
             <>
               <Row label="Lifecycle" value={mission.defenseHoldOutcome ?? mission.status} />
               <Row label="Original stationed fleet" value={<UnitIcons units={shipUnits(mission.originalShips ?? mission.ships)} />} />
@@ -350,11 +356,11 @@ function MissionFacts({
           ) : (
             <Row label="Ships" value={<UnitIcons units={shipUnits(mission.ships)} />} />
           )}
-          <Row label="Cargo" value={formatResources(mission.cargo)} />
+          {mission.missionType === "MissileAttack" ? null : <Row label="Cargo" value={formatResources(mission.cargo)} />}
           {mission.missionType === "Harvest" ? (
             <Row label="Debris collected" value={mission.returnCargo ? formatResources(mission.returnCargo) : "Unavailable for legacy harvest reports."} />
           ) : null}
-          <Row label="Fuel cost" value={`${formatResource(mission.fuelCost)} deuterium`} />
+          {mission.missionType === "MissileAttack" ? null : <Row label="Fuel cost" value={`${formatResource(mission.fuelCost)} deuterium`} />}
           {showsRecallCost(mission, context) ? (
             <Row label="Recall cost" value={recallCostLabel(mission, now)} />
           ) : null}
@@ -414,7 +420,7 @@ function MissionRoute({
       {/* Detail-only leg timing kept beneath the shared route hero: return reads beside the origin,
           arrival beside the target (VEY-405 / VEY-411 copy retained). */}
       <div className="mt-3 grid gap-3 border-t border-white/5 pt-3 sm:grid-cols-2">
-        <RouteLegTiming caption="Origin" timing={originTiming} />
+        {mission.missionType === "MissileAttack" ? <div /> : <RouteLegTiming caption="Origin" timing={originTiming} />}
         <RouteLegTiming align="right" caption="Target" timing={targetTiming} />
       </div>
     </section>
@@ -913,6 +919,7 @@ function defeatedAttackOriginTiming(
 // row on the same context as the Recall button keeps the two consistent and matches Mission Control,
 // which never surfaces a recall cost for someone else's attack.
 function showsRecallCost(mission: FleetMissionSummary, context: MissionActionContext): boolean {
+  if (mission.missionType === "MissileAttack") return false;
   if (context !== "outgoing" && context !== "returning") return false;
   if (mission.status === "Recalled") return true;
   return ["Outbound", "Returning"].includes(mission.status);
@@ -929,7 +936,7 @@ function recallCostLabel(mission: FleetMissionSummary, now: number): string {
 }
 
 function isCombatMission(mission: FleetMissionSummary): boolean {
-  return ["Attack", "AcsAttack", "Intercept", "MissileAttack"].includes(mission.missionType);
+  return ["Attack", "AcsAttack", "Intercept"].includes(mission.missionType);
 }
 
 // VEY-KANEO-425/755: a combat fleet has not fought yet while it is still outbound and en route, or

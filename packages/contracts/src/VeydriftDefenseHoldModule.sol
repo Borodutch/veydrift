@@ -11,7 +11,7 @@ import {VeydriftDefenseHoldStorage} from "./libraries/VeydriftDefenseHoldStorage
 import {VeydriftBodyAttackWindow} from "./libraries/VeydriftBodyAttackWindow.sol";
 import {VeydriftFleetFuel} from "./libraries/VeydriftFleetFuel.sol";
 import {VeydriftMoonIncarnation} from "./libraries/VeydriftMoonIncarnation.sol";
-import {Building, Ship, Technology} from "./libraries/VeydriftTypes.sol";
+import {Building, Defense, Ship, Technology} from "./libraries/VeydriftTypes.sol";
 
 interface IVeydriftDefenseHoldAllianceSystem {
     function defenseHoldFuelContext(
@@ -30,6 +30,15 @@ interface IVeydriftRiftAttackProtection {
     function enforceBodyAttackProtection(address attacker, uint256 planetId, bool targetIsMoon)
         external
         view;
+}
+
+interface IVeydriftDefenseHoldArrivalOrder {
+    function launchInterplanetaryMissileAttack(
+        uint256 missionId,
+        uint256 planetId,
+        Defense internalMarker,
+        uint32 quantity
+    ) external returns (uint256);
 }
 
 /// @notice Delegatecall target implementing OGame-style ACS Defend (DefenseHold): station a fleet at
@@ -391,6 +400,16 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
         uint64 holdUntil = _defenseHoldUntil[missionId];
         if (_currentTimestamp() < holdUntil) revert DefenseHoldStillActive(holdUntil);
 
+        // Planet DefenseHold resolution settles the target through the current timestamp. Do not
+        // let it complete defenses ahead of an earlier missile's historical impact snapshot.
+        if (!mission.targetIsMoon) {
+            if (
+                IVeydriftDefenseHoldArrivalOrder(address(this))
+                        .launchInterplanetaryMissileAttack(
+                            missionId, mission.targetPlanetId, Defense.RocketLauncher, 0
+                        ) == 0
+            ) return;
+        }
         _settleResources(mission.targetPlanetId);
         mission.status = FleetMissionStatus.Returning;
         VeydriftDefenseHoldStorage.endHold(

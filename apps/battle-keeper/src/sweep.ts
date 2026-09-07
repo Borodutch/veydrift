@@ -100,6 +100,10 @@ export class LogBackfillSweep {
   async sweep(lookbackOverride?: bigint): Promise<void> {
     const errors: string[] = [];
     const pendingBefore = this.keeper.snapshot().pendingCount;
+    // Only terminal missions that predate this canonical log scan need an authoritative status
+    // recheck. A terminal event observed inside this same scan is already canonical evidence; asking
+    // an eventually-consistent RPC for it immediately can incorrectly reopen the mission.
+    const terminalBefore = this.keeper.terminalMissionIds();
     let pendingAfterLogs = pendingBefore;
     try {
       const latest = BigInt(await this.transport.request<string>("eth_blockNumber", []));
@@ -129,7 +133,7 @@ export class LogBackfillSweep {
     }
 
     try {
-      await this.reconcilePendingStatuses();
+      await this.reconcilePendingStatuses(terminalBefore);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       errors.push(message);
@@ -188,10 +192,14 @@ export class LogBackfillSweep {
     }
   }
 
-  private async reconcilePendingStatuses(): Promise<void> {
+  private async reconcilePendingStatuses(terminalMissionIds: string[]): Promise<void> {
     const pending = this.keeper.pendingMissions();
-    for (const mission of pending) {
-      const status = await this.readFleetMissionStatus(mission.missionId);
+    const missionIds = new Set([
+      ...pending.map((mission) => mission.missionId),
+      ...terminalMissionIds
+    ]);
+    for (const missionId of missionIds) {
+      const status = await this.readFleetMissionStatus(missionId);
       this.keeper.reconcileMissionStatus(status);
       if (
         status.status === FleetMissionStatus.Outbound

@@ -57,6 +57,7 @@ import {
   fleetMissionLaunchedTopic,
   fleetMissionBodiesTopic,
   fleetMissionLootRatioTopic,
+  interplanetaryMissileLaunchedTopic,
   inviteeProductionBoostActivatedTopic,
   jumpGateJumpedTopic,
   missionBattleRandomnessRequestId,
@@ -167,6 +168,7 @@ import {
   randomnessRequestedTopic,
   researchQueuedTopic,
   researchQueuedV2Topic,
+  researchCompletedTopic,
   shipCompletedTopic,
   shipQueuedTopic,
   shipQueueTimingSetTopic,
@@ -332,12 +334,14 @@ const startPriceBlockMetadataKey = "canonicalStartPriceBlock";
 const startPriceLogIndexMetadataKey = "canonicalStartPriceLogIndex";
 const referralHistoryBackfillMetadataKey = "referralHistoryBackfillV1";
 const paidAllianceInviteHistoryBackfillMetadataKey = "paidAllianceInviteHistoryBackfillV1";
+const timedMissilePayloadHistoryBackfillMetadataKey = "timedMissilePayloadHistoryBackfillV1";
 const paidAllianceInviteProjectionBackfillMetadataKey = "paidAllianceInviteProjectionBackfillV1";
 const productionQueueProjectionBackfillMetadataKey = "productionQueueProjectionBackfillV1";
 const fleetMissionLootRatioProjectionBackfillMetadataKey = "fleetMissionLootRatioProjectionBackfillV1";
 const moonStateEventLedgerBackfillMetadataKey = "moonStateEventLedgerBackfillV1";
 const destroyedMoonStateRepairMetadataKey = "destroyedMoonStateRepairV3";
 const removedMissionEventLedgerRepairMetadataKey = "removedMissionEventLedgerRepairV1";
+const fulfilledRandomnessProjectionBackfillMetadataKey = "fulfilledRandomnessProjectionBackfillV1";
 const paidAllianceInviteProjectionTopics = [
   paidAllianceInvitePurchasedTopic,
   paidAllianceInviteRedeemedTopic,
@@ -354,6 +358,13 @@ export type ReferralHistoryBackfillMarker = {
 };
 
 export type PaidAllianceInviteHistoryBackfillMarker = {
+  completedAt: string;
+  contractAddress: string;
+  fromBlock: string;
+  throughBlock: string;
+};
+
+export type TimedMissilePayloadHistoryBackfillMarker = {
   completedAt: string;
   contractAddress: string;
   fromBlock: string;
@@ -1332,6 +1343,46 @@ export class SettlementIndexer {
       || marker.contractAddress.toLowerCase() !== contractAddress.toLowerCase()
       || marker.fromBlock !== fromBlock.toString();
     return { marker, required };
+  }
+
+  timedMissilePayloadHistoryBackfillStatus(
+    contractAddress: `0x${string}`,
+    fromBlock: bigint
+  ): { marker: TimedMissilePayloadHistoryBackfillMarker | null; required: boolean } {
+    const raw = this.metadata(timedMissilePayloadHistoryBackfillMetadataKey);
+    let marker: TimedMissilePayloadHistoryBackfillMarker | null = null;
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw) as Partial<TimedMissilePayloadHistoryBackfillMarker>;
+        if (
+          typeof parsed.completedAt === "string"
+          && typeof parsed.contractAddress === "string"
+          && typeof parsed.fromBlock === "string"
+          && typeof parsed.throughBlock === "string"
+        ) marker = parsed as TimedMissilePayloadHistoryBackfillMarker;
+      } catch {
+        // A malformed marker is untrusted; the narrow replay repairs it.
+      }
+    }
+    const required = marker === null
+      || marker.contractAddress.toLowerCase() !== contractAddress.toLowerCase()
+      || marker.fromBlock !== fromBlock.toString();
+    return { marker, required };
+  }
+
+  recordTimedMissilePayloadHistoryBackfill(
+    contractAddress: `0x${string}`,
+    fromBlock: bigint,
+    throughBlock: bigint
+  ): TimedMissilePayloadHistoryBackfillMarker {
+    const marker: TimedMissilePayloadHistoryBackfillMarker = {
+      completedAt: new Date().toISOString(),
+      contractAddress: contractAddress.toLowerCase(),
+      fromBlock: fromBlock.toString(),
+      throughBlock: throughBlock.toString()
+    };
+    this.setMetadata(timedMissilePayloadHistoryBackfillMetadataKey, JSON.stringify(marker));
+    return marker;
   }
 
   recordPaidAllianceInviteHistoryBackfill(
@@ -2562,7 +2613,7 @@ export class SettlementIndexer {
         // the fleet lands so Overview/Mission Control do not develop a post-arrival disappearance gap.
         && (mission.status === "Outbound" || mission.status === "Returning")
       )
-      .map((mission) => ["Attack", "AcsAttack", "MissileAttack"].includes(mission.missionType)
+      .map((mission) => ["Attack", "AcsAttack"].includes(mission.missionType)
         ? {
             ...mission,
             stationedDefenders: this.stationedDefendersForAttack(mission, summariesById, nowSeconds)
@@ -3264,55 +3315,95 @@ export class SettlementIndexer {
   // Bounded resolver-facing projection over the canonical active-mission table. Unlike the public
   // Mission Control projection, this deliberately keeps overdue return rows in their on-chain
   // Returning/Recalled status and never reconstructs mission history from logs.
-  missionResolutionCandidates(asOfSeconds = nowSeconds()): {
+  missionResolutionCandidates(asOfSeconds = nowSeconds(), limit = 500): {
     arrivals: ResolvableFleetMission[];
     returns: ReturnableFleetMission[];
   } {
     this.currentMissionReadModelDbVersion();
+    const boundedLimit = Math.max(1, Math.min(5_000, Math.floor(limit)));
     const rows = this.db.query(`
       SELECT *
       FROM contract_fleet_missions
       WHERE (
-          status_id = 1
-          AND CAST(arrival_at AS INTEGER) <= ?
+        status_id = 1
+        AND (
+          (
+            mission_type_id IN (0, 1, 2, 4, 7)
+            AND CAST(arrival_at AS INTEGER) <= ?
+          ) OR (
+            mission_type_id = 3
+            AND CAST(arrival_at AS INTEGER) <= ?
+            AND (
+              ? = 0
+              OR randomness_request_id IS NULL
+              OR randomness_request_id = '0'
+              OR EXISTS (
+                SELECT 1
+                FROM indexed_fulfilled_randomness_requests
+                WHERE request_id = contract_fleet_missions.randomness_request_id
+              )
+            )
+          ) OR (
+            mission_type_id = 9
+            AND CAST(COALESCE(
+              json_extract(event_json, '$.mission.defenseHoldUntil'),
+              json_extract(event_json, '$.defenseHoldUntil'),
+              return_at,
+              arrival_at
+            ) AS INTEGER) <= ?
+          )
         ) OR (
           status_id IN (2, 5)
           AND CAST(return_at AS INTEGER) > 0
           AND CAST(return_at AS INTEGER) <= ?
         )
+      )
       ORDER BY
-        CASE WHEN status_id = 1 THEN CAST(arrival_at AS INTEGER) ELSE CAST(return_at AS INTEGER) END ASC,
+        CASE
+          WHEN status_id = 1 AND mission_type_id = 9
+            THEN CAST(COALESCE(
+              json_extract(event_json, '$.mission.defenseHoldUntil'),
+              json_extract(event_json, '$.defenseHoldUntil'),
+              return_at,
+              arrival_at
+            ) AS INTEGER)
+          WHEN status_id = 1 THEN CAST(arrival_at AS INTEGER)
+          ELSE CAST(return_at AS INTEGER)
+        END ASC,
         CAST(mission_id AS INTEGER) ASC
-    `).all(asOfSeconds, asOfSeconds) as ContractFleetMissionRow[];
+      LIMIT ?
+    `).all(
+      asOfSeconds,
+      asOfSeconds,
+      this.randomnessEngineConfigured ? 1 : 0,
+      asOfSeconds,
+      asOfSeconds,
+      boundedLimit
+    ) as ContractFleetMissionRow[];
     const missions = rows.map((row) => this.canonicalFleetMissionSummary(row));
-    const arrivedAttacks = missions.filter(
-      (mission) => mission.status === "Outbound"
-        && mission.missionType === "Attack"
-        && missionBattleRandomnessRequestId(mission) !== null
-    );
-    const fulfilledRandomnessRequestIds = this.randomnessEngineConfigured && arrivedAttacks.length > 0
-      ? this.fulfilledRandomnessRequestIds()
-      : null;
     const resolvableTypes = new Set([
       "Attack",
       "Harvest",
       "Colonize",
       "Transport",
       "Deploy",
-      "DefenseHold"
+      "DefenseHold",
+      "MissileAttack"
     ]);
 
     const arrivals = missions
       .filter((mission) =>
         resolvableTypes.has(mission.missionType)
-          && fleetMissionNeedsResolution(mission, asOfSeconds, fulfilledRandomnessRequestIds)
+          && fleetMissionNeedsResolution(mission, asOfSeconds, null)
       )
-      .map(({ arrivalAt, missionId, missionType, originPlanetId, targetPlanetId }) => ({
-        arrivalAt,
-        missionId,
-        missionType,
-        originPlanetId,
-        targetPlanetId
+      .map((mission) => ({
+        arrivalAt: mission.missionType === "DefenseHold"
+          ? mission.defenseHoldUntil ?? mission.returnAt
+          : mission.arrivalAt,
+        missionId: mission.missionId,
+        missionType: mission.missionType,
+        originPlanetId: mission.originPlanetId,
+        targetPlanetId: mission.targetPlanetId
       }));
     const returns = missions
       .filter((mission) =>
@@ -3340,6 +3431,45 @@ export class SettlementIndexer {
     const canonical = await this.chainReader.getCanonicalFleetMission(BigInt(missionId));
     if (!canonical) return;
     await this.upsertCanonicalFleetMissions([canonical], `resolver candidate ${missionId}`);
+  }
+
+  /**
+   * A missile impact settles ready ship, defense, and research queues before damage. When that
+   * impact is later removed by an offline reorg, replaying the event ledger can reconstruct queue
+   * chronology but cannot infer the pre-completion unit/technology totals. Re-read only the bodies
+   * and owners named by removed completion logs so readiness is restored from canonical storage.
+   */
+  async reconcileTimedMissileCompletionState(logs: readonly IndexedRpcLog[]): Promise<void> {
+    const planetIds = new Set<string>();
+    const owners = new Set<Address>();
+    for (const log of logs) {
+      if (!isIndexedQueueCompletedLog(log)) continue;
+      const event = decodeIndexedQueueCompletedLog(log);
+      if ((event.queueKind === "defense" || event.queueKind === "ship") && event.planetId) {
+        planetIds.add(event.planetId);
+      } else if (event.queueKind === "research" && event.owner) {
+        owners.add(event.owner.toLowerCase() as Address);
+      }
+    }
+
+    const readPlanet = this.chainReader.getCanonicalPlanetState;
+    if (planetIds.size > 0 && !readPlanet) {
+      throw new Error("timed missile completion reconciliation requires canonical planet reads");
+    }
+    for (const planetId of planetIds) {
+      const row = await readPlanet!.call(this.chainReader, BigInt(planetId));
+      await this.healPlanetShips(row);
+      await this.healPlanetDefenses(row);
+      await this.healPlanetQueues(row);
+    }
+    const readResearch = this.chainReader.getResearchState;
+    if (owners.size > 0 && !readResearch) {
+      throw new Error("timed missile completion reconciliation requires canonical research reads");
+    }
+    for (const owner of owners) {
+      const research = await readResearch!.call(this.chainReader, owner);
+      await this.healOwnerResearch(owner, research);
+    }
   }
 
   // Every completed mission across the universe (all players), newest-first, for the past "All" tab.
@@ -3625,6 +3755,7 @@ export class SettlementIndexer {
     const active = this.activeFleetMissionsFromCanonicalRowsForOwner(wallet)
       .filter((mission) =>
         mission.owner.toLowerCase() === walletLower
+        && mission.missionType !== "MissileAttack"
         && !fleetSlotFreedByLazyLaunchSettlement(mission, asOfSeconds)
       )
       .length;
@@ -4391,6 +4522,108 @@ export class SettlementIndexer {
     return this.db.transaction(() => this.applyLogAtomic(log))();
   }
 
+  /**
+   * Return active Game-proxy logs in a verified HTTP range that are absent from the canonical
+   * `eth_getLogs` response. Websocket `removed` notifications are best effort and can be missed
+   * while the writer is offline, so every bounded HTTP replay must explicitly retire these rows
+   * through `applyLog`'s normal removal path before applying canonical replacements.
+   *
+   * Scope this to the stable Game proxy address: other indexed addresses can legitimately be
+   * replaced in configuration while their historical logs remain canonical.
+   */
+  missingCanonicalGameLogs(
+    gameContractAddress: string,
+    canonicalLogs: readonly IndexedRpcLog[],
+    fromBlock: bigint,
+    toBlock: bigint
+  ): IndexedRpcLog[] {
+    if (toBlock < fromBlock) return [];
+    const normalizedAddress = gameContractAddress.toLowerCase();
+    const canonicalByEventId = new Map(
+      canonicalLogs
+        .filter((log) => log.address?.toLowerCase() === normalizedAddress && !log.removed)
+        .map((log) => [indexedLogKey(log), log] as const)
+    );
+    const rows = this.db.query(`
+      SELECT event_json
+      FROM indexed_event_logs
+      WHERE removed = 0
+        AND CAST(block_number AS INTEGER) BETWEEN ? AND ?
+        AND lower(json_extract(event_json, '$.address')) = ?
+    `).all(fromBlock.toString(), toBlock.toString(), normalizedAddress) as EventRow[];
+
+    return rows
+      .map((row) => parseEvent<IndexedRpcLog>(row.event_json))
+      .filter((log) => {
+        const canonical = canonicalByEventId.get(indexedLogKey(log));
+        return !canonical || indexedLogFingerprint(log) !== indexedLogFingerprint(canonical);
+      })
+      .map((log) => ({ ...log, removed: true }));
+  }
+
+  /** Retire persisted timed-missile payload logs that disappeared from the canonical specialized
+   * replay range. The generic poll only overlaps the recent chain tip, while this replay can reach
+   * back to the immutable upgrade block after an offline reorg. */
+  missingCanonicalTimedMissileLifecycleLogs(
+    gameContractAddress: string,
+    canonicalLogs: readonly IndexedRpcLog[],
+    fromBlock: bigint,
+    toBlock: bigint
+  ): IndexedRpcLog[] {
+    if (toBlock < fromBlock) return [];
+    const normalizedAddress = gameContractAddress.toLowerCase();
+    const canonicalByEventId = new Map(
+      canonicalLogs
+        .filter((log) => log.address?.toLowerCase() === normalizedAddress && !log.removed)
+        .map((log) => [indexedLogKey(log), log] as const)
+    );
+    const rows = this.db.query(`
+      SELECT event_json
+      FROM indexed_event_logs
+      WHERE removed = 0
+        AND CAST(block_number AS INTEGER) BETWEEN ? AND ?
+        AND lower(json_extract(event_json, '$.address')) = ?
+    `).all(
+      fromBlock.toString(),
+      toBlock.toString(),
+      normalizedAddress
+    ) as EventRow[];
+
+    return rows
+      .map((row) => parseEvent<IndexedRpcLog>(row.event_json))
+      .filter((log) => {
+        const canonical = canonicalByEventId.get(indexedLogKey(log));
+        return !canonical || indexedLogFingerprint(log) !== indexedLogFingerprint(canonical);
+      })
+      .map((log) => ({ ...log, removed: true }));
+  }
+
+  /** Return completion logs already marked removed by an older writer. A crash can occur after the
+   * durable removal but before canonical unit/research hydration; the first timed-missile replay of
+   * every process run uses these rows to finish that interrupted repair. */
+  removedTimedMissileCompletionLogs(
+    gameContractAddress: string,
+    fromBlock: bigint,
+    toBlock: bigint
+  ): IndexedRpcLog[] {
+    if (toBlock < fromBlock) return [];
+    return (this.db.query(`
+      SELECT event_json
+      FROM indexed_event_logs
+      WHERE removed != 0
+        AND CAST(block_number AS INTEGER) BETWEEN ? AND ?
+        AND lower(json_extract(event_json, '$.address')) = ?
+        AND lower(json_extract(event_json, '$.topics[0]')) IN (?, ?, ?)
+    `).all(
+      fromBlock.toString(),
+      toBlock.toString(),
+      gameContractAddress.toLowerCase(),
+      defenseCompletedTopic,
+      shipCompletedTopic,
+      researchCompletedTopic
+    ) as EventRow[]).map((row) => parseEvent<IndexedRpcLog>(row.event_json));
+  }
+
   private applyLogAtomic(log: IndexedRpcLog): ApplyLogResult {
     const eventId = indexedLogKey(log);
     const existing = this.db.query("SELECT event_json, removed FROM indexed_event_logs WHERE event_id = ?").get(eventId) as (EventRow & { removed: number }) | null;
@@ -4399,7 +4632,11 @@ export class SettlementIndexer {
         this.advanceIndexedRevision();
         this.markReorgDetected();
         this.db.query("UPDATE indexed_event_logs SET removed = 1 WHERE event_id = ?").run(eventId);
+        const affectedQueue = productionQueueProjectionIdentity(log);
         this.removeMissionEventLog(eventId);
+        this.removeUnitCountEventLog(eventId, log);
+        this.removeMissileAttackEvent(eventId);
+        this.removeInterplanetaryMissileAttackCompatibilityEvent(log);
         const removedMissionId = fleetMissionLogMissionId(log);
         if (removedMissionId) this.rebuildMissionBodyProjection(removedMissionId);
         this.recordMoonStateEventLog(eventId, log);
@@ -4420,7 +4657,60 @@ export class SettlementIndexer {
         if (this.isMoonStateProjectionLog(log)) {
           this.repairIndexedMoonStateFromEventLogs(this.moonStatePlanetIds(log));
         }
+        if (affectedQueue) {
+          this.rebuildProductionQueueProjectionFromEventLogs(
+            affectedQueue.queueKind,
+            affectedQueue.planetId
+          );
+        }
         return { applied: false, duplicate: false, ignored: false, removed: true, snapshot: this.snapshot() };
+      }
+      if (existing.removed && isPlanetSettledLog(log)) {
+        this.advanceIndexedRevision();
+        this.db.query(`
+          UPDATE indexed_event_logs
+          SET removed = 0, event_json = ?, block_number = ?, received_at = ?
+          WHERE event_id = ?
+        `).run(JSON.stringify(log), blockNumberToDecimal(log.blockNumber), new Date().toISOString(), eventId);
+        this.recordPlayerActivityFromLog(eventId, log);
+        this.recordPlayerActivityFeedFromLog(eventId, log);
+        this.applyPlanetSettledEvent(decodePlanetSettledLog(log));
+        this.recordLatestBlock(log.blockNumber);
+        return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
+      }
+      if (
+        existing.removed
+        && isIndexedQueueCompletedLog(log)
+        && decodeIndexedQueueCompletedLog(log).queueKind === "research"
+      ) {
+        this.advanceIndexedRevision();
+        this.db.query(`
+          UPDATE indexed_event_logs
+          SET removed = 0, event_json = ?, block_number = ?, received_at = ?
+          WHERE event_id = ?
+        `).run(JSON.stringify(log), blockNumberToDecimal(log.blockNumber), new Date().toISOString(), eventId);
+        this.recordPlayerActivityFromLog(eventId, log);
+        this.recordPlayerActivityFeedFromLog(eventId, log);
+        this.applyQueueCompletedEvent(decodeIndexedQueueCompletedLog(log));
+        this.recordLatestBlock(log.blockNumber);
+        return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
+      }
+      if (existing.removed && productionQueueProjectionIdentity(log)) {
+        this.advanceIndexedRevision();
+        this.db.query(`
+          UPDATE indexed_event_logs
+          SET removed = 0, event_json = ?, block_number = ?, received_at = ?
+          WHERE event_id = ?
+        `).run(JSON.stringify(log), blockNumberToDecimal(log.blockNumber), new Date().toISOString(), eventId);
+        this.recordPlayerActivityFromLog(eventId, log);
+        this.recordPlayerActivityFeedFromLog(eventId, log);
+        const affectedQueue = productionQueueProjectionIdentity(log)!;
+        this.rebuildProductionQueueProjectionFromEventLogs(
+          affectedQueue.queueKind,
+          affectedQueue.planetId
+        );
+        this.recordLatestBlock(log.blockNumber);
+        return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
       }
       if (existing.removed && isPaidAllianceInviteProjectionLog(log)) {
         this.advanceIndexedRevision();
@@ -4456,6 +4746,52 @@ export class SettlementIndexer {
         this.recordLatestBlock(log.blockNumber);
         return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
       }
+      if (
+        existing.removed
+        && (
+          isShipCountChangedLog(log)
+          || isDefenseCountChangedLog(log)
+          || isMoonShipCountChangedLog(log)
+          || isMoonDefenseCountChangedLog(log)
+        )
+      ) {
+        this.advanceIndexedRevision();
+        this.db.query(`
+          UPDATE indexed_event_logs
+          SET removed = 0, event_json = ?, block_number = ?, received_at = ?
+          WHERE event_id = ?
+        `).run(JSON.stringify(log), blockNumberToDecimal(log.blockNumber), new Date().toISOString(), eventId);
+        this.recordUnitCountEventLog(eventId, log);
+        this.recordPlayerActivityFromLog(eventId, log);
+        this.recordPlayerActivityFeedFromLog(eventId, log);
+        if (isShipCountChangedLog(log)) {
+          this.applyShipCountChangedEvent(decodeShipCountChangedLog(log));
+        } else if (isDefenseCountChangedLog(log)) {
+          this.applyDefenseCountChangedEvent(decodeDefenseCountChangedLog(log));
+        } else if (isMoonShipCountChangedLog(log)) {
+          this.applyMoonShipCountChangedEvent(decodeMoonShipCountChangedLog(log));
+        } else {
+          this.applyMoonDefenseCountChangedEvent(decodeMoonDefenseCountChangedLog(log));
+        }
+        this.recordLatestBlock(log.blockNumber);
+        return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
+      }
+      if (existing.removed && isInterplanetaryMissileAttackLog(log)) {
+        this.advanceIndexedRevision();
+        this.db.query(`
+          UPDATE indexed_event_logs
+          SET removed = 0, event_json = ?, block_number = ?, received_at = ?
+          WHERE event_id = ?
+        `).run(JSON.stringify(log), blockNumberToDecimal(log.blockNumber), new Date().toISOString(), eventId);
+        this.recordMissileAttackEvent(eventId, log);
+        this.recordPlayerActivityFromLog(eventId, log);
+        this.recordPlayerActivityFeedFromLog(eventId, log);
+        this.applyInterplanetaryMissileAttackCompatibilityEvent(
+          decodeInterplanetaryMissileAttackLog(log)
+        );
+        this.recordLatestBlock(log.blockNumber);
+        return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
+      }
       if (existing.removed && this.missionEventKind(log)) {
         this.advanceIndexedRevision();
         this.db.query(`
@@ -4464,8 +4800,11 @@ export class SettlementIndexer {
           WHERE event_id = ?
         `).run(JSON.stringify(log), blockNumberToDecimal(log.blockNumber), new Date().toISOString(), eventId);
         this.recordMissionEventLog(eventId, log);
-        const restoredMissionId = fleetMissionLogMissionId(log);
-        if (restoredMissionId) this.rebuildMissionBodyProjection(restoredMissionId);
+        // A complete transaction reorg can remove every launch log and therefore delete an
+        // event-sourced mission row. Re-run the normal compatibility/upsert path so the row is
+        // recreated as soon as the restored log set becomes complete; projection-only rebuilding
+        // cannot recreate a row that no longer exists.
+        this.applyFleetMissionCompatibilityEvent(log);
         this.recordLatestBlock(log.blockNumber);
         return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
       }
@@ -5682,6 +6021,11 @@ export class SettlementIndexer {
         ON indexed_mission_event_logs (event_kind, block_number);
       CREATE INDEX IF NOT EXISTS indexed_mission_event_logs_kind_topic1_block_idx
         ON indexed_mission_event_logs (event_kind, json_extract(event_json, '$.topics[1]'), block_number);
+      CREATE TABLE IF NOT EXISTS indexed_fulfilled_randomness_requests (
+        request_id TEXT PRIMARY KEY,
+        event_id TEXT NOT NULL,
+        block_number TEXT NOT NULL
+      );
       -- Attack-protection previews only need Attack launches from one attacker. Without this
       -- expression index, every personalized Rankings/Raid Finder request loaded and decoded the
       -- entire fleet-event ledger (86k+ rows in production) just to find a few matching launches.
@@ -6040,6 +6384,10 @@ export class SettlementIndexer {
         ON contract_fleet_missions (origin_planet_id, status_id);
       CREATE INDEX IF NOT EXISTS contract_fleet_missions_status_type_idx
         ON contract_fleet_missions (status_id, mission_type_id);
+      CREATE INDEX IF NOT EXISTS contract_fleet_missions_resolver_arrival_idx
+        ON contract_fleet_missions (status_id, CAST(arrival_at AS INTEGER), CAST(mission_id AS INTEGER));
+      CREATE INDEX IF NOT EXISTS contract_fleet_missions_resolver_return_idx
+        ON contract_fleet_missions (status_id, CAST(return_at AS INTEGER), CAST(mission_id AS INTEGER));
       CREATE INDEX IF NOT EXISTS contract_fleet_missions_completed_archive_idx
         ON contract_fleet_missions (
           CAST(CASE WHEN status_id = 4 THEN return_at ELSE arrival_at END AS INTEGER) DESC,
@@ -6182,6 +6530,16 @@ export class SettlementIndexer {
     this.backfillStartPriceProjection();
     this.backfillDefenseHoldEndedMissionEvents();
     this.backfillBattleReportStationedDefenderIndex();
+    // This narrow purge must also run on the production writer, which intentionally disables the
+    // broad startup backfill. Older builds could leave an archive row behind after its raw impact
+    // log was removed by a reorg.
+    this.repairRemovedUnitProjectionRows();
+    this.repairRemovedProductionQueueCompletionProjections();
+    this.repairRemovedMissileAttackRows();
+    // Missile payloads are event-only. This narrow repair must run even when production disables the
+    // broad startup backfill, because an older writer can journal the new launch event without adding
+    // it to the specialized mission ledger during a rollback window.
+    this.backfillTimedMissilePayloadMissionEvents();
     if (runStartupBackfill) {
       this.backfillMissionEventLogs();
       this.backfillUnitCountEventLogs();
@@ -6190,6 +6548,7 @@ export class SettlementIndexer {
       this.backfillCanonicalTables();
       this.replayFleetMissionRowsFromEventLogs();
     }
+    this.backfillFulfilledRandomnessProjection();
     // Unlike the broad materialized-state repairs above, this versioned feed migration must run on
     // the production writer. Production intentionally passes runStartupBackfill=false, while the
     // activity feed still needs one bounded replay of the already-durable raw event ledger.
@@ -6260,6 +6619,72 @@ export class SettlementIndexer {
       this.setMetadata(productionQueueProjectionBackfillMetadataKey, new Date().toISOString());
       this.touch();
     })();
+  }
+
+  private repairRemovedProductionQueueCompletionProjections(): void {
+    const rows = this.db.query(`
+      SELECT event_json
+      FROM indexed_event_logs
+      WHERE removed != 0
+        AND lower(json_extract(event_json, '$.topics[0]')) IN (?, ?)
+    `).all(
+      defenseCompletedTopic,
+      shipCompletedTopic
+    ) as EventRow[];
+    const affected = new Map<string, { queueKind: "defense" | "ship"; planetId: string }>();
+    for (const row of rows) {
+      const identity = productionQueueProjectionIdentity(parseEvent<IndexedRpcLog>(row.event_json));
+      if (identity) affected.set(`${identity.queueKind}:${identity.planetId}`, identity);
+    }
+    for (const identity of affected.values()) {
+      this.rebuildProductionQueueProjectionFromEventLogs(identity.queueKind, identity.planetId);
+    }
+  }
+
+  private rebuildProductionQueueProjectionFromEventLogs(
+    queueKind: "defense" | "ship",
+    planetId: string
+  ): void {
+    const current = this.db.query(`
+      SELECT event_json
+      FROM indexed_planet_queues
+      WHERE queue_key = ?
+    `).get(`${queueKind}:${planetId}`) as EventRow | null;
+    if (current) {
+      const event = parseEvent<QueueUpsertEvent>(current.event_json);
+      // A canonical snapshot may be newer than the retained raw log window. Never replace it with
+      // an incomplete event-only replay merely because an older writer left a removed completion.
+      if (event.canonicalSnapshot === true) return;
+    }
+    const rows = this.db.query(`
+      SELECT event_json
+      FROM indexed_event_logs
+      WHERE removed = 0
+        AND lower(json_extract(indexed_event_logs.event_json, '$.topics[0]')) IN (?, ?, ?, ?, ?, ?)
+    `).all(
+      defenseQueuedTopic,
+      shipQueuedTopic,
+      defenseQueueTimingSetTopic,
+      shipQueueTimingSetTopic,
+      defenseCompletedTopic,
+      shipCompletedTopic
+    ) as EventRow[];
+
+    const key = `${queueKind}:${planetId}`;
+    this.db.query("DELETE FROM indexed_planet_queues WHERE queue_key = ?").run(key);
+    this.db.query("DELETE FROM contract_production_queues WHERE queue_key = ?").run(key);
+    for (const log of sortedEventRows(rows)) {
+      const identity = productionQueueProjectionIdentity(log);
+      if (!identity || identity.queueKind !== queueKind || identity.planetId !== planetId) continue;
+      if (isIndexedQueueStartedLog(log)) {
+        this.applyQueueStartedEvent(decodeIndexedQueueStartedLog(log), { settleResources: false });
+      } else if (isProductionQueueTimingLog(log)) {
+        this.applyProductionQueueTimingEvent(decodeProductionQueueTimingLog(log));
+      } else if (isIndexedQueueCompletedLog(log)) {
+        this.applyQueueCompletedEvent(decodeIndexedQueueCompletedLog(log), { applyEffects: false });
+      }
+    }
+    this.touch();
   }
 
   private repairPaidAllianceInviteProjectionsFromEventLogs(
@@ -6712,6 +7137,60 @@ export class SettlementIndexer {
     })();
   }
 
+  private backfillTimedMissilePayloadMissionEvents(): void {
+    const rows = this.db.query(`
+      SELECT indexed_event_logs.event_id, indexed_event_logs.event_json
+      FROM indexed_event_logs
+      LEFT JOIN indexed_mission_event_logs
+        ON indexed_mission_event_logs.event_id = indexed_event_logs.event_id
+      WHERE indexed_event_logs.removed = 0
+        AND indexed_mission_event_logs.event_id IS NULL
+        AND lower(json_extract(indexed_event_logs.event_json, '$.topics[0]')) = ?
+      ORDER BY CAST(indexed_event_logs.block_number AS INTEGER) ASC,
+        length(indexed_event_logs.log_index) ASC,
+        indexed_event_logs.log_index ASC
+    `).all(interplanetaryMissileLaunchedTopic) as Array<EventRow & { event_id: string }>;
+    if (rows.length === 0) return;
+
+    this.db.transaction(() => {
+      for (const row of rows) {
+        const log = parseEvent<IndexedRpcLog>(row.event_json);
+        this.recordMissionEventLog(row.event_id, log);
+        this.applyFleetMissionCompatibilityEvent(log);
+      }
+    })();
+  }
+
+  /// Materialize fulfilled request ids once for indexed resolver joins. Resolver ticks must never
+  /// decode the historical randomness ledger or let an earlier unfulfilled attack consume their
+  /// bounded candidate window.
+  private backfillFulfilledRandomnessProjection(): void {
+    if (this.metadata(fulfilledRandomnessProjectionBackfillMetadataKey) !== null) return;
+    const rows = this.db.query(`
+      SELECT event_id, block_number, event_json
+      FROM indexed_mission_event_logs
+      WHERE event_kind = 'randomness'
+      ORDER BY CAST(block_number AS INTEGER) ASC
+    `).all() as Array<EventRow & { event_id: string; block_number: string }>;
+    const insert = this.db.query(`
+      INSERT OR REPLACE INTO indexed_fulfilled_randomness_requests
+        (request_id, event_id, block_number)
+      VALUES (?, ?, ?)
+    `);
+    this.db.transaction(() => {
+      for (const row of rows) {
+        const requestId = decodeRandomnessFulfilledRequestId(
+          parseEvent<IndexedRpcLog>(row.event_json)
+        );
+        insert.run(requestId, row.event_id, row.block_number);
+      }
+      this.setMetadata(
+        fulfilledRandomnessProjectionBackfillMetadataKey,
+        new Date().toISOString()
+      );
+    })();
+  }
+
   private backfillPlayerActivityFeed(): void {
     const migrationKey = "playerActivityFeedBackfilledV2";
     if (this.metadata(migrationKey) !== null) return;
@@ -6983,6 +7462,45 @@ export class SettlementIndexer {
     })();
   }
 
+  private repairRemovedMissileAttackRows(): void {
+    this.db.query(`
+      DELETE FROM indexed_missile_attacks
+      WHERE event_id NOT IN (
+        SELECT event_id FROM indexed_event_logs WHERE removed = 0
+      )
+    `).run();
+  }
+
+  /** Purge specialized rows left behind by older reorg handling and rebuild only the affected
+   * body/unit projections. This runs even when the production writer disables broad startup
+   * backfills, so an orphaned missile launch/impact cannot survive a restart. */
+  private repairRemovedUnitProjectionRows(): void {
+    const removedUnitRows = this.db.query(`
+      SELECT indexed_unit_count_event_logs.event_id, indexed_unit_count_event_logs.event_json
+      FROM indexed_unit_count_event_logs
+      INNER JOIN indexed_event_logs
+        ON indexed_event_logs.event_id = indexed_unit_count_event_logs.event_id
+      WHERE indexed_event_logs.removed != 0
+    `).all() as Array<EventRow & { event_id: string }>;
+    for (const row of removedUnitRows) {
+      this.removeUnitCountEventLog(
+        row.event_id,
+        parseEvent<IndexedRpcLog>(row.event_json),
+        { preserveWithoutBaseline: true }
+      );
+    }
+
+    const removedMissileRows = this.db.query(`
+      SELECT event_json
+      FROM indexed_event_logs
+      WHERE removed != 0
+        AND lower(json_extract(event_json, '$.topics[0]')) = lower(?)
+    `).all(interplanetaryMissileAttackTopic) as EventRow[];
+    for (const row of removedMissileRows) {
+      this.removeInterplanetaryMissileAttackCompatibilityEvent(parseEvent<IndexedRpcLog>(row.event_json));
+    }
+  }
+
   private queueDefenderLossBreakdownBackfill(): void {
     const migrationKey = "defenderLossBreakdownBackfillV1";
     if (this.metadata(migrationKey) !== null) return;
@@ -7077,6 +7595,16 @@ export class SettlementIndexer {
   }
 
   private absoluteUnitCountProjection(log: IndexedRpcLog): AbsoluteUnitCountProjection | null {
+    if (isIndexedQueueCompletedLog(log)) {
+      const event = decodeIndexedQueueCompletedLog(log);
+      if (!event.planetId || event.total === undefined) return null;
+      if (event.eventName === "ShipCompleted") {
+        return { body: "planet", kind: "ship", planetId: event.planetId, itemId: event.itemId, total: event.total };
+      }
+      if (event.eventName === "DefenseCompleted") {
+        return { body: "planet", kind: "defense", planetId: event.planetId, itemId: event.itemId, total: event.total };
+      }
+    }
     if (isShipCountChangedLog(log)) {
       const event = decodeShipCountChangedLog(log);
       return { body: "planet", kind: "ship", planetId: event.planetId, itemId: event.shipId, total: event.total };
@@ -7120,6 +7648,58 @@ export class SettlementIndexer {
       this.upsertIndexedLevel(table, idColumn, "count", projection.planetId, projection.itemId, projection.total);
     }
     return true;
+  }
+
+  private removeUnitCountEventLog(
+    eventId: string,
+    log: IndexedRpcLog,
+    options: { preserveWithoutBaseline?: boolean } = {}
+  ): void {
+    const removed = this.absoluteUnitCountProjection(log);
+    if (!removed) return;
+    this.db.query("DELETE FROM indexed_unit_count_event_logs WHERE event_id = ?").run(eventId);
+    this.restoreLatestAbsoluteUnitCountProjection(removed, options);
+    this.touchBattleReportReadModel();
+  }
+
+  private restoreLatestAbsoluteUnitCountProjection(
+    affected: AbsoluteUnitCountProjection,
+    options: { preserveWithoutBaseline?: boolean } = {}
+  ): void {
+    const rows = this.db.query(`
+      SELECT event_json
+      FROM indexed_unit_count_event_logs
+      ORDER BY CAST(block_number AS INTEGER) DESC, length(log_index) DESC, log_index DESC
+    `).all() as EventRow[];
+    const affectedKey = this.absoluteUnitCountProjectionKey(affected);
+    for (const row of rows) {
+      const candidate = this.absoluteUnitCountProjection(parseEvent<IndexedRpcLog>(row.event_json));
+      if (!candidate || this.absoluteUnitCountProjectionKey(candidate) !== affectedKey) continue;
+      this.applyAbsoluteUnitCountProjectionIfStale(candidate);
+      this.touch();
+      return;
+    }
+
+    if (options.preserveWithoutBaseline) {
+      // A production database can retain only a bounded raw log history while a canonical heal has
+      // already restored this row. Absence of an older event is not proof that the on-chain count is
+      // zero: retain the snapshot and fail readiness closed until an operator reconciliation.
+      this.markStale(`unit_count_projection_reconciliation_required:${affectedKey}`);
+      return;
+    }
+
+    // A live removal with complete local history has no earlier snapshot, so its event-sourced
+    // baseline is zero.
+    const idColumn = affected.kind === "ship" ? "ship_id" : "defense_id";
+    const tables = affected.body === "moon"
+      ? [affected.kind === "ship" ? "contract_moon_ship_counts" : "contract_moon_defense_counts"]
+      : affected.kind === "ship"
+        ? ["indexed_ship_counts", "contract_ship_counts"]
+        : ["indexed_defense_counts", "contract_defense_counts"];
+    for (const table of tables) {
+      this.db.query(`DELETE FROM ${table} WHERE planet_id = ? AND ${idColumn} = ?`).run(affected.planetId, affected.itemId);
+    }
+    this.touch();
   }
 
   private replayMaterializedStateFromEventLogs(): void {
@@ -7995,7 +8575,10 @@ export class SettlementIndexer {
     return sortedEventRows(rows);
   }
 
-  private upsertEventDerivedFleetMissionRow(mission: FleetMissionSummary): number {
+  private upsertEventDerivedFleetMissionRow(
+    mission: FleetMissionSummary,
+    options: { allowLifecycleRollback?: boolean } = {}
+  ): number {
     const statusId = fleetMissionStatusId(mission.status);
     const missionTypeId = fleetMissionTypeId(mission.missionType);
     if (statusId === null || missionTypeId === null) return 0;
@@ -8006,7 +8589,11 @@ export class SettlementIndexer {
       WHERE mission_id = ?
     `).get(mission.missionId) as (EventRow & { status_id: number }) | null;
     if (existing) {
-      if (fleetMissionStatusProgressRank(fleetMissionStatusLabel(existing.status_id)) > fleetMissionStatusProgressRank(mission.status)) return 0;
+      if (
+        !options.allowLifecycleRollback
+          && fleetMissionStatusProgressRank(fleetMissionStatusLabel(existing.status_id))
+            > fleetMissionStatusProgressRank(mission.status)
+      ) return 0;
       const marker = parseJson<{ source?: string }>(existing.event_json, {});
       const baselineBlock = safeBigInt(this.metadata("lastReconciledBlock"), 0n);
       if (marker.source !== "indexed_mission_event_logs" && safeBigInt(mission.blockNumber, 0n) <= baselineBlock) return 0;
@@ -9024,6 +9611,25 @@ export class SettlementIndexer {
     this.applyLegacyUnitMutationsOnce(`legacy:ipm:${event.transactionHash.toLowerCase()}`, mutations, event);
   }
 
+  private removeInterplanetaryMissileAttackCompatibilityEvent(log: IndexedRpcLog): void {
+    if (!isInterplanetaryMissileAttackLog(log)) return;
+    const event = decodeInterplanetaryMissileAttackLog(log);
+    const mutationKey = `legacy:ipm:${event.transactionHash.toLowerCase()}`;
+    const mutations = this.storedLegacyUnitMutations(mutationKey);
+    if (!mutations) return;
+
+    this.db.query("DELETE FROM indexed_legacy_unit_mutations WHERE mutation_key = ?").run(mutationKey);
+    for (const mutation of mutations) {
+      this.restoreLatestAbsoluteUnitCountProjection({
+        body: "planet",
+        kind: mutation.kind,
+        planetId: mutation.planetId,
+        itemId: mutation.itemId,
+        total: 0
+      });
+    }
+  }
+
   private applyGuardedInterplanetaryMissileAttackCompatibilityEvent(
     event: InterplanetaryMissileAttackEvent,
     latestAbsoluteUnitTotals: Map<string, LegacyAbsoluteUnitTotal>,
@@ -9086,17 +9692,20 @@ export class SettlementIndexer {
     `).get(missionId) as EventRow | null;
     if (!row) return 0;
     const payload = parseJson<Record<string, unknown>>(row.event_json ?? "{}", {});
-    const previous = JSON.stringify(payload.combatResolutionProgress ?? null);
+    const progressPayload = payload.mission && typeof payload.mission === "object"
+      ? payload.mission as Record<string, unknown>
+      : payload;
+    const previous = JSON.stringify(progressPayload.combatResolutionProgress ?? null);
     if (terminal) {
-      delete payload.combatResolutionProgress;
+      delete progressPayload.combatResolutionProgress;
     } else if (progress) {
       const current = parseCombatResolutionProgress(JSON.stringify(payload));
-      payload.combatResolutionProgress = {
+      progressPayload.combatResolutionProgress = {
         roundsCompleted: Math.max(current?.roundsCompleted ?? 0, progress.roundsCompleted),
         totalRounds: 6
       };
     }
-    if (JSON.stringify(payload.combatResolutionProgress ?? null) === previous) return 0;
+    if (JSON.stringify(progressPayload.combatResolutionProgress ?? null) === previous) return 0;
     return this.db.query(`
       UPDATE contract_fleet_missions
       SET event_json = ?
@@ -9134,13 +9743,16 @@ export class SettlementIndexer {
     `).get(missionId) as EventRow | null;
     if (!row) return 0;
     const payload = parseJson<Record<string, unknown>>(row.event_json ?? "{}", {});
-    const previous = JSON.stringify(payload.combatResolutionProgress ?? null);
+    const progressPayload = payload.mission && typeof payload.mission === "object"
+      ? payload.mission as Record<string, unknown>
+      : payload;
+    const previous = JSON.stringify(progressPayload.combatResolutionProgress ?? null);
     if (!terminal && roundsCompleted > 0) {
-      payload.combatResolutionProgress = { roundsCompleted, totalRounds: 6 };
+      progressPayload.combatResolutionProgress = { roundsCompleted, totalRounds: 6 };
     } else {
-      delete payload.combatResolutionProgress;
+      delete progressPayload.combatResolutionProgress;
     }
-    if (JSON.stringify(payload.combatResolutionProgress ?? null) === previous) return 0;
+    if (JSON.stringify(progressPayload.combatResolutionProgress ?? null) === previous) return 0;
     return this.db.query(`
       UPDATE contract_fleet_missions
       SET event_json = ?
@@ -11008,6 +11620,10 @@ export class SettlementIndexer {
     );
   }
 
+  private removeMissileAttackEvent(eventId: string): void {
+    this.db.query("DELETE FROM indexed_missile_attacks WHERE event_id = ?").run(eventId);
+  }
+
   private recordMissionEventLog(eventId: string, log: IndexedRpcLog): void {
     if (log.removed) return;
     const eventKind = this.missionEventKind(log);
@@ -11016,6 +11632,17 @@ export class SettlementIndexer {
       INSERT OR REPLACE INTO indexed_mission_event_logs (event_id, event_kind, block_number, event_json)
       VALUES (?, ?, ?, ?)
     `).run(eventId, eventKind, blockNumberToDecimal(log.blockNumber), JSON.stringify(log));
+    if (eventKind === "randomness") {
+      this.db.query(`
+        INSERT OR REPLACE INTO indexed_fulfilled_randomness_requests
+          (request_id, event_id, block_number)
+        VALUES (?, ?, ?)
+      `).run(
+        decodeRandomnessFulfilledRequestId(log),
+        eventId,
+        blockNumberToDecimal(log.blockNumber)
+      );
+    }
     if (eventKind === "battle") {
       const missionId = battleLogMissionId(log);
       if (missionId) this.markBattleReportMaterializationPending(missionId, blockNumberToDecimal(log.blockNumber));
@@ -11024,13 +11651,42 @@ export class SettlementIndexer {
   }
 
   private removeMissionEventLog(eventId: string): void {
+    const existing = this.db.query(`
+      SELECT event_kind, event_json
+      FROM indexed_mission_event_logs
+      WHERE event_id = ?
+    `).get(eventId) as { event_kind: string; event_json: string } | null;
     const result = this.db
       .query("DELETE FROM indexed_mission_event_logs WHERE event_id = ?")
       .run(eventId);
+    if (existing?.event_kind === "randomness") {
+      const log = parseEvent<IndexedRpcLog>(existing.event_json);
+      const requestId = decodeRandomnessFulfilledRequestId(log);
+      const requestTopic = log.topics[1]?.toLowerCase() ?? "";
+      const replacement = this.db.query(`
+        SELECT event_id, block_number
+        FROM indexed_mission_event_logs
+        WHERE event_kind = 'randomness'
+          AND lower(json_extract(event_json, '$.topics[1]')) = ?
+        ORDER BY CAST(block_number AS INTEGER) DESC
+        LIMIT 1
+      `).get(requestTopic) as { event_id: string; block_number: string } | null;
+      if (replacement) {
+        this.db.query(`
+          INSERT OR REPLACE INTO indexed_fulfilled_randomness_requests
+            (request_id, event_id, block_number)
+          VALUES (?, ?, ?)
+        `).run(requestId, replacement.event_id, replacement.block_number);
+      } else {
+        this.db.query(
+          "DELETE FROM indexed_fulfilled_randomness_requests WHERE request_id = ?"
+        ).run(requestId);
+      }
+    }
     if (result.changes > 0) this.touchMissionReadModel();
   }
 
-  /** Rebuild event-derived body/loot fields after a canonical log is removed or restored.
+  /** Rebuild event-derived body, loot, and missile-payload fields after a canonical log is removed or restored.
    * Canonical reconciliation deliberately preserves these fields, so simply deleting the ledger
    * row would otherwise leave a reorged FleetMissionBodies value stuck in event_json forever. */
   private rebuildMissionBodyProjection(missionId: string): void {
@@ -11049,18 +11705,34 @@ export class SettlementIndexer {
       return;
     }
 
+    // A removed FleetMissionResolved/Returned/Recalled event is a genuine lifecycle rollback.
+    // Rebuild every SQL column from the remaining canonical event ledger and explicitly bypass the
+    // normal forward-only progress guard, so an orphaned resolution becomes Outbound/resolvable
+    // again instead of retaining stale status_id/return_at columns.
+    if (eventMission) {
+      this.upsertEventDerivedFleetMissionRow(eventMission, { allowLifecycleRollback: true });
+      this.touchMissionReadModel();
+      return;
+    }
+
     const rebuilt = { ...this.canonicalFleetMissionSummary(row) } as FleetMissionSummary;
     delete rebuilt.originIsMoon;
     delete rebuilt.targetIsMoon;
     delete rebuilt.lootRatio;
-    if (eventMission?.originIsMoon !== undefined) rebuilt.originIsMoon = eventMission.originIsMoon;
-    if (eventMission?.targetIsMoon !== undefined) rebuilt.targetIsMoon = eventMission.targetIsMoon;
-    if (eventMission?.lootRatio) rebuilt.lootRatio = eventMission.lootRatio;
+    delete rebuilt.missilePrimaryTargetId;
+    delete rebuilt.missileQuantity;
     this.db.query(`
       UPDATE contract_fleet_missions
       SET event_json = ?
       WHERE mission_id = ?
-    `).run(JSON.stringify(rebuilt), missionId);
+    `).run(
+      JSON.stringify(
+        marker.source === "indexed_mission_event_logs"
+          ? { source: "indexed_mission_event_logs", mission: rebuilt }
+          : rebuilt
+      ),
+      missionId
+    );
     this.touchMissionReadModel();
   }
 
@@ -12294,7 +12966,13 @@ export class SettlementIndexer {
         ...(canonicalEventMission.defenseHoldUntil ? { defenseHoldUntil: canonicalEventMission.defenseHoldUntil } : {}),
         ...(canonicalEventMission.defenseHoldOutcome ? { defenseHoldOutcome: canonicalEventMission.defenseHoldOutcome } : {}),
         ...(canonicalEventMission.recallProvenance ? { recallProvenance: canonicalEventMission.recallProvenance } : {}),
-        ...(canonicalEventMission.randomnessRequestId ? { randomnessRequestId: canonicalEventMission.randomnessRequestId } : {})
+        ...(canonicalEventMission.randomnessRequestId ? { randomnessRequestId: canonicalEventMission.randomnessRequestId } : {}),
+        ...(canonicalEventMission.missilePrimaryTargetId !== undefined
+          ? { missilePrimaryTargetId: canonicalEventMission.missilePrimaryTargetId }
+          : {}),
+        ...(canonicalEventMission.missileQuantity !== undefined
+          ? { missileQuantity: canonicalEventMission.missileQuantity }
+          : {})
       }
       : base;
     const detailedBase = canonicalStorageDetails
@@ -14117,6 +14795,9 @@ function fleetSlotSettlementDue(mission: FleetMissionSummary, asOfSeconds: numbe
 }
 
 function fleetSlotSettlementBlocksLaunch(mission: FleetMissionSummary, asOfSeconds: number): boolean {
+  // Timed missiles intentionally consume no fleet slot and therefore must never participate in
+  // the separate launch-blocker projection, even while their permissionless arrival is overdue.
+  if (mission.missionType === "MissileAttack") return false;
   if (!isActiveFleetMissionStatus(mission.status) || !fleetSlotSettlementDue(mission, asOfSeconds)) return false;
   return !fleetSlotFreedByLazyLaunchSettlement(mission, asOfSeconds);
 }
@@ -14945,6 +15626,40 @@ const riftResourceRows = [
 
 function indexedLogKey(log: IndexedRpcLog): string {
   return `${log.transactionHash.toLowerCase()}:${log.logIndex ?? fallbackLogIndex(log)}`;
+}
+
+function indexedLogFingerprint(log: IndexedRpcLog): string {
+  return JSON.stringify({
+    address: log.address?.toLowerCase() ?? null,
+    blockHash: log.blockHash?.toLowerCase() ?? null,
+    blockNumber: blockNumberToDecimal(log.blockNumber),
+    data: log.data.toLowerCase(),
+    topics: log.topics.map((topic) => topic.toLowerCase())
+  });
+}
+
+function productionQueueProjectionIdentity(
+  log: IndexedRpcLog
+): { queueKind: "defense" | "ship"; planetId: string } | null {
+  let queueKind: IndexedQueueStartedEvent["queueKind"];
+  let planetId: string | undefined;
+  if (isIndexedQueueStartedLog(log)) {
+    const event = decodeIndexedQueueStartedLog(log);
+    queueKind = event.queueKind;
+    planetId = event.planetId;
+  } else if (isProductionQueueTimingLog(log)) {
+    const event = decodeProductionQueueTimingLog(log);
+    queueKind = event.queueKind;
+    planetId = event.planetId;
+  } else if (isIndexedQueueCompletedLog(log)) {
+    const event = decodeIndexedQueueCompletedLog(log);
+    queueKind = event.queueKind;
+    planetId = event.planetId;
+  } else {
+    return null;
+  }
+  if ((queueKind !== "defense" && queueKind !== "ship") || !planetId) return null;
+  return { queueKind, planetId };
 }
 
 function paidAllianceInviteLogFingerprint(log: IndexedRpcLog): string {

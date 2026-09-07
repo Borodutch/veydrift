@@ -3,6 +3,7 @@ import {
   currentPlanetTransactionInputsAvailable,
   shouldClearCachedShipyardStateForPageRefresh,
   shouldEagerlyRefreshPlanetSwitchForPage,
+  shouldPollPendingMissionReport,
   shouldRefreshPlanetStateForIdentityChange,
   shouldRefreshAllianceStateForPage,
 } from "./PlayableMvpApp";
@@ -68,5 +69,32 @@ describe("currentPlanetTransactionInputsAvailable", () => {
   test("does not turn backend maintenance telemetry into a frontend transaction lock", () => {
     expect(playableMvpAppSource).not.toContain("gameMaintenancePaused");
     expect(playableMvpAppSource).not.toContain("GAME_MAINTENANCE_MESSAGE");
+  });
+});
+
+describe("shouldPollPendingMissionReport", () => {
+  test("never waits for a battle report for a one-way missile impact", () => {
+    const now = Date.parse("2026-09-06T12:00:00.000Z");
+    expect(shouldPollPendingMissionReport({
+      mission: {
+        missionId: "77",
+        missionType: "MissileAttack",
+        status: "Resolved",
+        owner: "0x1111111111111111111111111111111111111111",
+        originPlanetId: "7",
+        targetPlanetId: "9",
+        arrivalAt: String(Math.floor(now / 1_000) - 30),
+        returnAt: String(Math.floor(now / 1_000) - 30),
+        fuelCost: "0",
+        recallCost: "0",
+        attackGroupId: null,
+        joinedAttackMissionIds: [],
+        cargo: { metal: "0", crystal: "0", deuterium: "0" },
+        ships: {},
+        transactionHash: "0xabc",
+        blockNumber: "123",
+      },
+      battleReport: null,
+    }, now)).toBe(false);
   });
 });

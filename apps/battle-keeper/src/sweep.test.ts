@@ -388,6 +388,30 @@ describe("LogBackfillSweep", () => {
     expect(sweep.snapshot().prunedPendingMissions).toBe(1);
   });
 
+  test("status reconciliation reopens a terminal missile whose impact was reorged out", async () => {
+    const keeper = makeKeeper(() => 2_000);
+    keeper.recordLaunched({
+      missionId: "918",
+      missionType: MissionType.MissileAttack,
+      arrivalAt: 900,
+      returnAt: 900
+    });
+    keeper.recordArrivalResolved({ missionId: "918", missionType: MissionType.MissileAttack, returnAt: 0 });
+    expect(keeper.snapshot().pendingCount).toBe(0);
+
+    const transport = new MockTransport([], [fleetMissionResult({
+      status: FleetMissionStatus.Outbound,
+      missionType: MissionType.MissileAttack,
+      arrivalAt: 900n,
+      returnAt: 900n
+    })]);
+    const sweep = new LogBackfillSweep(transport, gameContract, keeper, { logger: silentLogger });
+
+    await sweep.sweep();
+
+    expect(keeper.snapshot().pendingMissionIds).toEqual(["918"]);
+  });
+
   test("canonicalizes a pending ACS joiner to the attack group lead", async () => {
     const keeper = makeKeeper(() => 2_000);
     keeper.recordLaunched({

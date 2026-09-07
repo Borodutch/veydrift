@@ -1,5 +1,13 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
+import { keccak256 } from "viem";
+
+import { receiptActivatesImplementation } from "./veydrift-upgrade-receipt.mjs";
+
+const eip1967ImplementationSlot = "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc";
+const gamePausedSelector = "0xc3de1ab9";
+const launchMissileSelector = "0xa72cd29a";
+const resolveMissionSelector = "0xde09e7cf";
 
 const options = parseArgs(process.argv.slice(2));
 const apiUrl = trimSlash(options["api-url"] ?? "https://api-test.veydrift.com");
@@ -16,8 +24,13 @@ const failures = [];
 const evidence = [];
 let walletHomePlanetId = null;
 
+if (manifest && !rpcUrl) usage("A deployment manifest requires --rpc-url for active implementation checks.");
+if (manifest && manifest.deployment.timedMissileIndexFromBlock !== manifest.deployment.blockNumber) {
+  usage("The timed missile replay boundary must equal the exact upgrade receipt block.");
+}
+
 if (manifest?.contracts.referralSystem) {
-  if (!rpcUrl || !referralSigner || !referralStartPriceWei) {
+  if (!referralSigner || !referralStartPriceWei) {
     usage("Referral manifests require --rpc-url, --referral-signer, and --referral-start-price-wei for config truth checks.");
   }
   if (!/^0x[a-fA-F0-9]{40}$/.test(referralSigner)) usage("--referral-signer must be an EVM address.");
@@ -30,11 +43,32 @@ await checkJson("health", "/health", (body) => {
   if (manifest) {
     expect(body.chain?.chainId === manifest.network.chainId, "health chain id must match manifest");
     expect(body.chain?.indexFromBlock === manifest.deployment.indexFromBlock, "health indexFromBlock must match manifest");
+    expect(
+      body.chain?.timedMissileIndexFromBlock === manifest.deployment.timedMissileIndexFromBlock,
+      "health timedMissileIndexFromBlock must match the exact upgrade boundary"
+    );
     expect(body.chain?.gameContractConfigured === true, "health must report game contract configured");
+    expect(body.chain?.timedMissileStandby === false, "final health must not remain in timed-missile standby");
     expect(body.chain?.resourceTokenAddressesConfigured === true, "health must report resource tokens configured");
     expect(body.chain?.allianceContractConfigured === true, "health must report alliance configured");
     expect(body.chain?.moonContractConfigured === true, "health must report moon configured");
     expect(body.chain?.randomnessEngineConfigured === true, "health must report randomness configured");
+    const replay = body.chainSync?.timedMissilePayloadHistoryBackfill;
+    expect(replay?.fromBlock === manifest.deployment.timedMissileIndexFromBlock, "timed missile replay must start at the manifest boundary");
+    expect(replay?.inProgress === false, "timed missile replay must be complete");
+    expect(replay?.lastError === null, "timed missile replay must be error-free");
+    expect(Boolean(replay?.completedAt), "timed missile replay must report completion evidence");
+    expect(/^\d+$/.test(replay?.throughBlock ?? ""), "timed missile replay must report its through-block");
+    expect(/^\d+$/.test(body.chainSync?.latestSyncedBlock ?? ""), "chain sync must report its latest block");
+    if (/^\d+$/.test(replay?.throughBlock ?? "") && /^\d+$/.test(body.chainSync?.latestSyncedBlock ?? "")) {
+      expect(
+        BigInt(replay.throughBlock) >= BigInt(body.chainSync.latestSyncedBlock),
+        "timed missile replay must cover the latest synchronized block"
+      );
+    }
+    expect(body.backend?.build?.deploymentCommit === manifest.deployment.commit, "backend deployment commit must match manifest");
+    expect(body.backend?.build?.deploymentAbiHash === manifest.deployment.abiHash, "backend deployment ABI hash must match manifest");
+    expect(body.backend?.build?.gitSha === manifest.deployment.commit, "running backend build SHA must match manifest commit");
   }
 });
 
@@ -59,8 +93,59 @@ await checkJson("runtime-config", "/runtime-config", (body) => {
   expect(body.featureSupport?.highscoresEndpoint === true, "runtime featureSupport.highscoresEndpoint must be true");
 });
 
+if (manifest) {
+  await checkGameActivationOnChain();
+}
+
 if (manifest?.contracts.referralSystem) {
   await checkReferralOnChain();
+}
+
+async function checkGameActivationOnChain() {
+  try {
+    const activation = manifest.deployment.activation;
+    const [implementationWord, runtimeCode, pausedWord, receipt] = await Promise.all([
+      rpcRequest("eth_getStorageAt", [manifest.contracts.game, eip1967ImplementationSlot, "latest"]),
+      rpcRequest("eth_getCode", [activation.gameImplementation, "latest"]),
+      ethCall(manifest.contracts.game, gamePausedSelector),
+      rpcRequest("eth_getTransactionReceipt", [activation.transactionHash])
+    ]);
+    const activeImplementation = decodeAddressWord(implementationWord);
+    const runtimeCodeHash = keccak256(runtimeCode);
+    const receiptBlock = receipt?.blockNumber ? BigInt(receipt.blockNumber).toString() : null;
+    const receiptSucceeded = receipt?.status === "0x1";
+    const receiptActivatedExpectedImplementation = receiptActivatesImplementation(
+      receipt,
+      manifest.contracts.game,
+      activation.gameImplementation
+    );
+    const hasTimedMissileSelectors = [launchMissileSelector, resolveMissionSelector]
+      .every((selector) => runtimeCode.toLowerCase().includes(selector.slice(2)));
+    evidence.push({
+      name: "game-active-implementation",
+      gameProxy: manifest.contracts.game,
+      activeImplementation,
+      runtimeCodeHash,
+      upgradeTransactionHash: activation.transactionHash,
+      receiptBlock,
+      receiptSucceeded,
+      receiptActivatedExpectedImplementation,
+      gamePaused: BigInt(pausedWord) !== 0n,
+      hasTimedMissileSelectors
+    });
+    expect(eqAddress(activeImplementation, activation.gameImplementation), "EIP-1967 Game implementation must match manifest");
+    expect(eqHex(runtimeCodeHash, activation.gameImplementationCodeHash), "active Game runtime code hash must match manifest");
+    expect(receiptSucceeded, "Game upgrade transaction receipt must have status 1");
+    expect(receiptBlock === manifest.deployment.blockNumber, "Game upgrade receipt block must match exact manifest boundary");
+    expect(
+      receiptActivatedExpectedImplementation,
+      "Game upgrade receipt must emit Upgraded(expected implementation) from the proxy"
+    );
+    expect(BigInt(pausedWord) === 0n, "Game must remain unpaused after upgrade");
+    expect(hasTimedMissileSelectors, "active Game runtime must contain timed missile launch and resolution selectors");
+  } catch (error) {
+    fail(`active Game implementation check failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 await checkJson("galaxy", "/universe/galaxies/1/systems/1", (body) => {
@@ -237,13 +322,19 @@ async function checkReferralOnChain() {
 }
 
 async function ethCall(to, data) {
+  const result = await rpcRequest("eth_call", [{ to, data }, "latest"]);
+  if (typeof result !== "string") throw new Error("eth_call returned a non-string result");
+  return result;
+}
+
+async function rpcRequest(method, params) {
   const response = await fetch(rpcUrl, {
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_call", params: [{ to, data }, "latest"] }),
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
     headers: { "content-type": "application/json" },
     method: "POST"
   });
   const body = await response.json();
-  if (!response.ok || body.error || typeof body.result !== "string") {
+  if (!response.ok || body.error || !Object.hasOwn(body, "result")) {
     throw new Error(body.error?.message ?? `RPC HTTP ${response.status}`);
   }
   return body.result;

@@ -23,6 +23,11 @@ const backendEnv = {
   VEYDRIFT_CRYSTAL_TOKEN_ADDRESS: manifest.contracts.resourceTokens.crystal,
   VEYDRIFT_DEUTERIUM_TOKEN_ADDRESS: manifest.contracts.resourceTokens.deuterium,
   VEYDRIFT_INDEX_FROM_BLOCK: manifest.deployment.indexFromBlock,
+  VEYDRIFT_TIMED_MISSILE_INDEX_FROM_BLOCK: manifest.deployment.timedMissileIndexFromBlock,
+  VEYDRIFT_TIMED_MISSILE_STANDBY: "false",
+  VEYDRIFT_UPGRADE_TRANSACTION_HASH: manifest.deployment.activation.transactionHash,
+  VEYDRIFT_EXPECTED_GAME_IMPLEMENTATION: manifest.deployment.activation.gameImplementation,
+  VEYDRIFT_EXPECTED_GAME_IMPLEMENTATION_CODE_HASH: manifest.deployment.activation.gameImplementationCodeHash,
   VEYDRIFT_DEPLOYMENT_MANIFEST_SCHEMA: manifest.schema,
   VEYDRIFT_DEPLOYMENT_COMMIT: manifest.deployment.commit,
   VEYDRIFT_DEPLOYMENT_ABI_HASH: manifest.deployment.abiHash,
@@ -65,8 +70,23 @@ function validateManifest(current) {
   if (!current.network?.name) fail("Missing network.name.");
   if (!/^[0-9]+$/.test(current.deployment?.blockNumber ?? "")) fail("Invalid deployment.blockNumber.");
   if (!/^[0-9]+$/.test(current.deployment?.indexFromBlock ?? "")) fail("Invalid deployment.indexFromBlock.");
+  if (!/^[0-9]+$/.test(current.deployment?.timedMissileIndexFromBlock ?? "")) {
+    fail("Invalid deployment.timedMissileIndexFromBlock.");
+  }
+  if (current.deployment.timedMissileIndexFromBlock !== current.deployment.blockNumber) {
+    fail("deployment.timedMissileIndexFromBlock must equal the exact upgrade receipt block.");
+  }
   if (!current.deployment?.commit) fail("Missing deployment.commit.");
   if (!current.deployment?.abiHash) fail("Missing deployment.abiHash.");
+  if (!/^0x[a-fA-F0-9]{64}$/.test(current.deployment?.activation?.transactionHash ?? "")) {
+    fail("Invalid deployment.activation.transactionHash.");
+  }
+  if (!addressPattern.test(current.deployment?.activation?.gameImplementation ?? "")) {
+    fail("Invalid deployment.activation.gameImplementation.");
+  }
+  if (!/^0x[a-fA-F0-9]{64}$/.test(current.deployment?.activation?.gameImplementationCodeHash ?? "")) {
+    fail("Invalid deployment.activation.gameImplementationCodeHash.");
+  }
   for (const [label, address] of Object.entries({
     game: current.contracts?.game,
     settlement: current.contracts?.settlement,

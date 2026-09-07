@@ -17,17 +17,22 @@ export interface ShareCapableNavigator {
   clipboard?: { writeText: (text: string) => Promise<void> };
 }
 
-const SHARE_TITLE = "Veydrift battle report";
+export type ShareReportKind = "battle";
+
+export function shareReportTitle(_kind: ShareReportKind = "battle"): string {
+  return "Veydrift battle report";
+}
 
 export async function shareReportUrl(
   navigatorRef: ShareCapableNavigator | undefined,
   url: string,
+  kind: ShareReportKind = "battle",
 ): Promise<ShareOutcome> {
   if (!url || !navigatorRef) return "error";
 
   if (typeof navigatorRef.share === "function") {
     try {
-      await navigatorRef.share({ title: SHARE_TITLE, url });
+      await navigatorRef.share({ title: shareReportTitle(kind), url });
       return "shared";
     } catch (error) {
       // Dismissing the native share sheet rejects with AbortError — that is a normal cancellation,

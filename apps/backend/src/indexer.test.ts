@@ -5,7 +5,7 @@ import { afterAll, describe, expect, setSystemTime, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { encodeAbiParameters, keccak256, parseAbiParameters, toHex } from "viem";
 import { canonicalContractTables } from "./contractStateSchema";
-import { inviteeProductionBoostActivatedTopic, type Address, type AllianceState, type CanonicalFleetMissionDetails, type CanonicalFleetMissionSnapshot, type CanonicalPlanetChainState, type DebrisFieldEvent, type DefenseState, type InfrastructureState, type MoonChanceReportEvent, type MoonState, type PlayerQueues, type ResearchState, type ShipyardState, type SettledPlanetEvent } from "./evm";
+import { inviteeProductionBoostActivatedTopic, type Address, type AllianceState, type CanonicalFleetMissionDetails, type CanonicalFleetMissionSnapshot, type CanonicalPlanetChainState, type DebrisFieldEvent, type DefenseState, type InfrastructureState, type MoonChanceReportEvent, type MoonState, type PlayerQueues, type ResearchState, type RpcLog, type ShipyardState, type SettledPlanetEvent } from "./evm";
 import { SettlementIndexer } from "./indexer";
 import { deriveBuildingRows, deriveDefenseRows, deriveInfrastructureFields, deriveShipRows } from "./readModels";
 
@@ -72,6 +72,7 @@ const fleetMissionCargoTopic = "0x3daa6311ecdadad6781f70e5d285e7150f9dc165db88d2
 const fleetMissionShipsTopic = "0xf581cbe97357884794500d80286cfbe823fed3b5d77446e477aa694ce89fc82d";
 const fleetMissionLootRatioTopic = "0xa6846d64330aacb1675d30a3535ea36822060fb38252cbb6b358bec4149767ff";
 const fleetMissionBodiesTopic = "0xfa464e2180f08e3e4d8c4247566d0616a5e1ab845d1678c47fedae6d44e9c502";
+const interplanetaryMissileLaunchedTopic = "0x604ad2c11139a5c17dc4ad536be44e0decb1a46637bc3a7497c4e049e9ad3bd2";
 const defenseHoldStationedTopic = "0x1183ab32cc2efce96b8c0956b35dd1b46c594234a5717fd810d8cc569a193a47";
 const defenseHoldEndedTopic = "0xf72983c656a87e172935581e9c19f22826c62a2c4d552c6dd217c498a9d88586";
 const fleetMissionRecalledTopic = "0x2c9b31f1abc732f3b6d28e7724439ea4713ae516632088b8c4dc0211479dc6ca";
@@ -280,11 +281,28 @@ describe("SettlementIndexer", () => {
       ["3", 2, "Colonize"],
       ["4", 3, "Attack"],
       ["5", 4, "Harvest"],
-      ["6", 9, "DefenseHold"]
+      ["6", 9, "DefenseHold"],
+      ["11", 7, "MissileAttack"]
     ] as const;
     for (const [missionId, missionTypeId] of arrivalTypes) {
       insert.run(missionId, 1, missionTypeId, player, "900", "900", missionTypeId === 3 ? "44" : null);
     }
+    database.query(`UPDATE contract_fleet_missions SET event_json = ? WHERE mission_id = '6'`).run(
+      JSON.stringify({
+        missionId: "6",
+        transactionHash: "0x",
+        blockNumber: "100",
+        launchBlockNumber: "100",
+        returnCargo: null,
+        ships: {},
+        attackGroupId: null,
+        joinedAttackMissionIds: [],
+        counterplayDefenderMissionIds: [],
+        defendsMissionId: null,
+        needsResolution: true,
+        defenseHoldUntil: "950"
+      })
+    );
     insert.run("7", 2, 0, player, "800", "900", null);
     insert.run("8", 5, 3, player, "800", "850", null);
     insert.run("9", 1, 5, player, "900", "900", null); // AcsDefend is not permissionlessly resolved here.
@@ -292,13 +310,24 @@ describe("SettlementIndexer", () => {
 
     const candidates = indexer.missionResolutionCandidates(1_000);
 
-    expect(candidates.arrivals.map((mission) => mission.missionType)).toEqual(
-      arrivalTypes.map(([, , missionType]) => missionType)
+    expect(candidates.arrivals.map((mission) => mission.missionType)).toEqual([
+      "Transport",
+      "Deploy",
+      "Colonize",
+      "Attack",
+      "Harvest",
+      "MissileAttack",
+      "DefenseHold"
+    ]);
+    expect(candidates.arrivals.find((mission) => mission.missionId === "6")).toEqual(
+      expect.objectContaining({ missionType: "DefenseHold", arrivalAt: "950" })
     );
     expect(candidates.returns).toEqual([
       expect.objectContaining({ missionId: "8", missionType: "Attack", returnAt: "850" }),
       expect.objectContaining({ missionId: "7", missionType: "Transport", returnAt: "900" })
     ]);
+    const bounded = indexer.missionResolutionCandidates(1_000, 2);
+    expect(bounded.arrivals.length + bounded.returns.length).toBeLessThanOrEqual(2);
     database.close();
   });
 
@@ -318,6 +347,83 @@ describe("SettlementIndexer", () => {
     `).run(player);
 
     expect(indexer.missionResolutionCandidates(1_000)).toEqual({ arrivals: [], returns: [] });
+    database.close();
+  });
+
+  test("pending-randomness attacks cannot starve a later missile and return", () => {
+    const database = new Database(":memory:");
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n, { database, randomnessEngineConfigured: true });
+    const insert = database.query(`
+      INSERT INTO contract_fleet_missions (
+        mission_id, status_id, mission_type_id, owner, origin_planet_id, target_planet_id,
+        departure_at, arrival_at, return_at, fuel_cost,
+        metal_cargo, crystal_cargo, deuterium_cargo, ships_json, randomness_request_id, event_json
+      ) VALUES (?, ?, ?, ?, '85', '86', '1', ?, ?, '0', '0', '0', '0', '{}', ?, NULL)
+    `);
+    database.transaction(() => {
+      for (let index = 1; index <= 501; index += 1) {
+        insert.run(String(index), 1, 3, player, String(index), "1200", String(index));
+      }
+      insert.run("1000", 1, 7, player, "900", "900", null);
+      insert.run("1001", 2, 0, player, "800", "950", null);
+    })();
+
+    const candidates = indexer.missionResolutionCandidates(1_000, 2);
+    expect(candidates.arrivals).toEqual([
+      expect.objectContaining({ missionId: "1000", missionType: "MissileAttack" })
+    ]);
+    expect(candidates.returns).toEqual([
+      expect.objectContaining({ missionId: "1001", missionType: "Transport" })
+    ]);
+    database.close();
+  });
+
+  test("unsupported arrivals and active DefenseHolds cannot consume the SQL candidate limit", () => {
+    const database = new Database(":memory:");
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n, { database });
+    const insert = database.query(`
+      INSERT INTO contract_fleet_missions (
+        mission_id, status_id, mission_type_id, owner, origin_planet_id, target_planet_id,
+        departure_at, arrival_at, return_at, fuel_cost,
+        metal_cargo, crystal_cargo, deuterium_cargo, ships_json,
+        randomness_request_id, event_json
+      ) VALUES (?, ?, ?, ?, '85', '86', '1', ?, ?, '0', '0', '0', '0', '{}', NULL, ?)
+    `);
+    database.transaction(() => {
+      for (let index = 1; index <= 501; index += 1) {
+        const unsupportedType = [5, 6, 8][index % 3]!;
+        insert.run(String(index), 1, unsupportedType, player, String(index), "0", null);
+      }
+      for (let index = 502; index <= 1_002; index += 1) {
+        insert.run(
+          String(index),
+          1,
+          9,
+          player,
+          "2",
+          "5000",
+          JSON.stringify({ defenseHoldUntil: "5000" })
+        );
+      }
+      insert.run("2000", 1, 7, player, "900", "900", null);
+      insert.run("2001", 2, 0, player, "800", "950", null);
+    })();
+
+    const candidates = indexer.missionResolutionCandidates(1_000, 2);
+    expect(candidates.arrivals).toEqual([
+      expect.objectContaining({ missionId: "2000", missionType: "MissileAttack" })
+    ]);
+    expect(candidates.returns).toEqual([
+      expect.objectContaining({ missionId: "2001", missionType: "Transport" })
+    ]);
     database.close();
   });
 
@@ -2343,6 +2449,195 @@ describe("SettlementIndexer", () => {
       originPlanet: { planetId: "7" },
       targetPlanet: { planetId: "8" },
     }]);
+
+    const impactLog = {
+      blockNumber: "0x90",
+      transactionHash: "0xlegacy-ipm",
+      logIndex: "0x0",
+      topics: [interplanetaryMissileAttackTopic, addressTopic(player), topic(7n), topic(8n)],
+      data: abiWords(1n, 3n, 1n, 2n, 2n)
+    };
+    indexer.applyLog({ ...impactLog, removed: true });
+    expect(indexer.missileAttackArchivePage(player, { page: 1, pageSize: 25 }).rows).toEqual([]);
+    expect(indexer.defenseRows("7").find((defense) => defense.id === 9)?.count).toBe(3);
+    expect(indexer.defenseRows("8").find((defense) => defense.id === 8)?.count).toBe(1);
+    expect(indexer.defenseRows("8").find((defense) => defense.id === 1)?.count).toBe(5);
+    indexer.applyLog(impactLog);
+    expect(indexer.missileAttackArchivePage(player, { page: 1, pageSize: 25 }).rows).toHaveLength(1);
+    expect(indexer.defenseRows("7").find((defense) => defense.id === 9)?.count).toBe(0);
+    expect(indexer.defenseRows("8").find((defense) => defense.id === 8)?.count).toBe(0);
+    expect(indexer.defenseRows("8").find((defense) => defense.id === 1)?.count).toBe(3);
+  });
+
+  test("timed missile impact remains exact across remove and reinclude", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    indexer.applyEvent({ ...planet, planetId: "8" });
+    indexer.applyLog({
+      blockNumber: "0x83",
+      transactionHash: "0xorigin-build",
+      logIndex: "0x0",
+      topics: [defenseCompletedTopic, topic(7n), topic(9n)],
+      data: abiWords(3n, 3n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x83",
+      transactionHash: "0xtarget-abm-build",
+      logIndex: "0x1",
+      topics: [defenseCompletedTopic, topic(8n), topic(8n)],
+      data: abiWords(2n, 2n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x83",
+      transactionHash: "0xtarget-laser-build",
+      logIndex: "0x2",
+      topics: [defenseCompletedTopic, topic(8n), topic(1n)],
+      data: abiWords(5n, 5n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xtimed-launch",
+      logIndex: "0x0",
+      topics: [planetDefenseCountChangedTopic, topic(7n), topic(9n)],
+      data: abiWords(0n)
+    });
+    const impactLogs = [
+      {
+        blockNumber: "0x91",
+        transactionHash: "0xtimed-impact",
+        logIndex: "0x0",
+        topics: [planetDefenseCountChangedTopic, topic(8n), topic(8n)],
+        data: abiWords(0n)
+      },
+      {
+        blockNumber: "0x91",
+        transactionHash: "0xtimed-impact",
+        logIndex: "0x1",
+        topics: [planetDefenseCountChangedTopic, topic(8n), topic(1n)],
+        data: abiWords(3n)
+      },
+      {
+        blockNumber: "0x91",
+        transactionHash: "0xtimed-impact",
+        logIndex: "0x2",
+        topics: [planetDefenseCountChangedTopic, topic(7n), topic(9n)],
+        data: abiWords(0n)
+      },
+      {
+        blockNumber: "0x91",
+        transactionHash: "0xtimed-impact",
+        logIndex: "0x3",
+        topics: [interplanetaryMissileAttackTopic, addressTopic(player), topic(7n), topic(8n)],
+        data: abiWords(1n, 3n, 2n, 1n, 2n)
+      }
+    ];
+    for (const log of impactLogs) indexer.applyLog(log);
+
+    expect(indexer.defenseRows("7").find((defense) => defense.id === 9)?.count).toBe(0);
+    expect(indexer.defenseRows("8").find((defense) => defense.id === 8)?.count).toBe(0);
+    expect(indexer.defenseRows("8").find((defense) => defense.id === 1)?.count).toBe(3);
+
+    for (const log of impactLogs) indexer.applyLog({ ...log, removed: true });
+    expect(indexer.defenseRows("7").find((defense) => defense.id === 9)?.count).toBe(0);
+    expect(indexer.defenseRows("8").find((defense) => defense.id === 8)?.count).toBe(2);
+    expect(indexer.defenseRows("8").find((defense) => defense.id === 1)?.count).toBe(5);
+    for (const log of impactLogs) indexer.applyLog(log);
+
+    expect(indexer.defenseRows("7").find((defense) => defense.id === 9)?.count).toBe(0);
+    expect(indexer.defenseRows("8").find((defense) => defense.id === 8)?.count).toBe(0);
+    expect(indexer.defenseRows("8").find((defense) => defense.id === 1)?.count).toBe(3);
+  });
+
+  test("writer startup purges stale missile archive rows whose impact log was removed", () => {
+    const database = new Database(":memory:");
+    const reader = {
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    };
+    const indexer = new SettlementIndexer(reader, 100n, { database });
+    indexer.applyEvent(planet);
+    const impactLog = {
+      blockNumber: "0x90",
+      transactionHash: "0xstale-missile-impact",
+      logIndex: "0x0",
+      topics: [interplanetaryMissileAttackTopic, addressTopic(player), topic(7n), topic(8n)],
+      data: abiWords(1n, 1n, 0n, 1n, 0n)
+    };
+    indexer.applyLog(impactLog);
+    database.query("UPDATE indexed_event_logs SET removed = 1").run();
+    expect(indexer.missileAttackArchivePage(player, { page: 1, pageSize: 25 }).rows).toHaveLength(1);
+
+    const restarted = new SettlementIndexer(reader, 100n, {
+      database,
+      runStartupBackfill: false
+    });
+    expect(restarted.missileAttackArchivePage(player, { page: 1, pageSize: 25 }).rows).toEqual([]);
+    database.close();
+  });
+
+  test("writer startup rolls back stale missile unit projections and legacy mutation markers", () => {
+    const database = new Database(":memory:");
+    const reader = {
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    };
+    const indexer = new SettlementIndexer(reader, 100n, { database });
+    indexer.applyEvent(planet);
+    indexer.applyEvent({ ...planet, planetId: "8" });
+    for (const log of [
+      {
+        blockNumber: "0x83",
+        transactionHash: "0xstartup-origin-ipm",
+        logIndex: "0x0",
+        topics: [defenseCompletedTopic, topic(7n), topic(9n)],
+        data: abiWords(3n, 3n)
+      },
+      {
+        blockNumber: "0x83",
+        transactionHash: "0xstartup-target-abm",
+        logIndex: "0x1",
+        topics: [defenseCompletedTopic, topic(8n), topic(8n)],
+        data: abiWords(1n, 1n)
+      },
+      {
+        blockNumber: "0x83",
+        transactionHash: "0xstartup-target-laser",
+        logIndex: "0x2",
+        topics: [defenseCompletedTopic, topic(8n), topic(1n)],
+        data: abiWords(5n, 5n)
+      }
+    ]) indexer.applyLog(log);
+    const impactLog = {
+      blockNumber: "0x90",
+      transactionHash: "0xstartup-legacy-ipm",
+      logIndex: "0x0",
+      topics: [interplanetaryMissileAttackTopic, addressTopic(player), topic(7n), topic(8n)],
+      data: abiWords(1n, 3n, 1n, 2n, 2n)
+    };
+    indexer.applyLog(impactLog);
+    database.query("UPDATE indexed_event_logs SET removed = 1 WHERE transaction_hash = ?").run(impactLog.transactionHash);
+
+    expect(indexer.defenseRows("7").find((defense) => defense.id === 9)?.count).toBe(0);
+    expect(indexer.defenseRows("8").find((defense) => defense.id === 8)?.count).toBe(0);
+    expect(indexer.defenseRows("8").find((defense) => defense.id === 1)?.count).toBe(3);
+
+    const restarted = new SettlementIndexer(reader, 100n, {
+      database,
+      runStartupBackfill: false
+    });
+    expect(restarted.defenseRows("7").find((defense) => defense.id === 9)?.count).toBe(3);
+    expect(restarted.defenseRows("8").find((defense) => defense.id === 8)?.count).toBe(1);
+    expect(restarted.defenseRows("8").find((defense) => defense.id === 1)?.count).toBe(5);
+    expect(database.query(
+      "SELECT * FROM indexed_legacy_unit_mutations WHERE mutation_key = ?"
+    ).all(`legacy:ipm:${impactLog.transactionHash}`)).toEqual([]);
+    database.close();
   });
 
   test("legacy combat losses apply when the defender loss vector has one exact unit solution", () => {
@@ -4326,6 +4621,63 @@ describe("SettlementIndexer", () => {
     });
   });
 
+  test("canonically restores ship, defense, and research effects removed with a missile impact", async () => {
+    const canonicalPlanet: CanonicalPlanetChainState = {
+      planetId: planet.planetId,
+      resources: planet.resources,
+      buildings: [],
+      defenses: [{ id: 1, count: 3, cost: { metal: "0", crystal: "0", deuterium: "0" } }],
+      ships: [{ id: 3, count: 2, cost: { metal: "0", crystal: "0", deuterium: "0" } }],
+      queues: { building: null, defense: null, ship: null },
+    };
+    const canonicalResearch = {
+      wallet: player,
+      technologies: [{ id: 4, level: 1, cost: { metal: "0", crystal: "0", deuterium: "0" } }],
+      queue: null,
+    } as ResearchState;
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; },
+      async getCanonicalPlanetState() { return canonicalPlanet; },
+      async getResearchState() { return canonicalResearch; },
+    }, 100n);
+    indexer.applyEvent(planet);
+    const completions: RpcLog[] = [
+      {
+        blockNumber: "0x85",
+        transactionHash: "0xmissile-ship-completion",
+        logIndex: "0x0",
+        topics: [shipCompletedTopic, topic(7n), topic(3n)],
+        data: abiWords(5n, 7n),
+      },
+      {
+        blockNumber: "0x85",
+        transactionHash: "0xmissile-defense-completion",
+        logIndex: "0x1",
+        topics: [defenseCompletedTopic, topic(7n), topic(1n)],
+        data: abiWords(2n, 5n),
+      },
+      {
+        blockNumber: "0x85",
+        transactionHash: "0xmissile-research-completion",
+        logIndex: "0x2",
+        topics: [researchCompletedTopic, addressTopic(player), topic(4n)],
+        data: abiWords(4n),
+      },
+    ];
+    for (const log of completions) indexer.applyLog(log);
+    expect(indexer.shipRows("7").find((ship) => ship.id === 3)?.count).toBe(7);
+    expect(indexer.defenseRows("7").find((defense) => defense.id === 1)?.count).toBe(5);
+    expect(indexer.technologyLevels(player)["4"]).toBe(4);
+
+    await indexer.reconcileTimedMissileCompletionState(completions);
+
+    expect(indexer.shipRows("7").find((ship) => ship.id === 3)?.count).toBe(2);
+    expect(indexer.defenseRows("7").find((defense) => defense.id === 1)?.count).toBe(3);
+    expect(indexer.technologyLevels(player)["4"]).toBe(1);
+  });
+
   test("candidate current-state heals preserve only the same research queue start", async () => {
     const database = new Database(":memory:");
     let canonicalReadyAt = "1787758249";
@@ -6087,6 +6439,163 @@ describe("SettlementIndexer", () => {
       readyAt: "1770002600",
       backlog: [{ itemId: 12, quantity: 3, readyAt: "1770003200" }]
     });
+  });
+
+  test("repairs a defense queue after an older writer persisted an orphaned completion", () => {
+    const database = new Database(":memory:");
+    const reader = {
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    };
+    const indexer = new SettlementIndexer(reader, 100n, { database, runStartupBackfill: false });
+    indexer.applyEvent(planet);
+    const active = {
+      blockNumber: "0xa0",
+      transactionHash: "0xdefense-active-before-missile",
+      logIndex: "0x0",
+      topics: [defenseQueuedTopic, topic(7n), topic(1n)],
+      data: abiWords(2n, 1770001000n, 100n, 50n, 0n)
+    };
+    const backlog = {
+      blockNumber: "0xa1",
+      transactionHash: "0xdefense-backlog-before-missile",
+      logIndex: "0x0",
+      topics: [defenseQueuedTopic, topic(7n), topic(0n)],
+      data: abiWords(3n, 1770001600n, 200n, 0n, 0n)
+    };
+    const orphanedCompletion = {
+      blockNumber: "0xa2",
+      transactionHash: "0xorphaned-missile-defense-completion",
+      logIndex: "0x0",
+      topics: [defenseCompletedTopic, topic(7n), topic(1n)],
+      data: abiWords(2n, 2n)
+    };
+    for (const log of [active, backlog, orphanedCompletion]) indexer.applyLog(log);
+    expect(indexer.playerQueues(player, planet.planetId).defense).toMatchObject({
+      itemId: 0,
+      quantity: 3
+    });
+
+    database.query(`
+      UPDATE indexed_event_logs
+      SET removed = 1
+      WHERE transaction_hash = lower(?) AND log_index = ?
+    `).run(orphanedCompletion.transactionHash, orphanedCompletion.logIndex);
+    expect(database.query(
+      "SELECT value FROM indexer_metadata WHERE key = 'productionQueueProjectionBackfillV1'"
+    ).get()).not.toBeNull();
+
+    const restarted = new SettlementIndexer(reader, 100n, { database, runStartupBackfill: false });
+
+    expect(restarted.playerQueues(player, planet.planetId).defense).toMatchObject({
+      itemId: 1,
+      quantity: 2,
+      backlog: [{ itemId: 0, quantity: 3, readyAt: "1770001600" }]
+    });
+    database.close();
+  });
+
+  test("startup queue repair preserves a newer canonical queue snapshot outside retained logs", () => {
+    const database = new Database(":memory:");
+    const reader = {
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    };
+    const indexer = new SettlementIndexer(reader, 100n, { database, runStartupBackfill: false });
+    indexer.applyEvent(planet);
+    const orphanedCompletion = {
+      blockNumber: "0xa2",
+      transactionHash: "0xhistorical-orphaned-completion",
+      logIndex: "0x0",
+      topics: [defenseCompletedTopic, topic(7n), topic(1n)],
+      data: abiWords(2n, 2n)
+    };
+    indexer.applyLog(orphanedCompletion);
+    const canonicalQueueSeed = {
+      blockNumber: "0xa3",
+      transactionHash: "0xcanonical-queue-seed",
+      logIndex: "0x0",
+      topics: [defenseQueuedTopic, topic(7n), topic(6n)],
+      data: abiWords(4n, 1770005000n, 400n, 200n, 0n)
+    };
+    indexer.applyLog(canonicalQueueSeed);
+    const canonicalEvent = JSON.stringify({
+      eventName: "DefenseQueued",
+      transactionHash: "0x",
+      queueKind: "defense",
+      planetId: "7",
+      itemId: 6,
+      quantity: 4,
+      readyAt: "1770005000",
+      cost: { metal: "400", crystal: "200", deuterium: "0" },
+      canonicalSnapshot: true,
+      blockNumber: "200"
+    });
+    database.query(`
+      UPDATE indexed_planet_queues
+      SET item_id = 6, quantity = 4, ready_at = '1770005000', event_json = ?
+      WHERE queue_key = 'defense:7'
+    `).run(canonicalEvent);
+    database.query(`
+      UPDATE contract_production_queues
+      SET item_id = 6, quantity = 4, ready_at = '1770005000'
+      WHERE queue_key = 'defense:7'
+    `).run();
+    database.query(`
+      DELETE FROM indexed_event_logs
+      WHERE transaction_hash = lower(?) AND log_index = ?
+    `).run(canonicalQueueSeed.transactionHash, canonicalQueueSeed.logIndex);
+    database.query(`
+      UPDATE indexed_event_logs
+      SET removed = 1
+      WHERE transaction_hash = lower(?) AND log_index = ?
+    `).run(orphanedCompletion.transactionHash, orphanedCompletion.logIndex);
+
+    const restarted = new SettlementIndexer(reader, 100n, { database, runStartupBackfill: false });
+
+    expect(restarted.playerQueues(player, planet.planetId).defense).toMatchObject({
+      itemId: 6,
+      quantity: 4,
+      readyAt: "1770005000"
+    });
+    database.close();
+  });
+
+  test("startup unit rollback preserves a canonical heal when retained history has no baseline", () => {
+    const database = new Database(":memory:");
+    const reader = {
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    };
+    const indexer = new SettlementIndexer(reader, 100n, { database, runStartupBackfill: false });
+    indexer.applyEvent(planet);
+    const orphanedCount = {
+      blockNumber: "0xa2",
+      transactionHash: "0xorphaned-defense-count",
+      logIndex: "0x0",
+      topics: [planetDefenseCountChangedTopic, topic(7n), topic(1n)],
+      data: abiWords(3n)
+    };
+    indexer.applyLog(orphanedCount);
+    database.query("UPDATE indexed_defense_counts SET count = 9 WHERE planet_id = '7' AND defense_id = 1").run();
+    database.query("UPDATE contract_defense_counts SET count = 9 WHERE planet_id = '7' AND defense_id = 1").run();
+    database.query(`
+      UPDATE indexed_event_logs
+      SET removed = 1
+      WHERE transaction_hash = lower(?) AND log_index = ?
+    `).run(orphanedCount.transactionHash, orphanedCount.logIndex);
+
+    const restarted = new SettlementIndexer(reader, 100n, { database, runStartupBackfill: false });
+
+    expect(restarted.defenseRows("7").find((defense) => defense.id === 1)?.count).toBe(9);
+    expect(restarted.snapshot()).toMatchObject({
+      safeToServeIndexedState: false,
+      pendingReconciliationReason: "unit_count_projection_reconciliation_required:planet:defense:7:1"
+    });
+    database.close();
   });
 
   test("indexes rift deposits and withdrawal lifecycle", () => {
@@ -7984,6 +8493,194 @@ describe("SettlementIndexer", () => {
     });
     expect(visibility.incoming).toEqual([]);
     expect(visibility.joinableAttacks).toEqual([]);
+  });
+
+  test("indexes a timed missile flight for both owners with its immutable payload", () => {
+    const attacker = "0x3333333333333333333333333333333333333333" as Address;
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    indexer.applyEvent({ ...planet, planetId: "99", owner: attacker, system: 34, name: "Missile base" });
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xmissile",
+      logIndex: "0x0",
+      topics: [fleetMissionLaunchedTopic, topic(51n), addressTopic(attacker), topic(7n)],
+      data: abiWords(99n, 7n, 1770001200n, 1770001200n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xmissile",
+      logIndex: "0x1",
+      topics: [fleetMissionCargoTopic, topic(51n)],
+      data: abiWords(0n, 0n, 0n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xmissile",
+      logIndex: "0x2",
+      topics: [fleetMissionShipsTopic, topic(51n)],
+      data: abiWords(0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n)
+    });
+    const payloadLog = {
+      blockNumber: "0x90",
+      transactionHash: "0xmissile",
+      logIndex: "0x3",
+      topics: [interplanetaryMissileLaunchedTopic, topic(51n)],
+      data: abiWords(4n, 3n)
+    };
+    indexer.applyLog(payloadLog);
+
+    expect(indexer.fleetMissionVisibility(attacker).outgoing).toContainEqual(expect.objectContaining({
+      missionId: "51",
+      missionType: "MissileAttack",
+      missilePrimaryTargetId: 4,
+      missileQuantity: 3,
+      originPlanetId: "99",
+      targetPlanetId: "7"
+    }));
+    expect(indexer.fleetSlots(attacker)).toEqual({ active: 0, limit: 1 });
+    expect(indexer.pendingFleetSlotSettlementMissionsForWallet(attacker, 1_800_000_000)).toEqual([]);
+    expect(indexer.fleetMissionVisibility(player).incoming).toContainEqual(expect.objectContaining({
+      missionId: "51",
+      missionType: "MissileAttack",
+      missilePrimaryTargetId: 4,
+      missileQuantity: 3
+    }));
+
+    indexer.applyLog({ ...payloadLog, removed: true });
+    expect(indexer.fleetMission("51")).not.toHaveProperty("missilePrimaryTargetId");
+    expect(indexer.fleetMission("51")).not.toHaveProperty("missileQuantity");
+
+    indexer.applyLog(payloadLog);
+    expect(indexer.fleetMission("51")).toMatchObject({
+      missilePrimaryTargetId: 4,
+      missileQuantity: 3
+    });
+  });
+
+  test("repairs a raw-only timed missile payload on production-writer startup", () => {
+    const database = new Database(":memory:");
+    const reader = {
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    };
+    const indexer = new SettlementIndexer(reader, 100n, { database, runStartupBackfill: false });
+    const attacker = "0x3333333333333333333333333333333333333333" as Address;
+    const tx = "0xmissile-old-writer";
+    for (const log of [
+      {
+        blockNumber: "0x90", transactionHash: tx, logIndex: "0x0",
+        topics: [fleetMissionLaunchedTopic, topic(53n), addressTopic(attacker), topic(7n)],
+        data: abiWords(99n, 7n, 1770001200n, 1770001200n, 0n)
+      },
+      {
+        blockNumber: "0x90", transactionHash: tx, logIndex: "0x1",
+        topics: [fleetMissionCargoTopic, topic(53n)], data: abiWords(0n, 0n, 0n, 0n)
+      },
+      {
+        blockNumber: "0x90", transactionHash: tx, logIndex: "0x2",
+        topics: [fleetMissionShipsTopic, topic(53n)],
+        data: abiWords(0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n)
+      }
+    ]) indexer.applyLog(log);
+    const payloadLog = {
+      blockNumber: "0x90", transactionHash: tx, logIndex: "0x3",
+      topics: [interplanetaryMissileLaunchedTopic, topic(53n)], data: abiWords(5n, 4n)
+    };
+    database.query(`
+      INSERT INTO indexed_event_logs
+        (event_id, transaction_hash, log_index, block_number, removed, event_json, received_at)
+      VALUES (?, ?, ?, ?, 0, ?, ?)
+    `).run(`${tx}:0x3`, tx, "0x3", "144", JSON.stringify(payloadLog), new Date().toISOString());
+    expect(indexer.fleetMission("53")).not.toHaveProperty("missileQuantity");
+
+    const restarted = new SettlementIndexer(reader, 100n, { database, runStartupBackfill: false });
+
+    expect(database.query(`
+      SELECT event_kind FROM indexed_mission_event_logs WHERE event_id = ?
+    `).get(`${tx}:0x3`)).toEqual({ event_kind: "fleet" });
+    expect(restarted.fleetMission("53")).toMatchObject({
+      missilePrimaryTargetId: 5,
+      missileQuantity: 4
+    });
+    database.close();
+  });
+
+  test("recreates a timed missile after its complete launch transaction is removed and re-included", () => {
+    const attacker = "0x3333333333333333333333333333333333333333" as Address;
+    const database = new Database(":memory:");
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n, { database });
+    indexer.applyEvent(planet);
+    indexer.applyEvent({ ...planet, planetId: "99", owner: attacker, system: 34 });
+    const launchLogs = [
+      {
+        blockNumber: "0x90",
+        transactionHash: "0xmissile-reorg",
+        logIndex: "0x0",
+        topics: [fleetMissionLaunchedTopic, topic(52n), addressTopic(attacker), topic(7n)],
+        data: abiWords(99n, 7n, 1770001200n, 1770001200n, 0n)
+      },
+      {
+        blockNumber: "0x90",
+        transactionHash: "0xmissile-reorg",
+        logIndex: "0x1",
+        topics: [fleetMissionCargoTopic, topic(52n)],
+        data: abiWords(0n, 0n, 0n, 0n)
+      },
+      {
+        blockNumber: "0x90",
+        transactionHash: "0xmissile-reorg",
+        logIndex: "0x2",
+        topics: [fleetMissionShipsTopic, topic(52n)],
+        data: abiWords(0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n)
+      },
+      {
+        blockNumber: "0x90",
+        transactionHash: "0xmissile-reorg",
+        logIndex: "0x3",
+        topics: [interplanetaryMissileLaunchedTopic, topic(52n)],
+        data: abiWords(4n, 3n)
+      }
+    ];
+
+    for (const log of launchLogs) indexer.applyLog(log);
+    expect(indexer.fleetMission("52")).toMatchObject({
+      missionType: "MissileAttack",
+      missilePrimaryTargetId: 4,
+      missileQuantity: 3
+    });
+
+    for (const log of launchLogs) indexer.applyLog({ ...log, removed: true });
+    expect(database.query("SELECT * FROM indexed_mission_event_logs").all()).toEqual([]);
+    expect(database.query(
+      "SELECT mission_id, event_json FROM contract_fleet_missions WHERE mission_id = '52'"
+    ).all()).toEqual([]);
+    expect(indexer.fleetMission("52")).toBeNull();
+
+    for (const log of launchLogs) indexer.applyLog(log);
+    expect(indexer.fleetMission("52")).toMatchObject({
+      status: "Outbound",
+      missionType: "MissileAttack",
+      owner: attacker,
+      originPlanetId: "99",
+      targetPlanetId: "7",
+      missilePrimaryTargetId: 4,
+      missileQuantity: 3
+    });
+    expect(indexer.fleetMissionVisibility(attacker).outgoing).toContainEqual(expect.objectContaining({
+      missionId: "52",
+      missionType: "MissileAttack"
+    }));
+    database.close();
   });
 
   test("serves joinable attack participants with owner tech and exact interleaved lane groups", () => {

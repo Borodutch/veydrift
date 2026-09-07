@@ -122,7 +122,8 @@ export function galaxyActionsForSlot({
   shipyardState: ChainShipyardState | null;
   attackProtection?: GalaxyAttackProtectionStatus | null | undefined;
 }): GalaxyAction[] {
-  const commonBlocker = baseActionBlocker(account, homePlanetId, shipyardState);
+  const originBlocker = originActionBlocker(account, homePlanetId);
+  const commonBlocker = originBlocker ?? fleetActionBlocker(shipyardState);
   const owner = planet?.occupiedBy?.owner?.toLowerCase() ?? planet?.ownerId?.toLowerCase() ?? null;
   const accountLower = account?.toLowerCase();
   const isOwnTarget = Boolean(owner && accountLower && owner === accountLower);
@@ -217,7 +218,11 @@ export function galaxyActionsForSlot({
   }
 
   const attackBlocker = commonBlocker ?? attackProtectionBlocker(attackProtection) ?? firstAvailableFleetShipBlocker(shipyardState);
-  const missileBlocker = commonBlocker ?? interplanetaryMissileBlocker(defenseState);
+  // IPMs are one-way ordnance and consume no fleet slot. Their availability depends on wallet,
+  // origin, and defense readiness only; an unrelated fleet-settlement backlog must not disable them.
+  const missileBlocker = originBlocker
+    ?? missileAttackProtectionBlocker(attackProtection)
+    ?? interplanetaryMissileBlocker(defenseState);
 
   return [
     ...(isAllyTarget ? [defenseHoldAction(commonBlocker, shipyardState)] : []),
@@ -376,13 +381,18 @@ function enabledOrDisabled<T extends Extract<GalaxyAction, { enabled: true }>>({
   };
 }
 
-function baseActionBlocker(
+function originActionBlocker(
   account: string | undefined,
-  homePlanetId: string | null | undefined,
-  shipyardState: ChainShipyardState | null
+  homePlanetId: string | null | undefined
 ): string | undefined {
   if (!account) return "Connect a wallet to launch contract missions.";
   if (!homePlanetId) return "No home planet is loaded for this wallet.";
+  return undefined;
+}
+
+function fleetActionBlocker(
+  shipyardState: ChainShipyardState | null
+): string | undefined {
   if (!shipyardState) return "Shipyard state is still loading.";
   if (shipyardState.productionAvailable === false) {
     return shipyardState.unavailableReason ?? "Fleet actions are unavailable on this deployment.";
@@ -439,6 +449,11 @@ function attackProtectionBlocker(status: GalaxyAttackProtectionStatus | null | u
   if (status.blockedReason === "score_protection") return "Attack blocked by newbie or score-ratio protection.";
   if (status.blockedReason === "same_alliance") return "Attack blocked: target belongs to your alliance.";
   return "Attack blocked.";
+}
+
+function missileAttackProtectionBlocker(status: GalaxyAttackProtectionStatus | null | undefined): string | undefined {
+  if (status?.blockedReason === "bashing_limit") return undefined;
+  return attackProtectionBlocker(status);
 }
 
 function firstAvailableCargoShip(shipyardState: ChainShipyardState | null): MissionShipKey | undefined {

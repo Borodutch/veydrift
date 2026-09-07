@@ -7,6 +7,7 @@ import {
   isMoonResourcesChangedLog,
   isMoonResourcesSettledLog,
   isPlanetSettledLog,
+  isIndexedQueueCompletedLog,
   isSettledPlanetLog
 } from "./evm";
 import type { RpcLog } from "./evm";
@@ -26,6 +27,7 @@ type LogBackfiller = {
   listContractLogs(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
   listReferralLogs?(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
   listPaidAllianceInviteLogs?(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
+  listTimedMissileLifecycleLogs?(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
   rpcMetrics?(): unknown;
 };
 
@@ -48,13 +50,21 @@ type ChainSyncIndexer = Partial<Pick<SettlementIndexer,
   | "recordPaidAllianceInviteHistoryBackfill"
   | "paidAllianceInviteHistoryBackfillStatus"
   | "reconcilePaidAllianceInviteHistory"
+  | "recordTimedMissilePayloadHistoryBackfill"
+  | "timedMissilePayloadHistoryBackfillStatus"
+  | "missingCanonicalTimedMissileLifecycleLogs"
+  | "removedTimedMissileCompletionLogs"
+  | "reconcileTimedMissileCompletionState"
   | "snapshot"
   | "invalidateResourceProjectionWatermark"
+  | "missingCanonicalGameLogs"
   | "recordResourceProjectionWatermark"
 >>;
 
 const PAID_ALLIANCE_REORG_OVERLAP_BLOCKS = 64n;
 const PAID_ALLIANCE_REORG_CHECK_INTERVAL_BLOCKS = 16n;
+const TIMED_MISSILE_PAYLOAD_REPLAY_BLOCKS = 64n;
+const TIMED_MISSILE_PAYLOAD_REPLAY_INTERVAL_BLOCKS = 16n;
 // Re-read the latest complete generic range on every HTTP poll. A websocket callback can contain only
 // some logs from a block; txHash:logIndex dedupe makes this bounded replay cheap and idempotent while
 // ensuring a sibling omitted from that callback is still collected by HTTP even when head has not moved.
@@ -129,6 +139,7 @@ export type ChainSyncSnapshot = {
   pollingEnabled: boolean;
   referralHistoryBackfill: ReferralHistoryBackfillSnapshot;
   paidAllianceInviteHistoryBackfill: ReferralHistoryBackfillSnapshot;
+  timedMissilePayloadHistoryBackfill: ReferralHistoryBackfillSnapshot;
 };
 
 export type ChainSyncEvent = {
@@ -226,10 +237,20 @@ export class ChainSyncService {
     lastError: null,
     throughBlock: null
   };
+  private timedMissilePayloadHistoryBackfill: ReferralHistoryBackfillSnapshot = {
+    completedAt: null,
+    contractAddress: null,
+    fromBlock: null,
+    inProgress: false,
+    lastError: null,
+    throughBlock: null
+  };
+  private timedMissilePayloadHistoryVerifiedThisRun = false;
   private liveListenerConnected = false;
   private liveListenerErrorCount = 0;
   private liveListenerLastError: string | null = null;
   private liveUnsubscribe: (() => void) | undefined;
+  private liveListenerGeneration = 0;
   private livePollWakePending = false;
   private livePollWakeDrain: Promise<void> | null = null;
   private readonly liveRemovedLogs = new Map<string, RpcLog>();
@@ -246,6 +267,7 @@ export class ChainSyncService {
   private readonly recentEventReceiveLagsMs: number[] = [];
   private readonly recentHandlerDurationsMs: Array<{ durationMs: number; sampledAtMs: number }> = [];
   private readonly recentHandledLogIdentities = new Map<string, undefined>();
+  private readonly pendingCompletionReconciliationLogs = new Map<string, RpcLog>();
 
   constructor(
     private readonly config: BackendConfig,
@@ -302,7 +324,8 @@ export class ChainSyncService {
       subscribedToLogs: this.liveListenerConnected || this.connected,
       pollingEnabled: Boolean(this.options.logBackfiller) && Boolean(this.pollTimer),
       referralHistoryBackfill: { ...this.referralHistoryBackfill },
-      paidAllianceInviteHistoryBackfill: { ...this.paidAllianceInviteHistoryBackfill }
+      paidAllianceInviteHistoryBackfill: { ...this.paidAllianceInviteHistoryBackfill },
+      timedMissilePayloadHistoryBackfill: { ...this.timedMissilePayloadHistoryBackfill }
     };
   }
 
@@ -331,6 +354,7 @@ export class ChainSyncService {
 
   stop(): void {
     this.stopped = true;
+    this.liveListenerGeneration += 1;
     this.liveUnsubscribe?.();
     this.liveUnsubscribe = undefined;
     this.liveListenerConnected = false;
@@ -469,7 +493,22 @@ export class ChainSyncService {
         } finally {
           this.lastGetLogsDurationMs = Date.now() - getLogsStartedAt;
         }
+        const missingCanonicalLogs = this.config.gameContractAddress
+          ? this.indexer?.missingCanonicalGameLogs?.(
+              this.config.gameContractAddress,
+              logs,
+              fromBlock,
+              head
+            ) ?? []
+          : [];
+        if (missingCanonicalLogs.length > 0) {
+          // A writer that was offline during a reorg never receives websocket `removed` notices.
+          // Retire missing persisted Game logs through the same removal handlers before replaying
+          // canonical replacements, including missile defense totals and complete launch rows.
+          await this.applyLogs(missingCanonicalLogs, applyLog, "fallback_poll");
+        }
         const { applied, lastHash, resourceChanges, walletPlanetsChanged } = await this.applyLogs(logs, applyLog);
+        await this.reconcileRemovedCompletionLogs(missingCanonicalLogs);
         // Advance the generic cursor before specialized history scans. Both share the raw ledger, so
         // a process crash after a specialized scan must never leave latestIndexedBlock ahead of a
         // generic range that was not durably ingested.
@@ -488,6 +527,7 @@ export class ChainSyncService {
 
       await this.ensureReferralHistoryBackfilled(head, backfiller, applyLog);
       await this.ensurePaidAllianceInviteHistoryBackfilled(head, backfiller, applyLog);
+      await this.ensureTimedMissilePayloadHistoryBackfilled(head, backfiller, applyLog);
       // Publish the projection clock only after every indexed log source has durably scanned through
       // this block. A crash/failure before here leaves the old timestamp in place (conservative),
       // while publishing it earlier could combine block-N time with pre-N resource state.
@@ -650,6 +690,100 @@ export class ChainSyncService {
     }
   }
 
+  private async ensureTimedMissilePayloadHistoryBackfilled(
+    head: bigint,
+    backfiller: LogBackfiller,
+    applyLog: NonNullable<SettlementIndexer["applyLog"]>
+  ): Promise<void> {
+    if (this.config.timedMissileStandby) return;
+    const contractAddress = this.config.gameContractAddress;
+    const fromBlock = this.config.timedMissileIndexFromBlock;
+    const listLogs = backfiller.listTimedMissileLifecycleLogs;
+    const status = this.indexer?.timedMissilePayloadHistoryBackfillStatus;
+    const record = this.indexer?.recordTimedMissilePayloadHistoryBackfill;
+    if (!contractAddress || fromBlock === undefined) return;
+    if (!listLogs || !status || !record) {
+      const message = "Timed missile payload history backfill capability is unavailable.";
+      this.timedMissilePayloadHistoryBackfill = {
+        completedAt: null,
+        contractAddress,
+        fromBlock: fromBlock.toString(),
+        inProgress: false,
+        lastError: message,
+        throughBlock: null
+      };
+      this.connected = false;
+      throw new Error(message);
+    }
+
+    const current = status.call(this.indexer, contractAddress, fromBlock);
+    this.timedMissilePayloadHistoryBackfill = {
+      completedAt: current.marker?.completedAt ?? null,
+      contractAddress,
+      fromBlock: fromBlock.toString(),
+      inProgress: false,
+      lastError: null,
+      throughBlock: current.marker?.throughBlock ?? null
+    };
+    const markerThroughBlock = current.marker ? BigInt(current.marker.throughBlock) : null;
+    if (
+      this.timedMissilePayloadHistoryVerifiedThisRun
+      && !current.required
+      && markerThroughBlock !== null
+      && head < markerThroughBlock + TIMED_MISSILE_PAYLOAD_REPLAY_INTERVAL_BLOCKS
+    ) return;
+
+    const scanFrom = !this.timedMissilePayloadHistoryVerifiedThisRun || current.required || markerThroughBlock === null
+      ? fromBlock
+      : maxBigInt(
+          fromBlock,
+          markerThroughBlock > TIMED_MISSILE_PAYLOAD_REPLAY_BLOCKS
+            ? markerThroughBlock - TIMED_MISSILE_PAYLOAD_REPLAY_BLOCKS
+            : 0n
+        );
+
+    this.timedMissilePayloadHistoryBackfill.inProgress = true;
+    if (current.required) this.connected = false;
+    try {
+      const isStartupVerification = !this.timedMissilePayloadHistoryVerifiedThisRun;
+      const logs = await listLogs.call(backfiller, scanFrom, head);
+      const missingCanonicalLogs = this.indexer?.missingCanonicalTimedMissileLifecycleLogs?.(
+        contractAddress,
+        logs,
+        scanFrom,
+        head
+      ) ?? [];
+      if (missingCanonicalLogs.length > 0) {
+        await this.applyLogs(missingCanonicalLogs, applyLog, "fallback_poll");
+      }
+      await this.applyLogs(logs, applyLog);
+      const removedCompletionLogs = isStartupVerification
+        ? this.indexer?.removedTimedMissileCompletionLogs?.(contractAddress, fromBlock, head) ?? []
+        : [];
+      await this.reconcileRemovedCompletionLogs([
+        ...missingCanonicalLogs,
+        ...removedCompletionLogs
+      ]);
+      const marker = record.call(this.indexer, contractAddress, fromBlock, head);
+      this.timedMissilePayloadHistoryVerifiedThisRun = true;
+      this.timedMissilePayloadHistoryBackfill = {
+        completedAt: marker.completedAt,
+        contractAddress: marker.contractAddress,
+        fromBlock: marker.fromBlock,
+        inProgress: false,
+        lastError: null,
+        throughBlock: marker.throughBlock
+      };
+    } catch (error) {
+      this.timedMissilePayloadHistoryBackfill.inProgress = false;
+      this.timedMissilePayloadHistoryBackfill.lastError = error instanceof Error
+        ? error.message
+        : "Timed missile payload history backfill failed.";
+      this.connected = false;
+      throw error;
+    }
+  }
+
   private startFallbackPolling(): void {
     this.activeSource = "fallback_poll";
     this.startPollingLoop();
@@ -666,38 +800,38 @@ export class ChainSyncService {
   private startLiveListener(): boolean {
     const subscriber = this.options.liveLogSubscriber;
     if (!subscriber) return false;
+    const generation = this.liveListenerGeneration + 1;
+    this.liveListenerGeneration = generation;
 
     try {
       const unsubscribe = subscriber.subscribe({
         addresses: this.subscribedAddresses(),
-        onError: (error) => this.handleLiveListenerError(error),
-        onLogs: (logs) => this.enqueueLiveLogs(logs)
+        onError: (error) => this.handleLiveListenerError(error, generation),
+        onLogs: (logs) => {
+          if (generation === this.liveListenerGeneration) this.enqueueLiveLogs(logs);
+        }
       });
       void Promise.resolve(unsubscribe)
         .then((resolvedUnsubscribe) => {
-          if (this.stopped) {
+          if (this.stopped || generation !== this.liveListenerGeneration) {
             resolvedUnsubscribe();
             return;
           }
           this.liveUnsubscribe = resolvedUnsubscribe;
           this.liveListenerConnected = true;
-          if (this.paidAllianceInviteHistoryReady()) {
-            this.connected = true;
-            this.lastConnectedAt ??= new Date().toISOString();
-          }
           this.liveListenerLastError = null;
-          this.lastError = null;
           this.publishDiagnostics();
         })
-        .catch((error) => this.handleLiveListenerError(error));
+        .catch((error) => this.handleLiveListenerError(error, generation));
       return true;
     } catch (error) {
-      this.handleLiveListenerError(error);
+      this.handleLiveListenerError(error, generation);
       return false;
     }
   }
 
-  private handleLiveListenerError(error: unknown): void {
+  private handleLiveListenerError(error: unknown, generation: number): void {
+    if (this.stopped || generation !== this.liveListenerGeneration) return;
     const message = error instanceof Error ? error.message : "Viem websocket live listener failed.";
     this.liveListenerConnected = false;
     this.liveListenerErrorCount += 1;
@@ -759,15 +893,6 @@ export class ChainSyncService {
       }
       await this.poll();
     }
-  }
-
-  private paidAllianceInviteHistoryReady(): boolean {
-    const contractAddress = this.config.paidAllianceInviteAddress;
-    const fromBlock = this.config.paidAllianceInviteIndexFromBlock;
-    const status = this.indexer?.paidAllianceInviteHistoryBackfillStatus;
-    if (!contractAddress || fromBlock === undefined) return true;
-    if (!status) return false;
-    return !status.call(this.indexer, contractAddress, fromBlock).required;
   }
 
   private async catchUpRange(fromBlock: bigint, toBlock: bigint): Promise<void> {
@@ -836,6 +961,9 @@ export class ChainSyncService {
           // A reorg-removed log. The contract re-emits the canonical post-state on the new chain, and
           // the next poll re-scans head, so we only record it for observability — no reconcile sweep.
           this.reorgDetectedAt = new Date().toISOString();
+          if (isIndexedQueueCompletedLog(log)) {
+            this.pendingCompletionReconciliationLogs.set(logIdentity, log);
+          }
         }
       } catch (error) {
         this.lastError =
@@ -846,6 +974,21 @@ export class ChainSyncService {
       }
     }
     return { applied, lastHash, resourceChanges: [...resourceChanges.values()], walletPlanetsChanged };
+  }
+
+  private async reconcileRemovedCompletionLogs(logs: readonly RpcLog[]): Promise<void> {
+    const pending = [...this.pendingCompletionReconciliationLogs.entries()];
+    const completionLogs = [
+      ...logs.filter((log) => isIndexedQueueCompletedLog(log)),
+      ...pending.map(([, log]) => log)
+    ];
+    if (completionLogs.length === 0) return;
+    const reconcile = this.indexer?.reconcileTimedMissileCompletionState;
+    if (!reconcile) {
+      throw new Error("removed queue completion reconciliation capability is unavailable");
+    }
+    await reconcile.call(this.indexer, completionLogs);
+    for (const [identity] of pending) this.pendingCompletionReconciliationLogs.delete(identity);
   }
 
   private rememberHandledLogIdentity(identity: string): void {

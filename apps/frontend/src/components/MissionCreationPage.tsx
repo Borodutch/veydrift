@@ -12,6 +12,7 @@ import {
   fleetMissionFuelCost,
   interplanetaryMissileRange,
   interplanetaryMissileSystemDistance,
+  interplanetaryMissileTravelSeconds,
   fleetMissionShipCount,
   fleetMissionTravelSeconds,
   type AcsDefendFuelBreakdown,
@@ -539,18 +540,22 @@ export function MissionCreationPage({
           targetIsMoon: effectiveTargetIsMoon,
         })
     : 0;
-  const travelSeconds = action.mode === "missile" ? 0 : fleetMissionTravelSeconds(distance, ships, driveLevels, speedPercent);
+  const missileSystemDistance = originCoords ? interplanetaryMissileSystemDistance(originCoords, coords) : null;
+  const travelSeconds = action.mode === "missile"
+    ? missileSystemDistance === null ? 0 : interplanetaryMissileTravelSeconds(missileSystemDistance)
+    : fleetMissionTravelSeconds(distance, ships, driveLevels, speedPercent);
   const fuelCost = action.mode === "missile" ? 0 : fleetMissionFuelCost(ships, distance, driveLevels, speedPercent);
   const totalCargoCapacity = action.mode === "missile" ? 0 : fleetMissionCargoCapacity(ships);
   const cargoCapacity = action.mode === "missile" ? 0 : fleetMissionAvailableCargoCapacity(ships, distance, driveLevels, speedPercent);
   const selectedShipCount = action.mode === "missile" ? 0 : fleetMissionShipCount(ships);
   const availableMissiles = Math.max(0, Math.trunc(missileInventory ?? 0));
   const missileRange = interplanetaryMissileRange(driveLevels.impulseDrive);
-  const missileSystemDistance = originCoords ? interplanetaryMissileSystemDistance(originCoords, coords) : null;
   const missileRangeBlocker = action.mode !== "missile" ? undefined
     : missileSystemDistance === null
       ? "Interplanetary missiles cannot cross galaxies."
-      : missileSystemDistance > missileRange
+      : missileRange === 0
+        ? "Interplanetary missiles require Impulse Drive level 1."
+        : missileSystemDistance > missileRange
         ? `Target is ${missileSystemDistance} systems away; Impulse Drive ${Math.max(0, Math.trunc(driveLevels.impulseDrive ?? 0))} reaches ${missileRange}.`
         : undefined;
   const missileTargetOptions = defenseCatalog.filter((defense) => defense.id >= 0 && defense.id <= 7);
@@ -684,9 +689,17 @@ export function MissionCreationPage({
 
   // Both flows share the same holding-fuel summary; whichever is active drives the preview.
   const holdingBreakdown = acsBreakdown ?? defenseHoldBreakdown;
-  const timingRows = action.mode === "missile" || joinAttackMode
+  const timingRows = joinAttackMode
     ? []
-    : missionTimingRows(action, acsActive || defenseHoldActive, timingSummary);
+    : action.mode === "missile"
+      ? [{
+          align: "right" as const,
+          kind: "arrival" as const,
+          placeholder: timingSummary === null,
+          time: timingSummary?.arrivalClock ?? MISSION_TIMING_PLACEHOLDER,
+          value: timingSummary?.arrivalDuration ?? "—",
+        }]
+      : missionTimingRows(action, acsActive || defenseHoldActive, timingSummary);
   // Net holding fuel rides in the defending fleet's own deuterium spend on-chain, so it counts toward
   // both the deuterium balance and cargo-capacity gates.
   const effectiveFuelCost = holdingBreakdown ? fuelCost + holdingBreakdown.netHoldingFuel : fuelCost;
@@ -873,7 +886,8 @@ export function MissionCreationPage({
           {action.mode === "missile" ? (
             <MissionFormSection summary={`${availableMissiles.toLocaleString()} ready`} title="Missile strike" eyebrow="Ordnance">
               <p className="mb-3 text-sm text-slate-300">
-                Instant strike — no ships, fuel, fleet slot, or return flight.
+                One-way missile flight — no ships, fuel, fleet slot, or return flight. Impact and
+                interception happen when the missiles arrive.
               </p>
               <div className="grid gap-3 sm:grid-cols-2">
                 <NumberField
@@ -901,6 +915,7 @@ export function MissionCreationPage({
               <div className="mt-3 grid gap-2 rounded border border-sky-300/20 bg-sky-300/5 px-3 py-2 text-xs text-sky-100/90 sm:grid-cols-2">
                 <p>Range: Impulse Drive {Math.max(0, Math.trunc(driveLevels.impulseDrive ?? 0))} → {missileRange.toLocaleString()} systems (5 × drive − 1).</p>
                 <p>Route: {missileSystemDistance === null ? "different galaxy — unavailable" : `${missileSystemDistance.toLocaleString()} / ${missileRange.toLocaleString()} systems`}</p>
+                <p className="sm:col-span-2">Flight time: 30 seconds + 60 seconds per system of distance.</p>
                 <p className="sm:col-span-2">Target anti-ballistic missiles intercept one-for-one first. Remaining hits destroy up to {selectedMissileTargetCount.toLocaleString()} {selectedMissileTarget?.label ?? "selected defenses"}.</p>
               </div>
             </MissionFormSection>

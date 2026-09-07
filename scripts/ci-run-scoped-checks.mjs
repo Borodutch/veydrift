@@ -119,6 +119,11 @@ function main() {
   }
 
   if (scope.contracts) {
+    runLogged("deployment-manifest-test", "node", [
+      "--test",
+      "scripts/veydrift-deployment-manifest.test.mjs",
+      "scripts/veydrift-upgrade-receipt.test.mjs",
+    ]);
     runLogged("contracts-fast-check", "bun", ["run", "check:contracts:fast"]);
     runLogged("contracts-test", "bun", ["run", "test:contracts"]);
     if (scope.storage_layout) {

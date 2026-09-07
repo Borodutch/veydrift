@@ -70,7 +70,7 @@ export type MissionResolutionCandidates = {
 };
 
 export type MissionResolutionCandidateSource = {
-  missionResolutionCandidates(): MissionResolutionCandidates | Promise<MissionResolutionCandidates>;
+  missionResolutionCandidates(asOfSeconds?: number, limit?: number): MissionResolutionCandidates | Promise<MissionResolutionCandidates>;
   /**
    * A resolver settlement can expose a stale event-indexed mission status, including when a durable
    * coordinator reuses a previously confirmed operation. Re-read just that candidate from canonical
@@ -321,7 +321,7 @@ export class MissionResolutionService {
 
   private async listCandidates(): Promise<MissionResolutionCandidates> {
     if (this.candidateSource) {
-      return this.candidateSource.missionResolutionCandidates();
+      return this.candidateSource.missionResolutionCandidates(undefined, this.maxMissionsPerTick * 5);
     }
     if (!this.chainClient) return { arrivals: [], returns: [] };
     const [arrivals, returns] = await Promise.all([
@@ -534,7 +534,10 @@ function needsCanonicalMissionReconciliation(error: unknown): boolean {
 
 export class ViemMissionResolutionChainClient implements MissionResolutionChainClient {
   constructor(
-    private readonly reader: Pick<VeydriftGameReader, "listResolvableFleetMissions" | "listReturnableFleetMissions">,
+    private readonly reader: Pick<
+      VeydriftGameReader,
+      "listResolvableFleetMissions" | "listReturnableFleetMissions"
+    > & Partial<Pick<VeydriftGameReader, "getCanonicalFleetMission">>,
     private readonly gameAddress: Address,
     private readonly sender: Address | ReturnType<typeof privateKeyToAccount>,
     private readonly publicClient?: PublicClient,
@@ -602,6 +605,8 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
           nonce,
           ...(functionName === "resolveFleetMission" ? { gas: fleetMissionResolutionGas } : {})
         }),
+        isConfirmedCanonical: (hash) => this.isConfirmedCanonical(hash),
+        isOperationComplete: () => this.isMissionOperationComplete(functionName, missionId),
         shouldReplace: (hash) => resolverTransactionNeedsReplacement(this.publicClient!, hash),
         replace: async (nonce, previousHash) => this.walletClient!.writeContract({
           abi: veydriftGameResolutionAbi,
@@ -643,6 +648,8 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
         nonce,
         functionName === "resolveFleetMission" ? fleetMissionResolutionGas : undefined
       ),
+      isConfirmedCanonical: (hash) => this.isConfirmedCanonical(hash),
+      isOperationComplete: () => this.isMissionOperationComplete(functionName, missionId),
       shouldReplace: (hash) => resolverTransactionNeedsReplacement(this.publicClient!, hash),
       replace: async (nonce, previousHash) => this.sendUnlockedTransaction(
         from,
@@ -655,11 +662,31 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     });
   }
 
+  private async isMissionOperationComplete(
+    functionName: "resolveFleetMission" | "completeFleetMissionReturn",
+    missionId: string
+  ): Promise<boolean> {
+    const mission = await this.reader.getCanonicalFleetMission?.(BigInt(missionId));
+    if (!mission) return true;
+    if (functionName === "resolveFleetMission") return mission.status !== "Outbound";
+    return mission.status !== "Returning" && mission.status !== "Recalled";
+  }
+
   private async confirm(hash: Hex): Promise<void> {
     if (!this.publicClient) return;
     const receipt = await this.publicClient.waitForTransactionReceipt({ hash });
     if (receipt.status !== "success") {
       throw new Error(`transaction ${hash} reverted`);
+    }
+  }
+
+  private async isConfirmedCanonical(hash: Hex): Promise<boolean> {
+    if (!this.publicClient) return false;
+    try {
+      const receipt = await this.publicClient.getTransactionReceipt({ hash });
+      return receipt.status === "success";
+    } catch {
+      return false;
     }
   }
 

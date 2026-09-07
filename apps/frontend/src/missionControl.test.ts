@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { ComponentChildren } from "preact";
 
 import { MissionDetailPage } from "./components/MissionDetailPage";
-import { EMPTY_MISSION_CONTROL_FILTERS, MissionControlPage, StationedDefenseSection, activeMissionRowMatchesFilters, allActiveMissionRows, applyMissionFilterSelectInput, buildMissionControlViewQuery, initializeMissionRowDisclosure, missionControlActiveFilterCount, missionIdMatchesMissionNumberSearch, missionPlanetCoordinateKey, missionReport, missionRowsDisclosureState, missionStatusPill, normalizeMissionControlFilters, normalizeMissionNumberSearch, parseMissionControlViewParams, persistMissionControlView, resolveMissionControlView, setMissionRowsExpanded, partitionActiveMissionRows, type ActiveMissionRow, type MissionControlFilters, type MissionControlView } from "./components/MissionControlPage";
+import { EMPTY_MISSION_CONTROL_FILTERS, MissionControlPage, MissionReportDetail, StationedDefenseSection, activeMissionRowMatchesFilters, allActiveMissionRows, applyMissionFilterSelectInput, buildMissionControlViewQuery, initializeMissionRowDisclosure, missionControlActiveFilterCount, missionIdMatchesMissionNumberSearch, missionPlanetCoordinateKey, missionReport, missionRowsDisclosureState, missionStatusPill, normalizeMissionControlFilters, normalizeMissionNumberSearch, parseMissionControlViewParams, persistMissionControlView, resolveMissionControlView, setMissionRowsExpanded, partitionActiveMissionRows, type ActiveMissionRow, type MissionControlFilters, type MissionControlView } from "./components/MissionControlPage";
 import { MissionRouteCell, missionEndpoint, type MissionPlanetIdentity } from "./components/missionRoute";
 import { planetImageForType, planetTypeFromCoordinates } from "./data/mockUniverse";
 import { buildInspectPath, parseInspectPath, parseInspectRoute } from "./inspectRoutes";
@@ -2267,6 +2267,49 @@ describe("Mission Control battle reports", () => {
       actionState: { status: "error", label: "Recall mission #42 transaction failed." },
     })).join(" ");
     expect(failed).toContain("transaction failed");
+  });
+
+  test("keeps missile impacts out of battle-report sharing", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const missile = {
+      ...mission("77", "MissileAttack", "Resolved", undefined, "7", "9", now - 30_000),
+      missileQuantity: 3,
+      missilePrimaryTargetId: 1,
+      fuelCost: "0",
+      cargo: { metal: "0", crystal: "0", deuterium: "0" },
+      ships: {},
+    };
+    const detailText = collectText(MissionDetailPage(missionDetailProps(now, {
+      mission: missile,
+      battleReport: null,
+    }))).join(" ");
+    expect(detailText).not.toContain("Share missile impact");
+    expect(detailText).not.toContain("Share battle report");
+
+    const sharedText = collectText(MissionReportDetail({
+      mission: missile,
+      now,
+      onBack: () => undefined,
+      planetLookup: new Map(),
+      reportUrl: "https://veydrift.com/mission/77",
+    })).join(" ").replace(/\s+/g, " ");
+    expect(sharedText).toContain("Missile impact reports are private");
+    expect(sharedText).toContain("do not create shareable battle reports");
+    expect(sharedText).not.toContain("Copy link");
+    expect(sharedText).not.toContain("Shareable missile impact");
+  });
+
+  test("uses mission-neutral copy when a shared missile report is unavailable", () => {
+    const text = collectText(MissionReportDetail({
+      mission: undefined,
+      now: Date.parse("2026-06-05T12:00:00.000Z"),
+      onBack: () => undefined,
+      planetLookup: new Map(),
+    })).join(" ");
+
+    expect(text).toContain("Mission report unavailable");
+    expect(text).toContain("Back to missions");
+    expect(text).not.toContain("Battle report");
   });
 
   test("renders the route as origin -> target with clickable coordinates and commanders", () => {

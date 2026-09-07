@@ -268,6 +268,7 @@ describe("returnLegMissionTypes", () => {
   test("excludes mission types whose successful arrival is terminal even with a nonzero returnAt", () => {
     expect(returnLegMissionTypes.has(MissionType.Deploy)).toBe(false);
     expect(returnLegMissionTypes.has(MissionType.Colonize)).toBe(false);
+    expect(returnLegMissionTypes.has(MissionType.MissileAttack)).toBe(false);
     expect(returnLegMissionTypes.has(MissionType.Transport)).toBe(true);
     expect(returnLegMissionTypes.has(MissionType.Attack)).toBe(true);
   });

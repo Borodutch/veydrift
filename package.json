@@ -42,7 +42,7 @@
     "report:api-latency": "node scripts/veydrift-api-latency-report.mjs",
     "test": "bun run test:universe && bun run test:backend && bun run test:frontend && bun run test:contracts && bun run test:circuits && bun run test:keeper && bun run test:chicken-burn-listener",
     "test:api-latency-report": "node --test scripts/veydrift-api-latency-report.test.mjs scripts/veydrift-api-route-benchmark.test.mjs",
-    "test:backend": "cd apps/backend && bun test",
+    "test:backend": "cd apps/backend && bun run test",
     "test:keeper": "cd apps/battle-keeper && bun test",
     "test:frontend": "cd apps/frontend && bun run test",
     "test:contracts": "cd packages/contracts && bun run test",

@@ -193,6 +193,7 @@ describe("VEY-KANEO-653 pending mission report polling", () => {
     expect(shouldPollPendingMissionReport(detail({ battleReportMaterialization: { status: "missing" } }), 1_700_000_200_000)).toBe(true);
     expect(shouldPollPendingMissionReport(detail({ battleReport: report() }), 1_700_000_200_000)).toBe(false);
     expect(shouldPollPendingMissionReport(detail({ mission: mission({ missionType: "Transport", status: "Returned" }) }), 1_700_000_200_000)).toBe(false);
+    expect(shouldPollPendingMissionReport(detail({ mission: mission({ missionType: "MissileAttack", status: "Resolved" }) }), 1_700_000_200_000)).toBe(false);
     expect(shouldPollPendingMissionReport(detail({ mission: mission({ status: "Outbound", arrivalAt: "1800000000" }) }), 1_700_000_200_000)).toBe(false);
   });
 

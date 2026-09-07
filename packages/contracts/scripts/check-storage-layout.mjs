@@ -149,6 +149,42 @@ const reviewedStorageAppend = [
     offset: 0,
     type: "mapping(uint256 => bool)",
   },
+  {
+    label: "_missileMissionPrimaryTarget",
+    slot: "69",
+    offset: 0,
+    type: "mapping(uint256 => enum Defense)",
+  },
+  {
+    label: "_missileMissionQuantity",
+    slot: "70",
+    offset: 0,
+    type: "mapping(uint256 => uint32)",
+  },
+  {
+    label: "_missileArrivalHeapByPlanet",
+    slot: "71",
+    offset: 0,
+    type: "mapping(uint256 => uint256[])",
+  },
+  {
+    label: "_missileArrivalHeapIndexByPlanet",
+    slot: "72",
+    offset: 0,
+    type: "mapping(uint256 => mapping(uint256 => uint256))",
+  },
+  {
+    label: "_missileQueueSettlementProgress",
+    slot: "73",
+    offset: 0,
+    type: "mapping(uint256 => struct MissileQueueSettlementProgress)",
+  },
+  {
+    label: "_arrivalOrderIndexByPlanet",
+    slot: "74",
+    offset: 0,
+    type: "mapping(uint256 => struct ArrivalOrderIndex)",
+  },
 ];
 const riftExtractionStruct = [
   {label: "active", slot: "0", offset: 0, type: "bool"},
@@ -163,6 +199,18 @@ const battleResolutionProgressStruct = [
   {label: "defenderDefenseDestroyed", slot: "5", offset: 0, type: "uint256"},
   {label: "rounds", slot: "6", offset: 0, type: "uint8"},
 ];
+const missileQueueSettlementProgressStruct = [
+  {label: "shipBacklogConsumed", slot: "0", offset: 0, type: "uint32"},
+  {label: "shipBacklogCompacted", slot: "0", offset: 4, type: "uint32"},
+  {label: "defenseBacklogConsumed", slot: "0", offset: 8, type: "uint32"},
+  {label: "defenseBacklogCompacted", slot: "0", offset: 12, type: "uint32"},
+  {label: "stage", slot: "0", offset: 16, type: "uint8"},
+];
+const arrivalOrderIndexStruct = [
+  {label: "cursor", slot: "0", offset: 0, type: "uint64"},
+  {label: "ready", slot: "0", offset: 8, type: "bool"},
+  {label: "headMissionId", slot: "0", offset: 9, type: "uint184"},
+];
 const currentV1Prefix = {
   storage: current.storage.slice(0, expected.storage.length),
   structs: Object.fromEntries(
@@ -174,6 +222,8 @@ const hasReviewedStorageAppend = (
   && stableStringify(current.storage.slice(expected.storage.length)) === stableStringify(reviewedStorageAppend)
   && stableStringify(current.structs.RiftExtraction) === stableStringify(riftExtractionStruct)
   && stableStringify(current.structs.BattleResolutionProgress) === stableStringify(battleResolutionProgressStruct)
+  && stableStringify(current.structs.MissileQueueSettlementProgress) === stableStringify(missileQueueSettlementProgressStruct)
+  && stableStringify(current.structs.ArrivalOrderIndex) === stableStringify(arrivalOrderIndexStruct)
 );
 
 if (currentJson !== expectedJson && !hasReviewedStorageAppend) {

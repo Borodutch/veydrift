@@ -89,6 +89,60 @@ describe("backend config", () => {
     expect(result.config.resolverTransactionStorePath).toBe("/tmp/resolver-transactions.sqlite");
   });
 
+  test("accepts and safely exposes the timed missile upgrade replay boundary", () => {
+    const result = loadBackendConfig({
+      VEYDRIFT_GAME_CONTRACT_ADDRESS: "0x3333333333333333333333333333333333333333",
+      VEYDRIFT_RPC_URL: "https://example.invalid/rpc",
+      VEYDRIFT_TIMED_MISSILE_INDEX_FROM_BLOCK: "50960000"
+    });
+
+    expect(result.problems).toEqual([]);
+    expect(result.config.timedMissileIndexFromBlock).toBe(50_960_000n);
+    expect(result.config.timedMissileStandby).toBe(false);
+    expect(safeConfigSummary(result.config).timedMissileIndexFromBlock).toBe("50960000");
+  });
+
+  test("requires the timed missile replay boundary outside local and test deployments", () => {
+    const baseEnv = {
+      VEYDRIFT_GAME_CONTRACT_ADDRESS: "0x3333333333333333333333333333333333333333",
+      VEYDRIFT_RPC_URL: "https://example.invalid/rpc"
+    };
+
+    for (const mode of ["staging", "production"]) {
+      expect(loadBackendConfig({ ...baseEnv, VEYDRIFT_DEPLOYMENT_MODE: mode }).problems).toContainEqual({
+        field: "VEYDRIFT_TIMED_MISSILE_INDEX_FROM_BLOCK",
+        message: "Required in staging and production for timed-missile payload recovery."
+      });
+      expect(loadBackendConfig({
+        ...baseEnv,
+        VEYDRIFT_DEPLOYMENT_MODE: mode,
+        VEYDRIFT_TIMED_MISSILE_INDEX_FROM_BLOCK: "50960000"
+      }).problems).toEqual([]);
+      expect(loadBackendConfig({
+        ...baseEnv,
+        VEYDRIFT_DEPLOYMENT_MODE: mode,
+        VEYDRIFT_TIMED_MISSILE_STANDBY: "true"
+      }).problems).toEqual([]);
+    }
+
+    expect(loadBackendConfig({ ...baseEnv, VEYDRIFT_DEPLOYMENT_MODE: "test" }).problems).toEqual([]);
+  });
+
+  test("rejects combining timed missile standby with an invented replay boundary", () => {
+    const result = loadBackendConfig({
+      VEYDRIFT_DEPLOYMENT_MODE: "production",
+      VEYDRIFT_GAME_CONTRACT_ADDRESS: "0x3333333333333333333333333333333333333333",
+      VEYDRIFT_RPC_URL: "https://example.invalid/rpc",
+      VEYDRIFT_TIMED_MISSILE_INDEX_FROM_BLOCK: "50960000",
+      VEYDRIFT_TIMED_MISSILE_STANDBY: "true"
+    });
+
+    expect(result.problems).toContainEqual({
+      field: "VEYDRIFT_TIMED_MISSILE_STANDBY",
+      message: "Standby cannot be combined with an exact timed-missile replay boundary."
+    });
+  });
+
   test("accepts an explicit durable resolver transaction coordinator path", () => {
     const result = loadBackendConfig({
       VEYDRIFT_GAME_CONTRACT_ADDRESS: "0x3333333333333333333333333333333333333333",
@@ -310,6 +364,7 @@ describe("backend config", () => {
       VEYDRIFT_DEPLOYMENT_MODE: "production",
       VEYDRIFT_GAME_CONTRACT_ADDRESS: "0x3333333333333333333333333333333333333333",
       VEYDRIFT_MISSION_RESOLVER_ADDRESS: "0x4444444444444444444444444444444444444444",
+      VEYDRIFT_TIMED_MISSILE_INDEX_FROM_BLOCK: "50960000",
       VEYDRIFT_RPC_URL: "https://example.invalid/rpc"
     }).config.missionResolutionEnabled).toBe(true);
   });
@@ -332,6 +387,7 @@ describe("backend config", () => {
   test("gates the synthetic stationed-defense QA flag on opt-in and non-production", () => {
     const baseEnv = {
       VEYDRIFT_GAME_CONTRACT_ADDRESS: "0x3333333333333333333333333333333333333333",
+      VEYDRIFT_TIMED_MISSILE_INDEX_FROM_BLOCK: "50960000",
       VEYDRIFT_RPC_URL: "https://example.invalid/rpc"
     };
 

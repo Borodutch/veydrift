@@ -116,7 +116,7 @@ Colonies:
 
 Fleet missions:
 
-- `launchFleetMission(originPlanetId, targetPlanetId, missionType, ships, cargo, randomnessRequestId)` is the generic contract-backed fleet lifecycle for transport, deploy, colonize, attack, harvest, ACS defend, and intercept mission types. Missile attacks use `launchInterplanetaryMissileAttack(...)`.
+- `launchFleetMission(originPlanetId, targetPlanetId, missionType, ships, cargo, randomnessRequestId)` is the generic contract-backed fleet lifecycle for transport, deploy, colonize, attack, harvest, ACS defend, and intercept mission types. Missile attacks use `launchInterplanetaryMissileAttack(...)` and fly one way for `(30 + 60 × system distance) / universe speed` seconds before interception and defense damage resolve at arrival. They consume no fleet slot, fuel, cargo, randomness, return leg, or recall path.
 - Departure settles involved planets, enforces fleet slots, removes launched ships from the origin, checks cargo capacity, and spends cargo plus fuel/deuterium.
 - For `AcsDefend` and `Intercept`, the `targetPlanetId` argument is the hostile attack mission id. The contract resolves the actual defended planet from that mission, requires alliance defense permission from `VeydriftAllianceSystem`, and links the launched fleet into the combat module's defender-side battle resolution.
 - Release-slice parity note: Veydrift currently treats ACS defend and intercept as hostile-mission counterplay, launched from indexed inbound attack rows by mission id. They are not Galaxy planet-slot actions and are not a claim of full classic OGame ACS parity.
@@ -280,6 +280,17 @@ Scripts require a funded deployer key in the shell environment. Do not commit or
 Veydrift is in open alpha as of 2026-05-29, so contract deployments must preserve
 existing player state. Read `../../docs/open-alpha-state-preservation.md` before
 running any deploy or upgrade command.
+
+Timed-missile rollout has a strict compatibility order. First deploy and verify the compatible backend
+writer and keeper with `VEYDRIFT_TIMED_MISSILE_STANDBY=true` and no replay boundary. Upgrade the live
+Transparent Game proxy through `UpgradeGame.s.sol` without pausing. Only after the receipt confirms,
+replace standby with `VEYDRIFT_TIMED_MISSILE_INDEX_FROM_BLOCK` equal to that exact receipt block and
+redeploy the same writer/keeper build. Verify lifecycle replay through the current synchronized head,
+then deploy the frontend last. Never pre-record or estimate the boundary, run `Deploy.s.sol`, roll back
+to an old writer, or pause gameplay for this upgrade. The narrow replay remains active after rollout so
+a temporary process restart cannot strand the event-only immutable missile payload. The canonical
+commands and implementation/code-hash smoke proof are in
+[`../../docs/veydrift-contract-redeploy-runbook.md`](../../docs/veydrift-contract-redeploy-runbook.md).
 
 ## VEYDRIFT Uniswap CCA/v4 launch
 

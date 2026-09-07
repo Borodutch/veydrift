@@ -482,6 +482,8 @@ export type FleetMissionSummary = {
   attackGroupId: string | null;
   joinedAttackMissionIds: string[];
   linkedMissionIds?: string[];
+  missilePrimaryTargetId?: number;
+  missileQuantity?: number;
   attackPreview?: JoinAttackPreviewSummary;
   // VEY-KANEO-442 stationed-defense links. For an AcsDefend mission, `defendsMissionId` is the hostile
   // Attack mission it is stationed to defend (its fleet holds at the defended planet until that attack

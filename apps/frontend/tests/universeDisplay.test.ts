@@ -424,6 +424,29 @@ describe("tester universe display data", () => {
     expect(planetFleetActivityRows("99", [outbound, returning])).toEqual([]);
   });
 
+  test("planet mission activity shows timed missiles as hostile ordnance instead of a zero-ship fleet", () => {
+    const missile = activeFleetMission({
+      missionId: "85",
+      missionType: "MissileAttack",
+      missilePrimaryTargetId: 4,
+      missileQuantity: 6,
+      originPlanetId: "12",
+      ships: {},
+      targetPlanetId: "7",
+    });
+
+    expect(planetFleetActivityRows("7", [missile])).toEqual([
+      expect.objectContaining({
+        direction: "Inbound",
+        missionId: "85",
+        missionLabel: "Missile Attack",
+        routeLabel: "From Planet 12",
+        shipCountLabel: "6 missiles",
+        tone: "danger",
+      }),
+    ]);
+  });
+
   test("moon fleet activity includes only missions touching the lunar body", () => {
     const moonOutbound = activeFleetMission({
       missionId: "83",

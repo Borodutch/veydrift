@@ -158,6 +158,7 @@ contract VeydriftDefenseProductionModule is VeydriftResourceReserves {
         _requirePlanetOwner(planetId);
         _settleDueColonizeArrivals(msg.sender);
         _settleDueCombatArrivals(msg.sender);
+        _requireNoPendingMissionResolutionForPlanet(planetId);
         if (quantity == 0) revert InvalidQuantity();
         _settleResources(planetId);
         DefenseQueue memory activeQueue = defenseQueues[planetId];

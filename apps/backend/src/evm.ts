@@ -379,7 +379,7 @@ export type InterplanetaryMissileAttackEvent = {
   destroyedPrimary: number;
 };
 
-/** A completed, immediate missile strike. Unlike FleetMission this is emitted and settled in one transaction. */
+/** A completed missile impact. New strikes emit this after their timed FleetMission arrives. */
 export type IndexedMissileAttack = InterplanetaryMissileAttackEvent & {
   eventId: string;
   logIndex: string;
@@ -682,6 +682,8 @@ export type FleetMissionSummary = {
   // Exact append order in the contract's combined AcsAttack/AcsDefend link array.
   // Combat random lanes depend on this position, so the two filtered id arrays are not enough.
   linkedMissionIds?: string[];
+  missilePrimaryTargetId?: number;
+  missileQuantity?: number;
   // Public participant projection for a player composing another join.
   attackPreview?: JoinAttackPreviewSummary;
   // VEY-KANEO-442: ACS Defend stationed-defense links. For an AcsDefend mission, `defendsMissionId`
@@ -1516,6 +1518,7 @@ export interface ChainReader {
   listDebrisFieldEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<DebrisFieldEvent[]>;
   listAllianceLogs?(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
   listPaidAllianceInviteLogs?(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
+  listTimedMissileLifecycleLogs?(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
   listContractLogs?(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
   listReferralLogs?(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
   failoverRpc?(reason: string): boolean;
@@ -1581,6 +1584,7 @@ type JsonRpcResponse<T> = {
 
 export type RpcLog = {
   address?: string;
+  blockHash?: string;
   blockNumber: string;
   blockTimestamp?: string;
   logIndex?: string;
@@ -2358,6 +2362,7 @@ export class VeydriftGameReader implements ChainReader {
               || mission.missionType === "Colonize"
               || mission.missionType === "Transport"
               || mission.missionType === "Deploy"
+              || mission.missionType === "MissileAttack"
               || mission.missionType === "DefenseHold"
           )
       )
@@ -3904,6 +3909,23 @@ export class VeydriftGameReader implements ChainReader {
     });
   }
 
+  async listTimedMissileLifecycleLogs(
+    fromBlock: bigint,
+    toBlock: bigint | "latest" = "latest"
+  ): Promise<RpcLog[]> {
+    if (!this.gameContractAddress) return [];
+    return this.getLogs({
+      address: this.gameContractAddress,
+      fromBlock: toQuantity(fromBlock),
+      toBlock: toBlock === "latest" ? "latest" : toQuantity(toBlock),
+      // Reconcile the complete Game transaction surface from the immutable upgrade boundary.
+      // Missile impact state spans FleetMissionResolved, defense/queue snapshots, and the legacy
+      // impact event; filtering only the launch payload would leave orphaned sibling projections
+      // after an offline reorg outside the generic tip overlap.
+      topics: []
+    });
+  }
+
   /**
    * Raw logs for every indexed contract address over a block range, with no topic
    * filter. Mirrors the websocket `logs` subscription so chain-sync gap recovery can
@@ -5162,6 +5184,7 @@ export class VeydriftGameReader implements ChainReader {
         fleetMissionShipsTopic,
         fleetMissionBodiesTopic,
         fleetMissionLootRatioTopic,
+        interplanetaryMissileLaunchedTopic,
         fleetMissionRecalledTopic,
         fleetMissionResolvedTopic,
         fleetMissionReturnExposedTopic,
@@ -5558,6 +5581,10 @@ export function decodeFleetMissionLogs(logs: RpcLog[]): Map<string, MutableFleet
         crystalBps: Number(decodeUintWord(wordAt(words, 1))),
         deuteriumBps: Number(decodeUintWord(wordAt(words, 2)))
       };
+    } else if (topic === interplanetaryMissileLaunchedTopic) {
+      const words = splitWords(log.data);
+      mission.missilePrimaryTargetId = Number(decodeUintWord(wordAt(words, 0)));
+      mission.missileQuantity = Number(decodeUintWord(wordAt(words, 1)));
     } else if (topic === fleetMissionRecalledTopic) {
       const words = splitWords(log.data);
       mission.owner = decodeAddressWord(topicAt(log.topics, 2));
@@ -5956,7 +5983,7 @@ export const shipQueueTimingSetTopic = "0x241c6a6ecff5bf5d31df2871e9d836b18f8380
 export const defenseQueueTimingSetTopic = "0xcdf898af8ba3659ffa369d372a1cacd237f74927074397a0ae531a4b60ed078e";
 export const researchQueuedTopic = "0x2c3d4c823cd097fa6cbea60fb91c561d6a497270c397a8c8258170458fe69e73";
 export const researchQueuedV2Topic = "0xc656964d8e68d0b6942679e773cfa1067a21bfab5837879972bcf64c948deaa6";
-const researchCompletedTopic = "0x93dffeb1ed0a05133592cf6d82b9a200c2ac72b521497b81cef83ac57cb84b4f";
+export const researchCompletedTopic = "0x93dffeb1ed0a05133592cf6d82b9a200c2ac72b521497b81cef83ac57cb84b4f";
 const debrisFieldUpdatedTopic = "0x49f79a15c2a0409be62598b886efd90e25154bb9156b4bd64df41fd515aa4909";
 const planetShipCountChangedTopic = "0x6a0fc6b08970eb9f7e15767e6902471ca8731c57dbe4577c76021e1f9d6762cf";
 const planetDefenseCountChangedTopic = "0xe861e6f62777a3f6ea372d2892ead2d43e27d726e0ae4a2e39e5c3b682a7bbd3";
@@ -5968,6 +5995,7 @@ const fleetMissionCargoTopic = "0x3daa6311ecdadad6781f70e5d285e7150f9dc165db88d2
 const fleetMissionShipsTopic = "0xf581cbe97357884794500d80286cfbe823fed3b5d77446e477aa694ce89fc82d";
 export const fleetMissionBodiesTopic = "0xfa464e2180f08e3e4d8c4247566d0616a5e1ab845d1678c47fedae6d44e9c502";
 export const fleetMissionLootRatioTopic = "0xa6846d64330aacb1675d30a3535ea36822060fb38252cbb6b358bec4149767ff";
+export const interplanetaryMissileLaunchedTopic = "0x604ad2c11139a5c17dc4ad536be44e0decb1a46637bc3a7497c4e049e9ad3bd2";
 const fleetMissionRecalledTopic = "0x2c9b31f1abc732f3b6d28e7724439ea4713ae516632088b8c4dc0211479dc6ca";
 const fleetMissionResolvedTopic = "0xcb928b431ffcdbe55fddc2bf06967951efb3dfe87d14bc436d546fdbbee9cb2d";
 const fleetMissionReturnExposedTopic = "0x27a083519451f4434cd1f93497fb93689a906d3b982a3f127cb236aa24356afa";
@@ -6068,6 +6096,7 @@ const eventNamesByTopic = new Map<string, string>([
   [fleetMissionShipsTopic, "FleetMissionShips"],
   [fleetMissionBodiesTopic, "FleetMissionBodies"],
   [fleetMissionLootRatioTopic, "FleetMissionLootRatio"],
+  [interplanetaryMissileLaunchedTopic, "InterplanetaryMissileLaunched"],
   [fleetMissionRecalledTopic, "FleetMissionRecalled"],
   [fleetMissionResolvedTopic, "FleetMissionResolved"],
   [fleetMissionReturnExposedTopic, "FleetMissionReturnExposed"],
@@ -6385,6 +6414,7 @@ export function isFleetMissionLog(log: RpcLog): boolean {
     || topic === fleetMissionShipsTopic
     || topic === fleetMissionBodiesTopic
     || topic === fleetMissionLootRatioTopic
+    || topic === interplanetaryMissileLaunchedTopic
     || topic === fleetMissionRecalledTopic
     || topic === fleetMissionResolvedTopic
     || topic === fleetMissionReturnExposedTopic

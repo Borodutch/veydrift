@@ -4,13 +4,14 @@ import { encodeAbiParameters, keccak256, parseAbiParameters, toHex } from "viem"
 import { ChainSyncService } from "./chainSync";
 import type { LiveLogSubscriber } from "./chainSync";
 import type { BackendConfig } from "./config";
-import type { RpcLog, SettledPlanetEvent } from "./evm";
+import type { CanonicalPlanetChainState, QueueState, ResearchState, RpcLog, SettledPlanetEvent } from "./evm";
 import { SettlementIndexer } from "./indexer";
 
 const player = "0x2222222222222222222222222222222222222222";
 const planetStartedTopic = "0xef2d7a7105128f441ebc83d8e2e87960a9b0dfdfa02cc68769872b2c52a431f3";
 const shipCompletedTopic = "0xd261dd8008086de5ef74708b23f5f21be1962fee33795961e03a5750c4897785";
 const defenseCompletedTopic = "0xcc99fccb631bf08aef4833c0cbd43ed8d19a40eacce0fe225beff1693a903aa6";
+const researchCompletedTopic = "0x93dffeb1ed0a05133592cf6d82b9a200c2ac72b521497b81cef83ac57cb84b4f";
 // Authoritative per-mutation count events the contract emits on EVERY ship/defense count change,
 // including combat losses (overwrite-to-total).
 const planetShipCountChangedTopic = "0x6a0fc6b08970eb9f7e15767e6902471ca8731c57dbe4577c76021e1f9d6762cf";
@@ -19,6 +20,11 @@ const planetSettledTopic = "0x7faee98c7c745f9c9fb2117a44185f57454dac3013383364df
 const moonResourcesChangedTopic = "0xd1823653b6a3910ee502390b5bf01f05a3b571dc81899a6ac3af3f01fae05c26";
 const attackBattleResolvedTopic = "0xc0d98d89682d12d3fe90cd0786b9320015ab3950de5f4ae3f54ca0fe9b660d1b";
 const fleetMissionLaunchedTopic = "0x95e2cb506aa14052bac412e42f47fb34d9234819a960761a7bc7f1920c0ab456";
+const fleetMissionCargoTopic = "0x3daa6311ecdadad6781f70e5d285e7150f9dc165db88d23be8867be4de33ff29";
+const fleetMissionShipsTopic = "0xf581cbe97357884794500d80286cfbe823fed3b5d77446e477aa694ce89fc82d";
+const fleetMissionResolvedTopic = "0xcb928b431ffcdbe55fddc2bf06967951efb3dfe87d14bc436d546fdbbee9cb2d";
+const interplanetaryMissileLaunchedTopic = "0x604ad2c11139a5c17dc4ad536be44e0decb1a46637bc3a7497c4e049e9ad3bd2";
+const defenseQueuedTopic = "0xc3dcdf6abcac9fc4831745727e78f808922f43da079b984420ef70c97cff0f5b";
 const fleetMissionReturnExposedTopic = "0x27a083519451f4434cd1f93497fb93689a906d3b982a3f127cb236aa24356afa";
 const fleetMissionReturnedTopic = "0xbb4a50257c10524783e403a4e0db9c4c3e9378c2e398ec5de34281be1aa97b06";
 const referralInviteWindowActivatedTopic = "0xd51c9643dafa95fcfa30d65f2b6576bc03873e2630d73fc523daf87a7158d589";
@@ -93,12 +99,14 @@ class MockBackfiller {
   ranges: Array<{ from: bigint; to: bigint | "latest" }> = [];
   referralRanges: Array<{ from: bigint; to: bigint | "latest" }> = [];
   paidAllianceInviteRanges: Array<{ from: bigint; to: bigint | "latest" }> = [];
+  timedMissilePayloadRanges: Array<{ from: bigint; to: bigint | "latest" }> = [];
   headCalls = 0;
   timestampCalls: bigint[] = [];
   anchorHashFor: (blockNumber: bigint) => string = (blockNumber) => `0x${blockNumber.toString(16).padStart(64, "0")}`;
   logsFor: (from: bigint, to: bigint | "latest") => TestLog[];
   referralLogsFor: (from: bigint, to: bigint | "latest") => TestLog[] = () => [];
   paidAllianceInviteLogsFor: (from: bigint, to: bigint | "latest") => TestLog[] = () => [];
+  timedMissilePayloadLogsFor: (from: bigint, to: bigint | "latest") => TestLog[] = () => [];
 
   constructor(head: bigint, logsFor: (from: bigint, to: bigint | "latest") => TestLog[] = () => []) {
     this.head = head;
@@ -139,6 +147,13 @@ class MockBackfiller {
     this.paidAllianceInviteRanges.push({ from, to });
     if (this.logsError) throw this.logsError;
     return this.paidAllianceInviteLogsFor(from, to);
+  }
+
+  async listTimedMissileLifecycleLogs(from: bigint, to: bigint | "latest" = "latest"): Promise<RpcLog[]> {
+    this.calls.push("timed-missile");
+    this.timedMissilePayloadRanges.push({ from, to });
+    if (this.logsError) throw this.logsError;
+    return this.timedMissilePayloadLogsFor(from, to);
   }
 
   failoverRpc(reason: string): boolean {
@@ -435,6 +450,270 @@ describe("ChainSyncService (polling)", () => {
     expect(indexer.fleetMission("16512")).toBeNull();
     expect(indexer.fleetMission("16513")).toMatchObject({ missionId: "16513" });
     expect(indexer.snapshot().pendingReconciliationReason).toBeNull();
+    service.stop();
+  });
+
+  test("retires a Game launch removed while the writer was offline before indexing its replacement", async () => {
+    const indexer = makeIndexer();
+    const orphanedLaunch: TestLog = {
+      address: config.gameContractAddress!,
+      blockNumber: "0x181",
+      transactionHash: "0xoffline-orphaned-launch",
+      logIndex: "0x0",
+      topics: [fleetMissionLaunchedTopic, topicWord(16516n), ownerTopic(player), topicWord(7n)],
+      data: abiWords(7n, 99n, 4_000_000_000n, 4_000_000_100n, 0n)
+    };
+    const replacementLaunch: TestLog = {
+      ...orphanedLaunch,
+      transactionHash: "0xoffline-canonical-launch",
+      topics: [fleetMissionLaunchedTopic, topicWord(16517n), ownerTopic(player), topicWord(7n)]
+    };
+    indexer.applyLog(orphanedLaunch);
+    expect(indexer.fleetMission("16516")).not.toBeNull();
+
+    const backfiller = new MockBackfiller(0x182n, () => [replacementLaunch]);
+    const service = new ChainSyncService(config, indexer, { logBackfiller: backfiller });
+    await service.poll();
+
+    expect(indexer.fleetMission("16516")).toBeNull();
+    expect(indexer.fleetMission("16517")).toMatchObject({ missionId: "16517" });
+    const db = (indexer as unknown as { db: Database }).db;
+    expect(db.query(`
+      SELECT removed FROM indexed_event_logs
+      WHERE transaction_hash = ? AND log_index = ?
+    `).get(orphanedLaunch.transactionHash, "0x0")).toEqual({ removed: 1 });
+    service.stop();
+  });
+
+  test("rolls back a missile defense total removed while the writer was offline", async () => {
+    const indexer = makeIndexer();
+    const baseline: TestLog = {
+      address: config.gameContractAddress!,
+      blockNumber: "0x180",
+      transactionHash: "0xcanonical-defense-baseline",
+      logIndex: "0x0",
+      topics: [planetDefenseCountChangedTopic, topicWord(7n), topicWord(1n)],
+      data: abiWords(5n)
+    };
+    const orphanedImpact: TestLog = {
+      address: config.gameContractAddress!,
+      blockNumber: "0x181",
+      transactionHash: "0xoffline-orphaned-missile-impact",
+      logIndex: "0x0",
+      topics: [planetDefenseCountChangedTopic, topicWord(7n), topicWord(1n)],
+      data: abiWords(3n)
+    };
+    indexer.applyLog(baseline);
+    indexer.applyLog(orphanedImpact);
+    expect(indexer.defenseRows("7").find((defense) => defense.id === 1)?.count).toBe(3);
+
+    const backfiller = new MockBackfiller(0x182n, () => [baseline]);
+    const service = new ChainSyncService(config, indexer, { logBackfiller: backfiller });
+    await service.poll();
+
+    expect(indexer.defenseRows("7").find((defense) => defense.id === 1)?.count).toBe(5);
+    const db = (indexer as unknown as { db: Database }).db;
+    expect(db.query(`
+      SELECT removed FROM indexed_event_logs
+      WHERE transaction_hash = ? AND log_index = ?
+    `).get(orphanedImpact.transactionHash, "0x0")).toEqual({ removed: 1 });
+    service.stop();
+  });
+
+  test("replaces a same-ID Game log when a reorg changes its canonical block and payload", async () => {
+    const indexer = makeIndexer();
+    const orphaned: TestLog = {
+      address: config.gameContractAddress!,
+      blockHash: `0x${"11".repeat(32)}`,
+      blockNumber: "0x181",
+      transactionHash: "0xsame-id-defense-reorg",
+      logIndex: "0x0",
+      topics: [planetDefenseCountChangedTopic, topicWord(7n), topicWord(1n)],
+      data: abiWords(3n)
+    };
+    const canonical: TestLog = {
+      ...orphaned,
+      blockHash: `0x${"22".repeat(32)}`,
+      blockNumber: "0x182",
+      data: abiWords(4n)
+    };
+    indexer.applyLog(orphaned);
+    expect(indexer.defenseRows("7").find((defense) => defense.id === 1)?.count).toBe(3);
+
+    const service = new ChainSyncService(
+      config,
+      indexer,
+      { logBackfiller: new MockBackfiller(0x182n, () => [canonical]) }
+    );
+    await service.poll();
+
+    expect(indexer.defenseRows("7").find((defense) => defense.id === 1)?.count).toBe(4);
+    const db = (indexer as unknown as { db: Database }).db;
+    const stored = db.query(`
+      SELECT event_json, removed FROM indexed_event_logs
+      WHERE transaction_hash = ? AND log_index = ?
+    `).get(orphaned.transactionHash, "0x0") as { event_json: string; removed: number };
+    expect(stored.removed).toBe(0);
+    expect(JSON.parse(stored.event_json)).toMatchObject({
+      blockHash: canonical.blockHash,
+      blockNumber: canonical.blockNumber,
+      data: canonical.data
+    });
+    service.stop();
+  });
+
+  test("finishes canonical defense repair after an older writer removed a missile impact", async () => {
+    let canonicalDefenseQueue: QueueState | null = null;
+    let canonicalReads = 0;
+    const database = new Database(":memory:");
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents(): Promise<SettledPlanetEvent[]> { return []; },
+      async getCanonicalPlanetState(): Promise<CanonicalPlanetChainState> {
+        canonicalReads += 1;
+        return {
+          planetId: "7",
+          resources: { metal: "0", crystal: "0", deuterium: "0" },
+          buildings: [],
+          defenses: [{ id: 1, count: 5, cost: { metal: "0", crystal: "0", deuterium: "0" } }],
+          ships: [],
+          queues: { building: null, defense: canonicalDefenseQueue, ship: null }
+        };
+      }
+    }, 100n, { database });
+    indexer.applyLog({
+      ...planetStartedLog("0x17f", 7n, "0xplanet"),
+      address: config.gameContractAddress!,
+      logIndex: "0x0"
+    });
+    const activeQueue: TestLog = {
+      address: config.gameContractAddress!,
+      blockNumber: "0x180",
+      transactionHash: "0xqueue-active",
+      logIndex: "0x0",
+      topics: [defenseQueuedTopic, topicWord(7n), topicWord(1n)],
+      data: abiWords(2n, 2_000_001_000n, 100n, 50n, 0n)
+    };
+    const backlogQueue: TestLog = {
+      address: config.gameContractAddress!,
+      blockNumber: "0x180",
+      transactionHash: "0xqueue-backlog",
+      logIndex: "0x1",
+      topics: [defenseQueuedTopic, topicWord(7n), topicWord(0n)],
+      data: abiWords(3n, 2_000_001_600n, 200n, 0n, 0n)
+    };
+    const orphanedCompletion: TestLog = {
+      address: config.gameContractAddress!,
+      blockNumber: "0x181",
+      transactionHash: "0xmissile-impact-settled-queue",
+      logIndex: "0x0",
+      topics: [defenseCompletedTopic, topicWord(7n), topicWord(1n)],
+      data: abiWords(2n, 2n)
+    };
+    for (const log of [activeQueue, backlogQueue]) indexer.applyLog(log);
+    canonicalDefenseQueue = indexer.playerQueues(player, "7").defense;
+    indexer.applyLog({
+      address: config.gameContractAddress!,
+      blockNumber: "0x180",
+      transactionHash: "0xdefense-before-impact",
+      logIndex: "0x2",
+      topics: [planetDefenseCountChangedTopic, topicWord(7n), topicWord(1n)],
+      data: abiWords(5n)
+    });
+    indexer.applyLog(orphanedCompletion);
+    expect(indexer.playerQueues(player, "7").defense).toMatchObject({ itemId: 0, quantity: 3 });
+    expect(indexer.defenseRows("7").find((defense) => defense.id === 1)?.count).toBe(2);
+    // Simulate an older writer persisting the removal and crashing before it could hydrate the
+    // materialized defense count. Queue chronology is rebuilt from logs, but the count is stale.
+    indexer.applyLog({ ...orphanedCompletion, removed: true });
+    for (const table of ["indexed_defense_counts", "contract_defense_counts"]) {
+      database.query(`UPDATE ${table} SET count = 2 WHERE planet_id = '7' AND defense_id = 1`).run();
+    }
+    expect(indexer.playerQueues(player, "7").defense).toMatchObject({
+      itemId: 1,
+      quantity: 2,
+      backlog: [expect.objectContaining({ itemId: 0, quantity: 3 })]
+    });
+    expect(indexer.defenseRows("7").find((defense) => defense.id === 1)?.count).toBe(2);
+
+    const backfiller = new MockBackfiller(0x182n, () => [activeQueue, backlogQueue]);
+    backfiller.timedMissilePayloadLogsFor = () => [activeQueue, backlogQueue];
+    const service = new ChainSyncService(
+      { ...config, timedMissileIndexFromBlock: 100n },
+      indexer,
+      { logBackfiller: backfiller }
+    );
+    await service.poll();
+
+    expect(indexer.playerQueues(player, "7").defense).toMatchObject({
+      itemId: 1,
+      quantity: 2,
+      backlog: [expect.objectContaining({ itemId: 0, quantity: 3 })]
+    });
+    expect(indexer.defenseRows("7").find((defense) => defense.id === 1)?.count).toBe(5);
+    expect(canonicalReads).toBe(1);
+    expect(database.query(`
+      SELECT removed FROM indexed_event_logs
+      WHERE transaction_hash = ? AND log_index = ?
+    `).get(orphanedCompletion.transactionHash, "0x0")).toEqual({ removed: 1 });
+    service.stop();
+  });
+
+  test("canonically heals research after a live completion removal", async () => {
+    let canonicalReads = 0;
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents(): Promise<SettledPlanetEvent[]> { return []; },
+      async getResearchState(): Promise<ResearchState> {
+        canonicalReads += 1;
+        return {
+          wallet: player,
+          homePlanetId: null,
+          researchAvailable: true,
+          resources: null,
+          researchLabLevel: 0,
+          researchNetworkLabLevels: [],
+          technologyLevels: { "4": 1 },
+          technologies: [{
+            id: 4,
+            level: 1,
+            cost: { metal: "0", crystal: "0", deuterium: "0" }
+          }],
+          queue: null
+        };
+      }
+    }, 100n);
+    const orphanedCompletion: TestLog = {
+      address: config.gameContractAddress!,
+      blockNumber: "0x181",
+      transactionHash: "0xmissile-impact-research-completion",
+      logIndex: "0x0",
+      topics: [researchCompletedTopic, ownerTopic(player), topicWord(4n)],
+      data: abiWords(4n)
+    };
+    indexer.applyLog(orphanedCompletion);
+    expect(indexer.technologyLevels(player)["4"]).toBe(4);
+
+    let canonicalLogs: RpcLog[] = [orphanedCompletion];
+    const backfiller = new MockBackfiller(0x181n, () => canonicalLogs);
+    backfiller.timedMissilePayloadLogsFor = () => canonicalLogs;
+    const liveLogs = new MockLiveLogSubscriber();
+    const service = new ChainSyncService({
+      ...config,
+      pollIntervalMs: 60_000,
+      timedMissileIndexFromBlock: 100n
+    }, indexer, { liveLogSubscriber: liveLogs, logBackfiller: backfiller });
+
+    service.start();
+    await waitFor(() => service.snapshot().connected);
+    canonicalLogs = [];
+    backfiller.head = 0x182n;
+    liveLogs.emit([{ ...orphanedCompletion, removed: true }]);
+
+    await waitFor(() => indexer.technologyLevels(player)["4"] === 1);
+    expect(canonicalReads).toBe(1);
     service.stop();
   });
 
@@ -1156,6 +1435,205 @@ describe("ChainSyncService (polling)", () => {
     service.stop();
   });
 
+  test("replays and reconciles the full timed missile lifecycle from the upgrade boundary", async () => {
+    const database = new Database(":memory:");
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents(): Promise<SettledPlanetEvent[]> { return []; }
+    }, 100n, { database, runStartupBackfill: false });
+    const tx = "0xmissile-rollback";
+    const launchLogs: TestLog[] = [
+      {
+        address: config.gameContractAddress!,
+        blockNumber: "0xa0",
+        transactionHash: tx,
+        logIndex: "0x0",
+        topics: [fleetMissionLaunchedTopic, topicWord(51n), ownerTopic(player), topicWord(7n)],
+        data: abiWords(99n, 7n, 1770001200n, 1770001200n, 0n)
+      },
+      {
+        address: config.gameContractAddress!,
+        blockNumber: "0xa0",
+        transactionHash: tx,
+        logIndex: "0x1",
+        topics: [fleetMissionCargoTopic, topicWord(51n)],
+        data: abiWords(0n, 0n, 0n, 0n)
+      },
+      {
+        address: config.gameContractAddress!,
+        blockNumber: "0xa0",
+        transactionHash: tx,
+        logIndex: "0x2",
+        topics: [fleetMissionShipsTopic, topicWord(51n)],
+        data: abiWords(0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n)
+      }
+    ];
+    for (const log of launchLogs) indexer.applyLog(log);
+    const payloadLog: TestLog = {
+      address: config.gameContractAddress!,
+      blockNumber: "0xa0",
+      transactionHash: tx,
+      logIndex: "0x3",
+      topics: [interplanetaryMissileLaunchedTopic, topicWord(51n)],
+      data: abiWords(4n, 3n)
+    };
+    database.query(`
+      INSERT INTO indexed_event_logs
+        (event_id, transaction_hash, log_index, block_number, removed, event_json, received_at)
+      VALUES (?, ?, ?, ?, 0, ?, ?)
+    `).run(
+      `${tx}:0x3`,
+      tx,
+      "0x3",
+      "160",
+      JSON.stringify(payloadLog),
+      new Date().toISOString()
+    );
+    const resolvedLog: TestLog = {
+      address: config.gameContractAddress!,
+      blockNumber: "0xa1",
+      transactionHash: "0xmissile-impact-reorg",
+      logIndex: "0x4",
+      topics: [fleetMissionResolvedTopic, topicWord(51n), ownerTopic(player), topicWord(7n)],
+      data: abiWords(1770001200n)
+    };
+    indexer.applyLog(resolvedLog);
+    const headLog = {
+      ...planetStartedLog("0x12c", 88n, "0xhead"),
+      address: config.gameContractAddress!,
+      logIndex: "0x0"
+    };
+    indexer.applyLog(headLog);
+    expect(indexer.fleetMission("51")).not.toHaveProperty("missileQuantity");
+
+    const backfiller = new MockBackfiller(300n, (from, to) => (
+      from <= 300n && to !== "latest" && to >= 300n ? [headLog] : []
+    ));
+    backfiller.timedMissilePayloadLogsFor = () => [...launchLogs, payloadLog, resolvedLog];
+    const service = new ChainSyncService({
+      ...config,
+      timedMissileIndexFromBlock: 150n
+    }, indexer, { logBackfiller: backfiller });
+
+    await service.poll();
+
+    expect(backfiller.timedMissilePayloadRanges).toEqual([{ from: 150n, to: 300n }]);
+    expect(indexer.fleetMission("51")).toMatchObject({
+      status: "Resolved",
+      missilePrimaryTargetId: 4,
+      missileQuantity: 3
+    });
+    expect(service.snapshot().timedMissilePayloadHistoryBackfill).toMatchObject({
+      contractAddress: config.gameContractAddress,
+      fromBlock: "150",
+      inProgress: false,
+      lastError: null,
+      throughBlock: "300"
+    });
+
+    service.stop();
+    backfiller.head = 316n;
+    // The launch remains canonical but the impact transaction disappeared outside the generic
+    // 64-block overlap while the writer was offline. Full lifecycle replay must retire the
+    // resolution and make the same mission id outbound/resolvable again.
+    backfiller.timedMissilePayloadLogsFor = () => [...launchLogs, payloadLog];
+    const restarted = new ChainSyncService({
+      ...config,
+      timedMissileIndexFromBlock: 150n
+    }, indexer, { logBackfiller: backfiller });
+    await restarted.poll();
+    expect(backfiller.timedMissilePayloadRanges.at(-1)).toEqual({ from: 150n, to: 316n });
+    expect(indexer.fleetMission("51")).toMatchObject({
+      status: "Outbound",
+      missilePrimaryTargetId: 4,
+      missileQuantity: 3
+    });
+    expect(database.query(
+      "SELECT removed FROM indexed_event_logs WHERE event_id = ?"
+    ).get("0xmissile-impact-reorg:0x4")).toEqual({ removed: 1 });
+    restarted.stop();
+  });
+
+  test("websocket setup cannot clear a timed missile replay readiness failure", async () => {
+    const indexer = makeIndexer();
+    const backfiller = new MockBackfiller(300n);
+    backfiller.listTimedMissileLifecycleLogs = async () => {
+      throw new Error("timed missile replay unavailable");
+    };
+    const liveLogs = new MockLiveLogSubscriber();
+    const service = new ChainSyncService({
+      ...config,
+      timedMissileIndexFromBlock: 150n
+    }, indexer, { liveLogSubscriber: liveLogs, logBackfiller: backfiller });
+
+    service.start();
+    await waitFor(() => service.snapshot().timedMissilePayloadHistoryBackfill.lastError !== null);
+
+    expect(service.snapshot()).toMatchObject({
+      connected: false,
+      lastError: "timed missile replay unavailable",
+      liveListenerConnected: true,
+      timedMissilePayloadHistoryBackfill: {
+        lastError: "timed missile replay unavailable"
+      }
+    });
+    service.stop();
+  });
+
+  test("pre-upgrade standby runs the compatible writer without inventing a replay boundary", async () => {
+    const backfiller = new MockBackfiller(300n);
+    backfiller.listTimedMissileLifecycleLogs = async () => {
+      throw new Error("standby must not query post-upgrade lifecycle history");
+    };
+    const service = new ChainSyncService({
+      ...config,
+      timedMissileStandby: true
+    }, makeIndexer(), { logBackfiller: backfiller });
+
+    await service.poll();
+
+    expect(backfiller.timedMissilePayloadRanges).toEqual([]);
+    expect(service.snapshot()).toMatchObject({
+      connected: true,
+      lastError: null,
+      timedMissilePayloadHistoryBackfill: {
+        fromBlock: null,
+        inProgress: false,
+        lastError: null,
+        throughBlock: null
+      }
+    });
+    service.stop();
+  });
+
+  test("keeps readiness disconnected when timed missile payload replay capability is unavailable", async () => {
+    const service = new ChainSyncService({
+      ...config,
+      timedMissileIndexFromBlock: 150n
+    }, makeIndexer(), {
+      logBackfiller: {
+        async getHeadBlock() { return 300n; },
+        async listContractLogs() { return []; }
+      }
+    });
+
+    await service.poll();
+
+    expect(service.snapshot()).toMatchObject({
+      connected: false,
+      lastError: "Timed missile payload history backfill capability is unavailable.",
+      timedMissilePayloadHistoryBackfill: {
+        contractAddress: config.gameContractAddress,
+        fromBlock: "150",
+        inProgress: false,
+        lastError: "Timed missile payload history backfill capability is unavailable.",
+        throughBlock: null
+      }
+    });
+    service.stop();
+  });
+
   test("keeps readiness disconnected and retries when referral history backfill fails", async () => {
     const indexer = makeIndexer();
     const referralConfig: BackendConfig = {
@@ -1734,5 +2212,42 @@ describe("ChainSyncService (polling)", () => {
     service.stop();
     await service.poll();
     expect(backfiller.headCalls).toBe(callsBefore); // stopped: no further head fetch
+  });
+
+  test("a delayed websocket setup cannot revive a stopped service", async () => {
+    const indexer = makeIndexer();
+    const backfiller = new MockBackfiller(0x180n);
+    let callbacks: Parameters<LiveLogSubscriber["subscribe"]>[0] | undefined;
+    let resolveSubscription: ((unsubscribe: () => void) => void) | undefined;
+    let unsubscribeCalls = 0;
+    const liveLogs: LiveLogSubscriber = {
+      subscribe(options) {
+        callbacks = options;
+        return new Promise<() => void>((resolve) => {
+          resolveSubscription = resolve;
+        });
+      }
+    };
+    const service = new ChainSyncService(config, indexer, {
+      logBackfiller: backfiller,
+      liveLogSubscriber: liveLogs
+    });
+
+    service.start();
+    service.stop();
+    resolveSubscription?.(() => { unsubscribeCalls += 1; });
+    await Promise.resolve();
+    await Promise.resolve();
+    callbacks?.onError(new Error("stale websocket failure"));
+    callbacks?.onLogs([planetStartedLog("0x181", 77n, "0xstale-websocket")]);
+    await Promise.resolve();
+
+    expect(unsubscribeCalls).toBe(1);
+    expect(service.snapshot()).toMatchObject({
+      eventsReceived: 0,
+      liveListenerConnected: false,
+      liveListenerErrorCount: 0,
+      pollingEnabled: false
+    });
   });
 });
