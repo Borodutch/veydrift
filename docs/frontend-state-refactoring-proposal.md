@@ -74,8 +74,23 @@ Infrastructure on wallet A/planet 2, and Shipyard on wallet B/planet 3. Invalida
 `[wallet:A, planet:1, kind:shipyard]` refreshed all three. This confirms the scope
 expansion at runtime, rather than assuming tags are conjunctive filters.
 
-The temporary tests are outside the repository; no diagnostic or application code
-is part of this PR. These are reproduction tests of current failures, not fixes.
+The original temporary diagnostics are outside the repository. The implementation
+slice now includes permanent regression tests for the scheduler and transport fixes;
+the aggregate ownership and invalidation-scope findings remain migration work.
+
+### Local startup findings during implementation
+
+The first local Mainnet bootstrap exposed an additional RPC failure: this node
+rejects a dense log range with `query exceeds max results 20000`, even when its
+block span is allowed. The shared log reader now recognizes that response and
+uses its existing recursive range splitting. This is covered by a regression test.
+
+The existing cold replay collects the entire requested history before applying it
+to SQLite. Consequently, unchanged database counters during that download do not
+prove the process is stalled. Canonical-state seeding must also finish before the
+local API can be considered ready. Do not bypass this readiness requirement merely
+to make the local health check green. Incremental replay/progress reporting is a
+separate possible improvement, not part of the first frontend slice.
 
 ## What already works and should be retained
 
