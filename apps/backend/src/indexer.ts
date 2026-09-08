@@ -733,6 +733,8 @@ export type IndexedTransactionSummary = {
     logIndex: string;
   }>;
   latestIndexedBlock: string | null;
+  latestSyncedBlock: string | null;
+  materialized: boolean;
 };
 
 export type PlayerActivityCategory =
@@ -10541,17 +10543,27 @@ export class SettlementIndexer {
     }
   }
 
-  transactionIndexingSummary(transactionHash: string): IndexedTransactionSummary {
-    const logs = this.indexedLogsForTransaction(transactionHash);
-    return {
-      eventCount: logs.length,
-      events: logs.map((log) => ({
-        blockNumber: blockNumberToDecimal(log.blockNumber),
-        eventName: eventNameForTopic(log.topics[0]) ?? "Unknown",
-        logIndex: log.logIndex ?? "0x0"
-      })),
-      latestIndexedBlock: this.snapshot().latestIndexedBlock
-    };
+  transactionIndexingSummary(transactionHash: string, expectedLogs: readonly IndexedRpcLog[] = []): IndexedTransactionSummary {
+    return this.readConsistentSnapshot(() => {
+      const logs = this.indexedLogsForTransaction(transactionHash);
+      const identity = (log: IndexedRpcLog): string => log.transactionHash.toLowerCase() + ":"
+        + (log.logIndex === undefined ? fallbackLogIndex(log) : BigInt(log.logIndex).toString());
+      const fingerprints = new Map(logs.map((log) => [identity(log), indexedLogFingerprint(log)]));
+      const projection = this.resourceProjectionContext();
+      return {
+        eventCount: logs.length,
+        events: logs.map((log) => ({
+          blockNumber: blockNumberToDecimal(log.blockNumber),
+          eventName: eventNameForTopic(log.topics[0]) ?? "Unknown",
+          logIndex: log.logIndex ?? "0x0"
+        })),
+        latestIndexedBlock: this.metadata("latestIndexedBlock"),
+        latestSyncedBlock: projection.block,
+        materialized: projection.safeToProject && expectedLogs.every((log) =>
+          !log.removed && fingerprints.get(identity(log)) === indexedLogFingerprint(log)
+        )
+      };
+    });
   }
 
   private indexedLogsForTransaction(transactionHash: string): IndexedRpcLog[] {

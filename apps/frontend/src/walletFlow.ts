@@ -3404,15 +3404,8 @@ export function paidAllianceInviteRecoveryMessage(viewer: string): string {
   return `Veydrift paid alliance invite recovery\nViewer: ${viewer.toLowerCase()}`;
 }
 
-export async function storePaidAllianceInvite(apiUrl: string, provider: Eip1193Provider, purchaser: string, secret: string): Promise<void> {
-  const commitment = paidAllianceInviteCommitment(secret);
-  const signature = await requestPersonalSignature(provider, purchaser, paidAllianceInviteStoreMessage(purchaser, commitment));
-  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/alliance-invites/store`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ purchaser, secret, signature }),
-  });
-  if (!response.ok) throw new Error(`Alliance invite recovery storage failed (${response.status}).`);
+export async function storePaidAllianceInvite(apiUrl: string, purchaser: string, secret: string, signature: string): Promise<void> {
+  await fetchGameApiMutation(`${apiUrl.replace(/\/+$/, "")}/alliance-invites/store`, "Alliance invite recovery storage", { purchaser, secret, signature });
 }
 
 export async function recoverPaidAllianceInvites(apiUrl: string, provider: Eip1193Provider, viewer: string): Promise<Array<{ commitment: string; secret: string }>> {
@@ -4904,7 +4897,7 @@ async function fetchGameApiMutation<T>(url: string, label: string, body?: Record
     controller.abort(new Error(`Timed out writing ${label.toLowerCase()} to the game API after ${Math.round(WALLET_API_READ_TIMEOUT_MS / 1_000)} seconds.`));
   }, WALLET_API_READ_TIMEOUT_MS);
 
-  let response: Response;
+  let response: Response | undefined;
   try {
     response = await fetch(url, {
       ...(body
@@ -4923,21 +4916,19 @@ async function fetchGameApiMutation<T>(url: string, label: string, body?: Record
       method: "POST",
       signal: controller.signal,
     });
+    if (!response.ok) throw new Error(await apiErrorMessage(response, label));
+    return await response.json() as T;
   } catch (error) {
     if (controller.signal.aborted) {
       throw controller.signal.reason instanceof Error
         ? controller.signal.reason
         : new Error(`Timed out writing ${label.toLowerCase()} to the game API after ${Math.round(WALLET_API_READ_TIMEOUT_MS / 1_000)} seconds.`);
     }
+    if (response) throw error;
     throw new Error(walletApiNetworkFailureMessage(label, error));
   } finally {
     clearTimeout(timeoutId);
   }
-
-  if (!response.ok) {
-    throw new Error(await apiErrorMessage(response, label));
-  }
-  return response.json() as Promise<T>;
 }
 
 async function fetchWalletJson<T>(

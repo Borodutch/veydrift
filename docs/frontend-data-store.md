@@ -1,97 +1,88 @@
 # Frontend backend-read boundary
 
-## Purpose
+## Ownership
 
-`apps/frontend/src/backendDataStore.ts` is the typed state boundary and canonical runtime owner between UI code, wallet writes, and the Veydrift backend. It owns normalized responses, typed query descriptors, stable request keys, aggregate wallet/planet hydration, generation ordering, freshness, failures, the priority read scheduler, wallet-scoped write gates, and transaction lifecycle state.
+`BackendDataStore` is the canonical runtime owner of backend response entries and
+pending actions. Views subscribe through typed query descriptors. Low-level HTTP
+encoding and validation remain in `walletFlow.ts` and `entityMedia.ts`; components
+must not call raw `fetch` or create another authoritative cache.
 
-Low-level request encoding and response validation remain in `walletFlow.ts` and `entityMedia.ts`. Those modules are transport clients, and UI components must not call their read functions directly.
+The ongoing migration is documented in
+[the refactoring proposal](frontend-state-refactoring-proposal.md). Aggregate
+fan-out, resource promotion between endpoints, and several legacy refresh plans
+still exist; they are not the final ownership model.
 
-## Invariants
+## Reads
 
-1. Every covered backend read has a typed store-owned descriptor with normalized arguments, one canonical key, and one loader. Components must not construct a `key + load` pair or read a raw snapshot key.
-2. If a request for the same key is already running, another caller receives that exact promise unless an authoritative refresh explicitly supersedes it.
-3. Every read has a generation and enqueue-time deadline. Older responses can resolve to their original caller but cannot replace a newer canonical snapshot.
-4. UI components contain no raw `fetch()` calls.
-5. `GameStateStore` is the canonical owner of response data and `fresh`, `refreshing`, `delayed`, or `failed` freshness. Screen and planet-section state is a render projection, not another authoritative response copy.
-6. A failed refresh must not clear the last confirmed view projection. The projection owner records the error while retaining its previous data.
-7. A wallet transaction is successful in the UI only after the backend reports its receipt block indexed and every indexed-contract receipt log materialized atomically.
-8. UI components submit writes and request reconciliation through `BackendDataStore`; they do not own a second transaction gate, write lifecycle, reservation retry, or post-write response cache.
-9. Browser state is a light-client projection of backend-indexed responses. Frontend reads, polls, foreground catch-up, and writes never trigger chain reconciliation. Lazy/as-of-now reconciliation belongs to backend writer/indexer work only.
-10. Shared API-base stores have mount leases and dispose after their final owner releases them. They must not retain listeners, pollers, or cached wallet state across an obsolete runtime configuration.
+- Independent keys start concurrently. There is no global request scheduler.
+- All consumers of a running key share its transport, including callers requesting
+  a fresh read. Invalidation during that request schedules one trailing refresh.
+- Generations prevent invalidated, replaced, or disposed requests from publishing.
+- Last-good data survives loading and failure.
+- A transport timeout covers the actual HTTP request and response-body parsing,
+  not time spent waiting behind unrelated requests.
+- Disabled queries do not subscribe. Inactive registered resources can be retained
+  briefly without being polled.
+- API-base stores are reference-counted through `retainBackendDataStore` and are
+  disposed after their final owner releases them.
 
-Generation, cancellation, priority, cross-screen propagation, and enqueue-time deadline behavior are enforced by `gameStateStore.test.ts`. Boundary/coalescing behavior remains covered by `backendDataStore.test.ts` and `backendDataBoundary.test.ts`.
+Priority arguments remain as compatibility metadata in some readers and polling
+leases. They do not allocate transport slots or delay another key.
 
-## Data flow
+## Writes and recovery
 
-```text
-refresh trigger
-  -> BackendDataStore typed descriptor or store action
-  -> priority scheduler (transaction, selected planet, Mission Control, background)
-  -> stable request key + generation + AbortController
-  -> canonical response/freshness snapshot
-  -> subscribed screen projections rerender
-```
+The same store owns the complete operation:
 
-Wallet mutations use the same boundary:
+1. Check conflicting pending actions and acquire the short wallet submission gate.
+2. Prepare required signatures and submit through the existing EIP-1193 wallet path.
+3. Save the hash, wallet, chain, action, affected planet IDs, and conflict keys before
+   beginning status observation or releasing the submission gate.
+4. Observe the backend's submitted/confirmed/applied/reverted status.
+5. Complete required auxiliary API writes and refresh active affected endpoints.
+6. Remove the journal and publish success only after those reads succeed.
 
-```text
-component action
-  -> BackendDataStore shared write gate
-  -> wallet submission + minimal store-owned pending journal
-  -> backend transaction status (submitted -> confirmed -> applied/reverted)
-  -> transaction-priority refresh of canonical response keys
-  -> shared write lifecycle becomes applied/timed-out/failed
-  -> all subscribed components rerender from those same store entries
-```
+A prior in-flight read cannot satisfy step 5: it must settle before a new
+post-application read starts. Refreshes retain last-good data. A failed refresh,
+HTTP timeout, or indexing delay keeps the action in **Processing…** and retains
+its recovery record. Only an explicit reverted receipt is a post-submission
+failure. There is no overall two-minute deadline or wait/discard dialog.
 
-`backendDataStoreFor(apiBaseUrl)` returns the shared canonical store for a normalized API URL. Do not construct a component-local coordinator, transaction gate, request mutex, write lifecycle, or authoritative response cache.
+Different planets can progress concurrently after submission. Shared fleet,
+research, alliance, and wallet-resource actions declare additional conflict keys.
+Older journals without scope conservatively lock that wallet until resolved.
+Per-action progress includes planet identity, so identical buttons on different
+planets cannot overwrite one another.
 
-Mounted app roots retain the store they use with `retainBackendDataStore(apiBaseUrl)`. The registry disposes an unleased store after the current turn, which handles strict-effect cleanup/reacquire without leaking inactive API-base listeners or maps. Runtime configuration, settlement funding, activity-presence claims, attack randomness readiness, and the wallet/planet hydration aggregate are all store descriptors/actions rather than app-shell async state machines.
+Hidden/offline tabs and inactive wallets pause observation. Visibility return,
+online, pageshow, context restoration, and SSE connection wake existing observers;
+there remains one observer per hash. Recovery never submits again or requests a
+new signature. A journal from another chain is retained, not queried on the
+current chain or silently discarded.
 
-Completed responses and freshness changes notify every subscriber. Rankings, Raid Finder, selected-planet modules, the top bar/Overview shell, Mission Control, Galaxy, and planet/moon detail all subscribe to canonical snapshots. Their remaining local state is limited to interaction and render projections such as the selected tab, page, filters, or composed display rows.
+Paid-invite and referral completion authorizations are obtained before submission.
+Their narrowly scoped signatures and required invite data live in the pending
+browser journal only until completion; this is not encrypted browser storage.
+No wallet private keys are stored. Recovery retries the signed API operation
+without reopening the wallet. If browser storage is unavailable, the current page
+still keeps hashes and conflict protection in memory, but reload recovery cannot
+be guaranteed.
 
-## Planet state
+## Backend completion boundary
 
-`planetSectionStore.ts` remains a render-only cache for derived per-planet universe projections used by mission composition. Indexed settlement, queues, infrastructure, moon, defense, shipyard, research, and rift responses no longer live there; their data and freshness come directly from `GameStateStore` snapshots.
+Transaction status checks receipt-log identities and contents together with the
+durable resource-projection watermark inside one SQLite read transaction.
+An in-memory sync cursor or matching event count alone cannot report **applied**.
+The watermark must cover the receipt block and match the committed index revision.
+Gameplay still uses separate endpoints; this change does not introduce whole-planet
+snapshot polling.
 
-For example, Infrastructure data follows this path:
+## Validation and remaining work
 
-```text
-BackendDataStore.infrastructure(wallet, planetId)
-  -> canonical store publishes the indexed response and revision
-  -> every subscriber for wallet + planetId rerenders
-  -> Overview, Infrastructure, top-bar/resource, and selector projections
-```
+`gameStateStore.test.ts`, `backendDataStore.test.ts`, and
+`transactionRecovery.test.ts` exercise concurrency, generations, disposal, recovery,
+and full-cycle completion. Backend transaction-status coverage checks missing
+watermarks, wrong log identities/content, and same-block revision changes.
 
-The planet section store never performs network requests or owns backend loading/error state. The canonical store keeps last-good data on delayed/failed refreshes, and only the current generation can replace it.
-
-## Canonical planet resources
-
-`planetResourceStore.ts` is the only frontend owner of connected-wallet resource balances. It is keyed by wallet, orbit-body kind, and planet ID. Wallet settlement, the planet roster/navigation cache, Infrastructure, Research, Shipyard, Defenses, Rift, moons, the top bar, and mission affordability all overlay resource values from this store instead of retaining competing balance projections.
-
-Every value promoted into the store comes from a backend-indexed response. Backend-reported transaction application starts one canonical refresh; it does not debit, credit, roll back, or reconcile a balance in the browser. Poll, EventSource, navigation, and in-flight responses are ordered by indexed block and settlement metadata, and an older response cannot replace the confirmed floor. Same-version responses may only advance backend-computed production accrual; a same-version decrease is rejected.
-
-Resource-affecting action UIs remain in the explicit `indexing` phase until shared convergence promotes the proven backend snapshot. A bounded timeout becomes a visible retryable action error while the last confirmed balance stays rendered.
-
-## Adding a backend read
-
-1. Add or reuse the typed transport function in `walletFlow.ts`.
-2. Add a typed method and stable key in `BackendDataStore`.
-3. Expose a descriptor or named store action for refresh triggers and post-transaction reconciliation.
-4. Subscribe to the canonical snapshot or adapt it into an existing render projection; do not add another authoritative response cache.
-5. Assign the appropriate scheduler priority and navigation/filter scope.
-6. Add generation, cancellation, deadline, or propagation coverage when the new read changes those behaviors.
-
-## Refresh behavior
-
-Calling a descriptor's `read`/`refetch` or a named store action means “refresh this canonical key.” Concurrent same-key calls coalesce; authoritative reads advance the generation. Wallet/planet/filter/navigation changes abort their old scope, including work still waiting for one of the three read slots. Deadlines begin at enqueue time, not when `fetch()` starts. A transport that is slow to honor an abort retains its logical in-flight identity until it settles, so queued callers do not create duplicate reads.
-
-Hidden documents defer refresh work into store-owned tags. Visibility return performs one canonical foreground catch-up; components must not add their own visibility timers or stale-response recovery loops.
-
-The underlying wallet API client also has a very short recent-response window to collapse immediate duplicate HTTP work. Transaction completion polling targets the backend transaction-status endpoint; components never poll receipts or domain state themselves. SSE sync status carries a durable monotonic index revision (separate from block height, so same-block events cannot collapse together), and the store performs one canonical catch-up if that revision advanced while its stream was disconnected.
-
-## Mutations
-
-Wallet provider calls stop at submission. `BackendDataStore` owns receipt/indexing observation through the backend, its wallet-scoped gate, and every write phase published into `GameStateStore`. Components subscribe to that shared write entry just like read entries. The shared state records wallet submission, confirmation, waiting for index, and the visible terminal outcome (`applied`, `timed-out`, or `failed`). Each backend status request has an abort deadline; the overall wait is bounded. A delayed outcome preserves the minimal wallet/chain/hash/action journal, and store bootstrap resumes it before another write can be submitted for that wallet.
-
-The backend writer/indexer is the only reconciliation owner. Its transaction endpoint reports `applied` only after the successful receipt's block is behind the atomic indexed high-water mark and all relevant receipt logs exist in the event ledger. The frontend then refreshes affected canonical store entries once at transaction priority. Those entries drive every page and widget; the initiating component does not copy responses, poll receipts, or run another state machine.
+The draft migration still needs single authoritative field ownership, removal of
+aggregate publication and broad tag invalidation, scoped post-commit SSE events,
+and receipt replacement/nonce recovery. Do not describe those as implemented.

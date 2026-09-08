@@ -282,14 +282,14 @@ describe("playable chain refresh", () => {
     expect(source).not.toContain("sendCollectResourcesTransaction");
   });
 
-  test("gates mutating transaction families until receipt and backend sync work settle", async () => {
+  test("keeps submission gates and scoped pending actions in the central store", async () => {
     const source = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.url)).text();
 
     const storeSource = await Bun.file(new URL("../src/backendDataStore.ts", import.meta.url)).text();
     expect(source).toContain("runCoordinatedWriteTransaction");
     expect(source).toContain("backendData.runWriteTransaction({");
     expect(storeSource).toContain("readonly transactionGates = new Map<string, TransactionActionGate>()");
-    expect(storeSource).toContain("executeWriteTransaction(this.transactionGateFor(walletScope), {");
+    expect(storeSource).toContain("this.transactionGateFor(walletScope).run(descriptor.key,");
     expect(source).toContain("const gameContractTransactionInputsAvailable = Boolean(provider && account && gameContract)");
     expect(source).not.toContain("gameMaintenancePaused");
     expect(source).toContain("gameActionsAvailableForBody(");
@@ -297,9 +297,9 @@ describe("playable chain refresh", () => {
     expect(source).toContain("const missionTransactionInputsAvailable = currentPlanetTransactionInputsAvailable(");
     expect(source).not.toContain("GAME_MAINTENANCE_MESSAGE");
     expect(source).toContain("const canSubmitGameTransaction = gameTransactionInputsAvailable && !transactionActionPending");
-    expect(source).toContain("const canSubmitMissionTransaction = missionTransactionInputsAvailable && !transactionActionPending");
+    expect(source).toContain("const canSubmitMissionTransaction = missionTransactionInputsAvailable && !missionTransactionPending");
     expect(source).toContain("runCoordinatedWriteTransaction");
-    expect(storeSource).toContain("waitForBackendTransactionStatus(");
+    expect(storeSource).toContain("trackPendingTransaction(");
     expect(storeSource).toContain("writePendingTransaction(");
     expect(source).toContain("const allianceTransactionUnavailableReason = transactionUnavailableReasonFor({");
     expect(source).toContain("const moonTransactionUnavailableReason = transactionUnavailableReasonFor({");
@@ -318,7 +318,7 @@ describe("playable chain refresh", () => {
     expect(source).toContain("): Promise<WriteTransactionOutcome> => {");
     expect(source).not.toContain("confirm: confirmSubmittedTransaction");
     const storeSource = await Bun.file(new URL("../src/backendDataStore.ts", import.meta.url)).text();
-    expect(storeSource).toContain("waitForBackendTransactionStatus(");
+    expect(storeSource).toContain("trackPendingTransaction(");
     expect(storeSource).not.toContain("waitForMissionLaunchState(");
     expect(storeSource).toContain("missionLaunch:");
     expect(storeSource).toContain("this.globalActiveMissions()");

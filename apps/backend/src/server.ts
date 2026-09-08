@@ -764,7 +764,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
     if (request.method === "GET" && url.pathname.match(/^\/transactions\/[^/]+\/status$/)) {
       const transactionHash = url.pathname.split("/")[2] ?? "";
-      return transactionStatusResponse(chainReader, indexer, chainSync, transactionHash);
+      return transactionStatusResponse(chainReader, indexer, transactionHash);
     }
 
     if (
@@ -6972,7 +6972,6 @@ function badRequest(message: string): Response {
 async function transactionStatusResponse(
   chainReader: ChainReader | undefined,
   indexer: SettlementIndexer | undefined,
-  chainSync: ChainSyncService | undefined,
   transactionHash: string
 ): Promise<Response> {
   const headers = {
@@ -6994,7 +6993,7 @@ async function transactionStatusResponse(
 
   try {
     const receipt = await chainReader.getTransactionReceipt(transactionHash);
-    const indexed = indexer.transactionIndexingSummary(transactionHash);
+    const indexed = indexer.transactionIndexingSummary(transactionHash, receipt?.logs);
     if (!receipt) {
       return Response.json({
         transactionHash,
@@ -7008,14 +7007,14 @@ async function transactionStatusResponse(
 
     const reverted = BigInt(receipt.status) === 0n;
     const receiptBlock = BigInt(receipt.blockNumber);
-    const writerChainSync = chainSync?.snapshot()
-      ?? indexer.writerChainSyncDiagnostics()?.chainSync;
-    const latestSyncedBlock = stringSnapshotField(writerChainSync, "latestSyncedBlock")
-      ?? indexed.latestIndexedBlock;
+    // The projection watermark is committed only after all log sources have
+    // been scanned and materialized. Process-local cursors and equal counts
+    // cannot prove that an API read will observe this receipt's exact effects.
+    const latestSyncedBlock = indexed.latestSyncedBlock;
     const indexedThroughReceipt = latestSyncedBlock !== null
       && BigInt(latestSyncedBlock) >= receiptBlock;
     const expectedIndexedEventCount = receipt.logs?.length ?? 0;
-    const materialized = indexedThroughReceipt && indexed.eventCount >= expectedIndexedEventCount;
+    const materialized = indexedThroughReceipt && indexed.materialized && Array.isArray(receipt.logs);
     return Response.json({
       transactionHash,
       phase: reverted ? "reverted" : materialized ? "applied" : "confirmed",

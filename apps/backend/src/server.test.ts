@@ -1003,6 +1003,8 @@ describe("Veydrift backend", () => {
     });
 
     latestSyncedBlock = "120";
+    await expect((await status()).json()).resolves.toMatchObject({ phase: "confirmed" });
+    indexer.recordResourceProjectionWatermark("120", "1000", `0x${"11".repeat(32)}`);
     await expect((await status()).json()).resolves.toMatchObject({
       indexedEventCount: 0,
       latestSyncedBlock: "120",
@@ -1028,11 +1030,20 @@ describe("Veydrift backend", () => {
       topics: [`0x${"00".repeat(32)}`],
       transactionHash,
     });
+    await expect((await status()).json()).resolves.toMatchObject({ phase: "confirmed" });
+    indexer.recordResourceProjectionWatermark("121", "1002", `0x${"22".repeat(32)}`);
     await expect((await status()).json()).resolves.toMatchObject({
       indexedEventCount: 1,
       latestIndexedBlock: "121",
       phase: "applied",
     });
+    const expectedLog = reader.transactionReceipt.logs![0]!;
+    reader.transactionReceipt.logs = [{ ...expectedLog, logIndex: "0x2" }];
+    await expect((await status()).json()).resolves.toMatchObject({ phase: "confirmed", indexedEventCount: 1 });
+    reader.transactionReceipt.logs = [{ ...expectedLog, data: "0x01" }];
+    await expect((await status()).json()).resolves.toMatchObject({ phase: "confirmed", indexedEventCount: 1 });
+    reader.transactionReceipt.logs = [{ ...expectedLog, logIndex: "0x00" }];
+    await expect((await status()).json()).resolves.toMatchObject({ phase: "applied" });
     const firstRevision = BigInt(indexer.snapshot().indexedRevision);
     indexer.applyLog({
       blockNumber: "0x79",
@@ -1043,6 +1054,9 @@ describe("Veydrift backend", () => {
     });
     expect(BigInt(indexer.snapshot().indexedRevision)).toBe(firstRevision + 1n);
     expect(indexer.snapshot().latestIndexedBlock).toBe("121");
+    // A later same-block commit invalidates the old projection revision until
+    // the complete log scan publishes its new durable watermark.
+    await expect((await status()).json()).resolves.toMatchObject({ phase: "confirmed" });
 
     reader.transactionReceipt = { ...reader.transactionReceipt, status: "0x0" };
     await expect((await status()).json()).resolves.toMatchObject({ phase: "reverted" });

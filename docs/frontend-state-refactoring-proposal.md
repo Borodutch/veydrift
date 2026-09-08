@@ -2,11 +2,14 @@
 
 Status: implementation approved and in progress on 2026-09-08. The findings below
 describe the inspected baseline, `813e0c9f564ecc2b9cae4734d0472cfd49b4efca`.
-This draft PR now includes the first implementation slice: independent single-flight
-reads without the global scheduler, response-body transport deadlines, and a
-loopback-only local backend/frontend setup. The transaction and ownership migration
-described below is not complete yet. No contracts or production application deployment
-have changed.
+This draft PR now includes independent single-flight reads without the global
+scheduler, full-response transport deadlines, and a loopback-only local setup.
+Automatic durable transaction recovery replaces the wait/discard popup. Wallet
+submission gates are short-lived, pending actions have conflict/planet scopes,
+and success waits for affected indexed refreshes. Backend application status now
+requires exact receipt logs and a durable projection watermark. Single field
+ownership, scoped post-commit events, and transaction replacement recovery remain
+unfinished. No contracts or production application deployment have changed.
 
 ## Recommendation
 

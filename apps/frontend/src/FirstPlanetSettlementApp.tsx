@@ -3,7 +3,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks"
 import { ChevronDown, Coins, Copy, FileText, Gift, Link, RefreshCw, Share2, TicketCheck, UserRound } from "lucide-preact";
 import { ComingSoonApp } from "./ComingSoonApp";
 import { TelegramIcon } from "./components/TelegramIcon";
-import { PendingTransactionRecoveryDialog } from "./components/PendingTransactionRecoveryDialog";
 import { PlayableMvpApp } from "./PlayableMvpApp";
 import { RankingCommanderLink, RankingsPagination, RankingsTable } from "./components/RankingsPage";
 import { Skeleton, SkeletonRegion } from "./components/Skeleton";
@@ -69,7 +68,7 @@ import {
   type WalletProviderSource,
   type WalletSettlementResponse,
 } from "./walletFlow";
-import { backendDataStoreFor, retainBackendDataStore, type PendingTransactionRecoveryDecision } from "./backendDataStore";
+import { backendDataStoreFor, retainBackendDataStore } from "./backendDataStore";
 import type { WriteTransactionState } from "./transactionActionGate";
 import { useBackendDataQuery } from "./useBackendDataQuery";
 import { useBackendDataSnapshot } from "./useBackendDataSnapshot";
@@ -366,8 +365,8 @@ export function FirstPlanetSettlementApp() {
   const previousWalletKind = useRef<WalletState["kind"]>();
   const referralData = useMemo(() => (settlementConfigState.apiUrl ? backendDataStoreFor(settlementConfigState.apiUrl) : undefined), [settlementConfigState.apiUrl]);
   useEffect(() => {
-    referralData?.setContext(account);
-  }, [account, referralData]);
+    referralData?.setContext(account, undefined, requiredChain.chainIdHex);
+  }, [account, referralData, requiredChain.chainIdHex]);
   useEffect(() => {
     const releaseRuntime = retainBackendDataStore("");
     const releaseApi = settlementConfigState.apiUrl ? retainBackendDataStore(settlementConfigState.apiUrl) : undefined;
@@ -381,11 +380,6 @@ export function FirstPlanetSettlementApp() {
     referralData && account ? referralData.writeTransactionKey(undefined, account) : undefined,
   );
   const writeTransactionState = writeTransactionSnapshot?.data;
-  const pendingTransactionRecoverySnapshot = useBackendDataSnapshot<PendingTransactionRecoveryDecision>(
-    referralData,
-    referralData && account ? referralData.pendingTransactionRecoveryKey(account) : undefined,
-  );
-  const pendingTransactionRecovery = pendingTransactionRecoverySnapshot?.data;
   useEffect(() => {
     if (!writeTransactionState?.key) return;
     const pending = !["idle", "success", "error"].includes(writeTransactionState.phase);
@@ -1595,17 +1589,6 @@ export function FirstPlanetSettlementApp() {
         }
         heroSupport={<SettlementSupportLinks />}
       />
-      {referralData && account && pendingTransactionRecovery ? (
-        <PendingTransactionRecoveryDialog
-          decision={pendingTransactionRecovery}
-          onDiscard={() => {
-            void referralData.discardPendingTransactionRecovery(account, pendingTransactionRecovery.transactionHash);
-          }}
-          onKeepWaiting={() => {
-            void referralData.keepPendingTransactionRecovery(account, pendingTransactionRecovery.transactionHash);
-          }}
-        />
-      ) : null}
     </>
   );
 }

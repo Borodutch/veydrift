@@ -1538,7 +1538,7 @@ describe("Playable MVP app display helpers", () => {
         transactionPending: true,
         unavailableReason: "Wallet or game contract unavailable",
       }),
-    ).toBe("Transaction is syncing indexed state. Wait for it to finish before starting another action.");
+    ).toBe("An action using these resources is processing.");
 
     expect(
       transactionUnavailableReasonFor({

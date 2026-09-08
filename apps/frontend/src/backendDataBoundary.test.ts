@@ -46,8 +46,8 @@ describe("frontend backend-data boundary", () => {
     expect(appSource).not.toContain('from "./planetSectionStore"');
     expect(appSource).not.toContain("setPlanetSectionStore");
     expect(guide).toContain("canonical runtime owner");
-    expect(guide).toContain("Deadlines begin at enqueue time");
-    expect(playerGuide).toContain("one shared game-state store and priority scheduler");
+    expect(guide).toContain("There is no global request scheduler");
+    expect(playerGuide).toContain("one shared game-state store");
     expect(playerGuide).toContain("the same stored responses");
   });
 
@@ -61,8 +61,7 @@ describe("frontend backend-data boundary", () => {
     expect(storeSource).toContain("/transactions/${encodeURIComponent(transactionHash)}/status");
     expect(storeSource).toContain("writePendingTransaction");
     expect(storeSource).toContain("resumePendingTransactions");
-    expect(storeSource).toContain('outcome: "submitted"');
-    expect(storeSource).toContain("writeTransactionOutcomeFromState");
+    expect(storeSource).toContain("trackPendingTransaction");
     expect(storeSource).not.toContain("waitForIndexedResource<T extends");
     expect(storeSource).not.toContain("waitForStartedDefenseProduction(");
     expect(appSource).toContain("backendData?.writeTransactionKey(undefined, account)");

@@ -83,7 +83,6 @@ import {
 import { derivePlanetPickerAttackHighlights, planetPickerHasIncomingAttack, type PlanetPickerAttackHighlights } from "./planetPickerAttackHighlights";
 import { ShareDialog } from "./components/ShareDialog";
 import { PlayerActivityCenter } from "./components/PlayerActivityDialog";
-import { PendingTransactionRecoveryDialog } from "./components/PendingTransactionRecoveryDialog";
 import { rankingsAttackProtectionForEntry } from "./rankingsAttackProtection";
 import {
   buildingKeyForContractId,
@@ -291,7 +290,7 @@ import {
   type PaidAllianceBonusAmount,
   type ResourceSnapshotMetadata,
 } from "./walletFlow";
-import { BackendDataStore, backendDataStoreFor, retainBackendDataStore, type BackendDataTag, type BackendIndexingPlan, type PendingTransactionRecoveryDecision } from "./backendDataStore";
+import { BackendDataStore, backendDataStoreFor, retainBackendDataStore, type BackendDataTag, type BackendIndexingPlan } from "./backendDataStore";
 import { isBackendDataSnapshotLoading, useBackendDataSnapshot, useBackendDataSnapshots } from "./useBackendDataSnapshot";
 import { useBackendDataQuery } from "./useBackendDataQuery";
 import { nextWatchedPlanetsPageAfterToggle } from "./watchedPlanetsView";
@@ -1760,7 +1759,7 @@ function useActionNoticeAutoDismiss<State extends AutoDismissableActionState>(ac
   }, [action]);
 }
 
-const transactionBusyUnavailableReason = "Transaction is syncing indexed state. Wait for it to finish before starting another action.";
+const transactionBusyUnavailableReason = "An action using these resources is processing.";
 
 export function transactionUnavailableReasonFor({
   activeActionLabel,
@@ -3280,17 +3279,6 @@ export function PlayableMvpApp({
     };
   }, [apiBaseUrl]);
   const writeTransactionSnapshot = useBackendDataSnapshot<WriteTransactionState>(backendData, backendData?.writeTransactionKey(undefined, account));
-  const pendingTransactionRecoverySnapshot = useBackendDataSnapshot<PendingTransactionRecoveryDecision>(
-    backendData,
-    backendData && account ? backendData.pendingTransactionRecoveryKey(account) : undefined,
-  );
-  const pendingTransactionRecovery = pendingTransactionRecoverySnapshot?.data;
-  const writeTransactionState = writeTransactionSnapshot?.data ?? {
-    phase: "idle" as const,
-  };
-  const transactionActionPending = writeTransactionState.outcome === "submitted"
-    || writeTransactionState.outcome === "confirmed"
-    || (writeTransactionState.phase !== "idle" && writeTransactionState.phase !== "success" && writeTransactionState.phase !== "error");
   const [page, setPage] = useState<Page>(() => initialInspectPageState().page);
   // Mission Control used to fetch and mount every All/Incoming archive before the default My
   // missions view could become interactive. Keep the persisted deep-link selection working while
@@ -3441,9 +3429,15 @@ export function PlayableMvpApp({
   );
   const selectedManagedPlanet = useMemo(() => walletPlanets.find((item) => item.planetId === resolvedSelectedPlanetId) ?? walletPlanets[0], [resolvedSelectedPlanetId, walletPlanets]);
   const activePlanetId = selectedManagedPlanet?.planetId ?? onChainSettlementState?.homePlanetId ?? undefined;
+  const writeTransactionState = backendData?.pendingTransactionState(account, activePlanetId) ?? writeTransactionSnapshot?.data ?? { phase: "idle" as const };
+  const transactionActionPending = backendData?.isTransactionPending(account, activePlanetId ? [`planet:${activePlanetId}`] : []) ?? false;
+  const missionTransactionPending = transactionActionPending || (backendData?.isTransactionPending(account, ["fleets"]) ?? false);
+  const allianceTransactionPending = backendData?.isTransactionPending(account, ["alliance"]) ?? false;
+  const researchTransactionPending = transactionActionPending || (backendData?.isTransactionPending(account, ["research"]) ?? false);
+  const riftTransactionPending = transactionActionPending || (backendData?.isTransactionPending(account, ["wallet-resources"]) ?? false);
   useEffect(() => {
-    backendData?.setContext(account, activePlanetId);
-  }, [account, activePlanetId, backendData]);
+    backendData?.setContext(account, activePlanetId, runtimeConfig.status === "ready" ? String(runtimeConfig.config.chainId) : undefined);
+  }, [account, activePlanetId, backendData, runtimeConfig]);
   const selectedMoonBody = selectedManagedPlanet?.moon?.exists ? selectedManagedPlanet.moon : null;
   const activeBodyKind = resolvedOrbitBodyKind(selectedBodyKind, selectedManagedPlanet);
   // This is a read-only projection of canonical entries, not another cache.
@@ -4429,6 +4423,8 @@ export function PlayableMvpApp({
 
   const runCoordinatedWriteTransaction = useCallback(
     async ({
+      conflictKeys,
+      planetIds,
       errorLabel,
       invalidateTags,
       indexing,
@@ -4438,6 +4434,8 @@ export function PlayableMvpApp({
       onStateChange,
       send,
     }: {
+      conflictKeys?: readonly string[];
+      planetIds?: readonly string[];
       errorLabel?: (error: unknown) => string;
       invalidateTags?: readonly BackendDataTag[];
       indexing?: BackendIndexingPlan | undefined;
@@ -4449,6 +4447,8 @@ export function PlayableMvpApp({
     }) => {
       if (!backendData) throw new Error("Game state store is unavailable.");
       return backendData.runWriteTransaction({
+        ...(conflictKeys ? { conflictKeys } : {}),
+        ...(planetIds ? { planetIds } : {}),
         chainId: gameWalletChain.chainIdHex,
         ...(errorLabel ? { errorLabel } : {}),
         key,
@@ -5501,7 +5501,7 @@ export function PlayableMvpApp({
   const chainBuildingDurations = useMemo(() => buildingDurations(infrastructureChainState), [infrastructureChainState]);
   const infrastructureUnavailableReason = useMemo(() => {
     if (transactionActionPending && buildingAction.status !== "pending") {
-      return "Another transaction is syncing indexed state.";
+      return "An action on this planet is processing.";
     }
     return infrastructureUnavailableReasonFor({
       buildingAction,
@@ -5763,6 +5763,8 @@ export function PlayableMvpApp({
     async (label: string, send: () => Promise<string>, indexing?: BackendIndexingPlan) => {
       await runCoordinatedWriteTransaction({
         key: `alliance:${label}`,
+        conflictKeys: ["alliance"],
+        planetIds: [],
         label,
         send,
         indexing: indexing ?? backendData!.indexing.alliance(account!),
@@ -5796,6 +5798,7 @@ export function PlayableMvpApp({
       const planetSwitchRequestId = planetSwitchGate.current;
       await runCoordinatedWriteTransaction({
         key: `research:${label}`,
+        conflictKeys: ["research", ...(activePlanetId ? [`planet:${activePlanetId}`] : [])],
         label,
         send,
         indexing:
@@ -5842,6 +5845,7 @@ export function PlayableMvpApp({
       ];
       await runCoordinatedWriteTransaction({
         key: `rift:${label}`,
+        conflictKeys: ["wallet-resources", ...(activePlanetId ? [`planet:${activePlanetId}`] : [])],
         label,
         send,
         indexing: resourceChange
@@ -5958,6 +5962,7 @@ export function PlayableMvpApp({
         const exactResourcePlans = resourceChanges.map((change) => backendData!.indexing.resourceChange(account!, change.planetId, change.bodyKind));
         const result = await runCoordinatedWriteTransaction({
           key: `galaxy:${label}`,
+          conflictKeys: ["fleets", ...affectedPlanetIds.map((id) => `planet:${id}`)],
           label,
           invalidateTags: [...(account ? [`wallet:${account.toLowerCase()}` as const] : []), ...affectedPlanetIds.map((planetId) => `planet:${planetId}` as const)],
           send,
@@ -7929,6 +7934,8 @@ export function PlayableMvpApp({
 
       void runCoordinatedWriteTransaction({
         key: `mission:${label}`,
+        conflictKeys: ["fleets", ...(resourceChange ? [`planet:${resourceChange.planetId}`] : [])],
+        planetIds: resourceChange ? [resourceChange.planetId] : [],
         label,
         send: request,
         indexing: resourceChange
@@ -8474,7 +8481,7 @@ export function PlayableMvpApp({
   const missionTransactionUnavailableReason = transactionUnavailableReasonFor({
     activeActionLabel: pendingActionLabel(galaxyAction, missionAction) ?? writeTransactionState.label,
     inputsAvailable: missionTransactionInputsAvailable,
-    transactionPending: transactionActionPending,
+    transactionPending: missionTransactionPending,
     unavailableReason: gameContractTransactionInputsAvailable && !activePlanetStateFresh
       ? "Loading the selected planet's latest state."
       : "Wallet or game contract unavailable",
@@ -8482,7 +8489,7 @@ export function PlayableMvpApp({
   const allianceTransactionUnavailableReason = transactionUnavailableReasonFor({
     activeActionLabel: pendingActionLabel(allianceAction) ?? writeTransactionState.label,
     inputsAvailable: allianceTransactionInputsAvailable,
-    transactionPending: transactionActionPending,
+    transactionPending: allianceTransactionPending,
     unavailableReason: "Alliance contract unavailable.",
   });
   const moonTransactionUnavailableReason = transactionUnavailableReasonFor({
@@ -8492,11 +8499,11 @@ export function PlayableMvpApp({
     unavailableReason: Boolean(provider && account && moonContract) && !activePlanetStateFresh ? "Loading the selected planet's latest state." : "Wallet or moon contract unavailable.",
   });
   const canSubmitGameTransaction = gameTransactionInputsAvailable && !transactionActionPending;
-  const canSubmitMissionTransaction = missionTransactionInputsAvailable && !transactionActionPending;
-  const canSubmitAllianceTransaction = allianceTransactionInputsAvailable && !transactionActionPending;
+  const canSubmitMissionTransaction = missionTransactionInputsAvailable && !missionTransactionPending;
+  const canSubmitAllianceTransaction = allianceTransactionInputsAvailable && !allianceTransactionPending;
   const canSubmitMoonTransaction = moonTransactionInputsAvailable && !transactionActionPending;
   const canSubmitChickenBurnTransaction = chickenBurnTransactionInputsAvailable && !transactionActionPending;
-  const canSubmitProfileMutation = Boolean(provider && account && apiBaseUrl) && !transactionActionPending;
+  const canSubmitProfileMutation = Boolean(provider && account && apiBaseUrl) && !backendData?.isTransactionPending(account, []);
   const effectiveConnectWallet = onConnectWallet ?? (miniAppMode ? connectMiniAppWallet : undefined);
   const walletRecoveryReadError = walletRecoveryActionMessage(onChainError) ? onChainError : undefined;
   const missionLaunchBlocker = missionTransactionUnavailableReason ?? missionLaunchStateBlocker;
@@ -8903,7 +8910,7 @@ export function PlayableMvpApp({
       return (
         <ResearchPage
           actionState={researchAction}
-          canTransact={canSubmitGameTransaction}
+          canTransact={canSubmitGameTransaction && !researchTransactionPending}
           error={researchError ?? walletRecoveryReadError}
           loading={researchLoading}
           now={now}
@@ -8919,7 +8926,7 @@ export function PlayableMvpApp({
           spendableResources={spendableResources}
           settledState={settledState}
           state={state}
-          transactionUnavailableReason={gameTransactionUnavailableReason}
+          transactionUnavailableReason={gameTransactionUnavailableReason ?? (researchTransactionPending ? transactionBusyUnavailableReason : undefined)}
           useLocalStateFallback={!isWalletConnected}
         />
       );
@@ -9065,7 +9072,7 @@ export function PlayableMvpApp({
       return (
         <RiftPage
           actionState={riftAction}
-          canTransact={canSubmitGameTransaction}
+          canTransact={canSubmitGameTransaction && !riftTransactionPending}
           error={riftError}
           loading={riftLoading}
           now={now}
@@ -9229,17 +9236,6 @@ export function PlayableMvpApp({
           kind="battle"
           onClose={() => setShareDialogUrl(null)}
           url={shareDialogUrl}
-        />
-      ) : null}
-      {backendData && account && pendingTransactionRecovery ? (
-        <PendingTransactionRecoveryDialog
-          decision={pendingTransactionRecovery}
-          onDiscard={() => {
-            void backendData.discardPendingTransactionRecovery(account, pendingTransactionRecovery.transactionHash);
-          }}
-          onKeepWaiting={() => {
-            void backendData.keepPendingTransactionRecovery(account, pendingTransactionRecovery.transactionHash);
-          }}
         />
       ) : null}
       <PlayerActivityCenter

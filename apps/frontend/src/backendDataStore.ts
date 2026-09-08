@@ -26,6 +26,9 @@ import {
   fetchReferralHistory,
   inspectReferralCode,
   persistReferralClaimIntent,
+  requestPersonalSignature,
+  paidAllianceInviteCommitment,
+  paidAllianceInviteStoreMessage,
   resolvePaidAllianceInvite,
   recordReferralClaimTransaction,
   recordReferralRedemptionTransaction,
@@ -106,7 +109,7 @@ import {
   type WalletPlanetSyncSnapshot,
 } from "./postTransactionRefresh";
 import { confirmedFleetVisibility } from "./missionVisibilityRefresh";
-import { createTransactionActionGate, isTransactionIndexingTimeout, runWriteTransaction as executeWriteTransaction, writeTransactionOutcomeFromState, type TransactionActionGate, type WriteTransactionDescriptor, type WriteTransactionOutcome, type WriteTransactionState } from "./transactionActionGate";
+import { createTransactionActionGate, type TransactionActionGate, type WriteTransactionOutcome, type WriteTransactionState } from "./transactionActionGate";
 
 type WalletReadOptions = {
   source?: "indexed";
@@ -167,7 +170,17 @@ export type BackendIndexingPlan = {
   readonly [backendIndexingPlanBrand]: true;
 };
 
-export type BackendWriteTransactionDescriptor = Omit<WriteTransactionDescriptor<void>, "applyIndexedState" | "confirm" | "waitForIndexed"> & {
+export type BackendWriteTransactionDescriptor = {
+  key: string;
+  label: string;
+  prepare?: () => Promise<void>;
+  send: () => Promise<string>;
+  errorLabel?: (error: unknown) => string;
+  onErrorRefresh?: (error: unknown) => Promise<void> | void;
+  onStateChange?: (state: WriteTransactionState) => void;
+  /** Shared resources consumed by this action, independent of its display label. */
+  conflictKeys?: readonly string[];
+  planetIds?: readonly string[];
   chainId?: string;
   /**
    * Canonical resources affected by a confirmed mutation. The wallet UI owns
@@ -268,12 +281,24 @@ export type PendingTransactionJournalEntry = {
   submittedAt: number;
   transactionHash: string;
   wallet: string;
+  label?: string;
+  planetIds?: string[];
+  conflictKeys?: string[];
+  completions?: PendingTransactionCompletion[];
 };
 
-export type PendingTransactionRecoveryDecision = Readonly<PendingTransactionJournalEntry> & {
-  error?: string | undefined;
-  phase: "decision" | "checking";
-};
+type PendingTransactionCompletion =
+  | { kind: "paid-alliance-invite"; secret: string; signature: string }
+  | { kind: "referral-claim"; code: string; commitment: string; signature: string };
+
+function isPendingTransactionCompletion(value: unknown): value is PendingTransactionCompletion {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<PendingTransactionCompletion>;
+  return typeof candidate.signature === "string" && (
+    candidate.kind === "paid-alliance-invite" ? typeof candidate.secret === "string"
+      : candidate.kind === "referral-claim" && typeof candidate.code === "string" && typeof candidate.commitment === "string"
+  );
+}
 
 function sameChainId(left: string, right: string): boolean {
   try {
@@ -284,10 +309,6 @@ function sameChainId(left: string, right: string): boolean {
 }
 
 type IndexingPlanRunner = (receipt: unknown, txHash: string) => Promise<void>;
-
-type ReceiptBlock = {
-  blockNumber?: string | number | bigint | null;
-};
 
 type FleetMissionVisibilityOptions = WalletReadOptions & {
   includeArchive?: boolean;
@@ -318,7 +339,6 @@ type BackendDataStoreOptions = {
   now?: () => number;
   transactionPollIntervalMs?: number;
   transactionRequestTimeoutMs?: number;
-  transactionStatusTimeoutMs?: number;
   transactionStatusReader?: (transactionHash: string) => Promise<BackendTransactionStatus>;
 };
 
@@ -357,8 +377,7 @@ function resourceTagsForKey(key: string, wallet?: string | undefined, planetId?:
  */
 export class BackendDataStore {
   private readonly state = new GameStateStore();
-  /** EVM nonces must serialize per wallet, not across unrelated accounts that
-   * happen to share this API-base store after a browser account switch. */
+  /** Serialize wallet prompts only; submitted hashes are observed independently. */
   private readonly transactionGates = new Map<string, TransactionActionGate>();
   private readonly settlementReservationAttempts = new Map<string, Promise<SettlementRedemptions>>();
   /**
@@ -384,13 +403,22 @@ export class BackendDataStore {
   private readonly activityPresenceClaims = new Map<string, ActivityPresenceClaim>();
   private readonly chainEventBridges = new Map<string, ChainEventBridge>();
   private readonly latestIndexedRevisionByWallet = new Map<string, bigint>();
-  private readonly transactionRecoveries = new Map<string, Promise<void>>();
+  private readonly transactionRecoveries = new Map<string, Promise<WriteTransactionOutcome>>();
+  private readonly transactionJournal = new Map<string, PendingTransactionJournalEntry>();
+  private readonly completedTransactionHashes = new Set<string>();
+  private readonly transactionWakeups = new Set<() => void>();
+  private readonly transactionAbort = new AbortController();
   private readonly scheduledRefreshes = new Map<string, ReturnType<typeof setTimeout>>();
   /** Refresh intent that became due while hidden. It is coalesced and resumed
    * once, centrally, when the tab is visible again. */
   private readonly deferredHiddenRefreshes = new Map<BackendDataTag, GameStatePriority>();
-  private readonly indexingPlanRunners = new WeakMap<object, IndexingPlanRunner>();
+  private readonly indexingPlanRunners = new WeakMap<object, {
+    run: IndexingPlanRunner;
+    prepare?: () => Promise<PendingTransactionCompletion[]>;
+  }>();
   private contextWallet: string | undefined;
+  private contextChainId: string | undefined;
+  private hasContext = false;
   /**
    * Detail endpoints are separate cache keys but project into one canonical
    * planet-resource entity. Track request start order per body so an earlier
@@ -402,7 +430,6 @@ export class BackendDataStore {
   private readonly now: () => number;
   private readonly transactionPollIntervalMs: number;
   private readonly transactionRequestTimeoutMs: number;
-  private readonly transactionStatusTimeoutMs: number;
   private readonly transactionStatusReader: ((transactionHash: string) => Promise<BackendTransactionStatus>) | undefined;
 
   constructor(readonly apiBaseUrl: string, options: BackendDataStoreOptions = {}) {
@@ -410,10 +437,13 @@ export class BackendDataStore {
     this.now = options.now ?? Date.now;
     this.transactionPollIntervalMs = options.transactionPollIntervalMs ?? 1_000;
     this.transactionRequestTimeoutMs = options.transactionRequestTimeoutMs ?? 10_000;
-    this.transactionStatusTimeoutMs = options.transactionStatusTimeoutMs ?? 120_000;
     this.transactionStatusReader = options.transactionStatusReader;
     if (typeof document !== "undefined") {
       document.addEventListener("visibilitychange", this.handleVisibilityChange);
+    }
+    if (typeof window !== "undefined") {
+      window.addEventListener?.("online", this.handleResume);
+      window.addEventListener?.("pageshow", this.handleResume);
     }
   }
 
@@ -502,12 +532,12 @@ export class BackendDataStore {
         });
       }),
     referralClaim: (wallet: string, code: string, commitment: string, signature: string | (() => string)): BackendIndexingPlan =>
-      this.createIndexingPlan(async (_receipt, txHash) => {
+      this.createIndexingPlan(async () => { await this.referralDashboard(wallet); }, async () => {
         const resolvedSignature = typeof signature === "function" ? signature() : signature;
         if (!resolvedSignature) {
           throw new Error("Referral claim authorization is unavailable.");
         }
-        await this.recordReferralClaimAfterIndexing(wallet, code, commitment, txHash, resolvedSignature);
+        return [{ kind: "referral-claim", code, commitment, signature: resolvedSignature }];
       }),
     startedBuilding: (wallet: string, expectation: StartedBuildingExpectation, _baseline: ResourceIndexingExpectation["baseline"] = undefined): BackendIndexingPlan =>
       this.createIndexingPlan(async () => {
@@ -546,10 +576,10 @@ export class BackendDataStore {
           if (!run) {
             throw new Error("The write supplied an indexing plan from a different data store.");
           }
-          return run;
+          return run.run;
         });
         await Promise.all(runners.map((run) => run(receipt, txHash)));
-      }),
+      }, () => this.prepareIndexingPlans(plans)),
     /** Use this only where a later post-application action depends on an earlier refresh. */
     sequence: (plans: readonly BackendIndexingPlan[]): BackendIndexingPlan =>
       this.createIndexingPlan(async (receipt, txHash) => {
@@ -558,9 +588,9 @@ export class BackendDataStore {
           if (!run) {
             throw new Error("The write supplied an indexing plan from a different data store.");
           }
-          await run(receipt, txHash);
+          await run.run(receipt, txHash);
         }
-      }),
+      }, () => this.prepareIndexingPlans(plans)),
     fleetVisibility: (wallet: string, tags: readonly BackendDataTag[] = []): BackendIndexingPlan =>
       this.createIndexingPlan(async () => {
         await this.fleetVisibility(wallet, {
@@ -583,9 +613,11 @@ export class BackendDataStore {
       }),
     paidAllianceInvite: (wallet: string, provider: Eip1193Provider, secret: string): BackendIndexingPlan =>
       this.createIndexingPlan(async () => {
-        await storePaidAllianceInvite(this.apiBaseUrl, provider, wallet, secret);
         await this.alliance(wallet, { fresh: true });
-      }),
+      }, async () => [{
+        kind: "paid-alliance-invite", secret,
+        signature: await requestPersonalSignature(provider, wallet, paidAllianceInviteStoreMessage(wallet, paidAllianceInviteCommitment(secret))),
+      }]),
     planetRename: (wallet: string, _planetId: string, _name: string): BackendIndexingPlan =>
       this.createIndexingPlan(async () => {
         await this.planets(wallet, { fresh: true, priority: "transaction" });
@@ -733,7 +765,13 @@ export class BackendDataStore {
    * not call this during ordinary navigation; the shared registry releases
    * stores only when their base URL is no longer retained by the app shell. */
   dispose(): void {
+    this.transactionAbort.abort();
+    for (const wake of this.transactionWakeups) wake();
     if (typeof document !== "undefined") document.removeEventListener("visibilitychange", this.handleVisibilityChange);
+    if (typeof window !== "undefined") {
+      window.removeEventListener?.("online", this.handleResume);
+      window.removeEventListener?.("pageshow", this.handleResume);
+    }
     this.stopAllPolling();
     for (const timer of this.scheduledRefreshes.values()) clearTimeout(timer);
     this.scheduledRefreshes.clear();
@@ -924,6 +962,7 @@ export class BackendDataStore {
     };
 
     events.addEventListener("chain-event", onChainEvent);
+    events.addEventListener("open", this.handleResume);
     events.addEventListener("sync-status", updateHealth);
     events.onerror = () =>
       this.commitBackendSnapshot("chain-sync-health", false, [wallet], {
@@ -941,19 +980,23 @@ export class BackendDataStore {
     return () => this.releaseChainEventBridge(normalizedWallet);
   }
 
-  setContext(wallet?: string, planetId?: string): void {
+  setContext(wallet?: string, planetId?: string, chainId?: string): void {
     const nextWallet = wallet?.toLowerCase();
-    if (nextWallet === this.contextWallet) return;
+    const changed = !this.hasContext || nextWallet !== this.contextWallet || chainId !== this.contextChainId;
+    this.hasContext = true;
+    this.contextChainId = chainId;
+    if (!changed) return;
     const previousWallet = this.contextWallet;
     this.contextWallet = nextWallet;
-    if (nextWallet) void this.resumePendingTransactions(nextWallet);
+    for (const wake of this.transactionWakeups) wake();
+    if (nextWallet) this.resumePendingTransactions(nextWallet, chainId);
 
     // An API-base store survives account switching. Retaining wallet A's
     // canonical entries after moving to wallet B wastes the unbounded dynamic
     // cache and makes accidental old-account projections possible. Clear only
     // wallet-scoped entries; public/global feeds remain shared and an older
     // in-flight wallet response is generation-blocked by `clear`.
-    if (!previousWallet) return;
+    if (!previousWallet || previousWallet === nextWallet) return;
     const walletTag: BackendDataTag = `wallet:${previousWallet}`;
     for (const resource of [...this.resources.values()]) {
       if (!resource.tags.has(walletTag)) continue;
@@ -1014,21 +1057,19 @@ export class BackendDataStore {
     return this.key("canonical-planet-resources", wallet);
   }
 
-  writeTransactionKey(key?: string, wallet?: string): string {
+  writeTransactionKey(key?: string, wallet?: string, planetId?: string): string {
+    if (planetId) return cacheKey("write-transaction", wallet?.toLowerCase() ?? "global", key ?? "global", planetId);
     return cacheKey("write-transaction", wallet?.toLowerCase() ?? "global", key ?? "global");
   }
 
-  pendingTransactionRecoveryKey(wallet: string): string {
-    return cacheKey("pending-transaction-recovery", wallet.toLowerCase());
-  }
-
   private publishWriteTransactionState(state: WriteTransactionState, walletScope = "global"): void {
+    if (this.hasContext && walletScope !== "global" && this.contextWallet !== walletScope) return;
     // Write status is UI state, but it is still scoped to the initiating
     // wallet.  Without this metadata `clearWallet()` cannot retire a
     // confirmed/failed action from a previous account after an account switch.
     const options = walletScope === "global" ? undefined : { wallet: walletScope };
     this.state.publish(this.writeTransactionKey(undefined, walletScope), state, options);
-    if (state.key) this.state.publish(this.writeTransactionKey(state.key, walletScope), state, options);
+    if (state.key) this.state.publish(this.writeTransactionKey(state.key, walletScope, state.planetId), state, options);
   }
 
   private transactionWalletScope(tags: readonly BackendDataTag[] | undefined): string {
@@ -1049,276 +1090,238 @@ export class BackendDataStore {
 
   private pendingTransactions(): PendingTransactionJournalEntry[] {
     try {
-      if (typeof window === "undefined" || !window.localStorage) return [];
-      const value = JSON.parse(window.localStorage.getItem(this.transactionJournalKey()) ?? "[]") as unknown;
-      if (!Array.isArray(value)) return [];
-      return value.filter((entry): entry is PendingTransactionJournalEntry => {
-        if (!entry || typeof entry !== "object") return false;
-        const candidate = entry as Partial<PendingTransactionJournalEntry>;
-        return typeof candidate.actionId === "string"
-          && typeof candidate.chainId === "string"
-          && typeof candidate.submittedAt === "number"
-          && typeof candidate.transactionHash === "string"
-          && typeof candidate.wallet === "string";
-      });
-    } catch {
-      return [];
-    }
-  }
-
-  private persistPendingTransactions(entries: readonly PendingTransactionJournalEntry[]): void {
-    try {
-      if (typeof window === "undefined" || !window.localStorage) return;
-      if (entries.length === 0) {
-        window.localStorage.removeItem(this.transactionJournalKey());
-      } else {
-        window.localStorage.setItem(this.transactionJournalKey(), JSON.stringify(entries));
+      const value: unknown = typeof window === "undefined" ? [] : JSON.parse(window.localStorage?.getItem(this.transactionJournalKey()) ?? "[]");
+      if (Array.isArray(value)) {
+        for (const entry of value) {
+          if (!entry || typeof entry !== "object"
+            || typeof entry.actionId !== "string" || typeof entry.chainId !== "string"
+            || typeof entry.submittedAt !== "number" || typeof entry.transactionHash !== "string"
+            || typeof entry.wallet !== "string") continue;
+          const hash = entry.transactionHash.toLowerCase();
+          if (this.completedTransactionHashes.has(hash)) continue;
+          if (!this.transactionJournal.has(hash)) {
+            this.transactionJournal.set(hash, {
+              actionId: entry.actionId, chainId: entry.chainId, submittedAt: entry.submittedAt,
+              transactionHash: hash, wallet: entry.wallet.toLowerCase(),
+              ...(typeof entry.label === "string" ? { label: entry.label } : {}),
+              ...(Array.isArray(entry.planetIds) && entry.planetIds.every((id: unknown) => typeof id === "string") ? { planetIds: entry.planetIds } : {}),
+              ...(Array.isArray(entry.conflictKeys) && entry.conflictKeys.every((key: unknown) => typeof key === "string") ? { conflictKeys: entry.conflictKeys } : {}),
+              ...(Array.isArray(entry.completions) ? { completions: entry.completions.filter(isPendingTransactionCompletion) } : {}),
+            });
+          }
+        }
       }
     } catch {
-      // Storage can be unavailable in private/embedded browsers. The in-memory
-      // gate still protects the current page; persistence is best-effort only.
+      // Storage may be unavailable. Never lose the current page's known hashes.
+    }
+    return [...this.transactionJournal.values()];
+  }
+
+  private persistPendingTransactions(): void {
+    try {
+      if (typeof window === "undefined" || !window.localStorage) return;
+      const entries = [...this.transactionJournal.values()];
+      if (entries.length === 0) window.localStorage.removeItem(this.transactionJournalKey());
+      else window.localStorage.setItem(this.transactionJournalKey(), JSON.stringify(entries));
+    } catch {
+      // Keep the in-memory recovery obligation when browser storage fails.
     }
   }
 
   private writePendingTransaction(entry: PendingTransactionJournalEntry): void {
-    const entries = this.pendingTransactions().filter((current) => current.transactionHash.toLowerCase() !== entry.transactionHash.toLowerCase());
-    entries.push(entry);
-    this.persistPendingTransactions(entries);
+    this.pendingTransactions();
+    this.transactionJournal.set(entry.transactionHash.toLowerCase(), entry);
+    this.persistPendingTransactions();
   }
 
   private removePendingTransaction(transactionHash: string): void {
-    this.persistPendingTransactions(
-      this.pendingTransactions().filter((entry) => entry.transactionHash.toLowerCase() !== transactionHash.toLowerCase()),
+    this.pendingTransactions();
+    this.completedTransactionHashes.add(transactionHash.toLowerCase());
+    this.transactionJournal.delete(transactionHash.toLowerCase());
+    this.persistPendingTransactions();
+  }
+
+  private pendingTransactionMatchesChain(entry: PendingTransactionJournalEntry, chainId = this.contextChainId): boolean {
+    return !chainId || entry.chainId === "unknown" || sameChainId(entry.chainId, chainId);
+  }
+
+  private transactionConflicts(entry: PendingTransactionJournalEntry, keys: readonly string[]): boolean {
+    // Older journals have no scope. Preserve their conservative wallet lock,
+    // without deleting a submitted transaction just because its age/chain changed.
+    const pending = entry.conflictKeys ?? ["wallet"];
+    return pending.includes("wallet") || keys.includes("wallet") || pending.some((key) => keys.includes(key));
+  }
+
+  isTransactionPending(wallet: string | undefined, conflictKeys: readonly string[] = ["wallet"]): boolean {
+    const scope = wallet?.toLowerCase() ?? "global";
+    return this.transactionGates.get(scope)?.isRunning() === true || this.pendingTransactions().some((entry) =>
+      entry.wallet === scope && this.pendingTransactionMatchesChain(entry) && this.transactionConflicts(entry, conflictKeys)
     );
   }
 
-  private publishPendingTransactionRecovery(
+  pendingTransactionState(wallet: string | undefined, planetId?: string): WriteTransactionState | undefined {
+    const entry = this.pendingTransactions().find((candidate) => candidate.wallet === wallet?.toLowerCase()
+      && this.pendingTransactionMatchesChain(candidate)
+      && (!candidate.planetIds?.length || (planetId !== undefined && candidate.planetIds.includes(planetId))));
+    return entry ? this.state.value<WriteTransactionState>(this.writeTransactionKey(entry.actionId, entry.wallet, entry.planetIds?.[0])) : undefined;
+  }
+
+  private canObserveTransaction(entry: PendingTransactionJournalEntry): boolean {
+    return !this.transactionAbort.signal.aborted
+      && (typeof navigator === "undefined" || navigator.onLine !== false)
+      && (typeof document === "undefined" || document.visibilityState !== "hidden")
+      && (!this.hasContext || this.contextWallet === entry.wallet)
+      && this.pendingTransactionMatchesChain(entry);
+  }
+
+  private waitForTransactionWake(delayMs?: number): Promise<void> {
+    if (this.transactionAbort.signal.aborted) return Promise.resolve();
+    return new Promise((resolve) => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const wake = () => {
+        if (timer !== undefined) clearTimeout(timer);
+        this.transactionWakeups.delete(wake);
+        resolve();
+      };
+      this.transactionWakeups.add(wake);
+      if (delayMs !== undefined) timer = setTimeout(wake, delayMs);
+    });
+  }
+
+  private resumePendingTransactions(wallet: string, expectedChainId = this.contextChainId): void {
+    for (const entry of this.pendingTransactions()) {
+      if (entry.wallet === wallet.toLowerCase() && this.pendingTransactionMatchesChain(entry, expectedChainId)) {
+        void this.trackPendingTransaction(entry);
+      }
+    }
+  }
+
+  private async refreshTransactionResources(entry: PendingTransactionJournalEntry): Promise<void> {
+    const resources = [...this.resources.values()].filter((resource) =>
+      resource.options.wallet?.toLowerCase() === entry.wallet
+      && (!resource.options.planetId || !entry.planetIds?.length || entry.planetIds.includes(resource.options.planetId))
+    );
+    await Promise.all(resources.map(async (resource) => {
+      this.state.invalidate(resource.key);
+      if (this.state.subscriberCount(resource.key) === 0) return;
+      // A read started before application is not a completion refresh. Let it
+      // settle, then start a new read without acquiring any global read slot.
+      await this.state.inFlightSettled(resource.key);
+      if (this.transactionAbort.signal.aborted || this.resources.get(resource.key) !== resource) return;
+      await this.readRegisteredResource(resource, { priority: "transaction" }, true);
+      if (this.resources.get(resource.key) === resource && this.state.snapshot(resource.key)?.freshness !== "fresh") {
+        throw new Error("The affected state changed during refresh.");
+      }
+    }));
+  }
+
+  private trackPendingTransaction(
     entry: PendingTransactionJournalEntry,
-    phase: PendingTransactionRecoveryDecision["phase"],
-    error?: string,
-  ): void {
-    const wallet = entry.wallet.toLowerCase();
-    this.state.publish(this.pendingTransactionRecoveryKey(wallet), {
-      ...entry,
-      ...(error ? { error } : {}),
-      phase,
-      wallet,
-    } satisfies PendingTransactionRecoveryDecision, { wallet });
-  }
-
-  private clearPendingTransactionRecovery(wallet: string): void {
-    this.state.clear(this.pendingTransactionRecoveryKey(wallet));
-  }
-
-  async keepPendingTransactionRecovery(wallet: string, transactionHash: string): Promise<void> {
-    const normalizedWallet = wallet.toLowerCase();
-    const entry = this.pendingTransactions().find((candidate) =>
-      candidate.wallet === normalizedWallet
-      && candidate.transactionHash.toLowerCase() === transactionHash.toLowerCase()
-    );
-    if (!entry) {
-      this.clearPendingTransactionRecovery(normalizedWallet);
-      return;
-    }
-    this.clearPendingTransactionRecovery(normalizedWallet);
-    await this.resumePendingTransactions(normalizedWallet, entry.chainId, {
-      allowAgedPolling: true,
-      transactionHash: entry.transactionHash,
-    });
-  }
-
-  async discardPendingTransactionRecovery(wallet: string, transactionHash: string): Promise<void> {
-    const normalizedWallet = wallet.toLowerCase();
-    const existing = this.transactionRecoveries.get(normalizedWallet);
+    indexingRunner?: IndexingPlanRunner,
+    onStateChange?: (state: WriteTransactionState) => void,
+  ): Promise<WriteTransactionOutcome> {
+    const identity = entry.transactionHash.toLowerCase();
+    const existing = this.transactionRecoveries.get(identity);
     if (existing) return existing;
-    const entry = this.pendingTransactions().find((candidate) =>
-      candidate.wallet === normalizedWallet
-      && candidate.transactionHash.toLowerCase() === transactionHash.toLowerCase()
-    );
-    if (!entry) {
-      this.clearPendingTransactionRecovery(normalizedWallet);
-      return;
-    }
-
-    const recovery = (async () => {
-      this.publishPendingTransactionRecovery(entry, "checking");
-      try {
-        const status = await this.readBackendTransactionStatus(entry.transactionHash);
-        const currentEntry = this.pendingTransactions().find((candidate) =>
-          candidate.wallet === normalizedWallet
-          && candidate.transactionHash.toLowerCase() === transactionHash.toLowerCase()
-        );
-        if (!currentEntry) {
-          this.clearPendingTransactionRecovery(normalizedWallet);
-          return;
+    let confirmed = false;
+    let indexedPlanCompleted = false;
+    let attempts = 0;
+    let lastPhase: WriteTransactionState["phase"] | undefined;
+    const publish = (phase: WriteTransactionState["phase"], error?: Error) => {
+      if (!this.canObserveTransaction(entry)) return;
+      const current = this.state.value<WriteTransactionState>(this.writeTransactionKey(entry.actionId, entry.wallet, entry.planetIds?.[0]));
+      if (lastPhase === phase && current?.txHash === entry.transactionHash) return;
+      lastPhase = phase;
+      const state: WriteTransactionState = {
+        key: entry.actionId,
+        phase,
+        stage: phase === "success" ? "applied" : phase === "error" ? "failed" : confirmed ? "waiting-for-index" : "wallet",
+        outcome: phase === "success" ? "indexed" : phase === "error" ? "reverted" : confirmed ? "confirmed" : "submitted",
+        label: phase === "success" ? (entry.label ?? "Action") + " completed."
+          : phase === "error" ? "Transaction reverted. Please try again." : (entry.label ? entry.label + ": " : "") + "Processing…",
+        txHash: entry.transactionHash,
+        ...(entry.planetIds?.[0] ? { planetId: entry.planetIds[0] } : {}),
+        ...(error ? { error } : {}),
+      };
+      this.publishWriteTransactionState(state, entry.wallet);
+      try { onStateChange?.(state); } catch { /* UI callbacks cannot end recovery. */ }
+    };
+    const recovery = (async (): Promise<WriteTransactionOutcome> => {
+      while (!this.transactionAbort.signal.aborted) {
+        if (!this.canObserveTransaction(entry)) {
+          await this.waitForTransactionWake();
+          continue;
         }
-
-        if (status.phase === "applied") {
-          this.removePendingTransaction(entry.transactionHash);
-          this.clearPendingTransactionRecovery(normalizedWallet);
-          try {
-            void this.invalidate([`wallet:${normalizedWallet}`], {
-              activeOnly: false,
-              priority: "transaction",
-            }).catch(() => undefined);
-          } catch {
-            // Backend-applied is authoritative. Canonical refresh is
-            // best-effort here and must never resurrect a removed journal.
+        publish(confirmed ? "indexing" : "confirming");
+        try {
+          const status = await this.readBackendTransactionStatus(entry.transactionHash);
+          if (!this.canObserveTransaction(entry)) continue;
+          if (status.transactionHash?.toLowerCase() !== identity || !["submitted", "confirmed", "applied", "reverted"].includes(status.phase)) {
+            throw new Error("Unexpected transaction status response.");
           }
-          this.publishWriteTransactionState({
-            key: entry.actionId,
-            label: `${entry.actionId} confirmed.`,
-            outcome: "indexed",
-            phase: "success",
-            stage: "applied",
-            txHash: entry.transactionHash,
-          }, normalizedWallet);
-          return;
-        }
-        if (status.phase === "reverted") {
-          this.removePendingTransaction(entry.transactionHash);
-          this.clearPendingTransactionRecovery(normalizedWallet);
-          this.publishWriteTransactionState({
-            error: new Error("The transaction reverted."),
-            key: entry.actionId,
-            label: "The saved transaction reverted. Its recovery record was removed.",
-            outcome: "reverted",
-            phase: "error",
-            stage: "failed",
-            txHash: entry.transactionHash,
-          }, normalizedWallet);
-          return;
-        }
-
-        if (status.phase === "confirmed") {
-          this.publishPendingTransactionRecovery(
-            entry,
-            "decision",
-            "Veydrift has confirmed this transaction onchain, so its recovery record cannot be discarded while indexed state is still catching up.",
-          );
-          return;
-        }
-
-        this.removePendingTransaction(entry.transactionHash);
-        this.clearPendingTransactionRecovery(normalizedWallet);
-        const discarded = new Error("Discarded the unverifiable saved transaction record. Nothing was submitted. Retry the action to create one new Base transaction.");
-        this.publishWriteTransactionState({
-          error: discarded,
-          key: entry.actionId,
-          label: discarded.message,
-          outcome: "not-submitted",
-          phase: "error",
-          stage: "failed",
-          txHash: entry.transactionHash,
-        }, normalizedWallet);
-      } catch (error) {
-        this.publishPendingTransactionRecovery(
-          entry,
-          "decision",
-          error instanceof Error
-            ? `Could not recheck the saved transaction: ${error.message}`
-            : "Could not recheck the saved transaction. Try again before discarding it.",
-        );
-      }
-    })().finally(() => {
-      this.transactionRecoveries.delete(normalizedWallet);
-    });
-    this.transactionRecoveries.set(normalizedWallet, recovery);
-    return recovery;
-  }
-
-  private async resumePendingTransactions(
-    wallet: string,
-    expectedChainId?: string,
-    options: { allowAgedPolling?: boolean; transactionHash?: string } = {},
-  ): Promise<void> {
-    const normalizedWallet = wallet.toLowerCase();
-    const existing = this.transactionRecoveries.get(normalizedWallet);
-    if (existing) return existing;
-    const entries = this.pendingTransactions().filter((entry) =>
-      entry.wallet === normalizedWallet
-      && (!options.transactionHash || entry.transactionHash.toLowerCase() === options.transactionHash.toLowerCase())
-    );
-    if (entries.length === 0) return;
-    const recovery = (async () => {
-      for (const entry of entries.sort((left, right) => left.submittedAt - right.submittedAt)) {
-        const deterministicallyWrongChain = Boolean(
-          expectedChainId
-          && entry.chainId !== "unknown"
-          && !sameChainId(entry.chainId, expectedChainId),
-        );
-        if (!deterministicallyWrongChain && !options.allowAgedPolling && this.now() - entry.submittedAt >= this.transactionStatusTimeoutMs) {
-          this.publishPendingTransactionRecovery(entry, "decision");
-          break;
-        }
-        await this.transactionGateFor(normalizedWallet).run(`recover:${entry.transactionHash}`, async () => {
-          this.publishWriteTransactionState({
-            key: entry.actionId,
-            label: `${entry.actionId}: recovering submitted transaction...`,
-            outcome: "submitted",
-            phase: "confirming",
-            stage: "wallet",
-            txHash: entry.transactionHash,
-          }, normalizedWallet);
-          try {
-            if (expectedChainId && entry.chainId !== "unknown" && !sameChainId(entry.chainId, expectedChainId)) {
-              this.removePendingTransaction(entry.transactionHash);
-              throw new Error(`Released a stale transaction journal from chain ${entry.chainId}; this action requires ${expectedChainId}. Nothing was submitted on the required Base network. Retry the action.`);
-            }
-            const status = await this.waitForBackendTransactionStatus(
-              entry.transactionHash,
-              (candidate) => candidate.phase === "applied" || candidate.phase === "reverted",
-              options.allowAgedPolling
-                ? undefined
-                : { deadlineMs: entry.submittedAt + this.transactionStatusTimeoutMs },
-            );
+          if (status.phase === "reverted") {
+            const error = new Error("The transaction reverted.");
             this.removePendingTransaction(entry.transactionHash);
-            if (status.phase === "reverted") throw new Error("The transaction reverted.");
-            await this.invalidate([`wallet:${normalizedWallet}`], {
-              activeOnly: false,
-              priority: "transaction",
-            });
-            this.publishWriteTransactionState({
-              key: entry.actionId,
-              label: `${entry.actionId} confirmed.`,
-              outcome: "indexed",
-              phase: "success",
-              stage: "applied",
-              txHash: entry.transactionHash,
-            }, normalizedWallet);
-          } catch (error) {
-            if (isTransactionIndexingTimeout(error)) {
-              this.publishPendingTransactionRecovery(entry, "decision");
-            }
-            this.publishWriteTransactionState({
-              error,
-              key: entry.actionId,
-              label: isTransactionIndexingTimeout(error)
-                ? `${entry.actionId}: syncing indexed state...`
-                : error instanceof Error ? error.message : "Transaction confirmation is delayed.",
-              outcome: error instanceof Error && /Nothing was submitted/i.test(error.message)
-                ? "not-submitted"
-                : error instanceof Error && /transaction reverted|\breverted\b/i.test(error.message)
-                  ? "reverted"
-                  : "submitted",
-              phase: "error",
-              stage: isTransactionIndexingTimeout(error) ? "timed-out" : "failed",
-              txHash: entry.transactionHash,
-            }, normalizedWallet);
+            publish("error", error);
+            return { outcome: "reverted", txHash: entry.transactionHash, error };
           }
-        });
+          if (status.phase !== "submitted" && !confirmed) {
+            confirmed = true;
+            attempts = 0;
+            publish("confirmed");
+            publish("indexing");
+          }
+          if (status.phase === "applied") {
+            if (!indexedPlanCompleted) {
+              while (entry.completions?.length) {
+                const completion = entry.completions[0]!;
+                if (completion.kind === "paid-alliance-invite") {
+                  await storePaidAllianceInvite(this.apiBaseUrl, entry.wallet, completion.secret, completion.signature);
+                } else {
+                  await this.recordReferralClaimAfterIndexing(entry.wallet, completion.code, completion.commitment, entry.transactionHash, completion.signature);
+                }
+                // Checkpoint successful auxiliary writes separately from reads;
+                // a later refresh failure must not repeat a completed operation.
+                entry.completions = entry.completions.slice(1);
+                this.writePendingTransaction(entry);
+              }
+              await indexingRunner?.({ blockNumber: status.receiptBlock }, entry.transactionHash);
+              indexedPlanCompleted = true;
+            }
+            await this.refreshTransactionResources(entry);
+            if (!this.canObserveTransaction(entry)) continue;
+            this.removePendingTransaction(entry.transactionHash);
+            publish("success");
+            return { outcome: "indexed", txHash: entry.transactionHash };
+          }
+        } catch {
+          // A hash proves submission. RPC, API and refresh failures stay in
+          // Processing and retry; only an explicit reverted receipt is failure.
+        }
+        await this.waitForTransactionWake(Math.min(30_000, this.transactionPollIntervalMs * 2 ** Math.min(attempts++, 5)));
       }
+      return { outcome: confirmed ? "confirmed" : "submitted", txHash: entry.transactionHash };
     })().finally(() => {
-      this.transactionRecoveries.delete(normalizedWallet);
+      this.transactionRecoveries.delete(identity);
     });
-    this.transactionRecoveries.set(normalizedWallet, recovery);
+    this.transactionRecoveries.set(identity, recovery);
     return recovery;
   }
 
-  private createIndexingPlan(run: IndexingPlanRunner): BackendIndexingPlan {
+  private createIndexingPlan(run: IndexingPlanRunner, prepare?: () => Promise<PendingTransactionCompletion[]>): BackendIndexingPlan {
     const plan = {} as BackendIndexingPlan;
-    this.indexingPlanRunners.set(plan as object, run);
+    this.indexingPlanRunners.set(plan as object, { run, ...(prepare ? { prepare } : {}) });
     return plan;
+  }
+
+  private async prepareIndexingPlans(plans: readonly BackendIndexingPlan[]): Promise<PendingTransactionCompletion[]> {
+    const completions: PendingTransactionCompletion[] = [];
+    for (const plan of plans) {
+      const entry = this.indexingPlanRunners.get(plan as object);
+      if (!entry) throw new Error("The write supplied an indexing plan from a different data store.");
+      completions.push(...(await entry.prepare?.() ?? []));
+    }
+    return completions;
   }
 
   private async refreshIndexedTags(tags: readonly BackendDataTag[]): Promise<void> {
@@ -1345,104 +1348,63 @@ export class BackendDataStore {
   }
 
   async runWriteTransaction(descriptor: BackendWriteTransactionDescriptor): Promise<WriteTransactionOutcome> {
-    const { chainId, indexing, invalidateTags, send, ...transaction } = descriptor;
-    const indexingRunner = indexing ? this.indexingPlanRunners.get(indexing as object) : undefined;
-    if (indexing && !indexingRunner) {
-      throw new Error("The write supplied an indexing plan from a different data store.");
-    }
+    const indexingPlan = descriptor.indexing ? this.indexingPlanRunners.get(descriptor.indexing as object) : undefined;
+    if (descriptor.indexing && !indexingPlan) throw new Error("The write supplied an indexing plan from a different data store.");
+    if (this.transactionAbort.signal.aborted) return { outcome: "not-submitted" };
     const walletScope = this.transactionWalletScope(descriptor.invalidateTags);
-    if (walletScope !== "global") {
-      const submittedBeforeThisAction = this.pendingTransactions().find((entry) => entry.wallet === walletScope);
-      if (submittedBeforeThisAction) {
-        // A retry after reload may be the first interaction that resumes the
-        // journal. Even when recovery proves the old hash applied and removes
-        // it, this click must not continue into a duplicate submission.
-        await this.resumePendingTransactions(walletScope, chainId);
-        return writeTransactionOutcomeFromState(
-          this.snapshot<WriteTransactionState>(this.writeTransactionKey(submittedBeforeThisAction.actionId, walletScope))?.data,
-          submittedBeforeThisAction.transactionHash,
-        );
-      }
+    const planetIds = [...(descriptor.planetIds ?? descriptor.invalidateTags?.filter((tag) => tag.startsWith("planet:")).map((tag) => tag.slice(7)) ?? [])];
+    const conflictKeys = [...(descriptor.conflictKeys ?? (planetIds.length ? planetIds.map((id) => "planet:" + id) : ["wallet"]))];
+    const previous = this.pendingTransactions().find((entry) =>
+      entry.wallet === walletScope && this.pendingTransactionMatchesChain(entry, descriptor.chainId) && this.transactionConflicts(entry, conflictKeys)
+    );
+    if (previous) {
+      const recovery = this.trackPendingTransaction(previous);
+      // A click blocked by a different action must not report that action's
+      // success as its own, or submit automatically after it finishes.
+      return previous.actionId === descriptor.key ? recovery : { outcome: "not-submitted" };
     }
-    let latestStatus: BackendTransactionStatus | undefined;
-    let appliedReceipt: ReceiptBlock | undefined;
-    const outcome = await executeWriteTransaction(this.transactionGateFor(walletScope), {
-      ...transaction,
-      send: async () => {
-        const transactionHash = await send();
-        if (walletScope !== "global") {
-          this.writePendingTransaction({
-            actionId: descriptor.key,
-            chainId: chainId ?? "unknown",
-            submittedAt: this.now(),
-            transactionHash,
-            wallet: walletScope,
-          });
-        }
-        return transactionHash;
-      },
-      confirm: async (transactionHash) => {
-        latestStatus = await this.waitForBackendTransactionStatus(
-          transactionHash,
-          (status) => status.phase !== "submitted",
-        );
-        if (latestStatus.phase === "reverted") {
-          this.removePendingTransaction(transactionHash);
-          throw new Error("The transaction reverted.");
-        }
-        appliedReceipt = { blockNumber: latestStatus.receiptBlock };
-        return appliedReceipt;
-      },
-      waitForIndexed: async (_receipt: unknown, txHash: string) => {
-        latestStatus = latestStatus?.phase === "applied"
-          ? latestStatus
-          : await this.waitForBackendTransactionStatus(txHash, (status) => status.phase === "applied" || status.phase === "reverted");
-        if (latestStatus.phase === "reverted") {
-          this.removePendingTransaction(txHash);
-          throw new Error("The transaction reverted.");
-        }
-      },
-      onStateChange: (state) => {
-        this.publishWriteTransactionState(state, walletScope);
-        descriptor.onStateChange?.(state);
-      },
-      onConfirmedIndexingFailure: async () => {
-        // The chain receipt is final even though the backend has not yet
-        // published a matching snapshot. Invalidate every affected resource
-        // and force an indexed re-read; this preserves the error state while
-        // ensuring no planet can keep displaying the pre-write value as fresh.
-        if (invalidateTags && invalidateTags.length > 0) {
-          await this.invalidate(invalidateTags, {
-            activeOnly: false,
-            priority: "transaction",
-          });
-        }
-      },
-    });
-    if (outcome.outcome === "indexed") {
-      const transactionHash = this.snapshot<WriteTransactionState>(this.writeTransactionKey(descriptor.key, walletScope))?.data?.txHash;
-      if (transactionHash) {
-        this.removePendingTransaction(transactionHash);
-        if (indexingRunner) {
-          try {
-            await indexingRunner(appliedReceipt, transactionHash);
-          } catch (error) {
-            // The backend already proved this transaction applied. A trailing
-            // canonical refresh or auxiliary API action may fail independently,
-            // but it must never downgrade or indefinitely hold the authoritative
-            // transaction lifecycle.
-            console.warn("Post-application canonical refresh failed", error);
+    const publish = (state: WriteTransactionState) => {
+      this.publishWriteTransactionState({ ...state, ...(planetIds[0] ? { planetId: planetIds[0] } : {}) }, walletScope);
+      try { descriptor.onStateChange?.(state); } catch { /* UI callbacks cannot alter submission. */ }
+    };
+    try {
+      const entry = await this.transactionGateFor(walletScope).run(descriptor.key, async () => {
+        const assertSubmissionContext = () => {
+          if (this.transactionAbort.signal.aborted || (this.hasContext && this.contextWallet !== walletScope)) {
+            throw new Error("Wallet changed before submission. Please try again.");
           }
-        }
-      }
-    }
-    if (outcome.outcome === "indexed" && invalidateTags && invalidateTags.length > 0) {
-      await this.invalidate(invalidateTags, {
-        activeOnly: true,
-        priority: "transaction",
+          if (this.contextChainId && descriptor.chainId && !sameChainId(this.contextChainId, descriptor.chainId)) {
+            throw new Error("Network changed before submission. Please try again.");
+          }
+          if (typeof navigator !== "undefined" && navigator.onLine === false) throw new Error("You are offline. Reconnect before trying again.");
+        };
+        assertSubmissionContext();
+        publish({ key: descriptor.key, phase: "pending", stage: "wallet", outcome: "not-submitted", label: descriptor.label + ": Awaiting wallet" });
+        await descriptor.prepare?.();
+        assertSubmissionContext();
+        const completions = await indexingPlan?.prepare?.();
+        assertSubmissionContext();
+        const transactionHash = await descriptor.send();
+        const pending: PendingTransactionJournalEntry = {
+          actionId: descriptor.key, chainId: descriptor.chainId ?? this.contextChainId ?? "unknown",
+          submittedAt: this.now(), transactionHash, wallet: walletScope,
+          label: descriptor.label, planetIds, conflictKeys,
+          ...(completions?.length ? { completions } : {}),
+        };
+        // Persist before releasing the wallet gate or observing any receipt.
+        this.writePendingTransaction(pending);
+        return pending;
       });
+      if (!entry) return { outcome: "not-submitted" };
+      return this.trackPendingTransaction(entry, indexingPlan?.run, descriptor.onStateChange);
+    } catch (error) {
+      try { await descriptor.onErrorRefresh?.(error); } catch { /* Preserve the submission error. */ }
+      publish({
+        error, key: descriptor.key, phase: "error", stage: "failed", outcome: "not-submitted",
+        label: descriptor.errorLabel?.(error) ?? (error instanceof Error ? error.message : "The action could not be submitted."),
+      });
+      return { error, outcome: "not-submitted" };
     }
-    return outcome;
   }
 
   private async readBackendTransactionStatus(transactionHash: string): Promise<BackendTransactionStatus> {
@@ -1453,7 +1415,7 @@ export class BackendDataStore {
       const response = await fetch(`${this.apiBaseUrl}/transactions/${encodeURIComponent(transactionHash)}/status`, {
         cache: "no-store",
         headers: { accept: "application/json" },
-        signal: controller.signal,
+        signal: AbortSignal.any([controller.signal, this.transactionAbort.signal]),
       });
       if (!response.ok) throw new Error(`Transaction status HTTP ${response.status}`);
       return await response.json() as BackendTransactionStatus;
@@ -1467,28 +1429,6 @@ export class BackendDataStore {
     }
   }
 
-  private async waitForBackendTransactionStatus(
-    transactionHash: string,
-    accepted: (status: BackendTransactionStatus) => boolean,
-    options: { deadlineMs?: number } = {},
-  ): Promise<BackendTransactionStatus> {
-    const deadline = options.deadlineMs ?? this.now() + this.transactionStatusTimeoutMs;
-    let lastError: unknown;
-    while (true) {
-      try {
-        const status = await this.readBackendTransactionStatus(transactionHash);
-        if (accepted(status)) return status;
-        lastError = undefined;
-      } catch (error) {
-        lastError = error;
-      }
-      if (this.now() >= deadline) {
-        const detail = lastError instanceof Error ? ` ${lastError.message}` : "";
-        throw new Error(`The transaction is confirmed or submitted, but backend indexing is still syncing.${detail}`);
-      }
-      await new Promise<void>((resolve) => setTimeout(resolve, this.transactionPollIntervalMs));
-    }
-  }
 
   async runExclusiveTransaction<T>(key: string, label: string, action: () => Promise<T>, wallet?: string): Promise<T | undefined> {
     const walletScope = wallet?.toLowerCase() ?? "global";
@@ -1764,19 +1704,21 @@ export class BackendDataStore {
     }
   }
 
-  private readonly handleVisibilityChange = (): void => {
-    if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
-    if (this.deferredHiddenRefreshes.size === 0) return;
-    const byPriority = new Map<GameStatePriority, BackendDataTag[]>();
-    for (const [tag, priority] of this.deferredHiddenRefreshes) {
-      const tags = byPriority.get(priority) ?? [];
-      tags.push(tag);
-      byPriority.set(priority, tags);
-    }
+  private readonly handleResume = (): void => {
+    if (typeof navigator !== "undefined" && navigator.onLine === false) return;
+    if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+    for (const wake of this.transactionWakeups) wake();
+    const tags = [...this.deferredHiddenRefreshes.keys()];
     this.deferredHiddenRefreshes.clear();
-    for (const [priority, tags] of byPriority) {
-      void this.invalidate(tags, { activeOnly: true, priority });
+    if (this.contextWallet) {
+      this.resumePendingTransactions(this.contextWallet);
+      tags.push(`wallet:${this.contextWallet}`);
     }
+    if (tags.length) void this.invalidate(tags, { activeOnly: true });
+  };
+
+  private readonly handleVisibilityChange = (): void => {
+    this.handleResume();
   };
 
   private createPollTimer(tags: readonly BackendDataTag[], intervalMs: number, priority: GameStatePriority): ReturnType<typeof setInterval> {
