@@ -5760,11 +5760,11 @@ export function PlayableMvpApp({
   );
 
   const runAllianceTransaction = useCallback(
-    async (label: string, send: () => Promise<string>, indexing?: BackendIndexingPlan) => {
+    async (label: string, send: () => Promise<string>, indexing?: BackendIndexingPlan, resourcePlanetId?: string) => {
       await runCoordinatedWriteTransaction({
         key: `alliance:${label}`,
-        conflictKeys: ["alliance"],
-        planetIds: [],
+        conflictKeys: ["alliance", ...(resourcePlanetId ? [`planet:${resourcePlanetId}`] : [])],
+        planetIds: resourcePlanetId ? [resourcePlanetId] : [],
         label,
         send,
         indexing: indexing ?? backendData!.indexing.alliance(account!),
@@ -6399,8 +6399,11 @@ export function PlayableMvpApp({
         });
         return;
       }
-      void runAllianceTransaction("Alliance production treasury withdrawal", () =>
-        sendWithdrawPaidAllianceBonusTransaction(provider, account, paidAllianceInviteContract, allianceState.membership.allianceId, activePlanetId, amount),
+      void runAllianceTransaction(
+        "Alliance production treasury withdrawal",
+        () => sendWithdrawPaidAllianceBonusTransaction(provider, account, paidAllianceInviteContract, allianceState.membership.allianceId, activePlanetId, amount),
+        undefined,
+        activePlanetId,
       );
     },
     [account, activePlanetId, allianceState?.membership.allianceId, infrastructureChainState?.buildings, paidAllianceInviteContract, provider, runAllianceTransaction],

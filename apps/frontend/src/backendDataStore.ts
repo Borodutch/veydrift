@@ -1199,7 +1199,7 @@ export class BackendDataStore {
   private async refreshTransactionResources(entry: PendingTransactionJournalEntry): Promise<void> {
     const resources = [...this.resources.values()].filter((resource) =>
       resource.options.wallet?.toLowerCase() === entry.wallet
-      && (!resource.options.planetId || !entry.planetIds?.length || entry.planetIds.includes(resource.options.planetId))
+      && (!resource.options.planetId || entry.planetIds === undefined || entry.planetIds.includes(resource.options.planetId))
     );
     await Promise.all(resources.map(async (resource) => {
       this.state.invalidate(resource.key);

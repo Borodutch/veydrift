@@ -59,6 +59,24 @@ afterEach(() => {
 });
 
 describe("automatic transaction recovery", () => {
+  test("wallet-only completion leaves planet reads alone; legacy unknown scopes still refresh them", async () => {
+    const { values } = browser();
+    const data = store();
+    const loads = { wallet: 0, planet: 0 };
+    for (const scope of ["wallet", "planet"] as const) {
+      const planetId = scope === "planet" ? "7" : undefined;
+      const key = data.key(scope, "0xabc", planetId);
+      data.subscribeKey(key, () => {});
+      await data.refresh(key, async () => ++loads[scope], { wallet: "0xabc", planetId });
+    }
+    await data.runWriteTransaction({ ...action(), planetIds: [], conflictKeys: ["alliance"] });
+    expect(loads).toEqual({ wallet: 2, planet: 1 });
+    values.set(journalKey, JSON.stringify([{ ...saved(), planetIds: undefined }]));
+    data.setContext("0xabc", "7", "0x2105");
+    await until(() => !values.has(journalKey));
+    expect(loads).toEqual({ wallet: 3, planet: 2 });
+  });
+
   test("ten restored hashes begin observation independently", async () => {
     const entries = Array.from({ length: 10 }, (_, index) => ({ ...saved("0xtx" + index), planetIds: [String(index)], conflictKeys: ["planet:" + index] }));
     const { values } = browser(entries);
