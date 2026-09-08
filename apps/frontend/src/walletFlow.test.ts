@@ -1352,7 +1352,7 @@ describe("walletFlow", () => {
       },
       { forwardNetwork: true, forwardSimulation: true },
     );
-    configureWalletTransactionTransport(injectedProvider, "injected", "https://base-rpc.example.test");
+    configureWalletTransactionTransport(injectedProvider, "injected", "https://base-rpc.example.test", BASE_MAINNET);
     globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
       rpcRequests.push({
         input: String(input),
@@ -1401,7 +1401,7 @@ describe("walletFlow", () => {
       },
       { forwardNetwork: true, forwardSimulation: true },
     );
-    configureWalletTransactionTransport(provider, "injected", "https://base-rpc.example.test");
+    configureWalletTransactionTransport(provider, "injected", "https://base-rpc.example.test", BASE_MAINNET);
     globalThis.fetch = (async (_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
       const body = JSON.parse(String(init?.body ?? "{}")) as { method?: string };
       return body.method === "eth_chainId" ? Response.json({ result: BASE_MAINNET.chainIdHex }) : Response.json({
@@ -1434,7 +1434,7 @@ describe("walletFlow", () => {
     const hostProvider = mockProvider(
       async ({ method, params }) => {
         walletRequests.push(params === undefined ? { method } : { method, params });
-        if (method === "eth_chainId") return BASE_MAINNET.chainIdHex;
+        if (method === "eth_chainId") return defaultVeydriftChainForLocation().chainIdHex;
         if (method === "eth_call") throw { code: 4200, message: "Unsupported method" };
         if (method === "eth_sendTransaction") return "0xfarcaster";
         throw new Error(`Unexpected method ${method}`);
@@ -1460,7 +1460,7 @@ describe("walletFlow", () => {
         body: JSON.parse(String(init?.body ?? "{}")),
       });
       const body = rpcRequests.at(-1)?.body as { method?: string } | undefined;
-      return Response.json({ result: body?.method === "eth_chainId" ? BASE_MAINNET.chainIdHex : "0x" });
+      return Response.json({ result: body?.method === "eth_chainId" ? defaultVeydriftChainForLocation().chainIdHex : "0x" });
     }) as unknown as typeof fetch;
 
     try {
@@ -1472,7 +1472,7 @@ describe("walletFlow", () => {
     expect(walletRequests).toEqual([
       { method: "eth_chainId" },
       { method: "eth_chainId" },
-      { method: "eth_sendTransaction", params: [{ ...transaction, chainId: BASE_MAINNET.chainIdHex }] },
+      { method: "eth_sendTransaction", params: [{ ...transaction, chainId: defaultVeydriftChainForLocation().chainIdHex }] },
     ]);
     expect(rpcRequests).toEqual([
       {
@@ -1510,7 +1510,7 @@ describe("walletFlow", () => {
       },
       { forwardNetwork: true, forwardSimulation: true },
     );
-    configureWalletTransactionTransport(reownProvider, "reown", "https://base-rpc.example.test");
+    configureWalletTransactionTransport(reownProvider, "reown", "https://base-rpc.example.test", BASE_MAINNET);
     globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
       rpcRequests.push({
         input: String(input),
@@ -1559,7 +1559,7 @@ describe("walletFlow", () => {
       },
       { forwardNetwork: true, forwardSimulation: true },
     );
-    configureWalletTransactionTransport(provider, "reown", "https://base-rpc.example.test");
+    configureWalletTransactionTransport(provider, "reown", "https://base-rpc.example.test", BASE_MAINNET);
     globalThis.fetch = (async (_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
       const body = JSON.parse(String(init?.body ?? "{}")) as { method?: string };
       return body.method === "eth_chainId" ? Response.json({ result: BASE_MAINNET.chainIdHex }) : Response.json({
@@ -1593,7 +1593,7 @@ describe("walletFlow", () => {
       },
       { forwardNetwork: true, forwardSimulation: true },
     );
-    configureWalletTransactionTransport(provider, "farcaster", "https://base-rpc.example.test");
+    configureWalletTransactionTransport(provider, "farcaster", "https://base-rpc.example.test", BASE_MAINNET);
     globalThis.fetch = (async (_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
       const body = JSON.parse(String(init?.body ?? "{}")) as { method?: string; params?: unknown[] };
       if (body.method === "eth_chainId") return Response.json({ result: BASE_MAINNET.chainIdHex });
@@ -1623,7 +1623,7 @@ describe("walletFlow", () => {
       },
       { forwardNetwork: true, forwardSimulation: true },
     );
-    configureWalletTransactionTransport(provider, "farcaster", "https://base-rpc.example.test");
+    configureWalletTransactionTransport(provider, "farcaster", "https://base-rpc.example.test", BASE_MAINNET);
     globalThis.fetch = (async (_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
       const body = JSON.parse(String(init?.body ?? "{}")) as { method?: string };
       return body.method === "eth_chainId" ? Response.json({ result: BASE_MAINNET.chainIdHex }) : Response.json({

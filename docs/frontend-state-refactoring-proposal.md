@@ -499,10 +499,13 @@ Local inspection used Bun 1.3.9 and Node 25.2.1; CI requests Bun 1.1.42 and Node
 | Temporary diagnostic tests reproducing current failures | Initial 3 passed; revision 2 added 1 passing invalidation-scope reproduction; they confirm the failures still exist |
 | Full `bun run test:frontend` | 1,823 passed, 11 failed |
 
-The full frontend failures are nine wallet/invite cases expecting Sepolia while
-submission enforces Base Mainnet, one runtime-sensitive English date separator
+The full frontend baseline failures were nine wallet/invite cases assuming Sepolia
+while this laptop's environment selected Mainnet, one runtime-sensitive English date separator
 assertion, and one deterministic battle simulation exceeding the five-second test
 timeout. These occurred before any repository edit. The focused state suites passed.
+The implementation makes explicit-chain sender tests configure their required chain;
+the provider-discovery test follows the configured default. Both Mainnet and Sepolia
+test environments are checked; production network enforcement is unchanged.
 The proposal does not weaken network checks or alter tests to conceal this baseline.
 
 Required regression coverage for implementation:

@@ -7740,7 +7740,7 @@ function shouldChunkLogQuery(error: unknown): boolean {
   // than the node could return intact — halving the range is the same recovery as an explicit
   // "block range too large" rejection (VEY-KANEO-461).
   return error instanceof RpcResponseParseError
-    || (error instanceof Error && /max block range|block range|too many blocks|RPC HTTP 400/i.test(error.message));
+    || (error instanceof Error && /max block range|block range|too many blocks|query exceeds max results|RPC HTTP 400/i.test(error.message));
 }
 
 function shouldRetryWithoutBatch(error: unknown): boolean {

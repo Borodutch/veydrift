@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   BASE_MAINNET,
+  configureWalletTransactionTransport,
   generatePaidAllianceInviteSecret,
   paidAllianceInviteCommitment,
   paidAllianceInviteCommitmentFromPathname,
@@ -209,11 +210,13 @@ describe("paid alliance invite frontend flow", () => {
 });
 
 function providerRecording(requests: unknown[]): Eip1193Provider {
-  return {
+  const provider: Eip1193Provider = {
     async request({ method, params }) {
       if (method === "eth_chainId") return BASE_MAINNET.chainIdHex as never;
       requests.push({ method, params });
       return "0xabc" as never;
     },
   };
+  configureWalletTransactionTransport(provider, "injected", "", BASE_MAINNET);
+  return provider;
 }

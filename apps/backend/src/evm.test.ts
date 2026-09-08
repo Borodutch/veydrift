@@ -1115,7 +1115,10 @@ describe("moon chance report event decoding", () => {
     }
   });
 
-  test("splits log chunks again when an RPC rejects a chunk", async () => {
+  test.each([
+    "RPC HTTP 400",
+    "RPC -32602: query exceeds max results 20000, retry with the range 100-104",
+  ])("splits rejected log chunks without restarting the full scan: %s", async (rpcError) => {
     const calls: Array<{ method: string; params: unknown[] }> = [];
     const failedRanges = new Set(["0x64:0x6d"]);
     const reader = new VeydriftGameReader(
@@ -1130,7 +1133,7 @@ describe("moon chance report event decoding", () => {
             const [filter] = params as [{ fromBlock: string; toBlock: string }];
             const range = `${filter.fromBlock}:${filter.toBlock}`;
             if (failedRanges.delete(range)) {
-              throw new Error("RPC HTTP 400");
+              throw new Error(rpcError);
             }
             return [] as T;
           }
