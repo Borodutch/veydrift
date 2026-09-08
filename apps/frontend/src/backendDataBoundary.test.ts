@@ -128,7 +128,6 @@ describe("frontend backend-data boundary", () => {
 
     for (const canonicalProjection of [
       "WalletSettlementResponse",
-      "WalletPlanetsResponse",
       "PlayerQueuesResponse",
       "FleetMissionVisibilityResponse",
       "FleetMissionArchiveResponse",
@@ -140,6 +139,7 @@ describe("frontend backend-data boundary", () => {
     ]) {
       expect(appSource).toContain(`useBackendDataSnapshot<${canonicalProjection}>`);
     }
+    expect(appSource).toContain("useBackendDataQuery<WalletPlanetsResponse>(walletPlanetsQuery)");
     expect(appSource).not.toMatch(/useState<(?:WalletSettlementResponse|FleetMissionVisibilityResponse|FleetMissionArchiveResponse|GlobalMissionArchiveResponse)/);
     expect(appSource).not.toMatch(/useState<PlayerProfile/);
     expect(appSource).toContain("const playerProfileSnapshot = useBackendDataSnapshot<PlayerProfile>");
