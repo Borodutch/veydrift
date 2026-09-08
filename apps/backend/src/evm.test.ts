@@ -332,17 +332,21 @@ describe("HTTP JSON-RPC transport", () => {
 
   test("aborts a hung RPC fetch at the request timeout and retries before failing", async () => {
     const previousFetch = globalThis.fetch;
+    const rpcUrl = "https://hung-rpc.example";
     let fetchCalls = 0;
     let abortedCalls = 0;
 
     // A fetch that never resolves on its own — it only settles when the transport aborts the signal,
     // reproducing the Alchemy live-read timeout storm where the socket hangs indefinitely.
-    globalThis.fetch = ((_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) =>
+    globalThis.fetch = ((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) =>
       new Promise((_resolve, reject) => {
-        fetchCalls += 1;
+        // Other test-owned services can still finish background work. Count
+        // this transport's attempts, not unrelated users of the global mock.
+        const belongsToTransport = String(input) === rpcUrl;
+        if (belongsToTransport) fetchCalls += 1;
         const signal = init?.signal;
         const onAbort = () => {
-          abortedCalls += 1;
+          if (belongsToTransport) abortedCalls += 1;
           reject(new DOMException("The operation was aborted.", "AbortError"));
         };
         if (signal?.aborted) {
@@ -353,7 +357,7 @@ describe("HTTP JSON-RPC transport", () => {
       })) as unknown as typeof fetch;
 
     try {
-      const transport = new HttpJsonRpcTransport("https://rpc.example", {
+      const transport = new HttpJsonRpcTransport(rpcUrl, {
         cacheTtlMs: 0,
         minRequestIntervalMs: 0,
         requestTimeoutMs: 20

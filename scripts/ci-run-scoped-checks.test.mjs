@@ -1,6 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { outputContainsFlaggedOutput } from "./ci-run-scoped-checks.mjs";
+
+test("passing test names may describe warnings without being diagnostics", () => {
+  assert.equal(outputContainsFlaggedOutput("(pass) warning UI > renders a warning badge"), false);
+  assert.equal(outputContainsFlaggedOutput("(pass) warning UI > renders a warning badge\nwarning: unexpected diagnostic"), true);
+});
 import { filesRequireContractChecks } from "./ci-scope.mjs";
 
 test("routes deployment proof changes through blocking contract CI", () => {

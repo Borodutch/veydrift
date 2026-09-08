@@ -453,7 +453,7 @@ matters. No background timer is required for correctness: every resume performs 
 fresh sync. A backend subscription outage and a healthy browser SSE transport are
 different states; indexer readiness failures remain retryable.
 
-## Proposed implementation sequence, after approval
+## Approved implementation sequence
 
 1. Fix transport body deadlines and remove scheduled parents/global slots, preserving
    the existing public store boundary. Turn the three reproduced failures into
@@ -483,12 +483,12 @@ by `backmeupplz` (also checking numeric user ID) to the repository variable
 is `veydrift-mac-backmeupplz-ci`; it was online during inspection. Main pushes use
 GitHub-hosted runners. The latest main and preceding PR CI runs were successful.
 
-This documentation-only PR should run the GitHub check but select no package jobs.
-That is normal scoped CI, not evidence that all application tests passed.
+The original documentation-only commits selected no package checks.
+The implementation now selects frontend and backend checks.
 [`ci-run-scoped-checks.mjs`](../scripts/ci-run-scoped-checks.mjs) runs frontend type
-checking and the touch-browser test for frontend changes, but currently omits
-`test:frontend`. Enabling that suite and fixing its stale fixtures should accompany
-the implementation so the refactoring's regression coverage actually gates PRs.
+checking, the full frontend suite, and the touch-browser test for frontend changes.
+The first implementation fixes the stale wallet-chain and locale fixtures so the
+refactoring's regression coverage gates PRs.
 
 Local inspection used Bun 1.3.9 and Node 25.2.1; CI requests Bun 1.1.42 and Node 24.
 
@@ -546,4 +546,5 @@ unless measurement or a concrete product requirement justifies them. Removing de
 code and reshaping application modules are part of implementation, not optional
 cleanup left behind after another compatibility layer.
 
-The user must approve implementation; this revised proposal is not that approval.
+The user approved implementation after this proposal. The PR remains a draft until
+the migration and local testing are complete.
