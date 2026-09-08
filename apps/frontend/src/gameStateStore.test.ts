@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { BackendDataStore } from "./backendDataStore";
-import { GameStateReadScheduler, GameStateStore } from "./gameStateStore";
+import { GameStateStore } from "./gameStateStore";
 import { backendDataProjection, isBackendDataSnapshotLoading } from "./useBackendDataSnapshot";
 
 function deferred<T>() {
@@ -22,27 +22,14 @@ describe("GameStateStore", () => {
     expect(isBackendDataSnapshotLoading(undefined, false)).toBe(false);
   });
 
-  test("keeps the newest generation when responses resolve out of order", async () => {
+  test("a late response cannot replace a newer published snapshot", async () => {
     const store = new GameStateStore();
     const older = deferred<{ revision: number }>();
-    const newer = deferred<{ revision: number }>();
-
-    const olderRead = store.read("overview:wallet:1", () => older.promise, {
-      dedupe: false,
-    });
-    const newerRead = store.read("overview:wallet:1", () => newer.promise, {
-      dedupe: false,
-    });
-    newer.resolve({ revision: 2 });
-    await expect(newerRead).resolves.toEqual({ revision: 2 });
+    const olderRead = store.read("planet:1", () => older.promise);
+    store.publish("planet:1", { revision: 2 });
     older.resolve({ revision: 1 });
-    await expect(olderRead).resolves.toEqual({ revision: 1 });
-
-    expect(store.snapshot<{ revision: number }>("overview:wallet:1")).toMatchObject({
-      data: { revision: 2 },
-      freshness: "fresh",
-      indexRevision: "2",
-    });
+    await olderRead;
+    expect(store.value<{ revision: number }>("planet:1")).toEqual({ revision: 2 });
   });
 
   test("clearing an error does not invalidate an in-flight deduplicated read", async () => {
@@ -63,202 +50,70 @@ describe("GameStateStore", () => {
     });
   });
 
-  test("removes a cancelled navigation read before it consumes a queue slot", async () => {
-    const store = new GameStateStore(new GameStateReadScheduler(1));
-    const blocker = deferred<string>();
-    let navigationLoads = 0;
-    const active = store.read("active", () => blocker.promise, {
-      scope: "stable",
-      deadlineMs: 100,
-    });
-    const navigation = store.read(
-      "galaxy:old",
-      async () => {
-        navigationLoads += 1;
-        return "stale";
-      },
-      { scope: "navigation:old", deadlineMs: 100 },
-    );
-
-    store.cancelScope("navigation:old");
-    await expect(navigation).rejects.toMatchObject({ name: "AbortError" });
-    expect(navigationLoads).toBe(0);
-    blocker.resolve("ready");
-    await expect(active).resolves.toBe("ready");
-  });
-
-  test("route cleanup cancels queued reads but retains started shared transport", async () => {
-    const store = new GameStateStore(new GameStateReadScheduler(1));
-    const blocker = deferred<string>();
-    const active = store.read("active", () => blocker.promise);
-    const activeResult = active.then(
-      () => undefined,
-      (error) => error,
-    );
-    let queuedStarted = false;
-    const queued = store.read("queued", async () => {
-      queuedStarted = true;
-      return "queued";
-    });
-
+  test("independent planets start together and a slow read cannot block infrastructure", async () => {
+    const store = new GameStateStore();
+    const blockers = Array.from({ length: 10 }, () => deferred<string>());
+    const started: number[] = [];
+    const reads = blockers.map((blocker, id) => store.read(`planet:${id}`, () => {
+      started.push(id);
+      return blocker.promise;
+    }));
     await Promise.resolve();
-    expect(store.cancelQueuedRead("active")).toBe(false);
-    expect(store.cancelQueuedRead("queued")).toBe(true);
-    blocker.resolve("active");
-
-    await expect(activeResult).resolves.toBeUndefined();
-    await expect(queued).resolves.toBeUndefined();
-    expect(queuedStarted).toBe(false);
+    expect(started).toHaveLength(10);
+    await expect(store.read("infrastructure", async () => "ready")).resolves.toBe("ready");
+    blockers.forEach((blocker) => blocker.resolve("ready"));
+    await Promise.all(reads);
   });
 
-  test("does not cancel a queued canonical read while another subscriber remains", async () => {
-    const store = new GameStateStore(new GameStateReadScheduler(1));
-    const blocker = deferred<string>();
-    const active = store.read("active", () => blocker.promise);
-    let queuedStarted = false;
-    const queued = store.read("shared", async () => {
-      queuedStarted = true;
-      return "shared";
-    });
-    const unsubscribe = store.subscribeKey("shared", () => {});
-
-    expect(store.cancelQueuedReadIfUnobserved("shared")).toBe(false);
-    blocker.resolve("active");
-    await expect(active).resolves.toBe("active");
-    await expect(queued).resolves.toBe("shared");
-    expect(queuedStarted).toBe(true);
-    unsubscribe();
+  test("ten consumers share one transport even when requesting fresh data", async () => {
+    const store = new GameStateStore();
+    const response = deferred<string>();
+    let calls = 0;
+    const reads = Array.from({ length: 10 }, () => store.read("planet:1", () => {
+      calls += 1;
+      return response.promise;
+    }, { dedupe: false }));
+    await Promise.resolve();
+    expect(calls).toBe(1);
+    response.resolve("ready");
+    expect(await Promise.all(reads)).toEqual(Array(10).fill("ready"));
   });
 
-  test("terminal disposal cancels queued reads before they begin transport", async () => {
-    const store = new GameStateStore(new GameStateReadScheduler(1));
-    const blocker = deferred<string>();
-    const active = store.read("active", () => blocker.promise);
-    let queuedStarted = false;
-    const queued = store.read("queued", async () => {
-      queuedStarted = true;
-      return "queued";
-    });
-    const activeResult = active.then(
-      () => undefined,
-      (error) => error,
-    );
-    const queuedResult = queued.then(
-      () => undefined,
-      (error) => error,
-    );
+  test("a parent read can await independent children without a scheduler deadlock", async () => {
+    const store = new GameStateStore();
+    await expect(store.read("parent", () => Promise.all([
+      store.read("child:1", async () => 1),
+      store.read("child:2", async () => 2),
+    ]))).resolves.toEqual([1, 2]);
+  });
 
+  test("disposal aborts transports and prevents late publication", async () => {
+    const store = new GameStateStore();
+    const response = deferred<string>();
+    let signal: AbortSignal | undefined;
+    const read = store.read("old", (requestSignal) => {
+      signal = requestSignal;
+      return response.promise;
+    });
     await Promise.resolve();
     store.dispose();
-    blocker.resolve("active");
-
-    await expect(activeResult).resolves.toMatchObject({ name: "AbortError" });
-    await expect(queuedResult).resolves.toMatchObject({ name: "AbortError" });
-    expect(queuedStarted).toBe(false);
+    expect(signal?.aborted).toBe(true);
+    response.resolve("obsolete");
+    await read;
+    expect(store.snapshot("old")).toBeUndefined();
+    store.publish("old", "late projection");
+    expect(store.snapshot("old")).toBeUndefined();
+    await expect(store.read("old", async () => "restarted")).rejects.toMatchObject({ name: "AbortError" });
   });
 
-  test("enforces an end-to-end deadline while a read is queued", async () => {
-    const store = new GameStateStore(new GameStateReadScheduler(1));
-    const blocker = deferred<string>();
-    let queuedLoads = 0;
-    const active = store.read("active", () => blocker.promise, {
-      deadlineMs: 100,
-    });
-    const queued = store.read(
-      "queued",
-      async () => {
-        queuedLoads += 1;
-        return "late";
-      },
-      { deadlineMs: 5 },
-    );
-
-    await expect(queued).rejects.toThrow("including queue time");
-    expect(queuedLoads).toBe(0);
-    expect(store.snapshot("queued")?.freshness).toBe("failed");
-    blocker.resolve("ready");
-    await active;
-  });
-
-  test("does not start a replacement before a timed-out transport settles", async () => {
-    const scheduler = new GameStateReadScheduler(1);
-    const slowTransport = deferred<string>();
-    let replacementStarted = false;
-    const timedOut = scheduler.schedule("slow", () => slowTransport.promise, { deadlineMs: 5 }).promise;
-    const replacement = scheduler.schedule(
-      "replacement",
-      async () => {
-        replacementStarted = true;
-        return "replacement";
-      },
-      { deadlineMs: 100 },
-    ).promise;
-
-    await expect(timedOut).rejects.toThrow("including queue time");
-    await new Promise<void>((resolve) => setTimeout(resolve, 5));
-    expect(replacementStarted).toBe(false);
-
-    slowTransport.resolve("finished after abort");
-    await expect(replacement).resolves.toBe("replacement");
-    expect(replacementStarted).toBe(true);
-  });
-
-  test("keeps dedupe ownership until a deadline-aborted transport actually settles", async () => {
-    const store = new GameStateStore(new GameStateReadScheduler(1));
-    const slowTransport = deferred<string>();
-    let duplicateLoads = 0;
-    const first = store.read("slow", () => slowTransport.promise, { deadlineMs: 5 });
-
-    await expect(first).rejects.toThrow("including queue time");
-    expect(store.hasInFlight("slow")).toBe(true);
-    const duplicate = store.read("slow", async () => {
-      duplicateLoads += 1;
-      return "duplicate";
-    });
-    await expect(duplicate).rejects.toThrow("including queue time");
-    expect(duplicateLoads).toBe(0);
-
-    slowTransport.resolve("settled after timeout");
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    expect(store.hasInFlight("slow")).toBe(false);
-    await expect(store.read("slow", async () => "fresh", { deadlineMs: 100 })).resolves.toBe("fresh");
-  });
-
-  test("runs transaction convergence before selected and background refreshes", async () => {
-    const scheduler = new GameStateReadScheduler(1);
-    const blocker = deferred<string>();
-    const order: string[] = [];
-    const active = scheduler.schedule("active", () => blocker.promise, {
-      deadlineMs: 100,
-    }).promise;
-    const background = scheduler.schedule(
-      "background",
-      async () => {
-        order.push("background");
-        return "background";
-      },
-      { priority: "background", deadlineMs: 100 },
-    ).promise;
-    const selected = scheduler.schedule(
-      "selected",
-      async () => {
-        order.push("selected");
-        return "selected";
-      },
-      { priority: "selected-planet", deadlineMs: 100 },
-    ).promise;
-    const transaction = scheduler.schedule(
-      "transaction",
-      async () => {
-        order.push("transaction");
-        return "transaction";
-      },
-      { priority: "transaction", deadlineMs: 100 },
-    ).promise;
-
-    blocker.resolve("ready");
-    await Promise.all([active, background, selected, transaction]);
-    expect(order).toEqual(["transaction", "selected", "background"]);
+  test("a disposed wallet response cannot republish after an account switch", async () => {
+    const store = new GameStateStore();
+    const response = deferred<string>();
+    const read = store.read("planet", () => response.promise, { wallet: "0xabc" });
+    store.clearWallet("0xabc");
+    response.resolve("old wallet");
+    await read;
+    expect(store.snapshot("planet")).toBeUndefined();
   });
 
   test("notifies a keyed subscriber only when its canonical entry changes", () => {

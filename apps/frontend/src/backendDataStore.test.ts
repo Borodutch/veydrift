@@ -108,7 +108,7 @@ describe("BackendDataStore", () => {
     }
   });
 
-  test("does not reuse an older in-flight request for an authoritative refresh", async () => {
+  test("fresh reads still share the canonical in-flight transport", async () => {
     const store = new BackendDataStore("https://api.test");
     let loads = 0;
     const load = async () => {
@@ -119,8 +119,8 @@ describe("BackendDataStore", () => {
     const [first, second] = await Promise.all([store.refresh("fleet-visibility:wallet", load, { dedupe: false }), store.refresh("fleet-visibility:wallet", load, { dedupe: false })]);
 
     expect(first).toEqual({ revision: 1 });
-    expect(second).toEqual({ revision: 2 });
-    expect(loads).toBe(2);
+    expect(second).toEqual({ revision: 1 });
+    expect(loads).toBe(1);
   });
 
   test("releases a failed request so a later refresh can retry", async () => {
@@ -173,7 +173,7 @@ describe("BackendDataStore", () => {
     }
   });
 
-  test("runs one trailing read when indexed invalidation lands during an in-flight request", async () => {
+  test("ten indexed invalidations during an in-flight request produce one trailing read", async () => {
     const store = new BackendDataStore("https://api.test");
     const key = store.key("infrastructure", "0xabc", "planet-7");
     let resolveFirst!: (value: { revision: number }) => void;
@@ -195,7 +195,7 @@ describe("BackendDataStore", () => {
         wallet: "0xabc",
       });
       await Promise.resolve();
-      await store.invalidate(["planet:planet-7"], { priority: "transaction" });
+      await Promise.all(Array.from({ length: 10 }, () => store.invalidate(["planet:planet-7"], { priority: "transaction" })));
       resolveFirst({ revision: 1 });
       await initial;
       await new Promise<void>((resolve) => setTimeout(resolve, 5));

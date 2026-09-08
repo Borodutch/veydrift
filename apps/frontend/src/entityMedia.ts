@@ -1,4 +1,4 @@
-import { requestPersonalSignature, type Eip1193Provider } from "./walletFlow";
+import { fetchGameApiJson, requestPersonalSignature, type Eip1193Provider } from "./walletFlow";
 
 export type EntityMediaKind = "planet" | "moon" | "player" | "alliance";
 export type YouTubeMedia = {
@@ -111,12 +111,10 @@ export async function fetchEntityMedia(
   entityId: string,
   signal?: AbortSignal
 ): Promise<EntityMediaResponse> {
-  const response = await fetch(entityMediaEndpoint(apiUrl, entityKind, entityId), {
-    headers: { accept: "application/json" },
+  return fetchGameApiJson<EntityMediaResponse>(entityMediaEndpoint(apiUrl, entityKind, entityId), "Entity media", {
     ...(signal ? { signal } : {}),
+    httpErrorMessage: (response) => entityMediaApiError(response, "Media could not be loaded."),
   });
-  if (!response.ok) throw new Error(await entityMediaApiError(response, "Media could not be loaded."));
-  return response.json() as Promise<EntityMediaResponse>;
 }
 
 export async function updateEntityMedia(

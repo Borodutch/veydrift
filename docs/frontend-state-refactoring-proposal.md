@@ -1,8 +1,12 @@
 # Frontend state refactoring proposal, revision 2
 
-Status: discussion only; implementation requires approval. Inspected `main` at
-`813e0c9f564ecc2b9cae4734d0472cfd49b4efca` on 2026-09-08. This PR changes documentation
-only. It does not change application behavior, contracts, deployments, or trackers.
+Status: implementation approved and in progress on 2026-09-08. The findings below
+describe the inspected baseline, `813e0c9f564ecc2b9cae4734d0472cfd49b4efca`.
+This draft PR now includes the first implementation slice: independent single-flight
+reads without the global scheduler, response-body transport deadlines, and a
+loopback-only local backend/frontend setup. The transaction and ownership migration
+described below is not complete yet. No contracts or production application deployment
+have changed.
 
 ## Recommendation
 
@@ -29,7 +33,7 @@ This revision incorporates the user's clarified requirements:
 - Keep separate endpoints. Whole-planet snapshots are out of the initial scope and
   require evidence of acceptable backend cost, response size, and transfer volume.
 
-These are design requirements, not authorization to implement them yet.
+These are the approved design requirements for the remaining migration.
 
 ## Findings from the current code
 

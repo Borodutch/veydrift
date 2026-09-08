@@ -19,6 +19,7 @@ import {
 installCrashDiagnostics();
 
 const port = Number.parseInt(process.env.PORT ?? "4000", 10);
+const hostname = process.env.HOST ?? "0.0.0.0";
 const idleTimeout = Number.parseInt(process.env.VEYDRIFT_HTTP_IDLE_TIMEOUT_SECONDS ?? "30", 10);
 
 // Reader workers bind the shared public port with SO_REUSEPORT so the kernel load-balances user-facing
@@ -55,6 +56,7 @@ function serveWorker(role: WorkerRole, index: number, writerInternalPort?: numbe
     Bun.serve({
       idleTimeout,
       port,
+      hostname,
       reusePort: true,
       fetch: createRequestLoggingFetch(
         createForwardingFetch(
@@ -77,6 +79,7 @@ function serveWorker(role: WorkerRole, index: number, writerInternalPort?: numbe
   Bun.serve({
     idleTimeout,
     port,
+    hostname,
     reusePort: true,
     fetch: handler
   });

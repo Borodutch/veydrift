@@ -110,7 +110,7 @@ describe("frontend backend-data boundary", () => {
     const storeSource = await Bun.file(new URL("./backendDataStore.ts", import.meta.url)).text();
 
     expect(storeSource).toContain("dedupe: true");
-    expect(storeSource).toContain("cancelQueuedReadIfUnobserved(key)");
+    expect(storeSource).not.toContain("cancelQueuedReadIfUnobserved");
     expect(storeSource).toContain("dismissPlayerActivityAwayWindow(wallet: string)");
     expect(storeSource).toContain("activityAwayWindowConsumedInSession(wallet)");
     expect(storeSource).toContain("async recoverPaidAllianceInvites(wallet: string, provider: Eip1193Provider)");

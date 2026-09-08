@@ -1345,7 +1345,7 @@ describe("walletFlow", () => {
     const injectedProvider = mockProvider(
       async ({ method, params }) => {
         walletRequests.push(params === undefined ? { method } : { method, params });
-        if (method === "eth_chainId") return BASE_SEPOLIA.chainIdHex;
+        if (method === "eth_chainId") return BASE_MAINNET.chainIdHex;
         if (method === "eth_call") throw {};
         if (method === "eth_sendTransaction") return "0xmetamask";
         throw new Error(`Unexpected method ${method}`);
@@ -1359,7 +1359,7 @@ describe("walletFlow", () => {
         body: JSON.parse(String(init?.body ?? "{}")),
       });
       const body = rpcRequests.at(-1)?.body as { method?: string } | undefined;
-      return Response.json({ result: body?.method === "eth_chainId" ? BASE_SEPOLIA.chainIdHex : "0x" });
+      return Response.json({ result: body?.method === "eth_chainId" ? BASE_MAINNET.chainIdHex : "0x" });
     }) as unknown as typeof fetch;
 
     try {
@@ -1371,7 +1371,7 @@ describe("walletFlow", () => {
     expect(walletRequests).toEqual([
       { method: "eth_chainId" },
       { method: "eth_chainId" },
-      { method: "eth_sendTransaction", params: [{ ...transaction, chainId: BASE_SEPOLIA.chainIdHex }] },
+      { method: "eth_sendTransaction", params: [{ ...transaction, chainId: BASE_MAINNET.chainIdHex }] },
     ]);
     expect(rpcRequests).toEqual([
       {
@@ -1396,7 +1396,7 @@ describe("walletFlow", () => {
     const provider = mockProvider(
       async ({ method }) => {
         walletMethods.push(method);
-        if (method === "eth_chainId") return BASE_SEPOLIA.chainIdHex;
+        if (method === "eth_chainId") return BASE_MAINNET.chainIdHex;
         throw new Error(`${method} should not be called`);
       },
       { forwardNetwork: true, forwardSimulation: true },
@@ -1404,7 +1404,7 @@ describe("walletFlow", () => {
     configureWalletTransactionTransport(provider, "injected", "https://base-rpc.example.test");
     globalThis.fetch = (async (_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
       const body = JSON.parse(String(init?.body ?? "{}")) as { method?: string };
-      return body.method === "eth_chainId" ? Response.json({ result: BASE_SEPOLIA.chainIdHex }) : Response.json({
+      return body.method === "eth_chainId" ? Response.json({ result: BASE_MAINNET.chainIdHex }) : Response.json({
         error: {
           code: 3,
           message: "execution reverted",
@@ -1434,7 +1434,7 @@ describe("walletFlow", () => {
     const hostProvider = mockProvider(
       async ({ method, params }) => {
         walletRequests.push(params === undefined ? { method } : { method, params });
-        if (method === "eth_chainId") return BASE_SEPOLIA.chainIdHex;
+        if (method === "eth_chainId") return BASE_MAINNET.chainIdHex;
         if (method === "eth_call") throw { code: 4200, message: "Unsupported method" };
         if (method === "eth_sendTransaction") return "0xfarcaster";
         throw new Error(`Unexpected method ${method}`);
@@ -1460,7 +1460,7 @@ describe("walletFlow", () => {
         body: JSON.parse(String(init?.body ?? "{}")),
       });
       const body = rpcRequests.at(-1)?.body as { method?: string } | undefined;
-      return Response.json({ result: body?.method === "eth_chainId" ? BASE_SEPOLIA.chainIdHex : "0x" });
+      return Response.json({ result: body?.method === "eth_chainId" ? BASE_MAINNET.chainIdHex : "0x" });
     }) as unknown as typeof fetch;
 
     try {
@@ -1472,7 +1472,7 @@ describe("walletFlow", () => {
     expect(walletRequests).toEqual([
       { method: "eth_chainId" },
       { method: "eth_chainId" },
-      { method: "eth_sendTransaction", params: [{ ...transaction, chainId: BASE_SEPOLIA.chainIdHex }] },
+      { method: "eth_sendTransaction", params: [{ ...transaction, chainId: BASE_MAINNET.chainIdHex }] },
     ]);
     expect(rpcRequests).toEqual([
       {
@@ -1503,7 +1503,7 @@ describe("walletFlow", () => {
     const reownProvider = mockProvider(
       async ({ method, params }) => {
         walletRequests.push(params === undefined ? { method } : { method, params });
-        if (method === "eth_chainId") return BASE_SEPOLIA.chainIdHex;
+        if (method === "eth_chainId") return BASE_MAINNET.chainIdHex;
         if (method === "eth_call") throw {};
         if (method === "eth_sendTransaction") return "0xtrust-wallet";
         throw new Error(`Unexpected method ${method}`);
@@ -1517,7 +1517,7 @@ describe("walletFlow", () => {
         body: JSON.parse(String(init?.body ?? "{}")),
       });
       const body = rpcRequests.at(-1)?.body as { method?: string } | undefined;
-      return Response.json({ result: body?.method === "eth_chainId" ? BASE_SEPOLIA.chainIdHex : "0x" });
+      return Response.json({ result: body?.method === "eth_chainId" ? BASE_MAINNET.chainIdHex : "0x" });
     }) as unknown as typeof fetch;
 
     try {
@@ -1529,7 +1529,7 @@ describe("walletFlow", () => {
     expect(walletRequests).toEqual([
       { method: "eth_chainId" },
       { method: "eth_chainId" },
-      { method: "eth_sendTransaction", params: [{ ...transaction, chainId: BASE_SEPOLIA.chainIdHex }] },
+      { method: "eth_sendTransaction", params: [{ ...transaction, chainId: BASE_MAINNET.chainIdHex }] },
     ]);
     expect(rpcRequests).toEqual([
       {
@@ -1554,7 +1554,7 @@ describe("walletFlow", () => {
     const provider = mockProvider(
       async ({ method }) => {
         walletMethods.push(method);
-        if (method === "eth_chainId") return BASE_SEPOLIA.chainIdHex;
+        if (method === "eth_chainId") return BASE_MAINNET.chainIdHex;
         throw new Error(`${method} should not be called`);
       },
       { forwardNetwork: true, forwardSimulation: true },
@@ -1562,7 +1562,7 @@ describe("walletFlow", () => {
     configureWalletTransactionTransport(provider, "reown", "https://base-rpc.example.test");
     globalThis.fetch = (async (_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
       const body = JSON.parse(String(init?.body ?? "{}")) as { method?: string };
-      return body.method === "eth_chainId" ? Response.json({ result: BASE_SEPOLIA.chainIdHex }) : Response.json({
+      return body.method === "eth_chainId" ? Response.json({ result: BASE_MAINNET.chainIdHex }) : Response.json({
         error: {
           code: 3,
           message: "execution reverted",
@@ -1587,7 +1587,7 @@ describe("walletFlow", () => {
     const provider = mockProvider(
       async ({ method }) => {
         walletMethods.push(method);
-        if (method === "eth_chainId") return BASE_SEPOLIA.chainIdHex;
+        if (method === "eth_chainId") return BASE_MAINNET.chainIdHex;
         if (method === "eth_sendTransaction") return "0xfarcaster-fallback";
         throw new Error(`Farcaster host must not receive ${method}`);
       },
@@ -1596,7 +1596,7 @@ describe("walletFlow", () => {
     configureWalletTransactionTransport(provider, "farcaster", "https://base-rpc.example.test");
     globalThis.fetch = (async (_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
       const body = JSON.parse(String(init?.body ?? "{}")) as { method?: string; params?: unknown[] };
-      if (body.method === "eth_chainId") return Response.json({ result: BASE_SEPOLIA.chainIdHex });
+      if (body.method === "eth_chainId") return Response.json({ result: BASE_MAINNET.chainIdHex });
       const tag = String(body.params?.[1]);
       rpcTags.push(tag);
       return tag === "pending" ? Response.json({ error: { code: -32602, message: "pending block tag is not supported" } }) : Response.json({ result: "0x" });
@@ -1618,7 +1618,7 @@ describe("walletFlow", () => {
     const provider = mockProvider(
       async ({ method }) => {
         walletMethods.push(method);
-        if (method === "eth_chainId") return BASE_SEPOLIA.chainIdHex;
+        if (method === "eth_chainId") return BASE_MAINNET.chainIdHex;
         throw new Error(`${method} should not be called`);
       },
       { forwardNetwork: true, forwardSimulation: true },
@@ -1626,7 +1626,7 @@ describe("walletFlow", () => {
     configureWalletTransactionTransport(provider, "farcaster", "https://base-rpc.example.test");
     globalThis.fetch = (async (_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
       const body = JSON.parse(String(init?.body ?? "{}")) as { method?: string };
-      return body.method === "eth_chainId" ? Response.json({ result: BASE_SEPOLIA.chainIdHex }) : Response.json({
+      return body.method === "eth_chainId" ? Response.json({ result: BASE_MAINNET.chainIdHex }) : Response.json({
         error: {
           code: 3,
           message: "execution reverted",
@@ -4047,6 +4047,27 @@ describe("walletFlow", () => {
       ).rejects.toThrow("Timed out reading infrastructure");
       expect(calls).toBe(4);
       await Promise.allSettled(blockers);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("the transport deadline includes a stalled JSON response body", async () => {
+    const originalFetch = globalThis.fetch;
+    let signal: AbortSignal | undefined;
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      signal = init?.signal ?? undefined;
+      return {
+        ok: true,
+        json: () => new Promise((_resolve, reject) => {
+          signal?.addEventListener("abort", () => reject(signal?.reason), { once: true });
+        }),
+      } as Response;
+    }) as typeof fetch;
+    try {
+      await expect(fetchInfrastructureState("https://api.test", account, "1", { timeoutMs: 5 }))
+        .rejects.toThrow("Timed out reading infrastructure");
+      expect(signal?.aborted).toBe(true);
     } finally {
       globalThis.fetch = originalFetch;
     }

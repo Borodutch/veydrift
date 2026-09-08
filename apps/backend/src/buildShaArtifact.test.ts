@@ -98,7 +98,7 @@ describe("backend build SHA artifact writer", () => {
 
     expect(spawnSync("git", ["init", "--quiet"], { cwd: directory }).status).toBe(0);
     expect(spawnSync("git", ["add", sourceFile], { cwd: directory }).status).toBe(0);
-    expect(spawnSync("git", ["-c", "user.name=Veydrift Test", "-c", "user.email=test@veydrift.invalid", "commit", "--quiet", "-m", "test source"], {
+    expect(spawnSync("git", ["-c", "commit.gpgsign=false", "-c", "user.name=Veydrift Test", "-c", "user.email=test@veydrift.invalid", "commit", "--quiet", "-m", "test source"], {
       cwd: directory
     }).status).toBe(0);
     const commitSha = spawnSync("git", ["rev-parse", "HEAD"], {

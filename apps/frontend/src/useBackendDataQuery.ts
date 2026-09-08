@@ -21,7 +21,7 @@ export function useBackendDataQuery<T>(
   queryRef.current = query;
   const store = query?.store;
   const key = query?.key;
-  const snapshot = useBackendDataSnapshot<T>(store, key);
+  const snapshot = useBackendDataSnapshot<T>(enabled ? store : undefined, key);
 
   const refetch = useCallback(async (): Promise<T | undefined> => {
     const current = queryRef.current;
@@ -47,18 +47,7 @@ export function useBackendDataQuery<T>(
       // render the snapshot's error state, so background failures must not be
       // promoted to a window error.
     });
-    // Canonical reads are cache-owned. Preserve an already-started transport
-    // for another subscriber (or the next route), but remove queued work that
-    // has never touched the network when this route is replaced.
-    return () => {
-      // `useBackendDataSnapshot` releases its subscription from a passive
-      // effect. Let that cleanup run first, then cancel only if this was the
-      // final consumer of a request that has not started transport yet.
-      // Otherwise a route transition can cancel a shared descriptor while an
-      // already-mounted screen is still waiting on it.
-      setTimeout(() => store.cancelQueuedReadIfUnobserved(key), 0);
-    };
-  }, [key, refetch, store]);
+  }, [enabled, key, refetch, store]);
 
   return { refetch, snapshot };
 }

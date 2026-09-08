@@ -8,6 +8,7 @@ import {
   fetchFleetMissionVisibility,
   fetchGlobalActiveMissions,
   fetchGlobalMissionArchive,
+  fetchGameApiJson,
   fetchHighscores,
   fetchInfrastructureState,
   fetchMissileAttackArchive,
@@ -348,8 +349,8 @@ function resourceTagsForKey(key: string, wallet?: string | undefined, planetId?:
 /**
  * The single state and refresh boundary for the playable frontend.
  *
- * It owns normalized response data, generations, freshness, failures, and the
- * three-slot priority scheduler. Calling the same read again while it is
+ * It owns normalized response data, generations, freshness, and failures.
+ * Independent resources load concurrently. Calling the same read again while it is
  * running returns the existing promise. Screens may keep render projections,
  * but this store is the authoritative runtime snapshot and rejects stale
  * generations before they can replace newer shared state.
@@ -997,17 +998,6 @@ export class BackendDataStore {
       unsubscribe();
       this.scheduleEviction(key);
     };
-  }
-
-  /** A component may unmount before its descriptor gets a scheduler slot.
-   * Preserve started canonical transports, but avoid issuing stale queued
-   * reads from a route that no longer exists. */
-  cancelQueuedRead(key: string): boolean {
-    return this.state.cancelQueuedRead(key);
-  }
-
-  cancelQueuedReadIfUnobserved(key: string): boolean {
-    return this.state.cancelQueuedReadIfUnobserved(key);
   }
 
   key(kind: string, ...parts: unknown[]): string {
@@ -2583,14 +2573,10 @@ export class BackendDataStore {
 
   runtimeConfig<T>(url: string): Promise<T> {
     const key = cacheKey("runtime-config", url);
-    return this.refresh(key, async (signal) => {
-      const response = await fetch(url, {
-        headers: { accept: "application/json" },
-        signal,
-      });
-      if (!response.ok) throw new Error(`Runtime config failed with ${response.status}`);
-      return response.json() as Promise<T>;
-    });
+    return this.refresh(key, (signal) => fetchGameApiJson<T>(url, "Runtime config", {
+      signal,
+      httpErrorMessage: async (response) => `Runtime config failed with ${response.status}`,
+    }));
   }
 
   attackProtection(wallet: string, targetPlanetId: string, targetIsMoon = false, options: WalletReadOptions = {}): Promise<AttackProtectionStatus> {
@@ -2670,13 +2656,11 @@ export class BackendDataStore {
     return this.refresh(
       key,
       async (signal) => {
-        const response = await fetch(`${this.apiBaseUrl}/missions?status=active&live=1`, {
+        const data = await fetchGameApiJson<{ missions?: T[] }>(`${this.apiBaseUrl}/missions?status=active&live=1`, "Landing missions", {
           cache: "no-store",
-          headers: { accept: "application/json" },
           signal,
+          httpErrorMessage: async () => "Failed to load landing missions",
         });
-        if (!response.ok) throw new Error("Failed to load landing missions");
-        const data = (await response.json()) as { missions?: T[] };
         return data.missions ?? [];
       },
       { priority: "background" },
@@ -2694,13 +2678,11 @@ export class BackendDataStore {
           page: "1",
           pageSize: "250",
         });
-        const response = await fetch(`${this.apiBaseUrl}/highscores?${params.toString()}`, {
+        const data = await fetchGameApiJson<{ rankings?: { total?: T[] } }>(`${this.apiBaseUrl}/highscores?${params.toString()}`, "Landing highscores", {
           cache: "no-store",
-          headers: { accept: "application/json" },
           signal,
+          httpErrorMessage: async () => "Failed to load landing highscores",
         });
-        if (!response.ok) throw new Error("Failed to load landing highscores");
-        const data = (await response.json()) as { rankings?: { total?: T[] } };
         return data.rankings?.total ?? [];
       },
       { priority: "background" },

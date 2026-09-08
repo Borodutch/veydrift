@@ -4961,7 +4961,7 @@ async function fetchWalletJson<T>(
   });
 }
 
-async function fetchGameApiJson<T>(
+export async function fetchGameApiJson<T>(
   url: string,
   label: string,
   options: {
@@ -4998,29 +4998,29 @@ async function fetchGameApiJsonUnpooled<T>(
   if (options.signal?.aborted) forwardAbort();
   else options.signal?.addEventListener("abort", forwardAbort, { once: true });
 
-  let response: Response;
+  let response: Response | undefined;
   try {
     response = await fetch(url, {
       ...(options.cache !== undefined ? { cache: options.cache } : {}),
       headers: { accept: "application/json" },
       signal: controller.signal,
     });
+    if (!response.ok) {
+      throw new Error(options.httpErrorMessage ? await options.httpErrorMessage(response) : await apiErrorMessage(response, label));
+    }
+    return await response.json() as T;
   } catch (error) {
     if (controller.signal.aborted) {
       throw controller.signal.reason instanceof Error
         ? controller.signal.reason
         : new Error(`Timed out reading ${label.toLowerCase()} from the game API after ${Math.round(timeoutMs / 1_000)} seconds.`);
     }
+    if (response) throw error;
     throw new Error(options.networkFailureMessage?.(error) ?? walletApiNetworkFailureMessage(label, error));
   } finally {
     clearTimeout(timeoutId);
     options.signal?.removeEventListener("abort", forwardAbort);
   }
-
-  if (!response.ok) {
-    throw new Error(options.httpErrorMessage ? await options.httpErrorMessage(response) : await apiErrorMessage(response, label));
-  }
-  return response.json() as Promise<T>;
 }
 
 export function __clearGameApiReadPoolForTests(): void {

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
-  BASE_SEPOLIA,
+  BASE_MAINNET,
   generatePaidAllianceInviteSecret,
   paidAllianceInviteCommitment,
   paidAllianceInviteCommitmentFromPathname,
@@ -211,7 +211,7 @@ describe("paid alliance invite frontend flow", () => {
 function providerRecording(requests: unknown[]): Eip1193Provider {
   return {
     async request({ method, params }) {
-      if (method === "eth_chainId") return BASE_SEPOLIA.chainIdHex as never;
+      if (method === "eth_chainId") return BASE_MAINNET.chainIdHex as never;
       requests.push({ method, params });
       return "0xabc" as never;
     },
