@@ -611,6 +611,13 @@ for (const { width, route, kind } of [
   });
 }
 
+test("owned planet selector loads its own roster endpoint on startup", async () => {
+  await loadInspectorFixture("/", 1280, { shell: "settlement" });
+  await waitForExpression("window.inspectorProof.requests.some(request => /\\/wallet\\/[^/]+\\/planets(?:\\?|$)/.test(request))");
+  const ids = await evaluate("[...document.querySelectorAll('aside[aria-label=\"Select planet\"] [data-planet-selector-item]')].map(item => item.dataset.planetSelectorItem)");
+  assert.deepEqual(ids.sort(), ["owned-a", "owned-b"]);
+});
+
 test("desktop selector atomically replaces an unrelated inspector with one owned route and dataset", async () => {
   await loadInspectorFixture("/planet/9/9/9", 1280);
   await waitForExpression("document.querySelector('main h2')?.textContent === 'Unrelated Gamma'");

@@ -3318,7 +3318,7 @@ export function PlayableMvpApp({
   );
   const canonicalPlanetResources = canonicalPlanetResourcesSnapshot?.data ?? {};
   const walletPlanetsQuery = backendData && account ? backendData.queries.planets(account) : undefined;
-  const walletPlanetsSnapshot = useBackendDataSnapshot<WalletPlanetsResponse>(backendData, walletPlanetsQuery?.key);
+  const { snapshot: walletPlanetsSnapshot } = useBackendDataQuery<WalletPlanetsResponse>(walletPlanetsQuery);
   const walletPlanetsState = walletPlanetsSnapshot?.data?.planets ?? [];
   const walletPlanets = useMemo(() => walletPlanetsWithCanonicalPlanetResources(walletPlanetsState, canonicalPlanetResources, account), [account, canonicalPlanetResources, walletPlanetsState]);
   const setWalletPlanets = useCallback((value: ManagedPlanetResponse[] | ((current: ManagedPlanetResponse[]) => ManagedPlanetResponse[])) => {
