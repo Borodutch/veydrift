@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
+import { writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { computeScope } from "./ci-scope.mjs";
 
@@ -76,12 +77,16 @@ function runLogged(label, command, args) {
   const output = `${result.stdout || ""}${result.stderr || ""}`;
 
   if (result.status !== 0) {
-    process.stdout.write(output);
+    // Flush the complete failure before exiting; an async pipe write followed
+    // by process.exit truncated large test logs before their failing assertions.
+    writeFileSync(1, output);
+    if (result.signal) console.error(`${label} terminated by ${result.signal}.`);
+    if (result.error) console.error(result.error);
     process.exit(result.status || 1);
   }
 
   if (outputContainsFlaggedOutput(output)) {
-    process.stdout.write(output);
+    writeFileSync(1, output);
     console.error(`::error::${label} output contains flagged output.`);
     process.exit(1);
   }
