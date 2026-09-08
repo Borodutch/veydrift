@@ -28,13 +28,16 @@ VITE_VEYDRIFT_CHAIN=mainnet
 Run in separate terminals from the repository root:
 
 ```sh
-bun --env-file=apps/backend/.env.local-runtime run dev:backend
+(cd apps/backend && bun --env-file=.env.local-runtime src/index.ts)
 VITE_VEYDRIFT_SURFACE=playable bun run dev:frontend --host 127.0.0.1
 ```
 
 Open <http://127.0.0.1:5173/>. Vite forwards `/local-api` exclusively to
 `127.0.0.1:4000`; it does not fall back to production. The backend supervisor runs
 one local indexing writer on `127.0.0.1:4001` and one API reader on port 4000.
+Restart the backend manually after backend code edits. Do not use Bun watch mode
+with this two-worker supervisor: a watch reload can leave the old child workers
+alive. Frontend changes still hot-reload normally through Vite.
 
 ## Verify before gameplay testing
 
