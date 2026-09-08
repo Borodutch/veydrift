@@ -681,7 +681,7 @@ function RankingRow({
                 className="shrink-0 rounded border border-rose-300/40 bg-rose-400/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase leading-none tracking-normal text-rose-100"
                 title={`At war with ${alliance.name}. Attack eligibility is verified for the selected target: frozen original rosters and declaration direction still apply.`}
               >
-                {`War [${alliance.tag}] · verify`}
+                {`War [${alliance.tag}]`}
               </span>
             ) : null}
           </span>
