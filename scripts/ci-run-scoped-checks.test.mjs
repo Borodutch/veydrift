@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { outputContainsFlaggedOutput } from "./ci-run-scoped-checks.mjs";
 
 test("passing test names may describe warnings without being diagnostics", () => {
@@ -7,6 +8,18 @@ test("passing test names may describe warnings without being diagnostics", () =>
   assert.equal(outputContainsFlaggedOutput("(pass) warning UI > renders a warning badge\nwarning: unexpected diagnostic"), true);
 });
 import { filesRequireContractChecks } from "./ci-scope.mjs";
+
+test("flushes a large failure log to a pipe before exiting", () => {
+  const moduleUrl = new URL("./ci-run-scoped-checks.mjs", import.meta.url).href;
+  const result = spawnSync(process.execPath, ["--input-type=module", "-e", `
+    import { writeCheckOutput } from ${JSON.stringify(moduleUrl)};
+    await writeCheckOutput("x".repeat(200000) + "FAILURE DETAIL\\n");
+    process.exit(1);
+  `], { encoding: "utf8" });
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout.length, 200015);
+  assert.ok(result.stdout.endsWith("FAILURE DETAIL\n"));
+});
 
 test("routes deployment proof changes through blocking contract CI", () => {
   assert.equal(filesRequireContractChecks(["scripts/veydrift-postdeploy-smoke.mjs"]), true);

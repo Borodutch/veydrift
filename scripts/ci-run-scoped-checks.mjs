@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
-import { writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { computeScope } from "./ci-scope.mjs";
 
@@ -66,7 +65,13 @@ export function outputContainsFlaggedOutput(output) {
     });
 }
 
-function runLogged(label, command, args) {
+export async function writeCheckOutput(output) {
+  await new Promise((resolve, reject) => {
+    process.stdout.write(output, (error) => error ? reject(error) : resolve());
+  });
+}
+
+async function runLogged(label, command, args) {
   console.log(`\n== ${label} ==`);
   console.log(`$ ${[command, ...args].join(" ")}`);
   const result = spawnSync(command, args, {
@@ -79,14 +84,14 @@ function runLogged(label, command, args) {
   if (result.status !== 0) {
     // Flush the complete failure before exiting; an async pipe write followed
     // by process.exit truncated large test logs before their failing assertions.
-    writeFileSync(1, output);
+    await writeCheckOutput(output);
     if (result.signal) console.error(`${label} terminated by ${result.signal}.`);
     if (result.error) console.error(result.error);
     process.exit(result.status || 1);
   }
 
   if (outputContainsFlaggedOutput(output)) {
-    writeFileSync(1, output);
+    await writeCheckOutput(output);
     console.error(`::error::${label} output contains flagged output.`);
     process.exit(1);
   }
@@ -98,50 +103,50 @@ function runLogged(label, command, args) {
   console.log(`${label} passed.`);
 }
 
-function main() {
+async function main() {
   const args = parseArgs(process.argv.slice(2));
   const scope = scopeFromEnvOrGit(args);
 
   if (scope.universe) {
-    runLogged("universe-check", "bun", ["run", "check:universe"]);
-    runLogged("universe-test", "bun", ["run", "test:universe"]);
+    await runLogged("universe-check", "bun", ["run", "check:universe"]);
+    await runLogged("universe-test", "bun", ["run", "test:universe"]);
   }
 
   if (scope.backend) {
-    runLogged("backend-check", "bun", ["run", "check:backend"]);
-    runLogged("backend-test", "bun", ["run", "test:backend"]);
-    runLogged("backend-performance-tool-test", "bun", ["run", "test:api-latency-report"]);
+    await runLogged("backend-check", "bun", ["run", "check:backend"]);
+    await runLogged("backend-test", "bun", ["run", "test:backend"]);
+    await runLogged("backend-performance-tool-test", "bun", ["run", "test:api-latency-report"]);
   }
 
   if (scope.frontend) {
-    runLogged("frontend-precheck", "bash", ["-lc", "cd apps/frontend && bun scripts/generate-image-variants.mjs"]);
-    runLogged("frontend-typecheck", "bash", ["-lc", "cd apps/frontend && ../../node_modules/.bin/tsc --project tsconfig.json"]);
-    runLogged("frontend-test", "bun", ["run", "test:frontend"]);
-    runLogged("frontend-touch-browser", "bash", ["-lc", "cd apps/frontend && bun run test:touch-browser"]);
-    runLogged("stats-check", "bun", ["run", "check:stats"]);
+    await runLogged("frontend-precheck", "bash", ["-lc", "cd apps/frontend && bun scripts/generate-image-variants.mjs"]);
+    await runLogged("frontend-typecheck", "bash", ["-lc", "cd apps/frontend && ../../node_modules/.bin/tsc --project tsconfig.json"]);
+    await runLogged("frontend-test", "bun", ["run", "test:frontend"]);
+    await runLogged("frontend-touch-browser", "bash", ["-lc", "cd apps/frontend && bun run test:touch-browser"]);
+    await runLogged("stats-check", "bun", ["run", "check:stats"]);
   }
 
   if (scope.circuits) {
-    runLogged("circuits-check", "bun", ["run", "check:circuits"]);
+    await runLogged("circuits-check", "bun", ["run", "check:circuits"]);
   }
 
   if (scope.contracts) {
-    runLogged("deployment-manifest-test", "node", [
+    await runLogged("deployment-manifest-test", "node", [
       "--test",
       "scripts/veydrift-deployment-manifest.test.mjs",
       "scripts/veydrift-upgrade-receipt.test.mjs",
     ]);
-    runLogged("contracts-fast-check", "bun", ["run", "check:contracts:fast"]);
-    runLogged("contracts-test", "bun", ["run", "test:contracts"]);
+    await runLogged("contracts-fast-check", "bun", ["run", "check:contracts:fast"]);
+    await runLogged("contracts-test", "bun", ["run", "test:contracts"]);
     if (scope.storage_layout) {
-      runLogged("contracts-storage-check", "bun", ["run", "check:contracts:storage"]);
+      await runLogged("contracts-storage-check", "bun", ["run", "check:contracts:storage"]);
     } else {
       console.log("\n== contracts-storage-check ==\nSkipped: no storage-relevant contract files changed.");
     }
   }
 
   if (scope.full_build) {
-    runLogged("build", "bun", ["run", "build"]);
+    await runLogged("build", "bun", ["run", "build"]);
   }
 
   if (!scope.frontend && !scope.backend && !scope.universe && !scope.contracts && !scope.circuits && !scope.full_build) {
@@ -150,5 +155,5 @@ function main() {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main();
+  await main();
 }
