@@ -2123,10 +2123,19 @@ export function resolvePreparedPublicTargetBattleForecast(
   simulation: ContractBattleForecastSummary,
 ): BattleForecastState {
   const kind = simulation.probableOutcome;
-  const label = (["win", "draw", "defeat"] as const)
+  const outcomes = (["win", "draw", "defeat"] as const)
     .filter((outcome) => simulation.outcomeCounts[outcome] > 0)
-    .map((outcome) => `${Math.round(simulation.outcomeCounts[outcome] / simulation.sampleCount * 100)}% ${outcome}`)
-    .join(" · ");
+    .map((outcome, index) => {
+      const exactPercentage = simulation.outcomeCounts[outcome] / simulation.sampleCount * 100;
+      return { outcome, index, percentage: Math.floor(exactPercentage), remainder: exactPercentage % 1 };
+    });
+  let percentagePointsRemaining = 100 - outcomes.reduce((total, outcome) => total + outcome.percentage, 0);
+  for (const outcome of [...outcomes].sort((left, right) => right.remainder - left.remainder || left.index - right.index)) {
+    if (percentagePointsRemaining <= 0) break;
+    outcome.percentage += 1;
+    percentagePointsRemaining -= 1;
+  }
+  const label = outcomes.map(({ outcome, percentage }) => `${percentage}% ${outcome}`).join(" · ");
   return {
     kind,
     label,
