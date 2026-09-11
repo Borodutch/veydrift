@@ -1192,17 +1192,22 @@ test("Mission Control detail links use the router without replacing the document
   await clickExpression(`document.querySelector('[data-active-tab-button="all"]')`);
   await evaluate("window.detailNavigationMarker = {}; window.detailNavigationOriginal = window.detailNavigationMarker");
   for (const path of ['/planet/1/2/3', '/moon/1/2/3']) {
+    const history = await cdp.send("Page.getNavigationHistory");
     const selector = `document.querySelector('[data-active-tab="all"] a[href="${path}"]')`;
     await waitForExpression(`${selector} !== null`);
     await clickExpressionWithTrustedPointer(selector);
     await waitForExpression(`location.pathname === '${path}' && document.querySelector('[data-mission-control-page]') === null`);
+    await waitForExpression(`document.querySelector('[data-celestial-detail="${path.startsWith('/moon/') ? 'moon' : 'planet'}"]') !== null`);
     assert.equal(await evaluate("window.detailNavigationMarker !== undefined && window.detailNavigationMarker === window.detailNavigationOriginal"), true);
-    await evaluate("history.back()");
+    // Use the browser's Back action: rapid script-initiated traversals can be
+    // throttled by Chrome independently of the app's router.
+    await cdp.send("Page.navigateToHistoryEntry", { entryId: history.entries[history.currentIndex].id });
     await waitForExpression(`document.querySelector('[data-active-tab="all"] a[href="${path}"]') !== null`);
   }
   // Other list/dialog consumers may also stop bubbling. All entity anchors
   // must use the same router, including nested images and keyboard clicks.
   for (const path of ['/player/0x9999999999999999999999999999999999999999', '/alliance/7']) {
+    const history = await cdp.send("Page.getNavigationHistory");
     await evaluate(`(() => {
       const wrapper = document.createElement('div');
       wrapper.onclick = event => event.stopPropagation();
@@ -1218,7 +1223,7 @@ test("Mission Control detail links use the router without replacing the document
     }
     await waitForExpression(`location.pathname === '${path}' && document.querySelector('[data-mission-control-page]') === null`);
     assert.equal(await evaluate("window.detailNavigationMarker !== undefined && window.detailNavigationMarker === window.detailNavigationOriginal"), true);
-    await evaluate("history.back()");
+    await cdp.send("Page.navigateToHistoryEntry", { entryId: history.entries[history.currentIndex].id });
     await waitForExpression("document.querySelector('[data-mission-control-page]') !== null");
     await evaluate("document.querySelector('#detail-route-proof')?.parentElement.remove()");
   }
