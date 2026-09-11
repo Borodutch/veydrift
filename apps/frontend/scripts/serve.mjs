@@ -1,5 +1,6 @@
-import { existsSync } from "node:fs";
+import { createReadStream, existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { Readable } from "node:stream";
 import {
   MOON_ANIMATION_BASE,
   MOON_ANIMATION_MASTER_WIDTH,
@@ -196,7 +197,7 @@ export async function planetAnimationResponse(url) {
   };
   if (route.size === route.masterWidth) {
     const sourcePath = `${route.base}/${route.assetType}.webp`;
-    return new Response(Bun.file(existingAssetUrl(sourcePath)), { headers });
+    return new Response(Readable.toWeb(createReadStream(existingAssetUrl(sourcePath))), { headers });
   }
 
   if (route.size === 1024) {
