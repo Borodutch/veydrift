@@ -209,19 +209,14 @@ describe("frontend static server headers", () => {
     expect(metadata.pages).toBe(96);
   });
 
-  test("resizes a 1024px moon master without retaining the large derivative", async () => {
+  test("rejects expensive moon sizes that the frontend never requests", async () => {
     clearPlanetAnimationCache();
     const url = new URL(`http://localhost/assets/game/moon-animations/cratered-cyan-moon.webp?size=1024&v=${MOON_ANIMATION_VERSION}`);
     const response = await planetAnimationResponse(url);
 
-    expect(response?.status).toBe(200);
+    expect(response?.status).toBe(400);
     expect(planetAnimationCacheSize()).toBe(0);
-    expect(response?.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
-    const metadata = await sharp(Buffer.from(await response!.arrayBuffer()), { animated: true }).metadata();
-    expect(metadata.width).toBe(1024);
-    expect(metadata.pageHeight).toBe(1024);
-    expect(metadata.pages).toBe(96);
-  }, 20_000);
+  });
 
   test("rejects unknown moon animation variants", async () => {
     const unknownType = await planetAnimationResponse(new URL(`http://localhost/assets/game/moon-animations/not-a-moon.webp?size=64&v=${MOON_ANIMATION_VERSION}`));
