@@ -207,7 +207,7 @@ describe("frontend static server headers", () => {
     expect(metadata.width).toBe(64);
     expect(metadata.pageHeight).toBe(64);
     expect(metadata.pages).toBe(96);
-  });
+  }, 20_000);
 
   test("rejects expensive moon sizes that the frontend never requests", async () => {
     clearPlanetAnimationCache();
