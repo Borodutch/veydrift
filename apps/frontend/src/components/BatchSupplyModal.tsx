@@ -1,4 +1,5 @@
-import { Check, LoaderCircle, PackagePlus, X } from "lucide-preact";
+import { Check, PackagePlus, X } from "lucide-preact";
+import { Skeleton, SkeletonRegion, skeletonList } from "./Skeleton";
 import { useEffect, useMemo, useState } from "preact/hooks";
 import {
   fleetMissionDistance,
@@ -15,7 +16,7 @@ import {
 import { shipAssetByKey } from "../gameAssets";
 import type { MissionShipKey, MissionShips } from "../galaxyActions";
 import type { ManagedPlanetResponse } from "../walletFlow";
-import type { WriteTransactionState } from "../transactionActionGate";
+import { transactionStateOutcome, type WriteTransactionState } from "../transactionActionGate";
 
 const supplyCargoShips: Array<{ key: MissionShipKey; label: string }> = [
   { key: "largeCargo", label: "Large Cargo" },
@@ -72,7 +73,7 @@ export function BatchSupplyModal({
   sources: readonly BatchSupplySource[];
   maxSources: number;
   target: ManagedPlanetResponse;
-  transactionState?: Pick<WriteTransactionState, "label" | "outcome" | "txHash"> | undefined;
+  transactionState?: Pick<WriteTransactionState, "label" | "phase" | "txHash"> | undefined;
 }) {
   const [requested, setRequested] = useState<Record<keyof SupplyResources, string>>(() => supplyResourceInputValues(initialRequested));
   const [selectedSourceIds, setSelectedSourceIds] = useState<Set<string>>(new Set());
@@ -108,9 +109,10 @@ export function BatchSupplyModal({
   const orderByOrigin = useMemo(() => new Map(plan.orders.map((order) => [order.originPlanetId, order])), [plan.orders]);
 
   const missingTotal = resourceTotal(plan.missing);
-  const transactionPending = transactionState?.outcome === "submitted" || transactionState?.outcome === "confirmed";
-  const canonicalTransactionError = transactionState?.outcome === "not-submitted" || transactionState?.outcome === "reverted"
-    ? transactionState.label
+  const transactionOutcome = transactionStateOutcome(transactionState);
+  const transactionPending = transactionOutcome === "submitted" || transactionOutcome === "confirmed";
+  const canonicalTransactionError = transactionOutcome === "not-submitted" || transactionOutcome === "reverted"
+    ? transactionState?.label
     : undefined;
   const canSubmit = !loading && !actionPending && !transactionPending && plan.orders.length > 0 && missingTotal === 0 && !plan.sourceLimitReached;
   const targetLabel = target.name?.trim() || target.coordinates;
@@ -174,7 +176,7 @@ export function BatchSupplyModal({
             </span>
             <span className="flex h-5 items-center">Supply {targetLabel}</span>
           </h2>
-          <button aria-label="Close supply resources" className="rounded border border-white/15 p-2 text-slate-300 hover:bg-white/10" disabled={actionPending} onClick={onClose} type="button">
+          <button aria-label="Close supply resources" className="rounded border border-white/15 p-2 text-slate-300 hover:bg-white/10" onClick={onClose} type="button">
             <X aria-hidden="true" size={18} />
           </button>
         </header>
@@ -205,8 +207,16 @@ export function BatchSupplyModal({
             <span className="text-xs text-slate-400">{selected.size}/{selectableSourceCount} selected</span>
           </div>
           <div className="grid min-h-0 content-start gap-2 overflow-y-auto pr-1">
-            {loading ? (
-              <div className="flex items-center gap-2 rounded-lg border border-white/10 p-4 text-sm text-slate-300"><LoaderCircle className="animate-spin" size={16} /> Reading cargo fleets…</div>
+            {loading && sources.length === 0 ? (
+              <SkeletonRegion className="grid gap-2" label="Loading cargo fleets">
+                {skeletonList(3, (index) => (
+                  <div key={index} className="grid gap-3 rounded-lg border border-white/10 p-4">
+                    <Skeleton className="h-4 w-40" />
+                    <Skeleton className="h-3 w-2/3" />
+                    <Skeleton className="h-8 w-full" />
+                  </div>
+                ))}
+              </SkeletonRegion>
             ) : sources.length === 0 ? (
               <div className="rounded-lg border border-white/10 p-4 text-sm text-slate-300">No other owned planets can supply this target.</div>
             ) : sources.map((source) => {
@@ -280,7 +290,7 @@ export function BatchSupplyModal({
           {plan.sourceLimitReached ? <p className="rounded border border-amber-300/30 bg-amber-300/10 p-2 text-sm text-amber-100">Select at most {maxSources} sources because that is your current fleet-slot capacity.</p> : null}
           {plan.blockedSources.length > 0 ? <p className="rounded border border-amber-300/30 bg-amber-300/10 p-2 text-sm text-amber-100">Some selected sources cannot launch: {plan.blockedSources.map((source) => source.reason).join(" ")}</p> : null}
           {missingTotal > 0 ? <p className="rounded border border-amber-300/30 bg-amber-300/10 p-2 text-sm text-amber-100">Missing: M {format(plan.missing.metal)} · C {format(plan.missing.crystal)} · D {format(plan.missing.deuterium)}. Select more sources or reduce the request.</p> : null}
-          {transactionPending ? <p className="rounded border border-cyan-300/30 bg-cyan-300/10 p-2 text-sm text-cyan-100">{transactionState?.outcome === "confirmed" ? "Supply submitted — syncing indexed missions." : "Supply submitted — waiting for Base confirmation."}{transactionState?.txHash ? ` ${transactionState.txHash.slice(0, 10)}…` : ""}</p> : null}
+          {transactionPending ? <p className="rounded border border-cyan-300/30 bg-cyan-300/10 p-2 text-sm text-cyan-100">Processing… You can close this window.</p> : null}
           {(error ?? canonicalTransactionError) ? <p className="rounded border border-red-300/30 bg-red-300/10 p-2 text-sm text-red-100">{error ?? canonicalTransactionError}</p> : null}
 
           <footer className="grid gap-3 border-t border-white/10 pt-3">
@@ -291,7 +301,7 @@ export function BatchSupplyModal({
             </div>
             <button className="inline-flex w-full items-center justify-center gap-2 whitespace-nowrap rounded bg-cyan-300 px-4 py-2 text-xs font-bold text-slate-950 disabled:cursor-not-allowed disabled:opacity-50 sm:text-sm" disabled={!canSubmit} onClick={() => onConfirm(plan.orders)} type="button">
               <Check aria-hidden="true" size={16} />
-              {transactionPending ? "Supply submitted — syncing…" : actionPending ? "Launching…" : `Launch ${plan.orders.length} transport${plan.orders.length === 1 ? "" : "s"} in one call`}
+              {transactionPending ? "Processing…" : actionPending ? "Launching…" : `Launch ${plan.orders.length} transport${plan.orders.length === 1 ? "" : "s"} in one call`}
             </button>
           </footer>
         </div>

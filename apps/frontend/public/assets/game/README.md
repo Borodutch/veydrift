@@ -1,11 +1,15 @@
 # Veydrift Game Art Assets
 
-Generated first-pass production assets for Veydrift gameplay UI.
+Veydrift gameplay assets, including the retained first-pass artwork and later style passes.
 
-- `buildings/`: 15 buildings, with `low`, `mid`, and `high` visual tiers for upgrade progression.
-- `ships/`: 16 spacecraft assets.
-- `planets/`: 12 planet temperature/resource variants.
+- `buildings/`: building artwork with visual tiers for upgrade progression.
+- `ships/`: retained spacecraft artwork.
+- `planets/`: planet temperature/resource variants.
 - `concepts/`: original concept sheets used to establish the art direction.
-- `manifest.json`: stable asset map for frontend/indexer/UI use.
+- [manifest.json](manifest.json): asset metadata.
+- `style-pass/generated/`: planet, building, ship, defense, research and moon previews.
+- [Small Cargo direction anchor](style-pass/high-res/small-cargo-alive-fullship-2k.webp): high-resolution reference.
 
-All exported gameplay assets are WebP files generated from transparent high-resolution PNG sources using OpenAI `gpt-image-2`.
+Check [gameAssets.ts](../../../src/gameAssets.ts) and the consuming components for actual UI mappings.
+An asset's presence here does not mean it is used in the application. Keep filenames linked in these
+notes so the documentation checker can detect removed or renamed assets.

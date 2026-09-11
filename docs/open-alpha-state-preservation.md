@@ -115,7 +115,7 @@ The migration plan must cover:
 
 Do not treat the public API, backend indexer, or generated event export as a
 complete replacement-contract migration source unless every internal game-state
-index is explicitly covered. The current direct `VeydriftGame` stores several
+index is explicitly covered. `VeydriftGame` stores several
 state classes that are not enumerable from public getters alone, including:
 
 - owned-planet indexes: `_ownedPlanetIds` and `_ownedPlanetIndex`;
@@ -130,11 +130,30 @@ state, the plan must name the source of truth for each class and include a
 pre/post parity check. If any class is intentionally dropped, record the product
 decision and compensation/rollback plan before broadcast.
 
-The approved VEY-313 Base Sepolia `VeydriftGame` replacement path is a migrated
-redeploy because the live game is a direct non-proxy deployment with existing
-alpha state and nonzero game-held resource reserves. Follow
-`docs/veydriftgame-replacement-plan-VEY-KANEO-313.md` before any replacement
-broadcast.
+If the verified target is not proxy-upgradeable and has existing player state, use a reviewed
+migrated redeploy; a no-state redeploy is invalid. A previous address's implementation slot or
+snapshot is not evidence about the current target. Preserve pre- and post-replacement preflight JSON.
+
+Import dependencies in order: module/token wiring; ownership, coordinates and ledgers; progression
+and queues; missions and their indexes; moon generations, alliance, Rift and protection state; then
+backend replay and parity checks. Use audited owner-only import paths and verify every exported class.
+
+Verify reserve backing separately for metal, crystal and deuterium before replacement gameplay:
+
+```text
+replacement.resourceReserveRequirement() <= replacement resource token balances
+```
+
+If reserves cannot be transferred safely, stop for an approved backing plan. Do not mint replacement
+supply, rewrite proxy storage or switch reserve-token addresses to make the check pass.
+
+## Rollback
+
+Retain the old/new manifests, ABI hashes, implementations, authorized owners, consistent database
+backup and replay points. Simulate rollback and verify parity before changing runtime pointers.
+Account for writes after cutover; pointing clients back at an older contract is not sufficient when
+new player state would be lost. An irreversible operation requires an explicit recovery plan, not an
+assumed implementation downgrade. Failed parity, reserve or smoke checks block completion.
 
 ## Done Gate
 

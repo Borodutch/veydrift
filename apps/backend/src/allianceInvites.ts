@@ -19,6 +19,14 @@ import { HttpJsonRpcTransport, type RpcMetrics } from "./evm";
 
 export const paidAllianceInviteSecretPattern = /^0x[0-9a-fA-F]{64}$/;
 export const paidAllianceAuthorizationLifetimeSeconds = 10 * 60;
+
+export function paidAllianceInviteCapabilities(config: BackendConfig) {
+  const publicConfigured = Boolean(config.rpcUrl && config.paidAllianceInviteAddress && config.paidAllianceInviteIndexFromBlock !== undefined);
+  return {
+    redemption: publicConfigured && Boolean(config.paidAllianceInviteSignerPrivateKey),
+    recovery: publicConfigured && Boolean(config.allianceContractAddress && config.paidAllianceInviteEncryptionKey && config.paidAllianceInviteSecretStorePath),
+  };
+}
 const paidAllianceInviteSecretRecordVersion = "Veydrift paid alliance invite secret v1";
 const paidAllianceInviteLogChunkSpan = 90_000n;
 

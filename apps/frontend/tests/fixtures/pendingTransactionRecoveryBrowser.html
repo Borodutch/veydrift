@@ -3,52 +3,52 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Pending transaction recovery accessibility proof</title>
+    <title>Session-only transaction proof</title>
   </head>
   <body>
     <main id="background">
-      <button id="background-action" type="button">Background action</button>
+      <button id="background-action" type="button">Unrelated action</button>
+      <button id="navigation" type="button">Navigate</button>
     </main>
-    <div id="modal-root"></div>
     <script type="module">
-      import { h, render } from "preact";
-      import { PendingTransactionRecoveryDialog } from "/src/components/PendingTransactionRecoveryDialog.tsx";
-      import "/src/styles.css";
+      import { BackendDataStore } from "/src/backendDataStore.ts";
 
-      const backgroundAction = document.querySelector("#background-action");
-      const modalRoot = document.querySelector("#modal-root");
+      const wallet = "0x1111111111111111111111111111111111111111";
+      const apiUrl = "https://recovery.browser.test";
+      const journalKey = `veydrift:pending-transactions:${apiUrl}`;
+      if (!localStorage.getItem(journalKey)) localStorage.setItem(journalKey, JSON.stringify([{
+        actionId: "building:start:mine", chainId: "0x2105", submittedAt: 1,
+        transactionHash: `0x${"ab".repeat(32)}`, wallet,
+        planetIds: ["7"], conflictKeys: ["planet:7"],
+      }]));
       let activations = 0;
-      let phase = "decision";
-
-      backgroundAction.addEventListener("click", () => {
-        activations += 1;
+      let phase = "confirmed";
+      let reads = 0;
+      let submissions = 0;
+      const data = new BackendDataStore(apiUrl, {
+        transactionPollIntervalMs: 10,
+        transactionStatusReader: async (hash) => {
+          reads++;
+          return { events: [], indexedEventCount: 0, latestIndexedBlock: "20",
+            phase, receiptBlock: "20", transactionHash: hash };
+        },
       });
-
-      const decision = () => ({
-        actionId: "building:start:metalStorage",
-        chainId: "0x2105",
-        phase,
-        submittedAt: Date.now() - 300_000,
-        transactionHash: `0x${"ab".repeat(32)}`,
-        wallet: "0x1111111111111111111111111111111111111111",
-      });
-
-      const close = () => render(null, modalRoot);
-      const show = (nextPhase = "decision") => {
-        phase = nextPhase;
-        render(h(PendingTransactionRecoveryDialog, {
-          decision: decision(),
-          onDiscard: () => show("checking"),
-          onKeepWaiting: close,
-        }), modalRoot);
-      };
-
-      backgroundAction.focus();
-      show();
+      document.querySelector("#background-action").addEventListener("click", () => activations++);
+      document.querySelector("#background-action").focus();
+      data.setContext(wallet, "7", "0x2105");
+      window.addEventListener("pagehide", () => data.dispose());
       window.recoveryProof = {
         activations: () => activations,
-        close,
-        show,
+        reads: () => reads,
+        submissions: () => submissions,
+        start: () => { void data.runWriteTransaction({
+          key: "building:start:mine", label: "Build", chainId: "0x2105",
+          invalidateTags: [`wallet:${wallet}`, "planet:7"],
+          send: async () => { submissions++; return `0x${"cd".repeat(32)}`; },
+        }); },
+        pending: (planetId = "7") => data.isTransactionPending(wallet, [`planet:${planetId}`]),
+        saved: () => localStorage.getItem(journalKey) !== null,
+        complete: () => { phase = "applied"; window.dispatchEvent(new Event("online")); },
       };
       window.recoveryProofReady = true;
     </script>

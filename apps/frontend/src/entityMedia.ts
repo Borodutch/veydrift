@@ -1,4 +1,4 @@
-import { requestPersonalSignature, type Eip1193Provider } from "./walletFlow";
+import { fetchGameApiJson, fetchGameApiMutation, requestMetadataSignature, type SignedMetadataOptions, type Eip1193Provider } from "./walletFlow";
 
 export type EntityMediaKind = "planet" | "moon" | "player" | "alliance";
 export type YouTubeMedia = {
@@ -111,12 +111,10 @@ export async function fetchEntityMedia(
   entityId: string,
   signal?: AbortSignal
 ): Promise<EntityMediaResponse> {
-  const response = await fetch(entityMediaEndpoint(apiUrl, entityKind, entityId), {
-    headers: { accept: "application/json" },
+  return fetchGameApiJson<EntityMediaResponse>(entityMediaEndpoint(apiUrl, entityKind, entityId), "Entity media", {
     ...(signal ? { signal } : {}),
+    httpErrorMessage: (response) => entityMediaApiError(response, "Media could not be loaded."),
   });
-  if (!response.ok) throw new Error(await entityMediaApiError(response, "Media could not be loaded."));
-  return response.json() as Promise<EntityMediaResponse>;
 }
 
 export async function updateEntityMedia(
@@ -125,7 +123,8 @@ export async function updateEntityMedia(
   wallet: string,
   entityKind: EntityMediaKind,
   entityId: string,
-  mediaUrl: string
+  mediaUrl: string,
+  options: SignedMetadataOptions = {},
 ): Promise<EntityMediaResponse> {
   const normalizedEntityId = normalizeEntityMediaId(entityKind, entityId);
   const preview = parseYouTubeMediaUrl(mediaUrl);
@@ -134,45 +133,35 @@ export async function updateEntityMedia(
     apiUrl,
     wallet,
     entityKind,
-    normalizedEntityId
+    normalizedEntityId,
+    options,
   );
-  const signature = await requestPersonalSignature(
-    provider,
-    wallet,
-    entityMediaMessage({
+  const signature = await requestMetadataSignature(provider, wallet, entityMediaMessage({
       entityId: normalizedEntityId,
       entityKind,
       media: preview.media,
       version: challenge.version,
       wallet,
-    }),
-  );
-  const response = await fetch(entityMediaEndpoint(apiUrl, entityKind, normalizedEntityId), {
-    body: JSON.stringify({ mediaUrl, signature, version: challenge.version, wallet }),
-    headers: {
-      accept: "application/json",
-      "content-type": "application/json",
-    },
-    method: "POST",
-  });
-  if (!response.ok) throw new Error(await entityMediaApiError(response, "Media could not be saved."));
-  return response.json() as Promise<EntityMediaResponse>;
+    }), options);
+  return fetchGameApiMutation<EntityMediaResponse>(entityMediaEndpoint(apiUrl, entityKind, normalizedEntityId), "Entity media",
+    { mediaUrl, signature, version: challenge.version, wallet }, {
+      ...options,
+      httpErrorMessage: response => entityMediaApiError(response, "Media could not be saved."),
+    });
 }
 
 export async function fetchEntityMediaChallenge(
   apiUrl: string,
   wallet: string,
   entityKind: EntityMediaKind,
-  entityId: string
+  entityId: string,
+  options: { signal?: AbortSignal; timeoutMs?: number } = {},
 ): Promise<EntityMediaChallenge> {
   const endpoint = `${entityMediaEndpoint(apiUrl, entityKind, entityId)}/challenge`;
-  const response = await fetch(`${endpoint}?wallet=${encodeURIComponent(wallet)}`, {
-    headers: { accept: "application/json" },
+  return fetchGameApiJson<EntityMediaChallenge>(`${endpoint}?wallet=${encodeURIComponent(wallet)}`, "Media authorization", {
+    ...options,
+    httpErrorMessage: response => entityMediaApiError(response, "Media authorization could not be prepared."),
   });
-  if (!response.ok) {
-    throw new Error(await entityMediaApiError(response, "Media authorization could not be prepared."));
-  }
-  return response.json() as Promise<EntityMediaChallenge>;
 }
 
 export type ParsedYouTubeMedia =

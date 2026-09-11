@@ -1,41 +1,5 @@
 import type { ComponentChildren } from "preact";
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
-import type { Coordinates, DebrisField, Planet, PublicStationedDefender } from "../types";
-import { ActionReasonNote } from "./ActionReasonNote";
-import {
-  DEFAULT_MISSION_SPEED_PERCENT,
-  acsDefendHoldingFuel,
-  fleetMissionAvailableCargoCapacity,
-  fleetMissionCargoCapacity,
-  fleetMissionDistance,
-  fleetMissionDistanceForMission,
-  fleetMissionFuelCost,
-  interplanetaryMissileRange,
-  interplanetaryMissileSystemDistance,
-  interplanetaryMissileTravelSeconds,
-  fleetMissionShipCount,
-  fleetMissionTravelSeconds,
-  type AcsDefendFuelBreakdown,
-  type FleetDriveLevels,
-} from "../fleetMissionRules";
-import { planetArtTypeFromArchetypeOrCoords } from "../data/mockUniverse";
-import { defenseAssetByKey, shipAssetByKey } from "../gameAssets";
-import { emptyMissionShips, type GalaxyAction, type MissionShipKey, type MissionShips } from "../galaxyActions";
-import {
-  buildingContractIds,
-  defenseCatalog,
-  productionPerHour,
-  researchCatalog,
-  shipCatalog,
-  storageCaps,
-  type BuildingKey,
-  type ShipKey,
-} from "../playableMvp";
-import { shortAddress, type ChainShipyardState } from "../walletFlow";
-import { formatDuration } from "../durationFormat";
-import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
-import { PlanetMoonIndicator } from "./PlanetMoonIndicator";
-import { MissionRouteCell, type MissionEndpoint } from "./missionRoute";
 import {
   contractCombatPower,
   forecastContractBattle,
@@ -50,22 +14,50 @@ import {
 import {
   battlePreviewInputKey,
 } from "../battlePreviewScheduler";
+import { planetArtTypeFromArchetypeOrCoords } from "../data/mockUniverse";
+import { formatDuration } from "../durationFormat";
+import {
+  DEFAULT_MISSION_SPEED_PERCENT,
+  acsDefendHoldingFuel,
+  fleetMissionAvailableCargoCapacity,
+  fleetMissionCargoCapacity,
+  fleetMissionDistance,
+  fleetMissionDistanceForMission,
+  fleetMissionFuelCost,
+  fleetMissionShipCount,
+  fleetMissionTravelSeconds,
+  interplanetaryMissileRange,
+  interplanetaryMissileSystemDistance,
+  interplanetaryMissileTravelSeconds,
+  type AcsDefendFuelBreakdown,
+  type FleetDriveLevels,
+} from "../fleetMissionRules";
+import { emptyMissionShips, type GalaxyAction, type MissionShipKey, type MissionShips } from "../galaxyActions";
+import { defenseAssetByKey, shipAssetByKey } from "../gameAssets";
+import {
+  buildingContractIds,
+  defenseCatalog,
+  productionPerHour,
+  researchCatalog,
+  shipCatalog,
+  storageCaps,
+  type BuildingKey
+} from "../playableMvp";
+import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
+import type { Coordinates, DebrisField, Planet, PublicStationedDefender } from "../types";
+import { shortAddress, type ChainShipyardState } from "../walletFlow";
+import { ActionReasonNote } from "./ActionReasonNote";
+import { PlanetMoonIndicator } from "./PlanetMoonIndicator";
+import { Skeleton, SkeletonRegion } from "./Skeleton";
+import { emptyMissionCargoDraft, normalizeMissionCargoDraft, resourceDraftNumber, type MissionCargoDraft } from "./missionCargoModel";
+import { MissionRouteCell, type MissionEndpoint } from "./missionRoute";
+export { emptyMissionCargoDraft, normalizeMissionCargoDraft, type MissionCargoDraft } from "./missionCargoModel";
 
 export type CombatTechLevels = {
   weapons: number;
   shielding: number;
   armor: number;
 };
-
-export type MissionCargoDraft = {
-  metal: string;
-  crystal: string;
-  deuterium: string;
-};
-
-export function emptyMissionCargoDraft(): MissionCargoDraft {
-  return { metal: "0", crystal: "0", deuterium: "0" };
-}
 
 export type MissionLootRatioDraft = {
   metal: number;
@@ -1741,16 +1733,6 @@ function allowedShipKeysForAction(action: EnabledGalaxyAction): Set<MissionShipK
   return new Set(missionShipOptions.map((ship) => ship.key).filter((key) => key !== "colonyShip"));
 }
 
-export function normalizeMissionCargoDraft(
-  cargo: Partial<MissionCargoDraft> | undefined,
-): MissionCargoDraft {
-  return {
-    metal: String(resourceDraftNumber(cargo?.metal)),
-    crystal: String(resourceDraftNumber(cargo?.crystal)),
-    deuterium: String(resourceDraftNumber(cargo?.deuterium)),
-  };
-}
-
 export function reconcileMissionCargoAfterFleetChange(cargo: MissionCargoDraft): MissionCargoDraft {
   return normalizeMissionCargoDraft(cargo);
 }
@@ -2413,7 +2395,6 @@ function harvestCoverageLabel(resources: MissionResourceSnapshot, cargoCapacity:
   return `${formatResourceAmount(capacity)} / ${formatResourceAmount(total)} debris capacity`;
 }
 
-
 export function AttackOutcomePanel({
   battleForecast,
 }: {
@@ -2478,7 +2459,7 @@ function AttackOutcomeContent({
             label="Defender technology"
             value={battleForecast.defenderTechKnown
               ? formatTechLevelsLong(battleForecast.defenderTechLevels ?? ZERO_COMBAT_TECH_LEVELS)
-              : "Still loading"}
+              : <SkeletonRegion className="inline-block" label="Loading defender technology"><Skeleton className="h-3 w-24" /></SkeletonRegion>}
           />
         </div>
       </div>
@@ -3259,11 +3240,11 @@ function TargetFact({ label, value }: { label: string; value: string }) {
   );
 }
 
-function CompactFactRow({ label, value }: { label: string; value: string }) {
+function CompactFactRow({ label, value }: { label: string; value: ComponentChildren }) {
   return (
     <div className="grid min-w-0 gap-0.5 text-[11px] min-[360px]:grid-cols-[8rem_minmax(0,1fr)] min-[360px]:items-baseline min-[360px]:gap-2">
       <span className="text-slate-500">{label}</span>
-      <span className="break-words text-right tabular-nums text-slate-200">{value}</span>
+      <div className="break-words text-right tabular-nums text-slate-200">{value}</div>
     </div>
   );
 }
@@ -3792,12 +3773,6 @@ function NumberField({
       />
     </label>
   );
-}
-
-function resourceDraftNumber(value: string | undefined): number {
-  if (!value) return 0;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? Math.max(0, Math.trunc(parsed)) : 0;
 }
 
 function clampInteger(value: number, min: number, max: number): number {

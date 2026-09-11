@@ -1,14 +1,4 @@
 import {
-  defenseCatalog,
-  queueProgress as queueProgressValue,
-  researchCatalog,
-  shipCatalog,
-  type MainQueueItem,
-  type PlayableState,
-  type Resources,
-} from "../playableMvp";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
-import {
   ArrowDownLeft,
   ArrowRight,
   ArrowUpRight,
@@ -27,24 +17,43 @@ import {
   Trash2,
   X,
 } from "lucide-preact";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
+import {
+  actionNoticeForBuilding,
+  buildingKeyForContractId,
+  type InfrastructureActionNotice,
+} from "../buildingActionNotice";
 import { researchQueueForDisplay } from "../chainState";
+import { constructionQueueForDisplay, type ConstructionProgress } from "../constructionProgress";
+import { formatPlanetType, planetFromSettlementPlanet, planetsFromSystemResponse } from "../data/mockUniverse";
+import { formatDurationUntil } from "../durationFormat";
+import type { GalaxyAction } from "../galaxyActions";
+import { isImageReady } from "../imageLoadState";
 import {
   buildingQueueAsset,
   buildingQueueLabel,
   buildingQueuePreview,
   displayPlanetStats,
   overviewPlanetEffects,
-  type OverviewPlanetEffectsDisplay,
   overviewQueueItemLabelClassName,
   overviewQueueItemRemainingClassName,
   queueProgressBarState,
   queueProgressFillState,
   usedFieldsFromBuildings,
   type ChainLoadStatus,
+  type OverviewPlanetEffectsDisplay,
 } from "../overviewData";
 import { overviewHeroImage } from "../overviewHeroImage";
-import { isImageReady } from "../imageLoadState";
-import { formatPlanetType, planetFromSettlementPlanet, planetsFromSystemResponse } from "../data/mockUniverse";
+import {
+  defenseCatalog,
+  queueProgress as queueProgressValue,
+  researchCatalog,
+  shipCatalog,
+  type MainQueueItem,
+  type PlayableState,
+  type Resources,
+} from "../playableMvp";
+import { timestampToMs } from "../timestampFormat";
 import type { Coordinates, Planet } from "../types";
 import {
   decodeColonizationTargetId,
@@ -53,34 +62,27 @@ import {
   type ManagedPlanetResponse,
   type PlanetSummary,
   type PlayerQueuesResponse,
-  type WatchedPlanetsResponse,
-  type WalletSettlementResponse
+  type WalletSettlementResponse,
+  type WatchedPlanetsResponse
 } from "../walletFlow";
-import { constructionQueueForDisplay, type ConstructionProgress } from "../constructionProgress";
-import type { GalaxyAction } from "../galaxyActions";
-import { formatDurationUntil } from "../durationFormat";
-import { timestampToMs, type TimestampInput } from "../timestampFormat";
-import {
-  actionNoticeForBuilding,
-  buildingKeyForContractId,
-  type InfrastructureActionNotice,
-} from "../buildingActionNotice";
-import { OptimizedImage } from "./OptimizedImage";
+import { watchedPlanetsPanelRange } from "../watchedPlanetsView";
 import { AnimatedProgressBar } from "./AnimatedProgressBar";
-import { ProductionQueuePanel, productionQueueViewModel } from "./ProductionCatalog";
-import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
-import { PlanetMoonIndicator } from "./PlanetMoonIndicator";
-import { InlineSyncIndicator } from "./VeydriftLoader";
+import { galaxyActionIcon } from "./GalaxyActionIcon";
 import {
+  formatCompactResource,
   formatGalaxyAllianceIdentityLabel,
   formatGalaxyCommanderLabel,
-  formatCompactResource,
   formatGalaxyHeatLabel,
 } from "./GalaxyView";
+import { GalaxyRowsSkeleton } from "./LoadingSkeletons";
+import { missionTypeLabel } from "./missionControlModel";
+import { OptimizedImage } from "./OptimizedImage";
+import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
+import { PlanetMoonIndicator } from "./PlanetMoonIndicator";
+import { ProductionQueuePanel, productionQueueViewModel } from "./ProductionCatalog";
+import { Skeleton, SkeletonRegion } from "./Skeleton";
 import { WatchablePlanetRow, type PlanetMetaItem } from "./WatchablePlanetRow";
-import { watchedPlanetsPanelRange } from "../watchedPlanetsView";
-import { missionTypeLabel } from "./MissionControlPage";
-import { galaxyActionIcon } from "./GalaxyActionIcon";
+export { isOverviewResearchReadyToFinish } from "./overviewQueueModel";
 
 export function compactOverviewLevelLabel(label: string): string {
   return label.replace(/\s+[Ll]evel\s+(\d+)$/, " $1");
@@ -117,6 +119,7 @@ export type OverviewMyPlanetActionGroup = {
 };
 
 interface OverviewPageProps {
+  selectedBodyKind?: "planet" | "moon";
   state: PlayableState;
   settledState: PlayableState;
   rates: Resources;
@@ -174,6 +177,7 @@ interface OverviewPageProps {
 }
 
 export function OverviewPage({
+  selectedBodyKind = "planet",
   settledState,
   rates,
   caps,
@@ -328,6 +332,10 @@ export function OverviewPage({
   const [renamePanelOpen, setRenamePanelOpen] = useState(false);
   const [renameValidation, setRenameValidation] = useState<string | undefined>(undefined);
   const [effectsPanelOpen, setEffectsPanelOpen] = useState(false);
+  useEffect(() => {
+    setEffectsPanelOpen(false);
+    setRenamePanelOpen(false);
+  }, [selectedBodyKind]);
   const planetSubhead = homePlanet
     ? `${formatPlanetType(homePlanet.type)} · ${homePlanet.galaxy}:${homePlanet.system}:${homePlanet.position}`
     : "Home planet";
@@ -448,7 +456,7 @@ export function OverviewPage({
           <PlanetMoonIndicator
             className="right-3 top-3"
             label={`Open ${homePlanet.moonName ?? "Moon"}`}
-            onClick={onSelectMoon ? () => onSelectMoon({ galaxy: homePlanet.galaxy, system: homePlanet.system, position: homePlanet.position }) : undefined}
+            onClick={onSwitchPlanet && selectedPlanetId ? () => onSwitchPlanet(selectedPlanetId, "moon") : onSelectMoon ? () => onSelectMoon({ galaxy: homePlanet.galaxy, system: homePlanet.system, position: homePlanet.position }) : undefined}
             overviewHero
             planetType={homePlanet.type}
             title={`Open ${homePlanet.moonName ?? "Moon"} at [${homePlanet.galaxy}:${homePlanet.system}:${homePlanet.position}]`}
@@ -535,6 +543,7 @@ export function OverviewPage({
 
       {shouldShowFleetsSummary && fleetVisibility ? (
         <FleetsSummary
+          bodyKind={selectedBodyKind}
           fleetVisibility={fleetVisibility}
           planetContextKey={selectedPlanetId}
           planetNames={fleetPlanetNames}
@@ -829,6 +838,7 @@ export function OverviewPage({
           onSelectPlanet={onSelectPlanet}
           onSwitchPlanet={onSwitchPlanet}
           selectedPlanetId={selectedPlanetId ?? onChainSettlement?.homePlanetId ?? onChainSettlement?.planet?.planetId}
+          selectedBodyKind={selectedBodyKind}
         />
       ) : null}
 
@@ -862,16 +872,12 @@ export function OverviewPage({
         />
       ) : null}
 
-      {/* Resource values live in the persistent top bar; keep Overview focused on planet state and actions. */}
-      {isWalletConnected && onChainStatus === "loading" && (
-        <InlineSyncIndicator label="Refreshing resources" />
-      )}
-
     </div>
   );
 }
 
 function MyPlanetsPanel({
+  selectedBodyKind,
   commanderLabel,
   myPlanets,
   onAction,
@@ -889,6 +895,7 @@ function MyPlanetsPanel({
   onSelectPlanet: ((coords: Coordinates) => void) | undefined;
   onSwitchPlanet: ((planetId: string, bodyKind: "planet" | "moon") => void) | undefined;
   selectedPlanetId: string | undefined;
+  selectedBodyKind: "planet" | "moon";
 }) {
   return (
     <section aria-label="My planets" className="grid gap-1 rounded-lg border border-white/10 bg-[#101624] p-2">
@@ -903,7 +910,8 @@ function MyPlanetsPanel({
               commanderLabel={commanderLabel}
               compact
               coords={coords}
-              current={isSelected}
+              current={isSelected && selectedBodyKind === "planet"}
+              currentMoon={isSelected && selectedBodyKind === "moon"}
               isHome={planet.isHomePlanet}
               key={planet.planetId}
               meta={[]}
@@ -922,10 +930,11 @@ function MyPlanetsPanel({
                   onSupply={() => onSupplyPlanet?.(planet)}
                 />
               ) : undefined}
-              moonActionSlot={moonActions && moonActions.length > 0 ? (
+              moonActionSlot={moonActions?.length || onSelectMoon ? (
                 <OverviewMoonActionButtons
-                  actions={moonActions}
+                  actions={moonActions ?? []}
                   onAction={(action) => onAction?.(action, planet)}
+                  onInspect={onSelectMoon ? () => onSelectMoon(coords) : undefined}
                 />
               ) : undefined}
             />
@@ -980,17 +989,29 @@ function MyPlanetActionButtons({
   );
 }
 
-// No standalone Inspect button: the moon subsection's name/art is the inspect control.
 function OverviewMoonActionButtons({
   actions,
   onAction,
+  onInspect,
 }: {
   actions: GalaxyAction[];
   onAction: (action: GalaxyAction) => void;
+  onInspect?: (() => void) | undefined;
 }) {
   return (
     <span className="flex flex-wrap justify-end gap-1.5">
       <MyPlanetActionButtons actions={actions} onAction={onAction} />
+      {onInspect ? (
+        <button
+          aria-label="Open moon details"
+          className="inline-flex h-11 w-11 items-center justify-center rounded border border-signal/30 bg-signal/10 text-signal transition hover:bg-signal/20 sm:h-8 sm:w-8"
+          onClick={onInspect}
+          title="Open moon details"
+          type="button"
+        >
+          <ArrowRight aria-hidden="true" size={15} strokeWidth={1.9} />
+        </button>
+      ) : null}
     </span>
   );
 }
@@ -1071,9 +1092,9 @@ function WatchedPlanetsPanel({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h3 className="text-sm font-semibold text-white">Watched planets</h3>
-          <p className="text-xs text-slate-500">
-            {total > 0 ? `${start}-${end} of ${total}` : "Loading watched planets"}
-          </p>
+          {loading && total === 0 ? (
+            <SkeletonRegion label="Loading watched planets"><Skeleton className="mt-1 h-3 w-24" /></SkeletonRegion>
+          ) : <p className="text-xs text-slate-500">{total > 0 ? `${start}-${end} of ${total}` : "No watched planets"}</p>}
         </div>
         {totalPages > 1 ? (
           <div className="flex items-center gap-2">
@@ -1116,7 +1137,7 @@ function WatchedPlanetsPanel({
           ) : null}
         </div>
       ) : null}
-      {loading ? <InlineSyncIndicator label="Refreshing watched planets" /> : null}
+      {loading && planets.length === 0 ? <GalaxyRowsSkeleton rows={3} /> : null}
 
       <div className="grid gap-1.5">
         {planets.map((planet) => {
@@ -1192,12 +1213,6 @@ export function shouldRenderWatchedPlanetsPanel({
 
 // Research completions settle automatically on-chain (lazy reconcile), so there is no manual
 // "complete" control. This predicate is still used to derive backend-state availability messaging.
-export function isOverviewResearchReadyToFinish(
-  queue: PlayerQueuesResponse["research"] | undefined,
-  now: number,
-): boolean {
-  return Boolean(queue?.active && queue.readyAt && Number(queue.readyAt) * 1_000 <= now);
-}
 
 function OverviewBuildingActionNotice({
   notice,
@@ -1465,6 +1480,7 @@ function compareOverviewFleetLines(left: FleetSummaryLine, right: FleetSummaryLi
 }
 
 export function FleetsSummary({
+  bodyKind = "planet",
   fleetVisibility,
   now,
   onOpenMissionControl,
@@ -1472,6 +1488,7 @@ export function FleetsSummary({
   planetNames,
 }: {
   fleetVisibility: FleetMissionVisibilityResponse;
+  bodyKind?: "planet" | "moon";
   now: number;
   onOpenMissionControl: () => void;
   planetContextKey?: string | undefined;
@@ -1493,7 +1510,7 @@ export function FleetsSummary({
       </div>
 
       {summary.activeCount === 0 ? (
-        <p className="mt-3 text-xs text-slate-500">No active fleets for this planet.</p>
+        <p className="mt-3 text-xs text-slate-500">{`No active fleets for this ${bodyKind}.`}</p>
       ) : (
         <div className="mt-3 min-w-0">
           <ul className="grid gap-1" data-fleet-visible-count={summary.visibleLines.length}>
@@ -1661,7 +1678,9 @@ function EffectMetric({ label, value, nowrap = false }: { label: string; value: 
   return (
     <div className="min-w-0 rounded border border-white/10 bg-white/[0.03] px-2.5 py-2">
       <dt className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">{label}</dt>
-      <dd className={`mt-0.5 text-xs font-semibold text-slate-100 ${nowrap ? "truncate whitespace-nowrap" : "break-words"}`} title={nowrap ? value : undefined}>{value}</dd>
+      <dd className={`mt-0.5 text-xs font-semibold text-slate-100 ${nowrap ? "truncate whitespace-nowrap" : "break-words"}`} title={nowrap ? value : undefined}>
+        {value === "Loading" ? <SkeletonRegion label={`Loading ${label.toLowerCase()}`}><Skeleton className="h-4 w-20" /></SkeletonRegion> : value}
+      </dd>
     </div>
   );
 }

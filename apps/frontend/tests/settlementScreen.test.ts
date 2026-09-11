@@ -6,7 +6,6 @@ import {
   isSameWalletChainId,
   migrationReservationForSettlementFunding,
   noWalletDetectedMessage,
-  POST_SETTLEMENT_INDEXING_TIMEOUT_MESSAGE,
   settlementErrorStateMessage,
   settlementLaunchBlocker,
   settlementBalanceRecheckAvailable,
@@ -18,7 +17,6 @@ import {
   shouldRetryRejectedRequestWithSettlement,
   shouldShowPublicPlayableApp,
   shouldUseWalletProviderForSettlement,
-  waitForIndexedSettledPlanet,
   walletConnectionAccounts,
 } from "../src/FirstPlanetSettlementApp";
 import { preSettlementMode, type PlanetState, type WalletState } from "../src/settlementScreen";
@@ -137,7 +135,8 @@ describe("settlement screen mode", () => {
     expect(settlementSource).toContain("Free first planet");
     expect(settlementSource).toContain("2× starter resources");
     expect(settlementSource).toContain("2× production · 7 days");
-    expect(settlementSource).toContain("Preparing your invitation");
+    expect(settlementSource).toContain('label="Loading settlement"');
+    expect(settlementSource).toContain("return <SettlementFormSkeleton />");
     expect(settlementSource).not.toContain('title="Reading wallet link"');
     expect(settlementSource).not.toContain('visual={<SettlementScanVisual label="SETTLEMENT SCAN" />}');
     expect(stylesSource).toContain(".landing-invite-welcome");
@@ -317,64 +316,7 @@ describe("settlement screen mode", () => {
     ).toEqual({ kind: "indexing" });
   });
 
-  test("waits for indexed settlement resources to hydrate after reconnect", async () => {
-    const responses = [
-      indexedSettlementResponse({
-        lastSettledAt: "0",
-        resources: { metal: "0", crystal: "0", deuterium: "0" },
-      }),
-      indexedSettlementResponse({
-        lastSettledAt: "1770000000",
-        resources: { metal: "5000", crystal: "4900", deuterium: "4800" },
-      }),
-    ];
-    const fetches: string[] = [];
-    const delays: number[] = [];
 
-    await expect(
-      waitForIndexedSettledPlanet("https://api.example.test", connected.account, {
-        attempts: 2,
-        delay: async (ms) => {
-          delays.push(ms);
-        },
-        fetchSettlement: async (apiUrl, account) => {
-          fetches.push(`${apiUrl}:${account}`);
-          const response = responses.shift();
-          if (!response) throw new Error("unexpected extra fetch");
-          return response;
-        },
-        intervalMs: 25,
-      }),
-    ).resolves.toMatchObject({
-      kind: "settled",
-      planet: {
-        coordinates: "2:44:9",
-        resources: {
-          metal: "5000",
-          crystal: "4900",
-          deuterium: "4800",
-        },
-      },
-    });
-
-    expect(fetches).toEqual([`https://api.example.test:${connected.account}`, `https://api.example.test:${connected.account}`]);
-    expect(delays).toEqual([25]);
-  });
-
-  test("times out with a retryable message when indexed starter resources stay pending", async () => {
-    await expect(
-      waitForIndexedSettledPlanet("https://api.example.test", connected.account, {
-        attempts: 2,
-        delay: async () => {},
-        fetchSettlement: async () =>
-          indexedSettlementResponse({
-            lastSettledAt: "0",
-            resources: { metal: "0", crystal: "0", deuterium: "0" },
-          }),
-        intervalMs: 1,
-      }),
-    ).rejects.toThrow(POST_SETTLEMENT_INDEXING_TIMEOUT_MESSAGE);
-  });
 
   test("blocks settlement launch until funding info is ready and affordable", () => {
     expect(
@@ -786,6 +728,10 @@ describe("settlement screen mode", () => {
     const source = await Bun.file(new URL("../src/FirstPlanetSettlementApp.tsx", import.meta.url)).text();
 
     expect(source).toContain("referralData.queries.settlement(account)");
+    expect(source).toContain("referralData.startGameplaySync(account)");
+    expect(source).not.toContain("waitForIndexedSettledPlanet");
+    expect(source).not.toContain("POST_SETTLEMENT_READ_ATTEMPTS");
+    expect(source).not.toContain("POST_SETTLEMENT_INDEXING_TIMEOUT_MESSAGE");
     expect(source).toContain("queries.settlementFundingProjection(");
     expect(source).toContain("settlementTransactionOptions(funding, redemptions.referral, redemptions.allianceInvite)");
     expect(source).not.toContain("readSettlementStateWithMiniAppFallback");

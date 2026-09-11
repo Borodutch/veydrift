@@ -1,39 +1,18 @@
 export type GameStateFreshness = "fresh" | "refreshing" | "delayed" | "failed";
 
-export type GameStatePriority = "transaction" | "selected-planet" | "mission-control" | "background";
-
 export type GameStateEntry<T = unknown> = {
   data?: T | undefined;
   error?: string | undefined;
   freshness: GameStateFreshness;
   generation: number;
-  indexRevision?: string | undefined;
   lastSuccessfulUpdate?: number | undefined;
   wallet?: string | undefined;
   planetId?: string | undefined;
 };
 
 export type GameStateReadOptions = {
-  dedupe?: boolean;
-  deadlineMs?: number | undefined;
   planetId?: string | undefined;
-  priority?: GameStatePriority | undefined;
-  scope?: string | undefined;
   wallet?: string | undefined;
-};
-
-type ScheduledRead<T> = {
-  controller: AbortController;
-  deadlineAt: number;
-  key: string;
-  priority: number;
-  run: (signal: AbortSignal) => Promise<T>;
-  resolve: (value: T) => void;
-  reject: (reason: unknown) => void;
-  settleTransport: () => void;
-  released: boolean;
-  started: boolean;
-  timer: ReturnType<typeof setTimeout>;
 };
 
 type InFlightRead<T = unknown> = {
@@ -44,134 +23,16 @@ type InFlightRead<T = unknown> = {
   /** The request consumer may time out before an AbortSignal-aware transport
    * actually settles. Keep its canonical identity until then. */
   settled: Promise<void>;
-  scope?: string | undefined;
 };
-
-const priorityOrder: Record<GameStatePriority, number> = {
-  transaction: 0,
-  "selected-planet": 1,
-  "mission-control": 2,
-  background: 3,
-};
-
-export class GameStateReadScheduler {
-  private active = 0;
-  private readonly queue: ScheduledRead<unknown>[] = [];
-  private readonly tasks = new Map<AbortController, ScheduledRead<unknown>>();
-
-  constructor(private readonly concurrency = 3) {}
-
-  schedule<T>(key: string, run: (signal: AbortSignal) => Promise<T>, options: Pick<GameStateReadOptions, "deadlineMs" | "priority"> = {}): { controller: AbortController; promise: Promise<T>; settled: Promise<void> } {
-    const controller = new AbortController();
-    const deadlineMs = options.deadlineMs ?? 10_000;
-    const deadlineAt = Date.now() + deadlineMs;
-    let task!: ScheduledRead<T>;
-    let settleTransport!: () => void;
-    const settled = new Promise<void>((resolve) => {
-      settleTransport = resolve;
-    });
-    const promise = new Promise<T>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        const reason = gameStateDeadlineError(key, deadlineMs);
-        controller.abort(reason);
-        const index = this.queue.indexOf(task as ScheduledRead<unknown>);
-        if (index >= 0) this.queue.splice(index, 1);
-        this.tasks.delete(controller);
-        // Do not free a concurrency slot until the underlying transport has
-        // actually settled. AbortSignal is cooperative: freeing the slot here
-        // used to let a slow-to-abort fetch overlap a replacement request and
-        // exceed the scheduler's real network limit.
-        reject(reason);
-        if (!task.started) task.settleTransport();
-      }, deadlineMs);
-      task = {
-        controller,
-        deadlineAt,
-        key,
-        priority: priorityOrder[options.priority ?? "background"],
-        run,
-        resolve,
-        reject,
-        settleTransport,
-        released: false,
-        timer,
-        started: false,
-      };
-      this.tasks.set(controller, task as ScheduledRead<unknown>);
-      this.queue.push(task as ScheduledRead<unknown>);
-      this.queue.sort((left, right) => left.priority - right.priority || left.deadlineAt - right.deadlineAt);
-      this.drain();
-    });
-    return { controller, promise, settled };
-  }
-
-  cancel(controller: AbortController, reason = new DOMException("Request cancelled", "AbortError")): void {
-    if (!controller.signal.aborted) controller.abort(reason);
-    const task = this.tasks.get(controller);
-    if (!task) return;
-    this.tasks.delete(controller);
-    const index = this.queue.findIndex((task) => task.controller === controller);
-    if (index >= 0) this.queue.splice(index, 1);
-    clearTimeout(task.timer);
-    task.reject(reason);
-    // See the deadline path above: a started read still owns its slot until
-    // its promise settles, even after cancellation has rejected consumers.
-    if (!task.started) task.settleTransport();
-  }
-
-  /** Cancel only a request that has not yet acquired a real transport slot.
-   * Route cleanup must retain an already-started shared transport for cache
-   * reuse, but there is no value in starting a stale view's queued request. */
-  cancelQueued(controller: AbortController): boolean {
-    const task = this.tasks.get(controller);
-    if (!task || task.started) return false;
-    const reason = new DOMException("Request cancelled", "AbortError");
-    if (!controller.signal.aborted) controller.abort(reason);
-    this.tasks.delete(controller);
-    const index = this.queue.indexOf(task);
-    if (index >= 0) this.queue.splice(index, 1);
-    clearTimeout(task.timer);
-    // This queue-only cancellation is normal route lifecycle, not a backend
-    // failure. Resolve the former unobserved consumer silently; typed store
-    // adapters must still treat an absent value as unavailable before they
-    // dereference it.
-    task.resolve(undefined);
-    task.settleTransport();
-    return true;
-  }
-
-  private drain(): void {
-    while (this.active < this.concurrency && this.queue.length > 0) {
-      const task = this.queue.shift()!;
-      if (task.controller.signal.aborted) continue;
-      task.started = true;
-      this.active += 1;
-      Promise.resolve()
-        .then(() => task.run(task.controller.signal))
-        .then(task.resolve, task.reject)
-        .finally(() => {
-          clearTimeout(task.timer);
-          this.tasks.delete(task.controller);
-          if (!task.released) {
-            task.released = true;
-            this.active = Math.max(0, this.active - 1);
-            this.drain();
-          }
-          task.settleTransport();
-        });
-    }
-  }
-}
 
 export class GameStateStore {
+  private disposed = false;
   private readonly entries = new Map<string, GameStateEntry>();
   private readonly generations = new Map<string, number>();
   private readonly inFlight = new Map<string, InFlightRead>();
   private readonly activeReads = new Set<InFlightRead>();
   private readonly listeners = new Set<() => void>();
   private readonly listenersByKey = new Map<string, Set<() => void>>();
-
-  constructor(private readonly scheduler = new GameStateReadScheduler(3)) {}
 
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener);
@@ -190,7 +51,7 @@ export class GameStateStore {
 
   /**
    * A resource may be retained in the cache after a screen unmounts, but only
-   * subscribed resources should be eagerly refreshed by the shared scheduler.
+   * subscribed resources should be eagerly refreshed by the store.
    */
   subscriberCount(key: string): number {
     return this.listenersByKey.get(key)?.size ?? 0;
@@ -200,7 +61,7 @@ export class GameStateStore {
     return [...this.listenersByKey.keys()];
   }
 
-  /** True while a transport for this canonical key is queued or running. */
+  /** True while a transport for this canonical key is running. */
   hasInFlight(key: string): boolean {
     return this.inFlight.has(key);
   }
@@ -219,13 +80,13 @@ export class GameStateStore {
     return this.snapshot<T>(key)?.data;
   }
 
-  publish<T>(key: string, data: T, options: Omit<GameStateReadOptions, "dedupe" | "deadlineMs" | "priority" | "scope"> = {}): void {
+  publish<T>(key: string, data: T, options: GameStateReadOptions = {}): void {
+    if (this.disposed) return;
     const generation = this.nextGeneration(key);
     this.entries.set(key, {
       data,
       freshness: "fresh",
       generation,
-      indexRevision: backendIndexRevision(data),
       lastSuccessfulUpdate: Date.now(),
       planetId: options.planetId,
       wallet: normalizeWallet(options.wallet),
@@ -305,33 +166,37 @@ export class GameStateStore {
   }
 
   read<T>(key: string, load: (signal: AbortSignal) => Promise<T>, options: GameStateReadOptions = {}): Promise<T> {
+    if (this.disposed) return Promise.reject(new DOMException("Game state store disposed", "AbortError"));
     const running = this.inFlight.get(key) as InFlightRead<T> | undefined;
-    if (running && options.dedupe !== false) return running.promise;
+    if (running) return running.promise;
 
     const generation = this.nextGeneration(key);
     const previous = this.entries.get(key);
     this.entries.set(key, {
       ...previous,
       error: undefined,
-      freshness: previous?.data === undefined ? "refreshing" : "refreshing",
+      freshness: "refreshing",
       generation,
       planetId: options.planetId ?? previous?.planetId,
       wallet: normalizeWallet(options.wallet) ?? previous?.wallet,
     });
     this.emit([key]);
 
-    const scheduled = this.scheduler.schedule(key, load, options);
+    const controller = new AbortController();
+    const transport = Promise.resolve().then(() => {
+      controller.signal.throwIfAborted();
+      return load(controller.signal);
+    });
     let promise!: Promise<T>;
     let request!: InFlightRead<T>;
-    promise = scheduled.promise
+    promise = transport
       .then(
         (data) => {
-          if (!this.isCurrent(key, generation)) return data;
+          if (controller.signal.aborted || !this.isCurrent(key, generation)) return data;
           this.entries.set(key, {
             data,
             freshness: "fresh",
             generation,
-            indexRevision: backendIndexRevision(data),
             lastSuccessfulUpdate: Date.now(),
             planetId: options.planetId,
             wallet: normalizeWallet(options.wallet),
@@ -356,74 +221,23 @@ export class GameStateStore {
       )
       .finally(() => {
         this.activeReads.delete(request as InFlightRead);
+        if (this.inFlight.get(key) === request) this.inFlight.delete(key);
       });
-    request = { controller: scheduled.controller, generation, key, promise, settled: scheduled.settled, scope: options.scope };
+    request = { controller, generation, key, promise, settled: promise.then(() => {}, () => {}) };
     this.inFlight.set(key, request);
     this.activeReads.add(request as InFlightRead);
-    void scheduled.settled.finally(() => {
-      if (this.inFlight.get(key) === request) this.inFlight.delete(key);
-    });
     return promise;
   }
 
-  cancelScope(scope: string): void {
-    const cancelledKeys = new Set<string>();
-    for (const request of [...this.activeReads]) {
-      if (request.scope !== scope) continue;
-      cancelledKeys.add(request.key);
-      this.scheduler.cancel(request.controller, new DOMException(`Cancelled ${scope} request`, "AbortError"));
-      this.activeReads.delete(request);
-      // Keep the logical request until its underlying transport settles. A
-      // cancellation only ends this consumer; abort is cooperative.
-    }
-    for (const key of cancelledKeys) {
-      const generation = this.nextGeneration(key);
-      const current = this.entries.get(key);
-      this.entries.set(key, {
-        ...current,
-        error: undefined,
-        freshness: current?.data === undefined ? "delayed" : "fresh",
-        generation,
-      });
-    }
-    if (cancelledKeys.size > 0) this.emit(cancelledKeys);
-  }
 
-  /** Drop a queued-only read when its final route subscriber unmounts. Active
-   * transports remain cache-owned and are deliberately not route-cancelled. */
-  cancelQueuedRead(key: string): boolean {
-    const request = this.inFlight.get(key);
-    if (!request) return false;
-    const cancelled = this.scheduler.cancelQueued(request.controller);
-    if (cancelled) {
-      this.activeReads.delete(request);
-      const generation = this.nextGeneration(key);
-      const current = this.entries.get(key);
-      this.entries.set(key, {
-        ...current,
-        error: undefined,
-        freshness: current?.data === undefined ? "delayed" : "fresh",
-        generation,
-      });
-      this.emit([key]);
-    }
-    return cancelled;
-  }
-
-  /** A queued transport belongs to the canonical resource, not an individual
-   * component. It may be discarded only once its final subscriber is gone. */
-  cancelQueuedReadIfUnobserved(key: string): boolean {
-    if (this.subscriberCount(key) > 0) return false;
-    return this.cancelQueuedRead(key);
-  }
-
-  /** Terminal cleanup for a discarded API-base store. Abort queued and active
-   * reads so an obsolete runtime configuration cannot begin transport after
+  /** Terminal cleanup for a discarded API-base store. Abort active
+   * reads so an obsolete runtime configuration cannot publish after
    * its owning shell has unmounted. A transport that ignores abort is still
    * generation-blocked, but no longer remains a live canonical request. */
   dispose(): void {
+    this.disposed = true;
     for (const request of [...this.activeReads]) {
-      this.scheduler.cancel(request.controller, new DOMException("Game state store disposed", "AbortError"));
+      request.controller.abort(new DOMException("Game state store disposed", "AbortError"));
     }
     this.activeReads.clear();
     this.inFlight.clear();
@@ -440,7 +254,7 @@ export class GameStateStore {
   }
 
   private isCurrent(key: string, generation: number): boolean {
-    return this.generations.get(key) === generation;
+    return !this.disposed && this.generations.get(key) === generation;
   }
 
   private emit(keys: Iterable<string> = []): void {
@@ -449,29 +263,6 @@ export class GameStateStore {
       for (const listener of this.listenersByKey.get(key) ?? []) listener();
     }
   }
-}
-
-export function backendIndexRevision(value: unknown): string | undefined {
-  if (!value || typeof value !== "object") return undefined;
-  const record = value as Record<string, unknown>;
-  const direct = record.indexRevision ?? record.indexedRevision ?? record.revision ?? record.indexedBlock ?? record.blockNumber ?? record.generatedAt;
-  if (typeof direct === "string" || typeof direct === "number" || typeof direct === "bigint") return String(direct);
-  const resourceSnapshot = record.resourceSnapshot;
-  if (resourceSnapshot && typeof resourceSnapshot === "object") {
-    const blockNumber = (resourceSnapshot as Record<string, unknown>).blockNumber;
-    if (typeof blockNumber === "string" || typeof blockNumber === "number" || typeof blockNumber === "bigint") {
-      return String(blockNumber);
-    }
-  }
-  for (const nestedKey of ["fleetVisibility", "settlement", "planet"]) {
-    const nestedRevision = backendIndexRevision(record[nestedKey]);
-    if (nestedRevision !== undefined) return nestedRevision;
-  }
-  return undefined;
-}
-
-function gameStateDeadlineError(key: string, deadlineMs: number): Error {
-  return new Error(`Timed out refreshing ${key} after ${Math.round(deadlineMs / 1_000)} seconds, including queue time.`);
 }
 
 function normalizeWallet(wallet: string | undefined): string | undefined {

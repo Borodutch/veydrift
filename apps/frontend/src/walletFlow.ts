@@ -1,3 +1,5 @@
+import { GameApiError } from "./gameApiError";
+import type * as Api from "../../../packages/api-types/src/index";
 import { sdk } from "@farcaster/miniapp-sdk";
 import { encodeAbiParameters, keccak256, parseAbiParameters, toHex } from "viem";
 import { GAME_UNAVAILABLE_MESSAGE, serverUnavailableRetryMessage } from "./gameUnavailable";
@@ -30,6 +32,19 @@ export async function requestPersonalSignature(provider: Eip1193Provider, wallet
     method: "personal_sign",
     params: [personalSignPayload(message), wallet],
   });
+}
+
+export type SignedMetadataOptions = {
+  signal?: AbortSignal;
+  timeoutMs?: number;
+  sign?: (message: string) => Promise<string>;
+};
+
+export async function requestMetadataSignature(provider: Eip1193Provider, wallet: string, message: string, options: SignedMetadataOptions): Promise<string> {
+  options.signal?.throwIfAborted();
+  const signature = await (options.sign ? options.sign(message) : requestPersonalSignature(provider, wallet, message));
+  options.signal?.throwIfAborted();
+  return signature;
 }
 
 type WalletLockProbe = {
@@ -177,14 +192,7 @@ export type ReferralHistoryEntry = ReferralRedemptionRecord & {
 
 export type ReferralHistoryResponse = {
   entries: ReferralHistoryEntry[];
-  pagination: {
-    page: number;
-    pageSize: number;
-    totalEntries: number;
-    totalPages: number;
-    hasPreviousPage: boolean;
-    hasNextPage: boolean;
-  };
+  pagination: Api.Pagination;
 };
 
 export type ReferralResolution = {
@@ -226,22 +234,8 @@ type TransactionRequest = {
   value?: string;
 };
 
-export type TransactionReceipt = {
-  status?: string | number | bigint | null;
-  transactionHash?: string;
-  blockNumber?: string | number | bigint | null;
-};
 
-export const TRANSACTION_REVERTED_MESSAGE = "Transaction reverted on-chain. No game state was changed.";
-export const TRANSACTION_RECEIPT_TIMEOUT_MESSAGE = "Transaction submitted, but the chain did not confirm it yet. Check the transaction status before retrying.";
-const TRANSACTION_RECEIPT_TIMEOUT_MS = 120_000;
-const TRANSACTION_RECEIPT_POLL_MS = 1_500;
-
-export type OnChainResources = {
-  metal: string;
-  crystal: string;
-  deuterium: string;
-};
+export type OnChainResources = Api.Resources;
 
 export type ResourceSnapshotMetadata = {
   planetId?: string | null;
@@ -401,44 +395,11 @@ export type WalletPlanetsResponse = {
 // active item finishes and whether it is due, computed by the backend at request
 // time from `readyAt`. The frontend displays these directly instead of deriving
 // readiness/remaining time against its own clock (VEY-KANEO-465).
-export type QueueAsOfNowResponse = {
-  secondsRemaining: number;
-  complete: boolean;
-  completedQuantity?: number;
-  remainingQuantity?: number;
-  currentUnitSecondsRemaining?: number;
-  currentUnitProgressBps?: number;
-  overallProgressBps?: number;
-};
+export type QueueAsOfNowResponse = Api.QueueAsOfNow;
 
-export type QueueStateResponse = {
-  active: boolean;
-  kind: string | null;
-  planetId?: string;
-  itemId?: number;
-  targetLevel?: number;
-  quantity?: number;
-  readyAt: string | null;
-  startedAt?: string | null;
-  cost: OnChainResources;
-  backlog?: QueueStateResponse[];
-  productionTiming?: {
-    startedAt: string;
-    originalQuantity: number;
-    unitWorkSeconds: string;
-    rate: string;
-  };
-  asOfNow?: QueueAsOfNowResponse;
-};
+export type QueueStateResponse = Api.QueueState;
 
-export type PlayerQueuesResponse = {
-  wallet: string;
-  homePlanetId: string | null;
-  building: QueueStateResponse | null;
-  defense: QueueStateResponse | null;
-  ship: QueueStateResponse | null;
-  research: QueueStateResponse | null;
-};
+export type PlayerQueuesResponse = Api.PlayerQueues;
 
 export type AttackPreviewParticipantSummary = {
   missionId: string;
@@ -629,13 +590,7 @@ export type WatchPlanetMutationResponse = {
   watchedPlanetIds: string[];
 };
 
-export type FleetMissionArchiveEntry =
-  | {
-      kind: "mission";
-      mission: FleetMissionSummary;
-      report?: BattleReport | undefined;
-    }
-  | { kind: "battleReport"; report: BattleReport };
+export type FleetMissionArchiveEntry = Api.MissionArchiveEntry<FleetMissionSummary, BattleReport>;
 
 // Universe-wide (no wallet scope) active missions for the Mission Control "All" active tab.
 export type GlobalActiveMissionsResponse = {
@@ -644,24 +599,9 @@ export type GlobalActiveMissionsResponse = {
 
 // Universe-wide completed mission archive for the Mission Control past "All" tab. Mirrors the
 // per-wallet archive pagination contract but carries no wallet scope.
-export type GlobalMissionArchiveResponse = {
-  rows: FleetMissionArchiveEntry[];
-  pagination: FleetMissionArchiveResponse["pagination"];
-};
+export type GlobalMissionArchiveResponse = Api.GlobalMissionArchive<FleetMissionSummary, BattleReport>;
 
-export type FleetMissionArchiveResponse = {
-  wallet: string;
-  homePlanetId: string | null;
-  rows: FleetMissionArchiveEntry[];
-  pagination: {
-    page: number;
-    pageSize: number;
-    totalEntries: number;
-    totalPages: number;
-    hasPreviousPage: boolean;
-    hasNextPage: boolean;
-  };
-};
+export type FleetMissionArchiveResponse = Api.FleetMissionArchive<FleetMissionSummary, BattleReport>;
 
 export type PlayerActivityCategory = "combat" | "infrastructure" | "mission" | "moon" | "production" | "research" | "rift" | "system";
 
@@ -688,14 +628,7 @@ export type PlayerActivityResponse = {
   items: PlayerActivityItem[];
   summary: Partial<Record<PlayerActivityCategory, number>>;
   through: string;
-  pagination: {
-    page: number;
-    pageSize: number;
-    totalEntries: number;
-    totalPages: number;
-    hasPreviousPage: boolean;
-    hasNextPage: boolean;
-  };
+  pagination: Api.Pagination;
   stale?: boolean;
   source?: string;
 };
@@ -827,6 +760,8 @@ export type BattleReportDefenderLossBreakdown = {
   fleetLossesReconciled: boolean;
 };
 
+export type BattleReportSummary = Pick<BattleReport, "missionId" | "attacker" | "targetPlanetId" | "outcome" | "rounds" | "loot" | "attackerLosses" | "defenderLosses">;
+
 export type BattleReport = {
   missionId: string;
   attacker: string;
@@ -885,10 +820,17 @@ export type ChainShipyardState = {
   // Canonical `ships` plus due production that the next fleet launch can
   // settle atomically. Mission composition uses this; inventory displays use
   // canonical `ships`.
-  launchableShips?: ChainShipyardState["ships"];
+  launchableShips?: Array<Pick<ChainShipyardState["ships"][number], "id" | "count"> & Partial<ChainShipyardState["ships"][number]>>;
   queue: QueueStateResponse | null;
   resourcesAsOfNow?: OnChainResources | null;
   resourceSnapshot?: ResourceSnapshotMetadata | null;
+};
+
+export type SupplySourcesResponse = Pick<ChainShipyardState, "fleetSlots" | "fleetLaunchAvailable" | "fleetLaunchUnavailableReason" | "technologyLevels"> & {
+  wallet: string;
+  sources: Array<Pick<ManagedPlanetResponse, "planetId" | "name" | "galaxy" | "system" | "position" | "coordinates" | "resources"> & {
+    launchableShips: Array<{ id: number; count: number }>;
+  }>;
 };
 
 export type ChainDefenseState = {
@@ -908,7 +850,7 @@ export type ChainDefenseState = {
     // Backend-sourced predicted per-unit build time (VEY-KANEO-472).
     durationSeconds?: number;
   }>;
-  launchableDefenses?: ChainDefenseState["defenses"];
+  launchableDefenses?: Array<Pick<ChainDefenseState["defenses"][number], "id" | "count"> & Partial<ChainDefenseState["defenses"][number]>>;
   queue: QueueStateResponse | null;
   resourcesAsOfNow?: OnChainResources | null;
   resourceSnapshot?: ResourceSnapshotMetadata | null;
@@ -1201,30 +1143,15 @@ export type ChainAllianceState = {
   }>;
 };
 
-export type AllianceRole = "none" | "member" | "officer" | "owner";
-export type AllianceDiplomacyStatus = "none" | "ally" | "non_aggression_pact" | "war";
-export type AllianceDiplomacyEntry = {
-  allianceId: string;
-  otherAllianceId: string;
-  status: AllianceDiplomacyStatus;
-  statusId: number;
-  updatedAt: string | null;
-  initiatedByAllianceId: string | null;
-  declaredAt?: string | null;
-  warSnapshot?: {
-    snapshotId: string;
-    declarerScore: string;
-    declareeScore: string;
-    declarerMemberCount: number;
-    declareeMemberCount: number;
-  } | null;
-  alliance: ChainAllianceState["directory"][number] | null;
-};
+export type AllianceRole = Api.AllianceRole;
+export type AllianceDiplomacyStatus = Api.AllianceDiplomacyStatus;
+export type AllianceDiplomacyEntry = Api.AllianceDiplomacyEntry<ChainAllianceState["directory"][number]>;
 
 export type HighscoreCategory = "total" | "economy" | "research" | "researchLevels" | "military" | "fleet" | "fleetCount" | "defense";
 
 export type HighscoreEntry = {
   rank: number;
+  profile?: PlayerProfile;
   wallet: string;
   alliance?: {
     allianceId: string;
@@ -2289,36 +2216,17 @@ async function simulateTransactionFromRpc(rpcUrl: string, transaction: Transacti
   return transactionRpcRequest<string>(rpcUrl, "eth_call", [transaction, blockTag]);
 }
 
-async function transactionRpcRequest<T>(rpcUrl: string, method: string, params: unknown[]): Promise<T> {
-  if (!rpcUrl.trim()) {
-    throw new Error("App RPC is unavailable for the transaction preflight.");
-  }
-  const response = await fetch(rpcUrl, {
-    body: JSON.stringify({
-      id: 1,
-      jsonrpc: "2.0",
-      method,
-      params,
-    }),
-    headers: {
-      accept: "application/json",
-      "content-type": "application/json",
-    },
-    method: "POST",
-  });
-  const body = (await response.json()) as {
-    error?: { code?: number; data?: unknown; message?: string };
-    result?: T;
-  };
-  if (!response.ok) {
-    throw new Error(`Transaction simulation RPC returned ${response.status}.`);
-  }
-  if (body.error) {
-    throw body.error;
-  }
-  if (body.result === undefined) {
-    throw new Error(`Transaction RPC returned an invalid ${method} response.`);
-  }
+export async function transactionRpcRequest<T>(
+  rpcUrl: string, method: string, params: unknown[],
+  options: { signal?: AbortSignal; timeoutMs?: number } = {},
+): Promise<T> {
+  if (!rpcUrl.trim()) throw new Error("App RPC is unavailable for the transaction preflight.");
+  const body = await fetchGameApiMutation<{ error?: { code?: number; data?: unknown; message?: string }; result?: T }>(
+    rpcUrl, "Transaction RPC", { id: 1, jsonrpc: "2.0", method, params },
+    { ...options, httpErrorMessage: async response => `Transaction simulation RPC returned ${response.status}.` },
+  );
+  if (body.error) throw body.error;
+  if (body.result === undefined) throw new Error(`Transaction RPC returned an invalid ${method} response.`);
   return body.result;
 }
 
@@ -3376,24 +3284,12 @@ export function paidAllianceInviteSecretFromLocation(location: Pick<Location, "h
   return state.kind === "valid" ? state.secret : "";
 }
 
-export async function resolvePaidAllianceInvite(apiUrl: string, secret: string): Promise<PaidAllianceInviteResolution> {
-  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/alliance-invites/resolve`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ secret }),
-  });
-  if (!response.ok) throw new Error(`Alliance invite validation failed (${response.status}).`);
-  return response.json() as Promise<PaidAllianceInviteResolution>;
+export async function resolvePaidAllianceInvite(apiUrl: string, secret: string, signal?: AbortSignal): Promise<PaidAllianceInviteResolution> {
+  return fetchGameApiMutation(`${apiUrl.replace(/\/+$/, "")}/alliance-invites/resolve`, "Alliance invite validation", { secret }, { ...(signal ? { signal } : {}) });
 }
 
 export async function redeemPaidAllianceInvite(apiUrl: string, secret: string, invitee: string): Promise<PaidAllianceInviteRedemption> {
-  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/alliance-invites/redeem`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ secret, invitee }),
-  });
-  if (!response.ok) throw new Error(`Alliance invite redemption failed (${response.status}).`);
-  return response.json() as Promise<PaidAllianceInviteRedemption>;
+  return fetchGameApiMutation(`${apiUrl.replace(/\/+$/, "")}/alliance-invites/redeem`, "Alliance invite redemption", { secret, invitee });
 }
 
 export function paidAllianceInviteStoreMessage(purchaser: string, commitment: string): string {
@@ -3404,28 +3300,15 @@ export function paidAllianceInviteRecoveryMessage(viewer: string): string {
   return `Veydrift paid alliance invite recovery\nViewer: ${viewer.toLowerCase()}`;
 }
 
-export async function storePaidAllianceInvite(apiUrl: string, provider: Eip1193Provider, purchaser: string, secret: string): Promise<void> {
-  const commitment = paidAllianceInviteCommitment(secret);
-  const signature = await requestPersonalSignature(provider, purchaser, paidAllianceInviteStoreMessage(purchaser, commitment));
-  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/alliance-invites/store`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ purchaser, secret, signature }),
-  });
-  if (!response.ok) throw new Error(`Alliance invite recovery storage failed (${response.status}).`);
+export async function storePaidAllianceInvite(apiUrl: string, purchaser: string, secret: string, signature: string): Promise<void> {
+  await fetchGameApiMutation(`${apiUrl.replace(/\/+$/, "")}/alliance-invites/store`, "Alliance invite recovery storage", { purchaser, secret, signature });
 }
 
 export async function recoverPaidAllianceInvites(apiUrl: string, provider: Eip1193Provider, viewer: string): Promise<Array<{ commitment: string; secret: string }>> {
   const signature = await requestPersonalSignature(provider, viewer, paidAllianceInviteRecoveryMessage(viewer));
-  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/alliance-invites/recover`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ viewer, signature }),
-  });
-  if (!response.ok) throw new Error(`Alliance invite recovery failed (${response.status}).`);
-  const body = (await response.json()) as {
-    invites?: Array<{ commitment: string; secret: string }>;
-  };
+  const body = await fetchGameApiMutation<{ invites?: Array<{ commitment: string; secret: string }> }>(
+    `${apiUrl.replace(/\/+$/, "")}/alliance-invites/recover`, "Alliance invite recovery", { viewer, signature },
+  );
   return body.invites ?? [];
 }
 
@@ -3838,33 +3721,10 @@ export async function fetchBurningChickenForOwner(account: string, tokenId: stri
 }
 
 async function callBaseMainnetContract(config: BurningChickenConfig, contractAddress: string, data: string, signal?: AbortSignal): Promise<string> {
-  const response = await fetch(config.rpcUrl || BASE_MAINNET.rpcUrls[0], {
-    body: JSON.stringify({
-      id: 1,
-      jsonrpc: "2.0",
-      method: "eth_call",
-      params: [
-        {
-          to: contractAddress,
-          data,
-        },
-        "latest",
-      ],
-    }),
-    headers: {
-      "content-type": "application/json",
-    },
-    method: "POST",
-    ...(signal === undefined ? {} : { signal }),
-  });
-  const body = (await response.json()) as {
-    error?: { message?: string };
-    result?: string;
-  };
-  if (!response.ok || body.error || typeof body.result !== "string") {
-    throw new Error(body.error?.message ?? "Burning Chicken contract read failed.");
-  }
-  return body.result;
+  const result = await transactionRpcRequest<unknown>(config.rpcUrl || BASE_MAINNET.rpcUrls[0], "eth_call",
+    [{ to: contractAddress, data }, "latest"], { ...(signal ? { signal } : {}) });
+  if (typeof result !== "string") throw new Error("Burning Chicken contract read failed.");
+  return result;
 }
 
 export async function sendBurningChickenMoonTransaction(
@@ -4386,21 +4246,21 @@ export function referralCommitment(code: string, inviter: string): string {
   return keccak256(encodeAbiParameters(parseAbiParameters("address,bytes32"), [inviter as `0x${string}`, referralCodeHash(code) as `0x${string}`]));
 }
 
-export async function validateReferralCode(apiUrl: string, code: string, invitee?: string): Promise<ReferralResolution> {
+export async function validateReferralCode(apiUrl: string, code: string, invitee?: string, signal?: AbortSignal): Promise<ReferralResolution> {
   const url = new URL(`${apiUrl.replace(/\/+$/, "")}/referrals/resolve`);
   url.searchParams.set("code", code);
   if (invitee) url.searchParams.set("invitee", invitee);
   return fetchGameApiJson<ReferralResolution>(url.toString(), "Referral validation", {
-    cache: "no-store",
+    cache: "no-store", signal,
   });
 }
 
-export async function inspectReferralCode(apiUrl: string, code: string, wallet: string): Promise<ReferralResolution> {
+export async function inspectReferralCode(apiUrl: string, code: string, wallet: string, signal?: AbortSignal): Promise<ReferralResolution> {
   const url = new URL(`${apiUrl.replace(/\/+$/, "")}/referrals/resolve`);
   url.searchParams.set("code", code);
   url.searchParams.set("wallet", wallet);
   return fetchGameApiJson<ReferralResolution>(url.toString(), "Referral code availability", {
-    cache: "no-store",
+    cache: "no-store", signal,
   });
 }
 
@@ -4416,6 +4276,10 @@ export async function fetchWalletPlanets(apiUrl: string, wallet: string, options
   return fetchWalletJson<WalletPlanetsResponse>(apiUrl, wallet, withWalletReadOptions("planets", undefined, options), "Planets", options);
 }
 
+export function normalizePageOptions<T extends { page?: number; pageSize?: number }>(options: T): T & { page: number; pageSize: number } {
+  return { ...options, page: options.page ?? 1, pageSize: options.pageSize ?? 25 };
+}
+
 export async function fetchWatchedPlanets(
   apiUrl: string,
   wallet: string,
@@ -4426,36 +4290,26 @@ export async function fetchWatchedPlanets(
     timeoutMs?: number;
   } = {},
 ): Promise<WatchedPlanetsResponse> {
+  options = normalizePageOptions(options);
   const params = new URLSearchParams();
-  params.set("page", String(options.page ?? 1));
-  params.set("pageSize", String(options.pageSize ?? 25));
+  params.set("page", String(options.page));
+  params.set("pageSize", String(options.pageSize));
   return fetchWalletJson<WatchedPlanetsResponse>(apiUrl, wallet, `watched-planets?${params.toString()}`, "Watched planets", {
     signal: options.signal,
     timeoutMs: options.timeoutMs ?? WATCHED_PLANETS_API_READ_TIMEOUT_MS,
   });
 }
 
-export async function watchPlanet(apiUrl: string, provider: Eip1193Provider, wallet: string, planetId: string): Promise<WatchPlanetMutationResponse> {
-  return mutateWatchedPlanet(apiUrl, provider, wallet, "watch", "POST", "watched-planets", planetId);
+export async function watchPlanet(apiUrl: string, provider: Eip1193Provider, wallet: string, planetId: string, options: SignedMetadataOptions = {}): Promise<WatchPlanetMutationResponse> {
+  return mutateWatchedPlanet(apiUrl, provider, wallet, "watch", "POST", "watched-planets", planetId, options);
 }
 
-export async function unwatchPlanet(apiUrl: string, provider: Eip1193Provider, wallet: string, planetId: string): Promise<WatchPlanetMutationResponse> {
-  return mutateWatchedPlanet(apiUrl, provider, wallet, "unwatch", "DELETE", `watched-planets/${encodeURIComponent(planetId)}`, planetId);
+export async function unwatchPlanet(apiUrl: string, provider: Eip1193Provider, wallet: string, planetId: string, options: SignedMetadataOptions = {}): Promise<WatchPlanetMutationResponse> {
+  return mutateWatchedPlanet(apiUrl, provider, wallet, "unwatch", "DELETE", `watched-planets/${encodeURIComponent(planetId)}`, planetId, options);
 }
 
-export async function requestWatchedPlanetSignature(provider: Eip1193Provider, wallet: string, action: WatchedPlanetAction, planetId: string, timeoutMs?: number): Promise<string> {
-  return readWalletRequest<string>(
-    provider,
-    {
-      method: "personal_sign",
-      params: [personalSignPayload(watchedPlanetMessage(wallet, action, planetId)), wallet],
-    },
-    "watched planet signature",
-    timeoutMs,
-  );
-}
 
-type WalletReadOptions = {
+export type WalletReadOptions = {
   source?: "indexed";
   timeoutMs?: number;
   fresh?: boolean;
@@ -4508,14 +4362,15 @@ export async function fetchFleetMissionArchive(
     signal?: AbortSignal;
   } = {},
 ): Promise<FleetMissionArchiveResponse> {
+  options = normalizePageOptions(options);
   const params = new URLSearchParams();
   params.set("status", "completed");
   if (options.filter) params.set("filter", options.filter);
   if (options.missionNumber) params.set("missionNumber", options.missionNumber);
   if (options.missionType) params.set("missionType", options.missionType);
   if (options.planetId) params.set("planetId", options.planetId);
-  params.set("page", String(options.page ?? 1));
-  params.set("pageSize", String(options.pageSize ?? 25));
+  params.set("page", String(options.page));
+  params.set("pageSize", String(options.pageSize));
   return fetchWalletJson<FleetMissionArchiveResponse>(apiUrl, wallet, `missions?${params.toString()}`, "Mission archive", { fresh: true, signal: options.signal });
 }
 
@@ -4530,9 +4385,10 @@ export async function fetchPlayerActivity(
     since?: number;
   } = {},
 ): Promise<PlayerActivityResponse> {
+  options = normalizePageOptions(options);
   const params = new URLSearchParams();
-  params.set("page", String(options.page ?? 1));
-  params.set("pageSize", String(options.pageSize ?? 25));
+  params.set("page", String(options.page));
+  params.set("pageSize", String(options.pageSize));
   if (options.since !== undefined) params.set("since", String(Math.max(0, Math.floor(options.since))));
   if (options.includeProjected) params.set("includeProjected", "true");
   return fetchWalletJson<PlayerActivityResponse>(apiUrl, wallet, `activity?${params.toString()}`, "Player activity", { signal: options.signal });
@@ -4556,10 +4412,11 @@ export async function fetchMissileAttackArchive(
     signal?: AbortSignal;
   } = {},
 ): Promise<MissileAttackArchiveResponse> {
+  options = normalizePageOptions(options);
   const params = new URLSearchParams();
   if (options.planetId) params.set("planetId", options.planetId);
-  params.set("page", String(options.page ?? 1));
-  params.set("pageSize", String(options.pageSize ?? 25));
+  params.set("page", String(options.page));
+  params.set("pageSize", String(options.pageSize));
   return fetchWalletJson<MissileAttackArchiveResponse>(apiUrl, wallet, `missile-attacks?${params.toString()}`, "Missile strike archive", { fresh: true, signal: options.signal });
 }
 
@@ -4579,6 +4436,7 @@ export async function fetchGlobalMissionArchive(
     summaryOnly?: boolean;
   } = {},
 ): Promise<GlobalMissionArchiveResponse> {
+  options = normalizePageOptions(options);
   const params = new URLSearchParams();
   params.set("status", "completed");
   params.set("live", "1");
@@ -4586,8 +4444,8 @@ export async function fetchGlobalMissionArchive(
   if (options.missionType) params.set("missionType", options.missionType);
   if (options.planetId) params.set("planetId", options.planetId);
   if (options.summaryOnly) params.set("summaryOnly", "true");
-  params.set("page", String(options.page ?? 1));
-  params.set("pageSize", String(options.pageSize ?? 25));
+  params.set("page", String(options.page));
+  params.set("pageSize", String(options.pageSize));
   return fetchGameApiJson<GlobalMissionArchiveResponse>(`${apiUrl.replace(/\/+$/, "")}/missions?${params.toString()}`, "Mission archive", { cache: "no-store", signal: options.signal });
 }
 
@@ -4595,8 +4453,8 @@ export async function fetchMission(apiUrl: string, missionId: string, signal?: A
   return fetchGameApiJson<MissionDetailResponse>(`${apiUrl.replace(/\/+$/, "")}/mission/${encodeURIComponent(missionId)}`, "Mission", { cache: "no-store", signal });
 }
 
-export async function fetchBattleReports(apiUrl: string, signal?: AbortSignal): Promise<BattleReport[]> {
-  return fetchGameApiJson<BattleReport[]>(`${apiUrl.replace(/\/+$/, "")}/battle-reports`, "Battle reports", { signal });
+export async function fetchBattleReports(apiUrl: string, signal?: AbortSignal): Promise<BattleReportSummary[]> {
+  return fetchGameApiJson<BattleReportSummary[]>(`${apiUrl.replace(/\/+$/, "")}/battle-reports?view=summary`, "Battle reports", { signal });
 }
 
 export async function fetchInfrastructureState(apiUrl: string, wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<ChainInfrastructureState> {
@@ -4609,6 +4467,10 @@ export async function fetchMoonState(apiUrl: string, wallet: string, planetId?: 
 
 export async function fetchShipyardState(apiUrl: string, wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<ChainShipyardState> {
   return fetchWalletJson<ChainShipyardState>(apiUrl, wallet, withWalletReadOptions("shipyard", planetId, options), "Shipyard", options);
+}
+
+export async function fetchSupplySources(apiUrl: string, wallet: string, targetPlanetId?: string, options: WalletReadOptions = {}): Promise<SupplySourcesResponse> {
+  return fetchWalletJson<SupplySourcesResponse>(apiUrl, wallet, withWalletReadOptions("supply-sources", targetPlanetId, options), "Supply sources", options);
 }
 
 export async function fetchDefenseState(apiUrl: string, wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<ChainDefenseState> {
@@ -4624,162 +4486,19 @@ export async function fetchRiftState(apiUrl: string, wallet: string, planetId?: 
 }
 
 export async function fetchAllianceState(apiUrl: string, wallet: string, options: WalletReadOptions = {}): Promise<ChainAllianceState> {
-  return fetchWalletJson<ChainAllianceState>(apiUrl, wallet, "alliance", "Alliance", options);
+  return fetchWalletJson<ChainAllianceState>(apiUrl, wallet, "alliance?view=summary", "Alliance", options);
 }
 
 export async function fetchPlayerProfile(apiUrl: string, wallet: string, options: WalletReadOptions = {}): Promise<PlayerProfile> {
   return fetchWalletJson<PlayerProfile>(apiUrl, wallet, "profile", "Player profile", options);
 }
 
-export async function updatePlayerDisplayName(apiUrl: string, provider: Eip1193Provider, account: string, displayName: string): Promise<PlayerProfile> {
-  const message = playerDisplayNameMessage(account, displayName);
-  const signature = await requestPersonalSignature(provider, account, message);
-  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(account)}/profile/display-name`, {
-    body: JSON.stringify({ displayName, signature }),
-    headers: {
-      accept: "application/json",
-      "content-type": "application/json",
-    },
-    method: "POST",
-  });
 
-  if (!response.ok) {
-    throw new Error(await apiErrorMessage(response, "Player profile"));
-  }
-  return response.json() as Promise<PlayerProfile>;
+export async function updatePlayerProfile(apiUrl: string, provider: Eip1193Provider, account: string, displayName: string, description: string | null, options: SignedMetadataOptions = {}): Promise<PlayerProfile> {
+  const signature = await requestMetadataSignature(provider, account, playerProfileMessage(account, displayName, description), options);
+  return fetchGameApiMutation(`${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(account)}/profile`, "Player profile", { description, displayName, signature }, options);
 }
 
-export async function updatePlayerProfile(apiUrl: string, provider: Eip1193Provider, account: string, displayName: string, description: string | null): Promise<PlayerProfile> {
-  const message = playerProfileMessage(account, displayName, description);
-  const signature = await requestPersonalSignature(provider, account, message);
-  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(account)}/profile`, {
-    body: JSON.stringify({ description, displayName, signature }),
-    headers: {
-      accept: "application/json",
-      "content-type": "application/json",
-    },
-    method: "POST",
-  });
-
-  if (!response.ok) {
-    throw new Error(await apiErrorMessage(response, "Player profile"));
-  }
-  return response.json() as Promise<PlayerProfile>;
-}
-
-export async function confirmTransactionReceipt(
-  provider: Eip1193Provider,
-  transactionHash: string,
-  {
-    pollMs = TRANSACTION_RECEIPT_POLL_MS,
-    timeoutMs = TRANSACTION_RECEIPT_TIMEOUT_MS,
-  }: {
-    pollMs?: number;
-    timeoutMs?: number;
-  } = {},
-): Promise<TransactionReceipt> {
-  const startedAt = Date.now();
-
-  while (Date.now() - startedAt < timeoutMs) {
-    let receipt: TransactionReceipt | null;
-    try {
-      receipt = await provider.request<TransactionReceipt | null>({
-        method: "eth_getTransactionReceipt",
-        params: [transactionHash],
-      });
-    } catch {
-      // The transaction was already submitted; the RPC node can still fail an
-      // individual receipt read transiently (internal JSON-RPC error, timeout)
-      // while the transaction is mining. Don't treat that as a launch failure —
-      // keep polling until the receipt arrives or the overall timeout elapses.
-      await delay(pollMs);
-      continue;
-    }
-    if (receipt) {
-      if (isRevertedReceiptStatus(receipt.status)) {
-        throw new Error(TRANSACTION_REVERTED_MESSAGE);
-      }
-      return receipt;
-    }
-    await delay(pollMs);
-  }
-
-  throw new Error(TRANSACTION_RECEIPT_TIMEOUT_MESSAGE);
-}
-
-type TransactionReceiptConfirmationOptions = {
-  fetcher?: (input: string, init?: RequestInit) => Promise<Response>;
-  pollMs?: number;
-  timeoutMs?: number;
-};
-
-export async function confirmTransactionReceiptFromRpc(
-  rpcUrl: string,
-  transactionHash: string,
-  { fetcher = fetch, pollMs = TRANSACTION_RECEIPT_POLL_MS, timeoutMs = TRANSACTION_RECEIPT_TIMEOUT_MS }: TransactionReceiptConfirmationOptions = {},
-): Promise<TransactionReceipt> {
-  if (!rpcUrl.trim()) {
-    throw new Error("App RPC is unavailable while confirming the transaction.");
-  }
-  const startedAt = Date.now();
-
-  while (Date.now() - startedAt < timeoutMs) {
-    try {
-      const response = await fetcher(rpcUrl, {
-        body: JSON.stringify({
-          id: 1,
-          jsonrpc: "2.0",
-          method: "eth_getTransactionReceipt",
-          params: [transactionHash],
-        }),
-        headers: {
-          accept: "application/json",
-          "content-type": "application/json",
-        },
-        method: "POST",
-      });
-      if (!response.ok) {
-        throw new Error(`Transaction receipt RPC returned ${response.status}.`);
-      }
-      const body = (await response.json()) as {
-        error?: { code?: number; message?: string };
-        result?: TransactionReceipt | null;
-      };
-      if (body.error) {
-        throw new Error(body.error.message ?? `Transaction receipt RPC error ${body.error.code ?? "unknown"}.`);
-      }
-      if (body.result) {
-        if (isRevertedReceiptStatus(body.result.status)) {
-          throw new Error(TRANSACTION_REVERTED_MESSAGE);
-        }
-        return body.result;
-      }
-    } catch (error) {
-      if (error instanceof Error && error.message === TRANSACTION_REVERTED_MESSAGE) {
-        throw error;
-      }
-      // The app RPC reader may be temporarily unavailable while the
-      // submitted transaction is mining. Keep the same bounded retry semantics
-      // used by browser-wallet receipt confirmation.
-    }
-    await delay(pollMs);
-  }
-
-  throw new Error(TRANSACTION_RECEIPT_TIMEOUT_MESSAGE);
-}
-
-export async function confirmTransactionReceiptForProviderSource(
-  provider: Eip1193Provider,
-  providerSource: WalletProviderSource | undefined,
-  receiptRpcUrl: string,
-  transactionHash: string,
-  options: TransactionReceiptConfirmationOptions = {},
-): Promise<TransactionReceipt> {
-  if (providerSource === "farcaster") {
-    return confirmTransactionReceiptFromRpc(receiptRpcUrl, transactionHash, options);
-  }
-  return confirmTransactionReceipt(provider, transactionHash, options);
-}
 
 export type FetchHighscoreOptions = {
   category?: HighscoreCategory;
@@ -4898,46 +4617,12 @@ function delay(ms: number): Promise<void> {
   });
 }
 
-async function fetchGameApiMutation<T>(url: string, label: string, body?: Record<string, unknown>): Promise<T> {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => {
-    controller.abort(new Error(`Timed out writing ${label.toLowerCase()} to the game API after ${Math.round(WALLET_API_READ_TIMEOUT_MS / 1_000)} seconds.`));
-  }, WALLET_API_READ_TIMEOUT_MS);
-
-  let response: Response;
-  try {
-    response = await fetch(url, {
-      ...(body
-        ? {
-            body: JSON.stringify(body),
-            headers: {
-              accept: "application/json",
-              "content-type": "application/json",
-            },
-          }
-        : {
-            headers: {
-              accept: "application/json",
-            },
-          }),
-      method: "POST",
-      signal: controller.signal,
-    });
-  } catch (error) {
-    if (controller.signal.aborted) {
-      throw controller.signal.reason instanceof Error
-        ? controller.signal.reason
-        : new Error(`Timed out writing ${label.toLowerCase()} to the game API after ${Math.round(WALLET_API_READ_TIMEOUT_MS / 1_000)} seconds.`);
-    }
-    throw new Error(walletApiNetworkFailureMessage(label, error));
-  } finally {
-    clearTimeout(timeoutId);
-  }
-
-  if (!response.ok) {
-    throw new Error(await apiErrorMessage(response, label));
-  }
-  return response.json() as Promise<T>;
+export async function fetchGameApiMutation<T>(
+  url: string, label: string, body?: Record<string, unknown>,
+  options: { method?: "POST" | "DELETE"; cache?: RequestCache; signal?: AbortSignal; timeoutMs?: number; httpErrorMessage?: (response: Response) => Promise<string> } = {},
+): Promise<T> {
+  // Mutations use the same bounded transport, but are never deduplicated or retried.
+  return requestGameApiJson<T>(url, label, { ...options, method: options.method ?? "POST", ...(body ? { body } : {}) });
 }
 
 async function fetchWalletJson<T>(
@@ -4961,7 +4646,7 @@ async function fetchWalletJson<T>(
   });
 }
 
-async function fetchGameApiJson<T>(
+export async function fetchGameApiJson<T>(
   url: string,
   label: string,
   options: {
@@ -4975,13 +4660,15 @@ async function fetchGameApiJson<T>(
   // BackendDataStore is the only owner of GET deduplication, caching and
   // scheduling.  This adapter deliberately performs one abortable transport
   // so an invalidation cannot be satisfied by a lower-level stale response.
-  return fetchGameApiJsonUnpooled<T>(url, label, options);
+  return requestGameApiJson<T>(url, label, options);
 }
 
-async function fetchGameApiJsonUnpooled<T>(
+async function requestGameApiJson<T>(
   url: string,
   label: string,
   options: {
+    method?: "POST" | "DELETE";
+    body?: Record<string, unknown>;
     cache?: RequestCache;
     httpErrorMessage?: (response: Response) => Promise<string>;
     networkFailureMessage?: (error: unknown) => string;
@@ -4990,66 +4677,54 @@ async function fetchGameApiJsonUnpooled<T>(
   },
 ): Promise<T> {
   const timeoutMs = options.timeoutMs ?? WALLET_API_READ_TIMEOUT_MS;
+  const operation = options.method ? "writing" : "reading";
+  const direction = options.method ? "to" : "from";
   const controller = new AbortController();
   const timeoutId = setTimeout(() => {
-    controller.abort(new Error(`Timed out reading ${label.toLowerCase()} from the game API after ${Math.round(timeoutMs / 1_000)} seconds.`));
+    controller.abort(new Error(`Timed out ${operation} ${label.toLowerCase()} ${direction} the game API after ${Math.round(timeoutMs / 1_000)} seconds.`));
   }, timeoutMs);
   const forwardAbort = () => controller.abort(options.signal?.reason ?? new DOMException("Request cancelled", "AbortError"));
   if (options.signal?.aborted) forwardAbort();
   else options.signal?.addEventListener("abort", forwardAbort, { once: true });
 
-  let response: Response;
+  let response: Response | undefined;
   try {
     response = await fetch(url, {
       ...(options.cache !== undefined ? { cache: options.cache } : {}),
-      headers: { accept: "application/json" },
+      ...(options.method ? { method: options.method } : {}),
+      ...(options.body ? { body: JSON.stringify(options.body) } : {}),
+      headers: { accept: "application/json", ...(options.body ? { "content-type": "application/json" } : {}) },
       signal: controller.signal,
     });
+    if (!response.ok) {
+      const body: unknown = await response.clone().json().catch(() => null);
+      const code = body && typeof body === "object" && "error" in body && typeof body.error === "string" ? body.error.trim() : undefined;
+      throw new GameApiError(options.httpErrorMessage ? await options.httpErrorMessage(response) : apiErrorMessage(response.status, code, label), {
+        status: response.status, ...(code ? { code } : {}), retryAfter: response.headers.get("retry-after"),
+      });
+    }
+    return await response.json() as T;
   } catch (error) {
     if (controller.signal.aborted) {
       throw controller.signal.reason instanceof Error
         ? controller.signal.reason
-        : new Error(`Timed out reading ${label.toLowerCase()} from the game API after ${Math.round(timeoutMs / 1_000)} seconds.`);
+        : new Error(`Timed out ${operation} ${label.toLowerCase()} ${direction} the game API after ${Math.round(timeoutMs / 1_000)} seconds.`);
     }
-    throw new Error(options.networkFailureMessage?.(error) ?? walletApiNetworkFailureMessage(label, error));
+    if (response) throw error;
+    throw new GameApiError(options.networkFailureMessage?.(error) ?? walletApiNetworkFailureMessage(label, error), { cause: error });
   } finally {
     clearTimeout(timeoutId);
     options.signal?.removeEventListener("abort", forwardAbort);
   }
-
-  if (!response.ok) {
-    throw new Error(options.httpErrorMessage ? await options.httpErrorMessage(response) : await apiErrorMessage(response, label));
-  }
-  return response.json() as Promise<T>;
-}
-
-export function __clearGameApiReadPoolForTests(): void {
-  // Compatibility seam for older transport tests. GET lifecycle state lives
-  // in BackendDataStore now, so there is no wallet-flow pool to reset.
 }
 
 async function mutateWatchedPlanet(
-  apiUrl: string,
-  provider: Eip1193Provider,
-  wallet: string,
-  action: WatchedPlanetAction,
-  method: "POST" | "DELETE",
-  path: string,
-  planetId: string,
+  apiUrl: string, provider: Eip1193Provider, wallet: string, action: WatchedPlanetAction,
+  method: "POST" | "DELETE", path: string, planetId: string, options: SignedMetadataOptions,
 ): Promise<WatchPlanetMutationResponse> {
-  const signature = await requestWatchedPlanetSignature(provider, wallet, action, planetId);
-  const init: RequestInit = {
-    body: JSON.stringify({ planetId, signature }),
-    cache: "no-store",
-    headers: {
-      accept: "application/json",
-      "content-type": "application/json",
-    },
-    method,
-  };
-  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(wallet)}/${path}`, init);
-  if (!response.ok) throw new Error(await apiErrorMessage(response, "Watched planets"));
-  return response.json() as Promise<WatchPlanetMutationResponse>;
+  const signature = await requestMetadataSignature(provider, wallet, watchedPlanetMessage(wallet, action, planetId), options);
+  return fetchGameApiMutation(`${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(wallet)}/${path}`,
+    "Watched planets", { planetId, signature }, { ...options, method, cache: "no-store" });
 }
 
 function withPlanetId(path: string, planetId: string | undefined): string {
@@ -5070,37 +4745,10 @@ function isContractPlanetId(planetId: string): boolean {
   return /^[1-9][0-9]*$/.test(planetId);
 }
 
-async function apiErrorMessage(response: Response, label: string): Promise<string> {
-  const fallback = `${label} API failed: ${response.status}`;
-  try {
-    const body = (await response.clone().json()) as { error?: unknown };
-    const error = typeof body.error === "string" ? body.error.trim() : "";
-
-    if (response.status === 503 && error === "backend_not_configured") {
-      return GAME_UNAVAILABLE_MESSAGE;
-    }
-
-    if (response.status >= 500) {
-      return GAME_UNAVAILABLE_MESSAGE;
-    }
-
-    return error ? `${fallback}: ${error}` : fallback;
-  } catch {
-    if (response.status >= 500) {
-      return GAME_UNAVAILABLE_MESSAGE;
-    }
-
-    return fallback;
-  }
-}
-
-function isRevertedReceiptStatus(status: TransactionReceipt["status"]): boolean {
-  if (typeof status === "bigint") return status === 0n;
-  if (typeof status === "number") return status === 0;
-  if (typeof status !== "string") return false;
-
-  const normalized = status.trim().toLowerCase();
-  return normalized === "0" || normalized === "0x0";
+function apiErrorMessage(status: number, code: string | undefined, label: string): string {
+  if (status >= 500) return GAME_UNAVAILABLE_MESSAGE;
+  const fallback = `${label} API failed: ${status}`;
+  return code ? `${fallback}: ${code}` : fallback;
 }
 
 function walletApiNetworkFailureMessage(label: string, error: unknown): string {

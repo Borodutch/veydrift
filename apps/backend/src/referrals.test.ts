@@ -60,6 +60,7 @@ function referralIndex() {
   const redemptions: IndexedReferralRedemptionEvent[] = [];
   const rewardClaims: IndexedReferralRewardClaimEvent[] = [];
   const indexer = {
+    readConsistentSnapshot: <T>(read: () => T): T => read(),
     allianceIntelForPlayers: () => new Map(),
     currentStartPriceWei: () => startPriceWei,
     highscoreLeaderboard: () => ({

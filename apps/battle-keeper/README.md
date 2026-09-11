@@ -1,19 +1,21 @@
 # @veydrift/battle-keeper
 
 A focused, **event-driven keeper** that resolves on-chain fleet missions promptly — **every mission
-type, both legs (arrival and return)** — so players never wait on a manual mutating call.
+type, both legs (arrival and return)**. Progress still depends on RPC access, signer funding,
+contract preconditions and healthy randomness fulfillment where required.
 
-## Why this exists (VEY-468)
+## Why this exists
 
-Veydrift moved all mission completions to **lazy on-chain settlement**, retiring the old 30s polling
-keeper. Lazy settlement is the **correctness floor**: any mission settles the next time someone
-touches the relevant state. But that can lag — a player shouldn't have to send their own resolve tx
-and wait, and combat in particular needs randomness resolved promptly. This service is the
-**promptness optimization**: it watches launched missions and calls the permissionless settlement
-entrypoints as soon as each leg is due.
+The contracts expose lazy settlement paths and explicit permissionless mission entrypoints.
+This service watches launched missions and attempts the appropriate entrypoint when each leg is
+due. A read-only API request does not send a settlement transaction, and a state touch is not a
+guarantee that every due mission or randomness-dependent battle has completed.
 
 It is intentionally a **separate web service** (not the backend), so resolution is isolated from the
-indexer/API and can be deployed on the host that can reach the self-hosted node.
+indexer/API and can be deployed on a host with approved RPC access. The backend also has a
+`MissionResolutionService`; choose the deployed resolver topology deliberately. Never share the
+standalone keeper's signing EOA with another independent writer: this service does not participate
+in the backend's durable nonce coordinator. See [Backend and indexer](../../docs/backend-indexer.md).
 
 ## What it does
 
@@ -51,17 +53,18 @@ awaiting-return  --completeFleetMissionReturn(0xc2472852)--> terminal
   `fleetMission()` status for pending ids and prunes stale terminal entries
   (`None`/`Resolved`/`Returned`) or corrects legs that no longer match on-chain state, then
   re-attempts due legs.
-- **Idempotent**: a mission with an in-flight submission is never submitted again for that leg; a
-  terminal mission is never re-queued. When we resolve a leg ourselves we advance the state machine
+- **In-process deduplication**: an in-flight submission prevents another attempt for that leg;
+  tracked terminal missions are not re-queued. When we resolve a leg ourselves we advance the state machine
   immediately (the matching event is a backstop that refines the authoritative `returnAt`).
-- **Robust**: auto-reconnects the WebSocket with capped exponential backoff, bounded concurrency on
-  tx submission, structured logs, and never wedges.
+- Auto-reconnects the WebSocket with capped exponential backoff, serializes transaction submission,
+  and emits structured logs. Monitor retry backlogs and health; these mechanisms do not guarantee
+  liveness during RPC, signer, or oracle failures.
 
 ### Scope decision
 
 The keeper **only resolves** — it does not commit randomness; `RandomnessCommitterService` stays in
-the backend. Lazy on-chain reconcile remains the correctness floor, so even if the keeper is down
-nothing is lost; it merely settles later. Any mission type that emits no `FleetMissionLaunched`
+the backend. If the keeper is down, inspect due missions and other resolver coverage rather than
+assuming passive reads will finish them. Any mission type that emits no `FleetMissionLaunched`
 (i.e. has no resolvable arrival) is simply never tracked.
 
 ## Endpoints
@@ -88,42 +91,39 @@ nothing is lost; it merely settles later. Any mission type that emits no `FleetM
 | `SWEEP_INTERVAL_MS`     | no       | `10000` | Backstop log-backfill sweep cadence.                               |
 | `BACKFILL_BLOCKS`       | no       | `90000` | Startup deep-backfill window, chunked below the self-hosted node cap. |
 | `PORT`                  | no       | `8080`  | HTTP health/status port.                                           |
-| `MAX_CONCURRENCY`       | no       | `3`     | Max concurrent `resolveFleetMission` submissions.                  |
+| `MAX_CONCURRENCY`       | no       | `1`     | Submission concurrency; currently clamped to 1 to avoid signer nonce races. |
 | `GIT_SHA`               | no       | —       | Deployed commit surfaced in `/health` as `build.gitSha`.           |
 
 **Never commit secrets.** `KEEPER_PRIVATE_KEY` must come from the deploy environment.
 
 ## Run locally
 
-```bash
-bun install                 # from repo root
-cd apps/battle-keeper
-RPC_URL=http://178.63.102.149:8545 \
-WS_RPC_URL=ws://178.63.102.149:8546 \
-GAME_CONTRACT_ADDRESS=0xf12f31734868F1089d9d6514D7F19a31Ec5e00e2 \
-KEEPER_PRIVATE_KEY=0x... \
-bun src/index.ts
+First configure the variables above through an ignored environment file or approved secret
+injection. Verify `CHAIN_ID`, both RPC endpoints and the deployed game address; the Sepolia default
+is not an environment check. A local keeper targeting mainnet sends real transactions. Do not copy
+production signing keys to a laptop for frontend testing.
+
+From the repository root, with the verified environment loaded and explicit intent to sign:
+
+```sh
+bun run dev:keeper
 ```
 
 Type-check and test:
 
 ```bash
-bun run check   # tsc
-bun test
+bun run check:keeper
+bun run test:keeper
 ```
 
 ## EasyPanel deploy recipe
 
-1. In the existing **`veydrift`** project, create a **new App** service, e.g. `battle-keeper`.
-2. **Source**: the same monorepo repo/branch. **Build**: Nixpacks; build path = repo root; it picks
-   up `apps/battle-keeper/nixpacks.toml` (install at root, type-check, `bun src/index.ts`).
-3. Deploy it on the **host that can reach the self-hosted Base node** (the node only allows
-   `8545`/`8546` from the backend host `148.251.0.158`), and set:
-   - `RPC_URL=http://178.63.102.149:8545`
-   - `WS_RPC_URL=ws://178.63.102.149:8546`
-   - `GAME_CONTRACT_ADDRESS=0xf12f31734868F1089d9d6514D7F19a31Ec5e00e2`
-   - `KEEPER_PRIVATE_KEY=<funded keeper EOA key>` (mark as a secret)
-   - `CHAIN_ID=84532`
-   - `PORT=8080`
-4. Expose/health-check `GET /health` on `PORT`.
-5. Fund the keeper EOA with enough Base Sepolia ETH to cover resolve-tx gas.
+1. Follow [Application deployment](../../docs/deployment.md) and verify the intended managed service
+   and resolver topology before creating or changing anything.
+2. Use the monorepo root as build context and explicitly select
+   [nixpacks.toml](nixpacks.toml); a nested file is not selected merely by setting the root context.
+3. Configure the verified chain ID, deployed game address, approved HTTP/WS endpoints and dedicated
+   funded signer through the deployment environment. Confirm network access without widening public
+   RPC exposure. Keep the key secret and avoid overlapping independent writers for that EOA.
+4. Check `GET /health` on the configured port, build identity, due backlog, receipts and gas funding.
+   HTTP 200 alone does not prove the mission backlog is healthy.

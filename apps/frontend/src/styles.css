@@ -2,25 +2,6 @@
 @tailwind components;
 @tailwind utilities;
 
-@keyframes veydrift-loader-orbit-a {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-@keyframes veydrift-loader-orbit-b {
-  to {
-    transform: rotate(-360deg);
-  }
-}
-
-@keyframes veydrift-loader-core {
-  50% {
-    box-shadow:
-      0 0 18px rgba(128, 241, 255, 0.72),
-      inset -8px -10px 18px rgba(88, 121, 255, 0.32);
-  }
-}
 
 @keyframes veydrift-copy-value-fade-up {
   0% {
@@ -180,154 +161,6 @@ body {
     background-position: 50% 0;
   }
 }
-
-
-.veydrift-loader {
-  display: inline-flex;
-  align-items: center;
-  min-width: 0;
-  color: rgb(186 230 253);
-}
-
-.veydrift-loader-section {
-  display: flex;
-  min-height: 11rem;
-  justify-content: center;
-  gap: 1rem;
-  border: 1px solid rgba(128, 241, 255, 0.16);
-  border-radius: 8px;
-  background:
-    radial-gradient(circle at 50% 38%, rgba(128, 241, 255, 0.1), transparent 12rem),
-    linear-gradient(135deg, rgba(16, 22, 36, 0.96), rgba(5, 7, 15, 0.92));
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
-}
-
-.veydrift-loader-inline {
-  gap: 0.45rem;
-  font-size: 0.75rem;
-  line-height: 1rem;
-  color: rgba(186, 230, 253, 0.82);
-}
-
-.veydrift-loader-orbit {
-  position: relative;
-  display: inline-grid;
-  flex: 0 0 auto;
-  place-items: center;
-  width: 3.75rem;
-  aspect-ratio: 1;
-}
-
-.veydrift-loader-inline .veydrift-loader-orbit {
-  width: 1.25rem;
-}
-
-.veydrift-loader-core {
-  width: 1.05rem;
-  aspect-ratio: 1;
-  border-radius: 50%;
-  background:
-    radial-gradient(circle at 34% 28%, #ecfeff 0 12%, #80f1ff 26%, #5879ff 72%, #121a33 100%);
-  box-shadow:
-    0 0 12px rgba(128, 241, 255, 0.52),
-    inset -7px -9px 16px rgba(5, 7, 15, 0.38);
-  animation: veydrift-loader-core 1.8s ease-in-out infinite;
-}
-
-.veydrift-loader-inline .veydrift-loader-core {
-  width: 0.42rem;
-}
-
-.veydrift-loader-ring {
-  position: absolute;
-  inset: 0.58rem;
-  border: 1px solid rgba(128, 241, 255, 0.28);
-  border-radius: 50%;
-  transform: rotate(-20deg);
-}
-
-.veydrift-loader-ring-b {
-  inset: 0.25rem;
-  border-color: rgba(246, 179, 92, 0.22);
-  transform: rotate(28deg);
-}
-
-.veydrift-loader-inline .veydrift-loader-ring {
-  inset: 0.22rem;
-}
-
-.veydrift-loader-inline .veydrift-loader-ring-b {
-  inset: 0.08rem;
-}
-
-.veydrift-loader-satellite {
-  position: absolute;
-  inset: 0.46rem;
-  border-radius: 50%;
-  animation: veydrift-loader-orbit-a 2.8s linear infinite;
-}
-
-.veydrift-loader-satellite::before {
-  position: absolute;
-  top: -0.15rem;
-  left: 50%;
-  width: 0.34rem;
-  aspect-ratio: 1;
-  border-radius: 50%;
-  background: #f6b35c;
-  box-shadow: 0 0 12px rgba(246, 179, 92, 0.7);
-  content: "";
-}
-
-.veydrift-loader-satellite-b {
-  inset: 0.18rem;
-  animation: veydrift-loader-orbit-b 4.6s linear infinite;
-}
-
-.veydrift-loader-satellite-b::before {
-  width: 0.24rem;
-  background: #80f1ff;
-  box-shadow: 0 0 10px rgba(128, 241, 255, 0.66);
-}
-
-.veydrift-loader-inline .veydrift-loader-satellite,
-.veydrift-loader-inline .veydrift-loader-satellite-b {
-  inset: 0.08rem;
-}
-
-.veydrift-loader-inline .veydrift-loader-satellite::before {
-  width: 0.13rem;
-}
-
-.veydrift-loader-label {
-  min-width: 0;
-  overflow-wrap: anywhere;
-  font-weight: 700;
-  letter-spacing: 0;
-}
-
-.veydrift-loader-section .veydrift-loader-label {
-  max-width: 12rem;
-  color: rgb(224 242 254);
-  font-size: 0.9rem;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .veydrift-loader-core,
-  .veydrift-loader-satellite,
-  .veydrift-loader-satellite-b {
-    animation: none;
-  }
-
-  .veydrift-loader-satellite {
-    transform: rotate(34deg);
-  }
-
-  .veydrift-loader-satellite-b {
-    transform: rotate(-38deg);
-  }
-}
-
 .veydrift-copy-value-fade-up {
   animation: veydrift-copy-value-fade-up 720ms ease-out both;
 }
@@ -4117,6 +3950,13 @@ h4 {
   animation: resource-flash-down 900ms ease-out both;
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .resource-flash-up,
+  .resource-flash-down {
+    animation: none;
+  }
+}
+
 @keyframes resource-cap-pulse {
   0%, 100% {
     opacity: 1;
@@ -4326,126 +4166,4 @@ h4 {
 
 :root[data-sfx-muted="1"] .sound-toggle-icon-off {
   display: block;
-}
-
-.pending-transaction-recovery-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 1000;
-  display: grid;
-  place-items: center;
-  padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
-  background: rgba(2, 6, 15, 0.82);
-  backdrop-filter: blur(8px);
-}
-
-.pending-transaction-recovery-dialog {
-  width: min(100%, 32rem);
-  max-height: 100%;
-  overflow-y: auto;
-  border: 1px solid rgba(103, 232, 249, 0.24);
-  border-radius: 18px;
-  padding: clamp(18px, 5vw, 28px);
-  background: linear-gradient(145deg, rgba(8, 20, 34, 0.99), rgba(4, 10, 22, 0.99));
-  color: #e2e8f0;
-  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55);
-}
-
-.pending-transaction-recovery-kicker {
-  color: #67e8f9;
-  font-size: 0.72rem;
-  font-weight: 800;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-}
-
-.pending-transaction-recovery-dialog h2 {
-  margin: 8px 0 10px;
-  color: #f8fafc;
-  font-size: clamp(1.25rem, 5vw, 1.65rem);
-  line-height: 1.2;
-}
-
-.pending-transaction-recovery-dialog p {
-  margin: 0;
-  color: #cbd5e1;
-  line-height: 1.55;
-}
-
-.pending-transaction-recovery-dialog code {
-  color: #a5f3fc;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-}
-
-.pending-transaction-recovery-error {
-  margin-top: 14px !important;
-  border: 1px solid rgba(251, 191, 36, 0.28);
-  border-radius: 10px;
-  padding: 10px 12px;
-  background: rgba(120, 53, 15, 0.22);
-  color: #fde68a !important;
-  font-size: 0.88rem;
-}
-
-.pending-transaction-recovery-checking {
-  margin-top: 14px !important;
-  border-radius: 10px;
-  padding: 10px 12px;
-  background: rgba(14, 116, 144, 0.2);
-  color: #a5f3fc !important;
-  font-size: 0.88rem;
-}
-
-.pending-transaction-recovery-checking:focus-visible {
-  outline: 3px solid rgba(103, 232, 249, 0.55);
-  outline-offset: 2px;
-}
-
-.pending-transaction-recovery-actions {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-  margin-top: 20px;
-}
-
-.pending-transaction-recovery-actions button {
-  min-height: 44px;
-  border-radius: 10px;
-  padding: 10px 14px;
-  font-weight: 800;
-  transition: border-color 150ms ease, background 150ms ease, opacity 150ms ease;
-}
-
-.pending-transaction-recovery-actions button:focus-visible {
-  outline: 3px solid rgba(103, 232, 249, 0.55);
-  outline-offset: 2px;
-}
-
-.pending-transaction-recovery-actions button:disabled {
-  cursor: wait;
-  opacity: 0.65;
-}
-
-.pending-transaction-recovery-keep {
-  border: 1px solid rgba(148, 163, 184, 0.35);
-  background: rgba(30, 41, 59, 0.78);
-  color: #f8fafc;
-}
-
-.pending-transaction-recovery-discard {
-  border: 1px solid rgba(251, 146, 60, 0.46);
-  background: rgba(154, 52, 18, 0.72);
-  color: #fff7ed;
-}
-
-.pending-transaction-recovery-footnote {
-  margin-top: 14px !important;
-  color: #94a3b8 !important;
-  font-size: 0.78rem;
-}
-
-@media (max-width: 440px) {
-  .pending-transaction-recovery-actions {
-    grid-template-columns: 1fr;
-  }
 }

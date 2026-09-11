@@ -51,9 +51,15 @@ export class SharedResponseCache {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS response_cache_locks (
         cache_key TEXT PRIMARY KEY,
-        expires_at INTEGER NOT NULL
+        expires_at INTEGER NOT NULL,
+        owner TEXT
       );
     `);
+    const hasOwner = () => (this.db.query("PRAGMA table_info(response_cache_locks)").all() as Array<{ name: string }>).some(column => column.name === "owner");
+    if (!hasOwner()) {
+      try { this.db.exec("ALTER TABLE response_cache_locks ADD COLUMN owner TEXT"); }
+      catch (error) { if (!hasOwner()) throw error; } // Another reader may migrate first.
+    }
     this.db.exec("CREATE INDEX IF NOT EXISTS response_cache_stale_expires_at_idx ON response_cache (stale_expires_at);");
   }
 
@@ -115,21 +121,21 @@ export class SharedResponseCache {
     }
   }
 
-  tryAcquireRefresh(cacheKey: string, ttlMs = 15_000, now = Date.now()): boolean {
+  tryAcquireRefresh(cacheKey: string, ttlMs = 15_000, now = Date.now()): string | null {
+    const owner = crypto.randomUUID();
     const result = this.runCacheOperation(() => {
       this.db.query("DELETE FROM response_cache_locks WHERE expires_at <= ?").run(now);
       return this.db.query(`
-        INSERT OR IGNORE INTO response_cache_locks (cache_key, expires_at)
-        VALUES (?, ?)
-      `).run(cacheKey, now + ttlMs) as { changes?: number };
+        INSERT OR IGNORE INTO response_cache_locks (cache_key, expires_at, owner)
+        VALUES (?, ?, ?)
+      `).run(cacheKey, now + ttlMs, owner) as { changes?: number };
     }, null);
-    if (!result) return false;
-    return (result.changes ?? 0) > 0;
+    return (result?.changes ?? 0) > 0 ? owner : null;
   }
 
-  releaseRefresh(cacheKey: string): void {
+  releaseRefresh(cacheKey: string, owner: string): void {
     this.runCacheOperation(() => {
-      this.db.query("DELETE FROM response_cache_locks WHERE cache_key = ?").run(cacheKey);
+      this.db.query("DELETE FROM response_cache_locks WHERE cache_key = ? AND owner = ?").run(cacheKey, owner);
     });
   }
 

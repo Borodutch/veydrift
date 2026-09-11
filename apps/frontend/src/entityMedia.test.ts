@@ -11,6 +11,41 @@ import { personalSignPayload, type Eip1193Provider } from "./walletFlow";
 import { entityMediaHeading } from "./components/EntityMediaPanel";
 
 describe("entity media", () => {
+  for (const blockedPhase of ["challenge", "save"]) {
+    test(`times out a stalled media ${blockedPhase} without retrying the mutation`, async () => {
+      const originalFetch = globalThis.fetch;
+      let requests = 0;
+      let signatures = 0;
+      const provider: Eip1193Provider = { async request<T>() { signatures += 1; return "0x1234" as T; } };
+      globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+        requests += 1;
+        if (blockedPhase === "save" && requests === 1) return Response.json({ version: 1 });
+        return new Promise<Response>((_resolve, reject) => init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true }));
+      }) as typeof fetch;
+      try {
+        await expect(updateEntityMedia("https://api.test", provider, "0xabc", "planet", "7", "", { timeoutMs: 10 })).rejects.toThrow();
+        expect(requests).toBe(blockedPhase === "challenge" ? 1 : 2);
+        expect(signatures).toBe(blockedPhase === "challenge" ? 0 : 1);
+      } finally { globalThis.fetch = originalFetch; }
+    });
+  }
+
+  test("an aborted media challenge never opens a wallet prompt", async () => {
+    const originalFetch = globalThis.fetch;
+    const controller = new AbortController();
+    let signatures = 0;
+    const provider: Eip1193Provider = { async request<T>() { signatures += 1; return "0x1234" as T; } };
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+    })) as typeof fetch;
+    try {
+      const saving = updateEntityMedia("https://api.test", provider, "0xabc", "planet", "7", "", { signal: controller.signal });
+      controller.abort();
+      await expect(saving).rejects.toThrow();
+      expect(signatures).toBe(0);
+    } finally { globalThis.fetch = originalFetch; }
+  });
+
   test("uses entity-specific media headings without provider copy", () => {
     expect(entityMediaHeading("planet")).toBe("Planet anthem");
     expect(entityMediaHeading("moon")).toBe("Moon anthem");

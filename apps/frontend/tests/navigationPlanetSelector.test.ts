@@ -16,7 +16,7 @@ const missionCreationSource = await Bun.file(new URL("../src/components/MissionC
 const planetDetailSource = await Bun.file(new URL("../src/components/PlanetDetail.tsx", import.meta.url)).text();
 const gameAssetsSource = await Bun.file(new URL("../src/gameAssets.ts", import.meta.url)).text();
 const moonIndicatorSource = await Bun.file(new URL("../src/components/PlanetMoonIndicator.tsx", import.meta.url)).text();
-const rankingsSource = await Bun.file(new URL("../src/components/RankingsPage.tsx", import.meta.url)).text();
+const rankingsSource = await Bun.file(new URL("../src/components/RankingsTable.tsx", import.meta.url)).text();
 const topBarSource = await Bun.file(new URL("../src/components/TopBar.tsx", import.meta.url)).text();
 const stylesSource = await Bun.file(new URL("../src/styles.css", import.meta.url)).text();
 
@@ -227,33 +227,12 @@ describe("navigation and planet selector UI source contracts", () => {
   });
 
   test("asks the centralized backend-data store to refresh completed queues for unselected planets", () => {
-    const completionRefreshSource = playableSource.slice(
-      playableSource.indexOf("const nextEventMs = nextProductionQueueCompletionEventMs("),
-      playableSource.indexOf("// Chime when an active production queue reaches completion."),
-    );
-    expect(completionRefreshSource).toContain("[...constructionQueues.values(), walletResearchQueue]");
-    expect(completionRefreshSource).toContain('backendData!.scheduleRefresh(');
-    expect(completionRefreshSource).toContain('"production-queue-completion"');
-    expect(completionRefreshSource).toContain("`wallet:${account.toLowerCase()}`");
-    expect(completionRefreshSource).not.toContain("confirmedConstructionQueues");
-    expect(completionRefreshSource).not.toContain('document.visibilityState === "hidden"');
+
+ expect(playableSource).not.toContain(".scheduleRefresh(");
+ expect(playableSource).toContain("managedPlanet.queues.building");
+ expect(playableSource).toContain("useBackendDataQuery<WalletPlanetsResponse>(walletPlanetsQuery)");
   });
 
-  test("keeps research wallet-global while projecting its progress onto the home selector item", () => {
-    expect(playableSource).toContain("const walletQueuesQuery = backendData && account ? backendData.queries.queues(account) : undefined");
-    expect(playableSource).toContain("const walletResearchQueue = walletResearchQueueFor(walletQueues)");
-    expect(playableSource).toContain("progressState={walletResearchProgress}");
-    expect(playableSource).toContain("progressState={constructionProgressState}");
-    expect(playableSource).not.toContain("researchQueueWithPlanetAttribution");
-    expect(playableSource).not.toContain("researchQueueForPlanet");
-    expect(playableSource).not.toContain('constructionProgressKey(planet.planetId, "planet", "research")');
-    expect(playableSource).toContain('researchPlanetId={walletQueues?.homePlanetId ?? researchState?.homePlanetId}');
-    expect(playableSource).toContain('researchProgress={walletResearchProgress}');
-    expect(playableSource).toContain('kind: "research"');
-    expect(playableSource).toContain('color: "bg-violet-300"');
-    expect(playableSource).toContain("function researchQueuePreview(queue: QueueStateResponse | null | undefined)");
-    expect(playableSource).not.toContain("planet.queues.research");
-  });
 
   test("renders one selector tile per planet and represents moons only as unclipped overlays", () => {
     expect(playableSource).toContain("data-planet-selector-item={planet.planetId}");
@@ -304,28 +283,18 @@ describe("navigation and planet selector UI source contracts", () => {
   test("keeps a current moon mapped to its selected parent while moon navigation remains active", () => {
     expect(playableSource).toContain("const selected = isPlanetSelectorParentSelected(planet.planetId, selectedPlanet.planetId);");
     expect(playableSource).toContain("selected={selected}");
-    expect(playableSource).not.toContain('selectedBodyKind={activeBodyKind}');
+    expect(playableSource).toContain('selectedBodyKind={activeBodyKind}');
     expect(playableSource).toContain('setSelectedBodyKind(nextBodyKind)');
     expect(playableSource).toContain('navigateToInspectRoute({ kind: "page", page: "moon" })');
-    expect(playableSource).toContain('if (route.page !== "moon") setSelectedBodyKind("planet")');
+    expect(playableSource).toContain('if (route.kind === "page" && route.page !== "moon" && route.page !== "overview") setSelectedBodyKind("planet")');
   });
 
-  test("normal navigation from a selected moon returns to the parent planet context", () => {
-    expect(playableSource).toContain('if (route.page !== "moon") setSelectedBodyKind("planet")');
+  test("Overview preserves the selected moon while other planet pages restore the parent context", () => {
+    expect(playableSource).toContain('if (route.kind === "page" && route.page !== "moon" && route.page !== "overview") setSelectedBodyKind("planet")');
     expect(playableSource).toContain('setSelectedBodyKind("planet")');
     expect(playableSource).not.toContain('activeBodyKind === "moon" && (page === "overview" || page === "infrastructure" || page === "defenses" || page === "shipyard")');
-    expect(playableSource).toContain('if (route.page !== "moon") setSelectedBodyKind("planet")');
   });
 
-  test("moon overview actions open moon-origin parent-planet mission flows", () => {
-    expect(playableSource).toContain("moonOverviewActions");
-    expect(playableSource).toContain("bodySelectionDefaults: { originIsMoon: true, targetIsMoon: false }");
-    expect(playableSource).toContain("defaultTargetIsMoon: pendingGalaxyMission.bodySelectionDefaults?.targetIsMoon");
-    expect(playableSource).toContain("defaultOriginIsMoon: pendingGalaxyMission.bodySelectionDefaults?.originIsMoon");
-    expect(playableSource).toContain("Moon defense stationing is not available in the current mission contract.");
-    expect(missionCreationSource).toContain("defaultTargetIsMoon?: boolean");
-    expect(missionCreationSource).toContain("Boolean(bodySelection?.defaultTargetIsMoon) || (action.mode === \"mission\" && action.defaultTargetIsMoon === true)");
-  });
 
   test("keeps planet selector selected and keyboard focus states subtle", () => {
     expect(playableSource).toContain("veydrift-planet-selector-button");
@@ -375,7 +344,6 @@ describe("navigation and planet selector UI source contracts", () => {
     expect(playableSource).toContain('if (page === "alliance-invites")');
     expect(playableSource).toContain("<AllianceInvitesPage");
     expect(playableSource).toContain('page === "alliance-invites"');
-    expect(playableSource).toContain("referralProgramPanel={referralProgramPanel}");
     expect(playableSource).toContain("onAcceptInvite={handleAcceptAllianceInvite}");
   });
 

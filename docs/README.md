@@ -1,49 +1,45 @@
-# Veydrift repository documentation
+# Documentation
 
-This directory contains current architecture, operating runbooks, implementation decisions, and historical audits. Start with the short guides below; use issue-specific documents when you need the reasoning or evidence behind a particular change.
+These guides describe the current repository. They are not proof of what is
+deployed: verify live configuration and health before operational changes.
 
-The player-facing manual is maintained separately in `apps/frontend/src/docs/content/docs.md` and published at [veydrift.com/docs](https://veydrift.com/docs).
+## Development and architecture
 
-## Start here
+- [Development](development.md) — local setup, validation, CI and explicit index repair.
+- [Frontend state](frontend-data-store.md) — one store, independent queries, endpoint ownership and session-only actions.
+- [Backend and indexer](backend-indexer.md) — event replay, projections, application status and worker boundaries.
+- [Public onchain state](public-onchain-state-architecture.md) — gameplay authority and privacy constraints.
+- [Combat reference](combat-reference.md) — contract/reference-simulator parity.
+- [Randomness engine](randomness-engine.md) — trust model, fulfillment and operational configuration.
+- [Player manual](../apps/frontend/src/docs/content/docs.md) — player-facing behavior, not developer architecture.
 
-- [Development](development.md) — install, run, validate, and troubleshoot locally.
-- [Frontend data store](frontend-data-store.md) — the single frontend backend-read boundary and refresh rules.
-- [Public onchain state](public-onchain-state-architecture.md) — source-of-truth and privacy decisions.
-- [Event-sourced indexer](event-sourced-indexer-VEY-KANEO-475.md) — event coverage and indexed read-model design.
-- [Combat reference](combat-reference.md) — current combat terminology and behavior.
-- [Randomness engine](randomness-engine.md) — request, fulfillment, and resolution flow.
-- [Open-alpha state preservation](open-alpha-state-preservation.md) — mandatory safety rules for contract changes.
-- [Contract redeploy runbook](veydrift-contract-redeploy-runbook.md) — controlled replacement and migration procedure.
+## Operations and safety
 
-## Current feature and migration references
+- [Application deployment](deployment.md)
+- [Open-alpha state preservation](open-alpha-state-preservation.md)
+- [Contract redeploy runbook](veydrift-contract-redeploy-runbook.md)
+- [Resolver nonce recovery](resolver-nonce-recovery.md)
+- [Referral code migration](referral-code-migration.md)
+- [Synthetic stationed-defense QA](stationed-defense-qa.md) — isolated test rendering; deployment mode is not a chain sandbox.
+- [Battle keeper](../apps/battle-keeper/README.md)
+- [Chicken burn listener](../apps/chicken-burn-listener/README.md)
 
-- [Referral code migration](referral-code-migration-VEY-KANEO-714.md)
-- [Selectable moon bodies](selectable-moon-bodies-VEY-KANEO-639.md)
-- [Token launch](veydrift-token-launch-VEY-740.md)
-- [Uniswap CCA v4 launch](veydrift-uniswap-cca-v4-launch-VEY-741.md)
-- [Production combat QA matrix](production-combat-missions-qa-matrix-VEY-KANEO-164.md)
+## Token contracts
 
-## Historical decisions and audits
+- [Token supply, vesting and Uniswap CCA/v4 launch](token-launch.md)
 
-Files with an issue identifier in their name usually capture the code, assumptions, and evidence at one point in time. They remain useful context, but their line references, contract sizes, deployed addresses, and conclusions may be stale. Revalidate them against the current commit and live network before making operational or security decisions.
+Launch and migration documents require their own approval and verification;
+their presence does not authorize a deployment.
 
-- `anti-raid-public-state-*`
-- `attack-flow-audit-*`
-- `catalog-audit-*` and `catalog-re-audit-*`
-- `combat-economy-incentives-*`
-- `defender-loss-audit-*`
-- `espionage-hidden-intel-decision-*`
-- `highscore-ranking-*`
-- `lazy-onchain-reconciliation-*`
-- `ogame-parity-scope-*`
-- `veydriftgame-replacement-plan-*`
+## Maintenance
 
-`ci-speed-draft.md` is a draft proposal, not a runbook.
-
-## Documentation rules
-
-- Update the root `README.md` when setup, package layout, or primary commands change.
-- Update `development.md` when local or validation workflows change.
-- Update `frontend-data-store.md` when a backend read, refresh trigger, or cache ownership rule changes.
-- Update the player manual when gameplay or player-visible transaction behavior changes.
-- Mark time-sensitive audit evidence clearly and never treat an old deployment snapshot as current proof.
+- Keep setup commands in Development and deploy procedures in Deployment/runbooks.
+- Keep frontend query/action policy in Frontend state; backend read and commit policy in Backend and indexer.
+- Keep environment variable inventories in the package `.env.example` files and build recipes in their committed configuration files.
+- Update the player manual for gameplay changes; do not put implementation instructions there.
+- Do not retain completed-task status logs, copied test totals or laptop-specific SSH details as architecture.
+- Keep only current guides here. Git history provides previous audits, plans and incident records.
+- Preserve migration, authorization, randomness and state-preservation safeguards when consolidating.
+- Do not edit vendored dependency documentation as part of project documentation cleanup.
+- Run `bun run check:docs` for player-copy restrictions and repository Markdown link checks.
+  This does not verify remote URLs, deployment health, or the truth of prose; review those separately.

@@ -5,20 +5,15 @@ import {
   buildingCompletionReadyToFinishFlag,
   buildingUpgradeActionErrorLabel,
   buildingFinishUnavailableReasonForDisplay,
-  buildingCompletionAutoRefreshDelayMs,
   buildingFinishActionErrorLabel,
   attackProtectionSubmitBlocker,
   attackerCombatTechLevelsForMission,
   batchSupplyPlanMatchesOrders,
   batchSupplySourceForPlanet,
-  beginRefreshRequest,
-  canLoadIndexedPageState,
   canApplyRefreshRequest,
   colonizationLimitBlocker,
   canonicalInfrastructureBuildingCompletionQueue,
-  completedBuildingFinishSyncReasonFor,
   defenseCompletionPlanetIdFor,
-  failedBuildingFinishSyncReasonFor,
   galaxyMissionActionErrorLabel,
   gameActionsAvailableForBody,
   homeGalaxySystemSyncKey,
@@ -32,8 +27,6 @@ import {
   infrastructureLoadErrorFor,
   infrastructureMissionResolutionPendingLabel,
   infrastructureUnavailableReasonFor,
-  loadWalletPlanetSyncSnapshot,
-  markFreshStateWrite,
   overviewMyPlanetMoonActionsFor,
   overviewMyPlanetActionsFor,
   overviewWatchedPlanetActionsFor,
@@ -42,26 +35,23 @@ import {
   replanBatchSupplyForConfirmation,
   revalidateAttackProtectionBeforeSubmit,
   overviewResearchCompletionUnavailableReasonFor,
-  preserveActiveResearchQueue,
-  preserveActiveResearchState,
   planetHasIncomingAttack,
   planetScopedFleetVisibility,
   previousMissionIndexingBlockerLabel,
   refreshedInfrastructureUnavailableReasonFor,
   refreshedInfrastructureUpgradeUnavailableReasonFor,
   researchCompletionUnavailableReasonFor,
-  researchStateWithFallbackQueue,
-  researchStartUnavailableReasonAfterLiveRevalidation,
+  researchStartUnavailableReasonAfterBackendRevalidation,
   researchStartUnavailableReasonFor,
   selectedResearchStartBlocker,
   researchStateForCompletionRevalidation,
   researchStartPlanetIdFor,
-  researchStateWithPreservedActiveQueue,
   researchStartTransactionLabel,
   resolvedOrbitBodyKind,
   highscorePlanetForMission,
   raidTargetPlanetForMission,
   missionOriginResources,
+  missionDraftFor,
   missionCooperativeActionAvailable,
   missionShipInventoryBlocker,
   nextProductionQueueCompletionEventMs,
@@ -104,6 +94,11 @@ import type {
 
 const playableMvpSource = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.url)).text();
 
+test("static infrastructure projection does not depend on the display clock", () => {
+  expect(playableMvpSource).toContain("useMemo<PlayableState>(() => infrastructurePlayableState(infrastructureChainState), [infrastructureChainState])");
+  expect(playableMvpSource).toContain("[hasEconomyResources, economyResources, activeBodyKind, activePlanetId]");
+});
+
 function collectRenderedText(node: unknown): string[] {
   if (node === null || node === undefined || typeof node === "boolean") return [];
   if (Array.isArray(node)) return node.flatMap(collectRenderedText);
@@ -122,6 +117,20 @@ function collectRenderedText(node: unknown): string[] {
 }
 
 describe("Playable MVP app display helpers", () => {
+  test("all composer entry points preserve body defaults and reject disabled actions", () => {
+    const action = { enabled: true, kind: "transport", mode: "mission", mission: "transport", label: "Transport" } as const;
+    const coords = { galaxy: 1, system: 2, position: 3 };
+    const origin = indexedPlanet("0x2222222222222222222222222222222222222222");
+    expect(missionDraftFor(action, undefined, coords, origin, "moon")?.bodySelectionDefaults)
+      .toEqual({ originIsMoon: true, targetIsMoon: false });
+    expect(missionDraftFor(action, undefined, coords, origin, "moon", { targetIsMoon: true })?.bodySelectionDefaults)
+      .toEqual({ originIsMoon: true, targetIsMoon: true });
+    expect(missionDraftFor({ ...action, defaultTargetIsMoon: true }, undefined, coords, origin, "planet")?.bodySelectionDefaults)
+      .toEqual({ originIsMoon: false, targetIsMoon: true });
+    expect(missionDraftFor(action, undefined, coords, origin, "planet", { originIsMoon: true, targetIsMoon: false })?.originPlanet).toBe(origin);
+    expect(missionDraftFor({ ...action, enabled: false, reason: "Protected" }, undefined, coords, origin, "moon")).toBeNull();
+  });
+
   const buildingFinishStateReadFailureLabel = "Can't check game state right now. Your upgrade is still ready, but Veydrift could not verify the contract state. Retry in a moment.";
   const buildingFinishLiveStateRequiredLabel = "Can't verify the current building queue right now. Refresh infrastructure state and retry before finishing.";
   const buildingCompletionWalletPrompt = "Building completion: confirm the game-state update in your wallet; token balance changes are not expected.";
@@ -203,33 +212,6 @@ describe("Playable MVP app display helpers", () => {
     ).toBeUndefined();
   });
 
-  test("gates page state refreshes until the current wallet snapshot is hydrated", () => {
-    const apiBaseUrl = "https://api.test";
-    const account = "0x2222222222222222222222222222222222222222";
-    const hydratedWalletSnapshotKey = walletSnapshotHydrationKey(apiBaseUrl, account);
-
-    expect(
-      canLoadIndexedPageState({
-        account,
-        apiBaseUrl,
-        hydratedWalletSnapshotKey,
-      }),
-    ).toBe(true);
-    expect(
-      canLoadIndexedPageState({
-        account,
-        apiBaseUrl,
-        hydratedWalletSnapshotKey: walletSnapshotHydrationKey(apiBaseUrl, "0x3333333333333333333333333333333333333333"),
-      }),
-    ).toBe(false);
-    expect(
-      canLoadIndexedPageState({
-        account: undefined,
-        apiBaseUrl,
-        hydratedWalletSnapshotKey: undefined,
-      }),
-    ).toBe(true);
-  });
 
   test("scopes Overview and TopBar snapshots to the newly selected planet immediately", () => {
     const wallet = "0x2222222222222222222222222222222222222222";
@@ -388,15 +370,10 @@ describe("Playable MVP app display helpers", () => {
     expect(queues?.research?.itemId).toBe(3);
   });
 
-  test("invalidates stale in-flight planet reads after an explicit planet switch", () => {
-    const gate = { current: 0 };
-    const oldPlanetRequest = beginRefreshRequest(gate);
-
-    markFreshStateWrite(gate);
-    const newPlanetRequest = beginRefreshRequest(gate);
-
-    expect(canApplyRefreshRequest(gate, oldPlanetRequest)).toBe(false);
-    expect(canApplyRefreshRequest(gate, newPlanetRequest)).toBe(true);
+  test("accepts only a response matching the current scope version", () => {
+    const gate = { current: 2 };
+    expect(canApplyRefreshRequest(gate, 1)).toBe(false);
+    expect(canApplyRefreshRequest(gate, 2)).toBe(true);
   });
 
   test("falls back to a live owned planet when the selected planet id is stale", () => {
@@ -433,35 +410,6 @@ describe("Playable MVP app display helpers", () => {
     ).toBeUndefined();
   });
 
-  test("omits the selected planet id for forced home-planet sync snapshots", async () => {
-    const requestedPlanetIds: Array<string | undefined> = [];
-    const wallet = "0x2222222222222222222222222222222222222222";
-    const home = indexedPlanet(wallet);
-    const response = walletPlanetsResponse(wallet, [home]);
-
-    const snapshot = await loadWalletPlanetSyncSnapshot(
-      "https://api.test",
-      wallet,
-      "999",
-      { forceHomePlanet: true },
-      {
-        fetchWalletOverviewSnapshot: async (_apiUrl, _account, planetId) => {
-          requestedPlanetIds.push(planetId);
-          return {
-            settlement: walletSettlementForManagedPlanet(walletSettlementResponse(wallet), home)!,
-            planetsResponse: response,
-            queues: playerQueues({ homePlanetId: home.planetId }),
-            fleetVisibility: emptyFleetVisibilityFixture(wallet, home.planetId),
-          };
-        },
-      },
-    );
-
-    expect(requestedPlanetIds).toEqual([undefined]);
-    expect(snapshot.settlement.homePlanetId).toBe("7");
-    expect(snapshot.settlement.planet?.planetId).toBe("7");
-    expect(snapshot.planetsResponse.planets.map((planet) => planet.planetId)).toEqual(["7"]);
-  });
 
   test("scopes Overview fleet rows to the selected planet", () => {
     const wallet = "0x2222222222222222222222222222222222222222";
@@ -531,6 +479,13 @@ describe("Playable MVP app display helpers", () => {
     expect(scoped?.outgoing.map((mission) => mission.missionId)).toEqual(["out-selected"]);
     expect(scoped?.returning.map((mission) => mission.missionId)).toEqual(["ret-selected"]);
 
+    const moonTransfer = fleetMission({ missionId: "moon-to-parent", missionType: "Transport", originPlanetId: "8", targetPlanetId: "8", originIsMoon: true, targetIsMoon: false });
+    const bodyVisibility = { ...visibility, incoming: [], outgoing: [moonTransfer], returning: [] };
+    expect(planetScopedFleetVisibility(bodyVisibility, "8", ["8"], "moon")?.outgoing).toEqual([moonTransfer]);
+    expect(planetScopedFleetVisibility(bodyVisibility, "8", ["8"], "moon")?.incoming).toEqual([]);
+    expect(planetScopedFleetVisibility(bodyVisibility, "8", ["8"], "planet")?.incoming).toEqual([moonTransfer]);
+    expect(planetScopedFleetVisibility(bodyVisibility, "8", ["8"], "planet")?.outgoing).toEqual([]);
+
     const switched = planetScopedFleetVisibility(visibility, "7", ["7", "8"]);
     expect(switched?.incoming.map((mission) => mission.missionId)).toEqual(["in-other"]);
     expect(switched?.outgoing.map((mission) => mission.missionId)).toEqual(["in-selected", "self-inbound", "out-other", "transport-to-selected"]);
@@ -591,6 +546,13 @@ describe("Playable MVP app display helpers", () => {
         shipyardState: selectedShipyardState,
       }),
     ).toEqual([]);
+
+    const moonToParent = overviewMyPlanetActionsFor({
+      account: wallet, activePlanetId: "8", activeBodyKind: "moon", defenseState: null,
+      homePlanetId: "7", planet: selectedPlanet, shipyardState: selectedShipyardState,
+    });
+    expect(moonToParent.map(action => action.kind)).toEqual(["transport", "deploy"]);
+    expect(moonToParent.every(action => action.enabled)).toBe(true);
 
     const actions = overviewMyPlanetActionsFor({
       account: wallet,
@@ -954,31 +916,6 @@ describe("Playable MVP app display helpers", () => {
     expect(planetHasIncomingAttack(visibility, "8")).toBe(true);
   });
 
-  test("keeps a delayed older attack response from replacing the latest target", () => {
-    const wallet = "0x2222222222222222222222222222222222222222";
-    const refreshGate = { current: 0 };
-    const olderRequest = beginRefreshRequest(refreshGate);
-    const latestRequest = beginRefreshRequest(refreshGate);
-    let applied = emptyFleetVisibilityFixture(wallet, "7");
-    const apply = (requestId: number, targetPlanetId: string) => {
-      if (!canApplyRefreshRequest(refreshGate, requestId)) return;
-      applied = {
-        ...emptyFleetVisibilityFixture(wallet, "7"),
-        incoming: [
-          fleetMission({
-            missionId: `attack-${targetPlanetId}`,
-            targetPlanetId,
-          }),
-        ],
-      };
-    };
-
-    apply(latestRequest, "8");
-    apply(olderRequest, "7");
-
-    expect(planetHasIncomingAttack(applied, "8")).toBe(true);
-    expect(planetHasIncomingAttack(applied, "7")).toBe(false);
-  });
 
   test("shows planet picker moon overlays without standalone moon selector buttons", () => {
     const itemSource = sourceBetween(playableMvpSource, "function PlanetSelectorItem", "function PlanetSelectorButton");
@@ -1004,7 +941,9 @@ describe("Playable MVP app display helpers", () => {
     expect(routeOwnerSource).toContain("setPendingAttackProtection(null)");
     expect(routeOwnerSource).toContain("setPendingJoinAttack(null)");
     expect(routeOwnerSource).toContain("setPendingAcsDefend(null)");
-    expect(routeOwnerSource).toContain("setPage(route.page)");
+    expect(routeOwnerSource).toContain("setInspectRoute(route)");
+    expect(routeOwnerSource).not.toContain("setMissionDetailId");
+    expect(routeOwnerSource).not.toContain("setInspectedPlayerWallet");
     expect(historyListenerSource).toContain("applyInspectRoute(parseInspectRouteFromLocation(window.location))");
     expect(tabNavigationSource).toContain('navigateToInspectRoute({ kind: "page", page: target })');
     expect(tabNavigationSource).not.toContain("setPendingGalaxyMission");
@@ -1538,7 +1477,7 @@ describe("Playable MVP app display helpers", () => {
         transactionPending: true,
         unavailableReason: "Wallet or game contract unavailable",
       }),
-    ).toBe("Transaction is syncing indexed state. Wait for it to finish before starting another action.");
+    ).toBe("An action using these resources is processing.");
 
     expect(
       transactionUnavailableReasonFor({
@@ -1809,38 +1748,6 @@ describe("Playable MVP app display helpers", () => {
     ).toEqual({ metal: 2022, crystal: 1005, deuterium: 1259 });
   });
 
-  test("schedules building completion auto-refresh at the ready boundary", () => {
-    expect(
-      buildingCompletionAutoRefreshDelayMs(
-        {
-          ...readyBuildingQueue(),
-          readyAt: "1700000000",
-        },
-        1_699_999_999_000,
-      ),
-    ).toBe(2_500);
-
-    expect(
-      buildingCompletionAutoRefreshDelayMs(
-        {
-          ...readyBuildingQueue(),
-          readyAt: "1700000000",
-        },
-        1_700_000_002_000,
-      ),
-    ).toBe(0);
-
-    expect(buildingCompletionAutoRefreshDelayMs(null, 1_700_000_000_000)).toBeUndefined();
-    expect(
-      buildingCompletionAutoRefreshDelayMs(
-        {
-          ...readyBuildingQueue(),
-          readyAt: "not-a-date",
-        },
-        1_700_000_000_000,
-      ),
-    ).toBeUndefined();
-  });
 
   test("mission origin resources track the canonical spendable balance, not the lagging backend snapshot", () => {
     // VEY-KANEO-453: the backend wallet-planet snapshot lags the real on-chain balance, so the
@@ -2195,75 +2102,33 @@ describe("Playable MVP app display helpers", () => {
     expect(calls).toEqual([["https://api.test", "0x2222222222222222222222222222222222222222", "7"]]);
   });
 
-  test("preserves a recently known active research queue when a refresh returns empty queue data", () => {
-    const knownQueue = activeResearchQueue();
-    const next = researchState({ queue: null });
 
-    expect(
-      researchStateWithPreservedActiveQueue({
-        knownResearchQueue: knownQueue,
-        next,
-      }).queue,
-    ).toBe(knownQueue);
 
-    expect(
-      researchStartUnavailableReasonFor({
-        canTransact: true,
-        knownResearchQueue: knownQueue,
-        researchState: next,
-      }),
-    ).toBe("Another research is already active. Finish or refresh the active research before starting a new one.");
-  });
 
-  test("blocks research start when live wallet queues still report active research", async () => {
-    const latestResearch = researchState({ queue: null });
-    const latestQueues = walletQueues({
-      research: activeResearchQueue({ itemId: 1, targetLevel: 4 }),
-    });
-    const calls: unknown[][] = [];
-
-    const result = await researchStartUnavailableReasonAfterLiveRevalidation({
+  test("research preflight uses one fresh indexed response, not an older queue", async () => {
+    let latest = researchState({ queue: activeResearchQueue() });
+    let reads = 0;
+    const check = () => researchStartUnavailableReasonAfterBackendRevalidation({
       account: "0x2222222222222222222222222222222222222222",
       activePlanetId: "7",
       apiBaseUrl: "https://api.test",
-      fallback: researchState({ queue: null }),
-      loadResearchState: ((...args: unknown[]) => {
-        calls.push(["research", ...args]);
-        return Promise.resolve(latestResearch);
-      }) as never,
-      loadWalletQueues: ((...args: unknown[]) => {
-        calls.push(["queues", ...args]);
-        return Promise.resolve(latestQueues);
-      }) as never,
+      loadResearchState: async () => { reads++; return latest; },
     });
-
-    expect(result).toEqual({
-      researchState: latestResearch,
-      queues: latestQueues,
-      unavailableReason: "Another research is already active. Finish or refresh the active research before starting a new one.",
-    });
-    expect(calls).toEqual([
-      ["research", "https://api.test", "0x2222222222222222222222222222222222222222", "7"],
-      ["queues", "https://api.test", "0x2222222222222222222222222222222222222222", "7"],
-    ]);
+    expect((await check()).unavailableReason).toContain("Another research is already active");
+    latest = researchState({ queue: null });
+    const refreshed = await check();
+    expect(refreshed.researchState).toBe(latest);
+    expect(refreshed.unavailableReason).toBeUndefined();
+    expect(reads).toBe(2);
   });
 
-  test("keeps research start preflight blocked when live state transiently omits a known active queue", async () => {
-    const latestResearch = researchState({ queue: null });
-    const latestQueues = walletQueues({ research: null });
-    const knownQueue = activeResearchQueue();
-
-    const result = await researchStartUnavailableReasonAfterLiveRevalidation({
-      account: "0x2222222222222222222222222222222222222222",
-      activePlanetId: "7",
-      apiBaseUrl: "https://api.test",
-      fallback: researchState({ queue: knownQueue }),
-      knownResearchQueue: knownQueue,
-      loadResearchState: (() => Promise.resolve(latestResearch)) as never,
-      loadWalletQueues: (() => Promise.resolve(latestQueues)) as never,
-    });
-
-    expect(result.unavailableReason).toBe("Another research is already active. Finish or refresh the active research before starting a new one.");
+  test("research preflight fails closed when the backend cannot be read", async () => {
+    const options = { account: "0x2222222222222222222222222222222222222222", activePlanetId: "7", apiBaseUrl: undefined };
+    expect((await researchStartUnavailableReasonAfterBackendRevalidation(options)).unavailableReason).toContain("Can't verify");
+    await expect(researchStartUnavailableReasonAfterBackendRevalidation({
+      ...options, apiBaseUrl: "https://api.test",
+      loadResearchState: async () => { throw new Error("Indexer unavailable"); },
+    })).rejects.toThrow("Indexer unavailable");
   });
 
   test("blocks Shielding Technology level 1 before wallet submission when Energy Technology is below level 3", async () => {
@@ -2284,15 +2149,13 @@ describe("Playable MVP app display helpers", () => {
       researchLabLevel: 6,
     });
 
-    const result = await researchStartUnavailableReasonAfterLiveRevalidation({
+    const result = await researchStartUnavailableReasonAfterBackendRevalidation({
       account: "0x2222222222222222222222222222222222222222",
       activePlanetId: "7",
       apiBaseUrl: "https://api.test",
-      fallback: researchState(),
       selectedResearchKey: "shielding",
       selectedTechnologyId: 6,
       loadResearchState: (() => Promise.resolve(latestResearch)) as never,
-      loadWalletQueues: (() => Promise.resolve(walletQueues({ research: null }))) as never,
     });
 
     expect(result.unavailableReason).toBe("Energy Technology 3 is required before starting Shielding Technology.");
@@ -2342,15 +2205,13 @@ describe("Playable MVP app display helpers", () => {
       stale: true,
     });
 
-    const result = await researchStartUnavailableReasonAfterLiveRevalidation({
+    const result = await researchStartUnavailableReasonAfterBackendRevalidation({
       account: "0x2222222222222222222222222222222222222222",
       activePlanetId: "7",
       apiBaseUrl: "https://api.test",
-      fallback: researchState(),
       selectedResearchKey: "shielding",
       selectedTechnologyId: 6,
       loadResearchState: (() => Promise.resolve(staleResearch)) as never,
-      loadWalletQueues: (() => Promise.resolve(walletQueues({ research: null }))) as never,
     });
 
     expect(result.unavailableReason).toBe("Research state is still syncing. Refresh research state and retry before starting research.");
@@ -2465,25 +2326,7 @@ describe("Playable MVP app display helpers", () => {
     ).toBe("12");
   });
 
-  test("preserves active research queues when a background wallet poll returns an empty research queue", () => {
-    const activeResearch = activeResearchQueue();
-    const currentQueues = playerQueues({ research: activeResearch });
-    const emptyPollQueues = playerQueues({ research: null });
 
-    expect(preserveActiveResearchQueue(currentQueues, emptyPollQueues).research).toEqual(activeResearch);
-  });
-
-  test("clears preserved research queues when a due completion poll returns no active queue", () => {
-    const activeResearch = activeResearchQueue({ targetLevel: 2 });
-    const currentQueues = playerQueues({ research: activeResearch });
-    const emptyPollQueues = playerQueues({ research: null });
-
-    expect(
-      preserveActiveResearchQueue(currentQueues, emptyPollQueues, {
-        now: 1_700_006_000_000,
-      }).research,
-    ).toBeNull();
-  });
 
   test("schedules the soonest future production queue completion only", () => {
     expect(
@@ -2498,46 +2341,8 @@ describe("Playable MVP app display helpers", () => {
     ).toBeUndefined();
   });
 
-  test("preserves active research state during transient empty research refreshes", () => {
-    const activeResearch = activeResearchQueue({ targetLevel: 2 });
-    const currentState = researchState({ queue: activeResearch });
-    const emptyRefresh = researchState({ queue: null });
 
-    expect(preserveActiveResearchState(currentState, emptyRefresh).queue).toEqual(activeResearch);
-  });
 
-  test("clears preserved research queues once the refreshed research level confirms completion", () => {
-    const activeResearch = activeResearchQueue({ targetLevel: 2 });
-    const currentState = researchState({ queue: activeResearch });
-    const completedRefresh = researchState({
-      queue: null,
-      technologyLevels: { "0": 2 },
-      technologies: [
-        {
-          id: 0,
-          level: 2,
-          cost: { metal: "0", crystal: "3200", deuterium: "1600" },
-        },
-      ],
-    });
-
-    expect(preserveActiveResearchState(currentState, completedRefresh).queue).toBeNull();
-  });
-
-  test("uses a preserved wallet research queue to keep new research starts disabled", () => {
-    const activeResearch = activeResearchQueue({ itemId: 0, targetLevel: 2 });
-    const loadedResearch = researchState({ queue: null });
-    const effectiveResearchState = researchStateWithFallbackQueue(loadedResearch, activeResearch);
-
-    expect(effectiveResearchState?.queue).toEqual(activeResearch);
-    expect(
-      researchCompletionUnavailableReasonFor({
-        canTransact: true,
-        now: 1_699_999_000_000,
-        researchState: effectiveResearchState,
-      }),
-    ).toBe("Research is not ready to complete yet.");
-  });
 
   test("lets Overview derive building readiness from the displayed active queue", () => {
     expect(
@@ -3069,134 +2874,9 @@ describe("Playable MVP app display helpers", () => {
     ).toBe("Wallet or game contract is unavailable.");
   });
 
-  test("blocks duplicate finish attempts while a submitted building completion is still visible", () => {
-    const readyQueue = readyBuildingQueue();
-
-    expect(
-      completedBuildingFinishSyncReasonFor({
-        activeBuildingQueue: readyQueue,
-        expectation: {
-          itemId: readyQueue.itemId,
-          targetLevel: readyQueue.targetLevel,
-        },
-      }),
-    ).toContain("Waiting for backend state to clear this completed queue");
-
-    expect(
-      buildingFinishUnavailableReasonForDisplay({
-        activeBuildingQueue: readyQueue,
-        canTransact: true,
-        completedBuildingFinishExpectation: {
-          itemId: readyQueue.itemId,
-          targetLevel: readyQueue.targetLevel,
-        },
-        infrastructureState: infrastructureState({
-          queue: readyQueue,
-          source: "contract-state-indexer",
-          stale: true,
-        }),
-        isBuildingReadyToFinish: true,
-        isDisplayedBuildingQueueReady: true,
-        now: 1_700_000_000_000,
-      }),
-    ).toContain("Waiting for backend state to clear this completed queue");
-  });
-
-  test("clears duplicate finish blocking when the active building queue changes", () => {
-    const readyQueue = readyBuildingQueue();
-
-    expect(
-      completedBuildingFinishSyncReasonFor({
-        activeBuildingQueue: {
-          ...readyQueue,
-          targetLevel: 3,
-        },
-        expectation: {
-          itemId: readyQueue.itemId,
-          targetLevel: readyQueue.targetLevel,
-        },
-      }),
-    ).toBeUndefined();
-    expect(
-      completedBuildingFinishSyncReasonFor({
-        activeBuildingQueue: null,
-        expectation: {
-          itemId: readyQueue.itemId,
-          targetLevel: readyQueue.targetLevel,
-        },
-      }),
-    ).toBeUndefined();
-  });
-
-  test("keeps failed finish attempts recoverable after backend revalidation catches up", () => {
-    const readyQueue = readyBuildingQueue();
-
-    expect(
-      failedBuildingFinishSyncReasonFor({
-        activeBuildingQueue: readyQueue,
-        expectation: {
-          itemId: readyQueue.itemId,
-          targetLevel: readyQueue.targetLevel,
-        },
-      }),
-    ).toContain("Building completion failed for this ready queue");
-
-    expect(
-      buildingFinishUnavailableReasonForDisplay({
-        activeBuildingQueue: readyQueue,
-        canTransact: true,
-        infrastructureState: infrastructureState({
-          queue: readyQueue,
-          source: "contract-state-indexer",
-          stale: true,
-        }),
-        isBuildingReadyToFinish: true,
-        isDisplayedBuildingQueueReady: true,
-        now: 1_700_000_030_000,
-      }),
-    ).toBeUndefined();
-
-    expect(
-      buildingFinishUnavailableReasonForDisplay({
-        activeBuildingQueue: readyQueue,
-        canTransact: true,
-        completedBuildingFinishExpectation: undefined,
-        infrastructureState: infrastructureState({
-          queue: readyQueue,
-          source: "live-rpc",
-          stale: false,
-        }),
-        isBuildingReadyToFinish: true,
-        isDisplayedBuildingQueueReady: true,
-        now: 1_700_000_000_000,
-      }),
-    ).toBeUndefined();
-  });
-
-  test("clears failed finish blocking when the active building queue changes", () => {
-    const readyQueue = readyBuildingQueue();
-
-    expect(
-      failedBuildingFinishSyncReasonFor({
-        activeBuildingQueue: {
-          ...readyQueue,
-          targetLevel: 3,
-        },
-        expectation: {
-          itemId: readyQueue.itemId,
-          targetLevel: readyQueue.targetLevel,
-        },
-      }),
-    ).toBeUndefined();
-    expect(
-      failedBuildingFinishSyncReasonFor({
-        activeBuildingQueue: null,
-        expectation: {
-          itemId: readyQueue.itemId,
-          targetLevel: readyQueue.targetLevel,
-        },
-      }),
-    ).toBeUndefined();
+  test("does not retain unreachable building-finish recovery state", () => {
+    expect(playableMvpSource).not.toContain("BuildingFinishExpectation");
+    expect(playableMvpSource).not.toContain("BuildingFinishSyncReasonFor");
   });
 
   test("allows building completion wallet submission after backend ready queue revalidation", () => {
@@ -3684,396 +3364,13 @@ describe("Playable MVP app display helpers", () => {
     ).toContain("ready to finish");
   });
 
-  test("hydrates indexed planet state before requesting canonical settlement state", async () => {
-    const originalFetch = globalThis.fetch;
-    const wallet = "0x2222222222222222222222222222222222222222";
-    const requestedPaths: string[] = [];
-    const activeMission = fleetMission({
-      missionId: "42",
-      owner: wallet,
-      originPlanetId: "7",
-      targetPlanetId: "9",
-    });
 
-    globalThis.fetch = ((input: RequestInfo | URL) => {
-      const url = new URL(String(input));
-      requestedPaths.push(`${url.pathname}${url.search}`);
 
-      if (url.pathname.endsWith("/overview")) {
-        return Promise.resolve(
-          Response.json(
-            walletOverviewSnapshot(wallet, {
-              fleetVisibility: {
-                wallet,
-                homePlanetId: "7",
-                incoming: [],
-                outgoing: [activeMission],
-                returning: [],
-                joinableAttacks: [],
-                completedMissions: [],
-                battleReports: [],
-              },
-            }),
-          ),
-        );
-      }
 
-      return Promise.resolve(Response.json({ error: "unexpected endpoint" }, { status: 404 }));
-    }) as typeof fetch;
 
-    try {
-      const snapshot = await loadWalletPlanetSyncSnapshot("https://api.test", wallet, undefined);
 
-      expect(snapshot.settlement).toMatchObject({
-        wallet,
-        hasFirstPlanet: true,
-        homePlanetId: "7",
-        planet: {
-          planetId: "7",
-          resources: {
-            metal: "5000",
-            crystal: "4900",
-            deuterium: "4800",
-          },
-        },
-      });
-      expect(snapshot.planetsResponse.planets).toHaveLength(1);
-      expect(snapshot.fleetVisibility.outgoing.map((mission) => mission.missionId)).toEqual(["42"]);
-      expect(requestedPaths).toEqual([`/wallet/${wallet}/overview`]);
-      expect(requestedPaths).not.toContain(`/wallet/${wallet}/settlement`);
-      expect(requestedPaths).not.toContain(`/wallet/${wallet}/queues`);
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
-  });
 
-  test("does not start a pending settlement read before showing indexed planet state", async () => {
-    const wallet = "0x2222222222222222222222222222222222222222";
-    const requestedPaths: string[] = [];
 
-    const snapshot = await loadWalletPlanetSyncSnapshot(
-      "https://api.test",
-      wallet,
-      undefined,
-      {},
-      {
-        fetchWalletOverviewSnapshot: async () => {
-          requestedPaths.push(`/wallet/${wallet}/overview`);
-          return walletOverviewSnapshot(wallet) as any;
-        },
-        fetchWalletSettlement: async () => new Promise(() => undefined) as never,
-      },
-    );
-
-    expect(snapshot.settlement.homePlanetId).toBe("7");
-    expect(snapshot.settlement.planet?.resources.metal).toBe("5000");
-    expect(snapshot.planetsResponse.planets).toHaveLength(1);
-    expect(requestedPaths).toEqual([`/wallet/${wallet}/overview`]);
-  });
-
-  test("does not fall back to multi-read hydration when the Overview snapshot endpoint is present but unavailable", async () => {
-    const wallet = "0x2222222222222222222222222222222222222222";
-    const requestedPaths: string[] = [];
-
-    await expect(
-      loadWalletPlanetSyncSnapshot(
-        "https://api.test",
-        wallet,
-        undefined,
-        {},
-        {
-          fetchWalletOverviewSnapshot: async () => {
-            requestedPaths.push(`/wallet/${wallet}/overview`);
-            throw new Error("Overview snapshot API failed: 503: indexed_read_not_ready");
-          },
-          fetchWalletPlanets: async () => {
-            throw new Error("Overview should not fan out after an unavailable combined snapshot response");
-          },
-        },
-      ),
-    ).rejects.toThrow("Overview snapshot API failed: 503: indexed_read_not_ready");
-    expect(requestedPaths).toEqual([`/wallet/${wallet}/overview`]);
-  });
-
-  test("keeps indexed active building queues in the reload snapshot", async () => {
-    const wallet = "0x2222222222222222222222222222222222222222";
-    const activeBuilding = {
-      active: true,
-      kind: "building",
-      itemId: 0,
-      targetLevel: 2,
-      readyAt: "1770000600",
-      startedAt: "1770000000",
-      cost: {
-        metal: "120",
-        crystal: "30",
-        deuterium: "0",
-      },
-    };
-
-    const snapshot = await loadWalletPlanetSyncSnapshot(
-      "https://api.test",
-      wallet,
-      undefined,
-      {},
-      {
-        fetchWalletOverviewSnapshot: async () =>
-          walletOverviewSnapshot(wallet, {
-            planetsResponse: {
-              wallet,
-              homePlanetId: "7",
-              queues: { research: null },
-              planets: [
-                {
-                  ...indexedPlanet(wallet),
-                  queues: {
-                    building: activeBuilding,
-                    defense: null,
-                    ship: null,
-                  },
-                },
-              ],
-            },
-          }) as any,
-      },
-    );
-
-    expect(snapshot.queues.building).toEqual(activeBuilding);
-  });
-
-  test("keeps indexed active research queues in the reload snapshot", async () => {
-    const wallet = "0x2222222222222222222222222222222222222222";
-    const requestedPaths: string[] = [];
-    const activeResearch = {
-      active: true,
-      kind: "research",
-      itemId: 0,
-      targetLevel: 2,
-      readyAt: "1770000600",
-      startedAt: "1770000000",
-      cost: {
-        metal: "800",
-        crystal: "400",
-        deuterium: "0",
-      },
-    };
-
-    const snapshot = await loadWalletPlanetSyncSnapshot(
-      "https://api.test",
-      wallet,
-      undefined,
-      {},
-      {
-        fetchWalletOverviewSnapshot: async () => {
-          requestedPaths.push(`/wallet/${wallet}/overview`);
-          return walletOverviewSnapshot(wallet, {
-            planetsResponse: {
-              wallet,
-              homePlanetId: "7",
-              queues: {
-                research: activeResearch,
-              },
-              planets: [indexedPlanet(wallet)],
-            },
-          }) as any;
-        },
-      },
-    );
-
-    expect(snapshot.queues.research).toEqual(activeResearch);
-    expect(requestedPaths).toEqual([`/wallet/${wallet}/overview`]);
-  });
-
-  test("fetches active research queues when indexed planets omit the global queue snapshot", async () => {
-    const wallet = "0x2222222222222222222222222222222222222222";
-    const requestedPaths: string[] = [];
-    const activeResearch = {
-      active: true,
-      kind: "research",
-      itemId: 0,
-      targetLevel: 2,
-      readyAt: "1770000600",
-      startedAt: "1770000000",
-      cost: {
-        metal: "800",
-        crystal: "400",
-        deuterium: "0",
-      },
-    };
-
-    const snapshot = await loadWalletPlanetSyncSnapshot(
-      "https://api.test",
-      wallet,
-      undefined,
-      {},
-      {
-        fetchWalletOverviewSnapshot: async () => {
-          requestedPaths.push(`/wallet/${wallet}/overview`);
-          return walletOverviewSnapshot(wallet, {
-            queues: {
-              wallet,
-              homePlanetId: "7",
-              building: null,
-              defense: null,
-              ship: null,
-              research: activeResearch,
-            },
-          }) as any;
-        },
-      },
-    );
-
-    expect(snapshot.queues.research).toEqual(activeResearch);
-    expect(requestedPaths).toEqual([`/wallet/${wallet}/overview`]);
-  });
-
-  test("uses indexed queues for the requested active planet", async () => {
-    const originalFetch = globalThis.fetch;
-    const wallet = "0x2222222222222222222222222222222222222222";
-    const homeBuilding = {
-      active: true,
-      kind: "building",
-      itemId: 0,
-      targetLevel: 2,
-      readyAt: "1770000600",
-      startedAt: "1770000000",
-      cost: { metal: "120", crystal: "30", deuterium: "0" },
-    };
-    const colonyBuilding = {
-      active: true,
-      kind: "building",
-      itemId: 1,
-      targetLevel: 3,
-      readyAt: "1770000900",
-      startedAt: "1770000300",
-      cost: { metal: "144", crystal: "72", deuterium: "0" },
-    };
-
-    globalThis.fetch = ((input: RequestInfo | URL) => {
-      const url = new URL(String(input));
-
-      if (url.pathname.endsWith("/overview")) {
-        return Promise.resolve(
-          Response.json(
-            walletOverviewSnapshot(wallet, {
-              planetsResponse: {
-                wallet,
-                homePlanetId: "7",
-                planets: [
-                  {
-                    ...indexedPlanet(wallet),
-                    queues: {
-                      building: homeBuilding,
-                      defense: null,
-                      ship: null,
-                    },
-                  },
-                  {
-                    ...indexedPlanet(wallet),
-                    planetId: "8",
-                    isHomePlanet: false,
-                    coordinates: "2:44:10",
-                    queues: {
-                      building: colonyBuilding,
-                      defense: null,
-                      ship: null,
-                    },
-                  },
-                ],
-              },
-              queues: {
-                wallet,
-                homePlanetId: "8",
-                building: colonyBuilding,
-                defense: null,
-                ship: null,
-                research: null,
-              },
-            }),
-          ),
-        );
-      }
-
-      return Promise.resolve(Response.json({ error: "unexpected endpoint" }, { status: 404 }));
-    }) as typeof fetch;
-
-    try {
-      const snapshot = await loadWalletPlanetSyncSnapshot("https://api.test", wallet, "8");
-
-      expect(snapshot.queues.homePlanetId).toBe("8");
-      expect(snapshot.queues.building).toEqual(colonyBuilding);
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
-  });
-
-  test("falls back to canonical settlement state when indexed planets are empty", async () => {
-    const wallet = "0x2222222222222222222222222222222222222222";
-    const requestedPaths: string[] = [];
-
-    const snapshot = await loadWalletPlanetSyncSnapshot(
-      "https://api.test",
-      wallet,
-      undefined,
-      {},
-      {
-        fetchWalletOverviewSnapshot: async () => {
-          requestedPaths.push(`/wallet/${wallet}/overview`);
-          throw new Error("Overview snapshot API failed: 404: missing");
-        },
-        fetchWalletPlanets: async () => {
-          requestedPaths.push(`/wallet/${wallet}/planets`);
-          return {
-            wallet,
-            homePlanetId: null,
-            planets: [],
-          } as any;
-        },
-        fetchWalletSettlement: async () => {
-          requestedPaths.push(`/wallet/${wallet}/settlement`);
-          return {
-            wallet,
-            hasFirstPlanet: true,
-            homePlanetId: "7",
-            planet: indexedPlanet(wallet),
-          } as any;
-        },
-        fetchWalletQueues: async () => {
-          requestedPaths.push(`/wallet/${wallet}/queues`);
-          return {
-            wallet,
-            homePlanetId: "7",
-            building: null,
-            defense: null,
-            ship: null,
-            research: null,
-          } as any;
-        },
-        fetchFleetMissionVisibility: async () => {
-          requestedPaths.push(`/wallet/${wallet}/fleet-visibility?archive=none`);
-          return {
-            wallet,
-            homePlanetId: "7",
-            incoming: [],
-            outgoing: [],
-            returning: [],
-            joinableAttacks: [],
-            completedMissions: [],
-            battleReports: [],
-          } as any;
-        },
-      },
-    );
-
-    expect(snapshot.settlement.homePlanetId).toBe("7");
-    expect(snapshot.settlement.planet?.resources.metal).toBe("5000");
-    expect(requestedPaths[0]).toBe(`/wallet/${wallet}/overview`);
-    expect(requestedPaths).toContain(`/wallet/${wallet}/planets`);
-    expect(requestedPaths).toContain(`/wallet/${wallet}/settlement`);
-    expect(requestedPaths).toContain(`/wallet/${wallet}/queues`);
-    // Fleet visibility is fetched without archived missions during hydration (?archive=none).
-    expect(requestedPaths).toContain(`/wallet/${wallet}/fleet-visibility?archive=none`);
-  });
 });
 
 function fleetMission(overrides: Partial<FleetMissionSummary> = {}): FleetMissionSummary {

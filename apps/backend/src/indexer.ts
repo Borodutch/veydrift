@@ -186,6 +186,8 @@ import {
   deriveMoonBuildingRows,
   deriveShipRows,
   deriveTechnologyRows,
+  defenseCount,
+  supportedShipIds,
   usedFieldsFromBuildingRows,
   zeroResources
 } from "./readModels";
@@ -369,6 +371,7 @@ export type TimedMissilePayloadHistoryBackfillMarker = {
   contractAddress: string;
   fromBlock: string;
   throughBlock: string;
+  throughBlockHash?: string;
 };
 
 export type IndexedPaidAllianceInviteSummary = {
@@ -733,6 +736,8 @@ export type IndexedTransactionSummary = {
     logIndex: string;
   }>;
   latestIndexedBlock: string | null;
+  latestSyncedBlock: string | null;
+  materialized: boolean;
 };
 
 export type PlayerActivityCategory =
@@ -804,6 +809,14 @@ function cloneQueueState(queue: QueueState | null): QueueState | null {
     ...(queue.backlog ? { backlog: queue.backlog.map((entry) => cloneQueueState(entry)!) } : {})
   };
 }
+
+export const projectionInvalidationReasons = {
+  anchorChanged: "resource_projection_invalidated: canonical block anchor changed",
+  headChanged: "resource_projection_invalidated: canonical head changed during scan",
+  removedLog: "resource_projection_invalidated: websocket removed log",
+} as const;
+
+export type RpcTransportStaleReason = `rpc_head_stalled:${string}` | `rpc_head_behind:${string}`;
 
 export class SettlementIndexer {
   private readonly db: Database;
@@ -938,7 +951,7 @@ export class SettlementIndexer {
       missionIds: ReadonlySet<string>;
     }
     | null = null;
-  private recentBattleReportsCache = new Map<number, {
+  private recentBattleReportsCache = new Map<string, {
     battleReportGeneration: number;
     missionGeneration: number;
     reports: BattleReport[];
@@ -992,6 +1005,8 @@ export class SettlementIndexer {
       this.readOnly,
       options.assumeSchemaReady ?? false
     );
+    // Keep row-count triggers correct for INSERT OR REPLACE as well as INSERT/DELETE.
+    this.db.exec("PRAGMA recursive_triggers = ON;");
     this.qaSyntheticStationedDefenders = options.qaSyntheticStationedDefenders ?? false;
     this.randomnessEngineConfigured = options.randomnessEngineConfigured ?? false;
     this.randomnessEngineAddress = options.randomnessEngineAddress?.toLowerCase() ?? null;
@@ -1045,7 +1060,7 @@ export class SettlementIndexer {
     const lastReconciledBlock = metadataValue("lastReconciledBlock");
     const lastReconciliationError = metadataValue("lastReconciliationError");
     const pendingReconciliationReason = metadataValue("pendingReconciliationReason");
-    const blockingStaleReason = this.blockingStaleReason({
+    const blockingStaleReason = metadataValue("transportStaleReason") ?? this.blockingStaleReason({
       lastReconciledAt,
       lastReconciliationError,
       pendingReconciliationReason
@@ -1191,9 +1206,16 @@ export class SettlementIndexer {
     })();
   }
 
-  invalidateResourceProjectionWatermark(reason: string): void {
+  invalidateResourceProjectionWatermark(cause: keyof typeof projectionInvalidationReasons): void {
     this.db.transaction(() => {
       const pendingReconciliationReason = this.metadata("pendingReconciliationReason");
+      if (pendingReconciliationReason === null && cause !== "removedLog") {
+        const block = this.metadata(resourceProjectionBlockMetadataKey);
+        const hash = this.metadata(resourceProjectionHashMetadataKey);
+        if (block && hash) this.setMetadata("invalidatedProjectionAnchor", JSON.stringify({
+          block, hash, revision: this.metadata(indexedRevisionMetadataKey) ?? "0"
+        }));
+      }
       this.db.query(`
         DELETE FROM indexer_metadata
         WHERE key IN (?, ?, ?, ?)
@@ -1204,7 +1226,7 @@ export class SettlementIndexer {
         resourceProjectionTimestampMetadataKey
       );
       if (pendingReconciliationReason === null) {
-        this.markStale(`resource_projection_invalidated: ${reason}`);
+        this.markStale(projectionInvalidationReasons[cause]);
       }
       this.snapshotCache = null;
     })();
@@ -1229,6 +1251,7 @@ export class SettlementIndexer {
     // signals still fail closed: no transaction-facing resource response may use the anchor while
     // state repair is pending or running, or after a cold reconciliation failure.
     const projectionStateSafe = !reconciliationInProgress
+      && value("transportStaleReason") === null
       && pendingReconciliationReason === null
       && (lastReconciliationError === null || lastReconciledAt !== null);
     const block = value(resourceProjectionBlockMetadataKey);
@@ -1359,6 +1382,10 @@ export class SettlementIndexer {
           && typeof parsed.contractAddress === "string"
           && typeof parsed.fromBlock === "string"
           && typeof parsed.throughBlock === "string"
+          && /^\d+$/.test(parsed.fromBlock)
+          && /^\d+$/.test(parsed.throughBlock)
+          && BigInt(parsed.throughBlock) >= BigInt(parsed.fromBlock)
+          && (parsed.throughBlockHash === undefined || /^0x[0-9a-f]{64}$/i.test(parsed.throughBlockHash))
         ) marker = parsed as TimedMissilePayloadHistoryBackfillMarker;
       } catch {
         // A malformed marker is untrusted; the narrow replay repairs it.
@@ -1373,13 +1400,18 @@ export class SettlementIndexer {
   recordTimedMissilePayloadHistoryBackfill(
     contractAddress: `0x${string}`,
     fromBlock: bigint,
-    throughBlock: bigint
+    throughBlock: bigint,
+    throughBlockHash?: string
   ): TimedMissilePayloadHistoryBackfillMarker {
+    if (throughBlockHash !== undefined && !/^0x[0-9a-f]{64}$/i.test(throughBlockHash)) {
+      throw new Error("Invalid timed missile checkpoint hash.");
+    }
     const marker: TimedMissilePayloadHistoryBackfillMarker = {
       completedAt: new Date().toISOString(),
       contractAddress: contractAddress.toLowerCase(),
       fromBlock: fromBlock.toString(),
-      throughBlock: throughBlock.toString()
+      throughBlock: throughBlock.toString(),
+      ...(throughBlockHash ? { throughBlockHash: throughBlockHash.toLowerCase() } : {})
     };
     this.setMetadata(timedMissilePayloadHistoryBackfillMetadataKey, JSON.stringify(marker));
     return marker;
@@ -1830,38 +1862,34 @@ export class SettlementIndexer {
     const projected = options.includeProjected
       ? this.projectedPlayerActivity(normalizedWallet, since ?? 0, through)
       : [];
-    const indexedTotal = (this.db.query(`
-      SELECT COUNT(*) AS count
-      FROM indexed_player_activity_feed
-      WHERE ${whereSql}
-    `).get(...params) as CountRow).count;
     const summaryRows = this.db.query(`
       SELECT json_extract(activity_json, '$.category') AS category, COUNT(*) AS count
-      FROM indexed_player_activity_feed
+      FROM indexed_player_activity_feed INDEXED BY indexed_player_activity_feed_wallet_category_idx
       WHERE ${whereSql}
       GROUP BY json_extract(activity_json, '$.category')
     `).all(...params) as PlayerActivitySummaryRow[];
     const summary: Partial<Record<PlayerActivityCategory, number>> = Object.fromEntries(
       summaryRows.map((row) => [row.category, row.count])
     );
+    const indexedTotal = summaryRows.reduce((total, row) => total + row.count, 0);
     for (const item of projected) summary[item.category] = (summary[item.category] ?? 0) + 1;
     const offset = Math.max(0, (options.page - 1) * options.pageSize);
-    const indexedLimit = offset + options.pageSize;
+    const indexedLimit = projected.length ? offset + options.pageSize : options.pageSize;
     const rows = this.db.query(`
       SELECT activity_json
       FROM indexed_player_activity_feed
       WHERE ${whereSql}
       ORDER BY CAST(transaction_at AS INTEGER) DESC, CAST(block_number AS INTEGER) DESC,
         length(log_index) DESC, log_index DESC
-      LIMIT ?
-    `).all(...params, indexedLimit) as PlayerActivityFeedRow[];
+      LIMIT ? OFFSET ?
+    `).all(...params, indexedLimit, projected.length ? 0 : offset) as PlayerActivityFeedRow[];
     const items = [
       ...rows.map((row) => parseEvent<PlayerActivityItem>(row.activity_json)),
       ...projected
     ]
-      .map((item) => this.withPlayerActivityPlanetContext(item))
       .sort(comparePlayerActivityNewestFirst)
-      .slice(offset, offset + options.pageSize);
+      .slice(projected.length ? offset : 0, (projected.length ? offset : 0) + options.pageSize)
+      .map((item) => this.withPlayerActivityPlanetContext(item));
 
     return {
       items,
@@ -1940,14 +1968,14 @@ export class SettlementIndexer {
     return items;
   }
 
-  allianceState(wallet: `0x${string}`): AllianceState {
+  allianceState(wallet: `0x${string}`, summaryDirectory = false): AllianceState {
     const normalizedWallet = wallet.toLowerCase() as Address;
     const membership = this.allianceMembership(normalizedWallet);
-    const directory = this.allianceDirectory();
+    const directory = this.allianceDirectory(undefined, summaryDirectory ? membership.allianceId : undefined);
     const directoryById = new Map(directory.map((alliance) => [alliance.allianceId, alliance]));
     const pendingInvites = this.allianceInvitesForWallet(normalizedWallet);
     const pendingJoinRequests = this.allianceJoinRequestsForWallet(normalizedWallet);
-    const members = membership.allianceId === "0" ? [] : this.allianceMembers(membership.allianceId);
+    const members = directoryById.get(membership.allianceId)?.members ?? [];
     const allianceJoinRequests = membership.allianceId === "0" ? [] : this.allianceJoinRequestsForAlliance(membership.allianceId);
     const profile = membership.allianceId === "0" ? null : directoryById.get(membership.allianceId) ?? null;
     const diplomacy = membership.allianceId === "0" ? [] : this.allianceDiplomacy(membership.allianceId, directoryById);
@@ -1979,10 +2007,12 @@ export class SettlementIndexer {
   }
 
   allianceProfile(allianceId: string): AllianceState["directory"][number] | null {
-    return this.allianceDirectory().find((alliance) => alliance.allianceId === allianceId) ?? null;
+    return this.allianceDirectory(allianceId)[0] ?? null;
   }
 
-  paidAllianceInviteSummaries(): Map<string, IndexedPaidAllianceInviteSummary> {
+  paidAllianceInviteSummaries(allianceId?: string): Map<string, IndexedPaidAllianceInviteSummary> {
+    const filter = allianceId === undefined ? "" : "WHERE alliance_id = ?";
+    const parameters = allianceId === undefined ? [] : [allianceId];
     const summaries = new Map<string, IndexedPaidAllianceInviteSummary>();
     const ensure = (allianceId: string) => {
       let summary = summaries.get(allianceId);
@@ -1999,13 +2029,15 @@ export class SettlementIndexer {
     const purchases = this.db.query(`
       SELECT alliance_id, COUNT(*) AS count
       FROM contract_paid_alliance_invite_purchases
+      ${filter}
       GROUP BY alliance_id
-    `).all() as Array<{ alliance_id: string; count: number }>;
+    `).all(...parameters) as Array<{ alliance_id: string; count: number }>;
     const redemptions = this.db.query(`
       SELECT alliance_id, COUNT(*) AS count
       FROM contract_paid_alliance_invite_uses
+      ${filter}
       GROUP BY alliance_id
-    `).all() as Array<{ alliance_id: string; count: number }>;
+    `).all(...parameters) as Array<{ alliance_id: string; count: number }>;
     for (const row of purchases) ensure(row.alliance_id).privateInviteStats.remaining = row.count;
     for (const row of redemptions) {
       const stats = ensure(row.alliance_id).privateInviteStats;
@@ -2015,7 +2047,8 @@ export class SettlementIndexer {
     const balances = this.db.query(`
       SELECT alliance_id, metal, crystal, deuterium, pending_metal, pending_crystal, pending_deuterium
       FROM contract_paid_alliance_invite_balances
-    `).all() as Array<{
+      ${filter}
+    `).all(...parameters) as Array<{
       alliance_id: string;
       metal: string;
       crystal: string;
@@ -2202,21 +2235,27 @@ export class SettlementIndexer {
     };
   }
 
-  private allianceDirectory(): AllianceState["directory"] {
+  private allianceDirectory(allianceId?: string, rosterAllianceId?: string): AllianceState["directory"] {
     const rows = this.db.query(`
       SELECT alliance_id, active, tag, name, description, owner, created_at, member_count
       FROM contract_alliances
       WHERE active = 1
+        ${allianceId === undefined ? "" : "AND alliance_id = ?"}
         AND EXISTS (
           SELECT 1
           FROM contract_alliance_members member
           WHERE member.alliance_id = contract_alliances.alliance_id
         )
       ORDER BY CAST(alliance_id AS INTEGER) ASC
-    `).all() as AllianceRow[];
+    `).all(...(allianceId === undefined ? [] : [allianceId])) as AllianceRow[];
     return rows.map((row) => {
-      const members = this.allianceMembers(row.alliance_id);
-      const memberCount = members.length;
+      const members = rosterAllianceId === undefined || rosterAllianceId === row.alliance_id
+        ? this.allianceMembers(row.alliance_id)
+        : undefined;
+      // Summary readers need scores, not foreign profiles, roles or invite metadata.
+      const scores = members?.map(member => member.totalScore ?? "0") ??
+        (this.db.query("SELECT wallet FROM contract_alliance_members WHERE alliance_id = ?")
+          .all(row.alliance_id) as Array<{ wallet: Address }>).map(member => this.walletTotalScore(member.wallet));
       return {
         allianceId: row.alliance_id,
         active: row.active === 1,
@@ -2226,9 +2265,9 @@ export class SettlementIndexer {
         owner: row.owner.toLowerCase() as Address,
         ownerDisplayName: this.playerProfile(row.owner).displayName,
         createdAt: row.created_at,
-        memberCount,
-        totalMemberScore: this.allianceTotalScore(members.map((member) => member.address)),
-        members
+        memberCount: scores.length,
+        totalMemberScore: scores.reduce((sum, score) => sum + BigInt(score), 0n).toString(),
+        ...(members ? { members } : {})
       };
     });
   }
@@ -2349,10 +2388,6 @@ export class SettlementIndexer {
         alliance: directoryById.get(otherAllianceId) ?? null
       };
     }).sort((left, right) => right.statusId - left.statusId || Number(left.otherAllianceId) - Number(right.otherAllianceId));
-  }
-
-  private allianceTotalScore(wallets: readonly Address[]): string {
-    return wallets.reduce((sum, wallet) => sum + BigInt(this.walletTotalScore(wallet)), 0n).toString();
   }
 
   private walletTotalScore(wallet: Address): string {
@@ -2837,7 +2872,7 @@ export class SettlementIndexer {
       visibleMissionIdsSql = targetIds.length > 0
         ? `
           SELECT mission_id
-          FROM contract_fleet_missions
+          FROM contract_fleet_missions INDEXED BY contract_fleet_missions_incoming_archive_idx
           WHERE target_planet_id IN (${targetPlaceholders})
             AND owner != ?
             AND mission_type_id = 3
@@ -3196,8 +3231,8 @@ export class SettlementIndexer {
     };
   }
 
-  battleReports(limit = 100): BattleReport[] {
-    return this.recentBattleReports(limit);
+  battleReports(limit = 100, offset = 0, includeParticipants = true): BattleReport[] {
+    return this.recentBattleReports(limit, offset, includeParticipants);
   }
 
   battleReportsForMissions(missions: readonly FleetMissionSummary[]): BattleReport[] {
@@ -3523,12 +3558,27 @@ export class SettlementIndexer {
   }
 
   private resolvedBattleMissionIdsForMissions(missionIds: Iterable<string>): ReadonlySet<string> {
+    this.currentMissionReadModelDbVersion();
+    this.currentBattleReportReadModelDbVersion();
     const resolvedMissionIds = new Set<string>();
-    for (const report of this.battleReportsForMissionIds(missionIds)) {
-      resolvedMissionIds.add(report.missionId);
-      for (const participant of report.participants) {
-        resolvedMissionIds.add(participant.missionId);
-      }
+    for (const ids of chunks([...new Set(missionIds)].filter(Boolean), 500)) {
+      // Only project identities: blocker checks do not need combat rounds,
+      // inventories or loot. Keep ready/valid report and ACS participant semantics.
+      const rows = this.db.query(`
+        WITH reports AS (
+          SELECT report_json FROM indexed_battle_report_read_models
+          WHERE mission_id IN (${ids.map(() => "?").join(",")})
+            AND status = 'ready' AND CASE WHEN json_valid(report_json) THEN
+              json_type(report_json, '$.missionId') = 'text'
+              AND json_type(report_json, '$.participants') = 'array'
+            ELSE 0 END
+        )
+        SELECT json_extract(report_json, '$.missionId') AS mission_id FROM reports
+        UNION
+        SELECT json_extract(participant.value, '$.missionId') AS mission_id
+        FROM reports, json_each(reports.report_json, '$.participants') participant
+      `).all(...ids) as Array<{ mission_id: string | null }>;
+      for (const row of rows) if (row.mission_id) resolvedMissionIds.add(row.mission_id);
     }
     return resolvedMissionIds;
   }
@@ -3558,23 +3608,31 @@ export class SettlementIndexer {
     ));
   }
 
-  shipRows(planetId: string, durationLevels?: { shipyardLevel: number; naniteLevel: number }): ShipyardState["ships"] {
-    const counts = this.indexedLevelsById("contract_ship_counts", "ship_id", "count", planetId);
-    const completedQueueQuantities = this.completedQueueQuantities(`ship:${planetId}`, {
-      requireProductionTiming: true
-    });
+  shipRows(planetId: string, durationLevels?: { shipyardLevel: number; naniteLevel: number }, counts = this.indexedLevelsById("contract_ship_counts", "ship_id", "count", planetId)): ShipyardState["ships"] {
+    const displayed = this.displayedShipCounts(planetId, counts);
     return deriveShipRows(
-      // Production is lazily settled on-chain by the next owner action, but the
-      // queue timing is deterministic. Serve the inventory that action will
-      // settle so At planet, public fleet counts, and Solar Satellite energy all
-      // advance at the same per-unit boundary as queue progress. The canonical
-      // contract_* mirror remains unchanged (see contractShipRows), and
-      // settleQueueAsOfNow subtracts units already reflected by completion
-      // events, preventing a later indexer update from double-counting them.
-      (id) => (counts.get(id) ?? 0) + (completedQueueQuantities.get(id) ?? 0),
+      (id) => displayed.get(id) ?? 0,
       this.planet(planetId)?.temperature,
       durationLevels
     );
+  }
+
+  private displayedShipCounts(planetId: string, counts: ReadonlyMap<number, number>): Map<number, number> {
+    const completedQueueQuantities = this.completedQueueQuantities(`ship:${planetId}`, {
+      requireProductionTiming: true
+    });
+    // Displayed ships advance only with indexed production timing. The canonical
+    // mirror is unchanged; queue settlement subtracts already-indexed completion
+    // events so a later commit cannot double-count these units.
+    return new Map(supportedShipIds.map(id => [id, (counts.get(id) ?? 0) + (completedQueueQuantities.get(id) ?? 0)]));
+  }
+
+  displayedUnitCounts(planetId: string, kind: "ship" | "defense"): Array<{ id: number; count: number }> {
+    const counts = kind === "ship"
+      ? this.displayedShipCounts(planetId, this.indexedLevelsById("contract_ship_counts", "ship_id", "count", planetId))
+      : this.indexedLevelsById("contract_defense_counts", "defense_id", "count", planetId);
+    const ids = kind === "ship" ? supportedShipIds : Array.from({ length: defenseCount }, (_, id) => id);
+    return ids.map(id => ({ id, count: counts.get(id) ?? 0 }));
   }
 
   resourceProjectionRows(planetId: string, owner: `0x${string}`): {
@@ -3658,7 +3716,7 @@ export class SettlementIndexer {
     return deriveDefenseRows((id) => counts.get(id) ?? 0);
   }
 
-  private moonResources(planetId: string | null): Resources {
+  moonResources(planetId: string | null): Resources {
     if (!planetId) return zeroResources();
     const row = this.moonResourceSnapshot(planetId);
     return row
@@ -3684,11 +3742,15 @@ export class SettlementIndexer {
     };
   }
 
-  availableShipRows(planetId: string, durationLevels?: { shipyardLevel: number; naniteLevel: number }): ShipyardState["ships"] {
-    const counts = this.indexedLevelsById("contract_ship_counts", "ship_id", "count", planetId);
+  launchableShipCounts(planetId: string, counts = this.indexedLevelsById("contract_ship_counts", "ship_id", "count", planetId)): Array<{ id: number; count: number }> {
     const completedQueueQuantities = this.completedQueueQuantities(`ship:${planetId}`);
+    return supportedShipIds.map(id => ({ id, count: (counts.get(id) ?? 0) + (completedQueueQuantities.get(id) ?? 0) }));
+  }
+
+  availableShipRows(planetId: string, durationLevels?: { shipyardLevel: number; naniteLevel: number }): ShipyardState["ships"] {
+    const counts = new Map(this.launchableShipCounts(planetId).map(({ id, count }) => [id, count]));
     return deriveShipRows(
-      (id) => (counts.get(id) ?? 0) + (completedQueueQuantities.get(id) ?? 0),
+      (id) => counts.get(id) ?? 0,
       this.planet(planetId)?.temperature,
       durationLevels
     );
@@ -3703,12 +3765,23 @@ export class SettlementIndexer {
   // PlanetDefenseCountChanged events, which applyShipCountChangedEvent / applyDefenseCountChangedEvent
   // already integrate authoritatively from the event stream.
 
-  defenseRows(planetId: string, durationLevels?: { shipyardLevel: number; naniteLevel: number }): DefenseState["defenses"] {
-    const counts = this.indexedLevelsById("contract_defense_counts", "defense_id", "count", planetId);
+  defenseRows(planetId: string, durationLevels?: { shipyardLevel: number; naniteLevel: number }, counts = this.indexedLevelsById("contract_defense_counts", "defense_id", "count", planetId)): DefenseState["defenses"] {
     return deriveDefenseRows(
       (id) => counts.get(id) ?? 0,
       durationLevels
     );
+  }
+
+  productionInventory(planetId: string, kind: "ship" | "defense", levels: { shipyardLevel: number; naniteLevel: number }) {
+    const counts = kind === "ship"
+      ? this.indexedLevelsById("contract_ship_counts", "ship_id", "count", planetId)
+      : this.indexedLevelsById("contract_defense_counts", "defense_id", "count", planetId);
+    const rows = kind === "ship" ? this.shipRows(planetId, levels, counts) : this.defenseRows(planetId, levels, counts);
+    // Displayed and launchable inventories intentionally have different timing
+    // rules. Share the settled counts/catalog, not their projected quantities.
+    if (kind === "ship") return { rows, launchable: this.launchableShipCounts(planetId, counts) };
+    const completed = this.completedQueueQuantities(`defense:${planetId}`);
+    return { rows, launchable: rows.map(({ id }) => ({ id, count: (counts.get(id) ?? 0) + (completed.get(id) ?? 0) })) };
   }
 
   availableDefenseRows(planetId: string, durationLevels?: { shipyardLevel: number; naniteLevel: number }): DefenseState["defenses"] {
@@ -3844,7 +3917,6 @@ export class SettlementIndexer {
   }
 
   highscoreForWallet(wallet: `0x${string}`, planetIds?: string[]): HighscoreEntry {
-    const settlement = this.walletSettlement(wallet);
     const ownedPlanets = (planetIds?.length
       ? planetIds.map((planetId) => this.planet(planetId)).filter((planet): planet is SettledPlanetEvent => (
         planet !== null && planet.owner.toLowerCase() === wallet.toLowerCase()
@@ -3853,25 +3925,8 @@ export class SettlementIndexer {
         "SELECT event_json FROM indexed_planets WHERE owner = lower(?) ORDER BY CAST(planet_id AS INTEGER) ASC",
         wallet
       ));
-    const contractTechnologies = this.contractTechnologyLevels(wallet);
-    const inFlightShips = this.activeMissionShipRowsByOwner([wallet]).get(wallet.toLowerCase()) ?? [];
-
-    return calculateIndexedHighscore({
-      wallet,
-      homePlanetId: settlement.homePlanetId,
-      planetCount: ownedPlanets.length,
-      planets: ownedPlanets.map((planet) => ({
-        buildings: this.contractInfrastructureRows(planet.planetId).map(({ id, level }) => ({ id, level })),
-        defenses: this.contractDefenseRows(planet.planetId).map(({ id, count }) => ({ id, count })),
-        ships: [
-          ...this.contractShipRows(planet.planetId),
-          ...this.moonShipRows(planet.planetId)
-        ].map(({ id, count }) => ({ id, count }))
-      })),
-      inFlightShips,
-      technologies: deriveTechnologyRows((id) => contractTechnologies[String(id)] ?? 0)
-        .map(({ id, level }) => ({ id, level }))
-    });
+    // Use the same calculation as rankings, scoped to one owner (including moons).
+    return this.highscoreEntriesForOwners(new Map([[wallet.toLowerCase(), ownedPlanets]]))[0]!;
   }
 
   highscoreEntriesForOwners(planetsByOwner: ReadonlyMap<string, SettledPlanetEvent[]>): HighscoreEntry[] {
@@ -5037,6 +5092,44 @@ export class SettlementIndexer {
     return this.snapshot();
   }
 
+  setTransportStale(reason: RpcTransportStaleReason | null): void {
+    if (reason) this.setMetadata("transportStaleReason", reason);
+    else {
+      this.db.query("DELETE FROM indexer_metadata WHERE key = 'transportStaleReason'").run();
+      // Called after a verified scan; retire transport flags written by older versions too.
+      const pending = this.metadata("pendingReconciliationReason");
+      if (pending && /^rpc_head_stalled:\d+$/.test(pending)) this.clearPendingReconciliationReason(pending);
+    }
+    this.snapshotCache = null;
+  }
+
+  invalidatedProjectionAnchor(): { block: string; hash: string; revision: string } | null {
+    const raw = this.metadata("invalidatedProjectionAnchor");
+    if (!raw) return null;
+    try {
+      const anchor = JSON.parse(raw);
+      return typeof anchor.block === "string" && /^\d+$/.test(anchor.block)
+        && typeof anchor.hash === "string" && /^0x[0-9a-f]{64}$/i.test(anchor.hash)
+        && typeof anchor.revision === "string" && /^\d+$/.test(anchor.revision) ? anchor : null;
+    } catch { return null; }
+  }
+
+  recoverProjectionAnchor(anchor: { block: string; hash: string }): void {
+    const previous = this.invalidatedProjectionAnchor();
+    const reason = this.metadata("pendingReconciliationReason");
+    // A transient inconsistent RPC response may recover, but a genuinely changed anchor needs
+    // explicit canonical reconciliation. Never erase another pending integrity failure.
+    if (!previous || previous.block !== anchor.block || previous.hash.toLowerCase() !== anchor.hash.toLowerCase()) return;
+    // A scan that changed indexed events needs reconciliation, even when the old anchor returns.
+    if (previous.revision !== (this.metadata(indexedRevisionMetadataKey) ?? "0")) return;
+    if (reason !== projectionInvalidationReasons.anchorChanged && reason !== projectionInvalidationReasons.headChanged) return;
+    const block = this.metadata(resourceProjectionBlockMetadataKey);
+    if (!block || BigInt(block) < BigInt(anchor.block)
+      || this.metadata(resourceProjectionRevisionMetadataKey) !== (this.metadata(indexedRevisionMetadataKey) ?? "0")) return;
+    this.clearPendingReconciliationReason(reason);
+    this.db.query("DELETE FROM indexer_metadata WHERE key = 'invalidatedProjectionAnchor'").run();
+  }
+
   clearPendingReconciliationReason(reason: string): IndexerSnapshot {
     if (this.metadata("pendingReconciliationReason") === reason) {
       this.snapshotCache = null;
@@ -5895,12 +5988,18 @@ export class SettlementIndexer {
         activity_json TEXT NOT NULL,
         PRIMARY KEY (wallet, event_id)
       );
-      CREATE INDEX IF NOT EXISTS indexed_player_activity_feed_wallet_time_idx
+      CREATE INDEX IF NOT EXISTS indexed_player_activity_feed_wallet_time_order_idx
         ON indexed_player_activity_feed (
           wallet,
           CAST(transaction_at AS INTEGER) DESC,
           CAST(block_number AS INTEGER) DESC,
-          log_index DESC
+          length(log_index) DESC, log_index DESC
+        );
+      DROP INDEX IF EXISTS indexed_player_activity_feed_wallet_time_idx;
+      CREATE INDEX IF NOT EXISTS indexed_player_activity_feed_wallet_category_idx
+        ON indexed_player_activity_feed (
+          wallet, json_extract(activity_json, '$.category'),
+          CAST(transaction_at AS INTEGER), CAST(occurred_at AS INTEGER)
         );
       CREATE TABLE IF NOT EXISTS indexed_planets (
         planet_id TEXT PRIMARY KEY,
@@ -5938,10 +6037,31 @@ export class SettlementIndexer {
       );
       CREATE INDEX IF NOT EXISTS indexed_event_logs_block_idx
         ON indexed_event_logs (block_number);
+      -- The HTTP safety replay compares only a recent block range. A text block
+      -- index cannot serve its numeric predicate and used to scan the full ledger.
+      CREATE INDEX IF NOT EXISTS indexed_event_logs_numeric_block_idx
+        ON indexed_event_logs (removed, CAST(block_number AS INTEGER));
       CREATE INDEX IF NOT EXISTS indexed_event_logs_transaction_idx
         ON indexed_event_logs (transaction_hash);
-      CREATE INDEX IF NOT EXISTS indexed_event_logs_transaction_lower_idx
-        ON indexed_event_logs (lower(transaction_hash));
+      CREATE INDEX IF NOT EXISTS indexed_event_logs_transaction_state_idx
+        ON indexed_event_logs (lower(transaction_hash), removed);
+      DROP INDEX IF EXISTS indexed_event_logs_transaction_lower_idx;
+      -- Diagnostics must not scan the entire ledger on every writer health read.
+      -- The counter participates in the same transaction, including deletes and rollbacks.
+      CREATE TABLE IF NOT EXISTS indexed_event_log_count (
+        id INTEGER PRIMARY KEY CHECK (id = 1), count INTEGER NOT NULL
+      );
+      INSERT INTO indexed_event_log_count (id, count)
+        SELECT 1, COUNT(*) FROM indexed_event_logs
+        HAVING NOT EXISTS (SELECT 1 FROM indexed_event_log_count WHERE id = 1);
+      CREATE TRIGGER IF NOT EXISTS indexed_event_log_count_insert AFTER INSERT ON indexed_event_logs
+      BEGIN
+        UPDATE indexed_event_log_count SET count = count + 1 WHERE id = 1;
+      END;
+      CREATE TRIGGER IF NOT EXISTS indexed_event_log_count_delete AFTER DELETE ON indexed_event_logs
+      BEGIN
+        UPDATE indexed_event_log_count SET count = count - 1 WHERE id = 1;
+      END;
       -- Legacy production queues recover their canonical timing from QueueStarted
       -- events. Keep that lookup topic-addressable: otherwise a one-time writer
       -- repair scans the entire event ledger for every retained FIFO entry.
@@ -6067,6 +6187,14 @@ export class SettlementIndexer {
       );
       CREATE INDEX IF NOT EXISTS indexed_battle_report_read_models_status_idx
         ON indexed_battle_report_read_models (status, updated_at);
+      CREATE INDEX IF NOT EXISTS indexed_battle_report_read_models_recent_idx
+        ON indexed_battle_report_read_models (
+          CAST(block_number AS INTEGER) DESC,
+          length(ltrim(substr(json_extract(report_json, '$.logIndex'), 3), '0')) DESC,
+          lower(ltrim(substr(json_extract(report_json, '$.logIndex'), 3), '0')) DESC,
+          CAST(mission_id AS INTEGER) DESC
+        ) WHERE status = 'ready' AND report_json IS NOT NULL
+          AND mission_id = json_extract(report_json, '$.missionId');
       -- Battle reports contain stationed defenders in JSON. Materialize that reverse association so
       -- completed DefenseHold history never has to scan every report with json_each on a read.
       CREATE TABLE IF NOT EXISTS indexed_battle_report_stationed_defenders (
@@ -6373,6 +6501,8 @@ export class SettlementIndexer {
         ON contract_fleet_missions (owner, status_id);
       CREATE INDEX IF NOT EXISTS contract_fleet_missions_target_idx
         ON contract_fleet_missions (target_planet_id, status_id);
+      CREATE INDEX IF NOT EXISTS contract_fleet_missions_incoming_archive_idx
+        ON contract_fleet_missions (target_planet_id, mission_type_id, status_id, owner, return_at, mission_id);
       CREATE INDEX IF NOT EXISTS contract_fleet_missions_target_type_window_idx
         ON contract_fleet_missions (
           target_planet_id,
@@ -10541,17 +10671,27 @@ export class SettlementIndexer {
     }
   }
 
-  transactionIndexingSummary(transactionHash: string): IndexedTransactionSummary {
-    const logs = this.indexedLogsForTransaction(transactionHash);
-    return {
-      eventCount: logs.length,
-      events: logs.map((log) => ({
-        blockNumber: blockNumberToDecimal(log.blockNumber),
-        eventName: eventNameForTopic(log.topics[0]) ?? "Unknown",
-        logIndex: log.logIndex ?? "0x0"
-      })),
-      latestIndexedBlock: this.snapshot().latestIndexedBlock
-    };
+  transactionIndexingSummary(transactionHash: string, expectedLogs: readonly IndexedRpcLog[] = []): IndexedTransactionSummary {
+    return this.readConsistentSnapshot(() => {
+      const logs = this.indexedLogsForTransaction(transactionHash);
+      const identity = (log: IndexedRpcLog): string => log.transactionHash.toLowerCase() + ":"
+        + (log.logIndex === undefined ? fallbackLogIndex(log) : BigInt(log.logIndex).toString());
+      const fingerprints = new Map(logs.map((log) => [identity(log), indexedLogFingerprint(log)]));
+      const projection = this.resourceProjectionContext();
+      return {
+        eventCount: logs.length,
+        events: logs.map((log) => ({
+          blockNumber: blockNumberToDecimal(log.blockNumber),
+          eventName: eventNameForTopic(log.topics[0]) ?? "Unknown",
+          logIndex: log.logIndex ?? "0x0"
+        })),
+        latestIndexedBlock: this.metadata("latestIndexedBlock"),
+        latestSyncedBlock: projection.block,
+        materialized: projection.safeToProject && expectedLogs.every((log) =>
+          !log.removed && fingerprints.get(identity(log)) === indexedLogFingerprint(log)
+        )
+      };
+    });
   }
 
   private indexedLogsForTransaction(transactionHash: string): IndexedRpcLog[] {
@@ -13082,19 +13222,22 @@ export class SettlementIndexer {
         AND json_extract(event_json, '$.topics[3]') = ?
       ORDER BY CAST(block_number AS INTEGER) ASC
     `).all(fleetMissionLaunchedTopic, attackerTopic, attackMissionTypeTopic) as EventRow[];
-    const bodyRows = this.db.query(`
+    const launches = sortedEventRows(rows);
+    const missionTopics = [...new Set(launches.map(log => log.topics[1]).filter((topic): topic is string => Boolean(topic)))];
+    const bodyRows = chunks(missionTopics, 500).flatMap(topics => this.db.query(`
       SELECT event_json
-      FROM indexed_mission_event_logs
+      FROM indexed_mission_event_logs INDEXED BY indexed_mission_event_logs_kind_topic1_block_idx
       WHERE event_kind = 'fleet'
+        AND json_extract(event_json, '$.topics[1]') IN (${topics.map(() => '?').join(',')})
         AND lower(json_extract(event_json, '$.topics[0]')) = lower(?)
-    `).all(fleetMissionBodiesTopic) as EventRow[];
+    `).all(...topics, fleetMissionBodiesTopic) as EventRow[]);
     const moonTargetMissionIds = new Set<string>();
     for (const bodyLog of sortedEventRows(bodyRows)) {
       const identity = decodeFleetMissionBodyIdentity(bodyLog);
       if (identity?.targetIsMoon) moonTargetMissionIds.add(identity.missionId);
     }
     const byTarget = new Map<string, number[]>();
-    for (const log of sortedEventRows(rows)) {
+    for (const log of launches) {
       const launch = decodeAttackMissionLaunch(log);
       if (!launch || launch.attacker.toLowerCase() !== normalizedAttacker) continue;
       const launchedAt = blockTimestampSeconds(log);
@@ -13146,11 +13289,13 @@ export class SettlementIndexer {
     return reports;
   }
 
-  private recentBattleReports(limit: number): BattleReport[] {
+  private recentBattleReports(limit: number, offset = 0, includeParticipants = true): BattleReport[] {
     this.currentBattleReportReadModelDbVersion();
     this.currentMissionReadModelDbVersion();
     const boundedLimit = Math.max(1, Math.min(500, Math.trunc(limit) || 100));
-    const cached = this.recentBattleReportsCache.get(boundedLimit);
+    const boundedOffset = Math.max(0, Math.min(Number.MAX_SAFE_INTEGER, Math.trunc(offset) || 0));
+    const cacheKey = `${boundedLimit}:${boundedOffset}:${includeParticipants}`;
+    const cached = this.recentBattleReportsCache.get(cacheKey);
     if (
       cached
       && cached.battleReportGeneration === this.battleReportGeneration
@@ -13159,23 +13304,29 @@ export class SettlementIndexer {
       return cached.reports;
     }
 
+    // ACS aliases share one report: paginate canonical rows only. RPC log indices
+    // are hex strings, so order by normalized length/value rather than SQL CAST.
+    // Prefer the ordered index even on imported databases with stale planner stats.
     const rows = this.db.query(`
-      SELECT json_extract(event_json, '$.topics[1]') AS mission_topic,
-        MAX(CAST(block_number AS INTEGER)) AS latest_block
-      FROM indexed_mission_event_logs
-      WHERE event_kind = 'battle'
-        AND json_extract(event_json, '$.topics[1]') IS NOT NULL
-      GROUP BY mission_topic
-      ORDER BY latest_block DESC
-      LIMIT ?
-    `).all(boundedLimit) as Array<{ mission_topic: string | null }>;
-    const missionIds = rows
-      .map((row) => missionIdFromTopic(row.mission_topic))
-      .filter((missionId): missionId is string => missionId !== null);
-    const reports = this.attachBattleReportParticipantsWithoutSnapshots(this.battleReportsForMissionIds(missionIds, { includeRawFallback: false }))
+      SELECT report_json
+      FROM indexed_battle_report_read_models INDEXED BY indexed_battle_report_read_models_recent_idx
+      WHERE status = 'ready' AND report_json IS NOT NULL
+        AND mission_id = json_extract(report_json, '$.missionId')
+      ORDER BY CAST(block_number AS INTEGER) DESC,
+        length(ltrim(substr(json_extract(report_json, '$.logIndex'), 3), '0')) DESC,
+        lower(ltrim(substr(json_extract(report_json, '$.logIndex'), 3), '0')) DESC,
+        CAST(mission_id AS INTEGER) DESC
+      LIMIT ? OFFSET ?
+    `).all(boundedLimit, boundedOffset) as Array<{ report_json: string }>;
+    const parsed = rows.map(row => parseEvent<BattleReport>(row.report_json));
+    const reports = (includeParticipants ? this.attachBattleReportParticipantsWithoutSnapshots(parsed) : parsed)
       .sort(compareBattleReportsNewestFirst)
       .slice(0, boundedLimit);
-    this.recentBattleReportsCache.set(boundedLimit, {
+    if (this.recentBattleReportsCache.size >= 64) {
+      const oldest = this.recentBattleReportsCache.keys().next().value;
+      if (oldest !== undefined) this.recentBattleReportsCache.delete(oldest);
+    }
+    this.recentBattleReportsCache.set(cacheKey, {
       battleReportGeneration: this.battleReportGeneration,
       missionGeneration: this.missionGeneration,
       reports
@@ -14113,7 +14264,7 @@ export class SettlementIndexer {
     if (this.readOnly && this.indexedTableCounts) return this.indexedTableCounts;
     const counts = {
       indexedDebrisFields: this.count("indexed_debris_fields"),
-      indexedEventLogs: this.count("indexed_event_logs"),
+      indexedEventLogs: (this.db.query("SELECT count FROM indexed_event_log_count WHERE id = 1").get() as CountRow).count,
       indexedMoonChanceReports: this.count("indexed_moon_chance_reports"),
       indexedMoons: this.count("indexed_moons"),
       indexedPlanets: this.count("indexed_planets"),

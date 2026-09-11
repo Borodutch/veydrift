@@ -81,7 +81,6 @@ jobs:
           CI_SCOPE_BACKEND: ${{ steps.scope.outputs.backend }}
           CI_SCOPE_UNIVERSE: ${{ steps.scope.outputs.universe }}
           CI_SCOPE_CONTRACTS: ${{ steps.scope.outputs.contracts }}
-          CI_SCOPE_CIRCUITS: ${{ steps.scope.outputs.circuits }}
           CI_SCOPE_STORAGE_LAYOUT: ${{ steps.scope.outputs.storage_layout }}
           CI_SCOPE_FULL_BUILD: ${{ steps.scope.outputs.full_build }}
         run: |

@@ -1,6 +1,8 @@
 # Veydrift Contract Redeploy Runbook
 
-This is the canonical handoff for Base Sepolia contract redeploys. Veydrift is
+This is the canonical contract deployment handoff, including the release-specific mainnet path
+below and state-preserving redeploys. Verify the intended chain; historical Sepolia examples are
+not production configuration. Veydrift is
 in open alpha as of 2026-05-29, so redeploying is not a reset button. Preserve
 current player state, prefer proxy upgrades when available, and use this runbook
 only after the state-preservation gate in
@@ -9,6 +11,9 @@ only after the state-preservation gate in
 The goal is to keep contract addresses, backend runtime config, frontend
 ABI/runtime assumptions, migration evidence, and tab smoke checks in one
 repeatable path.
+
+Run commands from the repository root unless a package directory is explicitly named.
+No procedure here authorizes a broadcast or production operation without the required owner approval.
 
 ## Production Timed-Missile Upgrade (Only Approved Path)
 
@@ -24,8 +29,8 @@ The timed-missile release is an **in-place Transparent ProxyAdmin upgrade**. Do 
 3. From `packages/contracts`, simulate and then broadcast exactly:
 
    ```sh
-   forge script script/UpgradeGame.s.sol:UpgradeGame --rpc-url "$BASE_RPC_URL"
-   forge script script/UpgradeGame.s.sol:UpgradeGame --rpc-url "$BASE_RPC_URL" --broadcast --slow
+   forge script script/UpgradeGame.s.sol:UpgradeGame --rpc-url "${BASE_RPC_URL:?Set the verified target RPC}"
+   forge script script/UpgradeGame.s.sol:UpgradeGame --rpc-url "${BASE_RPC_URL:?Set the verified target RPC}" --broadcast --slow
    ```
 
    The script must use empty upgrade calldata and must reject a paused Game. Capture the confirmed
@@ -58,9 +63,9 @@ workpad evidence:
 
 ```sh
 node scripts/veydrift-redeploy-preflight.mjs \
-  --api-url https://api-test.veydrift.com \
-  --rpc-url "$BASE_SEPOLIA_RPC_URL" \
-  --out /tmp/veydrift-redeploy-preflight.json
+  --api-url "${DEPLOYMENT_API_URL:?Set the verified target API}" \
+  --rpc-url "${DEPLOYMENT_RPC_URL:?Set the verified target RPC}" \
+  --out "${PREFLIGHT_OUTPUT_PATH:?Choose a new evidence file}"
 ```
 
 The preflight fails closed when backend health/runtime/indexer evidence is
@@ -91,10 +96,9 @@ not a substitute for recording the evidence described below.
 5. Define rollback and verification. The Kaneo handoff must include the
    migration verification note before the task can move to done.
 
-For the VEY-313 Base Sepolia `VeydriftGame` replacement, the approved path is
-migrated redeploy. The live game is not proxy-upgradeable and no-state redeploy
-is invalid. Complete
-`docs/veydriftgame-replacement-plan-VEY-KANEO-313.md` before broadcasting.
+For a non-upgradeable target with player state, follow the
+[full-redeploy migration and rollback requirements](open-alpha-state-preservation.md#full-redeploy-migration-path).
+Do not infer upgradeability or absence of state from an earlier deployment's evidence.
 
 Full deploys through `Deploy.s.sol` also require:
 
@@ -119,11 +123,10 @@ or commit `PRIVATE_KEY`. Only run this full deploy path after section 0 is
 complete.
 
 ```sh
-cd packages/contracts
-forge script script/Deploy.s.sol:Deploy \
-  --rpc-url "$BASE_SEPOLIA_RPC_URL" \
+(cd packages/contracts && forge script script/Deploy.s.sol:Deploy \
+  --rpc-url "${DEPLOYMENT_RPC_URL:?Set the verified target RPC}" \
   --broadcast \
-  --slow
+  --slow)
 ```
 
 Capture the deploy block from the broadcast receipt. Use the first block touched by the deploy as
@@ -132,30 +135,31 @@ replay earlier events.
 
 ## 2. Produce The Manifest
 
-Run `forge build` first so the VeydriftGame ABI artifact exists, then write a manifest:
+Run `bun run build:contracts` from the root so the VeydriftGame ABI artifact exists. Populate the
+reviewed deployment environment with actual receipt blocks, addresses and activation proof; choose
+a new output path in an existing ignored evidence directory. Do not overwrite earlier evidence.
+Then generate from that environment, explicitly binding chain identity:
 
 ```sh
-node scripts/veydrift-deployment-manifest.mjs \
-  --deploy-block 41848281 \
-  --upgrade-tx 0x... \
-  --game-implementation 0x... \
-  --game-implementation-code-hash 0x... \
-  --index-from-block 41848281 \
-  --game 0x... \
-  --settlement 0x... \
-  --metal 0x... \
-  --crystal 0x... \
-  --deuterium 0x... \
-  --alliance 0x... \
-  --randomness 0x... \
-  --moon 0x... \
-  --deployer-label "Veydrift deployer wallet" \
-  --out deploy/veydrift-base-sepolia-YYYYMMDDTHHMMSSZ.json
+node scripts/veydrift-deployment-manifest.mjs --from-env \
+  --chain-id "${VEYDRIFT_CHAIN_ID:?Set the verified chain ID}" \
+  --network-name "${VEYDRIFT_NETWORK_NAME:?Set the verified network name}" \
+  --index-from-block "${VEYDRIFT_INDEX_FROM_BLOCK:?Set the reviewed replay start}" \
+  --out "${DEPLOYMENT_MANIFEST_PATH:?Choose a new manifest file}"
 ```
 
 The manifest must include chain id/network, deploy/index blocks, game and auxiliary addresses,
 resource token addresses, deployer label, timestamp, git commit, and ABI hash. The script fails if a
 required address or ABI artifact is missing.
+
+In particular, the current generator requires `VEYDRIFT_DEPLOY_BLOCK`,
+`VEYDRIFT_UPGRADE_TRANSACTION_HASH`, `VEYDRIFT_EXPECTED_GAME_IMPLEMENTATION`, and
+`VEYDRIFT_EXPECTED_GAME_IMPLEMENTATION_CODE_HASH`. Its timed-missile boundary must equal the
+confirmed activation receipt block. On an existing deployment preserve the earlier ordinary index
+start so old player history is replayed; the narrow timed-missile boundary is not its replacement.
+Include every deployed auxiliary address, especially `VEYDRIFT_REFERRAL_SYSTEM_ADDRESS` where
+configured. Do not fabricate proof or omit an active module to make validation pass. If an approved
+migration cannot satisfy the current proof schema, stop and review the tooling before cutover.
 
 ## 3. Propagate Config
 
@@ -163,13 +167,13 @@ Render the backend/frontend env payload from the manifest:
 
 ```sh
 node scripts/veydrift-apply-deployment-manifest.mjs \
-  --manifest deploy/veydrift-base-sepolia-YYYYMMDDTHHMMSSZ.json \
-  --backend-env-out /tmp/veydrift-backend.env \
-  --frontend-env-out /tmp/veydrift-frontend.env \
-  --api-url https://api-test.veydrift.com
+  --manifest "${DEPLOYMENT_MANIFEST_PATH:?Set the reviewed manifest}" \
+  --backend-env-out "${BACKEND_ENV_OUTPUT_PATH:?Choose a new output file}" \
+  --frontend-env-out "${FRONTEND_ENV_OUTPUT_PATH:?Choose a new output file}" \
+  --api-url "${DEPLOYMENT_API_URL:?Set the verified target API}"
 ```
 
-Apply every generated backend variable to the `veydrift_backend-test` EasyPanel service, including:
+Apply every generated backend variable to the verified target's managed backend service, including:
 
 - `VEYDRIFT_CONTRACT_ADDRESS`
 - `VEYDRIFT_SETTLEMENT_CONTRACT_ADDRESS`
@@ -197,9 +201,10 @@ For the timed-missile in-place upgrade, use the production ordering above: compa
 standby, proxy upgrade, exact-boundary writer/keeper, smoke, then frontend. The generic full-redeploy
 order below applies only to this full-redeploy section:
 
-1. `veydrift_backend-test`
-2. any indexer/worker process attached to the backend service
-3. `veydrift_frontend-test`
+1. The target backend, including its indexing writer and read workers under the
+   [supervisor ownership rules](deployment.md#backend-readiness).
+2. Any separately deployed compatible workers required by that target.
+3. The matching frontend, only after backend/indexer readiness.
 
 The frontend should only need `VITE_VEYDRIFT_API_URL` when it reads addresses from
 `/runtime-config`; do not hard-code redeployed contract addresses into the frontend bundle.
@@ -210,12 +215,12 @@ Run the API smoke check before manual QA:
 
 ```sh
 node scripts/veydrift-postdeploy-smoke.mjs \
-  --manifest deploy/veydrift-base-sepolia-YYYYMMDDTHHMMSSZ.json \
-  --api-url https://api-test.veydrift.com \
-  --rpc-url "$BASE_SEPOLIA_RPC_URL" \
+  --manifest "${DEPLOYMENT_MANIFEST_PATH:?Set the reviewed manifest}" \
+  --api-url "${DEPLOYMENT_API_URL:?Set the verified target API}" \
+  --rpc-url "${DEPLOYMENT_RPC_URL:?Set the verified target RPC}" \
   --referral-signer "$REFERRAL_SIGNER_ADDRESS" \
   --referral-start-price-wei "$VEYDRIFT_SETTLEMENT_START_PRICE_WEI" \
-  --wallet 0x...
+  --wallet "${SMOKE_WALLET_ADDRESS:?Set a reviewed settled wallet}"
 ```
 
 Use a smoke wallet that has already settled a home planet on the fresh deployment. If the wallet has
@@ -239,22 +244,23 @@ For backend-test fixes touching the indexer, response cache, mission lifecycle, 
 or read models, also run the fleet/defense parity guard before review handoff:
 
 ```sh
-cd apps/backend
-bun run fleet-defense:parity -- \
-  --api-url https://api-test.veydrift.com \
-  --rpc-url "$BASE_SEPOLIA_RPC_URL" \
+(cd apps/backend && bun run fleet-defense:parity -- \
+  --api-url "${DEPLOYMENT_API_URL:?Set the verified target API}" \
+  --rpc-url "${DEPLOYMENT_RPC_URL:?Set the verified target RPC}" \
   --api-timeout-ms 15000 \
   --rpc-timeout-ms 20000 \
-  --out /Users/borodutch/.openclaw/workspace/artifacts/veydrift_fleet_defense_parity_YYYYMMDDTHHMMSSZ.json
+  --out "${PARITY_OUTPUT_PATH:?Choose a new evidence file}")
 ```
 
-The guard must exit zero and the Kaneo workpad must include the artifact path. It compares Base
-Sepolia `shipCount` / `defenseCount` against both raw indexed DB rows from
+The guard must exit zero and the Kaneo workpad must include the artifact path. It compares the
+target chain's `shipCount` / `defenseCount` against both raw indexed DB rows from
 the local indexed DB (`--index-db`/`VEYDRIFT_INDEX_DB_PATH`) and warmed served `/wallet/:wallet/shipyard` plus
 `/wallet/:wallet/defenses` read models, so a PR is not accepted on UI screenshots alone.
-If the guard reports `raw_db_mismatch` (for example the 2026-06-18 planet 21 / LightLaser
-raw DB `5` vs chain `4` case), run `cd apps/backend && bun run index:seed-current` on the
-backend-test service to repair the canonical DB mirror, then rerun the parity guard and record the
+If the guard reports `raw_db_mismatch`, diagnose the cause before choosing an explicit repair. Follow
+[Index repair](development.md#index-repair): verify the exact database/chain, make a consistent
+backup, and use an offline copy or controlled writer ownership. Only then use the reviewed replay
+or current-state seeding path; never start a competing repair writer on the live service.
+Rerun the parity guard after the repair and record the
 zero-divergence artifact. If the RPC or API path fails before comparison, the guard still writes a
 non-zero failure artifact; use that artifact as the deploy/readiness blocker instead of leaving a
 hung validation run.

@@ -1,16 +1,17 @@
 import { ChevronDown, ChevronLeft, ChevronRight, ChevronsDownUp, ChevronsUpDown, Clipboard, ExternalLink, Filter, List, Undo2 } from "lucide-preact";
 import type { ComponentChildren } from "preact";
+import { useMemo } from "preact/hooks";
+import { type ActiveMissionTabKey, type MissionControlFilters, type MissionControlView, type PastMissionTabKey, ACTIVE_MISSION_DEFAULT_TAB, ACTIVE_MISSION_TABS, EMPTY_MISSION_CONTROL_FILTERS, EMPTY_PLANET_ARCHETYPE_LOOKUP, PAST_MISSION_TABS, missionPlanetCoordinateKey, missionTypeLabel, normalizeMissionControlFilters, normalizeMissionNumberSearch, persistMissionControlView, resolveMissionControlView } from "./missionControlModel";
+export { DEFAULT_MISSION_CONTROL_VIEW, EMPTY_MISSION_CONTROL_FILTERS, buildMissionControlViewQuery, missionPlanetCoordinateKey, missionSystemKeysMissingUniverseArchetypes, missionTypeLabel, normalizeMissionControlFilters, normalizeMissionNumberSearch, parseMissionControlViewParams, persistMissionControlView, readPersistedMissionControlView, resolveMissionControlView, type MissionControlDirectionFilter, type MissionControlFilters, type MissionControlView } from "./missionControlModel";
 
-import { ActionReasonNote } from "./ActionReasonNote";
-import { galaxyActionIcon } from "./GalaxyActionIcon";
 import { planetArtTypeForCoordinates } from "../data/mockUniverse";
 import { formatDuration, formatDurationUntil } from "../durationFormat";
 import { acsHoldingFuelRatePerHour, allianceDepotSustainSeconds } from "../fleetMissionRules";
 import { shipAssetByKey } from "../gameAssets";
-import { defenseCatalog, type ShipKey } from "../playableMvp";
-import type { Coordinates, PlanetType } from "../types";
-import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import { shouldRenderMissileStrikeHistory } from "../missionVisibilityRefresh";
+import { type ShipKey, defenseCatalog } from "../playableMvp";
+import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
+import type { PlanetType } from "../types";
 import {
   type BattleReport,
   type BattleReportParticipant,
@@ -25,11 +26,15 @@ import {
   type StationedDefenderSummary,
   decodeColonizationTargetId,
 } from "../walletFlow";
+import { ActionReasonNote } from "./ActionReasonNote";
+import { galaxyActionIcon } from "./GalaxyActionIcon";
+import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailableNotice";
+import { MissionControlSkeleton } from "./LoadingSkeletons";
 import {
-  MissionRouteCell,
   type MissionEndpoint,
   type MissionPlanetIdentity,
   type RouteLeg,
+  MissionRouteCell,
   endpointFromPlanetId,
   missionEndpoint,
   missionProgressPercent,
@@ -37,8 +42,6 @@ import {
   shortAddress,
 } from "./missionRoute";
 import { refreshButtonState } from "./PageHeader";
-import { MissionControlSkeleton } from "./LoadingSkeletons";
-import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailableNotice";
 
 type MissionControlActionState =
   | { status: "idle" }
@@ -74,22 +77,6 @@ export const MISSION_CONTROL_MISSION_TYPES = [
   "DefenseHold",
 ] as const;
 
-export type MissionControlDirectionFilter = "" | "outbound" | "returning";
-
-export type MissionControlFilters = {
-  direction: MissionControlDirectionFilter;
-  missionNumber: string;
-  missionType: string;
-  planetId: string;
-};
-
-export const EMPTY_MISSION_CONTROL_FILTERS: MissionControlFilters = {
-  direction: "",
-  missionNumber: "",
-  missionType: "",
-  planetId: "",
-};
-
 export function missionControlRefreshButtonState(loading: boolean): { disabled: boolean; label: "Refresh" | "Refreshing" } {
   return refreshButtonState(loading);
 }
@@ -107,21 +94,15 @@ interface MissionControlPageProps {
   actionState: MissionControlActionState;
   activePlanetId?: string | undefined;
   allActiveMissions?: FleetMissionSummary[] | undefined;
+  allActiveMissionCount?: number | null | undefined;
+  allActiveMissionsLoading?: boolean | undefined;
+  allActiveMissionsError?: string | undefined;
   canTransact: boolean;
   fleetVisibility?: FleetMissionVisibilityResponse | undefined;
   globalMissionArchive?: GlobalMissionArchiveResponse | undefined;
   globalMissionArchiveError?: string | undefined;
   globalMissionArchiveLoading?: boolean | undefined;
   globalMissionArchiveTotalEntries?: number | undefined;
-  // Canonical indexed alliance membership owns Alliance-tab visibility. Defaults to visible so
-  // legacy callers/tests that do not model membership retain their historical tab set; the playable
-  // app always passes an explicit membership-derived boolean.
-  hasAlliance?: boolean | undefined;
-  // The live alliance roster disambiguates the backend's active attack candidates into attacks
-  // launched by allies and attacks targeting allies. `undefined` preserves legacy fixture/feed
-  // behavior; the playable app always supplies the canonical roster (including an empty roster
-  // after leave/dissolve) so cooperative actions fail closed as membership changes.
-  allianceMemberAddresses?: readonly string[] | undefined;
   // False only after the selected launch planet's ship inventory has loaded and is empty. This
   // prevents a cooperative control from opening a composer that cannot possibly submit.
   hasAvailableMissionFleet?: boolean | undefined;
@@ -145,12 +126,11 @@ interface MissionControlPageProps {
   // (enabled+explained where eligible, or disabled+explained on the launch planet itself).
   onDefendPlanet?: (() => void) | undefined;
   onJoinAttack: (mission: FleetMissionSummary, targetCoords: { galaxy: number; system: number; position: number } | null) => void;
-  onActiveMissionTabChange?: ((tab: ActiveMissionTabKey) => void) | undefined;
+  onViewChange?: ((view: Partial<MissionControlView>) => void) | undefined;
   onOpenReport: (missionId: string) => void;
   onOpenReportList: () => void;
   onGlobalMissionArchivePageChange?: ((page: number) => void) | undefined;
   onIncomingAttackArchivePageChange?: ((page: number) => void) | undefined;
-  onPastMissionTabChange?: ((tab: PastMissionTabKey) => void) | undefined;
   onMissionArchivePageChange?: ((page: number) => void) | undefined;
   onMissionFiltersChange?: ((filters: MissionControlFilters) => void) | undefined;
   onMissionNumberSearchChange?: ((value: string) => void) | undefined;
@@ -164,18 +144,88 @@ interface MissionControlPageProps {
   walletPlanets?: ManagedPlanetResponse[] | undefined;
 }
 
-export function MissionControlPage({
+export function buildMissionControlData({
+  fleetVisibility, allActiveMissions = [], missionArchive, incomingAttackArchive, globalMissionArchive,
+  missionFilters, missionNumberSearch = "", planetArchetypesByCoordinate = EMPTY_PLANET_ARCHETYPE_LOOKUP,
+  walletPlanets = [], reportMissionId,
+}: Pick<MissionControlPageProps, "fleetVisibility" | "allActiveMissions" | "missionArchive" | "incomingAttackArchive" | "globalMissionArchive" | "missionFilters" | "missionNumberSearch" | "planetArchetypesByCoordinate" | "walletPlanets" | "reportMissionId">) {
+  const incoming = fleetVisibility?.incoming ?? [];
+  const outgoing = fleetVisibility?.outgoing ?? [];
+  const returning = fleetVisibility?.returning ?? [];
+  const authoritativeHasAlliance = Boolean(fleetVisibility?.allianceId && fleetVisibility.allianceId !== "0");
+  const joinableAttacks = authoritativeHasAlliance ? fleetVisibility?.joinableAttacks ?? [] : [];
+  const joinableDefenses = authoritativeHasAlliance ? fleetVisibility?.joinableDefenses ?? [] : [];
+  const completedMissions = fleetVisibility?.completedMissions ?? [];
+  const battleReports = fleetVisibility?.battleReports ?? [];
+  const activeMissionRows = chronologicalActiveMissionRows({ incoming, joinableAttacks, joinableDefenses, outgoing, returning });
+  const { alliance: allianceMissionRows, incoming: incomingMissionRows, mine: myMissionRows } = partitionActiveMissionRows(activeMissionRows);
+  const allActiveRows = allActiveMissionRows(allActiveMissions, activeMissionRows);
+  const normalizedFilters = normalizeMissionControlFilters({ ...missionFilters, missionNumber: missionFilters?.missionNumber ?? missionNumberSearch });
+  const missionFiltersActive = missionControlActiveFilterCount(normalizedFilters) > 0;
+  const allMissions = uniqueMissions([...incoming, ...outgoing, ...returning, ...joinableAttacks, ...joinableDefenses, ...completedMissions]);
+  // An active mission's battle report belongs to its live row, not Past Missions.
+  const activeMissionIds = new Set(activeMissionRows.map(row => row.mission.missionId));
+  const allActiveMissionIds = new Set(allActiveRows.map(row => row.mission.missionId));
+  const rawPastMissionRows = missionArchive?.rows ?? chronologicalPastMissionRows(completedMissions, battleReports);
+  const pastMissionRows = dedupePastMissionRows(rawPastMissionRows, activeMissionIds);
+  const rawIncomingAttackArchiveRows = incomingAttackArchive?.rows;
+  const pastCollapsedCount = rawPastMissionRows.length - pastMissionRows.length;
+  const rawGlobalPastRows = globalMissionArchive?.rows ?? [];
+  const globalPastMissionRows = dedupePastMissionRows(rawGlobalPastRows, allActiveMissionIds);
+  const globalPastCollapsedCount = rawGlobalPastRows.length - globalPastMissionRows.length;
+  // Include paginated archive endpoints so older missions retain their coordinates.
+  const lookupMissions = uniqueMissions([...allMissions, ...allActiveMissions,
+    ...missionsFromArchiveRows(rawPastMissionRows), ...missionsFromArchiveRows(rawIncomingAttackArchiveRows ?? []), ...missionsFromArchiveRows(rawGlobalPastRows)]);
+  const reports = [...battleReports, ...battleReportsFromArchiveRows(rawPastMissionRows),
+    ...battleReportsFromArchiveRows(rawIncomingAttackArchiveRows ?? []), ...battleReportsFromArchiveRows(rawGlobalPastRows)];
+  const lootByMissionId = lootByMissionIdFromReports(reports);
+  const lossesByMissionId = lossesByMissionIdFromReports(reports);
+  const selectedReport = reportMissionId ? lookupMissions.find(mission => mission.missionId === reportMissionId) : undefined;
+  const planetLookup = planetLookupFromMissionData(lookupMissions, walletPlanets, planetArchetypesByCoordinate);
+  const walletAddress = fleetVisibility?.wallet ?? missionArchive?.wallet;
+  const walletPlanetIds = walletPlanetIdSet(walletPlanets, planetLookup, walletAddress);
+  const rawIncomingAttackPastRows = rawIncomingAttackArchiveRows ?? incomingAttackPastMissionRows(pastMissionRows, walletAddress, walletPlanetIds);
+  const incomingAttackRows = dedupePastMissionRows(rawIncomingAttackPastRows, activeMissionIds);
+  const incomingAttackPastCollapsedCount = rawIncomingAttackPastRows.length - incomingAttackRows.length;
+  return {
+    incoming, outgoing, authoritativeHasAlliance, normalizedFilters, missionFiltersActive, pastCollapsedCount,
+    globalPastCollapsedCount, lootByMissionId, lossesByMissionId, selectedReport, planetLookup, walletAddress,
+    walletPlanetIds, incomingAttackRows, incomingAttackPastCollapsedCount,
+    filteredMyMissionRows: filterActiveMissionRows(myMissionRows, normalizedFilters),
+    filteredIncomingMissionRows: filterActiveMissionRows(incomingMissionRows, normalizedFilters),
+    filteredAllianceMissionRows: filterActiveMissionRows(allianceMissionRows, normalizedFilters),
+    filteredAllActiveRows: filterActiveMissionRows(allActiveRows, normalizedFilters),
+    filteredStationedIncoming: incoming.filter(mission => activeMissionRowMatchesFilters({ context: "incoming", direction: incomingMissionDirection(mission), mission }, normalizedFilters)),
+    filteredStationedOutgoing: outgoing.filter(mission => activeMissionRowMatchesFilters({ context: "outgoing", direction: "Outbound", mission }, normalizedFilters)),
+    filteredPastMissionRows: filterPastMissionRows(pastMissionRows, normalizedFilters),
+    filteredGlobalPastMissionRows: filterPastMissionRows(globalPastMissionRows, normalizedFilters),
+    filteredIncomingAttackRows: filterPastMissionRows(incomingAttackRows, normalizedFilters),
+    filterEmptyLabel: missionFilterEmptyLabel(normalizedFilters),
+  };
+}
+
+export function MissionControlPage(props: MissionControlPageProps) {
+  const data = useMemo(() => buildMissionControlData(props), [
+    props.fleetVisibility, props.allActiveMissions, props.missionArchive, props.incomingAttackArchive,
+    props.globalMissionArchive, props.missionFilters, props.missionNumberSearch,
+    props.planetArchetypesByCoordinate, props.walletPlanets, props.reportMissionId,
+  ]);
+  return renderMissionControlPage(props, data);
+}
+
+export function renderMissionControlPage({
   actionState,
   activePlanetId,
-  allianceMemberAddresses,
   allActiveMissions = [],
+  allActiveMissionCount,
+  allActiveMissionsLoading = false,
+  allActiveMissionsError,
   canTransact,
   fleetVisibility,
   globalMissionArchive,
   globalMissionArchiveError,
   globalMissionArchiveLoading = false,
   globalMissionArchiveTotalEntries,
-  hasAlliance = true,
   hasAvailableMissionFleet,
   incomingAttackArchive,
   incomingAttackArchiveError,
@@ -193,12 +243,11 @@ export function MissionControlPage({
   now,  onCounterplay,
   onDefendPlanet,
   onJoinAttack,
-  onActiveMissionTabChange,
+  onViewChange,
   onOpenReport,
   onOpenReportList,
   onGlobalMissionArchivePageChange,
   onIncomingAttackArchivePageChange,
-  onPastMissionTabChange,
   onMissionArchivePageChange,
   onMissionFiltersChange,
   onMissionNumberSearchChange,
@@ -209,119 +258,11 @@ export function MissionControlPage({
   reportUrlForMission,
   transactionUnavailableReason,
   walletPlanets = [],
-}: MissionControlPageProps) {
-  const incoming = fleetVisibility?.incoming ?? [];
-  const outgoing = fleetVisibility?.outgoing ?? [];
-  const returning = fleetVisibility?.returning ?? [];
-  // Current backends return a viewer-qualified cooperative projection: membership, attacks, and
-  // defenses all come from one indexed revision. During a rolling deploy, legacy responses omit
-  // allianceId/joinableDefenses and retain the former roster-intersection fallback.
-  const hasAuthoritativeAllianceProjection = fleetVisibility?.allianceId !== undefined
-    || fleetVisibility?.joinableDefenses !== undefined;
-  const cooperativeRows = hasAuthoritativeAllianceProjection
-    ? {
-        joinAttacks: fleetVisibility?.joinableAttacks ?? [],
-        joinDefenses: fleetVisibility?.joinableDefenses ?? [],
-      }
-    : classifyAllianceCooperativeMissions({
-        allianceMemberAddresses,
-        candidates: fleetVisibility?.joinableAttacks ?? [],
-        wallet: fleetVisibility?.wallet,
-      });
-  const authoritativeHasAlliance = fleetVisibility?.allianceId !== undefined
-    ? Boolean(fleetVisibility.allianceId && fleetVisibility.allianceId !== "0")
-    : hasAlliance;
-  const joinableAttacks = authoritativeHasAlliance ? cooperativeRows.joinAttacks : [];
-  const joinableDefenses = authoritativeHasAlliance ? cooperativeRows.joinDefenses : [];
-  const completedMissions = fleetVisibility?.completedMissions ?? [];
-  const battleReports = fleetVisibility?.battleReports ?? [];
-  const activeMissionRows = chronologicalActiveMissionRows({ incoming, joinableAttacks, joinableDefenses, outgoing, returning });
-  const {
-    alliance: allianceMissionRows,
-    incoming: incomingMissionRows,
-    mine: myMissionRows,
-  } = partitionActiveMissionRows(activeMissionRows);
-  // Universe-wide active rows for the "All" tab: the player's own/alliance missions keep their exact
-  // classification (direction + lifecycle actions); every other active mission renders read-only.
-  const allActiveRows = allActiveMissionRows(allActiveMissions, activeMissionRows);
-  const normalizedFilters = normalizeMissionControlFilters({
-    ...missionFilters,
-    missionNumber: missionFilters?.missionNumber ?? missionNumberSearch,
-  });
-  const activeFilterCount = missionControlActiveFilterCount(normalizedFilters);
-  const missionFiltersActive = activeFilterCount > 0;
-  const allMissions = uniqueMissions([...incoming, ...outgoing, ...returning, ...joinableAttacks, ...joinableDefenses, ...completedMissions]);
-  // While a mission is still active (Outbound / Returning / Recalled) it must appear ONLY in the
-  // active section. Its battle report — which can already exist for a fleet that fought and is flying
-  // home — must not also render as a Past Missions row, duplicating the live mission. The report
-  // surfaces in Past Missions only once the fleet has fully returned (VEY-KANEO-434).
-  const activeMissionIds = new Set(activeMissionRows.map((row) => row.mission.missionId));
-  const allActiveMissionIds = new Set(allActiveRows.map((row) => row.mission.missionId));
-  const fallbackPastMissionRows = chronologicalPastMissionRows(completedMissions, battleReports);
-  const rawPastMissionRows = missionArchive?.rows ?? fallbackPastMissionRows;
-  const pastMissionRows = dedupePastMissionRows(rawPastMissionRows, activeMissionIds);
-  const rawIncomingAttackArchiveRows = incomingAttackArchive?.rows;
-  // Rows collapsed by the dedupe (a mission + its battle report -> one row, or an active mission's
-  // report suppressed) so the section header count can match the actual rendered rows even with
-  // server-side pagination (VEY-399#1, VEY-KANEO-434).
-  const pastCollapsedCount = rawPastMissionRows.length - pastMissionRows.length;
-  // Universe-wide past archive ("All" past tab): same dedupe + collapse accounting, server-paginated.
-  const rawGlobalPastRows = globalMissionArchive?.rows ?? [];
-  const globalPastMissionRows = dedupePastMissionRows(rawGlobalPastRows, allActiveMissionIds);
-  const globalPastCollapsedCount = rawGlobalPastRows.length - globalPastMissionRows.length;
-  // Past missions render from the paginated archive, which can contain missions absent from the live
-  // fleet-visibility feed (older pages, returned missions no longer "active"). The backend already
-  // resolves each row's origin/target planet, so seed the lookup from those references too — otherwise
-  // their coordinates render as "External coordinates unavailable" even though the data is available.
-  const pastArchiveMissions = missionsFromArchiveRows(rawPastMissionRows);
-  const incomingAttackArchiveMissions = missionsFromArchiveRows(rawIncomingAttackArchiveRows ?? []);
-  const globalArchiveMissions = missionsFromArchiveRows(rawGlobalPastRows);
-  const lookupMissions = uniqueMissions([...allMissions, ...allActiveMissions, ...pastArchiveMissions, ...incomingAttackArchiveMissions, ...globalArchiveMissions]);
-  // Loot grabbed per mission (return leg), drawn from every visible battle report so a mission card
-  // can show "Cargo" (outbound) and "Loot" (return) on separate lines — VEY-404.
-  const lootByMissionId = lootByMissionIdFromReports([
-    ...battleReports,
-    ...battleReportsFromArchiveRows(rawPastMissionRows),
-    ...battleReportsFromArchiveRows(rawIncomingAttackArchiveRows ?? []),
-    ...battleReportsFromArchiveRows(rawGlobalPastRows),
-  ]);
-  // VEY-KANEO-495: fleet losses (attacker / defender) keyed by mission id, from the same battle
-  // reports as loot. A mission card pairs this with the outbound cargo and return-leg loot so a
-  // resolved attack — and especially a failed one whose committed fleet was wiped — shows what it
-  // cost, not just the fleet it launched with and any haul.
-  const lossesByMissionId = lossesByMissionIdFromReports([
-    ...battleReports,
-    ...battleReportsFromArchiveRows(rawPastMissionRows),
-    ...battleReportsFromArchiveRows(rawIncomingAttackArchiveRows ?? []),
-    ...battleReportsFromArchiveRows(rawGlobalPastRows),
-  ]);
-  const selectedReport = reportMissionId ? lookupMissions.find((mission) => mission.missionId === reportMissionId) : undefined;
-  const planetLookup = planetLookupFromMissionData(lookupMissions, walletPlanets, planetArchetypesByCoordinate);
-  const walletAddress = fleetVisibility?.wallet ?? missionArchive?.wallet;
-  const walletPlanetIds = walletPlanetIdSet(walletPlanets, planetLookup, walletAddress);
-  const rawIncomingAttackPastRows = rawIncomingAttackArchiveRows ?? incomingAttackPastMissionRows(pastMissionRows, walletAddress, walletPlanetIds);
-  const incomingAttackRows = dedupePastMissionRows(rawIncomingAttackPastRows, activeMissionIds);
-  const filteredMyMissionRows = filterActiveMissionRows(myMissionRows, normalizedFilters);
-  const filteredIncomingMissionRows = filterActiveMissionRows(incomingMissionRows, normalizedFilters);
-  const filteredAllianceMissionRows = filterActiveMissionRows(allianceMissionRows, normalizedFilters);
-  const filteredAllActiveRows = filterActiveMissionRows(allActiveRows, normalizedFilters);
-  const filteredStationedIncoming = incoming.filter((mission) =>
-    activeMissionRowMatchesFilters({ context: "incoming", direction: incomingMissionDirection(mission), mission }, normalizedFilters)
-  );
-  const filteredStationedOutgoing = outgoing.filter((mission) =>
-    activeMissionRowMatchesFilters({ context: "outgoing", direction: "Outbound", mission }, normalizedFilters)
-  );
-  const filteredPastMissionRows = filterPastMissionRows(pastMissionRows, normalizedFilters);
-  const filteredGlobalPastMissionRows = filterPastMissionRows(globalPastMissionRows, normalizedFilters);
-  const filteredIncomingAttackRows = filterPastMissionRows(incomingAttackRows, normalizedFilters);
-  const filterEmptyLabel = missionFilterEmptyLabel(normalizedFilters);
-  const incomingAttackPastCollapsedCount = rawIncomingAttackPastRows.length - incomingAttackRows.length;
+}: MissionControlPageProps, data = buildMissionControlData({ fleetVisibility, allActiveMissions, missionArchive, incomingAttackArchive, globalMissionArchive, missionFilters, missionNumberSearch, planetArchetypesByCoordinate, walletPlanets, reportMissionId })) {
+  const { incoming, outgoing, authoritativeHasAlliance, normalizedFilters, missionFiltersActive, pastCollapsedCount, globalPastCollapsedCount, lootByMissionId, lossesByMissionId, selectedReport, planetLookup, walletAddress, walletPlanetIds, incomingAttackRows, filteredMyMissionRows, filteredIncomingMissionRows, filteredAllianceMissionRows, filteredAllActiveRows, filteredStationedIncoming, filteredStationedOutgoing, filteredPastMissionRows, filteredGlobalPastMissionRows, filteredIncomingAttackRows, filterEmptyLabel, incomingAttackPastCollapsedCount } = data;
   const initialLoading = loading && !fleetVisibility;
-  // VEY-412: restore the previously selected tabs + past page. The panel is DOM-driven (tabs/pages
-  // toggle `hidden`), so without this the selection resets to defaults every time the component
-  // remounts on returning from a mission detail (browser back or the in-app "← Mission Control").
-  // The view comes from the URL query first (shareable, survives reload + browser back), then the
-  // sessionStorage fallback for the in-app back button which lands on bare `/mission-control`.
+  // The app controls tab/page selection, restoring URL state first and session state
+  // when navigation returns to bare `/mission-control`.
   const requestedView = initialView ?? resolveMissionControlView();
   const showAllianceTab = authoritativeHasAlliance;
   const view = missionControlViewForAllianceMembership(requestedView, showAllianceTab);
@@ -329,7 +270,7 @@ export function MissionControlPage({
   // already mounted. Repair all three runtime sources of truth synchronously: rendered view,
   // session/in-memory persistence, and the URL query. Explicit test/story views remain side-effect
   // free because they do not represent persisted app navigation.
-  if (view !== requestedView && initialView === undefined) {
+  if (view !== requestedView && initialView === undefined && fleetVisibility?.allianceId !== undefined) {
     persistMissionControlView(view);
   }
   const activeTab = view.activeTab;
@@ -383,6 +324,9 @@ export function MissionControlPage({
             activePage={view.activePage}
             activeTab={activeTab}
             allRows={filteredAllActiveRows}
+            allCount={missionFiltersActive ? (allActiveMissionsLoading ? null : filteredAllActiveRows.length) : allActiveMissionCount}
+            allLoading={allActiveMissionsLoading}
+            allError={allActiveMissionsError}
             allianceRows={filteredAllianceMissionRows}
             showAllianceTab={showAllianceTab}
             canTransact={canTransact}
@@ -395,7 +339,8 @@ export function MissionControlPage({
             myRows={filteredMyMissionRows}
             now={now}
             onCounterplay={onCounterplay}
-            onTabChange={onActiveMissionTabChange}
+            onTabChange={activeTab => onViewChange?.({ activeTab, activePage: 0 })}
+            onPageChange={page => onViewChange?.({ activePage: page - 1 })}
             onJoinAttack={onJoinAttack}
             onOpenReport={onOpenReport}
             onRecall={onRecall}
@@ -456,7 +401,8 @@ export function MissionControlPage({
             now={now}
             onAllPageChange={onGlobalMissionArchivePageChange}
             onIncomingAttackPageChange={onIncomingAttackArchivePageChange}
-            onTabChange={onPastMissionTabChange}
+            onTabChange={pastTab => onViewChange?.({ pastTab, pastPage: 0 })}
+            onClientPageChange={page => onViewChange?.({ pastPage: page - 1 })}
             onOpenReport={onOpenReport}
             onPageChange={onMissionArchivePageChange}
             pagination={missionArchive?.pagination}
@@ -477,7 +423,6 @@ export function MissionControlPage({
 }
 
 const EMPTY_PLANET_LOOKUP: ReadonlyMap<string, MissionPlanetIdentity> = new Map();
-const EMPTY_PLANET_ARCHETYPE_LOOKUP: ReadonlyMap<string, PlanetType> = new Map();
 
 function MissileStrikeSection({
   archive,
@@ -503,7 +448,7 @@ function MissileStrikeSection({
         <span className="text-[11px] tabular-nums text-slate-400">{archive?.pagination.totalEntries ?? 0}</span>
       </div>
       {error ? <p className="text-xs text-rose-200">{error}</p> : null}
-      {loading && rows.length === 0 ? <p className="text-xs text-slate-400">Loading missile strikes…</p> : null}
+      {loading && rows.length === 0 ? <MissionControlSkeleton label="Loading missile strikes" /> : null}
       {rows.length > 0 ? (
         <div className="divide-y divide-white/[0.06] overflow-hidden rounded-md border border-white/[0.08] bg-black/20">
           {rows.map((strike) => {
@@ -907,67 +852,17 @@ export type ActiveMissionRow = {
   mission: FleetMissionSummary;
 };
 
-export function classifyAllianceCooperativeMissions({
-  allianceMemberAddresses,
-  candidates,
-  wallet,
-}: {
-  allianceMemberAddresses?: readonly string[] | undefined;
-  candidates: readonly FleetMissionSummary[];
-  wallet?: string | undefined;
-}): { joinAttacks: FleetMissionSummary[]; joinDefenses: FleetMissionSummary[] } {
-  // Older feeds already label this collection `joinableAttacks` but do not provide the roster that
-  // made it joinable. Keep that contract for legacy callers; production passes an explicit roster.
-  if (allianceMemberAddresses === undefined) {
-    return { joinAttacks: [...candidates], joinDefenses: [] };
-  }
-
-  const memberAddresses = new Set(allianceMemberAddresses.map((address) => address.toLowerCase()));
-  const walletAddress = wallet?.toLowerCase();
-  const joinAttacks: FleetMissionSummary[] = [];
-  const joinDefenses: FleetMissionSummary[] = [];
-
-  for (const mission of candidates) {
-    if (mission.status !== "Outbound" || mission.missionType !== "Attack") continue;
-    const attacker = mission.owner.toLowerCase();
-    const defender = mission.targetPlanet?.owner?.toLowerCase();
-
-    if (attacker !== walletAddress && memberAddresses.has(attacker)) {
-      joinAttacks.push(mission);
-    }
-    if (
-      defender
-      && defender !== walletAddress
-      && memberAddresses.has(defender)
-      && !memberAddresses.has(attacker)
-    ) {
-      joinDefenses.push(mission);
-    }
-  }
-
-  return { joinAttacks, joinDefenses };
-}
 
 type PastMissionRow = FleetMissionArchiveEntry;
-
-const ACTIVE_MISSION_TABS = [
-  // The one active-section empty state: the tab panel says it, so no separate page-level notice
-  // repeats it two lines above.
-  { emptyLabel: "No active missions for this wallet. Use Galaxy to launch attacks, transport resources, deploy fleets, or harvest debris.", key: "mine", label: "My missions" },
-  { emptyLabel: "No fleets are currently inbound to your planets.", key: "incoming", label: "Incoming" },
-  { emptyLabel: "No joinable alliance attacks or defenses.", key: "alliance", label: "Alliance" },
-  { emptyLabel: "No active missions in the universe yet.", key: "all", label: "All" },
-] as const;
-
-type ActiveMissionTabKey = (typeof ACTIVE_MISSION_TABS)[number]["key"];
-
-const ACTIVE_MISSION_DEFAULT_TAB: ActiveMissionTabKey = "mine";
 
 function ActiveMissionSection({
   activePlanetId,
   activePage,
   activeTab,
   allRows,
+  allCount,
+  allLoading,
+  allError,
   allianceRows,
   canTransact,
   hasAvailableMissionFleet,
@@ -983,6 +878,7 @@ function ActiveMissionSection({
   onRecall,
   onResolve,
   onTabChange,
+  onPageChange,
   planetLookup,
   showAllianceTab = true,
   toolbarActions,
@@ -994,6 +890,9 @@ function ActiveMissionSection({
   activePage: number;
   activeTab: ActiveMissionTabKey;
   allRows: ActiveMissionRow[];
+  allCount?: number | null | undefined;
+  allLoading?: boolean | undefined;
+  allError?: string | undefined;
   allianceRows: ActiveMissionRow[];
   canTransact: boolean;
   hasAvailableMissionFleet?: boolean | undefined;
@@ -1008,6 +907,7 @@ function ActiveMissionSection({
   onOpenReport: (missionId: string) => void;
   onRecall: (missionId: string) => void;
   onResolve: (missionId: string, kind: ManualMissionResolutionKind) => void;
+  onPageChange?: ((page: number) => void) | undefined;
   onTabChange?: ((tab: ActiveMissionTabKey) => void) | undefined;
   planetLookup: ReadonlyMap<string, MissionPlanetIdentity>;
   showAllianceTab?: boolean | undefined;
@@ -1050,14 +950,11 @@ function ActiveMissionSection({
               className="rounded border border-white/10 bg-white/5 px-3 py-2 text-xs font-medium text-slate-300 transition hover:bg-white/10 aria-selected:border-cyan-300/35 aria-selected:bg-cyan-300/10 aria-selected:text-cyan-100 sm:py-1"
               data-active-tab-button={tab.key}
               key={tab.key}
-              onClick={(event) => {
-                showActiveMissionTab(event, tab.key);
-                onTabChange?.(tab.key);
-              }}
+              onClick={() => onTabChange?.(tab.key)}
               role="tab"
               type="button"
             >
-              {`${tab.label} (${rowsByTab[tab.key].length})`}
+              {`${tab.label} (${tab.key === "all" && allCount !== undefined ? allCount ?? "…" : rowsByTab[tab.key].length})`}
             </button>
           ))}
         </div>
@@ -1067,11 +964,12 @@ function ActiveMissionSection({
           </div>
         ) : null}
       </div>
-      {visibleTabs.filter((tab) => tab.key === activeTab).map((tab) => (
+      {activeTab === "all" && allError && allRows.length === 0 ? <Notice tone="danger">{allError}</Notice> : activeTab === "all" && allLoading && allRows.length === 0 ? <MissionControlSkeleton label="Loading active missions" /> : visibleTabs.filter((tab) => tab.key === activeTab).map((tab) => (
         <div data-active-tab-panel={tab.key} key={tab.key} role="tabpanel">
           <ActiveMissionList
             emptyLabel={missionFiltersActive ? missionFilterEmptyLabel : tab.emptyLabel}
             initialPage={activePage}
+            onPageChange={onPageChange}
             rows={rowsByTab[tab.key]}
             {...sharedRowProps}
           />
@@ -1336,6 +1234,7 @@ function ActiveMissionList({
   hasAvailableMissionFleet,
   emptyLabel,
   initialPage = 0,
+  onPageChange,
   lootByMissionId,
   lossesByMissionId,
   now,  onCounterplay,
@@ -1353,6 +1252,7 @@ function ActiveMissionList({
   canTransact: boolean;
   hasAvailableMissionFleet?: boolean | undefined;
   emptyLabel: string;
+  onPageChange?: ((page: number) => void) | undefined;
   initialPage?: number | undefined;
   lootByMissionId: ReadonlyMap<string, BattleReport["loot"]>;
   lossesByMissionId: ReadonlyMap<string, MissionLossSummary>;
@@ -1416,7 +1316,7 @@ function ActiveMissionList({
           ))}
         </div>
       ))}
-      {pagination.totalPages > 1 ? <ClientPaginationControl className="px-2.5 pb-2 sm:px-3" pagination={pagination} /> : null}
+      {pagination.totalPages > 1 ? <ClientPaginationControl className="px-2.5 pb-2 sm:px-3" pagination={pagination} onPageChange={onPageChange} /> : null}
     </div>
   );
 }
@@ -1763,7 +1663,6 @@ export function missionStatusPill(mission: FleetMissionSummary, _now: number): M
 }
 
 // Shared style for the "Open" and "Join" row actions (VEY-397#14).
-const rowActionButtonClass = "inline-flex h-10 items-center justify-center gap-2 rounded border border-white/10 bg-white/5 px-2 text-xs font-medium text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500 sm:h-8";
 const iconRowActionButtonClass = "inline-flex h-10 w-10 shrink-0 items-center justify-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500 sm:h-8 sm:w-8";
 
 // Compact absolute timestamp like "Jun 8, 9:55 AM" (VEY-399#4) — collapsing to time-only ("9:55 AM")
@@ -2280,48 +2179,14 @@ export function MissionReportDetail({
   );
 }
 
-const PAST_MISSION_TABS = [
-  { emptyLabel: "No completed missions are visible for this wallet yet.", key: "mine", label: "My missions" },
-  { emptyLabel: "No completed incoming attacks are visible for this wallet yet.", key: "incomingAttacks", label: "Incoming attacks" },
-  { emptyLabel: "No completed missions in the universe yet.", key: "all", label: "All" },
-] as const;
-
-type PastMissionTabKey = (typeof PAST_MISSION_TABS)[number]["key"];
-
-const PAST_MISSION_DEFAULT_TAB: PastMissionTabKey = "mine";
-
 // VEY-412: Mission Control remembers which tabs + page the player was on across the mission-detail
 // round-trip. The panel is DOM-driven (tabs/pages toggle `hidden` directly), so the whole component
 // remounts to defaults whenever the player returns from a mission detail — via browser back or the
 // in-app "← Mission Control" button. We persist the view in sessionStorage and read it back at
 // render so the restored selection is reflected directly in the markup, then write on every change.
-export type MissionControlView = {
-  activePage: number;
-  activeTab: ActiveMissionTabKey;
-  pastPage: number;
-  pastTab: PastMissionTabKey;
-};
-
-const MISSION_CONTROL_VIEW_STORAGE_KEY = "veydrift:mission-control:view";
 
 // VEY-412: the bare Mission Control list route. Only this exact path carries the tab/page query
 // params — never a detail (`/mission/<id>`) or report (`/mission-control/report/<id>`) route.
-const MISSION_CONTROL_ROUTE_PATH = "/mission-control";
-const MISSION_CONTROL_VIEW_PARAM_KEYS = ["at", "pt", "ap", "pp"] as const;
-
-function isMissionControlListPath(pathname: string): boolean {
-  return pathname.replace(/\/+$/, "") === MISSION_CONTROL_ROUTE_PATH;
-}
-
-const ACTIVE_MISSION_TAB_KEYS = new Set<string>(ACTIVE_MISSION_TABS.map((tab) => tab.key));
-const PAST_MISSION_TAB_KEYS = new Set<string>(PAST_MISSION_TABS.map((tab) => tab.key));
-
-export const DEFAULT_MISSION_CONTROL_VIEW: MissionControlView = {
-  activePage: 0,
-  activeTab: ACTIVE_MISSION_DEFAULT_TAB,
-  pastPage: 0,
-  pastTab: PAST_MISSION_DEFAULT_TAB,
-};
 
 export function missionControlViewForAllianceMembership(
   view: MissionControlView,
@@ -2335,153 +2200,29 @@ export function missionControlViewForAllianceMembership(
   };
 }
 
-function clampPageIndex(value: unknown): number {
-  const page = Math.trunc(Number(value));
-  return Number.isFinite(page) && page > 0 ? page : 0;
-}
-
-function missionControlViewStorage(): Storage | null {
-  // Accessing window.sessionStorage can throw in privacy mode / sandboxed iframes, and is undefined
-  // under SSR and the test renderer — fall back to defaults in every such case.
-  try {
-    if (typeof window === "undefined") return null;
-    return window.sessionStorage ?? null;
-  } catch {
-    return null;
-  }
-}
-
-export function readPersistedMissionControlView(): MissionControlView {
-  const storage = missionControlViewStorage();
-  if (!storage) return DEFAULT_MISSION_CONTROL_VIEW;
-  try {
-    const raw = storage.getItem(MISSION_CONTROL_VIEW_STORAGE_KEY);
-    if (!raw) return DEFAULT_MISSION_CONTROL_VIEW;
-    const parsed = JSON.parse(raw) as Partial<MissionControlView> | null;
-    if (!parsed || typeof parsed !== "object") return DEFAULT_MISSION_CONTROL_VIEW;
-    return {
-      activePage: clampPageIndex(parsed.activePage),
-      activeTab: ACTIVE_MISSION_TAB_KEYS.has(String(parsed.activeTab))
-        ? (parsed.activeTab as ActiveMissionTabKey)
-        : ACTIVE_MISSION_DEFAULT_TAB,
-      pastPage: clampPageIndex(parsed.pastPage),
-      pastTab: PAST_MISSION_TAB_KEYS.has(String(parsed.pastTab))
-        ? (parsed.pastTab as PastMissionTabKey)
-        : PAST_MISSION_DEFAULT_TAB,
-    };
-  } catch {
-    return DEFAULT_MISSION_CONTROL_VIEW;
-  }
-}
-
 // VEY-412 rework: in-memory mirror of the last selected view. The Mission Control panel runs inside
 // a Farcaster Mini App iframe where sessionStorage is partitioned/blocked (the guarded accessor
 // returns null), so the in-app "← Mission Control" back button — which lands on a bare
 // `/mission-control` with no query — cannot restore from the URL or storage there. This
 // module-level value survives the panel remount within the SPA session and covers that case.
-let lastMissionControlView: MissionControlView = DEFAULT_MISSION_CONTROL_VIEW;
-
-export function persistMissionControlView(partial: Partial<MissionControlView>): void {
-  const next = { ...readPersistedMissionControlView(), ...partial };
-  lastMissionControlView = next;
-  const storage = missionControlViewStorage();
-  if (storage) {
-    try {
-      storage.setItem(MISSION_CONTROL_VIEW_STORAGE_KEY, JSON.stringify(next));
-    } catch {
-      // Best-effort persistence: ignore quota/security errors.
-    }
-  }
-  // VEY-412 rework: the URL query is the source of truth — it survives browser back, hard reload, and
-  // is shareable. sessionStorage / the in-memory mirror are the fallbacks for the in-app
-  // "← Mission Control" button, which navigates to bare `/mission-control` (no query).
-  writeMissionControlViewToLocation(next);
-}
 
 // VEY-412 rework: pure (window-free) encoders so the round-trip is unit-testable. Only non-default
 // fields are written, keeping fresh-load URLs clean (`/mission-control`).
-export function parseMissionControlViewParams(query: string): Partial<MissionControlView> {
-  const params = new URLSearchParams(query);
-  const out: Partial<MissionControlView> = {};
-  const activeTab = params.get("at");
-  if (activeTab && ACTIVE_MISSION_TAB_KEYS.has(activeTab)) out.activeTab = activeTab as ActiveMissionTabKey;
-  const pastTab = params.get("pt");
-  if (pastTab && PAST_MISSION_TAB_KEYS.has(pastTab)) out.pastTab = pastTab as PastMissionTabKey;
-  if (params.has("ap")) out.activePage = clampPageIndex(params.get("ap"));
-  if (params.has("pp")) out.pastPage = clampPageIndex(params.get("pp"));
-  return out;
-}
-
-export function buildMissionControlViewQuery(view: MissionControlView): string {
-  const params = new URLSearchParams();
-  if (view.activeTab !== ACTIVE_MISSION_DEFAULT_TAB) params.set("at", view.activeTab);
-  if (view.pastTab !== PAST_MISSION_DEFAULT_TAB) params.set("pt", view.pastTab);
-  if (view.activePage > 0) params.set("ap", String(view.activePage));
-  if (view.pastPage > 0) params.set("pp", String(view.pastPage));
-  return params.toString();
-}
 
 // Read the tab/page selection encoded in the current location query, but only when we are on the bare
 // Mission Control list route. Returns null elsewhere (detail/report routes, SSR, parse errors).
-function readMissionControlViewFromLocation(): Partial<MissionControlView> | null {
-  if (typeof window === "undefined") return null;
-  try {
-    if (!isMissionControlListPath(window.location.pathname) || !window.location.search) return null;
-    const parsed = parseMissionControlViewParams(window.location.search);
-    return Object.keys(parsed).length > 0 ? parsed : null;
-  } catch {
-    return null;
-  }
-}
 
 // Reflect the view in the URL via replaceState without creating a new history entry. Guarded to the
 // bare list route so we never rewrite a detail URL.
-function writeMissionControlViewToLocation(view: MissionControlView): void {
-  if (typeof window === "undefined") return;
-  try {
-    if (!isMissionControlListPath(window.location.pathname)) return;
-    const params = new URLSearchParams(window.location.search);
-    for (const key of MISSION_CONTROL_VIEW_PARAM_KEYS) params.delete(key);
-    const viewParams = new URLSearchParams(buildMissionControlViewQuery(view));
-    viewParams.forEach((value, key) => params.set(key, value));
-    const query = params.toString();
-    const url = `${window.location.pathname}${query ? `?${query}` : ""}`;
-    window.history.replaceState(window.history.state, "", url);
-  } catch {
-    // Best-effort: a sandboxed history (some embeds) can throw on replaceState.
-  }
-}
 
 // VEY-412 rework: resolve the initial view by precedence — URL query (shareable, survives browser
 // back + reload) first; then sessionStorage when it holds a real selection; then the in-memory
 // mirror, which is the only fallback that works for the in-app back button inside the Farcaster
 // iframe (sessionStorage is blocked there). A blocked/empty storage reads back as the default, so
 // we only trust it when it differs from the default and otherwise defer to the in-memory mirror.
-export function resolveMissionControlView(): MissionControlView {
-  const persisted = readPersistedMissionControlView();
-  const base = isDefaultMissionControlView(persisted) ? lastMissionControlView : persisted;
-  const fromLocation = readMissionControlViewFromLocation();
-  return fromLocation ? { ...base, ...fromLocation } : base;
-}
-
-function isDefaultMissionControlView(view: MissionControlView): boolean {
-  return (
-    view.activeTab === DEFAULT_MISSION_CONTROL_VIEW.activeTab &&
-    view.pastTab === DEFAULT_MISSION_CONTROL_VIEW.pastTab &&
-    view.activePage === DEFAULT_MISSION_CONTROL_VIEW.activePage &&
-    view.pastPage === DEFAULT_MISSION_CONTROL_VIEW.pastPage
-  );
-}
 
 // The 0-based client page currently shown inside a tab panel, read straight from the DOM marker the
 // pagination handlers maintain. Used when persisting a tab switch so we remember the page too.
-function visibleClientPageIndex(panel: Element | null): number {
-  if (!(panel instanceof HTMLElement)) return 0;
-  const holder = panel.matches("[data-past-page-current]")
-    ? panel
-    : panel.querySelector<HTMLElement>("[data-past-page-current]");
-  return holder ? clampPageIndex(holder.dataset.pastPageCurrent) : 0;
-}
 
 // VEY-399#1: the displayed total must match the actual de-duplicated rows. The fallback pagination
 // already counts deduped rows; a server archive count is corrected by the rows collapsed on the
@@ -2539,6 +2280,7 @@ function PastMissionSection({
   onOpenReport,
   onPageChange,
   onTabChange,
+  onClientPageChange,
   pagination,
   pastPage,
   pastTab,
@@ -2571,6 +2313,7 @@ function PastMissionSection({
   onIncomingAttackPageChange?: ((page: number) => void) | undefined;
   onOpenReport: (missionId: string) => void;
   onPageChange?: ((page: number) => void) | undefined;
+  onClientPageChange?: ((page: number) => void) | undefined;
   onTabChange?: ((tab: PastMissionTabKey) => void) | undefined;
   pagination?: FleetMissionArchiveResponse["pagination"] | undefined;
   pastPage: number;
@@ -2640,10 +2383,7 @@ function PastMissionSection({
                 className="rounded border border-white/10 bg-white/5 px-3 py-2 text-xs font-medium text-slate-300 transition hover:bg-white/10 aria-selected:border-cyan-300/35 aria-selected:bg-cyan-300/10 aria-selected:text-cyan-100 sm:py-1"
                 data-past-tab-button={tab.key}
                 key={tab.key}
-                onClick={(event) => {
-                  showPastMissionTab(event, tab.key);
-                  onTabChange?.(tab.key);
-                }}
+                onClick={() => onTabChange?.(tab.key)}
                 role="tab"
                 type="button"
               >
@@ -2655,7 +2395,7 @@ function PastMissionSection({
       </div>
       {PAST_MISSION_TABS.filter((tab) => tab.key === pastTab).map((tab) => (
         <div data-past-tab-panel={tab.key} key={tab.key} role="tabpanel">
-          <PastMissionTable initialClientPage={pastPage} {...dataByTab[tab.key]} {...sharedRowProps} />
+          <PastMissionTable initialClientPage={pastPage} onClientPageChange={onClientPageChange} {...dataByTab[tab.key]} {...sharedRowProps} />
         </div>
       ))}
     </section>
@@ -2668,6 +2408,7 @@ function PastMissionTable({
   emptyLabel,
   error,
   initialClientPage = 0,
+  onClientPageChange,
   loading,
   lootByMissionId,
   lossesByMissionId,
@@ -2681,6 +2422,7 @@ function PastMissionTable({
   wallet,
   walletPlanetIds,
 }: PastMissionTabData & {
+  onClientPageChange?: ((page: number) => void) | undefined;
   initialClientPage?: number | undefined;
   lootByMissionId: ReadonlyMap<string, BattleReport["loot"]>;
   lossesByMissionId: ReadonlyMap<string, MissionLossSummary>;
@@ -2712,7 +2454,7 @@ function PastMissionTable({
         </div>
       ) : null}
       {rows.length === 0 ? (
-        <p className="px-3 py-3 text-xs text-slate-500">{loading ? "Loading completed missions…" : emptyLabel}</p>
+        loading ? <MissionControlSkeleton label="Loading completed missions" /> : <p className="px-3 py-3 text-xs text-slate-500">{emptyLabel}</p>
       ) : (
         <>
           <div>
@@ -2754,7 +2496,7 @@ function PastMissionTable({
                 className="px-2.5 pb-2 sm:px-3"
                 loading={loading}
                 nextLabel="Next mission archive page"
-                onPageChange={onPageChange}
+                onPageChange={pagination ? onPageChange : onClientPageChange}
                 pagination={currentPagination}
                 prevLabel="Previous mission archive page"
               />
@@ -2983,57 +2725,6 @@ function paginatedRows<T>(rows: T[], pageSize: number): T[][] {
   return pages;
 }
 
-function showPastMissionPage(event: Event, target: number | "next" | "previous") {
-  const button = event.currentTarget;
-  if (!(button instanceof HTMLElement)) return;
-
-  const section = button.closest<HTMLElement>("[data-past-page-current]");
-  if (!section) return;
-
-  const pages = Array.from(section.querySelectorAll<HTMLElement>("[data-past-page]"));
-  if (pages.length === 0) return;
-
-  const current = Number(section.dataset.pastPageCurrent ?? "0");
-  const nextPage = target === "next"
-    ? current + 1
-    : target === "previous"
-      ? current - 1
-      : target;
-  const clamped = Math.max(0, Math.min(pages.length - 1, nextPage));
-  section.dataset.pastPageCurrent = clamped.toString();
-
-  // VEY-412: remember the client-paginated page so back-navigation lands on it. The same control
-  // drives both the active-missions panels and the client-paginated past fallback, so persist to
-  // whichever section this button lives in.
-  if (section.closest("[data-active-tab]")) {
-    persistMissionControlView({ activePage: clamped });
-  } else if (section.closest("[data-past-tab]")) {
-    persistMissionControlView({ pastPage: clamped });
-  }
-
-  pages.forEach((page, pageIndex) => {
-    page.hidden = pageIndex !== clamped;
-  });
-
-  const label = section.querySelector<HTMLElement>("[data-past-page-label]");
-  if (label) label.textContent = `Page ${clamped + 1} of ${pages.length}`;
-
-  const pageSize = Number(section.dataset.pastPageSize ?? "25");
-  const totalEntries = Number(section.dataset.pastPageTotal ?? "0");
-  const firstEntry = totalEntries === 0 ? 0 : clamped * pageSize + 1;
-  const lastEntry = Math.min((clamped + 1) * pageSize, totalEntries);
-  const range = section.querySelector<HTMLElement>("[data-past-page-range]");
-  if (range) range.textContent = `${firstEntry}-${lastEntry} of ${totalEntries}`;
-
-  const previous = section.querySelector<HTMLButtonElement>("[data-past-page-prev]");
-  if (previous) previous.disabled = clamped === 0;
-
-  const next = section.querySelector<HTMLButtonElement>("[data-past-page-next]");
-  if (next) next.disabled = clamped === pages.length - 1;
-
-  syncMissionRowsDisclosureControl(section);
-}
-
 export function partitionActiveMissionRows(rows: ActiveMissionRow[]): {
   alliance: ActiveMissionRow[];
   incoming: ActiveMissionRow[];
@@ -3053,51 +2744,7 @@ export function partitionActiveMissionRows(rows: ActiveMissionRow[]): {
   return { alliance, incoming, mine };
 }
 
-function showActiveMissionTab(event: Event, key: string) {
-  const button = event.currentTarget;
-  if (!(button instanceof HTMLElement)) return;
-
-  const section = button.closest<HTMLElement>("[data-active-tab]");
-  if (!section) return;
-  section.dataset.activeTab = key;
-
-  section.querySelectorAll<HTMLElement>("[data-active-tab-panel]").forEach((panel) => {
-    panel.hidden = panel.dataset.activeTabPanel !== key;
-  });
-  section.querySelectorAll<HTMLElement>("[data-active-tab-button]").forEach((tab) => {
-    tab.setAttribute("aria-selected", String(tab.dataset.activeTabButton === key));
-  });
-
-  // VEY-412: remember the tab and the page of the now-visible panel so both restore on return.
-  const visiblePanel = section.querySelector<HTMLElement>(`[data-active-tab-panel="${key}"]`);
-  persistMissionControlView({ activePage: visibleClientPageIndex(visiblePanel), activeTab: key as ActiveMissionTabKey });
-  syncMissionRowsDisclosureControl(section);
-}
-
-function showPastMissionTab(event: Event, key: string) {
-  const button = event.currentTarget;
-  if (!(button instanceof HTMLElement)) return;
-
-  const section = button.closest<HTMLElement>("[data-past-tab]");
-  if (!section) return;
-  section.dataset.pastTab = key;
-
-  section.querySelectorAll<HTMLElement>("[data-past-tab-panel]").forEach((panel) => {
-    panel.hidden = panel.dataset.pastTabPanel !== key;
-  });
-  section.querySelectorAll<HTMLElement>("[data-past-tab-button]").forEach((tab) => {
-    tab.setAttribute("aria-selected", String(tab.dataset.pastTabButton === key));
-  });
-
-  // VEY-412: remember the past-missions tab and the page of the now-visible panel.
-  const visiblePanel = section.querySelector<HTMLElement>(`[data-past-tab-panel="${key}"]`);
-  persistMissionControlView({ pastPage: visibleClientPageIndex(visiblePanel), pastTab: key as PastMissionTabKey });
-  syncMissionRowsDisclosureControl(section);
-}
-
-// Shared prev/next pagination control. With `onPageChange` it drives server-side pagination
-// (mission archive); without it, it toggles client-rendered pages via `showPastMissionPage`
-// (the active-mission tabs reuse this exact pattern, 25 rows per page).
+// Shared controlled pagination for server archives and client-rendered mission lists.
 function ClientPaginationControl({
   className = "",
   loading = false,
@@ -3127,7 +2774,7 @@ function ClientPaginationControl({
           className="inline-flex h-10 w-10 items-center justify-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50 sm:h-8 sm:w-8"
           data-past-page-prev
           disabled={loading || !pagination.hasPreviousPage}
-          onClick={(event) => onPageChange ? onPageChange(pagination.page - 1) : showPastMissionPage(event, "previous")}
+          onClick={() => onPageChange?.(pagination.page - 1)}
           title="Previous page"
           type="button"
         >
@@ -3138,7 +2785,7 @@ function ClientPaginationControl({
           className="inline-flex h-10 w-10 items-center justify-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50 sm:h-8 sm:w-8"
           data-past-page-next
           disabled={loading || !pagination.hasNextPage}
-          onClick={(event) => onPageChange ? onPageChange(pagination.page + 1) : showPastMissionPage(event, "next")}
+          onClick={() => onPageChange?.(pagination.page + 1)}
           title="Next page"
           type="button"
         >
@@ -3348,20 +2995,6 @@ function pastRowMissionId(row: PastMissionRow): string {
   return row.kind === "battleReport" ? row.report.missionId : row.mission.missionId;
 }
 
-export function normalizeMissionNumberSearch(value: string): string {
-  return value.replace(/\D+/g, "");
-}
-
-export function normalizeMissionControlFilters(filters: Partial<MissionControlFilters>): MissionControlFilters {
-  const direction = filters.direction;
-  return {
-    direction: direction === "outbound" || direction === "returning" ? direction : "",
-    missionNumber: normalizeMissionNumberSearch(filters.missionNumber ?? ""),
-    missionType: (filters.missionType ?? "").trim(),
-    planetId: (filters.planetId ?? "").replace(/\D+/g, "").replace(/^0+(?=\d)/, ""),
-  };
-}
-
 export function missionControlActiveFilterCount(filters: Partial<MissionControlFilters>): number {
   const normalized = normalizeMissionControlFilters(filters);
   return [
@@ -3500,7 +3133,6 @@ function missionTypeTone(missionType: string): string {
   if (["AcsDefend", "DefenseHold", "Intercept"].includes(missionType)) return "border-violet-300/25 bg-violet-300/10 text-violet-100";
   return "border-slate-300/20 bg-slate-300/10 text-slate-100";
 }
-
 
 function walletReason(canTransact: boolean, transactionUnavailableReason?: string | undefined): string | undefined {
   return canTransact ? undefined : transactionUnavailableReason ?? "Wallet or mission actions unavailable.";
@@ -3645,33 +3277,6 @@ function lossesByMissionIdFromReports(reports: BattleReport[]): Map<string, Miss
   return lookup;
 }
 
-export function missionPlanetCoordinateKey(coords: Coordinates): string {
-  return `${coords.galaxy}:${coords.system}:${coords.position}`;
-}
-
-export function missionSystemKeysMissingUniverseArchetypes(
-  missions: readonly FleetMissionSummary[],
-  planetArchetypesByCoordinate: ReadonlyMap<string, PlanetType> = EMPTY_PLANET_ARCHETYPE_LOOKUP,
-): string[] {
-  const systemKeys = new Set<string>();
-  for (const mission of missions) {
-    addMissionReferenceSystemKey(systemKeys, mission.originPlanet, planetArchetypesByCoordinate);
-    addMissionReferenceSystemKey(systemKeys, mission.targetPlanet, planetArchetypesByCoordinate);
-  }
-  return Array.from(systemKeys).sort();
-}
-
-function addMissionReferenceSystemKey(
-  systemKeys: Set<string>,
-  ref: FleetMissionPlanetReference | null | undefined,
-  planetArchetypesByCoordinate: ReadonlyMap<string, PlanetType>,
-): void {
-  if (!ref || ref.archetype) return;
-  const coords = { galaxy: ref.galaxy, position: ref.position, system: ref.system };
-  if (planetArchetypesByCoordinate.has(missionPlanetCoordinateKey(coords))) return;
-  systemKeys.add(`${ref.galaxy}:${ref.system}`);
-}
-
 function planetLookupFromMissionData(
   missions: FleetMissionSummary[],
   walletPlanets: ManagedPlanetResponse[],
@@ -3712,13 +3317,6 @@ function identityFromMissionPlanet(
     owner: planet.owner,
     ownerDisplayName: planet.ownerDisplayName ?? null,
   };
-}
-
-export function missionTypeLabel(missionType: string): string {
-  if (missionType === "AcsAttack") return "Group attack";
-  if (missionType === "AcsDefend") return "Group defense";
-  if (missionType === "DefenseHold") return "Stationed defense";
-  return missionType.replace(/([A-Z])/g, " $1").trim();
 }
 
 type MissionDirection = "incoming" | "neutral" | "outgoing";

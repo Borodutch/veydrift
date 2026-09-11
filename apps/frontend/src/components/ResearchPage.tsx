@@ -1,26 +1,28 @@
 import { Info, PackagePlus, X } from "lucide-preact";
-import { useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
-import { escapeCloseRef } from "./modalDismiss";
+import { useState } from "preact/hooks";
+import { supplyResourceShortfall, type SupplyResources } from "../batchSupplyPlanner";
+import { formatMissingResources } from "../buildingDetails";
+import { researchQueueForDisplay as chainResearchQueueForDisplay, resourcesFromChain } from "../chainState";
+import { constructionQueueForDisplay, type ConstructionProgress } from "../constructionProgress";
+import { formatDuration, } from "../durationFormat";
 import type { PlayableState, ResearchKey, ResearchRequirement, Resources } from "../playableMvp";
 import {
   buildingCatalog,
   canAfford,
   energyBalance,
-  researchDurationEstimate,
-  researchEffectRows,
   researchCatalog,
   researchCost,
+  researchDurationEstimate,
+  researchEffectRows,
   researchLabRequirementFor,
   researchRequirementsFor,
   researchUnlockRows,
   unmetResearchRequirement,
 } from "../playableMvp";
+import { timestampToMs } from "../timestampFormat";
 import { walletRecoveryActionMessage, type ChainResearchState } from "../walletFlow";
-import { researchQueueForDisplay as chainResearchQueueForDisplay } from "../chainState";
-import { formatMissingResources } from "../buildingDetails";
-import { formatDuration, formatDurationUntil } from "../durationFormat";
-import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
+import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailableNotice";
 import {
   InspectCatalogTile,
   InspectDetailHero,
@@ -30,13 +32,10 @@ import {
   InspectTwoColumnLayout,
   useInspectDetailSelection,
 } from "./InspectProgressLayout";
-import { refreshButtonState } from "./PageHeader";
-import { QueueProgressPanel } from "./QueueProgressPanel";
-import { constructionQueueForDisplay, type ConstructionProgress } from "../constructionProgress";
-import { RequirementFlairs, type RequirementFlair, type RequirementTarget } from "./RequirementFlairs";
 import { CatalogSkeleton } from "./LoadingSkeletons";
-import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailableNotice";
-import { supplyResourceShortfall, type SupplyResources } from "../batchSupplyPlanner";
+import { escapeCloseRef } from "./modalDismiss";
+import { QueueProgressPanel } from "./QueueProgressPanel";
+import { RequirementFlairs, type RequirementFlair, type RequirementTarget } from "./RequirementFlairs";
 
 const formatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 const researchGroups = ["Basic", "Drive", "Advanced", "Combat"];
@@ -65,9 +64,6 @@ const researchDescriptions: Partial<Record<ResearchKey, string>> = {
   armor: "Improves hull materials and structural resilience.",
 };
 
-export function researchRefreshButtonState(loading: boolean): { disabled: boolean; label: "Refresh" | "Refreshing" } {
-  return refreshButtonState(loading);
-}
 
 interface ResearchPageProps {
   actionState: ResearchActionState;
@@ -1087,7 +1083,7 @@ export function researchViewState(
     // and defense panels now read — falling back to the raw settled `resources` only when the
     // accrued field is absent. This is the fallback the gate uses when `spendableResources` is
     // unavailable; reading the raw snapshot here is what let the panel disagree with the top bar.
-    resources: toResources(researchState.resourcesAsOfNow ?? researchState.resources) ?? { metal: 0, crystal: 0, deuterium: 0 },
+    resources: resourcesFromChain(researchState.resourcesAsOfNow ?? researchState.resources) ?? { metal: 0, crystal: 0, deuterium: 0 },
   };
 }
 
@@ -1119,7 +1115,7 @@ function researchQueueForDisplay(
 
 function chainCostFor(researchState: ChainResearchState | null, technologyId: number): Resources | undefined {
   const row = researchState?.technologies.find((item) => item.id === technologyId);
-  return toResources(row?.cost);
+  return resourcesFromChain(row?.cost);
 }
 
 function chainDurationFor(researchState: ChainResearchState | null, technologyId: number): number | undefined {
@@ -1127,14 +1123,6 @@ function chainDurationFor(researchState: ChainResearchState | null, technologyId
   return typeof row?.durationSeconds === "number" ? row.durationSeconds : undefined;
 }
 
-function toResources(resources: ChainResearchState["resources"] | ChainResearchState["technologies"][number]["cost"] | null | undefined): Resources | undefined {
-  if (!resources) return undefined;
-  return {
-    metal: Number(resources.metal),
-    crystal: Number(resources.crystal),
-    deuterium: Number(resources.deuterium),
-  };
-}
 
 export function formatResearchRequirements(requirements: ResearchRequirement[]): string {
   return requirements.length > 0 ? requirements.map(formatRequirement).join(", ") : "None";

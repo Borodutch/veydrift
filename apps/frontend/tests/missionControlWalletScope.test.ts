@@ -4,14 +4,15 @@ describe("VEY-KANEO-836 Mission Control wallet scope", () => {
   test("keeps active and past mission state outside the selected-planet cache", async () => {
     const appSource = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.url)).text();
     const stateStart = appSource.indexOf("// Mission Control is a commander-level surface.");
-    const stateEnd = appSource.indexOf("const publicBattleReportsSnapshot", stateStart);
+    const stateEnd = appSource.indexOf("const { snapshot: publicBattleReportsSnapshot,", stateStart);
     const missionState = appSource.slice(stateStart, stateEnd);
 
     expect(stateStart).toBeGreaterThan(-1);
-    expect(missionState).toContain("const fleetVisibilitySnapshot = useBackendDataSnapshot");
-    expect(missionState).toContain("const missionArchiveSnapshot = useBackendDataSnapshot");
-    expect(missionState).toContain("const allActiveMissionsSnapshot = useBackendDataSnapshot");
-    expect(missionState).toContain("const globalMissionArchiveSnapshot = useBackendDataSnapshot");
+    expect(missionState).toContain("const { snapshot: fleetVisibilitySnapshot } = useBackendDataQuery");
+    expect(missionState).toContain("const { snapshot: missionArchiveSnapshot, isInitialLoading: missionArchiveLoading } = useBackendDataQuery");
+    expect(missionState).toContain("const { snapshot: allActiveMissionsSnapshot, isInitialLoading: allActiveMissionsLoading } = useBackendDataQuery");
+    expect(missionState).toContain("const { snapshot: globalMissionArchiveSnapshot, isInitialLoading: globalMissionArchiveLoading } = useBackendDataQuery");
+    expect(stateEnd).toBeGreaterThan(stateStart);
     // Archetypes are now derived from canonical system snapshots instead of
     // a Mission Control-local response cache.
     expect(appSource).toContain("const missionUniverseSnapshots = useBackendDataSnapshots<ApiSystemResponse>");
@@ -44,10 +45,10 @@ describe("VEY-KANEO-836 Mission Control wallet scope", () => {
     );
     const refresher = appSource.slice(
       appSource.indexOf("const refreshMissionControl = useCallback"),
-      appSource.indexOf("const refreshFinishedBuildingState", appSource.indexOf("const refreshMissionControl = useCallback")),
+      appSource.indexOf("\n  useEffect(", appSource.indexOf("const refreshMissionControl = useCallback")),
     );
 
-    expect(archiveLoader).toContain("planetId: normalizedMissionFilters.planetId");
+    expect(appSource).toContain("planetId: normalizedMissionFilters.planetId");
     expect(archiveLoader).not.toContain("activePlanetId");
     expect(refresher).not.toContain("activePlanetId");
     expect(appSource).toContain("onRefresh={() => void refreshMissionControl()}");

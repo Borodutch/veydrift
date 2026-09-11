@@ -11,13 +11,13 @@ import {
   isSettledPlanetLog
 } from "./evm";
 import type { RpcLog } from "./evm";
-import type { SettlementIndexer } from "./indexer";
+import { projectionInvalidationReasons, type SettlementIndexer } from "./indexer";
 import { emitObservabilityEvent } from "./observability";
 
 // HTTP catch-up source. `getHeadBlock` resolves the current chain head (eth_blockNumber) and
 // `listContractLogs` returns every indexed-contract log in a block range (chunked internally). The
-// primary live path is a websocket log subscriber when configured; this backfiller remains the durable
-// cursor recovery path for startup gaps, websocket setup failures, and detected block gaps. applyLog
+// websocket subscriber only wakes this canonical HTTP scan; HTTP also runs independently for
+// startup gaps, websocket failures, and missed notifications. applyLog
 // dedups by txHash:logIndex, so overlapping ranges are idempotent. Runtime mutation must stay event-only:
 // canonical state reads are reserved for a one-time operator heal, never for live log handling.
 type LogBackfiller = {
@@ -45,6 +45,9 @@ type ChainSyncIndexer = Partial<Pick<SettlementIndexer,
   | "applyLog"
   | "clearPendingReconciliationReason"
   | "markStale"
+  | "setTransportStale"
+  | "invalidatedProjectionAnchor"
+  | "recoverProjectionAnchor"
   | "recordReferralHistoryBackfill"
   | "referralHistoryBackfillStatus"
   | "recordPaidAllianceInviteHistoryBackfill"
@@ -59,6 +62,7 @@ type ChainSyncIndexer = Partial<Pick<SettlementIndexer,
   | "invalidateResourceProjectionWatermark"
   | "missingCanonicalGameLogs"
   | "recordResourceProjectionWatermark"
+  | "planet"
 >>;
 
 const PAID_ALLIANCE_REORG_OVERLAP_BLOCKS = 64n;
@@ -74,7 +78,6 @@ const GENERIC_POLL_REPLAY_BLOCKS = 64n;
 // a bounded in-process ledger of successfully handled non-removed logs so the second source can skip the
 // exact same event while still admitting a sibling the websocket did not deliver.
 const RECENT_LOG_IDENTITY_LIMIT = 16_384;
-const WEBSOCKET_REMOVAL_RECONCILIATION_REASON = "resource_projection_invalidated: websocket removed log";
 
 export type ReferralHistoryBackfillSnapshot = {
   completedAt: string | null;
@@ -86,6 +89,8 @@ export type ReferralHistoryBackfillSnapshot = {
 };
 
 export type ChainSyncSnapshot = {
+  /** Indexed reads are usable; independent of the live subscription transport. */
+  ready: boolean;
   connected: boolean;
   eventsReceived: number;
   lastConnectedAt: string | null;
@@ -131,9 +136,8 @@ export type ChainSyncSnapshot = {
   pollFailureCount: number;
   reorgDetectedAt: string | null;
   subscribedAddresses: string[];
-  // Retained for /health-readiness compatibility (backendReadiness gates on these). Under the polling
-  // ingester both mirror `connected`: once the poll loop has fetched head and is applying logs, the
-  // backend is "subscribed" to heads and logs via the poll, just over HTTP instead of a websocket.
+  // Diagnostic transport details, not readiness gates. Polling can be healthy
+  // without a websocket head subscription.
   subscribedToHeads: boolean;
   subscribedToLogs: boolean;
   pollingEnabled: boolean;
@@ -148,6 +152,9 @@ export type ChainSyncEvent = {
   resourceChanges?: ChainResourceChange[];
   transactionHash?: string;
   walletPlanetsChanged?: boolean;
+  /** Omitted for events whose full impact cannot yet be determined. */
+  wallets?: string[];
+  planetIds?: string[];
 };
 
 export type ChainResourceChange = {
@@ -157,7 +164,7 @@ export type ChainResourceChange = {
   transactionHash: string;
 };
 
-type ChainSyncListener = (event: ChainSyncEvent) => void;
+type ChainSyncListener = (event: ChainSyncEvent, frame: Uint8Array) => void;
 
 function resourceChangeForLog(log: RpcLog): ChainResourceChange | undefined {
   if (isPlanetSettledLog(log)) {
@@ -190,6 +197,16 @@ function resourceChangeForLog(log: RpcLog): ChainResourceChange | undefined {
   return undefined;
 }
 
+// These ABI events all have planetId in their first indexed argument.
+// Unknown/global events deliberately retain the broad invalidation fallback.
+const PLANET_SCOPED_EVENTS = new Set([
+  "PlanetSettled", "MoonResourcesChanged", "MoonResourcesSettled",
+  "BuildingStarted", "BuildingCompleted", "DefenseQueued", "DefenseCompleted",
+  "ShipQueued", "ShipCompleted", "ShipQueueTimingSet", "PlanetShipCountChanged",
+  "PlanetDefenseCountChanged", "MoonShipCountChanged", "MoonBuildingStarted",
+  "MoonBuildingCompleted", "MoonDefenseQueued", "MoonDefenseCompleted", "PlanetTemperatureChanged"
+]);
+
 // Consecutive failed polls before /health readiness is downgraded. A single transient getLogs /
 // eth_blockNumber blip must not flap the backend out of "ready" (and trip the redeploy health gate);
 // a sustained RPC outage should. lastError surfaces immediately on the very first failure regardless.
@@ -198,6 +215,9 @@ const HEAD_STALL_FAILURE_THRESHOLD = 30;
 const HANDLER_DIAGNOSTICS_WINDOW_MS = 60_000;
 
 export class ChainSyncService {
+  // Retain invalidation across a failed specialized backfill. A later poll
+  // must still notify readers even when all generic logs are now duplicates.
+  private pendingChainEvent: ChainSyncEvent | undefined;
   private connected = false;
   private eventsReceived = 0;
   private lastConnectedAt: string | null = null;
@@ -219,7 +239,6 @@ export class ChainSyncService {
   private pollInProgress = false;
   private pollFailureCount = 0;
   private headStallPollCount = 0;
-  private headStallReason: string | null = null;
   private activeSource: ChainSyncLiveSource | null = null;
   private referralHistoryBackfill: ReferralHistoryBackfillSnapshot = {
     completedAt: null,
@@ -289,7 +308,9 @@ export class ChainSyncService {
   }
 
   snapshot(): ChainSyncSnapshot {
+    const indexed = this.indexer?.snapshot?.();
     return {
+      ready: this.connected && indexed?.safeToServeIndexedState === true,
       connected: this.connected,
       eventsReceived: this.eventsReceived,
       lastConnectedAt: this.lastConnectedAt,
@@ -301,8 +322,8 @@ export class ChainSyncService {
       lastGetLogsDurationMs: this.lastGetLogsDurationMs,
       lastGetLogsRange: this.lastGetLogsRange,
       latestHeadBlock: this.latestHeadBlock,
-      latestIndexedBlock: this.indexer?.snapshot?.().latestIndexedBlock ?? null,
-      indexedRevision: this.indexer?.snapshot?.().indexedRevision ?? "0",
+      latestIndexedBlock: indexed?.latestIndexedBlock ?? null,
+      indexedRevision: indexed?.indexedRevision ?? "0",
       latestSyncedBlock: this.latestSyncedBlock,
       pollBacklogBlocks: this.pollBacklogBlocks(),
       pollBacklogMs: this.pollBacklogMs(),
@@ -320,8 +341,8 @@ export class ChainSyncService {
       pollFailureCount: this.pollFailureCount,
       reorgDetectedAt: this.reorgDetectedAt,
       subscribedAddresses: this.subscribedAddresses(),
-      subscribedToHeads: this.connected,
-      subscribedToLogs: this.liveListenerConnected || this.connected,
+      subscribedToHeads: false,
+      subscribedToLogs: this.liveListenerConnected,
       pollingEnabled: Boolean(this.options.logBackfiller) && Boolean(this.pollTimer),
       referralHistoryBackfill: { ...this.referralHistoryBackfill },
       paidAllianceInviteHistoryBackfill: { ...this.paidAllianceInviteHistoryBackfill },
@@ -354,6 +375,7 @@ export class ChainSyncService {
 
   stop(): void {
     this.stopped = true;
+    this.connected = false;
     this.liveListenerGeneration += 1;
     this.liveUnsubscribe?.();
     this.liveUnsubscribe = undefined;
@@ -372,16 +394,13 @@ export class ChainSyncService {
   }
 
   eventStream(signal?: AbortSignal): ReadableStream<Uint8Array> {
-    const encoder = new TextEncoder();
-    const encode = (event: string, data: unknown) =>
-      encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     let removeListener: (() => void) | undefined;
     let removeAbortListener: (() => void) | undefined;
     let closed = false;
 
     return new ReadableStream<Uint8Array>({
       start: (controller) => {
-        const cleanup = () => {
+        const cleanup = (error?: Error) => {
           if (closed) return;
           closed = true;
           removeListener?.();
@@ -389,7 +408,8 @@ export class ChainSyncService {
           removeAbortListener?.();
           removeAbortListener = undefined;
           try {
-            controller.close();
+            if (error) controller.error(error);
+            else controller.close();
           } catch {
             // The browser/client may already have torn the stream down.
           }
@@ -400,16 +420,21 @@ export class ChainSyncService {
             cleanup();
             return;
           }
-          signal.addEventListener("abort", cleanup, { once: true });
-          removeAbortListener = () => signal.removeEventListener("abort", cleanup);
+          const onAbort = () => cleanup();
+          signal.addEventListener("abort", onAbort, { once: true });
+          removeAbortListener = () => signal.removeEventListener("abort", onAbort);
         }
 
-        controller.enqueue(encode("sync-status", this.snapshot()));
-        removeListener = this.addListener((event) => {
+        controller.enqueue(this.encodeStreamEvent({ kind: "sync-status", blockNumber: this.latestSyncedBlock }));
+        removeListener = this.addListener((_event, frame) => {
+          // A slow consumer must reconnect and resync, not retain an unbounded
+          // event backlog or silently lose invalidations while appearing healthy.
+          if ((controller.desiredSize ?? 0) < frame.byteLength) {
+            cleanup(new Error("Chain event consumer is too slow; reconnect to resynchronize."));
+            return;
+          }
           try {
-            controller.enqueue(
-              encode(event.kind, event.kind === "sync-status" ? this.snapshot() : event)
-            );
+            controller.enqueue(frame);
           } catch {
             cleanup();
           }
@@ -422,7 +447,7 @@ export class ChainSyncService {
         removeAbortListener = undefined;
         closed = true;
       }
-    });
+    }, { highWaterMark: 64 * 1024, size: frame => frame?.byteLength ?? 0 });
   }
 
   // One poll pass: resolve head, ingest a bounded overlap through head, advance the cursor.
@@ -454,17 +479,19 @@ export class ChainSyncService {
           ? null
           : BigInt(projection.resourceProjectionBlock);
         if (projectionBlock !== null && projection.resourceProjectionHash) {
+          if (projectionBlock > head) {
+            this.indexer.setTransportStale?.(`rpc_head_behind:${head}`);
+            throw new Error(`RPC head ${head} is behind the verified projection ${projectionBlock}`);
+          }
           const canonicalProjectionAnchor = projectionBlock === head
             ? headAnchor
-            : projectionBlock < head
-              ? await backfiller.getBlockProjectionAnchor?.(projectionBlock) ?? null
-              : null;
+            : await backfiller.getBlockProjectionAnchor?.(projectionBlock) ?? null;
           if (
-            projectionBlock > head
-            || canonicalProjectionAnchor === null
+            canonicalProjectionAnchor === null
             || canonicalProjectionAnchor.hash.toLowerCase() !== projection.resourceProjectionHash.toLowerCase()
           ) {
-            this.indexer.invalidateResourceProjectionWatermark("canonical block anchor changed");
+            this.indexer.invalidateResourceProjectionWatermark("anchorChanged");
+            this.timedMissilePayloadHistoryVerifiedThisRun = false;
           }
         }
       }
@@ -484,12 +511,14 @@ export class ChainSyncService {
       }
 
       const fromBlock = this.genericPollFromBlock(head);
+      let genericRange: { fromBlock: bigint; logs: RpcLog[] } | undefined;
       if (head >= fromBlock) {
         this.lastGetLogsRange = { fromBlock: fromBlock.toString(), toBlock: head.toString() };
         const getLogsStartedAt = Date.now();
         let logs: RpcLog[];
         try {
           logs = await backfiller.listContractLogs(fromBlock, head);
+          genericRange = { fromBlock, logs };
         } finally {
           this.lastGetLogsDurationMs = Date.now() - getLogsStartedAt;
         }
@@ -514,30 +543,40 @@ export class ChainSyncService {
         // generic range that was not durably ingested.
         this.cursor = maxBigInt(this.cursor, head);
         this.latestSyncedBlock = maxBlockString(this.latestSyncedBlock, head);
-        if (applied > 0) {
-          this.notify({
+        if (applied > 0 || missingCanonicalLogs.length > 0) {
+          const scoped = missingCanonicalLogs.length === 0 && logs.every(log => PLANET_SCOPED_EVENTS.has(eventNameForTopic(log.topics[0]) ?? ""));
+          const planetIds = scoped ? [...new Set(logs.map(log => BigInt(log.topics[1]!).toString()))] : [];
+          const owners = planetIds.map(id => this.indexer?.planet?.(id)?.owner);
+          const previous = this.pendingChainEvent;
+          const completeScope = scoped && owners.every(Boolean) && (!previous || previous.wallets !== undefined);
+          this.pendingChainEvent = {
             kind: "chain-event",
             blockNumber: this.latestSyncedBlock,
             ...(lastHash ? { transactionHash: lastHash } : {}),
-            ...(resourceChanges.length > 0 ? { resourceChanges } : {}),
-            ...(walletPlanetsChanged ? { walletPlanetsChanged } : {})
-          });
+            resourceChanges: [...new Map([...(previous?.resourceChanges ?? []), ...resourceChanges].map(change => [`${change.bodyKind}:${change.planetId}`, change])).values()],
+            walletPlanetsChanged: walletPlanetsChanged || previous?.walletPlanetsChanged || false,
+            ...(completeScope ? {
+              wallets: [...new Set([...(previous?.wallets ?? []), ...owners.flatMap(owner => owner ? [owner.toLowerCase()] : [])])],
+              planetIds: [...new Set([...(previous?.planetIds ?? []), ...planetIds])]
+            } : {})
+          };
         }
       }
 
       await this.ensureReferralHistoryBackfilled(head, backfiller, applyLog);
       await this.ensurePaidAllianceInviteHistoryBackfilled(head, backfiller, applyLog);
-      await this.ensureTimedMissilePayloadHistoryBackfilled(head, backfiller, applyLog);
+      await this.ensureTimedMissilePayloadHistoryBackfilled(head, backfiller, applyLog, headAnchor, genericRange);
       // Publish the projection clock only after every indexed log source has durably scanned through
       // this block. A crash/failure before here leaves the old timestamp in place (conservative),
       // while publishing it earlier could combine block-N time with pre-N resource state.
+      let materialized = headAnchor === null;
       if (headAnchor !== null && backfiller.getBlockProjectionAnchor) {
         // Re-read the exact head after ingestion. A same-height reorg during getLogs must not publish
         // the pre-scan block timestamp/hash against post-scan state. The indexer additionally rejects
         // this publication atomically if websocket ingestion has already advanced beyond `head`.
         const verifiedHeadAnchor = await backfiller.getBlockProjectionAnchor(head);
         if (verifiedHeadAnchor.hash.toLowerCase() !== headAnchor.hash.toLowerCase()) {
-          this.indexer?.invalidateResourceProjectionWatermark?.("canonical head changed during scan");
+          this.indexer?.invalidateResourceProjectionWatermark?.("headChanged");
         } else {
           const watermarkRecorded = this.indexer?.recordResourceProjectionWatermark?.(
             head.toString(),
@@ -545,12 +584,22 @@ export class ChainSyncService {
             verifiedHeadAnchor.hash
           );
           if (watermarkRecorded) {
-            this.indexer?.clearPendingReconciliationReason?.(WEBSOCKET_REMOVAL_RECONCILIATION_REASON);
+            const invalidated = this.indexer?.invalidatedProjectionAnchor?.();
+            if (invalidated && BigInt(invalidated.block) <= head) {
+              const canonical = await backfiller.getBlockProjectionAnchor(BigInt(invalidated.block));
+              this.indexer?.recoverProjectionAnchor?.({ block: invalidated.block, hash: canonical.hash });
+            }
+            this.indexer?.clearPendingReconciliationReason?.(projectionInvalidationReasons.removedLog);
+            this.indexer?.setTransportStale?.(null);
+            materialized = true;
           }
         }
       }
       this.markConnected();
-      this.clearRecoveredHeadStall();
+      if (materialized && this.pendingChainEvent) {
+        this.notify({ ...this.pendingChainEvent, blockNumber: this.latestSyncedBlock });
+        this.pendingChainEvent = undefined;
+      }
       this.notify({ kind: "sync-status", blockNumber: this.latestSyncedBlock });
     } catch (error) {
       // No self-heal escalation: record the failure, leave the cursor put, and let the next interval
@@ -693,7 +742,9 @@ export class ChainSyncService {
   private async ensureTimedMissilePayloadHistoryBackfilled(
     head: bigint,
     backfiller: LogBackfiller,
-    applyLog: NonNullable<SettlementIndexer["applyLog"]>
+    applyLog: NonNullable<SettlementIndexer["applyLog"]>,
+    headAnchor: { hash: string; timestamp: string } | null,
+    genericRange?: { fromBlock: bigint; logs: RpcLog[] }
   ): Promise<void> {
     if (this.config.timedMissileStandby) return;
     const contractAddress = this.config.gameContractAddress;
@@ -730,23 +781,34 @@ export class ChainSyncService {
       this.timedMissilePayloadHistoryVerifiedThisRun
       && !current.required
       && markerThroughBlock !== null
+      && markerThroughBlock <= head
       && head < markerThroughBlock + TIMED_MISSILE_PAYLOAD_REPLAY_INTERVAL_BLOCKS
     ) return;
-
-    const scanFrom = !this.timedMissilePayloadHistoryVerifiedThisRun || current.required || markerThroughBlock === null
-      ? fromBlock
-      : maxBigInt(
-          fromBlock,
-          markerThroughBlock > TIMED_MISSILE_PAYLOAD_REPLAY_BLOCKS
-            ? markerThroughBlock - TIMED_MISSILE_PAYLOAD_REPLAY_BLOCKS
-            : 0n
-        );
 
     this.timedMissilePayloadHistoryBackfill.inProgress = true;
     if (current.required) this.connected = false;
     try {
-      const isStartupVerification = !this.timedMissilePayloadHistoryVerifiedThisRun;
-      const logs = await listLogs.call(backfiller, scanFrom, head);
+      // A checkpoint is reusable across restarts only when its exact block remains
+      // canonical. Old/unanchored markers and offline reorgs require a full audit.
+      const markerHash = current.marker?.throughBlockHash;
+      const canonicalMarker = !current.required && markerThroughBlock !== null && markerThroughBlock <= head && markerHash && backfiller.getBlockProjectionAnchor
+        ? await backfiller.getBlockProjectionAnchor(markerThroughBlock)
+        : null;
+      const verifiedCheckpoint = canonicalMarker !== null && canonicalMarker.hash.toLowerCase() === markerHash?.toLowerCase();
+      const fullVerification = !verifiedCheckpoint;
+      const scanFrom = verifiedCheckpoint && markerThroughBlock !== null
+        ? maxBigInt(fromBlock, markerThroughBlock >= TIMED_MISSILE_PAYLOAD_REPLAY_BLOCKS ? markerThroughBlock - TIMED_MISSILE_PAYLOAD_REPLAY_BLOCKS + 1n : 0n)
+        : fromBlock;
+      // The generic scan already fetched all contracts through this same head.
+      // Reuse its Game logs; fetch only the older prefix needed by the overlap.
+      const reusableRange = !fullVerification && genericRange && genericRange.fromBlock <= head && genericRange.logs.every(log => typeof log.address === "string")
+        ? genericRange : undefined;
+      const logs = reusableRange
+        ? [
+            ...(scanFrom < reusableRange.fromBlock ? await listLogs.call(backfiller, scanFrom, reusableRange.fromBlock - 1n) : []),
+            ...reusableRange.logs.filter(log => log.address?.toLowerCase() === contractAddress.toLowerCase() && BigInt(log.blockNumber) >= scanFrom)
+          ]
+        : await listLogs.call(backfiller, scanFrom, head);
       const missingCanonicalLogs = this.indexer?.missingCanonicalTimedMissileLifecycleLogs?.(
         contractAddress,
         logs,
@@ -757,14 +819,21 @@ export class ChainSyncService {
         await this.applyLogs(missingCanonicalLogs, applyLog, "fallback_poll");
       }
       await this.applyLogs(logs, applyLog);
-      const removedCompletionLogs = isStartupVerification
+      const removedCompletionLogs = fullVerification
         ? this.indexer?.removedTimedMissileCompletionLogs?.(contractAddress, fromBlock, head) ?? []
         : [];
       await this.reconcileRemovedCompletionLogs([
         ...missingCanonicalLogs,
         ...removedCompletionLogs
       ]);
-      const marker = record.call(this.indexer, contractAddress, fromBlock, head);
+      const verifiedHead = headAnchor && backfiller.getBlockProjectionAnchor
+        ? await backfiller.getBlockProjectionAnchor(head) : null;
+      if (verifiedHead && verifiedHead.hash.toLowerCase() !== headAnchor?.hash.toLowerCase()) {
+        this.indexer?.invalidateResourceProjectionWatermark?.("headChanged");
+        this.timedMissilePayloadHistoryVerifiedThisRun = false;
+        throw new Error("Chain head changed during timed missile history verification.");
+      }
+      const marker = record.call(this.indexer, contractAddress, fromBlock, head, verifiedHead?.hash);
       this.timedMissilePayloadHistoryVerifiedThisRun = true;
       this.timedMissilePayloadHistoryBackfill = {
         completedAt: marker.completedAt,
@@ -808,7 +877,12 @@ export class ChainSyncService {
         addresses: this.subscribedAddresses(),
         onError: (error) => this.handleLiveListenerError(error, generation),
         onLogs: (logs) => {
-          if (generation === this.liveListenerGeneration) this.enqueueLiveLogs(logs);
+          if (generation === this.liveListenerGeneration) {
+            this.liveListenerConnected = true;
+            this.liveListenerLastError = null;
+            this.activeSource = "viem_ws";
+            this.enqueueLiveLogs(logs);
+          }
         }
       });
       void Promise.resolve(unsubscribe)
@@ -834,6 +908,7 @@ export class ChainSyncService {
     if (this.stopped || generation !== this.liveListenerGeneration) return;
     const message = error instanceof Error ? error.message : "Viem websocket live listener failed.";
     this.liveListenerConnected = false;
+    this.activeSource = "fallback_poll";
     this.liveListenerErrorCount += 1;
     this.liveListenerLastError = message;
     this.lastError = message;
@@ -887,7 +962,7 @@ export class ChainSyncService {
           // that disappeared from a reorganized block. Apply only WS removal notices directly, after
           // any in-flight canonical scan has finished, then run a fresh bounded HTTP scan below.
           // Transaction-facing projections remain frozen until that scan publishes a verified anchor.
-          this.indexer?.invalidateResourceProjectionWatermark?.("websocket removed log");
+          this.indexer?.invalidateResourceProjectionWatermark?.("removedLog");
           await this.applyLogs(removedLogs, applyLog, "viem_ws");
         }
       }
@@ -1023,18 +1098,12 @@ export class ChainSyncService {
     this.latestHeadBlock = headLabel;
     this.connected = false;
     this.pollFailureCount = CONNECTED_FAILURE_THRESHOLD;
-    this.headStallReason = `rpc_head_stalled:${headLabel}`;
-    const failedOver = this.options.logBackfiller?.failoverRpc?.(this.headStallReason) ?? false;
+    const reason = `rpc_head_stalled:${headLabel}` as const;
+    const failedOver = this.options.logBackfiller?.failoverRpc?.(reason) ?? false;
     this.lastError = failedOver
       ? `RPC head stalled at block ${headLabel}; failed over to fallback RPC`
       : `RPC head stalled at block ${headLabel}`;
-    this.indexer?.markStale?.(this.headStallReason);
-  }
-
-  private clearRecoveredHeadStall(): void {
-    if (!this.headStallReason || this.headStallPollCount !== 0) return;
-    this.indexer?.clearPendingReconciliationReason?.(this.headStallReason);
-    this.headStallReason = null;
+    this.indexer?.setTransportStale?.(reason);
   }
 
   private pollBacklogBlocks(): string | null {
@@ -1205,9 +1274,16 @@ export class ChainSyncService {
   }
 
   private notify(event: ChainSyncEvent): void {
+    if (this.listeners.size === 0) return;
+    const frame = this.encodeStreamEvent(event);
     for (const listener of this.listeners) {
-      listener(event);
+      listener(event, frame);
     }
+  }
+
+  private encodeStreamEvent(event: ChainSyncEvent): Uint8Array {
+    const data = event.kind === "sync-status" ? { ready: this.snapshot().ready } : event;
+    return new TextEncoder().encode(`event: ${event.kind}\ndata: ${JSON.stringify(data)}\n\n`);
   }
 
   private subscribedAddresses(): `0x${string}`[] {

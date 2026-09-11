@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { encodeAbiParameters, keccak256 } from "viem";
 
 import type { BackendConfig } from "./config";
@@ -126,6 +126,163 @@ describe("HTTP JSON-RPC transport", () => {
     }
   });
 
+  test("independent RPC responses overlap while their starts remain throttled", async () => {
+    const previousFetch = globalThis.fetch;
+    const starts: number[] = [];
+    const requests: string[] = [];
+    const releases: Array<() => void> = [];
+    globalThis.fetch = (async (input: unknown) => {
+      requests.push(String(input));
+      starts.push(Date.now());
+      await new Promise<void>(resolve => releases.push(resolve));
+      return Response.json({ id: 1, result: [] });
+    }) as unknown as typeof fetch;
+    try {
+      const rpc = new HttpJsonRpcTransport("https://rpc.example", { minRequestIntervalMs: 10 });
+      const reads = [rpc.request("eth_getLogs", [1]), rpc.request("eth_getLogs", [2])];
+      await new Promise(resolve => setTimeout(resolve, 30));
+      expect(requests).toEqual(["https://rpc.example", "https://rpc.example"]);
+      expect(starts).toHaveLength(2);
+      expect(starts[1]! - starts[0]!).toBeGreaterThanOrEqual(8);
+      expect(rpc.snapshot().unfinishedHttpRequests).toBe(2);
+      releases.forEach(release => release());
+      await Promise.all(reads);
+    } finally { releases.forEach(release => release()); globalThis.fetch = previousFetch; }
+  });
+
+  test.each([false, true])("RPC deadline covers a stalled body and its metrics (batch=%s)", async batch => {
+    const previousFetch = globalThis.fetch;
+    let rpc!: HttpJsonRpcTransport;
+    let bodyWasCounted = false;
+    globalThis.fetch = (async (_input: unknown, init?: RequestInit) => new Response(new ReadableStream({
+      start(controller) {
+        bodyWasCounted ||= rpc.snapshot().unfinishedHttpRequests === 1;
+        init?.signal?.addEventListener("abort", () => controller.error(init.signal?.reason), { once: true });
+      },
+    }))) as unknown as typeof fetch;
+    try {
+      rpc = new HttpJsonRpcTransport("https://rpc.example", { minRequestIntervalMs: 0, requestTimeoutMs: 5 });
+      const reading = batch ? rpc.requestBatch([{ method: "eth_getLogs", params: [] }]) : rpc.request("eth_getLogs", []);
+      await expect(reading).rejects.toThrow("timed out");
+      expect(bodyWasCounted).toBe(true);
+      expect(rpc.snapshot()).toMatchObject({ timeouts: 3, unfinishedHttpRequests: 0 });
+    } finally { globalThis.fetch = previousFetch; }
+  });
+
+  test("single and batch reads share in-flight work beyond the successful-value TTL", async () => {
+    const previousFetch = globalThis.fetch;
+    let calls = 0;
+    let release!: () => void;
+    globalThis.fetch = (async () => {
+      calls++;
+      await new Promise<void>(resolve => { release = resolve; });
+      return Response.json({ id: 1, result: [] });
+    }) as unknown as typeof fetch;
+    try {
+      const rpc = new HttpJsonRpcTransport("https://rpc.example", { minRequestIntervalMs: 0, cacheTtlMs: 5 });
+      const first = rpc.request("eth_getLogs", []);
+      await new Promise(resolve => setTimeout(resolve, 15));
+      const second = rpc.requestBatch([{ method: "eth_getLogs", params: [] }]);
+      await new Promise(resolve => setTimeout(resolve, 5));
+      expect(calls).toBe(1);
+      release();
+      await Promise.all([first, second]);
+      await rpc.request("eth_getLogs", []);
+      expect(calls).toBe(1);
+    } finally { release?.(); globalThis.fetch = previousFetch; }
+  });
+
+  test("pruned batch log reads use the same fallback policy as individual reads", async () => {
+    const previousFetch = globalThis.fetch;
+    const urls: string[] = [];
+    globalThis.fetch = (async (input: unknown, init?: RequestInit) => {
+      const url = String(input); urls.push(url);
+      const requests = JSON.parse(String(init?.body)) as Array<{ id: number }>;
+      return Response.json(requests.map(({ id }) => url.includes("primary")
+        ? { id, error: { code: 4444, message: "pruned history unavailable" } } : { id, result: [] }));
+    }) as unknown as typeof fetch;
+    try {
+      const rpc = new HttpJsonRpcTransport(["https://primary.example", "https://archive.example"], { minRequestIntervalMs: 0 });
+      await expect(rpc.requestBatch([{ method: "eth_getLogs", params: [] }])).resolves.toEqual([[]]);
+      expect(urls).toEqual(["https://primary.example", "https://archive.example"]);
+    } finally { globalThis.fetch = previousFetch; }
+  });
+
+  test("cache hits do not sweep entries; expired values still refresh and new work cleans up", async () => {
+    const previousFetch = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = (async () => Response.json({ id: 1, result: ++calls })) as unknown as typeof fetch;
+    const rpc = new HttpJsonRpcTransport("https://rpc.example", { minRequestIntervalMs: 0, cacheTtlMs: 10 });
+    const cache = (rpc as any).cache as Map<string, { expiresAt: number; value: Promise<unknown> }>;
+    const iterations = spyOn(cache, Symbol.iterator);
+    try {
+      await rpc.request("eth_call", [1]);
+      cache.set("expired", { expiresAt: 0, value: Promise.resolve(null) });
+      iterations.mockClear();
+      await rpc.request("eth_call", [1]);
+      expect(iterations).not.toHaveBeenCalled();
+      expect(calls).toBe(1);
+      await new Promise(resolve => setTimeout(resolve, 20));
+      expect(await rpc.request<number>("eth_call", [1])).toBe(2);
+      expect(cache.has("expired")).toBe(true);
+      (rpc as any).nextCacheSweepAt = 0;
+      await rpc.request("eth_call", [2]);
+      expect(cache.has("expired")).toBe(false);
+      expect(iterations).toHaveBeenCalledTimes(1);
+    } finally { iterations.mockRestore(); globalThis.fetch = previousFetch; }
+  });
+
+  test("concurrent pruned reads select the fallback once instead of rotating back", async () => {
+    const previousFetch = globalThis.fetch;
+    const urls: string[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    globalThis.fetch = (async (input: unknown) => {
+      const url = String(input); urls.push(url);
+      if (url.includes("primary")) {
+        await gate;
+        return Response.json({ id: 1, error: { code: 4444, message: "pruned history unavailable" } });
+      }
+      return Response.json({ id: 1, result: [] });
+    }) as unknown as typeof fetch;
+    try {
+      const rpc = new HttpJsonRpcTransport(["https://primary.example", "https://archive.example"], { minRequestIntervalMs: 0 });
+      const reads = [rpc.request("eth_getLogs", [1]), rpc.request("eth_getLogs", [2])];
+      await new Promise(resolve => setTimeout(resolve, 0));
+      expect(urls).toEqual(["https://primary.example", "https://primary.example"]);
+      release();
+      await expect(Promise.all(reads)).resolves.toEqual([[], []]);
+      expect(urls.slice(2)).toEqual(["https://archive.example", "https://archive.example"]);
+      expect(rpc.snapshot().failoverCount).toBe(1);
+    } finally { release(); globalThis.fetch = previousFetch; }
+  });
+
+  test("failure of an old cached read cannot evict its replacement after failover", async () => {
+    const previousFetch = globalThis.fetch;
+    let calls = 0;
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    globalThis.fetch = (async (input: unknown) => {
+      calls++;
+      if (String(input).includes("primary")) {
+        await gate;
+        return Response.json({ error: { code: -32602, message: "invalid old request" } });
+      }
+      return Response.json({ result: "fresh" });
+    }) as unknown as typeof fetch;
+    try {
+      const rpc = new HttpJsonRpcTransport(["https://primary.example", "https://archive.example"], { minRequestIntervalMs: 0 });
+      const old = rpc.request("eth_call", []).catch(error => error);
+      await new Promise(resolve => setTimeout(resolve, 0));
+      rpc.failoverRpc("test");
+      expect(await rpc.request<string>("eth_call", [])).toBe("fresh");
+      release();
+      expect(String(await old)).toContain("invalid old request");
+      expect(await rpc.request<string>("eth_call", [])).toBe("fresh");
+      expect(calls).toBe(2);
+    } finally { release(); globalThis.fetch = previousFetch; }
+  });
+
   test("reports RPC method, call source, and started-minus-finished request growth", async () => {
     const previousFetch = globalThis.fetch;
     let releaseFetch!: () => void;
@@ -234,6 +391,29 @@ describe("HTTP JSON-RPC transport", () => {
     }
   });
 
+  test.each(["eth_getLogs", "eth_sendRawTransaction"])("pruned-history failover is read-only: %s", async method => {
+    const previousFetch = globalThis.fetch;
+    const seenUrls: string[] = [];
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+      const url = String(input);
+      seenUrls.push(url);
+      return url === "https://primary.example/rpc"
+        ? Response.json({ jsonrpc: "2.0", id: 1, error: { code: 4444, message: "pruned history unavailable" } })
+        : Response.json({ jsonrpc: "2.0", id: 1, result: [] });
+    }) as unknown as typeof fetch;
+    try {
+      const transport = new HttpJsonRpcTransport(["https://primary.example/rpc", "https://history.example/rpc"], { cacheTtlMs: 0, minRequestIntervalMs: 0 });
+      if (method === "eth_getLogs") {
+        await expect(transport.request(method, [])).resolves.toEqual([]);
+        expect(seenUrls).toEqual(["https://primary.example/rpc", "https://history.example/rpc"]);
+        expect(transport.snapshot().lastFailoverReason).toBe("pruned_history");
+      } else {
+        await expect(transport.request(method, [])).rejects.toThrow("pruned history unavailable");
+        expect(seenUrls).toEqual(["https://primary.example/rpc"]);
+      }
+    } finally { globalThis.fetch = previousFetch; }
+  });
+
   test("fails over to a fallback RPC after retryable primary failures", async () => {
     const previousFetch = globalThis.fetch;
     const seenUrls: string[] = [];
@@ -332,17 +512,21 @@ describe("HTTP JSON-RPC transport", () => {
 
   test("aborts a hung RPC fetch at the request timeout and retries before failing", async () => {
     const previousFetch = globalThis.fetch;
+    const rpcUrl = "https://hung-rpc.example";
     let fetchCalls = 0;
     let abortedCalls = 0;
 
     // A fetch that never resolves on its own — it only settles when the transport aborts the signal,
     // reproducing the Alchemy live-read timeout storm where the socket hangs indefinitely.
-    globalThis.fetch = ((_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) =>
+    globalThis.fetch = ((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) =>
       new Promise((_resolve, reject) => {
-        fetchCalls += 1;
+        // Other test-owned services can still finish background work. Count
+        // this transport's attempts, not unrelated users of the global mock.
+        const belongsToTransport = String(input) === rpcUrl;
+        if (belongsToTransport) fetchCalls += 1;
         const signal = init?.signal;
         const onAbort = () => {
-          abortedCalls += 1;
+          if (belongsToTransport) abortedCalls += 1;
           reject(new DOMException("The operation was aborted.", "AbortError"));
         };
         if (signal?.aborted) {
@@ -353,7 +537,7 @@ describe("HTTP JSON-RPC transport", () => {
       })) as unknown as typeof fetch;
 
     try {
-      const transport = new HttpJsonRpcTransport("https://rpc.example", {
+      const transport = new HttpJsonRpcTransport(rpcUrl, {
         cacheTtlMs: 0,
         minRequestIntervalMs: 0,
         requestTimeoutMs: 20
@@ -1111,7 +1295,11 @@ describe("moon chance report event decoding", () => {
     }
   });
 
-  test("splits log chunks again when an RPC rejects a chunk", async () => {
+  test.each([
+    "RPC HTTP 400",
+    "RPC -32602: query exceeds max results 20000, retry with the range 100-104",
+    "RPC -32614: eth_getLogs is limited to a 2,000 range",
+  ])("splits rejected log chunks without restarting the full scan: %s", async (rpcError) => {
     const calls: Array<{ method: string; params: unknown[] }> = [];
     const failedRanges = new Set(["0x64:0x6d"]);
     const reader = new VeydriftGameReader(
@@ -1126,7 +1314,7 @@ describe("moon chance report event decoding", () => {
             const [filter] = params as [{ fromBlock: string; toBlock: string }];
             const range = `${filter.fromBlock}:${filter.toBlock}`;
             if (failedRanges.delete(range)) {
-              throw new Error("RPC HTTP 400");
+              throw new Error(rpcError);
             }
             return [] as T;
           }

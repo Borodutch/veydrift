@@ -29,7 +29,7 @@ import {
   type GlobalActiveMissionsResponse,
 } from "../walletFlow";
 import { isImageReady } from "../imageLoadState";
-import { formatScore } from "../attackProtectionLabels";
+import { formatScore } from "../numberFormat";
 import { buildingCatalog, defenseCatalog, researchCatalog, shipCatalog, solarSatelliteEnergy } from "../playableMvp";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import { GalaxyActionButtons, type AttackProtectionStatus, type GalaxyActionState, formatAttackBlockReason } from "./GalaxyView";
@@ -41,7 +41,7 @@ import { canEditEntityMedia } from "../entityMedia";
 import { PlanetDetailSkeleton } from "./LoadingSkeletons";
 import { QueueProgressPanel, type QueueProgressTone } from "./QueueProgressPanel";
 import { Skeleton, SkeletonRegion, skeletonList } from "./Skeleton";
-import { missionTypeLabel } from "./MissionControlPage";
+import { missionTypeLabel } from "./missionControlModel";
 import { buildInspectPath } from "../inspectRoutes";
 import { backendDataStoreFor } from "../backendDataStore";
 import { useBackendDataQuery } from "../useBackendDataQuery";
@@ -167,7 +167,7 @@ export function PlanetDetail({
   );
   const backendData = useMemo(() => backendDataStoreFor(apiBaseUrl), [apiBaseUrl]);
   const systemQuery = useBackendDataQuery<ApiSystemResponse>(
-    backendData.queries.system<ApiSystemResponse>(coords.galaxy, coords.system, { detail: "full", priority: "selected-planet" }),
+    backendData.queries.system<ApiSystemResponse>(coords.galaxy, coords.system, { detail: "full", }),
   );
   const systemSnapshot = systemQuery.snapshot;
   const apiPlanet = systemSnapshot?.data

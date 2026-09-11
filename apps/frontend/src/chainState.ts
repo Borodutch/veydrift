@@ -18,6 +18,10 @@ import { timestampToMs } from "./timestampFormat";
 
 type BuildingQueueItem = Extract<NonNullable<PlayableState["queue"]>, { kind: "building" }>;
 
+export function technologyLevelsByKey(levels: Record<string, number> | undefined): PlayableState["research"] {
+  return Object.fromEntries(researchCatalog.map(({ key, id }) => [key, levels?.[String(id)] ?? 0])) as PlayableState["research"];
+}
+
 export function emptyContractState(now = Date.now()): PlayableState {
   return {
     ...createInitialPlayableState(now),
@@ -35,12 +39,7 @@ export function infrastructurePlayableState(
   return {
     ...state,
     buildings: buildingLevels(infrastructureState),
-    research: Object.fromEntries(
-      researchCatalog.map((research) => [
-        research.key,
-        infrastructureState.technologyLevels?.[research.id.toString()] ?? 0,
-      ]),
-    ) as PlayableState["research"],
+    research: technologyLevelsByKey(infrastructureState.technologyLevels),
     // VEY-KANEO-473: the playable `resources` (what the infrastructure panel and its
     // affordability gate read) must be the SAME canonical settled-to-now balance the top bar
     // shows — the backend's accrued `resourcesAsOfNow` — not the raw settled `resources` snapshot.
@@ -125,7 +124,7 @@ export function buildingLevels(infrastructureState: ChainInfrastructureState): P
   ) as PlayableState["buildings"];
 }
 
-export function resourcesFromChain(value: ChainInfrastructureState["resources"]): Resources | undefined {
+export function resourcesFromChain(value: ChainInfrastructureState["resources"] | undefined): Resources | undefined {
   return toResources(value);
 }
 

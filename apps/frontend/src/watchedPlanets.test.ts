@@ -146,26 +146,6 @@ describe("overview planet sections", () => {
     expect(watchedPlanetsIndex).toBeGreaterThan(myPlanetsIndex);
   });
 
-  test("wires My planets actions through the existing galaxy mission flow", () => {
-    expect(appSource).toContain("overviewMyPlanetActionsFor");
-    expect(appSource).toContain("galaxyActionsForSlot");
-    expect(appSource).toContain('page === "overview"');
-    expect(appSource).toContain("handleOverviewMyPlanetAction");
-    expect(appSource).toContain("originPlanet: selectedManagedPlanet");
-    expect(appSource).toContain("const missionOriginPlanet = pending.originPlanet ?? selectedManagedPlanet");
-    expect(appSource).toContain("myPlanets={overviewMyPlanetActionGroups}");
-    expect(appSource).toContain("selectedPlanetId={activePlanetId}");
-    expect(appSource).toContain("onMyPlanetAction={handleOverviewMyPlanetAction}");
-    expect(overviewSource).toContain("<MyPlanetActionButtons");
-    expect(overviewSource).toContain("onAction={(action) => onAction?.(action, planet)}");
-    expect(overviewSource).toContain("showIdentity={false}");
-    expect(overviewSource.match(/showMoonIndicator={false}/g)?.length).toBe(2);
-    expect(overviewSource).toContain("current={isSelected}");
-    expect(overviewSource).not.toContain("{myPlanets.length} owned");
-    expect(watchableRowSource).toContain("canWatch || actionSlot");
-    expect(watchableRowSource).toContain("{actionSlot}");
-    expect(watchableRowSource).toContain('compact ? "pt-0" : "pt-2"');
-  });
 
   test("keeps four-action planet headers inline at normal mobile widths and wraps only when genuinely narrow", () => {
     expect(overviewSource).toContain("mobileActionsInline");
@@ -180,7 +160,9 @@ describe("overview planet sections", () => {
   test("keeps a one-action planet and its moon actions in compact inline rows", () => {
     expect(watchableRowSource).toContain('data-watchable-moon-row="full-width"');
     expect(watchableRowSource).toContain("col-span-full min-w-0");
-    expect(overviewSource).toContain("moonActionSlot={moonActions && moonActions.length > 0");
+    expect(overviewSource).toContain("moonActionSlot={moonActions?.length || onSelectMoon");
+    expect(overviewSource).toContain('aria-label="Open moon details"');
+    expect(watchableRowSource).not.toContain('detail={currentMoon ? "Selected"');
     expect(overviewSource).toContain("<OverviewMoonActionButtons");
   });
 

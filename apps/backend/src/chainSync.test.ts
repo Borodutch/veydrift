@@ -1,4 +1,4 @@
-import { describe, expect, setSystemTime, test } from "bun:test";
+import { describe, expect, setSystemTime, spyOn, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { encodeAbiParameters, keccak256, parseAbiParameters, toHex } from "viem";
 import { ChainSyncService } from "./chainSync";
@@ -239,6 +239,59 @@ function referralMigrationLogs(): TestLog[] {
 }
 
 describe("ChainSyncService (polling)", () => {
+  test("SSE status frames are compact and each broadcast is encoded once", async () => {
+    const service = new ChainSyncService(config, makeIndexer());
+    const first = service.eventStream().getReader();
+    const second = service.eventStream().getReader();
+    const encode = spyOn(service as any, "encodeStreamEvent");
+    try {
+      const initial = new TextDecoder().decode((await first.read()).value);
+      expect(initial).toBe('event: sync-status\ndata: {"ready":false}\n\n');
+      await second.read();
+      (service as any).notify({ kind: "sync-status", blockNumber: "101" });
+      const [a, b] = await Promise.all([first.read(), second.read()]);
+      expect(a.value).toBe(b.value);
+      expect(encode).toHaveBeenCalledTimes(1);
+    } finally { encode.mockRestore(); await first.cancel(); await second.cancel(); service.stop(); }
+  });
+
+  test("slow SSE clients disconnect without blocking fast clients, then reconnect with readiness", async () => {
+    const service = new ChainSyncService(config, makeIndexer());
+    const slow = service.eventStream().getReader();
+    const fast = service.eventStream().getReader();
+    await slow.read();
+    await fast.read();
+    try {
+      for (let index = 0; index < 50; index++) {
+        (service as any).notify({ kind: "chain-event", blockNumber: String(index), wallets: ["x".repeat(2048)] });
+        expect(new TextDecoder().decode((await fast.read()).value)).toContain(`"blockNumber":"${index}"`);
+      }
+      await expect(slow.read()).rejects.toThrow("reconnect to resynchronize");
+      expect((service as any).listeners.size).toBe(1);
+      const restored = service.eventStream().getReader();
+      expect(new TextDecoder().decode((await restored.read()).value)).toContain("event: sync-status");
+      await restored.cancel();
+    } finally { await slow.cancel().catch(() => {}); await fast.cancel(); service.stop(); }
+  });
+
+  test("publishes indexed readiness independently of websocket subscriptions", async () => {
+    const indexer = makeIndexer();
+    let safe = false;
+    const original = indexer.snapshot();
+    indexer.snapshot = () => ({ ...original, safeToServeIndexedState: safe });
+    const service = new ChainSyncService(config, indexer);
+    (service as any).connected = true;
+    expect(service.snapshot().ready).toBe(false);
+    safe = true;
+    expect(service.snapshot()).toMatchObject({ ready: true, subscribedToHeads: false, subscribedToLogs: false });
+    const reader = service.eventStream().getReader();
+    const first = await reader.read();
+    expect(new TextDecoder().decode(first.value)).toContain('"ready":true');
+    await reader.cancel();
+    (service as any).connected = false;
+    expect(service.snapshot().ready).toBe(false);
+  });
+
   test("subscribes to settlement and migration contract activity", () => {
     const settlementContractAddress = "0x5555555555555555555555555555555555555555" as const;
     const migrationContractAddress = "0x6666666666666666666666666666666666666666" as const;
@@ -862,6 +915,22 @@ describe("ChainSyncService (polling)", () => {
     });
   }
 
+  test("reports live recovery after a websocket error without stopping independent HTTP polling", async () => {
+    const indexer = makeIndexer();
+    const backfiller = new MockBackfiller(0x180n);
+    const liveLogs = new MockLiveLogSubscriber();
+    const service = new ChainSyncService(config, indexer, {
+      liveLogSubscriber: liveLogs, logBackfiller: backfiller, pollIntervalMs: 60_000
+    });
+    service.start();
+    await waitFor(() => liveLogs.subscription !== null && service.snapshot().lastPolledAt !== null);
+    liveLogs.subscription!.onError(new Error("socket lost"));
+    expect(service.snapshot()).toMatchObject({ liveListenerConnected: false, activeSource: "fallback_poll", pollingEnabled: true });
+    liveLogs.emit([planetStartedLog("0x181", 7n, "0xrecovered")]);
+    expect(service.snapshot()).toMatchObject({ liveListenerConnected: true, activeSource: "viem_ws", liveListenerLastError: null, pollingEnabled: true });
+    service.stop();
+  });
+
   test("falls back to HTTP polling when websocket setup fails", async () => {
     const indexer = makeIndexer();
     const log = {
@@ -1435,6 +1504,96 @@ describe("ChainSyncService (polling)", () => {
     service.stop();
   });
 
+  test("verified timed missile checkpoints survive restart and reuse the complete generic range", async () => {
+    const indexer = makeIndexer();
+    const headLog = { ...planetStartedLog("0x12c", 88n, "0xcheckpoint-head"), address: config.gameContractAddress! };
+    indexer.applyLog(headLog);
+    const backfiller = new MockBackfiller(300n, () => [headLog]);
+    backfiller.timedMissilePayloadLogsFor = () => [headLog];
+    const timedConfig = { ...config, timedMissileIndexFromBlock: 150n };
+    const first = new ChainSyncService(timedConfig, indexer, { logBackfiller: backfiller });
+    await first.poll();
+    expect(indexer.timedMissilePayloadHistoryBackfillStatus(config.gameContractAddress!, 150n).marker).toMatchObject({ throughBlock: "300", throughBlockHash: topicWord(300n) });
+    first.stop();
+    backfiller.head = 316n;
+    backfiller.timedMissilePayloadRanges = [];
+    const restarted = new ChainSyncService(timedConfig, indexer, { logBackfiller: backfiller });
+    await restarted.poll();
+    expect(backfiller.timedMissilePayloadRanges).toEqual([]);
+    expect(indexer.timedMissilePayloadHistoryBackfillStatus(config.gameContractAddress!, 150n).marker).toMatchObject({ throughBlock: "316", throughBlockHash: topicWord(316n) });
+    expect(restarted.snapshot().connected).toBe(true);
+    restarted.stop();
+  });
+
+  test("incremental timed missile scans fetch only the prefix missing from the generic range", async () => {
+    const indexer = makeIndexer();
+    const headLog = { ...planetStartedLog("0x12c", 88n, "0xprefix-head"), address: config.gameContractAddress! };
+    indexer.applyLog(headLog);
+    const backfiller = new MockBackfiller(300n, () => [headLog]);
+    backfiller.timedMissilePayloadLogsFor = () => [headLog];
+    const service = new ChainSyncService({ ...config, timedMissileIndexFromBlock: 150n }, indexer, { logBackfiller: backfiller });
+    await service.poll();
+    backfiller.head = 308n;
+    await service.poll();
+    backfiller.timedMissilePayloadRanges = [];
+    backfiller.timedMissilePayloadLogsFor = () => [];
+    backfiller.head = 316n;
+    await service.poll();
+    expect(backfiller.timedMissilePayloadRanges).toEqual([{ from: 237n, to: 244n }]);
+    expect(service.snapshot().timedMissilePayloadHistoryBackfill.throughBlock).toBe("316");
+    service.stop();
+  });
+
+  test("a failed missing-prefix read leaves the checkpoint retryable", async () => {
+    const indexer = makeIndexer();
+    const headLog = { ...planetStartedLog("0x190", 88n, "0xfailed-prefix"), address: config.gameContractAddress! };
+    indexer.applyLog(headLog);
+    indexer.recordTimedMissilePayloadHistoryBackfill(config.gameContractAddress!, 150n, 300n, topicWord(300n));
+    const backfiller = new MockBackfiller(416n, () => [headLog]);
+    backfiller.timedMissilePayloadLogsFor = () => { throw new Error("prefix unavailable"); };
+    const service = new ChainSyncService({ ...config, timedMissileIndexFromBlock: 150n }, indexer, { logBackfiller: backfiller });
+    await service.poll();
+    expect(backfiller.timedMissilePayloadRanges).toEqual([{ from: 237n, to: 336n }]);
+    expect(indexer.timedMissilePayloadHistoryBackfillStatus(config.gameContractAddress!, 150n).marker?.throughBlock).toBe("300");
+    expect(service.snapshot().connected).toBe(false);
+    backfiller.timedMissilePayloadLogsFor = () => [];
+    await service.poll();
+    expect(indexer.timedMissilePayloadHistoryBackfillStatus(config.gameContractAddress!, 150n).marker?.throughBlock).toBe("416");
+    expect(service.snapshot().connected).toBe(true);
+    service.stop();
+  });
+
+  test.each(["unanchored", "changed", "future"])("a %s timed missile checkpoint requires full verification", async kind => {
+    const indexer = makeIndexer();
+    const headLog = { ...planetStartedLog("0x12c", 88n, "0xuntrusted-head"), address: config.gameContractAddress! };
+    indexer.applyLog(headLog);
+    const throughBlock = kind === "future" ? 400n : 300n;
+    indexer.recordTimedMissilePayloadHistoryBackfill(config.gameContractAddress!, 150n, throughBlock,
+      kind === "unanchored" ? undefined : kind === "changed" ? topicWord(999n) : topicWord(throughBlock));
+    const backfiller = new MockBackfiller(316n, () => [headLog]);
+    backfiller.timedMissilePayloadLogsFor = () => [headLog];
+    const service = new ChainSyncService({ ...config, timedMissileIndexFromBlock: 150n }, indexer, { logBackfiller: backfiller });
+    await service.poll();
+    expect(backfiller.timedMissilePayloadRanges).toEqual([{ from: 150n, to: 316n }]);
+    expect(service.snapshot().connected).toBe(true);
+    service.stop();
+  });
+
+  test("a head change during history verification cannot publish a timed missile checkpoint", async () => {
+    const indexer = makeIndexer();
+    const backfiller = new MockBackfiller(300n);
+    backfiller.timedMissilePayloadLogsFor = () => {
+      backfiller.anchorHashFor = () => topicWord(999n);
+      return [];
+    };
+    const service = new ChainSyncService({ ...config, timedMissileIndexFromBlock: 150n }, indexer, { logBackfiller: backfiller });
+    await service.poll();
+    expect(indexer.timedMissilePayloadHistoryBackfillStatus(config.gameContractAddress!, 150n).marker).toBeNull();
+    expect(service.snapshot().connected).toBe(false);
+    expect(service.snapshot().timedMissilePayloadHistoryBackfill.lastError).toContain("head changed");
+    service.stop();
+  });
+
   test("replays and reconciles the full timed missile lifecycle from the upgrade boundary", async () => {
     const database = new Database(":memory:");
     const indexer = new SettlementIndexer({
@@ -1537,6 +1696,7 @@ describe("ChainSyncService (polling)", () => {
     // The launch remains canonical but the impact transaction disappeared outside the generic
     // 64-block overlap while the writer was offline. Full lifecycle replay must retire the
     // resolution and make the same mission id outbound/resolvable again.
+    backfiller.anchorHashFor = () => `0x${"f".repeat(64)}`;
     backfiller.timedMissilePayloadLogsFor = () => [...launchLogs, payloadLog];
     const restarted = new ChainSyncService({
       ...config,
@@ -1643,7 +1803,15 @@ describe("ChainSyncService (polling)", () => {
     };
     const backfiller = new MockBackfiller(182n);
     backfiller.referralLogsError = new Error("replacement referral history unavailable");
+    backfiller.logsFor = () => [planetStartedLog("0xb5", 7n, "0xdelayed-notification")];
     const service = new ChainSyncService(referralConfig, indexer, { logBackfiller: backfiller });
+    const notifications: string[] = [];
+    service.addListener(event => {
+      if (event.kind !== "chain-event") return;
+      expect(indexer.snapshot().resourceProjectionBlock).toBe("182");
+      expect(indexer.referralClaims(player)).toHaveLength(1);
+      notifications.push(event.kind);
+    });
 
     await service.poll();
 
@@ -1657,6 +1825,7 @@ describe("ChainSyncService (polling)", () => {
       }
     });
     expect(indexer.referralHistoryBackfillStatus(referralAddress, 112n).required).toBe(true);
+    expect(notifications).toEqual([]);
 
     backfiller.referralLogsError = null;
     backfiller.referralLogsFor = () => referralMigrationLogs();
@@ -1672,6 +1841,7 @@ describe("ChainSyncService (polling)", () => {
       { from: 112n, to: 182n }
     ]);
     expect(indexer.referralClaims(player)).toHaveLength(1);
+    expect(notifications).toEqual(["chain-event"]);
     service.stop();
   });
 
@@ -1715,6 +1885,25 @@ describe("ChainSyncService (polling)", () => {
 
     expect(indexer.shipRows("7").find((ship) => ship.id === 1)?.count).toBe(3);
     expect(indexer.defenseRows("7").find((defense) => defense.id === 0)?.count).toBe(0);
+    service.stop();
+  });
+
+  test("scopes known planet commits to their owner after publishing the projection checkpoint", async () => {
+    const indexer = makeIndexer();
+    indexer.applyLog(planetStartedLog("0x180", 7n, "0xscope-planet"));
+    const log = {
+      blockNumber: "0x181", transactionHash: "0xscope-ships",
+      topics: [shipCompletedTopic, topicWord(7n), topicWord(1n)], data: abiWords(1n, 1n)
+    };
+    const service = new ChainSyncService(config, indexer, { logBackfiller: new MockBackfiller(0x181n, () => [log]) });
+    const events: unknown[] = [];
+    service.addListener(event => {
+      if (event.kind !== "chain-event") return;
+      expect(indexer.snapshot().resourceProjectionBlock).toBe(String(0x181n));
+      events.push(event);
+    });
+    await service.poll();
+    expect(events).toEqual([expect.objectContaining({ wallets: [player.toLowerCase()], planetIds: ["7"] })]);
     service.stop();
   });
 
@@ -1783,7 +1972,7 @@ describe("ChainSyncService (polling)", () => {
     service.stop();
   });
 
-  test("invalidates spendable projections when the canonical head rolls back", async () => {
+  test("preserves the verified anchor while a lagging RPC head catches up", async () => {
     const indexer = makeIndexer();
     const backfiller = new MockBackfiller(0x180n);
     const service = new ChainSyncService(config, indexer, { logBackfiller: backfiller });
@@ -1795,10 +1984,14 @@ describe("ChainSyncService (polling)", () => {
     await service.poll();
 
     expect(indexer.snapshot()).toMatchObject({
-      pendingReconciliationReason: "resource_projection_invalidated: canonical block anchor changed",
-      resourceProjectionBlock: String(0x17fn)
+      pendingReconciliationReason: null,
+      resourceProjectionBlock: String(0x180n),
+      staleReason: "rpc_head_behind:383"
     });
     expect(indexer.resourceProjectionContext().safeToProject).toBe(false);
+    backfiller.head = 0x181n;
+    await service.poll();
+    expect(indexer.resourceProjectionContext().safeToProject).toBe(true);
     service.stop();
   });
 
@@ -1817,6 +2010,64 @@ describe("ChainSyncService (polling)", () => {
       pendingReconciliationReason: "resource_projection_invalidated: canonical block anchor changed",
       resourceProjectionHash: `0x${"f".repeat(64)}`
     });
+    expect(indexer.resourceProjectionContext().safeToProject).toBe(false);
+    service.stop();
+  });
+
+  test("recovers an inconsistent RPC anchor only when the original anchor returns without event changes", async () => {
+    const indexer = makeIndexer();
+    const backfiller = new MockBackfiller(0x180n);
+    const originalHashFor = backfiller.anchorHashFor;
+    const service = new ChainSyncService(config, indexer, { logBackfiller: backfiller });
+    await service.poll();
+    backfiller.anchorHashFor = () => `0x${"f".repeat(64)}`;
+    await service.poll();
+    expect(indexer.resourceProjectionContext().safeToProject).toBe(false);
+    backfiller.anchorHashFor = originalHashFor;
+    await service.poll();
+    expect(indexer.snapshot().pendingReconciliationReason).toBeNull();
+    expect(indexer.resourceProjectionContext().safeToProject).toBe(true);
+    service.stop();
+  });
+
+  test("a verified scan retires an inherited old-format RPC stall flag", async () => {
+    const indexer = makeIndexer();
+    indexer.markStale("rpc_head_stalled:300");
+    const service = new ChainSyncService(config, indexer, { logBackfiller: new MockBackfiller(0x180n) });
+    await service.poll();
+    expect(indexer.snapshot().pendingReconciliationReason).toBeNull();
+    expect(indexer.resourceProjectionContext().safeToProject).toBe(true);
+    service.stop();
+  });
+
+  test("returning to the original anchor cannot bless events ingested on an inconsistent branch", async () => {
+    const indexer = makeIndexer();
+    const backfiller = new MockBackfiller(0x180n);
+    const originalHashFor = backfiller.anchorHashFor;
+    const service = new ChainSyncService(config, indexer, { logBackfiller: backfiller });
+    await service.poll();
+    backfiller.anchorHashFor = () => `0x${"f".repeat(64)}`;
+    await service.poll();
+    indexer.applyLog(planetStartedLog("0x180", 7n, "0xunverified-branch"));
+    backfiller.anchorHashFor = originalHashFor;
+    await service.poll();
+    expect(indexer.resourceProjectionContext().safeToProject).toBe(false);
+    expect(indexer.snapshot().pendingReconciliationReason).not.toBeNull();
+    service.stop();
+  });
+
+  test("head-stall recovery does not erase an existing integrity failure", async () => {
+    const indexer = makeIndexer();
+    const backfiller = new MockBackfiller(0x180n);
+    const service = new ChainSyncService(config, indexer, { logBackfiller: backfiller });
+    await service.poll();
+    indexer.markStale("integrity_check_failed");
+    for (let i = 0; i < 30; i += 1) await service.poll();
+    expect(indexer.snapshot().pendingReconciliationReason).toBe("integrity_check_failed");
+    expect(indexer.snapshot().staleReason).toBe("rpc_head_stalled:384");
+    backfiller.head = 0x181n;
+    await service.poll();
+    expect(indexer.snapshot().pendingReconciliationReason).toBe("integrity_check_failed");
     expect(indexer.resourceProjectionContext().safeToProject).toBe(false);
     service.stop();
   });
@@ -2175,7 +2426,7 @@ describe("ChainSyncService (polling)", () => {
     });
     expect(backfiller.failoverReasons).toEqual(["rpc_head_stalled:384"]);
     expect(indexer.snapshot()).toMatchObject({
-      pendingReconciliationReason: "rpc_head_stalled:384",
+      pendingReconciliationReason: null,
       safeToServeIndexedState: false,
       staleReason: "rpc_head_stalled:384"
     });

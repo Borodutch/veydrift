@@ -1,3 +1,4 @@
+import { refreshButtonState as shipyardRefreshButtonState } from "../src/components/PageHeader";
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -13,7 +14,6 @@ import {
   getBlockedReason,
   getShipRequirementStates,
   shipProductionItems,
-  shipyardRefreshButtonState,
   shipyardRefreshErrorLabel,
   shouldShowShipyardInitialLoader,
   StatusPanel,

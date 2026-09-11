@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
   BASE_MAINNET,
+  transactionRpcRequest,
   BASE_SEPOLIA,
-  __clearGameApiReadPoolForTests,
   assertWalletUnlocked,
   decodeBoolResult,
   decodeColonizationTargetId,
@@ -52,9 +52,6 @@ import {
   getChainId,
   getCurrentAccounts,
   getInjectedProvider,
-  confirmTransactionReceipt,
-  confirmTransactionReceiptForProviderSource,
-  confirmTransactionReceiptFromRpc,
   configureWalletTransactionTransport,
   defaultVeydriftChainForLocation,
   ensureVeydriftNetwork,
@@ -105,7 +102,6 @@ import {
   referralCommitment,
   persistReferralClaimIntent,
   recordReferralClaimTransaction,
-  requestWatchedPlanetSignature,
   readMigrationReservation,
   readWalletNativeBalance,
   sendSettlementTransaction,
@@ -136,7 +132,6 @@ import {
 import { GAME_UNAVAILABLE_MESSAGE } from "./gameUnavailable";
 
 afterEach(() => {
-  __clearGameApiReadPoolForTests();
 });
 
 const account = "0x1111111111111111111111111111111111111111";
@@ -167,6 +162,34 @@ function bytes32StringErrorData(selector: string, value: string): string {
 }
 
 describe("walletFlow", () => {
+  test("bounded RPC reads preserve JSON-RPC error details", async () => {
+    const originalFetch = globalThis.fetch;
+    const rpcError = { code: 3, message: "execution reverted", data: "0x1234" };
+    globalThis.fetch = (async (_input: RequestInfo | URL) => Response.json({ error: rpcError })) as typeof fetch;
+    try {
+      await expect(transactionRpcRequest("https://rpc.test", "eth_call", [])).rejects.toEqual(rpcError);
+    } finally { globalThis.fetch = originalFetch; }
+  });
+
+  test.each(["timeout", "cancel"])("bounded RPC reads stop on %s without retrying", async mode => {
+    const originalFetch = globalThis.fetch;
+    const controller = new AbortController();
+    let calls = 0;
+    let transportSignal: AbortSignal | undefined;
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      calls++;
+      transportSignal = init?.signal ?? undefined;
+      return new Promise<Response>((_resolve, reject) => transportSignal?.addEventListener("abort", () => reject(transportSignal?.reason), { once: true }));
+    }) as typeof fetch;
+    try {
+      const read = transactionRpcRequest("https://rpc.test", "eth_call", [], { signal: controller.signal, timeoutMs: 10 }).catch(error => error);
+      if (mode === "cancel") controller.abort();
+      expect(await read).toBeInstanceOf(Error);
+      expect(transportSignal?.aborted).toBe(true);
+      expect(calls).toBe(1);
+    } finally { globalThis.fetch = originalFetch; }
+  });
+
   test("requests paginated activity with an away-window projection", async () => {
     const originalFetch = globalThis.fetch;
     let requestedUrl = "";
@@ -473,34 +496,7 @@ describe("walletFlow", () => {
     expect(isUserRejected({ code: -32603 })).toBe(false);
   });
 
-  test("throws when a submitted transaction receipt is reverted", async () => {
-    const provider = mockProvider(async ({ method, params }) => {
-      expect(method).toBe("eth_getTransactionReceipt");
-      expect(params).toEqual(["0xreverted"]);
-      return { status: "0x0", transactionHash: "0xreverted" };
-    });
 
-    await expect(confirmTransactionReceipt(provider, "0xreverted")).rejects.toThrow("Transaction reverted on-chain. No game state was changed.");
-  });
-
-  test("resolves only after a submitted transaction receipt is mined successfully", async () => {
-    let polls = 0;
-    const provider = mockProvider(async () => {
-      polls += 1;
-      return polls === 1 ? null : { status: "0x1", transactionHash: "0xok" };
-    });
-
-    await expect(
-      confirmTransactionReceipt(provider, "0xok", {
-        pollMs: 1,
-        timeoutMs: 100,
-      }),
-    ).resolves.toMatchObject({
-      status: "0x1",
-      transactionHash: "0xok",
-    });
-    expect(polls).toBe(2);
-  });
 
   test("classifies stalled bootstrap wallet reads as transient and retryable", () => {
     expect(isTransientWalletBootstrapError(new Error("Timed out reading wallet accounts from the wallet after 6 seconds."))).toBe(true);
@@ -537,98 +533,10 @@ describe("walletFlow", () => {
     await expect(getChainId(stalledProvider, 30)).rejects.toThrow(/timed out reading wallet network/i);
   });
 
-  test("keeps polling when a receipt read transiently fails before the transaction is mined", async () => {
-    let polls = 0;
-    const provider = mockProvider(async () => {
-      polls += 1;
-      if (polls === 1) throw { code: -32603, message: "Internal JSON-RPC error." };
-      if (polls === 2) return null;
-      return { status: "0x1", transactionHash: "0xok" };
-    });
 
-    await expect(
-      confirmTransactionReceipt(provider, "0xok", {
-        pollMs: 1,
-        timeoutMs: 200,
-      }),
-    ).resolves.toMatchObject({
-      status: "0x1",
-      transactionHash: "0xok",
-    });
-    expect(polls).toBe(3);
-  });
 
-  test("reports a benign timeout when receipt reads keep failing after submission", async () => {
-    const provider = mockProvider(async () => {
-      throw { code: -32603, message: "Internal JSON-RPC error." };
-    });
 
-    await expect(confirmTransactionReceipt(provider, "0xok", { pollMs: 1, timeoutMs: 20 })).rejects.toThrow("Transaction submitted, but the chain did not confirm it yet");
-  });
 
-  test("confirms Farcaster submissions through the app RPC without reading from the wallet provider", async () => {
-    let walletRequests = 0;
-    const provider = mockProvider(async () => {
-      walletRequests += 1;
-      throw new Error("Farcaster host receipt reads must not be called.");
-    });
-    const rpcRequests: Array<{ input: string; init?: RequestInit }> = [];
-    let polls = 0;
-
-    const receipt = await confirmTransactionReceiptForProviderSource(provider, "farcaster", "https://base-rpc.example.test", `0x${"ab".repeat(32)}`, {
-      fetcher: async (input, init) => {
-        rpcRequests.push(init ? { input, init } : { input });
-        polls += 1;
-        return Response.json({
-          result: polls === 1 ? null : { status: "0x1", transactionHash: `0x${"ab".repeat(32)}` },
-        });
-      },
-      pollMs: 1,
-      timeoutMs: 100,
-    });
-
-    expect(receipt).toMatchObject({ status: "0x1" });
-    expect(walletRequests).toBe(0);
-    expect(rpcRequests).toHaveLength(2);
-    expect(rpcRequests.map((request) => request.input)).toEqual(["https://base-rpc.example.test", "https://base-rpc.example.test"]);
-    expect(rpcRequests[0]?.init?.method).toBe("POST");
-    expect(JSON.parse(String(rpcRequests[0]?.init?.body))).toMatchObject({
-      method: "eth_getTransactionReceipt",
-      params: [`0x${"ab".repeat(32)}`],
-    });
-  });
-
-  test.each(["injected", "reown"] as const)("keeps %s receipt confirmation on the wallet provider", async (source) => {
-    let walletRequests = 0;
-    const provider = mockProvider(async ({ method }) => {
-      walletRequests += 1;
-      expect(method).toBe("eth_getTransactionReceipt");
-      return { status: "0x1", transactionHash: "0xinjected" };
-    });
-
-    await expect(
-      confirmTransactionReceiptForProviderSource(provider, source, "https://api.example.test", "0xinjected", {
-        fetcher: async () => {
-          throw new Error("Browser-wallet confirmation must not call the app RPC receipt reader.");
-        },
-      }),
-    ).resolves.toMatchObject({ transactionHash: "0xinjected" });
-    expect(walletRequests).toBe(1);
-  });
-
-  test("preserves revert handling for app-RPC-confirmed Farcaster submissions", async () => {
-    await expect(
-      confirmTransactionReceiptFromRpc("https://base-rpc.example.test", `0x${"cd".repeat(32)}`, {
-        fetcher: async () =>
-          Response.json({
-            result: {
-              status: "0x0",
-              transactionHash: `0x${"cd".repeat(32)}`,
-            },
-          }),
-      }),
-    ).rejects.toThrow("Transaction reverted on-chain. No game state was changed.");
-  });
 
   test("selects Rabby from a multi-provider injected wallet", () => {
     const metamaskProvider = mockProvider(async () => []);
@@ -1345,21 +1253,21 @@ describe("walletFlow", () => {
     const injectedProvider = mockProvider(
       async ({ method, params }) => {
         walletRequests.push(params === undefined ? { method } : { method, params });
-        if (method === "eth_chainId") return BASE_SEPOLIA.chainIdHex;
+        if (method === "eth_chainId") return BASE_MAINNET.chainIdHex;
         if (method === "eth_call") throw {};
         if (method === "eth_sendTransaction") return "0xmetamask";
         throw new Error(`Unexpected method ${method}`);
       },
       { forwardNetwork: true, forwardSimulation: true },
     );
-    configureWalletTransactionTransport(injectedProvider, "injected", "https://base-rpc.example.test");
+    configureWalletTransactionTransport(injectedProvider, "injected", "https://base-rpc.example.test", BASE_MAINNET);
     globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
       rpcRequests.push({
         input: String(input),
         body: JSON.parse(String(init?.body ?? "{}")),
       });
       const body = rpcRequests.at(-1)?.body as { method?: string } | undefined;
-      return Response.json({ result: body?.method === "eth_chainId" ? BASE_SEPOLIA.chainIdHex : "0x" });
+      return Response.json({ result: body?.method === "eth_chainId" ? BASE_MAINNET.chainIdHex : "0x" });
     }) as unknown as typeof fetch;
 
     try {
@@ -1371,7 +1279,7 @@ describe("walletFlow", () => {
     expect(walletRequests).toEqual([
       { method: "eth_chainId" },
       { method: "eth_chainId" },
-      { method: "eth_sendTransaction", params: [{ ...transaction, chainId: BASE_SEPOLIA.chainIdHex }] },
+      { method: "eth_sendTransaction", params: [{ ...transaction, chainId: BASE_MAINNET.chainIdHex }] },
     ]);
     expect(rpcRequests).toEqual([
       {
@@ -1396,15 +1304,15 @@ describe("walletFlow", () => {
     const provider = mockProvider(
       async ({ method }) => {
         walletMethods.push(method);
-        if (method === "eth_chainId") return BASE_SEPOLIA.chainIdHex;
+        if (method === "eth_chainId") return BASE_MAINNET.chainIdHex;
         throw new Error(`${method} should not be called`);
       },
       { forwardNetwork: true, forwardSimulation: true },
     );
-    configureWalletTransactionTransport(provider, "injected", "https://base-rpc.example.test");
+    configureWalletTransactionTransport(provider, "injected", "https://base-rpc.example.test", BASE_MAINNET);
     globalThis.fetch = (async (_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
       const body = JSON.parse(String(init?.body ?? "{}")) as { method?: string };
-      return body.method === "eth_chainId" ? Response.json({ result: BASE_SEPOLIA.chainIdHex }) : Response.json({
+      return body.method === "eth_chainId" ? Response.json({ result: BASE_MAINNET.chainIdHex }) : Response.json({
         error: {
           code: 3,
           message: "execution reverted",
@@ -1434,7 +1342,7 @@ describe("walletFlow", () => {
     const hostProvider = mockProvider(
       async ({ method, params }) => {
         walletRequests.push(params === undefined ? { method } : { method, params });
-        if (method === "eth_chainId") return BASE_SEPOLIA.chainIdHex;
+        if (method === "eth_chainId") return defaultVeydriftChainForLocation().chainIdHex;
         if (method === "eth_call") throw { code: 4200, message: "Unsupported method" };
         if (method === "eth_sendTransaction") return "0xfarcaster";
         throw new Error(`Unexpected method ${method}`);
@@ -1460,7 +1368,7 @@ describe("walletFlow", () => {
         body: JSON.parse(String(init?.body ?? "{}")),
       });
       const body = rpcRequests.at(-1)?.body as { method?: string } | undefined;
-      return Response.json({ result: body?.method === "eth_chainId" ? BASE_SEPOLIA.chainIdHex : "0x" });
+      return Response.json({ result: body?.method === "eth_chainId" ? defaultVeydriftChainForLocation().chainIdHex : "0x" });
     }) as unknown as typeof fetch;
 
     try {
@@ -1472,7 +1380,7 @@ describe("walletFlow", () => {
     expect(walletRequests).toEqual([
       { method: "eth_chainId" },
       { method: "eth_chainId" },
-      { method: "eth_sendTransaction", params: [{ ...transaction, chainId: BASE_SEPOLIA.chainIdHex }] },
+      { method: "eth_sendTransaction", params: [{ ...transaction, chainId: defaultVeydriftChainForLocation().chainIdHex }] },
     ]);
     expect(rpcRequests).toEqual([
       {
@@ -1503,21 +1411,21 @@ describe("walletFlow", () => {
     const reownProvider = mockProvider(
       async ({ method, params }) => {
         walletRequests.push(params === undefined ? { method } : { method, params });
-        if (method === "eth_chainId") return BASE_SEPOLIA.chainIdHex;
+        if (method === "eth_chainId") return BASE_MAINNET.chainIdHex;
         if (method === "eth_call") throw {};
         if (method === "eth_sendTransaction") return "0xtrust-wallet";
         throw new Error(`Unexpected method ${method}`);
       },
       { forwardNetwork: true, forwardSimulation: true },
     );
-    configureWalletTransactionTransport(reownProvider, "reown", "https://base-rpc.example.test");
+    configureWalletTransactionTransport(reownProvider, "reown", "https://base-rpc.example.test", BASE_MAINNET);
     globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
       rpcRequests.push({
         input: String(input),
         body: JSON.parse(String(init?.body ?? "{}")),
       });
       const body = rpcRequests.at(-1)?.body as { method?: string } | undefined;
-      return Response.json({ result: body?.method === "eth_chainId" ? BASE_SEPOLIA.chainIdHex : "0x" });
+      return Response.json({ result: body?.method === "eth_chainId" ? BASE_MAINNET.chainIdHex : "0x" });
     }) as unknown as typeof fetch;
 
     try {
@@ -1529,7 +1437,7 @@ describe("walletFlow", () => {
     expect(walletRequests).toEqual([
       { method: "eth_chainId" },
       { method: "eth_chainId" },
-      { method: "eth_sendTransaction", params: [{ ...transaction, chainId: BASE_SEPOLIA.chainIdHex }] },
+      { method: "eth_sendTransaction", params: [{ ...transaction, chainId: BASE_MAINNET.chainIdHex }] },
     ]);
     expect(rpcRequests).toEqual([
       {
@@ -1554,15 +1462,15 @@ describe("walletFlow", () => {
     const provider = mockProvider(
       async ({ method }) => {
         walletMethods.push(method);
-        if (method === "eth_chainId") return BASE_SEPOLIA.chainIdHex;
+        if (method === "eth_chainId") return BASE_MAINNET.chainIdHex;
         throw new Error(`${method} should not be called`);
       },
       { forwardNetwork: true, forwardSimulation: true },
     );
-    configureWalletTransactionTransport(provider, "reown", "https://base-rpc.example.test");
+    configureWalletTransactionTransport(provider, "reown", "https://base-rpc.example.test", BASE_MAINNET);
     globalThis.fetch = (async (_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
       const body = JSON.parse(String(init?.body ?? "{}")) as { method?: string };
-      return body.method === "eth_chainId" ? Response.json({ result: BASE_SEPOLIA.chainIdHex }) : Response.json({
+      return body.method === "eth_chainId" ? Response.json({ result: BASE_MAINNET.chainIdHex }) : Response.json({
         error: {
           code: 3,
           message: "execution reverted",
@@ -1587,16 +1495,16 @@ describe("walletFlow", () => {
     const provider = mockProvider(
       async ({ method }) => {
         walletMethods.push(method);
-        if (method === "eth_chainId") return BASE_SEPOLIA.chainIdHex;
+        if (method === "eth_chainId") return BASE_MAINNET.chainIdHex;
         if (method === "eth_sendTransaction") return "0xfarcaster-fallback";
         throw new Error(`Farcaster host must not receive ${method}`);
       },
       { forwardNetwork: true, forwardSimulation: true },
     );
-    configureWalletTransactionTransport(provider, "farcaster", "https://base-rpc.example.test");
+    configureWalletTransactionTransport(provider, "farcaster", "https://base-rpc.example.test", BASE_MAINNET);
     globalThis.fetch = (async (_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
       const body = JSON.parse(String(init?.body ?? "{}")) as { method?: string; params?: unknown[] };
-      if (body.method === "eth_chainId") return Response.json({ result: BASE_SEPOLIA.chainIdHex });
+      if (body.method === "eth_chainId") return Response.json({ result: BASE_MAINNET.chainIdHex });
       const tag = String(body.params?.[1]);
       rpcTags.push(tag);
       return tag === "pending" ? Response.json({ error: { code: -32602, message: "pending block tag is not supported" } }) : Response.json({ result: "0x" });
@@ -1618,15 +1526,15 @@ describe("walletFlow", () => {
     const provider = mockProvider(
       async ({ method }) => {
         walletMethods.push(method);
-        if (method === "eth_chainId") return BASE_SEPOLIA.chainIdHex;
+        if (method === "eth_chainId") return BASE_MAINNET.chainIdHex;
         throw new Error(`${method} should not be called`);
       },
       { forwardNetwork: true, forwardSimulation: true },
     );
-    configureWalletTransactionTransport(provider, "farcaster", "https://base-rpc.example.test");
+    configureWalletTransactionTransport(provider, "farcaster", "https://base-rpc.example.test", BASE_MAINNET);
     globalThis.fetch = (async (_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
       const body = JSON.parse(String(init?.body ?? "{}")) as { method?: string };
-      return body.method === "eth_chainId" ? Response.json({ result: BASE_SEPOLIA.chainIdHex }) : Response.json({
+      return body.method === "eth_chainId" ? Response.json({ result: BASE_MAINNET.chainIdHex }) : Response.json({
         error: {
           code: 3,
           message: "execution reverted",
@@ -4052,6 +3960,27 @@ describe("walletFlow", () => {
     }
   });
 
+  test("the transport deadline includes a stalled JSON response body", async () => {
+    const originalFetch = globalThis.fetch;
+    let signal: AbortSignal | undefined;
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      signal = init?.signal ?? undefined;
+      return {
+        ok: true,
+        json: () => new Promise((_resolve, reject) => {
+          signal?.addEventListener("abort", () => reject(signal?.reason), { once: true });
+        }),
+      } as Response;
+    }) as typeof fetch;
+    try {
+      await expect(fetchInfrastructureState("https://api.test", account, "1", { timeoutMs: 5 }))
+        .rejects.toThrow("Timed out reading infrastructure");
+      expect(signal?.aborted).toBe(true);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   test("includes backend wallet API validation messages in shipyard errors", async () => {
     const originalFetch = globalThis.fetch;
 
@@ -4388,15 +4317,6 @@ describe("walletFlow", () => {
     }
   });
 
-  test("times out stuck watched-planet signature requests", async () => {
-    const provider = mockProvider(async ({ method, params }) => {
-      expect(method).toBe("personal_sign");
-      expect(params).toEqual([personalSignPayload(watchedPlanetMessage(account, "watch", "42")), account]);
-      return await new Promise<string>(() => undefined);
-    });
-
-    await expect(requestWatchedPlanetSignature(provider, account, "watch", "42", 1)).rejects.toThrow("Timed out reading watched planet signature from the wallet after 0 seconds.");
-  });
 
   test("signs watched-planet removals with the unwatch action", async () => {
     const originalFetch = globalThis.fetch;
@@ -4565,7 +4485,7 @@ describe("walletFlow", () => {
     const originalFetch = globalThis.fetch;
 
     globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
-      expect(String(input)).toBe(`https://api.example.test/wallet/${account}/alliance`);
+      expect(String(input)).toBe(`https://api.example.test/wallet/${account}/alliance?view=summary`);
       expect(init).toEqual({
         cache: "no-store",
         headers: { accept: "application/json" },

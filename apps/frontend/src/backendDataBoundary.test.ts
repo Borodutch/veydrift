@@ -1,264 +1,100 @@
-import { describe, expect, test } from "bun:test";
+import { expect, test } from "bun:test";
+import { BackendDataStore } from "./backendDataStore";
 
 const frontendRoot = new URL("..", import.meta.url).pathname;
 
-describe("frontend backend-data boundary", () => {
-  test("keeps raw HTTP reads out of UI components", async () => {
-    const violations: string[] = [];
-    const files = new Bun.Glob("src/**/*.tsx").scan({ cwd: frontendRoot });
+// Static checks enforce ownership boundaries; behavior belongs in runtime tests.
+test("UI components cannot bypass the data store or own transaction submissions", async () => {
+  const violations: string[] = [];
+  for await (const file of new Bun.Glob("src/**/*.tsx").scan({ cwd: frontendRoot })) {
+    const source = await Bun.file(`${frontendRoot}/${file}`).text();
+    if (/\bfetch\s*\(/.test(source)
+      || /eth_sendTransaction/.test(source)
+      || /\.(?:commitBackendSnapshot|markBackendFailure|discardBackendSnapshot)\(/.test(source)
+      || /from ["'][^"']*gameStateStore["']/.test(source)) violations.push(file);
+  }
+  expect(violations).toEqual([]);
+});
 
-    for await (const file of files) {
-      const source = await Bun.file(`${frontendRoot}/${file}`).text();
-      if (/\bfetch\s*\(/.test(source)) violations.push(file);
+test("only the canonical store owns cache primitives and only the wallet adapter submits transactions", async () => {
+  const violations: string[] = [];
+  let submissionGateways = 0;
+  for await (const file of new Bun.Glob("src/**/*.{ts,tsx}").scan({ cwd: frontendRoot })) {
+    if (/\.test\.tsx?$/.test(file)) continue;
+    const source = await Bun.file(`${frontendRoot}/${file}`).text();
+    if (!["src/backendDataStore.ts", "src/gameStateStore.ts"].includes(file)
+      && (/\.(?:publish|fail|clear)\(/.test(source) || /\/index\/(?:rebuild|verify)/.test(source))) violations.push(file);
+    const submissions = source.match(/method:\s*["']eth_sendTransaction["']/g) ?? [];
+    if (submissions.length && file !== "src/walletFlow.ts") violations.push(file);
+    submissionGateways += submissions.length;
+  }
+  expect(violations).toEqual([]);
+  expect(submissionGateways).toBe(1);
+});
+
+test("descriptor and imperative callers share one transport and one canonical snapshot", async () => {
+  const originalFetch = globalThis.fetch;
+  const store = new BackendDataStore("https://api.test");
+  let release!: (response: Response) => void;
+  let requests = 0;
+  globalThis.fetch = (() => {
+    requests += 1;
+    return new Promise<Response>(resolve => { release = resolve; });
+  }) as unknown as typeof fetch;
+  try {
+    const query = store.queries.planets("0xabc");
+    const first = query.read();
+    const others = Array.from({ length: 9 }, () => store.planets("0xabc"));
+    await Promise.resolve();
+    expect(requests).toBe(1);
+    const payload = { wallet: "0xabc", planets: [] };
+    release(Response.json(payload));
+    await Promise.all([first, ...others]);
+    expect(store.snapshot(query.key)?.data).toEqual(payload);
+  } finally {
+    store.dispose();
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("an unrelated slow query cannot block another wallet, and disposal aborts its transport", async () => {
+  const originalFetch = globalThis.fetch;
+  const store = new BackendDataStore("https://api.test");
+  let slowSignal: AbortSignal | undefined;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (String(input).includes("0xaaa")) {
+      slowSignal = init?.signal ?? undefined;
+      return new Promise<Response>((_resolve, reject) => slowSignal?.addEventListener("abort", () => reject(slowSignal?.reason), { once: true }));
     }
+    return Response.json({ wallet: "0xbbb", planets: [] });
+  }) as typeof fetch;
+  try {
+    const slow = store.queries.planets("0xaaa").read().catch(() => undefined);
+    await expect(store.planets("0xbbb")).resolves.toMatchObject({ wallet: "0xbbb" });
+    expect(slowSignal?.aborted).toBe(false);
+    store.dispose();
+    expect(slowSignal?.aborted).toBe(true);
+    await slow;
+  } finally {
+    store.dispose();
+    globalThis.fetch = originalFetch;
+  }
+});
 
-    expect(violations).toEqual([]);
-  });
-
-  test("routes shared planet reads through the canonical scheduled store", async () => {
-    const appSource = await Bun.file(new URL("./PlayableMvpApp.tsx", import.meta.url)).text();
-    const storeSource = await Bun.file(new URL("./backendDataStore.ts", import.meta.url)).text();
-
-    expect(appSource).toContain("backendDataStoreFor(apiBaseUrl)");
-    expect(appSource).toContain("backendData!.infrastructure(account, activePlanetId)");
-    expect(appSource).toContain("backendData!.queues(account, activePlanetId)");
-    expect(storeSource).toContain("private readonly state = new GameStateStore()");
-    expect(storeSource).toContain("return this.readRegisteredResource(resource");
-    expect(storeSource).toContain('priority: "selected-planet"');
-  });
-
-  test("keeps canonical data and freshness in one subscribed runtime store", async () => {
-    const storeSource = await Bun.file(new URL("./backendDataStore.ts", import.meta.url)).text();
-    const appSource = await Bun.file(new URL("./PlayableMvpApp.tsx", import.meta.url)).text();
-    const guide = await Bun.file(new URL("../../../docs/frontend-data-store.md", import.meta.url)).text();
-    const playerGuide = await Bun.file(new URL("./docs/content/docs.md", import.meta.url)).text();
-
-    expect(storeSource).toContain("private readonly state = new GameStateStore()");
-    expect(storeSource).toContain("private readonly resources = new Map<string, RegisteredResource>()");
-    expect(storeSource).toContain("connectChainEvents(");
-    expect(storeSource).toContain("startPolling(");
-    expect(storeSource).toContain("invalidate(tags");
-    expect(storeSource).toContain("subscribe(listener");
-    expect(storeSource).toContain("snapshot<T>(key: string)");
-    expect(storeSource).toContain("retainBackendDataStore(");
-    expect(appSource).toContain("queries.runtimeConfig<RuntimeConfig>(runtimeConfigUrl())");
-    expect(appSource).not.toContain("backendData.key(");
-    expect(appSource).not.toContain('from "./planetSectionStore"');
-    expect(appSource).not.toContain("setPlanetSectionStore");
-    expect(guide).toContain("canonical runtime owner");
-    expect(guide).toContain("Deadlines begin at enqueue time");
-    expect(playerGuide).toContain("one shared game-state store and priority scheduler");
-    expect(playerGuide).toContain("the same stored responses");
-  });
-
-  test("keeps the write gate and backend-owned write lifecycle in the canonical store", async () => {
-    const appSource = await Bun.file(new URL("./PlayableMvpApp.tsx", import.meta.url)).text();
-    const storeSource = await Bun.file(new URL("./backendDataStore.ts", import.meta.url)).text();
-
-    expect(storeSource).toContain("private readonly transactionGates = new Map<string, TransactionActionGate>()");
-    expect(storeSource).toContain("private transactionGateFor(walletScope: string)");
-    expect(storeSource).toContain("async runWriteTransaction(");
-    expect(storeSource).toContain("/transactions/${encodeURIComponent(transactionHash)}/status");
-    expect(storeSource).toContain("writePendingTransaction");
-    expect(storeSource).toContain("resumePendingTransactions");
-    expect(storeSource).toContain('outcome: "submitted"');
-    expect(storeSource).toContain("writeTransactionOutcomeFromState");
-    expect(storeSource).not.toContain("waitForIndexedResource<T extends");
-    expect(storeSource).not.toContain("waitForStartedDefenseProduction(");
-    expect(appSource).toContain("backendData?.writeTransactionKey(undefined, account)");
-    expect(appSource).toContain("backendData.runWriteTransaction({");
-    expect(appSource).toContain("backendData!.indexing.startedDefenseProduction(");
-    expect(appSource).toContain("backendData!.indexing.startedShipProduction(");
-    expect(appSource).toContain("backendData!.indexing.startedResearch(");
-    expect(appSource).not.toContain("useRef(createTransactionActionGate())");
-    expect(appSource).not.toContain("confirmTransactionReceiptForProviderSource(");
-    expect(appSource).not.toMatch(/useState<WriteTransactionState>/);
-    expect(appSource).not.toContain("The simulated Supply transaction was not sent");
-    expect(appSource).not.toContain("waitForStartedDefenseProductionState(");
-    expect(appSource).not.toContain("waitForIndexedResourceState(");
-  });
-
-  test("keeps lazy reconciliation and raw cache primitives out of UI code", async () => {
-    const appSource = await Bun.file(new URL("./PlayableMvpApp.tsx", import.meta.url)).text();
-    const storeSource = await Bun.file(new URL("./backendDataStore.ts", import.meta.url)).text();
-    const frontendFiles = new Bun.Glob("src/**/*.{ts,tsx}").scan({
-      cwd: frontendRoot,
-    });
-    const violations: string[] = [];
-
-    for await (const file of frontendFiles) {
-      if (file.endsWith(".test.ts") || file === "src/backendDataStore.ts" || file === "src/gameStateStore.ts") continue;
-      const source = await Bun.file(`${frontendRoot}/${file}`).text();
-      if (/\.(?:publish|fail|clear)\(/.test(source)) violations.push(file);
-      if (/\/index\/(?:rebuild|verify)/.test(source)) violations.push(file);
-    }
-
-    expect(appSource).not.toContain("backendData.waitForIndexedResource(");
-    expect(appSource).not.toMatch(/\.(?:commitBackendSnapshot|markBackendFailure|discardBackendSnapshot)\(/);
-    expect(appSource).not.toMatch(/backendData\.(?:setProfile|setWalletPlanets|setQueues|setShipyard|setResearch|setAlliance)\(/);
-    expect(appSource).not.toContain("backendData.setSnapshotError(");
-    expect(appSource).not.toContain("waitForIndexed:");
-    expect(storeSource).toContain("export type BackendIndexingPlan");
-    expect(storeSource).toContain("private readonly indexingPlanRunners");
-    expect(violations).toEqual([]);
-  });
-
-  test("keeps fresh reads, session presence and invite recovery in the canonical store", async () => {
-    const appSource = await Bun.file(new URL("./PlayableMvpApp.tsx", import.meta.url)).text();
-    const activitySource = await Bun.file(new URL("./components/PlayerActivityDialog.tsx", import.meta.url)).text();
-    const landingSource = await Bun.file(new URL("./ComingSoonApp.tsx", import.meta.url)).text();
-    const storeSource = await Bun.file(new URL("./backendDataStore.ts", import.meta.url)).text();
-
-    expect(storeSource).toContain("dedupe: true");
-    expect(storeSource).toContain("cancelQueuedReadIfUnobserved(key)");
-    expect(storeSource).toContain("dismissPlayerActivityAwayWindow(wallet: string)");
-    expect(storeSource).toContain("activityAwayWindowConsumedInSession(wallet)");
-    expect(storeSource).toContain("async recoverPaidAllianceInvites(wallet: string, provider: Eip1193Provider)");
-    expect(activitySource).toContain("backendData?.dismissPlayerActivityAwayWindow(wallet)");
-    expect(landingSource).toContain("retainBackendDataStore(playableApiUrl)");
-    expect(appSource).toContain("backendData!.recoverPaidAllianceInvites(account, provider)");
-    expect(appSource).not.toContain('backendData?.value<ApiSystemResponse>("system"');
-    expect(appSource).toContain("pendingJoinAttackSystemSnapshot");
-  });
-
-  test("migrated surfaces subscribe to canonical snapshots without response shadow state", async () => {
-    const appSource = await Bun.file(new URL("./PlayableMvpApp.tsx", import.meta.url)).text();
-    const galaxySource = await Bun.file(new URL("./components/GalaxyView.tsx", import.meta.url)).text();
-    const planetSource = await Bun.file(new URL("./components/PlanetDetail.tsx", import.meta.url)).text();
-    const moonSource = await Bun.file(new URL("./components/PublicMoonDetail.tsx", import.meta.url)).text();
-
-    for (const canonicalProjection of [
-      "WalletSettlementResponse",
-      "WalletPlanetsResponse",
-      "PlayerQueuesResponse",
-      "FleetMissionVisibilityResponse",
-      "FleetMissionArchiveResponse",
-      "GlobalMissionArchiveResponse",
-      "ChainInfrastructureState",
-      "ChainDefenseState",
-      "ChainShipyardState",
-      "ChainResearchState",
-    ]) {
-      expect(appSource).toContain(`useBackendDataSnapshot<${canonicalProjection}>`);
-    }
-    expect(appSource).not.toMatch(/useState<(?:WalletSettlementResponse|FleetMissionVisibilityResponse|FleetMissionArchiveResponse|GlobalMissionArchiveResponse)/);
-    expect(appSource).not.toMatch(/useState<PlayerProfile/);
-    expect(appSource).toContain("const playerProfileSnapshot = useBackendDataSnapshot<PlayerProfile>");
-    expect(appSource).not.toMatch(/const \[(?:onChainStatus|onChainError|activePlanetStateFresh|canonicalPlanetResources|planetSectionStore|allianceState|allianceLoading|allianceError),/);
-    expect(galaxySource).toContain("useBackendDataQuery<ApiSystemResponse>");
-    expect(galaxySource).toContain("useBackendDataSnapshots<AttackProtectionStatus>");
-    expect(galaxySource).not.toContain("useState<Planet[]>(");
-    expect(galaxySource).not.toMatch(/useState<Record<string, AttackProtectionStatus>>/);
-    expect(planetSource).toContain("useBackendDataQuery<ApiSystemResponse>");
-    expect(planetSource).not.toContain("useState<Planet | null>");
-    expect(moonSource).toContain("useBackendDataQuery<ApiSystemResponse>");
-    expect(moonSource).not.toContain("useState<Planet | null>");
-  });
-
-  test("keeps player inspection and alliance roster inspection on store descriptors", async () => {
-    const inspectSource = await Bun.file(new URL("./components/InspectPages.tsx", import.meta.url)).text();
-    const allianceSource = await Bun.file(new URL("./components/AlliancePage.tsx", import.meta.url)).text();
-    const querySource = await Bun.file(new URL("./useBackendDataQuery.ts", import.meta.url)).text();
-    const storeSource = await Bun.file(new URL("./backendDataStore.ts", import.meta.url)).text();
-
-    expect(inspectSource).toContain("backendData?.queries.planets(wallet)");
-    expect(inspectSource).toContain("useBackendDataQuery");
-    expect(inspectSource).not.toContain("Promise.allSettled");
-    expect(allianceSource).toContain("playerBackendData.queries.planets(selectedPlayer)");
-    expect(allianceSource).toContain("playerBackendData.queries.playerHighscore(selectedPlayer)");
-    expect(allianceSource).not.toContain("Promise.allSettled");
-    expect(querySource).toContain("BackendDataQueryDescriptor<T>");
-    expect(querySource).not.toContain("load: (() => Promise<T>)");
-    expect(storeSource).toContain("readonly queries = {");
-  });
-
-  test("keeps settlement and referral reads on canonical store queries", async () => {
-    const settlementSource = await Bun.file(new URL("./FirstPlanetSettlementApp.tsx", import.meta.url)).text();
-    const storeSource = await Bun.file(new URL("./backendDataStore.ts", import.meta.url)).text();
-
-    expect(settlementSource).toContain("useBackendDataQuery(");
-    expect(settlementSource).toContain("referralData.queries.referralDashboard(account)");
-    expect(settlementSource).toContain("historyData.queries.referralHistory(wallet, historyPage, 25)");
-    expect(settlementSource).toContain("referralData.queries.referralCodeInspection(account, referralClaimCode)");
-    expect(settlementSource).not.toContain("setTimeout(() => {\n      void inspectReferralCode");
-    expect(settlementSource).not.toContain("setTimeout(loadRuntimeConfig");
-    expect(settlementSource).not.toContain("createTransactionActionGate");
-    expect(settlementSource).toContain("data.runWriteTransaction({");
-    expect(settlementSource).toContain("data.indexing.settledPlanet(");
-    expect(settlementSource).toContain("data.indexing.referralClaim(");
-    expect(storeSource).toContain("referralCodeInspection(");
-    expect(storeSource).toContain("paidAllianceInviteResolution(");
-    expect(storeSource).toContain("settledPlanet: (");
-    expect(storeSource).toContain("referralClaim: (");
-  });
-
-  test("scheduled backend transports forward their AbortSignal", async () => {
-    const storeSource = await Bun.file(new URL("./backendDataStore.ts", import.meta.url)).text();
-
-    expect(storeSource).not.toMatch(/return this\.refresh\(key, (?:async )?\(\) => fetch(?:Wallet|Fleet|Global|Mission|Battle|System|Highscore)/);
-    expect(storeSource).toMatch(/fetchFleetMissionArchive\(this\.apiBaseUrl, wallet, \{\s*\.\.\.options,\s*signal,?\s*\}\)/);
-    expect(storeSource).toMatch(/fetchGlobalMissionArchive\(this\.apiBaseUrl, \{\s*\.\.\.options,\s*signal,?\s*\}\)/);
-    expect(storeSource).toContain("fetchMission(this.apiBaseUrl, missionId, signal)");
-  });
-
-  test("keeps cache and scheduling out of wallet transport adapters", async () => {
-    const walletFlowSource = await Bun.file(new URL("./walletFlow.ts", import.meta.url)).text();
-    const storeSource = await Bun.file(new URL("./backendDataStore.ts", import.meta.url)).text();
-
-    expect(walletFlowSource).not.toContain("gameApiRecentReads");
-    expect(walletFlowSource).not.toContain("gameApiInflightReads");
-    expect(walletFlowSource).not.toContain("gameApiReadQueue");
-    expect(storeSource).toContain("private readonly state = new GameStateStore()");
-    expect(storeSource).toContain("isFresh(key");
-  });
-
-  test("simulates every EVM write through the single configured wallet submission gateway", async () => {
-    const walletFlowSource = await Bun.file(new URL("./walletFlow.ts", import.meta.url)).text();
-    const appSource = await Bun.file(new URL("./PlayableMvpApp.tsx", import.meta.url)).text();
-    const settlementSource = await Bun.file(new URL("./FirstPlanetSettlementApp.tsx", import.meta.url)).text();
-    const sendOccurrences = walletFlowSource.match(/method:\s*["']eth_sendTransaction["']/g) ?? [];
-    const gatewayStart = walletFlowSource.indexOf("async function sendWalletTransaction");
-    const gatewayEnd = walletFlowSource.indexOf("function pendingCallUnsupported", gatewayStart);
-    const gatewaySource = walletFlowSource.slice(gatewayStart, gatewayEnd);
-
-    expect(sendOccurrences).toHaveLength(1);
-    expect(gatewaySource).toContain("Boolean(simulationRpcUrl?.trim())");
-    expect(gatewaySource).not.toContain('transport?.source === "farcaster"');
-    expect(gatewaySource).toContain("simulateTransactionFromRpc");
-    expect(gatewaySource).toContain("prepareWalletTransactionNetwork(provider, requiredChain)");
-    expect(gatewaySource).toContain("assertSimulationRpcNetwork(simulationRpcUrl");
-    expect(gatewaySource).toContain("assertWalletTransactionNetwork(provider, requiredChain)");
-    expect(gatewaySource).toContain("chainId: requiredChain.chainIdHex");
-    expect(gatewaySource).toContain('method: "eth_call"');
-    expect(gatewaySource.indexOf('await simulate("pending")')).toBeLessThan(gatewaySource.indexOf('method: "eth_sendTransaction"'));
-    expect(gatewaySource.indexOf("assertWalletTransactionNetwork(provider, requiredChain)")).toBeLessThan(gatewaySource.indexOf('method: "eth_sendTransaction"'));
-    expect(walletFlowSource).toContain('method: "eth_call"');
-    expect(walletFlowSource).toContain("Transaction simulation failed:");
-    expect(appSource).toContain("configureWalletTransactionTransport(provider, walletProviderSource, gameWalletChain.rpcUrls[0], gameWalletChain)");
-    expect(settlementSource).toContain("configureWalletTransactionTransport(injected, walletProvider.source, requiredChain.rpcUrls[0], requiredChain)");
-  });
-
-  test("keeps post-application refresh and auxiliary actions as opaque store plans", async () => {
-    const appSource = await Bun.file(new URL("./PlayableMvpApp.tsx", import.meta.url)).text();
-    const storeSource = await Bun.file(new URL("./backendDataStore.ts", import.meta.url)).text();
-
-    expect(appSource).not.toContain("afterReceipt?:");
-    expect(appSource).not.toContain("waitForIndexed:");
-    expect(appSource).toContain("indexing.paidAllianceInvite(account, provider, secret)");
-    expect(appSource).toContain("resourceChanges: refreshedPlan.orders.map");
-    expect(storeSource).toContain("all: (plans: readonly BackendIndexingPlan[])");
-    expect(storeSource).toContain("paidAllianceInvite:");
-    expect(storeSource).toContain("startedResearch: (");
-  });
-
-  test("uses resource-owned queries instead of page cancellation scopes", async () => {
-    const files = ["./components/RankingsPage.tsx", "./components/RaidTargetFinderPage.tsx", "./components/GalaxyView.tsx", "./components/PlanetDetail.tsx", "./components/PublicMoonDetail.tsx"];
-
-    for (const file of files) {
-      const source = await Bun.file(new URL(file, import.meta.url)).text();
-      expect(source).toContain("useBackendDataQuery");
-      expect(source).not.toContain("cancelScope(");
-      expect(source).not.toContain("requestScope:");
-    }
-  });
+test("failed refresh preserves the descriptor's last good data", async () => {
+  const originalFetch = globalThis.fetch;
+  const store = new BackendDataStore("https://api.test");
+  let fail = false;
+  globalThis.fetch = (async () => fail ? new Response("Unavailable", { status: 503 }) : Response.json({ wallet: "0xabc", planets: [] })) as unknown as typeof fetch;
+  try {
+    const query = store.queries.planets("0xabc");
+    const previous = await query.read();
+    fail = true;
+    await expect(store.planets("0xabc")).rejects.toThrow();
+    expect(store.snapshot(query.key)?.data).toEqual(previous);
+    expect(store.snapshot(query.key)?.error).toBeDefined();
+  } finally {
+    store.dispose();
+    globalThis.fetch = originalFetch;
+  }
 });

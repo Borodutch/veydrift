@@ -1,50 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import {
-  AttackLootProjection,
-  AttackIntelPanel,
-  AttackOutcomePanel,
-  buildMissionLaunchDraft,
-  emptyMissionCargoDraft,
-  DestinationIntelPanel,
-  forecastRaidLoot,
-  initialMissionShips,
-  LootRatioControls,
-  MissionLootSection,
-  MissionCargoPicker,
-  type MissionCargoDraft,
-  missionCargoAfterBodyChange,
-  normalizeMissionCargoDraft,
-  reconcileMissionCargoAfterFleetChange,
-  lootRatioFromUpToAmount,
-  missionCargoMaxForResource,
-  missionBodySelectionVisibility,
-  missionAttackLootMode,
-  missionConfirmButtonLabel,
-  missionComposerRouteEndpoints,
-  missionDraftBlocker,
-  missionTargetCompositionUnits,
-  missionTargetMoonUnavailableReason,
-  MissionFuelCost,
-  MissionTimingGrid,
-  MISSION_TIMING_PLACEHOLDER,
-  MISSION_TIMING_RESERVED_HEIGHT_PX,
-  missionSpecificLoadout,
-  missionShipOptions,
-  missionTimingRows,
-  missionTimingSummary,
-  NonAttackMissionIntelPanel,
-  projectedMissionArrivalAtSeconds,
-  preparePublicTargetBattleForecast,
-  publicTargetBattleForecast,
-  rebalanceLootRatio,
-  ShipQuantityRow,
-  shouldShowDestinationIntel,
-  shouldShowReturnTiming,
-  staleSelectedShipQuantityBlocker,
-  stationedDefenderCompositionUnits,
-  TargetIntelCard,
-  targetResourceIntel,
-} from "./components/MissionCreationPage";
+import { AttackLootProjection, AttackIntelPanel, AttackOutcomePanel, buildMissionLaunchDraft, DestinationIntelPanel, forecastRaidLoot, initialMissionShips, LootRatioControls, MissionLootSection, MissionCargoPicker, missionCargoAfterBodyChange, reconcileMissionCargoAfterFleetChange, lootRatioFromUpToAmount, missionCargoMaxForResource, missionBodySelectionVisibility, missionAttackLootMode, missionConfirmButtonLabel, missionComposerRouteEndpoints, missionDraftBlocker, missionTargetCompositionUnits, missionTargetMoonUnavailableReason, MissionFuelCost, MissionTimingGrid, MISSION_TIMING_PLACEHOLDER, MISSION_TIMING_RESERVED_HEIGHT_PX, missionSpecificLoadout, missionShipOptions, missionTimingRows, missionTimingSummary, NonAttackMissionIntelPanel, projectedMissionArrivalAtSeconds, preparePublicTargetBattleForecast, publicTargetBattleForecast, rebalanceLootRatio, ShipQuantityRow, shouldShowDestinationIntel, shouldShowReturnTiming, staleSelectedShipQuantityBlocker, stationedDefenderCompositionUnits, TargetIntelCard, targetResourceIntel } from "./components/MissionCreationPage";
+import { emptyMissionCargoDraft, type MissionCargoDraft, normalizeMissionCargoDraft } from "./components/missionCargoModel";
 import {
   attackProtectionSubmitBlocker,
   cargoForCargoMissionLaunch,
@@ -402,7 +358,6 @@ describe("mission creation", () => {
     expect(playableMvpAppSource).toContain("originIsMoon,");
     expect(playableMvpAppSource).toContain("validateAttackProtection:");
     expect(playableMvpAppSource).toContain("targetIsMoon,");
-    expect(playableMvpAppSource).toContain("targetPlanet: pendingJoinAttackTarget");
     expect(playableMvpAppSource).toContain("const targetIsMoon = pending.mission.targetIsMoon === true;");
 
     const target = targetPlanet({
@@ -616,7 +571,7 @@ describe("mission creation", () => {
 
     expect(state?.fleetSlots).toEqual({ active: 5, limit: 6 });
     expect(state?.ships.find((ship) => ship.id === 0)?.count).toBe(1);
-    expect(playableMvpAppSource).toContain("refreshShipyardState({ clearCachedState: true })");
+    expect(playableMvpAppSource).toContain("refreshShipyardState()");
     expect(playableMvpAppSource).toContain("refreshInfrastructureState()");
   });
 

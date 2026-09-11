@@ -1,97 +1,202 @@
-# Frontend backend-read boundary
+# Frontend state and API consumption
 
-## Purpose
+This is the implemented frontend architecture. Backend ingestion and commit
+guarantees are documented in [Backend and indexer](backend-indexer.md); local
+setup lives in [Development](development.md). Superseded migration proposals
+must not be used to restore browser-persisted transaction journals or schedulers.
 
-`apps/frontend/src/backendDataStore.ts` is the typed state boundary and canonical runtime owner between UI code, wallet writes, and the Veydrift backend. It owns normalized responses, typed query descriptors, stable request keys, aggregate wallet/planet hydration, generation ordering, freshness, failures, the priority read scheduler, wallet-scoped write gates, and transaction lifecycle state.
+## Ownership
 
-Low-level request encoding and response validation remain in `walletFlow.ts` and `entityMedia.ts`. Those modules are transport clients, and UI components must not call their read functions directly.
+`BackendDataStore` is the canonical runtime owner of backend response entries and
+pending actions. Views subscribe through typed query descriptors. Low-level HTTP
+encoding and validation remain in `walletFlow.ts` and `entityMedia.ts`; components
+must not call raw `fetch` or create another authoritative cache.
 
-## Invariants
+The playable shell activates each endpoint independently; Overview is not a
+bootstrap dependency and aggregate responses cannot publish into endpoint keys.
+Planet balances, production, caps and energy come from one infrastructure response;
+moon balances come from the moon response. Header and affordability use that same
+economy response. Roster and unit/research responses do not overwrite it.
 
-1. Every covered backend read has a typed store-owned descriptor with normalized arguments, one canonical key, and one loader. Components must not construct a `key + load` pair or read a raw snapshot key.
-2. If a request for the same key is already running, another caller receives that exact promise unless an authoritative refresh explicitly supersedes it.
-3. Every read has a generation and enqueue-time deadline. Older responses can resolve to their original caller but cannot replace a newer canonical snapshot.
-4. UI components contain no raw `fetch()` calls.
-5. `GameStateStore` is the canonical owner of response data and `fresh`, `refreshing`, `delayed`, or `failed` freshness. Screen and planet-section state is a render projection, not another authoritative response copy.
-6. A failed refresh must not clear the last confirmed view projection. The projection owner records the error while retaining its previous data.
-7. A wallet transaction is successful in the UI only after the backend reports its receipt block indexed and every indexed-contract receipt log materialized atomically.
-8. UI components submit writes and request reconciliation through `BackendDataStore`; they do not own a second transaction gate, write lifecycle, reservation retry, or post-write response cache.
-9. Browser state is a light-client projection of backend-indexed responses. Frontend reads, polls, foreground catch-up, and writes never trigger chain reconciliation. Lazy/as-of-now reconciliation belongs to backend writer/indexer work only.
-10. Shared API-base stores have mount leases and dispose after their final owner releases them. They must not retain listeners, pollers, or cached wallet state across an obsolete runtime configuration.
+## Reads
 
-Generation, cancellation, priority, cross-screen propagation, and enqueue-time deadline behavior are enforced by `gameStateStore.test.ts`. Boundary/coalescing behavior remains covered by `backendDataStore.test.ts` and `backendDataBoundary.test.ts`.
+Supply uses `GET /wallet/:wallet/supply-sources?planetId=:target` on open and again
+before confirmation. One consistent indexed snapshot returns all other owned
+planets' resources and launchable ship counts, plus wallet-wide technology and
+fleet-slot state once. The modal subscribes only while open, using the existing
+scoped invalidation/fallback refresh rather than its own timer. It never uses stale
+HTTP response caching or publishes into individual planet/shipyard cache entries.
+Sources and fleet slots are projections of this query; only the user's draft and
+submission feedback are local. Closing or switching wallets invalidates the modal
+submission context without cancelling unrelated resource requests.
 
-## Data flow
+`useBackendDataQuery` exposes per-key `isInitialLoading` and `isRefreshing`.
+Skeletons use the former; a background refresh leaves last-good data visible.
+Neither is an application-wide action lock. Conflicting transactions are still
+guarded by the transaction coordinator, independently of presentation loading.
 
-```text
-refresh trigger
-  -> BackendDataStore typed descriptor or store action
-  -> priority scheduler (transaction, selected planet, Mission Control, background)
-  -> stable request key + generation + AbortController
-  -> canonical response/freshness snapshot
-  -> subscribed screen projections rerender
-```
+The visible route is one `InspectRoute` value. Page, detail IDs, and inspected
+coordinates derive from it; gameplay planet selection and transient dialogs remain
+separate. Planet/moon/player/alliance links use internal navigation rather than
+full page reloads. API reads and mutations share timeout/error/JSON transport handling,
+but only the store deduplicates reads, and mutations are never automatically retried.
 
-Wallet mutations use the same boundary:
+- Independent keys start concurrently. There is no global request scheduler.
+- All consumers of a running key share its transport, including callers requesting
+  a fresh read. Invalidation during that request schedules one trailing refresh.
+- Generations prevent invalidated, replaced, or disposed requests from publishing.
+- Last-good data survives loading and failure.
+- A transport timeout covers the actual HTTP request and response-body parsing,
+  not time spent waiting behind unrelated requests.
+- Disabled queries do not subscribe. Inactive registered resources can be retained
+  briefly without being polled. All read paths schedule eviction after completion,
+  including failed or slow registered refetches.
+- API-base stores are reference-counted through `retainBackendDataStore` and are
+  disposed after their final owner releases them.
 
-```text
-component action
-  -> BackendDataStore shared write gate
-  -> wallet submission + minimal store-owned pending journal
-  -> backend transaction status (submitted -> confirmed -> applied/reverted)
-  -> transaction-priority refresh of canonical response keys
-  -> shared write lifecycle becomes applied/timed-out/failed
-  -> all subscribed components rerender from those same store entries
-```
+Reads have no priorities, configurable deduplication, or queue deadlines. Each
+key always shares its running request; timeout handling lives in the HTTP adapter.
 
-`backendDataStoreFor(apiBaseUrl)` returns the shared canonical store for a normalized API URL. Do not construct a component-local coordinator, transaction gate, request mutex, write lifecycle, or authoritative response cache.
+`startGameplaySync` owns the refresh cadence. Infrastructure, moon, queue,
+active fleet/count and mission-detail queries refresh on the ten-second policy;
+entries with active production also use that cadence. Archive and other mounted
+reads have a two-minute safety refresh. Hidden/offline
+tabs retain data and resynchronize on resume. Cached unmounted planets are not
+polled. This handles time-based changes even when the chain emits no new log.
 
-Mounted app roots retain the store they use with `retainBackendDataStore(apiBaseUrl)`. The registry disposes an unleased store after the current turn, which handles strict-effect cleanup/reacquire without leaking inactive API-base listeners or maps. Runtime configuration, settlement funding, activity-presence claims, attack randomness readiness, and the wallet/planet hydration aggregate are all store descriptors/actions rather than app-shell async state machines.
+SSE `sync-status.ready` is the backend's indexed-readiness signal; websocket
+subscription flags are diagnostics, not a frontend readiness gate. The first ready
+frame and recovery trigger a resync; ordinary heartbeats do not. One-shot refreshes
+(such as referral deadlines) target an exact query key, not broad wallet tags.
+Static infrastructure state is derived on API updates; clock ticks advance queue
+displays, while resource animations react to new indexed balances.
+Resource conversion and multi-query projections retain object identity until their
+inputs change. Preact's external-store hook handles subscription rechecks, including
+updates between render and subscribing; this does not introduce another data cache.
 
-Completed responses and freshness changes notify every subscriber. Rankings, Raid Finder, selected-planet modules, the top bar/Overview shell, Mission Control, Galaxy, and planet/moon detail all subscribe to canonical snapshots. Their remaining local state is limited to interaction and render projections such as the selected tab, page, filters, or composed display rows.
+SSE ready/recovery triggers a catch-up; heartbeat revisions do not trigger reads.
+Overlapping browser resume signals and deferred refresh tags are coalesced.
+A ready/reconnected stream remains a read barrier: requests started before it
+cannot replace the required catch-up. Genuine events during reads retain one
+trailing refresh. The display clock pauses while hidden and catches up on return;
+visible resource-number animations and countdowns remain presentation only.
+Known planet-only commit events include wallet/planet scope. Events with unknown
+or global impact deliberately retain conservative invalidation. Scope expansion
+can be added as individual event families acquire complete impact information.
+Complete planet scopes skip off-chain profile/media/runtime-config reads, but
+still invalidate alliance scores and resource-bearing rosters. Mutation
+invalidation uses exact keys or intersected scope matching, not wallet OR kind.
 
-## Planet state
+## Endpoint selection
 
-`planetSectionStore.ts` remains a render-only cache for derived per-planet universe projections used by mission composition. Indexed settlement, queues, infrastructure, moon, defense, shipyard, research, and rift responses no longer live there; their data and freshness come directly from `GameStateStore` snapshots.
+Keep domain endpoints separate. Use compact summaries or a focused batch when
+the screen needs them; do not make every refresh fetch a whole-planet snapshot.
+Each response owns its own canonical key and never populates another endpoint's cache.
 
-For example, Infrastructure data follows this path:
+| Consumer | Read policy |
+| --- | --- |
+| Header and affordability | Infrastructure economy for a planet; moon economy for a moon. Never promote roster/unit resources over these. |
+| Supply | One `supply-sources` batch while open and before submission; no per-source resources/ships fan-out. |
+| Home queues | Wallet-wide and home consumers pass the same explicit home planet ID to share a request; colony queues remain independent. Query identity never depends on previously loaded settlement data. |
+| Player details | Targeted wallet highscore header includes rank/profile; planets load independently. No full leaderboard or extra profile request. |
+| Landing rankings | `highscores?view=scoreboard` omits tactical planet hydration; tactical consumers keep their detailed view. |
+| Alliance | `alliance?view=summary` keeps the viewer's roster; foreign details use `/alliance/:id`. Treasury readiness is separate from private invite capabilities. |
+| Mission Control | Global count loads without opening All; full global rows load only for All/filters. Subscribe to count OR rows, and use the newest cached source for the badge. |
+| Archives | Paginated history and compact battle summaries; full report detail on demand. Keep mission detail polling while outcomes remain pending. |
+| Launch inventories | `{id, count}` availability overlays the base catalog; do not lose cost/duration/energy data. |
 
-```text
-BackendDataStore.infrastructure(wallet, planetId)
-  -> canonical store publishes the indexed response and revision
-  -> every subscriber for wallet + planetId rerenders
-  -> Overview, Infrastructure, top-bar/resource, and selector projections
-```
+Background refreshes do not replace loaded panels with skeletons, reset drafts,
+or turn a known empty section into a new loading block. Disabled requests do not
+poll. Profile/media/watch mutations refresh their actual dependencies, not every
+gameplay endpoint for the wallet.
 
-The planet section store never performs network requests or owns backend loading/error state. The canonical store keeps last-good data on delayed/failed refreshes, and only the current generation can replace it.
+Route bodies load on demand inside `PageContent`; navigation, resource displays,
+and the data store stay mounted. `LoadingSkeletons` owns page-shaped layouts shared
+by route and initial-data loading. Do not use a planet-detail skeleton for unrelated
+pages. Shared utilities belong outside lazy page modules so importing a helper does
+not eagerly load the page. First-planet indexing uses the active settlement query
+and the store's normal synchronization, not a page-owned retry countdown.
 
-## Canonical planet resources
+Profile, watch, and media saves use the shared timeout and cancellation transport.
+Only the signature prompt holds the wallet gate; HTTP saving locks that entity,
+not unrelated actions. Failed mutations are not automatically retried.
 
-`planetResourceStore.ts` is the only frontend owner of connected-wallet resource balances. It is keyed by wallet, orbit-body kind, and planet ID. Wallet settlement, the planet roster/navigation cache, Infrastructure, Research, Shipyard, Defenses, Rift, moons, the top bar, and mission affordability all overlay resource values from this store instead of retaining competing balance projections.
+Normalize pagination defaults and wallet/address casing before creating query keys;
+keep arbitrary identifiers such as invite codes case-sensitive. Transport
+options are not query identity. Referral and invite reads propagate cancellation
+from the store. RPC preflight and ownership reads use the same bounded transport.
 
-Every value promoted into the store comes from a backend-indexed response. Backend-reported transaction application starts one canonical refresh; it does not debit, credit, roll back, or reconcile a balance in the browser. Poll, EventSource, navigation, and in-flight responses are ordered by indexed block and settlement metadata, and an older response cannot replace the confirmed floor. Same-version responses may only advance backend-computed production accrual; a same-version decrease is rejected.
+Presentation countdowns share `useUiClock`, which pauses in hidden tabs and catches
+up when visible. Subscribe in display components, not the application shell. This
+clock never fetches data or changes indexed state.
 
-Resource-affecting action UIs remain in the explicit `indexing` phase until shared convergence promotes the proven backend snapshot. A bounded timeout becomes a visible retryable action error while the last confirmed balance stays rendered.
+## Writes and recovery
 
-## Adding a backend read
+Feature notices subscribe to store-owned transaction groups scoped by wallet and
+planet. Pages keep only validation feedback and dismissal state, not copied
+transaction phases. Mission Control likewise renders tabs and pagination from
+one controlled view, with URL/session persistence at the application boundary.
 
-1. Add or reuse the typed transport function in `walletFlow.ts`.
-2. Add a typed method and stable key in `BackendDataStore`.
-3. Expose a descriptor or named store action for refresh triggers and post-transaction reconciliation.
-4. Subscribe to the canonical snapshot or adapt it into an existing render projection; do not add another authoritative response cache.
-5. Assign the appropriate scheduler priority and navigation/filter scope.
-6. Add generation, cancellation, deadline, or propagation coverage when the new read changes those behaviors.
+Query descriptors and explicit reads share one key/scope/loader definition.
+Shipyard, defenses, and research reuse backend snapshot assembly helpers while
+keeping their separate payloads and endpoint-specific availability checks.
 
-## Refresh behavior
+Research preflight uses one fresh research response for levels and the active
+queue; it does not merge captured queues or request a second queue endpoint.
 
-Calling a descriptor's `read`/`refetch` or a named store action means “refresh this canonical key.” Concurrent same-key calls coalesce; authoritative reads advance the generation. Wallet/planet/filter/navigation changes abort their old scope, including work still waiting for one of the three read slots. Deadlines begin at enqueue time, not when `fetch()` starts. A transport that is slow to honor an abort retains its logical in-flight identity until it settles, so queued callers do not create duplicate reads.
+The same store owns the complete operation:
 
-Hidden documents defer refresh work into store-owned tags. Visibility return performs one canonical foreground catch-up; components must not add their own visibility timers or stale-response recovery loops.
+1. Check conflicting pending actions and acquire the short wallet submission gate.
+2. Prepare required signatures and submit through the existing EIP-1193 wallet path.
+3. Track the hash, wallet, chain, action, affected query keys, planet IDs, and conflict keys in memory before
+   beginning status observation or releasing the submission gate.
+4. Observe the backend's submitted/confirmed/applied/reverted status.
+5. On application, release gameplay conflicts and refresh active affected endpoints. Stop checking transaction status.
+6. Finish any required invite/referral API saves independently, then refresh their affected data and publish success.
+   Save retries retain their authorization in session memory without holding gameplay locks;
+   neither a read failure nor a save failure turns an applied transaction back into pending.
 
-The underlying wallet API client also has a very short recent-response window to collapse immediate duplicate HTTP work. Transaction completion polling targets the backend transaction-status endpoint; components never poll receipts or domain state themselves. SSE sync status carries a durable monotonic index revision (separate from block height, so same-block events cannot collapse together), and the store performs one canonical catch-up if that revision advanced while its stream was disconnected.
+A prior in-flight read cannot satisfy step 5: it must settle before a new
+post-application read starts. Refreshes retain last-good data. A status-request
+timeout or indexing delay keeps the action in **Processing…** during this session.
+Failed post-application reads retain last-good data and are retried by normal query synchronization, not transaction recovery. Only an explicit reverted receipt is a post-submission
+failure. There is no overall two-minute deadline or wait/discard dialog.
 
-## Mutations
+Plans contain deduplicated query keys, not nested refresh runners or endpoint
+expectations. Auxiliary writes are checkpointed before reads, so a failed read
+does not repeat a successful invite/referral operation. Unmounted affected keys
+are invalidated without transport and load normally when next needed.
 
-Wallet provider calls stop at submission. `BackendDataStore` owns receipt/indexing observation through the backend, its wallet-scoped gate, and every write phase published into `GameStateStore`. Components subscribe to that shared write entry just like read entries. The shared state records wallet submission, confirmation, waiting for index, and the visible terminal outcome (`applied`, `timed-out`, or `failed`). Each backend status request has an abort deadline; the overall wait is bounded. A delayed outcome preserves the minimal wallet/chain/hash/action journal, and store bootstrap resumes it before another write can be submitted for that wallet.
+Different planets can progress concurrently after submission. Shared fleet,
+research, alliance, and wallet-resource actions declare additional conflict keys.
+Old persisted transaction locks are removed when the store starts.
+Per-action progress includes planet identity, so identical buttons on different
+planets cannot overwrite one another.
+The stored transaction `phase` is the progress authority; labels and semantic
+outcomes are derived rather than maintained as independent state fields.
 
-The backend writer/indexer is the only reconciliation owner. Its transaction endpoint reports `applied` only after the successful receipt's block is behind the atomic indexed high-water mark and all relevant receipt logs exist in the event ledger. The frontend then refreshes affected canonical store entries once at transaction priority. Those entries drive every page and widget; the initiating component does not copy responses, poll receipts, or run another state machine.
+Hidden/offline tabs and inactive wallets pause observation. Visibility return,
+online, pageshow and context restoration wake existing observers;
+there remains one observer per hash. Recovery never submits again or requests a
+new signature. Session entries from another chain are not queried on the current chain.
+API errors preserve HTTP status, backend code, and `Retry-After`. Transient errors
+back off; non-retryable responses pause observation until a lifecycle recovery wake.
+Neither is evidence that a submitted transaction reverted.
+Reload creates a new session: it fetches backend state without restoring pending UI or automatically submitting transactions.
+
+Paid-invite and referral completion authorizations are obtained before submission.
+Their narrowly scoped signatures and required invite data live in the pending
+session memory only until completion. No wallet private keys are stored. In-session recovery retries the signed API operation
+without reopening the wallet. Reload recovery is deliberately not provided, including for unfinished auxiliary API writes.
+
+## Validation and remaining work
+
+`gameStateStore.test.ts`, `backendDataStore.test.ts`, and
+`transactionRecovery.test.ts` exercise concurrency, generations, disposal, recovery,
+and full-cycle completion. Backend transaction-status coverage checks missing
+watermarks, wrong log identities/content, and same-block revision changes.
+
+`requestOptimization.test.ts` and the isolated browser fixtures also cover
+summary/count selection, scoped refreshes, reconnect races, independent public
+details and hidden-clock behavior. Receipt replacement/nonce recovery and complete
+event-family scoping remain limitations, not reasons to restore durable UI locks.

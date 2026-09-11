@@ -35,11 +35,11 @@ Energy is not a stored spendable resource. Mines need energy to operate at full 
 
 The blockchain is authoritative, while the app reads a fast event-sourced index. A confirmed wallet receipt can appear before the corresponding indexed balance, queue, fleet, or report.
 
-Veydrift routes backend reads through one shared game-state store and priority scheduler. It retains last-good indexed responses with freshness, revision, and last-update metadata; coalesces duplicate reads; cancels stale navigation/filter generations; and propagates shared refreshes to subscribed screens. The frontend is a light client: it reads indexed backend state and never asks the browser to reconcile chain state. The top bar, Overview, Mission Control, Rankings, Raid Finder, Galaxy, and planet/moon detail read the same stored responses; planet-section models are limited to derived universe render projections.
+Views update independently, so refreshing one planet does not block another. Existing data stays visible during background refreshes. After a transaction is sent, you can navigate while the app checks its progress. Reloading fetches the latest game state; it neither resubmits a transaction nor restores an old processing lock. A reload does not cancel a transaction already sent to the blockchain.
 
 Resource-changing transactions include their final authoritative balances in contract events. This includes building and production spending, transport or deploy arrival, fleet-return cargo, raid loot, deposits, colonies, settlement, and Rift resource movement. When the backend indexes one of those events, the affected view projections refresh immediately; periodic polling remains a recovery path.
 
-If a transaction is confirmed but the app still says it is indexing, do not assume the displayed old balance is spendable. Check the backend health or retry the refresh. The app deliberately does not invent optimistic resource balances.
+A confirmed transaction can take a little longer to appear in the game. Wait for updated balances before relying on them for another action; do not resend the same action just because its result has not appeared yet.
 
 ### First Infrastructure
 
@@ -51,7 +51,7 @@ Build early mines and power in small steps:
 4. Build Robotics Factory to shorten construction time.
 5. Build Research Lab and Shipyard when you are ready to unlock new actions.
 
-Only one main production queue can run on a planet at a time for building and ship/defense production. Research uses its own research queue.
+Each planet has separate building, ship and defense queues, so those activities can run in parallel. Ship and defense orders can queue behind an active order. Research has one separate queue shared across your planets.
 
 ### Research, Ships, And Defenses
 
@@ -98,11 +98,13 @@ Moons may also be granted by burning Burning Chicken NFTs through the Moon page.
 
 ### Resources And Queues
 
-Spending starts immediately when a build, defense, ship, or research transaction is indexed. Completion either finishes through the explicit action or through lazy settlement inside later relevant actions when the contract supports it.
+Spending happens when the transaction succeeds on the blockchain; the displayed balance updates when that result is indexed. Completed work can be collected explicitly or settled by a later relevant action where supported.
 
 | Queue | Scope | Examples |
 | --- | --- | --- |
-| Main production | Per planet or moon body | Buildings, ships, defenses |
+| Building | Per planet or moon body | One building upgrade at a time |
+| Ships | Per planet | Active ship production and queued orders |
+| Defenses | Per planet or moon body | Active defense production and queued orders |
 | Research | Per player | Technologies |
 | Missions | Fleet route | Attack, Transport, Deploy, Harvest, Colonize, Missile, ACS |
 
@@ -232,7 +234,7 @@ All costs are base costs before level scaling unless noted.
 
 ### Build Infrastructure
 
-Starting a building upgrade spends the required resources, records the target level and ready time, and occupies the main queue. When the ready time has passed, the upgrade can be completed or lazily settled by a later relevant action.
+Starting a building upgrade spends the required resources, records the target level and ready time, and occupies that body's building queue. When the ready time has passed, the upgrade can be completed or lazily settled by a later relevant action.
 
 ### Start Research
 

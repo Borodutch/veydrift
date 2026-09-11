@@ -1,5 +1,6 @@
 import { RefreshCw } from "lucide-preact";
 import type { ComponentChildren } from "preact";
+import { Skeleton } from "./Skeleton";
 
 export type RefreshButtonState = {
   disabled: boolean;
@@ -28,6 +29,7 @@ export function RefreshButton({
 
   return (
     <button
+      aria-busy={loading}
       className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-white/10 bg-white/5 px-3 text-xs font-semibold text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
       disabled={disabled || state.disabled}
       onClick={onRefresh}
@@ -35,7 +37,7 @@ export function RefreshButton({
       type="button"
     >
       <RefreshCw aria-hidden="true" size={14} />
-      {state.label}
+      {loading ? <><span className="sr-only">{state.label}</span><Skeleton className="h-3 w-12" /></> : state.label}
     </button>
   );
 }

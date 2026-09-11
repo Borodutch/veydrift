@@ -1,3 +1,9 @@
+import { GameApiError } from "./gameApiError";
+import { fetchEntityMedia, normalizeEntityMediaId, updateEntityMedia, type EntityMediaKind, type EntityMediaResponse } from "./entityMedia";
+import { GameStateStore, type GameStateEntry } from "./gameStateStore";
+import { playerActivityAwaySince } from "./playerActivityPresence";
+import { createTransactionActionGate, type TransactionActionGate, type WriteTransactionOutcome, type WriteTransactionState } from "./transactionActionGate";
+import type { Eip1193Provider } from "./walletFlow";
 import {
   fetchAllianceState,
   fetchAttackProtectionStatus,
@@ -6,6 +12,7 @@ import {
   fetchDefenseState,
   fetchFleetMissionArchive,
   fetchFleetMissionVisibility,
+  fetchGameApiJson,
   fetchGlobalActiveMissions,
   fetchGlobalMissionArchive,
   fetchHighscores,
@@ -14,42 +21,47 @@ import {
   fetchMission,
   fetchMoonState,
   fetchPlayerActivity,
-  playerActivityPresenceUrl,
-  recordPlayerActivityPresence,
   fetchPlayerHighscore,
   fetchPlayerProfile,
   fetchRaidFinderDebrisTargets,
   fetchRaidFinderRifters,
-  fetchResearchState,
   fetchReferralDashboard,
   fetchReferralHistory,
-  inspectReferralCode,
-  persistReferralClaimIntent,
-  resolvePaidAllianceInvite,
-  recordReferralClaimTransaction,
-  recordReferralRedemptionTransaction,
-  readMigrationReservation,
-  readWalletNativeBalance,
-  settlementFundingWithWalletBalance,
-  redeemPaidAllianceInvite,
-  redeemReferralCode,
-  recoverPaidAllianceInvites,
-  storePaidAllianceInvite,
+  fetchResearchState,
   fetchRiftState,
   fetchSettlementFundingState,
   fetchShipyardState,
+  fetchSupplySources,
   fetchSystemData,
   fetchWalletOverviewSnapshot,
   fetchWalletPlanets,
   fetchWalletQueues,
   fetchWalletSettlement,
   fetchWatchedPlanets,
+  inspectReferralCode,
+  normalizePageOptions,
+  paidAllianceInviteCommitment,
+  paidAllianceInviteStoreMessage,
+  persistReferralClaimIntent,
+  playerActivityPresenceUrl,
+  readMigrationReservation,
+  readWalletNativeBalance,
+  recordPlayerActivityPresence,
+  recordReferralClaimTransaction,
+  recordReferralRedemptionTransaction,
+  recoverPaidAllianceInvites,
+  redeemPaidAllianceInvite,
+  redeemReferralCode,
+  requestPersonalSignature,
+  resolvePaidAllianceInvite,
+  settlementFundingWithWalletBalance,
+  storePaidAllianceInvite,
   unwatchPlanet,
-  watchPlanet,
   updatePlayerProfile,
   validateReferralCode,
+  watchPlanet,
   type AttackProtectionStatus,
-  type BattleReport,
+  type BattleReportSummary,
   type BurningChickenConfig,
   type ChainAllianceState,
   type ChainDefenseState,
@@ -58,83 +70,53 @@ import {
   type ChainResearchState,
   type ChainRiftState,
   type ChainShipyardState,
+  type FetchHighscoreOptions,
   type FleetMissionArchiveResponse,
   type FleetMissionVisibilityResponse,
-  type FetchHighscoreOptions,
   type GlobalActiveMissionsResponse,
   type GlobalMissionArchiveResponse,
   type HighscoreEntry,
   type HighscoreResponse,
+  type MigrationReservation,
   type MissileAttackArchiveResponse,
   type MissionDetailResponse,
-  type PlayerActivityResponse,
+  type PaidAllianceInviteRedemption,
+  type PaidAllianceInviteResolution,
   type PlayerActivityPresence,
+  type PlayerActivityResponse,
   type PlayerProfile,
   type PlayerQueuesResponse,
   type RaidFinderDebrisResponse,
   type RaidFinderRiftersResponse,
   type ReferralDashboard,
   type ReferralHistoryResponse,
-  type ReferralResolution,
-  type PaidAllianceInviteResolution,
-  type PaidAllianceInviteRedemption,
   type ReferralRedemption,
+  type ReferralResolution,
   type SettlementFundingState,
-  type MigrationReservation,
+  type SignedMetadataOptions,
+  type WalletReadOptions,
   type WalletOverviewSnapshotResponse,
   type WalletPlanetsResponse,
   type WalletSettlementResponse,
   type WatchedPlanetsResponse,
   type WatchPlanetMutationResponse,
 } from "./walletFlow";
-import { fetchEntityMedia, normalizeEntityMediaId, updateEntityMedia, type EntityMediaKind, type EntityMediaResponse } from "./entityMedia";
-import type { Eip1193Provider } from "./walletFlow";
-import { GameStateStore, type GameStateEntry, type GameStatePriority } from "./gameStateStore";
-import { playerActivityAwaySince } from "./playerActivityPresence";
-import { backendResourceSnapshot, promoteCanonicalPlanetResources, type BackendResourceState, type CanonicalPlanetResourceSnapshot, type CanonicalPlanetResourceStore } from "./planetResourceStore";
-import {
-  hydratedWalletPlanetSnapshot,
-  type AllianceApplicationExpectation,
-  type AllianceCreationExpectation,
-  type AllianceProfileExpectation,
-  type ResourceIndexingExpectation,
-  type StartedBuildingExpectation,
-  type StartedDefenseProductionExpectation,
-  type StartedResearchExpectation,
-  type StartedShipProductionExpectation,
-  type WalletPlanetSyncSnapshot,
-} from "./postTransactionRefresh";
-import { confirmedFleetVisibility } from "./missionVisibilityRefresh";
-import { createTransactionActionGate, isTransactionIndexingTimeout, runWriteTransaction as executeWriteTransaction, writeTransactionOutcomeFromState, type TransactionActionGate, type WriteTransactionDescriptor, type WriteTransactionOutcome, type WriteTransactionState } from "./transactionActionGate";
-
-type WalletReadOptions = {
-  source?: "indexed";
-  timeoutMs?: number;
-  fresh?: boolean;
-  signal?: AbortSignal;
-  priority?: GameStatePriority;
-};
 
 type SystemReadOptions = {
   detail?: "full";
-  /** Scheduling policy belongs to the store, never the backend request/key. */
-  priority?: GameStatePriority;
 };
 
 export type BackendDataTag = `kind:${string}` | `wallet:${string}` | `planet:${string}` | `resource:${string}`;
 
+export function backendScopeTags(wallet: string | undefined, planetId: string | undefined, ...kinds: `kind:${string}`[]): BackendDataTag[] {
+  return [...(wallet ? [`wallet:${wallet.toLowerCase()}` as const] : []), ...(planetId ? [`planet:${planetId}` as const] : []), ...kinds];
+}
+
 export type BackendDataRefreshOptions = {
   /** Only subscribed resources are refreshed by default. */
   activeOnly?: boolean;
-  priority?: GameStatePriority;
 };
 
-export type IndexedReadWaitOptions = {
-  attempts?: number;
-  intervalMs?: number;
-  delay?: (ms: number) => Promise<void>;
-  timeoutError?: string;
-};
 
 /** A typed, store-owned backend read. UI code can subscribe/refetch it but
  * cannot pair an arbitrary cache key with a different loader. */
@@ -144,18 +126,11 @@ export type BackendDataQueryDescriptor<T> = {
   readonly store: BackendDataStore;
 };
 
-export type WalletPlanetSyncOptions = {
-  forceHomePlanet?: boolean;
-  forceWalletPlanets?: boolean;
-  fresh?: boolean;
-};
 
 export type RandomnessReadiness = {
   ready: boolean;
   reasons?: string[];
 };
-
-declare const backendIndexingPlanBrand: unique symbol;
 
 /**
  * An opaque post-application canonical refresh or required auxiliary backend
@@ -163,10 +138,22 @@ declare const backendIndexingPlanBrand: unique symbol;
  * own pollers, cache writes, or transaction-indexing predicates.
  */
 export type BackendIndexingPlan = {
-  readonly [backendIndexingPlanBrand]: true;
+  readonly store: BackendDataStore;
+  readonly keys: readonly string[];
+  readonly prepare?: () => Promise<PendingTransactionCompletion[]>;
 };
 
-export type BackendWriteTransactionDescriptor = Omit<WriteTransactionDescriptor<void>, "applyIndexedState" | "confirm" | "waitForIndexed"> & {
+export type BackendWriteTransactionDescriptor = {
+  key: string;
+  label: string;
+  prepare?: () => Promise<void>;
+  send: () => Promise<string>;
+  errorLabel?: (error: unknown) => string;
+  onErrorRefresh?: (error: unknown) => Promise<void> | void;
+  onStateChange?: (state: WriteTransactionState) => void;
+  /** Shared resources consumed by this action, independent of its display label. */
+  conflictKeys?: readonly string[];
+  planetIds?: readonly string[];
   chainId?: string;
   /**
    * Canonical resources affected by a confirmed mutation. The wallet UI owns
@@ -213,10 +200,7 @@ type RegisteredResource = {
   key: string;
   load: (signal: AbortSignal) => Promise<unknown>;
   options: {
-    deadlineMs?: number | undefined;
     planetId?: string | undefined;
-    priority?: GameStatePriority | undefined;
-    scope?: string | undefined;
     wallet?: string | undefined;
   };
   tags: ReadonlySet<BackendDataTag>;
@@ -224,7 +208,6 @@ type RegisteredResource = {
 
 type PollingLease = {
   intervalMs: number;
-  priority: GameStatePriority;
   tags: readonly BackendDataTag[];
 };
 
@@ -261,18 +244,24 @@ type BackendTransactionStatus = {
   transactionHash: string;
 };
 
-export type PendingTransactionJournalEntry = {
+export type PendingTransaction = {
   actionId: string;
   chainId: string;
   submittedAt: number;
   transactionHash: string;
   wallet: string;
+  label?: string;
+  planetIds?: string[];
+  queryKeys?: string[];
+  conflictKeys?: string[];
+  completions?: PendingTransactionCompletion[];
+  /** Applied entries retain only in-session auxiliary saves, never spend locks. */
+  phase: "submitted" | "confirmed" | "applied";
 };
 
-export type PendingTransactionRecoveryDecision = Readonly<PendingTransactionJournalEntry> & {
-  error?: string | undefined;
-  phase: "decision" | "checking";
-};
+type PendingTransactionCompletion =
+  | { kind: "paid-alliance-invite"; secret: string; signature: string }
+  | { kind: "referral-claim"; code: string; commitment: string; signature: string };
 
 function sameChainId(left: string, right: string): boolean {
   try {
@@ -281,12 +270,6 @@ function sameChainId(left: string, right: string): boolean {
     return left.trim().toLowerCase() === right.trim().toLowerCase();
   }
 }
-
-type IndexingPlanRunner = (receipt: unknown, txHash: string) => Promise<void>;
-
-type ReceiptBlock = {
-  blockNumber?: string | number | bigint | null;
-};
 
 type FleetMissionVisibilityOptions = WalletReadOptions & {
   includeArchive?: boolean;
@@ -317,7 +300,6 @@ type BackendDataStoreOptions = {
   now?: () => number;
   transactionPollIntervalMs?: number;
   transactionRequestTimeoutMs?: number;
-  transactionStatusTimeoutMs?: number;
   transactionStatusReader?: (transactionHash: string) => Promise<BackendTransactionStatus>;
 };
 
@@ -336,6 +318,10 @@ function cacheKey(kind: string, ...parts: unknown[]): string {
   return `${kind}:${JSON.stringify(parts.map(normalizedCachePart))}`;
 }
 
+function walletCacheKey(kind: string, wallet: string, ...parts: unknown[]): string {
+  return cacheKey(kind, wallet.toLowerCase(), ...parts);
+}
+
 function resourceTagsForKey(key: string, wallet?: string | undefined, planetId?: string | undefined): ReadonlySet<BackendDataTag> {
   const separator = key.indexOf(":");
   const kind = separator >= 0 ? key.slice(0, separator) : key;
@@ -348,16 +334,15 @@ function resourceTagsForKey(key: string, wallet?: string | undefined, planetId?:
 /**
  * The single state and refresh boundary for the playable frontend.
  *
- * It owns normalized response data, generations, freshness, failures, and the
- * three-slot priority scheduler. Calling the same read again while it is
+ * It owns normalized response data, generations, freshness, and failures.
+ * Independent resources load concurrently. Calling the same read again while it is
  * running returns the existing promise. Screens may keep render projections,
  * but this store is the authoritative runtime snapshot and rejects stale
  * generations before they can replace newer shared state.
  */
 export class BackendDataStore {
   private readonly state = new GameStateStore();
-  /** EVM nonces must serialize per wallet, not across unrelated accounts that
-   * happen to share this API-base store after a browser account switch. */
+  /** Serialize wallet prompts only; submitted hashes are observed independently. */
   private readonly transactionGates = new Map<string, TransactionActionGate>();
   private readonly settlementReservationAttempts = new Map<string, Promise<SettlementRedemptions>>();
   /**
@@ -373,7 +358,6 @@ export class BackendDataStore {
    * one trailing read is required after the current transport settles.
    */
   private readonly trailingInvalidations = new Set<string>();
-  private readonly trailingInvalidationTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly trailingInvalidationSettlements = new Set<string>();
   private readonly evictionTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly pollers = new Map<string, ManagedPoller>();
@@ -382,26 +366,26 @@ export class BackendDataStore {
    * one-time session claim, while ordinary heartbeats remain silent. */
   private readonly activityPresenceClaims = new Map<string, ActivityPresenceClaim>();
   private readonly chainEventBridges = new Map<string, ChainEventBridge>();
-  private readonly latestIndexedRevisionByWallet = new Map<string, bigint>();
-  private readonly transactionRecoveries = new Map<string, Promise<void>>();
+  private readonly transactionRecoveries = new Map<string, Promise<WriteTransactionOutcome>>();
+  private readonly sessionTransactions = new Map<string, PendingTransaction>();
+  private readonly transactionWakeups = new Set<() => void>();
+  private readonly transactionAbort = new AbortController();
   private readonly scheduledRefreshes = new Map<string, ReturnType<typeof setTimeout>>();
   /** Refresh intent that became due while hidden. It is coalesced and resumed
    * once, centrally, when the tab is visible again. */
-  private readonly deferredHiddenRefreshes = new Map<BackendDataTag, GameStatePriority>();
-  private readonly indexingPlanRunners = new WeakMap<object, IndexingPlanRunner>();
+  private readonly deferredHiddenRefreshes = new Set<BackendDataTag>();
+  private readonly recoveryKeys = new Set<string>();
+  private readonly recoveringKeys = new Set<string>();
+  private recoveryTimer: ReturnType<typeof setTimeout> | undefined;
+
   private contextWallet: string | undefined;
-  /**
-   * Detail endpoints are separate cache keys but project into one canonical
-   * planet-resource entity. Track request start order per body so an earlier
-   * endpoint response that arrives late cannot replace a newer detail read.
-   */
-  private readonly planetResourceReadGenerations = new Map<string, number>();
+  private contextChainId: string | undefined;
+  private hasContext = false;
 
   private readonly inactiveResourceRetentionMs: number;
   private readonly now: () => number;
   private readonly transactionPollIntervalMs: number;
   private readonly transactionRequestTimeoutMs: number;
-  private readonly transactionStatusTimeoutMs: number;
   private readonly transactionStatusReader: ((transactionHash: string) => Promise<BackendTransactionStatus>) | undefined;
 
   constructor(readonly apiBaseUrl: string, options: BackendDataStoreOptions = {}) {
@@ -409,10 +393,15 @@ export class BackendDataStore {
     this.now = options.now ?? Date.now;
     this.transactionPollIntervalMs = options.transactionPollIntervalMs ?? 1_000;
     this.transactionRequestTimeoutMs = options.transactionRequestTimeoutMs ?? 10_000;
-    this.transactionStatusTimeoutMs = options.transactionStatusTimeoutMs ?? 120_000;
     this.transactionStatusReader = options.transactionStatusReader;
     if (typeof document !== "undefined") {
       document.addEventListener("visibilitychange", this.handleVisibilityChange);
+    }
+    if (typeof window !== "undefined") {
+      // Retire the old persisted UI locks. Backend reads hydrate a new session.
+      try { window.localStorage?.removeItem(`veydrift:pending-transactions:${this.apiBaseUrl}`); } catch { /* Storage is optional. */ }
+      window.addEventListener?.("online", this.handleResume);
+      window.addEventListener?.("pageshow", this.handleResume);
     }
   }
 
@@ -422,291 +411,504 @@ export class BackendDataStore {
    * be active and render the shared snapshot.
    */
   readonly queries = {
-    alliance: (wallet: string) => this.query(this.key("alliance", wallet), () => this.alliance(wallet)),
-    attackProtection: (wallet: string, planetId: string, targetIsMoon = false) => this.query(this.key("attack-protection", wallet, planetId, targetIsMoon), () => this.attackProtection(wallet, planetId, targetIsMoon)),
-    battleReports: () => this.query(this.key("battle-reports"), () => this.battleReports()),
-    burningChicken: (owner: string, tokenId: string, config: BurningChickenConfig) => this.query(this.key("burning-chicken", owner, tokenId, config), () => this.burningChicken(owner, tokenId, config)),
-    defenses: (wallet: string, planetId: string) => this.query(this.key("defenses", wallet, planetId), () => this.defenses(wallet, planetId)),
-    entityMedia: (kind: EntityMediaKind, entityId: string) => this.query(this.key("entity-media", kind, entityId), () => this.entityMedia(kind, entityId)),
-    fleetArchive: (wallet: string, options: FleetMissionArchiveOptions = {}) => this.query(this.key("fleet-archive", wallet, options), () => this.fleetArchive(wallet, options)),
-    fleetVisibility: (wallet: string, options: FleetMissionVisibilityOptions = {}) => {
+    allianceDetail: (id: string) => this.query(this.key("alliance-detail", id), () => {
+      const key = this.key("alliance-detail", id);
+      return this.refresh(key, async signal => (await fetchGameApiJson<{ alliance: ChainAllianceState["directory"][number] }>(`${this.apiBaseUrl}/alliance/${encodeURIComponent(id)}`, "Alliance", { signal })).alliance);
+    }),
+    alliance: (wallet: string, options: WalletReadOptions = {}): BackendDataQueryDescriptor<ChainAllianceState> => {
+      const key = walletCacheKey("alliance", wallet);
+      return this.query(key, () => this.refresh(key, (signal) => fetchAllianceState(this.apiBaseUrl, wallet, { ...options, signal }), {
+        wallet,
+      }));
+    },
+    attackProtection: (wallet: string, targetPlanetId: string, targetIsMoon = false, options: WalletReadOptions = {}): BackendDataQueryDescriptor<AttackProtectionStatus> => {
+      const key = walletCacheKey("attack-protection", wallet, targetPlanetId, targetIsMoon);
+      return this.query(key, () => this.refresh(key, (signal) => fetchAttackProtectionStatus(this.apiBaseUrl, wallet, targetPlanetId, targetIsMoon, signal), {
+        planetId: targetPlanetId,
+        wallet,
+      }));
+    },
+    battleReports: (): BackendDataQueryDescriptor<BattleReportSummary[]> => {
+      const key = cacheKey("battle-reports");
+      return this.query(key, () => this.refresh(key, (signal) => fetchBattleReports(this.apiBaseUrl, signal), {
+      }));
+    },
+    burningChicken: (owner: string, tokenId: string, config: BurningChickenConfig): BackendDataQueryDescriptor<unknown> => {
+      const key = walletCacheKey("burning-chicken", owner, tokenId, config.nftContractAddress.toLowerCase());
+      return this.query(key, () => this.refresh(key, (signal) => fetchBurningChickenForOwner(owner, tokenId, config, signal)));
+    },
+    defenses: this.planetQuery("defenses", fetchDefenseState),
+    entityMedia: (entityKind: EntityMediaKind, entityId: string): BackendDataQueryDescriptor<EntityMediaResponse> => {
+      entityId = normalizeEntityMediaId(entityKind, entityId);
+      const key = cacheKey("entity-media", entityKind, entityId);
+      return this.query(key, () => this.refresh(key, (signal) => fetchEntityMedia(this.apiBaseUrl, entityKind, entityId, signal), {}));
+    },
+    fleetArchive: (wallet: string, options: FleetMissionArchiveOptions = {}): BackendDataQueryDescriptor<FleetMissionArchiveResponse> => {
+      options = normalizePageOptions(options);
+      const key = walletCacheKey("fleet-archive", wallet, options);
+      return this.query(key, () => this.refresh(
+        key,
+        (signal) =>
+          fetchFleetMissionArchive(this.apiBaseUrl, wallet, {
+            ...options,
+            signal,
+          }),
+        {
+          planetId: options.planetId,
+          wallet,
+        },
+      ));
+    },
+    fleetVisibility: (wallet: string, options: FleetMissionVisibilityOptions = {}): BackendDataQueryDescriptor<FleetMissionVisibilityResponse> => {
       const includeArchive = options.includeArchive === true;
-      return this.query(this.key("fleet-visibility", wallet, includeArchive), () => this.fleetVisibility(wallet, { ...options, includeArchive }));
+      const key = walletCacheKey("fleet-visibility", wallet, includeArchive);
+      return this.query(key, () => this.refresh(
+        key,
+        (signal) =>
+          fetchFleetMissionVisibility(this.apiBaseUrl, wallet, {
+            ...options,
+            includeArchive,
+            signal,
+          }),
+        {
+          wallet,
+        },
+      ));
     },
-    globalActiveMissions: () => this.query(this.key("global-active-missions"), () => this.globalActiveMissions()),
-    globalMissionArchive: (options: GlobalMissionArchiveOptions = {}) => this.query(this.key("global-mission-archive", options), () => this.globalMissionArchive(options)),
-    highscores: (options: FetchHighscoreOptions = {}) => this.query(this.key("highscores", options), () => this.highscores(options)),
-    infrastructure: (wallet: string, planetId: string) => this.query(this.key("infrastructure", wallet, planetId), () => this.infrastructure(wallet, planetId)),
-    landingActiveMissions: <T>() => this.query(this.key("landing-active-missions"), () => this.landingActiveMissions<T>()),
-    landingHighscores: <T>() => this.query(this.key("landing-highscores"), () => this.landingHighscores<T>()),
-    moon: (wallet: string, planetId: string) => this.query(this.key("moon", wallet, planetId), () => this.moon(wallet, planetId)),
-    missileArchive: (wallet: string, options: { page?: number; pageSize?: number; planetId?: string } = {}) => this.query(this.key("missile-archive", wallet, options), () => this.missileArchive(wallet, options)),
-    mission: (missionId: string) => this.query(this.key("mission", missionId), () => this.mission(missionId)),
-    overview: (wallet: string, planetId?: string) => this.query(this.key("overview", wallet, planetId), () => this.overview(wallet, planetId)),
-    paidAllianceInviteResolution: (secret: string) => this.query(this.key("paid-alliance-invite-resolution", secret), () => this.paidAllianceInviteResolution(secret)),
-    playerActivity: (wallet: string, options: { page?: number; pageSize?: number; since?: number; includeProjected?: boolean } = {}) => this.query(this.key("player-activity", wallet, options), () => this.playerActivity(wallet, options)),
+    globalActiveMissions: (): BackendDataQueryDescriptor<GlobalActiveMissionsResponse> => {
+      const key = cacheKey("global-active-missions");
+      return this.query(key, () => this.refresh(key, (signal) => fetchGlobalActiveMissions(this.apiBaseUrl, signal), {
+      }));
+    },
+    globalActiveMissionCount: () => this.query(this.key("global-active-mission-count"), () => this.refresh(
+      this.key("global-active-mission-count"), signal => fetchGameApiJson<{ totalEntries: number }>(`${this.apiBaseUrl}/missions?status=active&summaryOnly=true`, "Mission count", { signal })
+    )),
+    globalMissionArchive: (options: GlobalMissionArchiveOptions = {}): BackendDataQueryDescriptor<GlobalMissionArchiveResponse> => {
+      options = normalizePageOptions({ ...options, summaryOnly: options.summaryOnly === true });
+      const key = cacheKey("global-mission-archive", options);
+      return this.query(key, () => this.refresh(key, (signal) => fetchGlobalMissionArchive(this.apiBaseUrl, { ...options, signal }), {
+      }));
+    },
+    highscores: (options: FetchHighscoreOptions | number = {}): BackendDataQueryDescriptor<HighscoreResponse> => {
+      const { signal: _signal, ...input } = typeof options === "number" ? { limit: options } as FetchHighscoreOptions : options;
+      const normalizedOptions = { ...input, ...(input.currentWallet ? { currentWallet: input.currentWallet.toLowerCase() } : {}), includeAttackProtection: input.includeAttackProtection ?? Boolean(input.currentWallet), limit: input.limit ?? input.pageSize ?? 100 };
+      const key = cacheKey("highscores", normalizedOptions);
+      return this.query(key, () => this.refresh(key, (signal) => fetchHighscores(this.apiBaseUrl, { ...normalizedOptions, signal }), {
+        ...(normalizedOptions.currentWallet ? { wallet: normalizedOptions.currentWallet } : {}),
+      }));
+    },
+    infrastructure: this.planetQuery("infrastructure", fetchInfrastructureState),
+    landingActiveMissions: <T>(): BackendDataQueryDescriptor<T[]> => {
+      const key = cacheKey("landing-active-missions");
+      return this.query(key, () => this.refresh(
+        key,
+        async (signal) => {
+          const data = await fetchGameApiJson<{ missions?: T[] }>(`${this.apiBaseUrl}/missions?status=active&live=1`, "Landing missions", {
+            cache: "no-store",
+            signal,
+            httpErrorMessage: async () => "Failed to load landing missions",
+          });
+          return data.missions ?? [];
+        },
+        { },
+      ));
+    },
+    landingHighscores: <T>(): BackendDataQueryDescriptor<T[]> => {
+      const key = cacheKey("landing-highscores");
+      return this.query(key, () => this.refresh(
+        key,
+        async (signal) => {
+          const params = new URLSearchParams({
+            category: "total",
+            view: "scoreboard",
+            live: "1",
+            page: "1",
+            pageSize: "250",
+          });
+          const data = await fetchGameApiJson<{ rankings?: { total?: T[] } }>(`${this.apiBaseUrl}/highscores?${params.toString()}`, "Landing highscores", {
+            cache: "no-store",
+            signal,
+            httpErrorMessage: async () => "Failed to load landing highscores",
+          });
+          return data.rankings?.total ?? [];
+        },
+        { },
+      ));
+    },
+    moon: this.planetQuery("moon", fetchMoonState),
+    missileArchive: (wallet: string, options: { page?: number; pageSize?: number; planetId?: string } = {}): BackendDataQueryDescriptor<MissileAttackArchiveResponse> => {
+      options = normalizePageOptions(options);
+      const key = walletCacheKey("missile-archive", wallet, options);
+      return this.query(key, () => this.refresh(
+        key,
+        (signal) =>
+          fetchMissileAttackArchive(this.apiBaseUrl, wallet, {
+            ...options,
+            signal,
+          }),
+        {
+          planetId: options.planetId,
+          wallet,
+        },
+      ));
+    },
+    mission: (missionId: string): BackendDataQueryDescriptor<MissionDetailResponse> => {
+      const key = cacheKey("mission", missionId);
+      return this.query(key, () => this.refresh(key, (signal) => fetchMission(this.apiBaseUrl, missionId, signal), {
+      }));
+    },
+    overview: (wallet: string, planetId?: string, options: WalletReadOptions = {}): BackendDataQueryDescriptor<WalletOverviewSnapshotResponse> => {
+      const key = walletCacheKey("overview", wallet, planetId);
+      // `fresh` means bypass the short-lived value cache, not send duplicate identical requests when
+      // the Overview, top bar, and selected-planet surface refresh in the same render turn.
+      return this.query(key, () => this.refresh(
+        key,
+        (signal) =>
+          fetchWalletOverviewSnapshot(this.apiBaseUrl, wallet, planetId, {
+            ...options,
+            signal,
+          }),
+        {
+          planetId,
+          wallet,
+        },
+      ));
+    },
+    paidAllianceInviteResolution: (secret: string): BackendDataQueryDescriptor<PaidAllianceInviteResolution> => {
+      const key = cacheKey("paid-alliance-invite-resolution", secret);
+      return this.query(key, () => this.refresh(key, (signal) => {
+        return resolvePaidAllianceInvite(this.apiBaseUrl, secret, signal);
+      }));
+    },
+    playerActivity: (wallet: string, options: {
+      includeProjected?: boolean;
+      page?: number;
+      pageSize?: number;
+      since?: number;
+    } = {}): BackendDataQueryDescriptor<PlayerActivityResponse> => {
+    options = normalizePageOptions({ ...options, includeProjected: options.includeProjected === true, ...(options.since === undefined ? {} : { since: Math.max(0, Math.floor(options.since)) }) });
+    const key = walletCacheKey("player-activity", wallet, options);
+    return this.query(key, () => this.refresh(key, (signal) => fetchPlayerActivity(this.apiBaseUrl, wallet, { ...options, signal }), { wallet }));
+  },
     playerActivityAwayWindow: (wallet: string) => this.query(this.playerActivityAwayWindowKey(wallet), () => this.claimPlayerActivityAwayWindow(wallet)),
-    playerHighscore: (wallet: string) => this.query(this.key("player-highscore", wallet), () => this.playerHighscore(wallet)),
-    planets: (wallet: string) => this.query(this.key("planets", wallet), () => this.planets(wallet)),
-    profile: (wallet: string) => this.query(this.key("profile", wallet), () => this.profile(wallet)),
-    queues: (wallet: string, planetId?: string) => this.query(this.key("queues", wallet, planetId), () => this.queues(wallet, planetId)),
-    randomnessReadiness: () => this.query(this.key("randomness-readiness"), () => this.randomnessReadiness()),
-    raidFinderDebris: (options: { limit?: number } = {}) => this.query(this.key("raid-finder-debris", options), () => this.raidFinderDebris(options)),
-    raidFinderRifters: (options: { limit?: number } = {}) => this.query(this.key("raid-finder-rifters", options), () => this.raidFinderRifters(options)),
-    referralCodeInspection: (wallet: string, code: string) => this.query(this.key("referral-code-inspection", wallet, code), () => this.referralCodeInspection(wallet, code)),
-    referralCodeValidation: (code: string, wallet?: string) => this.query(this.key("referral-code-validation", code, wallet), () => this.referralCodeValidation(code, wallet)),
-    referralDashboard: (wallet: string) => this.query(this.key("referral-dashboard", wallet), () => this.referralDashboard(wallet)),
-    referralHistory: (wallet: string, page: number, pageSize: number) => this.query(this.key("referral-history", wallet, page, pageSize), () => this.referralHistory(wallet, page, pageSize)),
-    research: (wallet: string, planetId: string) => this.query(this.key("research", wallet, planetId), () => this.research(wallet, planetId)),
-    rift: (wallet: string, planetId: string) => this.query(this.key("rift", wallet, planetId), () => this.rift(wallet, planetId)),
-    runtimeConfig: <T>(url: string) => this.query(this.key("runtime-config", url), () => this.runtimeConfig<T>(url)),
-    shipyard: (wallet: string, planetId: string) => this.query(this.key("shipyard", wallet, planetId), () => this.shipyard(wallet, planetId)),
-    settlement: (wallet: string) => this.query(this.key("settlement", wallet), () => this.settlement(wallet)),
-    settlementFunding: (wallet: string) => this.query(this.key("settlement-funding", wallet), () => this.settlementFunding(wallet)),
-    settlementFundingProjection: (wallet: string, provider: Eip1193Provider, migrationAddress: string | undefined, providerIdentity: string | undefined) =>
-      this.query(this.key("settlement-funding-projection", wallet, migrationAddress, providerIdentity), () => this.settlementFundingForProvider(wallet, provider, migrationAddress, providerIdentity)),
-    system: <T = unknown>(galaxy: number, system: number, options: SystemReadOptions = {}) => {
-      const { priority: _priority, ...identity } = options;
-      return this.query(this.key("system", galaxy, system, identity), () => this.system<T>(galaxy, system, options));
+    playerHighscore: (wallet: string): BackendDataQueryDescriptor<HighscoreEntry | null> => {
+      const key = walletCacheKey("player-highscore", wallet);
+      return this.query(key, () => this.refresh(key, (signal) => fetchPlayerHighscore(this.apiBaseUrl, wallet, signal), { wallet }));
     },
-    walletPlanetSync: (wallet: string, planetId?: string, options: WalletPlanetSyncOptions = {}) =>
-      this.query(this.key("wallet-planet-sync", wallet, planetId, options), () => this.walletPlanetSync(wallet, planetId, options)),
-    watchedPlanets: (wallet: string, options: { page?: number; pageSize?: number } = {}) => this.query(this.key("watched-planets", wallet, options), () => this.watchedPlanets(wallet, options)),
+    planets: (wallet: string, options: WalletReadOptions = {}): BackendDataQueryDescriptor<WalletPlanetsResponse> => {
+      const key = walletCacheKey("planets", wallet);
+      return this.query(key, () => this.refresh(key, (signal) => fetchWalletPlanets(this.apiBaseUrl, wallet, { ...options, signal }), {
+        wallet,
+      }));
+    },
+    profile: (wallet: string): BackendDataQueryDescriptor<PlayerProfile> => {
+      const key = walletCacheKey("profile", wallet);
+      return this.query(key, () => this.refresh(key, (signal) => fetchPlayerProfile(this.apiBaseUrl, wallet, { signal }), { wallet }));
+    },
+    queues: (wallet: string, planetId?: string, options: WalletReadOptions = {}): BackendDataQueryDescriptor<PlayerQueuesResponse> => {
+      const key = walletCacheKey("queues", wallet, planetId);
+      return this.query(key, () => this.refresh(
+        key,
+        (signal) =>
+          fetchWalletQueues(this.apiBaseUrl, wallet, planetId, {
+            ...options,
+            signal,
+          }),
+        {
+          planetId,
+          wallet,
+        },
+      ));
+    },
+    randomnessReadiness: (): BackendDataQueryDescriptor<RandomnessReadiness> => {
+      const key = cacheKey("randomness-readiness");
+      return this.query(key, () => this.refresh(key, async signal => {
+        const payload = await fetchGameApiJson<{ ready?: unknown; reasons?: unknown }>(`${this.apiBaseUrl}/randomness-readiness`, "Randomness readiness", {
+          signal, cache: "no-store", timeoutMs: 10_000,
+          httpErrorMessage: async response => {
+            const body = await response.json() as { reasons?: unknown };
+            return Array.isArray(body.reasons) && typeof body.reasons[0] === "string"
+              ? body.reasons[0] : `Randomness readiness API failed: ${response.status}`;
+          },
+        });
+        return {
+          ready: payload.ready === true,
+          ...(Array.isArray(payload.reasons) ? { reasons: payload.reasons.filter((reason): reason is string => typeof reason === "string") } : {}),
+        };
+      }));
+    },
+    raidFinderDebris: (options: { limit?: number } = {}): BackendDataQueryDescriptor<RaidFinderDebrisResponse> => {
+      options = { limit: options.limit ?? 250 };
+      const key = cacheKey("raid-finder-debris", options);
+      return this.query(key, () => this.refresh(key, (signal) => fetchRaidFinderDebrisTargets(this.apiBaseUrl, { ...options, signal }), {
+      }));
+    },
+    raidFinderRifters: (options: { limit?: number } = {}): BackendDataQueryDescriptor<RaidFinderRiftersResponse> => {
+      options = { limit: options.limit ?? 250 };
+      const key = cacheKey("raid-finder-rifters", options);
+      return this.query(key, () => this.refresh(key, (signal) => fetchRaidFinderRifters(this.apiBaseUrl, { ...options, signal }), {
+      }));
+    },
+    referralCodeInspection: (wallet: string, code: string): BackendDataQueryDescriptor<ReferralResolution> => {
+      const key = walletCacheKey("referral-code-inspection", wallet, code);
+      return this.query(key, () => this.refresh(
+        key,
+        (signal) => {
+          return inspectReferralCode(this.apiBaseUrl, code, wallet, signal);
+        },
+        { wallet },
+      ));
+    },
+    referralCodeValidation: (code: string, invitee?: string): BackendDataQueryDescriptor<ReferralResolution> => {
+      const key = cacheKey("referral-code-validation", code, invitee?.toLowerCase());
+      return this.query(key, () => this.refresh(
+        key,
+        (signal) => {
+          return validateReferralCode(this.apiBaseUrl, code, invitee, signal);
+        },
+        invitee ? { wallet: invitee } : {},
+      ));
+    },
+    referralDashboard: (wallet: string): BackendDataQueryDescriptor<ReferralDashboard> => {
+      const key = walletCacheKey("referral-dashboard", wallet);
+      return this.query(key, () => this.refresh(key, (signal) => fetchReferralDashboard(this.apiBaseUrl, wallet, signal), { wallet }));
+    },
+    referralHistory: (wallet: string, page = 1, pageSize = 25): BackendDataQueryDescriptor<ReferralHistoryResponse> => {
+      const key = walletCacheKey("referral-history", wallet, page, pageSize);
+      return this.query(key, () => this.refresh(key, (signal) => fetchReferralHistory(this.apiBaseUrl, wallet, page, pageSize, signal), { wallet }));
+    },
+    research: this.planetQuery("research", fetchResearchState),
+    rift: this.planetQuery("rift", fetchRiftState),
+    runtimeConfig: <T>(url: string): BackendDataQueryDescriptor<T> => {
+      const key = cacheKey("runtime-config", url);
+      return this.query(key, () => this.refresh(key, (signal) => fetchGameApiJson<T>(url, "Runtime config", {
+        signal,
+        httpErrorMessage: async (response) => `Runtime config failed with ${response.status}`,
+      })));
+    },
+    shipyard: this.planetQuery("shipyard", fetchShipyardState),
+    supplySources: this.planetQuery("supply-sources", fetchSupplySources),
+    settlement: (wallet: string, options: WalletReadOptions = {}): BackendDataQueryDescriptor<WalletSettlementResponse> => {
+      const key = walletCacheKey("settlement", wallet);
+      return this.query(key, () => this.refresh(key, (signal) => fetchWalletSettlement(this.apiBaseUrl, wallet, { ...options, signal }), {
+        wallet,
+      }).then((state) => {
+        // A queued-only resource can be retired after its final subscriber
+        // leaves before transport starts. Treat that normal lifecycle outcome
+        // as an unavailable indexed settlement, never as a real payload to
+        // dereference or permission to launch another settlement.
+        if (!state) {
+          return {
+            hasFirstPlanet: true,
+            homePlanetId: null,
+            indexer: { indexedState: "reconciling", safeToServeIndexedState: false },
+            planet: null,
+            wallet,
+          } satisfies WalletSettlementResponse;
+        }
+        return state;
+      }));
+    },
+    settlementFunding: (wallet: string): BackendDataQueryDescriptor<SettlementFundingState> => {
+      const key = walletCacheKey("settlement-funding", wallet);
+      return this.query(key, () => this.refresh(key, (signal) => fetchSettlementFundingState(this.apiBaseUrl, wallet, signal), { wallet }));
+    },
+    settlementFundingProjection: (wallet: string, provider: Eip1193Provider, migrationAddress: string | undefined, providerIdentity: string | undefined): BackendDataQueryDescriptor<SettlementFundingState> => {
+      const key = walletCacheKey("settlement-funding-projection", wallet, migrationAddress?.toLowerCase(), providerIdentity);
+      return this.query(key, () => this.refresh(
+        key,
+        async () => {
+          const [backendFunding, walletBalanceWei, chainMigrationReservation] = await Promise.all([
+            this.settlementFunding(wallet),
+            readWalletNativeBalance(provider, wallet),
+            readMigrationReservation(provider, migrationAddress, wallet),
+          ]);
+          return settlementFundingWithMigrationReservation(
+            settlementFundingWithWalletBalance(backendFunding, walletBalanceWei),
+            chainMigrationReservation,
+            migrationAddress,
+          );
+        },
+        {
+          wallet,
+        },
+      ));
+    },
+    system: <T = unknown>(galaxy: number, system: number, options: SystemReadOptions = {}): BackendDataQueryDescriptor<T> => {
+      const requestOptions = options;
+      const key = cacheKey("system", galaxy, system, requestOptions);
+      return this.query(key, () => this.refresh(
+        key,
+        (signal) =>
+          fetchSystemData(this.apiBaseUrl, galaxy, system, {
+            ...requestOptions,
+            signal,
+          }) as Promise<T>,
+        {
+        },
+      ));
+    },
+    watchedPlanets: (wallet: string, options: { page?: number; pageSize?: number; timeoutMs?: number } = {}): BackendDataQueryDescriptor<WatchedPlanetsResponse> => {
+      options = normalizePageOptions(options);
+      const key = walletCacheKey("watched-planets", wallet, {
+        page: options.page,
+        pageSize: options.pageSize,
+      });
+      return this.query(key, () => this.refresh(key, (signal) => fetchWatchedPlanets(this.apiBaseUrl, wallet, { ...options, signal }), {
+        wallet,
+      }));
+    },
   };
-
-  /** Store-created plans are post-application canonical refreshes or required
-   * backend side effects. They never decide whether a chain transaction was
-   * indexed: only the backend transaction-status boundary can do that. */
+/** Declarative affected keys, tracked with the hash. No nested refresh runners. */
   readonly indexing = {
-    refresh: (tags: readonly BackendDataTag[]): BackendIndexingPlan => this.createIndexingPlan(async () => this.refreshIndexedTags(tags)),
-    resourceChange: (wallet: string, planetId: string, bodyKind: "planet" | "moon" = "planet", _baseline: ResourceIndexingExpectation["baseline"] = undefined): BackendIndexingPlan =>
-      this.createIndexingPlan(async () => {
-        if (bodyKind === "moon") {
-          await this.moon(wallet, planetId, {
-            fresh: true,
-            priority: "transaction",
-          });
-        } else {
-          await this.shipyard(wallet, planetId, {
-            fresh: true,
-            priority: "transaction",
-          });
-        }
-      }),
-    settledPlanet: (wallet: string): BackendIndexingPlan =>
-      this.createIndexingPlan(async () => {
-        await this.settlement(wallet, {
-          fresh: true,
-          priority: "transaction",
-        });
-      }),
+    refresh: (tags: readonly BackendDataTag[]): BackendIndexingPlan => this.createIndexingPlan(this.keysForScope(tags)),
+    resourceChange: (wallet: string, planetId: string, bodyKind: "planet" | "moon" = "planet"): BackendIndexingPlan =>
+      this.createIndexingPlan([walletCacheKey(bodyKind === "moon" ? "moon" : "infrastructure", wallet, planetId)]),
+    settledPlanet: (wallet: string): BackendIndexingPlan => this.createIndexingPlan([walletCacheKey("settlement", wallet), walletCacheKey("planets", wallet)]),
     referralClaim: (wallet: string, code: string, commitment: string, signature: string | (() => string)): BackendIndexingPlan =>
-      this.createIndexingPlan(async (_receipt, txHash) => {
+      this.createIndexingPlan([walletCacheKey("referral-dashboard", wallet), ...this.keysForScope([`wallet:${wallet.toLowerCase()}`, "kind:referral-history"])], async () => {
         const resolvedSignature = typeof signature === "function" ? signature() : signature;
-        if (!resolvedSignature) {
-          throw new Error("Referral claim authorization is unavailable.");
-        }
-        await this.recordReferralClaimAfterIndexing(wallet, code, commitment, txHash, resolvedSignature);
+        if (!resolvedSignature) throw new Error("Referral claim authorization is unavailable.");
+        return [{ kind: "referral-claim", code, commitment, signature: resolvedSignature }];
       }),
-    startedBuilding: (wallet: string, expectation: StartedBuildingExpectation, _baseline: ResourceIndexingExpectation["baseline"] = undefined): BackendIndexingPlan =>
-      this.createIndexingPlan(async () => {
-        await Promise.all([
-          this.infrastructure(wallet, expectation.planetId, { fresh: true, priority: "transaction" }),
-          this.planets(wallet, { fresh: true, priority: "transaction" }),
-          this.queues(wallet, expectation.planetId, { fresh: true, priority: "transaction" }),
-        ]);
-      }),
-    startedShipProduction: (wallet: string, expectation: StartedShipProductionExpectation, _baseline: ResourceIndexingExpectation["baseline"] = undefined): BackendIndexingPlan =>
-      this.createIndexingPlan(async () => {
-        await Promise.all([
-          this.queues(wallet, expectation.planetId, { fresh: true, priority: "transaction" }),
-          this.shipyard(wallet, expectation.planetId, { fresh: true, priority: "transaction" }),
-        ]);
-      }),
-    startedDefenseProduction: (wallet: string, expectation: StartedDefenseProductionExpectation, _baseline: ResourceIndexingExpectation["baseline"] = undefined): BackendIndexingPlan =>
-      this.createIndexingPlan(async () => {
-        await Promise.all([
-          this.defenses(wallet, expectation.planetId, { fresh: true, priority: "transaction" }),
-          this.queues(wallet, expectation.planetId, { fresh: true, priority: "transaction" }),
-        ]);
-      }),
-    startedResearch: (wallet: string, planetId: string, _expectation: StartedResearchExpectation, _baseline: ResourceIndexingExpectation["baseline"] = undefined): BackendIndexingPlan =>
-      this.createIndexingPlan(async () => {
-        await Promise.all([
-          this.queues(wallet, planetId, { fresh: true, priority: "transaction" }),
-          this.research(wallet, planetId, { fresh: true, priority: "transaction" }),
-        ]);
-      }),
-    /** Independent indexed predicates can be observed together. */
-    all: (plans: readonly BackendIndexingPlan[]): BackendIndexingPlan =>
-      this.createIndexingPlan(async (receipt, txHash) => {
-        const runners = plans.map((plan) => {
-          const run = this.indexingPlanRunners.get(plan as object);
-          if (!run) {
-            throw new Error("The write supplied an indexing plan from a different data store.");
-          }
-          return run;
-        });
-        await Promise.all(runners.map((run) => run(receipt, txHash)));
-      }),
-    /** Use this only where a later post-application action depends on an earlier refresh. */
-    sequence: (plans: readonly BackendIndexingPlan[]): BackendIndexingPlan =>
-      this.createIndexingPlan(async (receipt, txHash) => {
-        for (const plan of plans) {
-          const run = this.indexingPlanRunners.get(plan as object);
-          if (!run) {
-            throw new Error("The write supplied an indexing plan from a different data store.");
-          }
-          await run(receipt, txHash);
-        }
-      }),
+    production: (wallet: string, planetId: string | undefined, kind: "infrastructure" | "shipyard" | "defenses" | "research"): BackendIndexingPlan =>
+      this.productionPlan(wallet, planetId, kind),
+    all: (plans: readonly BackendIndexingPlan[]): BackendIndexingPlan => {
+      plans.forEach(plan => this.assertIndexingPlan(plan));
+      return this.createIndexingPlan(plans.flatMap(plan => plan.keys), () => this.prepareIndexingPlans(plans));
+    },
     fleetVisibility: (wallet: string, tags: readonly BackendDataTag[] = []): BackendIndexingPlan =>
-      this.createIndexingPlan(async () => {
-        await this.fleetVisibility(wallet, {
-          fresh: true,
-          includeArchive: false,
-        });
-        this.refreshIndexedTagsAfterConvergence(tags);
-      }),
-    missionLaunch: (wallet: string, _expectedMission: (txHash: string) => import("./walletFlow").FleetMissionSummary | undefined, tags: readonly BackendDataTag[] = []): BackendIndexingPlan =>
-      this.createIndexingPlan(async () => {
-        await Promise.all([
-          this.globalActiveMissions(),
-          this.fleetVisibility(wallet, { fresh: true, includeArchive: false }),
-        ]);
-        this.refreshIndexedTagsAfterConvergence(tags);
-      }),
-    alliance: (wallet: string, _expectation?: AllianceApplicationExpectation | AllianceProfileExpectation | AllianceCreationExpectation): BackendIndexingPlan =>
-      this.createIndexingPlan(async () => {
-        await this.alliance(wallet, { fresh: true });
-      }),
+      this.createIndexingPlan([walletCacheKey("fleet-visibility", wallet, false), ...this.keysForScope(tags)]),
+    missionLaunch: (wallet: string, tags: readonly BackendDataTag[] = []): BackendIndexingPlan =>
+      this.createIndexingPlan([walletCacheKey("fleet-visibility", wallet, false), this.key("global-active-missions"), ...this.keysForScope(tags)]),
+    alliance: (wallet: string): BackendIndexingPlan => this.createIndexingPlan([walletCacheKey("alliance", wallet)]),
     paidAllianceInvite: (wallet: string, provider: Eip1193Provider, secret: string): BackendIndexingPlan =>
-      this.createIndexingPlan(async () => {
-        await storePaidAllianceInvite(this.apiBaseUrl, provider, wallet, secret);
-        await this.alliance(wallet, { fresh: true });
-      }),
-    planetRename: (wallet: string, _planetId: string, _name: string): BackendIndexingPlan =>
-      this.createIndexingPlan(async () => {
-        await this.planets(wallet, { fresh: true, priority: "transaction" });
-      }),
-    planetAbsent: (wallet: string, _planetId: string): BackendIndexingPlan =>
-      this.createIndexingPlan(async () => {
-        await this.planets(wallet, { fresh: true, priority: "transaction" });
-      }),
-    moonExists: (wallet: string, planetId: string): BackendIndexingPlan =>
-      this.createIndexingPlan(async () => {
-        await this.moon(wallet, planetId, {
-          fresh: true,
-          priority: "transaction",
-        });
-      }),
+      this.createIndexingPlan([walletCacheKey("alliance", wallet)], async () => [{
+        kind: "paid-alliance-invite", secret,
+        signature: await requestPersonalSignature(provider, wallet, paidAllianceInviteStoreMessage(wallet, paidAllianceInviteCommitment(secret))),
+      }]),
+    planetRename: (wallet: string): BackendIndexingPlan => this.createIndexingPlan([walletCacheKey("planets", wallet)]),
+    planetAbsent: (wallet: string): BackendIndexingPlan => this.createIndexingPlan([walletCacheKey("planets", wallet), walletCacheKey("settlement", wallet)]),
+    moonExists: (wallet: string, planetId: string): BackendIndexingPlan => this.createIndexingPlan([walletCacheKey("moon", wallet, planetId), walletCacheKey("planets", wallet)]),
   };
 
   refresh<T>(
     key: string,
     load: (signal: AbortSignal) => Promise<T>,
     options: {
-      dedupe?: boolean;
-      deadlineMs?: number | undefined;
       planetId?: string | undefined;
-      priority?: GameStatePriority | undefined;
-      scope?: string | undefined;
       wallet?: string | undefined;
     } = {},
   ): Promise<T> {
-    const readOptions = {
-      ...options,
-      // A cache resource, not a route, owns its transport.  Page-local scope
-      // strings used to let an unmount cancel another view's shared read and
-      // then present retained stale data as fresh.  Keep a stable internal
-      // scope only for diagnostics; cache reads are never route-cancelled.
-      scope: `backend-data:${key}`,
+    this.registerResource(key, load, options);
+    return this.readRegisteredResource(this.resources.get(key)!) as Promise<T>;
+  }
+
+  private planetQuery<T>(kind: string, load: (apiUrl: string, wallet: string, planetId?: string, options?: WalletReadOptions) => Promise<T>) {
+    return (wallet: string, planetId?: string, options: WalletReadOptions = {}) => {
+      const key = walletCacheKey(kind, wallet, planetId);
+      return this.query(key, () => this.refresh(key,
+        signal => load(this.apiBaseUrl, wallet, planetId, { ...options, signal }),
+        { wallet, planetId },
+      ));
     };
-    this.registerResource(key, load, readOptions);
-    const read = this.state.read(key, load, readOptions);
-    void read.then(
-      () => this.flushTrailingInvalidation(key),
-      () => this.flushTrailingInvalidation(key),
-    );
-    void read.finally(() => this.scheduleEviction(key)).catch(() => {
-      // The canonical entry carries the failure; eviction is best-effort.
-    });
-    return read;
   }
 
   private query<T>(key: string, read: () => Promise<T>): BackendDataQueryDescriptor<T> {
     return { key, read, store: this };
   }
 
-  /**
-   * Return a recent canonical value without causing a duplicate transport.
-   * Explicit Refresh buttons still use `refetch`, so freshness is never hidden
-   * behind an unbounded cache.
-   */
-  ensure<T>(
-    key: string,
-    load: (signal: AbortSignal) => Promise<T>,
-    options: {
-      maxAgeMs?: number;
-      deadlineMs?: number | undefined;
-      planetId?: string | undefined;
-      priority?: GameStatePriority | undefined;
-      scope?: string | undefined;
-      wallet?: string | undefined;
-    } = {},
-  ): Promise<T> {
-    const snapshot = this.state.snapshot<T>(key);
-    const maxAgeMs = options.maxAgeMs ?? 5_000;
-    if (snapshot?.data !== undefined && snapshot.freshness === "fresh" && snapshot.lastSuccessfulUpdate !== undefined && Date.now() - snapshot.lastSuccessfulUpdate < maxAgeMs) {
-      return Promise.resolve(snapshot.data);
-    }
-    return this.refresh(key, load, options);
-  }
-
-  refetch(key: string, options: BackendDataRefreshOptions = {}): Promise<unknown> | undefined {
+  refetch(key: string): Promise<unknown> | undefined {
     const resource = this.resources.get(key);
     if (!resource) return undefined;
-    return this.readRegisteredResource(resource, options, true);
+    return this.readRegisteredResource(resource);
   }
 
   /** Invalidate canonical resources by identity, then refresh active views. */
   invalidate(tags: readonly BackendDataTag[], options: BackendDataRefreshOptions = {}): Promise<PromiseSettledResult<unknown>[]> {
     const wanted = new Set(tags);
-    const reads: Promise<unknown>[] = [];
-    for (const resource of this.resources.values()) {
-      if (![...resource.tags].some((tag) => wanted.has(tag))) continue;
-      // Mark every matching canonical entry stale, including inactive source
-      // planets in a batch mutation. They will not lie about freshness when a
-      // player navigates back later; only currently subscribed resources are
-      // eagerly transported again.
-      this.state.invalidate(resource.key);
-      if (options.activeOnly !== false && this.state.subscriberCount(resource.key) === 0) continue;
-      if (this.state.hasInFlight(resource.key)) {
+    return this.invalidateKeys([...this.resources.values()].filter(resource => [...resource.tags].some(tag => wanted.has(tag))).map(resource => resource.key), options);
+  }
+
+  private invalidateKeys(keys: readonly string[], options: BackendDataRefreshOptions = {}): Promise<PromiseSettledResult<unknown>[]> {
+    return Promise.allSettled([...new Set(keys)].flatMap(key => {
+      const resource = this.resources.get(key);
+      return resource ? [this.refreshInvalidatedResource(resource, options)] : [];
+    }));
+  }
+
+  private canRefreshResource(resource: RegisteredResource, activeOnly = true): boolean {
+    return !this.transactionAbort.signal.aborted
+      && this.resources.get(resource.key) === resource
+      && (typeof navigator === "undefined" || navigator.onLine !== false)
+      && (typeof document === "undefined" || document.visibilityState !== "hidden")
+      && (!activeOnly || this.state.subscriberCount(resource.key) > 0);
+  }
+
+  /** Shared invalidation path; completion reads additionally wait past the commit barrier. */
+  private async refreshInvalidatedResource(resource: RegisteredResource, options: BackendDataRefreshOptions = {}, afterCurrentRead = false): Promise<unknown> {
+    this.state.invalidate(resource.key);
+    if (!this.canRefreshResource(resource, options.activeOnly !== false)) return;
+    if (this.state.hasInFlight(resource.key)) {
+      if (!afterCurrentRead) {
         this.trailingInvalidations.add(resource.key);
-        continue;
+        return;
       }
-      const refresh = this.readRegisteredResource(resource, options, true);
-      if (refresh) reads.push(refresh);
+      // Reuse any event-triggered trailing read, but never the pre-commit read.
+      await this.state.inFlightSettled(resource.key);
+      if (!this.canRefreshResource(resource, options.activeOnly !== false)) return;
     }
-    return Promise.allSettled(reads);
+    const result = await this.readRegisteredResource(resource);
+    if (afterCurrentRead && this.resources.get(resource.key) === resource && this.state.snapshot(resource.key)?.freshness !== "fresh") {
+      throw new Error("The affected state changed during refresh.");
+    }
+    return result;
+  }
+
+  /** One lifecycle for gameplay. Timed projections change even without logs;
+   * all other reads have a slow safety refresh if an event was lost. Only
+   * mounted queries participate, and independent keys never wait for a slot. */
+  startGameplaySync(wallet: string): () => void {
+    // Shell and page may both retain sync. They share one store-owned policy.
+    const disconnect = this.connectChainEvents(wallet, { debounceMs: 3_000 });
+    const stop = this.startPolling(`gameplay:${wallet.toLowerCase()}`, [], 10_000);
+    // The shared poller calls the store policy, not page-supplied refresh trees.
+    return () => { stop(); disconnect(); };
+  }
+
+  private refreshGameplay(): void {
+    if (typeof navigator !== "undefined" && navigator.onLine === false) return;
+    if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+    const timed = new Set(["settlement", "infrastructure", "moon", "queues", "fleet-visibility", "global-active-missions", "global-active-mission-count", "mission"]);
+    const keys = [...this.resources.values()].filter(resource => {
+      if (!this.state.subscriberCount(resource.key)) return false;
+      if (resource.options.wallet && resource.options.wallet.toLowerCase() !== this.contextWallet) return false;
+      const kind = resource.key.slice(0, resource.key.indexOf(":"));
+      const snapshot = this.state.snapshot(resource.key);
+      const age = this.now() - (snapshot?.lastSuccessfulUpdate ?? 0);
+      const data = snapshot?.data as { queue?: { active?: boolean }; planets?: Array<{ queues?: Record<string, { active?: boolean } | null> }> } | undefined;
+      const producing = data?.queue?.active || data?.planets?.some(planet => Object.values(planet.queues ?? {}).some(queue => queue?.active));
+      return !this.state.hasInFlight(resource.key) && age >= (timed.has(kind) || producing ? 10_000 : 120_000);
+    }).map(resource => resource.key);
+    void this.invalidateKeys(keys);
   }
 
   /**
    * Store-owned polling. Screens can register visibility/route intent, but do
    * not create timers or duplicate refresh loops themselves.
    */
-  startPolling(name: string, tags: readonly BackendDataTag[], intervalMs: number, priority: GameStatePriority): () => void {
+  startPolling(name: string, tags: readonly BackendDataTag[], intervalMs: number): () => void {
     const owner = Symbol(name);
     const existing = this.pollers.get(name);
     if (existing) {
-      existing.leases.set(owner, { intervalMs, priority, tags: [...tags] });
+      existing.leases.set(owner, { intervalMs, tags: [...tags] });
       this.reconfigurePolling(existing);
       return () => this.releasePolling(name, owner);
     }
     const poller: ManagedPoller = {
       // Replaced immediately below by the effective lease configuration.
       timer: undefined as unknown as ReturnType<typeof setInterval>,
-      leases: new Map([[owner, { intervalMs, priority, tags: [...tags] }]]),
+      leases: new Map([[owner, { intervalMs, tags: [...tags] }]]),
     };
     this.pollers.set(name, poller);
     this.reconfigurePolling(poller);
@@ -732,14 +934,21 @@ export class BackendDataStore {
    * not call this during ordinary navigation; the shared registry releases
    * stores only when their base URL is no longer retained by the app shell. */
   dispose(): void {
+    clearTimeout(this.recoveryTimer);
+    this.recoveryKeys.clear();
+    this.recoveringKeys.clear();
+    this.transactionAbort.abort();
+    for (const wake of this.transactionWakeups) wake();
     if (typeof document !== "undefined") document.removeEventListener("visibilitychange", this.handleVisibilityChange);
+    if (typeof window !== "undefined") {
+      window.removeEventListener?.("online", this.handleResume);
+      window.removeEventListener?.("pageshow", this.handleResume);
+    }
     this.stopAllPolling();
     for (const timer of this.scheduledRefreshes.values()) clearTimeout(timer);
     this.scheduledRefreshes.clear();
     for (const timer of this.evictionTimers.values()) clearTimeout(timer);
     this.evictionTimers.clear();
-    for (const timer of this.trailingInvalidationTimers.values()) clearTimeout(timer);
-    this.trailingInvalidationTimers.clear();
     this.resources.clear();
     this.trailingInvalidations.clear();
     this.trailingInvalidationSettlements.clear();
@@ -747,17 +956,16 @@ export class BackendDataStore {
     this.activityPresenceClaims.clear();
     this.settlementReservationAttempts.clear();
     this.transactionGates.clear();
-    this.planetResourceReadGenerations.clear();
     this.state.dispose();
   }
 
   /** Public landing data has one store-owned refresh policy and SSE bridge. */
   startLandingFeedPolling(): () => void {
-    return this.startPolling("landing-active-missions", ["kind:landing-active-missions"], 60_000, "background");
+    return this.startPolling("landing-active-missions", ["kind:landing-active-missions"], 60_000);
   }
 
   startLandingAlliancePolling(): () => void {
-    return this.startPolling("landing-highscores", ["kind:landing-highscores"], 300_000, "background");
+    return this.startPolling("landing-highscores", ["kind:landing-highscores"], 300_000);
   }
 
   /** Presence is backend data, so its heartbeat belongs here rather than in a dialog. */
@@ -792,20 +1000,16 @@ export class BackendDataStore {
     return () => this.releasePlayerActivityPresence(name);
   }
 
-  scheduleRefresh(name: string, tags: readonly BackendDataTag[], delayMs: number, priority: GameStatePriority): () => void {
-    this.cancelScheduledRefresh(name);
+  scheduleRefresh(key: string, delayMs: number): () => void {
+    this.cancelScheduledRefresh(key);
     this.scheduledRefreshes.set(
-      name,
+      key,
       setTimeout(() => {
-        this.scheduledRefreshes.delete(name);
-        if (typeof document !== "undefined" && document.visibilityState === "hidden") {
-          this.deferHiddenRefresh(tags, priority);
-          return;
-        }
-        void this.invalidate(tags, { activeOnly: true, priority });
+        this.scheduledRefreshes.delete(key);
+        void this.invalidateKeys([key]);
       }, delayMs),
     );
-    return () => this.cancelScheduledRefresh(name);
+    return () => this.cancelScheduledRefresh(key);
   }
 
   cancelScheduledRefresh(name: string): void {
@@ -842,92 +1046,56 @@ export class BackendDataStore {
     const events = new window.EventSource(`${this.apiBaseUrl}/chain/events`);
     const debounceMs = options.debounceMs ?? 500;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const pendingTags = new Set<BackendDataTag>();
+    const pendingKeys = new Set<string>();
     const flush = () => {
       timer = undefined;
-      if (pendingTags.size === 0) return;
-      const tags = [...pendingTags];
-      pendingTags.clear();
-      void this.invalidate(tags, { activeOnly: true, priority: "transaction" });
+      if (pendingKeys.size === 0) return;
+      const keys = [...pendingKeys];
+      pendingKeys.clear();
+      void this.invalidateKeys(keys);
     };
-    const queue = (tags: readonly BackendDataTag[]) => {
-      tags.forEach((tag) => pendingTags.add(tag));
+    const queue = (keys: readonly string[]) => {
+      keys.forEach((key) => pendingKeys.add(key));
       if (timer !== undefined) return;
       timer = setTimeout(flush, debounceMs);
     };
+    let wasHealthy = false;
+    const activeScopeKeys = (planetIds?: string[]) => [...this.resources.values()].filter(resource =>
+      (!resource.options.wallet || resource.options.wallet.toLowerCase() === normalizedWallet)
+      && (!planetIds || !resource.options.planetId || planetIds.includes(resource.options.planetId))
+    ).map(resource => resource.key);
     const updateHealth = (event: MessageEvent) => {
       try {
-        const payload = JSON.parse(event.data) as {
-          connected?: boolean;
-          indexedRevision?: string | null;
-          subscribedToHeads?: boolean;
-          subscribedToLogs?: boolean;
-        };
-        const healthy = Boolean(payload.connected && payload.subscribedToHeads && payload.subscribedToLogs);
-        const previousRevision = this.latestIndexedRevisionByWallet.get(normalizedWallet);
-        if (payload.indexedRevision !== null && payload.indexedRevision !== undefined) {
-          try {
-            const nextRevision = BigInt(payload.indexedRevision);
-            this.latestIndexedRevisionByWallet.set(normalizedWallet, nextRevision);
-            if (previousRevision !== undefined && nextRevision > previousRevision) {
-              queue([
-                `wallet:${normalizedWallet}`,
-                "kind:attack-protection",
-                "kind:fleet-visibility",
-                "kind:global-active-missions",
-                "kind:global-mission-archive",
-                "kind:battle-reports",
-                "kind:highscores",
-                "kind:player-highscore",
-                "kind:system",
-              ]);
-            }
-          } catch {
-            // Health remains useful even if a malformed revision cannot drive catch-up.
-          }
-        }
+        const payload = JSON.parse(event.data) as { ready?: boolean };
+        const healthy = payload.ready === true;
+        // The first ready message and every recovery close the connect/read
+        // race. Ordinary heartbeats do not refresh gameplay or expose revisions.
+        if (healthy && !wasHealthy) this.queueRecovery(activeScopeKeys(), true);
+        wasHealthy = healthy;
         this.commitBackendSnapshot("chain-sync-health", healthy, [wallet], { wallet });
-      } catch {
-        this.commitBackendSnapshot("chain-sync-health", false, [wallet], {
-          wallet,
-        });
-      }
+      } catch { wasHealthy = false; }
     };
     const onChainEvent = (event: MessageEvent) => {
-      const tags: BackendDataTag[] = [
-        `wallet:${wallet.toLowerCase()}`,
-        "kind:attack-protection",
-        "kind:fleet-visibility",
-        "kind:global-active-missions",
-        "kind:global-mission-archive",
-        "kind:battle-reports",
-        "kind:highscores",
-        "kind:landing-active-missions",
-        "kind:landing-highscores",
-        "kind:player-highscore",
-        "kind:raid-finder-debris",
-        "kind:raid-finder-rifters",
-        "kind:system",
-      ];
+      let planetIds: string[] | undefined;
       try {
-        const payload = JSON.parse(event.data) as {
-          resourceChanges?: Array<{ planetId?: unknown }>;
-        };
-        for (const change of payload.resourceChanges ?? []) {
-          if (typeof change?.planetId === "string") tags.push(`planet:${change.planetId}`);
+        const payload = JSON.parse(event.data) as { wallets?: unknown; planetIds?: unknown };
+        if (Array.isArray(payload.wallets) && payload.wallets.every(w => typeof w === "string")) {
+          if (!payload.wallets.some(w => w.toLowerCase() === normalizedWallet)) return;
+          if (Array.isArray(payload.planetIds) && payload.planetIds.every(id => typeof id === "string")) planetIds = payload.planetIds;
         }
-      } catch {
-        // An unparseable event still means the indexed state may have changed.
-      }
-      queue(tags);
+      } catch { /* An unscoped/legacy event requires a conservative catch-up. */ }
+      // Only complete planet scopes can exclude off-chain metadata. Unknown
+      // events still catch up everything; alliance scores and roster resources
+      // remain dependencies even when planet ownership itself did not change.
+      const unrelated = new Set(["profile", "entity-media", "runtime-config", "chain-sync-health"]);
+      queue(activeScopeKeys(planetIds).filter(key => !planetIds || !unrelated.has(key.slice(0, key.indexOf(":")))));
     };
-
     events.addEventListener("chain-event", onChainEvent);
     events.addEventListener("sync-status", updateHealth);
-    events.onerror = () =>
-      this.commitBackendSnapshot("chain-sync-health", false, [wallet], {
-        wallet,
-      });
+    events.onerror = () => {
+      wasHealthy = false;
+      this.commitBackendSnapshot("chain-sync-health", false, [wallet], { wallet });
+    };
     const close = () => {
       if (timer !== undefined) clearTimeout(timer);
       events.close();
@@ -940,19 +1108,23 @@ export class BackendDataStore {
     return () => this.releaseChainEventBridge(normalizedWallet);
   }
 
-  setContext(wallet?: string, planetId?: string): void {
+  setContext(wallet?: string, planetId?: string, chainId?: string): void {
     const nextWallet = wallet?.toLowerCase();
-    if (nextWallet === this.contextWallet) return;
+    const changed = !this.hasContext || nextWallet !== this.contextWallet || chainId !== this.contextChainId;
+    this.hasContext = true;
+    this.contextChainId = chainId;
+    if (!changed) return;
     const previousWallet = this.contextWallet;
     this.contextWallet = nextWallet;
-    if (nextWallet) void this.resumePendingTransactions(nextWallet);
+    for (const wake of this.transactionWakeups) wake();
+    if (nextWallet) this.resumePendingTransactions(nextWallet, chainId);
 
     // An API-base store survives account switching. Retaining wallet A's
     // canonical entries after moving to wallet B wastes the unbounded dynamic
     // cache and makes accidental old-account projections possible. Clear only
     // wallet-scoped entries; public/global feeds remain shared and an older
     // in-flight wallet response is generation-blocked by `clear`.
-    if (!previousWallet) return;
+    if (!previousWallet || previousWallet === nextWallet) return;
     const walletTag: BackendDataTag = `wallet:${previousWallet}`;
     for (const resource of [...this.resources.values()]) {
       if (!resource.tags.has(walletTag)) continue;
@@ -960,9 +1132,6 @@ export class BackendDataStore {
       this.resources.delete(resource.key);
       this.trailingInvalidations.delete(resource.key);
       this.trailingInvalidationSettlements.delete(resource.key);
-      const trailing = this.trailingInvalidationTimers.get(resource.key);
-      if (trailing !== undefined) clearTimeout(trailing);
-      this.trailingInvalidationTimers.delete(resource.key);
       this.state.clear(resource.key);
     }
     // Some store projections publish canonical entries directly (overview
@@ -999,17 +1168,6 @@ export class BackendDataStore {
     };
   }
 
-  /** A component may unmount before its descriptor gets a scheduler slot.
-   * Preserve started canonical transports, but avoid issuing stale queued
-   * reads from a route that no longer exists. */
-  cancelQueuedRead(key: string): boolean {
-    return this.state.cancelQueuedRead(key);
-  }
-
-  cancelQueuedReadIfUnobserved(key: string): boolean {
-    return this.state.cancelQueuedReadIfUnobserved(key);
-  }
-
   key(kind: string, ...parts: unknown[]): string {
     return cacheKey(kind, ...parts);
   }
@@ -1017,28 +1175,27 @@ export class BackendDataStore {
   /** Event-bridge health is a store projection, so it has a typed key even
    * though no HTTP loader owns it. */
   chainSyncHealthKey(wallet: string): string {
-    return this.key("chain-sync-health", wallet);
+    return walletCacheKey("chain-sync-health", wallet);
   }
 
-  canonicalPlanetResourcesKey(wallet: string): string {
-    return this.key("canonical-planet-resources", wallet);
-  }
-
-  writeTransactionKey(key?: string, wallet?: string): string {
+  writeTransactionKey(key?: string, wallet?: string, planetId?: string): string {
+    if (planetId) return cacheKey("write-transaction", wallet?.toLowerCase() ?? "global", key ?? "global", planetId);
     return cacheKey("write-transaction", wallet?.toLowerCase() ?? "global", key ?? "global");
   }
 
-  pendingTransactionRecoveryKey(wallet: string): string {
-    return cacheKey("pending-transaction-recovery", wallet.toLowerCase());
-  }
-
   private publishWriteTransactionState(state: WriteTransactionState, walletScope = "global"): void {
+    if (this.hasContext && walletScope !== "global" && this.contextWallet !== walletScope) return;
     // Write status is UI state, but it is still scoped to the initiating
     // wallet.  Without this metadata `clearWallet()` cannot retire a
     // confirmed/failed action from a previous account after an account switch.
     const options = walletScope === "global" ? undefined : { wallet: walletScope };
     this.state.publish(this.writeTransactionKey(undefined, walletScope), state, options);
-    if (state.key) this.state.publish(this.writeTransactionKey(state.key, walletScope), state, options);
+    if (state.key) this.state.publish(this.writeTransactionKey(state.key, walletScope, state.planetId), state, options);
+    if (state.key) {
+      const group = `group:${state.key.split(":")[0]}`;
+      this.state.publish(this.writeTransactionKey(group, walletScope), state, options);
+      if (state.planetId) this.state.publish(this.writeTransactionKey(group, walletScope, state.planetId), state, options);
+    }
   }
 
   private transactionWalletScope(tags: readonly BackendDataTag[] | undefined): string {
@@ -1052,462 +1209,311 @@ export class BackendDataStore {
     this.transactionGates.set(walletScope, gate);
     return gate;
   }
-
-  private transactionJournalKey(): string {
-    return `veydrift:pending-transactions:${this.apiBaseUrl}`;
+  private pendingTransactions(): PendingTransaction[] {
+    return [...this.sessionTransactions.values()];
   }
 
-  private pendingTransactions(): PendingTransactionJournalEntry[] {
-    try {
-      if (typeof window === "undefined" || !window.localStorage) return [];
-      const value = JSON.parse(window.localStorage.getItem(this.transactionJournalKey()) ?? "[]") as unknown;
-      if (!Array.isArray(value)) return [];
-      return value.filter((entry): entry is PendingTransactionJournalEntry => {
-        if (!entry || typeof entry !== "object") return false;
-        const candidate = entry as Partial<PendingTransactionJournalEntry>;
-        return typeof candidate.actionId === "string"
-          && typeof candidate.chainId === "string"
-          && typeof candidate.submittedAt === "number"
-          && typeof candidate.transactionHash === "string"
-          && typeof candidate.wallet === "string";
-      });
-    } catch {
-      return [];
-    }
-  }
-
-  private persistPendingTransactions(entries: readonly PendingTransactionJournalEntry[]): void {
-    try {
-      if (typeof window === "undefined" || !window.localStorage) return;
-      if (entries.length === 0) {
-        window.localStorage.removeItem(this.transactionJournalKey());
-      } else {
-        window.localStorage.setItem(this.transactionJournalKey(), JSON.stringify(entries));
-      }
-    } catch {
-      // Storage can be unavailable in private/embedded browsers. The in-memory
-      // gate still protects the current page; persistence is best-effort only.
-    }
-  }
-
-  private writePendingTransaction(entry: PendingTransactionJournalEntry): void {
-    const entries = this.pendingTransactions().filter((current) => current.transactionHash.toLowerCase() !== entry.transactionHash.toLowerCase());
-    entries.push(entry);
-    this.persistPendingTransactions(entries);
+  private writePendingTransaction(entry: PendingTransaction): void {
+    this.sessionTransactions.set(entry.transactionHash.toLowerCase(), entry);
   }
 
   private removePendingTransaction(transactionHash: string): void {
-    this.persistPendingTransactions(
-      this.pendingTransactions().filter((entry) => entry.transactionHash.toLowerCase() !== transactionHash.toLowerCase()),
+    this.sessionTransactions.delete(transactionHash.toLowerCase());
+  }
+
+  private pendingTransactionMatchesChain(entry: PendingTransaction, chainId = this.contextChainId): boolean {
+    return !chainId || entry.chainId === "unknown" || sameChainId(entry.chainId, chainId);
+  }
+
+  private transactionConflicts(entry: PendingTransaction, keys: readonly string[]): boolean {
+    if (entry.phase === "applied") return false;
+    // Unscoped actions conservatively conflict with all writes for this wallet.
+    const pending = entry.conflictKeys ?? ["wallet"];
+    return pending.includes("wallet") || keys.includes("wallet") || pending.some((key) => keys.includes(key));
+  }
+
+  isTransactionPending(wallet: string | undefined, conflictKeys: readonly string[] = ["wallet"]): boolean {
+    const scope = wallet?.toLowerCase() ?? "global";
+    return this.transactionGates.get(scope)?.isRunning() === true || this.pendingTransactions().some((entry) =>
+      entry.wallet === scope && this.pendingTransactionMatchesChain(entry) && this.transactionConflicts(entry, conflictKeys)
     );
   }
 
-  private publishPendingTransactionRecovery(
-    entry: PendingTransactionJournalEntry,
-    phase: PendingTransactionRecoveryDecision["phase"],
-    error?: string,
-  ): void {
-    const wallet = entry.wallet.toLowerCase();
-    this.state.publish(this.pendingTransactionRecoveryKey(wallet), {
-      ...entry,
-      ...(error ? { error } : {}),
-      phase,
-      wallet,
-    } satisfies PendingTransactionRecoveryDecision, { wallet });
+  pendingTransactionState(wallet: string | undefined, planetId?: string): WriteTransactionState | undefined {
+    const entry = this.pendingTransactions().find((candidate) => candidate.wallet === wallet?.toLowerCase()
+      && candidate.phase !== "applied"
+      && this.pendingTransactionMatchesChain(candidate)
+      && (!candidate.planetIds?.length || (planetId !== undefined && candidate.planetIds.includes(planetId))));
+    return entry ? this.state.value<WriteTransactionState>(this.writeTransactionKey(entry.actionId, entry.wallet, entry.planetIds?.[0])) : undefined;
   }
 
-  private clearPendingTransactionRecovery(wallet: string): void {
-    this.state.clear(this.pendingTransactionRecoveryKey(wallet));
+  private canObserveTransaction(entry: PendingTransaction): boolean {
+    return !this.transactionAbort.signal.aborted
+      && (typeof navigator === "undefined" || navigator.onLine !== false)
+      && (typeof document === "undefined" || document.visibilityState !== "hidden")
+      && (!this.hasContext || this.contextWallet === entry.wallet)
+      && this.pendingTransactionMatchesChain(entry);
   }
 
-  async keepPendingTransactionRecovery(wallet: string, transactionHash: string): Promise<void> {
-    const normalizedWallet = wallet.toLowerCase();
-    const entry = this.pendingTransactions().find((candidate) =>
-      candidate.wallet === normalizedWallet
-      && candidate.transactionHash.toLowerCase() === transactionHash.toLowerCase()
-    );
-    if (!entry) {
-      this.clearPendingTransactionRecovery(normalizedWallet);
-      return;
-    }
-    this.clearPendingTransactionRecovery(normalizedWallet);
-    await this.resumePendingTransactions(normalizedWallet, entry.chainId, {
-      allowAgedPolling: true,
-      transactionHash: entry.transactionHash,
+  private waitForTransactionWake(delayMs?: number): Promise<void> {
+    if (this.transactionAbort.signal.aborted) return Promise.resolve();
+    return new Promise((resolve) => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const wake = () => {
+        if (timer !== undefined) clearTimeout(timer);
+        this.transactionWakeups.delete(wake);
+        resolve();
+      };
+      this.transactionWakeups.add(wake);
+      if (delayMs !== undefined) timer = setTimeout(wake, Math.min(delayMs, 2_147_483_647));
     });
   }
 
-  async discardPendingTransactionRecovery(wallet: string, transactionHash: string): Promise<void> {
-    const normalizedWallet = wallet.toLowerCase();
-    const existing = this.transactionRecoveries.get(normalizedWallet);
-    if (existing) return existing;
-    const entry = this.pendingTransactions().find((candidate) =>
-      candidate.wallet === normalizedWallet
-      && candidate.transactionHash.toLowerCase() === transactionHash.toLowerCase()
-    );
-    if (!entry) {
-      this.clearPendingTransactionRecovery(normalizedWallet);
-      return;
-    }
-
-    const recovery = (async () => {
-      this.publishPendingTransactionRecovery(entry, "checking");
-      try {
-        const status = await this.readBackendTransactionStatus(entry.transactionHash);
-        const currentEntry = this.pendingTransactions().find((candidate) =>
-          candidate.wallet === normalizedWallet
-          && candidate.transactionHash.toLowerCase() === transactionHash.toLowerCase()
-        );
-        if (!currentEntry) {
-          this.clearPendingTransactionRecovery(normalizedWallet);
-          return;
-        }
-
-        if (status.phase === "applied") {
-          this.removePendingTransaction(entry.transactionHash);
-          this.clearPendingTransactionRecovery(normalizedWallet);
-          try {
-            void this.invalidate([`wallet:${normalizedWallet}`], {
-              activeOnly: false,
-              priority: "transaction",
-            }).catch(() => undefined);
-          } catch {
-            // Backend-applied is authoritative. Canonical refresh is
-            // best-effort here and must never resurrect a removed journal.
-          }
-          this.publishWriteTransactionState({
-            key: entry.actionId,
-            label: `${entry.actionId} confirmed.`,
-            outcome: "indexed",
-            phase: "success",
-            stage: "applied",
-            txHash: entry.transactionHash,
-          }, normalizedWallet);
-          return;
-        }
-        if (status.phase === "reverted") {
-          this.removePendingTransaction(entry.transactionHash);
-          this.clearPendingTransactionRecovery(normalizedWallet);
-          this.publishWriteTransactionState({
-            error: new Error("The transaction reverted."),
-            key: entry.actionId,
-            label: "The saved transaction reverted. Its recovery record was removed.",
-            outcome: "reverted",
-            phase: "error",
-            stage: "failed",
-            txHash: entry.transactionHash,
-          }, normalizedWallet);
-          return;
-        }
-
-        if (status.phase === "confirmed") {
-          this.publishPendingTransactionRecovery(
-            entry,
-            "decision",
-            "Veydrift has confirmed this transaction onchain, so its recovery record cannot be discarded while indexed state is still catching up.",
-          );
-          return;
-        }
-
-        this.removePendingTransaction(entry.transactionHash);
-        this.clearPendingTransactionRecovery(normalizedWallet);
-        const discarded = new Error("Discarded the unverifiable saved transaction record. Nothing was submitted. Retry the action to create one new Base transaction.");
-        this.publishWriteTransactionState({
-          error: discarded,
-          key: entry.actionId,
-          label: discarded.message,
-          outcome: "not-submitted",
-          phase: "error",
-          stage: "failed",
-          txHash: entry.transactionHash,
-        }, normalizedWallet);
-      } catch (error) {
-        this.publishPendingTransactionRecovery(
-          entry,
-          "decision",
-          error instanceof Error
-            ? `Could not recheck the saved transaction: ${error.message}`
-            : "Could not recheck the saved transaction. Try again before discarding it.",
-        );
+  private resumePendingTransactions(wallet: string, expectedChainId = this.contextChainId): void {
+    for (const entry of this.pendingTransactions()) {
+      if (entry.wallet === wallet.toLowerCase() && this.pendingTransactionMatchesChain(entry, expectedChainId)) {
+        void this.trackPendingTransaction(entry);
       }
-    })().finally(() => {
-      this.transactionRecoveries.delete(normalizedWallet);
-    });
-    this.transactionRecoveries.set(normalizedWallet, recovery);
-    return recovery;
+    }
   }
 
-  private async resumePendingTransactions(
-    wallet: string,
-    expectedChainId?: string,
-    options: { allowAgedPolling?: boolean; transactionHash?: string } = {},
-  ): Promise<void> {
-    const normalizedWallet = wallet.toLowerCase();
-    const existing = this.transactionRecoveries.get(normalizedWallet);
-    if (existing) return existing;
-    const entries = this.pendingTransactions().filter((entry) =>
-      entry.wallet === normalizedWallet
-      && (!options.transactionHash || entry.transactionHash.toLowerCase() === options.transactionHash.toLowerCase())
+  private async refreshTransactionResources(entry: PendingTransaction): Promise<void> {
+    const resources = [...this.resources.values()].filter((resource) => entry.queryKeys ? entry.queryKeys.includes(resource.key) :
+      resource.options.wallet?.toLowerCase() === entry.wallet
+      && (!resource.options.planetId || entry.planetIds === undefined || entry.planetIds.includes(resource.options.planetId))
     );
-    if (entries.length === 0) return;
-    const recovery = (async () => {
-      for (const entry of entries.sort((left, right) => left.submittedAt - right.submittedAt)) {
-        const deterministicallyWrongChain = Boolean(
-          expectedChainId
-          && entry.chainId !== "unknown"
-          && !sameChainId(entry.chainId, expectedChainId),
-        );
-        if (!deterministicallyWrongChain && !options.allowAgedPolling && this.now() - entry.submittedAt >= this.transactionStatusTimeoutMs) {
-          this.publishPendingTransactionRecovery(entry, "decision");
-          break;
+    await Promise.all(resources.map(resource => this.refreshInvalidatedResource(resource, {}, true)));
+  }
+
+  private trackPendingTransaction(
+    entry: PendingTransaction,
+    onStateChange?: (state: WriteTransactionState) => void,
+  ): Promise<WriteTransactionOutcome> {
+    const identity = entry.transactionHash.toLowerCase();
+    const existing = this.transactionRecoveries.get(identity);
+    if (existing) return existing;
+    let appliedRefresh: Promise<void> | undefined;
+    const hasCompletions = Boolean(entry.completions?.length);
+    let attempts = 0;
+    let lastPhase: WriteTransactionState["phase"] | undefined;
+    const publish = (phase: WriteTransactionState["phase"], error?: Error) => {
+      if (!this.canObserveTransaction(entry)) return;
+      const current = this.state.value<WriteTransactionState>(this.writeTransactionKey(entry.actionId, entry.wallet, entry.planetIds?.[0]));
+      // A follow-up save from an older transaction must not overwrite a newer action.
+      if (entry.phase === "applied" && current && (current.phase === "pending" || (current.txHash && current.txHash !== entry.transactionHash))) return;
+      if (lastPhase === phase && current?.txHash === entry.transactionHash) return;
+      lastPhase = phase;
+      const state: WriteTransactionState = {
+        key: entry.actionId,
+        phase,
+        label: phase === "success" ? (entry.label ?? "Action") + " completed."
+          : phase === "error" ? "Transaction reverted. Please try again."
+          : entry.phase === "applied" ? "Transaction completed. Finishing setup…"
+          : (entry.label ? entry.label + ": " : "") + "Processing…",
+        txHash: entry.transactionHash,
+        ...(entry.planetIds?.[0] ? { planetId: entry.planetIds[0] } : {}),
+        ...(error ? { error } : {}),
+      };
+      this.publishWriteTransactionState(state, entry.wallet);
+      try { onStateChange?.(state); } catch { /* UI callbacks cannot end recovery. */ }
+    };
+    const recovery = (async (): Promise<WriteTransactionOutcome> => {
+      while (!this.transactionAbort.signal.aborted) {
+        if (!this.canObserveTransaction(entry)) {
+          await this.waitForTransactionWake();
+          continue;
         }
-        await this.transactionGateFor(normalizedWallet).run(`recover:${entry.transactionHash}`, async () => {
-          this.publishWriteTransactionState({
-            key: entry.actionId,
-            label: `${entry.actionId}: recovering submitted transaction...`,
-            outcome: "submitted",
-            phase: "confirming",
-            stage: "wallet",
-            txHash: entry.transactionHash,
-          }, normalizedWallet);
-          try {
-            if (expectedChainId && entry.chainId !== "unknown" && !sameChainId(entry.chainId, expectedChainId)) {
+        publish(entry.phase === "applied" ? "applied" : entry.phase === "confirmed" ? "indexing" : "confirming");
+        try {
+          if (entry.phase !== "applied") {
+            const status = await this.readBackendTransactionStatus(entry.transactionHash);
+            if (!this.canObserveTransaction(entry)) continue;
+            if (status.transactionHash?.toLowerCase() !== identity || !["submitted", "confirmed", "applied", "reverted"].includes(status.phase)) {
+              throw new Error("Unexpected transaction status response.");
+            }
+            if (status.phase === "reverted") {
+              const error = new Error("The transaction reverted.");
               this.removePendingTransaction(entry.transactionHash);
-              throw new Error(`Released a stale transaction journal from chain ${entry.chainId}; this action requires ${expectedChainId}. Nothing was submitted on the required Base network. Retry the action.`);
+              publish("error", error);
+              return { outcome: "reverted", txHash: entry.transactionHash, error };
             }
-            const status = await this.waitForBackendTransactionStatus(
-              entry.transactionHash,
-              (candidate) => candidate.phase === "applied" || candidate.phase === "reverted",
-              options.allowAgedPolling
-                ? undefined
-                : { deadlineMs: entry.submittedAt + this.transactionStatusTimeoutMs },
-            );
-            this.removePendingTransaction(entry.transactionHash);
-            if (status.phase === "reverted") throw new Error("The transaction reverted.");
-            await this.invalidate([`wallet:${normalizedWallet}`], {
-              activeOnly: false,
-              priority: "transaction",
-            });
-            this.publishWriteTransactionState({
-              key: entry.actionId,
-              label: `${entry.actionId} confirmed.`,
-              outcome: "indexed",
-              phase: "success",
-              stage: "applied",
-              txHash: entry.transactionHash,
-            }, normalizedWallet);
-          } catch (error) {
-            if (isTransactionIndexingTimeout(error)) {
-              this.publishPendingTransactionRecovery(entry, "decision");
+            if (status.phase !== "submitted" && entry.phase === "submitted") {
+              entry.phase = "confirmed";
+              attempts = 0;
+              publish("confirmed");
+              publish("indexing");
             }
-            this.publishWriteTransactionState({
-              error,
-              key: entry.actionId,
-              label: isTransactionIndexingTimeout(error)
-                ? `${entry.actionId}: syncing indexed state...`
-                : error instanceof Error ? error.message : "Transaction confirmation is delayed.",
-              outcome: error instanceof Error && /Nothing was submitted/i.test(error.message)
-                ? "not-submitted"
-                : error instanceof Error && /transaction reverted|\breverted\b/i.test(error.message)
-                  ? "reverted"
-                  : "submitted",
-              phase: "error",
-              stage: isTransactionIndexingTimeout(error) ? "timed-out" : "failed",
-              txHash: entry.transactionHash,
-            }, normalizedWallet);
+            if (status.phase === "applied") {
+              entry.phase = "applied";
+              this.writePendingTransaction(entry);
+              // Release gameplay conflicts and refresh immediately, independently
+              // of invite/referral recovery saves. Never recheck an applied receipt.
+              appliedRefresh = this.refreshTransactionResources(entry).catch(() => {});
+              lastPhase = undefined;
+              publish("applied");
+            }
           }
-        });
+          if (entry.phase === "applied") {
+            while (entry.completions?.length) {
+              const completion = entry.completions[0]!;
+              if (completion.kind === "paid-alliance-invite") {
+                await storePaidAllianceInvite(this.apiBaseUrl, entry.wallet, completion.secret, completion.signature);
+              } else {
+                await this.recordReferralClaimAfterIndexing(entry.wallet, completion.code, completion.commitment, entry.transactionHash, completion.signature);
+              }
+              // Checkpoint successful auxiliary writes separately from reads;
+              // a later refresh failure must not repeat a completed operation.
+              entry.completions = entry.completions.slice(1);
+              this.writePendingTransaction(entry);
+            }
+            // Backend application is terminal. Read failures belong to the query
+            // store and must not resurrect a completed transaction's spend lock.
+            this.removePendingTransaction(entry.transactionHash);
+            publish("success");
+            await appliedRefresh;
+            // Recovery metadata changed after the indexed gameplay refresh.
+            if (hasCompletions) await this.refreshTransactionResources(entry).catch(() => {});
+            return { outcome: "indexed", txHash: entry.transactionHash };
+          }
+        } catch (error) {
+          // Invalid requests/auth failures need a lifecycle wake (e.g. restored session),
+          // not an endless timer loop. They never mean an on-chain transaction reverted.
+          if (error instanceof GameApiError && !error.retryable) {
+            await this.waitForTransactionWake();
+            continue;
+          }
+          if (error instanceof GameApiError && error.retryAfterMs !== undefined) {
+            await this.waitForTransactionWake(error.retryAfterMs);
+            continue;
+          }
+          // Transient transport failures retain the submitted hash and normal backoff.
+        }
+        await this.waitForTransactionWake(Math.min(30_000, this.transactionPollIntervalMs * 2 ** Math.min(attempts++, 5)));
       }
+      return { outcome: entry.phase === "applied" ? "indexed" : entry.phase, txHash: entry.transactionHash };
     })().finally(() => {
-      this.transactionRecoveries.delete(normalizedWallet);
+      this.transactionRecoveries.delete(identity);
     });
-    this.transactionRecoveries.set(normalizedWallet, recovery);
+    this.transactionRecoveries.set(identity, recovery);
     return recovery;
   }
-
-  private createIndexingPlan(run: IndexingPlanRunner): BackendIndexingPlan {
-    const plan = {} as BackendIndexingPlan;
-    this.indexingPlanRunners.set(plan as object, run);
-    return plan;
+private createIndexingPlan(keys: readonly string[], prepare?: () => Promise<PendingTransactionCompletion[]>): BackendIndexingPlan {
+    return { store: this, keys: [...new Set(keys)], ...(prepare ? { prepare } : {}) };
   }
 
-  private async refreshIndexedTags(tags: readonly BackendDataTag[]): Promise<void> {
-    if (tags.length === 0) return;
-    const results = await this.invalidate(tags, {
-      activeOnly: false,
-      priority: "transaction",
-    });
-    const rejected = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
-    if (rejected) throw rejected.reason;
+  private assertIndexingPlan(plan: BackendIndexingPlan): void {
+    if (plan.store !== this) throw new Error("The write supplied an indexing plan from a different data store.");
   }
 
-  /**
-   * The backend transaction boundary already proved the confirmed write is
-   * applied. Keep broad canonical invalidation centralized, but do not turn an
-   * incidental aggregate refresh failure into a false transaction failure.
-   */
-  private refreshIndexedTagsAfterConvergence(tags: readonly BackendDataTag[]): void {
-    if (tags.length === 0) return;
-    void this.invalidate(tags, {
-      activeOnly: false,
-      priority: "transaction",
-    });
+  private productionPlan(wallet: string, planetId: string | undefined, kind: string): BackendIndexingPlan {
+    return this.createIndexingPlan([
+      walletCacheKey(kind, wallet, planetId), walletCacheKey("infrastructure", wallet, planetId),
+      this.queries.queues(wallet, planetId).key, this.queries.queues(wallet).key, walletCacheKey("planets", wallet),
+    ]);
+  }
+
+  /** Within a mutation, wallet/planet/kind are intersected, not OR-ed into
+   * a wallet-wide refresh. Wallet-global dependencies remain eligible. */
+  private keysForScope(tags: readonly BackendDataTag[]): string[] {
+    if (!tags.length) return [];
+    const wallets = tags.filter(tag => tag.startsWith("wallet:"));
+    const planets = tags.filter(tag => tag.startsWith("planet:"));
+    const kinds = tags.filter(tag => tag.startsWith("kind:"));
+    return [...this.resources.values()].filter(resource =>
+      (!wallets.length || !resource.options.wallet || wallets.some(tag => resource.tags.has(tag)))
+      && (!planets.length || !resource.options.planetId || planets.some(tag => resource.tags.has(tag)))
+      && (!kinds.length || kinds.some(tag => resource.tags.has(tag)))
+    ).map(resource => resource.key);
+  }
+  private async prepareIndexingPlans(plans: readonly BackendIndexingPlan[]): Promise<PendingTransactionCompletion[]> {
+    const completions: PendingTransactionCompletion[] = [];
+    for (const plan of plans) {
+      this.assertIndexingPlan(plan);
+      completions.push(...(await plan.prepare?.() ?? []));
+    }
+    return completions;
   }
 
   async runWriteTransaction(descriptor: BackendWriteTransactionDescriptor): Promise<WriteTransactionOutcome> {
-    const { chainId, indexing, invalidateTags, send, ...transaction } = descriptor;
-    const indexingRunner = indexing ? this.indexingPlanRunners.get(indexing as object) : undefined;
-    if (indexing && !indexingRunner) {
-      throw new Error("The write supplied an indexing plan from a different data store.");
-    }
+    const indexingPlan = descriptor.indexing;
+    if (indexingPlan) this.assertIndexingPlan(indexingPlan);
+    if (this.transactionAbort.signal.aborted) return { outcome: "not-submitted" };
     const walletScope = this.transactionWalletScope(descriptor.invalidateTags);
-    if (walletScope !== "global") {
-      const submittedBeforeThisAction = this.pendingTransactions().find((entry) => entry.wallet === walletScope);
-      if (submittedBeforeThisAction) {
-        // A retry after reload may be the first interaction that resumes the
-        // journal. Even when recovery proves the old hash applied and removes
-        // it, this click must not continue into a duplicate submission.
-        await this.resumePendingTransactions(walletScope, chainId);
-        return writeTransactionOutcomeFromState(
-          this.snapshot<WriteTransactionState>(this.writeTransactionKey(submittedBeforeThisAction.actionId, walletScope))?.data,
-          submittedBeforeThisAction.transactionHash,
-        );
-      }
+    const planetIds = [...(descriptor.planetIds ?? descriptor.invalidateTags?.filter((tag) => tag.startsWith("planet:")).map((tag) => tag.slice(7)) ?? [])];
+    const conflictKeys = [...(descriptor.conflictKeys ?? (planetIds.length ? planetIds.map((id) => "planet:" + id) : ["wallet"]))];
+    const previous = this.pendingTransactions().find((entry) =>
+      entry.wallet === walletScope && this.pendingTransactionMatchesChain(entry, descriptor.chainId) && this.transactionConflicts(entry, conflictKeys)
+    );
+    if (previous) {
+      const recovery = this.trackPendingTransaction(previous);
+      // A click blocked by a different action must not report that action's
+      // success as its own, or submit automatically after it finishes.
+      return previous.actionId === descriptor.key ? recovery : { outcome: "not-submitted" };
     }
-    let latestStatus: BackendTransactionStatus | undefined;
-    let appliedReceipt: ReceiptBlock | undefined;
-    const outcome = await executeWriteTransaction(this.transactionGateFor(walletScope), {
-      ...transaction,
-      send: async () => {
-        const transactionHash = await send();
-        if (walletScope !== "global") {
-          this.writePendingTransaction({
-            actionId: descriptor.key,
-            chainId: chainId ?? "unknown",
-            submittedAt: this.now(),
-            transactionHash,
-            wallet: walletScope,
-          });
-        }
-        return transactionHash;
-      },
-      confirm: async (transactionHash) => {
-        latestStatus = await this.waitForBackendTransactionStatus(
-          transactionHash,
-          (status) => status.phase !== "submitted",
-        );
-        if (latestStatus.phase === "reverted") {
-          this.removePendingTransaction(transactionHash);
-          throw new Error("The transaction reverted.");
-        }
-        appliedReceipt = { blockNumber: latestStatus.receiptBlock };
-        return appliedReceipt;
-      },
-      waitForIndexed: async (_receipt: unknown, txHash: string) => {
-        latestStatus = latestStatus?.phase === "applied"
-          ? latestStatus
-          : await this.waitForBackendTransactionStatus(txHash, (status) => status.phase === "applied" || status.phase === "reverted");
-        if (latestStatus.phase === "reverted") {
-          this.removePendingTransaction(txHash);
-          throw new Error("The transaction reverted.");
-        }
-      },
-      onStateChange: (state) => {
-        this.publishWriteTransactionState(state, walletScope);
-        descriptor.onStateChange?.(state);
-      },
-      onConfirmedIndexingFailure: async () => {
-        // The chain receipt is final even though the backend has not yet
-        // published a matching snapshot. Invalidate every affected resource
-        // and force an indexed re-read; this preserves the error state while
-        // ensuring no planet can keep displaying the pre-write value as fresh.
-        if (invalidateTags && invalidateTags.length > 0) {
-          await this.invalidate(invalidateTags, {
-            activeOnly: false,
-            priority: "transaction",
-          });
-        }
-      },
-    });
-    if (outcome.outcome === "indexed") {
-      const transactionHash = this.snapshot<WriteTransactionState>(this.writeTransactionKey(descriptor.key, walletScope))?.data?.txHash;
-      if (transactionHash) {
-        this.removePendingTransaction(transactionHash);
-        if (indexingRunner) {
-          try {
-            await indexingRunner(appliedReceipt, transactionHash);
-          } catch (error) {
-            // The backend already proved this transaction applied. A trailing
-            // canonical refresh or auxiliary API action may fail independently,
-            // but it must never downgrade or indefinitely hold the authoritative
-            // transaction lifecycle.
-            console.warn("Post-application canonical refresh failed", error);
+    const publish = (state: WriteTransactionState) => {
+      this.publishWriteTransactionState({ ...state, ...(planetIds[0] ? { planetId: planetIds[0] } : {}) }, walletScope);
+      try { descriptor.onStateChange?.(state); } catch { /* UI callbacks cannot alter submission. */ }
+    };
+    try {
+      const entry = await this.transactionGateFor(walletScope).run(descriptor.key, async () => {
+        const assertSubmissionContext = () => {
+          if (this.transactionAbort.signal.aborted || (this.hasContext && this.contextWallet !== walletScope)) {
+            throw new Error("Wallet changed before submission. Please try again.");
           }
-        }
-      }
-    }
-    if (outcome.outcome === "indexed" && invalidateTags && invalidateTags.length > 0) {
-      await this.invalidate(invalidateTags, {
-        activeOnly: true,
-        priority: "transaction",
+          if (this.contextChainId && descriptor.chainId && !sameChainId(this.contextChainId, descriptor.chainId)) {
+            throw new Error("Network changed before submission. Please try again.");
+          }
+          if (typeof navigator !== "undefined" && navigator.onLine === false) throw new Error("You are offline. Reconnect before trying again.");
+        };
+        assertSubmissionContext();
+        publish({ key: descriptor.key, phase: "pending", label: descriptor.label + ": Awaiting wallet" });
+        await descriptor.prepare?.();
+        assertSubmissionContext();
+        const completions = await indexingPlan?.prepare?.();
+        assertSubmissionContext();
+        const transactionHash = await descriptor.send();
+        const pending: PendingTransaction = {
+          phase: "submitted",
+          actionId: descriptor.key, chainId: descriptor.chainId ?? this.contextChainId ?? "unknown",
+          submittedAt: this.now(), transactionHash, wallet: walletScope,
+          label: descriptor.label, planetIds, conflictKeys,
+          queryKeys: indexingPlan ? [...indexingPlan.keys] : this.keysForScope(descriptor.invalidateTags ?? []).filter(key => {
+            const planetId = this.resources.get(key)?.options.planetId;
+            return !planetId || planetIds.includes(planetId);
+          }),
+          ...(completions?.length ? { completions } : {}),
+        };
+        // Track in this session before releasing the wallet gate or observing status.
+        this.writePendingTransaction(pending);
+        return pending;
       });
+      if (!entry) return { outcome: "not-submitted" };
+      return this.trackPendingTransaction(entry, descriptor.onStateChange);
+    } catch (error) {
+      try { await descriptor.onErrorRefresh?.(error); } catch { /* Preserve the submission error. */ }
+      publish({
+        error, key: descriptor.key, phase: "error",
+        label: descriptor.errorLabel?.(error) ?? (error instanceof Error ? error.message : "The action could not be submitted."),
+      });
+      return { error, outcome: "not-submitted" };
     }
-    return outcome;
   }
 
   private async readBackendTransactionStatus(transactionHash: string): Promise<BackendTransactionStatus> {
     if (this.transactionStatusReader) return this.transactionStatusReader(transactionHash);
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.transactionRequestTimeoutMs);
-    try {
-      const response = await fetch(`${this.apiBaseUrl}/transactions/${encodeURIComponent(transactionHash)}/status`, {
-        cache: "no-store",
-        headers: { accept: "application/json" },
-        signal: controller.signal,
-      });
-      if (!response.ok) throw new Error(`Transaction status HTTP ${response.status}`);
-      return await response.json() as BackendTransactionStatus;
-    } catch (error) {
-      if (controller.signal.aborted) {
-        throw new Error("Transaction status request timed out.", { cause: error });
-      }
-      throw error;
-    } finally {
-      clearTimeout(timeout);
-    }
+    return fetchGameApiJson<BackendTransactionStatus>(`${this.apiBaseUrl}/transactions/${encodeURIComponent(transactionHash)}/status`, "Transaction status", {
+      cache: "no-store", signal: this.transactionAbort.signal, timeoutMs: this.transactionRequestTimeoutMs,
+      httpErrorMessage: async response => `Transaction status HTTP ${response.status}`,
+    });
   }
 
-  private async waitForBackendTransactionStatus(
-    transactionHash: string,
-    accepted: (status: BackendTransactionStatus) => boolean,
-    options: { deadlineMs?: number } = {},
-  ): Promise<BackendTransactionStatus> {
-    const deadline = options.deadlineMs ?? this.now() + this.transactionStatusTimeoutMs;
-    let lastError: unknown;
-    while (true) {
-      try {
-        const status = await this.readBackendTransactionStatus(transactionHash);
-        if (accepted(status)) return status;
-        lastError = undefined;
-      } catch (error) {
-        lastError = error;
-      }
-      if (this.now() >= deadline) {
-        const detail = lastError instanceof Error ? ` ${lastError.message}` : "";
-        throw new Error(`The transaction is confirmed or submitted, but backend indexing is still syncing.${detail}`);
-      }
-      await new Promise<void>((resolve) => setTimeout(resolve, this.transactionPollIntervalMs));
-    }
-  }
-
-  async runExclusiveTransaction<T>(key: string, label: string, action: () => Promise<T>, wallet?: string): Promise<T | undefined> {
+  async runExclusiveTransaction<T>(key: string, label: string, action: () => Promise<T>, wallet?: string, conflictKey?: string): Promise<T | undefined> {
     const walletScope = wallet?.toLowerCase() ?? "global";
-    return this.transactionGateFor(walletScope).run(key, async () => {
+    return this.transactionGateFor(conflictKey ? `${walletScope}:metadata:${conflictKey}` : walletScope).run(key, async () => {
       this.publishWriteTransactionState({
         key,
         label,
         phase: "pending",
-        stage: "wallet",
       }, walletScope);
       try {
         const result = await action();
@@ -1515,7 +1521,6 @@ export class BackendDataStore {
           key,
           label,
           phase: "success",
-          stage: "applied",
         }, walletScope);
         return result;
       } catch (error) {
@@ -1524,7 +1529,6 @@ export class BackendDataStore {
           key,
           label,
           phase: "error",
-          stage: "failed",
         }, walletScope);
         throw error;
       }
@@ -1599,17 +1603,6 @@ export class BackendDataStore {
   /** Centralized bounded polling for a canonical backend read that is not
    * associated with a known transaction hash (for example wallet bootstrap).
    * It only observes backend state and never performs chain reconciliation. */
-  async waitForIndexed<T>(load: () => Promise<T>, indexed: (value: T) => boolean, options: IndexedReadWaitOptions = {}): Promise<T> {
-    const attempts = options.attempts ?? 12;
-    const intervalMs = options.intervalMs ?? 1_000;
-    const delay = options.delay ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
-    for (let attempt = 0; attempt < attempts; attempt += 1) {
-      const value = await load();
-      if (indexed(value)) return value;
-      if (attempt < attempts - 1) await delay(intervalMs);
-    }
-    throw new Error(options.timeoutError ?? "Timed out waiting for indexed state.");
-  }
 
   snapshot<T>(key: string): GameStateEntry<T> | undefined {
     return this.state.snapshot<T>(key);
@@ -1635,7 +1628,7 @@ export class BackendDataStore {
       wallet?: string | undefined;
     } = {},
   ): void {
-    const key = cacheKey(kind, ...parts);
+    const key = cacheKey(kind, ...parts.map(part => options.wallet && part === options.wallet ? options.wallet.toLowerCase() : part));
     this.state.publish(key, data, options);
     // Store projections (overview fan-out, chain health, successful signed
     // mutations) do not always have a registered transport resource. They
@@ -1650,29 +1643,8 @@ export class BackendDataStore {
     this.scheduleEviction(key);
   }
 
-  /**
-   * Publish an action-level failure into the canonical lifecycle instead of
-   * retaining a shell-local error state. Clearing it restores the latest
-   * canonical snapshot's normal freshness state.
-   */
-  setSnapshotError(kind: string, error: string | undefined, parts: unknown[] = []): void {
-    this.markBackendFailure(kind, error, parts);
-  }
-
-  /** Shell-level wallet synchronization errors are a named store action, not
-   * a component-owned cache mutation. A later canonical overview read clears
-   * or replaces this status through the same snapshot lifecycle. */
-  reportWalletPlanetSyncError(wallet: string, planetId: string | undefined, error: string | undefined): void {
-    this.markBackendFailure("overview", error, [wallet, planetId]);
-  }
-
-  /** Remove a canonical snapshot only when its source is no longer applicable. */
-  private discardBackendSnapshot(kind: string, ...parts: unknown[]): void {
-    this.state.clear(cacheKey(kind, ...parts));
-  }
-
   private scheduleEviction(key: string): void {
-    if (this.state.subscriberCount(key) > 0 || this.evictionTimers.has(key)) return;
+    if (this.transactionAbort.signal.aborted || this.state.subscriberCount(key) > 0 || this.evictionTimers.has(key)) return;
     this.evictionTimers.set(
       key,
       setTimeout(() => {
@@ -1681,9 +1653,6 @@ export class BackendDataStore {
         this.resources.delete(key);
         this.trailingInvalidations.delete(key);
         this.trailingInvalidationSettlements.delete(key);
-        const trailing = this.trailingInvalidationTimers.get(key);
-        if (trailing !== undefined) clearTimeout(trailing);
-        this.trailingInvalidationTimers.delete(key);
       }, this.inactiveResourceRetentionMs),
     );
   }
@@ -1695,36 +1664,20 @@ export class BackendDataStore {
     this.evictionTimers.delete(key);
   }
 
-  coordinateRefresh<T>(key: string, priority: GameStatePriority, load: (signal: AbortSignal) => Promise<T>, deadlineMs = 10_000): Promise<T> {
-    return this.refresh(cacheKey("coordinated-refresh", key), load, {
-      deadlineMs,
-      priority,
-    });
-  }
-
   private registerResource<T>(
     key: string,
     load: (signal: AbortSignal) => Promise<T>,
     options: {
-      deadlineMs?: number | undefined;
       planetId?: string | undefined;
-      priority?: GameStatePriority | undefined;
-      scope?: string | undefined;
       wallet?: string | undefined;
     },
   ): void {
     // A query key fully identifies its loader inputs. Later equivalent reads
-    // may provide a newer closure or policy, so update the descriptor without
-    // letting a route-local cancellation scope become canonical.
+    // may provide a newer closure or policy, so update the descriptor.
     const descriptor: RegisteredResource = {
       key,
       load: load as (signal: AbortSignal) => Promise<unknown>,
-      options: {
-        ...options,
-        // Scopes belong to individual subscriptions, never to the canonical
-        // resource descriptor that SSE/write invalidation refreshes later.
-        scope: undefined,
-      },
+      options,
       tags: resourceTagsForKey(key, options.wallet, options.planetId),
     };
     const existing = this.resources.get(key);
@@ -1753,49 +1706,63 @@ export class BackendDataStore {
     const leases = [...poller.leases.values()];
     const tags = [...new Set(leases.flatMap((lease) => lease.tags))];
     const intervalMs = Math.min(...leases.map((lease) => lease.intervalMs));
-    const priority = leases.reduce<GameStatePriority>((effective, lease) => this.higherPriority(effective, lease.priority), "background");
-    poller.timer = this.createPollTimer(tags, intervalMs, priority);
+    poller.timer = this.createPollTimer(tags, intervalMs);
   }
 
-  private higherPriority(left: GameStatePriority, right: GameStatePriority): GameStatePriority {
-    const priority: Record<GameStatePriority, number> = {
-      transaction: 0,
-      "selected-planet": 1,
-      "mission-control": 2,
-      background: 3,
-    };
-    return priority[left] <= priority[right] ? left : right;
-  }
-
-  private deferHiddenRefresh(tags: readonly BackendDataTag[], priority: GameStatePriority): void {
+  private deferHiddenRefresh(tags: readonly BackendDataTag[]): void {
     for (const tag of tags) {
-      const current = this.deferredHiddenRefreshes.get(tag);
-      this.deferredHiddenRefreshes.set(tag, current ? this.higherPriority(current, priority) : priority);
+      this.deferredHiddenRefreshes.add(tag);
     }
+  }
+
+  private readonly handleResume = (): void => {
+    if (typeof navigator !== "undefined" && navigator.onLine === false) return;
+    if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+    for (const wake of this.transactionWakeups) wake();
+    const tags = [...this.deferredHiddenRefreshes.keys()];
+    this.deferredHiddenRefreshes.clear();
+    if (this.contextWallet) this.resumePendingTransactions(this.contextWallet);
+    this.queueRecovery([...this.resources.values()].filter(resource =>
+      (!resource.options.wallet || resource.options.wallet.toLowerCase() === this.contextWallet)
+      || [...resource.tags].some(tag => tags.includes(tag))
+    ).map(resource => resource.key));
+  };
+
+  /** Resume and SSE-ready can arrive together. Union their keys before loading;
+   * real chain events use invalidateKeys directly and retain trailing refreshes. */
+  private queueRecovery(keys: readonly string[], streamReady = false): void {
+    if (this.transactionAbort.signal.aborted) return;
+    // A ready stream is a new read barrier: requests begun before it may have
+    // missed a commit. Only duplicate browser lifecycle triggers can reuse them.
+    keys.forEach(key => { if (streamReady || !this.recoveringKeys.has(key)) this.recoveryKeys.add(key); });
+    if (this.recoveryTimer !== undefined || this.recoveryKeys.size === 0) return;
+    this.recoveryTimer = setTimeout(() => {
+      this.recoveryTimer = undefined;
+      const pending = [...this.recoveryKeys];
+      this.recoveryKeys.clear();
+      for (const key of pending) {
+        this.recoveringKeys.add(key);
+        // Do not let a second recovery trigger dirty its own in-progress read.
+        // A read that predates recovery is still invalidated and refreshed again.
+        const refresh = this.invalidateKeys([key]);
+        void Promise.allSettled([refresh, this.state.inFlightSettled(key)]).finally(() => this.recoveringKeys.delete(key));
+      }
+    }, 0);
   }
 
   private readonly handleVisibilityChange = (): void => {
-    if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
-    if (this.deferredHiddenRefreshes.size === 0) return;
-    const byPriority = new Map<GameStatePriority, BackendDataTag[]>();
-    for (const [tag, priority] of this.deferredHiddenRefreshes) {
-      const tags = byPriority.get(priority) ?? [];
-      tags.push(tag);
-      byPriority.set(priority, tags);
-    }
-    this.deferredHiddenRefreshes.clear();
-    for (const [priority, tags] of byPriority) {
-      void this.invalidate(tags, { activeOnly: true, priority });
-    }
+    this.handleResume();
   };
 
-  private createPollTimer(tags: readonly BackendDataTag[], intervalMs: number, priority: GameStatePriority): ReturnType<typeof setInterval> {
+  private createPollTimer(tags: readonly BackendDataTag[], intervalMs: number): ReturnType<typeof setInterval> {
     return setInterval(() => {
+      if (tags.length === 0) { this.refreshGameplay(); return; }
+      if (typeof navigator !== "undefined" && navigator.onLine === false) return;
       if (typeof document !== "undefined" && document.visibilityState === "hidden") {
-        this.deferHiddenRefresh(tags, priority);
+        this.deferHiddenRefresh(tags);
         return;
       }
-      void this.invalidate(tags, { activeOnly: true, priority });
+      void this.invalidate(tags, { activeOnly: true, });
     }, intervalMs);
   }
 
@@ -1825,19 +1792,12 @@ export class BackendDataStore {
     this.activityPresencePollers.delete(name);
   }
 
-  private readRegisteredResource(resource: RegisteredResource, options: BackendDataRefreshOptions, dedupe: boolean): Promise<unknown> {
-    const read = this.state.read(resource.key, resource.load, {
-      ...resource.options,
-      dedupe,
-      priority: options.priority ?? resource.options.priority,
-      // Invalidation is store-owned and must not be cancelled when a route
-      // unmounts or a selected planet changes.
-      scope: `backend-data:${resource.key}`,
-    });
-    void read.then(
-      () => this.flushTrailingInvalidation(resource.key),
-      () => this.flushTrailingInvalidation(resource.key),
-    );
+  private readRegisteredResource(resource: RegisteredResource): Promise<unknown> {
+    const read = this.state.read(resource.key, resource.load, resource.options);
+    void read.finally(() => {
+      this.flushTrailingInvalidation(resource.key);
+      this.scheduleEviction(resource.key);
+    }).catch(() => { /* The canonical entry carries the failure. */ });
     return read;
   }
 
@@ -1860,579 +1820,104 @@ export class BackendDataStore {
     }
     const resource = this.resources.get(key);
     if (!resource) return;
-    void this.readRegisteredResource(resource, { priority: "transaction" }, true).catch(() => {
+    // Resume/subscription will recover inactive keys; do not restart background work.
+    if (!this.canRefreshResource(resource)) return;
+    void this.readRegisteredResource(resource).catch(() => {
       // The canonical resource snapshot keeps last-good data and its normal
       // failure state. A later poll/manual retry can recover transient errors.
     });
   }
 
-  /** Canonical resource promotion lives beside the backend cache, never in a page. */
-  promoteResourceState(
-    state: BackendResourceState | null | undefined,
-    options: {
-      bodyKind?: "moon" | "planet";
-      confirmedTransaction?: boolean;
-      planetId?: string | null | undefined;
-      requestGeneration?: number | undefined;
-      sourcePriority?: number | undefined;
-      wallet?: string | null | undefined;
-    } = {},
-  ): CanonicalPlanetResourceSnapshot | undefined {
-    const candidate = backendResourceSnapshot(state, {
-      ...(options.bodyKind === undefined ? {} : { bodyKind: options.bodyKind }),
-      ...(options.planetId === undefined ? {} : { planetId: options.planetId }),
-      ...(options.sourcePriority === undefined ? {} : { sourcePriority: options.sourcePriority }),
-      ...(options.requestGeneration === undefined ? {} : { requestGeneration: options.requestGeneration }),
-      ...(options.wallet ? { wallet: options.wallet } : {}),
-    });
-    const wallet = options.wallet?.toLowerCase() ?? candidate?.wallet?.toLowerCase();
-    if (!candidate || !wallet) return candidate;
-    const current = this.value<CanonicalPlanetResourceStore>("canonical-planet-resources", wallet) ?? {};
-    const next = promoteCanonicalPlanetResources(current, candidate, {
-      ...(options.confirmedTransaction === undefined ? {} : { confirmedTransaction: options.confirmedTransaction }),
-    });
-    if (next !== current)
-      this.commitBackendSnapshot("canonical-planet-resources", next, [wallet], {
-        wallet,
-      });
-    return candidate;
-  }
-
-  private planetResourceReadGeneration(wallet: string, planetId: string | undefined, bodyKind: "planet" | "moon", resourceKey: string, forceNewRead: boolean): number | undefined {
-    if (!planetId) return undefined;
-    const identity = `${wallet.toLowerCase()}:${bodyKind}:${planetId}`;
-    const existing = this.planetResourceReadGenerations.get(identity) ?? 0;
-    // A deduplicated caller is joining the already-started transport, not
-    // starting a newer cross-endpoint read. Reuse its generation so that
-    // ordinary query sharing cannot invalidate its own response.
-    if (!forceNewRead && this.state.hasInFlight(resourceKey)) return existing;
-    const next = existing + 1;
-    this.planetResourceReadGenerations.set(identity, next);
-    return next;
-  }
-
-  promoteWalletPlanetResources(wallet: string, planets: readonly WalletPlanetsResponse["planets"][number][]): void {
-    for (const planet of planets) {
-      this.promoteResourceState(planet, {
-        planetId: planet.planetId,
-        sourcePriority: 10,
-        wallet,
-      });
-      if (planet.moon?.exists) {
-        this.promoteResourceState(planet.moon, {
-          bodyKind: "moon",
-          planetId: planet.planetId,
-          sourcePriority: 10,
-          wallet,
-        });
-      }
-    }
-  }
-
   settlement(wallet: string, options: WalletReadOptions = {}): Promise<WalletSettlementResponse> {
-    const key = cacheKey("settlement", wallet);
-    return this.refresh(key, (signal) => fetchWalletSettlement(this.apiBaseUrl, wallet, { ...options, signal }), {
-      // Fresh means "do not trust a previously completed snapshot". It must
-      // not mean "issue a second physical request" when the same canonical
-      // descriptor is already reading.
-      dedupe: true,
-      deadlineMs: options.timeoutMs,
-      priority: "selected-planet",
-      wallet,
-    }).then((state) => {
-      // A queued-only resource can be retired after its final subscriber
-      // leaves before transport starts. Treat that normal lifecycle outcome
-      // as an unavailable indexed settlement, never as a real payload to
-      // dereference or permission to launch another settlement.
-      if (!state) {
-        return {
-          hasFirstPlanet: true,
-          homePlanetId: null,
-          indexer: { indexedState: "reconciling", safeToServeIndexedState: false },
-          planet: null,
-          wallet,
-        } satisfies WalletSettlementResponse;
-      }
-      this.promoteResourceState(state.planet, {
-        planetId: state.homePlanetId,
-        sourcePriority: 20,
-        wallet,
-      });
-      return state;
-    });
+    return this.queries.settlement(wallet, options).read();
   }
-
-  overview(wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<WalletOverviewSnapshotResponse> {
-    const key = cacheKey("overview", wallet, planetId);
-    // `fresh` means bypass the short-lived value cache, not send duplicate identical requests when
-    // the Overview, top bar, and selected-planet surface refresh in the same render turn.
-    return this.refresh(
-      key,
-      (signal) =>
-        fetchWalletOverviewSnapshot(this.apiBaseUrl, wallet, planetId, {
-          ...options,
-          signal,
-        }),
-      {
-        dedupe: true,
-        deadlineMs: options.timeoutMs,
-        planetId,
-        priority: "selected-planet",
-        wallet,
-      },
-    ).then((snapshot) => {
-      // Overview is a backend-produced aggregate of the same indexed state
-      // exposed by these individual queries. Fan it out here, at the data
-      // boundary, so shells never need to publish their own copies merely to
-      // hydrate the planet picker after one aggregate read. An older overview
-      // transport can resolve after a newer generation; only the aggregate
-      // value currently accepted by GameStateStore may fan out into those
-      // other canonical keys.
-      if (this.value<WalletOverviewSnapshotResponse>("overview", wallet, planetId) === snapshot) {
-        this.publishOverviewSnapshot(wallet, planetId, snapshot);
-      }
-      return snapshot;
-    });
-  }
-
-  /**
-   * The app-shell wallet/planet projection. This is deliberately a store
-   * read, rather than a component-level Promise.all tree: it has one
-   * canonical identity, publishes every constituent snapshot, and remains
-   * invalidatable by normal backend/chain events.
-   */
-  walletPlanetSync(wallet: string, activePlanetId?: string, options: WalletPlanetSyncOptions = {}): Promise<WalletPlanetSyncSnapshot> {
-    const readPlanetId = options.forceHomePlanet || options.forceWalletPlanets ? undefined : activePlanetId;
-    const key = cacheKey("wallet-planet-sync", wallet, readPlanetId, {
-      forceHomePlanet: options.forceHomePlanet,
-      forceWalletPlanets: options.forceWalletPlanets,
-    });
-    return this.refresh(
-      key,
-      () => this.readWalletPlanetSync(wallet, activePlanetId, options),
-      {
-        dedupe: true,
-        planetId: readPlanetId,
-        priority: "selected-planet",
-        wallet,
-      },
-    ).then((snapshot) => {
-      // Only the generation that GameStateStore accepted may fan out into the
-      // canonical projections. A slow older wallet sync must never overwrite
-      // the selected planet after navigation.
-      if (this.value<WalletPlanetSyncSnapshot>("wallet-planet-sync", wallet, readPlanetId, {
-        forceHomePlanet: options.forceHomePlanet,
-        forceWalletPlanets: options.forceWalletPlanets,
-      }) === snapshot) {
-        this.publishWalletPlanetSyncSnapshot(wallet, readPlanetId, snapshot);
-      }
-      return snapshot;
-    });
-  }
-
-  private async readWalletPlanetSync(wallet: string, activePlanetId: string | undefined, options: WalletPlanetSyncOptions): Promise<WalletPlanetSyncSnapshot> {
-    const readPlanetId = options.forceHomePlanet || options.forceWalletPlanets ? undefined : activePlanetId;
-    const overviewPlanetId = options.forceHomePlanet ? undefined : activePlanetId;
-    const freshReadOptions = options.fresh === undefined ? {} : { fresh: options.fresh };
-
-    if (!options.forceWalletPlanets) {
-      try {
-        const overview = await this.overview(wallet, overviewPlanetId, {
-          ...freshReadOptions,
-          timeoutMs: 2_500,
-        });
-        if (hydratedWalletPlanetSnapshot(overview, overviewPlanetId)) return overview;
-      } catch (error) {
-        if (!isRecoverableOverviewSyncError(error)) throw error;
-      }
-    }
-
-    const planetsResult = await settleBackendPromise(this.planets(wallet, freshReadOptions));
-    const indexedSettlement = settlementFromIndexedPlanetsResponse(wallet, planetsResult.status === "fulfilled" ? planetsResult.value : undefined);
-    if (indexedSettlement) {
-      const indexedQueues = queuesFromIndexedPlanets(wallet, indexedSettlement.homePlanetId, readPlanetId, planetsResult.status === "fulfilled" ? planetsResult.value : undefined);
-      const queuesResultPromise = indexedPlanetsExposeResearchQueueResponse(planetsResult)
-        ? Promise.resolve({ status: "fulfilled", value: indexedQueues } satisfies PromiseSettledResult<PlayerQueuesResponse>)
-        : settleBackendPromise(this.queues(wallet, readPlanetId, freshReadOptions));
-      const visibilityResultPromise = settleBackendPromise(
-        this.fleetVisibility(wallet, {
-          includeArchive: false,
-          ...freshReadOptions,
-          timeoutMs: 1_200,
-        }),
-      );
-      const [queuesResult, visibilityResult] = await Promise.all([queuesResultPromise, visibilityResultPromise]);
-      return walletPlanetSyncFromResults(
-        wallet,
-        indexedSettlement,
-        planetsResult,
-        queuesResult.status === "fulfilled"
-          ? { status: "fulfilled", value: mergeIndexedQueues(indexedQueues, queuesResult.value) }
-          : { status: "fulfilled", value: indexedQueues },
-        visibilityResult,
-      );
-    }
-
-    const [settlementResult, queuesResult, visibilityResult] = await Promise.allSettled([
-      this.settlement(wallet, freshReadOptions),
-      this.queues(wallet, readPlanetId, freshReadOptions),
-      this.fleetVisibility(wallet, {
-        includeArchive: false,
-        ...freshReadOptions,
-        timeoutMs: 1_200,
-      }),
-    ]);
-    const settlement = settlementResult.status === "fulfilled" ? settlementResult.value : undefined;
-    if (!settlement) throw settlementResult.status === "rejected" ? settlementResult.reason : new Error("Settlement state could not be loaded.");
-    return walletPlanetSyncFromResults(wallet, settlement, planetsResult, queuesResult, visibilityResult);
-  }
-
-  private publishWalletPlanetSyncSnapshot(wallet: string, planetId: string | undefined, snapshot: WalletPlanetSyncSnapshot): void {
-    this.commitBackendSnapshot("planets", snapshot.planetsResponse, [wallet], { wallet });
-    this.commitBackendSnapshot("queues", snapshot.queues, [wallet, planetId], { planetId, wallet });
-    if (snapshot.fleetVisibility) this.commitBackendSnapshot("fleet-visibility", snapshot.fleetVisibility, [wallet, false], { wallet });
-    this.promoteWalletPlanetResources(wallet, snapshot.planetsResponse.planets);
-    // An aggregate may be intentionally partial while the index catches up.
-    // Never erase or dereference the canonical settlement descriptor until its
-    // own indexed subdocument is present.
-    if (snapshot.settlement) {
-      this.commitBackendSnapshot("settlement", snapshot.settlement, [wallet], { wallet });
-      this.promoteResourceState(snapshot.settlement.planet, {
-        planetId: snapshot.settlement.homePlanetId,
-        sourcePriority: 20,
-        wallet,
-      });
-    }
-  }
-
-  private publishOverviewSnapshot(wallet: string, planetId: string | undefined, snapshot: WalletOverviewSnapshotResponse): void {
-    const normalizedWallet = wallet.toLowerCase();
-    this.commitBackendSnapshot("planets", snapshot.planetsResponse, [wallet], {
-      wallet,
-    });
-    this.commitBackendSnapshot("queues", snapshot.queues, [wallet, planetId], {
-      planetId,
-      wallet,
-    });
-    this.commitBackendSnapshot("fleet-visibility", snapshot.fleetVisibility, [wallet, false], { wallet });
-    this.promoteWalletPlanetResources(normalizedWallet, snapshot.planetsResponse.planets);
-    if (snapshot.settlement) {
-      this.commitBackendSnapshot("settlement", snapshot.settlement, [wallet], {
-        wallet,
-      });
-      this.promoteResourceState(snapshot.settlement.planet, {
-        planetId: snapshot.settlement.homePlanetId,
-        sourcePriority: 20,
-        wallet: normalizedWallet,
-      });
-    }
+overview(wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<WalletOverviewSnapshotResponse> {
+    return this.queries.overview(wallet, planetId, options).read();
   }
 
   planets(wallet: string, options: WalletReadOptions = {}): Promise<WalletPlanetsResponse> {
-    const key = cacheKey("planets", wallet);
-    return this.refresh(key, (signal) => fetchWalletPlanets(this.apiBaseUrl, wallet, { ...options, signal }), {
-      dedupe: true,
-      deadlineMs: options.timeoutMs,
-      priority: "selected-planet",
-      wallet,
-    }).then((state) => {
-      this.promoteWalletPlanetResources(wallet, state.planets);
-      return state;
-    });
+    return this.queries.planets(wallet, options).read();
   }
 
   watchedPlanets(wallet: string, options: { page?: number; pageSize?: number; timeoutMs?: number } = {}): Promise<WatchedPlanetsResponse> {
-    const key = cacheKey("watched-planets", wallet, {
-      page: options.page,
-      pageSize: options.pageSize,
-    });
-    return this.refresh(key, (signal) => fetchWatchedPlanets(this.apiBaseUrl, wallet, { ...options, signal }), {
-      deadlineMs: options.timeoutMs ?? 25_000,
-      priority: "background",
-      wallet,
-    });
+    return this.queries.watchedPlanets(wallet, options).read();
   }
 
   queues(wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<PlayerQueuesResponse> {
-    const key = cacheKey("queues", wallet, planetId);
-    return this.refresh(
-      key,
-      (signal) =>
-        fetchWalletQueues(this.apiBaseUrl, wallet, planetId, {
-          ...options,
-          signal,
-        }),
-      {
-        dedupe: true,
-        deadlineMs: options.timeoutMs,
-        planetId,
-        priority: options.priority ?? "selected-planet",
-        wallet,
-      },
-    );
+    return this.queries.queues(wallet, planetId, options).read();
   }
 
   infrastructure(wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<ChainInfrastructureState> {
-    const key = cacheKey("infrastructure", wallet, planetId);
-    const requestGeneration = this.planetResourceReadGeneration(wallet, planetId, "planet", key, options.fresh === true);
-    return this.refresh(
-      key,
-      (signal) =>
-        fetchInfrastructureState(this.apiBaseUrl, wallet, planetId, {
-          ...options,
-          signal,
-        }),
-      {
-        dedupe: true,
-        deadlineMs: options.timeoutMs,
-        planetId,
-        priority: "selected-planet",
-        wallet,
-      },
-    ).then((state) => {
-      this.promoteResourceState(state, {
-        planetId,
-        requestGeneration,
-        wallet,
-      });
-      return state;
-    });
+    return this.queries.infrastructure(wallet, planetId, options).read();
   }
 
   moon(wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<ChainMoonState> {
-    const key = cacheKey("moon", wallet, planetId);
-    const requestGeneration = this.planetResourceReadGeneration(wallet, planetId, "moon", key, options.fresh === true);
-    return this.refresh(
-      key,
-      (signal) =>
-        fetchMoonState(this.apiBaseUrl, wallet, planetId, {
-          ...options,
-          signal,
-        }),
-      {
-        dedupe: true,
-        deadlineMs: options.timeoutMs,
-        planetId,
-        priority: "selected-planet",
-        wallet,
-      },
-    ).then((state) => {
-      this.promoteResourceState(state, {
-        bodyKind: "moon",
-        planetId,
-        requestGeneration,
-        wallet,
-      });
-      return state;
-    });
+    return this.queries.moon(wallet, planetId, options).read();
   }
 
   shipyard(wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<ChainShipyardState> {
-    const key = cacheKey("shipyard", wallet, planetId);
-    const requestGeneration = this.planetResourceReadGeneration(wallet, planetId, "planet", key, options.fresh === true);
-    return this.refresh(
-      key,
-      (signal) =>
-        fetchShipyardState(this.apiBaseUrl, wallet, planetId, {
-          ...options,
-          signal,
-        }),
-      {
-        dedupe: true,
-        deadlineMs: options.timeoutMs,
-        planetId,
-        priority: "selected-planet",
-        wallet,
-      },
-    ).then((state) => {
-      this.promoteResourceState(state, {
-        planetId,
-        requestGeneration,
-        wallet,
-      });
-      return state;
-    });
+    return this.queries.shipyard(wallet, planetId, options).read();
   }
 
   defenses(wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<ChainDefenseState> {
-    const key = cacheKey("defenses", wallet, planetId);
-    const requestGeneration = this.planetResourceReadGeneration(wallet, planetId, "planet", key, options.fresh === true);
-    return this.refresh(
-      key,
-      (signal) =>
-        fetchDefenseState(this.apiBaseUrl, wallet, planetId, {
-          ...options,
-          signal,
-        }),
-      {
-        dedupe: true,
-        deadlineMs: options.timeoutMs,
-        planetId,
-        priority: options.priority ?? "selected-planet",
-        wallet,
-      },
-    ).then((state) => {
-      this.promoteResourceState(state, {
-        planetId,
-        requestGeneration,
-        wallet,
-      });
-      return state;
-    });
+    return this.queries.defenses(wallet, planetId, options).read();
   }
 
   research(wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<ChainResearchState> {
-    const key = cacheKey("research", wallet, planetId);
-    const requestGeneration = this.planetResourceReadGeneration(wallet, planetId, "planet", key, options.fresh === true);
-    return this.refresh(
-      key,
-      (signal) =>
-        fetchResearchState(this.apiBaseUrl, wallet, planetId, {
-          ...options,
-          signal,
-        }),
-      {
-        dedupe: true,
-        deadlineMs: options.timeoutMs,
-        planetId,
-        priority: "selected-planet",
-        wallet,
-      },
-    ).then((state) => {
-      this.promoteResourceState(state, {
-        planetId,
-        requestGeneration,
-        wallet,
-      });
-      return state;
-    });
+    return this.queries.research(wallet, planetId, options).read();
   }
 
   rift(wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<ChainRiftState> {
-    const key = cacheKey("rift", wallet, planetId);
-    return this.refresh(
-      key,
-      (signal) =>
-        fetchRiftState(this.apiBaseUrl, wallet, planetId, {
-          ...options,
-          signal,
-        }),
-      {
-        deadlineMs: options.timeoutMs,
-        planetId,
-        priority: "selected-planet",
-        wallet,
-      },
-    );
+    return this.queries.rift(wallet, planetId, options).read();
   }
 
   alliance(wallet: string, options: WalletReadOptions = {}): Promise<ChainAllianceState> {
-    const key = cacheKey("alliance", wallet);
-    return this.refresh(key, (signal) => fetchAllianceState(this.apiBaseUrl, wallet, { ...options, signal }), {
-      dedupe: true,
-      deadlineMs: options.timeoutMs,
-      priority: "background",
-      wallet,
-    });
+    return this.queries.alliance(wallet, options).read();
   }
 
   profile(wallet: string): Promise<PlayerProfile> {
-    const key = cacheKey("profile", wallet);
-    return this.refresh(key, (signal) => fetchPlayerProfile(this.apiBaseUrl, wallet, { signal }), { wallet });
+    return this.queries.profile(wallet).read();
   }
 
   settlementFunding(wallet: string): Promise<SettlementFundingState> {
-    const key = cacheKey("settlement-funding", wallet);
-    return this.refresh(key, (signal) => fetchSettlementFundingState(this.apiBaseUrl, wallet, signal), { wallet });
+    return this.queries.settlementFunding(wallet).read();
   }
 
   /** Store-owned projection for settlement funding. Backend funding and the
    * wallet's chain-only balance/reservation are committed under one canonical
    * identity so an old provider/network result cannot overwrite a newer
    * wallet session in the settlement UI. */
-  settlementFundingForProvider(
-    wallet: string,
-    provider: Eip1193Provider,
-    migrationAddress: string | undefined,
-    providerIdentity: string | undefined,
-  ): Promise<SettlementFundingState> {
-    const key = cacheKey("settlement-funding-projection", wallet, migrationAddress, providerIdentity);
-    return this.refresh(
-      key,
-      async () => {
-        const [backendFunding, walletBalanceWei, chainMigrationReservation] = await Promise.all([
-          this.settlementFunding(wallet),
-          readWalletNativeBalance(provider, wallet),
-          readMigrationReservation(provider, migrationAddress, wallet),
-        ]);
-        return settlementFundingWithMigrationReservation(
-          settlementFundingWithWalletBalance(backendFunding, walletBalanceWei),
-          chainMigrationReservation,
-          migrationAddress,
-        );
-      },
-      {
-        priority: "selected-planet",
-        wallet,
-      },
-    );
+  settlementFundingForProvider(wallet: string, provider: Eip1193Provider, migrationAddress: string | undefined, providerIdentity: string | undefined): Promise<SettlementFundingState> {
+    return this.queries.settlementFundingProjection(wallet, provider, migrationAddress, providerIdentity).read();
   }
 
   referralDashboard(wallet: string): Promise<ReferralDashboard> {
-    const key = cacheKey("referral-dashboard", wallet);
-    return this.refresh(key, (signal) => fetchReferralDashboard(this.apiBaseUrl, wallet, signal), { wallet });
+    return this.queries.referralDashboard(wallet).read();
   }
 
   referralHistory(wallet: string, page = 1, pageSize = 25): Promise<ReferralHistoryResponse> {
-    const key = cacheKey("referral-history", wallet, page, pageSize);
-    return this.refresh(key, (signal) => fetchReferralHistory(this.apiBaseUrl, wallet, page, pageSize, signal), { wallet });
+    return this.queries.referralHistory(wallet, page, pageSize).read();
   }
 
   referralCodeInspection(wallet: string, code: string): Promise<ReferralResolution> {
-    const key = cacheKey("referral-code-inspection", wallet, code);
-    return this.refresh(
-      key,
-      (signal) => {
-        // The adapter does not yet accept AbortSignal, but this remains a
-        // canonical store-owned request with generation/failure handling.
-        void signal;
-        return inspectReferralCode(this.apiBaseUrl, code, wallet);
-      },
-      { wallet },
-    );
+    return this.queries.referralCodeInspection(wallet, code).read();
   }
 
   referralCodeValidation(code: string, invitee?: string): Promise<ReferralResolution> {
-    const key = cacheKey("referral-code-validation", code, invitee);
-    return this.refresh(
-      key,
-      (signal) => {
-        void signal;
-        return validateReferralCode(this.apiBaseUrl, code, invitee);
-      },
-      invitee ? { wallet: invitee } : {},
-    );
+    return this.queries.referralCodeValidation(code, invitee).read();
   }
 
   paidAllianceInviteResolution(secret: string): Promise<PaidAllianceInviteResolution> {
-    const key = cacheKey("paid-alliance-invite-resolution", secret);
-    return this.refresh(key, (signal) => {
-      void signal;
-      return resolvePaidAllianceInvite(this.apiBaseUrl, secret);
-    });
+    return this.queries.paidAllianceInviteResolution(secret).read();
   }
 
-  playerActivity(
-    wallet: string,
-    options: {
+  playerActivity(wallet: string, options: {
       includeProjected?: boolean;
       page?: number;
       pageSize?: number;
       since?: number;
-    } = {},
-  ): Promise<PlayerActivityResponse> {
-    const key = cacheKey("player-activity", wallet, options);
-    return this.refresh(key, (signal) => fetchPlayerActivity(this.apiBaseUrl, wallet, { ...options, signal }), { wallet });
+    } = {}): Promise<PlayerActivityResponse> {
+    return this.queries.playerActivity(wallet, options).read();
   }
 
   recordPlayerActivityPresence(wallet: string): Promise<PlayerActivityPresence> {
@@ -2440,7 +1925,7 @@ export class BackendDataStore {
   }
 
   playerActivityAwayWindowKey(wallet: string): string {
-    return this.key("player-activity-away-window", wallet);
+    return walletCacheKey("player-activity-away-window", wallet);
   }
 
   private playerActivityAwaySessionKey(wallet: string): string {
@@ -2492,7 +1977,7 @@ export class BackendDataStore {
       if (current?.status === "pending" && current.promise === promise) {
         this.activityPresenceClaims.delete(normalizedWallet);
       }
-      this.markBackendFailure("player-activity-away-window", error instanceof Error ? error.message : String(error), [wallet]);
+      this.markBackendFailure("player-activity-away-window", error instanceof Error ? error.message : String(error), [wallet.toLowerCase()]);
       throw error;
     });
     this.activityPresenceClaims.set(normalizedWallet, { promise, status: "pending" });
@@ -2515,236 +2000,111 @@ export class BackendDataStore {
   }
 
   highscores(options: FetchHighscoreOptions | number = 100): Promise<HighscoreResponse> {
-    const normalizedOptions = options;
-    const key = cacheKey("highscores", normalizedOptions);
-    return this.refresh(key, (signal) => fetchHighscores(this.apiBaseUrl, typeof normalizedOptions === "number" ? normalizedOptions : { ...normalizedOptions, signal }), {
-      priority: "background",
-      ...(typeof normalizedOptions === "number" || !normalizedOptions.currentWallet ? {} : { wallet: normalizedOptions.currentWallet }),
-    });
+    return this.queries.highscores(options).read();
   }
 
   playerHighscore(wallet: string): Promise<HighscoreEntry | null> {
-    const key = cacheKey("player-highscore", wallet);
-    return this.refresh(key, (signal) => fetchPlayerHighscore(this.apiBaseUrl, wallet, signal), { wallet });
+    return this.queries.playerHighscore(wallet).read();
   }
 
   raidFinderDebris(options: { limit?: number } = {}): Promise<RaidFinderDebrisResponse> {
-    const key = cacheKey("raid-finder-debris", options);
-    return this.refresh(key, (signal) => fetchRaidFinderDebrisTargets(this.apiBaseUrl, { ...options, signal }), {
-      priority: "background",
-    });
+    return this.queries.raidFinderDebris(options).read();
   }
 
   raidFinderRifters(options: { limit?: number } = {}): Promise<RaidFinderRiftersResponse> {
-    const key = cacheKey("raid-finder-rifters", options);
-    return this.refresh(key, (signal) => fetchRaidFinderRifters(this.apiBaseUrl, { ...options, signal }), {
-      priority: "background",
-    });
+    return this.queries.raidFinderRifters(options).read();
   }
 
   system<T = unknown>(galaxy: number, system: number, options: SystemReadOptions = {}): Promise<T> {
-    const { priority = "background", ...requestOptions } = options;
-    const key = cacheKey("system", galaxy, system, requestOptions);
-    return this.refresh(
-      key,
-      (signal) =>
-        fetchSystemData(this.apiBaseUrl, galaxy, system, {
-          ...requestOptions,
-          signal,
-        }) as Promise<T>,
-      {
-        priority,
-      },
-    );
+    return this.queries.system<T>(galaxy, system, options).read();
   }
 
   randomnessReadiness(): Promise<RandomnessReadiness> {
-    // This is a transaction safety probe, not canonical cached gameplay state. Start it directly so
-    // unrelated background reads can never delay an Attack behind the shared read scheduler.
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10_000);
-    return (async () => {
-      const response = await fetch(`${this.apiBaseUrl}/randomness-readiness`, {
-        cache: "no-store",
-        headers: { accept: "application/json" },
-        signal: controller.signal,
-      });
-      const payload = (await response.json()) as { ready?: unknown; reasons?: unknown };
-      if (!response.ok) {
-        const reason = Array.isArray(payload.reasons) && typeof payload.reasons[0] === "string" ? payload.reasons[0] : `Randomness readiness API failed: ${response.status}`;
-        throw new Error(reason);
-      }
-      return {
-        ready: payload.ready === true,
-        ...(Array.isArray(payload.reasons) ? { reasons: payload.reasons.filter((reason): reason is string => typeof reason === "string") } : {}),
-      };
-    })().finally(() => clearTimeout(timeout));
+    return this.queries.randomnessReadiness().read();
   }
 
   runtimeConfig<T>(url: string): Promise<T> {
-    const key = cacheKey("runtime-config", url);
-    return this.refresh(key, async (signal) => {
-      const response = await fetch(url, {
-        headers: { accept: "application/json" },
-        signal,
-      });
-      if (!response.ok) throw new Error(`Runtime config failed with ${response.status}`);
-      return response.json() as Promise<T>;
-    });
+    return this.queries.runtimeConfig<T>(url).read();
   }
 
   attackProtection(wallet: string, targetPlanetId: string, targetIsMoon = false, options: WalletReadOptions = {}): Promise<AttackProtectionStatus> {
-    const key = cacheKey("attack-protection", wallet, targetPlanetId, targetIsMoon);
-    return this.refresh(key, (signal) => fetchAttackProtectionStatus(this.apiBaseUrl, wallet, targetPlanetId, targetIsMoon, signal), {
-      dedupe: true,
-      deadlineMs: options.timeoutMs,
-      planetId: targetPlanetId,
-      priority: options.priority ?? "transaction",
-      wallet,
-    });
+    return this.queries.attackProtection(wallet, targetPlanetId, targetIsMoon, options).read();
   }
 
   fleetVisibility(wallet: string, options: FleetMissionVisibilityOptions = {}): Promise<FleetMissionVisibilityResponse> {
-    const includeArchive = options.includeArchive === true;
-    const key = cacheKey("fleet-visibility", wallet, includeArchive);
-    return this.refresh(
-      key,
-      (signal) =>
-        fetchFleetMissionVisibility(this.apiBaseUrl, wallet, {
-          ...options,
-          includeArchive,
-          signal,
-        }),
-      {
-        dedupe: true,
-        deadlineMs: options.timeoutMs,
-        priority: "mission-control",
-        wallet,
-      },
-    );
+    return this.queries.fleetVisibility(wallet, options).read();
   }
 
   fleetArchive(wallet: string, options: FleetMissionArchiveOptions = {}): Promise<FleetMissionArchiveResponse> {
-    const key = cacheKey("fleet-archive", wallet, options);
-    return this.refresh(
-      key,
-      (signal) =>
-        fetchFleetMissionArchive(this.apiBaseUrl, wallet, {
-          ...options,
-          signal,
-        }),
-      {
-        planetId: options.planetId,
-        priority: "mission-control",
-        wallet,
-      },
-    );
+    return this.queries.fleetArchive(wallet, options).read();
   }
 
   missileArchive(wallet: string, options: { page?: number; pageSize?: number; planetId?: string } = {}): Promise<MissileAttackArchiveResponse> {
-    const key = cacheKey("missile-archive", wallet, options);
-    return this.refresh(
-      key,
-      (signal) =>
-        fetchMissileAttackArchive(this.apiBaseUrl, wallet, {
-          ...options,
-          signal,
-        }),
-      {
-        planetId: options.planetId,
-        priority: "mission-control",
-        wallet,
-      },
-    );
+    return this.queries.missileArchive(wallet, options).read();
   }
 
   globalActiveMissions(): Promise<GlobalActiveMissionsResponse> {
-    const key = cacheKey("global-active-missions");
-    return this.refresh(key, (signal) => fetchGlobalActiveMissions(this.apiBaseUrl, signal), {
-      priority: "mission-control",
-    });
+    return this.queries.globalActiveMissions().read();
   }
 
   landingActiveMissions<T>(): Promise<T[]> {
-    const key = cacheKey("landing-active-missions");
-    return this.refresh(
-      key,
-      async (signal) => {
-        const response = await fetch(`${this.apiBaseUrl}/missions?status=active&live=1`, {
-          cache: "no-store",
-          headers: { accept: "application/json" },
-          signal,
-        });
-        if (!response.ok) throw new Error("Failed to load landing missions");
-        const data = (await response.json()) as { missions?: T[] };
-        return data.missions ?? [];
-      },
-      { priority: "background" },
-    );
+    return this.queries.landingActiveMissions<T>().read();
   }
 
   landingHighscores<T>(): Promise<T[]> {
-    const key = cacheKey("landing-highscores");
-    return this.refresh(
-      key,
-      async (signal) => {
-        const params = new URLSearchParams({
-          category: "total",
-          live: "1",
-          page: "1",
-          pageSize: "250",
-        });
-        const response = await fetch(`${this.apiBaseUrl}/highscores?${params.toString()}`, {
-          cache: "no-store",
-          headers: { accept: "application/json" },
-          signal,
-        });
-        if (!response.ok) throw new Error("Failed to load landing highscores");
-        const data = (await response.json()) as { rankings?: { total?: T[] } };
-        return data.rankings?.total ?? [];
-      },
-      { priority: "background" },
-    );
+    return this.queries.landingHighscores<T>().read();
   }
 
   globalMissionArchive(options: GlobalMissionArchiveOptions = {}): Promise<GlobalMissionArchiveResponse> {
-    const key = cacheKey("global-mission-archive", options);
-    return this.refresh(key, (signal) => fetchGlobalMissionArchive(this.apiBaseUrl, { ...options, signal }), {
-      priority: "mission-control",
-    });
+    return this.queries.globalMissionArchive(options).read();
   }
 
   mission(missionId: string): Promise<MissionDetailResponse> {
-    const key = cacheKey("mission", missionId);
-    return this.refresh(key, (signal) => fetchMission(this.apiBaseUrl, missionId, signal), {
-      priority: "mission-control",
-    });
+    return this.queries.mission(missionId).read();
   }
 
-  battleReports(): Promise<BattleReport[]> {
-    const key = cacheKey("battle-reports");
-    return this.refresh(key, (signal) => fetchBattleReports(this.apiBaseUrl, signal), {
-      priority: "mission-control",
-    });
+  battleReports(): Promise<BattleReportSummary[]> {
+    return this.queries.battleReports().read();
   }
 
   entityMedia(entityKind: EntityMediaKind, entityId: string): Promise<EntityMediaResponse> {
-    const key = cacheKey("entity-media", entityKind, entityId);
-    return this.refresh(key, (signal) => fetchEntityMedia(this.apiBaseUrl, entityKind, entityId, signal), {});
+    return this.queries.entityMedia(entityKind, entityId).read();
+  }
+
+  private async runSignedMetadataMutation<T>(provider: Eip1193Provider, wallet: string, key: string, label: string, action: (options: SignedMetadataOptions) => Promise<T>): Promise<T> {
+    const assertContext = () => {
+      if (this.transactionAbort.signal.aborted || (this.hasContext && this.contextWallet !== wallet.toLowerCase())) {
+        throw new Error("Wallet changed before metadata could be saved.");
+      }
+    };
+    assertContext();
+    const response = await this.runExclusiveTransaction(
+      key,
+      label,
+      () => action({
+        signal: this.transactionAbort.signal,
+        sign: async message => {
+          assertContext();
+          const signature = await this.transactionGateFor(wallet.toLowerCase()).run(key, () => requestPersonalSignature(provider, wallet, message));
+          if (!signature) throw new Error("Another wallet prompt is already open.");
+          assertContext();
+          return signature;
+        },
+      }),
+      wallet,
+      key,
+    );
+    if (!response) throw new Error("Another game action is already in progress.");
+    return response;
   }
 
   async saveEntityMedia(provider: Eip1193Provider, wallet: string, entityKind: EntityMediaKind, entityId: string, mediaUrl: string): Promise<EntityMediaResponse> {
-    const response = await this.runExclusiveTransaction(
-      `entity-media:${entityKind}:${normalizeEntityMediaId(entityKind, entityId)}`,
-      "Save media",
-      () => updateEntityMedia(this.apiBaseUrl, provider, wallet, entityKind, entityId, mediaUrl),
-      wallet,
-    );
-    if (!response) throw new Error("Another game action is already in progress.");
+    entityId = normalizeEntityMediaId(entityKind, entityId);
+    const response = await this.runSignedMetadataMutation(provider, wallet, `entity-media:${entityKind}:${entityId}`, "Save media",
+      options => updateEntityMedia(this.apiBaseUrl, provider, wallet, entityKind, entityId, mediaUrl, options));
     this.commitBackendSnapshot("entity-media", response, [entityKind, entityId]);
-    await this.invalidate([`kind:entity-media`], {
+    await this.invalidateKeys([this.key("entity-media", entityKind, entityId)], {
       activeOnly: true,
-      priority: "transaction",
     });
     return response;
   }
@@ -2755,35 +2115,33 @@ export class BackendDataStore {
    * view instead of patching one component's local page in place.
    */
   async setPlanetWatched(provider: Eip1193Provider, wallet: string, planetId: string, watched: boolean): Promise<WatchPlanetMutationResponse> {
-    const response = await this.runExclusiveTransaction(
+    const response = await this.runSignedMetadataMutation(
+      provider, wallet,
       `watched-planet:${wallet.toLowerCase()}:${planetId}`,
       watched ? "Unwatch planet" : "Watch planet",
-      () => watched ? unwatchPlanet(this.apiBaseUrl, provider, wallet, planetId) : watchPlanet(this.apiBaseUrl, provider, wallet, planetId),
-      wallet,
+      options => watched ? unwatchPlanet(this.apiBaseUrl, provider, wallet, planetId, options) : watchPlanet(this.apiBaseUrl, provider, wallet, planetId, options),
     );
-    if (!response) throw new Error("Another game action is already in progress.");
-    await this.invalidate([`wallet:${wallet.toLowerCase()}`, "kind:watched-planets"], { activeOnly: true, priority: "transaction" });
+    await this.invalidateKeys(this.keysForScope([`wallet:${wallet.toLowerCase()}`, "kind:watched-planets"]));
     return response;
   }
 
   /** Signed profile updates share the store-owned mutation gate and refresh policy. */
   async savePlayerProfile(provider: Eip1193Provider, wallet: string, displayName: string, description: string | null): Promise<PlayerProfile> {
-    const profile = await this.runExclusiveTransaction(
+    const profile = await this.runSignedMetadataMutation(
+      provider, wallet,
       `profile:${wallet.toLowerCase()}`,
       "Save profile",
-      () => updatePlayerProfile(this.apiBaseUrl, provider, wallet, displayName, description),
-      wallet,
+      options => updatePlayerProfile(this.apiBaseUrl, provider, wallet, displayName, description, options),
     );
-    if (!profile) throw new Error("Another game action is already in progress.");
     this.commitBackendSnapshot("profile", profile, [wallet], { wallet });
-    await this.invalidate([`wallet:${wallet.toLowerCase()}`, "kind:profile", "kind:settlement", "kind:alliance"], { activeOnly: true, priority: "transaction" });
+    await this.invalidateKeys(this.keysForScope([`wallet:${wallet.toLowerCase()}`, "kind:planets", "kind:settlement", "kind:alliance", "kind:alliance-detail", "kind:player-highscore", "kind:highscores", "kind:landing-highscores", "kind:system"]));
     return profile;
   }
 
   /** Record a confirmed referral redemption and invalidate shared referral views. */
   async recordReferralRedemption(code: string, invitee: string, txHash: string): Promise<void> {
     await recordReferralRedemptionTransaction(this.apiBaseUrl, code, invitee, txHash);
-    await this.invalidate([`wallet:${invitee.toLowerCase()}`, "kind:referral-dashboard", "kind:referral-history"], { activeOnly: true, priority: "transaction" });
+    await this.invalidateKeys(this.keysForScope([`wallet:${invitee.toLowerCase()}`, "kind:referral-dashboard", "kind:referral-history"]));
   }
 
   /** Persist signed referral-claim recovery data through the shared mutation boundary. */
@@ -2799,13 +2157,11 @@ export class BackendDataStore {
   async recordReferralClaimAfterIndexing(wallet: string, code: string, commitment: string, txHash: string, signature: string): Promise<ReferralDashboard> {
     const dashboard = await recordReferralClaimTransaction(this.apiBaseUrl, wallet, code, commitment, txHash, signature);
     this.commitBackendSnapshot("referral-dashboard", dashboard, [wallet], { wallet });
-    await this.invalidate([`wallet:${wallet.toLowerCase()}`, "kind:referral-dashboard", "kind:referral-history"], { activeOnly: true, priority: "transaction" });
     return dashboard;
   }
 
   burningChicken(owner: string, tokenId: string, config: BurningChickenConfig): Promise<unknown> {
-    const key = cacheKey("burning-chicken", owner, tokenId, config.nftContractAddress);
-    return this.refresh(key, (signal) => fetchBurningChickenForOwner(owner, tokenId, config, signal));
+    return this.queries.burningChicken(owner, tokenId, config).read();
   }
 }
 
@@ -2813,78 +2169,7 @@ export function createBackendDataStore(apiBaseUrl: string): BackendDataStore {
   return new BackendDataStore(apiBaseUrl.replace(/\/+$/, ""));
 }
 
-function emptyWalletQueues(wallet: string, homePlanetId: string | null): PlayerQueuesResponse {
-  return { wallet, homePlanetId, building: null, defense: null, ship: null, research: null };
-}
 
-function indexedPlanetsExposeResearchQueueResponse(result: PromiseSettledResult<WalletPlanetsResponse>): boolean {
-  return result.status === "fulfilled" && result.value.queues !== undefined && "research" in result.value.queues;
-}
-
-function mergeIndexedQueues(indexedQueues: PlayerQueuesResponse, fetchedQueues: PlayerQueuesResponse): PlayerQueuesResponse {
-  return {
-    ...indexedQueues,
-    ...fetchedQueues,
-    building: fetchedQueues.building ?? indexedQueues.building,
-    defense: fetchedQueues.defense ?? indexedQueues.defense,
-    ship: fetchedQueues.ship ?? indexedQueues.ship,
-    research: fetchedQueues.research ?? indexedQueues.research,
-  };
-}
-
-function queuesFromIndexedPlanets(wallet: string, homePlanetId: string | null, activePlanetId: string | undefined, planetsResponse: WalletPlanetsResponse | undefined): PlayerQueuesResponse {
-  const planets = planetsResponse?.planets;
-  const queuePlanetId = activePlanetId ?? homePlanetId;
-  const selectedPlanet = planets?.find((planet) => planet.planetId === queuePlanetId) ?? planets?.find((planet) => planet.planetId === homePlanetId || planet.isHomePlanet) ?? planets?.[0];
-  return {
-    ...emptyWalletQueues(wallet, selectedPlanet?.planetId ?? queuePlanetId ?? homePlanetId),
-    building: selectedPlanet?.queues.building ?? null,
-    defense: selectedPlanet?.queues.defense ?? null,
-    ship: selectedPlanet?.queues.ship ?? null,
-    research: planetsResponse?.queues?.research ?? null,
-  };
-}
-
-function settlementFromIndexedPlanetsResponse(wallet: string, planetsResponse: WalletPlanetsResponse | undefined): WalletSettlementResponse | undefined {
-  const selectedPlanet = planetsResponse?.planets.find((planet) => planet.planetId === planetsResponse.homePlanetId || planet.isHomePlanet) ?? planetsResponse?.planets[0];
-  if (!selectedPlanet || !planetsResponse) return undefined;
-  return {
-    wallet: planetsResponse.wallet ?? wallet,
-    hasFirstPlanet: true,
-    homePlanetId: planetsResponse.homePlanetId ?? selectedPlanet.planetId,
-    planet: selectedPlanet,
-  };
-}
-
-function walletPlanetSyncFromResults(
-  wallet: string,
-  settlement: WalletSettlementResponse,
-  planetsResult: PromiseSettledResult<WalletPlanetsResponse>,
-  queuesResult: PromiseSettledResult<PlayerQueuesResponse>,
-  visibilityResult: PromiseSettledResult<FleetMissionVisibilityResponse>,
-): WalletPlanetSyncSnapshot {
-  const planetsResponse = planetsResult.status === "fulfilled"
-    ? planetsResult.value
-    : { wallet, homePlanetId: settlement.homePlanetId, planets: [] };
-  return {
-    fleetVisibility: confirmedFleetVisibility(visibilityResult),
-    planetsResponse,
-    queues: queuesResult.status === "fulfilled" ? queuesResult.value : emptyWalletQueues(wallet, settlement.homePlanetId),
-    settlement,
-  };
-}
-
-function settleBackendPromise<T>(promise: Promise<T>): Promise<PromiseSettledResult<T>> {
-  return promise.then(
-    (value) => ({ status: "fulfilled", value }),
-    (reason) => ({ status: "rejected", reason }),
-  );
-}
-
-function isRecoverableOverviewSyncError(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
-  return /Overview snapshot API failed: 404\b/.test(error.message) || /Timed out reading overview snapshot from the game API/i.test(error.message) || /Game servers are unavailable while loading overview snapshot/i.test(error.message);
-}
 
 const sharedBackendDataStores = new Map<string, BackendDataStore>();
 const sharedBackendDataStoreLeases = new Map<string, number>();

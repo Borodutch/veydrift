@@ -45,7 +45,7 @@ const SIZES_DIR = join(PUBLIC_GAME_DIR, "sizes");
 const VARIANT_WIDTHS = [64, 256, 512];
 
 /** Skip reference/concept images not used in the UI. */
-const EXCLUDED_DIRS = new Set(["concepts", "style-pass"]); // style-pass subdirs are included, but style-pass/README.md etc are not
+const EXCLUDED_DIRS = new Set(["concepts", "style-pass"]); // Nested style-pass categories are included separately.
 
 async function readExistingManifest() {
   const manifestPath = join(SIZES_DIR, "manifest.json");

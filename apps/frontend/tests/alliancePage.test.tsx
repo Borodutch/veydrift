@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import {
   allianceDirectoryPageSize,
   allianceDirectoryWarActionState,
-  allianceRefreshButtonState,
   allianceRosterPageSize,
   allianceExitActionState,
   allianceInviteAcceptanceState,
@@ -24,6 +23,7 @@ import {
   warMinimumDurationCopy,
 } from "../src/components/AlliancePage";
 import type { ChainAllianceState } from "../src/walletFlow";
+import { refreshButtonState as allianceRefreshButtonState } from "../src/components/PageHeader";
 
 const alliancePageSource = await Bun.file(new URL("../src/components/AlliancePage.tsx", import.meta.url)).text();
 const inspectPagesSource = await Bun.file(new URL("../src/components/InspectPages.tsx", import.meta.url)).text();

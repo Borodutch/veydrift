@@ -20,6 +20,7 @@ export function WatchablePlanetRow({
   compact = false,
   coords,
   current,
+  currentMoon = false,
   isHome = false,
   leadingSlot,
   meta,
@@ -43,6 +44,7 @@ export function WatchablePlanetRow({
   compact?: boolean | undefined;
   coords: Coordinates;
   current?: boolean | undefined;
+  currentMoon?: boolean | undefined;
   isHome?: boolean | undefined;
   leadingSlot?: ComponentChildren;
   meta: PlanetMetaItem[];
@@ -72,6 +74,7 @@ export function WatchablePlanetRow({
   const moonSubsection = planet.hasMoon ? (
     <PlanetMoonSubsection
       action={moonActionSlot}
+      className={currentMoon ? "border-cyan-300/50 bg-cyan-300/10" : ""}
       compact={compact}
       label={planet.moonName ?? "Moon"}
       onClick={onInspectMoon ? () => onInspectMoon(coords) : undefined}

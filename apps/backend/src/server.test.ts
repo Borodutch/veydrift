@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, setSystemTime, test } from "bun:test";
+import { afterAll, describe, expect, setSystemTime, spyOn, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -30,13 +30,26 @@ import type {
   WalletPlanets
 } from "./evm";
 import { calculateHighscore, type HighscoreEntry } from "./highscores";
-import { VeydriftGameReader, riftRequirements } from "./evm";
+import { VeydriftGameReader, riftRequirements, decodeBattleReportLogs } from "./evm";
 import { SettlementIndexer, type IndexedRpcLog } from "./indexer";
 import { MissionResolutionService } from "./missionResolution";
 import { watchedPlanetMessage } from "./playerProfiles";
 import { deriveInfrastructureFields } from "./readModels";
-import { backendBuildMetadata, ccaBidOwnerTopic, createReaderBootstrapHandler, createRequestHandler, decodeCcaSubmittedBid, deriveLogBackfiller, readerBootstrapHealthResponse, rpcUnfinishedRequestReadiness, runtimeConfigResponse, shouldRecoverFailedReconciliation, walletConnectRpcResponse } from "./server";
+import { backendBuildMetadata, ccaBidOwnerTopic, createReaderBootstrapHandler, createRequestHandler, decodeCcaSubmittedBid, deriveLogBackfiller, readerBootstrapHealthResponse, rpcUnfinishedRequestReadiness, runtimeConfigResponse, walletConnectRpcResponse } from "./server";
 import { DEFAULT_MAX_WORKER_COUNT } from "./workerPool";
+import { normalizeViemLog } from "./server";
+
+test("websocket wakeups preserve removal identity without needing a timestamp lookup", () => {
+  const log = {
+    address: `0x${"1".repeat(40)}`, blockHash: `0x${"2".repeat(64)}`, blockNumber: 384n,
+    transactionHash: `0x${"3".repeat(64)}`, transactionIndex: 0, logIndex: 2, removed: true,
+    topics: [`0x${"4".repeat(64)}`], data: "0x"
+  } as const;
+  const normalized = normalizeViemLog({ ...log, topics: [...log.topics] });
+  expect(normalized).toMatchObject({ blockHash: log.blockHash, transactionHash: log.transactionHash, blockNumber: "0x180", logIndex: "0x2", removed: true });
+  expect(normalized).not.toHaveProperty("blockTimestamp");
+  expect(normalizeViemLog({ ...log, topics: [], blockNumber: null })).toBeNull();
+});
 
 setSystemTime(new Date(1_770_007_680_000));
 afterAll(() => setSystemTime());
@@ -1003,6 +1016,8 @@ describe("Veydrift backend", () => {
     });
 
     latestSyncedBlock = "120";
+    await expect((await status()).json()).resolves.toMatchObject({ phase: "confirmed" });
+    indexer.recordResourceProjectionWatermark("120", "1000", `0x${"11".repeat(32)}`);
     await expect((await status()).json()).resolves.toMatchObject({
       indexedEventCount: 0,
       latestSyncedBlock: "120",
@@ -1028,11 +1043,24 @@ describe("Veydrift backend", () => {
       topics: [`0x${"00".repeat(32)}`],
       transactionHash,
     });
+    await expect((await status()).json()).resolves.toMatchObject({ phase: "confirmed" });
+    indexer.recordResourceProjectionWatermark("121", "1002", `0x${"22".repeat(32)}`);
     await expect((await status()).json()).resolves.toMatchObject({
       indexedEventCount: 1,
       latestIndexedBlock: "121",
       phase: "applied",
     });
+    const expectedLog = reader.transactionReceipt.logs![0]!;
+    reader.transactionReceipt.logs = [{ ...expectedLog, logIndex: "0x2" }];
+    expect(indexer.transactionIndexingSummary(transactionHash, reader.transactionReceipt.logs).materialized).toBe(false);
+    reader.transactionReceipt.logs = [{ ...expectedLog, data: "0x01" }];
+    expect(indexer.transactionIndexingSummary(transactionHash, reader.transactionReceipt.logs).materialized).toBe(false);
+    reader.transactionReceipt.logs = [{ ...expectedLog, logIndex: "0x00" }];
+    const receiptSpy = spyOn(reader, "getTransactionReceipt");
+    receiptSpy.mockRejectedValueOnce(new Error("RPC must not run for a committed transaction"));
+    await expect((await status()).json()).resolves.toMatchObject({ phase: "applied" });
+    expect(receiptSpy).not.toHaveBeenCalled();
+    receiptSpy.mockRestore();
     const firstRevision = BigInt(indexer.snapshot().indexedRevision);
     indexer.applyLog({
       blockNumber: "0x79",
@@ -1043,9 +1071,14 @@ describe("Veydrift backend", () => {
     });
     expect(BigInt(indexer.snapshot().indexedRevision)).toBe(firstRevision + 1n);
     expect(indexer.snapshot().latestIndexedBlock).toBe("121");
+    // A later same-block commit invalidates the old projection revision until
+    // the complete log scan publishes its new durable watermark.
+    await expect((await status()).json()).resolves.toMatchObject({ phase: "confirmed" });
 
-    reader.transactionReceipt = { ...reader.transactionReceipt, status: "0x0" };
-    await expect((await status()).json()).resolves.toMatchObject({ phase: "reverted" });
+    // A genuinely reverted transaction has no committed logs of its own.
+    const revertedHash = `0x${"ef".repeat(32)}`;
+    reader.transactionReceipt = { ...reader.transactionReceipt, transactionHash: revertedHash, logs: [], status: "0x0" };
+    await expect((await transactionHandler(new Request(`http://localhost/transactions/${revertedHash}/status`))).json()).resolves.toMatchObject({ phase: "reverted" });
     expect((await transactionHandler(new Request("http://localhost/transactions/not-a-hash/status"))).status).toBe(400);
   });
 
@@ -1059,34 +1092,38 @@ describe("Veydrift backend", () => {
     expect(response.status).toBe(499);
   });
 
-  test("requires websocket head and log subscriptions for ready chain sync health", async () => {
+  test("healthy canonical HTTP polling does not require websocket subscriptions", async () => {
+    let connected = true;
     const chainSync = {
       start() {},
       snapshot() {
         return {
-          connected: true,
+          connected,
           subscribedToHeads: false,
-          subscribedToLogs: true
+          subscribedToLogs: false
         };
       }
     } as unknown as import("./chainSync").ChainSyncService;
     const handler = createRequestHandler({
       chainReader: new MockChainReader(),
       chainSync,
-      config: configuredTestConfig
+      config: configuredTestConfig,
+      indexer: { snapshot: () => ({ indexedState: "healthy", safeToServeIndexedState: true }) } as unknown as SettlementIndexer
     });
 
     const response = await handler(new Request("http://localhost/health"));
     const body = await response.json();
 
     expect(body.readiness).toMatchObject({
-      ready: false,
+      ready: true,
       chainSyncConnected: true,
       subscribedToHeads: false,
-      subscribedToLogs: true
+      subscribedToLogs: false
     });
-    expect(body.ok).toBe(false);
-    expect(response.status).toBe(503);
+    expect(body.ok).toBe(true);
+    expect(response.status).toBe(200);
+    connected = false;
+    expect((await handler(new Request("http://localhost/health"))).status).toBe(503);
   });
 
   test("returns 200 only when the backend readiness gate is satisfied", async () => {
@@ -1475,7 +1512,94 @@ describe("Veydrift backend", () => {
     });
   });
 
-  test("briefly waits for an in-flight shared-cache refresh on cold indexed reads", async () => {
+  test("releases cold-cache waiters and refresh ownership after a cache write throws", async () => {
+    let writes = 0;
+    let releases = 0;
+    const sharedResponseCache = {
+      get: () => null,
+      tryAcquireRefresh: () => "owner",
+      releaseRefresh: (_key: string, owner: string) => { expect(owner).toBe("owner"); releases += 1; },
+      set: () => { if (++writes === 1) throw new Error("cache write failed"); }
+    } as unknown as import("./sharedResponseCache").SharedResponseCache;
+    const handler = createRequestHandler({
+      chainReader: new MockChainReader(), config: configuredTestConfig, indexer: testIndexer(),
+      enableResponseCache: true, prewarmResponseCache: false, sharedResponseCache
+    });
+    const request = () => new Request("http://localhost/universe/galaxies/1/systems/1");
+    const reads = [handler(request()), handler(request())];
+    const results = await Promise.allSettled(reads);
+    expect(results.map(result => result.status === "fulfilled" ? result.value.status : "rejected")).toEqual([500, 500]);
+    expect(writes).toBe(1);
+    expect(releases).toBe(1);
+    expect((await handler(request())).status).toBe(200);
+  });
+
+  test("gameplay reads bypass shared caches and default to no-store", async () => {
+    const sharedResponseCache = new Proxy({}, { get() { throw new Error("gameplay must not touch HTTP caches"); } }) as import("./sharedResponseCache").SharedResponseCache;
+    const handler = createRequestHandler({
+      chainReader: new MockChainReader(), config: configuredTestConfig, indexer: testIndexer(),
+      enableResponseCache: true, prewarmResponseCache: false, sharedResponseCache
+    });
+    for (const path of [`/wallet/${player}/planets`, `/wallet/${player}/fleet-visibility?archive=none`, "/missions?status=active"]) {
+      const response = await handler(new Request(`http://localhost${path}`));
+      expect(response.status).toBe(200);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+    }
+  });
+
+  test("cold callers share one peer wait while unrelated keys load independently", async () => {
+    let waits = 0;
+    let release!: (value: import("./sharedResponseCache").SharedCachedJsonResponse) => void;
+    const peerResult = new Promise<import("./sharedResponseCache").SharedCachedJsonResponse>(resolve => { release = resolve; });
+    const sharedResponseCache = {
+      get: () => null,
+      tryAcquireRefresh: (key: string) => key.includes("/systems/1 ") ? null : "owner",
+      waitForFresh: () => { waits++; return peerResult; },
+      set() {}, releaseRefresh() {}
+    } as unknown as import("./sharedResponseCache").SharedResponseCache;
+    const handler = createRequestHandler({
+      chainReader: new MockChainReader(), config: configuredTestConfig, indexer: testIndexer(),
+      enableResponseCache: true, prewarmResponseCache: false, sharedResponseCache
+    });
+    const reads = Array.from({ length: 10 }, () => handler(new Request("http://localhost/universe/galaxies/1/systems/1")));
+    try {
+      expect((await handler(new Request("http://localhost/universe/galaxies/1/systems/2"))).status).toBe(200);
+      expect(waits).toBe(1);
+    } finally {
+      release({ body: new TextEncoder().encode('{"fromPeer":true}').buffer, expiresAt: Date.now() + 1_000,
+        headers: [["content-type", "application/json"]], status: 200, statusText: "" });
+    }
+    const responses = await Promise.all(reads);
+    for (const response of responses) {
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ fromPeer: true });
+    }
+  });
+
+  test("both shared and local stale hits respect another worker's refresh lease", async () => {
+    let acquisitions = 0;
+    const stale = { body: new TextEncoder().encode('{"lastGood":true}').buffer, expiresAt: Date.now() - 100,
+      headers: [["content-type", "application/json"]], status: 200, statusText: "" };
+    const sharedResponseCache = {
+      get: (_key: string, _now: number, includeStale: boolean) => includeStale ? stale : null,
+      tryAcquireRefresh: () => { acquisitions++; return null; },
+      waitForFresh: () => { throw new Error("stale reads must not wait"); },
+      set: () => { throw new Error("must not rebuild while a peer owns refresh"); },
+      releaseRefresh: () => { throw new Error("must not release another worker's lease"); }
+    } as unknown as import("./sharedResponseCache").SharedResponseCache;
+    const handler = createRequestHandler({
+      chainReader: new MockChainReader(), config: configuredTestConfig, indexer: testIndexer(),
+      enableResponseCache: true, prewarmResponseCache: false, sharedResponseCache
+    });
+    for (let read = 0; read < 2; read++) {
+      const response = await handler(new Request("http://localhost/universe/galaxies/1/systems/1"));
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ lastGood: true });
+    }
+    expect(acquisitions).toBe(2);
+  });
+
+  test("a cold read waits for a peer without duplicating a refresh still owned by that peer", async () => {
     let waitCalled = false;
     const sharedResponseCache = {
       get() {
@@ -1502,7 +1626,8 @@ describe("Veydrift backend", () => {
 
     const response = await handler(new Request("http://localhost/universe/galaxies/1/systems/1"));
 
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(503);
+    expect(response.headers.get("retry-after")).toBe("1");
     expect(waitCalled).toBe(true);
   });
 
@@ -1671,6 +1796,7 @@ describe("Veydrift backend", () => {
       network: "Base Sepolia",
       paidAllianceInviteAddress: null,
       paidAllianceInviteSignerAddress: null,
+      paidAllianceInviteCapabilities: { redemption: false, recovery: false },
       randomnessEngineAddress: null,
       referralSignerAddress: null,
       referralStartPriceWei: null,
@@ -2249,6 +2375,7 @@ describe("Veydrift backend", () => {
             network: "Base Sepolia",
             paidAllianceInviteAddress: null,
             paidAllianceInviteSignerAddress: null,
+            paidAllianceInviteCapabilities: { redemption: false, recovery: false },
             randomnessEngineAddress: null,
             referralSignerAddress: null,
             referralStartPriceWei: null,
@@ -2627,6 +2754,50 @@ describe("Veydrift backend", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("x-veydrift-index-state")).toBe("stale");
     await expect(response.json()).resolves.toEqual([]);
+  });
+
+  test("serves combat archive summaries without participant hydration or detailed payloads", async () => {
+    const indexer = testIndexer();
+    const report = decodeBattleReportLogs([{
+      blockNumber: "0x100", transactionHash: "0xsummary", logIndex: "0x1",
+      topics: ["0xc0d98d89682d12d3fe90cd0786b9320015ab3950de5f4ae3f54ca0fe9b660d1b", topic(77n), addressTopic(player), topic(7n)],
+      data: abiWords(1n, 1n, 0n, 0n, 0n, 0n)
+    }], "77")!;
+    const calls: unknown[][] = [];
+    indexer.battleReports = (...args) => { calls.push(args); return [report]; };
+    const handler = createRequestHandler({ config: configuredTestConfig, indexer });
+    const full = await (await handler(new Request("http://localhost/battle-reports?page=3&pageSize=10"))).json();
+    const response = await handler(new Request("http://localhost/battle-reports?page=3&pageSize=10&view=summary"));
+    const summaries = await response.json();
+    expect(response.status).toBe(200);
+    expect(calls).toEqual([[10, 20, true], [10, 20, false]]);
+    expect(summaries[0]).toEqual({
+      missionId: report.missionId, attacker: report.attacker, targetPlanetId: report.targetPlanetId,
+      outcome: report.outcome, rounds: report.rounds, loot: report.loot,
+      attackerLosses: report.attackerLosses, defenderLosses: report.defenderLosses
+    });
+    expect(full[0].roundReports).toBeDefined();
+    expect(summaries[0].roundReports).toBeUndefined();
+  });
+
+  test.each(["wallet", "global"])("%s archive preserves SQL tie order across page boundaries", async scope => {
+    const indexer = testIndexer();
+    for (let missionId = 1n; missionId <= 4n; missionId++) {
+      for (const log of completedFleetMissionLogs({
+        missionId, owner: player, originPlanetId: 7n, targetPlanetId: 8n,
+        arrivalAt: 1_700_000_000n, returnAt: 1_700_000_300n,
+      })) indexer.applyLog(log);
+    }
+    const handler = createRequestHandler({ config: configuredTestConfig, indexer, role: "reader" });
+    const path = scope === "wallet" ? `/wallet/${player}/missions` : "/missions";
+    const pages = await Promise.all([1, 2].map(async page => {
+      const response = await handler(new Request(`http://localhost${path}?status=completed&page=${page}&pageSize=2`));
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.pagination.totalEntries).toBe(4);
+      return body.rows.map((row: { mission: { missionId: string } }) => row.mission.missionId);
+    }));
+    expect(pages).toEqual([["4", "3"], ["2", "1"]]);
   });
 
   test("serves paginated completed mission archive from the indexed read model", async () => {
@@ -3021,6 +3192,11 @@ describe("Veydrift backend", () => {
     // Universe-wide: missions from a wallet other than the connected one are present.
     expect(body.missions.some((mission: { owner: string }) => mission.owner.toLowerCase() === otherPlayer.toLowerCase())).toBe(true);
     expect(body.missions.every((mission: { status: string }) => mission.status === "Outbound")).toBe(true);
+    const summary = await createRequestHandler({ config: configuredTestConfig, chainReader, indexer })(
+      new Request("http://localhost/missions?status=active&summaryOnly=true")
+    );
+    expect(summary.status).toBe(200);
+    expect(await summary.json()).toEqual({ totalEntries: body.missions.length });
     // As-of-now derivation (VEY-KANEO-464): outbound missions arrive in the future, so
     // every active mission reports a positive ETA and neither leg is due yet.
     for (const mission of body.missions as Array<{ asOfNow: {
@@ -5238,6 +5414,102 @@ describe("Veydrift backend", () => {
     expect(response.status).toBe(503);
   });
 
+  test("batches Supply sources from the wallet snapshot without production catalogs or other owners", async () => {
+    const indexer = testIndexer();
+    indexer.applyEvent({ ...planet, planetId: "8", position: 8, eventName: "PlanetStarted", transactionHash: "0xsupply8", blockNumber: "124" });
+    indexer.applyEvent({ ...planet, planetId: "9", owner: "0x9999999999999999999999999999999999999999", position: 9, eventName: "PlanetStarted", transactionHash: "0xsupply9", blockNumber: "125" });
+    const handler = createRequestHandler({ config: configuredTestConfig, indexer });
+    const response = await handler(new Request(`http://localhost/wallet/${player}/supply-sources?planetId=7`));
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    const shipyard = await (await handler(new Request(`http://localhost/wallet/${player}/shipyard?planetId=8`))).json();
+    expect(body.sources).toHaveLength(1);
+    expect(body.sources[0]).toMatchObject({ planetId: "8", resources: shipyard.resourcesAsOfNow ?? shipyard.resources });
+    expect(body.sources[0].launchableShips).toEqual(shipyard.launchableShips.map(({ id, count }: { id: number; count: number }) => ({ id, count })));
+    expect(body.fleetSlots).toEqual(shipyard.fleetSlots);
+    expect(body.technologyLevels).toEqual(shipyard.technologyLevels);
+    expect(body.sources[0].queue).toBeUndefined();
+    expect(body.sources[0].technologyLevels).toBeUndefined();
+    expect(body.sources[0].launchableShips.every((ship: object) => Object.keys(ship).length === 2)).toBe(true);
+    expect(shipyard.launchableShips.every((ship: object) => Object.keys(ship).length === 2)).toBe(true);
+    expect(shipyard.ships[0].cost).toBeDefined();
+    expect(shipyard.indexer.indexedRevision).toBeDefined();
+    expect(shipyard.indexer.indexedEventLogs).toBeUndefined();
+    const defenses = await (await handler(new Request(`http://localhost/wallet/${player}/defenses?planetId=8`))).json();
+    expect(defenses.launchableDefenses.every((defense: object) => Object.keys(defense).length === 2)).toBe(true);
+    expect(defenses.defenses[0].cost).toBeDefined();
+    const reverse = await (await handler(new Request(`http://localhost/wallet/${player}/supply-sources?planetId=8`))).json();
+    expect(reverse.sources.map((source: { planetId: string }) => source.planetId)).toEqual(["7"]);
+    indexer.applyEvent({ ...planet, planetId: "10", position: 10, eventName: "PlanetStarted", transactionHash: "0xsupply10", blockNumber: "126" });
+    const refreshed = await (await handler(new Request(`http://localhost/wallet/${player}/supply-sources?planetId=7`))).json();
+    expect(refreshed.sources.map((source: { planetId: string }) => source.planetId).sort()).toEqual(["10", "8"]);
+  });
+
+  test("gameplay requests read the indexer without invoking RPC, including cold indexes", async () => {
+    const calls: string[] = [];
+    const chainReader = new Proxy(new MockChainReader(), {
+      get(target, property, receiver) {
+        const value = Reflect.get(target, property, receiver);
+        if (typeof value !== "function") return value;
+        if (String(property).startsWith("get") || String(property).startsWith("list")) return () => {
+          calls.push(String(property));
+          throw new Error("Gameplay reads must not invoke RPC");
+        };
+        return value.bind(target);
+      },
+    });
+    for (const warm of [true, false]) {
+      const indexer = warm ? testIndexer() : new SettlementIndexer(new MockChainReader(), 100n);
+      const handler = createRequestHandler({ config: configuredTestConfig, indexer, chainReader, role: "reader" });
+      const responses = await Promise.all(["infrastructure", "shipyard", "defenses", "research", "supply-sources"].map(surface =>
+        handler(new Request(`http://localhost/wallet/${player}/${surface}?planetId=7`))));
+      expect(responses.map(response => response.status)).toEqual(Array(5).fill(warm ? 200 : 503));
+    }
+    expect(calls).toEqual([]);
+  });
+
+  test.each(["infrastructure", "shipyard", "defenses", "research"])("%s projects resources once, without hydrating settlement resources first", async surface => {
+    const indexer = testIndexer();
+    indexer.recordResourceProjectionWatermark("130", (Number(planet.lastSettledAt) + 60).toString(), `0x${"a".repeat(64)}`);
+    const projection = spyOn(indexer, "resourceProjectionRows");
+    const handler = createRequestHandler({ config: configuredTestConfig, indexer, role: "reader" });
+    try {
+      const response = await handler(new Request(`http://localhost/wallet/${player}/${surface}?planetId=7`));
+      expect(response.status).toBe(200);
+      expect(projection).toHaveBeenCalledTimes(1);
+      projection.mockClear();
+      const queues = await handler(new Request(`http://localhost/wallet/${player}/queues?planetId=7`));
+      expect(queues.status).toBe(200);
+      expect(projection).not.toHaveBeenCalled();
+      const foreign = await handler(new Request(`http://localhost/wallet/0x${"ab".repeat(20)}/${surface}?planetId=7`));
+      expect(foreign.status).toBe(503);
+      expect(projection).not.toHaveBeenCalled();
+    } finally { projection.mockRestore(); }
+  });
+
+  test("Supply does not construct unused production catalogs", async () => {
+    const indexer = testIndexer();
+    indexer.applyEvent({ ...planet, planetId: "8", position: 8, eventName: "PlanetStarted", transactionHash: "0xsupply8", blockNumber: "124" });
+    const buildings = spyOn(indexer, "infrastructureRows");
+    const ships = spyOn(indexer, "availableShipRows");
+    try {
+      const handler = createRequestHandler({ config: configuredTestConfig, indexer });
+      const response = await handler(new Request(`http://localhost/wallet/${player}/supply-sources?planetId=7`));
+      expect(response.status).toBe(200);
+      expect((await response.json()).sources).toHaveLength(1);
+      expect(buildings).not.toHaveBeenCalled();
+      expect(ships).not.toHaveBeenCalled();
+    } finally { buildings.mockRestore(); ships.mockRestore(); }
+  });
+
+  test("Supply sources fail closed for cold indexes, invalid wallets, and unowned targets", async () => {
+    const cold = createRequestHandler({ config: configuredTestConfig });
+    expect((await cold(new Request(`http://localhost/wallet/${player}/supply-sources?planetId=7`))).status).toBe(503);
+    const warm = createRequestHandler({ config: configuredTestConfig, indexer: testIndexer() });
+    expect((await warm(new Request("http://localhost/wallet/not-a-wallet/supply-sources?planetId=7"))).status).toBe(400);
+    expect((await warm(new Request(`http://localhost/wallet/${player}/supply-sources?planetId=999`))).status).toBe(503);
+  });
+
   test("returns indexed shipyard context before transient RPC rate limit fallbacks", async () => {
     const response = await createRequestHandler({
       config: configuredTestConfig,
@@ -6316,6 +6588,17 @@ describe("Veydrift backend", () => {
         { allianceId: "1", requester: applicant, requesterTotalScore: "0", requestedAt: "1770003000" }
       ]
     });
+    const handler = createRequestHandler({ config: configuredTestConfig, chainReader, indexer });
+    const compactResponse = await handler(new Request(`http://localhost/wallet/${player}/alliance?view=summary`));
+    const compact = await compactResponse.json();
+    expect(compactResponse.status).toBe(200);
+    expect(compact.members).toEqual(body.members);
+    expect(compact.profile).toEqual(body.profile);
+    expect(compact.directory[0].members).toBeUndefined();
+    expect(body.directory[0].members).toHaveLength(1);
+    const publicResponse = await handler(new Request("http://localhost/alliance/1"));
+    expect(publicResponse.status).toBe(200);
+    expect((await publicResponse.json()).alliance.members).toEqual(body.members);
   });
 
   test("fails Alliance GETs closed until paid invite history is complete", async () => {
@@ -7741,8 +8024,10 @@ describe("Veydrift backend", () => {
       topics: [planetSettledTopic, topic(7n)],
       data: abiWords(1000n, 900n, 800n, BigInt(chainTimestamp))
     });
-    const whileWatermarkLags = await handler(new Request(`http://localhost/wallet/${player}/infrastructure`));
-    expect(whileWatermarkLags.status).toBe(503);
+    for (const route of ["infrastructure", "shipyard", "defenses", "research", "supply-sources"]) {
+      const whileWatermarkLags = await handler(new Request(`http://localhost/wallet/${player}/${route}`));
+      expect(whileWatermarkLags.status).toBe(503);
+    }
 
     indexer.recordResourceProjectionWatermark("131", chainTimestamp.toString(), `0x${"b".repeat(64)}`);
     const afterPublication = await handler(new Request(`http://localhost/wallet/${player}/infrastructure`));
@@ -10573,8 +10858,10 @@ describe("Veydrift backend", () => {
       return technologyLevels(wallet);
     }) as SettlementIndexer["technologyLevels"];
     indexer.moonState = (() => {
-      throw new Error("no-moon rankings must not hydrate the full moon read model");
+      throw new Error("rankings must not hydrate the full moon read model");
     }) as SettlementIndexer["moonState"];
+    indexer.hasMoon = (planetId: string) => planetId === "11";
+    indexer.moonResources = () => ({ metal: "12", crystal: "34", deuterium: "56" });
     indexer.stationedDefenderForecastTimelineForPlanet = (() => {
       throw new Error("highscore discovery rows must defer stationed-defender forecasts until target selection");
     }) as SettlementIndexer["stationedDefenderForecastTimelineForPlanet"];
@@ -10594,6 +10881,11 @@ describe("Veydrift backend", () => {
       rank: 2,
       wallet: owners[1]
     });
+    expect(body.rankings.total[0].planets[0].moon).toEqual({
+      exists: true,
+      resources: { metal: "12", crystal: "34", deuterium: "56" },
+      resourcesAsOfNow: { metal: "12", crystal: "34", deuterium: "56" }
+    });
     expect(body.rankings.economy).toEqual([]);
     expect(body.currentPlayer.rankings.total).toMatchObject({
       rank: 4,
@@ -10602,6 +10894,39 @@ describe("Veydrift backend", () => {
     expect(body.currentPlayer.rankings.economy).toBeNull();
     expect(detailPlanetIds).toEqual(new Set(["11"]));
     expect(detailOwners).toEqual(new Set([owners[1]!]));
+    detailPlanetIds.clear();
+    detailOwners.clear();
+    const compactResponse = await handler(new Request(`http://localhost/highscores?category=total&page=2&pageSize=1&currentWallet=${owners[3]}&includeAttackProtection=true&view=scoreboard`));
+    const compact = await compactResponse.json();
+    expect(compactResponse.status).toBe(200);
+    expect(compact.rankings.total[0]).toMatchObject({
+      rank: 2, wallet: owners[1], score: body.rankings.total[0].score,
+      planets: [], homePlanet: null
+    });
+    expect(compact.currentPlayer).toEqual(body.currentPlayer);
+    expect(detailPlanetIds.size).toBe(0);
+    expect(detailOwners.size).toBe(0);
+
+    const defaultRanking = await (await handler(new Request("http://localhost/highscores?pageSize=1"))).json();
+    expect(defaultRanking.rankings.total).toHaveLength(1);
+    expect(defaultRanking.rankings.economy).toEqual([]);
+    const allRankings = await (await handler(new Request("http://localhost/highscores?category=all&pageSize=1"))).json();
+    expect(allRankings.rankings.total).toHaveLength(1);
+    expect(allRankings.rankings.economy).toHaveLength(1);
+
+    indexer.settledPlanetsByOwner = () => { throw new Error("player score must not scan every wallet"); };
+    const originalHighscoreForWallet = indexer.highscoreForWallet.bind(indexer);
+    indexer.highscoreForWallet = () => { throw new Error("ranked player must reuse the leaderboard score"); };
+    const playerResponse = await handler(new Request(`http://localhost/wallet/${owners[1]}/highscore`));
+    const playerBody = await playerResponse.json();
+    expect(playerResponse.status).toBe(200);
+    expect(playerBody.entry).toMatchObject({ wallet: owners[1], score: body.rankings.total[0].score, rank: 2 });
+    expect(playerBody.entry.profile).toEqual(indexer.playerProfile(owners[1]!));
+    indexer.highscoreForWallet = originalHighscoreForWallet;
+    const unrankedWallet = "0x9999999999999999999999999999999999999999";
+    const unranked = await handler(new Request(`http://localhost/wallet/${unrankedWallet}/highscore`));
+    expect(unranked.status).toBe(200);
+    expect((await unranked.json()).entry).toMatchObject({ wallet: unrankedWallet, rank: 0, totalUserScore: "0" });
   });
 
   test("keeps production-shaped cold and warm highscore reads below 300ms", async () => {
@@ -11159,6 +11484,19 @@ describe("Veydrift backend", () => {
       position: 8,
       key: "2:44:8"
     });
+  });
+
+  test("validates system range integers before returning data and preserves zero radius", async () => {
+    const handler = createRequestHandler({ config: configuredTestConfig, chainReader: new MockChainReader() });
+    for (const query of ["radius=oops", "radius=-1", "radius=1junk", "radius=1.5", "radius=", "radius=9007199254740992", "center=0", "center=500", "center=oops", "galaxy=0", "galaxy=10", "galaxy=oops"]) {
+      const response = await handler(new Request(`http://localhost/universe/systems?${query}`));
+      expect(response.status).toBe(400);
+    }
+    for (const [query, count] of [["radius=0", 1], ["center=499&radius=1", 2], ["center=44&radius=999", 21], ["", 2]] as const) {
+      const response = await handler(new Request(`http://localhost/universe/systems?${query}`));
+      expect(response.status).toBe(200);
+      expect((await response.json()).systems).toHaveLength(count);
+    }
   });
 
   test("gzips cached JSON responses when the client accepts gzip", async () => {
@@ -11852,37 +12190,3 @@ async function resolvesWithin<T>(promise: Promise<T>, timeoutMs: number): Promis
   }
   return result.value;
 }
-
-describe("shouldRecoverFailedReconciliation (VEY-KANEO-461)", () => {
-  test("recovers a warm DB carrying a failed reconcile", () => {
-    expect(shouldRecoverFailedReconciliation({
-      lastReconciledAt: "2026-06-11T09:44:41.430Z",
-      lastReconciliationError: "Unexpected end of JSON input",
-      reconciliationInProgress: false
-    })).toBe(true);
-  });
-
-  test("leaves a healthy warm DB untouched (no reintroduced sweep)", () => {
-    expect(shouldRecoverFailedReconciliation({
-      lastReconciledAt: "2026-06-11T09:44:41.430Z",
-      lastReconciliationError: null,
-      reconciliationInProgress: false
-    })).toBe(false);
-  });
-
-  test("does not fire on a cold DB (cold-start path owns that)", () => {
-    expect(shouldRecoverFailedReconciliation({
-      lastReconciledAt: null,
-      lastReconciliationError: "Unexpected end of JSON input",
-      reconciliationInProgress: false
-    })).toBe(false);
-  });
-
-  test("waits for an in-progress reconcile instead of stacking another", () => {
-    expect(shouldRecoverFailedReconciliation({
-      lastReconciledAt: "2026-06-11T09:44:41.430Z",
-      lastReconciliationError: "Unexpected end of JSON input",
-      reconciliationInProgress: true
-    })).toBe(false);
-  });
-});

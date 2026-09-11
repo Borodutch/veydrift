@@ -1,26 +1,27 @@
 import { useState } from "preact/hooks";
+import { supplyResourceShortfall, type SupplyResources } from "../batchSupplyPlanner";
+import { formatMissingResources } from "../buildingDetails";
+import { technologyLevelsByKey } from "../chainState";
+import type { ConstructionProgress } from "../constructionProgress";
+import { formatStatValue } from "../numberFormat";
 import type { BuildingKey, DefenseKey, ResearchKey, Resources, UnlockRequirement } from "../playableMvp";
 import { canAfford, defenseCatalog, defenseCombatStats, missingUnlockRequirements } from "../playableMvp";
-import { formatMissingResources } from "../buildingDetails";
 import { activeProductionQueue } from "../productionQueueFallback";
-import { supplyResourceShortfall, type SupplyResources } from "../batchSupplyPlanner";
 import { walletRecoveryActionMessage, type ChainDefenseState } from "../walletFlow";
+import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailableNotice";
+import { DefenseSkeleton } from "./LoadingSkeletons";
 import {
   adaptProductionItems,
   maxAffordableProductionQuantity,
   Notice,
+  productionQueueViewModel,
   ProductionSection,
+  scaleProductionCost,
   type ProductionCatalogItem,
   type ProductionQuantityInput,
   type ProductionRequirementState,
-  productionQueueViewModel,
-  scaleProductionCost,
 } from "./ProductionCatalog";
-import { refreshButtonState } from "./PageHeader";
 import type { RequirementTarget } from "./RequirementFlairs";
-import { ProductionCatalogSkeleton } from "./LoadingSkeletons";
-import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailableNotice";
-import type { ConstructionProgress } from "../constructionProgress";
 
 type DefenseActionState =
   | { status: "idle" }
@@ -55,9 +56,6 @@ const groupLabels = {
   missile: "Missiles",
 } as const;
 
-export function defenseRefreshButtonState(loading: boolean): { disabled: boolean; label: "Refresh" | "Refreshing" } {
-  return refreshButtonState(loading);
-}
 
 export function shouldShowDefenseInitialLoader({
   defenseState,
@@ -107,7 +105,7 @@ export function DefensePage({
       />
 
       {initialLoading ? (
-        <ProductionCatalogSkeleton groups={[2, 4, 2, 2]} label="Loading defenses" />
+        <DefenseSkeleton />
       ) : (
         <ProductionSection
           actionPending={actionState.status === "pending"}
@@ -225,15 +223,15 @@ export function defenseProductionItems({
   transactionUnavailableReason?: string | undefined;
 }): ProductionCatalogItem<DefenseKey>[] {
   return adaptProductionItems(defenseCatalog, quantities, (defense, { quantity, quantityValid }) => {
-    const chainDefense = (defenseState?.launchableDefenses ?? defenseState?.defenses)
-      ?.find((item) => item.id === defense.id);
+    const chainDefense = defenseState?.defenses.find((item) => item.id === defense.id);
+    const availableCount = defenseState?.launchableDefenses?.find((item) => item.id === defense.id)?.count;
     // The contract lazily settles production.  The API projects whole units that
     // have elapsed from a timed queue, while the canonical defense count remains
     // unchanged until the next state-changing call.  Show that effective count
     // here so a partially completed batch cannot read "19 deployed / 2 of 4
     // complete" at the same time.
     const deployed = productionAvailable && chainDefense
-      ? chainDefense.count + (defenseState?.launchableDefenses ? 0 : completedDefenseCount(defense.id, queue))
+      ? (defenseState?.launchableDefenses ? availableCount ?? 0 : chainDefense.count + completedDefenseCount(defense.id, queue))
       : undefined;
     const baseCost = productionAvailable && chainDefense
       ? resolveDefenseUnitCost(defense.baseCost, chainDefense.cost)
@@ -294,9 +292,6 @@ export function defenseProductionItems({
   });
 }
 
-function formatStatValue(value: number | string): string {
-  return typeof value === "number" ? value.toLocaleString("en-US") : value;
-}
 
 export function getMissingDefenseRequirements(
   defense: (typeof defenseCatalog)[number],
@@ -505,31 +500,4 @@ export function resolveDefenseUnitCost(
 
 function hasResourceCost(resources: Resources): boolean {
   return resources.metal !== 0 || resources.crystal !== 0 || resources.deuterium !== 0;
-}
-
-const technologyIdByKey: Partial<Record<string, number>> = {
-  energy: 0,
-  laser: 1,
-  ion: 2,
-  combustionDrive: 3,
-  computer: 4,
-  weapons: 5,
-  shielding: 6,
-  armor: 7,
-  hyperspace: 8,
-  impulseDrive: 9,
-  hyperspaceDrive: 10,
-  plasma: 11,
-  astrophysics: 12,
-  intergalacticResearchNetwork: 13,
-  graviton: 14,
-};
-
-function technologyLevelsByKey(levels: Record<string, number> | undefined) {
-  return Object.fromEntries(
-    Object.entries(technologyIdByKey).map(([key, id]) => [
-      key,
-      id === undefined ? 0 : levels?.[id.toString()] ?? 0,
-    ]),
-  );
 }
