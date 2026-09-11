@@ -1,6 +1,11 @@
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import {
+  MOON_ANIMATION_BASE,
+  MOON_ANIMATION_MASTER_WIDTH,
+  MOON_ANIMATION_TYPES,
+  MOON_ANIMATION_VERSION,
+  MOON_ANIMATION_WIDTHS,
   PLANET_ANIMATION_BASE,
   PLANET_ANIMATION_TYPES,
   PLANET_ANIMATION_VERSION,
@@ -142,20 +147,36 @@ export function planetAnimationCacheSize() {
 }
 
 export function planetAnimationRoute(url) {
-  const match = url.pathname.match(new RegExp(`^${PLANET_ANIMATION_BASE}/([a-z-]+)\\.webp$`));
-  if (!match) return null;
-  const planetType = match[1];
+  const configs = [
+    {
+      base: PLANET_ANIMATION_BASE,
+      masterWidth: 1024,
+      types: PLANET_ANIMATION_TYPES,
+      version: PLANET_ANIMATION_VERSION,
+      widths: PLANET_ANIMATION_WIDTHS,
+    },
+    {
+      base: MOON_ANIMATION_BASE,
+      masterWidth: MOON_ANIMATION_MASTER_WIDTH,
+      types: MOON_ANIMATION_TYPES,
+      version: MOON_ANIMATION_VERSION,
+      widths: MOON_ANIMATION_WIDTHS,
+    },
+  ];
+  const config = configs.find(({ base }) => url.pathname.startsWith(`${base}/`) && url.pathname.endsWith(".webp"));
+  if (!config) return null;
+  const assetType = url.pathname.slice(config.base.length + 1, -".webp".length);
   const size = Number(url.searchParams.get("size"));
   const version = url.searchParams.get("v");
 
-  if (!PLANET_ANIMATION_TYPES.includes(planetType)) return { error: "Unknown planet type", status: 404 };
-  if (!PLANET_ANIMATION_WIDTHS.includes(size)) return { error: "Unsupported planet animation size", status: 400 };
-  if (version !== PLANET_ANIMATION_VERSION) return { error: "Unsupported planet animation version", status: 400 };
-  return { planetType, size, version };
+  if (!config.types.includes(assetType)) return { error: "Unknown animation asset", status: 404 };
+  if (!config.widths.includes(size)) return { error: "Unsupported animation size", status: 400 };
+  if (version !== config.version) return { error: "Unsupported animation version", status: 400 };
+  return { ...config, assetType, size };
 }
 
-async function resizePlanetAnimation(planetType, size) {
-  const sourcePath = `${PLANET_ANIMATION_BASE}/${planetType}.webp`;
+async function resizePlanetAnimation(base, assetType, size) {
+  const sourcePath = `${base}/${assetType}.webp`;
   const source = await readFile(existingAssetUrl(sourcePath));
   const sharp = await getSharp();
   return sharp(source, { animated: true })
@@ -173,15 +194,19 @@ export async function planetAnimationResponse(url) {
     "cache-control": "public, max-age=31536000, immutable",
     "content-type": "image/webp",
   };
-  if (route.size === 1024) {
-    const sourcePath = `${PLANET_ANIMATION_BASE}/${route.planetType}.webp`;
+  if (route.size === route.masterWidth) {
+    const sourcePath = `${route.base}/${route.assetType}.webp`;
     return new Response(Bun.file(existingAssetUrl(sourcePath)), { headers });
   }
 
-  const key = `${route.version}:${route.planetType}:${route.size}`;
+  if (route.size === 1024) {
+    return new Response(await resizePlanetAnimation(route.base, route.assetType, route.size), { headers });
+  }
+
+  const key = `${route.version}:${route.base}:${route.assetType}:${route.size}`;
   let body = planetAnimationCache.get(key);
   if (!body) {
-    body = resizePlanetAnimation(route.planetType, route.size);
+    body = resizePlanetAnimation(route.base, route.assetType, route.size);
     planetAnimationCache.set(key, body);
     body.catch(() => planetAnimationCache.delete(key));
   }

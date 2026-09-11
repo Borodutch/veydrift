@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { PLANET_ANIMATION_VERSION } from "../planetAnimationConfig";
+import { MOON_ANIMATION_VERSION, PLANET_ANIMATION_VERSION } from "../planetAnimationConfig";
 import { moonImageForType } from "../src/gameAssets";
 import type { PlanetType } from "../src/types";
 import { getImageDimensions, getSizedImageSrc, getSrcSet } from "../src/utils/imageSizes";
@@ -28,7 +28,7 @@ describe("responsive image size manifest", () => {
     expect(getImageDimensions(src)).toBeUndefined();
   });
 
-  test("serves canonical typed moon assets through cached responsive variants", () => {
+  test("serves canonical typed moon animations through cached responsive variants", () => {
     const canonicalTypes: PlanetType[] = [
       "frozen-ice",
       "cold-tundra",
@@ -42,13 +42,12 @@ describe("responsive image size manifest", () => {
     for (const type of canonicalTypes) {
       const src = moonImageForType(type);
 
-      expect(src).toBe(`/assets/game/style-pass/generated/moons/${type}.webp`);
+      expect(src).toBe(`/assets/game/moon-animations/${type}.webp`);
       expect(getImageDimensions(src)).toEqual({ width: 1254, height: 1254 });
       expect(existsSync(join(PUBLIC_DIR, src.replace("/assets/", "assets/"))), type).toBe(true);
 
       for (const width of [64, 256, 512]) {
-        const variant = src.replace("/assets/game/", `/assets/game/sizes/${width}/`);
-        expect(getSrcSet(src), type).toContain(`${variant} ${width}w`);
+        expect(getSrcSet(src), type).toContain(`${src}?size=${width}&v=${MOON_ANIMATION_VERSION} ${width}w`);
       }
     }
   });
@@ -63,6 +62,18 @@ describe("responsive image size manifest", () => {
       `${src}?size=512&v=${PLANET_ANIMATION_VERSION} 512w`,
     ].join(", "));
     expect(getImageDimensions(src)).toEqual({ width: 1024, height: 1024 });
-    expect(() => getSizedImageSrc(src, 123)).toThrow("Unsupported planet animation width");
+    expect(() => getSizedImageSrc(src, 123)).toThrow("Unsupported animation width");
+  });
+
+  test("requests explicit cached widths for animated moons", () => {
+    const src = "/assets/game/moon-animations/cratered-cyan-moon.webp";
+
+    expect(getSizedImageSrc(src, 256)).toBe(`${src}?size=256&v=${MOON_ANIMATION_VERSION}`);
+    expect(getSrcSet(src)).toBe([
+      `${src}?size=64&v=${MOON_ANIMATION_VERSION} 64w`,
+      `${src}?size=256&v=${MOON_ANIMATION_VERSION} 256w`,
+      `${src}?size=512&v=${MOON_ANIMATION_VERSION} 512w`,
+    ].join(", "));
+    expect(getImageDimensions(src)).toEqual({ width: 1254, height: 1254 });
   });
 });

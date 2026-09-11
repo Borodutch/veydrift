@@ -1,3 +1,4 @@
+import { MOON_ANIMATION_BASE } from "../planetAnimationConfig";
 import type { DefenseKey, ResearchKey, ShipKey } from "./playableMvp";
 import type { PlanetType } from "./types";
 
@@ -12,7 +13,7 @@ export type GameAssetMapping<Key extends string> = {
 const SHIP_BASE = "/assets/game/style-pass/generated/ships";
 const DEFENSE_BASE = "/assets/game/style-pass/generated/defenses";
 const RESEARCH_BASE = "/assets/game/style-pass/generated/research";
-const MOON_BASE = "/assets/game/style-pass/generated/moons";
+const MOON_BASE = MOON_ANIMATION_BASE;
 
 export const moonAsset = {
   key: "frozenIceMoon",

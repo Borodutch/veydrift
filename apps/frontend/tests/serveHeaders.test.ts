@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import sharp from "sharp";
-import { PLANET_ANIMATION_VERSION } from "../planetAnimationConfig";
+import { MOON_ANIMATION_VERSION, PLANET_ANIMATION_VERSION } from "../planetAnimationConfig";
 import { planetArtTypeForCoordinates } from "../src/data/mockUniverse";
 import { paidAllianceInviteCommitment, paidAllianceInviteLink } from "../src/walletFlow";
 import {
@@ -191,6 +191,44 @@ describe("frontend static server headers", () => {
     expect(response?.status).toBe(200);
     expect(planetAnimationCacheSize()).toBe(0);
     expect(response?.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
+  });
+
+  test("resizes and caches every animated moon frame", async () => {
+    clearPlanetAnimationCache();
+    const url = new URL(`http://localhost/assets/game/moon-animations/cratered-cyan-moon.webp?size=64&v=${MOON_ANIMATION_VERSION}`);
+    const first = await planetAnimationResponse(url);
+    const second = await planetAnimationResponse(url);
+
+    expect(first?.status).toBe(200);
+    expect(second?.status).toBe(200);
+    expect(planetAnimationCacheSize()).toBe(1);
+    expect(first?.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
+    const metadata = await sharp(Buffer.from(await first!.arrayBuffer()), { animated: true }).metadata();
+    expect(metadata.width).toBe(64);
+    expect(metadata.pageHeight).toBe(64);
+    expect(metadata.pages).toBe(96);
+  });
+
+  test("resizes a 1024px moon master without retaining the large derivative", async () => {
+    clearPlanetAnimationCache();
+    const url = new URL(`http://localhost/assets/game/moon-animations/cratered-cyan-moon.webp?size=1024&v=${MOON_ANIMATION_VERSION}`);
+    const response = await planetAnimationResponse(url);
+
+    expect(response?.status).toBe(200);
+    expect(planetAnimationCacheSize()).toBe(0);
+    expect(response?.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
+    const metadata = await sharp(Buffer.from(await response!.arrayBuffer()), { animated: true }).metadata();
+    expect(metadata.width).toBe(1024);
+    expect(metadata.pageHeight).toBe(1024);
+    expect(metadata.pages).toBe(96);
+  }, 20_000);
+
+  test("rejects unknown moon animation variants", async () => {
+    const unknownType = await planetAnimationResponse(new URL(`http://localhost/assets/game/moon-animations/not-a-moon.webp?size=64&v=${MOON_ANIMATION_VERSION}`));
+    const unknownVersion = await planetAnimationResponse(new URL("http://localhost/assets/game/moon-animations/frozen-ice.webp?size=64&v=stale"));
+
+    expect(unknownType?.status).toBe(404);
+    expect(unknownVersion?.status).toBe(400);
   });
 
   test("falls back quickly when mission share metadata is slow", async () => {

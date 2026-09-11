@@ -1,5 +1,9 @@
 import imageSizeManifest from "../../public/assets/game/sizes/manifest.json";
 import {
+  MOON_ANIMATION_BASE,
+  MOON_ANIMATION_MASTER_WIDTH,
+  MOON_ANIMATION_VERSION,
+  MOON_ANIMATION_WIDTHS,
   PLANET_ANIMATION_BASE,
   PLANET_ANIMATION_VERSION,
   PLANET_ANIMATION_WIDTHS,
@@ -27,12 +31,27 @@ function isPlanetAnimation(src: string): boolean {
   return src.startsWith(`${PLANET_ANIMATION_BASE}/`) && src.endsWith(".webp");
 }
 
-export function getSizedImageSrc(src: string, width: number): string {
-  if (!isPlanetAnimation(src)) return src;
-  if (!(PLANET_ANIMATION_WIDTHS as readonly number[]).includes(width)) {
-    throw new Error(`Unsupported planet animation width: ${width}`);
+function isMoonAnimation(src: string): boolean {
+  return src.startsWith(`${MOON_ANIMATION_BASE}/`) && src.endsWith(".webp");
+}
+
+function animationConfig(src: string) {
+  if (isPlanetAnimation(src)) {
+    return { intrinsicSize: 1024, version: PLANET_ANIMATION_VERSION, widths: PLANET_ANIMATION_WIDTHS };
   }
-  return `${src}?size=${width}&v=${PLANET_ANIMATION_VERSION}`;
+  if (isMoonAnimation(src)) {
+    return { intrinsicSize: MOON_ANIMATION_MASTER_WIDTH, version: MOON_ANIMATION_VERSION, widths: MOON_ANIMATION_WIDTHS };
+  }
+  return undefined;
+}
+
+export function getSizedImageSrc(src: string, width: number): string {
+  const config = animationConfig(src);
+  if (!config) return src;
+  if (!(config.widths as readonly number[]).includes(width)) {
+    throw new Error(`Unsupported animation width: ${width}`);
+  }
+  return `${src}?size=${width}&v=${config.version}`;
 }
 
 /**
@@ -43,8 +62,9 @@ export function getSizedImageSrc(src: string, width: number): string {
  *   // => "/assets/game/sizes/64/planets/lush-temperate.webp 64w, ... 1024w"
  */
 export function getSrcSet(originalSrc: string): string {
-  if (isPlanetAnimation(originalSrc)) {
-    return PLANET_ANIMATION_WIDTHS
+  const animation = animationConfig(originalSrc);
+  if (animation) {
+    return animation.widths
       .filter((width) => width < 1024)
       .map((width) => `${getSizedImageSrc(originalSrc, width)} ${width}w`)
       .join(", ");
@@ -64,7 +84,8 @@ export function getSrcSet(originalSrc: string): string {
 }
 
 export function getImageDimensions(originalSrc: string): Pick<ImageSizeManifestEntry, "width" | "height"> | undefined {
-  if (isPlanetAnimation(originalSrc)) return { width: 1024, height: 1024 };
+  const animation = animationConfig(originalSrc);
+  if (animation) return { width: animation.intrinsicSize, height: animation.intrinsicSize };
   const entry = manifest[originalSrc];
   if (!entry) return undefined;
   return { width: entry.width, height: entry.height };
