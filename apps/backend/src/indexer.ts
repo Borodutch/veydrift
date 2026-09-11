@@ -6215,6 +6215,13 @@ export class SettlementIndexer {
         ON indexed_unit_count_event_logs (block_number, log_index);
       CREATE INDEX IF NOT EXISTS indexed_unit_count_event_logs_topic1_block_idx
         ON indexed_unit_count_event_logs (json_extract(event_json, '$.topics[1]'), block_number, log_index);
+      CREATE INDEX IF NOT EXISTS indexed_unit_count_event_logs_latest_unit_idx
+        ON indexed_unit_count_event_logs (
+          lower(json_extract(event_json, '$.topics[0]')),
+          lower(json_extract(event_json, '$.topics[1]')),
+          lower(json_extract(event_json, '$.topics[2]')),
+          CAST(block_number AS INTEGER) DESC, CAST(log_index AS INTEGER) DESC
+        );
       CREATE TABLE IF NOT EXISTS indexed_planet_queues (
         queue_key TEXT PRIMARY KEY,
         kind TEXT NOT NULL,
