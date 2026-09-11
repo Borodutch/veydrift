@@ -1197,6 +1197,7 @@ test("Mission Control detail links use the router without replacing the document
     await waitForExpression(`${selector} !== null`);
     await clickExpressionWithTrustedPointer(selector);
     await waitForExpression(`location.pathname === '${path}' && document.querySelector('[data-mission-control-page]') === null`);
+    await waitForExpression(`document.querySelector('[data-celestial-detail="${path.startsWith('/moon/') ? 'moon' : 'planet'}"]') !== null`);
     assert.equal(await evaluate("window.detailNavigationMarker !== undefined && window.detailNavigationMarker === window.detailNavigationOriginal"), true);
     // Use the browser's Back action: rapid script-initiated traversals can be
     // throttled by Chrome independently of the app's router.
