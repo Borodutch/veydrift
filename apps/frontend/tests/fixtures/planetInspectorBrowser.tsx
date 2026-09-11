@@ -463,7 +463,18 @@ globalThis.fetch = (async (input, init) => {
 
   if (systemMatch) {
     const key = `${systemMatch[1]}:${systemMatch[2]}`;
-    return Response.json(publicSystems.get(key) ?? { galaxy: Number(systemMatch[1]), system: Number(systemMatch[2]), planets: [] });
+    const payload = publicSystems.get(key) ?? { galaxy: Number(systemMatch[1]), system: Number(systemMatch[2]), planets: [] };
+    if (fixtureParams.get("attackIntelProbe") === "true") {
+      return Response.json({ ...payload, planets: payload.planets.map(planet => ({
+        ...planet,
+        key: `${planet.galaxy}:${planet.system}:${planet.position}`,
+        publicState: url.searchParams.get("detail") === "full" ? {
+          ...planet.publicState, research: [], stationedDefenderForecastTimeline: [], stationedDefenderTimelineComplete: true,
+        } : undefined,
+        publicMoonState: url.searchParams.get("detail") === "full" ? planet.publicMoonState : undefined,
+      })) });
+    }
+    return Response.json(payload);
   }
 
   if (url.pathname.includes("/attack-protection")) {

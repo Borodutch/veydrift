@@ -687,7 +687,8 @@ export function joinAttackTargetFromSystemPayload(payload: unknown, targetPlanet
     return undefined;
   }
   return planetsFromSystemResponse(payload as ApiSystemResponse).find(
-    (planet) => planet.id === targetPlanetId || (planet.galaxy === coords.galaxy && planet.system === coords.system && planet.position === coords.position),
+    (planet) => planet.occupiedBy?.planetId === targetPlanetId
+      && planet.galaxy === coords.galaxy && planet.system === coords.system && planet.position === coords.position,
   );
 }
 
@@ -1854,12 +1855,6 @@ type PendingGalaxyMission = {
   originPlanet: ManagedPlanetResponse | undefined;
 };
 
-type PendingAttackProtection = {
-  targetPlanetId: string;
-  status: "checking" | "ready" | "error";
-  protection?: AttackProtectionStatus | undefined;
-};
-
 export function missionDraftFor(
   action: GalaxyAction,
   target: Planet | undefined,
@@ -2847,7 +2842,27 @@ export function PlayableMvpApp({
     setBatchSupplySubmitting(false);
   }, [account, backendData]);
 
-  const [pendingAttackProtection, setPendingAttackProtection] = useState<PendingAttackProtection | null>(null);
+  const pendingAttackTargetId = pendingGalaxyMission
+    && (pendingGalaxyMission.action.kind === "attack" || pendingGalaxyMission.action.kind === "missileAttack")
+    ? pendingGalaxyMission.target?.occupiedBy?.planetId
+    : undefined;
+  const attackTargetQuery = useBackendDataQuery(
+    backendData && pendingAttackTargetId && pendingGalaxyMission
+      ? backendData.queries.system<ApiSystemResponse>(pendingGalaxyMission.coords.galaxy, pendingGalaxyMission.coords.system, { detail: "full" })
+      : undefined,
+  );
+  const attackProtectionQuery = useBackendDataQuery(
+    backendData && account && pendingAttackTargetId
+      ? backendData.queries.attackProtection(account, pendingAttackTargetId)
+      : undefined,
+  );
+  // Read the currently selected query instead of copying an asynchronous result
+  // into the mission draft. Coordinate keys and contract planet IDs are distinct.
+  const pendingMissionTarget = useMemo(() => pendingAttackTargetId && pendingGalaxyMission
+    ? joinAttackTargetFromSystemPayload(attackTargetQuery.snapshot?.data, pendingAttackTargetId, pendingGalaxyMission.coords)
+      ?? pendingGalaxyMission.target
+    : pendingGalaxyMission?.target,
+  [attackTargetQuery.snapshot?.data, pendingAttackTargetId, pendingGalaxyMission]);
   const missionComposerRefreshKeyRef = useRef<string | null>(null);
   // VEY-KANEO-431: a join-attack awaiting fleet selection. When set, the same
   // fleet picker the Attack action uses is shown so the player chooses which
@@ -3129,7 +3144,6 @@ export function PlayableMvpApp({
     // Keeping this cleanup here prevents a stale composer from rendering over
     // `/raid-finder` after popstate/hashchange or a cached SPA transition.
     setPendingGalaxyMission(null);
-    setPendingAttackProtection(null);
     setPendingJoinAttack(null);
     setPendingAcsDefend(null);
     setInspectRoute(route);
@@ -5037,7 +5051,6 @@ export function PlayableMvpApp({
       const pending = missionDraftFor(action, target, coords, selectedManagedPlanet, activeBodyKind, defaults);
       if (!pending) return;
       setGalaxyAction({ status: "idle" });
-      setPendingAttackProtection(null);
       setPendingGalaxyMission(pending);
     },
     [activeBodyKind, selectedManagedPlanet],
@@ -5168,49 +5181,6 @@ export function PlayableMvpApp({
     [account, allianceState?.membership.allianceId, defenseState, onChainSettlement?.homePlanetId, selectedMissionShipyardState],
   );
 
-  const hydratePendingAttackTarget = useCallback(
-    (targetPlanetId: string, coords: Coordinates) => {
-      if (!apiBaseUrl || !account) return;
-      setPendingAttackProtection((current) => (current?.targetPlanetId === targetPlanetId && current.status !== "error" ? current : { targetPlanetId, status: "checking" }));
-      void backendData!
-        .system(coords.galaxy, coords.system, { detail: "full" })
-        .then((payload) => {
-          const hydratedTarget = joinAttackTargetFromSystemPayload(payload, targetPlanetId, coords);
-          if (!hydratedTarget) return;
-          setPendingGalaxyMission((current) => (
-            (current?.action.kind === "attack" || current?.action.kind === "missileAttack")
-              && current.target?.id === targetPlanetId
-              ? { ...current, target: hydratedTarget }
-              : current
-          ));
-        })
-        .catch((error) => console.error(error));
-      void backendData!
-        .attackProtection(account, targetPlanetId)
-        .then((protection) => {
-          setPendingAttackProtection((current) => (current?.targetPlanetId === targetPlanetId ? { targetPlanetId, status: "ready", protection } : current));
-        })
-        .catch((error) => {
-          console.error(error);
-          setPendingAttackProtection((current) => (current?.targetPlanetId === targetPlanetId ? { targetPlanetId, status: "error" } : current));
-        });
-    },
-    [account, apiBaseUrl],
-  );
-
-  useEffect(() => {
-    const targetPlanetId = pendingGalaxyMission
-      && (pendingGalaxyMission.action.kind === "attack" || pendingGalaxyMission.action.kind === "missileAttack")
-      ? pendingGalaxyMission.target?.occupiedBy?.planetId
-      : undefined;
-    if (!targetPlanetId || !pendingGalaxyMission) {
-      if (pendingAttackProtection !== null) setPendingAttackProtection(null);
-      return;
-    }
-    if (pendingAttackProtection?.targetPlanetId === targetPlanetId) return;
-    hydratePendingAttackTarget(targetPlanetId, pendingGalaxyMission.coords);
-  }, [hydratePendingAttackTarget, pendingAttackProtection, pendingGalaxyMission]);
-
   const handleRankingsMoonAction = useCallback(
     (action: GalaxyAction, planet: HighscorePlanet, entry: HighscoreEntry) => handleGalaxyAction(
       action, highscorePlanetForMission(planet, entry), planet.coordinates, { targetIsMoon: true },
@@ -5266,15 +5236,8 @@ export function PlayableMvpApp({
     (target: RaidTarget) => {
       const action = raidFinderAttackAction(target);
       handleGalaxyAction(action, raidTargetPlanetForMission(target), target.coordinates);
-      if (!action.enabled || target.stationedDefenderTimelineComplete) return;
-
-      // Highscore/Raid Finder rows are intentionally compact and older API deployments do not carry
-      // the complete stationed-defense forecast timeline. Hydrate the selected target from the public
-      // system payload so visible base forces, scheduled defenders, and combat tech all feed the same
-      // exact battle preview instead of leaving DEF/report availability unknown.
-      hydratePendingAttackTarget(target.planetId, target.coordinates);
     },
-    [handleGalaxyAction, hydratePendingAttackTarget, raidFinderAttackAction],
+    [handleGalaxyAction, raidFinderAttackAction],
   );
 
   const raidFinderHarvestAction = useCallback(
@@ -6316,23 +6279,20 @@ export function PlayableMvpApp({
 
     if (pendingGalaxyMission) {
       const pendingMissionOriginPlanet = pendingGalaxyMission.originPlanet ?? selectedManagedPlanet;
-      const pendingAttackTargetId = pendingGalaxyMission.action.kind === "attack"
-        || pendingGalaxyMission.action.kind === "missileAttack"
-        ? pendingGalaxyMission.target?.occupiedBy?.planetId
-        : undefined;
+      const pendingAttackProtection = attackProtectionQuery.snapshot?.data;
       const pendingAttackProtectionBlocker = pendingAttackTargetId
-        ? pendingAttackProtection?.targetPlanetId !== pendingAttackTargetId || pendingAttackProtection?.status === "checking"
-          ? "Checking this target's active-war roster and protection rules."
-          : pendingAttackProtection?.status === "error"
-            ? "Could not verify this target's active-war protection. Retry before launching an attack."
+        ? attackProtectionQuery.snapshot?.error
+          ? "Could not verify this target's active-war protection. Retry before launching an attack."
+          : !pendingAttackProtection
+            ? "Checking this target's active-war roster and protection rules."
             : attackProtectionSubmitBlocker(
-                pendingAttackProtection?.protection,
+                pendingAttackProtection,
                 { ignoreBashingLimit: pendingGalaxyMission.action.kind === "missileAttack" },
               )
         : undefined;
       const pendingAttackWarNotice =
-        Boolean(pendingAttackTargetId) && pendingAttackProtection?.targetPlanetId === pendingAttackTargetId && pendingAttackProtection?.status === "ready" && pendingAttackProtection.protection?.atWar
-          ? pendingAttackProtection.protection.allowed
+        Boolean(pendingAttackTargetId) && pendingAttackProtection?.atWar
+          ? pendingAttackProtection.allowed
             ? "War eligibility verified for this target. Bypass applies only to original declaration-roster members in the allowed direction."
             : "This war does not bypass protection for this attacker/target pairing. Frozen original rosters and declaration direction still apply."
           : undefined;
@@ -6347,7 +6307,7 @@ export function PlayableMvpApp({
               defaultOriginIsMoon: pendingGalaxyMission.bodySelectionDefaults?.originIsMoon,
               defaultTargetIsMoon: pendingGalaxyMission.bodySelectionDefaults?.targetIsMoon,
               originMoonAvailable: pendingMissionOriginMoonLoaded,
-              targetMoonAvailable: Boolean(pendingGalaxyMission.target?.hasMoon),
+              targetMoonAvailable: Boolean(pendingMissionTarget?.hasMoon),
               originMoonResources: pendingMissionOriginMoonLoaded ? missionMoonResources(moonState) : undefined,
               originMoonShipyardState: pendingMissionOriginMoonLoaded ? missionMoonShipyardState({ moonState, shipyardState }) : null,
             }
@@ -6364,7 +6324,7 @@ export function PlayableMvpApp({
           defenseHoldContext={
             pendingGalaxyMission.action.kind === "defenseHold"
               ? {
-                  depotLevel: allianceDepotLevelFromPlanet(pendingGalaxyMission.target),
+                  depotLevel: allianceDepotLevelFromPlanet(pendingMissionTarget),
                 }
               : undefined
           }
@@ -6379,7 +6339,6 @@ export function PlayableMvpApp({
           nowMs={now}
           onBack={() => {
             setPendingGalaxyMission(null);
-            setPendingAttackProtection(null);
           }}
           onConfirm={handleConfirmGalaxyMission}
           originCoords={pendingMissionOriginCoords}
@@ -6389,7 +6348,11 @@ export function PlayableMvpApp({
           resources={pendingMissionOriginResources}
           shipyardState={shipyardState}
           submitBlocker={pendingAttackProtectionBlocker ?? missionLaunchBlocker}
-          target={pendingGalaxyMission.target}
+          target={pendingMissionTarget}
+          targetIntelLoading={attackTargetQuery.isInitialLoading}
+          targetIntelError={attackTargetQuery.snapshot?.error}
+          onRetryTargetIntel={pendingAttackTargetId ? () => { void attackTargetQuery.refetch().catch(() => {}); } : undefined}
+          onRetryProtection={attackProtectionQuery.snapshot?.error ? () => { void attackProtectionQuery.refetch().catch(() => {}); } : undefined}
           warProtectionNotice={pendingAttackWarNotice}
         />
       );

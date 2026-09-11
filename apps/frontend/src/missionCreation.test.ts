@@ -319,7 +319,7 @@ describe("mission creation", () => {
       galaxy: 7,
       system: 41,
       planets: [{
-        key: "9",
+        key: "7:41:6",
         galaxy: 7,
         system: 41,
         position: 6,
@@ -343,9 +343,13 @@ describe("mission creation", () => {
       }],
     }, "9", { galaxy: 7, system: 41, position: 6 });
 
-    expect(target?.id).toBe("9");
+    expect(target?.id).toBe("7:41:6");
     expect(target?.publicState?.fleet).toEqual([{ id: 7, count: 3 }]);
     expect(target?.publicState?.research).toEqual([{ id: 5, level: 2 }]);
+    expect(joinAttackTargetFromSystemPayload({ planets: [{
+      ...target, key: "7:41:6", fields: 180, temperature: 32,
+      metalMultiplierBps: 10_000, crystalMultiplierBps: 10_000, deuteriumMultiplierBps: 10_000,
+    }] }, "different-planet", { galaxy: 7, system: 41, position: 6 })).toBeUndefined();
   });
 
   test("supports moon body selection for attack missions without reusing parent planet intel", () => {
@@ -939,6 +943,7 @@ describe("mission creation", () => {
   test("forecasts public battle outcome without inventing hidden target state", () => {
     const uncharted = publicTargetBattleForecast(attackAction.ships, targetPlanet());
     expect(uncharted.kind).toBe("uncertain");
+    expect(uncharted.loading).toBe(false);
     expect(uncharted.detail).not.toContain("not charted in the public indexed state");
 
     const selectedShips = {
@@ -1202,7 +1207,7 @@ describe("mission creation", () => {
     expect(text).toContain("DEF");
   });
 
-  test("keeps the outcome loading while public defender technology is unavailable", () => {
+  test("shows unavailable defender technology without an endless loading skeleton", () => {
     const panel = AttackOutcomePanel({
       battleForecast: publicTargetBattleForecast(
         { ...attackAction.ships, lightFighter: 1 },
@@ -1225,10 +1230,10 @@ describe("mission creation", () => {
       (element) => element.props?.["aria-label"] === "Open simulated battle report",
     );
 
-    expect(reportButton).toBeUndefined();
+    expect(reportButton?.props?.disabled).toBe(true);
     expect(findElements(panel, "div").some(
       (element) => element.props?.["aria-label"] === "Calculating battle outcome",
-    )).toBe(true);
+    )).toBe(false);
     expect(findElements(panel, "div").some((element) => element.props?.role === "dialog")).toBe(false);
   });
 

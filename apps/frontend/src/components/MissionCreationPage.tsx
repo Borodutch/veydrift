@@ -12,6 +12,7 @@ import {
   type ContractBattleResult,
 } from "../battlePreview";
 import {
+  ATTACK_BATTLE_PREVIEW_TIMEOUT_MS,
   battlePreviewInputKey,
 } from "../battlePreviewScheduler";
 import { planetArtTypeFromArchetypeOrCoords } from "../data/mockUniverse";
@@ -446,6 +447,10 @@ export function MissionCreationPage({
   shipyardState,
   submitBlocker,
   target,
+  targetIntelLoading = false,
+  targetIntelError,
+  onRetryTargetIntel,
+  onRetryProtection,
   warProtectionNotice,
 }: {
   // VEY-KANEO-440: render the picker for an ACS Defend ("Defend planet") counterplay. Like a normal
@@ -485,6 +490,10 @@ export function MissionCreationPage({
   shipyardState: ChainShipyardState | null;
   submitBlocker?: string | undefined;
   target: Planet | undefined;
+  targetIntelLoading?: boolean | undefined;
+  targetIntelError?: string | undefined;
+  onRetryTargetIntel?: (() => void) | undefined;
+  onRetryProtection?: (() => void) | undefined;
   /** Target-specific active-war policy result, fetched before Confirm is enabled. */
   warProtectionNotice?: string | undefined;
 }) {
@@ -637,7 +646,10 @@ export function MissionCreationPage({
       target,
     ],
   );
-  const battleForecast = useDeferredPublicTargetBattleForecast(preparedBattleForecast);
+  const forecast = useDeferredPublicTargetBattleForecast(preparedBattleForecast);
+  const battleForecast = targetIntelLoading && forecast.kind === "uncertain"
+    ? { ...forecast, loading: true }
+    : forecast;
   const resourceIntel = useMemo(
     () => targetResourceIntel(target, travelSeconds, effectiveTargetIsMoon),
     [effectiveTargetIsMoon, target, travelSeconds],
@@ -858,6 +870,16 @@ export function MissionCreationPage({
             />
           )}
 
+          {attackIntelVisible && onRetryTargetIntel && !targetIntelLoading
+            && (targetIntelError || battleForecast.kind === "uncertain") ? (
+            <div className="grid gap-2 text-sm text-slate-400" role="status">
+              {targetIntelError ? <p>Combat intel could not be refreshed. Any displayed estimate uses the last available data.</p> : null}
+              <button className="w-fit rounded border border-white/15 px-3 py-2 text-sm font-medium text-slate-100" onClick={onRetryTargetIntel} type="button">
+                Retry combat intel
+              </button>
+            </div>
+          ) : null}
+
           {stationedDefenderRows.length > 0 ? (
             <div className="rounded border border-violet-300/25 bg-violet-300/10 px-3 py-2 text-sm text-violet-100">
               <p className="font-semibold">Stationed defenders can join this battle.</p>
@@ -1058,6 +1080,11 @@ export function MissionCreationPage({
           <p className="rounded border border-sky-300/20 bg-sky-300/10 px-3 py-2 text-xs text-sky-100">
             {warProtectionNotice}
           </p>
+        ) : null}
+        {onRetryProtection ? (
+          <button className="w-fit rounded border border-white/15 px-3 py-2 text-sm font-medium text-slate-100" onClick={onRetryProtection} type="button">
+            Retry attack protection
+          </button>
         ) : null}
         {actionError ? (
           <p className="rounded border border-rose-300/30 bg-rose-300/10 px-3 py-2 text-xs text-rose-100" role="alert">
@@ -1888,7 +1915,7 @@ export function preparePublicTargetBattleForecast(
     kind: "uncertain",
     label: "Uncertain",
     detail,
-    loading: true,
+    loading: false,
     attackerPower,
     defenderPower: null,
     ...forecastTech,
@@ -2594,51 +2621,58 @@ function LazySimulatedBattleReportControl({
 }) {
   const [state, setState] = useState<LazyBattleReportState>({ status: "idle" });
   const workerRef = useRef<Worker | null>(null);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout>>();
   const requestIdRef = useRef(0);
-
-  useEffect(() => {
-    requestIdRef.current += 1;
+  const stopWorker = useCallback(() => {
+    clearTimeout(timeoutRef.current);
+    timeoutRef.current = undefined;
     workerRef.current?.terminate();
     workerRef.current = null;
-    setState({ status: "idle" });
-    return () => {
-      requestIdRef.current += 1;
-      workerRef.current?.terminate();
-      workerRef.current = null;
-    };
-  }, [sourceKey]);
+  }, []);
+
+  // sourceKey keys this component: no mount-time reset that can cancel a
+  // report opened before passive effects finish.
+  useEffect(() => () => {
+    requestIdRef.current += 1;
+    stopWorker();
+  }, [sourceKey, stopWorker]);
 
   const generateReport = useCallback(() => {
     if (state.status === "loading" || state.status === "ready") return;
     requestIdRef.current += 1;
     const requestId = requestIdRef.current;
-    workerRef.current?.terminate();
-    const worker = new Worker(new URL("../battleReport.worker.ts", import.meta.url), { type: "module" });
-    workerRef.current = worker;
+    stopWorker();
     setState({ status: "loading" });
-    worker.onmessage = (event: MessageEvent<
-      | { report: ContractBattleResult; requestId: number }
-      | { error: string; requestId: number }
-    >) => {
-      if (event.data.requestId !== requestId || requestIdRef.current !== requestId) return;
-      worker.terminate();
-      if (workerRef.current === worker) workerRef.current = null;
-      if ("report" in event.data) setState({ status: "ready", report: event.data.report });
-      else setState({ status: "error", message: event.data.error });
-    };
-    worker.onerror = () => {
+    const fail = (message: string) => {
       if (requestIdRef.current !== requestId) return;
-      worker.terminate();
-      if (workerRef.current === worker) workerRef.current = null;
-      setState({ status: "error", message: "The battle report worker failed." });
+      stopWorker();
+      setState({ status: "error", message });
     };
-    worker.postMessage({
-      input: reportInput,
-      randomWord: reportSeed.randomWord,
-      requestId,
-      sampleId: reportSeed.sampleId,
-    });
-  }, [reportInput, reportSeed, state.status]);
+    try {
+      const worker = new Worker(new URL("../battleReport.worker.ts", import.meta.url), { type: "module" });
+      workerRef.current = worker;
+      worker.onmessage = (event: MessageEvent<
+        | { report: ContractBattleResult; requestId: number }
+        | { error: string; requestId: number }
+      >) => {
+        if (event.data.requestId !== requestId || requestIdRef.current !== requestId) return;
+        stopWorker();
+        if ("report" in event.data) setState({ status: "ready", report: event.data.report });
+        else setState({ status: "error", message: event.data.error });
+      };
+      worker.onerror = () => fail("The battle report worker failed.");
+      worker.onmessageerror = () => fail("The battle report could not be read.");
+      timeoutRef.current = setTimeout(() => fail("The battle report took too long. Please retry."), ATTACK_BATTLE_PREVIEW_TIMEOUT_MS);
+      worker.postMessage({
+        input: reportInput,
+        randomWord: reportSeed.randomWord,
+        requestId,
+        sampleId: reportSeed.sampleId,
+      });
+    } catch {
+      fail("The battle report worker could not start.");
+    }
+  }, [reportInput, reportSeed, state.status, stopWorker]);
 
   return (
     <SimulatedBattleReportDetails

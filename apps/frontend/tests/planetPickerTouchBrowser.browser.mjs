@@ -1346,6 +1346,81 @@ test("Galaxy settles its system and target-protection state once", async () => {
   assert.deepEqual(rendered.errors, []);
 });
 
+test("Galaxy attack hydrates coordinate-keyed targets and a stalled report can retry", async () => {
+  await loadInspectorFixture("/galaxy", 1280, { attackIntelProbe: "true" });
+  await waitForExpression(`document.querySelector('main button[aria-label="Attack"]:not(:disabled)') !== null`);
+  await clickExpression(`document.querySelector('main button[aria-label="Attack"]:not(:disabled)')`);
+  await waitForExpression(`document.querySelector('summary[aria-label="Open simulated battle report"]') !== null`);
+  assert.equal(await evaluate(`document.querySelector('[aria-label="Calculating battle outcome"]') !== null`), false);
+  assert.ok(await evaluate(`window.inspectorProof.requests.some(path => path.includes('detail=full'))`));
+  await evaluate(`(() => {
+    window.combatWorkerProof = { original: window.Worker, terminated: 0 };
+    window.Worker = class {
+      postMessage() {}
+      terminate() { window.combatWorkerProof.terminated++; }
+    };
+  })()`);
+  await clickExpression(`document.querySelector('summary[aria-label="Open simulated battle report"]')`);
+  await waitForExpression(`document.querySelector('[aria-label="Simulated battle report"]')?.textContent.includes('took too long')`, 7_000);
+  assert.equal(await evaluate(`window.combatWorkerProof.terminated`), 1);
+  await evaluate(`window.Worker = window.combatWorkerProof.original`);
+  await clickExpression(`[...document.querySelectorAll('[aria-label="Simulated battle report"] button')].find(button => button.textContent.trim() === 'Retry')`);
+  await waitForExpression(`document.querySelector('[aria-label="Simulated battle report"]')?.textContent.includes('Final outcome')`);
+  assert.deepEqual(await evaluate("window.inspectorProof.errors"), []);
+  assert.equal(await evaluate(`window.inspectorProof.walletRequests.some(request => request.method === 'eth_sendTransaction')`), false);
+});
+
+test("attack intel failure stops loading and retries independently of protection", async () => {
+  await loadInspectorFixture("/galaxy", 1280, { attackIntelProbe: "true" });
+  await waitForExpression(`document.querySelector('main button[aria-label="Attack"]:not(:disabled)') !== null`);
+  await evaluate(`(() => {
+    const originalFetch = window.fetch;
+    window.combatIntelProof = { fail: true, calls: 0 };
+    window.fetch = (input, init) => {
+      if (String(input).includes('detail=full')) {
+        window.combatIntelProof.calls++;
+        if (window.combatIntelProof.fail) return Promise.resolve(Response.json({ error: 'Temporary intel failure' }, { status: 503 }));
+      }
+      return originalFetch(input, init);
+    };
+  })()`);
+  await clickExpression(`document.querySelector('main button[aria-label="Attack"]:not(:disabled)')`);
+  const retry = `[...document.querySelectorAll('main button')].find(button => button.textContent.trim() === 'Retry combat intel')`;
+  await waitForExpression(`${retry} !== undefined`);
+  assert.equal(await evaluate(`document.querySelector('[aria-label="Calculating battle outcome"]') !== null`), false);
+  await evaluate(`window.combatIntelProof.fail = false`);
+  await clickExpression(retry);
+  await waitForExpression(`document.querySelector('summary[aria-label="Open simulated battle report"]') !== null`);
+  assert.equal(await evaluate(`window.combatIntelProof.calls`), 2);
+  assert.deepEqual(await evaluate("window.inspectorProof.errors"), []);
+});
+
+test("a slow attack target does not block navigation or replace a newer target", async () => {
+  await loadInspectorFixture("/galaxy", 1280, { attackIntelProbe: "true" });
+  await waitForExpression(`document.querySelector('main button[aria-label="Attack"]:not(:disabled)') !== null`);
+  await evaluate(`(() => {
+    const originalFetch = window.fetch;
+    window.fetch = async (input, init) => {
+      if (String(input).includes('/universe/galaxies/1/systems/2?detail=full')) {
+        await new Promise(resolve => { window.releaseOldCombatIntel = resolve; });
+      }
+      return originalFetch(input, init);
+    };
+  })()`);
+  await clickExpression(`document.querySelector('main button[aria-label="Attack"]:not(:disabled)')`);
+  await waitForExpression(`window.releaseOldCombatIntel && document.querySelector('[aria-label="Calculating battle outcome"]') !== null`);
+  await evaluate(`history.pushState({}, '', '/planet/9/9/9'); window.dispatchEvent(new PopStateEvent('popstate'))`);
+  await waitForExpression(`document.querySelector('main h2')?.textContent === 'Unrelated Gamma' && document.querySelector('main button[aria-label="Attack"]:not(:disabled)') !== null`);
+  await clickExpression(`document.querySelector('main button[aria-label="Attack"]:not(:disabled)')`);
+  await waitForExpression(`document.querySelector('summary[aria-label="Open simulated battle report"]') !== null`);
+  await evaluate(`window.releaseOldCombatIntel()`);
+  await waitForExpression(`window.inspectorProof.requests.some(path => path.includes('/systems/2?detail=full'))`);
+  await evaluate(`new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))`);
+  assert.ok(await evaluate(`document.querySelector('[data-mission-composer]')?.textContent.includes('Unrelated Gamma')`));
+  assert.equal(await evaluate(`document.querySelector('[data-mission-composer]')?.textContent.includes('Nearby Rival')`), false);
+  assert.deepEqual(await evaluate("window.inspectorProof.errors"), []);
+});
+
 for (const width of [390, 1280]) {
   test(`direct Shipyard load hydrates game content at ${width}px`, async () => {
     await loadInspectorFixture("/shipyard", width);

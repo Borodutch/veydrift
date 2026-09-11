@@ -938,7 +938,6 @@ describe("Playable MVP app display helpers", () => {
     const tabNavigationSource = sourceBetween(playableMvpSource, "const handleNavigate = useCallback", "const handleOpenMissionReport = useCallback");
 
     expect(routeOwnerSource).toContain("setPendingGalaxyMission(null)");
-    expect(routeOwnerSource).toContain("setPendingAttackProtection(null)");
     expect(routeOwnerSource).toContain("setPendingJoinAttack(null)");
     expect(routeOwnerSource).toContain("setPendingAcsDefend(null)");
     expect(routeOwnerSource).toContain("setInspectRoute(route)");
