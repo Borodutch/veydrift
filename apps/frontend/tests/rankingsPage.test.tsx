@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { ComponentChildren, VNode } from "preact";
+import { PLANET_ANIMATION_VERSION } from "../planetAnimationConfig";
 import type { Coordinates } from "../src/types";
 import type { GalaxyAction } from "../src/galaxyActions";
 import {
@@ -620,10 +621,11 @@ describe("RankingsPage", () => {
     const table = RankingsTable({ entries: [entry], loading: false });
     const image = elementNodes(table).find((item) => item.type === "img" && item.props?.alt === "");
 
-    expect(image?.props?.src).toBe(imagePath);
+    expect(image?.props?.src).toBe(`${imagePath}?size=512&v=${PLANET_ANIMATION_VERSION}`);
     expect(image?.props?.sizes).toBe("40px");
-    expect(image?.props?.srcSet).toContain(`/assets/game/sizes/64/style-pass/generated/planets/${planetType}.webp 64w`);
-    expect(image?.props?.srcSet).toContain(`${imagePath} 1024w`);
+    expect(image?.props?.srcSet).toContain(`${imagePath}?size=64&v=${PLANET_ANIMATION_VERSION} 64w`);
+    expect(image?.props?.srcSet).toContain(`${imagePath}?size=512&v=${PLANET_ANIMATION_VERSION} 512w`);
+    expect(image?.props?.srcSet).not.toContain("size=1024");
   });
 
   test("reads the canonical total ranking from the existing highscore payload", () => {

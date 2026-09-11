@@ -124,6 +124,7 @@ import { timestampToMs } from "./timestampFormat";
 import { confirmTransactionRetry, transactionAwaitingWalletLabel, transactionWasSubmitted, type WriteTransactionOutcome, type WriteTransactionState } from "./transactionActionGate";
 import { transactionWalletProvider } from "./walletFlow";
 import type { Coordinates, Planet, PlanetType, PublicStationedDefender } from "./types";
+import { getSizedImageSrc } from "./utils/imageSizes";
 import { useBackendDataQuery } from "./useBackendDataQuery";
 import { useBackendDataSnapshot, useBackendDataSnapshots } from "./useBackendDataSnapshot";
 import { transactionActionNotice, useTransactionAction } from "./useTransactionAction";
@@ -7450,7 +7451,7 @@ function PlanetSelectorButton({
     >
       <span className="relative h-14 w-14">
         <span className="block h-14 w-14 overflow-hidden rounded-full bg-black/30">
-          <img alt="" className="h-full w-full object-cover" loading="lazy" src={planetImage(planet)} />
+          <img alt="" className="h-full w-full object-cover" loading="lazy" src={getSizedImageSrc(planetImage(planet), 64)} />
         </span>
         {showMoonIndicator ? <PlanetMoonIndicator className="!-right-1 !-top-1 !h-5 !w-5 xl:!h-5 xl:!w-5" compact planetType={planetArtTypeForCoordinates(planet)} /> : null}
         {hasIncomingAttack ? (

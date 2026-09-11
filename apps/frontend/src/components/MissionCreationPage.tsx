@@ -45,6 +45,7 @@ import {
 } from "../playableMvp";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import type { Coordinates, DebrisField, Planet, PublicStationedDefender } from "../types";
+import { getSizedImageSrc } from "../utils/imageSizes";
 import { shortAddress, type ChainShipyardState } from "../walletFlow";
 import { ActionReasonNote } from "./ActionReasonNote";
 import { PlanetMoonIndicator } from "./PlanetMoonIndicator";
@@ -2239,7 +2240,7 @@ function TargetIdentityContent({
             alt=""
             className="h-full w-full object-cover"
             loading="lazy"
-            src={target.image}
+            src={getSizedImageSrc(target.image, 256)}
           />
           {target.hasMoon ? <PlanetMoonIndicator compact planetType={target.type} /> : null}
         </span>

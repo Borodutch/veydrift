@@ -1,4 +1,9 @@
 import imageSizeManifest from "../../public/assets/game/sizes/manifest.json";
+import {
+  PLANET_ANIMATION_BASE,
+  PLANET_ANIMATION_VERSION,
+  PLANET_ANIMATION_WIDTHS,
+} from "../../planetAnimationConfig";
 
 /**
  * Image size utilities for Veydrift responsive asset delivery.
@@ -18,6 +23,18 @@ export type ImageSizeManifestEntry = {
 
 const manifest = imageSizeManifest as Record<string, ImageSizeManifestEntry>;
 
+function isPlanetAnimation(src: string): boolean {
+  return src.startsWith(`${PLANET_ANIMATION_BASE}/`) && src.endsWith(".webp");
+}
+
+export function getSizedImageSrc(src: string, width: number): string {
+  if (!isPlanetAnimation(src)) return src;
+  if (!(PLANET_ANIMATION_WIDTHS as readonly number[]).includes(width)) {
+    throw new Error(`Unsupported planet animation width: ${width}`);
+  }
+  return `${src}?size=${width}&v=${PLANET_ANIMATION_VERSION}`;
+}
+
 /**
  * Build a srcset string for an original game asset path.
  *
@@ -26,6 +43,13 @@ const manifest = imageSizeManifest as Record<string, ImageSizeManifestEntry>;
  *   // => "/assets/game/sizes/64/planets/lush-temperate.webp 64w, ... 1024w"
  */
 export function getSrcSet(originalSrc: string): string {
+  if (isPlanetAnimation(originalSrc)) {
+    return PLANET_ANIMATION_WIDTHS
+      .filter((width) => width < 1024)
+      .map((width) => `${getSizedImageSrc(originalSrc, width)} ${width}w`)
+      .join(", ");
+  }
+
   const entry = manifest[originalSrc];
   if (!entry) return originalSrc;
 
@@ -40,6 +64,7 @@ export function getSrcSet(originalSrc: string): string {
 }
 
 export function getImageDimensions(originalSrc: string): Pick<ImageSizeManifestEntry, "width" | "height"> | undefined {
+  if (isPlanetAnimation(originalSrc)) return { width: 1024, height: 1024 };
   const entry = manifest[originalSrc];
   if (!entry) return undefined;
   return { width: entry.width, height: entry.height };

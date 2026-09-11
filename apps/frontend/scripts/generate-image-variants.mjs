@@ -65,7 +65,7 @@ async function* walkGameImages(dir) {
 
     if (entry.isDirectory()) {
       // Skip the output directory to avoid infinite recursion
-      if (entry.name === "sizes") continue;
+      if (entry.name === "sizes" || entry.name === "planet-animations") continue;
       // Skip concept/reference directories entirely
       if (entry.name === "concepts") continue;
       // Recurse into everything else (buildings, ships, planets, style-pass, etc.)
