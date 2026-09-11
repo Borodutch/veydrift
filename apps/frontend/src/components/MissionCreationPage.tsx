@@ -167,7 +167,7 @@ export type BattleForecastState =
     })
   | ({
       kind: "win" | "defeat" | "draw";
-      label: "Probable win" | "Probable defeat" | "Probable draw";
+      label: string;
       detail: string;
       attackerPower: number;
       defenderPower: number;
@@ -2123,7 +2123,10 @@ export function resolvePreparedPublicTargetBattleForecast(
   simulation: ContractBattleForecastSummary,
 ): BattleForecastState {
   const kind = simulation.probableOutcome;
-  const label = kind === "win" ? "Probable win" : kind === "defeat" ? "Probable defeat" : "Probable draw";
+  const label = (["win", "draw", "defeat"] as const)
+    .filter((outcome) => simulation.outcomeCounts[outcome] > 0)
+    .map((outcome) => `${Math.round(simulation.outcomeCounts[outcome] / simulation.sampleCount * 100)}% ${outcome}`)
+    .join(" · ");
   return {
     kind,
     label,
@@ -2462,7 +2465,7 @@ function AttackOutcomeContent({
               <span className="text-[11px] font-semibold uppercase text-slate-500">Outcome</span>
               <SimulatedBattleReportControl battleForecast={battleForecast} />
             </div>
-            <p className={`truncate text-base font-semibold ${battleForecast.kind === "win" ? "text-emerald-200" : battleForecast.kind === "defeat" ? "text-red-200" : battleForecast.kind === "draw" ? "text-amber-200" : "text-slate-300"}`}>
+            <p className={`text-base font-semibold ${battleForecast.kind === "win" ? "text-emerald-200" : battleForecast.kind === "defeat" ? "text-red-200" : battleForecast.kind === "draw" ? "text-amber-200" : "text-slate-300"}`}>
               {battleForecast.label}
             </p>
           </div>
