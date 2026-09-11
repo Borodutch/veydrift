@@ -1223,13 +1223,13 @@
       "512": "/assets/game/sizes/512/style-pass/generated/ships/pathfinder.webp"
     }
   },
-  "/assets/game/style-pass/generated/ships/reaper.webp": {
+  "/assets/game/style-pass/generated/ships/reaper-symmetric.webp": {
     "width": 1254,
     "height": 1254,
     "variants": {
-      "64": "/assets/game/sizes/64/style-pass/generated/ships/reaper.webp",
-      "256": "/assets/game/sizes/256/style-pass/generated/ships/reaper.webp",
-      "512": "/assets/game/sizes/512/style-pass/generated/ships/reaper.webp"
+      "64": "/assets/game/sizes/64/style-pass/generated/ships/reaper-symmetric.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/ships/reaper-symmetric.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/ships/reaper-symmetric.webp"
     }
   },
   "/assets/game/style-pass/generated/ships/recycler.webp": {
