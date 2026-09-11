@@ -64,7 +64,7 @@ import {
   publicMoonQueueViews,
 } from "../src/components/PublicMoonDetail";
 import { isImageReady, type ImageLoadState } from "../src/imageLoadState";
-import { getSrcSet, VARIANT_WIDTHS } from "../src/utils/imageSizes";
+import { getSizedImageSrc, getSrcSet, VARIANT_WIDTHS } from "../src/utils/imageSizes";
 
 const PUBLIC_DIR = join(import.meta.dir, "..", "public");
 
@@ -1457,14 +1457,14 @@ describe("tester universe display data", () => {
     for (const type of PLANET_TYPES) {
       const image = planetImageForType(type);
 
-      expect(image).toBe(`/assets/game/style-pass/generated/planets/${type}.webp`);
+      expect(image).toBe(`/assets/game/planet-animations/${type}.webp`);
       expect(existsSync(join(PUBLIC_DIR, image.replace("/assets/", "assets/")))).toBe(true);
 
       for (const width of VARIANT_WIDTHS) {
-        const variant = image.replace("/assets/game/", `/assets/game/sizes/${width}/`);
+        const variant = getSizedImageSrc(image, width);
         expect(getSrcSet(image)).toContain(`${variant} ${width}w`);
-        expect(existsSync(join(PUBLIC_DIR, variant.replace("/assets/", "assets/")))).toBe(true);
       }
+      expect(getSrcSet(image)).not.toContain("size=1024");
     }
   });
 

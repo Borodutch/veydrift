@@ -8,6 +8,7 @@ import { MissionRouteCell, missionEndpoint, type MissionPlanetIdentity } from ".
 import { planetImageForType, planetTypeFromCoordinates } from "./data/mockUniverse";
 import { buildInspectPath, parseInspectPath, parseInspectRoute } from "./inspectRoutes";
 import type { Coordinates } from "./types";
+import { getSizedImageSrc } from "./utils/imageSizes";
 import { fetchBattleReports, fetchFleetMissionArchive, fetchGlobalMissionArchive, fetchMission, type BattleReport, type FleetMissionPlanetReference, type FleetMissionSummary, type FleetMissionVisibilityResponse } from "./walletFlow";
 
 const missionRouteSource = await Bun.file(new URL("./components/missionRoute.tsx", import.meta.url)).text();
@@ -2488,8 +2489,8 @@ describe("Mission Control battle reports", () => {
     expect(arts).toContain("temperate-ocean");
     expect(arts).toContain(targetType);
     const sources = planetImages.map((node) => node.props?.src);
-    expect(sources).toContain(planetImageForType("temperate-ocean"));
-    expect(sources).toContain(planetImageForType(targetType));
+    expect(sources).toContain(getSizedImageSrc(planetImageForType("temperate-ocean"), 64));
+    expect(sources).toContain(getSizedImageSrc(planetImageForType(targetType), 64));
   });
 
   test("renders moon indicators on route endpoint planet art when identity has a moon", () => {
@@ -2689,8 +2690,8 @@ describe("Mission Control battle reports", () => {
     expect(arts).toContain(originType);
     expect(arts).toContain(targetType);
     const sources = planetImages.map((node) => node.props?.src);
-    expect(sources).toContain(planetImageForType(originType));
-    expect(sources).toContain(planetImageForType(targetType));
+    expect(sources).toContain(getSizedImageSrc(planetImageForType(originType), 64));
+    expect(sources).toContain(getSizedImageSrc(planetImageForType(targetType), 64));
   });
 
   test("uses slot-aware coordinate art when mission and universe archetypes are stale", () => {
@@ -2724,8 +2725,8 @@ describe("Mission Control battle reports", () => {
     expect(arts).toContain(originType);
     expect(arts).toContain(targetType);
     const sources = planetImages.map((node) => node.props?.src);
-    expect(sources).toContain(planetImageForType(targetType));
-    expect(sources).not.toContain(planetImageForType("frozen-ice"));
+    expect(sources).toContain(getSizedImageSrc(planetImageForType(targetType), 64));
+    expect(sources).not.toContain(getSizedImageSrc(planetImageForType("frozen-ice"), 64));
   });
 
   test("returning Mission Control rows point the arrow home and keep the full timings expanded", () => {

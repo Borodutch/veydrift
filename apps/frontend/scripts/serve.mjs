@@ -1,5 +1,11 @@
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import {
+  PLANET_ANIMATION_BASE,
+  PLANET_ANIMATION_TYPES,
+  PLANET_ANIMATION_VERSION,
+  PLANET_ANIMATION_WIDTHS,
+} from "../planetAnimationConfig.ts";
 
 const distRoot = new URL("../dist/", import.meta.url);
 const publicRoot = new URL("../public/", import.meta.url);
@@ -9,6 +15,7 @@ const siteName = "Veydrift";
 const ogImageCache = new Map();
 const ogDataCache = new Map();
 const assetDataCache = new Map();
+const planetAnimationCache = new Map();
 let sharpModule;
 const defaultMetadataTimeoutMs = 1_500;
 export const referralXCardImageVersion = "2";
@@ -124,6 +131,62 @@ function responseFor(file, pathname) {
   const headers = responseHeadersFor(pathname);
 
   return new Response(file, { headers });
+}
+
+export function clearPlanetAnimationCache() {
+  planetAnimationCache.clear();
+}
+
+export function planetAnimationCacheSize() {
+  return planetAnimationCache.size;
+}
+
+export function planetAnimationRoute(url) {
+  const match = url.pathname.match(new RegExp(`^${PLANET_ANIMATION_BASE}/([a-z-]+)\\.webp$`));
+  if (!match) return null;
+  const planetType = match[1];
+  const size = Number(url.searchParams.get("size"));
+  const version = url.searchParams.get("v");
+
+  if (!PLANET_ANIMATION_TYPES.includes(planetType)) return { error: "Unknown planet type", status: 404 };
+  if (!PLANET_ANIMATION_WIDTHS.includes(size)) return { error: "Unsupported planet animation size", status: 400 };
+  if (version !== PLANET_ANIMATION_VERSION) return { error: "Unsupported planet animation version", status: 400 };
+  return { planetType, size, version };
+}
+
+async function resizePlanetAnimation(planetType, size) {
+  const sourcePath = `${PLANET_ANIMATION_BASE}/${planetType}.webp`;
+  const source = await readFile(existingAssetUrl(sourcePath));
+  const sharp = await getSharp();
+  return sharp(source, { animated: true })
+    .resize({ width: size, height: size, fit: "fill" })
+    .webp({ quality: 82, effort: 4 })
+    .toBuffer();
+}
+
+export async function planetAnimationResponse(url) {
+  const route = planetAnimationRoute(url);
+  if (!route) return null;
+  if (route.error) return new Response(route.error, { status: route.status });
+
+  const headers = {
+    "cache-control": "public, max-age=31536000, immutable",
+    "content-type": "image/webp",
+  };
+  if (route.size === 1024) {
+    const sourcePath = `${PLANET_ANIMATION_BASE}/${route.planetType}.webp`;
+    return new Response(Bun.file(existingAssetUrl(sourcePath)), { headers });
+  }
+
+  const key = `${route.version}:${route.planetType}:${route.size}`;
+  let body = planetAnimationCache.get(key);
+  if (!body) {
+    body = resizePlanetAnimation(route.planetType, route.size);
+    planetAnimationCache.set(key, body);
+    body.catch(() => planetAnimationCache.delete(key));
+  }
+
+  return new Response(await body, { headers });
 }
 
 function docsAppRouteForPathname(pathname) {
@@ -1062,6 +1125,9 @@ if (import.meta.main) {
       }
 
       const route = pathname === "/" ? "/index.html" : pathname;
+      const animationResponse = await planetAnimationResponse(url);
+      if (animationResponse) return animationResponse;
+
       const imageRoute = imageRouteForPathname(pathname);
       if (imageRoute) {
         return ogImageResponse(imageRoute);

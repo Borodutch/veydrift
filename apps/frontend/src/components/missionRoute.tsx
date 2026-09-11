@@ -4,6 +4,7 @@ import { planetArtTypeFromArchetypeOrCoords, planetImageForType } from "../data/
 import { buildInspectPath } from "../inspectRoutes";
 import { timestampToMs } from "../timestampFormat";
 import type { Coordinates, PlanetType } from "../types";
+import { getSizedImageSrc } from "../utils/imageSizes";
 import { type FleetMissionSummary, decodeColonizationTargetId } from "../walletFlow";
 import { PlanetMoonIndicator } from "./PlanetMoonIndicator";
 
@@ -171,7 +172,7 @@ function EndpointPlanetImage({ compact, endpoint, nav }: { compact: boolean; end
           className="h-full w-full object-cover"
           data-planet-art={endpoint.archetype}
           loading="lazy"
-          src={planetImageForType(endpoint.archetype)}
+          src={getSizedImageSrc(planetImageForType(endpoint.archetype), 64)}
         />
       </span>
       {moonIndicator}

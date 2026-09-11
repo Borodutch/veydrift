@@ -1,5 +1,5 @@
 import type { JSX, Ref } from "preact";
-import { getImageDimensions, getSrcSet, Sizes, type SizePreset } from "../utils/imageSizes";
+import { getImageDimensions, getSizedImageSrc, getSrcSet, Sizes, type SizePreset } from "../utils/imageSizes";
 
 interface OptimizedImageProps {
   /** Original full-size asset path (e.g. /assets/game/planets/lush-temperate.webp). */
@@ -46,6 +46,7 @@ export function OptimizedImage({
   const dimensions = getImageDimensions(src);
   const intrinsicWidth = width ?? dimensions?.width ?? 1024;
   const intrinsicHeight = height ?? dimensions?.height ?? 1024;
+  const fallbackSrc = getSizedImageSrc(src, 512);
 
   return (
     <img
@@ -61,10 +62,10 @@ export function OptimizedImage({
         image.dataset.fallbackApplied = "true";
         image.removeAttribute("srcset");
         image.removeAttribute("sizes");
-        image.src = src;
+        image.src = fallbackSrc;
       }}
       sizes={isDev ? undefined : sizesValue}
-      src={src}
+      src={fallbackSrc}
       srcSet={isDev ? undefined : getSrcSet(src)}
       style={style}
       width={intrinsicWidth}

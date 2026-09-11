@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import sharp from "sharp";
+import { PLANET_ANIMATION_VERSION } from "../planetAnimationConfig";
 import { planetArtTypeForCoordinates } from "../src/data/mockUniverse";
 import { paidAllianceInviteCommitment, paidAllianceInviteLink } from "../src/walletFlow";
 import {
@@ -10,6 +11,7 @@ import {
   buildReferralMiniAppEmbed,
   cacheControl,
   canonicalSharePathForRoute,
+  clearPlanetAnimationCache,
   farcasterReferralPng,
   injectShareMeta,
   imageRouteForPathname,
@@ -17,6 +19,8 @@ import {
   inviteAppRouteForPathname,
   ogPng,
   ogSvg,
+  planetAnimationCacheSize,
+  planetAnimationResponse,
   planetTypeFromCoordinates,
   referralMiniAppImageVersion,
   referralMiniAppLayout,
@@ -151,6 +155,42 @@ describe("frontend static server headers", () => {
   test("does not expose the retired CCA page or social image routes", () => {
     expect(shareRouteForUrl(new URL("https://veydrift.com/cca"))).toBeNull();
     expect(imageRouteForPathname("/og/cca.png")).toBeNull();
+  });
+
+  test("resizes every animation frame once and caches the derivative", async () => {
+    clearPlanetAnimationCache();
+    const url = new URL(`http://localhost/assets/game/planet-animations/scorching-molten.webp?size=64&v=${PLANET_ANIMATION_VERSION}`);
+    const first = await planetAnimationResponse(url);
+    const second = await planetAnimationResponse(url);
+
+    expect(first?.status).toBe(200);
+    expect(second?.status).toBe(200);
+    expect(planetAnimationCacheSize()).toBe(1);
+    expect(first?.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
+    const metadata = await sharp(Buffer.from(await first!.arrayBuffer()), { animated: true }).metadata();
+    expect(metadata.width).toBe(64);
+    expect(metadata.pageHeight).toBe(64);
+    expect(metadata.pages).toBe(96);
+  });
+
+  test("rejects unbounded animation variants", async () => {
+    const missingSize = await planetAnimationResponse(new URL(`http://localhost/assets/game/planet-animations/scorching-molten.webp?v=${PLANET_ANIMATION_VERSION}`));
+    const unknownType = await planetAnimationResponse(new URL(`http://localhost/assets/game/planet-animations/not-a-planet.webp?size=64&v=${PLANET_ANIMATION_VERSION}`));
+    const unknownVersion = await planetAnimationResponse(new URL("http://localhost/assets/game/planet-animations/scorching-molten.webp?size=64&v=stale"));
+
+    expect(missingSize?.status).toBe(400);
+    expect(unknownType?.status).toBe(404);
+    expect(unknownVersion?.status).toBe(400);
+  });
+
+  test("streams the full master without retaining it in the derivative cache", async () => {
+    clearPlanetAnimationCache();
+    const url = new URL(`http://localhost/assets/game/planet-animations/scorching-molten.webp?size=1024&v=${PLANET_ANIMATION_VERSION}`);
+    const response = await planetAnimationResponse(url);
+
+    expect(response?.status).toBe(200);
+    expect(planetAnimationCacheSize()).toBe(0);
+    expect(response?.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
   });
 
   test("falls back quickly when mission share metadata is slow", async () => {

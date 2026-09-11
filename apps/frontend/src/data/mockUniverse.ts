@@ -1,18 +1,19 @@
 import type { DebrisField, MigrationReservation, MoonChanceReport, OccupiedPlanet, Planet, PlanetType, PublicMoonState, PublicPlanetState, Resources } from "../types";
+import { PLANET_ANIMATION_BASE } from "../../planetAnimationConfig";
 
 const PLANET_IMAGES: Record<PlanetType, string> = {
-  "scorching-molten": "/assets/game/style-pass/generated/planets/scorching-molten.webp",
-  "hot-desert": "/assets/game/style-pass/generated/planets/hot-desert.webp",
-  "warm-terracotta": "/assets/game/style-pass/generated/planets/warm-terracotta.webp",
-  "temperate-ocean": "/assets/game/style-pass/generated/planets/temperate-ocean.webp",
-  "lush-temperate": "/assets/game/style-pass/generated/planets/lush-temperate.webp",
-  "cool-misty-blue": "/assets/game/style-pass/generated/planets/cool-misty-blue.webp",
-  "cold-tundra": "/assets/game/style-pass/generated/planets/cold-tundra.webp",
-  "frozen-ice": "/assets/game/style-pass/generated/planets/frozen-ice.webp",
-  "outer-cryo": "/assets/game/style-pass/generated/planets/outer-cryo.webp",
-  "metal-planetoid": "/assets/game/style-pass/generated/planets/metal-planetoid.webp",
-  "crystal-violet": "/assets/game/style-pass/generated/planets/crystal-violet.webp",
-  "deuterium-blue": "/assets/game/style-pass/generated/planets/deuterium-blue.webp",
+  "scorching-molten": `${PLANET_ANIMATION_BASE}/scorching-molten.webp`,
+  "hot-desert": `${PLANET_ANIMATION_BASE}/hot-desert.webp`,
+  "warm-terracotta": `${PLANET_ANIMATION_BASE}/warm-terracotta.webp`,
+  "temperate-ocean": `${PLANET_ANIMATION_BASE}/temperate-ocean.webp`,
+  "lush-temperate": `${PLANET_ANIMATION_BASE}/lush-temperate.webp`,
+  "cool-misty-blue": `${PLANET_ANIMATION_BASE}/cool-misty-blue.webp`,
+  "cold-tundra": `${PLANET_ANIMATION_BASE}/cold-tundra.webp`,
+  "frozen-ice": `${PLANET_ANIMATION_BASE}/frozen-ice.webp`,
+  "outer-cryo": `${PLANET_ANIMATION_BASE}/outer-cryo.webp`,
+  "metal-planetoid": `${PLANET_ANIMATION_BASE}/metal-planetoid.webp`,
+  "crystal-violet": `${PLANET_ANIMATION_BASE}/crystal-violet.webp`,
+  "deuterium-blue": `${PLANET_ANIMATION_BASE}/deuterium-blue.webp`,
 };
 
 function seededRandom(seed: number): number {
