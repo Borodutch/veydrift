@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import ts from "typescript";
 import {
   missionLaunchSubmitBlocker,
   previousMissionTransactionBlockerLabel,
@@ -9,6 +10,24 @@ import {
 import type { ChainInfrastructureState, WalletSettlementResponse } from "../src/walletFlow";
 
 describe("playable chain refresh", () => {
+  test("every contract sender receives its attempt's observed wallet, including conditional fleet sends", async () => {
+    const text = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.url)).text();
+    const source = ts.createSourceFile("PlayableMvpApp.tsx", text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+    const unobserved: string[] = [];
+    let senders = 0;
+    const visit = (node: ts.Node) => {
+      if (ts.isCallExpression(node) && /^send.*Transaction$/.test(node.expression.getText(source)) && node.arguments[0]?.getText(source) === "provider") {
+        senders++;
+        let parent: ts.Node | undefined = node.parent;
+        while (parent && !((ts.isArrowFunction(parent) || ts.isFunctionExpression(parent)) && parent.parameters.some(parameter => parameter.name.getText(source) === "provider"))) parent = parent.parent;
+        if (!parent) unobserved.push(node.expression.getText(source));
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(source);
+    expect(senders).toBeGreaterThan(40);
+    expect(unobserved).toEqual([]);
+  });
   test("uses backend chain events instead of the old fast unconditional polling loops", async () => {
 const source = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.url)).text();const storeSource = await Bun.file(new URL("../src/backendDataStore.ts", import.meta.url)).text();
  expect(source).toContain("backendData.startGameplaySync(account");
@@ -136,14 +155,15 @@ const source = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.u
     expect(source).toContain("runCoordinatedWriteTransaction");
     expect(source).toContain("backendData.runWriteTransaction({");
     expect(storeSource).toContain("readonly transactionGates = new Map<string, TransactionActionGate>()");
-    expect(storeSource).toContain("this.transactionGateFor(walletScope).run(descriptor.key,");
+    expect(storeSource).not.toContain("this.transactionGateFor(walletScope).run(descriptor.key,");
+    expect(storeSource).toContain("this.submissionAttempts.get(identity)");
     expect(source).toContain("const gameContractTransactionInputsAvailable = Boolean(provider && account && gameContract)");
     expect(source).not.toContain("gameMaintenancePaused");
     expect(source).toContain("gameActionsAvailableForBody(");
     expect(source).toContain("activePlanetStateFresh");
     expect(source).toContain("const missionTransactionInputsAvailable = currentPlanetTransactionInputsAvailable(");
     expect(source).not.toContain("GAME_MAINTENANCE_MESSAGE");
-    expect(source).toContain("const canSubmitGameTransaction = gameTransactionInputsAvailable && !transactionActionPending");
+    expect(source).toContain("const canSubmitGameTransaction = gameTransactionInputsAvailable;");
     expect(source).toContain("const canSubmitMissionTransaction = missionTransactionInputsAvailable && !missionTransactionPending");
     expect(source).toContain("runCoordinatedWriteTransaction");
     expect(storeSource).toContain("trackPendingTransaction(");
@@ -158,7 +178,7 @@ const source = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.u
     expect(source).toContain("backendData!.indexing.missionLaunch(");
   });
 
-  test("keeps mission confirmation open until receipt confirmation and indexing settle", async () => {
+  test("closes mission creation after submission while the store observes indexing", async () => {
     const source = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.url)).text();
 
     expect(source).toContain("const runGalaxyTransaction = useCallback(");
@@ -170,15 +190,16 @@ const source = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.u
     expect(storeSource).toContain("missionLaunch:");
     expect(source).toContain("return result;");
     expect(source).toContain("const closeMissionCreationWhenComplete = (transaction: Promise<WriteTransactionOutcome>) => {");
-    expect(source).toContain("if ((await transaction).outcome === \"indexed\") closeMissionCreation();");
+    expect(source).toContain("waitForIndexing: false");
+    expect(source).toContain("if (transactionWasSubmitted((await transaction).outcome)) closeMissionCreation();");
     expect(source).toContain('"Colony mission"');
     expect(source).toContain('"Missile attack"');
     expect(source).toContain('"Stationed defense"');
     expect(source).toContain("closeMissionCreationWhenComplete(runMission());");
     expect(source).toContain("const closeAcsDefendWhenComplete = (transaction: Promise<WriteTransactionOutcome>) => {");
-    expect(source).toContain("if ((await transaction).outcome === \"indexed\") setPendingAcsDefend(null);");
-    expect(source).toContain("if (outcome.outcome === \"indexed\") closeJoinAttack();");
-    expect(source.match(/actionPendingLabel=\{galaxyAction\.status === "pending" \? galaxyAction\.label : undefined\}/g) ?? [])
+    expect(source).toContain("if (transactionWasSubmitted((await transaction).outcome)) setPendingAcsDefend(null);");
+    expect(source).toContain("if (transactionWasSubmitted(outcome.outcome)) closeJoinAttack();");
+    expect(source.match(/actionPendingLabel=\{isActionBusy\(galaxyAction\) \? galaxyAction\.label : undefined\}/g) ?? [])
       .toHaveLength(3);
     expect(source).not.toContain("setPendingGalaxyMission(null);\n    setPendingJoinAttack(null);\n    setPendingAcsDefend(null);\n    if (action.kind === \"attack\"");
     expect(source).not.toContain("closeMissionCreation();\n      void runGalaxyTransaction(\"Colony mission\"");

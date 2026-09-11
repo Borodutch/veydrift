@@ -1,15 +1,21 @@
 import { expect, test } from "bun:test";
 import { BackendDataStore } from "./backendDataStore";
 import { transactionActionNotice } from "./useTransactionAction";
+import { isActionBusy } from "./actionNoticeAutoDismiss";
 import type { WriteTransactionState } from "./transactionActionGate";
 
 test("transaction notices use one phase mapping", () => {
   expect(transactionActionNotice(undefined)).toEqual({ status: "idle" });
-  for (const phase of ["pending", "confirming", "confirmed", "indexing"] as const) {
-    expect(transactionActionNotice({ phase, label: "Processing…" })).toEqual({ status: "pending", label: "Processing…" });
+  for (const phase of ["preparing", "pending", "confirming", "confirmed", "indexing"] as const) {
+    expect(transactionActionNotice({ phase, label: "Processing…" })).toEqual({ status: "pending", busy: phase === "preparing" || phase === "pending", label: "Processing…" });
   }
+  expect(transactionActionNotice({ phase: "unknown", label: "Check wallet activity" })).toEqual({ status: "error", label: "Check wallet activity" });
   expect(transactionActionNotice({ phase: "success" }).status).toBe("success");
   expect(transactionActionNotice({ phase: "error", label: "Rejected" })).toEqual({ status: "error", label: "Rejected" });
+  expect(isActionBusy(transactionActionNotice({ phase: "pending" }))).toBe(true);
+  for (const phase of ["unknown", "confirming", "confirmed", "indexing", "applied", "success"] as const) {
+    expect(isActionBusy(transactionActionNotice({ phase }))).toBe(false);
+  }
 });
 
 test("action selectors stay scoped by wallet, feature, and planet through completion", async () => {

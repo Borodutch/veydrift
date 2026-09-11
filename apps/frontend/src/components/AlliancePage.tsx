@@ -1,3 +1,4 @@
+import { isActionBusy } from "../actionNoticeAutoDismiss";
 import { useUiClock } from "../useUiClock";
 import type { LucideIcon } from "lucide-preact";
 import { Check, Clock, Copy, Crown, ExternalLink, LogOut, Mail, Pencil, Plus, Scale, Shield, ShieldOff, Trash2, UserPlus, UserRound, Users, X } from "lucide-preact";
@@ -140,7 +141,7 @@ export function AlliancePage({
   const isMember = hasAllianceMembership(allianceState);
   const isOwner = role === "owner";
   const canManageMembers = role === "owner" || role === "officer";
-  const disabled = !canTransact || actionState.status === "pending";
+  const disabled = !canTransact || isActionBusy(actionState);
   const roster = useMemo(
     () => buildAllianceRoster(allianceState?.members ?? [], profile?.owner),
     [allianceState?.members, profile?.owner]

@@ -1,13 +1,13 @@
 import { useCallback, useMemo, useRef, useState } from "preact/hooks";
 import type { BackendDataStore } from "./backendDataStore";
 import type { ActionStateSetter, AutoDismissableActionState } from "./actionNoticeAutoDismiss";
-import type { WriteTransactionState } from "./transactionActionGate";
+import { transactionIsBusy, type WriteTransactionState } from "./transactionActionGate";
 import { useBackendDataSnapshot } from "./useBackendDataSnapshot";
 
 export function transactionActionNotice(state: WriteTransactionState | undefined): AutoDismissableActionState {
   if (!state || state.phase === "idle") return { status: "idle" };
-  const status = state.phase === "success" ? "success" : state.phase === "error" ? "error" : "pending";
-  return { status, label: state.label ?? (status === "pending" ? "Processing…" : status === "success" ? "Completed." : "Action failed.") };
+  const status = state.phase === "success" ? "success" : state.phase === "error" || state.phase === "unknown" ? "error" : "pending";
+  return { status, ...(status === "pending" ? { busy: transactionIsBusy(state) } : {}), label: state.label ?? (state.phase === "unknown" ? "Check your wallet activity before retrying." : status === "pending" ? "Processing…" : status === "success" ? "Completed." : "Action failed.") };
 }
 
 /** Transaction progress is a store projection. Only validation feedback and

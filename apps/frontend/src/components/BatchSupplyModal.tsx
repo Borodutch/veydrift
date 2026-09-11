@@ -16,7 +16,7 @@ import {
 import { shipAssetByKey } from "../gameAssets";
 import type { MissionShipKey, MissionShips } from "../galaxyActions";
 import type { ManagedPlanetResponse } from "../walletFlow";
-import { transactionStateOutcome, type WriteTransactionState } from "../transactionActionGate";
+import { transactionIsBusy, transactionStateOutcome, type WriteTransactionState } from "../transactionActionGate";
 
 const supplyCargoShips: Array<{ key: MissionShipKey; label: string }> = [
   { key: "largeCargo", label: "Large Cargo" },
@@ -110,8 +110,8 @@ export function BatchSupplyModal({
 
   const missingTotal = resourceTotal(plan.missing);
   const transactionOutcome = transactionStateOutcome(transactionState);
-  const transactionPending = transactionOutcome === "submitted" || transactionOutcome === "confirmed";
-  const canonicalTransactionError = transactionOutcome === "not-submitted" || transactionOutcome === "reverted"
+  const transactionPending = transactionIsBusy(transactionState);
+  const canonicalTransactionError = transactionState?.phase === "error" || transactionOutcome === "unknown" || transactionOutcome === "reverted"
     ? transactionState?.label
     : undefined;
   const canSubmit = !loading && !actionPending && !transactionPending && plan.orders.length > 0 && missingTotal === 0 && !plan.sourceLimitReached;

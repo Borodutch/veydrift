@@ -1,3 +1,4 @@
+import { isActionBusy } from "../actionNoticeAutoDismiss";
 import { formatIntegerAmount as resourceValue } from "../numberFormat";
 import {
   Building2,
@@ -191,7 +192,7 @@ export function PublicMoonDetail({
 
             <div className={`${isHome ? "mt-3" : ""} flex min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-2`}>
               <h2 className="min-w-0 break-words text-2xl font-semibold tracking-tight text-white sm:text-3xl lg:text-4xl">{planet.moonName ?? "Moon"}</h2>
-              {actionState.status === "pending" ? (
+              {isActionBusy(actionState) ? (
                 <SkeletonRegion className="flex gap-2" label="Loading moon actions">
                   {skeletonList(2, (index) => <Skeleton className="h-11 w-11 rounded" key={index} />)}
                 </SkeletonRegion>
@@ -466,7 +467,7 @@ export function publicMoonActions({
     shipyardState,
   });
   const actionsByKind = new Map(targetActions.map((action) => [action.kind, action]));
-  const pendingReason = actionState.status === "pending" ? actionState.label : undefined;
+  const pendingReason = isActionBusy(actionState) ? actionState.label : undefined;
   const unavailableReason = pendingReason ?? transactionUnavailableReason;
 
   return [

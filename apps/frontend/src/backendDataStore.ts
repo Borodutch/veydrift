@@ -39,6 +39,8 @@ import {
   fetchWalletSettlement,
   fetchWatchedPlanets,
   inspectReferralCode,
+  isUserRejected,
+  isOnChainRevertError,
   normalizePageOptions,
   paidAllianceInviteCommitment,
   paidAllianceInviteStoreMessage,
@@ -147,7 +149,10 @@ export type BackendWriteTransactionDescriptor = {
   key: string;
   label: string;
   prepare?: () => Promise<void>;
-  send: () => Promise<string>;
+  send: (beforeWalletSend: () => void) => Promise<string>;
+  /** Only an explicit repeat click may authorize retrying an uncertain send. */
+  confirmRetry?: () => boolean;
+  waitForIndexing?: boolean;
   errorLabel?: (error: unknown) => string;
   onErrorRefresh?: (error: unknown) => Promise<void> | void;
   onStateChange?: (state: WriteTransactionState) => void;
@@ -164,9 +169,7 @@ export type BackendWriteTransactionDescriptor = {
   indexing?: BackendIndexingPlan | undefined;
 };
 
-/** Backend reservations that must be prepared under the same wallet-scoped
- * gate as first-planet settlement, so retries cannot race a second browser
- * tab or a reconnect. */
+/** Backend reservations prepared inside the guarded settlement attempt. */
 export type SettlementRedemptions = {
   allianceInvite?: PaidAllianceInviteRedemption | undefined;
   referral?: ReferralRedemption | undefined;
@@ -245,6 +248,7 @@ type BackendTransactionStatus = {
 };
 
 export type PendingTransaction = {
+  attemptId?: number;
   actionId: string;
   chainId: string;
   submittedAt: number;
@@ -261,6 +265,7 @@ export type PendingTransaction = {
 
 type PendingTransactionCompletion =
   | { kind: "paid-alliance-invite"; secret: string; signature: string }
+  | { kind: "referral-redemption"; code: string }
   | { kind: "referral-claim"; code: string; commitment: string; signature: string };
 
 function sameChainId(left: string, right: string): boolean {
@@ -296,6 +301,7 @@ type GlobalMissionArchiveOptions = {
 const INACTIVE_RESOURCE_RETENTION_MS = 120_000;
 
 type BackendDataStoreOptions = {
+  transactionForegroundTimeoutMs?: number;
   inactiveResourceRetentionMs?: number;
   now?: () => number;
   transactionPollIntervalMs?: number;
@@ -342,8 +348,10 @@ function resourceTagsForKey(key: string, wallet?: string | undefined, planetId?:
  */
 export class BackendDataStore {
   private readonly state = new GameStateStore();
-  /** Serialize wallet prompts only; submitted hashes are observed independently. */
+  /** Metadata writes are serialized separately from contract submissions. */
   private readonly transactionGates = new Map<string, TransactionActionGate>();
+  private nextTransactionAttempt = 0;
+  private readonly submissionAttempts = new Map<string, { id: number; unknown: boolean }>();
   private readonly settlementReservationAttempts = new Map<string, Promise<SettlementRedemptions>>();
   /**
    * The one registry of backend reads. A view never owns a second cache: it
@@ -386,6 +394,7 @@ export class BackendDataStore {
   private readonly now: () => number;
   private readonly transactionPollIntervalMs: number;
   private readonly transactionRequestTimeoutMs: number;
+  private readonly transactionForegroundTimeoutMs: number;
   private readonly transactionStatusReader: ((transactionHash: string) => Promise<BackendTransactionStatus>) | undefined;
 
   constructor(readonly apiBaseUrl: string, options: BackendDataStoreOptions = {}) {
@@ -393,6 +402,7 @@ export class BackendDataStore {
     this.now = options.now ?? Date.now;
     this.transactionPollIntervalMs = options.transactionPollIntervalMs ?? 1_000;
     this.transactionRequestTimeoutMs = options.transactionRequestTimeoutMs ?? 10_000;
+    this.transactionForegroundTimeoutMs = options.transactionForegroundTimeoutMs ?? 60_000;
     this.transactionStatusReader = options.transactionStatusReader;
     if (typeof document !== "undefined") {
       document.addEventListener("visibilitychange", this.handleVisibilityChange);
@@ -402,6 +412,7 @@ export class BackendDataStore {
       try { window.localStorage?.removeItem(`veydrift:pending-transactions:${this.apiBaseUrl}`); } catch { /* Storage is optional. */ }
       window.addEventListener?.("online", this.handleResume);
       window.addEventListener?.("pageshow", this.handleResume);
+      window.addEventListener?.("focus", this.handleResume);
     }
   }
 
@@ -764,7 +775,13 @@ export class BackendDataStore {
     refresh: (tags: readonly BackendDataTag[]): BackendIndexingPlan => this.createIndexingPlan(this.keysForScope(tags)),
     resourceChange: (wallet: string, planetId: string, bodyKind: "planet" | "moon" = "planet"): BackendIndexingPlan =>
       this.createIndexingPlan([walletCacheKey(bodyKind === "moon" ? "moon" : "infrastructure", wallet, planetId)]),
-    settledPlanet: (wallet: string): BackendIndexingPlan => this.createIndexingPlan([walletCacheKey("settlement", wallet), walletCacheKey("planets", wallet)]),
+    settledPlanet: (wallet: string, referralCode?: () => string | undefined): BackendIndexingPlan => this.createIndexingPlan(
+      [walletCacheKey("settlement", wallet), walletCacheKey("planets", wallet)],
+      async () => {
+        const code = referralCode?.();
+        return code ? [{ kind: "referral-redemption", code }] : [];
+      },
+    ),
     referralClaim: (wallet: string, code: string, commitment: string, signature: string | (() => string)): BackendIndexingPlan =>
       this.createIndexingPlan([walletCacheKey("referral-dashboard", wallet), ...this.keysForScope([`wallet:${wallet.toLowerCase()}`, "kind:referral-history"])], async () => {
         const resolvedSignature = typeof signature === "function" ? signature() : signature;
@@ -943,6 +960,7 @@ export class BackendDataStore {
     if (typeof window !== "undefined") {
       window.removeEventListener?.("online", this.handleResume);
       window.removeEventListener?.("pageshow", this.handleResume);
+      window.removeEventListener?.("focus", this.handleResume);
     }
     this.stopAllPolling();
     for (const timer of this.scheduledRefreshes.values()) clearTimeout(timer);
@@ -956,6 +974,7 @@ export class BackendDataStore {
     this.activityPresenceClaims.clear();
     this.settlementReservationAttempts.clear();
     this.transactionGates.clear();
+    this.submissionAttempts.clear();
     this.state.dispose();
   }
 
@@ -1184,17 +1203,23 @@ export class BackendDataStore {
   }
 
   private publishWriteTransactionState(state: WriteTransactionState, walletScope = "global"): void {
+    if (this.transactionAbort.signal.aborted) return;
     if (this.hasContext && walletScope !== "global" && this.contextWallet !== walletScope) return;
     // Write status is UI state, but it is still scoped to the initiating
     // wallet.  Without this metadata `clearWallet()` cannot retire a
     // confirmed/failed action from a previous account after an account switch.
     const options = walletScope === "global" ? undefined : { wallet: walletScope };
-    this.state.publish(this.writeTransactionKey(undefined, walletScope), state, options);
-    if (state.key) this.state.publish(this.writeTransactionKey(state.key, walletScope, state.planetId), state, options);
+    const publish = (key: string) => {
+      const current = this.state.value<WriteTransactionState>(key);
+      if (state.attemptId !== undefined && current?.attemptId !== undefined && current.attemptId > state.attemptId) return;
+      this.state.publish(key, state, options);
+    };
+    publish(this.writeTransactionKey(undefined, walletScope));
+    if (state.key) publish(this.writeTransactionKey(state.key, walletScope, state.planetId));
     if (state.key) {
       const group = `group:${state.key.split(":")[0]}`;
-      this.state.publish(this.writeTransactionKey(group, walletScope), state, options);
-      if (state.planetId) this.state.publish(this.writeTransactionKey(group, walletScope, state.planetId), state, options);
+      publish(this.writeTransactionKey(group, walletScope));
+      if (state.planetId) publish(this.writeTransactionKey(group, walletScope, state.planetId));
     }
   }
 
@@ -1299,11 +1324,13 @@ export class BackendDataStore {
     const publish = (phase: WriteTransactionState["phase"], error?: Error) => {
       if (!this.canObserveTransaction(entry)) return;
       const current = this.state.value<WriteTransactionState>(this.writeTransactionKey(entry.actionId, entry.wallet, entry.planetIds?.[0]));
+      if (entry.attemptId !== undefined && current?.attemptId !== undefined && current.attemptId > entry.attemptId) return;
       // A follow-up save from an older transaction must not overwrite a newer action.
       if (entry.phase === "applied" && current && (current.phase === "pending" || (current.txHash && current.txHash !== entry.transactionHash))) return;
-      if (lastPhase === phase && current?.txHash === entry.transactionHash) return;
+      if ((lastPhase === phase || current?.phase === phase) && current?.txHash === entry.transactionHash) return;
       lastPhase = phase;
       const state: WriteTransactionState = {
+        ...(entry.attemptId !== undefined ? { attemptId: entry.attemptId } : {}),
         key: entry.actionId,
         phase,
         label: phase === "success" ? (entry.label ?? "Action") + " completed."
@@ -1358,6 +1385,8 @@ export class BackendDataStore {
               const completion = entry.completions[0]!;
               if (completion.kind === "paid-alliance-invite") {
                 await storePaidAllianceInvite(this.apiBaseUrl, entry.wallet, completion.secret, completion.signature);
+              } else if (completion.kind === "referral-redemption") {
+                await this.recordReferralRedemption(completion.code, entry.wallet, entry.transactionHash);
               } else {
                 await this.recordReferralClaimAfterIndexing(entry.wallet, completion.code, completion.commitment, entry.transactionHash, completion.signature);
               }
@@ -1441,22 +1470,64 @@ private createIndexingPlan(keys: readonly string[], prepare?: () => Promise<Pend
     const walletScope = this.transactionWalletScope(descriptor.invalidateTags);
     const planetIds = [...(descriptor.planetIds ?? descriptor.invalidateTags?.filter((tag) => tag.startsWith("planet:")).map((tag) => tag.slice(7)) ?? [])];
     const conflictKeys = [...(descriptor.conflictKeys ?? (planetIds.length ? planetIds.map((id) => "planet:" + id) : ["wallet"]))];
-    const previous = this.pendingTransactions().find((entry) =>
-      entry.wallet === walletScope && this.pendingTransactionMatchesChain(entry, descriptor.chainId) && this.transactionConflicts(entry, conflictKeys)
-    );
-    if (previous) {
-      const recovery = this.trackPendingTransaction(previous);
-      // A click blocked by a different action must not report that action's
-      // success as its own, or submit automatically after it finishes.
-      return previous.actionId === descriptor.key ? recovery : { outcome: "not-submitted" };
+    const actionKey = this.writeTransactionKey(descriptor.key, walletScope, planetIds[0]);
+    const restoreNotice = () => {
+      const state = this.state.value<WriteTransactionState>(actionKey);
+      if (state) this.publishWriteTransactionState({ ...state }, walletScope);
+    };
+    const identity = `${descriptor.chainId ?? this.contextChainId ?? "unknown"}:${actionKey}`;
+    const previousAttempt = this.submissionAttempts.get(identity);
+    if (previousAttempt && !previousAttempt.unknown) {
+      restoreNotice();
+      return { outcome: "not-submitted" };
     }
+    const previous = this.pendingTransactions().find(entry => entry.wallet === walletScope
+      && this.pendingTransactionMatchesChain(entry, descriptor.chainId) && entry.phase === "submitted"
+      && entry.actionId === descriptor.key && entry.planetIds?.[0] === planetIds[0]);
+    if ((previousAttempt?.unknown || previous) && !descriptor.confirmRetry?.()) {
+      // Replace any local preflight notice from the declined retry. It must
+      // not turn the older background/unknown operation back into a UI lock.
+      restoreNotice();
+      return { outcome: previous ? "not-submitted" : "unknown" };
+    }
+    const attempt = { id: ++this.nextTransactionAttempt, unknown: false };
+    this.submissionAttempts.set(identity, attempt);
+    let expired = false;
+    const deadline = Date.now() + this.transactionForegroundTimeoutMs;
+    let walletSendStarted = false;
+    let entry: PendingTransaction | undefined;
+    const isCurrent = () => !this.transactionAbort.signal.aborted
+      && (!this.hasContext || this.contextWallet === walletScope)
+      && (this.state.value<WriteTransactionState>(actionKey)?.attemptId ?? attempt.id) <= attempt.id;
     const publish = (state: WriteTransactionState) => {
-      this.publishWriteTransactionState({ ...state, ...(planetIds[0] ? { planetId: planetIds[0] } : {}) }, walletScope);
+      if (!isCurrent()) return;
+      this.publishWriteTransactionState({ ...state, attemptId: attempt.id, ...(planetIds[0] ? { planetId: planetIds[0] } : {}) }, walletScope);
       try { descriptor.onStateChange?.(state); } catch { /* UI callbacks cannot alter submission. */ }
     };
-    try {
-      const entry = await this.transactionGateFor(walletScope).run(descriptor.key, async () => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let stopObservingAbort: () => void = () => {};
+    const foreground = new Promise<WriteTransactionOutcome>(resolve => {
+      const finish = () => {
+        expired = true;
+        if (entry) {
+          resolve({ outcome: entry.phase === "applied" ? "indexed" : entry.phase, txHash: entry.transactionHash });
+        } else {
+          attempt.unknown = walletSendStarted;
+          if (!walletSendStarted && this.submissionAttempts.get(identity) === attempt) this.submissionAttempts.delete(identity);
+          publish({ key: descriptor.key, phase: walletSendStarted ? "unknown" : "error", label: walletSendStarted
+            ? "Your wallet has not returned a result. Check its activity before retrying; this transaction may already have been sent. Other actions are available."
+            : "Preparation took too long. Please try again." });
+          resolve({ outcome: walletSendStarted ? "unknown" : "not-submitted" });
+        }
+      };
+      timer = setTimeout(finish, this.transactionForegroundTimeoutMs);
+      this.transactionAbort.signal.addEventListener("abort", finish, { once: true });
+      stopObservingAbort = () => this.transactionAbort.signal.removeEventListener("abort", finish);
+    });
+    const work = (async (): Promise<WriteTransactionOutcome> => {
+      try {
         const assertSubmissionContext = () => {
+          if (expired || Date.now() >= deadline) throw new Error("This preparation attempt has expired. Please try again.");
           if (this.transactionAbort.signal.aborted || (this.hasContext && this.contextWallet !== walletScope)) {
             throw new Error("Wallet changed before submission. Please try again.");
           }
@@ -1466,13 +1537,18 @@ private createIndexingPlan(keys: readonly string[], prepare?: () => Promise<Pend
           if (typeof navigator !== "undefined" && navigator.onLine === false) throw new Error("You are offline. Reconnect before trying again.");
         };
         assertSubmissionContext();
-        publish({ key: descriptor.key, phase: "pending", label: descriptor.label + ": Awaiting wallet" });
+        publish({ key: descriptor.key, phase: "preparing", label: descriptor.label + ": Preparing…" });
         await descriptor.prepare?.();
         assertSubmissionContext();
         const completions = await indexingPlan?.prepare?.();
         assertSubmissionContext();
-        const transactionHash = await descriptor.send();
+        const transactionHash = await descriptor.send(() => {
+          assertSubmissionContext();
+          walletSendStarted = true;
+          publish({ key: descriptor.key, phase: "pending", label: descriptor.label + ": Awaiting wallet" });
+        });
         const pending: PendingTransaction = {
+          attemptId: attempt.id,
           phase: "submitted",
           actionId: descriptor.key, chainId: descriptor.chainId ?? this.contextChainId ?? "unknown",
           submittedAt: this.now(), transactionHash, wallet: walletScope,
@@ -1483,20 +1559,37 @@ private createIndexingPlan(keys: readonly string[], prepare?: () => Promise<Pend
           }),
           ...(completions?.length ? { completions } : {}),
         };
-        // Track in this session before releasing the wallet gate or observing status.
+        // Track before releasing the initiating UI; a late hash is never discarded.
         this.writePendingTransaction(pending);
-        return pending;
-      });
-      if (!entry) return { outcome: "not-submitted" };
-      return this.trackPendingTransaction(entry, descriptor.onStateChange);
-    } catch (error) {
-      try { await descriptor.onErrorRefresh?.(error); } catch { /* Preserve the submission error. */ }
-      publish({
-        error, key: descriptor.key, phase: "error",
-        label: descriptor.errorLabel?.(error) ?? (error instanceof Error ? error.message : "The action could not be submitted."),
-      });
-      return { error, outcome: "not-submitted" };
-    }
+        entry = pending;
+        clearTimeout(timer);
+        if (this.submissionAttempts.get(identity) === attempt) this.submissionAttempts.delete(identity);
+        publish({ key: descriptor.key, phase: "confirming", txHash: transactionHash, label: descriptor.label + ": Processing…" });
+        const recovery = this.trackPendingTransaction(entry, state => {
+          if (isCurrent()) descriptor.onStateChange?.(state);
+        });
+        if (descriptor.waitForIndexing === false) {
+          void recovery.catch(() => {});
+          return { outcome: "submitted", txHash: transactionHash };
+        }
+        return await recovery;
+      } catch (error) {
+        // A provider transport error after send began is not proof of rejection.
+        const uncertain = walletSendStarted && !isUserRejected(error) && !isOnChainRevertError(error);
+        attempt.unknown = uncertain;
+        // Error refresh is background work, never another unbounded UI lock.
+        if (!expired) void Promise.resolve().then(() => descriptor.onErrorRefresh?.(error)).catch(() => {});
+        if (!expired || walletSendStarted) publish({
+          error, key: descriptor.key, phase: uncertain ? "unknown" : "error",
+          label: uncertain ? "The wallet did not confirm the result. Check its activity before retrying; this transaction may already have been sent."
+            : descriptor.errorLabel?.(error) ?? (error instanceof Error ? error.message : "The action could not be submitted."),
+        });
+        return { error, outcome: uncertain ? "unknown" : "not-submitted" };
+      } finally {
+        if (!attempt.unknown && this.submissionAttempts.get(identity) === attempt) this.submissionAttempts.delete(identity);
+      }
+    })();
+    return Promise.race([work, foreground]).finally(() => { clearTimeout(timer); stopObservingAbort(); });
   }
 
   private async readBackendTransactionStatus(transactionHash: string): Promise<BackendTransactionStatus> {

@@ -11,7 +11,7 @@ describe("Galaxy transaction gating", () => {
     expect(playableSource).toContain("const missionLaunchBlocker = missionTransactionUnavailableReason ?? missionLaunchStateBlocker;");
     expect(playableSource).toContain("transactionUnavailableReason={missionTransactionUnavailableReason}");
     expect(galaxySource).toContain("transactionUnavailableReason?: string | undefined;");
-    expect(galaxySource).toContain('busy={actionState.status === "pending" || Boolean(transactionUnavailableReason)}');
+    expect(galaxySource).toContain('busy={isActionBusy(actionState) || Boolean(transactionUnavailableReason)}');
     expect(galaxySource).toContain("busyReason={transactionUnavailableReason}");
     expect(galaxySource).toContain("const hint = busyReason");
     expect(galaxySource).toContain("title={hint}");
