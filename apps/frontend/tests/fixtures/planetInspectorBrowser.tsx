@@ -122,6 +122,8 @@ class FixtureEventSource extends EventTarget {
 
 Object.defineProperty(window, "EventSource", { configurable: true, value: FixtureEventSource });
 Object.defineProperty(globalThis, "EventSource", { configurable: true, value: FixtureEventSource });
+// Route page-exit presence through the fetch mock too, never a real dev/prod proxy.
+Object.defineProperty(navigator, "sendBeacon", { configurable: true, value: () => false });
 
 const provider: Eip1193Provider = {
   on(event, listener) {

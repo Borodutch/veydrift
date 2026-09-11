@@ -1073,6 +1073,8 @@ test("Supply ignores old reload locks, can close during indexing, and allows the
     planetIds: ['101', '102'], conflictKeys: ['fleets', 'planet:101', 'planet:102']
   }]))`);
   await loadInspectorFixture("/", 1280);
+  // The shell's planet selector can mount before the lazy Overview page.
+  await waitForExpression(`document.querySelector('button[aria-label="Supply this planet"]') !== null`);
   assert.equal(await evaluate(`localStorage.getItem('veydrift:pending-transactions:/local-api')`), null);
   await evaluate(`(async () => {
     const url = performance.getEntriesByType('resource').map(r => r.name).find(name => name.includes('/src/backendDataStore.ts'));
