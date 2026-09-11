@@ -213,12 +213,15 @@ function TargetCombatIntelPanel({
 
   return (
     <Panel title="Target Combat Intel">
-      <Row label="Combat power" value={formatResource(intel.combatPower)} />
+      {intel.basis === "battle-time" ? <Row label="Snapshot" value="Battle-time forces" /> : null}
+      <Row label="Combat power" value={intel.combatPower === null ? "Unknown — historical combat power was not captured." : formatResource(intel.combatPower)} />
       <Row label="Combat ships" value={<TacticalUnitIcons units={intel.combatShips.units} catalog={shipCatalog} assetByKey={shipAssetByKey} />} />
       <Row label="Defenses" value={<TacticalUnitIcons units={intel.defenses.units} catalog={defenseCatalog} assetByKey={defenseAssetByKey} />} />
-      <Row label="Defense queue" value={queueLabel(intel.queues.defense, defenseCatalog, now)} />
-      <Row label="Ship queue" value={queueLabel(intel.queues.ship, shipCatalog, now)} />
-      <Row label="Target traffic" value={<TargetMissionTraffic missions={intel.activeMissions} now={now} />} />
+      {intel.basis !== "battle-time" ? <>
+        <Row label="Defense queue" value={queueLabel(intel.queues.defense, defenseCatalog, now)} />
+        <Row label="Ship queue" value={queueLabel(intel.queues.ship, shipCatalog, now)} />
+        <Row label="Target traffic" value={<TargetMissionTraffic missions={intel.activeMissions} now={now} />} />
+      </> : null}
     </Panel>
   );
 }
@@ -1117,8 +1120,9 @@ function TacticalUnitIcons({
 }: {
   assetByKey: Record<string, string>;
   catalog: readonly { id: number; key: string; label: string }[];
-  units: Array<{ id: number; count: number }> | undefined;
+  units: Array<{ id: number; count: number }> | null | undefined;
 }) {
+  if (units === null) return <>Unknown — historical composition was not captured.</>;
   return <UnitIcons units={compositionUnits(units, catalog, assetByKey)} />;
 }
 

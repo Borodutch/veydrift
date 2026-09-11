@@ -1649,7 +1649,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
             mission,
             battleReport,
             battleReportMaterialization: reportedBattleReportMaterialization,
-            targetCombatIntel: targetCombatIntelForMission(indexer, mission),
+            targetCombatIntel: targetCombatIntelForMission(indexer, mission, battleReport),
             // Current target state remains useful alongside the persisted battle-time snapshot and
             // loss breakdown. Historical loss rendering never infers destroyed/restored counts from
             // this mutable projection.
@@ -4516,16 +4516,29 @@ function defenderPlanetStateForReport(
 
 function targetCombatIntelForMission(
   indexer: SettlementIndexer,
-  mission: FleetMissionSummary
-): Pick<RankedHighscorePlanet["tactical"], "combatPower" | "combatShips" | "defenses"> & {
-  planetId: string;
-  targetIsMoon: boolean;
-  activeMissions: FleetMissionSummary[];
-  queues: {
-    defense: PlayerQueues["defense"];
-    ship: PlayerQueues["ship"];
-  };
-} | null {
+  mission: FleetMissionSummary,
+  report: ReturnType<SettlementIndexer["battleReport"]>
+) {
+  if (report) {
+    // Reports describe the force at combat, not today's inventory (or today's tech/costs).
+    // An absent historical snapshot is unknown, never an empty target or zero power.
+    const snapshot = report.defenderSnapshot;
+    const historicalUnits = (rows: Array<{ id: number; count: number }> | undefined) => ({
+      count: rows ? rows.reduce((total, unit) => total + unit.count, 0) : null,
+      power: null,
+      units: rows?.map((unit) => ({ ...unit, power: null })) ?? null
+    });
+    return {
+      planetId: report.targetPlanetId,
+      targetIsMoon: report.targetIsMoon === true,
+      basis: "battle-time" as const,
+      combatPower: null,
+      combatShips: historicalUnits(snapshot?.fleet.filter((unit) => isCombatShipId(unit.id))),
+      defenses: historicalUnits(snapshot?.defenses),
+      activeMissions: [],
+      queues: { defense: null, ship: null }
+    };
+  }
   const planet = indexer.planet(mission.targetPlanetId);
   if (!planet) return null;
 
