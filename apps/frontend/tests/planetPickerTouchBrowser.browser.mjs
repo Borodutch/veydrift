@@ -28,6 +28,7 @@ let inspectorFixtureUrl;
 let pageTargetId;
 let recoveryFixtureUrl;
 let server;
+let routeChunkGate;
 
 const INSPECTOR_APP_READY_TIMEOUT_MS = 30_000;
 const INSPECTOR_PRELOAD_TIMEOUT_MS = 120_000;
@@ -227,6 +228,18 @@ before(async () => {
   server = await createServer({
     logLevel: "error",
     root: new URL("..", import.meta.url).pathname,
+    // Fixture stores and mocked requests must not depend on a developer's .env.local.
+    define: { "import.meta.env.VITE_VEYDRIFT_API_URL": JSON.stringify("/local-api") },
+    plugins: [{
+      name: "browser-proof-route-gate",
+      configureServer(vite) {
+        vite.middlewares.use((request, _response, next) => {
+          if (routeChunkGate && /\/components\/(MissionControlPage|ShipyardPage)\.tsx(?:\?|$)/.test(request.url ?? "")) {
+            void routeChunkGate.then(() => next());
+          } else next();
+        });
+      },
+    }],
     server: {
       host: "127.0.0.1",
       port: 0,
@@ -1599,8 +1612,11 @@ test("slow route chunks use matching skeletons while navigation stays usable", a
   await loadInspectorFixture("/", 1280);
   await waitForExpression("document.querySelector('main section[aria-label=\"Fleets\"]') !== null");
   await evaluate("window.routeShellProof = document.querySelector('nav.hidden')");
+  await cdp.send("Network.enable");
   await cdp.send("Network.setCacheDisabled", { cacheDisabled: true });
-  await cdp.send("Network.emulateNetworkConditions", { offline: false, latency: 1500, downloadThroughput: -1, uploadThroughput: -1 });
+  // Hold only route modules until assertions finish; elapsed network latency is not a gate.
+  let releaseChunks;
+  routeChunkGate = new Promise(resolve => { releaseChunks = resolve; });
   try {
     await clickExpression("document.querySelector('nav.hidden a[href=\"/mission-control\"]')");
     await waitForExpression("document.querySelector('main')?.textContent.includes('Loading active missions') === true");
@@ -1609,7 +1625,8 @@ test("slow route chunks use matching skeletons while navigation stays usable", a
     await clickExpression("document.querySelector('nav.hidden a[href=\"/shipyard\"]')");
     await waitForExpression("location.pathname === '/shipyard' && document.querySelector('main')?.textContent.includes('Loading shipyard') === true");
   } finally {
-    await cdp.send("Network.emulateNetworkConditions", { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
+    routeChunkGate = undefined;
+    releaseChunks();
     await cdp.send("Network.setCacheDisabled", { cacheDisabled: false });
   }
   await waitForExpression("document.querySelector('main [data-production-catalog]') !== null", 20_000);
