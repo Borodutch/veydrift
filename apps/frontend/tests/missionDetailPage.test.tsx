@@ -165,6 +165,49 @@ describe("MissionDetailPage defender Fleet / Defenses block", () => {
     expect(text).not.toContain("Battle Report");
   });
 
+  test("six-round Draw keeps 12 surviving defenses in intel and the summary (VEY-863)", () => {
+    const zero = { metal: "0", crystal: "0", deuterium: "0" };
+    const detail: MissionDetailResponse = {
+      mission: combatMission({ missionId: "79423", ships: { smallCargo: "7" } }),
+      battleReport: battleReport({ missionId: "79423", outcome: "Draw", rounds: 6,
+        attackerLosses: zero, defenderLosses: zero, loot: zero, debris: { metal: "0", crystal: "0" },
+        roundReports: Array.from({ length: 6 }, (_, i) => ({ round: i + 1, attackerUnits: "7", defenderUnits: "12", attackerLosses: zero, defenderLosses: zero })),
+        defenderSnapshot: { fleet: [], defenses: [{ id: 0, count: 12 }] },
+        defenderLossBreakdown: {
+          planetFleet: { units: [], destroyedResources: zero, restoredResources: zero, netLostResources: zero },
+          stationedFleet: { destroyedResources: zero }, fleetLossesReconciled: true,
+          staticDefenses: { units: [{ id: 0, destroyed: 0, restored: 0, netLost: 0, remaining: 12 }],
+            destroyedResources: zero, restoredResources: zero, netLostResources: zero }
+        } }),
+      targetCombatIntel: { planetId: "9", basis: "battle-time", combatPower: null,
+        combatShips: { count: 0, power: null, units: [] },
+        defenses: { count: 12, power: null, units: [{ id: 0, count: 12, power: null }] },
+        activeMissions: [], queues: { defense: null, ship: null } }
+    };
+    const text = renderDetailText(detail);
+    expect(text).toContain("Draw");
+    expect(text).toContain("Battle-time forces");
+    expect(text).toContain("Combat power Unknown");
+    expect(text).not.toContain("Combat power 0");
+    expect(text).not.toContain("Defenses None");
+    expect(text).not.toContain("Static defenses remaining None");
+    expect(text).toContain("Static defenses destroyed None");
+    expect(text).toContain("Static defenses restored None");
+    expect(text).toContain("Static defenses net lost None");
+    expect(renderDetailUnitTitles(detail).filter((title) => title === "Rocket Launcher ×12")).toHaveLength(3);
+    expect(text).not.toContain("Defense queue");
+    expect(text).not.toContain("Target traffic");
+
+    detail.battleReport!.defenderSnapshot = null;
+    detail.battleReport!.defenderLossBreakdown = null;
+    detail.targetCombatIntel!.combatShips.units = null;
+    detail.targetCombatIntel!.defenses.units = null;
+    detail.targetCombatIntel!.defenses.count = null;
+    const unknown = renderDetailText(detail);
+    expect(unknown).toContain("Defenses Unknown — historical composition was not captured.");
+    expect(unknown).toContain("Combat ships Unknown — historical composition was not captured.");
+  });
+
   test("shows a precise target combat intel caveat when the target is uncharted", () => {
     const text = renderDetailText({
       mission: combatMission({ status: "Outbound", arrivalAt: "1770003600", returnAt: "1770007200" }),

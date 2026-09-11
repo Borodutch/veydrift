@@ -7639,7 +7639,9 @@ export class SettlementIndexer {
   }
 
   private queueDefenderLossBreakdownBackfill(): void {
-    const migrationKey = "defenderLossBreakdownBackfillV1";
+    // V2 also repairs persisted summaries that omitted unchanged survivors. Queue only canonical
+    // incomplete reports; the existing worker regenerates their shared/ACS read models from logs.
+    const migrationKey = "defenderLossBreakdownBackfillV2";
     if (this.metadata(migrationKey) !== null) return;
     this.db.transaction(() => {
       this.db.query(`
@@ -7650,7 +7652,25 @@ export class SettlementIndexer {
         WHERE status = 'ready'
           AND report_json IS NOT NULL
           AND mission_id = CAST(json_extract(report_json, '$.missionId') AS TEXT)
-          AND json_type(report_json, '$.defenderLossBreakdown') IS NULL
+          AND (
+            json_type(report_json, '$.defenderLossBreakdown') IS NULL
+            OR EXISTS (
+              SELECT 1 FROM json_each(report_json, '$.defenderSnapshot.defenses') AS snapshot
+              WHERE json_extract(snapshot.value, '$.count') > 0
+                AND NOT EXISTS (
+                  SELECT 1 FROM json_each(report_json, '$.defenderLossBreakdown.staticDefenses.units') AS loss
+                  WHERE json_extract(loss.value, '$.id') = json_extract(snapshot.value, '$.id')
+                )
+            )
+            OR EXISTS (
+              SELECT 1 FROM json_each(report_json, '$.defenderSnapshot.fleet') AS snapshot
+              WHERE json_extract(snapshot.value, '$.count') > 0
+                AND NOT EXISTS (
+                  SELECT 1 FROM json_each(report_json, '$.defenderLossBreakdown.planetFleet.units') AS loss
+                  WHERE json_extract(loss.value, '$.id') = json_extract(snapshot.value, '$.id')
+                )
+            )
+          )
       `).run(new Date().toISOString());
       this.setMetadata(migrationKey, new Date().toISOString());
     })();
@@ -15374,15 +15394,19 @@ function battleReportLossSection(
   remaining: Map<number, number>,
   costForId: (id: number) => Resources | null
 ): BattleReportDefenderLossBreakdown["planetFleet"] {
-  const units = [...changes.entries()]
-    .filter(([, change]) => change.destroyed > 0 || change.restored > 0)
-    .map(([id, change]) => ({
-      id,
-      destroyed: change.destroyed,
-      restored: change.restored,
-      netLost: Math.max(0, change.destroyed - change.restored),
-      remaining: remaining.get(id) ?? 0
-    }))
+  // Unchanged survivors emit no loss event but still belong in the remaining force.
+  const units = [...new Set([...changes.keys(), ...remaining.keys()])]
+    .map((id) => {
+      const change = changes.get(id) ?? { destroyed: 0, restored: 0 };
+      return {
+        id,
+        destroyed: change.destroyed,
+        restored: change.restored,
+        netLost: Math.max(0, change.destroyed - change.restored),
+        remaining: remaining.get(id) ?? 0
+      };
+    })
+    .filter((unit) => unit.destroyed > 0 || unit.restored > 0 || unit.remaining > 0)
     .sort((left, right) => left.id - right.id);
   return {
     units,

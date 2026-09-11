@@ -988,7 +988,7 @@ describe("SettlementIndexer", () => {
     const now = new Date().toISOString();
     insert.run("42", reportJson, now);
     insert.run("43", reportJson, now);
-    database.query("DELETE FROM indexer_metadata WHERE key = 'defenderLossBreakdownBackfillV1'").run();
+    database.query("DELETE FROM indexer_metadata WHERE key = 'defenderLossBreakdownBackfillV2'").run();
 
     new SettlementIndexer(reader, 100n, { database, runStartupBackfill: false });
 
@@ -1000,6 +1000,42 @@ describe("SettlementIndexer", () => {
       { mission_id: "42", status: "pending" },
       { mission_id: "43", status: "ready" }
     ]);
+    database.close();
+  });
+
+  test("survivor backfill requeues only incomplete canonical summaries and runs once", () => {
+    const database = new Database(":memory:");
+    const reader = {
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    };
+    new SettlementIndexer(reader, 100n, { database, runStartupBackfill: false });
+    const insert = database.query(`
+      INSERT INTO indexed_battle_report_read_models (
+        mission_id, status, report_json, attempts, block_number, updated_at
+      ) VALUES (?, 'ready', ?, 1, '100', ?)
+    `);
+    for (const [id, fleet, defenses, units] of [
+      ["79423", [], [{ id: 0, count: 12 }], []],
+      ["79303", [{ id: 1, count: 2 }], [], []],
+      ["68163", [], [{ id: 0, count: 53 }], [{ id: 0, destroyed: 53, restored: 37, netLost: 16, remaining: 37 }]],
+      ["99", [], [], []]
+    ] as const) {
+      insert.run(id, JSON.stringify({ missionId: id, defenderSnapshot: { fleet, defenses },
+        defenderLossBreakdown: { planetFleet: { units: [] }, staticDefenses: { units } }
+      }), new Date().toISOString());
+    }
+    insert.run("79424", JSON.stringify({ missionId: "79423", defenderSnapshot: { fleet: [], defenses: [{ id: 0, count: 12 }] },
+      defenderLossBreakdown: { planetFleet: { units: [] }, staticDefenses: { units: [] } }
+    }), new Date().toISOString());
+    database.query("DELETE FROM indexer_metadata WHERE key = 'defenderLossBreakdownBackfillV2'").run();
+    new SettlementIndexer(reader, 100n, { database, runStartupBackfill: false });
+    expect(database.query("SELECT mission_id FROM indexed_battle_report_read_models WHERE status = 'pending' ORDER BY mission_id").all())
+      .toEqual([{ mission_id: "79303" }, { mission_id: "79423" }]);
+    database.query("UPDATE indexed_battle_report_read_models SET status = 'ready'").run();
+    new SettlementIndexer(reader, 100n, { database, runStartupBackfill: false });
+    expect(database.query("SELECT mission_id FROM indexed_battle_report_read_models WHERE status = 'pending'").all()).toEqual([]);
     database.close();
   });
 
@@ -10163,6 +10199,14 @@ describe("SettlementIndexer", () => {
       topics: [planetDefenseCountChangedTopic, topic(8n), topic(0n)],
       data: abiWords(4n)
     });
+    // Mixed force: these ships/defenses survive unchanged alongside the destroyed launchers.
+    for (const [topic0, unitId, count, position] of [
+      [planetDefenseCountChangedTopic, 1n, 3n, "0x1"],
+      [planetShipCountChangedTopic, 1n, 2n, "0x2"]
+    ] as const) indexer.applyLog({
+      blockNumber: "0x7f", transactionHash: "0xdefenses-before-5682", logIndex: position,
+      topics: [topic0, topic(8n), topic(unitId)], data: abiWords(count)
+    });
     for (const [logIndex, total] of [2n, 1n, 0n, 2n].entries()) {
       indexer.applyLog({
         blockNumber: "0x80",
@@ -10190,13 +10234,13 @@ describe("SettlementIndexer", () => {
     indexer.materializeBattleReportReadModelsForWorker(["5682"], "ingest");
     expect(indexer.battleReport("5682")).toMatchObject({
       defenderSnapshot: {
-        fleet: [],
-        defenses: [{ id: 0, count: 4 }]
+        fleet: [{ id: 1, count: 2 }],
+        defenses: [{ id: 0, count: 4 }, { id: 1, count: 3 }]
       },
       defenderLosses: { metal: "0", crystal: "0", deuterium: "0" },
       defenderLossBreakdown: {
         planetFleet: {
-          units: [],
+          units: [{ id: 1, destroyed: 0, restored: 0, netLost: 0, remaining: 2 }],
           destroyedResources: { metal: "0", crystal: "0", deuterium: "0" }
         },
         stationedFleet: {
@@ -10209,7 +10253,7 @@ describe("SettlementIndexer", () => {
             restored: 2,
             netLost: 2,
             remaining: 2
-          }],
+          }, { id: 1, destroyed: 0, restored: 0, netLost: 0, remaining: 3 }],
           destroyedResources: { metal: "8000", crystal: "0", deuterium: "0" },
           restoredResources: { metal: "4000", crystal: "0", deuterium: "0" },
           netLostResources: { metal: "4000", crystal: "0", deuterium: "0" }

@@ -4051,6 +4051,90 @@ describe("Veydrift backend", () => {
     });
   });
 
+  for (const fixture of [
+    { id: 79423n, start: 12n, destroyed: 0, restored: 0, remaining: 12, rounds: 6, outcome: 0n },
+    { id: 79303n, start: 12n, destroyed: 0, restored: 0, remaining: 12, rounds: 6, outcome: 0n },
+    { id: 68163n, start: 53n, destroyed: 53, restored: 37, remaining: 37, rounds: 1, outcome: 1n },
+    { id: 79425n, start: null, destroyed: 0, restored: 0, remaining: 12, rounds: 6, outcome: 0n }
+  ]) {
+    test(`historical defender intel and survivor summaries: mission ${fixture.id} (VEY-863)`, async () => {
+      const database = new Database(":memory:");
+      let indexer = new SettlementIndexer(new MockChainReader(), configuredTestConfig.indexFromBlock, { database });
+      await indexer.rebuild();
+      indexer.applyEvent({ ...planet, planetId: "92", eventName: "PlanetStarted", transactionHash: "0xtarget", blockNumber: "100" });
+      for (const log of activeFleetMissionLogs({
+        arrivalAt: 1_700_000_000n, missionId: fixture.id, missionTypeId: 3n,
+        owner: player, originPlanetId: 7n, targetPlanetId: 92n
+      })) indexer.applyLog(log);
+      indexer.applyLog({ blockNumber: "0x69", transactionHash: "0xcargo-fleet", logIndex: "0x0",
+        topics: [fleetMissionShipsTopic, topic(fixture.id)],
+        data: abiWords(7n, ...Array.from({ length: 13 }, () => 0n)) });
+      if (fixture.start !== null) indexer.applyLog({
+        blockNumber: "0x6f", transactionHash: "0xbefore", logIndex: "0x0",
+        topics: [planetDefenseCountChangedTopic, topic(92n), topic(0n)], data: abiWords(fixture.start)
+      });
+      if (fixture.destroyed) {
+        for (const [position, count] of [0n, BigInt(fixture.restored)].entries()) indexer.applyLog({
+          blockNumber: "0x70", transactionHash: "0xbattle", logIndex: `0x${position}`,
+          topics: [planetDefenseCountChangedTopic, topic(92n), topic(0n)], data: abiWords(count)
+        });
+      }
+      for (let round = 1; round <= fixture.rounds; round++) indexer.applyLog({
+        blockNumber: "0x70", transactionHash: "0xbattle", logIndex: `0x${(round + 2).toString(16)}`,
+        topics: ["0xad3481558e72184b0d73a624579c0f1fc7db867024ac190f038373dbde288ca9", topic(fixture.id), topic(BigInt(round))],
+        data: abiWords(fixture.destroyed ? 24n : 7n, fixture.destroyed ? 0n : 12n, 0n, 0n, 0n, 0n)
+      });
+      indexer.applyLog({ blockNumber: "0x70", transactionHash: "0xbattle", logIndex: "0xa",
+        topics: ["0xc0d98d89682d12d3fe90cd0786b9320015ab3950de5f4ae3f54ca0fe9b660d1b", topic(fixture.id), addressTopic(player), topic(92n)],
+        data: abiWords(fixture.outcome, BigInt(fixture.rounds), 12345n, 0n, 0n, 0n) });
+      // Today's inventory is empty; it must not replace the battle's historical force.
+      indexer.applyLog({ blockNumber: "0x80", transactionHash: "0xafter", logIndex: "0x0",
+        topics: [planetDefenseCountChangedTopic, topic(92n), topic(0n)], data: abiWords(0n) });
+      indexer.materializeBattleReportReadModelsForWorker([String(fixture.id)], "ingest");
+      if (fixture.id === 79423n) {
+        // Reproduce an already-persisted pre-fix report, then restart with broad backfills disabled.
+        const stale = indexer.battleReport(String(fixture.id))!;
+        stale.defenderLossBreakdown!.staticDefenses.units = [];
+        database.query("UPDATE indexed_battle_report_read_models SET report_json = ? WHERE mission_id = ?")
+          .run(JSON.stringify(stale), String(fixture.id));
+        database.query("DELETE FROM indexer_metadata WHERE key = 'defenderLossBreakdownBackfillV2'").run();
+        indexer = new SettlementIndexer(new MockChainReader(), configuredTestConfig.indexFromBlock, { database, runStartupBackfill: false });
+        expect(indexer.battleReportMaterializationStatus(String(fixture.id)).status).toBe("pending");
+        indexer.materializeBattleReportReadModelsForWorker([String(fixture.id)], "ingest");
+        expect(indexer.battleReportMaterializationStatus(String(fixture.id)).status).toBe("ready");
+      }
+      const response = await createRequestHandler({ config: configuredTestConfig, chainReader: new MockChainReader(), indexer })(
+        new Request(`http://localhost/mission/${fixture.id}`));
+      const body = await response.json();
+      expect(response.status).toBe(200);
+      expect(body.defenderPlanetState.defenses).toEqual([]);
+      expect(body.targetCombatIntel).toMatchObject({ basis: "battle-time", combatPower: null,
+        defenses: { count: fixture.start === null ? null : Number(fixture.start), power: null,
+          units: fixture.start === null ? null : [{ id: 0, count: Number(fixture.start), power: null }] } });
+      expect(body.battleReport.roundReports).toHaveLength(fixture.rounds);
+      if (fixture.start === null) {
+        expect(body.battleReport.defenderSnapshot).toBeNull();
+        expect(body.battleReport.defenderLossBreakdown).toBeNull();
+        expect(body.targetCombatIntel.combatShips.units).toBeNull();
+        return;
+      }
+      const expectedUnits = [{ id: 0, destroyed: fixture.destroyed, restored: fixture.restored,
+        netLost: fixture.destroyed - fixture.restored, remaining: fixture.remaining }];
+      expect(body.battleReport.defenderLossBreakdown.staticDefenses.units).toEqual(expectedUnits);
+      expect(body.battleReport.defenderLossBreakdown.staticDefenses.netLostResources.metal)
+        .toBe(String((fixture.destroyed - fixture.restored) * 2000));
+      expect(body.targetCombatIntel.combatShips.units).toEqual([]);
+      if (!fixture.destroyed) {
+        expect(body.mission.ships.smallCargo).toBe("7");
+        expect(body.battleReport.outcome).toBe("Draw");
+        expect(body.battleReport.roundReports.every((round: { defenderUnits: string }) => round.defenderUnits === "12")).toBe(true);
+      }
+      // All materialized report readers share the same loss section, not a detail-only patch.
+      expect(indexer.battleReports(100, 0, false)[0]?.defenderLossBreakdown?.staticDefenses.units).toEqual(expectedUnits);
+      expect(indexer.battleReportsForMissions([indexer.fleetMission(String(fixture.id))!])[0]?.defenderLossBreakdown?.staticDefenses.units).toEqual(expectedUnits);
+    });
+  }
+
   test("battle report snapshots update when historical unit-count logs arrive after the report cache is warm", async () => {
     const attacker = "0x3333333333333333333333333333333333333333" as Address;
     const attackBattleResolvedTopic = "0xc0d98d89682d12d3fe90cd0786b9320015ab3950de5f4ae3f54ca0fe9b660d1b";

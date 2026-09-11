@@ -671,17 +671,18 @@ export type DefenderPlanetState = {
 
 export type TargetCombatIntel = {
   planetId: string;
+  basis?: "battle-time";
   activeMissions: FleetMissionSummary[];
-  combatPower: string;
+  combatPower: string | null;
   combatShips: {
-    count: number;
-    power: string;
-    units?: TacticalUnitBreakdown[];
+    count: number | null;
+    power: string | null;
+    units?: Array<{ id: number; count: number; power: string | null }> | null;
   };
   defenses: {
-    count: number;
-    power: string;
-    units?: TacticalUnitBreakdown[];
+    count: number | null;
+    power: string | null;
+    units?: Array<{ id: number; count: number; power: string | null }> | null;
   };
   queues: {
     defense: QueueStateResponse | null;
@@ -699,8 +700,9 @@ export type MissionDetailResponse = {
     error?: string | null;
     updatedAt?: string;
   };
-  // Public target fighting-strength snapshot for the mission target. Null means the target planet is
-  // not charted in the indexed state; undefined only appears with older API responses.
+  // Before combat this describes the current target. A materialized report uses battle-time units;
+  // null power/composition means historical data is unavailable, not zero. A null intel object means
+  // the current target is uncharted; undefined only appears with older API responses.
   targetCombatIntel?: TargetCombatIntel | null;
   // The defender planet's current indexed fleet/defenses composition, used to populate the
   // Battle Report's defender block. Null/undefined when the target planet is not charted, so the
