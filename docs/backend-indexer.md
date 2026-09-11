@@ -52,6 +52,14 @@ depends on the actual deployed contracts and configured responsibilities.
 
 ## Consistent reads and transaction application
 
+Structured `api_request` logs include `requestBodyBytes` (declared Content-Length,
+zero for no body, `null` when unknown) and `responseBodyBytes` (payload bytes read
+from the response stream). `responseBodyComplete` is false on cancellation or a
+body-stream error; those sizes are partial. SSE is logged immediately with a
+`null` response size. Other responses are logged when consumed or cancelled,
+while `durationMs` still measures handler time, not download time. Sizes exclude
+HTTP headers, network overhead and any later proxy compression; no bodies are logged.
+
 Gameplay builders use SQLite read snapshots so one response does not mix commits.
 Ownership lookup does not project resources; each endpoint computes the resource
 view it actually returns once, within that snapshot.

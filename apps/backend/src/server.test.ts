@@ -1192,6 +1192,7 @@ describe("Veydrift backend", () => {
       });
 
       const response = await loggedHandler(new Request("http://localhost/runtime-config?source=test"));
+      const responseBytes = (await response.arrayBuffer()).byteLength;
 
       expect(response.status).toBe(200);
       expect(logs).toHaveLength(1);
@@ -1217,6 +1218,9 @@ describe("Veydrift backend", () => {
         route: "/runtime-config",
         service: "veydrift",
         status: 200,
+        requestBodyBytes: 0,
+        responseBodyBytes: responseBytes,
+        responseBodyComplete: true,
         stream: false,
         workerRole: "writer"
       });
