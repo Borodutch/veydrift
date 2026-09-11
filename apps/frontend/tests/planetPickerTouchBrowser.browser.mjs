@@ -759,6 +759,7 @@ test("desktop selector atomically replaces an unrelated inspector with one owned
   }
 
   await waitForExpression("document.querySelector('main')?.textContent?.includes('Add media') === true");
+  await waitForExpression("[...document.querySelectorAll('.sticky.top-0 summary[title]')].some(node => node.title.startsWith('Metal: 203'))");
   const snapshot = await inspectorSnapshot();
   assert.equal(snapshot.path, "/planet/4/5/6");
   assert.equal(snapshot.heading, "Owned Beta");
@@ -1065,7 +1066,7 @@ test("a stalled Supply inventory request does not block another planet or Shipya
   assert.deepEqual(await evaluate(`window.inspectorProof.errors`), []);
 });
 
-test("Supply ignores old reload locks, can close during indexing, and allows the next submission", async () => {
+test("Supply ignores old reload locks, closes after submission, and allows the next submission during indexing", async () => {
   await loadInspectorFixture("/", 1280);
   await evaluate(`localStorage.setItem('veydrift:pending-transactions:/local-api', JSON.stringify([{
     actionId: 'galaxy:Supply 1 transport', chainId: '0x14a34', submittedAt: 1,
@@ -1091,11 +1092,12 @@ test("Supply ignores old reload locks, can close during indexing, and allows the
       if (String(input).includes('/supply-sources')) window.supplyProof.sourceReads++;
       if (String(input).includes('/shipyard')) window.supplyProof.shipyardReads++;
       if (String(input).includes('/transactions/0xsupplyfixture')) {
-        if (window.supplyProof.phase === 'confirmed' && window.supplyProof.checked) {
+        const firstTransaction = String(input).includes('/transactions/0xsupplyfixture1/');
+        if (firstTransaction && window.supplyProof.phase === 'confirmed' && window.supplyProof.checked) {
           await new Promise(resolve => { window.supplyProof.release = resolve; });
         }
         window.supplyProof.checked = true;
-        return Response.json({ transactionHash: String(input).split('/transactions/')[1].split('/')[0], phase: window.supplyProof.phase, receiptBlock: '20', latestIndexedBlock: '20', indexedEventCount: 1, events: [] });
+        return Response.json({ transactionHash: String(input).split('/transactions/')[1].split('/')[0], phase: firstTransaction ? window.supplyProof.phase : 'applied', receiptBlock: '20', latestIndexedBlock: '20', indexedEventCount: 1, events: [] });
       }
       const response = await originalFetch(input, init);
       if (!String(input).includes('/shipyard')) return response;
@@ -1108,6 +1110,11 @@ test("Supply ignores old reload locks, can close during indexing, and allows the
   await waitForExpression(`document.querySelector('[role="dialog"]')?.textContent?.includes('Available cargo fleet') === true`);
   assert.equal(await evaluate("window.supplyProof.sourceReads"), 1, 'Opening Supply batches every origin into one request');
   assert.equal(await evaluate("window.supplyProof.shipyardReads"), 0, 'Opening Supply does not fan out into shipyard reads');
+  const titleAlignment = await evaluate(`(() => {
+    const parts = [...document.querySelectorAll('[role="dialog"] h2 > span')].map(node => node.getBoundingClientRect());
+    return Math.abs((parts[0].top + parts[0].height / 2) - (parts[1].top + parts[1].height / 2));
+  })()`);
+  assert.ok(titleAlignment <= 1, `Supply title and icon differ by ${titleAlignment}px`);
   await evaluate(`(() => {
     const input = document.querySelector('input[aria-label="metal to send"]');
     input.value = '10';
@@ -1115,26 +1122,14 @@ test("Supply ignores old reload locks, can close during indexing, and allows the
   })()`);
   await waitForExpression(`document.querySelector('[role="dialog"] footer button')?.disabled === false`);
   await clickExpression(`document.querySelector('[role="dialog"] footer button')`);
-  await waitForExpression(`window.supplyProof.release !== undefined && document.querySelector('[role="dialog"]')?.textContent?.includes('You can close this window.') === true`);
+  await waitForExpression(`window.supplyProof.release !== undefined && document.querySelector('[role="dialog"]') === null`);
   assert.equal(await evaluate("window.supplyProof.sourceReads"), 2, 'Confirmation revalidates all origins with one request');
-  assert.equal(await evaluate(`document.querySelector('[role="dialog"] .skeleton-region') !== null`), false);
-  assert.ok(await evaluate(`document.querySelectorAll('[role="dialog"] [aria-label="Source planets"] input[type="checkbox"]').length > 0`), 'Keep source planets visible while the transaction is processing');
-  const titleAlignment = await evaluate(`(() => {
-    const parts = [...document.querySelectorAll('[role="dialog"] h2 > span')].map(node => node.getBoundingClientRect());
-    return Math.abs((parts[0].top + parts[0].height / 2) - (parts[1].top + parts[1].height / 2));
-  })()`);
-  assert.ok(titleAlignment <= 1, `Supply title and icon differ by ${titleAlignment}px`);
-  assert.equal(await evaluate(`document.querySelector('[role="dialog"] footer button').disabled`), true);
-  await clickExpression(`document.querySelector('[aria-label="Close supply resources"]')`);
-  await waitForExpression(`document.querySelector('[role="dialog"]') === null`);
   assert.equal(await evaluate(`window.supplyProof.store.pendingTransactions().length`), 1);
 
   await clickExpression(`document.querySelector('button[aria-label="Supply this planet"]')`);
-  await waitForExpression(`document.querySelector('[role="dialog"]') !== null`);
+  await waitForExpression(`document.querySelector('[role="dialog"]')?.textContent?.includes('Available cargo fleet') === true`);
+  assert.equal(await evaluate(`document.querySelector('[role="dialog"] .skeleton-region') !== null`), false);
   assert.equal(await evaluate(`document.querySelector('[role="dialog"] footer button').disabled`), true);
-  await evaluate(`window.supplyProof.phase = 'applied'; window.supplyProof.release()`);
-  await waitForExpression(`window.supplyProof.store.pendingTransactions().length === 0`);
-  assert.equal(await evaluate(`document.querySelector('[role="dialog"]') !== null`), true);
   assert.equal(await evaluate(`window.supplyProof.sends`), 1);
   await evaluate(`(() => {
     const input = document.querySelector('input[aria-label="metal to send"]');
@@ -1144,6 +1139,8 @@ test("Supply ignores old reload locks, can close during indexing, and allows the
   await waitForExpression(`document.querySelector('[role="dialog"] footer button')?.disabled === false`);
   await clickExpression(`document.querySelector('[role="dialog"] footer button')`);
   await waitForExpression(`window.supplyProof.sends === 2 && document.querySelector('[role="dialog"]') === null`);
+  await evaluate(`window.supplyProof.phase = 'applied'; window.supplyProof.release()`);
+  await waitForExpression(`window.supplyProof.store.pendingTransactions().length === 0`);
   assert.equal(await evaluate(`window.supplyProof.store.isTransactionPending(window.inspectorProof.account)`), false);
   assert.deepEqual(await evaluate("window.inspectorProof.errors"), []);
 });
