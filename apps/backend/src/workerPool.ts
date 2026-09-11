@@ -16,7 +16,7 @@
 // This module is intentionally side-effect free (no port binding, no spawning)
 // so the topology decisions can be unit-tested in isolation.
 
-import { logApiRequestEvent } from "./observability";
+export { createRequestLoggingFetch } from "./observability";
 
 export const WORKER_ROLE_ENV = "VEYDRIFT_WORKER_ROLE";
 export const WORKER_INDEX_ENV = "VEYDRIFT_WORKER_INDEX";
@@ -242,42 +242,6 @@ class ForwardedBodyTooLargeError extends Error {
   constructor() {
     super(`Forwarded request body exceeds ${FORWARDED_BODY_LIMIT_BYTES} bytes.`);
   }
-}
-
-export function createRequestLoggingFetch(
-  fetchHandler: (request: Request) => Promise<Response>,
-  workerRole: WorkerRole
-): (request: Request) => Promise<Response> {
-  return async (request: Request): Promise<Response> => {
-    const startedAt = performance.now();
-    const url = new URL(request.url);
-    try {
-      const response = await fetchHandler(request);
-      logBackendRequest(request, url, workerRole, response.status, performance.now() - startedAt);
-      return response;
-    } catch (error) {
-      logBackendRequest(request, url, workerRole, 500, performance.now() - startedAt, error);
-      throw error;
-    }
-  };
-}
-
-function logBackendRequest(
-  request: Request,
-  url: URL,
-  workerRole: WorkerRole,
-  status: number,
-  durationMs: number,
-  error?: unknown
-): void {
-  logApiRequestEvent(
-    request,
-    url,
-    workerRole,
-    status,
-    durationMs,
-    error ? error instanceof Error ? error.message : String(error) : undefined
-  );
 }
 
 function forwardedResponseBody(

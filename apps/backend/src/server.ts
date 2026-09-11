@@ -58,7 +58,7 @@ import { RandomnessCommitterService } from "./randomnessCommitter";
 import { loadRandomnessReadinessSnapshot, type RandomnessReadinessSnapshot } from "./randomness";
 import { MissionResolutionService } from "./missionResolution";
 import { ResolverTransactionCoordinator } from "./resolverTransactions";
-import { logApiRequestEvent } from "./observability";
+import { createRequestLoggingFetch } from "./observability";
 import {
   validatePlayerDescription,
   validatePlayerDisplayName,
@@ -2234,7 +2234,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
   };
 
   prewarmHotResponseCache(serveWithResponseCache, indexer, prewarmResponseCache, prewarmStartDelayMs());
-  return logRequests ? requestLoggingHandler(serveWithResponseCache, workerRole) : serveWithResponseCache;
+  return logRequests ? createRequestLoggingFetch(serveWithResponseCache, workerRole) : serveWithResponseCache;
 }
 
 /**
@@ -2584,35 +2584,6 @@ export function withRequestCors(request: Request, response: Response): Response 
     status: response.status,
     statusText: response.statusText
   });
-}
-
-function requestLoggingHandler(
-  serve: (request: Request) => Promise<Response>,
-  workerRole: WorkerRole
-): (request: Request) => Promise<Response> {
-  return async (request: Request): Promise<Response> => {
-    const startedAt = performance.now();
-    const url = new URL(request.url);
-    try {
-      const response = await serve(request);
-      logApiRequest(request, url, workerRole, response.status, performance.now() - startedAt);
-      return response;
-    } catch (error) {
-      logApiRequest(request, url, workerRole, 500, performance.now() - startedAt, error);
-      throw error;
-    }
-  };
-}
-
-function logApiRequest(
-  request: Request,
-  url: URL,
-  workerRole: WorkerRole,
-  status: number,
-  durationMs: number,
-  error?: unknown
-): void {
-  logApiRequestEvent(request, url, workerRole, status, durationMs, error ? reasonText(error) : undefined);
 }
 
 function allowedCorsOrigin(request: Request): string {

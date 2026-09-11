@@ -325,6 +325,7 @@ describe("createForwardingFetch", () => {
       );
 
       const response = await handler(new Request("http://localhost/runtime-config?source=test"));
+      const responseBytes = (await response.arrayBuffer()).byteLength;
 
       expect(response.status).toBe(200);
       expect(logs).toHaveLength(1);
@@ -348,6 +349,9 @@ describe("createForwardingFetch", () => {
         queryKeys: ["source"],
         route: "/runtime-config",
         status: 200,
+        requestBodyBytes: 0,
+        responseBodyBytes: responseBytes,
+        responseBodyComplete: true,
         stream: false,
         workerRole: "reader"
       });
