@@ -6,6 +6,7 @@ import {
   planetArtTypeFromArchetypeOrCoords,
   planetArtTypeForCoordinates,
   planetFromSettlementPlanet,
+  planetImageForType,
   planetsFromSystemResponse,
 } from "./data/mockUniverse";
 import {
@@ -139,7 +140,7 @@ describe("planet identity", () => {
         max: -35,
       },
       diameter: 14_000,
-      image: `/assets/game/style-pass/generated/planets/${planetArtTypeForCoordinates(settlementPlanet)}.webp`,
+      image: planetImageForType(planetArtTypeForCoordinates(settlementPlanet)),
     });
     expect(formatPlanetType(identity.type)).toBe(formatPlanetType(planetArtTypeForCoordinates(settlementPlanet)));
   });
