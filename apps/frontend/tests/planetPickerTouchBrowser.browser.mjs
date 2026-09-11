@@ -1108,6 +1108,7 @@ test("Supply ignores old reload locks, closes after submission, and allows the n
   })()`);
   await clickExpression(`document.querySelector('button[aria-label="Supply this planet"]')`);
   await waitForExpression(`document.querySelector('[role="dialog"]')?.textContent?.includes('Available cargo fleet') === true`);
+  await waitForExpression(`document.querySelector('[role="dialog"] [aria-label="Source planets"] input[type="checkbox"]:checked') !== null`);
   assert.equal(await evaluate("window.supplyProof.sourceReads"), 1, 'Opening Supply batches every origin into one request');
   assert.equal(await evaluate("window.supplyProof.shipyardReads"), 0, 'Opening Supply does not fan out into shipyard reads');
   const titleAlignment = await evaluate(`(() => {
@@ -1128,6 +1129,7 @@ test("Supply ignores old reload locks, closes after submission, and allows the n
 
   await clickExpression(`document.querySelector('button[aria-label="Supply this planet"]')`);
   await waitForExpression(`document.querySelector('[role="dialog"]')?.textContent?.includes('Available cargo fleet') === true`);
+  await waitForExpression(`document.querySelector('[role="dialog"] [aria-label="Source planets"] input[type="checkbox"]:checked') !== null`);
   assert.equal(await evaluate(`document.querySelector('[role="dialog"] .skeleton-region') !== null`), false);
   assert.equal(await evaluate(`document.querySelector('[role="dialog"] footer button').disabled`), true);
   assert.equal(await evaluate(`window.supplyProof.sends`), 1);
