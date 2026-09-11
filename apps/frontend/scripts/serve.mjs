@@ -988,14 +988,15 @@ async function referralTitleComposite(sharp, value) {
     .trim({ background: { r: 0, g: 0, b: 0, alpha: 0 } })
     .png()
     .toBuffer({ resolveWithObject: true });
-  const maximumWidth = referralOgLayout.titleSafeRight - referralOgLayout.titleX;
+  const left = Math.max(0, -(info.trimOffsetLeft ?? -referralOgLayout.titleX));
+  const maximumWidth = referralOgLayout.titleSafeRight - left + 1;
   const input = info.width > maximumWidth
     ? await sharp(data).resize({ width: maximumWidth, height: info.height, fit: "fill" }).png().toBuffer()
     : data;
 
   return {
     input,
-    left: Math.max(0, -(info.trimOffsetLeft ?? -referralOgLayout.titleX)),
+    left,
     top: Math.max(0, -(info.trimOffsetTop ?? 0)),
     blend: "over",
   };
