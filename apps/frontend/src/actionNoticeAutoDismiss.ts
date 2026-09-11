@@ -2,7 +2,12 @@ export const ACTION_NOTICE_AUTO_DISMISS_MS = 10_000;
 
 export type AutoDismissableActionState =
   | { status: "idle" }
-  | { status: "pending" | "success" | "error"; label: string; autoDismiss?: boolean | undefined };
+  | { status: "pending" | "success" | "error"; label: string; busy?: boolean; autoDismiss?: boolean | undefined };
+
+/** Progress notices may outlive their button's foreground work. */
+export function isActionBusy<T extends { status: string; busy?: boolean }>(action: T): action is T & { status: "pending"; label: string } {
+  return action.status === "pending" && action.busy !== false;
+}
 
 export type ActionStateSetter<State extends AutoDismissableActionState> = (
   value: State | ((current: State) => State)

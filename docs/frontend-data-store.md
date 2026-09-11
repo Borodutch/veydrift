@@ -32,8 +32,8 @@ submission context without cancelling unrelated resource requests.
 
 `useBackendDataQuery` exposes per-key `isInitialLoading` and `isRefreshing`.
 Skeletons use the former; a background refresh leaves last-good data visible.
-Neither is an application-wide action lock. Conflicting transactions are still
-guarded by the transaction coordinator, independently of presentation loading.
+Neither is an application-wide action lock. The transaction coordinator guards
+duplicate submissions, independently of presentation loading.
 
 The visible route is one `InspectRoute` value. Page, detail IDs, and inspected
 coordinates derive from it; gameplay planet selection and transient dialogs remain
@@ -146,19 +146,20 @@ queue; it does not merge captured queues or request a second queue endpoint.
 
 The same store owns the complete operation:
 
-1. Check conflicting pending actions and acquire the short wallet submission gate.
+1. Guard the initiating action against duplicate clicks; there is no wallet-wide contract-write gate.
 2. Prepare required signatures and submit through the existing EIP-1193 wallet path.
+   Only the actual send request publishes **Awaiting wallet**; preparation has its own phase.
 3. Track the hash, wallet, chain, action, affected query keys, planet IDs, and conflict keys in memory before
-   beginning status observation or releasing the submission gate.
-4. Observe the backend's submitted/confirmed/applied/reverted status.
-5. On application, release gameplay conflicts and refresh active affected endpoints. Stop checking transaction status.
+   beginning status observation. Playable actions return the hash and release their initiating UI immediately.
+4. Observe the backend's submitted/confirmed/applied/reverted status in the background.
+5. On application, refresh active affected endpoints. Stop checking transaction status.
 6. Finish any required invite/referral API saves independently, then refresh their affected data and publish success.
    Save retries retain their authorization in session memory without holding gameplay locks;
    neither a read failure nor a save failure turns an applied transaction back into pending.
 
 A prior in-flight read cannot satisfy step 5: it must settle before a new
 post-application read starts. Refreshes retain last-good data. A status-request
-timeout or indexing delay keeps the action in **Processing…** during this session.
+timeout or indexing delay keeps a non-blocking **Processing…** notice during this session.
 Failed post-application reads retain last-good data and are retried by normal query synchronization, not transaction recovery. Only an explicit reverted receipt is a post-submission
 failure. There is no overall two-minute deadline or wait/discard dialog.
 
@@ -167,8 +168,16 @@ expectations. Auxiliary writes are checkpointed before reads, so a failed read
 does not repeat a successful invite/referral operation. Unmounted affected keys
 are invalidated without transport and load normally when next needed.
 
-Different planets can progress concurrently after submission. Shared fleet,
-research, alliance, and wallet-resource actions declare additional conflict keys.
+Unrelated actions can progress even while a wallet request is outstanding.
+Foreground waiting is bounded to 60 seconds, not transaction lifetime. Expired
+preparation cannot send later; an unresponsive send becomes **outcome unknown**,
+never a false failure or automatic retry. An explicit repeat of an uncertain
+action requires a duplicate-risk confirmation. Late hashes are still tracked.
+Monotonic attempt IDs keep older progress out of newer action/group notices.
+`isActionBusy` distinguishes preparation/approval from background tracking;
+screens must not use a Processing notice or outstanding transaction count as a lock.
+Subsequent submissions retain fresh indexed preflights and app-RPC simulation;
+backend reads do not make request-time RPC calls.
 Old persisted transaction locks are removed when the store starts.
 Per-action progress includes planet identity, so identical buttons on different
 planets cannot overwrite one another.
@@ -176,7 +185,7 @@ The stored transaction `phase` is the progress authority; labels and semantic
 outcomes are derived rather than maintained as independent state fields.
 
 Hidden/offline tabs and inactive wallets pause observation. Visibility return,
-online, pageshow and context restoration wake existing observers;
+online, pageshow, window focus and context restoration wake existing observers;
 there remains one observer per hash. Recovery never submits again or requests a
 new signature. Session entries from another chain are not queried on the current chain.
 API errors preserve HTTP status, backend code, and `Retry-After`. Transient errors

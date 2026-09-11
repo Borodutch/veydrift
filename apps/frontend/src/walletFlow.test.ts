@@ -53,6 +53,7 @@ import {
   getCurrentAccounts,
   getInjectedProvider,
   configureWalletTransactionTransport,
+  transactionWalletProvider,
   defaultVeydriftChainForLocation,
   ensureVeydriftNetwork,
   farcasterChainFor,
@@ -162,6 +163,27 @@ function bytes32StringErrorData(selector: string, value: string): string {
 }
 
 describe("walletFlow", () => {
+  test("submission observers are per-attempt, preserve frozen wallet receivers, and can stop a late send", async () => {
+    const calls: string[] = [];
+    const wallet: Eip1193Provider = Object.freeze({
+      isRabby: true,
+      async request<T>({ method }: { method: string }): Promise<T> {
+        expect(this as Eip1193Provider).toBe(wallet);
+        calls.push(method);
+        return "0xhash" as T;
+      },
+    });
+    let approvals = 0;
+    const first = transactionWalletProvider(wallet, () => { throw new Error("Preparation expired"); });
+    const second = transactionWalletProvider(wallet, () => { approvals++; });
+    expect(second.isRabby).toBe(true);
+    await second.request({ method: "eth_chainId" });
+    expect(approvals).toBe(0);
+    expect(() => first.request({ method: "eth_sendTransaction" })).toThrow("Preparation expired");
+    await expect(second.request({ method: "eth_sendTransaction" })).resolves.toBe("0xhash");
+    expect(approvals).toBe(1);
+    expect(calls).toEqual(["eth_chainId", "eth_sendTransaction"]);
+  });
   test("bounded RPC reads preserve JSON-RPC error details", async () => {
     const originalFetch = globalThis.fetch;
     const rpcError = { code: 3, message: "execution reverted", data: "0x1234" };
@@ -1429,7 +1451,10 @@ describe("walletFlow", () => {
     }) as unknown as typeof fetch;
 
     try {
-      await expect(sendStartBuildingUpgradeTransaction(reownProvider, account, contract, "7", 0)).resolves.toBe("0xtrust-wallet");
+      let approvals = 0;
+      const observedProvider = transactionWalletProvider(reownProvider, () => { approvals++; });
+      await expect(sendStartBuildingUpgradeTransaction(observedProvider, account, contract, "7", 0)).resolves.toBe("0xtrust-wallet");
+      expect(approvals).toBe(1);
     } finally {
       globalThis.fetch = originalFetch;
     }

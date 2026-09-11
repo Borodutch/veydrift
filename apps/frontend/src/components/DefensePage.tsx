@@ -1,3 +1,4 @@
+import { isActionBusy } from "../actionNoticeAutoDismiss";
 import { useState } from "preact/hooks";
 import { supplyResourceShortfall, type SupplyResources } from "../batchSupplyPlanner";
 import { formatMissingResources } from "../buildingDetails";
@@ -108,11 +109,11 @@ export function DefensePage({
         <DefenseSkeleton />
       ) : (
         <ProductionSection
-          actionPending={actionState.status === "pending"}
+          actionPending={isActionBusy(actionState)}
           canTransact={canTransact}
           emptyLabel="Select a defense to review costs, requirements, and production controls."
           items={(quantities) => defenseProductionItems({
-            actionPending: actionState.status === "pending",
+            actionPending: isActionBusy(actionState),
             canTransact,
             defenseState,
             productionAvailable,

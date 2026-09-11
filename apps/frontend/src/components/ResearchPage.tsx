@@ -1,3 +1,4 @@
+import { isActionBusy } from "../actionNoticeAutoDismiss";
 import { Info, PackagePlus, X } from "lucide-preact";
 import type { ComponentChildren } from "preact";
 import { useState } from "preact/hooks";
@@ -159,7 +160,7 @@ export function ResearchPage({
               <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-3 2xl:grid-cols-4">
                 {entries.map((research) => {
                   const status = researchActionStatus({
-                    actionPending: actionState.status === "pending",
+                    actionPending: isActionBusy(actionState),
                     canTransact,
                     chainCost: chainCostFor(researchState, research.id),
                     error,
@@ -195,8 +196,8 @@ export function ResearchPage({
         catalogClassName="grid gap-4"
         detail={(
           <ResearchDetailPanel
-            actionPending={actionState.status === "pending"}
-            actionPendingLabel={actionState.status === "pending" ? actionState.label : undefined}
+            actionPending={isActionBusy(actionState)}
+            actionPendingLabel={isActionBusy(actionState) ? actionState.label : undefined}
             canTransact={canTransact}
             error={error}
             loading={loading}

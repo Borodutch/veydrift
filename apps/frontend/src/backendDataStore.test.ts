@@ -784,7 +784,7 @@ describe("BackendDataStore", () => {
         store.runWriteTransaction({
           key: "defense:start:4",
           label: "Defense production",
-          send: async () => "0xabc",
+          send: async beforeSend => { beforeSend(); return "0xabc"; },
           indexing: store.indexing.production("0xabc", "planet-7", "infrastructure"),
         }),
       ).resolves.toMatchObject({ outcome: "indexed" });
@@ -792,7 +792,7 @@ describe("BackendDataStore", () => {
       unsubscribe();
     }
 
-    expect(phases).toEqual(["pending", "confirming", "confirmed", "indexing", "applied", "success"]);
+    expect(phases).toEqual(["preparing", "pending", "confirming", "confirmed", "indexing", "applied", "success"]);
     expect(store.snapshot<WriteTransactionState>(store.writeTransactionKey("defense:start:4"))?.data).toMatchObject({
       key: "defense:start:4",
       phase: "success",
@@ -1030,8 +1030,8 @@ describe("BackendDataStore", () => {
     });
   });
 
-  test("uses the same shared gate for receipt writes and non-receipt mutations", async () => {
-    const store = new BackendDataStore("https://api.test");
+  test("a stalled metadata mutation cannot block contract submissions", async () => {
+    const store = new BackendDataStore("https://api.test", { transactionStatusReader: appliedTransactionStatusReader });
     let release!: () => void;
     const held = store.runExclusiveTransaction(
       "player-profile:update",
@@ -1053,8 +1053,8 @@ describe("BackendDataStore", () => {
           return "0xabc";
         },
       }),
-    ).resolves.toMatchObject({ outcome: "not-submitted" });
-    expect(sent).toBe(false);
+    ).resolves.toMatchObject({ outcome: "indexed" });
+    expect(sent).toBe(true);
 
     release();
     await held;

@@ -1,3 +1,4 @@
+import { isActionBusy } from "../actionNoticeAutoDismiss";
 import {
   ArrowDownLeft,
   ArrowUpRight,
@@ -250,7 +251,7 @@ export function PlanetDetail({
           <div className="flex w-full max-w-xl flex-col items-center gap-3">
             <PlanetMissionControls
               actions={emptyMissionActions}
-              busy={actionState.status === "pending"}
+              busy={isActionBusy(actionState)}
               coords={coords}
               onAction={onAction}
               planet={undefined}
@@ -346,7 +347,7 @@ export function PlanetDetail({
               {visibleMissionActions.length > 0 ? (
                 <PlanetMissionControls
                   actions={visibleMissionActions}
-                  busy={actionState.status === "pending"}
+                  busy={isActionBusy(actionState)}
                   coords={{ galaxy: planet.galaxy, system: planet.system, position: planet.position }}
                   onAction={onAction}
                   planet={planet}

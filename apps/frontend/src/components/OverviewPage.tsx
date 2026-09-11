@@ -1,3 +1,4 @@
+import { isActionBusy } from "../actionNoticeAutoDismiss";
 import {
   ArrowDownLeft,
   ArrowRight,
@@ -380,7 +381,7 @@ export function OverviewPage({
   }, [planetRenameAction.status]);
 
   const canShowRename = Boolean(isWalletConnected && onRenamePlanet);
-  const renameBusy = planetRenameAction.status === "pending";
+  const renameBusy = isActionBusy(planetRenameAction);
   const renameStatusTone = planetRenameAction.status === "error"
     ? "text-amber-200"
     : planetRenameAction.status === "success"

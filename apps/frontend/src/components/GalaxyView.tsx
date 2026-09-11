@@ -1,3 +1,4 @@
+import { isActionBusy } from "../actionNoticeAutoDismiss";
 import { useState, useEffect, useMemo, useRef } from "preact/hooks";
 import type { Planet, Coordinates } from "../types";
 import {
@@ -745,7 +746,7 @@ function GalaxySlot({
       actionSlot={(
         <GalaxyActionButtons
           actions={actions}
-          busy={actionState.status === "pending" || Boolean(transactionUnavailableReason)}
+          busy={isActionBusy(actionState) || Boolean(transactionUnavailableReason)}
           busyReason={transactionUnavailableReason}
           coords={coords}
           onAction={onAction}
@@ -763,7 +764,7 @@ function GalaxySlot({
       moonActionSlot={moonActions.length > 0 ? (
         <GalaxyMoonActionButtons
           actions={moonActions}
-          busy={actionState.status === "pending" || Boolean(transactionUnavailableReason)}
+          busy={isActionBusy(actionState) || Boolean(transactionUnavailableReason)}
           busyReason={transactionUnavailableReason}
           coords={coords}
           onAction={onAction}

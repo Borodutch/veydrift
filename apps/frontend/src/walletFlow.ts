@@ -1503,6 +1503,25 @@ type WalletTransactionTransport = {
 
 const walletTransactionTransports = new WeakMap<Eip1193Provider, WalletTransactionTransport>();
 
+/** Per-attempt wrapper: preserve the wallet receiver and app RPC configuration.
+ * The callback can refuse a late send after preparation has been abandoned. */
+export function transactionWalletProvider(provider: Eip1193Provider, beforeSend: () => void): Eip1193Provider {
+  const wrapped = new Proxy({} as Eip1193Provider, {
+    get(_target, property) {
+      const target = provider;
+      if (property === "request") return (args: Parameters<Eip1193Provider["request"]>[0]) => {
+        if (args.method === "eth_sendTransaction") beforeSend();
+        return target.request(args);
+      };
+      const value = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+  const transport = walletTransactionTransports.get(provider);
+  if (transport) walletTransactionTransports.set(wrapped, transport);
+  return wrapped;
+}
+
 export function configureWalletTransactionTransport(
   provider: Eip1193Provider,
   source: WalletProviderSource,

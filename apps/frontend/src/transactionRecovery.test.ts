@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { BackendDataStore } from "./backendDataStore";
 import { GameApiError } from "./gameApiError";
-import type { WriteTransactionState } from "./transactionActionGate";
+import { transactionIsBusy, type WriteTransactionState } from "./transactionActionGate";
 import { storePaidAllianceInvite } from "./walletFlow";
 
 const journalKey = "veydrift:pending-transactions:https://recovery.test";
@@ -16,8 +16,9 @@ function deferred<T>() {
   const promise = new Promise<T>((done) => { resolve = done; });
   return { promise, resolve };
 }
-async function until(check: () => boolean) {
+async function until(check: () => boolean, label = "condition") {
   for (let attempt = 0; attempt < 100 && !check(); attempt++) await Bun.sleep(1);
+  if (!check()) throw new Error(`Timed out waiting for ${label}`);
   expect(check()).toBe(true);
 }
 function globalValue(key: string, value: unknown) {
@@ -52,7 +53,7 @@ const saved = (hash = "0xold", wallet = "0xabc", chainId = "0x2105") => ({
 const action = (hash = "0xnew", planetId = "7", wallet = "0xabc") => ({
   key: "building:start:mine", label: "Build mine", chainId: "0x2105",
   invalidateTags: [`wallet:${wallet}`, `planet:${planetId}`] as const,
-  send: async () => hash,
+  send: async (beforeSend: () => void) => { beforeSend(); return hash; },
 });
 afterEach(() => {
   for (const data of stores.splice(0)) data.dispose();
@@ -60,6 +61,121 @@ afterEach(() => {
 });
 
 describe("automatic transaction recovery", () => {
+  test("a rogue wallet neither blocks unrelated writes nor live missions, polling, or focus recovery", async () => {
+    const { events } = browser();
+    const stream = new EventTarget();
+    Object.assign(events, { EventSource: class {
+      addEventListener = stream.addEventListener.bind(stream);
+      close() {}
+    } });
+    let now = Date.now();
+    let missions: string[] = [];
+    const wallet = deferred<string>();
+    const data = store({ now: () => now, transactionForegroundTimeoutMs: 50 });
+    data.setContext("0xabc", "7", "0x2105");
+    const key = data.queries.fleetVisibility("0xabc").key;
+    data.subscribeKey(key, () => {});
+    await data.refresh(key, async () => [...missions], { wallet: "0xabc" });
+    const stop = data.connectChainEvents("0xabc", { debounceMs: 0 });
+    const first = data.runWriteTransaction({ ...action(), send: beforeSend => { beforeSend(); return wallet.promise; } });
+    await until(() => data.snapshot<WriteTransactionState>(data.writeTransactionKey(undefined, "0xabc"))?.data?.phase === "pending", "wallet prompt");
+    await expect(data.runWriteTransaction({ ...action("0xship"), key: "ship:start" })).resolves.toMatchObject({ outcome: "indexed" });
+    missions = ["new mission"];
+    stream.dispatchEvent(new MessageEvent("chain-event", { data: JSON.stringify({ wallets: ["0xabc"], planetIds: ["7"] }) }));
+    await until(() => data.snapshot<string[]>(key)?.data?.length === 1, "SSE mission update");
+    missions = [];
+    now += 20_000;
+    (data as any).refreshGameplay();
+    await until(() => data.snapshot<string[]>(key)?.data?.length === 0, "poll mission update");
+    missions = ["another mission"];
+    events.dispatchEvent(new Event("focus"));
+    await until(() => data.snapshot<string[]>(key)?.data?.length === 1, "focus mission update");
+    await expect(first).resolves.toMatchObject({ outcome: "unknown" });
+    const state = data.snapshot<WriteTransactionState>(data.writeTransactionKey("building:start:mine", "0xabc", "7"))?.data;
+    expect(state?.phase).toBe("unknown");
+    expect(transactionIsBusy(state)).toBe(false);
+    wallet.resolve("0xlate");
+    await until(() => data.snapshot<WriteTransactionState>(data.writeTransactionKey("building:start:mine", "0xabc", "7"))?.data?.phase === "success", "late hash completion");
+    stop();
+  });
+
+  test("an uncertain retry requires consent and a late hash cannot overwrite the newer action", async () => {
+    browser();
+    const wallet = deferred<string>();
+    const observed: string[] = [];
+    const data = store({ transactionForegroundTimeoutMs: 5, transactionStatusReader: async hash => { observed.push(hash); return status(hash); } });
+    const oldPhases: string[] = [];
+    await expect(data.runWriteTransaction({ ...action(), send: beforeSend => { beforeSend(); return wallet.promise; }, onStateChange: state => oldPhases.push(state.phase) })).resolves.toMatchObject({ outcome: "unknown" });
+    let sends = 0;
+    const retry = { ...action("0xnext"), send: async () => { sends++; return "0xnext"; } };
+    const key = data.writeTransactionKey("building:start:mine", "0xabc", "7");
+    const beforeRetry = data.snapshot<WriteTransactionState>(key)?.data;
+    await expect(data.runWriteTransaction(retry)).resolves.toMatchObject({ outcome: "unknown" });
+    expect(sends).toBe(0);
+    expect(data.snapshot<WriteTransactionState>(key)?.data).not.toBe(beforeRetry);
+    expect(transactionIsBusy(data.snapshot<WriteTransactionState>(key)?.data)).toBe(false);
+    await expect(data.runWriteTransaction({ ...retry, confirmRetry: () => true })).resolves.toMatchObject({ outcome: "indexed" });
+    const oldPhaseCount = oldPhases.length;
+    wallet.resolve("0xlate");
+    await until(() => observed.includes("0xlate"));
+    await Bun.sleep(2);
+    expect(sends).toBe(1);
+    expect(oldPhases.length).toBe(oldPhaseCount);
+    expect(data.snapshot<WriteTransactionState>(data.writeTransactionKey("group:building", "0xabc", "7"))?.data?.txHash).toBe("0xnext");
+  });
+
+  test("expired preparation cannot ask the wallet to send later", async () => {
+    browser();
+    const prepare = deferred<void>();
+    const data = store({ transactionForegroundTimeoutMs: 5 });
+    let sends = 0;
+    await expect(data.runWriteTransaction({ ...action(), prepare: () => prepare.promise, send: async beforeSend => { beforeSend(); sends++; return "0xlate"; } })).resolves.toMatchObject({ outcome: "not-submitted" });
+    prepare.resolve();
+    await Bun.sleep(2);
+    expect(sends).toBe(0);
+    await expect(data.runWriteTransaction(action())).resolves.toMatchObject({ outcome: "indexed" });
+  });
+
+  test("a late settlement hash still completes referral bookkeeping after the UI returns", async () => {
+    browser();
+    const wallet = deferred<string>();
+    const writes: unknown[] = [];
+    globalValue("fetch", async (url: string, init: RequestInit) => {
+      expect(url).toBe("https://recovery.test/referrals/redeem-transaction");
+      writes.push(JSON.parse(String(init.body)));
+      return Response.json({ recorded: true });
+    });
+    const data = store({ transactionForegroundTimeoutMs: 5 });
+    await expect(data.runWriteTransaction({ ...action(), key: "settlement:first-planet",
+      indexing: data.indexing.settledPlanet("0xabc", () => "refcode"),
+      send: beforeSend => { beforeSend(); return wallet.promise; },
+    })).resolves.toMatchObject({ outcome: "unknown" });
+    expect(writes).toEqual([]);
+    wallet.resolve("0xlate");
+    await until(() => writes.length === 1);
+    expect(writes).toEqual([{ code: "refcode", invitee: "0xabc", txHash: "0xlate" }]);
+  });
+
+  test("background tracking returns the hash without waiting for indexing", async () => {
+    browser();
+    const indexed = deferred<ReturnType<typeof status>>();
+    const data = store({ transactionStatusReader: hash => hash === "0xfirst" ? indexed.promise : Promise.resolve(status(hash)) });
+    await expect(data.runWriteTransaction({ ...action("0xfirst"), waitForIndexing: false })).resolves.toMatchObject({ outcome: "submitted", txHash: "0xfirst" });
+    expect(transactionIsBusy(data.pendingTransactionState("0xabc", "7"))).toBe(false);
+    await expect(data.runWriteTransaction(action("0xduplicate"))).resolves.toMatchObject({ outcome: "not-submitted" });
+    await expect(data.runWriteTransaction({ ...action("0xother"), key: "ship:start" })).resolves.toMatchObject({ outcome: "indexed" });
+    indexed.resolve(status("0xfirst"));
+    await until(() => !data.isTransactionPending("0xabc"));
+  });
+
+  test("send transport failure is uncertain, but explicit wallet rejection is terminal", async () => {
+    browser();
+    const data = store();
+    await expect(data.runWriteTransaction({ ...action(), send: async beforeSend => { beforeSend(); throw new Error("Provider disconnected"); } })).resolves.toMatchObject({ outcome: "unknown" });
+    await expect(data.runWriteTransaction({ ...action(), confirmRetry: () => true, send: async beforeSend => { beforeSend(); throw Object.assign(new Error("User rejected"), { code: 4001 }); } })).resolves.toMatchObject({ outcome: "not-submitted" });
+    await expect(data.runWriteTransaction(action())).resolves.toMatchObject({ outcome: "indexed" });
+  });
+
   test("permanent API errors pause until recovery without losing or resubmitting the hash", async () => {
     const { events } = browser();
     let reads = 0, sends = 0;
@@ -224,17 +340,18 @@ describe("automatic transaction recovery", () => {
     expect(values.has(journalKey)).toBe(false);
   });
 
-  test("preparation is gated and wallet rejection never creates a journal", async () => {
+  test("preparation guards only duplicate actions and rejection never creates a journal", async () => {
     const { values } = browser();
     const prepared = deferred<void>();
     let sends = 0;
     const data = store();
     const first = data.runWriteTransaction({ ...action(), prepare: () => prepared.promise, send: async () => { throw new Error("Wallet request rejected"); } });
-    await expect(data.runWriteTransaction({ ...action("0xother", "8"), send: async () => { sends++; return "0xother"; } })).resolves.toMatchObject({ outcome: "not-submitted" });
+    await expect(data.runWriteTransaction({ ...action(), send: async () => { sends++; return "0xduplicate"; } })).resolves.toMatchObject({ outcome: "not-submitted" });
+    await expect(data.runWriteTransaction({ ...action("0xother", "8"), send: async () => { sends++; return "0xother"; } })).resolves.toMatchObject({ outcome: "indexed" });
     prepared.resolve();
     await expect(first).resolves.toMatchObject({ outcome: "not-submitted" });
     expect(values.has(journalKey)).toBe(false);
-    expect(sends).toBe(0);
+    expect(sends).toBe(1);
     expect(data.isTransactionPending("0xabc")).toBe(false);
   });
 
@@ -324,8 +441,8 @@ describe("automatic transaction recovery", () => {
     expect(data.isTransactionPending("0xabc", ["planet:7"])).toBe(true);
     expect(data.isTransactionPending("0xabc", ["planet:8"])).toBe(false);
     let conflictingSends = 0;
-    await expect(data.runWriteTransaction({ ...action(), key: "ship:start", send: async () => { conflictingSends++; return "0xbad"; } })).resolves.toMatchObject({ outcome: "not-submitted" });
-    expect(conflictingSends).toBe(0);
+    await expect(data.runWriteTransaction({ ...action(), key: "ship:start", send: async () => { conflictingSends++; return "0xship"; } })).resolves.toMatchObject({ outcome: "indexed" });
+    expect(conflictingSends).toBe(1);
     await expect(data.runWriteTransaction(action("0xsecond", "8"))).resolves.toMatchObject({ outcome: "indexed", txHash: "0xsecond" });
     expect(data.snapshot<WriteTransactionState>(data.writeTransactionKey("building:start:mine", "0xabc", "7"))?.data?.txHash).toBe("0xfirst");
     expect(data.snapshot<WriteTransactionState>(data.writeTransactionKey("building:start:mine", "0xabc", "8"))?.data?.txHash).toBe("0xsecond");

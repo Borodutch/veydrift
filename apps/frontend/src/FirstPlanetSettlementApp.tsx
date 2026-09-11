@@ -27,7 +27,8 @@ import { apiBaseUrlForRuntimeConfig, gameContractAddress, paidAllianceInviteCapa
 import { preSettlementMode, type PlanetState, type WalletState } from "./settlementScreen";
 import { playSfx } from "./sfx";
 import { TELEGRAM_SUPPORT_URL, WHITEPAPER_URL } from "./supportLinks";
-import type { WriteTransactionState } from "./transactionActionGate";
+import { confirmTransactionRetry, type WriteTransactionState } from "./transactionActionGate";
+import { transactionWalletProvider } from "./walletFlow";
 import { useBackendDataQuery } from "./useBackendDataQuery";
 import { useBackendDataSnapshot } from "./useBackendDataSnapshot";
 import {
@@ -1290,11 +1291,11 @@ export function FirstPlanetSettlementApp() {
       const data = backendDataStoreFor(apiUrl);
       let referralCode: string | undefined;
       let transactionOptions: SettlementTransactionOptions | undefined;
-      let submittedTxHash: string | undefined;
       playSfx("settle-launch");
       haptic("select");
       const outcome = await data.runWriteTransaction({
         key: "settlement:first-planet",
+        confirmRetry: confirmTransactionRetry,
         label,
         prepare: async () => {
           referralCode = paidAllianceInviteSecret ? undefined : referralCodeInput.trim() || undefined;
@@ -1306,14 +1307,13 @@ export function FirstPlanetSettlementApp() {
             ? settlementTransactionOptions(funding, redemptions.referral, redemptions.allianceInvite)
             : settlementTransactionOptions(funding, redemptions.referral);
         },
-        send: async () => {
+        send: async beforeWalletSend => {
           if (!isCurrentIdentity()) throw new Error("Wallet changed before settlement submission.");
           if (!transactionOptions) throw new Error("Settlement preparation did not complete.");
-          submittedTxHash = await sendSettlementTransaction(provider, wallet.account, settlementConfig, transactionOptions);
-          return submittedTxHash;
+          return sendSettlementTransaction(transactionWalletProvider(provider, beforeWalletSend), wallet.account, settlementConfig, transactionOptions);
         },
         chainId: requiredChain.chainIdHex,
-        indexing: data.indexing.settledPlanet(wallet.account),
+        indexing: data.indexing.settledPlanet(wallet.account, () => referralCode),
         invalidateTags: [
           `wallet:${wallet.account.toLowerCase()}`,
           "kind:settlement",
@@ -1326,7 +1326,7 @@ export function FirstPlanetSettlementApp() {
         onStateChange: (state) => {
           if (!isCurrentIdentity()) return;
           if (state.phase === "confirmed") playSfx("tx-confirm");
-          if (state.phase === "error") {
+          if (state.phase === "error" || state.phase === "unknown") {
             setPlanet({
               kind: isUserRejected(state.error) ? "rejected" : "error",
               message: state.label ?? "First planet settlement transaction failed.",
@@ -1348,13 +1348,6 @@ export function FirstPlanetSettlementApp() {
       // Do not add a second request (or a second recovery loop) here.
       const settlement = data.snapshot<WalletSettlementResponse>(data.queries.settlement(wallet.account).key)?.data;
       const indexedSettlement = indexedSettlementState(settlement);
-      if (referralCode && submittedTxHash) {
-        try {
-          await data.recordReferralRedemption(referralCode, wallet.account, submittedTxHash);
-        } catch (error) {
-          console.error("Failed to record confirmed referral redemption", error);
-        }
-      }
       // A temporarily unavailable read is not a failed settlement. The active
       // canonical query will recover through normal gameplay synchronization.
       if (!isCurrentIdentity()) return;
@@ -1383,13 +1376,14 @@ export function FirstPlanetSettlementApp() {
     const data = backendDataStoreFor(apiUrl);
     const outcome = await data.runWriteTransaction({
       key: "referral:claim",
+      confirmRetry: confirmTransactionRetry,
       label: "Referral reward claim",
       prepare: async () => {
         signature = await requestReferralWalletSignature(provider, wallet.account, "claim-transaction", commitment);
         waitingForSignature = false;
         await data.persistReferralClaimIntent(wallet.account, inviteCode, commitment, signature);
       },
-      send: () => sendReferralClaimTransaction(provider, wallet.account, settlementConfig, inviteCode),
+      send: beforeWalletSend => sendReferralClaimTransaction(transactionWalletProvider(provider, beforeWalletSend), wallet.account, settlementConfig, inviteCode),
       chainId: requiredChain.chainIdHex,
       indexing: data.indexing.referralClaim(wallet.account, inviteCode, commitment, () => signature ?? ""),
       invalidateTags: [`wallet:${wallet.account.toLowerCase()}`, "kind:referral-dashboard", "kind:referral-history"],
@@ -1399,7 +1393,7 @@ export function FirstPlanetSettlementApp() {
           setReferralProgramPhase({ status: "idle" });
           return;
         }
-        if (state.phase === "error") {
+        if (state.phase === "error" || state.phase === "unknown") {
           terminalError = true;
           setReferralProgramPhase({
             status: "error",

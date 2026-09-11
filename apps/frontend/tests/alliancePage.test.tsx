@@ -575,7 +575,7 @@ describe("AlliancePage loading display", () => {
   });
 
   test("keeps member controls enabled during background alliance refetches", () => {
-    expect(alliancePageSource).toContain('const disabled = !canTransact || actionState.status === "pending";');
+    expect(alliancePageSource).toContain('const disabled = !canTransact || isActionBusy(actionState);');
     expect(alliancePageSource).not.toContain("const disabled = !canTransact || loading || actionState.status === \"pending\";");
   });
 

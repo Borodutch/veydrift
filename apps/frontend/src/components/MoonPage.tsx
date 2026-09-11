@@ -1,3 +1,4 @@
+import { isActionBusy } from "../actionNoticeAutoDismiss";
 import { ArrowLeftRight, Crosshair, ExternalLink, Eye, Flame, Orbit, Rocket, Shield } from "lucide-preact";
 import type { LucideIcon } from "lucide-preact";
 import { useState } from "preact/hooks";
@@ -162,7 +163,7 @@ function ChickenBurnPanel({
   onBurnChicken?: MoonPageProps["onBurnChicken"];
   transactionUnavailableReason?: string | undefined;
 }) {
-  const pending = action?.status === "pending";
+  const pending = (action ? isActionBusy(action) : false);
   const configured = Boolean(burningChicken?.configured);
   const disabledReason = chickenBurnDisabledReason({
     canBurnChicken,
@@ -359,7 +360,7 @@ function MoonSystemsPanel({
   const [jumpDestination, setJumpDestination] = useState("");
   const [jumpSmallCargo, setJumpSmallCargo] = useState("");
   const [jumpLargeCargo, setJumpLargeCargo] = useState("");
-  const pending = action?.status === "pending";
+  const pending = (action ? isActionBusy(action) : false);
   const jumpDestinationReady = isPositiveIntegerInput(jumpDestination);
   const jumpShips = parseMoonJumpShips(jumpSmallCargo, jumpLargeCargo);
   const jumpCargoValid = jumpShips !== null;
