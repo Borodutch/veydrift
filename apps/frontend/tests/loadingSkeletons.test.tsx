@@ -15,6 +15,15 @@ import {
   RaidTargetsSkeleton,
   RankingsRowsSkeleton,
   RiftSkeleton,
+  PageLoadingSkeleton,
+  OverviewSkeleton,
+  MissionControlPageSkeleton,
+  MissionCreationSkeleton,
+  MissionDetailSkeleton,
+  ShipyardSkeleton,
+  DefenseSkeleton,
+  RankingsSkeleton,
+  InviteSkeleton,
 } from "../src/components/LoadingSkeletons";
 import { Skeleton, SkeletonRegion } from "../src/components/Skeleton";
 import { EntityMediaPanelSkeleton } from "../src/components/EntityMediaPanel";
@@ -69,6 +78,44 @@ describe("Skeleton primitives", () => {
   });
 });
 
+describe("Route loading layouts", () => {
+  test.each([
+    ["overview", OverviewSkeleton],
+    ["infrastructure", CatalogSkeleton],
+    ["research", CatalogSkeleton],
+    ["shipyard", ShipyardSkeleton],
+    ["defenses", DefenseSkeleton],
+    ["mission-control", MissionControlPageSkeleton],
+    ["mission-create", MissionCreationSkeleton],
+    ["mission-detail", MissionDetailSkeleton],
+    ["battle-reports", MissionControlSkeleton],
+    ["moon", MoonSkeleton],
+    ["planet", PlanetDetailSkeleton],
+    ["moon-inspect", MoonDetailSkeleton],
+    ["alliance", AllianceSkeleton],
+    ["alliance-invites", InviteSkeleton],
+    ["alliance-inspect", InspectPanelSkeleton],
+    ["player-inspect", InspectPanelSkeleton],
+    ["rankings", RankingsSkeleton],
+    ["rift", RiftSkeleton],
+    ["galaxy", GalaxyRowsSkeleton],
+    ["raid-target-finder", RaidTargetsSkeleton],
+  ] as const)("%s uses its page layout and accessible loading status", (page, component) => {
+    const skeleton = PageLoadingSkeleton({ page });
+    expect(skeleton.type).toBe(component);
+    expect(roles(skeleton)).toContain("status");
+  });
+
+  test("lazy loading is confined to content, with its fallback supplied by the route", () => {
+    const boundary = readFileSync(new URL("../src/components/PageContent.tsx", import.meta.url), "utf8");
+    const shell = readFileSync(new URL("../src/PlayableMvpApp.tsx", import.meta.url), "utf8");
+    expect(boundary).toContain("<Suspense fallback={fallback}>");
+    expect(boundary).not.toContain("PlanetDetailSkeleton");
+    expect(shell.indexOf("<PageContent")).toBeGreaterThan(shell.indexOf("<main"));
+    expect(shell.indexOf("</PageContent>")).toBeLessThan(shell.indexOf("</main>"));
+  });
+});
+
 const skeletons: Array<{ name: string; node: ComponentChildren }> = [
   { name: "CatalogSkeleton", node: CatalogSkeleton({ label: "Loading research" }) },
   {
@@ -109,9 +156,11 @@ describe("Pages render skeleton loaders, not text loaders, during initial load",
     "DefensePage.tsx",
     "ResearchPage.tsx",
     "MissionControlPage.tsx",
+    "MissionDetailPage.tsx",
+    "BattleReportsPage.tsx",
     "GalaxyView.tsx",
     "AlliancePage.tsx",
-    "RankingsPage.tsx",
+    "RankingsTable.tsx",
     "InspectPages.tsx",
     "RaidTargetFinderPage.tsx",
   ];
@@ -126,17 +175,26 @@ describe("Pages render skeleton loaders, not text loaders, during initial load",
     });
   }
 
-  test("no page uses a full-section VeydriftLoader (text loader) for initial load", () => {
+  test("no page uses the removed text-and-spinner loader", () => {
     for (const page of pages) {
       const source = readFileSync(
         fileURLToPath(new URL(`../src/components/${page}`, import.meta.url)),
         "utf8",
       );
-      // Inline refresh indicators (variant="inline") are allowed; a bare
-      // section-variant <VeydriftLoader label=...> initial loader is not.
-      const sectionLoader = /<VeydriftLoader\s+label=(?:(?!variant)[^>])*\/>/.test(source);
-      expect({ page, sectionLoader }).toEqual({ page, sectionLoader: false });
+      expect(source).not.toContain("VeydriftLoader");
+      expect(source).not.toContain("InlineSyncIndicator");
     }
+  });
+
+  test("data-loading surfaces reuse skeletons and the old spinner styles are gone", async () => {
+    for (const file of ["components/TopBar", "components/BatchSupplyModal", "components/PageHeader", "ComingSoonApp", "FirstPlanetSettlementApp"]) {
+      const source = await Bun.file(new URL(`../src/${file}.tsx`, import.meta.url)).text();
+      expect(source).toContain("Skeleton");
+      expect(source).not.toContain("animate-spin");
+    }
+    const css = await Bun.file(new URL("../src/styles.css", import.meta.url)).text();
+    expect(css).not.toContain("veydrift-loader");
+    expect(css).toContain("prefers-reduced-motion: reduce");
   });
 
   test("production pages use the grouped row and featured-card skeleton", () => {

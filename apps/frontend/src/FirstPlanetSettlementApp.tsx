@@ -1,87 +1,83 @@
+import { ChevronDown, Coins, Copy, FileText, Gift, Link, RefreshCw, Share2, TicketCheck, UserRound } from "lucide-preact";
 import type { ComponentChildren } from "preact";
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { ChevronDown, Coins, Copy, FileText, Gift, Link, RefreshCw, Share2, TicketCheck, UserRound } from "lucide-preact";
+import { backendDataStoreFor, retainBackendDataStore } from "./backendDataStore";
 import { ComingSoonApp } from "./ComingSoonApp";
-import { TelegramIcon } from "./components/TelegramIcon";
-import { PlayableMvpApp } from "./PlayableMvpApp";
-import { RankingCommanderLink, RankingsPagination, RankingsTable } from "./components/RankingsPage";
+import { RankingCommanderLink, RankingsPagination, RankingsTable } from "./components/RankingsTable";
 import { Skeleton, SkeletonRegion } from "./components/Skeleton";
-import { buildInspectPath } from "./inspectRoutes";
-import { apiBaseUrlForRuntimeConfig, gameContractAddress, playableApiUrl, runtimeConfigUrl, type RuntimeConfig } from "./runtimeConfig";
-import { readReferralStorage, referralCodeFromText, referralCodeForLanding, REFERRAL_CLAIM_CODE_STORAGE_KEY, REFERRAL_CODE_STORAGE_KEY, writeReferralStorage } from "./referralStorage";
-import { copyReferralText, type ReferralCopyOutcome } from "./referralClipboard";
-import { preSettlementMode, type PlanetState, type WalletState } from "./settlementScreen";
-import { TELEGRAM_SUPPORT_URL, WHITEPAPER_URL } from "./supportLinks";
-import { fetchReferralShareImage, shareReferralOnX } from "./referralShare";
-import { haptic } from "./haptics";
-import { playSfx } from "./sfx";
+import { TelegramIcon } from "./components/TelegramIcon";
 import {
   detectFarcasterMiniApp,
-  farcasterMiniAppWalletSupport,
+  FARCASTER_WALLET_CAPABILITY,
   farcasterMiniAppPlatformType,
+  farcasterMiniAppWalletSupport,
   hasMiniAppUrlHint,
   signalFarcasterReadyOnce,
-  FARCASTER_WALLET_CAPABILITY,
   type FarcasterMiniAppPlatformType,
   type FarcasterMiniAppWalletSupport,
 } from "./farcasterReady";
+import { haptic } from "./haptics";
+import { buildInspectPath, type InspectRoute } from "./inspectRoutes";
+import { PlayableMvpApp } from "./PlayableMvpApp";
+import { copyReferralText, type ReferralCopyOutcome } from "./referralClipboard";
+import { fetchReferralShareImage, shareReferralOnX } from "./referralShare";
+import { readReferralStorage, REFERRAL_CLAIM_CODE_STORAGE_KEY, REFERRAL_CODE_STORAGE_KEY, referralCodeForLanding, referralCodeFromText, writeReferralStorage } from "./referralStorage";
+import { connectWalletConnect, walletConnectEnabled } from "./reownWallet";
+import { apiBaseUrlForRuntimeConfig, gameContractAddress, paidAllianceInviteCapabilitiesForRuntime, playableApiUrl, runtimeConfigUrl, type RuntimeConfig } from "./runtimeConfig";
+import { preSettlementMode, type PlanetState, type WalletState } from "./settlementScreen";
+import { playSfx } from "./sfx";
+import { TELEGRAM_SUPPORT_URL, WHITEPAPER_URL } from "./supportLinks";
+import type { WriteTransactionState } from "./transactionActionGate";
+import { useBackendDataQuery } from "./useBackendDataQuery";
+import { useBackendDataSnapshot } from "./useBackendDataSnapshot";
 import {
+  configureWalletTransactionTransport,
   defaultVeydriftChainForLocation,
   ensureVeydriftNetwork,
   farcasterChainFor,
   generateReferralClaimCode,
+  getAvailableWalletProviderDetails,
   getChainId,
   getCurrentAccounts,
-  isVeydriftChain,
   isGameBackendUnavailableMessage,
   isTransientWalletBootstrapError,
   isUserRejected,
-  normalizeReferralClaimCode,
-  configureWalletTransactionTransport,
+  isVeydriftChain,
   miniAppUnsupportedChainMessage,
-  WALLET_BOOTSTRAP_READ_TIMEOUT_MS,
-  requestAccounts,
-  getAvailableWalletProviderDetails,
-  referralCommitment,
-  referralClaimErrorMessage,
-  requestReferralWalletSignature,
+  normalizeReferralClaimCode,
   paidAllianceInviteLocationState,
+  referralClaimErrorMessage,
+  referralCommitment,
+  requestAccounts,
+  requestReferralWalletSignature,
   sendReferralClaimTransaction,
   sendSettlementTransaction,
-  settlementFundingShortfallWei,
   settlementContractConfigured,
+  settlementFundingShortfallWei,
   switchVeydriftNetwork,
   waitForVeydriftNetwork,
+  WALLET_BOOTSTRAP_READ_TIMEOUT_MS,
   walletRequestErrorMessage,
   type Eip1193Provider,
   type MigrationReservation,
+  type PaidAllianceInviteRedemption,
+  type PaidAllianceInviteResolution,
   type PlanetSummary,
   type ReferralDashboard,
   type ReferralRedemption,
-  type PaidAllianceInviteRedemption,
-  type PaidAllianceInviteResolution,
   type ReferralResolution,
-  type SettlementTransactionOptions,
-  type SettlementFundingState,
   type SettlementConfig,
+  type SettlementFundingState,
+  type SettlementTransactionOptions,
   type VeydriftWalletChain,
   type WalletProviderSource,
   type WalletSettlementResponse,
 } from "./walletFlow";
-import { backendDataStoreFor, retainBackendDataStore } from "./backendDataStore";
-import type { WriteTransactionState } from "./transactionActionGate";
-import { useBackendDataQuery } from "./useBackendDataQuery";
-import { useBackendDataSnapshot } from "./useBackendDataSnapshot";
 import { walletRecoveryCopy, walletRecoveryDeviceForNavigator, walletRecoveryPageUrl, type WalletRecoveryDevice } from "./walletRecovery";
-import { connectWalletConnect, walletConnectEnabled } from "./reownWallet";
 
-type FetchWalletSettlement = typeof import("./walletFlow").fetchWalletSettlement;
 
-const POST_SETTLEMENT_READ_ATTEMPTS = 8;
-const POST_SETTLEMENT_READ_INTERVAL_MS = 2_000;
 const RUNTIME_CONFIG_RETRY_MS = 5_000;
 export const POST_SETTLEMENT_INDEXING_LABEL = "Settlement confirmed. Indexing starting resources before opening planetary overview.";
-export const POST_SETTLEMENT_INDEXING_TIMEOUT_MESSAGE = "Settlement is confirmed, but the game API is still indexing starter resources. Retry once backend sync catches up.";
 const GAME_BACKEND_UNAVAILABLE_BODY = "The Veydrift backend is likely restarting or temporarily unreachable. It should be back in a few minutes.";
 const FARCASTER_WALLET_PROVIDER_PROBE_ATTEMPTS = 8;
 const FARCASTER_WALLET_PROVIDER_PROBE_INTERVAL_MS = 250;
@@ -419,6 +415,10 @@ export function FirstPlanetSettlementApp() {
     Boolean(referralData && account && !hasOverview),
   );
   useEffect(() => {
+    if (!referralData || !account || hasOverview) return;
+    return referralData.startGameplaySync(account);
+  }, [referralData, account, hasOverview]);
+  useEffect(() => {
     if (!account || !settlementQuery.snapshot?.data) return;
     const indexed = indexedSettlementState(settlementQuery.snapshot.data);
     if (indexed.kind === "settled") {
@@ -647,7 +647,7 @@ export function FirstPlanetSettlementApp() {
 
   useEffect(() => {
     if (runtimeConfigQuery.snapshot?.freshness !== "failed") return;
-    return runtimeData.startPolling("settlement-runtime-config", ["kind:runtime-config"], RUNTIME_CONFIG_RETRY_MS, "background");
+    return runtimeData.startPolling("settlement-runtime-config", ["kind:runtime-config"], RUNTIME_CONFIG_RETRY_MS);
   }, [runtimeConfigQuery.snapshot?.freshness, runtimeData]);
 
   useEffect(() => {
@@ -655,7 +655,7 @@ export function FirstPlanetSettlementApp() {
     if (!referralData || !account || !hasOverview || delay === undefined) {
       return;
     }
-    return referralData.scheduleRefresh(`referral-dashboard:${account.toLowerCase()}`, [`wallet:${account.toLowerCase()}`, "kind:referral-dashboard"], delay, "background");
+    return referralData.scheduleRefresh(referralData.queries.referralDashboard(account).key, delay);
   }, [account, hasOverview, referralDashboard, referralData]);
 
   const refreshPaidAllianceInviteValidation = useCallback(() => paidAllianceInviteQuery.refetch(), [paidAllianceInviteQuery]);
@@ -1107,20 +1107,8 @@ export function FirstPlanetSettlementApp() {
           kind: "pending",
           label: POST_SETTLEMENT_INDEXING_LABEL,
         });
-        try {
-          const settled = await waitForIndexedSettledPlanet(settlementConfigState.apiUrl, connectedAccount);
-          if (!isCurrentIdentity()) return;
-          setPlanet({
-            kind: "already-settled",
-            planet: settled.planet,
-          });
-        } catch (error) {
-          if (!isCurrentIdentity()) return;
-          setPlanet({
-            kind: "error",
-            message: walletRequestErrorMessage(error),
-          });
-        }
+        // The subscribed settlement query completes this transition when the
+        // index catches up. There is no component-owned countdown or retry loop.
       } else {
         setPlanet({
           kind: "not-settled",
@@ -1274,6 +1262,8 @@ export function FirstPlanetSettlementApp() {
 
   async function settlePlanet() {
     if (!provider || wallet.kind !== "connected") return;
+    const epoch = settlementIdentityEpoch.current;
+    const isCurrentIdentity = () => epoch === settlementIdentityEpoch.current && currentAccount.current === wallet.account;
     const apiUrl = settlementConfigState.apiUrl;
     if (!apiUrl) {
       setPlanet({
@@ -1285,12 +1275,16 @@ export function FirstPlanetSettlementApp() {
     const label = "First planet settlement";
 
     if (paidAllianceInviteSecret) {
+      if (!paidAllianceInviteCapabilitiesForRuntime(runtimeConfigQuery.snapshot?.data).redemption) {
+        setPlanet({ kind: "error", message: "Private invite redemption is not enabled on this backend." });
+        return;
+      }
       const resolution = await refreshPaidAllianceInviteValidation();
-      if (!resolution?.valid) return;
+      if (!resolution?.valid || !isCurrentIdentity()) return;
     }
 
     const funding = await refreshSettlementLaunchInfo(wallet.account, planet);
-    if (!funding) return;
+    if (!funding || !isCurrentIdentity()) return;
 
     try {
       const data = backendDataStoreFor(apiUrl);
@@ -1313,6 +1307,7 @@ export function FirstPlanetSettlementApp() {
             : settlementTransactionOptions(funding, redemptions.referral);
         },
         send: async () => {
+          if (!isCurrentIdentity()) throw new Error("Wallet changed before settlement submission.");
           if (!transactionOptions) throw new Error("Settlement preparation did not complete.");
           submittedTxHash = await sendSettlementTransaction(provider, wallet.account, settlementConfig, transactionOptions);
           return submittedTxHash;
@@ -1329,8 +1324,9 @@ export function FirstPlanetSettlementApp() {
         ],
         errorLabel: (error) => (isUserRejected(error) ? "Settlement transaction was rejected." : walletRequestErrorMessage(error)),
         onStateChange: (state) => {
+          if (!isCurrentIdentity()) return;
           if (state.phase === "confirmed") playSfx("tx-confirm");
-          if (state.phase === "error" && state.outcome !== "submitted" && state.outcome !== "confirmed") {
+          if (state.phase === "error") {
             setPlanet({
               kind: isUserRejected(state.error) ? "rejected" : "error",
               message: state.label ?? "First planet settlement transaction failed.",
@@ -1348,17 +1344,10 @@ export function FirstPlanetSettlementApp() {
       });
       if (outcome.outcome !== "indexed") return;
 
-      // Read through the named descriptor instead of reaching into the raw
-      // snapshot map. The indexing plan above already waited for this API
-      // state; the fresh read simply joins any trailing canonical transport.
-      const settlement = await data.settlement(wallet.account, {
-        fresh: true,
-        priority: "transaction",
-      });
+      // The write cycle already refreshed the canonical settlement query.
+      // Do not add a second request (or a second recovery loop) here.
+      const settlement = data.snapshot<WalletSettlementResponse>(data.queries.settlement(wallet.account).key)?.data;
       const indexedSettlement = indexedSettlementState(settlement);
-      if (indexedSettlement.kind !== "settled") {
-        throw new Error(POST_SETTLEMENT_INDEXING_TIMEOUT_MESSAGE);
-      }
       if (referralCode && submittedTxHash) {
         try {
           await data.recordReferralRedemption(referralCode, wallet.account, submittedTxHash);
@@ -1366,8 +1355,14 @@ export function FirstPlanetSettlementApp() {
           console.error("Failed to record confirmed referral redemption", error);
         }
       }
-      setPlanet({ kind: "success", planet: indexedSettlement.planet });
+      // A temporarily unavailable read is not a failed settlement. The active
+      // canonical query will recover through normal gameplay synchronization.
+      if (!isCurrentIdentity()) return;
+      setPlanet(indexedSettlement.kind === "settled"
+        ? { kind: "success", planet: indexedSettlement.planet }
+        : { kind: "pending", label: POST_SETTLEMENT_INDEXING_LABEL });
     } catch (error) {
+      if (!isCurrentIdentity()) return;
       setPlanet({
         kind: isUserRejected(error) ? "rejected" : "error",
         message: isUserRejected(error) ? "Settlement transaction was rejected." : walletRequestErrorMessage(error),
@@ -1404,7 +1399,7 @@ export function FirstPlanetSettlementApp() {
           setReferralProgramPhase({ status: "idle" });
           return;
         }
-        if (state.phase === "error" && state.outcome !== "submitted" && state.outcome !== "confirmed") {
+        if (state.phase === "error") {
           terminalError = true;
           setReferralProgramPhase({
             status: "error",
@@ -1493,18 +1488,19 @@ export function FirstPlanetSettlementApp() {
         account={account}
         miniAppMode={miniAppMode}
         planet={planet.kind === "success" || planet.kind === "already-settled" ? planet.planet : undefined}
-        referralProgramPanel={
+        referralProgramPanel={(onInspect) => (
           <ReferralProgramPanel
             apiBaseUrl={settlementConfigState.apiUrl ?? playableApiUrl}
             claimCode={referralClaimCodeInput}
             inspection={referralClaimInspection}
             onClaimCodeChange={setReferralClaimCodeInput}
             onClaim={claimReferralInvite}
+            onInspect={onInspect}
             state={referralProgram}
             startPriceWei={referralBenefitStartPriceWei(settlementFunding)}
             wallet={account}
           />
-        }
+        )}
       />
     );
   }
@@ -1521,7 +1517,9 @@ export function FirstPlanetSettlementApp() {
           ) : (
             <>
               {paidAllianceInviteSecret ? (
-                paidAllianceInviteValidation.status === "resolved" && !paidAllianceInviteValidation.resolution.valid ? (
+                runtimeConfigQuery.snapshot?.data && !paidAllianceInviteCapabilitiesForRuntime(runtimeConfigQuery.snapshot.data).redemption ? (
+                  <StateMessage title="Private invites unavailable" body="Private invite redemption is not enabled on this backend." tone="warning" />
+                ) : paidAllianceInviteValidation.status === "resolved" && !paidAllianceInviteValidation.resolution.valid ? (
                   <PaidAllianceInviteUnavailable resolution={paidAllianceInviteValidation.resolution} />
                 ) : paidAllianceInviteValidation.status === "error" ? (
                   <StateMessage
@@ -1539,7 +1537,7 @@ export function FirstPlanetSettlementApp() {
                     }
                   />
                 ) : paidAllianceInviteValidation.status === "idle" || paidAllianceInviteValidation.status === "loading" ? (
-                  <StateMessage title="Checking invitation" body="Verifying this private alliance invitation before connecting your wallet." tone="scanning" />
+                  <SettlementFormSkeleton />
                 ) : (
                   <>
                     <AllianceInviteWelcome />
@@ -1599,6 +1597,7 @@ function ReferralProgramPanel({
   inspection,
   onClaim,
   onClaimCodeChange,
+  onInspect,
   startPriceWei,
   state,
   wallet,
@@ -1608,6 +1607,7 @@ function ReferralProgramPanel({
   inspection: ReferralValidationState;
   onClaim: () => void;
   onClaimCodeChange: (value: string) => void;
+  onInspect: (route: InspectRoute) => void;
   startPriceWei: bigint | null;
   state: ReferralProgramState;
   wallet: string | undefined;
@@ -1862,17 +1862,10 @@ function ReferralProgramPanel({
                 expandedWallets={expandedHistoryWallets}
                 hasLoadedData
                 loading={historyLoading}
-                onSelectAlliance={(allianceId) => window.location.assign(buildInspectPath({ kind: "alliance", allianceId }))}
-                onSelectMoon={(coords) => window.location.assign(buildInspectPath({ kind: "moon", coords }))}
-                onSelectPlanet={(coords) => window.location.assign(buildInspectPath({ kind: "planet", coords }))}
-                onSelectPlayer={(selectedWallet) =>
-                  window.location.assign(
-                    buildInspectPath({
-                      kind: "player",
-                      wallet: selectedWallet,
-                    }),
-                  )
-                }
+                onSelectAlliance={(allianceId) => onInspect({ kind: "alliance", allianceId })}
+                onSelectMoon={(coords) => onInspect({ kind: "moon", coords })}
+                onSelectPlanet={(coords) => onInspect({ kind: "planet", coords })}
+                onSelectPlayer={(wallet) => onInspect({ kind: "player", wallet })}
                 onTogglePlayerBodies={(selectedWallet) => {
                   setExpandedHistoryWallets((current) => {
                     const next = new Set(current);
@@ -2024,7 +2017,7 @@ export function referralCodeDisclosurePresentation(
 
 function ReferralClaimInspectionMessage({ state }: { state: ReferralValidationState }) {
   if (state.status === "loading" || state.status === "idle") {
-    return <p className="referral-muted">Checking code…</p>;
+    return <SkeletonRegion label="Checking invite code"><Skeleton className="h-4 w-32" /></SkeletonRegion>;
   }
   if (state.status === "error") {
     return <p className="referral-error">{state.message}</p>;
@@ -2057,6 +2050,9 @@ function ReferralClaimInspectionMessage({ state }: { state: ReferralValidationSt
 }
 
 function ReferralValidationMessage({ state }: { state: ReferralValidationState }) {
+  if (state.status === "loading" || state.status === "idle") {
+    return <SkeletonRegion label="Checking invite code"><Skeleton className="h-4 w-32" /></SkeletonRegion>;
+  }
   const presentation = referralValidationPresentation(state);
   return (
     <span aria-live="polite" className={`referral-code-status referral-code-status-${presentation.tone}`}>
@@ -2194,13 +2190,7 @@ function FlowBody({
 }) {
   const networkName = requiredChain.chainName;
   if (mode === "resolving") {
-    return (
-      <StateMessage
-        tone="scanning"
-        title={prepaidAllianceInvite ? "Preparing your invitation" : "Getting things ready"}
-        body={prepaidAllianceInvite ? "One moment while we prepare your alliance welcome." : "One moment while we check for your wallet."}
-      />
-    );
+    return <SettlementFormSkeleton />;
   }
 
   if (mode === "no-wallet") {
@@ -2294,6 +2284,8 @@ function FlowBody({
     );
   }
 
+  if (settlementFunding.status === "idle" || settlementFunding.status === "loading") return <SettlementFormSkeleton />;
+
   const balanceRecheckAvailable = settlementBalanceRecheckAvailable(settlementReady, settlementFunding, prepaidAllianceInvite);
   const actionBlocked =
     (settlementLaunchBlocker(settlementReady, settlementFunding, prepaidAllianceInvite) !== undefined && !balanceRecheckAvailable) ||
@@ -2301,9 +2293,7 @@ function FlowBody({
   const migrationReservation = activeMigrationReservation(settlementFunding);
   const actionLabel = balanceRecheckAvailable
     ? "Recheck balance & launch"
-    : settlementFunding.status === "idle" || settlementFunding.status === "loading"
-      ? "Checking balance"
-      : migrationReservation
+    : migrationReservation
         ? "Migrate planet"
         : prepaidAllianceInvite
           ? "Accept invite & launch"
@@ -2607,6 +2597,17 @@ function hasHydratedSettlementResources(planet: Pick<PlanetSummary, "resources">
   return Boolean(resources) && !(resources?.metal === "0" && resources.crystal === "0" && resources.deuterium === "0");
 }
 
+function SettlementFormSkeleton() {
+  return (
+    <SkeletonRegion className="settlement-state grid gap-4" label="Loading settlement">
+      <Skeleton className="h-8 w-3/4" />
+      <Skeleton className="h-4 w-full" />
+      <Skeleton className="h-4 w-2/3" />
+      <Skeleton className="h-12 w-full" />
+    </SkeletonRegion>
+  );
+}
+
 function StateMessage({
   action,
   body,
@@ -2691,38 +2692,7 @@ function buildSettlementConfig(): SettlementConfig {
     : {};
 }
 
-type WaitForIndexedSettledPlanetOptions = {
-  attempts?: number;
-  delay?: (ms: number) => Promise<void>;
-  fetchSettlement?: FetchWalletSettlement;
-  intervalMs?: number;
-};
 
-export async function waitForIndexedSettledPlanet(apiUrl: string | undefined, account: string, options: WaitForIndexedSettledPlanetOptions = {}) {
-  if (!apiUrl) {
-    throw new Error("Settlement is confirmed, but the game API is unavailable. Retry once backend indexing is reachable.");
-  }
-
-  const attempts = options.attempts ?? POST_SETTLEMENT_READ_ATTEMPTS;
-  const intervalMs = options.intervalMs ?? POST_SETTLEMENT_READ_INTERVAL_MS;
-  const fetchSettlement: FetchWalletSettlement = options.fetchSettlement ?? ((baseUrl, wallet, readOptions) => backendDataStoreFor(baseUrl).settlement(wallet, readOptions));
-  const settlement = await backendDataStoreFor(apiUrl).waitForIndexed(
-    () => fetchSettlement(apiUrl, account),
-    (value) => {
-      const indexed = indexedSettlementState(value);
-      return indexed.kind === "settled" && Boolean(indexed.planet.coordinates);
-    },
-    {
-      attempts,
-      intervalMs,
-      ...(options.delay ? { delay: options.delay } : {}),
-      timeoutError: POST_SETTLEMENT_INDEXING_TIMEOUT_MESSAGE,
-    },
-  );
-  const indexed = indexedSettlementState(settlement);
-  if (indexed.kind === "settled" && indexed.planet.coordinates) return indexed;
-  throw new Error(POST_SETTLEMENT_INDEXING_TIMEOUT_MESSAGE);
-}
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));

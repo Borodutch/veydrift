@@ -1,265 +1,36 @@
-import type {
-  Address,
-  AllianceIdentity,
-  AllianceState,
-  AllianceJoinRequestSnapshot,
-  AllianceInviteSnapshot,
-  AllianceDiplomacySnapshot,
-  AttackProtectionStatus,
-  BattleReport,
-  ChainReader,
-  DebrisFieldEvent,
-  DefenseState,
-  FleetMissionVisibility,
-  InfrastructureState,
-  WalletPlanets,
-  MoonState,
-  MoonChanceReportEvent,
-  PlanetState,
-  PlayerQueues,
-  ResearchState,
-  RiftState,
-  RpcLog,
-  RpcMetrics,
-  RpcTransactionReceipt,
-  SettledPlanetEvent,
-  SettlementFundingState,
-  ShipyardState,
-  WalletSettlement
-} from "./evm";
-import type { HighscoreEntry } from "./highscores";
+import type { Address, AttackProtectionStatus, ChainReader, RpcMetrics, RpcTransactionReceipt } from "./evm";
 
-type CacheEntry<T> = {
-  expiresAt: number;
-  value: Promise<T>;
-};
+/** Only the explicitly live API reads; indexed gameplay never goes through this wrapper. */
+export type ApiChainReader = Pick<ChainReader, "getAttackProtectionStatus" | "getTransactionReceipt" | "rpcMetrics">;
+type CacheEntry = { expiresAt: number; value: Promise<AttackProtectionStatus> };
 
-export class CachedChainReader implements ChainReader {
-  private readonly cache = new Map<string, CacheEntry<unknown>>();
+export class CachedChainReader implements ApiChainReader {
+  private readonly cache = new Map<string, CacheEntry>();
 
-  constructor(
-    private readonly inner: ChainReader,
-    private readonly ttlMs = 2_000
-  ) {}
+  constructor(private readonly inner: ApiChainReader, private readonly ttlMs = 2_000) {}
 
-  clear(): void {
-    this.cache.clear();
+  getTransactionReceipt(hash: string): Promise<RpcTransactionReceipt | null> {
+    return this.inner.getTransactionReceipt?.(hash) ?? Promise.resolve(null);
   }
 
-  getTransactionReceipt(transactionHash: string): Promise<RpcTransactionReceipt | null> {
-    return this.inner.getTransactionReceipt?.(transactionHash) ?? Promise.resolve(null);
-  }
+  getAttackProtectionStatus(wallet: Address, targetPlanetId: bigint, targetIsMoon = false): Promise<AttackProtectionStatus> {
+    const key = `${wallet.toLowerCase()}:${targetPlanetId}:${targetIsMoon}`;
+    const now = Date.now();
+    const current = this.cache.get(key);
+    if (current && current.expiresAt > now) return current.value;
 
-  getWalletSettlement(wallet: Address): Promise<WalletSettlement> {
-    return this.cached(`settlement:${wallet.toLowerCase()}`, () => this.inner.getWalletSettlement(wallet));
-  }
-
-  getSettlementFunding(wallet: Address): Promise<SettlementFundingState> {
-    return this.cached(`settlement-funding:${wallet.toLowerCase()}`, () => this.inner.getSettlementFunding(wallet));
-  }
-
-  getStartPrice(): Promise<string | null> {
-    return this.inner.getStartPrice();
-  }
-
-  getWalletPlanets(wallet: Address): Promise<WalletPlanets> {
-    return this.cached(`planets:${wallet.toLowerCase()}`, () => this.inner.getWalletPlanets(wallet));
-  }
-
-  getPlanet(planetId: bigint): Promise<PlanetState | null> {
-    return this.cached(`planet:${planetId.toString()}`, () => this.inner.getPlanet(planetId));
-  }
-
-  getPlayerQueues(wallet: Address, planetId?: bigint): Promise<PlayerQueues> {
-    return this.cached(`queues:${wallet.toLowerCase()}:${planetId?.toString() ?? "home"}`, () => this.inner.getPlayerQueues(wallet, planetId));
-  }
-
-  getInfrastructureState(wallet: Address, planetId?: bigint): Promise<InfrastructureState> {
-    return this.cached(`infrastructure:${wallet.toLowerCase()}:${planetId?.toString() ?? "home"}`, () => this.inner.getInfrastructureState(wallet, planetId));
-  }
-
-  getInfrastructureAuthoritativeFields(planetId: bigint): Promise<Partial<Pick<InfrastructureState, "buildings" | "resources">>> {
-    if (!this.inner.getInfrastructureAuthoritativeFields) {
-      return Promise.resolve({});
+    for (const [candidate, entry] of this.cache) {
+      if (entry.expiresAt <= now) this.cache.delete(candidate);
     }
-
-    return this.cached(
-      `infrastructure-authoritative:${planetId.toString()}`,
-      () => this.inner.getInfrastructureAuthoritativeFields!(planetId)
-    );
-  }
-
-  getFleetMissionVisibility(wallet: Address): Promise<FleetMissionVisibility> {
-    return this.cached(`fleet-visibility:${wallet.toLowerCase()}`, () => this.inner.getFleetMissionVisibility(wallet));
-  }
-
-  getBattleReport(missionId: bigint): Promise<BattleReport | null> {
-    return this.cached(`battle-report:${missionId.toString()}`, () => this.inner.getBattleReport(missionId));
-  }
-
-  listBattleReports(): Promise<BattleReport[]> {
-    return this.cached("battle-reports", () => this.inner.listBattleReports());
-  }
-
-  getMoonState(wallet: Address, planetId?: bigint): Promise<MoonState> {
-    return this.cached(`moon:${wallet.toLowerCase()}:${planetId?.toString() ?? "home"}`, () => this.inner.getMoonState(wallet, planetId));
-  }
-
-  getDefenseState(wallet: Address, planetId?: bigint): Promise<DefenseState> {
-    return this.cached(`defenses:${wallet.toLowerCase()}:${planetId?.toString() ?? "home"}`, () => this.inner.getDefenseState(wallet, planetId));
-  }
-
-  getShipyardState(wallet: Address, planetId?: bigint): Promise<ShipyardState> {
-    return this.cached(`shipyard:${wallet.toLowerCase()}:${planetId?.toString() ?? "home"}`, () => this.inner.getShipyardState(wallet, planetId));
-  }
-
-  getShipyardAuthoritativeFields(
-    planetId: bigint,
-    maxTemperature?: number
-  ): Promise<Partial<Pick<ShipyardState, "naniteLevel" | "resources" | "ships" | "shipyardLevel">>> {
-    if (!this.inner.getShipyardAuthoritativeFields) {
-      return Promise.resolve({});
-    }
-
-    return this.cached(
-      `shipyard-authoritative:${planetId.toString()}:${maxTemperature ?? "unknown"}`,
-      () => this.inner.getShipyardAuthoritativeFields!(planetId, maxTemperature)
-    );
-  }
-
-  getResearchState(wallet: Address, planetId?: bigint): Promise<ResearchState> {
-    return this.cached(`research:${wallet.toLowerCase()}:${planetId?.toString() ?? "home"}`, () => this.inner.getResearchState(wallet, planetId));
-  }
-
-  getRiftState(wallet: Address, planetId?: bigint): Promise<RiftState> {
-    return this.cached(`rift:${wallet.toLowerCase()}:${planetId?.toString() ?? "home"}`, () => this.inner.getRiftState(wallet, planetId));
-  }
-
-  getAllianceState(wallet: Address): Promise<AllianceState> {
-    return this.cached(`alliance:${wallet.toLowerCase()}`, () => this.inner.getAllianceState(wallet));
-  }
-
-  getAllianceIntelForPlayers(wallets: readonly Address[]): Promise<Map<Address, AllianceIdentity>> {
-    if (!this.inner.getAllianceIntelForPlayers) {
-      return Promise.resolve(new Map());
-    }
-
-    const normalizedWallets = Array.from(new Set(wallets.map((wallet) => wallet.toLowerCase() as Address))).sort();
-    return this.cached(
-      `alliance-intel:${normalizedWallets.join(",")}`,
-      () => this.inner.getAllianceIntelForPlayers!(normalizedWallets)
-    );
-  }
-
-  listAllianceDirectoryState(): Promise<AllianceState["directory"]> {
-    if (!this.inner.listAllianceDirectoryState) {
-      return Promise.resolve([]);
-    }
-
-    return this.cached("alliance-directory", () => this.inner.listAllianceDirectoryState!());
-  }
-
-  // Canonical-mirror seed reads. These run only on explicit indexer rebuilds (never per request), so
-  // forward to the inner reader without caching; absent inner methods degrade to "no chain seed".
-  listAllianceJoinRequestState(): Promise<AllianceJoinRequestSnapshot[]> {
-    if (!this.inner.listAllianceJoinRequestState) {
-      return Promise.resolve([]);
-    }
-
-    return this.inner.listAllianceJoinRequestState();
-  }
-
-  listAllianceInviteState(candidateWallets: readonly Address[]): Promise<AllianceInviteSnapshot[]> {
-    if (!this.inner.listAllianceInviteState) {
-      return Promise.resolve([]);
-    }
-
-    return this.inner.listAllianceInviteState(candidateWallets);
-  }
-
-  listAllianceDiplomacyState(): Promise<AllianceDiplomacySnapshot[]> {
-    if (!this.inner.listAllianceDiplomacyState) {
-      return Promise.resolve([]);
-    }
-
-    return this.inner.listAllianceDiplomacyState();
-  }
-
-  getAttackProtectionStatus(
-    wallet: Address,
-    targetPlanetId: bigint,
-    targetIsMoon = false
-  ): Promise<AttackProtectionStatus> {
-    return this.cached(
-      `attack-protection:${wallet.toLowerCase()}:${targetPlanetId.toString()}:${targetIsMoon ? "moon" : "planet"}`,
-      () => this.inner.getAttackProtectionStatus(wallet, targetPlanetId, targetIsMoon)
-    );
-  }
-
-  getHighscoreForWallet(wallet: Address, planetIds?: string[]): Promise<HighscoreEntry> {
-    if (!this.inner.getHighscoreForWallet) {
-      return Promise.reject(new Error("Highscores are not supported by the wrapped chain reader."));
-    }
-
-    const planetScope = planetIds?.length ? planetIds.join(",") : "indexed";
-    return this.cached(
-      `highscore:${wallet.toLowerCase()}:${planetScope}`,
-      () => this.inner.getHighscoreForWallet!(wallet, planetIds)
-    );
-  }
-
-  getHighscoresForWallets(planetsByOwner: ReadonlyMap<string, SettledPlanetEvent[]>): Promise<HighscoreEntry[]> {
-    if (!this.inner.getHighscoresForWallets) {
-      return Promise.reject(new Error("Bulk highscores are not supported by the wrapped chain reader."));
-    }
-
-    const scope = [...planetsByOwner.entries()]
-      .map(([owner, planets]) => `${owner}:${planets.map((planet) => planet.planetId).join(",")}`)
-      .join("|");
-    return this.cached(`highscores:${scope}`, () => this.inner.getHighscoresForWallets!(planetsByOwner));
-  }
-
-  listSettledPlanetEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<SettledPlanetEvent[]> {
-    return this.inner.listSettledPlanetEvents(fromBlock, toBlock);
-  }
-
-  listCurrentPlanets(): Promise<SettledPlanetEvent[]> {
-    if (!this.inner.listCurrentPlanets) {
-      return Promise.reject(new Error("Current planet enumeration is not supported by the wrapped chain reader."));
-    }
-
-    return this.cached("current-planets", () => this.inner.listCurrentPlanets!());
-  }
-
-  listMoonChanceReportEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<MoonChanceReportEvent[]> {
-    return this.inner.listMoonChanceReportEvents(fromBlock, toBlock);
-  }
-
-  listDebrisFieldEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<DebrisFieldEvent[]> {
-    return this.inner.listDebrisFieldEvents(fromBlock, toBlock);
-  }
-
-  listAllianceLogs(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]> {
-    if (!this.inner.listAllianceLogs) {
-      return Promise.resolve([]);
-    }
-
-    return this.inner.listAllianceLogs(fromBlock, toBlock);
-  }
-
-  listPaidAllianceInviteLogs(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]> {
-    if (!this.inner.listPaidAllianceInviteLogs) {
-      return Promise.resolve([]);
-    }
-    return this.inner.listPaidAllianceInviteLogs(fromBlock, toBlock);
-  }
-
-  listContractLogs(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]> {
-    if (!this.inner.listContractLogs) {
-      return Promise.resolve([]);
-    }
-
-    return this.inner.listContractLogs(fromBlock, toBlock);
+    // Bound retained targets as well as their lifetime, including long-running requests.
+    if (this.cache.size >= 512) this.cache.delete(this.cache.keys().next().value!);
+    const value = Promise.resolve().then(() => this.inner.getAttackProtectionStatus(wallet, targetPlanetId, targetIsMoon))
+      .catch(error => {
+        if (this.cache.get(key)?.value === value) this.cache.delete(key);
+        throw error;
+      });
+    this.cache.set(key, { expiresAt: now + this.ttlMs, value });
+    return value;
   }
 
   rpcMetrics(): RpcMetrics {
@@ -279,23 +50,5 @@ export class CachedChainReader implements ChainReader {
       unfinishedHttpRequests: 0,
       oldestUnfinishedRequestAgeMs: null
     };
-  }
-
-  private cached<T>(key: string, load: () => Promise<T>): Promise<T> {
-    const now = Date.now();
-    const current = this.cache.get(key);
-    if (current && current.expiresAt > now) {
-      return current.value as Promise<T>;
-    }
-
-    const value = load().catch((error) => {
-      this.cache.delete(key);
-      throw error;
-    });
-    this.cache.set(key, {
-      expiresAt: now + this.ttlMs,
-      value
-    });
-    return value;
   }
 }

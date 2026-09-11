@@ -12,8 +12,8 @@ import { PlanetMoonIndicator } from "./PlanetMoonIndicator";
 // outer edge, with a directional, progress-filled arrow spanning the gap. Both screens drive it from
 // the same `MissionEndpoint` model so they always look the same and stay in sync.
 //
-// Navigation is pluggable so each screen keeps its existing behaviour: Mission Control passes no
-// handlers and the endpoints render as clean links (`buildInspectPath`); Mission Detail passes
+// Navigation is pluggable: Mission Control renders clean links (`buildInspectPath`) handled by
+// the app's internal router; Mission Detail passes
 // `onSelectCoordinates`/`onSelectPlayer` and the endpoints render as buttons that call back into the
 // page's existing in-app navigation.
 
@@ -65,7 +65,7 @@ export function missionProgressPercent(mission: FleetMissionSummary, now: number
 }
 
 // Optional in-app navigation handlers. When provided, the endpoints render as buttons that call
-// these (Mission Detail); when omitted, they render as hash links (Mission Control).
+// these (Mission Detail); when omitted, they render as internal detail links (Mission Control).
 type RouteNavigation = {
   onSelectCoordinates?: ((coords: Coordinates) => void) | undefined;
   onSelectMoon?: ((coords: Coordinates) => void) | undefined;

@@ -275,6 +275,29 @@ describe("backend config", () => {
     expect(safeConfigSummary(configured.config).paidAllianceInviteIndexFromBlock).toBe("48900000");
   });
 
+  test("allows public-only paid invite indexing while validating each optional private capability", () => {
+    const publicEnv = {
+      VEYDRIFT_GAME_CONTRACT_ADDRESS: "0x3333333333333333333333333333333333333333",
+      VEYDRIFT_RPC_URL: "https://example.invalid/rpc",
+      VEYDRIFT_PAID_ALLIANCE_INVITE_ADDRESS: "0x5555555555555555555555555555555555555555",
+      VEYDRIFT_PAID_ALLIANCE_INVITE_INDEX_FROM_BLOCK: "48900000",
+    };
+    for (const privateEnv of [
+      {},
+      { VEYDRIFT_PAID_ALLIANCE_INVITE_SIGNER_PRIVATE_KEY: `0x${"11".repeat(32)}` },
+      { VEYDRIFT_PAID_ALLIANCE_INVITE_ENCRYPTION_KEY: `0x${"22".repeat(32)}` },
+      { VEYDRIFT_PAID_ALLIANCE_INVITE_SIGNER_PRIVATE_KEY: `0x${"11".repeat(32)}`, VEYDRIFT_PAID_ALLIANCE_INVITE_ENCRYPTION_KEY: `0x${"22".repeat(32)}` },
+    ]) expect(loadBackendConfig({ ...publicEnv, ...privateEnv }).problems).toEqual([]);
+    for (const field of ["VEYDRIFT_PAID_ALLIANCE_INVITE_SIGNER_PRIVATE_KEY", "VEYDRIFT_PAID_ALLIANCE_INVITE_ENCRYPTION_KEY"]) {
+      expect(loadBackendConfig({ ...publicEnv, [field]: "invalid" }).problems.some(problem => problem.field === field)).toBe(true);
+    }
+    expect(loadBackendConfig({ ...publicEnv, VEYDRIFT_PAID_ALLIANCE_INVITE_INDEX_FROM_BLOCK: undefined }).problems.length).toBeGreaterThan(0);
+    expect(loadBackendConfig({ ...publicEnv, VEYDRIFT_PAID_ALLIANCE_INVITE_ADDRESS: undefined }).problems.length).toBeGreaterThan(0);
+    expect(loadBackendConfig({ ...publicEnv, VEYDRIFT_PAID_ALLIANCE_INVITE_PREVIOUS_ENCRYPTION_KEYS: `0x${"22".repeat(32)}` }).problems.length).toBeGreaterThan(0);
+    // A path copied from .env.example does not enable encrypted storage by itself.
+    expect(loadBackendConfig({ ...publicEnv, VEYDRIFT_PAID_ALLIANCE_INVITE_SECRET_STORE_PATH: ".data/invites.sqlite" }).problems).toEqual([]);
+  });
+
   test("accepts a static settlement start price for RPC-free funding reads", () => {
     const result = loadBackendConfig({
       VEYDRIFT_GAME_CONTRACT_ADDRESS: "0x3333333333333333333333333333333333333333",

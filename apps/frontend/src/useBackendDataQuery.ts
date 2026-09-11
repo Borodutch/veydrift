@@ -4,9 +4,19 @@ import type { GameStateEntry } from "./gameStateStore";
 import { useBackendDataSnapshot } from "./useBackendDataSnapshot";
 
 export type BackendDataQuery<T> = {
+  isInitialLoading: boolean;
+  isRefreshing: boolean;
   refetch: () => Promise<T | undefined>;
   snapshot: GameStateEntry<T> | undefined;
 };
+
+/** Display loading is local to this key, never a reason to block another query. */
+export function backendQueryLoading<T>(snapshot: GameStateEntry<T> | undefined, enabled: boolean) {
+  return {
+    isInitialLoading: enabled && snapshot?.data === undefined && snapshot?.freshness !== "failed",
+    isRefreshing: enabled && snapshot?.data !== undefined && snapshot.freshness === "refreshing",
+  };
+}
 
 /**
  * The standard UI boundary for backend state. The data module supplies a
@@ -49,5 +59,5 @@ export function useBackendDataQuery<T>(
     });
   }, [enabled, key, refetch, store]);
 
-  return { refetch, snapshot };
+  return { refetch, snapshot, ...backendQueryLoading(snapshot, enabled && query !== undefined) };
 }

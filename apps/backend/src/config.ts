@@ -384,6 +384,7 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
   }
   if (
     env.VEYDRIFT_PAID_ALLIANCE_INVITE_ADDRESS
+    || env.VEYDRIFT_PAID_ALLIANCE_INVITE_INDEX_FROM_BLOCK
     || env.VEYDRIFT_PAID_ALLIANCE_INVITE_SIGNER_PRIVATE_KEY
     || env.VEYDRIFT_PAID_ALLIANCE_INVITE_ENCRYPTION_KEY
     || env.VEYDRIFT_PAID_ALLIANCE_INVITE_PREVIOUS_ENCRYPTION_KEYS
@@ -400,16 +401,12 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
         message: "Paid alliance invite configuration requires the invite contract deployment block."
       });
     }
-    if (!paidAllianceInviteSignerPrivateKey) {
-      problems.push({
-        field: "VEYDRIFT_PAID_ALLIANCE_INVITE_SIGNER_PRIVATE_KEY",
-        message: "Paid alliance invite configuration requires the backend redemption signer key."
-      });
-    }
-    if (!paidAllianceInviteEncryptionKey) {
+    // Public indexing does not need either private capability. Rotation keys
+    // still require a current encryption key; malformed supplied keys fail above.
+    if (paidAllianceInvitePreviousEncryptionKeys.length && !paidAllianceInviteEncryptionKey) {
       problems.push({
         field: "VEYDRIFT_PAID_ALLIANCE_INVITE_ENCRYPTION_KEY",
-        message: "Paid alliance invite configuration requires a 32-byte encrypted secret-store key."
+        message: "Paid invite encryption key rotation requires a current encryption key."
       });
     }
   }

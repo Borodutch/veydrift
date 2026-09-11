@@ -8,6 +8,7 @@ import { join } from "node:path";
 import type { BackendConfig } from "./config";
 import {
   aggregatePaidAllianceInviteCounts,
+  paidAllianceInviteCapabilities,
   buildPaidAllianceInviteAuthorization,
   paidAllianceInviteLogRanges,
   paidAllianceAuthorizationHash,
@@ -54,6 +55,48 @@ function config(): BackendConfig {
 }
 
 describe("paid alliance invites", () => {
+  test("reports signing and recovery capabilities independently of public indexing", () => {
+    const publicConfig: BackendConfig = {
+      ...config(),
+      paidAllianceInviteIndexFromBlock: 0n,
+      allianceContractAddress: inviteAddress,
+    };
+    delete publicConfig.paidAllianceInviteSignerPrivateKey;
+    expect(paidAllianceInviteCapabilities(publicConfig)).toEqual({ redemption: false, recovery: false });
+    expect(paidAllianceInviteCapabilities({ ...publicConfig, paidAllianceInviteSignerPrivateKey: signerKey }))
+      .toEqual({ redemption: true, recovery: false });
+    const recoveryConfig: BackendConfig = { ...publicConfig, paidAllianceInviteEncryptionKey: signerKey, paidAllianceInviteSecretStorePath: ":memory:" };
+    expect(paidAllianceInviteCapabilities(recoveryConfig)).toEqual({ redemption: false, recovery: true });
+    expect(paidAllianceInviteCapabilities({ ...recoveryConfig, paidAllianceInviteSignerPrivateKey: signerKey }))
+      .toEqual({ redemption: true, recovery: true });
+    delete recoveryConfig.rpcUrl;
+    expect(paidAllianceInviteCapabilities(recoveryConfig))
+      .toEqual({ redemption: false, recovery: false });
+  });
+
+  test("public-only configuration resolves invites but refuses private operations", async () => {
+    let reads = 0;
+    const publicConfig = config();
+    delete publicConfig.paidAllianceInviteSignerPrivateKey;
+    const handler = createRequestHandler({
+      config: { ...publicConfig, paidAllianceInviteIndexFromBlock: 0n },
+      paidAllianceInviteReader: {
+        invite: async () => { reads += 1; return state; },
+        canRecoverAllianceInvites: async () => true,
+      },
+      role: "writer",
+    });
+    for (const operation of ["resolve", "redeem", "store", "recover"]) {
+      const response = await handler(new Request(`http://test/alliance-invites/${operation}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ secret, invitee }),
+      }));
+      expect(response.status).toBe(operation === "resolve" ? 200 : 503);
+    }
+    expect(reads).toBe(1);
+  });
+
   test("counts remaining and redeemed private invites by alliance", () => {
     expect(aggregatePaidAllianceInviteCounts([1n, 1n, 1n, 2n], [1n, 2n])).toEqual(new Map([
       ["1", { remaining: 2, used: 1 }],

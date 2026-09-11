@@ -1,9 +1,11 @@
+import { formatResourceAmount as formatResource } from "../numberFormat";
 import { ArrowLeft, Copy, ExternalLink, Swords } from "lucide-preact";
 import { useState } from "preact/hooks";
 
-import type { BattleReport } from "../walletFlow";
+import type { BattleReportSummary } from "../walletFlow";
 import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailableNotice";
 import { PageHeader } from "./PageHeader";
+import { MissionControlSkeleton } from "./LoadingSkeletons";
 
 interface BattleReportsPageProps {
   error?: string | undefined;
@@ -11,7 +13,7 @@ interface BattleReportsPageProps {
   onBack: () => void;
   onOpenBattleReport: (missionId: string) => void;
   onRetry: () => void;
-  reports: BattleReport[];
+  reports: BattleReportSummary[];
   shareUrl: string;
 }
 
@@ -53,10 +55,8 @@ export function BattleReportsPage({
         title="Public Combat Archive"
       />
 
-      {loading ? (
-        <div className="rounded-lg border border-white/10 bg-[#101624] p-4 text-sm text-slate-400">
-          Loading battle reports...
-        </div>
+      {loading && reports.length === 0 ? (
+        <MissionControlSkeleton label="Loading battle reports" />
       ) : error ? (
         isGameUnavailableMessage(error) ? (
           <GameUnavailableNotice />
@@ -119,7 +119,7 @@ function Datum({ label, value }: { label: string; value: string }) {
   );
 }
 
-function battleOutcomeLabel(outcome: BattleReport["outcome"]): string {
+function battleOutcomeLabel(outcome: BattleReportSummary["outcome"]): string {
   if (outcome === "AttackerWin") return "Attacker win";
   if (outcome === "DefenderWin") return "Defender win";
   return "Draw";
@@ -130,9 +130,6 @@ function formatResources(resources: { metal: string; crystal: string; deuterium?
   return `${formatResource(resources.metal)} M / ${formatResource(resources.crystal)} C${deuterium}`;
 }
 
-function formatResource(value: string): string {
-  return Number(value).toLocaleString();
-}
 
 function shortHash(value: string): string {
   return value.length > 18 ? `${value.slice(0, 10)}...${value.slice(-6)}` : value;

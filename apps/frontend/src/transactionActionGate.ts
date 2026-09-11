@@ -3,10 +3,10 @@ export type TransactionActionGate = {
   run: <T>(key: string, action: () => Promise<T>) => Promise<T | undefined>;
 };
 
-export type WriteTransactionPhase = "idle" | "pending" | "confirming" | "confirmed" | "indexing" | "success" | "error";
+export type WriteTransactionPhase = "idle" | "pending" | "confirming" | "confirmed" | "indexing" | "applied" | "success" | "error";
 
 /**
- * A submitted hash remains Processing until indexed refresh succeeds. Only a
+ * A submitted hash remains Processing until the backend reports it applied. Only a
  * reverted receipt is a post-submission failure, never a transport timeout.
  */
 export type WriteTransactionOutcomeKind = "not-submitted" | "submitted" | "confirmed" | "indexed" | "reverted";
@@ -22,12 +22,23 @@ export type WriteTransactionState = {
   error?: unknown;
   key?: string;
   label?: string;
-  outcome?: WriteTransactionOutcomeKind;
   phase: WriteTransactionPhase;
-  stage?: "wallet" | "confirmed" | "waiting-for-index" | "applied" | "failed";
   txHash?: string | undefined;
 };
 
+/** Derive semantic outcome from the one stored lifecycle phase. */
+export function transactionStateOutcome(state: Pick<WriteTransactionState, "phase" | "txHash"> | undefined): WriteTransactionOutcomeKind | undefined {
+  if (!state || state.phase === "idle") return undefined;
+  switch (state.phase) {
+    case "pending": return "not-submitted";
+    case "confirming": return "submitted";
+    case "confirmed":
+    case "indexing": return "confirmed";
+    case "applied":
+    case "success": return "indexed";
+    case "error": return state.txHash ? "reverted" : "not-submitted";
+  }
+}
 
 export function createTransactionActionGate(): TransactionActionGate {
   let inFlightKey: string | undefined;

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { checkRepositoryMarkdownLinks } from "./veydrift-docs-links-check.mjs";
 
 const root = new URL("../apps/frontend/src/docs/content", import.meta.url).pathname;
 const prohibited = [
@@ -23,6 +24,7 @@ function collectMarkdown(dir) {
   return files;
 }
 
+checkRepositoryMarkdownLinks();
 const offenders = [];
 for (const file of collectMarkdown(root)) {
   const text = readFileSync(file, "utf8");

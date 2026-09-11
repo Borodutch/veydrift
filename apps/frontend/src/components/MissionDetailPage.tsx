@@ -1,6 +1,8 @@
+import { formatResourceAmount as formatResource } from "../numberFormat";
 import { ArrowLeft, Share2, Swords, Undo2 } from "lucide-preact";
 
 import { ActionReasonNote } from "./ActionReasonNote";
+import { MissionDetailSkeleton } from "./LoadingSkeletons";
 import { galaxyActionIcon } from "./GalaxyActionIcon";
 import { formatDurationUntil } from "../durationFormat";
 import { defenseAssetByKey, shipAssetByKey } from "../gameAssets";
@@ -144,8 +146,8 @@ export function MissionDetailPage({
         </div>
       ) : null}
 
-      {loading ? (
-        <Notice>Loading mission...</Notice>
+      {loading && !mission ? (
+        <MissionDetailSkeleton />
       ) : error ? (
         isGameUnavailableMessage(error) ? <GameUnavailableNotice /> : <Notice tone="danger">{error}</Notice>
       ) : mission ? (
@@ -1032,9 +1034,6 @@ function formatResources(resources: { metal: string; crystal: string; deuterium?
   return `${formatResource(resources.metal)} metal / ${formatResource(resources.crystal)} crystal${deuterium}`;
 }
 
-function formatResource(value: string): string {
-  return Number(value).toLocaleString();
-}
 
 // A recycler carries 20,000 units of cargo, so the fleet needed to sweep a debris field is the
 // combined metal + crystal divided by that capacity, rounded up. Shown compactly next to the debris

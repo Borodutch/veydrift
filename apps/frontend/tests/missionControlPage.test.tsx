@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import type { ComponentChildren, VNode } from "preact";
-import { MissionControlPage, StationedDefenseSection, classifyAllianceCooperativeMissions, formatMissionTime, isFleetRecallable, manualMissionResolutionKind, missionControlRefreshButtonState, missionDisplayStatusLabel, missionLifecycleActions, missionStatusPill, returnPhaseHarvestedResources, returnPhaseLoot, returnPhaseLosses } from "../src/components/MissionControlPage";
+import { renderMissionControlPage as MissionControlPage, StationedDefenseSection, formatMissionTime, isFleetRecallable, manualMissionResolutionKind, missionControlRefreshButtonState, missionDisplayStatusLabel, missionLifecycleActions, missionStatusPill, returnPhaseHarvestedResources, returnPhaseLoot, returnPhaseLosses } from "../src/components/MissionControlPage";
 import { encodeColonizationTargetId } from "../src/walletFlow";
 import type { BattleReport, FleetMissionSummary, ManagedPlanetResponse } from "../src/walletFlow";
 
@@ -175,42 +175,6 @@ describe("MissionControlPage", () => {
     })).toEqual([]);
   });
 
-  test("classifies only live same-alliance attack and defense candidates", () => {
-    const wallet = "0x1111111111111111111111111111111111111111";
-    const ally = "0x2222222222222222222222222222222222222222";
-    const enemy = "0x3333333333333333333333333333333333333333";
-    const outsider = "0x4444444444444444444444444444444444444444";
-    const targetPlanet = (planetId: string, owner: string) => ({
-      allianceDepotLevel: 0,
-      coordinates: `1:1:${planetId}`,
-      galaxy: 1,
-      name: `Planet ${planetId}`,
-      owner,
-      ownerDisplayName: null,
-      planetId,
-      position: Number(planetId),
-      system: 1,
-    });
-    const allyAttack = mission({ missionId: "attack", owner: ally, targetPlanet: targetPlanet("9", enemy) });
-    const allyDefense = mission({ missionId: "defense", owner: enemy, targetPlanet: targetPlanet("10", ally) });
-    const nonAlliance = mission({ missionId: "other", owner: enemy, targetPlanet: targetPlanet("11", outsider) });
-    const returning = mission({ missionId: "returning", owner: ally, status: "Returning", targetPlanet: targetPlanet("12", enemy) });
-
-    expect(classifyAllianceCooperativeMissions({
-      allianceMemberAddresses: [wallet, ally],
-      candidates: [allyAttack, allyDefense, nonAlliance, returning],
-      wallet,
-    })).toEqual({
-      joinAttacks: [allyAttack],
-      joinDefenses: [allyDefense],
-    });
-
-    expect(classifyAllianceCooperativeMissions({
-      allianceMemberAddresses: [],
-      candidates: [allyAttack, allyDefense],
-      wallet,
-    })).toEqual({ joinAttacks: [], joinDefenses: [] });
-  });
 
   test("hides Recall once an outbound fleet is within the 60s recall cutoff", () => {
     const now = 1_770_000_100_000;
@@ -1014,10 +978,10 @@ describe("MissionControlPage", () => {
         battleReports: [],
       },
     };
-    const withoutAlliance = visibleText(missionControlPage({ ...base, hasAlliance: false }));
+const withoutAlliance = visibleText(missionControlPage({ ...base, fleetVisibility: { ...base.fleetVisibility, allianceId: null } }));
     expect(withoutAlliance).not.toContain("Alliance (");
 
-    const withAlliance = visibleText(missionControlPage({ ...base, hasAlliance: true }));
+const withAlliance = visibleText(missionControlPage({ ...base, fleetVisibility: { ...base.fleetVisibility, allianceId: "1" } }));
     expect(withAlliance).toContain("Alliance (0)");
   });
 
@@ -1579,6 +1543,8 @@ describe("MissionControlPage", () => {
   test("surfaces joinable attacks under the Alliance tab (no stat-card row)", () => {
     const page = missionControlPage({
       fleetVisibility: {
+        allianceId: "1",
+        joinableDefenses: [],
         wallet: "0x1111111111111111111111111111111111111111",
         homePlanetId: "7",
         incoming: [],

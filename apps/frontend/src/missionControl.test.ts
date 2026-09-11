@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 import type { ComponentChildren } from "preact";
 
 import { MissionDetailPage } from "./components/MissionDetailPage";
-import { EMPTY_MISSION_CONTROL_FILTERS, MissionControlPage, MissionReportDetail, StationedDefenseSection, activeMissionRowMatchesFilters, allActiveMissionRows, applyMissionFilterSelectInput, buildMissionControlViewQuery, initializeMissionRowDisclosure, missionControlActiveFilterCount, missionIdMatchesMissionNumberSearch, missionPlanetCoordinateKey, missionReport, missionRowsDisclosureState, missionStatusPill, normalizeMissionControlFilters, normalizeMissionNumberSearch, parseMissionControlViewParams, persistMissionControlView, resolveMissionControlView, setMissionRowsExpanded, partitionActiveMissionRows, type ActiveMissionRow, type MissionControlFilters, type MissionControlView } from "./components/MissionControlPage";
+import { renderMissionControlPage as MissionControlPage, MissionReportDetail, StationedDefenseSection, activeMissionRowMatchesFilters, allActiveMissionRows, applyMissionFilterSelectInput, initializeMissionRowDisclosure, missionControlActiveFilterCount, missionIdMatchesMissionNumberSearch, missionReport, missionRowsDisclosureState, missionStatusPill, setMissionRowsExpanded, partitionActiveMissionRows, type ActiveMissionRow } from "./components/MissionControlPage";
+import { EMPTY_MISSION_CONTROL_FILTERS, buildMissionControlViewQuery, missionPlanetCoordinateKey, normalizeMissionControlFilters, normalizeMissionNumberSearch, parseMissionControlViewParams, persistMissionControlView, resolveMissionControlView, type MissionControlFilters, type MissionControlView } from "./components/missionControlModel";
 import { MissionRouteCell, missionEndpoint, type MissionPlanetIdentity } from "./components/missionRoute";
 import { planetImageForType, planetTypeFromCoordinates } from "./data/mockUniverse";
 import { buildInspectPath, parseInspectPath, parseInspectRoute } from "./inspectRoutes";
@@ -45,7 +46,7 @@ describe("Mission Control battle reports", () => {
       await expect(fetchBattleReports("https://api.example.test/")).resolves.toMatchObject([
         { missionId: "42", outcome: "AttackerWin" },
       ]);
-      expect(requestedUrls).toEqual(["https://api.example.test/battle-reports"]);
+      expect(requestedUrls).toEqual(["https://api.example.test/battle-reports?view=summary"]);
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -917,8 +918,7 @@ describe("Mission Control battle reports", () => {
     const joinCalls: string[] = [];
     const defenseCalls: string[] = [];
     const tree = MissionControlPage({
-      ...missionControlProps(now, { joinableAttacks: [joinAttack, joinDefense] }),
-      allianceMemberAddresses: [wallet, ally],
+...missionControlProps(now, { joinableAttacks: [joinAttack], joinableDefenses: [joinDefense] }),
       initialView: { activePage: 0, activeTab: "alliance", pastPage: 0, pastTab: "mine" },
       onCounterplay: (mission) => defenseCalls.push(mission.missionId),
       onJoinAttack: (mission) => joinCalls.push(mission.missionId),
@@ -958,10 +958,7 @@ describe("Mission Control battle reports", () => {
         joinableAttacks: [joinAttack],
         joinableDefenses: [joinDefense],
       }),
-      // Reproduces the production split-read race: the separately timed alliance response is stale
-      // or empty, while fleet visibility already contains the internally consistent revision.
-      allianceMemberAddresses: [],
-      hasAlliance: false,
+      // Membership and cooperative rows come from the same fleet-visibility response.
       initialView: { activePage: 0, activeTab: "alliance", pastPage: 0, pastTab: "mine" },
     });
     const text = collectText(tree).join(" ");
@@ -994,21 +991,17 @@ describe("Mission Control battle reports", () => {
 
     expect(actionLabels(MissionControlPage({
       ...missionControlProps(now, { joinableAttacks: [cutoffAttack] }),
-      allianceMemberAddresses: [wallet, ally],
       initialView: { activePage: 0, activeTab: "alliance", pastPage: 0, pastTab: "mine" },
     }))).not.toContain("Join Attack");
 
     expect(actionLabels(MissionControlPage({
       ...missionControlProps(now, { joinableAttacks: [candidate] }),
-      allianceMemberAddresses: [wallet, ally],
       hasAvailableMissionFleet: false,
       initialView: { activePage: 0, activeTab: "alliance", pastPage: 0, pastTab: "mine" },
     }))).not.toContain("Join Defense");
 
     expect(actionLabels(MissionControlPage({
-      ...missionControlProps(now, { joinableAttacks: [candidate] }),
-      allianceMemberAddresses: [],
-      hasAlliance: false,
+      ...missionControlProps(now, { allianceId: null, joinableDefenses: [candidate] }),
     }))).not.toContain("Join Defense");
   });
 
@@ -1023,6 +1016,19 @@ describe("Mission Control battle reports", () => {
     expect(rows).toHaveLength(2);
     expect(contextById["1"]).toBe("outgoing");
     expect(contextById["2"]).toBe("observer");
+  });
+
+  test("shows the global count before All rows load, preserving the count during loading", () => {
+    const props = { ...missionControlProps(Date.now(), {}), allActiveMissionCount: 42, allActiveMissions: [] };
+    const mineText = collectText(MissionControlPage(props)).join(" ");
+    expect(mineText).toContain("All (42)");
+    const loadingText = collectText(MissionControlPage({ ...props, allActiveMissionsLoading: true,
+      initialView: { activePage: 0, activeTab: "all", pastPage: 0, pastTab: "mine" }
+    })).join(" ");
+    expect(loadingText).toContain("All (42)");
+    expect(loadingText).not.toContain("No active missions");
+    const unknownText = collectText(MissionControlPage({ ...props, allActiveMissionCount: null })).join(" ");
+    expect(unknownText).toContain("All (…)");
   });
 
   test("offers permissionless overdue resolution for other players in All active", () => {
@@ -1428,7 +1434,7 @@ describe("Mission Control battle reports", () => {
     );
     const props = missionControlProps(now, { joinableAttacks: [joinable] });
 
-    const memberTree = MissionControlPage({ ...props, hasAlliance: true });
+    const memberTree = MissionControlPage({ ...props, fleetVisibility: { ...props.fleetVisibility!, allianceId: "1" } });
     const memberAllianceButton = findElements(memberTree, "button")
       .find((node) => node.props?.["data-active-tab-button"] === "alliance");
     expect(memberAllianceButton).toBeDefined();
@@ -1437,7 +1443,7 @@ describe("Mission Control battle reports", () => {
     expect(String(memberAllianceButton?.props?.className)).toContain("sm:py-1");
 
     for (const transition of ["dissolved", "left-or-removed"] as const) {
-      const nonmemberTree = MissionControlPage({ ...props, hasAlliance: false });
+      const nonmemberTree = MissionControlPage({ ...props, fleetVisibility: { ...props.fleetVisibility!, allianceId: null } });
       expect(
         findElements(nonmemberTree, "button")
           .some((node) => node.props?.["data-active-tab-button"] === "alliance"),
@@ -1448,7 +1454,7 @@ describe("Mission Control battle reports", () => {
       expect(nonmemberText).not.toContain("#783");
     }
 
-    const rejoinedTree = MissionControlPage({ ...props, hasAlliance: true });
+    const rejoinedTree = MissionControlPage({ ...props, fleetVisibility: { ...props.fleetVisibility!, allianceId: "1" } });
     expect(
       findElements(rejoinedTree, "button")
         .some((node) => node.props?.["data-active-tab-button"] === "alliance"),
@@ -1460,8 +1466,7 @@ describe("Mission Control battle reports", () => {
     persistMissionControlView({ activePage: 3, activeTab: "alliance", pastPage: 2, pastTab: "all" });
     try {
       const tree = MissionControlPage({
-        ...missionControlProps(now, {}),
-        hasAlliance: false,
+...missionControlProps(now, { allianceId: null }),
       });
 
       expect(sectionByData(tree, "data-active-tab")?.props?.["data-active-tab"]).toBe("mine");
@@ -1474,6 +1479,18 @@ describe("Mission Control battle reports", () => {
     } finally {
       persistMissionControlView({ activePage: 0, activeTab: "mine", pastPage: 0, pastTab: "mine" });
     }
+  });
+
+  test("an unavailable membership feed does not erase the saved Alliance tab", () => {
+    const view = { activePage: 0, activeTab: "alliance", pastPage: 0, pastTab: "mine" } as const;
+    persistMissionControlView(view);
+    try {
+      const props = missionControlProps(Date.now(), {});
+      MissionControlPage({ ...props, fleetVisibility: undefined, loading: true });
+      expect(resolveMissionControlView()).toEqual(view);
+      MissionControlPage({ ...props, fleetVisibility: { ...props.fleetVisibility!, allianceId: null } });
+      expect(resolveMissionControlView().activeTab).toBe("mine");
+    } finally { persistMissionControlView({ ...view, activeTab: "mine" }); }
   });
 
   test("paginates the My missions tab at 25 rows per page", () => {
@@ -2910,6 +2927,8 @@ function missionControlProps(
     actionState: { status: "idle" },
     canTransact: true,
     fleetVisibility: {
+      allianceId: "1",
+      joinableDefenses: [],
       wallet: "0x1111111111111111111111111111111111111111",
       homePlanetId: "7",
       incoming: visibility.incoming ?? [],

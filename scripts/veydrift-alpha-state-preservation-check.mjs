@@ -4,7 +4,6 @@ import { readFileSync } from "node:fs";
 const requiredFiles = [
   "docs/open-alpha-state-preservation.md",
   "docs/veydrift-contract-redeploy-runbook.md",
-  "docs/veydriftgame-replacement-plan-VEY-KANEO-313.md",
   "README.md",
   "packages/contracts/README.md",
   "packages/contracts/script/Deploy.s.sol",
@@ -41,16 +40,16 @@ requireIncludes("docs/veydrift-contract-redeploy-runbook.md", [
   "Migration plan approved",
   "VEYDRIFT_ALPHA_REDEPLOY_ACK",
   "proxy upgrade, no-state redeploy, or migrated redeploy",
-  "docs/veydriftgame-replacement-plan-VEY-KANEO-313.md"
+  "open-alpha-state-preservation.md#full-redeploy-migration-path"
 ]);
 
-requireIncludes("docs/veydriftgame-replacement-plan-VEY-KANEO-313.md", [
-  "Use a migrated redeploy.",
-  "Proxy upgrade is unavailable",
-  "No-state redeploy is invalid",
-  "reviewed fail-closed evidence collector",
+requireIncludes("docs/open-alpha-state-preservation.md", [
+  "If the verified target is not proxy-upgradeable and has existing player state",
+  "migrated redeploy; a no-state redeploy is invalid",
+  "fail-closed evidence collector",
   "pre- and post-replacement preflight JSON",
   "replacement.resourceReserveRequirement() <= replacement resource token balances",
+  "Do not mint replacement",
   "Rollback"
 ]);
 

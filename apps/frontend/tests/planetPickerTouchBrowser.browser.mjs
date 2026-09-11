@@ -177,7 +177,8 @@ async function waitForExpression(expression, timeoutMs = 5_000) {
     if (await evaluate(expression)) return;
     await delay(25);
   }
-  throw new Error(`Timed out waiting for browser expression: ${expression}`);
+  const diagnostics = await evaluate(`({ path: location.pathname, main: document.querySelector('main')?.innerText.slice(0, 1500), errors: window.inspectorProof?.errors, requests: window.inspectorProof?.requests?.slice(-10) })`).catch(() => null);
+  throw new Error(`Timed out waiting for browser expression: ${expression}\n${JSON.stringify(diagnostics)}`);
 }
 
 async function loadFixture() {
@@ -413,7 +414,7 @@ async function loadRecoveryFixture() {
     width: 1024,
   });
   await cdp.send("Page.navigate", { url: recoveryFixtureUrl });
-  await waitForExpression("window.recoveryProofReady === true && window.recoveryProof.reads() > 0");
+  await waitForExpression("window.recoveryProofReady === true");
 }
 
 async function pressTab(shiftKey = false) {
@@ -615,14 +616,121 @@ test("owned planet selector loads its own roster endpoint on startup", async () 
   await loadInspectorFixture("/", 1280, { shell: "settlement" });
   await waitForExpression("window.inspectorProof.requests.some(request => /\\/wallet\\/[^/]+\\/planets(?:\\?|$)/.test(request))");
   const ids = await evaluate("[...document.querySelectorAll('aside[aria-label=\"Select planet\"] [data-planet-selector-item]')].map(item => item.dataset.planetSelectorItem)");
-  assert.deepEqual(ids.sort(), ["owned-a", "owned-b"]);
+  assert.deepEqual(ids.sort(), ["101", "102"]);
+});
+
+test("planet switches show balances and production together and retain cached resources during refresh", async () => {
+  await loadInspectorFixture("/", 1280, { shell: "settlement" });
+  const metalTitle = "document.querySelector('[data-resource=\"M\"] summary')?.title";
+  await waitForExpression(`${metalTitle}?.startsWith('Metal: 10,313')`);
+  const alphaTitle = await evaluate(metalTitle);
+  await evaluate(`(() => {
+    const fetch = window.fetch;
+    window.resourceSwitch = { release: null, waiting: false, hold: true };
+    window.fetch = async (...args) => {
+      const url = new URL(String(args[0]), location.origin);
+      if (!url.pathname.endsWith('/infrastructure') || url.searchParams.get('planetId') !== '102') return fetch(...args);
+      if (window.resourceSwitch.hold) {
+        window.resourceSwitch.waiting = true;
+        await new Promise(resolve => { window.resourceSwitch.release = resolve; });
+      }
+      const data = await (await fetch(...args)).json();
+      // Deliberately differ from the roster, which must not publish a partial header.
+      data.resourcesAsOfNow = { metal: '1203', crystal: '1201', deuterium: '1202' };
+      data.productionPerHour = { metal: '920', crystal: '338', deuterium: '171' };
+      return Response.json(data);
+    };
+  })()`);
+  const select = (id) => clickExpression(`document.querySelector('aside[aria-label="Select planet"] [data-planet-selector-item="${id}"] button[data-planet-selector-long-press]')`);
+  await select("102");
+  await waitForExpression("window.resourceSwitch.waiting && document.querySelector('[data-resource-status]')?.dataset.resourceStatus === 'loading'");
+  assert.equal(await evaluate(metalTitle), undefined, "must not display roster balances with missing production");
+  for (const width of [390, 768, 1280]) {
+    await cdp.send("Emulation.setDeviceMetricsOverride", { width, height: 900, deviceScaleFactor: 1, mobile: width < 640 });
+    const skeleton = await evaluate(`(() => {
+      const bar = document.querySelector('[data-resource-status]');
+      const blocks = [...bar.querySelectorAll('.skeleton')];
+      const copy = bar.cloneNode(true);
+      copy.querySelectorAll('.sr-only').forEach(node => node.remove());
+      return {
+        count: blocks.length,
+        busy: bar.querySelector('[role="status"]')?.getAttribute('aria-busy'),
+        fits: blocks.filter(node => node.offsetWidth > 0).every(node => { const rect = node.getBoundingClientRect(); return rect.width <= 56 && rect.left >= 0 && rect.right <= innerWidth; }),
+        text: copy.textContent,
+      };
+    })()`);
+    assert.equal(skeleton.count, 8);
+    assert.equal(skeleton.busy, "true");
+    assert.equal(skeleton.fits, true, `resource skeletons must fit at ${width}px`);
+    assert.doesNotMatch(skeleton.text, /loading|syncing/i);
+  }
+  await cdp.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "reduce" }] });
+  assert.equal(await evaluate("getComputedStyle(document.querySelector('[data-resource-status] .skeleton')).animationName"), "none");
+  await cdp.send("Emulation.setEmulatedMedia", { features: [] });
+  await evaluate("window.resourceSwitch.hold = false; window.resourceSwitch.release()");
+  await waitForExpression(`${metalTitle}?.startsWith('Metal: 1,203')`);
+  const betaTitle = await evaluate(metalTitle);
+  assert.match(betaTitle, /920/);
+
+  await select("101");
+  await waitForExpression(`${metalTitle} === ${JSON.stringify(alphaTitle)}`);
+  await evaluate("window.resourceSwitch.hold = true; window.resourceSwitch.waiting = false");
+  await evaluate(`(async () => {
+    const url = performance.getEntriesByType('resource').map(r => r.name).find(name => name.includes('/src/backendDataStore.ts'));
+    const { backendDataStoreFor } = await import(url);
+    void backendDataStoreFor('/local-api').invalidate(['planet:102']);
+  })()`);
+  await select("102");
+  await waitForExpression(`${metalTitle} === ${JSON.stringify(betaTitle)}`);
+  await waitForExpression("window.resourceSwitch.waiting");
+  assert.equal(await evaluate(metalTitle), betaTitle, "a background refresh must retain both cached values");
+  // A late response for B must not change A's displayed resources.
+  await select("101");
+  await waitForExpression(`${metalTitle} === ${JSON.stringify(alphaTitle)}`);
+  await evaluate("window.resourceSwitch.hold = false; window.resourceSwitch.release()");
+  await delay(100);
+  assert.equal(await evaluate(metalTitle), alphaTitle);
+});
+
+test("resource numbers animate green and red without crossing planets or changing sibling values", async () => {
+  await loadInspectorFixture("/", 1280, { shell: "settlement" });
+  const amount = "document.querySelector('[data-resource=\"M\"] [data-resource-amount]')";
+  const displayed = `Number(${amount}?.querySelector('.hidden')?.textContent.replaceAll(',', ''))`;
+  await evaluate("window.inspectorProof.renderResourceBar('planet-a', 10)");
+  assert.equal(await evaluate(displayed), 10);
+  assert.equal(await evaluate(`${amount}.dataset.direction`), undefined);
+  await evaluate("window.inspectorProof.renderResourceBar('planet-a', 110)");
+  await waitForExpression(`${displayed} > 10 && ${displayed} < 110`);
+  assert.equal(await evaluate(`${amount}.dataset.direction`), "up");
+  assert.equal(await evaluate(`getComputedStyle(${amount}).animationName`), "resource-flash-up");
+  await waitForExpression(`${displayed} === 110`);
+  await evaluate("window.inspectorProof.renderResourceBar('planet-a', 5)");
+  await waitForExpression(`${displayed} < 110 && ${displayed} > 5`);
+  assert.equal(await evaluate(`${amount}.dataset.direction`), "down");
+  assert.equal(await evaluate(`getComputedStyle(${amount}).animationName`), "resource-flash-down");
+  await waitForExpression(`${displayed} === 5`);
+  assert.equal(await evaluate("document.querySelector('[data-resource=\"C\"] [data-resource-amount] .hidden').textContent"), "222");
+  assert.equal(await evaluate("document.querySelector('[data-resource=\"D\"] [data-resource-amount] .hidden').textContent"), "333");
+
+  await evaluate("window.inspectorProof.renderResourceBar('planet-a', 1000)");
+  await waitForExpression(`${displayed} > 5 && ${displayed} < 1000`);
+  await evaluate("window.inspectorProof.renderResourceBar('planet-b', 50)");
+  assert.equal(await evaluate(displayed), 50);
+  assert.equal(await evaluate(`${amount}.dataset.direction`), undefined);
+  await delay(500);
+  assert.equal(await evaluate(displayed), 50, "the old planet's animation must be cancelled");
+  await cdp.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "reduce" }] });
+  await evaluate("window.inspectorProof.renderResourceBar('planet-b', 70)");
+  await waitForExpression(`${displayed} === 70`);
+  assert.equal(await evaluate(`${amount}.dataset.direction`), undefined);
+  await cdp.send("Emulation.setEmulatedMedia", { features: [] });
 });
 
 test("desktop selector atomically replaces an unrelated inspector with one owned route and dataset", async () => {
   await loadInspectorFixture("/planet/9/9/9", 1280);
   await waitForExpression("document.querySelector('main h2')?.textContent === 'Unrelated Gamma'");
 
-  await clickExpression('document.querySelector(\'aside[aria-label="Select planet"] [data-planet-selector-item="owned-b"] button[data-planet-selector-long-press]\')');
+  await clickExpression('document.querySelector(\'aside[aria-label="Select planet"] [data-planet-selector-item="102"] button[data-planet-selector-long-press]\')');
   await waitForExpression("location.pathname === '/planet/4/5/6'");
   try {
     await waitForExpression("document.querySelector('main h2')?.textContent?.includes('Owned Beta') === true");
@@ -682,8 +790,11 @@ test("mobile hamburger selector independently invokes the owned-planet transitio
         .every((label) => labels.includes(label));
   })()`);
   await waitForExpression("document.querySelector('#mobile-navigation-menu section[aria-label=\"Select planet\"]') !== null");
-  await clickExpression("document.querySelector('#mobile-navigation-menu [data-planet-selector-item=\"owned-b\"] button[data-planet-selector-long-press]')");
+  await clickExpression("document.querySelector('#mobile-navigation-menu [data-planet-selector-item=\"102\"] button[data-planet-selector-long-press]')");
   await waitForExpression("location.pathname === '/planet/4/5/6' && document.querySelector('main h2')?.textContent === 'Owned Beta'");
+
+  // Media and resource reads are independent of the planet heading.
+  await waitForExpression("document.querySelector('main')?.textContent.includes('Add media') && [...document.querySelectorAll('[data-resource-status] summary')].some(node => node.title.startsWith('Metal: 203'))");
 
   const snapshot = await inspectorSnapshot();
   assert.equal(snapshot.heading, "Owned Beta");
@@ -909,10 +1020,293 @@ test("direct Mission Control load hydrates before stalled history reads occupy t
   ))`);
 
   const requests = await evaluate("window.inspectorProof.requests");
-  const overviewIndex = requests.findIndex((request) => request.includes("/overview"));
+  const fleetIndex = requests.findIndex((request) => request.includes("/fleet-visibility"));
   const firstHistoryIndex = requests.findIndex((request) => request.includes("/missions?") || request.includes("/missile-attacks?"));
-  assert.ok(overviewIndex >= 0, JSON.stringify(requests));
-  assert.ok(firstHistoryIndex > overviewIndex, JSON.stringify(requests));
+  assert.ok(fleetIndex >= 0, JSON.stringify(requests));
+  assert.ok(firstHistoryIndex >= 0, JSON.stringify(requests));
+  assert.ok(!requests.some(request => request.includes('/overview')), JSON.stringify(requests));
+});
+
+test("a stalled Supply inventory request does not block another planet or Shipyard", async () => {
+  await loadInspectorFixture("/", 1280);
+  await waitForExpression(`document.querySelector('button[aria-label="Supply this planet"]') !== null`);
+  await evaluate(`(() => {
+    const originalFetch = globalThis.fetch;
+    window.supplyInventoryBlocked = false;
+    globalThis.fetch = (input, init) => {
+      if (String(input).includes('/supply-sources')) {
+        window.supplyInventoryBlocked = true;
+        return new Promise(() => {});
+      }
+      return originalFetch(input, init);
+    };
+  })()`);
+  await clickExpression(`document.querySelector('button[aria-label="Supply this planet"]')`);
+  await waitForExpression(`window.supplyInventoryBlocked && document.querySelector('[role="dialog"] .skeleton-region') !== null`);
+  await clickExpression(`document.querySelector('[aria-label="Close supply resources"]')`);
+  await clickExpression(`document.querySelector('aside[aria-label="Select planet"] [data-planet-selector-item="102"] button[data-planet-selector-long-press]')`);
+  await waitForExpression(`document.querySelector('main h2')?.textContent?.includes('Owned Beta') === true`);
+  await clickExpression(`document.querySelector('nav.hidden a[href="/shipyard"]')`);
+  await waitForExpression(`location.pathname === '/shipyard' && document.querySelector('main [data-production-catalog]') !== null`);
+  assert.equal(await evaluate(`window.supplyInventoryBlocked`), true);
+  assert.deepEqual(await evaluate(`window.inspectorProof.errors`), []);
+});
+
+test("Supply ignores old reload locks, can close during indexing, and allows the next submission", async () => {
+  await loadInspectorFixture("/", 1280);
+  await evaluate(`localStorage.setItem('veydrift:pending-transactions:/local-api', JSON.stringify([{
+    actionId: 'galaxy:Supply 1 transport', chainId: '0x14a34', submittedAt: 1,
+    transactionHash: '0xoldsupply', wallet: window.inspectorProof.account,
+    planetIds: ['101', '102'], conflictKeys: ['fleets', 'planet:101', 'planet:102']
+  }]))`);
+  await loadInspectorFixture("/", 1280);
+  assert.equal(await evaluate(`localStorage.getItem('veydrift:pending-transactions:/local-api')`), null);
+  await evaluate(`(async () => {
+    const url = performance.getEntriesByType('resource').map(r => r.name).find(name => name.includes('/src/backendDataStore.ts'));
+    const { backendDataStoreFor } = await import(url);
+    const store = backendDataStoreFor('/local-api');
+    window.supplyProof = { store, sends: 0, phase: 'confirmed', sourceReads: 0, shipyardReads: 0 };
+    const originalWrite = store.runWriteTransaction.bind(store);
+    store.runWriteTransaction = descriptor => originalWrite({ ...descriptor, send: async () => {
+      window.supplyProof.sends++;
+      return '0xsupplyfixture' + window.supplyProof.sends;
+    } });
+    const originalFetch = window.fetch;
+    window.fetch = async (input, init) => {
+      if (String(input).includes('/supply-sources')) window.supplyProof.sourceReads++;
+      if (String(input).includes('/shipyard')) window.supplyProof.shipyardReads++;
+      if (String(input).includes('/transactions/0xsupplyfixture')) {
+        if (window.supplyProof.phase === 'confirmed' && window.supplyProof.checked) {
+          await new Promise(resolve => { window.supplyProof.release = resolve; });
+        }
+        window.supplyProof.checked = true;
+        return Response.json({ transactionHash: String(input).split('/transactions/')[1].split('/')[0], phase: window.supplyProof.phase, receiptBlock: '20', latestIndexedBlock: '20', indexedEventCount: 1, events: [] });
+      }
+      const response = await originalFetch(input, init);
+      if (!String(input).includes('/shipyard')) return response;
+      const body = await response.json();
+      body.resources = body.resourcesAsOfNow = { metal: '10000', crystal: '10000', deuterium: '10000' };
+      return Response.json(body);
+    };
+  })()`);
+  await clickExpression(`document.querySelector('button[aria-label="Supply this planet"]')`);
+  await waitForExpression(`document.querySelector('[role="dialog"]')?.textContent?.includes('Available cargo fleet') === true`);
+  assert.equal(await evaluate("window.supplyProof.sourceReads"), 1, 'Opening Supply batches every origin into one request');
+  assert.equal(await evaluate("window.supplyProof.shipyardReads"), 0, 'Opening Supply does not fan out into shipyard reads');
+  await evaluate(`(() => {
+    const input = document.querySelector('input[aria-label="metal to send"]');
+    input.value = '10';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  })()`);
+  await waitForExpression(`document.querySelector('[role="dialog"] footer button')?.disabled === false`);
+  await clickExpression(`document.querySelector('[role="dialog"] footer button')`);
+  await waitForExpression(`window.supplyProof.release !== undefined && document.querySelector('[role="dialog"]')?.textContent?.includes('You can close this window.') === true`);
+  assert.equal(await evaluate("window.supplyProof.sourceReads"), 2, 'Confirmation revalidates all origins with one request');
+  assert.equal(await evaluate(`document.querySelector('[role="dialog"] .skeleton-region') !== null`), false);
+  assert.ok(await evaluate(`document.querySelectorAll('[role="dialog"] [aria-label="Source planets"] input[type="checkbox"]').length > 0`), 'Keep source planets visible while the transaction is processing');
+  const titleAlignment = await evaluate(`(() => {
+    const parts = [...document.querySelectorAll('[role="dialog"] h2 > span')].map(node => node.getBoundingClientRect());
+    return Math.abs((parts[0].top + parts[0].height / 2) - (parts[1].top + parts[1].height / 2));
+  })()`);
+  assert.ok(titleAlignment <= 1, `Supply title and icon differ by ${titleAlignment}px`);
+  assert.equal(await evaluate(`document.querySelector('[role="dialog"] footer button').disabled`), true);
+  await clickExpression(`document.querySelector('[aria-label="Close supply resources"]')`);
+  await waitForExpression(`document.querySelector('[role="dialog"]') === null`);
+  assert.equal(await evaluate(`window.supplyProof.store.pendingTransactions().length`), 1);
+
+  await clickExpression(`document.querySelector('button[aria-label="Supply this planet"]')`);
+  await waitForExpression(`document.querySelector('[role="dialog"]') !== null`);
+  assert.equal(await evaluate(`document.querySelector('[role="dialog"] footer button').disabled`), true);
+  await evaluate(`window.supplyProof.phase = 'applied'; window.supplyProof.release()`);
+  await waitForExpression(`window.supplyProof.store.pendingTransactions().length === 0`);
+  assert.equal(await evaluate(`document.querySelector('[role="dialog"]') !== null`), true);
+  assert.equal(await evaluate(`window.supplyProof.sends`), 1);
+  await evaluate(`(() => {
+    const input = document.querySelector('input[aria-label="metal to send"]');
+    input.value = '20';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  })()`);
+  await waitForExpression(`document.querySelector('[role="dialog"] footer button')?.disabled === false`);
+  await clickExpression(`document.querySelector('[role="dialog"] footer button')`);
+  await waitForExpression(`window.supplyProof.sends === 2 && document.querySelector('[role="dialog"]') === null`);
+  assert.equal(await evaluate(`window.supplyProof.store.isTransactionPending(window.inspectorProof.account)`), false);
+  assert.deepEqual(await evaluate("window.inspectorProof.errors"), []);
+});
+
+test("Overview keeps an empty watched-planets section hidden during background refreshes", async () => {
+  await loadInspectorFixture("/", 1280);
+  await evaluate(`(async () => {
+    const url = performance.getEntriesByType('resource').map(r => r.name).find(name => name.includes('/src/backendDataStore.ts'));
+    const { backendDataStoreFor } = await import(url);
+    const store = backendDataStoreFor('/local-api');
+    const query = store.queries.watchedPlanets(window.inspectorProof.account, { page: 1, pageSize: 25 });
+    await query.read();
+    const originalFetch = window.fetch;
+    window.watchedRefreshProof = { query };
+    window.fetch = async (input, init) => {
+      if (String(input).includes('/watched-planets')) {
+        await new Promise(resolve => { window.watchedRefreshProof.release = resolve; });
+        if (window.watchedRefreshProof.fail) throw new Error('Temporary background failure');
+      }
+      return originalFetch(input, init);
+    };
+  })()`);
+  const hidden = `![...document.querySelectorAll('main h3')].some(node => node.textContent === 'Watched planets')`;
+  await waitForExpression(hidden);
+  for (const fail of [false, false, true]) {
+    await evaluate(`(() => {
+      const proof = window.watchedRefreshProof;
+      proof.release = undefined;
+      proof.done = false;
+      proof.fail = ${fail};
+      void proof.query.read().catch(() => {}).finally(() => { proof.done = true; });
+    })()`);
+    await waitForExpression("window.watchedRefreshProof.release !== undefined");
+    await evaluate("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
+    assert.equal(await evaluate(hidden), true, 'A background refresh must not insert a skeleton panel');
+    await evaluate("window.watchedRefreshProof.release()");
+    await waitForExpression("window.watchedRefreshProof.done");
+    await evaluate("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
+    assert.equal(await evaluate(hidden), true, 'Keep the last empty result even if a refresh fails');
+  }
+});
+
+test("Mission Control detail links use the router without replacing the document", async () => {
+  await loadInspectorFixture("/mission-control", 1280, { activeMission: "true" });
+  await waitForExpression(`document.querySelector('[data-active-tab-button="all"]')?.textContent === 'All (1)'`);
+  await clickExpression(`document.querySelector('[data-active-tab-button="all"]')`);
+  await evaluate("window.detailNavigationMarker = {}; window.detailNavigationOriginal = window.detailNavigationMarker");
+  for (const path of ['/planet/1/2/3', '/moon/1/2/3']) {
+    const selector = `document.querySelector('[data-active-tab="all"] a[href="${path}"]')`;
+    await waitForExpression(`${selector} !== null`);
+    await clickExpressionWithTrustedPointer(selector);
+    await waitForExpression(`location.pathname === '${path}' && document.querySelector('[data-mission-control-page]') === null`);
+    assert.equal(await evaluate("window.detailNavigationMarker !== undefined && window.detailNavigationMarker === window.detailNavigationOriginal"), true);
+    await evaluate("history.back()");
+    await waitForExpression(`document.querySelector('[data-active-tab="all"] a[href="${path}"]') !== null`);
+  }
+  // Other list/dialog consumers may also stop bubbling. All entity anchors
+  // must use the same router, including nested images and keyboard clicks.
+  for (const path of ['/player/0x9999999999999999999999999999999999999999', '/alliance/7']) {
+    await evaluate(`(() => {
+      const wrapper = document.createElement('div');
+      wrapper.onclick = event => event.stopPropagation();
+      wrapper.innerHTML = '<a id="detail-route-proof" href="${path}"><span>Open detail</span></a>';
+      document.querySelector('main').prepend(wrapper);
+    })()`);
+    if (path.startsWith('/alliance/')) {
+      await evaluate("document.querySelector('#detail-route-proof').focus()");
+      await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
+      await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
+    } else {
+      await clickExpressionWithTrustedPointer("document.querySelector('#detail-route-proof span')");
+    }
+    await waitForExpression(`location.pathname === '${path}' && document.querySelector('[data-mission-control-page]') === null`);
+    assert.equal(await evaluate("window.detailNavigationMarker !== undefined && window.detailNavigationMarker === window.detailNavigationOriginal"), true);
+    await evaluate("history.back()");
+    await waitForExpression("document.querySelector('[data-mission-control-page]') !== null");
+    await evaluate("document.querySelector('#detail-route-proof')?.parentElement.remove()");
+  }
+  const nativeClicks = await evaluate(`(() => {
+    const anchor = document.createElement('a');
+    document.querySelector('main').prepend(anchor);
+    let intercepted;
+    // Cancel at the target so the test never opens external pages/new tabs.
+    anchor.onclick = event => { intercepted = event.defaultPrevented; event.preventDefault(); };
+    const results = [];
+    for (const scenario of [
+      { ctrlKey: true }, { metaKey: true }, { shiftKey: true }, { altKey: true },
+      { button: 1 }, { target: '_blank' }, { download: true },
+      { href: 'https://example.com/planet/1/2/3' },
+    ]) {
+      anchor.href = scenario.href ?? '/planet/1/2/3';
+      anchor.target = scenario.target ?? '';
+      anchor.toggleAttribute('download', !!scenario.download);
+      intercepted = undefined;
+      anchor.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, ...scenario }));
+      results.push(intercepted);
+    }
+    anchor.remove();
+    return results;
+  })()`);
+  assert.deepEqual(nativeClicks, Array(8).fill(false), 'Modified, download, and external links retain browser behavior');
+});
+
+test("Mission Control controls tab and page state through navigation and browser back", async () => {
+  await loadInspectorFixture("/mission-control", 1280, { activeMissionCount: "26" });
+  await waitForExpression(`document.querySelector('[data-active-tab-button="all"]')?.textContent === 'All (26)'`);
+  await clickExpression(`document.querySelector('[data-active-tab-button="all"]')`);
+  await waitForExpression(`document.querySelector('[data-active-tab="all"] [data-past-page-next]')?.disabled === false`);
+  await clickExpression(`document.querySelector('[data-active-tab="all"] [data-past-page-next]')`);
+  const pageTwo = `document.querySelector('[data-active-tab="all"] [data-past-page-label]')?.textContent === 'Page 2 of 2'`;
+  await waitForExpression(pageTwo);
+  assert.equal(await evaluate(`new URLSearchParams(location.search).get('ap')`), "1");
+  assert.equal(await evaluate(`document.querySelector('[data-active-tab="all"] [data-past-page-next]').disabled`), true);
+  await clickExpression(`document.querySelector('nav.hidden a[href="/"]')`);
+  await waitForExpression(`location.pathname === '/' && document.querySelector('[data-mission-control-page]') === null`);
+  await evaluate("history.back()");
+  await waitForExpression(pageTwo);
+  await clickExpression(`document.querySelector('[data-active-tab="all"] [data-past-page-prev]')`);
+  await waitForExpression(`document.querySelector('[data-active-tab="all"] [data-past-page-label]')?.textContent === 'Page 1 of 2'`);
+  await clickExpression(`document.querySelector('[data-past-tab-button="all"]')`);
+  await waitForExpression(`document.querySelector('[data-past-tab="all"]') !== null`);
+  assert.equal(await evaluate(`new URLSearchParams(location.search).get('pt')`), "all");
+  assert.deepEqual(await evaluate("window.inspectorProof.errors"), []);
+});
+
+test("Mission Control populates the All active count without selecting the tab", async () => {
+  await loadInspectorFixture("/mission-control", 1280, { activeMission: "true" });
+  await waitForExpression(`document.querySelector('[data-active-tab-button="all"]')?.textContent === 'All (1)'`);
+  assert.equal(await evaluate(`document.querySelector('[data-active-tab-button="mine"]')?.getAttribute('aria-selected')`), "true");
+  assert.equal(await evaluate(`document.querySelector('[data-active-tab-button="all"]')?.getAttribute('aria-selected')`), "false");
+  assert.equal(await evaluate(`window.inspectorProof.requests.some(path => path.includes('/missions?status=active') && !path.includes('summaryOnly=true'))`), false);
+
+  await clickExpression(`document.querySelector('[data-active-tab-button="all"]')`);
+  await waitForExpression(`document.querySelector('[data-active-tab="all"]')?.textContent?.includes('#777') === true`);
+  assert.equal(await evaluate(`window.inspectorProof.requests.some(path => path.includes('/missions?status=active') && !path.includes('summaryOnly=true'))`), true);
+  await delay(100);
+  await evaluate(`window.inspectorProof.requests.length = 0; window.inspectorProof.refreshMissionQueries()`);
+  assert.equal(await evaluate(`window.inspectorProof.requests.filter(path => path.includes('/missions?status=active')).length`), 1);
+  assert.equal(await evaluate(`window.inspectorProof.requests.some(path => path.includes('summaryOnly=true'))`), false);
+  await clickExpression(`document.querySelector('[data-active-tab-button="mine"]')`);
+  await delay(100);
+  await evaluate(`window.inspectorProof.requests.length = 0; window.inspectorProof.refreshMissionQueries()`);
+  assert.equal(await evaluate(`window.inspectorProof.requests.filter(path => path.includes('/missions?status=active')).length`), 1);
+  assert.equal(await evaluate(`window.inspectorProof.requests.some(path => path.includes('summaryOnly=true'))`), true);
+  assert.equal(await evaluate(`document.querySelector('[data-active-tab-button="all"]')?.textContent`), 'All (1)');
+  assert.deepEqual(await evaluate("window.inspectorProof.errors"), []);
+});
+
+test("presentation clock updates without rerendering the app shell and pauses while hidden", async () => {
+  await loadInspectorFixture("/", 1280, { profileRoot: "true", activeMission: "true" });
+  await delay(2000);
+  await evaluate(`window.inspectorProof.rootRenderMs.length = 0; window.inspectorProof.clockRenders = 0`);
+  await delay(2200);
+  assert.ok(await evaluate(`window.inspectorProof.clockRenders >= 2`), "visible presentation clock should keep updating");
+  assert.equal(await evaluate(`window.inspectorProof.rootRenderMs.length`), 0, "clock must not rerender the app shell");
+  await evaluate(`Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' }); document.dispatchEvent(new Event('visibilitychange'))`);
+  await delay(100);
+  const hiddenRenders = await evaluate(`window.inspectorProof.clockRenders`);
+  await delay(2200);
+  assert.equal(await evaluate(`window.inspectorProof.clockRenders`), hiddenRenders);
+  await evaluate(`Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' }); document.dispatchEvent(new Event('visibilitychange'))`);
+  await waitForExpression(`window.inspectorProof.clockRenders > ${hiddenRenders}`);
+  assert.deepEqual(await evaluate("window.inspectorProof.errors"), []);
+});
+
+test("public player header loads rank and biography without an extra profile request", async () => {
+  const wallet = "0x9999999999999999999999999999999999999999";
+  await loadInspectorFixture(`/player/${wallet}`, 1280);
+  await waitForExpression(`document.querySelector('main')?.textContent.includes('Public biography') && document.querySelector('main')?.textContent.includes('#3')`);
+  assert.equal(await evaluate(`window.inspectorProof.requests.some(path => path.endsWith('/wallet/${wallet}/profile'))`), false);
+  assert.deepEqual(await evaluate("window.inspectorProof.errors"), []);
+});
+
+test("another alliance loads its public roster independently of directory summaries", async () => {
+  await loadInspectorFixture("/alliance/8", 1280, { publicTreasury: "true" });
+  await waitForExpression(`document.querySelector('main')?.textContent.includes('Other Fleet') && document.querySelector('main')?.textContent.includes('Public Admiral')`);
+  assert.equal(await evaluate(`window.inspectorProof.requests.some(path => path.endsWith('/alliance/8'))`), true);
+  assert.deepEqual(await evaluate("window.inspectorProof.errors"), []);
 });
 
 test("Galaxy settles its system and target-protection state once", async () => {
@@ -1129,7 +1523,7 @@ for (const width of [390, 1280]) {
       && document.querySelector('main')?.textContent?.includes('Syncing planetfall') === false
       && document.querySelector('main')?.textContent?.includes('Owned Alpha') === true
       && document.querySelector('[data-resource-status="ready"] summary[title^="Metal:"]') !== null
-      && window.inspectorProof.requests.some((request) => request.includes('/overview'))
+      && !window.inspectorProof.requests.some((request) => request.includes('/overview'))
       && window.inspectorProof.requests.some((request) => request.includes('/settlement'))`);
 
     const initialSnapshot = await evaluate(`({
@@ -1201,6 +1595,102 @@ for (const width of [390, 1280]) {
   });
 }
 
+test("slow route chunks use matching skeletons while navigation stays usable", async () => {
+  await loadInspectorFixture("/", 1280);
+  await waitForExpression("document.querySelector('main section[aria-label=\"Fleets\"]') !== null");
+  await evaluate("window.routeShellProof = document.querySelector('nav.hidden')");
+  await cdp.send("Network.setCacheDisabled", { cacheDisabled: true });
+  await cdp.send("Network.emulateNetworkConditions", { offline: false, latency: 1500, downloadThroughput: -1, uploadThroughput: -1 });
+  try {
+    await clickExpression("document.querySelector('nav.hidden a[href=\"/mission-control\"]')");
+    await waitForExpression("document.querySelector('main')?.textContent.includes('Loading active missions') === true");
+    assert.equal(await evaluate("document.querySelector('main')?.textContent.includes('Loading planet details')"), false);
+    assert.equal(await evaluate("document.querySelector('nav.hidden') === window.routeShellProof"), true);
+    await clickExpression("document.querySelector('nav.hidden a[href=\"/shipyard\"]')");
+    await waitForExpression("location.pathname === '/shipyard' && document.querySelector('main')?.textContent.includes('Loading shipyard') === true");
+  } finally {
+    await cdp.send("Network.emulateNetworkConditions", { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
+    await cdp.send("Network.setCacheDisabled", { cacheDisabled: false });
+  }
+  await waitForExpression("document.querySelector('main [data-production-catalog]') !== null", 20_000);
+  assert.equal(await evaluate("document.querySelector('nav.hidden') === window.routeShellProof"), true);
+});
+
+test("a failed route chunk stays inside the page and permits navigation elsewhere", async () => {
+  await loadInspectorFixture("/", 1280);
+  await waitForExpression("document.querySelector('main section[aria-label=\"Fleets\"]') !== null");
+  await cdp.send("Network.enable");
+  await cdp.send("Network.setCacheDisabled", { cacheDisabled: true });
+  await cdp.send("Network.setBlockedURLs", { urls: ["*MissionControlPage.tsx*"] });
+  try {
+    await clickExpression("document.querySelector('nav.hidden a[href=\"/mission-control\"]')");
+    await waitForExpression("document.querySelector('main [role=alert]')?.textContent.includes('This page could not be loaded') === true");
+    assert.equal(await evaluate("document.querySelector('nav.hidden') !== null"), true);
+    await clickExpression("document.querySelector('nav.hidden a[href=\"/shipyard\"]')");
+    await waitForExpression("document.querySelector('main [data-production-catalog]') !== null");
+    assert.equal(await evaluate("document.querySelector('main [role=alert]') === null"), true);
+  } finally {
+    await cdp.send("Network.setBlockedURLs", { urls: [] });
+    await cdp.send("Network.setCacheDisabled", { cacheDisabled: false });
+  }
+});
+
+test("multi-query subscriptions catch mount-time writes and keep stable snapshots across unrelated renders", async () => {
+  await loadInspectorFixture("/", 1280, { snapshotProbe: "true", waitForPlanetSelectors: "false" });
+  await waitForExpression("document.querySelector('[data-snapshot-probe] output')?.textContent === 'a'");
+  const changes = await evaluate("document.querySelector('[data-snapshot-probe]').dataset.changes");
+  await clickExpression("document.querySelector('[data-snapshot-probe] button')");
+  await waitForExpression("document.querySelector('[data-snapshot-probe]').dataset.tick === '1'");
+  assert.equal(await evaluate("document.querySelector('[data-snapshot-probe]').dataset.changes"), changes);
+  await clickExpression("document.querySelectorAll('[data-snapshot-probe] button')[1]");
+  await waitForExpression("document.querySelector('[data-snapshot-probe] output')?.textContent === 'b'");
+  assert.deepEqual(await evaluate("window.inspectorProof.errors"), []);
+});
+
+test("Mission Control reuses its list model on clock ticks but updates countdowns and replaced feeds", async () => {
+  await loadInspectorFixture("/", 1280, { missionMemoProbe: "true", waitForPlanetSelectors: "false" });
+  await waitForExpression("document.querySelector('[data-mission-memo-probe]')?.dataset.reads === '1'");
+  const text = await evaluate("document.querySelector('[data-mission-control-page]').textContent");
+  await clickExpression("document.querySelector('[data-mission-memo-probe] [data-tick]')");
+  await waitForExpression("document.querySelector('[data-mission-memo-probe]').dataset.tick === '1'");
+  assert.equal(await evaluate("document.querySelector('[data-mission-memo-probe]').dataset.reads"), "1");
+  assert.notEqual(await evaluate("document.querySelector('[data-mission-control-page]').textContent"), text);
+  await clickExpression("document.querySelector('[data-replace]')");
+  await waitForExpression("document.querySelector('[data-mission-memo-probe]').dataset.reads === '2'");
+  assert.match(await evaluate("document.querySelector('[data-mission-control-page]').textContent"), /#701/);
+  assert.deepEqual(await evaluate("window.inspectorProof.errors"), []);
+});
+
+test("Overview selects the moon and opens Transport and Deploy to its parent with a moon origin", async () => {
+  for (const action of ["Transport", "Deploy"]) {
+    await loadInspectorFixture("/", 1280, { moonOverview: "true" });
+    await waitForExpression(`document.querySelector('[aria-label="My planets"] [data-planet-moon-subsection]') !== null`);
+    await evaluate(`window.moonOverviewProof = {
+      hero: document.querySelector('img[alt="Planet hero background"]'),
+      queues: ['Buildings', 'Defenses', 'Research', 'Shipyard'].map(label => document.querySelector('section[aria-label="' + label + '"]')),
+    }`);
+    await clickExpression(`document.querySelector('[aria-label="My planets"] [data-planet-moon-subsection]')`);
+    await waitForExpression(`document.querySelector('[aria-label="My planets"] [data-planet-moon-subsection]').classList.contains('border-cyan-300/50')`);
+    assert.equal(await evaluate("location.pathname"), "/");
+    assert.equal(await evaluate(`window.moonOverviewProof.hero !== null && window.moonOverviewProof.hero === document.querySelector('img[alt="Planet hero background"]')`), true);
+    assert.equal(await evaluate(`window.moonOverviewProof.queues.every(queue => queue !== null && queue.isConnected)`), true);
+    assert.equal(await evaluate(`document.querySelector('[aria-label="My planets"] [data-planet-moon-subsection]').textContent.includes('Selected')`), false);
+    if (action === "Transport") {
+      await clickExpression(`document.querySelector('[aria-label="My planets"] button[aria-label="Open moon details"]')`);
+      await waitForExpression(`location.pathname === '/moon/1/2/3'`);
+      assert.equal(await evaluate("window.moonOverviewProof !== undefined"), true, "Moon details must use the internal router");
+      await evaluate("history.back()");
+      await waitForExpression(`location.pathname === '/' && document.querySelector('[aria-label="My planets"] [data-planet-moon-subsection]')?.classList.contains('border-cyan-300/50')`);
+    }
+    await waitForExpression(`document.querySelector('[aria-label="My planets"] button[aria-label="${action}"]') !== null`);
+    await clickExpression(`document.querySelector('[aria-label="My planets"] button[aria-label="${action}"]')`);
+    await waitForExpression(`Array.from(document.querySelectorAll('button')).some(button => button.textContent.trim() === 'Origin moon' && button.getAttribute('aria-pressed') === 'true')`);
+    assert.equal(await evaluate(`Array.from(document.querySelectorAll('button')).find(button => button.textContent.trim() === 'Destination planet')?.getAttribute('aria-pressed')`), "true");
+    assert.deepEqual(await evaluate("window.inspectorProof.walletRequests.filter(request => request.method === 'eth_sendTransaction')"), []);
+    assert.deepEqual(await evaluate("window.inspectorProof.errors"), []);
+  }
+});
+
 test("desktop Overview to Shipyard click atomically replaces the rendered page", async () => {
   await loadInspectorFixture("/", 1280);
   await waitForExpression("location.pathname === '/' && document.querySelector('main section[aria-label=\"Fleets\"]') !== null");
@@ -1213,6 +1703,22 @@ test("desktop Overview to Shipyard click atomically replaces the rendered page",
   });
   await waitForExpression(`document.querySelector('main [data-production-catalog]') !== null
     && document.querySelector('main section[aria-label="Fleets"]') === null`);
+});
+
+test("public-only treasury keeps withdrawals available while private invite actions are disabled", async () => {
+  await loadInspectorFixture("/alliance", 1280, { publicTreasury: "true" });
+  const button = (label) => `[...document.querySelectorAll('main button')].find(button => button.textContent?.trim() === ${JSON.stringify(label)})`;
+  await waitForExpression(`${button("Treasury")} !== undefined`);
+  await clickExpression(button("Treasury"));
+  await waitForExpression(`document.querySelector('main').textContent.includes('39,409')`);
+  assert.equal(await evaluate(`document.querySelector('main').textContent.includes('Unavailable')`), false);
+  await clickExpression(button("Max"));
+  await waitForExpression(`[...document.querySelectorAll('main button')].some(button => button.textContent.includes('Rift resources to') && !button.disabled)`);
+  await clickExpression(button("Private Invites"));
+  await waitForExpression(`document.querySelector('main').textContent.includes('Private invite purchases are not enabled')`);
+  assert.equal(await evaluate(`[...document.querySelectorAll('main button')].find(button => button.textContent.includes('Buy private invite')).disabled`), true);
+  assert.equal(await evaluate(`[...document.querySelectorAll('main button')].find(button => button.textContent.includes('Recover')).disabled`), true);
+  assert.equal(await evaluate(`window.inspectorProof.walletRequests.some(request => request.method === 'eth_sendTransaction' || request.method === 'personal_sign')`), false);
 });
 
 test("wallet shell does not let a repeated account event interrupt the Build gesture", async () => {
@@ -1386,6 +1892,7 @@ test("owned deep links and real back-forward events never expose owned controls 
 
   await evaluate("history.back()");
   await waitForExpression("location.pathname === '/planet/1/2/3' && document.querySelector('main h2')?.textContent === 'Owned Alpha'");
+  await waitForExpression("document.querySelector('main')?.textContent.includes('Add media') === true");
   snapshot = await inspectorSnapshot();
   assert.match(snapshot.text, /Add media/);
   assert.match(snapshot.text, /Home world/);
@@ -1418,8 +1925,10 @@ for (const kind of ["planet", "moon"]) {
   });
 }
 
-test("automatic recovery leaves background actions and keyboard navigation usable", async () => {
+test("session transaction tracking leaves background actions and keyboard navigation usable", async () => {
   await loadRecoveryFixture();
+  await evaluate("window.recoveryProof.start()");
+  await waitForExpression("window.recoveryProof.reads() > 0");
   assert.equal(await evaluate("document.querySelector('[role=alertdialog]')"), null);
   assert.equal(await evaluate("document.querySelector('#background').inert"), false);
   assert.equal(await evaluate("document.activeElement?.id"), "background-action");
@@ -1429,26 +1938,32 @@ test("automatic recovery leaves background actions and keyboard navigation usabl
   assert.equal(await evaluate("document.activeElement?.id"), "background-action");
   await clickExpressionWithTrustedPointer("document.querySelector('#background-action')");
   assert.equal(await evaluate("window.recoveryProof.activations()"), 1);
-  assert.equal(await evaluate("window.recoveryProof.saved()"), true);
+  assert.equal(await evaluate("window.recoveryProof.saved()"), false);
 });
 
-test("confirmed recovery blocks only its conflicting planet until applied", async () => {
+test("a confirmed session transaction blocks only its conflicting planet until applied", async () => {
   await loadRecoveryFixture();
+  await evaluate("window.recoveryProof.start()");
+  await waitForExpression("window.recoveryProof.reads() > 0");
   assert.equal(await evaluate("window.recoveryProof.pending('7')"), true);
   assert.equal(await evaluate("window.recoveryProof.pending('8')"), false);
   await evaluate("window.recoveryProof.complete()");
-  await waitForExpression("window.recoveryProof.saved() === false");
+  await waitForExpression("window.recoveryProof.pending('7') === false");
   assert.equal(await evaluate("window.recoveryProof.pending('7')"), false);
   assert.equal(await evaluate("document.querySelector('[role=alertdialog]')"), null);
 });
 
-test("a real browser reload resumes the persisted transaction without a wallet or decision", async () => {
+test("a real browser reload drops session locks and never restores or resubmits a transaction", async () => {
   await loadRecoveryFixture();
-  assert.equal(await evaluate("window.recoveryProof.saved()"), true);
-  await cdp.send("Page.reload");
-  await waitForExpression("window.recoveryProofReady === true && window.recoveryProof.reads() > 0");
+  await evaluate("window.recoveryProof.start()");
+  await waitForExpression("window.recoveryProof.reads() > 0");
   assert.equal(await evaluate("window.recoveryProof.pending('7')"), true);
+  assert.equal(await evaluate("window.recoveryProof.submissions()"), 1);
+  assert.equal(await evaluate("window.recoveryProof.saved()"), false);
+  await cdp.send("Page.reload");
+  await waitForExpression("window.recoveryProofReady === true && window.recoveryProof.pending('7') === false");
+  assert.equal(await evaluate("window.recoveryProof.reads()"), 0);
+  assert.equal(await evaluate("window.recoveryProof.submissions()"), 0);
+  assert.equal(await evaluate("window.recoveryProof.saved()"), false);
   assert.equal(await evaluate("document.querySelector('[role=alertdialog]')"), null);
-  await evaluate("window.recoveryProof.complete()");
-  await waitForExpression("window.recoveryProof.saved() === false");
 });

@@ -1,8 +1,25 @@
 import { describe, expect, test } from "bun:test";
-import type { ComponentChildren, VNode } from "preact";
+import type { ComponentChildren, ComponentClass, VNode } from "preact";
 import { TopBar } from "../src/components/TopBar";
 
 describe("TopBar", () => {
+  test("cold resource reads keep labels with compact value and rate skeletons, but failures do not", () => {
+    const loading = renderTopBar({ resources: undefined, resourceStatus: "loading" });
+    const blocks = elementNodes(loading).filter((node) => String(node.props?.className).split(" ").includes("skeleton"));
+    expect(blocks).toHaveLength(8);
+    expect(visibleText(loading)).toContain("Metal");
+    expect(visibleText(loading)).toContain("Crystal");
+    expect(visibleText(loading)).toContain("Deuterium");
+    expect(visibleText(loading)).toContain("Energy");
+    expect(blocks.every((node) => node.props?.["aria-hidden"] === "true")).toBe(true);
+    expect(elementNodes(loading).some((node) => node.props?.role === "status" && node.props?.["aria-busy"] === "true")).toBe(true);
+    expect(visibleText(loading)).not.toContain("Resources loading");
+    expect(visibleText(loading)).not.toContain("+0/h");
+    const failed = renderTopBar({ resources: undefined, resourceStatus: "error" });
+    expect(visibleText(failed)).toContain("Resources unavailable");
+    expect(elementNodes(failed).some((node) => String(node.props?.className).split(" ").includes("skeleton"))).toBe(false);
+  });
+
   test("exposes the canonical resource freshness rendered by the shell", () => {
     const readyTopBar = renderTopBar();
     const loadingTopBar = renderTopBar({ resourceStatus: "loading" });
@@ -159,9 +176,10 @@ describe("TopBar", () => {
     const panelText = visibleText(energyDetailsNode(topBar));
 
     expect(energyInfo?.props?.["aria-label"]).toContain("Crawler production details are syncing from the backend production model.");
-    expect(panelText).toContain("Crawler boost Syncing");
-    expect(panelText).toContain("Crawlers Waiting for production model");
-    expect(panelText).toContain("Crawler production details are syncing from the backend production model.");
+    expect(panelText).toContain("Crawler boost");
+    expect(panelText).not.toContain("Syncing");
+    expect(panelText).not.toContain("Waiting for production model");
+    expect(elementNodes(energyDetailsNode(topBar)).some((node) => node.props?.["aria-busy"] === "true")).toBe(true);
   });
 
   test("labels energy popup values without selected player planet coordinates", () => {
@@ -362,6 +380,10 @@ function textParts(node: ComponentChildren): string[] {
     if ("size" in (vnode.props ?? {}) || "strokeWidth" in (vnode.props ?? {})) {
       return [];
     }
+    if (vnode.type.prototype?.render) {
+      const instance = new (vnode.type as ComponentClass)(vnode.props);
+      return textParts(instance.render(instance.props, instance.state, instance.context));
+    }
     return textParts(vnode.type(vnode.props));
   }
   return textParts(vnode.props?.children as ComponentChildren);
@@ -400,6 +422,10 @@ function elementNodes(node: ComponentChildren): VNode[] {
   if (typeof vnode.type === "function") {
     if ("size" in (vnode.props ?? {}) || "strokeWidth" in (vnode.props ?? {})) {
       return [];
+    }
+    if (vnode.type.prototype?.render) {
+      const instance = new (vnode.type as ComponentClass)(vnode.props);
+      return elementNodes(instance.render(instance.props, instance.state, instance.context));
     }
     return elementNodes(vnode.type(vnode.props));
   }

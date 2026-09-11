@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Automatic transaction recovery proof</title>
+    <title>Session-only transaction proof</title>
   </head>
   <body>
     <main id="background">
@@ -24,6 +24,7 @@
       let activations = 0;
       let phase = "confirmed";
       let reads = 0;
+      let submissions = 0;
       const data = new BackendDataStore(apiUrl, {
         transactionPollIntervalMs: 10,
         transactionStatusReader: async (hash) => {
@@ -39,6 +40,12 @@
       window.recoveryProof = {
         activations: () => activations,
         reads: () => reads,
+        submissions: () => submissions,
+        start: () => { void data.runWriteTransaction({
+          key: "building:start:mine", label: "Build", chainId: "0x2105",
+          invalidateTags: [`wallet:${wallet}`, "planet:7"],
+          send: async () => { submissions++; return `0x${"cd".repeat(32)}`; },
+        }); },
         pending: (planetId = "7") => data.isTransactionPending(wallet, [`planet:${planetId}`]),
         saved: () => localStorage.getItem(journalKey) !== null,
         complete: () => { phase = "applied"; window.dispatchEvent(new Event("online")); },

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { BackendDataStore } from "./backendDataStore";
+import { GameApiError } from "./gameApiError";
 import type { WriteTransactionState } from "./transactionActionGate";
 import { storePaidAllianceInvite } from "./walletFlow";
 
@@ -59,8 +60,119 @@ afterEach(() => {
 });
 
 describe("automatic transaction recovery", () => {
-  test("wallet-only completion leaves planet reads alone; legacy unknown scopes still refresh them", async () => {
-    const { values } = browser();
+  test("permanent API errors pause until recovery without losing or resubmitting the hash", async () => {
+    const { events } = browser();
+    let reads = 0, sends = 0;
+    const data = store({ transactionStatusReader: async hash => {
+      if (++reads === 1) throw new GameApiError("Unauthorized", { status: 401 });
+      return status(hash);
+    } });
+    const pending = data.runWriteTransaction({ ...action(), send: async () => { sends++; return "0xnew"; } });
+    await until(() => reads === 1);
+    await Bun.sleep(5);
+    expect(reads).toBe(1);
+    expect(data.isTransactionPending("0xabc")).toBe(true);
+    expect(data.pendingTransactionState("0xabc", "7")?.phase).toBe("confirming");
+    events.dispatchEvent(new Event("pageshow"));
+    await expect(pending).resolves.toMatchObject({ outcome: "indexed", txHash: "0xnew" });
+    expect(sends).toBe(1);
+  });
+
+  test("rate-limited transaction observation respects Retry-After", async () => {
+    browser();
+    let reads = 0;
+    const started = Date.now();
+    const data = store({ transactionStatusReader: async hash => {
+      if (++reads === 1) throw new GameApiError("Busy", { status: 429, retryAfter: "0.03" });
+      return status(hash);
+    } });
+    await expect(data.runWriteTransaction(action())).resolves.toMatchObject({ outcome: "indexed" });
+    expect(reads).toBe(2);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(25);
+  });
+  test("applied transactions release conflicts and refresh while auxiliary saves retry without receipt checks", async () => {
+    browser();
+    let statusReads = 0;
+    let saveAttempts = 0;
+    let reads = 0;
+    const saved = deferred<Response>();
+    globalValue("fetch", async () => ++saveAttempts === 1 ? new Response("unavailable", { status: 503 }) : saved.promise);
+    const data = store({ transactionStatusReader: async hash => { statusReads++; return status(hash); } });
+    const query = data.queries.alliance("0xabc");
+    data.subscribeKey(query.key, () => {});
+    await data.refresh(query.key, async () => ({ revision: ++reads }), { wallet: "0xabc" });
+    let complete = false;
+    const first = data.runWriteTransaction({ ...action(), indexing: data.indexing.paidAllianceInvite("0xabc", {
+      request: async <T>() => "0xsignature" as T,
+    }, "0x" + "ab".repeat(32)) }).then(result => { complete = true; return result; });
+    await until(() => saveAttempts === 2 && reads === 2);
+    expect(statusReads).toBe(1);
+    expect(complete).toBe(false); // Do not claim auxiliary setup succeeded.
+    expect(data.isTransactionPending("0xabc")).toBe(false);
+    expect(data.pendingTransactionState("0xabc", "7")).toBeUndefined();
+    await expect(data.runWriteTransaction(action("0xnext"))).resolves.toMatchObject({ outcome: "indexed", txHash: "0xnext" });
+    expect(statusReads).toBe(2);
+    saved.resolve(Response.json({ stored: true }));
+    await expect(first).resolves.toMatchObject({ outcome: "indexed", txHash: "0xnew" });
+    expect(statusReads).toBe(2);
+    expect(data.snapshot<any>(data.writeTransactionKey("building:start:mine", "0xabc", "7"))?.data?.txHash).toBe("0xnext");
+  });
+
+  test("mission completion waits for backend application and refreshes subscribed mission queries", async () => {
+    browser();
+    let applied = false;
+    let checks = 0;
+    const data = store({ transactionStatusReader: async hash => { checks++; return status(hash, applied ? "applied" : "confirmed"); } });
+    data.setContext("0xabc", "7", "0x2105");
+    const queries = [data.queries.globalActiveMissions(), data.queries.fleetVisibility("0xabc")];
+    const reads = [0, 0];
+    for (const [i, query] of queries.entries()) {
+      data.subscribeKey(query.key, () => {});
+      await data.refresh(query.key, async () => ({ revision: ++reads[i]! }), { wallet: "0xabc" });
+    }
+    let finished = false;
+    const pending = data.runWriteTransaction({ ...action(), indexing: data.indexing.missionLaunch("0xabc") }).then(result => { finished = true; return result; });
+    await until(() => checks > 0);
+    expect(finished).toBe(false);
+    expect(reads).toEqual([1, 1]);
+    applied = true;
+    await expect(pending).resolves.toMatchObject({ outcome: "indexed" });
+    expect(reads).toEqual([2, 2]);
+  });
+
+  test("a dirty in-flight query finishing while hidden waits for foreground recovery", async () => {
+    const { document, events } = browser();
+    const data = store();
+    data.setContext("0xabc", "7");
+    const key = data.queries.infrastructure("0xabc", "7").key;
+    data.subscribeKey(key, () => {});
+    const first = deferred<number>();
+    let reads = 0;
+    const request = data.refresh(key, async () => ++reads === 1 ? first.promise : reads, { wallet: "0xabc", planetId: "7" });
+    await until(() => reads === 1);
+    await data.invalidate(["planet:7"]);
+    document.visibilityState = "hidden";
+    first.resolve(1);
+    await request;
+    await Bun.sleep(2);
+    expect(reads).toBe(1);
+    document.visibilityState = "visible";
+    events.dispatchEvent(new Event("pageshow"));
+    await until(() => reads === 2);
+  });
+
+  test("a fresh session ignores old stored locks and can submit again", async () => {
+    const { values } = browser([saved()]);
+    const hashes: string[] = [];
+    const data = store({ transactionStatusReader: async hash => { hashes.push(hash); return status(hash); } });
+    data.setContext("0xabc", "7", "0x2105");
+    expect(data.isTransactionPending("0xabc")).toBe(false);
+    expect(values.has(journalKey)).toBe(false);
+    await expect(data.runWriteTransaction(action())).resolves.toMatchObject({ outcome: "indexed" });
+    expect(hashes).toEqual(["0xnew"]);
+  });
+  test("wallet-only completion leaves planet reads alone", async () => {
+    browser();
     const data = store();
     const loads = { wallet: 0, planet: 0 };
     for (const scope of ["wallet", "planet"] as const) {
@@ -71,25 +183,21 @@ describe("automatic transaction recovery", () => {
     }
     await data.runWriteTransaction({ ...action(), planetIds: [], conflictKeys: ["alliance"] });
     expect(loads).toEqual({ wallet: 2, planet: 1 });
-    values.set(journalKey, JSON.stringify([{ ...saved(), planetIds: undefined }]));
-    data.setContext("0xabc", "7", "0x2105");
-    await until(() => !values.has(journalKey));
-    expect(loads).toEqual({ wallet: 3, planet: 2 });
   });
-
-  test("ten restored hashes begin observation independently", async () => {
-    const entries = Array.from({ length: 10 }, (_, index) => ({ ...saved("0xtx" + index), planetIds: [String(index)], conflictKeys: ["planet:" + index] }));
-    const { values } = browser(entries);
+  test("ten submitted hashes begin observation independently", async () => {
+    browser();
     const ready = deferred<void>();
     let reads = 0;
-    const data = store({ transactionStatusReader: async (hash) => { reads++; await ready.promise; return status(hash); } });
-    data.setContext("0xabc", "7", "0x2105");
-    await until(() => reads === 10);
+    const data = store({ transactionStatusReader: async hash => { reads++; await ready.promise; return status(hash); } });
+    const writes: Promise<unknown>[] = [];
+    for (let index = 0; index < 10; index++) {
+      writes.push(data.runWriteTransaction(action("0xtx" + index, String(index))));
+      await until(() => reads === index + 1);
+    }
     ready.resolve();
-    await until(() => !values.has(journalKey));
+    await Promise.all(writes);
     expect(reads).toBe(10);
   });
-
   test("a response for another hash cannot complete this transaction", async () => {
     browser();
     let reads = 0;
@@ -98,7 +206,7 @@ describe("automatic transaction recovery", () => {
     expect(reads).toBe(2);
   });
 
-  test("disposal aborts a real status transport while preserving its journal", async () => {
+  test("disposal aborts a real status transport without persisting a lock", async () => {
     const { values } = browser();
     let started = false;
     let aborted = false;
@@ -113,7 +221,7 @@ describe("automatic transaction recovery", () => {
     data.dispose();
     await expect(write).resolves.toMatchObject({ outcome: "submitted", txHash: "0xnew" });
     expect(aborted).toBe(true);
-    expect(values.has(journalKey)).toBe(true);
+    expect(values.has(journalKey)).toBe(false);
   });
 
   test("preparation is gated and wallet rejection never creates a journal", async () => {
@@ -130,34 +238,25 @@ describe("automatic transaction recovery", () => {
     expect(data.isTransactionPending("0xabc")).toBe(false);
   });
 
-  test("invite authorization happens before submission and survives reload without wallet prompts", async () => {
-    const { values } = browser();
+  test("invite authorization precedes submission and retries in-session without wallet prompts", async () => {
+    browser();
     const steps: string[] = [];
     const secret = "0x" + "ab".repeat(32);
-    const provider = { request: async <T>() => { steps.push("authorize"); return "0xsignature" as T; } };
-    const first = store({ transactionStatusReader: async (hash) => status(hash, "submitted") });
-    const write = first.runWriteTransaction({
-      ...action(), indexing: first.indexing.paidAllianceInvite("0xabc", provider, secret),
-      send: async () => { steps.push("send"); return "0xnew"; },
-    });
-    await until(() => values.has(journalKey));
-    first.dispose();
-    await write;
-    expect(steps).toEqual(["authorize", "send"]);
-    expect(JSON.parse(values.get(journalKey)!)[0].completions).toEqual([{ kind: "paid-alliance-invite", secret, signature: "0xsignature" }]);
     let attempts = 0;
     globalValue("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       expect(String(input)).toBe("https://recovery.test/alliance-invites/store");
       expect(JSON.parse(String(init?.body))).toEqual({ purchaser: "0xabc", secret, signature: "0xsignature" });
       return ++attempts === 1 ? new Response("unavailable", { status: 503 }) : Response.json({ stored: true });
     });
-    const next = store();
-    next.setContext("0xabc", "7", "0x2105");
-    await until(() => !values.has(journalKey));
+    const data = store();
+    await data.runWriteTransaction({
+      ...action(),
+      indexing: data.indexing.paidAllianceInvite("0xabc", { request: async <T>() => { steps.push("authorize"); return "0xsignature" as T; } }, secret),
+      send: async () => { steps.push("send"); return "0xnew"; },
+    });
     expect(attempts).toBe(2);
     expect(steps).toEqual(["authorize", "send"]);
   });
-
   test("the post-application mutation timeout covers a stalled response body", async () => {
     const originalTimeout = globalThis.setTimeout;
     globalValue("setTimeout", ((callback: TimerHandler, ms?: number, ...args: unknown[]) => originalTimeout(callback, ms === 10_000 ? 1 : ms, ...args)) as typeof setTimeout);
@@ -178,6 +277,15 @@ describe("automatic transaction recovery", () => {
       return ++reads === 1 ? new Response("unavailable", { status: 503 }) : Response.json({ membership: { allianceId: null } });
     });
     const data = store();
+    const key = data.queries.alliance("0xabc").key;
+    data.subscribeKey(key, () => {});
+    await data.refresh(key, async () => ({ membership: null }), { wallet: "0xabc" });
+    // Install the real loader without consuming the intentional failing read.
+    (data as any).resources.get(key).load = async () => {
+      const response = await fetch("https://recovery.test/wallet/0xabc/alliance");
+      if (!response.ok) throw new Error("unavailable");
+      return response.json();
+    };
     await expect(data.runWriteTransaction({ ...action(), indexing: data.indexing.paidAllianceInvite("0xabc", {
       request: async <T>() => { signatures++; return "0xsignature" as T; },
     }, "0x" + "ab".repeat(32)) })).resolves.toMatchObject({ outcome: "indexed" });
@@ -186,12 +294,12 @@ describe("automatic transaction recovery", () => {
     expect(reads).toBe(2);
   });
 
-  test("persists the hash before status observation and completes only after indexed refresh", async () => {
+  test("tracks the hash in-session and releases the lock before an applied refresh finishes", async () => {
     const { values } = browser();
     const refresh = deferred<{ revision: number }>();
     let loads = 0;
     const data = store({ transactionStatusReader: async (hash) => {
-      expect(values.get(journalKey)).toContain(hash);
+      expect(data.pendingTransactionState("0xabc", "7")?.txHash).toBe(hash);
       return status(hash);
     } });
     const key = data.key("infrastructure", "0xabc", "7");
@@ -199,8 +307,8 @@ describe("automatic transaction recovery", () => {
     await data.refresh(key, async () => ++loads === 1 ? { revision: 1 } : refresh.promise, { wallet: "0xabc", planetId: "7" });
     const write = data.runWriteTransaction(action());
     await until(() => loads === 2);
-    expect(values.get(journalKey)).toContain("0xnew");
-    expect(data.snapshot<WriteTransactionState>(data.writeTransactionKey(undefined, "0xabc"))?.data?.phase).toBe("indexing");
+    expect(data.isTransactionPending("0xabc")).toBe(false);
+    expect(data.snapshot<WriteTransactionState>(data.writeTransactionKey(undefined, "0xabc"))?.data?.phase).toBe("success");
     refresh.resolve({ revision: 2 });
     await expect(write).resolves.toMatchObject({ outcome: "indexed" });
     expect(data.snapshot(key)?.data).toEqual({ revision: 2 });
@@ -225,45 +333,34 @@ describe("automatic transaction recovery", () => {
     await first;
   });
 
-  test("reload resumes an arbitrarily old hash without submitting or asking for a decision", async () => {
-    const { values, events } = browser([saved()]);
+  test("temporary status errors retry in-session without claiming submission failed", async () => {
+    browser();
     let reads = 0;
     const phases: string[] = [];
-    const data = store({ transactionStatusReader: async (hash) => {
-      reads++;
-      if (reads < 3) throw new Error("temporarily unavailable");
+    const data = store({ transactionStatusReader: async hash => {
+      if (++reads < 3) throw new Error("temporarily unavailable");
       return status(hash, reads === 3 ? "confirmed" : "applied");
     } });
-    data.subscribe(() => {
-      const state = data.snapshot<WriteTransactionState>(data.writeTransactionKey(undefined, "0xabc"))?.data;
-      if (state) phases.push(state.phase);
-    });
-    data.setContext("0xabc", "7", "0x2105");
-    events.dispatchEvent(new Event("pageshow"));
-    events.dispatchEvent(new Event("online"));
-    await until(() => !values.has(journalKey));
+    await data.runWriteTransaction({ ...action(), onStateChange: state => phases.push(state.phase) });
     expect(reads).toBe(4);
     expect(phases).not.toContain("error");
-    expect(phases).not.toContain("pending");
     expect(phases.at(-1)).toBe("success");
-    expect(data.snapshot(data.key("pending-transaction-recovery", "0xabc"))).toBeUndefined();
   });
-
-  test("dispose retains the submitted hash and a new store recovers it without resubmitting", async () => {
+  test("reload starts without pending UI or automatic resubmission", async () => {
     const { values } = browser();
-    const first = store({ transactionStatusReader: async (hash) => status(hash, "submitted") });
+    const first = store({ transactionStatusReader: async hash => status(hash, "submitted") });
     let sends = 0;
     const pending = first.runWriteTransaction({ ...action(), send: async () => { sends++; return "0xnew"; } });
-    await until(() => values.has(journalKey));
+    await until(() => first.isTransactionPending("0xabc") && first.pendingTransactionState("0xabc", "7")?.phase === "confirming");
     first.dispose();
     await expect(pending).resolves.toMatchObject({ outcome: "submitted", txHash: "0xnew" });
-    expect(values.has(journalKey)).toBe(true);
+    expect(values.has(journalKey)).toBe(false);
     const next = store();
     next.setContext("0xabc", "7", "0x2105");
-    await until(() => !values.has(journalKey));
+    expect(next.isTransactionPending("0xabc")).toBe(false);
+    expect(next.pendingTransactionState("0xabc", "7")).toBeUndefined();
     expect(sends).toBe(1);
   });
-
   test("a reverted receipt is terminal, while an API error is not", async () => {
     const { values } = browser();
     let reads = 0;
@@ -276,27 +373,25 @@ describe("automatic transaction recovery", () => {
     expect(values.has(journalKey)).toBe(false);
   });
 
-  test("a failed refresh preserves last-good data and the journal until a retry succeeds", async () => {
-    const { values } = browser();
+  test("applied releases the lock even if a refresh fails, allowing the next transaction", async () => {
+    browser();
     const data = store();
     const key = data.key("shipyard", "0xabc", "7");
     let loads = 0;
-    let permitRefresh = false;
     data.subscribeKey(key, () => {});
     await data.refresh(key, async () => {
-      if (++loads > 1 && !permitRefresh) throw new Error("read unavailable");
-      return { revision: loads };
+      if (++loads > 1) throw new Error("read unavailable");
+      return { revision: 1 };
     }, { wallet: "0xabc", planetId: "7" });
-    const write = data.runWriteTransaction(action());
-    await until(() => loads >= 2);
-    expect(values.has(journalKey)).toBe(true);
+    await expect(data.runWriteTransaction(action())).resolves.toMatchObject({ outcome: "indexed" });
+    expect(data.isTransactionPending("0xabc")).toBe(false);
     expect(data.snapshot(key)?.data).toEqual({ revision: 1 });
-    expect(data.snapshot<WriteTransactionState>(data.writeTransactionKey(undefined, "0xabc"))?.data?.phase).toBe("indexing");
-    permitRefresh = true;
-    await expect(write).resolves.toMatchObject({ outcome: "indexed" });
-    expect(values.has(journalKey)).toBe(false);
+    expect(data.snapshot(key)?.freshness).toBe("delayed");
+    expect(data.snapshot<WriteTransactionState>(data.writeTransactionKey(undefined, "0xabc"))?.data?.phase).toBe("success");
+    let sends = 0;
+    await expect(data.runWriteTransaction({ ...action("0xnext"), send: async () => { sends++; return "0xnext"; } })).resolves.toMatchObject({ outcome: "indexed", txHash: "0xnext" });
+    expect(sends).toBe(1);
   });
-
   test("a read begun before submission cannot satisfy the post-application refresh", async () => {
     browser();
     const data = store();
@@ -308,56 +403,46 @@ describe("automatic transaction recovery", () => {
     await data.refresh(key, load, { wallet: "0xabc", planetId: "7" });
     const staleRead = data.refresh(key, load, { wallet: "0xabc", planetId: "7" });
     const write = data.runWriteTransaction(action());
-    await until(() => data.snapshot<WriteTransactionState>(data.writeTransactionKey(undefined, "0xabc"))?.data?.phase === "indexing");
+    await until(() => data.snapshot<WriteTransactionState>(data.writeTransactionKey(undefined, "0xabc"))?.data?.phase === "success");
     old.resolve({ revision: 2 });
     await staleRead;
     await expect(write).resolves.toMatchObject({ outcome: "indexed" });
     expect(data.snapshot(key)?.data).toEqual({ revision: 3 });
   });
 
-  test("offline/hidden recovery pauses and resumes once on online/pageshow/visibility", async () => {
-    const { values, document, navigator, events } = browser([saved()]);
-    document.visibilityState = "hidden";
-    navigator.onLine = false;
+  test("in-session hidden recovery pauses and resumes on foreground", async () => {
+    const { document, events } = browser();
+    const receipt = deferred<ReturnType<typeof status>>();
     let reads = 0;
-    const data = store({ transactionStatusReader: async (hash) => { reads++; return status(hash); } });
-    data.setContext("0xabc", "7", "0x2105");
+    const data = store({ transactionStatusReader: async hash => ++reads === 1 ? receipt.promise : status(hash) });
+    const write = data.runWriteTransaction(action());
+    await until(() => reads === 1);
+    document.visibilityState = "hidden";
+    receipt.resolve(status("0xnew"));
     await Bun.sleep(5);
-    expect(reads).toBe(0);
+    expect(data.isTransactionPending("0xabc")).toBe(true);
+    expect(reads).toBe(1);
     document.visibilityState = "visible";
     events.dispatchEvent(new Event("pageshow"));
-    expect(reads).toBe(0);
-    navigator.onLine = true;
-    events.dispatchEvent(new Event("online"));
-    document.dispatchEvent(new Event("visibilitychange"));
-    events.dispatchEvent(new Event("pageshow"));
-    await until(() => !values.has(journalKey));
-    expect(reads).toBe(1);
+    await expect(write).resolves.toMatchObject({ outcome: "indexed" });
+    expect(reads).toBe(2);
   });
-
-  test("wallet switching pauses the old recovery without exposing or deleting it", async () => {
-    const { values } = browser([saved()]);
+  test("wallet switching pauses in-session recovery without exposing or deleting it", async () => {
+    browser();
     const receipt = deferred<ReturnType<typeof status>>();
-    const data = store({ transactionStatusReader: () => receipt.promise });
+    let reads = 0;
+    const data = store({ transactionStatusReader: async () => { reads++; return receipt.promise; } });
     data.setContext("0xabc", "7", "0x2105");
+    const write = data.runWriteTransaction(action());
+    await until(() => reads === 1);
     data.setContext("0xdef", "8", "0x2105");
-    receipt.resolve(status("0xold"));
+    receipt.resolve(status("0xnew"));
     await Bun.sleep(5);
-    expect(values.has(journalKey)).toBe(true);
+    expect(data.isTransactionPending("0xabc")).toBe(true);
     expect(data.snapshot(data.writeTransactionKey(undefined, "0xabc"))).toBeUndefined();
     expect(data.isTransactionPending("0xdef", ["planet:7"])).toBe(false);
     data.setContext("0xabc", "7", "0x2105");
-    await until(() => !values.has(journalKey));
-  });
-
-  test("a different-chain journal is retained and never queried against the current chain", async () => {
-    const { values } = browser([saved("0xotherchain", "0xabc", "0x1")]);
-    const hashes: string[] = [];
-    const data = store({ transactionStatusReader: async (hash) => { hashes.push(hash); return status(hash); } });
-    data.setContext("0xabc", "7", "0x2105");
-    await expect(data.runWriteTransaction(action())).resolves.toMatchObject({ outcome: "indexed" });
-    expect(hashes).toEqual(["0xnew"]);
-    expect(values.get(journalKey)).toContain("0xotherchain");
+    await expect(write).resolves.toMatchObject({ outcome: "indexed" });
   });
 
   test("storage failure still preserves in-memory recovery and duplicate protection", async () => {

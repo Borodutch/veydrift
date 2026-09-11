@@ -1,7 +1,137 @@
 import type { JSX } from "preact";
+import type { Page } from "./NavBar";
 import { Skeleton, SkeletonRegion, skeletonList } from "./Skeleton";
 
 const CARD = "rounded-md border border-white/10 bg-[#101624] p-4";
+
+/** Route chunks and endpoint reads share these layouts, never a generic planet hero. */
+export function PageLoadingSkeleton({ page }: { page: Page | "mission-detail" | "mission-create" }): JSX.Element {
+  switch (page) {
+    case "overview": return <OverviewSkeleton />;
+    case "infrastructure": return <CatalogSkeleton label="Loading infrastructure" tiles={16} />;
+    case "research": return <CatalogSkeleton label="Loading research" />;
+    case "shipyard": return <ShipyardSkeleton />;
+    case "defenses": return <DefenseSkeleton />;
+    case "mission-control": return <MissionControlPageSkeleton />;
+    case "mission-create": return <MissionCreationSkeleton />;
+    case "mission-detail": return <MissionDetailSkeleton />;
+    case "battle-reports": return <MissionControlSkeleton label="Loading battle reports" />;
+    case "moon": return <MoonSkeleton />;
+    case "planet": return <PlanetDetailSkeleton />;
+    case "moon-inspect": return <MoonDetailSkeleton />;
+    case "alliance": return <AllianceSkeleton />;
+    case "alliance-invites": return <InviteSkeleton />;
+    case "alliance-inspect": return <InspectPanelSkeleton label="Loading alliance" />;
+    case "player-inspect": return <InspectPanelSkeleton label="Loading player" />;
+    case "rift": return <RiftSkeleton />;
+    case "rankings": return <RankingsSkeleton />;
+    case "galaxy": return <GalaxyRowsSkeleton />;
+    case "raid-target-finder": return <RaidTargetsSkeleton />;
+  }
+}
+
+function SkeletonTabs({ count }: { count: number }): JSX.Element {
+  return <div className="flex flex-wrap gap-2">{skeletonList(count, index => <Skeleton className="h-8 w-28 rounded" key={index} />)}</div>;
+}
+
+export function ShipyardSkeleton(): JSX.Element {
+  return <ProductionCatalogSkeleton groups={[4, 8, 3]} label="Loading shipyard" />;
+}
+
+export function DefenseSkeleton(): JSX.Element {
+  return <ProductionCatalogSkeleton groups={[2, 4, 2, 2]} label="Loading defenses" />;
+}
+
+export function OverviewSkeleton(): JSX.Element {
+  return (
+    <SkeletonRegion className="grid gap-3" label="Loading overview">
+      <div className="grid gap-3 xl:grid-cols-2">
+        <section className={`${CARD} flex min-h-48 flex-col justify-end`}>
+          <Skeleton className="h-3 w-48" /><Skeleton className="mt-3 h-8 w-56" />
+        </section>
+        <section className={CARD}>
+          <Skeleton className="mb-6 h-4 w-24" />
+          {skeletonList(2, index => <Skeleton className="mt-2 h-14 w-full" key={index} />)}
+        </section>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {skeletonList(4, index => <section className={`${CARD} grid min-h-32 content-between gap-4`} key={index}>
+          <Skeleton className="h-4 w-3/4" /><Skeleton className="h-8 w-full" />
+        </section>)}
+      </div>
+      <section className={`${CARD} grid gap-2`}>
+        {skeletonList(5, index => <div className="flex items-center gap-3 rounded border border-white/10 p-2" key={index}>
+          <Skeleton className="h-10 w-10 rounded-full" /><Skeleton className="h-4 w-36" /><Skeleton className="ml-auto h-8 w-8" />
+        </div>)}
+      </section>
+    </SkeletonRegion>
+  );
+}
+
+export function MissionControlPageSkeleton(): JSX.Element {
+  return <div className="grid gap-3">
+    {[4, 3].map((tabs, index) => <section className={`${CARD} grid gap-4`} key={tabs}>
+      <SkeletonTabs count={tabs} />
+      <MissionControlSkeleton label={index === 0 ? "Loading active missions" : "Loading past missions"} />
+    </section>)}
+  </div>;
+}
+
+export function MissionCreationSkeleton(): JSX.Element {
+  return <SkeletonRegion className="grid gap-4" label="Loading mission launch">
+    <Skeleton className="h-8 w-56" />
+    <section className={`${CARD} grid gap-4 sm:grid-cols-2`}>
+      {skeletonList(2, index => <div className="flex items-center gap-3" key={index}>
+        <Skeleton className="h-12 w-12 rounded-full" /><Skeleton className="h-4 w-36" />
+      </div>)}
+    </section>
+    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_20rem]">
+      <section className={`${CARD} grid gap-3`}>
+        <Skeleton className="h-4 w-32" />
+        {skeletonList(6, index => <div className="flex items-center gap-3" key={index}>
+          <Skeleton className="h-10 w-10" /><Skeleton className="h-4 w-28" /><Skeleton className="ml-auto h-8 w-24" />
+        </div>)}
+      </section>
+      <section className={`${CARD} grid content-start gap-4`}>
+        {skeletonList(3, index => <Skeleton className="h-10 w-full" key={index} />)}
+        <Skeleton className="mt-5 h-9 w-full" />
+      </section>
+    </div>
+  </SkeletonRegion>;
+}
+
+export function MissionDetailSkeleton(): JSX.Element {
+  return <SkeletonRegion className="grid gap-4" label="Loading mission details">
+    <Skeleton className="h-8 w-52" />
+    <section className={`${CARD} grid gap-4`}>
+      <div className="flex items-center justify-between gap-4">
+        <Skeleton className="h-14 w-14 rounded-full" /><Skeleton className="h-1 flex-1" /><Skeleton className="h-14 w-14 rounded-full" />
+      </div>
+      <Skeleton className="h-4 w-48" /><Skeleton className="h-2 w-full" />
+    </section>
+    <section className={`${CARD} grid gap-3 sm:grid-cols-3`}>
+      {skeletonList(3, index => <Skeleton className="h-20 w-full" key={index} />)}
+    </section>
+  </SkeletonRegion>;
+}
+
+export function RankingsSkeleton(): JSX.Element {
+  return <section className={`${CARD} grid gap-4`}>
+    <SkeletonTabs count={6} /><RankingsRowsSkeleton />
+  </section>;
+}
+
+export function InviteSkeleton(): JSX.Element {
+  return <SkeletonRegion className="grid gap-4" label="Loading invites">
+    <section className={`${CARD} grid gap-4`}>
+      <Skeleton className="h-6 w-48" /><Skeleton className="h-4 w-3/4" /><Skeleton className="h-10 w-full" />
+    </section>
+    <section className={`${CARD} grid gap-3`}>
+      <Skeleton className="h-4 w-32" />
+      {skeletonList(3, index => <Skeleton className="h-12 w-full" key={index} />)}
+    </section>
+  </SkeletonRegion>;
+}
 
 /** Celestial detail skeleton matching the compact hero and visual inventory cards. */
 export function PlanetDetailSkeleton({
@@ -271,9 +401,9 @@ export function RankingsRowsSkeleton({ rows = 8 }: { rows?: number | undefined }
 }
 
 /** Mission Control skeleton: section heading plus a few mission-row cards. */
-export function MissionControlSkeleton(): JSX.Element {
+export function MissionControlSkeleton({ label = "Loading missions" }: { label?: string } = {}): JSX.Element {
   return (
-    <SkeletonRegion className="grid gap-3" label="Loading missions">
+    <SkeletonRegion className="grid gap-3" label={label}>
       <Skeleton className="h-4 w-44" />
       {skeletonList(3, (index) => (
         <div className={CARD} key={index}>

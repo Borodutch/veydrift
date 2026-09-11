@@ -10,7 +10,6 @@ import {
   rankingsErrorPresentation,
   rankingsPageSize,
   rankingsPaginationLabel,
-  rankingsRefreshButtonState,
   RankingsCurrentPlayerIndicator,
   RankingsPagination,
   RankingsTable,
@@ -22,6 +21,7 @@ import {
 import { activeMissionsByPlanetId } from "../src/planetMissionSubtext";
 import { planetArtTypeForCoordinates, planetImageForType } from "../src/data/mockUniverse";
 import type { FleetMissionSummary, HighscoreEntry, HighscoreResponse } from "../src/walletFlow";
+import { refreshButtonState as rankingsRefreshButtonState } from "../src/components/PageHeader";
 
 describe("RankingsPage", () => {
   test("uses calm stale-state copy and actionable blocking copy without raw errors", () => {

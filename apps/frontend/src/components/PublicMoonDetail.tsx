@@ -1,3 +1,4 @@
+import { formatIntegerAmount as resourceValue } from "../numberFormat";
 import {
   Building2,
   Database,
@@ -73,7 +74,7 @@ export function PublicMoonDetail({
 }: PublicMoonDetailProps) {
   const backendData = useMemo(() => backendDataStoreFor(apiBaseUrl), [apiBaseUrl]);
   const systemQuery = useBackendDataQuery<ApiSystemResponse>(
-    backendData.queries.system<ApiSystemResponse>(coords.galaxy, coords.system, { detail: "full", priority: "selected-planet" }),
+    backendData.queries.system<ApiSystemResponse>(coords.galaxy, coords.system, { detail: "full", }),
   );
   const systemSnapshot = systemQuery.snapshot;
   const loadedPlanet = systemSnapshot?.data
@@ -559,14 +560,4 @@ function attackMoonUnavailableReason(attackProtection: AttackProtectionStatus | 
 
 function sameCoordinates(left: Coordinates | undefined, right: Coordinates | undefined): boolean {
   return Boolean(left && right && left.galaxy === right.galaxy && left.system === right.system && left.position === right.position);
-}
-
-function resourceValue(value: string | null | undefined): string {
-  if (value === null || value === undefined) return "0";
-  try {
-    return BigInt(value).toLocaleString("en-US");
-  } catch {
-    const parsed = Number.parseFloat(value);
-    return Number.isFinite(parsed) ? Math.trunc(parsed).toLocaleString("en-US") : value;
-  }
 }

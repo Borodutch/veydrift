@@ -1,3 +1,4 @@
+import { refreshButtonState as defenseRefreshButtonState } from "../src/components/PageHeader";
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -5,7 +6,6 @@ import type { ComponentChildren, VNode } from "preact";
 import { formatProductionPrice, selectedProductionItem } from "../src/components/ProductionCatalog";
 import {
   defenseProductionItems,
-  defenseRefreshButtonState,
   getDefenseRequirementStates,
   getQueueBlocker,
   resolveDefenseUnitCost,

@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { BackendDataStore, backendDataStoreFor, disposeBackendDataStoresExcept, retainBackendDataStore } from "./backendDataStore";
 import type { WriteTransactionState } from "./transactionActionGate";
-import type { FleetMissionSummary } from "./walletFlow";
 
 const appliedTransactionStatusReader = async (transactionHash: string) => ({
   events: [],
@@ -13,6 +12,157 @@ const appliedTransactionStatusReader = async (transactionHash: string) => ({
 });
 
 describe("BackendDataStore", () => {
+  test("late reads cannot recreate eviction timers after disposal", async () => {
+    const store = new BackendDataStore("https://api.test");
+    let finish!: (value: number) => void;
+    const request = store.refresh("late", () => new Promise<number>(resolve => { finish = resolve; }));
+    await Promise.resolve();
+    store.dispose();
+    expect((store as any).evictionTimers.size).toBe(0);
+    finish(1);
+    await request.catch(() => {});
+    await Promise.resolve();
+    expect((store as any).evictionTimers.size).toBe(0);
+    expect(store.snapshot("late")).toBeUndefined();
+  });
+
+  test("equivalent query defaults and canonical media IDs share one request", async () => {
+    const originalFetch = globalThis.fetch;
+    const store = new BackendDataStore("https://api.test");
+    const urls: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      urls.push(String(input));
+      return Response.json({ entityKind: "planet", entityId: "7", media: null, version: 1 });
+    }) as typeof fetch;
+    try {
+      const pairs = [
+        [store.queries.planets("0xABc"), store.queries.planets("0xabc")],
+        [store.queries.infrastructure("0xABc", "7"), store.queries.infrastructure("0xabc", "7")],
+        [store.queries.raidFinderDebris(), store.queries.raidFinderDebris({ limit: 250 })],
+        [store.queries.raidFinderRifters(), store.queries.raidFinderRifters({ limit: 250 })],
+        [store.queries.highscores({ currentWallet: "0xABc" }), store.queries.highscores({ currentWallet: "0xabc" })],
+        [store.queries.fleetArchive("0xabc"), store.queries.fleetArchive("0xabc", { page: 1, pageSize: 25 })],
+        [store.queries.missileArchive("0xabc"), store.queries.missileArchive("0xabc", { page: 1, pageSize: 25 })],
+        [store.queries.globalMissionArchive(), store.queries.globalMissionArchive({ page: 1, pageSize: 25, summaryOnly: false })],
+        [store.queries.playerActivity("0xabc"), store.queries.playerActivity("0xabc", { page: 1, pageSize: 25, includeProjected: false })],
+        [store.queries.watchedPlanets("0xabc"), store.queries.watchedPlanets("0xabc", { page: 1, pageSize: 25, timeoutMs: 1234 })],
+        [store.queries.highscores(100), store.queries.highscores({ limit: 100, signal: new AbortController().signal })],
+        [store.queries.entityMedia("planet", "007"), store.queries.entityMedia("planet", "7")],
+      ] as const;
+      for (const [first, second] of pairs) {
+        expect(first.key).toBe(second.key);
+        await Promise.all([first.read(), second.read()]);
+      }
+      expect(urls).toHaveLength(pairs.length);
+      expect(store.queries.fleetArchive("0xabc", { page: 2 }).key).not.toBe(store.queries.fleetArchive("0xabc").key);
+      expect(store.queries.highscores({ currentWallet: "0xabc" }).key).not.toBe(store.queries.highscores().key);
+    } finally { store.dispose(); globalThis.fetch = originalFetch; }
+  });
+
+  test("explicit queue identity never changes when settlement loads; plans normalize the same wallet", async () => {
+    const originalFetch = globalThis.fetch;
+    const store = new BackendDataStore("https://api.test");
+    globalThis.fetch = (async () => Response.json({ homePlanetId: "7", hasFirstPlanet: true })) as unknown as typeof fetch;
+    try {
+      const before = store.queries.queues("0xABc", "7").key;
+      await store.settlement("0xabc");
+      expect(store.queries.queues("0xabc", "7").key).toBe(before);
+      expect(store.queries.queues("0xabc", "8").key).not.toBe(before);
+      expect(store.indexing.resourceChange("0xABc", "7").keys).toContain(store.queries.infrastructure("0xabc", "7").key);
+      // Arbitrary codes and secrets remain case-sensitive, even if they look like addresses.
+      const code = "0xABcdefabcdefabcdefabcdefabcdefabcdefabcd";
+      expect(store.queries.paidAllianceInviteResolution(code).key).not.toBe(store.queries.paidAllianceInviteResolution(code.toLowerCase()).key);
+    } finally { store.dispose(); globalThis.fetch = originalFetch; }
+  });
+
+  test.each(["inspection", "validation", "paid-invite"])("disposal aborts %s transport", async kind => {
+    const originalFetch = globalThis.fetch;
+    const store = new BackendDataStore("https://api.test");
+    let transportSignal: AbortSignal | undefined;
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      transportSignal = init?.signal ?? undefined;
+      transportSignal?.addEventListener("abort", () => reject(transportSignal?.reason), { once: true });
+    })) as typeof fetch;
+    try {
+      const query = kind === "inspection" ? store.queries.referralCodeInspection("0xabc", "code")
+        : kind === "validation" ? store.queries.referralCodeValidation("code", "0xabc")
+        : store.queries.paidAllianceInviteResolution("secret");
+      const read = query.read().catch(error => error);
+      await Promise.resolve();
+      store.dispose();
+      expect(transportSignal?.aborted).toBe(true);
+      expect(await read).toBeInstanceOf(Error);
+    } finally { store.dispose(); globalThis.fetch = originalFetch; }
+  });
+
+  test.each(["profile", "watch"])("%s HTTP saves release the wallet gate but keep their own lock", async kind => {
+    const originalFetch = globalThis.fetch;
+    const store = new BackendDataStore("https://api.test");
+    let finishSave!: (response: Response) => void;
+    let started!: () => void;
+    const savingStarted = new Promise<void>(resolve => { started = resolve; });
+    globalThis.fetch = (async (_input: RequestInfo | URL) => {
+      started();
+      return new Promise<Response>(resolve => { finishSave = resolve; });
+    }) as typeof fetch;
+    const provider = { async request<T>() { return "0x1234" as T; } };
+    const save = () => kind === "profile" ? store.savePlayerProfile(provider, "0xabc", "Player", null)
+      : store.setPlanetWatched(provider, "0xabc", "7", false);
+    try {
+      const saving = save();
+      await savingStarted;
+      await expect(save()).rejects.toThrow("already in progress");
+      await expect(store.runExclusiveTransaction("unrelated", "Unrelated action", async () => "sent", "0xabc")).resolves.toBe("sent");
+      finishSave(Response.json(kind === "profile" ? { wallet: "0xabc", displayName: "Player", description: null } : { watched: true, planetId: "7" }));
+      await saving;
+    } finally { store.dispose(); globalThis.fetch = originalFetch; }
+  });
+
+  test.each(["wallet change", "dispose"])("metadata signature cannot start an HTTP write after %s", async change => {
+    const originalFetch = globalThis.fetch;
+    const store = new BackendDataStore("https://api.test");
+    store.setContext("0xabc");
+    let fetches = 0;
+    let finishSignature!: (signature: string) => void;
+    let started!: () => void;
+    const signing = new Promise<void>(resolve => { started = resolve; });
+    const provider = { async request<T>() {
+      started();
+      return await new Promise<string>(resolve => { finishSignature = resolve; }) as T;
+    } };
+    globalThis.fetch = (async (_input: RequestInfo | URL) => { fetches++; return Response.json({}); }) as typeof fetch;
+    try {
+      const saved = store.savePlayerProfile(provider, "0xabc", "Player", null).catch(error => error);
+      await signing;
+      if (change === "dispose") store.dispose(); else store.setContext("0xdef");
+      finishSignature("0x1234");
+      expect(await saved).toBeInstanceOf(Error);
+      expect(fetches).toBe(0);
+    } finally { store.dispose(); globalThis.fetch = originalFetch; }
+  });
+
+  test("media HTTP saves do not hold the wallet gate and duplicate entity saves stay scoped", async () => {
+    const originalFetch = globalThis.fetch;
+    const store = new BackendDataStore("https://api.test");
+    let finishSave!: (response: Response) => void;
+    let started!: () => void;
+    const savingStarted = new Promise<void>(resolve => { started = resolve; });
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method !== "POST") return Response.json({ version: 1 });
+      started();
+      return new Promise<Response>(resolve => { finishSave = resolve; });
+    }) as typeof fetch;
+    const provider = { async request<T>() { return "0x1234" as T; } };
+    try {
+      const saving = store.saveEntityMedia(provider, "0xabc", "planet", "7", "");
+      await savingStarted;
+      await expect(store.saveEntityMedia(provider, "0xabc", "planet", "7", "")).rejects.toThrow("already in progress");
+      await expect(store.runExclusiveTransaction("unrelated", "Unrelated action", async () => "sent", "0xabc")).resolves.toBe("sent");
+      finishSave(Response.json({ entityKind: "planet", entityId: "7", media: null, version: 2 }));
+      await expect(saving).resolves.toMatchObject({ version: 2 });
+    } finally { store.dispose(); globalThis.fetch = originalFetch; }
+  });
+
   test("disposes an unused shared API-base store after its last owner releases it", async () => {
     const apiBaseUrl = "https://leased-store.test";
     disposeBackendDataStoresExcept([]);
@@ -116,7 +266,7 @@ describe("BackendDataStore", () => {
       return { revision: loads };
     };
 
-    const [first, second] = await Promise.all([store.refresh("fleet-visibility:wallet", load, { dedupe: false }), store.refresh("fleet-visibility:wallet", load, { dedupe: false })]);
+    const [first, second] = await Promise.all([store.refresh("fleet-visibility:wallet", load, { }), store.refresh("fleet-visibility:wallet", load, { })]);
 
     expect(first).toEqual({ revision: 1 });
     expect(second).toEqual({ revision: 1 });
@@ -151,19 +301,15 @@ describe("BackendDataStore", () => {
     const unsubscribe = store.subscribeKey(key, () => {});
 
     try {
-      await store.ensure(key, load, {
+      await store.refresh(key, load, {
         wallet: "0xabc",
         planetId: "planet-7",
-        maxAgeMs: 60_000,
       });
-      await store.ensure(key, load, {
-        wallet: "0xabc",
-        planetId: "planet-7",
-        maxAgeMs: 60_000,
-      });
+      expect(store.isFresh(key)).toBe(true);
+      expect(store.snapshot<{ revision: number }>(key)?.data).toEqual({ revision: 1 });
       expect(loads).toBe(1);
 
-      await store.invalidate(["planet:planet-7"], { priority: "transaction" });
+      await store.invalidate(["planet:planet-7"], { });
       expect(loads).toBe(2);
       expect(store.snapshot<{ revision: number }>(key)?.data).toEqual({
         revision: 2,
@@ -195,7 +341,7 @@ describe("BackendDataStore", () => {
         wallet: "0xabc",
       });
       await Promise.resolve();
-      await Promise.all(Array.from({ length: 10 }, () => store.invalidate(["planet:planet-7"], { priority: "transaction" })));
+      await Promise.all(Array.from({ length: 10 }, () => store.invalidate(["planet:planet-7"], { })));
       resolveFirst({ revision: 1 });
       await initial;
       await new Promise<void>((resolve) => setTimeout(resolve, 5));
@@ -209,6 +355,47 @@ describe("BackendDataStore", () => {
     }
   });
 
+  test.each([false, true])("registered refresh cleanup evicts inactive entries after a slow read (failure=%s)", async fails => {
+    const store = new BackendDataStore("https://api.test", { inactiveResourceRetentionMs: 10 });
+    const key = store.key("infrastructure", "0xabc", "7");
+    let release!: () => void;
+    let slow = false;
+    try {
+      await store.refresh(key, async () => {
+        if (slow) {
+          await new Promise<void>(resolve => { release = resolve; });
+          if (fails) throw new Error("temporary backend failure");
+        }
+        return { level: 1 };
+      }, { wallet: "0xabc", planetId: "7" });
+      slow = true;
+      const read = store.refetch(key)!.catch(() => undefined);
+      await new Promise(resolve => setTimeout(resolve, 25));
+      expect(store.snapshot(key)).toBeDefined();
+      release();
+      await read;
+      await new Promise(resolve => setTimeout(resolve, 25));
+      expect(store.snapshot(key)).toBeUndefined();
+      expect(store.refetch(key)).toBeUndefined();
+    } finally { release?.(); store.dispose(); }
+  });
+
+  test("scheduled referral refresh reloads only that wallet's dashboard", async () => {
+    const store = new BackendDataStore("https://api.test");
+    store.setContext("0xabc");
+    const loads = [0, 0, 0];
+    const keys = [store.queries.referralDashboard("0xabc").key, store.queries.referralDashboard("0xdef").key, store.queries.infrastructure("0xabc", "7").key];
+    try {
+      for (const [index, key] of keys.entries()) {
+        store.subscribeKey(key, () => {});
+        await store.refresh(key, async () => ({ count: ++loads[index]! }), { wallet: index === 1 ? "0xdef" : "0xabc" });
+      }
+      store.scheduleRefresh(keys[0]!, 0);
+      await new Promise(resolve => setTimeout(resolve, 10));
+      expect(loads).toEqual([2, 1, 1]);
+    } finally { store.dispose(); }
+  });
+
   test("updates a canonical resource descriptor when an equivalent surface provides newer inputs", async () => {
     const store = new BackendDataStore("https://api.test");
     const key = store.key("system", 1, 2);
@@ -217,8 +404,8 @@ describe("BackendDataStore", () => {
     let secondLoads = 0;
 
     try {
-      await store.refresh(key, async () => ({ source: "first", revision: ++firstLoads }), { scope: "first-surface" });
-      await store.refresh(key, async () => ({ source: "second", revision: ++secondLoads }), { scope: "second-surface" });
+      await store.refresh(key, async () => ({ source: "first", revision: ++firstLoads }));
+      await store.refresh(key, async () => ({ source: "second", revision: ++secondLoads }));
       await store.invalidate(["kind:system"]);
 
       expect(firstLoads).toBe(1);
@@ -234,7 +421,7 @@ describe("BackendDataStore", () => {
     const key = store.key("global-active-missions");
     let loads = 0;
     const unsubscribe = store.subscribeKey(key, () => {});
-    const stopPolling = store.startPolling("mission-control", ["kind:global-active-missions"], 5, "mission-control");
+    const stopPolling = store.startPolling("mission-control", ["kind:global-active-missions"], 5);
 
     try {
       await store.refresh(key, async () => ({ revision: ++loads }));
@@ -261,7 +448,7 @@ describe("BackendDataStore", () => {
       await store.refresh(overviewKey, async () => ({ revision: ++overviewLoads }), { wallet });
       await store.refresh(fleetKey, async () => ({ revision: ++fleetLoads }), { wallet });
 
-      await store.invalidate(["kind:fleet-visibility"], { priority: "mission-control" });
+      await store.invalidate(["kind:fleet-visibility"], { });
 
       expect(overviewLoads).toBe(1);
       expect(fleetLoads).toBe(2);
@@ -315,8 +502,8 @@ describe("BackendDataStore", () => {
     const key = store.key("global-active-missions");
     let loads = 0;
     const unsubscribe = store.subscribeKey(key, () => {});
-    const releaseFirst = store.startPolling("mission-control", ["kind:global-active-missions"], 5, "mission-control");
-    const releaseSecond = store.startPolling("mission-control", ["kind:global-active-missions"], 5, "mission-control");
+    const releaseFirst = store.startPolling("mission-control", ["kind:global-active-missions"], 5);
+    const releaseSecond = store.startPolling("mission-control", ["kind:global-active-missions"], 5);
 
     try {
       await store.refresh(key, async () => ({ revision: ++loads }));
@@ -334,8 +521,8 @@ describe("BackendDataStore", () => {
     const key = store.key("global-active-missions");
     let loads = 0;
     const unsubscribe = store.subscribeKey(key, () => {});
-    const releaseSlow = store.startPolling("mission-control", ["kind:global-active-missions"], 60_000, "background");
-    const releaseFast = store.startPolling("mission-control", ["kind:global-active-missions"], 5, "mission-control");
+    const releaseSlow = store.startPolling("mission-control", ["kind:global-active-missions"], 60_000);
+    const releaseFast = store.startPolling("mission-control", ["kind:global-active-missions"], 5);
 
     try {
       await store.refresh(key, async () => ({ revision: ++loads }));
@@ -353,8 +540,8 @@ describe("BackendDataStore", () => {
     const key = store.key("global-active-missions");
     let loads = 0;
     const unsubscribe = store.subscribeKey(key, () => {});
-    const releaseSlow = store.startPolling("mission-control", ["kind:global-active-missions"], 60_000, "background");
-    const releaseFast = store.startPolling("mission-control", ["kind:global-active-missions"], 5, "mission-control");
+    const releaseSlow = store.startPolling("mission-control", ["kind:global-active-missions"], 60_000);
+    const releaseFast = store.startPolling("mission-control", ["kind:global-active-missions"], 5);
 
     try {
       await store.refresh(key, async () => ({ revision: ++loads }));
@@ -409,7 +596,7 @@ describe("BackendDataStore", () => {
 
     try {
       await store.refresh(key, async () => ({ revision: ++loads }));
-      store.scheduleRefresh("hidden-refresh", ["kind:global-active-missions"], 1, "mission-control");
+      store.scheduleRefresh(key, 1);
       await new Promise<void>((resolve) => setTimeout(resolve, 5));
       expect(loads).toBe(1);
       document.visibilityState = "visible";
@@ -423,7 +610,7 @@ describe("BackendDataStore", () => {
     }
   });
 
-  test("reference-counts one chain-event bridge per wallet", () => {
+  test("shell and page share one gameplay sync policy and release the bridge only after both unmount", () => {
     const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
     const sources: Array<{ closed: boolean }> = [];
     class TestEventSource {
@@ -443,8 +630,8 @@ describe("BackendDataStore", () => {
 
     try {
       const store = new BackendDataStore("https://api.test");
-      const releaseFirst = store.connectChainEvents("0xabc");
-      const releaseSecond = store.connectChainEvents("0xAbC");
+      const releaseFirst = store.startGameplaySync("0xabc");
+      const releaseSecond = store.startGameplaySync("0xAbC");
       expect(sources).toHaveLength(1);
       releaseFirst();
       expect(sources[0]!.closed).toBe(false);
@@ -516,13 +703,13 @@ describe("BackendDataStore", () => {
         planetsResponse: { revision: 1 },
       });
 
-      expect(store.snapshot<{ planets: unknown[]; revision: number }>(store.key("planets", "0xabc"))?.data).toEqual({ planets: [], revision: 1 });
+      expect(store.snapshot(store.queries.planets("0xabc").key)).toBeUndefined();
     } finally {
       globalThis.fetch = originalFetch;
     }
   });
 
-  test("owns the wallet/planet aggregate and publishes its canonical projections", async () => {
+  test("composes independent endpoint reads without an Overview fan-out", async () => {
     const originalFetch = globalThis.fetch;
     const wallet = "0xabc";
     const planet = {
@@ -540,11 +727,18 @@ describe("BackendDataStore", () => {
       queues: { wallet, homePlanetId: "planet-7", building: null, defense: null, ship: null, research: null },
       settlement: { wallet, hasFirstPlanet: true, homePlanetId: "planet-7", planet },
     };
-    globalThis.fetch = (async () => Response.json(overview)) as unknown as typeof fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const path = new URL(String(input)).pathname;
+      return Response.json(path.endsWith("/settlement") ? overview.settlement : path.endsWith("/planets") ? overview.planetsResponse : path.endsWith("/queues") ? overview.queues : overview.fleetVisibility);
+    }) as unknown as typeof fetch;
 
     try {
       const store = new BackendDataStore("https://api.test");
-      await expect(store.walletPlanetSync(wallet, "planet-7")).resolves.toMatchObject({ settlement: { homePlanetId: "planet-7" } });
+      await Promise.all([
+        store.queries.planets(wallet).read(),
+        store.queries.queues(wallet, "planet-7").read(),
+        store.queries.fleetVisibility(wallet).read(),
+      ]);
       expect(store.snapshot(store.queries.planets(wallet).key)?.data).toMatchObject({ homePlanetId: "planet-7" });
       expect(store.snapshot(store.queries.queues(wallet, "planet-7").key)?.data).toMatchObject({ homePlanetId: "planet-7" });
       expect(store.snapshot(store.queries.fleetVisibility(wallet).key)?.data).toMatchObject({ incoming: [] });
@@ -591,18 +785,17 @@ describe("BackendDataStore", () => {
           key: "defense:start:4",
           label: "Defense production",
           send: async () => "0xabc",
-          indexing: store.indexing.refresh([]),
+          indexing: store.indexing.production("0xabc", "planet-7", "infrastructure"),
         }),
       ).resolves.toMatchObject({ outcome: "indexed" });
     } finally {
       unsubscribe();
     }
 
-    expect(phases).toEqual(["pending", "confirming", "confirmed", "indexing", "success"]);
+    expect(phases).toEqual(["pending", "confirming", "confirmed", "indexing", "applied", "success"]);
     expect(store.snapshot<WriteTransactionState>(store.writeTransactionKey("defense:start:4"))?.data).toMatchObject({
       key: "defense:start:4",
       phase: "success",
-      stage: "applied",
       txHash: "0xabc",
     });
   });
@@ -633,12 +826,10 @@ describe("BackendDataStore", () => {
     expect(reads).toBe(3);
     expect(store.snapshot<WriteTransactionState>(store.writeTransactionKey("building:start:7", "0xabc"))?.data).toMatchObject({
       phase: "success",
-      stage: "applied",
     });
   });
 
-
-  test("performs one centralized catch-up when the SSE indexed revision advances", async () => {
+  test("resynchronizes on ready, ignores heartbeat revisions and scopes wallet events", async () => {
     const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
     const listeners = new Map<string, (event: MessageEvent) => void>();
     class TestEventSource {
@@ -660,7 +851,7 @@ describe("BackendDataStore", () => {
       const release = store.connectChainEvents("0xabc", { debounceMs: 0 });
       const syncStatus = listeners.get("sync-status")!;
       const payload = (indexedRevision: string) => ({
-        data: JSON.stringify({ connected: true, indexedRevision, subscribedToHeads: true, subscribedToLogs: true }),
+        data: JSON.stringify({ ready: true, connected: true, indexedRevision, subscribedToHeads: false, subscribedToLogs: false }),
       } as MessageEvent);
       syncStatus(payload("20"));
       syncStatus(payload("21"));
@@ -668,6 +859,22 @@ describe("BackendDataStore", () => {
         await new Promise<void>((resolve) => setTimeout(resolve, 0));
       }
       expect(loads).toBe(2);
+      syncStatus(payload("22"));
+      listeners.get("chain-event")!({ data: JSON.stringify({ wallets: ["0xother"], planetIds: ["7"] }) } as MessageEvent);
+      await new Promise(resolve => setTimeout(resolve, 2));
+      expect(loads).toBe(2);
+      listeners.get("chain-event")!({ data: JSON.stringify({ wallets: ["0xabc"], planetIds: ["7"] }) } as MessageEvent);
+      await new Promise(resolve => setTimeout(resolve, 2));
+      expect(loads).toBe(3);
+      syncStatus({ data: JSON.stringify({ ready: false, connected: true, subscribedToHeads: true, subscribedToLogs: true }) } as MessageEvent);
+      expect(store.snapshot<boolean>(store.key("chain-sync-health", "0xabc"))?.data).toBe(false);
+      syncStatus(payload("23"));
+      syncStatus(payload("24"));
+      for (let attempt = 0; attempt < 20 && loads < 4; attempt += 1) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      }
+      expect(loads).toBe(4);
+      expect(store.snapshot<boolean>(store.key("chain-sync-health", "0xabc"))?.data).toBe(true);
       release();
       unsubscribe();
     } finally {
@@ -693,7 +900,7 @@ describe("BackendDataStore", () => {
           key: "building:start:planet-7",
           label: "Building upgrade",
           send: async () => "0xabc",
-          indexing: store.indexing.refresh([]),
+          indexing: store.indexing.production("0xabc", "planet-7", "infrastructure"),
         }),
       ).resolves.toMatchObject({ outcome: "indexed" });
       expect(loads).toBe(2);
@@ -702,7 +909,6 @@ describe("BackendDataStore", () => {
     }
   });
 
-
   test("runs independent indexing plans concurrently", async () => {
     const store = new BackendDataStore("https://api.test", { transactionStatusReader: appliedTransactionStatusReader });
     let starts = 0;
@@ -710,16 +916,18 @@ describe("BackendDataStore", () => {
     const barrier = new Promise<void>((resolve) => {
       release = resolve;
     });
-    const createPlan = (store as any).createIndexingPlan.bind(store) as (runner: () => Promise<void>) => unknown;
-    const first = createPlan(async () => {
-      starts += 1;
-      await barrier;
-    });
-    const second = createPlan(async () => {
-      starts += 1;
-      await barrier;
-    });
-    const parallel = store.indexing.all([first as any, second as any]);
+    for (const planetId of ["1", "2"]) {
+      const key = store.queries.infrastructure("0xabc", planetId).key;
+      store.subscribeKey(key, () => {});
+      let initial = true;
+      await store.refresh(key, async () => {
+        if (initial) { initial = false; return {}; }
+        starts++; await barrier; return {};
+      }, { wallet: "0xabc", planetId });
+    }
+    const first = store.indexing.resourceChange("0xabc", "1");
+    const second = store.indexing.resourceChange("0xabc", "2");
+    const parallel = store.indexing.all([first, second, first]);
 
     const pending = store.runWriteTransaction({
       indexing: parallel,
@@ -732,6 +940,75 @@ describe("BackendDataStore", () => {
 
     release();
     await expect(pending).resolves.toMatchObject({ outcome: "indexed" });
+    expect(starts).toBe(2); // The repeated first plan did not cause a second refresh.
+  });
+
+  test("store freshness policy refreshes active timed data and production, not inactive planets", async () => {
+    let now = Date.now();
+    const store = new BackendDataStore("https://policy.test", { now: () => now });
+    store.setContext("0xabc", "7");
+    const reads = { infrastructure: 0, inactive: 0, fleet: 0, research: 0, profile: 0 };
+    for (const [name, kind, planetId, active, value] of [
+      ["infrastructure", "infrastructure", "7", true, {}],
+      ["inactive", "infrastructure", "8", false, {}],
+      ["fleet", "fleet-visibility", undefined, true, {}],
+      ["research", "research", "7", true, { queue: { active: true } }],
+      ["profile", "profile", undefined, true, {}],
+    ] as const) {
+      const key = store.key(kind, "0xabc", planetId);
+      if (active) store.subscribeKey(key, () => {});
+      await store.refresh(key, async () => { reads[name]++; return value; }, { wallet: "0xabc", planetId });
+    }
+    now += 20_000;
+    (store as any).refreshGameplay();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(reads).toEqual({ infrastructure: 2, inactive: 1, fleet: 2, research: 2, profile: 1 });
+    now += 120_000;
+    (store as any).refreshGameplay();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(reads.profile).toBe(2);
+    expect(reads.inactive).toBe(1);
+    store.dispose();
+  });
+
+  test("active settlement keeps recovering beyond eight reads without resubmitting", async () => {
+    let now = Date.now();
+    let reads = 0;
+    const store = new BackendDataStore("https://settlement-recovery.test", { now: () => now });
+    store.setContext("0xabc");
+    const key = store.queries.settlement("0xabc").key;
+    const unsubscribe = store.subscribeKey(key, () => {});
+    try {
+      await store.refresh(key, async () => ({ hasFirstPlanet: ++reads >= 12 }), { wallet: "0xabc" });
+      for (let i = 0; i < 11; i++) {
+        now += 20_000;
+        (store as any).refreshGameplay();
+        await new Promise(resolve => setTimeout(resolve, 0));
+      }
+      expect(reads).toBe(12);
+      expect(store.snapshot<any>(key)?.data.hasFirstPlanet).toBe(true);
+      store.setContext("0xdef");
+      now += 20_000;
+      (store as any).refreshGameplay();
+      await new Promise(resolve => setTimeout(resolve, 0));
+      expect(reads).toBe(12);
+    } finally { unsubscribe(); store.dispose(); }
+  });
+
+  test("a late stale Overview cannot erase missions loaded by the fleet endpoint", async () => {
+    const originalFetch = globalThis.fetch;
+    let resolveOverview!: (response: Response) => void;
+    globalThis.fetch = (async (input: RequestInfo | URL) => String(input).includes("/overview")
+      ? new Promise<Response>(resolve => { resolveOverview = resolve; })
+      : Response.json({ outgoing: [{ missionId: "75223" }], returning: [] })) as typeof fetch;
+    const store = new BackendDataStore("https://fleet.test");
+    try {
+      const older = store.overview("0xabc");
+      await store.queries.fleetVisibility("0xabc").read();
+      resolveOverview(Response.json({ fleetVisibility: { outgoing: [], returning: [] }, planetsResponse: { planets: [] }, queues: {} }));
+      await older;
+      expect(store.snapshot<any>(store.queries.fleetVisibility("0xabc").key)?.data.outgoing).toEqual([{ missionId: "75223" }]);
+    } finally { globalThis.fetch = originalFetch; store.dispose(); }
   });
 
   test("marks inactive batch-mutation resources stale without pretending they refreshed", async () => {
@@ -744,7 +1021,6 @@ describe("BackendDataStore", () => {
       wallet: "0xabc",
     });
     await store.invalidate(["planet:planet-origin"], {
-      priority: "transaction",
     });
 
     expect(loads).toBe(1);

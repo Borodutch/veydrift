@@ -1,4 +1,5 @@
 import type { EnergyBalance, Resources, QueueItem } from "../playableMvp";
+import { Component } from "preact";
 import { shouldShowTopBarEnergy, type ChainLoadStatus } from "../overviewData";
 import { energyExplanationTitle } from "../topBarEnergyInfo";
 import { shortAddress } from "../walletFlow";
@@ -7,6 +8,7 @@ import { TELEGRAM_SUPPORT_URL, WHITEPAPER_URL } from "../supportLinks";
 import { TelegramIcon } from "./TelegramIcon";
 import { detailsCloseOutsideRef } from "./modalDismiss";
 import { SoundToggle } from "./SoundToggle";
+import { Skeleton, SkeletonRegion } from "./Skeleton";
 
 const formatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 const compactFormatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 1, notation: "compact" });
@@ -32,6 +34,7 @@ function topBarHeightSyncRef(element: HTMLElement | null) {
 }
 
 interface TopBarProps {
+  resourceScope?: string | undefined;
   resources?: Resources | undefined;
   rates: Resources;
   caps: Resources;
@@ -58,7 +61,7 @@ type CrawlerProductionInfo = {
   };
 };
 
-export function TopBar({ resources, rates, caps, crawlerProduction, inviteeProductionBoost, resourceStatus, queue, researchQueue, account, energy, isWalletConnected }: TopBarProps) {
+export function TopBar({ resources, resourceScope, rates, caps, crawlerProduction, inviteeProductionBoost, resourceStatus, queue, researchQueue, account, energy, isWalletConnected }: TopBarProps) {
   const showResourceDetails = Boolean(resources);
 
   return (
@@ -73,13 +76,22 @@ export function TopBar({ resources, rates, caps, crawlerProduction, inviteeProdu
               {!isWalletConnected ? (
                 <span className="text-xs text-slate-400">Connect wallet for resources</span>
               ) : resourceStatus === "loading" && !resources ? (
-                <span className="text-xs text-slate-400">Resources loading</span>
+                <SkeletonRegion className="flex min-w-0 flex-1 items-center gap-1 sm:flex-none sm:gap-2.5" label="Loading resources">
+                  {[["Metal", "M", "text-amber-300"], ["Crystal", "C", "text-cyan-300"], ["Deuterium", "D", "text-emerald-300"], ["Energy", "E", "text-lime-300"]].map(([label, abbr, color]) => (
+                    <div key={abbr} className="flex h-10 min-w-0 flex-1 items-center justify-center gap-1 rounded border border-white/10 bg-white/[0.03] px-1 sm:h-6 sm:flex-none sm:gap-1.5 sm:border-0 sm:bg-transparent sm:px-0">
+                      <span className={`text-[11px] font-semibold sm:text-xs ${color}`}><span className="sm:hidden">{abbr}</span><span className="hidden sm:inline">{label}</span></span>
+                      <Skeleton className="h-3 w-10 sm:w-14" />
+                      <Skeleton className="hidden h-2 w-8 sm:block" />
+                    </div>
+                  ))}
+                </SkeletonRegion>
               ) : !resources ? (
                 <span className="text-xs text-amber-200">Resources unavailable</span>
               ) : (
                 <>
                   <ResourcePip
                     key="metal"
+                    scope={resourceScope}
                     abbr="M"
                     cap={showResourceDetails ? caps.metal : undefined}
                     color="text-amber-300"
@@ -89,6 +101,7 @@ export function TopBar({ resources, rates, caps, crawlerProduction, inviteeProdu
                   />
                   <ResourcePip
                     key="crystal"
+                    scope={resourceScope}
                     abbr="C"
                     cap={showResourceDetails ? caps.crystal : undefined}
                     color="text-cyan-300"
@@ -98,6 +111,7 @@ export function TopBar({ resources, rates, caps, crawlerProduction, inviteeProdu
                   />
                   <ResourcePip
                     key="deuterium"
+                    scope={resourceScope}
                     abbr="D"
                     cap={showResourceDetails ? caps.deuterium : undefined}
                     color="text-emerald-300"
@@ -205,7 +219,7 @@ export function TopBar({ resources, rates, caps, crawlerProduction, inviteeProdu
   );
 }
 
-function ResourcePip({ abbr, label, value, rate, cap, color }: { abbr: string; label: string; value: number; rate?: number | undefined; cap?: number | undefined; color: string }) {
+function ResourcePip({ abbr, label, value, rate, cap, color, scope }: { abbr: string; label: string; value: number; rate?: number | undefined; cap?: number | undefined; color: string; scope?: string | undefined }) {
   const pct = cap && cap > 0 ? Math.min(100, Math.round((value / cap) * 100)) : 0;
   return (
     <details
@@ -224,8 +238,7 @@ function ResourcePip({ abbr, label, value, rate, cap, color }: { abbr: string; l
             <span className="hidden sm:inline">{label}</span>
           </span>
           <span className={`min-w-0 truncate text-[11px] leading-none sm:text-xs ${pct >= 90 ? "resource-cap-warning text-amber-100" : "text-white"}`}>
-            <span className="sm:hidden">{formatCompact(value)}</span>
-            <span className="hidden sm:inline">{format(value)}</span>
+            <ResourceAmount key={`${scope}:${abbr}`} value={value} />
           </span>
           {rate !== undefined && <span className="hidden text-[10px] leading-none text-slate-500 sm:inline">+{format(rate)}/h</span>}
           {pct >= 90 && <span className="resource-cap-warning hidden text-[10px] leading-none text-amber-400 sm:inline">{pct}%</span>}
@@ -255,6 +268,44 @@ function ResourcePip({ abbr, label, value, rate, cap, color }: { abbr: string; l
       </div>
     </details>
   );
+}
+
+// Animation owns display values only; balances and affordability stay in the store.
+class ResourceAmount extends Component<{ value: number }, { value: number; direction?: "up" | "down" | undefined }> {
+  override state = { value: this.props.value, direction: undefined as "up" | "down" | undefined };
+  private frame = 0;
+
+  override componentDidUpdate(previous: { value: number }) {
+    if (previous.value === this.props.value) return;
+    cancelAnimationFrame(this.frame);
+    const target = this.props.value;
+    const from = this.state.value;
+    if (document.hidden || matchMedia("(prefers-reduced-motion: reduce)").matches || from === target) {
+      this.setState({ value: target, direction: undefined });
+      return;
+    }
+    this.setState({ direction: target > from ? "up" : "down" });
+    const started = performance.now();
+    const tick = (now: number) => {
+      const progress = Math.min(1, (now - started) / 450);
+      this.setState({ value: from + (target - from) * (1 - (1 - progress) ** 3) });
+      if (progress < 1) this.frame = requestAnimationFrame(tick);
+    };
+    this.frame = requestAnimationFrame(tick);
+  }
+
+  override componentWillUnmount() {
+    cancelAnimationFrame(this.frame);
+  }
+
+  override render() {
+    return (
+      <span aria-label={format(this.props.value)} className={`inline-block tabular-nums ${this.state.direction ? `resource-flash-${this.state.direction}` : ""}`} data-resource-amount data-direction={this.state.direction} key={this.props.value}>
+        <span aria-hidden="true" className="sm:hidden">{formatCompact(this.state.value)}</span>
+        <span aria-hidden="true" className="hidden sm:inline">{format(this.state.value)}</span>
+      </span>
+    );
+  }
 }
 
 function EnergyPip({
@@ -367,21 +418,20 @@ function EnergyPip({
 function CrawlerProductionDetails({ crawlerProduction }: { crawlerProduction?: CrawlerProductionInfo | null | undefined }) {
   if (!crawlerProduction) {
     return (
-      <>
+      <SkeletonRegion label="Loading crawler production">
         <dl className="mt-2 grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1 border-t border-white/10 pt-2 text-[11px] leading-4">
           <dt className="text-slate-500">Crawler boost</dt>
-          <dd className="text-right font-semibold text-slate-100">Syncing</dd>
+          <dd><Skeleton className="h-4 w-16" /></dd>
           <dt className="text-slate-500">Crawlers</dt>
-          <dd className="text-right font-semibold text-slate-100">Waiting for production model</dd>
+          <dd><Skeleton className="h-4 w-16" /></dd>
           <dt className="text-slate-500">Metal impact</dt>
-          <dd className="text-right font-semibold text-slate-100">Syncing</dd>
+          <dd><Skeleton className="h-4 w-16" /></dd>
           <dt className="text-slate-500">Crystal impact</dt>
-          <dd className="text-right font-semibold text-slate-100">Syncing</dd>
+          <dd><Skeleton className="h-4 w-16" /></dd>
           <dt className="text-slate-500">Deuterium impact</dt>
-          <dd className="text-right font-semibold text-slate-100">Syncing</dd>
+          <dd><Skeleton className="h-4 w-16" /></dd>
         </dl>
-        <p className="mt-2 text-[11px] leading-4 text-slate-400">Crawler production details are syncing from the backend production model.</p>
-      </>
+      </SkeletonRegion>
     );
   }
 

@@ -13,7 +13,7 @@
 import { formatDurationUntil } from "./durationFormat";
 import { timestampToMs } from "./timestampFormat";
 import { decodeColonizationTargetId, shortAddress, type FleetMissionSummary } from "./walletFlow";
-import { missionTypeLabel } from "./components/MissionControlPage";
+import { missionTypeLabel } from "./components/missionControlModel";
 
 // Mission types that read as an attack on the planet; everything else (Transport, Deploy, AcsDefend,
 // Colonize, …) is treated as friendly/neutral for styling.

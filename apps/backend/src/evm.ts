@@ -1,3 +1,4 @@
+import type * as Api from "../../../packages/api-types/src/index";
 import { solarSatelliteEnergy } from "@veydrift/universe";
 import { encodeAbiParameters, keccak256 } from "viem";
 import type { BackendConfig } from "./config";
@@ -15,11 +16,7 @@ import { planetMetadata, planetMultipliers } from "./universe";
 
 export type Address = `0x${string}`;
 
-export type Resources = {
-  metal: string;
-  crystal: string;
-  deuterium: string;
-};
+export type Resources = Api.Resources;
 
 export type ResourceSnapshotMetadata = {
   planetId: string | null;
@@ -150,17 +147,7 @@ export type SettlementFundingState = {
 // Derived as-of-now state shapes (VEY-KANEO-464). Defined here next to the
 // canonical read-model types they augment; the derivation logic lives in
 // ./asOfNow.
-export type QueueAsOfNow = {
-  // Whole seconds until the active item finishes; 0 once it is due (or unknown).
-  secondsRemaining: number;
-  // Whether the active item is due as of now (its `readyAt` has passed).
-  complete: boolean;
-  completedQuantity?: number;
-  remainingQuantity?: number;
-  currentUnitSecondsRemaining?: number;
-  currentUnitProgressBps?: number;
-  overallProgressBps?: number;
-};
+export type QueueAsOfNow = Api.QueueAsOfNow;
 
 export type MissionAsOfNow = {
   // Whole seconds until the fleet reaches its target; 0 once it has arrived.
@@ -174,38 +161,9 @@ export type MissionAsOfNow = {
   returned: boolean;
 };
 
-export type QueueState = {
-  active: boolean;
-  kind: string | null;
-  planetId?: string;
-  itemId?: number;
-  targetLevel?: number;
-  quantity?: number;
-  readyAt: string | null;
-  startedAt?: string | null;
-  cost: Resources;
-  backlog?: QueueState[];
-  productionTiming?: {
-    startedAt: string;
-    originalQuantity: number;
-    unitWorkSeconds: string;
-    rate: string;
-  };
-  // Derived as-of-now state (VEY-KANEO-464): seconds left / whether the active
-  // item is due, computed server-side at request time from `readyAt`. Optional so
-  // persisted/event-derived queue rows stay valid; the read-model getters always
-  // populate it before serving.
-  asOfNow?: QueueAsOfNow;
-};
+export type QueueState = Api.QueueState;
 
-export type PlayerQueues = {
-  wallet: Address;
-  homePlanetId: string | null;
-  building: QueueState | null;
-  defense: QueueState | null;
-  ship: QueueState | null;
-  research: QueueState | null;
-};
+export type PlayerQueues = Api.PlayerQueues<Address>;
 
 export type IndexedQueueStartedEvent = {
   eventName: "BuildingStarted" | "DefenseQueued" | "ShipQueued" | "ResearchQueued" | "ResearchQueuedV2" | "MoonBuildingStarted" | "MoonDefenseQueued";
@@ -391,14 +349,7 @@ export type MissileAttackArchiveResponse = {
   wallet: Address;
   homePlanetId: string | null;
   rows: IndexedMissileAttack[];
-  pagination: {
-    page: number;
-    pageSize: number;
-    totalEntries: number;
-    totalPages: number;
-    hasPreviousPage: boolean;
-    hasNextPage: boolean;
-  };
+  pagination: Api.Pagination;
 };
 
 export type IndexedAllianceEvent =
@@ -576,23 +527,9 @@ export type GameMaintenanceState = {
   pauseAgeSeconds: number;
 };
 
-export type FleetMissionArchiveEntry =
-  | { kind: "mission"; mission: FleetMissionSummary; report?: BattleReport | undefined }
-  | { kind: "battleReport"; report: BattleReport };
+export type FleetMissionArchiveEntry = Api.MissionArchiveEntry<FleetMissionSummary, BattleReport>;
 
-export type FleetMissionArchiveResponse = {
-  wallet: Address;
-  homePlanetId: string | null;
-  rows: FleetMissionArchiveEntry[];
-  pagination: {
-    page: number;
-    pageSize: number;
-    totalEntries: number;
-    totalPages: number;
-    hasPreviousPage: boolean;
-    hasNextPage: boolean;
-  };
-};
+export type FleetMissionArchiveResponse = Api.FleetMissionArchive<FleetMissionSummary, BattleReport, Address>;
 
 // Universe-wide (no wallet scope) active missions feed for the Mission Control "All" tab.
 export type GlobalActiveMissionsResponse = {
@@ -601,10 +538,7 @@ export type GlobalActiveMissionsResponse = {
 
 // Universe-wide completed mission archive for the Mission Control past "All" tab. Mirrors the
 // per-wallet archive pagination contract but carries no wallet scope.
-export type GlobalMissionArchiveResponse = {
-  rows: FleetMissionArchiveEntry[];
-  pagination: FleetMissionArchiveResponse["pagination"];
-};
+export type GlobalMissionArchiveResponse = Api.GlobalMissionArchive<FleetMissionSummary, BattleReport>;
 
 // VEY-KANEO-456/498: a single allied fleet stationed to defend a planet. Reactive AcsDefend rows are
 // resolved from an attack's `counterplayDefenderMissionIds`; proactive DefenseHold rows are resolved
@@ -933,7 +867,7 @@ export type ShipyardState = {
   }>;
   // Inventory the next fleet-launch transaction can use after the contract's
   // deterministic lazy production settlement prologue.
-  launchableShips?: ShipyardState["ships"];
+  launchableShips?: Array<Pick<ShipyardState["ships"][number], "id" | "count">>;
   queue: QueueState | null;
 };
 
@@ -975,7 +909,7 @@ export type DefenseState = {
   }>;
   // Inventory the next missile-launch transaction can use after the contract's
   // deterministic lazy defense-production settlement prologue.
-  launchableDefenses?: DefenseState["defenses"];
+  launchableDefenses?: Array<Pick<DefenseState["defenses"][number], "id" | "count">>;
   queue: QueueState | null;
 };
 
@@ -1212,18 +1146,9 @@ export type AllianceState = {
   }>;
 };
 
-export type AllianceRoleName = "none" | "member" | "officer" | "owner";
-export type AllianceDiplomacyStatusName = "none" | "ally" | "non_aggression_pact" | "war";
-export type AllianceDiplomacyEntry = {
-  allianceId: string;
-  otherAllianceId: string;
-  status: AllianceDiplomacyStatusName;
-  statusId: number;
-  updatedAt: string | null;
-  initiatedByAllianceId: string | null;
-  declaredAt: string | null;
-  alliance: AllianceState["directory"][number] | null;
-};
+export type AllianceRoleName = Api.AllianceRole;
+export type AllianceDiplomacyStatusName = Api.AllianceDiplomacyStatus;
+export type AllianceDiplomacyEntry = Api.AllianceDiplomacyEntry<AllianceState["directory"][number]> & { declaredAt: string | null };
 
 // Canonical-mirror seed shapes for the alliance sub-states that have no on-chain enumeration getter
 // covered by the directory snapshot. Read from contract getters during explicit rebuild and used
@@ -1606,6 +1531,14 @@ export type RpcBlock = {
   timestamp: string;
 };
 
+class RpcEndpointError extends Error {
+  constructor(message: string, readonly retryReason: string | null, readonly failoverOnly = false) { super(message); }
+}
+
+function isReadOnlyRpcMethod(method: string): boolean {
+  return method.startsWith("eth_get") || ["eth_call", "eth_blockNumber", "eth_chainId", "net_version"].includes(method);
+}
+
 export class HttpJsonRpcTransport {
   private readonly metrics: RpcMetrics = {
     activeRpcUrl: null,
@@ -1624,6 +1557,7 @@ export class HttpJsonRpcTransport {
     oldestUnfinishedRequestAgeMs: null
   };
   private readonly cache = new Map<string, RpcCacheEntry<unknown>>();
+  private nextCacheSweepAt = 0;
   private readonly cacheTtlMs: number;
   private readonly minRequestIntervalMs: number;
   private readonly requestTimeoutMs: number;
@@ -1663,83 +1597,7 @@ export class HttpJsonRpcTransport {
   }
 
   private async requestUncached<T>(method: string, params: unknown[]): Promise<T> {
-    endpointLoop: for (let endpointAttempt = 0; endpointAttempt < this.rpcUrls.length; endpointAttempt += 1) {
-      for (let attempt = 0; attempt < 3; attempt += 1) {
-        this.metrics.httpRequests += 1;
-        let response: Response;
-        try {
-          response = await this.fetchRpc({
-            method: "POST",
-            headers: {
-              "content-type": "application/json"
-            },
-            body: JSON.stringify({
-              jsonrpc: "2.0",
-              id: 1,
-              method,
-              params
-            })
-          });
-        } catch (error) {
-          if (isRetryableTransportError(error) && attempt < 2) {
-            await retryDelay(attempt);
-            continue;
-          }
-          if (isRetryableTransportError(error) && this.failoverRpc("transport_error")) {
-            await retryDelay(0);
-            continue endpointLoop;
-          }
-          throw error;
-        }
-
-        if (!response.ok) {
-          if (isRetryableRpcHttpStatus(response.status) && attempt < 2) {
-            await retryDelay(attempt);
-            continue;
-          }
-          if (isRetryableRpcHttpStatus(response.status) && this.failoverRpc(`http_${response.status}`)) {
-            await retryDelay(0);
-            continue endpointLoop;
-          }
-          throw new Error(`RPC HTTP ${response.status}`);
-        }
-
-        let body: JsonRpcResponse<T>;
-        try {
-          body = await readRpcJson<JsonRpcResponse<T>>(response);
-        } catch (error) {
-          // A truncated/empty body (e.g. the node cutting the stream short) is transient — retry.
-          if (error instanceof RpcResponseParseError && attempt < 2) {
-            await retryDelay(attempt);
-            continue;
-          }
-          if (error instanceof RpcResponseParseError && this.failoverRpc("rpc_response_parse_error")) {
-            await retryDelay(0);
-            continue endpointLoop;
-          }
-          throw error;
-        }
-        if (body.error) {
-          if (isRetryableRpcError(body.error) && attempt < 2) {
-            await retryDelay(attempt);
-            continue;
-          }
-          if (isRetryableRpcError(body.error) && this.failoverRpc(`rpc_${body.error.code}`)) {
-            await retryDelay(0);
-            continue endpointLoop;
-          }
-          throw new Error(`RPC ${body.error.code}: ${body.error.message}`);
-        }
-
-        if (body.result === undefined) {
-          throw new Error("RPC response missing result.");
-        }
-
-        return body.result;
-      }
-    }
-
-    throw new Error("RPC request failed after retries.");
+    return (await this.requestPayload<T>([{ method, params }], false))[0]!;
   }
 
   async requestBatch<T>(requests: Array<{ method: string; params: unknown[] }>): Promise<T[]> {
@@ -1765,12 +1623,9 @@ export class HttpJsonRpcTransport {
       if (existingMiss) return existingMiss.deferred.promise;
 
       const deferred = createDeferred<T>();
-      this.cache.set(cacheKey, {
-        expiresAt: Date.now() + this.cacheTtlMs,
-        value: deferred.promise
-      });
+      const pending = this.cachePending(cacheKey, deferred.promise);
       cacheMisses.set(cacheKey, { deferred, request });
-      return deferred.promise;
+      return pending;
     });
     const uncachedRequests = requests
       .map((request, index) => ({ index, request }))
@@ -1785,10 +1640,7 @@ export class HttpJsonRpcTransport {
           });
         })
         .catch((error) => {
-          for (const [cacheKey, miss] of misses) {
-            this.cache.delete(cacheKey);
-            miss.deferred.reject(error);
-          }
+          for (const [, miss] of misses) miss.deferred.reject(error);
         });
     }
 
@@ -1808,111 +1660,61 @@ export class HttpJsonRpcTransport {
     return Promise.all(resultPromises as Array<Promise<T>>);
   }
 
-  private async requestBatchUncached<T>(requests: Array<{ method: string; params: unknown[] }>): Promise<T[]> {
-    endpointLoop: for (let endpointAttempt = 0; endpointAttempt < this.rpcUrls.length; endpointAttempt += 1) {
-      for (let attempt = 0; attempt < 3; attempt += 1) {
-        this.metrics.batchRequests += 1;
-        this.metrics.httpRequests += 1;
+  private requestBatchUncached<T>(requests: Array<{ method: string; params: unknown[] }>): Promise<T[]> {
+    return this.requestPayload<T>(requests, true);
+  }
 
-        let response: Response;
+  private async requestPayload<T>(requests: Array<{ method: string; params: unknown[] }>, batch: boolean): Promise<T[]> {
+    const readOnly = requests.every(({ method }) => isReadOnlyRpcMethod(method));
+    const items = requests.map((request, index) => ({ jsonrpc: "2.0", id: index + 1, ...request }));
+    endpointLoop: for (let endpoint = 0; endpoint < this.rpcUrls.length; endpoint++) {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        this.metrics.httpRequests++;
+        if (batch) this.metrics.batchRequests++;
+        const rpcUrl = this.activeRpcUrl();
         try {
-          response = await this.fetchRpc({
-            method: "POST",
-            headers: {
-              "content-type": "application/json"
-            },
-            body: JSON.stringify(requests.map((request, index) => ({
-              jsonrpc: "2.0",
-              id: index + 1,
-              method: request.method,
-              params: request.params
-            })))
+          const body = await this.fetchRpc<JsonRpcResponse<T> & { id?: number } | Array<JsonRpcResponse<T> & { id?: number }>>({
+            method: "POST", headers: { "content-type": "application/json" },
+            body: JSON.stringify(batch ? items : items[0])
+          }, rpcUrl);
+          const bodies = Array.isArray(body) ? body : [body];
+          for (const entry of bodies) {
+            if (!entry.error) continue;
+            const error = entry.error;
+            const method = batch ? requests[(entry.id ?? 1) - 1]?.method : requests[0]?.method;
+            const pruned = error.code === 4444 && method === "eth_getLogs";
+            throw new RpcEndpointError(
+              "RPC " + error.code + ": " + error.message,
+              pruned ? "pruned_history" : isRetryableRpcError(error) ? "rpc_" + error.code : null,
+              pruned
+            );
+          }
+          if (batch && !Array.isArray(body)) throw new Error("RPC batch response missing items.");
+          const byId = new Map(bodies.map(entry => [entry.id, entry]));
+          return requests.map((_, index) => {
+            const entry = batch ? byId.get(index + 1) : bodies[0];
+            if (!entry) throw new Error("RPC batch response missing item.");
+            if (entry.result === undefined) throw new Error("RPC response missing result.");
+            return entry.result;
           });
         } catch (error) {
-          if (isRetryableTransportError(error) && attempt < 2) {
+          const reason = error instanceof RpcEndpointError ? error.retryReason
+            : error instanceof RpcResponseParseError ? "rpc_response_parse_error"
+            : isRetryableTransportError(error) ? "transport_error" : null;
+          // A submission or mixed write batch is never replayed automatically.
+          if (!readOnly || !reason) throw error;
+          if (!(error instanceof RpcEndpointError && error.failoverOnly) && attempt < 2) {
             await retryDelay(attempt);
             continue;
           }
-          if (isRetryableTransportError(error) && this.failoverRpc("transport_error")) {
-            await retryDelay(0);
+          if (endpoint + 1 < this.rpcUrls.length && this.failoverRpc(reason, rpcUrl)) {
             continue endpointLoop;
           }
           throw error;
         }
-
-        if (!response.ok) {
-          if (isRetryableRpcHttpStatus(response.status) && attempt < 2) {
-            await retryDelay(attempt);
-            continue;
-          }
-          if (isRetryableRpcHttpStatus(response.status) && this.failoverRpc(`http_${response.status}`)) {
-            await retryDelay(0);
-            continue endpointLoop;
-          }
-          throw new Error(`RPC HTTP ${response.status}`);
-        }
-
-        let body: JsonRpcResponse<T> | Array<JsonRpcResponse<T> & { id?: number }>;
-        try {
-          body = await readRpcJson<JsonRpcResponse<T> | Array<JsonRpcResponse<T> & { id?: number }>>(response);
-        } catch (error) {
-          // An oversized batch response truncated mid-stream throws "Unexpected end of JSON input" here.
-          // Retry the batch; if it keeps failing the typed error makes batchCallContract fall back to
-          // sequential single calls, whose small responses never truncate (VEY-KANEO-461).
-          if (error instanceof RpcResponseParseError && attempt < 2) {
-            await retryDelay(attempt);
-            continue;
-          }
-          if (error instanceof RpcResponseParseError && this.failoverRpc("rpc_response_parse_error")) {
-            await retryDelay(0);
-            continue endpointLoop;
-          }
-          throw error;
-        }
-        if (!Array.isArray(body)) {
-          if (body.error && isRetryableRpcError(body.error) && attempt < 2) {
-            await retryDelay(attempt);
-            continue;
-          }
-          if (body.error && isRetryableRpcError(body.error) && this.failoverRpc(`rpc_${body.error.code}`)) {
-            await retryDelay(0);
-            continue endpointLoop;
-          }
-          if (body.error) {
-            throw new Error(`RPC ${body.error.code}: ${body.error.message}`);
-          }
-          throw new Error("RPC batch response missing items.");
-        }
-
-        const bodies = body;
-        const retryableError = bodies.find((body) => body.error && isRetryableRpcError(body.error));
-        if (retryableError?.error && attempt < 2) {
-          await retryDelay(attempt);
-          continue;
-        }
-        if (retryableError?.error && this.failoverRpc(`rpc_${retryableError.error.code}`)) {
-          await retryDelay(0);
-          continue endpointLoop;
-        }
-        const byId = new Map(bodies.map((body) => [body.id, body]));
-
-        return requests.map((_, index) => {
-          const body = byId.get(index + 1);
-          if (!body) {
-            throw new Error("RPC batch response missing item.");
-          }
-          if (body.error) {
-            throw new Error(`RPC ${body.error.code}: ${body.error.message}`);
-          }
-          if (body.result === undefined) {
-            throw new Error("RPC response missing result.");
-          }
-          return body.result;
-        });
       }
     }
-
-    throw new Error("RPC batch request failed after retries.");
+    throw new Error("RPC request failed after retries.");
   }
 
   snapshot(): RpcMetrics {
@@ -1940,8 +1742,10 @@ export class HttpJsonRpcTransport {
     };
   }
 
-  failoverRpc(reason: string): boolean {
+  failoverRpc(reason: string, failedUrl?: string): boolean {
     if (this.rpcUrls.length <= 1) return false;
+    // Another concurrent read may already have selected the next endpoint.
+    if (failedUrl && failedUrl !== this.activeRpcUrl()) return true;
     this.activeRpcIndex = (this.activeRpcIndex + 1) % this.rpcUrls.length;
     this.cache.clear();
     this.metrics.failoverCount += 1;
@@ -1957,82 +1761,91 @@ export class HttpJsonRpcTransport {
     this.metrics.callsBySource[this.requestSource] = sourceMethods;
   }
 
-  private fetchRpc(init: RequestInit): Promise<Response> {
-    const requestId = this.nextActiveRequestId++;
-    this.metrics.startedHttpRequests += 1;
-    this.activeRequestStartedAt.set(requestId, Date.now());
-    const scheduled = this.requestQueue.then(async () => {
+  private fetchRpc<T>(init: RequestInit, rpcUrl: string): Promise<T> {
+    // Serialize start slots, never response completion. Independent reads can overlap.
+    const start = this.requestQueue.then(async () => {
       const waitMs = Math.max(0, this.nextRequestAt - Date.now());
-      if (waitMs > 0) {
-        await retryDelayMs(waitMs);
-      }
+      if (waitMs > 0) await retryDelayMs(waitMs);
       this.nextRequestAt = Date.now() + this.minRequestIntervalMs;
-      return this.fetchWithTimeout(init);
     });
-    const tracked = scheduled.finally(() => {
-      this.metrics.finishedHttpRequests += 1;
-      this.activeRequestStartedAt.delete(requestId);
+    this.requestQueue = start.catch(() => {});
+    return start.then(async () => {
+      const requestId = this.nextActiveRequestId++;
+      this.metrics.startedHttpRequests++;
+      this.activeRequestStartedAt.set(requestId, Date.now());
+      try { return await this.fetchWithTimeout<T>(init, rpcUrl); }
+      finally {
+        this.metrics.finishedHttpRequests++;
+        this.activeRequestStartedAt.delete(requestId);
+      }
     });
-    this.requestQueue = tracked.then(
-      () => undefined,
-      () => undefined
-    );
-    return tracked;
   }
 
-  // Bound every upstream RPC fetch with an AbortController-backed deadline. Without this, a slow or
-  // hung Alchemy connection during a live-read timeout storm keeps its socket and promise alive
-  // indefinitely; the server-side withTimeout only stops *awaiting* the read, leaving the underlying
-  // fetch orphaned. Under a sustained storm those orphans accumulate without bound (sockets, file
-  // descriptors, buffered response bodies) until the Bun runtime crashes with SIGSEGV (139). Aborting
-  // at the deadline frees the socket promptly and surfaces a retryable timeout error (VEY-KANEO-459).
-  private async fetchWithTimeout(init: RequestInit): Promise<Response> {
-    if (!Number.isFinite(this.requestTimeoutMs) || this.requestTimeoutMs <= 0) {
-      return fetch(this.activeRpcUrl(), init);
-    }
-
+  private async fetchWithTimeout<T>(init: RequestInit, rpcUrl: string): Promise<T> {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.requestTimeoutMs);
-    timer.unref?.();
-    try {
-      return await fetch(this.activeRpcUrl(), { ...init, signal: controller.signal });
-    } catch (error) {
-      if (controller.signal.aborted) {
-        this.metrics.timeouts += 1;
-        throw new RpcRequestTimeoutError(this.requestTimeoutMs);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<never>((_, reject) => {
+      if (!Number.isFinite(this.requestTimeoutMs) || this.requestTimeoutMs <= 0) return;
+      timer = setTimeout(() => {
+        const error = new RpcRequestTimeoutError(this.requestTimeoutMs);
+        controller.abort(error);
+        reject(error);
+      }, this.requestTimeoutMs);
+      timer.unref?.();
+    });
+    const read = async () => {
+      let response: Response;
+      try { response = await fetch(rpcUrl, { ...init, signal: controller.signal }); }
+      catch (error) { throw new RpcTransportError(error); }
+      if (!response.ok) {
+        void response.body?.cancel().catch(() => {});
+        throw new RpcEndpointError("RPC HTTP " + response.status, isRetryableRpcHttpStatus(response.status) ? "http_" + response.status : null);
       }
-      // Wrap raw network failures (connection reset, DNS, TLS) so the retry loop treats them as the
-      // transient transport faults they are instead of letting them escape as opaque fetch errors.
-      throw new RpcTransportError(error);
-    } finally {
-      clearTimeout(timer);
-    }
+      return readRpcJson<T>(response);
+    };
+    try { return await Promise.race([read(), deadline]); }
+    catch (error) {
+      if (controller.signal.aborted) {
+        this.metrics.timeouts++;
+        throw controller.signal.reason;
+      }
+      throw error;
+    } finally { clearTimeout(timer); }
   }
 
   private cached<T>(key: string, load: () => Promise<T>): Promise<T> {
-    const current = this.cachedValue<T>(key);
-    if (current) return current;
+    return this.cachedValue<T>(key) ?? this.cachePending(key, load());
+  }
 
-    const value = load().catch((error) => {
-      this.cache.delete(key);
+  private cachePending<T>(key: string, pending: Promise<T>): Promise<T> {
+    const now = Date.now();
+    // Sweep on new work at most once per second, never on every cache hit.
+    if (now >= this.nextCacheSweepAt) {
+      for (const [expiredKey, entry] of this.cache) {
+        if (entry.expiresAt <= now) this.cache.delete(expiredKey);
+      }
+      this.nextCacheSweepAt = now + 1_000;
+    }
+    const entry: RpcCacheEntry<T> = { expiresAt: Infinity, value: pending };
+    const value = pending.then(result => {
+      entry.expiresAt = Date.now() + this.cacheTtlMs;
+      if (this.cacheTtlMs <= 0 && this.cache.get(key) === entry) this.cache.delete(key);
+      return result;
+    }, error => {
+      if (this.cache.get(key) === entry) this.cache.delete(key);
       throw error;
     });
-    this.cache.set(key, {
-      expiresAt: Date.now() + this.cacheTtlMs,
-      value
-    });
+    entry.value = value;
+    this.cache.set(key, entry);
     return value;
   }
 
   private cachedValue<T>(key: string): Promise<T> | null {
-    const current = this.cache.get(key);
-    if (!current) return null;
-    if (current.expiresAt <= Date.now()) {
-      this.cache.delete(key);
-      return null;
-    }
-
-    return current.value as Promise<T>;
+    const entry = this.cache.get(key);
+    if (!entry) return null;
+    if (entry.expiresAt > Date.now()) return entry.value as Promise<T>;
+    this.cache.delete(key);
+    return null;
   }
 
   private cacheKey(method: string, params: unknown[]): string | null {
@@ -4410,13 +4223,9 @@ export class VeydriftGameReader implements ChainReader {
   }
 
   private async getLogs(filter: RpcLogFilter): Promise<RpcLog[]> {
-    // VEY-KANEO-485: page deploy->head proactively in <=logChunkSpan windows rather than first issuing
-    // a full-range eth_getLogs that a range-capped node is guaranteed to reject. Our self-hosted node
-    // (now the ONLY RPC — Alchemy is permanently dead) caps eth_getLogs at 100k blocks; the old
-    // "try the unbounded range, fail, then chunk" path wasted a failing round-trip on every cold-rebuild
-    // and full-history serving read and, with the previous 2k span, never finished the cold reindex.
-    // Resolve the head once and chunk immediately. getLogsRange still halves any individual chunk a node
-    // rejects or truncates, so an over-cap or oversized-response chunk is always recovered.
+    // Resolve the head once and page history proactively. The configured span
+    // should fit the providers' range limits; getLogsRange halves rejected or
+    // oversized chunks when a fallback has a smaller limit.
     const fromBlock = decodeUint(filter.fromBlock);
     const toBlock = filter.toBlock === "latest"
       ? decodeUint(await this.transport.request<string>("eth_blockNumber", []))
@@ -7740,7 +7549,7 @@ function shouldChunkLogQuery(error: unknown): boolean {
   // than the node could return intact — halving the range is the same recovery as an explicit
   // "block range too large" rejection (VEY-KANEO-461).
   return error instanceof RpcResponseParseError
-    || (error instanceof Error && /max block range|block range|too many blocks|query exceeds max results|RPC HTTP 400/i.test(error.message));
+    || (error instanceof Error && /max block range|block range|too many blocks|query exceeds max results|eth_getLogs is limited to .* range|RPC HTTP 400/i.test(error.message));
 }
 
 function shouldRetryWithoutBatch(error: unknown): boolean {

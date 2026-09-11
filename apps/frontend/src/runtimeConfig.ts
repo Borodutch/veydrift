@@ -32,6 +32,7 @@ export type RuntimeConfig = {
   referralStartPriceWei?: string | null;
   paidAllianceInviteAddress?: string | null;
   paidAllianceInviteSignerAddress?: string | null;
+  paidAllianceInviteCapabilities?: { redemption: boolean; recovery: boolean };
   resourceTokenAddresses: {
     crystal: string | null;
     deuterium: string | null;
@@ -44,6 +45,13 @@ export type RuntimeConfigState =
   | { status: "loading" }
   | { status: "ready"; config: RuntimeConfig }
   | { status: "error" };
+
+export function paidAllianceInviteCapabilitiesForRuntime(config: RuntimeConfig | undefined) {
+  // Older backends required both private keys whenever the signer was configured.
+  // Preserve that fully configured deployment during a backend-first rollout.
+  const legacyConfigured = Boolean(config?.paidAllianceInviteAddress && config.paidAllianceInviteSignerAddress);
+  return config?.paidAllianceInviteCapabilities ?? { redemption: legacyConfigured, recovery: legacyConfigured };
+}
 
 export const productionPlayableApiUrl = "https://api.veydrift.com";
 export const testPlayableApiUrl = "https://api-test.veydrift.com";
@@ -72,7 +80,7 @@ export function runtimeConfigUrl(apiUrl = playableApiUrl): string {
 // server.proxy in vite.config.ts), keep routing through it: localhost
 // origins are not in the API's CORS allowlist, only the dev server is able
 // to reach the absolute URL.
-export function apiBaseUrlForRuntimeConfig(config: RuntimeConfig, buildTimeApiUrl = playableApiUrl): string {
+export function apiBaseUrlForRuntimeConfig(config: Pick<RuntimeConfig, "apiUrl">, buildTimeApiUrl = playableApiUrl): string {
   return buildTimeApiUrl.startsWith("/") ? buildTimeApiUrl : config.apiUrl;
 }
 

@@ -42,6 +42,9 @@ describe("chainState", () => {
       startedAt: (readyAtSeconds - 108) * 1_000,
     });
     expect(progress(state.queue, halfway)).toBe(0.5);
+    // Clock ticks advance the display without rebuilding the API-derived state.
+    expect(progress(state.queue, halfway + 27_000)).toBe(0.75);
+    expect(progress(state.queue, readyAtSeconds * 1_000)).toBe(1);
   });
 
   test("derives building queue progress from the backend queue startedAt/readyAt", () => {

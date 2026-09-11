@@ -32,7 +32,6 @@ function scopeFromEnvOrGit(args) {
     backend: envBool("CI_SCOPE_BACKEND"),
     universe: envBool("CI_SCOPE_UNIVERSE"),
     contracts: envBool("CI_SCOPE_CONTRACTS"),
-    circuits: envBool("CI_SCOPE_CIRCUITS"),
     storage_layout: envBool("CI_SCOPE_STORAGE_LAYOUT"),
     full_build: envBool("CI_SCOPE_FULL_BUILD"),
   };
@@ -107,6 +106,10 @@ async function main() {
   const args = parseArgs(process.argv.slice(2));
   const scope = scopeFromEnvOrGit(args);
 
+  // Documentation-only changes must run these too; neither needs Bun or installed packages.
+  await runLogged("docs-link-tests", "node", ["--test", "scripts/veydrift-docs-links-check.test.mjs"]);
+  await runLogged("docs-check", "node", ["scripts/veydrift-docs-content-check.mjs"]);
+
   if (scope.universe) {
     await runLogged("universe-check", "bun", ["run", "check:universe"]);
     await runLogged("universe-test", "bun", ["run", "test:universe"]);
@@ -126,9 +129,6 @@ async function main() {
     await runLogged("stats-check", "bun", ["run", "check:stats"]);
   }
 
-  if (scope.circuits) {
-    await runLogged("circuits-check", "bun", ["run", "check:circuits"]);
-  }
 
   if (scope.contracts) {
     await runLogged("deployment-manifest-test", "node", [
@@ -149,7 +149,7 @@ async function main() {
     await runLogged("build", "bun", ["run", "build"]);
   }
 
-  if (!scope.frontend && !scope.backend && !scope.universe && !scope.contracts && !scope.circuits && !scope.full_build) {
+  if (!scope.frontend && !scope.backend && !scope.universe && !scope.contracts && !scope.full_build) {
     console.log("No package checks needed for this change.");
   }
 }

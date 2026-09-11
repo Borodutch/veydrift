@@ -35,7 +35,7 @@ import {
   sanitizeCoordinateDraft,
 } from "../galaxyCoordinateInput";
 import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
-import { InlineSyncIndicator } from "./VeydriftLoader";
+import { Skeleton, SkeletonRegion } from "./Skeleton";
 import { GalaxyRowsSkeleton } from "./LoadingSkeletons";
 import { InlineStateNotice } from "./InlineStateNotice";
 import { WatchablePlanetRow, type PlanetMetaItem } from "./WatchablePlanetRow";
@@ -358,7 +358,6 @@ export function GalaxyView({
         ) : null}
         <div className="grid gap-1">
           {showInitialGalaxyLoader ? <GalaxyRowsSkeleton /> : null}
-          {loading && hasCurrentSystemData ? <InlineSyncIndicator label="Refreshing galaxy" /> : null}
 
           {showInitialLoadError ? (
             <InlineStateNotice
@@ -700,7 +699,7 @@ function GalaxySlot({
               <div className="mt-2 h-3 w-44 max-w-full animate-pulse rounded bg-white/5" />
             </div>
           </div>
-          <div className="hidden justify-self-end text-xs text-cyan-100/70 sm:block">Home loading</div>
+          <SkeletonRegion className="hidden justify-self-end sm:block" label="Loading home planet"><Skeleton className="h-4 w-20" /></SkeletonRegion>
         </div>
       );
     }

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { formatIntegerAmount as fullNumber } from "../numberFormat";
 import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Recycle, ShieldAlert, Swords } from "lucide-preact";
 import { planetImageForType } from "../data/mockUniverse";
 import { formatDurationUntil } from "../durationFormat";
@@ -1058,16 +1059,6 @@ function trimCompact(value: number): string {
 function etaLabel(seconds: number | null, now: number): string {
   if (seconds === null) return "--";
   return formatDurationUntil(now + seconds * 1_000, now);
-}
-
-function fullNumber(value: string | null | undefined): string {
-  if (value === null || value === undefined) return "0";
-  try {
-    return BigInt(value).toLocaleString("en-US");
-  } catch {
-    const parsed = Number.parseFloat(value);
-    return Number.isFinite(parsed) ? Math.trunc(parsed).toLocaleString("en-US") : value;
-  }
 }
 
 function raidableResourcesLabel(target: RaidTarget): string {

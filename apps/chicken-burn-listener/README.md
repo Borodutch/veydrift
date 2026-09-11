@@ -1,7 +1,9 @@
 # Veydrift Chicken Burn Listener
 
 Standalone service that listens to Base mainnet Chicken NFT burn events and calls
-`VeydriftMoonSystem.grantMoonFromChickenBurn` on Base Sepolia.
+`VeydriftMoonSystem.grantMoonFromChickenBurn` on the configured Veydrift target chain
+(`VEYDRIFT_CHAIN_ID`, default Base Sepolia / 84532). Verify the actual chain and deployed moon-system
+address before enabling the funded signer; the default is not proof of deployment identity.
 
 It is intentionally separate from the normal Veydrift backend. It only watches the configured
 Chicken contract, backfills missed burn logs, persists processed burn ids, and submits moon grant
@@ -13,11 +15,13 @@ transactions with the configured admin key.
   secret, not source control.
 - `BASE_MAINNET_WS_RPC_URL`: Base mainnet websocket RPC for live burn subscriptions.
 - `CHICKEN_CONTRACT_ADDRESS`: Base mainnet Chicken NFT contract.
-- `VEYDRIFT_RPC_URL`: Base Sepolia self-hosted Veydrift RPC endpoint.
-- `VEYDRIFT_MOON_SYSTEM_ADDRESS`: Base Sepolia `VeydriftMoonSystem` proxy/contract address.
+- `VEYDRIFT_RPC_URL`: HTTP RPC endpoint for the verified Veydrift target chain.
+- `VEYDRIFT_MOON_SYSTEM_ADDRESS`: `VeydriftMoonSystem` address on that target chain.
 - `VEYDRIFT_GRANT_PRIVATE_KEY`: EOA authorized as the moon system owner/admin.
 
-Optional env is listed in `.env.example`. `STATE_FILE` must be durable across restarts so replayed
+Optional env is illustrated in [.env.example](.env.example); [config.ts](src/config.ts) defines
+supported variables and defaults, including `CONFIRMATION_BLOCKS` (20 source-chain blocks by default).
+`STATE_FILE` must be durable across restarts so replayed
 logs do not resubmit already handled burns. The contract also stores `chickenBurnMoonGranted(burnId)`
 as an on-chain replay guard.
 

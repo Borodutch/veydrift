@@ -1,9 +1,15 @@
-import { h, render } from "preact";
+import { h, render, options, type VNode } from "preact";
+import { BackendDataStore, backendDataStoreFor } from "../../src/backendDataStore";
+import { useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useBackendDataSnapshots } from "../../src/useBackendDataSnapshot";
+import { apiBaseUrlForRuntimeConfig } from "../../src/runtimeConfig";
 import { FirstPlanetSettlementApp } from "../../src/FirstPlanetSettlementApp";
 import { PlayableMvpApp } from "../../src/PlayableMvpApp";
+import { UiClock } from "../../src/useUiClock";
 import { PlanetDetail } from "../../src/components/PlanetDetail";
 import { PublicMoonDetail } from "../../src/components/PublicMoonDetail";
 import { initSfx } from "../../src/sfx";
+import { TopBar } from "../../src/components/TopBar";
 import type { Coordinates } from "../../src/types";
 import type { Eip1193Provider, ManagedPlanetResponse } from "../../src/walletFlow";
 import "../../src/styles.css";
@@ -20,6 +26,10 @@ declare global {
       beginDetailRace(kind: "moon" | "planet"): void;
       pendingDetailRequests(): string[];
       resolveDetailRequest(key: string): void;
+      renderResourceBar(scope: string, metal: number): void;
+      rootRenderMs: number[];
+      clockRenders: number;
+      refreshMissionQueries(): Promise<unknown>;
     };
   }
 }
@@ -28,6 +38,11 @@ const account = "0x1111111111111111111111111111111111111111";
 const unrelatedOwner = "0x9999999999999999999999999999999999999999";
 const appRoot = document.querySelector("#app") as HTMLElement;
 const fixtureParams = new URLSearchParams(window.location.search);
+// Only the isolated memo probe needs this module up front. Eagerly importing it
+// in every fixture bypasses the real app's lazy-route failure path.
+const MissionControlPage = fixtureParams.get("missionMemoProbe") === "true"
+  ? (await import("../../src/components/MissionControlPage")).MissionControlPage
+  : () => null;
 const route = fixtureParams.get("route") ?? "/planet/9/9/9";
 const settlementShell = fixtureParams.get("shell") === "settlement";
 const incompleteOverview = fixtureParams.get("incompleteOverview") === "true";
@@ -35,6 +50,8 @@ const stallMissionBackgroundReads = fixtureParams.get("stallMissionBackgroundRea
 const walletEventOnPointerDown = fixtureParams.get("walletEventOnPointerDown");
 const audioContextFailure = fixtureParams.get("audioContextFailure") === "true";
 const shortResources = fixtureParams.get("shortResources") === "true";
+const publicTreasury = fixtureParams.get("publicTreasury") === "true";
+const moonOverview = fixtureParams.get("moonOverview") === "true";
 const selectedPlanetResources = shortResources
   ? { crystal: "5", deuterium: "2", metal: "10" }
   : { crystal: "3873", deuterium: "102", metal: "10313" };
@@ -44,7 +61,8 @@ const ownedPlanets = [
     galaxy: 1,
     isHomePlanet: true,
     name: "Owned Alpha",
-    planetId: "owned-a",
+    moon: moonOverview || fixtureParams.get("activeMission") === "true" ? { exists: true } : null,
+    planetId: "101",
     position: 3,
     resources: selectedPlanetResources,
     system: 2,
@@ -53,7 +71,7 @@ const ownedPlanets = [
     galaxy: 4,
     isHomePlanet: false,
     name: "Owned Beta",
-    planetId: "owned-b",
+    planetId: "102",
     position: 6,
     resources: { crystal: "201", deuterium: "202", metal: "203" },
     system: 5,
@@ -61,9 +79,9 @@ const ownedPlanets = [
 ];
 
 const publicSystems = new Map([
-  ["1:2", systemPayload(1, 2, 3, "Owned Alpha Public", account, "owned-a", 1101, true)],
-  ["4:5", systemPayload(4, 5, 6, "Owned Beta Public", account, "owned-b", 2202, false)],
-  ["9:9", systemPayload(9, 9, 9, "Unrelated Gamma", unrelatedOwner, "unrelated", 9909, true)],
+  ["1:2", systemPayload(1, 2, 3, "Owned Alpha Public", account, "101", 1101, true)],
+  ["4:5", systemPayload(4, 5, 6, "Owned Beta Public", account, "102", 2202, false)],
+  ["9:9", systemPayload(9, 9, 9, "Unrelated Gamma", unrelatedOwner, "9909", 9909, true)],
 ]);
 publicSystems.get("1:2")?.planets.push(
   systemPayload(1, 2, 9, "Nearby Rival", unrelatedOwner, "nearby-rival", 4404, true).planets[0]!,
@@ -161,12 +179,17 @@ globalThis.fetch = (async (input, init) => {
   if (url.pathname.endsWith("/runtime-config")) {
     await new Promise((resolve) => setTimeout(resolve, 25));
     return Response.json({
-      allianceContractAddress: null,
+      allianceContractAddress: publicTreasury ? "0x3333333333333333333333333333333333333333" : null,
+      ...(publicTreasury ? {
+        paidAllianceInviteAddress: "0x4444444444444444444444444444444444444444",
+        paidAllianceInviteSignerAddress: null,
+        paidAllianceInviteCapabilities: { redemption: false, recovery: false },
+      } : {}),
       apiUrl: `${window.location.origin}/api`,
       chainId: settlementShell ? 8453 : 84532,
       contractAddress: "0x2222222222222222222222222222222222222222",
       featureSupport: {
-        allianceConfigured: false,
+        allianceConfigured: publicTreasury,
         gameConfigured: true,
         highscoresEndpoint: true,
         moonConfigured: false,
@@ -190,6 +213,37 @@ globalThis.fetch = (async (input, init) => {
 
   if (url.pathname.endsWith(`/wallet/${account}/settlement`)) {
     return Response.json(walletOverview().settlement);
+  }
+
+  if (url.pathname.endsWith(`/wallet/${account}/planets`)) {
+    return Response.json(walletOverview().planetsResponse);
+  }
+  if (url.pathname.endsWith(`/wallet/${account}/queues`)) {
+    return Response.json(walletOverview().queues);
+  }
+  if (url.pathname.endsWith(`/wallet/${account}/fleet-visibility`)) {
+    return Response.json(walletOverview().fleetVisibility);
+  }
+  if (url.pathname.endsWith("/missions") && url.searchParams.get("status") === "active") {
+    if (url.searchParams.get("summaryOnly") === "true") return Response.json({ totalEntries: Number(fixtureParams.get("activeMissionCount") ?? (fixtureParams.get("activeMission") === "true" ? 1 : 0)) });
+    return Response.json({ missions: Array.from({ length: Number(fixtureParams.get("activeMissionCount") ?? (fixtureParams.get("activeMission") === "true" ? 1 : 0)) }, (_, index) => ({
+      missionId: String(777 + index),
+      status: "Outbound",
+      missionType: "Transport",
+      owner: unrelatedOwner,
+      originPlanetId: "101",
+      targetPlanetId: "102",
+      arrivalAt: String(Math.floor(Date.now() / 1000) + 3600),
+      returnAt: String(Math.floor(Date.now() / 1000) + 7200),
+      fuelCost: "0",
+      recallCost: null,
+      attackGroupId: null,
+      joinedAttackMissionIds: [],
+      cargo: { metal: "10", crystal: "0", deuterium: "0" },
+      ships: {},
+      transactionHash: "0xfixture",
+      blockNumber: "1",
+    })) });
   }
 
   if (url.pathname.endsWith(`/wallet/${account}/missions`)) {
@@ -217,6 +271,24 @@ globalThis.fetch = (async (input, init) => {
     });
   }
 
+  if (url.pathname.endsWith(`/wallet/${unrelatedOwner}/planets`)) {
+    return Response.json({ wallet: unrelatedOwner, homePlanetId: null, planets: [] });
+  }
+  if (url.pathname.endsWith(`/wallet/${unrelatedOwner}/highscore`)) {
+    return Response.json({ entry: {
+      wallet: unrelatedOwner, homePlanetId: null, planetCount: 0, rank: 3,
+      displayName: "Public Commander", profile: { wallet: unrelatedOwner, displayName: "Public Commander", description: "Public biography" },
+      score: { total: "100", economy: "100", research: "0", researchLevels: "0", military: "0", fleet: "0", fleetCount: "0", defense: "0" },
+      alliance: null
+    } });
+  }
+  if (url.pathname.endsWith("/alliance/8")) {
+    return Response.json({ alliance: {
+      allianceId: "8", active: true, createdAt: "1770000000", description: "Public roster fixture",
+      memberCount: 1, name: "Other Fleet", owner: unrelatedOwner, tag: "OTHER",
+      members: [{ address: unrelatedOwner, displayName: "Public Admiral", role: "owner", joinedAt: "1770000000", totalScore: "100" }]
+    } });
+  }
   if (url.pathname.endsWith(`/wallet/${account}/profile`)) {
     return Response.json({
       description: null,
@@ -247,11 +319,33 @@ globalThis.fetch = (async (input, init) => {
         totalMemberScore: "12345",
       }],
       members: [],
-      membership: { allianceId: "0", joinedAt: "0", role: "none" },
+      membership: publicTreasury
+        ? { allianceId: "7", joinedAt: "1770000000", role: "owner" }
+        : { allianceId: "0", joinedAt: "0", role: "none" },
       pendingInvites: [],
       pendingJoinRequests: [],
-      profile: null,
+      profile: publicTreasury ? {
+        active: true, createdAt: "1770000000", description: "Public treasury fixture",
+        memberCount: 1, name: "Fixture Fleet", owner: account, tag: "FIX",
+        bonusBalance: { metal: "39409", crystal: "20657", deuterium: "7056" },
+        privateInviteStats: { remaining: 0, used: 8 },
+      } : null,
       wallet: account,
+    });
+  }
+
+  if (url.pathname.endsWith(`/wallet/${account}/supply-sources`)) {
+    return Response.json({
+      wallet: account,
+      fleetSlots: { active: 0, limit: 1 },
+      fleetLaunchAvailable: true,
+      technologyLevels: { "3": 6, "6": 2 },
+      sources: ownedPlanets.filter(planet => planet.planetId !== url.searchParams.get("planetId")).map(planet => ({
+        planetId: planet.planetId, name: planet.name, coordinates: planet.coordinates,
+        galaxy: planet.galaxy, system: planet.system, position: planet.position,
+        resources: { metal: "10000", crystal: "10000", deuterium: "10000" },
+        launchableShips: [{ id: 0, count: 5 }],
+      })),
     });
   }
 
@@ -278,19 +372,21 @@ globalThis.fetch = (async (input, init) => {
   }
 
   if (url.pathname.endsWith(`/wallet/${account}/infrastructure`)) {
+    const planet = ownedPlanets.find((planet) => planet.planetId === url.searchParams.get("planetId")) ?? ownedPlanets[0]!;
     return Response.json({
       buildings: [
         { id: 0, level: 4, cost: { crystal: "30", deuterium: "0", metal: "120" }, durationSeconds: 60 },
         { id: 3, level: 5, cost: { crystal: "60", deuterium: "0", metal: "150" }, durationSeconds: 90 },
+        ...(publicTreasury ? [{ id: 15, level: 1, cost: { crystal: "0", deuterium: "0", metal: "0" }, durationSeconds: 60 }] : []),
       ],
       energyBalance: { available: "20", consumed: "80", produced: "100" },
-      homePlanetId: "owned-a",
+      homePlanetId: "101",
       infrastructureAvailable: true,
-      planetId: "owned-a",
+      planetId: planet.planetId,
       productionPerHour: { crystal: "238", deuterium: "71", metal: "620" },
       queue: null,
-      resources: selectedPlanetResources,
-      resourcesAsOfNow: selectedPlanetResources,
+      resources: planet.resources,
+      resourcesAsOfNow: planet.resources,
       storageCaps: { crystal: "10000", deuterium: "10000", metal: "10000" },
       wallet: account,
     });
@@ -301,8 +397,12 @@ globalThis.fetch = (async (input, init) => {
       buildings: [],
       defenseQueue: null,
       defenses: [],
-      homePlanetId: "owned-a",
-      moon: null,
+      homePlanetId: "101",
+      moon: moonOverview ? { exists: true, planetId: "101" } : null,
+      ...(moonOverview ? {
+        resources: { metal: "1234", crystal: "567", deuterium: "890" },
+        launchableShips: [{ id: 0, count: 3, cost: { metal: "0", crystal: "0", deuterium: "0" } }],
+      } : {}),
       queue: null,
       wallet: account,
     });
@@ -316,7 +416,7 @@ globalThis.fetch = (async (input, init) => {
         durationSeconds: 60,
         id: 0,
       }],
-      homePlanetId: "owned-a",
+      homePlanetId: "101",
       missileSiloLevel: 0,
       naniteLevel: 0,
       productionAvailable: true,
@@ -331,8 +431,8 @@ globalThis.fetch = (async (input, init) => {
 
   if (url.pathname.endsWith(`/wallet/${account}/research`)) {
     return Response.json({
-      homePlanetId: "owned-a",
-      planetId: "owned-a",
+      homePlanetId: "101",
+      planetId: "101",
       queue: null,
       researchAvailable: true,
       researchLabLevel: 1,
@@ -384,6 +484,12 @@ document.addEventListener("pointerdown", (event) => {
 window.inspectorProof = {
   account,
   appReady: false,
+  rootRenderMs: [],
+  clockRenders: 0,
+  refreshMissionQueries: () => backendDataStoreFor(apiBaseUrlForRuntimeConfig({ apiUrl: `${window.location.origin}/api` })).invalidate(["kind:global-active-missions", "kind:global-active-mission-count"]),
+  renderResourceBar(scope, metal) {
+    render(<TopBar resourceScope={scope} resources={{ metal, crystal: 222, deuterium: 333 }} rates={{ metal: 10, crystal: 20, deuterium: 30 }} caps={{ metal: 10000, crystal: 10000, deuterium: 10000 }} isWalletConnected resourceStatus="ready" />, appRoot);
+  },
   errors: fixtureErrors,
   interactions: fixtureInteractions,
   requests: fixtureRequests,
@@ -417,6 +523,24 @@ window.inspectorProof = {
   },
 };
 
+// Opt-in profiling in the isolated test page; never installed in the game bundle.
+if (fixtureParams.get("profileRoot") === "true") {
+  const hooks = options as typeof options & { __r?: (vnode: VNode) => void };
+  const beforeRender = hooks.__r;
+  const afterDiff = hooks.diffed;
+  const starts = new WeakMap<VNode, number>();
+  hooks.__r = vnode => {
+    beforeRender?.(vnode);
+    if (vnode.type === PlayableMvpApp) starts.set(vnode, performance.now());
+    if (vnode.type === UiClock) window.inspectorProof.clockRenders++;
+  };
+  hooks.diffed = vnode => {
+    afterDiff?.(vnode);
+    const start = starts.get(vnode);
+    if (start !== undefined) window.inspectorProof.rootRenderMs.push(performance.now() - start);
+  };
+}
+
 history.replaceState({ fixture: true }, "", route);
 if (audioContextFailure) {
   Object.defineProperty(window, "AudioContext", {
@@ -428,7 +552,11 @@ if (audioContextFailure) {
     },
   });
 }
-if (settlementShell) {
+if (fixtureParams.get("missionMemoProbe") === "true") {
+  render(<MissionMemoProbe />, appRoot);
+} else if (fixtureParams.get("snapshotProbe") === "true") {
+  render(<SnapshotProbe />, appRoot);
+} else if (settlementShell) {
   Object.defineProperty(window, "ethereum", { configurable: true, value: provider });
   render(<FirstPlanetSettlementApp />, appRoot);
 } else {
@@ -436,6 +564,56 @@ if (settlementShell) {
 }
 initSfx();
 window.inspectorProof.appReady = true;
+
+function MissionMemoProbe() {
+  const [tick, setTick] = useState(0);
+  const [version, setVersion] = useState(0);
+  const reads = useRef(0);
+  const fleetVisibility = useMemo(() => ({
+    wallet: account, homePlanetId: "7", allianceId: null, incoming: [], returning: [],
+    joinableAttacks: [], joinableDefenses: [], completedMissions: [], battleReports: [],
+    get outgoing() {
+      reads.current++;
+      return [{ missionId: String(700 + version), status: "Outbound" as const, missionType: "Transport" as const,
+        owner: account, originPlanetId: "7", targetPlanetId: "8", arrivalAt: "1770003600", returnAt: "1770007200",
+        fuelCost: "0", recallCost: null, attackGroupId: null, joinedAttackMissionIds: [],
+        cargo: { metal: "10", crystal: "0", deuterium: "0" }, ships: {}, transactionHash: "0xfixture", blockNumber: "1" }];
+    },
+  }), [version]);
+  useLayoutEffect(() => {
+    document.querySelector<HTMLElement>("[data-mission-memo-probe]")!.dataset.reads = String(reads.current);
+  });
+  return <div data-mission-memo-probe data-tick={tick} data-version={version}>
+    <button data-tick onClick={() => setTick(tick + 1)}>Tick</button>
+    <button data-replace onClick={() => setVersion(version + 1)}>Replace feed</button>
+    <MissionControlPage actionState={{ status: "idle" }} canTransact={false} fleetVisibility={fleetVisibility}
+      loading={false} now={1770000000000 + tick * 1000}
+      onCounterplay={() => {}} onJoinAttack={() => {}} onOpenReport={() => {}}
+      onOpenReportList={() => {}} onRecall={() => {}} onRefresh={() => {}} />
+  </div>;
+}
+
+function SnapshotProbe() {
+  const store = useMemo(() => new BackendDataStore("https://snapshot-probe.invalid"), []);
+  const [selected, select] = useState("a");
+  const [tick, setTick] = useState(0);
+  const key = store.key("probe", selected);
+  const snapshots = useBackendDataSnapshots<string>(store, [key]);
+  const previous = useRef(snapshots);
+  const changes = useRef(0);
+  if (previous.current !== snapshots) changes.current++;
+  previous.current = snapshots;
+  useLayoutEffect(() => {
+    // Complete between render and the passive subscription effect.
+    void store.refresh(key, async () => selected);
+  }, [key]);
+  useLayoutEffect(() => () => store.dispose(), [store]);
+  return <div data-snapshot-probe data-changes={changes.current} data-tick={tick}>
+    <output>{snapshots.get(key)?.data ?? "pending"}</output>
+    <button onClick={() => setTick(tick + 1)}>Rerender</button>
+    <button onClick={() => select(selected === "a" ? "b" : "a")}>Switch query</button>
+  </div>;
+}
 
 function renderDetail(kind: "moon" | "planet", coords: Coordinates) {
   const props = {

@@ -1,7 +1,7 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, setSystemTime, test } from "bun:test";
 import { CachedChainReader } from "./cachedReader";
-import type { Address, AllianceIdentity, ChainReader } from "./evm";
-import type { HighscoreEntry } from "./highscores";
+import type { Address, AttackProtectionStatus, ChainReader } from "./evm";
+afterEach(() => setSystemTime());
 
 const wallet = "0x2222222222222222222222222222222222222222" as Address;
 
@@ -35,67 +35,41 @@ describe("CachedChainReader", () => {
     expect(bodyCalls).toEqual([false, true]);
   });
 
-  test("preserves optional highscore support from the wrapped reader", async () => {
+
+  test("an expired failed request cannot evict its replacement", async () => {
+    setSystemTime(new Date(1000));
+    let reject!: (error: Error) => void;
     let calls = 0;
-    const entry: HighscoreEntry = {
-      wallet,
-      homePlanetId: "7",
-      planetCount: 1,
-      totalUserScore: "1000",
-      score: {
-        total: "15",
-        economy: "0",
-        research: "1",
-        researchLevels: "1",
-        military: "14",
-        fleet: "8",
-        fleetCount: "2",
-        defense: "6"
-      }
-    };
-    const inner = {
-      async getHighscoreForWallet() {
-        calls += 1;
-        return entry;
-      }
-    } as unknown as ChainReader;
-
-    const cached = new CachedChainReader(inner);
-
-    await expect(cached.getHighscoreForWallet(wallet, ["7"])).resolves.toEqual(entry);
-    await expect(cached.getHighscoreForWallet(wallet, ["7"])).resolves.toEqual(entry);
-    expect(calls).toBe(1);
+    const result = { allowed: true } as AttackProtectionStatus;
+    const cached = new CachedChainReader({
+      getAttackProtectionStatus: () => ++calls === 1
+        ? new Promise<AttackProtectionStatus>((_resolve, fail) => { reject = fail; })
+        : Promise.resolve(result),
+    });
+    const first = cached.getAttackProtectionStatus(wallet, 7n);
+    const caught = first.catch(() => {});
+    await Promise.resolve();
+    setSystemTime(new Date(4000));
+    const replacement = cached.getAttackProtectionStatus(wallet, 7n);
+    reject(new Error("Old request failed"));
+    await caught;
+    expect(await replacement).toBe(result);
+    expect(await cached.getAttackProtectionStatus(wallet, 7n)).toBe(result);
+    expect(calls).toBe(2);
   });
 
-  test("preserves optional alliance intel support from the wrapped reader", async () => {
-    const otherWallet = "0x3333333333333333333333333333333333333333" as Address;
-    const alliance: AllianceIdentity = {
-      allianceId: "3",
-      name: "Veydrift Union",
-      tag: "VDFT"
-    };
+  test("bounds retained targets and expires old entries", async () => {
+    setSystemTime(new Date(1000));
     let calls = 0;
-    const inner = {
-      async getAllianceIntelForPlayers(wallets: readonly Address[]) {
-        calls += 1;
-        expect(wallets).toEqual([wallet, otherWallet]);
-        return new Map<Address, AllianceIdentity>([
-          [wallet, alliance],
-          [otherWallet, alliance]
-        ]);
-      }
-    } as unknown as ChainReader;
-
-    const cached = new CachedChainReader(inner);
-
-    await expect(cached.getAllianceIntelForPlayers([wallet, otherWallet, wallet])).resolves.toEqual(new Map<Address, AllianceIdentity>([
-      [wallet, alliance],
-      [otherWallet, alliance]
-    ]));
-    await expect(cached.getAllianceIntelForPlayers([otherWallet, wallet])).resolves.toEqual(new Map<Address, AllianceIdentity>([
-      [wallet, alliance],
-      [otherWallet, alliance]
-    ]));
-    expect(calls).toBe(1);
+    const cached = new CachedChainReader({
+      getAttackProtectionStatus: async () => { calls++; return { allowed: true } as AttackProtectionStatus; },
+    });
+    for (let target = 0; target < 513; target++) await cached.getAttackProtectionStatus(wallet, BigInt(target));
+    await cached.getAttackProtectionStatus(wallet, 0n);
+    expect(calls).toBe(514);
+    setSystemTime(new Date(4000));
+    await cached.getAttackProtectionStatus(wallet, 0n);
+    expect(calls).toBe(515);
+    expect(cached).not.toHaveProperty("getWalletSettlement");
   });
 });

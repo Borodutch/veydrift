@@ -81,11 +81,15 @@ function anyMatch(files, pattern) {
 }
 
 export function filesRequireBackendChecks(files) {
-  return anyMatch(files, /^(apps\/backend|packages\/universe)\//)
+  return anyMatch(files, /^(apps\/backend|packages\/(universe|api-types))\//)
     || anyMatch(
       files,
       /^scripts\/(ci-(run-scoped-checks|scope)|veydrift-api-(latency-report|route-benchmark))(\.test)?\.mjs$/,
     );
+}
+
+export function filesRequireFrontendChecks(files) {
+  return anyMatch(files, /^(apps\/(frontend|stats)|packages\/(universe|api-types))\//);
 }
 
 export function filesRequireContractChecks(files) {
@@ -116,7 +120,6 @@ export function computeScope(options = {}) {
     backend: false,
     universe: false,
     contracts: false,
-    circuits: false,
     storage_layout: false,
     full_build: false,
     changed_count: files.length,
@@ -127,20 +130,17 @@ export function computeScope(options = {}) {
     scope.backend = true;
     scope.universe = true;
     scope.contracts = true;
-    scope.circuits = true;
     scope.full_build = true;
   } else if (repoWide) {
     scope.frontend = true;
     scope.backend = true;
     scope.universe = true;
     scope.contracts = true;
-    scope.circuits = true;
   } else {
-    scope.frontend = anyMatch(files, /^(apps\/(frontend|stats)|packages\/universe)\//);
+    scope.frontend = filesRequireFrontendChecks(files);
     scope.backend = filesRequireBackendChecks(files);
     scope.universe = anyMatch(files, /^packages\/universe\//);
     scope.contracts = filesRequireContractChecks(files);
-    scope.circuits = anyMatch(files, /^packages\/circuits\//);
   }
 
   scope.storage_layout =
@@ -151,7 +151,7 @@ export function computeScope(options = {}) {
     );
 
   scope.any_package_check =
-    scope.frontend || scope.backend || scope.universe || scope.contracts || scope.circuits || scope.full_build;
+    scope.frontend || scope.backend || scope.universe || scope.contracts || scope.full_build;
   scope.files = files;
   return scope;
 }
@@ -181,7 +181,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     console.log(JSON.stringify(scope, null, 2));
   } else {
     console.log(
-      `changed=${scope.changed_count} frontend=${scope.frontend} backend=${scope.backend} universe=${scope.universe} contracts=${scope.contracts} circuits=${scope.circuits} storage_layout=${scope.storage_layout} full_build=${scope.full_build}`,
+      `changed=${scope.changed_count} frontend=${scope.frontend} backend=${scope.backend} universe=${scope.universe} contracts=${scope.contracts} storage_layout=${scope.storage_layout} full_build=${scope.full_build}`,
     );
   }
 }

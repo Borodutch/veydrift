@@ -30,3 +30,15 @@ survivors, defense repairs, ACS joined/counterplay survivors, and the large-stac
 rapidfire approximation against this model. When a fixture fails, the assertion
 label identifies the drifted mechanic: outcome, rounds, losses, debris, or a
 specific survivor inventory.
+
+## Indexed battle reports
+
+Resolve defender state at impact time, not at a late resolver's current time. Report snapshots and
+losses must come from the combat transaction's ordered count events and immutable fleet snapshots,
+never the target's current inventory.
+
+- Keep planet/moon fleet losses, stationed-fleet losses and static-defense losses separate.
+- `CombatLosses.defender*` measures fleet value, not static-defense costs. Show defense destruction,
+  restoration and net loss separately; defense losses do not create fleet debris.
+- Attribute stationed-fleet destroyed counts only when the event evidence uniquely identifies them.
+  Unknown allocation is not zero loss. A wiped defender still needs its pre-battle snapshot.

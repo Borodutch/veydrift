@@ -1,29 +1,30 @@
 import { useState } from "preact/hooks";
-import type { BuildingKey, ResearchKey, Resources, ShipKey, UnlockRequirement } from "../playableMvp";
-import { canAfford, missingUnlockRequirements, shipCatalog, shipyardCatalog, shipCombatStats, shipSpecRows } from "../playableMvp";
-import { formatMissingResources } from "../buildingDetails";
-import { formatDuration } from "../durationFormat";
 import { supplyResourceShortfall, type SupplyResources } from "../batchSupplyPlanner";
+import { formatMissingResources } from "../buildingDetails";
+import { resourcesFromChain, technologyLevelsByKey } from "../chainState";
+import type { ConstructionProgress } from "../constructionProgress";
+import { formatDuration } from "../durationFormat";
+import { formatStatValue } from "../numberFormat";
+import type { BuildingKey, ResearchKey, Resources, ShipKey, UnlockRequirement } from "../playableMvp";
+import { canAfford, missingUnlockRequirements, shipCatalog, shipCombatStats, shipSpecRows, shipyardCatalog } from "../playableMvp";
 import { activeProductionQueue } from "../productionQueueFallback";
 import { walletRecoveryActionMessage, type ChainShipyardState } from "../walletFlow";
+import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailableNotice";
+import { ShipyardSkeleton } from "./LoadingSkeletons";
 import {
   adaptProductionItems,
+  formatProductionPrice,
   maxAffordableProductionQuantity,
   Notice,
-  formatProductionPrice,
+  productionQueueViewModel,
   ProductionSection,
+  scaleProductionCost,
   type ProductionCatalogItem,
   type ProductionDetailSection,
   type ProductionQuantityInput,
   type ProductionRequirementState,
-  productionQueueViewModel,
-  scaleProductionCost,
 } from "./ProductionCatalog";
-import { refreshButtonState } from "./PageHeader";
 import type { RequirementTarget } from "./RequirementFlairs";
-import { ProductionCatalogSkeleton } from "./LoadingSkeletons";
-import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailableNotice";
-import type { ConstructionProgress } from "../constructionProgress";
 
 type ShipyardActionState =
   | { status: "idle" }
@@ -58,9 +59,6 @@ const groupLabels = {
   special: "Satellites and specials",
 } as const;
 
-export function shipyardRefreshButtonState(loading: boolean): { disabled: boolean; label: "Refresh" | "Refreshing" } {
-  return refreshButtonState(loading);
-}
 
 export function shouldShowShipyardInitialLoader({
   loading,
@@ -97,7 +95,7 @@ export function ShipyardPage({
   // VEY-KANEO-473: gate on the canonical settled-to-now balance (`resourcesAsOfNow`) the top bar
   // uses, falling back to the raw settled snapshot only when the accrued field is absent — so the
   // shipyard affordability number can never disagree with the bar.
-  const resources = toResources(shipyardState?.resourcesAsOfNow ?? shipyardState?.resources);
+  const resources = resourcesFromChain(shipyardState?.resourcesAsOfNow ?? shipyardState?.resources);
   const queue = activeProductionQueue(shipyardState?.queue, overviewQueue, "ship");
   const productionAvailable = shipyardState?.productionAvailable !== false;
   const initialLoading = shouldShowShipyardInitialLoader({ loading, shipyardState });
@@ -112,7 +110,7 @@ export function ShipyardPage({
       />
 
       {initialLoading ? (
-        <ProductionCatalogSkeleton groups={[4, 8, 3]} label="Loading shipyard" />
+        <ShipyardSkeleton />
       ) : (
         <ProductionSection
           actionPending={actionState.status === "pending"}
@@ -247,7 +245,7 @@ export function shipProductionItems({
     const chainShip = shipyardState?.ships.find((item) => item.id === ship.id);
     const shipUnavailable = Boolean(shipyardState) && productionAvailable && !chainShip;
     const owned = productionAvailable && chainShip ? chainShip.count : undefined;
-    const baseCost = productionAvailable && chainShip ? toResources(chainShip.cost) : undefined;
+    const baseCost = productionAvailable && chainShip ? resourcesFromChain(chainShip.cost) : undefined;
     const totalCost = baseCost && quantityValid ? scaleProductionCost(baseCost, quantity) : undefined;
     // Backend-sourced per-unit build time scaled by the selected quantity (VEY-KANEO-472).
     const durationSeconds = chainShip?.durationSeconds === undefined
@@ -400,9 +398,6 @@ function formatShipSpecValue(ship: (typeof shipCatalog)[number], label: string, 
   return value;
 }
 
-function formatStatValue(value: number | string): string {
-  return typeof value === "number" ? value.toLocaleString("en-US") : value;
-}
 
 export function getMissingRequirements(
   ship: (typeof shipCatalog)[number],
@@ -426,7 +421,7 @@ export function getShipRequirementStates(
   return uniqueRequirements(ship.requirements).map((requirement) => {
     const actual = requirement.kind === "building"
       ? levels.buildings[requirement.key as keyof typeof levels.buildings] ?? 0
-      : levels.research[requirement.key as string] ?? 0;
+      : levels.research[requirement.key as keyof typeof levels.research] ?? 0;
 
     return {
       label: `${requirement.label} ${requirement.level}`,
@@ -493,40 +488,4 @@ function queuedShipCount(shipId: number, queue?: ChainShipyardState["queue"] | u
     }
   }
   return quantity;
-}
-
-function toResources(resources: ChainShipyardState["resources"] | ChainShipyardState["ships"][number]["cost"] | null | undefined): Resources | undefined {
-  if (!resources) return undefined;
-  return {
-    metal: Number(resources.metal),
-    crystal: Number(resources.crystal),
-    deuterium: Number(resources.deuterium),
-  };
-}
-
-const technologyIdByKey: Partial<Record<string, number>> = {
-  energy: 0,
-  laser: 1,
-  ion: 2,
-  combustionDrive: 3,
-  computer: 4,
-  weapons: 5,
-  shielding: 6,
-  armor: 7,
-  hyperspace: 8,
-  impulseDrive: 9,
-  hyperspaceDrive: 10,
-  plasma: 11,
-  astrophysics: 12,
-  intergalacticResearchNetwork: 13,
-  graviton: 14,
-};
-
-function technologyLevelsByKey(levels: Record<string, number> | undefined) {
-  return Object.fromEntries(
-    Object.entries(technologyIdByKey).map(([key, id]) => [
-      key,
-      id === undefined ? 0 : levels?.[id.toString()] ?? 0,
-    ]),
-  );
 }

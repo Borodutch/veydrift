@@ -1,3 +1,4 @@
+import { refreshButtonState as researchRefreshButtonState } from "../src/components/PageHeader";
 import { describe, expect, test } from "bun:test";
 import type { ComponentChildren, VNode } from "preact";
 import {
@@ -16,7 +17,6 @@ import {
   researchLevelInfoRows,
   researchRefreshErrorLabel,
   researchActionStatus,
-  researchRefreshButtonState,
   sortResearchUnlockRows,
   shouldHideResearchValues,
 } from "../src/components/ResearchPage";

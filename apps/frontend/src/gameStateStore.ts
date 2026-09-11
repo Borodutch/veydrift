@@ -1,24 +1,17 @@
 export type GameStateFreshness = "fresh" | "refreshing" | "delayed" | "failed";
 
-export type GameStatePriority = "transaction" | "selected-planet" | "mission-control" | "background";
-
 export type GameStateEntry<T = unknown> = {
   data?: T | undefined;
   error?: string | undefined;
   freshness: GameStateFreshness;
   generation: number;
-  indexRevision?: string | undefined;
   lastSuccessfulUpdate?: number | undefined;
   wallet?: string | undefined;
   planetId?: string | undefined;
 };
 
 export type GameStateReadOptions = {
-  dedupe?: boolean;
-  deadlineMs?: number | undefined;
   planetId?: string | undefined;
-  priority?: GameStatePriority | undefined;
-  scope?: string | undefined;
   wallet?: string | undefined;
 };
 
@@ -30,7 +23,6 @@ type InFlightRead<T = unknown> = {
   /** The request consumer may time out before an AbortSignal-aware transport
    * actually settles. Keep its canonical identity until then. */
   settled: Promise<void>;
-  scope?: string | undefined;
 };
 
 export class GameStateStore {
@@ -88,14 +80,13 @@ export class GameStateStore {
     return this.snapshot<T>(key)?.data;
   }
 
-  publish<T>(key: string, data: T, options: Omit<GameStateReadOptions, "dedupe" | "deadlineMs" | "priority" | "scope"> = {}): void {
+  publish<T>(key: string, data: T, options: GameStateReadOptions = {}): void {
     if (this.disposed) return;
     const generation = this.nextGeneration(key);
     this.entries.set(key, {
       data,
       freshness: "fresh",
       generation,
-      indexRevision: backendIndexRevision(data),
       lastSuccessfulUpdate: Date.now(),
       planetId: options.planetId,
       wallet: normalizeWallet(options.wallet),
@@ -206,7 +197,6 @@ export class GameStateStore {
             data,
             freshness: "fresh",
             generation,
-            indexRevision: backendIndexRevision(data),
             lastSuccessfulUpdate: Date.now(),
             planetId: options.planetId,
             wallet: normalizeWallet(options.wallet),
@@ -233,34 +223,12 @@ export class GameStateStore {
         this.activeReads.delete(request as InFlightRead);
         if (this.inFlight.get(key) === request) this.inFlight.delete(key);
       });
-    request = { controller, generation, key, promise, settled: promise.then(() => {}, () => {}), scope: options.scope };
+    request = { controller, generation, key, promise, settled: promise.then(() => {}, () => {}) };
     this.inFlight.set(key, request);
     this.activeReads.add(request as InFlightRead);
     return promise;
   }
 
-  cancelScope(scope: string): void {
-    const cancelledKeys = new Set<string>();
-    for (const request of [...this.activeReads]) {
-      if (request.scope !== scope) continue;
-      cancelledKeys.add(request.key);
-      request.controller.abort(new DOMException(`Cancelled ${scope} request`, "AbortError"));
-      this.activeReads.delete(request);
-      // Keep the logical request until its underlying transport settles. A
-      // cancellation only ends this consumer; abort is cooperative.
-    }
-    for (const key of cancelledKeys) {
-      const generation = this.nextGeneration(key);
-      const current = this.entries.get(key);
-      this.entries.set(key, {
-        ...current,
-        error: undefined,
-        freshness: current?.data === undefined ? "delayed" : "fresh",
-        generation,
-      });
-    }
-    if (cancelledKeys.size > 0) this.emit(cancelledKeys);
-  }
 
   /** Terminal cleanup for a discarded API-base store. Abort active
    * reads so an obsolete runtime configuration cannot publish after
@@ -295,25 +263,6 @@ export class GameStateStore {
       for (const listener of this.listenersByKey.get(key) ?? []) listener();
     }
   }
-}
-
-export function backendIndexRevision(value: unknown): string | undefined {
-  if (!value || typeof value !== "object") return undefined;
-  const record = value as Record<string, unknown>;
-  const direct = record.indexRevision ?? record.indexedRevision ?? record.revision ?? record.indexedBlock ?? record.blockNumber ?? record.generatedAt;
-  if (typeof direct === "string" || typeof direct === "number" || typeof direct === "bigint") return String(direct);
-  const resourceSnapshot = record.resourceSnapshot;
-  if (resourceSnapshot && typeof resourceSnapshot === "object") {
-    const blockNumber = (resourceSnapshot as Record<string, unknown>).blockNumber;
-    if (typeof blockNumber === "string" || typeof blockNumber === "number" || typeof blockNumber === "bigint") {
-      return String(blockNumber);
-    }
-  }
-  for (const nestedKey of ["fleetVisibility", "settlement", "planet"]) {
-    const nestedRevision = backendIndexRevision(record[nestedKey]);
-    if (nestedRevision !== undefined) return nestedRevision;
-  }
-  return undefined;
 }
 
 function normalizeWallet(wallet: string | undefined): string | undefined {

@@ -15,6 +15,7 @@ import {
   Users,
 } from "lucide-preact";
 import { RetroCdBoxHero, type CdView } from "./components/RetroCdBoxHero";
+import { Skeleton, SkeletonRegion, skeletonList } from "./components/Skeleton";
 import { TELEGRAM_SUPPORT_URL, WHITEPAPER_URL } from "./supportLinks";
 import { playableApiUrl } from "./runtimeConfig";
 import { backendDataStoreFor, retainBackendDataStore } from "./backendDataStore";
@@ -523,10 +524,14 @@ function FeedSection() {
           <div className="grid gap-2 p-3">
             {feed.items.length > 0
               ? feed.items.map((item) => <LandingFeedRow item={item} key={item.value} />)
-              : (
+              : feed.status === "loading" ? (
+                <SkeletonRegion className="grid gap-3" label="Loading universe activity">
+                  {skeletonList(3, (index) => <Skeleton key={index} className="h-14 w-full" />)}
+                </SkeletonRegion>
+              ) : (
                 <LandingFeedRow
                   item={{
-                    label: feed.status === "loading" ? "Syncing indexed missions" : "No active fleet movement",
+                    label: "No active fleet movement",
                     tone: feed.status === "offline" ? "amber" : "cyan",
                     value: landingFeedEmptyCopy(feed.status),
                   }}
@@ -644,7 +649,9 @@ function AlliancesSection() {
               <Users className="h-4 w-4 text-ember" />
               <h3 className="text-sm font-semibold text-white">Top alliances</h3>
             </div>
-            <span className="text-xs font-semibold text-slate-500">{landingAllianceBoardLabel(alliances.status)}</span>
+            {alliances.status === "loading"
+              ? <SkeletonRegion label="Loading alliance scores"><Skeleton className="h-4 w-12" /></SkeletonRegion>
+              : <span className="text-xs font-semibold text-slate-500">{landingAllianceBoardLabel(alliances.status)}</span>}
           </div>
           <div className="grid gap-2 p-3">
             {alliances.items.length > 0
@@ -679,18 +686,23 @@ function LandingFeedRow({ item }: { item: LandingFeedItem }) {
 }
 
 function LandingAllianceEmpty({ status }: { status: LandingLoadStatus }) {
+  if (status === "loading") return (
+    <SkeletonRegion className="grid gap-3 p-3" label="Loading alliances">
+      {skeletonList(3, (index) => <Skeleton key={index} className="h-14 w-full" />)}
+    </SkeletonRegion>
+  );
   return (
     <div className="landing-alliance-empty">
-      <p>{status === "loading" ? "Syncing indexed alliances" : "No ranked alliances"}</p>
+      <p>No ranked alliances</p>
       <span>{landingAllianceEmptyCopy(status)}</span>
     </div>
   );
 }
 
 function LandingStatusPill({ status }: { status: LandingLoadStatus }) {
+  if (status === "loading") return <SkeletonRegion label="Loading status"><Skeleton className="h-6 w-14" /></SkeletonRegion>;
   const ready = status === "ready";
   const offline = status === "offline";
-  const empty = status === "empty";
   return (
     <span
       className={`rounded border px-2 py-1 text-xs ${
@@ -701,7 +713,7 @@ function LandingStatusPill({ status }: { status: LandingLoadStatus }) {
             : "border-cyan-300/[0.12] bg-cyan-300/10 text-cyan-100"
       }`}
     >
-      {ready ? "Live" : offline ? "Offline" : empty ? "Quiet" : "Syncing"}
+      {ready ? "Live" : offline ? "Offline" : "Quiet"}
     </span>
   );
 }
@@ -889,19 +901,16 @@ function safeLandingBigInt(value: string | undefined): bigint {
 }
 
 function landingFeedEmptyCopy(status: LandingLoadStatus): string {
-  if (status === "loading") return "Reading the backend mission index for current fleet movement.";
   if (status === "offline") return "The Veydrift API is not reachable from this page right now.";
   return "The backend mission index has no active universe-wide fleet rows right now.";
 }
 
 function landingAllianceEmptyCopy(status: LandingLoadStatus): string {
-  if (status === "loading") return "Reading the backend highscore index for alliance membership.";
   if (status === "offline") return "The Veydrift API is not reachable from this page right now.";
   return "The backend highscore index has no alliance-ranked commanders yet.";
 }
 
 function landingAllianceBoardLabel(status: LandingLoadStatus): string {
-  if (status === "loading") return "Syncing";
   if (status === "offline") return "Offline";
   return "Score";
 }

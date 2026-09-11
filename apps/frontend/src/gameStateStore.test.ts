@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { BackendDataStore } from "./backendDataStore";
 import { GameStateStore } from "./gameStateStore";
-import { backendDataProjection, isBackendDataSnapshotLoading } from "./useBackendDataSnapshot";
+import { backendDataProjection, backendDataSnapshotsProjection } from "./useBackendDataSnapshot";
+import { backendQueryLoading } from "./useBackendDataQuery";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -14,12 +15,40 @@ function deferred<T>() {
 }
 
 describe("GameStateStore", () => {
+  test("multi-query snapshots keep identity until a selected entry changes and release subscriptions", async () => {
+    const store = new BackendDataStore("https://api.test");
+    const keys = [store.key("system", 1, 2), store.key("system", 1, 3)];
+    const projection = backendDataSnapshotsProjection<{ revision: number }>(store, keys);
+    try {
+      const initial = projection.getSnapshot();
+      expect(projection.getSnapshot()).toBe(initial);
+      await store.refresh(store.key("unrelated"), async () => ({ revision: 1 }));
+      expect(projection.getSnapshot()).toBe(initial);
+      // An update between rendering and subscribing must be observable on the
+      // external-store hook's immediate subscription recheck.
+      await store.refresh(keys[0]!, async () => ({ revision: 2 }));
+      let updates = 0;
+      const release = projection.subscribe(() => updates++);
+      const next = projection.getSnapshot();
+      expect(next).not.toBe(initial);
+      expect(next.get(keys[0]!)?.data?.revision).toBe(2);
+      expect(projection.getSnapshot()).toBe(next);
+      await store.refresh(keys[1]!, async () => ({ revision: 3 }));
+      expect(updates).toBeGreaterThan(0);
+      expect(projection.getSnapshot().get(keys[1]!)?.data?.revision).toBe(3);
+      release();
+      const before = updates;
+      await store.refresh(keys[1]!, async () => ({ revision: 4 }));
+      expect(updates).toBe(before);
+      expect(backendDataSnapshotsProjection(store, [keys[1]!]).getSnapshot().size).toBe(1);
+    } finally { store.dispose(); }
+  });
   test("treats an unseeded selected-resource snapshot as pending, not failed", () => {
-    expect(isBackendDataSnapshotLoading(undefined, true)).toBe(true);
-    expect(isBackendDataSnapshotLoading({ freshness: "refreshing", generation: 1 }, true)).toBe(true);
-    expect(isBackendDataSnapshotLoading({ freshness: "delayed", generation: 1 }, true)).toBe(true);
-    expect(isBackendDataSnapshotLoading({ freshness: "failed", generation: 1, error: "offline" }, true)).toBe(false);
-    expect(isBackendDataSnapshotLoading(undefined, false)).toBe(false);
+    expect(backendQueryLoading(undefined, true).isInitialLoading).toBe(true);
+    expect(backendQueryLoading({ freshness: "refreshing", generation: 1 }, true).isInitialLoading).toBe(true);
+    expect(backendQueryLoading({ freshness: "delayed", generation: 1 }, true).isInitialLoading).toBe(true);
+    expect(backendQueryLoading({ freshness: "failed", generation: 1, error: "offline" }, true).isInitialLoading).toBe(false);
+    expect(backendQueryLoading(undefined, false).isInitialLoading).toBe(false);
   });
 
   test("a late response cannot replace a newer published snapshot", async () => {
@@ -72,7 +101,7 @@ describe("GameStateStore", () => {
     const reads = Array.from({ length: 10 }, () => store.read("planet:1", () => {
       calls += 1;
       return response.promise;
-    }, { dedupe: false }));
+    }, { }));
     await Promise.resolve();
     expect(calls).toBe(1);
     response.resolve("ready");
@@ -163,12 +192,4 @@ describe("GameStateStore", () => {
     expect(topBarObserved).toContain("delayed:9:Indexer is unavailable.");
   });
 
-  test("exposes nested backend index revisions with the canonical snapshot", async () => {
-    const store = new GameStateStore();
-    await store.read("overview", async () => ({
-      fleetVisibility: { indexedRevision: "block:991:4" },
-      settlement: { planet: null },
-    }));
-    expect(store.snapshot("overview")?.indexRevision).toBe("block:991:4");
-  });
 });

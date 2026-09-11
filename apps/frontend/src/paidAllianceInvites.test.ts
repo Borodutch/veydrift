@@ -186,7 +186,7 @@ describe("paid alliance invite frontend flow", () => {
     expect(source).toContain("paidAllianceInviteQuery.refetch()");
     expect(source).toContain("Invitation already used");
     expect(source).toContain("has already been accepted");
-    expect(source).toContain("Checking invitation");
+    expect(source).toContain('paidAllianceInviteValidation.status === "idle" || paidAllianceInviteValidation.status === "loading" ? (\n                  <SettlementFormSkeleton />');
     expect(source).toContain("await refreshPaidAllianceInviteValidation()");
     expect(source).toContain("errorLabel: (error) => (isUserRejected(error)");
     expect(source).toContain("Retry invitation");

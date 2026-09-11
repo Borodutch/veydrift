@@ -1,7 +1,17 @@
 import { describe, expect, test } from "bun:test";
-import { createTransactionActionGate } from "../src/transactionActionGate";
+import { createTransactionActionGate, transactionStateOutcome } from "../src/transactionActionGate";
 
 describe("transaction action gate", () => {
+  test("derives pending, confirmed, applied and error outcomes from one lifecycle phase", () => {
+    expect(transactionStateOutcome(undefined)).toBeUndefined();
+    expect(transactionStateOutcome({ phase: "idle" })).toBeUndefined();
+    expect(transactionStateOutcome({ phase: "pending" })).toBe("not-submitted");
+    expect(transactionStateOutcome({ phase: "confirming", txHash: "0x1" })).toBe("submitted");
+    for (const phase of ["confirmed", "indexing"] as const) expect(transactionStateOutcome({ phase, txHash: "0x1" })).toBe("confirmed");
+    for (const phase of ["applied", "success"] as const) expect(transactionStateOutcome({ phase, txHash: "0x1" })).toBe("indexed");
+    expect(transactionStateOutcome({ phase: "error" })).toBe("not-submitted");
+    expect(transactionStateOutcome({ phase: "error", txHash: "0x1" })).toBe("reverted");
+  });
   test("prevents rapid duplicate start actions while the wallet path is in flight", async () => {
     const gate = createTransactionActionGate();
     const start = deferred<void>();

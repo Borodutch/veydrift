@@ -3,7 +3,7 @@ import { gzipSync } from "node:zlib";
 import { generateSystem } from "@veydrift/universe";
 import { createPublicClient, encodeFunctionData, webSocket, type Address as ViemAddress, type Log as ViemLog } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { CachedChainReader } from "./cachedReader";
+import { CachedChainReader, type ApiChainReader } from "./cachedReader";
 import { ChainSyncService } from "./chainSync";
 import type { ChainSyncSnapshot, LiveLogSubscriber } from "./chainSync";
 import { loadBackendConfig, safeConfigSummary, type BackendConfig, type ConfigProblem, type ConfigResult } from "./config";
@@ -86,12 +86,13 @@ import {
   createPaidAllianceInviteReader,
   createPaidAllianceInviteSecretStore,
   paidAllianceInviteCommitment,
+  paidAllianceInviteCapabilities,
   PaidAllianceInviteRateLimiter,
   type PaidAllianceInviteSecretStore,
   resolvePaidAllianceInvite,
   type PaidAllianceInviteReader,
 } from "./allianceInvites";
-import { planetArchetypeForTemperature, planetMetadata, planetMultipliers, systemSnapshot, type PlanetMetadata, type SystemSnapshot } from "./universe";
+import { maxGalaxy, maxSystem, planetArchetypeForTemperature, planetMetadata, planetMultipliers, systemSnapshot, type PlanetMetadata, type SystemSnapshot } from "./universe";
 import { responseCachePath, SharedResponseCache } from "./sharedResponseCache";
 import { normalizeStatsUtcOffsetMinutes } from "./stats";
 import {
@@ -132,9 +133,10 @@ const corsHeaders = {
 const jsonBodyLimitBytes = 32 * 1024;
 const graphqlBodyLimitBytes = 128 * 1024;
 const acceptedCacheQueryParams = new Map<string, ReadonlySet<string>>([
+  ["/battle-reports", new Set(["page", "pageSize", "view"])],
   ["/cca", new Set(["owner"])],
-  ["/highscores", new Set(["category", "currentWallet", "includeAttackProtection", "limit", "live", "page", "pageSize"])],
-  ["/missions", new Set(["live", "missionNumber", "missionType", "owner", "page", "pageSize", "planetId", "status"])],
+  ["/highscores", new Set(["category", "currentWallet", "includeAttackProtection", "limit", "live", "page", "pageSize", "view"])],
+  ["/missions", new Set(["live", "missionNumber", "missionType", "owner", "page", "pageSize", "planetId", "status", "summaryOnly"])],
   ["/stats", new Set(["utcOffsetMinutes"])],
   ["/raid-finder/debris", new Set(["limit", "minMetal", "minCrystal"])],
   ["/raid-finder/rifters", new Set(["limit"])],
@@ -153,8 +155,7 @@ const acceptedCacheQueryParams = new Map<string, ReadonlySet<string>>([
   ["/wallet/*/attack-protection", new Set(["targetIsMoon", "targetPlanetId"])],
   ["/wallet/*/shipyard", new Set(["planetId"])],
   ["/wallet/*/defenses", new Set(["planetId"])],
-  ["/wallet/*/research", new Set(["planetId"])],
-  ["/wallet/*/attack-protection", new Set(["targetPlanetId"])]
+  ["/wallet/*/research", new Set(["planetId"])]
 ]);
 
 const indexedSource = "contract-state-indexer" as const;
@@ -289,6 +290,7 @@ type RuntimeConfig = {
   referralSystemAddress: string | null;
   paidAllianceInviteAddress: string | null;
   paidAllianceInviteSignerAddress: string | null;
+  paidAllianceInviteCapabilities: ReturnType<typeof paidAllianceInviteCapabilities>;
   resourceTokenAddresses: {
     crystal: string | null;
     deuterium: string | null;
@@ -403,7 +405,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       : undefined);
   const indexerChainReader =
     dependencies.chainReader
-      ? chainReader
+      ? dependencies.chainReader
       : loaded.problems.length === 0
         ? new VeydriftGameReader(loaded.config, undefined, {
           // Canonical queue repairs must retain the timing data used to derive
@@ -414,7 +416,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         : undefined;
   const logBackfillChainReader =
     dependencies.chainReader
-      ? chainReader
+      ? dependencies.chainReader
       : loaded.problems.length === 0
         ? new VeydriftGameReader(
           loaded.config,
@@ -610,7 +612,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
   }
 
   const responseCache = new Map<string, CachedJsonResponse>();
-  const inflightResponseCache = new Map<string, Promise<CachedJsonResponse | null>>();
+  const inflightResponseCache = new Map<string, Promise<CachedJsonRefreshResult | null>>();
   const readRateLimits = new Map<string, { count: number; resetAt: number }>();
   const walletConnectRpcRateLimits = new Map<string, { count: number; resetAt: number }>();
   const galaxySystemCache = new Map<string, GalaxySystemCacheEntry>();
@@ -1000,8 +1002,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         const indexed = await indexedWalletOverviewWarmResponse(
           indexer,
           wallet,
-          selectedPlanetId(url),
-          chainReader
+          selectedPlanetId(url)
         );
         if (indexed) return indexed;
         return indexedReadNotReadyResponse("overview snapshot", indexer, indexedReadLookup(url, wallet));
@@ -1226,12 +1227,12 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
     if (request.method === "POST" && url.pathname === "/alliance-invites/redeem") {
       try {
+        if (!paidAllianceInviteReader || !loaded.config.paidAllianceInviteSignerPrivateKey) {
+          return Response.json({ error: "paid_alliance_invite_redemption_unavailable", message: "Private invite redemption is not enabled on this backend." }, { headers: corsHeaders, status: 503 });
+        }
         const remote = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
         if (!paidAllianceInviteRateLimiter.consume(remote)) {
           return Response.json({ error: "paid_alliance_invite_rate_limited" }, { headers: corsHeaders, status: 429 });
-        }
-        if (!paidAllianceInviteReader) {
-          return Response.json({ error: "paid_alliance_invites_unavailable" }, { headers: corsHeaders, status: 503 });
         }
         const body = await readJsonBody(request);
         const invitee = String(body?.invitee ?? "");
@@ -1580,8 +1581,11 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         const snapshot = indexer.snapshot();
         const status = url.searchParams.get("status") ?? "active";
         if (status === "active") {
+          const missions = indexer.allActiveFleetMissions();
           return Response.json(
-            { missions: indexer.allActiveFleetMissions() } satisfies GlobalActiveMissionsResponse,
+            url.searchParams.get("summaryOnly") === "true"
+              ? { totalEntries: missions.length }
+              : { missions } satisfies GlobalActiveMissionsResponse,
             { headers: indexedStateHeaders(indexedStateLabel(snapshot)) }
           );
         }
@@ -1720,8 +1724,13 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         const snapshot = indexer.snapshot();
         const requested = missionArchivePagination(url);
         const offset = (requested.page - 1) * requested.pageSize;
-        const reports = indexer.battleReports(offset + requested.pageSize).slice(offset, offset + requested.pageSize);
-        return Response.json(reports, {
+        const view = url.searchParams.get("view");
+        if (view !== null && view !== "summary") throw new Error("Unsupported battle report view.");
+        const reports = indexer.battleReports(requested.pageSize, offset, view !== "summary");
+        const payload = view === "summary" ? reports.map(({ missionId, attacker, targetPlanetId, outcome, rounds, loot, attackerLosses, defenderLosses }) => ({
+          missionId, attacker, targetPlanetId, outcome, rounds, loot, attackerLosses, defenderLosses
+        })) : reports;
+        return Response.json(payload, {
           headers: indexedStateHeaders(indexedStateLabel(snapshot))
         });
       } catch (error) {
@@ -1731,7 +1740,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
     if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/infrastructure$/)) {
       try {
-        return indexedWalletStateResponse(url, indexer, "infrastructure", indexedInfrastructureState);
+        return indexedWalletStateResponse(url, indexer, "infrastructure", indexedInfrastructureState, { requiresSafeResources: true });
       } catch (error) {
         return errorResponse(error, 400);
       }
@@ -1753,9 +1762,17 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       }
     }
 
+    if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/supply-sources$/)) {
+      try {
+        return indexedWalletStateResponse(url, indexer, "supply sources", indexedSupplySources, { requiresSafeResources: true });
+      } catch (error) {
+        return errorResponse(error, 400);
+      }
+    }
+
     if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/shipyard$/)) {
       try {
-        return indexedWalletStateResponse(url, indexer, "shipyard", indexedShipyardState);
+        return indexedWalletStateResponse(url, indexer, "shipyard", indexedShipyardState, { requiresSafeResources: true });
       } catch (error) {
         return errorResponse(error, 400);
       }
@@ -1763,7 +1780,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
     if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/defenses$/)) {
       try {
-        return indexedWalletStateResponse(url, indexer, "defenses", indexedDefenseState);
+        return indexedWalletStateResponse(url, indexer, "defenses", indexedDefenseState, { requiresSafeResources: true });
       } catch (error) {
         return errorResponse(error, 400);
       }
@@ -1771,7 +1788,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
     if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/research$/)) {
       try {
-        return indexedWalletStateResponse(url, indexer, "research", indexedResearchState);
+        return indexedWalletStateResponse(url, indexer, "research", indexedResearchState, { requiresSafeResources: true });
       } catch (error) {
         return errorResponse(error, 400);
       }
@@ -1785,7 +1802,8 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           wallet,
           indexer,
           loaded.config.paidAllianceInviteAddress,
-          loaded.config.paidAllianceInviteIndexFromBlock
+          loaded.config.paidAllianceInviteIndexFromBlock,
+          url.searchParams.get("view") === "summary"
         );
       } catch (error) {
         return errorResponse(error, 400);
@@ -1819,7 +1837,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           );
         }
         const paidInviteSummary = loaded.config.paidAllianceInviteAddress
-          ? indexer.paidAllianceInviteSummaries().get(allianceId) ?? emptyPaidAllianceInviteSummary()
+          ? indexer.paidAllianceInviteSummaries(allianceId).get(allianceId) ?? emptyPaidAllianceInviteSummary()
           : null;
         return Response.json(
           {
@@ -1878,11 +1896,19 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       try {
         assertAddress(wallet);
         if (hasWarmPlanetIndex(indexer)) {
-          const indexedPlanets = indexer.settledPlanetsByOwner().get(wallet.toLowerCase()) ?? [];
+          const profile = indexer.playerProfile(wallet);
+          const rankings = sortedHighscores(indexer.highscoreLeaderboard().entries, "total");
+          const rankIndex = rankings.findIndex(entry => entry.wallet.toLowerCase() === wallet.toLowerCase());
           return Response.json(
             {
               formula: highscoreFormula,
-              entry: indexer.highscoreForWallet(wallet, indexedPlanets.map((planet) => planet.planetId)),
+              entry: {
+                ...(rankings[rankIndex] ?? indexer.highscoreForWallet(wallet)),
+                rank: rankIndex + 1,
+                profile,
+                displayName: profile.displayName,
+                alliance: allianceIntelForPlayers([wallet], indexer).get(wallet.toLowerCase()) ?? null,
+              },
               source: indexedSource
             },
             {
@@ -1900,6 +1926,8 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       const startedAt = Date.now();
       try {
         const pagination = highscorePagination(url);
+        const view = url.searchParams.get("view");
+        if (view !== null && view !== "scoreboard") return errorResponse(new Error("Unsupported highscore view."), 400);
         let planetsByOwner: Map<string, SettledPlanetEvent[]>;
         let entries: HighscoreEntry[];
         const source = "contract-state-indexer";
@@ -1934,7 +1962,8 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           planetsByOwner,
           profiles,
           allianceIntel,
-          indexer
+          indexer,
+          view !== "scoreboard"
         );
         const rankings = highscoreRankings(
           sortedRankings,
@@ -2019,11 +2048,15 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     }
 
     if (request.method === "GET" && url.pathname === "/universe/systems") {
-      const galaxy = Number.parseInt(url.searchParams.get("galaxy") ?? "1", 10);
-      const center = Number.parseInt(url.searchParams.get("center") ?? "1", 10);
-      const radius = Math.min(Number.parseInt(url.searchParams.get("radius") ?? "1", 10), 10);
+      const galaxy = parseIntegerQuery(url, "galaxy", 1);
+      const center = parseIntegerQuery(url, "center", 1);
+      const requestedRadius = parseIntegerQuery(url, "radius", 1);
+      if (galaxy === null || galaxy < 1 || galaxy > maxGalaxy) return badRequest(`galaxy must be an integer from 1 to ${maxGalaxy}.`);
+      if (center === null || center < 1 || center > maxSystem) return badRequest(`center must be an integer from 1 to ${maxSystem}.`);
+      if (requestedRadius === null || requestedRadius < 0) return badRequest("radius must be a non-negative integer.");
+      const radius = Math.min(requestedRadius, 10);
       const from = Math.max(center - radius, 1);
-      const to = Math.min(center + radius, 499);
+      const to = Math.min(center + radius, maxSystem);
 
       try {
         return Response.json(
@@ -2118,7 +2151,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
       const cacheTtlMs = enableResponseCache ? cacheableJsonRequestTtlMs(request, url) : 0;
       if (cacheTtlMs > 0) {
-        const cacheKey = cacheableJsonRequestKey(request, url, indexer, loaded.config);
+        const cacheKey = cacheableJsonRequestKey(request, url, indexer);
         const staleCacheKey = cacheableJsonRequestStaleKey(request, url, cacheKey);
         const cached = responseCache.get(cacheKey);
         const now = Date.now();
@@ -2130,100 +2163,50 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           responseCache.set(cacheKey, sharedCached);
           return withRequestCors(request, cachedJsonResponse(request, sharedCached));
         }
-        if (cached && cached.expiresAt + staleCachedJsonWindowMs > now) {
-          if (!inflightResponseCache.has(cacheKey)) {
-            let resolveRefresh: (cached: CachedJsonResponse | null) => void;
-            const refresh = new Promise<CachedJsonResponse | null>((resolve) => {
-              resolveRefresh = resolve;
-            });
-            inflightResponseCache.set(cacheKey, refresh);
-            void refreshCachedJsonResponse(request, url, routeRequest, responseCache, sharedResponseCache, cacheKey, cacheTtlMs, staleCacheKey)
-              .then((refreshed) => resolveRefresh!(refreshed.cached))
-              .catch(() => resolveRefresh!(null))
-              .finally(() => {
-                inflightResponseCache.delete(cacheKey);
-              });
-          }
-          return withRequestCors(request, cachedJsonResponse(request, cached));
-        }
-        const sharedCache = sharedResponseCache;
-        const sharedStale = sharedCache?.get(cacheKey, now, true);
-        if (sharedCache && sharedStale) {
-          responseCache.set(cacheKey, sharedStale);
-          if (sharedCache.tryAcquireRefresh(cacheKey)) {
-            void refreshCachedJsonResponse(request, url, routeRequest, responseCache, sharedCache, cacheKey, cacheTtlMs, staleCacheKey)
-              .catch(() => null)
-              .finally(() => sharedCache.releaseRefresh(cacheKey));
-          }
-          return withRequestCors(request, cachedJsonResponse(request, sharedStale));
-        }
-        const sharedVersionlessStale = staleCacheKey !== cacheKey
-          ? sharedCache?.get(staleCacheKey, now, true)
-          : null;
-        if (sharedCache && sharedVersionlessStale) {
-          responseCache.set(cacheKey, sharedVersionlessStale);
-          if (sharedCache.tryAcquireRefresh(cacheKey)) {
-            void refreshCachedJsonResponse(request, url, routeRequest, responseCache, sharedCache, cacheKey, cacheTtlMs, staleCacheKey)
-              .catch(() => null)
-              .finally(() => sharedCache.releaseRefresh(cacheKey));
-          }
-          return withRequestCors(request, cachedJsonResponse(request, sharedVersionlessStale));
-        }
+        const stale = cached && cached.expiresAt + staleCachedJsonWindowMs > now ? cached
+          : sharedResponseCache?.get(cacheKey, now, true)
+            ?? (staleCacheKey !== cacheKey ? sharedResponseCache?.get(staleCacheKey, now, true) : null);
 
-        const inflight = inflightResponseCache.get(cacheKey);
-        if (inflight) {
-          const refreshed = await inflight;
-          if (refreshed) {
-            return withRequestCors(request, cachedJsonResponse(request, refreshed));
-          }
+        // Every refresh uses the same per-key local promise and shared ownership.
+        // Register before waiting on a peer so cold callers cannot fan out behind it.
+        const refresh = (): Promise<CachedJsonRefreshResult | null> => {
+          const existing = inflightResponseCache.get(cacheKey);
+          if (existing) return existing;
+          const pending = Promise.resolve().then(async () => {
+            let owner = sharedResponseCache?.tryAcquireRefresh(cacheKey) ?? null;
+            if (sharedResponseCache && !owner) {
+              if (stale) return null;
+              const peer = sharedResponseCache.get(cacheKey)
+                ?? await sharedResponseCache.waitForFresh(cacheKey, sharedColdReadWaitMsFor(url));
+              if (peer) { responseCache.set(cacheKey, peer); return { cached: peer }; }
+              owner = sharedResponseCache.tryAcquireRefresh(cacheKey);
+              // Retry later rather than rebuilding concurrently with a live owner.
+              if (!owner) return null;
+            }
+            try {
+              return await refreshCachedJsonResponse(request, url, routeRequest, responseCache, sharedResponseCache, cacheKey, cacheTtlMs, staleCacheKey);
+            } finally {
+              if (owner) sharedResponseCache?.releaseRefresh(cacheKey, owner);
+            }
+          }).finally(() => inflightResponseCache.delete(cacheKey));
+          inflightResponseCache.set(cacheKey, pending);
+          return pending;
+        };
+        if (stale) {
+          responseCache.set(cacheKey, stale);
+          void refresh().catch(() => { /* Preserve last-good informational data. */ });
+          return withRequestCors(request, cachedJsonResponse(request, stale));
         }
-
         const rateLimited = readRateLimitResponse(request, url, readRateLimits);
         if (rateLimited) return withRequestCors(request, rateLimited);
-
-        const ownsSharedRefresh = sharedResponseCache?.tryAcquireRefresh(cacheKey) ?? false;
-        if (sharedResponseCache && !ownsSharedRefresh) {
-          const refreshed = sharedResponseCache.get(cacheKey);
-          if (refreshed) {
-            responseCache.set(cacheKey, refreshed);
-            return withRequestCors(request, cachedJsonResponse(request, refreshed));
-          }
-
-          // A different reader is already building this exact cache key. Previously every
-          // concurrent cold read carried on and rebuilt the same indexed response, which
-          // turned a single ~600ms wallet/mission read into a multi-worker CPU stampede.
-          // Wait briefly for that owner before falling back; the bounded timeout still lets
-          // this request recover if the other worker dies while holding its SQLite lock. The hot
-          // projections are bounded below this window; a one-second wait made a stale abandoned
-          // lock itself a visible backend timeout on mobile navigation.
-          const refreshedByPeer = await sharedResponseCache.waitForFresh(
-            cacheKey,
-            sharedColdReadWaitMsFor(url)
-          );
-          if (refreshedByPeer) {
-            responseCache.set(cacheKey, refreshedByPeer);
-            return withRequestCors(request, cachedJsonResponse(request, refreshedByPeer));
-          }
-        }
-
-        let resolveInflight: (cached: CachedJsonResponse | null) => void;
-        inflightResponseCache.set(cacheKey, new Promise((resolve) => {
-          resolveInflight = resolve;
-        }));
-
-        try {
-          const refreshed = await refreshCachedJsonResponse(request, url, routeRequest, responseCache, sharedResponseCache, cacheKey, cacheTtlMs, staleCacheKey);
-          if (refreshed.cached) {
-            resolveInflight!(refreshed.cached);
-            inflightResponseCache.delete(cacheKey);
-            return withRequestCors(request, cachedJsonResponse(request, refreshed.cached));
-          }
-          resolveInflight!(null);
-          inflightResponseCache.delete(cacheKey);
-          return withRequestCors(request, refreshed.response);
-        } finally {
-          if (ownsSharedRefresh) sharedResponseCache?.releaseRefresh(cacheKey);
-        }
+        const refreshed = await refresh();
+        if (!refreshed) return withRequestCors(request, Response.json(
+          { error: "cache_refresh_pending", message: "Data is refreshing. Please retry shortly." },
+          { status: 503, headers: { "retry-after": "1", "cache-control": "no-store" } }
+        ));
+        return withRequestCors(request, refreshed.cached
+          ? cachedJsonResponse(request, refreshed.cached)
+          : refreshed.response.clone());
       }
 
       const rateLimited = readRateLimitResponse(request, url, readRateLimits);
@@ -2312,28 +2295,6 @@ export function createViemLiveLogSubscriber(config: BackendConfig): LiveLogSubsc
       timeout: 10_000
     })
   });
-  const blockTimestampCache = new Map<string, Promise<string | undefined>>();
-
-  const timestampForBlock = (blockNumber: bigint): Promise<string | undefined> => {
-    const key = blockNumber.toString();
-    let cached = blockTimestampCache.get(key);
-    if (!cached) {
-      cached = client
-        .getBlock({ blockNumber })
-        .then((block) => block.timestamp.toString())
-        .catch((error) => {
-          console.warn("Veydrift viem websocket block timestamp lookup failed", error);
-          return undefined;
-        });
-      blockTimestampCache.set(key, cached);
-      if (blockTimestampCache.size > 256) {
-        const oldest = blockTimestampCache.keys().next().value;
-        if (oldest) blockTimestampCache.delete(oldest);
-      }
-    }
-    return cached;
-  };
-
   return {
     subscribe({ addresses, onError, onLogs }) {
       return client.watchEvent({
@@ -2341,24 +2302,21 @@ export function createViemLiveLogSubscriber(config: BackendConfig): LiveLogSubsc
         batch: false,
         onError,
         onLogs(logs) {
-          void Promise.all(logs.map((log) => normalizeViemLog(log, timestampForBlock)))
-            .then((normalizedLogs) => {
-              const usableLogs = normalizedLogs.filter((log): log is RpcLog => log !== null);
-              if (usableLogs.length > 0) onLogs(usableLogs);
-            })
-            .catch(onError);
+          try {
+            const usable = logs.map(normalizeViemLog).filter((log): log is RpcLog => log !== null);
+            if (usable.length) onLogs(usable);
+          } catch (error) {
+            onError(error instanceof Error ? error : new Error(String(error)));
+          }
         }
       });
     }
   };
 }
 
-async function normalizeViemLog(
-  log: ViemLog,
-  timestampForBlock: (blockNumber: bigint) => Promise<string | undefined>
-): Promise<RpcLog | null> {
+// WS logs wake the canonical HTTP scan; preserve removal identity without another RPC lookup.
+export function normalizeViemLog(log: ViemLog): RpcLog | null {
   if (log.blockNumber === null || log.transactionHash === null) return null;
-  const blockTimestamp = await timestampForBlock(log.blockNumber);
   return {
     ...(log.blockHash ? { blockHash: log.blockHash } : {}),
     blockNumber: toQuantity(log.blockNumber),
@@ -2367,7 +2325,6 @@ async function normalizeViemLog(
     data: log.data,
     ...(log.address ? { address: log.address } : {}),
     ...(typeof log.logIndex === "number" ? { logIndex: toQuantity(BigInt(log.logIndex)) } : {}),
-    ...(blockTimestamp ? { blockTimestamp } : {}),
     ...(log.removed ? { removed: true } : {})
   };
 }
@@ -2826,23 +2783,8 @@ function statsUtcOffsetMinutesFromQuery(value: string | null): number {
 }
 
 function acceptedCacheParams(pathname: string): ReadonlySet<string> | undefined {
-  const direct = acceptedCacheQueryParams.get(pathname);
-  if (direct) return direct;
-  if (pathname.match(/^\/wallet\/[^/]+\/fleet-visibility$/)) return acceptedCacheQueryParams.get("/wallet/*/fleet-visibility");
-  if (pathname.match(/^\/wallet\/[^/]+\/activity$/)) return acceptedCacheQueryParams.get("/wallet/*/activity");
-  if (pathname.match(/^\/wallet\/[^/]+\/missions$/)) return acceptedCacheQueryParams.get("/wallet/*/missions");
-  if (pathname.match(/^\/wallet\/[^/]+\/referrals\/history$/)) return acceptedCacheQueryParams.get("/wallet/*/referrals/history");
-  if (pathname.match(/^\/wallet\/[^/]+\/overview$/)) return acceptedCacheQueryParams.get("/wallet/*/overview");
-  if (pathname.match(/^\/wallet\/[^/]+\/queues$/)) return acceptedCacheQueryParams.get("/wallet/*/queues");
-  if (pathname.match(/^\/wallet\/[^/]+\/infrastructure$/)) return acceptedCacheQueryParams.get("/wallet/*/infrastructure");
-  if (pathname.match(/^\/wallet\/[^/]+\/moon$/)) return acceptedCacheQueryParams.get("/wallet/*/moon");
-  if (pathname.match(/^\/wallet\/[^/]+\/attack-protection$/)) return acceptedCacheQueryParams.get("/wallet/*/attack-protection");
-  if (pathname.match(/^\/wallet\/[^/]+\/shipyard$/)) return acceptedCacheQueryParams.get("/wallet/*/shipyard");
-  if (pathname.match(/^\/wallet\/[^/]+\/defenses$/)) return acceptedCacheQueryParams.get("/wallet/*/defenses");
-  if (pathname.match(/^\/wallet\/[^/]+\/research$/)) return acceptedCacheQueryParams.get("/wallet/*/research");
-  if (pathname.match(/^\/wallet\/[^/]+\/attack-protection$/)) return acceptedCacheQueryParams.get("/wallet/*/attack-protection");
-  if (pathname.match(/^\/universe\/galaxies\/[0-9]+\/systems\/[0-9]+$/)) return new Set(["detail"]);
-  return undefined;
+  if (/^\/universe\/galaxies\/[0-9]+\/systems\/[0-9]+$/.test(pathname)) return new Set(["detail"]);
+  return acceptedCacheQueryParams.get(pathname.replace(/^\/wallet\/[^/]+\//, "/wallet/*/"));
 }
 
 function sharedResponseCacheForIndex(indexDbPath: string): SharedResponseCache | null {
@@ -2854,17 +2796,6 @@ function sharedResponseCacheForIndex(indexDbPath: string): SharedResponseCache |
     console.warn("Veydrift shared response cache unavailable", reasonText(error));
     return null;
   }
-}
-
-// Predicate kept for diagnostics/tests: true when a warm DB inherited a recorded reconcile failure
-// (lastReconciliationError set, not currently reconciling). The backend no longer auto-runs canonical
-// reconcile at startup; recovery is an explicit operator action or event-log replay.
-export function shouldRecoverFailedReconciliation(
-  snapshot: Pick<IndexerSnapshot, "lastReconciledAt" | "lastReconciliationError" | "reconciliationInProgress">
-): boolean {
-  return Boolean(snapshot.lastReconciledAt)
-    && Boolean(snapshot.lastReconciliationError)
-    && !snapshot.reconciliationInProgress;
 }
 
 type CachedJsonResponse = {
@@ -2916,146 +2847,37 @@ async function refreshCachedJsonResponse(
   return { cached };
 }
 
+// Only informational/metadata reads opt into HTTP caching. New gameplay routes are no-store.
 function cacheableJsonRequestTtlMs(request: Request, url: URL): number {
-  if (request.method !== "GET") return 0;
-  if (url.searchParams.get("fresh") === "1") return 0;
-  if (url.pathname === "/chain/events") return 0;
-  if (url.pathname === "/cca") return 4_000;
-  if (url.pathname === "/health") return 10_000;
-  if (url.pathname === "/stats") return 30_000;
-  // Public landing pages request the live board independently. Keep its browser response no-store,
-  // but serve a short shared snapshot across every reader instead of synchronously rebuilding the
-  // entire ranking after unrelated indexed events.
+  if (request.method !== "GET" || url.searchParams.get("fresh") === "1") return 0;
   if (url.pathname === "/highscores") {
     return landingLeaderboardRequest(url) ? 60_000 : livePublicDataRequest(url) ? 1_000 : 300_000;
   }
-  if (url.pathname === "/raid-finder/debris") return 30_000;
-  if (url.pathname === "/raid-finder/rifters") return 30_000;
-  // Mission Control is an authoritative indexed-state surface. The chain-event stream fires only
-  // after the writer commits a log, so returning a process-local stale snapshot here defeats the
-  // live refresh and can leave a resolved mission shown as Outbound/Resolving. These targeted SQL
-  // projections are already bounded/indexed; never put stale-while-revalidate in front of them.
-  if (url.pathname.match(/^\/wallet\/[^/]+\/fleet-visibility$/)) return 0;
-  if (url.pathname.match(/^\/wallet\/[^/]+\/missions$/)) return 0;
-  if (url.pathname.match(/^\/wallet\/[^/]+\/missile-attacks$/)) return 0;
-  if (url.pathname === "/missions") return livePublicDataRequest(url) ? 0 : 300_000;
-  if (url.pathname.match(/^\/mission\/[^/]+$/)) return 0;
-  // Moon/Shipyard/Infrastructure payloads include as-of-now projections that can change when time
-  // crosses a mission or per-unit production boundary without a new indexed log. A TTL cache can
-  // otherwise preserve mismatched queue, inventory, and Solar Satellite energy values after refresh.
-  if (url.pathname.match(/^\/wallet\/[^/]+\/(?:infrastructure|moon|shipyard|defenses)$/)) return 0;
-  // Active-war eligibility is checked against a frozen on-chain roster and can change when a
-  // member leaves/rejoins or a war starts/ends. Never let a stale shared HTTP response tell the
-  // mission dialog that a selected target is legal or blocked.
-  if (url.pathname.match(/^\/wallet\/[^/]+\/attack-protection$/)) return 0;
-  // Overview is the canonical combined wallet snapshot used by live chain-event refreshes. It must
-  // advance resources and fleet visibility from the same committed DB state, never a cached copy.
-  if (url.pathname.match(/^\/wallet\/[^/]+\/overview$/)) return 0;
-  // Alliance writes are confirmed against this indexed projection. Do not let an owner see a
-  // cached empty description after the profile event has already committed.
-  if (url.pathname.match(/^\/wallet\/[^/]+\/alliance$/)) return 0;
-  if (url.pathname.match(/^\/alliance\/[0-9]+$/)) return 0;
-  if (cacheableWalletSnapshotPath(url.pathname)) return 15_000;
-  if (url.pathname.startsWith("/wallet/")) return 5_000;
-  if (url.pathname.match(/^\/universe\/galaxies\/[0-9]+\/systems\/[0-9]+$/)) return 30_000;
-  if (url.pathname === "/universe/systems") return 30_000;
+  if (url.pathname === "/cca") return 4_000;
+  if (["/stats", "/raid-finder/debris", "/raid-finder/rifters", "/universe/systems"].includes(url.pathname)) return 30_000;
+  if (/^\/universe\/galaxies\/[0-9]+\/systems\/[0-9]+$/.test(url.pathname)) return 30_000;
   return 0;
 }
 
-function cacheableWalletSnapshotPath(pathname: string): boolean {
-  if (!pathname.startsWith("/wallet/")) return false;
-  if (pathname.match(/^\/wallet\/[^/]+\/(?:infrastructure|shipyard|defenses)(?:$|\?)/)) return false;
-  return Boolean(pathname.match(
-    /^\/wallet\/[^/]+\/(?:overview|infrastructure|moon|planets|settlement|queues|research|rift|alliance|profile|highscore|fleet-visibility|attack-protection)$/
-  ));
-}
-
-function cacheableJsonRequestKey(
-  request: Request,
-  url: URL,
-  indexer: SettlementIndexer | undefined,
-  config?: BackendConfig
-): string {
-  const indexerVersion = indexer ? cacheableJsonRequestVersion(url, indexer) : "none";
-  const paidAllianceHistoryIdentity = allianceHistoryCacheIdentity(url, indexer, config);
-  return `${request.method} ${url.pathname}${normalizedCacheSearch(url)} indexer=${indexerVersion}${paidAllianceHistoryIdentity}`;
-}
-
-function allianceHistoryCacheIdentity(
-  url: URL,
-  indexer: SettlementIndexer | undefined,
-  config?: BackendConfig
-): string {
-  if (!url.pathname.match(/^(?:\/wallet\/[^/]+\/alliance|\/alliance\/[0-9]+)$/)) return "";
-  const contractAddress = config?.paidAllianceInviteAddress;
-  const fromBlock = config?.paidAllianceInviteIndexFromBlock;
-  if (!contractAddress || fromBlock === undefined) return " paid-alliance=disabled";
-  const status = indexer?.paidAllianceInviteHistoryBackfillStatus(contractAddress, fromBlock);
-  const marker = status?.marker;
-  const readiness = status?.required || !marker ? "pending" : marker.throughBlock;
-  return ` paid-alliance=${contractAddress.toLowerCase()}:${fromBlock}:${readiness}`;
+function cacheableJsonRequestKey(request: Request, url: URL, indexer: SettlementIndexer | undefined): string {
+  const version = indexer ? cacheableJsonRequestVersion(url, indexer) : "none";
+  return `${request.method} ${url.pathname}${normalizedCacheSearch(url)} indexer=${version}`;
 }
 
 function cacheableJsonRequestStaleKey(request: Request, url: URL, cacheKey: string): string {
-  // Leaderboard data is informational, not a transaction precondition. Its global state token changes
-  // on every indexed event, which used to make all readers miss together and each rebuild the full
-  // live board. Reuse the last completed board while exactly one reader refreshes it.
-  if (landingLeaderboardRequest(url)) {
-    return `${request.method} ${url.pathname}${normalizedCacheSearch(url)} indexer=stale`;
-  }
-  // Mission Control transitions must not cross read-model versions through the versionless stale
-  // cache. In particular, an Outbound payload cannot mask a newly materialized Returning attack and
-  // battle report for up to 60 seconds. Same-version stale-while-revalidate remains available.
-  if (
-    url.pathname.match(/^\/wallet\/[^/]+\/fleet-visibility$/)
-    || url.pathname.match(/^\/wallet\/[^/]+\/missions$/)
-    || url.pathname.match(/^\/wallet\/[^/]+\/missile-attacks$/)
-  ) {
-    return cacheKey;
-  }
-  if (cacheableWalletSnapshotPath(url.pathname) || livePublicDataRequest(url)) return cacheKey;
-  return `${request.method} ${url.pathname}${normalizedCacheSearch(url)} indexer=stale`;
+  // Only the informational landing board can reuse data across committed versions.
+  return landingLeaderboardRequest(url)
+    ? `${request.method} ${url.pathname}${normalizedCacheSearch(url)} indexer=stale`
+    : cacheKey;
 }
 
 function cacheableJsonRequestVersion(url: URL, indexer: SettlementIndexer): string {
-  if (url.pathname === "/health") return "ttl";
-  if (url.pathname === "/stats") return "ttl";
   if (url.pathname === "/highscores") {
-    // The public landing board is informational. A stable one-minute snapshot means a reader that
-    // did not receive the last browser request can reuse the same completed ranking immediately,
-    // rather than becoming a fresh multi-second SQLite rebuild after every unrelated chain event.
-    return landingLeaderboardRequest(url)
-      ? "landing-leaderboard"
-      : livePublicDataRequest(url)
-        ? indexer.indexedStateCacheVersion()
-        : "ttl";
+    return landingLeaderboardRequest(url) ? "landing-leaderboard"
+      : livePublicDataRequest(url) ? indexer.indexedStateCacheVersion() : "ttl";
   }
-  if (url.pathname === "/raid-finder/debris") return "ttl";
-  if (url.pathname === "/raid-finder/rifters") return "ttl";
-  // Do not use the global mission/battle-report generation for hot per-wallet views. It advances
-  // for every player's event, including completed missions that cannot affect another wallet's
-  // active view. Keep one stable key and let the five-second TTL/stale-while-revalidate path own
-  // refreshes. Time-bucketed keys synchronized every wallet's cold rebuild at once.
-  if (
-    url.pathname.match(/^\/wallet\/[^/]+\/(?:fleet-visibility|missions|overview)$/)
-  ) {
-    return "mission-poll";
-  }
-  if (url.pathname.match(/^\/wallet\/[^/]+\/missile-attacks$/)) return indexer.responseCacheVersion();
-  if (url.pathname === "/missions") return livePublicDataRequest(url) ? indexer.missionResponseCacheVersion() : "ttl";
-  if (url.pathname.match(/^\/mission\/[^/]+$/)) return indexer.missionResponseCacheVersion();
-  if (cacheableWalletSnapshotPath(url.pathname)) return indexer.walletResponseCacheVersion(walletAddressFromPath(url));
-  if (url.pathname.match(/^\/universe\/galaxies\/[0-9]+\/systems\/[0-9]+$/)) {
-    const parts = url.pathname.split("/");
-    const galaxy = Number.parseInt(parts[3] ?? "", 10);
-    const system = Number.parseInt(parts[5] ?? "", 10);
-    if (Number.isFinite(galaxy) && Number.isFinite(system)) {
-      return galaxySystemCacheVersion(indexer, galaxySystemDetail(url), galaxy, system);
-    }
-    return "ttl";
-  }
-  if (url.pathname === "/universe/systems") return "ttl";
-  return indexer.responseCacheVersion();
+  const system = url.pathname.match(/^\/universe\/galaxies\/([0-9]+)\/systems\/([0-9]+)$/);
+  return system ? galaxySystemCacheVersion(indexer, galaxySystemDetail(url), Number(system[1]), Number(system[2])) : "ttl";
 }
 
 function clientCacheControlHeader(url: URL, ttlMs: number): string {
@@ -3102,7 +2924,7 @@ function requestAcceptsGzip(request: Request): boolean {
 
 function cachedGzipBody(cached: CachedJsonResponse): ArrayBuffer {
   if (cached.gzipBody) return cached.gzipBody.slice(0);
-  const compressed = gzipSync(new Uint8Array(cached.body));
+  const compressed = gzipSync(new Uint8Array(cached.body), { level: 1 });
   cached.gzipBody = compressed.buffer.slice(compressed.byteOffset, compressed.byteOffset + compressed.byteLength);
   return cached.gzipBody.slice(0);
 }
@@ -3131,13 +2953,8 @@ function prewarmHotResponseCache(
 
   const timer = setTimeout(() => {
     void (async () => {
-      let paths: string[] = [];
-      try {
-        indexer.allActiveFleetMissions();
-        paths = hotResponseCachePaths(indexer);
-      } catch {
-        // Best-effort only. A cold/stale index should not make worker startup fail.
-      }
+      // Only prewarm informational data that the HTTP cache actually retains.
+      const paths = ["/highscores?page=1&pageSize=250"];
       for (const path of paths) {
         try {
           const response = await serve(new Request(`http://localhost${path}`));
@@ -3162,52 +2979,6 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function hotResponseCachePaths(indexer: SettlementIndexer): string[] {
-  const paths = new Set<string>([
-    "/highscores?page=1&pageSize=250",
-    "/missions?status=active",
-    "/missions?status=completed&page=1&pageSize=25"
-  ]);
-  const galaxySystemPaths = new Set<string>();
-
-  for (const mission of [
-    ...indexer.allActiveFleetMissions().slice(0, 50),
-    ...indexer.allCompletedFleetMissions().slice(0, 50)
-  ]) {
-    paths.add(`/mission/${encodeURIComponent(mission.missionId)}`);
-    if (mission.targetPlanet) {
-      galaxySystemPaths.add(`/universe/galaxies/${mission.targetPlanet.galaxy}/systems/${mission.targetPlanet.system}`);
-    }
-  }
-
-  for (const [wallet, planets] of indexer.settledPlanetsByOwner()) {
-    const encodedWallet = encodeURIComponent(wallet);
-    paths.add(`/wallet/${encodedWallet}/fleet-visibility`);
-    paths.add(`/wallet/${encodedWallet}/fleet-visibility?archive=none`);
-    paths.add(`/wallet/${encodedWallet}/missions?status=completed&page=1&pageSize=25`);
-    paths.add(`/wallet/${encodedWallet}/settlement`);
-    paths.add(`/wallet/${encodedWallet}/planets`);
-    paths.add(`/wallet/${encodedWallet}/highscore`);
-
-    for (const planet of planets) {
-      galaxySystemPaths.add(`/universe/galaxies/${planet.galaxy}/systems/${planet.system}`);
-      const planetId = encodeURIComponent(planet.planetId);
-      paths.add(`/wallet/${encodedWallet}/overview?planetId=${planetId}`);
-      paths.add(`/wallet/${encodedWallet}/queues?planetId=${planetId}`);
-      paths.add(`/wallet/${encodedWallet}/infrastructure?planetId=${planetId}`);
-      paths.add(`/wallet/${encodedWallet}/moon?planetId=${planetId}`);
-      paths.add(`/wallet/${encodedWallet}/shipyard?planetId=${planetId}`);
-      paths.add(`/wallet/${encodedWallet}/defenses?planetId=${planetId}`);
-      paths.add(`/wallet/${encodedWallet}/research?planetId=${planetId}`);
-    }
-  }
-
-  for (const path of [...galaxySystemPaths].slice(0, 500)) {
-    paths.add(path);
-  }
-
-  return [...paths];
-}
 
 const indexedRequestSnapshotCache = new WeakMap<SettlementIndexer, {
   expiresAtMs: number;
@@ -3455,8 +3226,7 @@ function indexedWalletPlanetsWarmResponse(
 async function indexedWalletOverviewWarmResponse(
   indexer: SettlementIndexer | undefined,
   wallet: `0x${string}`,
-  selectedPlanetId: bigint | undefined,
-  _chainReader: ChainReader | undefined
+  selectedPlanetId: bigint | undefined
 ): Promise<Response | null> {
   const startedAt = performance.now();
   if (!indexer || !hasWarmPlanetIndex(indexer)) return null;
@@ -3559,11 +3329,11 @@ function indexedWalletStateResponse<T extends object>(
   indexer: SettlementIndexer | undefined,
   surface: string,
   build: IndexedWarmBuilder<T>,
-  options: { includeSelectedPlanet?: boolean } = {}
+  options: { includeSelectedPlanet?: boolean; requiresSafeResources?: boolean } = {}
 ): Response {
   const wallet = walletAddressFromPath(url);
   const planetId = options.includeSelectedPlanet === false ? undefined : selectedPlanetId(url);
-  const indexed = indexedWarmResponse(indexer, wallet, planetId, surface, build);
+  const indexed = indexedWarmResponse(indexer, wallet, planetId, surface, build, options.requiresSafeResources);
   return indexed ?? indexedReadNotReadyResponse(surface, indexer, indexedReadLookup(url, wallet));
 }
 
@@ -3586,22 +3356,22 @@ function indexedWarmResponse<T extends object>(
   wallet: `0x${string}`,
   selectedPlanetId: bigint | undefined,
   surface: string,
-  build: IndexedWarmBuilder<T>
+  build: IndexedWarmBuilder<T>,
+  requiresSafeResources = false
 ): Response | null {
   if (!indexer) return null;
 
   return indexer.readConsistentSnapshot(() => {
     if (!hasWarmPlanetIndex(indexer)) return null;
     const projection = indexer.resourceProjectionContext();
-    const requiresSpendableResources = ["infrastructure", "shipyard", "defenses", "research"].includes(surface);
-    if (requiresSpendableResources && projection.timestamp !== null && !projection.safeToProject) {
+    if (requiresSafeResources && projection.timestamp !== null && !projection.safeToProject) {
       return indexedReadNotReadyResponse(surface, indexer, {
         wallet,
         ...(selectedPlanetId !== undefined ? { selectedPlanetId: selectedPlanetId.toString() } : {}),
         reason: "resource_projection_not_ready"
       });
     }
-    const settlement = indexedWalletSettlement(indexer, wallet, selectedPlanetId);
+    const settlement = indexedWalletSelection(indexer, wallet, selectedPlanetId);
     if (!settlement?.planet) return null;
 
     const detail = indexedWarmDetail(surface);
@@ -3639,7 +3409,21 @@ function indexedJsonResponse<T extends object>(
 ): Response {
   return Response.json({
     ...body,
-    indexer: snapshot,
+    // Gameplay consumers need readiness and ordering, not the repeated maintenance
+    // history/counters. Full diagnostics remain available through /health.
+    indexer: {
+      indexedState: snapshot.indexedState,
+      safeToServeIndexedState: snapshot.safeToServeIndexedState,
+      safeToServeAllianceState: snapshot.safeToServeAllianceState,
+      allianceStaleReason: snapshot.allianceStaleReason,
+      pendingReconciliationReason: snapshot.pendingReconciliationReason,
+      staleReason: snapshot.staleReason,
+      indexedRevision: snapshot.indexedRevision,
+      latestIndexedBlock: snapshot.latestIndexedBlock,
+      resourceProjectionBlock: snapshot.resourceProjectionBlock,
+      resourceProjectionTimestamp: snapshot.resourceProjectionTimestamp,
+      reorgDetectedAt: snapshot.reorgDetectedAt,
+    },
     source: indexedSource
   }, {
     headers: indexedStateHeaders(indexState)
@@ -3711,30 +3495,29 @@ function indexedWalletSettlement(
   wallet: `0x${string}`,
   selectedPlanetId: bigint | undefined
 ): { settlement: ReturnType<SettlementIndexer["walletSettlement"]>; planet: SettledPlanetEvent | null } | null {
-  const settlement = indexer.walletSettlement(wallet);
-  if (!selectedPlanetId) {
-    const planet = settlement.planet;
-    return {
-      settlement: {
-        ...settlement,
-        planet: indexedWalletSettlementPlanetState(indexer, planet)
-      },
-      planet
-    };
-  }
-
-  const planet = indexer.planet(selectedPlanetId.toString());
-  if (!planet || planet.owner.toLowerCase() !== wallet.toLowerCase()) {
-    return null;
-  }
-
+  const selected = indexedWalletSelection(indexer, wallet, selectedPlanetId);
+  if (!selected) return null;
   return {
+    ...selected,
     settlement: {
-      ...settlement,
-      homePlanetId: planet.planetId,
-      planet: indexedWalletSettlementPlanetState(indexer, planet)
-    },
-    planet
+      ...selected.settlement,
+      planet: indexedWalletSettlementPlanetState(indexer, selected.planet)
+    }
+  };
+}
+
+// Ownership lookup does not project resources. Endpoint builders project only
+// the state they return, inside the caller's consistent SQLite snapshot.
+function indexedWalletSelection(indexer: SettlementIndexer, wallet: `0x${string}`, selectedPlanetId: bigint | undefined) {
+  if (!selectedPlanetId) {
+    const settlement = indexer.walletSettlement(wallet);
+    return { settlement, planet: settlement.planet };
+  }
+  const planet = indexer.planet(selectedPlanetId.toString());
+  if (!planet || planet.owner.toLowerCase() !== wallet.toLowerCase()) return null;
+  return {
+    planet,
+    settlement: { wallet, hasFirstPlanet: true, homePlanetId: planet.planetId, planet, contractKind: "game" as const }
   };
 }
 
@@ -4066,7 +3849,7 @@ function indexedMissionArchive(
     pageSize: requested.pageSize,
     planetId: url.searchParams.get("planetId")
   });
-  const rows = chronologicalMissionArchiveRows(archive.completedMissions, []);
+  const rows = missionArchiveRows(indexer, archive.completedMissions);
   const totalEntries = archive.totalEntries;
   const totalPages = Math.max(1, Math.ceil(totalEntries / requested.pageSize));
   const page = archive.page;
@@ -4074,7 +3857,7 @@ function indexedMissionArchive(
   return {
     wallet,
     homePlanetId: archive.homePlanetId,
-    rows: attachMissionArchiveReports(rows, indexer.battleReportsForMissions(missionsFromArchiveRows(rows))),
+    rows,
     pagination: {
       page,
       pageSize: requested.pageSize,
@@ -4125,13 +3908,13 @@ function globalMissionArchive(url: URL, indexer: SettlementIndexer): GlobalMissi
     planetId: url.searchParams.get("planetId"),
     summaryOnly: url.searchParams.get("summaryOnly") === "true"
   });
-  const rows = chronologicalMissionArchiveRows(archive.completedMissions, []);
+  const rows = missionArchiveRows(indexer, archive.completedMissions);
   const totalEntries = archive.totalEntries;
   const totalPages = Math.max(1, Math.ceil(totalEntries / requested.pageSize));
   const page = archive.page;
 
   return {
-    rows: attachMissionArchiveReports(rows, indexer.battleReportsForMissions(missionsFromArchiveRows(rows))),
+    rows,
     pagination: {
       page,
       pageSize: requested.pageSize,
@@ -4143,25 +3926,6 @@ function globalMissionArchive(url: URL, indexer: SettlementIndexer): GlobalMissi
   };
 }
 
-function attachMissionArchiveReports(
-  rows: FleetMissionArchiveEntry[],
-  battleReports: FleetMissionVisibility["battleReports"]
-): FleetMissionArchiveEntry[] {
-  if (battleReports.length === 0) return rows;
-  const reportsByMissionId = battleReportsByAssociatedMissionId(battleReports);
-  return rows.map((row) => {
-    if (row.kind !== "mission" || row.report) return row;
-    return {
-      ...row,
-      report: reportsByMissionId.get(row.mission.missionId)
-    };
-  });
-}
-
-function missionsFromArchiveRows(rows: readonly FleetMissionArchiveEntry[]): FleetMissionSummary[] {
-  return rows.flatMap((row) => row.kind === "mission" ? [row.mission] : []);
-}
-
 function missionArchivePagination(url: URL): { page: number; pageSize: number } {
   const page = Number.parseInt(url.searchParams.get("page") ?? "1", 10) || 1;
   const pageSize = Number.parseInt(url.searchParams.get("pageSize") ?? "25", 10) || 25;
@@ -4171,22 +3935,18 @@ function missionArchivePagination(url: URL): { page: number; pageSize: number } 
   };
 }
 
-function chronologicalMissionArchiveRows(
+function missionArchiveRows(
+  indexer: SettlementIndexer,
   completedMissions: FleetMissionSummary[],
-  battleReports: FleetMissionVisibility["battleReports"]
 ): FleetMissionArchiveEntry[] {
-  const reportsByMissionId = battleReportsByAssociatedMissionId(battleReports);
-  const completedMissionIds = new Set(completedMissions.map((mission) => mission.missionId));
-  return [
-    ...completedMissions.map((mission): FleetMissionArchiveEntry => ({
+  // Preserve the existing display order and SQL tie order within this page.
+  const missions = [...completedMissions].sort((left, right) => missionArchiveTimestamp(right) - missionArchiveTimestamp(left));
+  const reportsByMissionId = battleReportsByAssociatedMissionId(indexer.battleReportsForMissions(missions));
+  return missions.map((mission): FleetMissionArchiveEntry => ({
       kind: "mission",
       mission,
       report: reportsByMissionId.get(mission.missionId)
-    })),
-    ...battleReports
-      .filter((report) => !associatedBattleReportMissionIds(report).some((missionId) => completedMissionIds.has(missionId)))
-      .map((report): FleetMissionArchiveEntry => ({ kind: "battleReport", report })),
-  ].sort((left, right) => missionArchiveTimestamp(right) - missionArchiveTimestamp(left));
+    }));
 }
 
 function battleReportsByAssociatedMissionId(
@@ -4205,9 +3965,7 @@ function associatedBattleReportMissionIds(report: FleetMissionVisibility["battle
   return [report.missionId, ...report.participants.map((participant) => participant.missionId)];
 }
 
-function missionArchiveTimestamp(row: FleetMissionArchiveEntry): number {
-  if (row.kind === "battleReport") return Number(row.report.blockNumber || "0");
-  const mission = row.mission;
+function missionArchiveTimestamp(mission: FleetMissionSummary): number {
   const rawTimestamp = mission.status === "Returned" ? mission.returnAt : mission.arrivalAt;
   const numericTimestamp = Number(rawTimestamp);
   if (Number.isFinite(numericTimestamp) && numericTimestamp > 0) {
@@ -4319,6 +4077,70 @@ function indexedMoonState(
   return indexer.moonState(wallet, planet?.planetId ?? settlement.homePlanetId);
 }
 
+function indexedProductionContext(
+  wallet: `0x${string}`,
+  settlement: ReturnType<SettlementIndexer["walletSettlement"]>,
+  planet: SettledPlanetEvent | null,
+  indexer: SettlementIndexer
+) {
+  const buildings = planet ? indexer.infrastructureRows(planet.planetId) : [];
+  return {
+    buildings,
+    levels: {
+      shipyardLevel: buildings.find(building => building.id === 5)?.level ?? 0,
+      naniteLevel: buildings.find(building => building.id === 11)?.level ?? 0
+    },
+    state: {
+      wallet,
+      homePlanetId: settlement.homePlanetId,
+      resources: planet?.resources ?? null,
+      resourcesAsOfNow: indexedCurrentResourcesForPlanet(indexer, planet),
+      resourceSnapshot: resourceSnapshotMetadataForPlanet(planet),
+      technologyLevels: indexer.technologyLevels(wallet)
+    }
+  };
+}
+
+function indexedFleetLaunchContext(wallet: `0x${string}`, indexer: SettlementIndexer) {
+  const slotSettlementBlocker = indexer.pendingFleetSlotSettlementMissionsForWallet(wallet)[0];
+  return {
+    fleetSlots: indexer.fleetSlots(wallet),
+    fleetLaunchAvailable: !slotSettlementBlocker,
+    ...(slotSettlementBlocker ? {
+      fleetLaunchUnavailableReason: `Fleet slot state is waiting for mission settlement (mission ${slotSettlementBlocker.missionId}). Refresh after the backend or keeper settles due fleet missions before launching another fleet.`,
+      stale: true
+    } : {})
+  };
+}
+
+function indexedSupplySources(
+  wallet: `0x${string}`,
+  _settlement: ReturnType<SettlementIndexer["walletSettlement"]>,
+  target: SettledPlanetEvent | null,
+  _detail: string,
+  indexer: SettlementIndexer
+) {
+  return {
+    wallet,
+    technologyLevels: indexer.technologyLevels(wallet),
+    ...indexedFleetLaunchContext(wallet, indexer),
+    sources: indexer.settledPlanetsForOwner(wallet)
+      .filter(planet => planet.planetId !== target?.planetId)
+      .map(planet => {
+        return {
+          planetId: planet.planetId,
+          name: planet.name,
+          galaxy: planet.galaxy,
+          system: planet.system,
+          position: planet.position,
+          coordinates: `${planet.galaxy}:${planet.system}:${planet.position}`,
+          resources: indexedCurrentResourcesForPlanet(indexer, planet) ?? planet.resources,
+          launchableShips: indexer.launchableShipCounts(planet.planetId)
+        };
+      })
+  };
+}
+
 function indexedShipyardState(
   wallet: `0x${string}`,
   settlement: ReturnType<SettlementIndexer["walletSettlement"]>,
@@ -4326,40 +4148,24 @@ function indexedShipyardState(
   unavailableReason: string,
   indexer: SettlementIndexer
 ): ShipyardState {
-  const shipyardLevel = planet ? indexer.infrastructureRows(planet.planetId).find((building) => building.id === 5)?.level ?? 0 : 0;
-  const naniteLevel = planet ? indexer.infrastructureRows(planet.planetId).find((building) => building.id === 11)?.level ?? 0 : 0;
-  const pendingSlotSettlements = indexer.pendingFleetSlotSettlementMissionsForWallet(wallet);
-  const slotSettlementBlocker = pendingSlotSettlements[0];
-  const fleetLaunchUnavailableReason = slotSettlementBlocker
-    ? `Fleet slot state is waiting for mission settlement (mission ${slotSettlementBlocker.missionId}). Refresh after the backend or keeper settles due fleet missions before launching another fleet.`
-    : undefined;
+  const { state, levels } = indexedProductionContext(wallet, settlement, planet, indexer);
+  const { shipyardLevel, naniteLevel } = levels;
+  const inventory = planet ? indexer.productionInventory(planet.planetId, "ship", levels) : { rows: [], launchable: [] };
 
   return {
-    wallet,
-    homePlanetId: settlement.homePlanetId,
+    ...state,
     planetId: planet?.planetId ?? settlement.homePlanetId,
     productionAvailable: true,
     unavailableReason,
-    resources: planet?.resources ?? null,
-    resourcesAsOfNow: indexedCurrentResourcesForPlanet(indexer, planet),
-    resourceSnapshot: resourceSnapshotMetadataForPlanet(planet),
-    fleetSlots: indexer.fleetSlots(wallet),
-    ...(fleetLaunchUnavailableReason
-      ? {
-        fleetLaunchAvailable: false,
-        fleetLaunchUnavailableReason,
-        stale: true
-      }
-      : { fleetLaunchAvailable: true }),
+    ...indexedFleetLaunchContext(wallet, indexer),
     shipyardLevel,
     naniteLevel,
-    technologyLevels: indexer.technologyLevels(wallet),
     // `ships` is the deterministic settled-to-now inventory: canonical evented
     // counts plus per-unit production completions. It is shared with energy and
     // public inventory surfaces so a completed Solar Satellite cannot disappear
     // between queue progress and the next lazy on-chain settlement transaction.
-    ships: planet ? indexer.shipRows(planet.planetId, { shipyardLevel, naniteLevel }) : [],
-    launchableShips: planet ? indexer.availableShipRows(planet.planetId, { shipyardLevel, naniteLevel }) : [],
+    ships: inventory.rows,
+    launchableShips: inventory.launchable,
     queue: planet ? indexer.planetQueue(planet.planetId, "ship") : null
   };
 }
@@ -4371,32 +4177,17 @@ function indexedDefenseState(
   unavailableReason: string,
   indexer: SettlementIndexer
 ): DefenseState {
-  const buildings = planet ? indexer.infrastructureRows(planet.planetId) : [];
+  const { state, buildings, levels } = indexedProductionContext(wallet, settlement, planet, indexer);
+  const inventory = planet ? indexer.productionInventory(planet.planetId, "defense", levels) : { rows: [], launchable: [] };
 
   return {
-    wallet,
-    homePlanetId: settlement.homePlanetId,
+    ...state,
     productionAvailable: true,
     unavailableReason,
-    resources: planet?.resources ?? null,
-    resourcesAsOfNow: indexedCurrentResourcesForPlanet(indexer, planet),
-    resourceSnapshot: resourceSnapshotMetadataForPlanet(planet),
-    shipyardLevel: buildings.find((building) => building.id === 5)?.level ?? 0,
-    naniteLevel: buildings.find((building) => building.id === 11)?.level ?? 0,
+    ...levels,
     missileSiloLevel: buildings.find((building) => building.id === 14)?.level ?? 0,
-    technologyLevels: indexer.technologyLevels(wallet),
-    defenses: planet
-      ? indexer.defenseRows(planet.planetId, {
-          shipyardLevel: buildings.find((building) => building.id === 5)?.level ?? 0,
-          naniteLevel: buildings.find((building) => building.id === 11)?.level ?? 0
-        })
-      : [],
-    launchableDefenses: planet
-      ? indexer.availableDefenseRows(planet.planetId, {
-          shipyardLevel: buildings.find((building) => building.id === 5)?.level ?? 0,
-          naniteLevel: buildings.find((building) => building.id === 11)?.level ?? 0
-        })
-      : [],
+    defenses: inventory.rows,
+    launchableDefenses: inventory.launchable,
     queue: planet ? indexer.planetQueue(planet.planetId, "defense") : null
   };
 }
@@ -4408,22 +4199,17 @@ function indexedResearchState(
   unavailableReason: string,
   indexer: SettlementIndexer
 ): ResearchState {
-  const buildings = planet ? indexer.infrastructureRows(planet.planetId) : [];
+  const { state, buildings } = indexedProductionContext(wallet, settlement, planet, indexer);
   const researchLabLevel = buildings.find((building) => building.id === 6)?.level ?? 0;
   const researchNetworkLabLevels = indexer.researchNetworkLabLevels(wallet, planet?.planetId ?? null);
 
   return {
-    wallet,
-    homePlanetId: settlement.homePlanetId,
+    ...state,
     planetId: planet?.planetId ?? settlement.homePlanetId,
     researchAvailable: true,
     unavailableReason,
-    resources: planet?.resources ?? null,
-    resourcesAsOfNow: indexedCurrentResourcesForPlanet(indexer, planet),
-    resourceSnapshot: resourceSnapshotMetadataForPlanet(planet),
     researchLabLevel,
     researchNetworkLabLevels,
-    technologyLevels: indexer.technologyLevels(wallet),
     technologies: indexer.technologyRows(wallet, { localLabLevel: researchLabLevel, researchNetworkLabLevels }),
     queue: indexer.researchQueue(wallet)
   };
@@ -4751,8 +4537,8 @@ function defenderPlanetStateForReport(
   const planet = indexer.planet(report.targetPlanetId);
   if (!planet) return null;
   return {
-    fleet: indexer.shipRows(planet.planetId).map(({ id, count }) => ({ id, count })).filter((row) => row.count > 0),
-    defenses: indexer.defenseRows(planet.planetId).map(({ id, count }) => ({ id, count })).filter((row) => row.count > 0),
+    fleet: indexer.displayedUnitCounts(planet.planetId, "ship").filter((row) => row.count > 0),
+    defenses: indexer.displayedUnitCounts(planet.planetId, "defense").filter((row) => row.count > 0),
     stationedDefenders: report.stationedDefenders ?? indexer.stationedDefendersForBattle(mission, report)
   };
 }
@@ -5302,6 +5088,7 @@ function getRuntimeConfig(workerRole: WorkerRole = envWorkerRole()): RuntimeConf
     referralSystemAddress,
     paidAllianceInviteAddress,
     paidAllianceInviteSignerAddress,
+    paidAllianceInviteCapabilities: paidAllianceInviteCapabilities(loadBackendConfig(process.env).config),
     resourceTokenAddresses,
     rpcProvider: rpcUrl.includes("alchemy") ? "alchemy" : "unknown"
   };
@@ -5580,7 +5367,9 @@ function highscorePagination(url: URL): { page: number; pageSize: number } {
 
 function highscoreRequestedCategories(url: URL): readonly HighscoreCategory[] {
   const requested = url.searchParams.get("category");
-  if (!requested) return highscoreCategories;
+  // The frontend requests the active tab explicitly. Default to Total instead
+  // of repeating every player's full tactical data in every category list.
+  if (!requested) return ["total"];
   return highscoreCategories.includes(requested as HighscoreCategory) ? [requested as HighscoreCategory] : highscoreCategories;
 }
 
@@ -5712,11 +5501,12 @@ function highscoreRows(
   planetsByOwner: ReadonlyMap<string, SettledPlanetEvent[]>,
   profiles: ReadonlyMap<string, PlayerProfile> = new Map(),
   allianceIntel: ReadonlyMap<string, AllianceIdentity> = new Map(),
-  indexer?: SettlementIndexer | undefined
+  indexer?: SettlementIndexer | undefined,
+  includePlanetDetails = true,
 ): Map<string, RankedHighscoreEntry> {
-  return new Map(
+  const buildRows = () => new Map<string, RankedHighscoreEntry>(
     entries.map((entry) => {
-      const planets = rankedHighscorePlanets(entry, planetsByOwner, indexer);
+      const planets = includePlanetDetails ? rankedHighscorePlanets(entry, planetsByOwner, indexer) : [];
       const homePlanet = rankedHighscoreHomePlanet(entry, planets);
       return [
         entry.wallet.toLowerCase(),
@@ -5732,6 +5522,9 @@ function highscoreRows(
       ];
     })
   );
+  // All visible planets share one committed projection context, rather than
+  // reopening a SQLite snapshot and reloading its metadata for every planet.
+  return indexer ? indexer.readConsistentSnapshot(buildRows) : buildRows();
 }
 
 function rankHighscores(
@@ -6031,12 +5824,12 @@ function rankedHighscorePlanets(
     // unnecessary SQLite queries. The indexed primary-key existence lookup lets the common no-moon
     // path stay O(1) per planet (VEY-KANEO-737).
     const hasMoon = indexer?.hasMoon(planet.planetId) ?? false;
-    const moonState = hasMoon ? indexer?.moonState(planet.owner, planet.planetId) : undefined;
-    const moon = moonState?.moon
+    const moonResources = hasMoon ? indexer?.moonResources(planet.planetId) : undefined;
+    const moon = moonResources
       ? {
           exists: true,
-          resources: moonState.resources ?? null,
-          ...(moonState.resourcesAsOfNow ? { resourcesAsOfNow: moonState.resourcesAsOfNow } : {})
+          resources: moonResources,
+          resourcesAsOfNow: moonResources
         }
       : null;
 
@@ -6437,6 +6230,7 @@ function indexedAllianceResponse(
   indexer: SettlementIndexer | undefined,
   paidAllianceInviteAddress?: `0x${string}`,
   paidAllianceInviteIndexFromBlock?: bigint,
+  summaryDirectory = false,
 ): Response {
   if (!hasWarmAllianceIndex(indexer)) {
     return indexedReadNotReadyResponse("alliance", indexer, { wallet });
@@ -6453,12 +6247,13 @@ function indexedAllianceResponse(
   }
 
   const snapshot = indexer.snapshot();
-  const state = indexer.allianceState(wallet);
+  const state = indexer.allianceState(wallet, summaryDirectory);
   const paidInviteSummaries = paidAllianceInviteAddress
     ? indexer.paidAllianceInviteSummaries()
     : null;
-  const directory = state.directory.map((alliance) => ({
+  const directory = state.directory.map(({ members, ...alliance }) => ({
     ...alliance,
+    ...(summaryDirectory ? {} : { members }),
     bonusBalance: paidInviteSummaries
       ? (paidInviteSummaries.get(alliance.allianceId) ?? emptyPaidAllianceInviteSummary()).bonusBalance
       : null,
@@ -6502,7 +6297,7 @@ function emptyPaidAllianceInviteSummary() {
 
 async function indexedAttackProtectionResponse(
   indexer: SettlementIndexer | undefined,
-  chainReader: ChainReader | undefined,
+  chainReader: ApiChainReader | undefined,
   wallet: `0x${string}`,
   targetPlanetId: bigint,
   targetIsMoon = false
@@ -6728,9 +6523,8 @@ function backendReadiness(
 
   return {
     ready: configurationReady
+      && booleanSnapshotField(chainSyncSnapshot, "ready") !== false
       && chainSyncConnected !== false
-      && subscribedToHeads !== false
-      && subscribedToLogs !== false
       && safeToServeIndexedState !== false
       && rpcReadiness.ready,
     degraded: gamePaused || missionResolutionStatus === "degraded" || !rpcReadiness.ready,
@@ -6950,7 +6744,8 @@ function parseIntegerQuery(
     return null;
   }
 
-  return Number.parseInt(value, 10);
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) ? parsed : null;
 }
 
 function badRequest(message: string): Response {
@@ -6970,7 +6765,7 @@ function badRequest(message: string): Response {
 }
 
 async function transactionStatusResponse(
-  chainReader: ChainReader | undefined,
+  chainReader: ApiChainReader | undefined,
   indexer: SettlementIndexer | undefined,
   transactionHash: string
 ): Promise<Response> {
@@ -6984,7 +6779,7 @@ async function transactionStatusResponse(
       status: 400
     });
   }
-  if (!chainReader?.getTransactionReceipt || !indexer) {
+  if (!indexer) {
     return Response.json({ error: "Transaction status is unavailable." }, {
       headers,
       status: 503
@@ -6992,6 +6787,29 @@ async function transactionStatusResponse(
   }
 
   try {
+    // A completed canonical scan proves all indexed-contract effects of a known
+    // transaction are committed. Do not ask RPC to re-confirm that durable fact.
+    const committed = indexer.transactionIndexingSummary(transactionHash);
+    const committedBlock = committed.events[0]?.blockNumber;
+    if (committedBlock && committed.events.every(event => event.blockNumber === committedBlock)) {
+      const applied = committed.materialized && committed.latestSyncedBlock !== null
+        && BigInt(committed.latestSyncedBlock) >= BigInt(committedBlock);
+      return Response.json({
+        transactionHash,
+        phase: applied ? "applied" : "confirmed",
+        receiptBlock: committedBlock,
+        latestIndexedBlock: committed.latestIndexedBlock,
+        latestSyncedBlock: committed.latestSyncedBlock,
+        indexedEventCount: committed.eventCount,
+        ...(applied ? { expectedIndexedEventCount: committed.eventCount } : {}),
+        events: committed.events
+      }, { headers });
+    }
+    // Unknown/no-event/reverted transactions cannot be inferred from event logs.
+    // Keep receipt validation for those rather than guessing success from a hash.
+    if (!chainReader?.getTransactionReceipt) {
+      return Response.json({ error: "Transaction receipt status is unavailable." }, { headers, status: 503 });
+    }
     const receipt = await chainReader.getTransactionReceipt(transactionHash);
     const indexed = indexer.transactionIndexingSummary(transactionHash, receipt?.logs);
     if (!receipt) {

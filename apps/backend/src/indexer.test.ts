@@ -1,12 +1,13 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { afterAll, describe, expect, setSystemTime, test } from "bun:test";
+import { afterAll, describe, expect, setSystemTime, spyOn, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { encodeAbiParameters, keccak256, parseAbiParameters, toHex } from "viem";
 import { canonicalContractTables } from "./contractStateSchema";
 import { inviteeProductionBoostActivatedTopic, type Address, type AllianceState, type CanonicalFleetMissionDetails, type CanonicalFleetMissionSnapshot, type CanonicalPlanetChainState, type DebrisFieldEvent, type DefenseState, type InfrastructureState, type MoonChanceReportEvent, type MoonState, type PlayerQueues, type ResearchState, type RpcLog, type ShipyardState, type SettledPlanetEvent } from "./evm";
 import { SettlementIndexer } from "./indexer";
+import { decodeBattleReportLogs } from "./evm";
 import { deriveBuildingRows, deriveDefenseRows, deriveInfrastructureFields, deriveShipRows } from "./readModels";
 
 const player = "0x2222222222222222222222222222222222222222" as Address;
@@ -158,6 +159,66 @@ const moonChance: MoonChanceReportEvent = {
 };
 
 describe("SettlementIndexer", () => {
+  test("resolution checks batch ready report identities including ACS participants without hydrating reports", () => {
+    const database = new Database(":memory:");
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; },
+    }, 100n, { database });
+    const insert = database.query(`INSERT INTO indexed_battle_report_read_models
+      (mission_id, status, report_json, updated_at) VALUES (?, ?, ?, '2026-01-01')`);
+    insert.run("0", "ready", JSON.stringify({ missionId: "0" }));
+    insert.run("1", "ready", JSON.stringify({ missionId: "1", participants: [{ missionId: "2" }] }));
+    insert.run("2", "ready", JSON.stringify({ missionId: "1", participants: [{ missionId: "2" }] }));
+    insert.run("3", "pending", JSON.stringify({ missionId: "3", participants: [] }));
+    // Older databases may contain malformed rows; the current expression index
+    // rejects them at insertion, so remove it only in this in-memory fixture.
+    database.run("DROP INDEX indexed_battle_report_read_models_recent_idx");
+    insert.run("4", "ready", "broken JSON");
+    insert.run("5", "ready", null);
+    for (let id = 6; id < 510; id++) insert.run(String(id), "ready", JSON.stringify({ missionId: String(id), participants: [] }));
+    const hydrate = spyOn(indexer as any, "battleReportsForMissionIds").mockImplementation(() => { throw new Error("must not hydrate reports"); });
+    try {
+      const resolved = (indexer as any).resolvedBattleMissionIdsForMissions(Array.from({ length: 510 }, (_, id) => String(id)));
+      expect(resolved.size).toBe(506);
+      expect([...resolved].sort()).toEqual(["1", "2", ...Array.from({ length: 504 }, (_, id) => String(id + 6))].sort());
+      expect([...(indexer as any).resolvedBattleMissionIdsForMissions(["2", "2"])]).toEqual(["1", "2"]);
+      expect(hydrate).not.toHaveBeenCalled();
+    } finally { hydrate.mockRestore(); database.close(); }
+  });
+
+  test("paginates ready battle reports numerically without ACS aliases or the old 500-row ceiling", () => {
+    const database = new Database(":memory:");
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n, { database });
+    const insert = database.query(`INSERT INTO indexed_battle_report_read_models
+      (mission_id, status, report_json, block_number, updated_at) VALUES (?, 'ready', ?, ?, ?)`);
+    const reportFor = (id: number, logIndex: string, blockNumber = "0x100") => decodeBattleReportLogs([{
+      blockNumber, transactionHash: `0xbattle${id}`, logIndex,
+      topics: [attackBattleResolvedTopic, topic(BigInt(id)), addressTopic(player), topic(7n)],
+      data: abiWords(1n, 0n, 0n, 0n, 0n, 0n)
+    }], String(id))!;
+    for (const [id, logIndex] of [[80, "0x2"], [90, "0xf"], [70, "0x10"]] as const) {
+      insert.run(String(id), JSON.stringify(reportFor(id, logIndex)), "256", "2026-01-01");
+    }
+    insert.run("999", JSON.stringify(reportFor(70, "0x10")), "256", "2026-01-01");
+    database.transaction(() => {
+      for (let id = 1000; id < 1600; id++) {
+        insert.run(String(id), JSON.stringify(reportFor(id, "0x0", "0xff")), "255", "2026-01-01");
+      }
+    })();
+    expect(indexer.battleReports(1, 0).map(report => report.missionId)).toEqual(["70"]);
+    expect(indexer.battleReports(1, 1).map(report => report.missionId)).toEqual(["90"]);
+    expect(indexer.battleReports(1, 2).map(report => report.missionId)).toEqual(["80"]);
+    expect(indexer.battleReports(1, 501)).toHaveLength(1);
+    expect(indexer.battleReports(10, 603)).toEqual([]);
+    database.close();
+  });
+
   test("indexes retained production queue events by their canonical topics", () => {
     const database = new Database(":memory:");
     new SettlementIndexer({
@@ -1836,6 +1897,88 @@ describe("SettlementIndexer", () => {
       relatedTransactionHash: "0xactivity-start",
       reconciliation: "projected"
     });
+  });
+
+  test("paginates indexed activity before hydration and preserves projected feed ordering", () => {
+    const database = new Database(":memory:");
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n, { database });
+    indexer.applyEvent(planet);
+    for (let i = 0; i < 7; i++) {
+      indexer.applyLog({
+        blockNumber: "0x81", blockTimestamp: "0x694c0000",
+        transactionHash: `0xactivity-page-${i}`, logIndex: `0x${(14 + i).toString(16)}`,
+        topics: [buildingStartedTopic, topic(7n), topic(0n)],
+        data: abiWords(BigInt(i + 1), 1766580000n, 0n, 0n, 0n)
+      });
+    }
+    const all = indexer.playerActivity(player, { page: 1, pageSize: 25 });
+    const page = indexer.playerActivity(player, { page: 2, pageSize: 2 });
+    expect(page.items).toEqual(all.items.slice(2, 4));
+    expect(page.totalEntries).toBe(all.totalEntries);
+    expect(page.summary).toEqual(all.summary);
+    const projected = indexer.playerActivity(player, { page: 1, pageSize: 25, includeProjected: true });
+    expect(indexer.playerActivity(player, { page: 2, pageSize: 2, includeProjected: true }).items).toEqual(projected.items.slice(2, 4));
+    const plan = database.query(`EXPLAIN QUERY PLAN SELECT activity_json FROM indexed_player_activity_feed
+      WHERE wallet = ? AND CAST(transaction_at AS INTEGER) <= ?
+      ORDER BY CAST(transaction_at AS INTEGER) DESC, CAST(block_number AS INTEGER) DESC,
+        length(log_index) DESC, log_index DESC LIMIT ? OFFSET ?`).all(player, 2000000000, 2, 2) as Array<{ detail: string }>;
+    expect(plan.some(row => row.detail.includes("wallet_time_order_idx"))).toBe(true);
+    expect(plan.some(row => row.detail.includes("TEMP B-TREE"))).toBe(false);
+    database.close();
+  });
+
+  test("canonical replay range uses the numeric block index instead of scanning the ledger", () => {
+    const database = new Database(":memory:");
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n, { database });
+    const log = {
+      address: player, blockNumber: "0x81", transactionHash: "0xreplay-range", logIndex: "0x0",
+      topics: [shipCompletedTopic, topic(7n), topic(0n)], data: abiWords(4n, 4n)
+    };
+    indexer.applyEvent(planet);
+    indexer.applyLog(log);
+    expect(indexer.missingCanonicalGameLogs(player, [], 129n, 129n)).toEqual([{ ...log, removed: true }]);
+    expect(indexer.missingCanonicalGameLogs(player, [log], 129n, 129n)).toEqual([]);
+    expect(indexer.missingCanonicalGameLogs(player, [], 130n, 140n)).toEqual([]);
+    const plan = database.query(`EXPLAIN QUERY PLAN SELECT event_json FROM indexed_event_logs
+      WHERE removed=0 AND CAST(block_number AS INTEGER) BETWEEN ? AND ?
+        AND lower(json_extract(event_json, '$.address'))=?`).all("129", "130", player) as Array<{ detail: string }>;
+    expect(plan.some(row => row.detail.includes("indexed_event_logs_numeric_block_idx"))).toBe(true);
+    const transactionPlan = database.query(`EXPLAIN QUERY PLAN SELECT event_json FROM indexed_event_logs
+      WHERE removed=0 AND lower(transaction_hash)=lower(?)`).all(log.transactionHash) as Array<{ detail: string }>;
+    expect(transactionPlan.some(row => row.detail.includes("indexed_event_logs_transaction_state_idx"))).toBe(true);
+    database.close();
+  });
+
+  test("ledger diagnostic counter follows inserts, duplicates, replacements, deletes and rollback", () => {
+    const database = new Database(":memory:");
+    new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n, { database });
+    const insert = database.query(`INSERT OR REPLACE INTO indexed_event_logs
+      (event_id, transaction_hash, log_index, block_number, removed, event_json, received_at)
+      VALUES (?, '0xabc', '0x0', '100', 0, '{}', 'now')`);
+    const count = () => (database.query("SELECT count FROM indexed_event_log_count WHERE id = 1").get() as { count: number }).count;
+    expect(count()).toBe(0);
+    insert.run("one");
+    insert.run("one");
+    expect(count()).toBe(1);
+    expect(() => database.transaction(() => { insert.run("rollback"); throw new Error("rollback"); })()).toThrow("rollback");
+    expect(count()).toBe(1);
+    insert.run("two");
+    expect(count()).toBe(2);
+    database.exec("DELETE FROM indexed_event_logs");
+    expect(count()).toBe(0);
+    database.close();
   });
 
   test("keeps one server-side activity presence watermark per wallet", () => {
@@ -6195,6 +6338,38 @@ describe("SettlementIndexer", () => {
     ]);
   });
 
+  test.each(["ship", "defense"] as const)("%s inventory reuses settled counts without changing display or launch timing", kind => {
+    const indexer = new SettlementIndexer({
+      async listSettledPlanetEvents() { return []; },
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+    }, 100n);
+    indexer.applyEvent(planet);
+    indexer.applyLog({
+      blockNumber: "0xa0", transactionHash: "0xinventory-count", logIndex: "0x0",
+      topics: [kind === "ship" ? planetShipCountChangedTopic : planetDefenseCountChangedTopic, topic(7n), topic(0n)],
+      data: abiWords(4n),
+    });
+    indexer.applyLog({
+      blockNumber: "0xa1", transactionHash: "0xinventory-queue", logIndex: "0x0",
+      topics: [kind === "ship" ? shipQueuedTopic : defenseQueuedTopic, topic(7n), topic(0n)],
+      data: abiWords(3n, 1767225599n, 0n, 0n, 0n),
+    });
+    const levels = { shipyardLevel: 3, naniteLevel: 1 };
+    const rows = kind === "ship" ? indexer.shipRows(planet.planetId, levels) : indexer.defenseRows(planet.planetId, levels);
+    const launchable = (kind === "ship" ? indexer.availableShipRows(planet.planetId, levels) : indexer.availableDefenseRows(planet.planetId, levels))
+      .map(({ id, count }) => ({ id, count }));
+    const displayed = indexer.displayedUnitCounts(planet.planetId, kind);
+    expect(displayed).toEqual(rows.map(({ id, count }) => ({ id, count })));
+    expect(displayed[0]!.count).toBe(4);
+    expect(launchable[0]!.count).toBe(7);
+    const reads = spyOn(indexer as any, "indexedLevelsById");
+    try {
+      expect(indexer.productionInventory(planet.planetId, kind, levels)).toEqual({ rows, launchable });
+      expect(reads).toHaveBeenCalledTimes(1);
+    } finally { reads.mockRestore(); }
+  });
+
   test("indexes active and FIFO backlog production timings for different and same ship types", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
@@ -6925,6 +7100,11 @@ describe("SettlementIndexer", () => {
       paidLog("0xdefer", "0x0", [allianceProductionBonusDeferredTopic, topic(7n), addressTopic(invitee)], abiWords(7n, 8n, 9n));
       paidLog("0xwithdraw", "0x0", [allianceBonusWithdrawnTopic, topic(7n), addressTopic(purchaser), topic(99n)], abiWords(40n, 10n, 5n));
 
+      paidLog("0xforeign-buy", "0x0", [paidAllianceInvitePurchasedTopic, topic(13n), topic(8n), addressTopic(purchaser)], abiWords(6_000_000_000_000_000n, 1_770_000_002n));
+      expect([...indexer.paidAllianceInviteSummaries("7").keys()]).toEqual(["7"]);
+      expect(indexer.paidAllianceInviteSummaries("7").get("7")).toEqual(indexer.paidAllianceInviteSummaries().get("7"));
+      expect(indexer.paidAllianceInviteSummaries("999").size).toBe(0);
+
       expect(indexer.paidAllianceInviteSummaries().get("7")).toEqual({
         bonusBalance: { metal: "60", crystal: "40", deuterium: "20" },
         pendingBonusBalance: { metal: "7", crystal: "8", deuterium: "9" },
@@ -7495,6 +7675,20 @@ describe("SettlementIndexer", () => {
     await indexer.rebuild();
 
     const state = indexer.allianceState(owner);
+    const originalMembers = (indexer as any).allianceMembers.bind(indexer);
+    const hydratedRosters: string[] = [];
+    (indexer as any).allianceMembers = (id: string) => { hydratedRosters.push(id); return originalMembers(id); };
+    const scoreReads: string[] = [];
+    const originalScore = indexer.highscoreForWallet.bind(indexer);
+    indexer.highscoreForWallet = (wallet, ids) => { scoreReads.push(wallet); return originalScore(wallet, ids); };
+    const summary = indexer.allianceState(owner, true);
+    expect(hydratedRosters).toEqual(["15"]);
+    expect(summary.members).toEqual(state.members);
+    expect(summary.directory.map(({ members, ...row }) => row)).toEqual(state.directory.map(({ members, ...row }) => row));
+    expect(summary.directory.filter(row => row.allianceId !== "15").every(row => row.members === undefined)).toBe(true);
+    expect(scoreReads).toHaveLength(state.directory.reduce((sum, row) => sum + row.memberCount, 0));
+    (indexer as any).allianceMembers = originalMembers;
+    indexer.highscoreForWallet = originalScore;
     expect(indexer.snapshot()).toMatchObject({
       allianceStaleReason: null,
       safeToServeAllianceState: true
@@ -13064,6 +13258,23 @@ describe("SettlementIndexer", () => {
     expect(leaderboardEntry.score).toEqual(directWalletEntry.score);
     expect(leaderboardEntry.totalUserScore).toBe(directWalletEntry.totalUserScore);
     expect(leaderboardEntry.score.total).toBe("0");
+  });
+
+  test("includes moon buildings consistently in targeted and leaderboard scores", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    const before = indexer.highscoreForWallet(player);
+    indexer.applyLog({
+      blockNumber: "0x90", transactionHash: "0xmoon-building-score", logIndex: "0x0",
+      topics: [moonBuildingCompletedTopic, topic(7n), topic(2n)], data: abiWords(1n)
+    });
+    const direct = indexer.highscoreForWallet(player);
+    expect(direct.score).toEqual(indexer.highscoreLeaderboard().entries[0]!.score);
+    expect(BigInt(direct.score.total)).toBeGreaterThan(BigInt(before.score.total));
   });
 
   test("keeps moon-stationed and outbound fleet ships in direct and bulk highscores", () => {

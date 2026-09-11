@@ -1,30 +1,27 @@
-import { Check, Clock, Copy, Crown, ExternalLink, LogOut, Mail, Pencil, Plus, Scale, Shield, ShieldOff, Trash2, UserPlus, UserRound, Users, X } from "lucide-preact";
+import { useUiClock } from "../useUiClock";
 import type { LucideIcon } from "lucide-preact";
+import { Check, Clock, Copy, Crown, ExternalLink, LogOut, Mail, Pencil, Plus, Scale, Shield, ShieldOff, Trash2, UserPlus, UserRound, Users, X } from "lucide-preact";
 import type { ComponentChildren } from "preact";
 import { useEffect, useMemo, useState } from "preact/hooks";
+import { backendDataStoreFor } from "../backendDataStore";
 import { descriptionLinkParts } from "../descriptionLinks";
 import { formatDurationUntil } from "../durationFormat";
+import { formatScore } from "../numberFormat";
 import { copyReferralText } from "../referralClipboard";
 import { formatUserTimestamp } from "../timestampFormat";
-import type { AllianceDiplomacyStatus, AllianceRole, ChainAllianceState, HighscoreEntry, PaidAllianceBonusAmount, WalletPlanetsResponse } from "../walletFlow";
-import { generatePaidAllianceInviteSecret, paidAllianceInviteLink } from "../walletFlow";
-import { shortAddress } from "../walletFlow";
-import { backendDataStoreFor } from "../backendDataStore";
 import { useBackendDataQuery } from "../useBackendDataQuery";
-import { refreshButtonState } from "./PageHeader";
-import { VeydriftLoader } from "./VeydriftLoader";
-import { AllianceSkeleton } from "./LoadingSkeletons";
-import { escapeCloseRef } from "./modalDismiss";
+import type { AllianceDiplomacyStatus, AllianceRole, ChainAllianceState, HighscoreEntry, PaidAllianceBonusAmount, WalletPlanetsResponse } from "../walletFlow";
+import { generatePaidAllianceInviteSecret, paidAllianceInviteLink, shortAddress } from "../walletFlow";
+import { type InviteEntry, allianceJoinRequestApprovalState, allianceJoinRequestDismissalState, hasAllianceMembership } from "./alliancePageModel";
 import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailableNotice";
+import { AllianceSkeleton, InspectPanelSkeleton } from "./LoadingSkeletons";
+import { escapeCloseRef } from "./modalDismiss";
+export { allianceInviteAcceptanceState, allianceJoinRequestApprovalState, allianceJoinRequestDismissalState, hasAllianceMembership } from "./alliancePageModel";
 
 export const allianceRosterPageSize = 10;
 export const allianceDirectoryPageSize = 10;
 export const warMinimumDurationCopy = "Once declared, a war cannot be ended for 48 hours.";
 export const warMinimumDurationSeconds = 48 * 60 * 60;
-
-export function allianceRefreshButtonState(loading: boolean): { disabled: boolean; label: "Refresh" | "Refreshing" } {
-  return refreshButtonState(loading);
-}
 
 type AllianceActionState =
   | { status: "idle" }
@@ -33,8 +30,6 @@ type AllianceActionState =
   | { status: "error"; label: string };
 
 type DirectoryEntry = ChainAllianceState["directory"][number];
-type InviteEntry = ChainAllianceState["pendingInvites"][number];
-type JoinRequestEntry = ChainAllianceState["allianceJoinRequests"][number];
 type RosterMember = ChainAllianceState["members"][number];
 
 type AllianceEntry = DirectoryEntry & {
@@ -354,88 +349,6 @@ export function shouldShowAllianceTransactionNotice({
   return Boolean(transactionUnavailableReason && transactionUnavailableReason !== actionLabel);
 }
 
-export function hasAllianceMembership(allianceState: ChainAllianceState | null): boolean {
-  return Boolean(allianceState?.profile && allianceState.membership.allianceId !== "0");
-}
-
-export function allianceJoinRequestApprovalState(
-  allianceState: ChainAllianceState | null,
-  request: JoinRequestEntry
-): { canApprove: boolean; reason: string | null } {
-  if (!allianceState) {
-    return { canApprove: false, reason: "Alliance state is still loading." };
-  }
-
-  const role = allianceState.membership.role;
-  if (role !== "owner" && role !== "officer") {
-    return { canApprove: false, reason: "Only officers and owners can approve applications." };
-  }
-
-  const currentAllianceId = allianceState.membership.allianceId;
-  if (currentAllianceId === "0" || request.allianceId !== currentAllianceId) {
-    return { canApprove: false, reason: "You are not managing this alliance." };
-  }
-
-  const requester = request.requester.toLowerCase();
-  const rosterMember = allianceState.members.find((member) => member.address.toLowerCase() === requester);
-  const requesterAllianceId = request.requesterMembership?.allianceId ?? "0";
-  if (rosterMember || requesterAllianceId === currentAllianceId) {
-    return { canApprove: false, reason: "Applicant is already in this alliance." };
-  }
-
-  if (requesterAllianceId !== "0") {
-    return { canApprove: false, reason: "Applicant already joined another alliance." };
-  }
-
-  return { canApprove: true, reason: null };
-}
-
-export function allianceJoinRequestDismissalState(
-  allianceState: ChainAllianceState | null,
-  request: JoinRequestEntry
-): { canDismiss: boolean; reason: string | null } {
-  if (!allianceState) {
-    return { canDismiss: false, reason: "Alliance state is still loading." };
-  }
-
-  const role = allianceState.membership.role;
-  if (role !== "owner" && role !== "officer") {
-    return { canDismiss: false, reason: "Only officers and owners can dismiss applications." };
-  }
-
-  const currentAllianceId = allianceState.membership.allianceId;
-  if (currentAllianceId === "0" || request.allianceId !== currentAllianceId) {
-    return { canDismiss: false, reason: "You are not managing this alliance." };
-  }
-
-  return { canDismiss: true, reason: null };
-}
-
-export function allianceInviteAcceptanceState(
-  allianceState: ChainAllianceState | null,
-  invite: InviteEntry
-): { canAccept: boolean; reason: string | null } {
-  if (!allianceState) {
-    return { canAccept: false, reason: "Alliance state is still loading." };
-  }
-
-  if (allianceState.membership.allianceId !== "0") {
-    return { canAccept: false, reason: "You are already in an alliance." };
-  }
-
-  const pendingInvite = allianceState.pendingInvites.find((entry) => entry.allianceId === invite.allianceId);
-  if (!pendingInvite) {
-    return { canAccept: false, reason: "This invitation is no longer pending." };
-  }
-
-  const alliance = allianceState.directory.find((entry) => entry.allianceId === invite.allianceId);
-  if (!alliance?.active) {
-    return { canAccept: false, reason: "This alliance is unavailable." };
-  }
-
-  return { canAccept: true, reason: null };
-}
-
 export function allianceExitActionState(
   allianceState: ChainAllianceState | null
 ): { canSubmit: boolean; label: "Leave Alliance" | "Delete Alliance"; reason: string | null } {
@@ -721,6 +634,7 @@ function MyAllianceSection({
 
         {activeControlPanel === "paid-invites" ? (
           <AllianceManagementPanel description={<AlliancePrivateInviteExplanation />}>
+            {!onBuyPaidInvite ? <p className="mb-2 text-sm text-slate-400">Private invite purchases are not enabled on this backend.</p> : null}
             <div className="flex flex-wrap items-center gap-2">
               <button
                 className={allianceManagementPrimaryActionClass}
@@ -1365,12 +1279,7 @@ function WarSection({
   disabled: boolean;
   onSetDiplomacy: (otherAllianceId: string, status: AllianceDiplomacyStatus) => void;
 }) {
-  const [nowMs, setNowMs] = useState(() => Date.now());
-  useEffect(() => {
-    if (activeWars.length === 0) return;
-    const interval = window.setInterval(() => setNowMs(Date.now()), 1_000);
-    return () => window.clearInterval(interval);
-  }, [activeWars.length]);
+  const nowMs = useUiClock(activeWars.length > 0);
 
   return (
     <div className="rounded border border-white/10 bg-black/20 p-3">
@@ -2433,7 +2342,7 @@ function PlayerProfilePanel({ profile, onClose }: { profile: PlayerProfileState;
           <p className="font-mono text-sm text-white">{shortAddress(wallet)}</p>
           <p className="mt-1 break-all text-xs text-slate-500">{wallet}</p>
         </div>
-        {profile.status === "loading" ? <VeydriftLoader label="Loading player profile" variant="inline" /> : null}
+        {profile.status === "loading" ? <InspectPanelSkeleton label="Loading player profile" /> : null}
         {profile.status === "error" ? (
           isGameUnavailableMessage(profile.label) ? <GameUnavailableNotice /> : <Notice tone="error">{profile.label}</Notice>
         ) : null}
@@ -2795,12 +2704,6 @@ function roleLabel(role: AllianceRole): string {
 
 function playerLabel(displayName: string | null | undefined, wallet: string): string {
   return displayName?.trim() || shortAddress(wallet);
-}
-
-function formatScore(value: string | undefined): string {
-  if (!value) return "0";
-  const numeric = Number(value);
-  return Number.isFinite(numeric) ? numeric.toLocaleString() : value;
 }
 
 function scoreValue(value: string | undefined): bigint {

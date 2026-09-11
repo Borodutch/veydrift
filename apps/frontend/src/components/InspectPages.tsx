@@ -6,7 +6,7 @@ import { descriptionLinkParts, isSafeDescriptionUrl, type DescriptionLinkPart } 
 import { fleetMissionDistance } from "../fleetMissionRules";
 import type { Coordinates } from "../types";
 import { formatUserTimestamp } from "../timestampFormat";
-import { formatScore as formatCanonicalScore } from "../attackProtectionLabels";
+import { formatScore, formatScore as formatCanonicalScore } from "../numberFormat";
 import { PlanetMoonIndicator, PlanetMoonSubsection } from "./PlanetMoonIndicator";
 import {
   shortAddress,
@@ -20,24 +20,8 @@ import {
 } from "../walletFlow";
 import { backendDataStoreFor } from "../backendDataStore";
 import { useBackendDataQuery } from "../useBackendDataQuery";
-import {
-  AllianceMemberActions,
-  AllianceSummary,
-  RosterBatchActions,
-  allianceRosterPageSize,
-  allianceDisplayName,
-  allianceExitActionState,
-  allianceJoinRequestApprovalState,
-  allianceJoinRequestDismissalState,
-  buildAllianceRoster,
-  canRemoveAllianceRosterMember,
-  canSelectAllianceRosterMember,
-  canTransferAllianceOwnership,
-  currentAllianceEntry,
-  findAllianceEntry,
-  rosterPageCount,
-  rosterPageRows,
-} from "./AlliancePage";
+import { AllianceMemberActions, AllianceSummary, RosterBatchActions, allianceRosterPageSize, allianceDisplayName, allianceExitActionState, buildAllianceRoster, canRemoveAllianceRosterMember, canSelectAllianceRosterMember, canTransferAllianceOwnership, currentAllianceEntry, findAllianceEntry, rosterPageCount, rosterPageRows } from "./AlliancePage";
+import { allianceJoinRequestApprovalState, allianceJoinRequestDismissalState } from "./alliancePageModel";
 import { OptimizedImage } from "./OptimizedImage";
 import { PageHeader } from "./PageHeader";
 import { InspectPanelSkeleton } from "./LoadingSkeletons";
@@ -75,16 +59,15 @@ export function PlayerInspectPage({
 }) {
   const backendData = useMemo(() => apiBaseUrl ? backendDataStoreFor(apiBaseUrl) : undefined, [apiBaseUrl]);
   const planetsQuery = useBackendDataQuery(backendData?.queries.planets(wallet), Boolean(apiBaseUrl));
-  const highscoreQuery = useBackendDataQuery(backendData?.queries.highscores());
-  const profileQuery = useBackendDataQuery(backendData?.queries.profile(wallet), Boolean(apiBaseUrl));
+  const highscoreQuery = useBackendDataQuery(backendData?.queries.playerHighscore(wallet));
   const planets = planetsQuery.snapshot?.data ?? null;
-  const highscore = highscoreQuery.snapshot?.data?.rankings.total.find((entry) => entry.wallet.toLowerCase() === wallet.toLowerCase()) ?? null;
-  const profile = profileQuery.snapshot?.data ?? planets?.player ?? null;
-  const loading = Boolean(apiBaseUrl && !planets && !highscore && !profile && [planetsQuery, highscoreQuery, profileQuery].some((query) => query.snapshot?.freshness !== "failed"));
+  const highscore = highscoreQuery.snapshot?.data ?? null;
+  const profile = highscore?.profile ?? planets?.player ?? null;
+  const loading = Boolean(apiBaseUrl && !planets && !highscore && !profile && [planetsQuery, highscoreQuery].some((query) => query.snapshot?.freshness !== "failed"));
   const error = !apiBaseUrl
     ? "Game API unavailable."
-    : !planets && !highscore && !profile && [planetsQuery, highscoreQuery, profileQuery].every((query) => query.snapshot?.freshness === "failed")
-      ? planetsQuery.snapshot?.error ?? highscoreQuery.snapshot?.error ?? profileQuery.snapshot?.error ?? "Public player profile could not be loaded."
+    : !planets && !highscore && !profile && [planetsQuery, highscoreQuery].every((query) => query.snapshot?.freshness === "failed")
+      ? planetsQuery.snapshot?.error ?? highscoreQuery.snapshot?.error ?? "Public player profile could not be loaded."
       : undefined;
   const state: PlayerInspectState = error
     ? { status: "error", label: error }
@@ -137,7 +120,7 @@ export function PlayerInspectPage({
           />
 
           <div className="flex flex-wrap gap-2 rounded border border-white/10 bg-black/20 px-3 py-2">
-            <CompactStat label="Rank" value={state.highscore ? `#${state.highscore.rank}` : "Unranked"} />
+            <CompactStat label="Rank" value={state.highscore?.rank ? `#${state.highscore.rank}` : "Unranked"} />
             <CompactStat label="Planets" value={String(state.planets?.planets.length ?? state.highscore?.planetCount ?? 0)} />
             {homePlanetLabel ? <CompactStat label="Home planet" value={homePlanetLabel} /> : null}
           </div>
@@ -331,7 +314,9 @@ export function AllianceInspectPage({
     [allianceState?.members, isCurrentAlliance, profile?.owner]
   );
   const currentAlliance = isCurrentAlliance ? currentAllianceEntry(allianceState, roster.all.length) : null;
-  const alliance = findAllianceEntry(allianceState?.directory ?? [], allianceId, currentAlliance);
+  const backendData = useMemo(() => apiBaseUrl ? backendDataStoreFor(apiBaseUrl) : undefined, [apiBaseUrl]);
+  const detailQuery = useBackendDataQuery(backendData?.queries.allianceDetail(allianceId), !isCurrentAlliance);
+  const alliance = isCurrentAlliance ? currentAlliance : detailQuery.snapshot?.data ?? findAllianceEntry(allianceState?.directory ?? [], allianceId, currentAlliance);
   const publicRoster = useMemo(
     () => buildAllianceRoster(!isCurrentAlliance ? alliance?.members ?? [] : [], alliance?.owner),
     [alliance?.members, alliance?.owner, isCurrentAlliance]
@@ -347,7 +332,7 @@ export function AllianceInspectPage({
       title={alliance ? allianceDisplayName(alliance) : `Alliance #${allianceId}`}
       onBack={onBack}
     >
-      {!allianceState ? <InspectPanelSkeleton label="Loading alliance" /> : null}
+      {!allianceState && !alliance ? <InspectPanelSkeleton label="Loading alliance" /> : null}
       {allianceState && !alliance ? <Notice tone="error">Alliance details are not indexed for this id yet.</Notice> : null}
       {!canTransact && transactionUnavailableReason ? <Notice>{transactionUnavailableReason}</Notice> : null}
       {alliance ? (
@@ -413,7 +398,7 @@ export function AllianceInspectPage({
             </Panel>
           ) : (
             <Panel title="Members">
-              <p className="text-sm text-slate-400">No indexed public members are available for this alliance yet.</p>
+              {detailQuery.isInitialLoading ? <InspectPanelSkeleton label="Loading alliance members" /> : detailQuery.snapshot?.error ? <Notice tone="error">{detailQuery.snapshot.error}</Notice> : <p className="text-sm text-slate-400">No indexed public members are available for this alliance yet.</p>}
             </Panel>
           )}
 
@@ -727,14 +712,6 @@ function Notice({ children, tone = "info" }: { children: ComponentChildren; tone
   );
 }
 
-function formatScore(value: string | undefined): string {
-  if (!value) return "0";
-  try {
-    return BigInt(value).toLocaleString("en-US");
-  } catch {
-    return value;
-  }
-}
 
 export function playerInspectScoreItems(highscore: HighscoreEntry | null): Array<{ label: string; value: string }> {
   if (!highscore) return [];
