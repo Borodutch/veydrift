@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { AttackLootProjection, AttackIntelPanel, AttackOutcomePanel, buildMissionLaunchDraft, DestinationIntelPanel, forecastRaidLoot, initialMissionShips, LootRatioControls, MissionLootSection, MissionCargoPicker, missionCargoAfterBodyChange, reconcileMissionCargoAfterFleetChange, lootRatioFromUpToAmount, missionCargoMaxForResource, missionBodySelectionVisibility, missionAttackLootMode, missionConfirmButtonLabel, missionComposerRouteEndpoints, missionDraftBlocker, missionTargetCompositionUnits, missionTargetMoonUnavailableReason, MissionFuelCost, MissionTimingGrid, MISSION_TIMING_PLACEHOLDER, MISSION_TIMING_RESERVED_HEIGHT_PX, missionSpecificLoadout, missionShipOptions, missionTimingRows, missionTimingSummary, NonAttackMissionIntelPanel, projectedMissionArrivalAtSeconds, preparePublicTargetBattleForecast, publicTargetBattleForecast, rebalanceLootRatio, ShipQuantityRow, shouldShowDestinationIntel, shouldShowReturnTiming, staleSelectedShipQuantityBlocker, stationedDefenderCompositionUnits, TargetIntelCard, targetResourceIntel } from "./components/MissionCreationPage";
+import { AttackLootProjection, AttackIntelPanel, AttackOutcomePanel, buildMissionLaunchDraft, DestinationIntelPanel, forecastRaidLoot, initialMissionShips, LootRatioControls, MissionLootSection, MissionCargoPicker, missionCargoAfterBodyChange, reconcileMissionCargoAfterFleetChange, lootRatioFromUpToAmount, missionCargoMaxForResource, missionBodySelectionVisibility, missionAttackLootMode, missionConfirmButtonLabel, missionComposerRouteEndpoints, missionDraftBlocker, missionTargetCompositionUnits, missionTargetMoonUnavailableReason, MissionFuelCost, MissionTimingGrid, MISSION_TIMING_PLACEHOLDER, MISSION_TIMING_RESERVED_HEIGHT_PX, missionSpecificLoadout, missionShipOptions, missionTimingRows, missionTimingSummary, NonAttackMissionIntelPanel, projectedMissionArrivalAtSeconds, preparePublicTargetBattleForecast, publicTargetBattleForecast, resolvePreparedPublicTargetBattleForecast, rebalanceLootRatio, ShipQuantityRow, shouldShowDestinationIntel, shouldShowReturnTiming, staleSelectedShipQuantityBlocker, stationedDefenderCompositionUnits, TargetIntelCard, targetResourceIntel } from "./components/MissionCreationPage";
+import { forecastContractBattle, summarizeContractBattleForecast } from "./battlePreview";
 import { emptyMissionCargoDraft, type MissionCargoDraft, normalizeMissionCargoDraft } from "./components/missionCargoModel";
 import {
   attackProtectionSubmitBlocker,
@@ -960,7 +961,7 @@ describe("mission creation", () => {
         research: [],
         queues: null,
       },
-    }))).toMatchObject({ kind: "win", label: "Probable win" });
+    }))).toMatchObject({ kind: "win", label: "100% win" });
 
     expect(publicTargetBattleForecast({ ...attackAction.ships, lightFighter: 1 }, targetPlanet({
       publicState: {
@@ -972,7 +973,37 @@ describe("mission creation", () => {
         research: [],
         queues: null,
       },
-    }))).toMatchObject({ kind: "defeat", label: "Probable defeat" });
+    }))).toMatchObject({ kind: "defeat", label: "100% defeat" });
+  });
+
+  test("formats attack outcome percentages in win/draw/defeat order from sample counts", () => {
+    const prepared = preparePublicTargetBattleForecast(attackAction.ships, targetPlanet({
+      publicState: { fleet: [], defenses: [], stationedDefenders: [], research: [] },
+    }));
+    if (prepared.status !== "simulate") throw new Error("Expected a simulation-ready forecast");
+    const simulation = forecastContractBattle(prepared.input, 1, false);
+    const summary = summarizeContractBattleForecast(simulation);
+    const cases = [
+      { counts: { win: 81, draw: 47, defeat: 0 }, samples: 128, label: "63% win · 37% draw" },
+      { counts: { defeat: 64, draw: 48, win: 16 }, samples: 128, label: "13% win · 38% draw · 50% defeat" },
+      { counts: { win: 0, draw: 1, defeat: 3 }, samples: 4, label: "25% draw · 75% defeat" },
+      { counts: { win: 127, draw: 0, defeat: 1 }, samples: 128, label: "99% win · 1% defeat" },
+      { counts: { win: 128, draw: 0, defeat: 0 }, samples: 128, label: "100% win" },
+      { counts: { win: 0, draw: 128, defeat: 0 }, samples: 128, label: "100% draw" },
+      { counts: { win: 0, draw: 0, defeat: 1 }, samples: 1, label: "100% defeat" },
+    ];
+    for (const { counts, samples, label } of cases) {
+      const forecast = resolvePreparedPublicTargetBattleForecast(prepared, {
+        ...summary, outcomeCounts: counts, sampleCount: samples,
+      });
+      expect(forecast.label).toBe(label);
+      const panel = AttackOutcomePanel({
+        battleForecast: { ...forecast, sampleReport: simulation.sampleReport }, lootableAtArrival: null,
+        maxLootForecast: { metal: 0, crystal: 0, deuterium: 0 },
+      });
+      expect(findElements(panel, "p").some((element) => collectText(element).join("") === label)).toBe(true);
+      expect(collectText(panel).join(" ")).not.toContain("Probable win");
+    }
   });
 
   test("treats an empty attacking fleet as a concrete battle outcome with a report", () => {
@@ -1026,7 +1057,7 @@ describe("mission creation", () => {
 
     expect(forecast).toMatchObject({
       kind: "draw",
-      label: "Probable draw",
+      label: "100% draw",
       attackerPower: 210,
       defenderPower: 165,
     });
@@ -1059,7 +1090,6 @@ describe("mission creation", () => {
 
     expect(forecast).toMatchObject({
       kind: "draw",
-      label: "Probable draw",
       attackerLosses: {
         average: { metal: 0, crystal: 0, deuterium: 0 },
         best: { metal: 0, crystal: 0, deuterium: 0 },
@@ -1070,6 +1100,7 @@ describe("mission creation", () => {
     expect(forecast.randomness?.sampleCount).toBe(128);
     expect(forecast.randomness?.outcomeCounts.win).toBeGreaterThan(0);
     expect(forecast.randomness?.outcomeCounts.draw).toBeGreaterThan(0);
+    expect(forecast.label).toMatch(/^\d+% win · \d+% draw$/);
     expect(forecast.reportInput?.defender.ships[9]).toBe(4);
     expect(forecast.sampleReport?.defender.startingShips).toContainEqual({
       id: 9,
@@ -1166,6 +1197,7 @@ describe("mission creation", () => {
     expect(text).toContain("runs");
     expect(text).toContain("attacker survivors");
     expect(text).toContain("Possible battle");
+    expect(text).toContain("One possible outcome from the battle preview.");
     expect(text).not.toContain("Illustrative simulation");
     expect(text).not.toContain("Random word");
     expect(text).not.toContain("Contract lane");
@@ -1267,7 +1299,7 @@ describe("mission creation", () => {
     expect(techForecast.attackerPower).toBeGreaterThan(baseForecast.attackerPower);
     expect(techForecast).toMatchObject({
       kind: "win",
-      label: "Probable win",
+      label: "98% win · 2% draw",
       attackerTechLevels: { weapons: 10, shielding: 10, armor: 10 },
     });
   });
@@ -1341,7 +1373,7 @@ describe("mission creation", () => {
 
     expect(publicTargetBattleForecast(selectedShips, target, undefined, false, undefined, timing)).toMatchObject({
       kind: "defeat",
-      label: "Probable defeat",
+      label: "100% defeat",
     });
     expect(units).toEqual([
       expect.objectContaining({ key: "lightFighter", label: "Light Fighter", count: 40 }),
@@ -1794,12 +1826,15 @@ describe("mission creation", () => {
     const intel = AttackIntelPanel({
       battleForecast: {
         kind: "win",
-        label: "Probable win",
+        label: "63% win · 37% draw",
         detail: "Visible defender power is lower than the selected fleet.",
         attackerPower: 1_250,
         defenderPower: 200,
         attackerLosses: zeroBattleLosses(),
-        randomness: null,
+        randomness: {
+          outcomeCounts: { win: 81, draw: 47, defeat: 0 }, sampleCount: 128,
+          outcomeRange: ["win", "draw"], attackerSurvivorRange: { min: 1, max: 3 },
+        },
       },
       coords: { galaxy: 7, system: 41, position: 6 },
       lootableAtArrival: { metal: 500, crystal: 250, deuterium: 100 },
@@ -1819,7 +1854,10 @@ describe("mission creation", () => {
     const text = collectText(intel).join(" ");
 
     expect(text).toContain("Outcome");
-    expect(text).toContain("Probable win");
+    const headline = findElements(intel, "p").find((element) => collectText(element).join("") === "63% win · 37% draw");
+    expect(headline).toBeDefined();
+    expect(headline?.props?.className).not.toContain("truncate");
+    expect(text).not.toContain("Probable win");
     expect(text).toContain("Your technology");
     expect(text).toContain("DEF");
     expect(text).toContain("200");
@@ -2296,7 +2334,7 @@ describe("mission creation", () => {
     const outcome = AttackOutcomePanel({
       battleForecast: {
         kind: "win",
-        label: "Probable win",
+        label: "100% win",
         detail: "Visible defender power is lower than the selected fleet.",
         attackerPower: 1_250,
         defenderPower: 200,
