@@ -11122,6 +11122,18 @@ describe("SettlementIndexer", () => {
       writer.applyEvent(planet);
       writer.applyLog(absoluteShipCount);
 
+      const planDb = new Database(databasePath);
+      const plan = planDb.query(`
+        EXPLAIN QUERY PLAN SELECT event_id FROM indexed_unit_count_event_logs
+        WHERE lower(json_extract(event_json, '$.topics[0]')) = lower(?)
+          AND lower(json_extract(event_json, '$.topics[1]')) = lower(?)
+          AND lower(json_extract(event_json, '$.topics[2]')) = lower(?)
+        ORDER BY CAST(block_number AS INTEGER) DESC, CAST(log_index AS INTEGER) DESC LIMIT 1
+      `).all(...absoluteShipCount.topics);
+      expect(JSON.stringify(plan)).toContain("indexed_unit_count_event_logs_latest_unit_idx");
+      expect(JSON.stringify(plan)).not.toContain("TEMP B-TREE");
+      planDb.close();
+
       // Simulate the legacy failure mode: the immutable event journal survives but its mutable
       // ship-count rows were lost after a process interruption.
       const db = new Database(databasePath);
