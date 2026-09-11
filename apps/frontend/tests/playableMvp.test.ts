@@ -295,6 +295,9 @@ describe("playable MVP contract display helpers", () => {
 
     expect([...srcCounts.entries()].filter(([, count]) => count > 1)).toEqual([]);
     expect(shipAssetManifest.every((asset) => asset.category === "ship")).toBe(true);
+    expect(shipAssetManifest.find((asset) => asset.key === "reaper")?.src).toBe(
+      "/assets/game/style-pass/generated/ships/reaper-symmetric.webp"
+    );
     expect(researchAssetManifest.every((asset) => asset.category === "research")).toBe(true);
     expect(defenseAssetManifest.every((asset) => asset.category === "defense")).toBe(true);
     expect(shipAssetManifest.every((asset) => asset.src.includes("/style-pass/generated/ships/"))).toBe(true);

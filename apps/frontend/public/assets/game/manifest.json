@@ -203,7 +203,7 @@
     },
     "reaper": {
       "name": "Reaper",
-      "image": "/assets/game/style-pass/generated/ships/reaper.webp",
+      "image": "/assets/game/style-pass/generated/ships/reaper-symmetric.webp",
       "status": "generated-preview"
     },
     "pathfinder": {
