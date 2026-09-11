@@ -10590,6 +10590,111 @@ describe("SettlementIndexer", () => {
     });
   });
 
+  test("battle report retries park exhausted failures without starving retryable or missing work", async () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return [planet]; }
+    }, 100n);
+    await indexer.rebuild();
+    const database = (indexer as unknown as { db: Database }).db;
+    const incompleteLog = (missionId: bigint) => ({
+      blockNumber: "0x80",
+      transactionHash: `0xincomplete-${missionId}`,
+      logIndex: "0x0",
+      topics: [combatLossesTopic, topic(missionId)],
+      data: abiWords(0n, 0n, 0n, 100n, 50n, 0n)
+    });
+    // More historical rows than the old batchSize * 4 fallback window.
+    for (let id = 22259n; id < 22269n; id += 1n) {
+      indexer.applyLog(incompleteLog(id));
+      database.query(`UPDATE indexed_battle_report_read_models
+        SET status = 'failed', attempts = 212996, error = ? WHERE mission_id = ?`)
+        .run(`Battle report logs are incomplete or missing for mission ${id}.`, id.toString());
+    }
+    const terminal = indexer.battleReportMaterializationStatus("22259");
+    expect(indexer.pendingBattleReportMaterializationMissionIds(1)).toEqual([]);
+    for (const reason of ["ingest", "backfill"] as const) {
+      expect(indexer.materializeBattleReportReadModelsForWorker(["22259"], reason)).toBe(0);
+    }
+    expect(indexer.backfillBattleReportReadModels()).toBe(0);
+    expect(indexer.battleReportMaterializationStatus("22259")).toEqual(terminal);
+    expect(indexer.applyLog(incompleteLog(22259n)).duplicate).toBe(true);
+    expect(indexer.battleReportMaterializationStatus("22259")).toEqual(terminal);
+
+    indexer.applyLog(incompleteLog(22270n));
+    expect(indexer.materializeBattleReportReadModelsForWorker(["22270"], "ingest")).toBe(0);
+    indexer.applyLog(incompleteLog(22271n));
+    indexer.applyLog({ ...incompleteLog(22272n), blockNumber: "0x81" });
+    database.query("DELETE FROM indexed_battle_report_read_models WHERE mission_id = '22272'").run();
+    expect(indexer.pendingBattleReportMaterializationMissionIds(3)).toEqual(["22271", "22270", "22272"]);
+    expect(indexer.pendingBattleReportMaterializationMissionIds(1)).toEqual(["22271"]);
+
+    // Exhaust real retries, including attempts to materialize after the cap.
+    for (let tick = 0; tick < 10; tick += 1) {
+      indexer.materializeBattleReportReadModelsForWorker(["22270", "22271"], "ingest");
+    }
+    expect(indexer.battleReportMaterializationStatus("22270")).toMatchObject({ status: "failed", attempts: 5 });
+    expect(indexer.battleReportMaterializationStatus("22271")).toMatchObject({ status: "failed", attempts: 5 });
+    expect(indexer.pendingBattleReportMaterializationMissionIds(1)).toEqual(["22272"]);
+    expect(indexer.battleReportMaterializationStatus("22259")).toEqual(terminal);
+  });
+
+  test("exhausted battle reports recover on new logs, startup log backfill, or explicit repair", async () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return [planet]; }
+    }, 100n);
+    await indexer.rebuild();
+    const database = (indexer as unknown as { db: Database }).db;
+    for (const missionId of [22259n, 22260n, 22261n]) {
+      indexer.applyLog({
+        blockNumber: "0x80",
+        transactionHash: `0xrecover-${missionId}`,
+        logIndex: "0x0",
+        topics: [combatLossesTopic, topic(missionId)],
+        data: abiWords(0n, 0n, 0n, 100n, 50n, 0n)
+      });
+      database.query(`UPDATE indexed_battle_report_read_models
+        SET status = 'failed', attempts = 212996, error = 'missing logs' WHERE mission_id = ?`)
+        .run(missionId.toString());
+    }
+    const resolvedLog = (missionId: bigint) => ({
+      // Another log in the SAME block also supplies new evidence and must reopen retries.
+      blockNumber: "0x80",
+      transactionHash: `0xrecover-${missionId}`,
+      logIndex: "0x1",
+      topics: [attackBattleResolvedTopic, topic(missionId), addressTopic(player), topic(7n)],
+      data: abiWords(1n, 1n, 12345n, 50n, 25n, 0n)
+    });
+    indexer.applyLog(resolvedLog(22259n));
+    expect(indexer.battleReportMaterializationStatus("22259")).toMatchObject({ status: "pending", attempts: 0, error: null });
+    expect(indexer.pendingBattleReportMaterializationMissionIds()).toEqual(["22259"]);
+    expect(indexer.materializeBattleReportReadModelsForWorker(["22259"], "ingest")).toBe(1);
+    expect(indexer.battleReportMaterializationStatus("22259")).toMatchObject({ status: "ready", attempts: 1 });
+
+    // Historical raw logs absent from the specialized projection use startup backfill, not applyLog.
+    const log = resolvedLog(22260n);
+    database.query(`INSERT INTO indexed_event_logs
+      (event_id, transaction_hash, log_index, block_number, removed, event_json, received_at)
+      VALUES ('late-battle-log', ?, '1', '128', 0, ?, '2026-01-01T00:00:00Z')`)
+      .run(log.transactionHash, JSON.stringify(log));
+    (indexer as unknown as { backfillMissionEventLogs(): void }).backfillMissionEventLogs();
+    expect(indexer.battleReportMaterializationStatus("22260")).toMatchObject({ status: "pending", attempts: 0 });
+    expect(indexer.materializeBattleReportReadModelsForWorker(["22260"], "backfill")).toBe(1);
+
+    // Explicit repair attempts once even without new logs; a failed repair stays parked on ticks.
+    expect(indexer.materializeBattleReportReadModelsForWorker(["22261"], "repair")).toBe(0);
+    expect(indexer.battleReportMaterializationStatus("22261")).toMatchObject({ status: "failed", attempts: 212997 });
+    expect(indexer.pendingBattleReportMaterializationMissionIds()).toEqual([]);
+    database.query(`INSERT INTO indexed_mission_event_logs (event_id, event_kind, block_number, event_json)
+      VALUES ('manual-repair-log', 'battle', '128', ?)`)
+      .run(JSON.stringify(resolvedLog(22261n)));
+    expect(indexer.materializeBattleReportReadModelsForWorker(["22261"], "repair")).toBe(1);
+    expect(indexer.battleReportMaterializationStatus("22261")).toMatchObject({ status: "ready", error: null });
+  });
+
   test("canonical fleet mission sync is a no-op; terminal rows must come from event logs", async () => {
     const dir = mkdtempSync(join(tmpdir(), "veydrift-indexer-"));
     const databasePath = join(dir, "contract-state.sqlite");

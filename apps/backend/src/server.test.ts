@@ -3679,6 +3679,40 @@ describe("Veydrift backend", () => {
     }
   });
 
+  test("exhausted battle report failures remain visible to API readers without requeueing", async () => {
+    const attacker = "0x3333333333333333333333333333333333333333" as Address;
+    const indexer = new SettlementIndexer(new MockChainReader(), configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    for (const log of activeFleetMissionLogs({
+      arrivalAt: 1_700_000_000n,
+      missionId: 22259n,
+      missionTypeId: 3n,
+      owner: attacker,
+      originPlanetId: 7n,
+      targetPlanetId: 9n
+    })) indexer.applyLog(log);
+    const failure = "Battle report logs are incomplete or missing for mission 22259.";
+    (indexer as any).db.query(`INSERT INTO indexed_battle_report_read_models
+      (mission_id, status, report_json, error, attempts, duration_ms, block_number, updated_at)
+      VALUES ('22259', 'failed', NULL, ?, 212996, 4, '145', '2026-06-25T00:00:00.000Z')`).run(failure);
+    const before = indexer.battleReportMaterializationStatus("22259");
+    const handler = createRequestHandler({ config: configuredTestConfig, chainReader: new MockChainReader(), indexer });
+    const response = await handler(new Request("http://localhost/battle-report/22259"));
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({
+      error: "battle_report_materialization_failed",
+      materialization: { status: "failed", attempts: 212996, error: failure }
+    });
+    const missionResponse = await handler(new Request("http://localhost/mission/22259"));
+    expect(missionResponse.status).toBe(200);
+    expect(await missionResponse.json()).toMatchObject({
+      battleReport: null,
+      battleReportMaterialization: { status: "failed", attempts: 212996, error: failure }
+    });
+    expect(indexer.pendingBattleReportMaterializationMissionIds()).toEqual([]);
+    expect(indexer.battleReportMaterializationStatus("22259")).toEqual(before);
+  });
+
   test("returns a fast explicit processing state while battle report materialization is pending", async () => {
     const attacker = "0x3333333333333333333333333333333333333333" as Address;
     const indexer = new SettlementIndexer(new MockChainReader(), configuredTestConfig.indexFromBlock);

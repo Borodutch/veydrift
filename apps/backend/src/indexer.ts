@@ -449,6 +449,9 @@ export class GameMaintenanceStateReader {
   }
 }
 
+// New battle logs re-open the retry budget; explicit repair can retry a parked failure.
+const battleReportMaterializationMaxAttempts = 5;
+
 export type BattleReportMaterializationRequest = {
   databasePath: string | null;
   fromBlock: string;
@@ -3248,17 +3251,17 @@ export class SettlementIndexer {
     const queued = this.db.query(`
       SELECT mission_id
       FROM indexed_battle_report_read_models
-      WHERE status IN ('pending', 'failed')
+      WHERE status = 'pending' OR (status = 'failed' AND attempts < ?)
       ORDER BY
         CASE status WHEN 'pending' THEN 0 ELSE 1 END,
         CAST(COALESCE(block_number, '0') AS INTEGER) ASC,
         updated_at ASC
       LIMIT ?
-    `).all(boundedLimit) as Array<{ mission_id: string }>;
+    `).all(battleReportMaterializationMaxAttempts, boundedLimit) as Array<{ mission_id: string }>;
     const ids = queued.map((row) => row.mission_id);
     if (ids.length >= boundedLimit) return ids;
 
-    const missing = this.db.query(`
+    const missing = this.db.prepare(`
       SELECT json_extract(event_json, '$.topics[1]') AS mission_topic,
         MAX(CAST(block_number AS INTEGER)) AS latest_block
       FROM indexed_mission_event_logs
@@ -3266,14 +3269,19 @@ export class SettlementIndexer {
         AND json_extract(event_json, '$.topics[1]') IS NOT NULL
       GROUP BY mission_topic
       ORDER BY latest_block ASC
-      LIMIT ?
-    `).all(Math.min(2_000, boundedLimit * 4)) as Array<{ mission_topic: string | null }>;
-    for (const row of missing) {
-      const missionId = missionIdFromTopic(row.mission_topic);
-      if (!missionId || ids.includes(missionId)) continue;
-      if (this.battleReportMaterializationStatus(missionId).status === "ready") continue;
-      ids.push(missionId);
-      if (ids.length >= boundedLimit) break;
+    `);
+    // Stream past existing rows rather than letting an old ready/failed prefix hide missing work.
+    // Finalize the uncached statement so a bounded early exit cannot leave the next tick mid-cursor.
+    try {
+      for (const row of missing.iterate() as Iterable<{ mission_topic: string | null }>) {
+        const missionId = missionIdFromTopic(row.mission_topic);
+        if (!missionId || ids.includes(missionId)) continue;
+        if (this.battleReportMaterializationStatus(missionId).status !== "missing") continue;
+        ids.push(missionId);
+        if (ids.length >= boundedLimit) break;
+      }
+    } finally {
+      missing.finalize();
     }
     return ids;
   }
@@ -7270,6 +7278,10 @@ export class SettlementIndexer {
         const eventKind = this.missionEventKind(log);
         if (!eventKind) continue;
         insert.run(row.event_id, eventKind, blockNumberToDecimal(log.blockNumber), row.event_json);
+        if (eventKind === "battle") {
+          const missionId = battleLogMissionId(log);
+          if (missionId) this.markBattleReportMaterializationPending(missionId, blockNumberToDecimal(log.blockNumber));
+        }
       }
     })();
   }
@@ -7406,6 +7418,10 @@ export class SettlementIndexer {
           WHEN indexed_battle_report_read_models.status = 'ready' THEN indexed_battle_report_read_models.status
           ELSE 'pending'
         END,
+        attempts = CASE
+          WHEN indexed_battle_report_read_models.status = 'ready' THEN indexed_battle_report_read_models.attempts
+          ELSE 0
+        END,
         error = NULL,
         block_number = excluded.block_number,
         updated_at = excluded.updated_at
@@ -7447,6 +7463,8 @@ export class SettlementIndexer {
   private materializeBattleReportReadModel(missionId: string, reason: "ingest" | "backfill" | "repair"): boolean {
     const started = performance.now();
     const previous = this.battleReportMaterializationStatus(missionId);
+    if (reason !== "repair" && previous.status === "failed"
+      && (previous.attempts ?? 0) >= battleReportMaterializationMaxAttempts) return false;
     try {
       const report = this.materializedBattleReportFromLogs(missionId);
       if (!report) {
