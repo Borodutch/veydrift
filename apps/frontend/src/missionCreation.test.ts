@@ -985,7 +985,8 @@ describe("mission creation", () => {
     const summary = summarizeContractBattleForecast(simulation);
     const cases = [
       { counts: { win: 81, draw: 47, defeat: 0 }, samples: 128, label: "63% win · 37% draw" },
-      { counts: { defeat: 64, draw: 48, win: 16 }, samples: 128, label: "13% win · 38% draw · 50% defeat" },
+      { counts: { win: 10, draw: 6, defeat: 0 }, samples: 16, label: "63% win · 37% draw" },
+      { counts: { defeat: 64, draw: 48, win: 16 }, samples: 128, label: "13% win · 37% draw · 50% defeat" },
       { counts: { win: 0, draw: 1, defeat: 3 }, samples: 4, label: "25% draw · 75% defeat" },
       { counts: { win: 127, draw: 0, defeat: 1 }, samples: 128, label: "99% win · 1% defeat" },
       { counts: { win: 128, draw: 0, defeat: 0 }, samples: 128, label: "100% win" },
