@@ -1,4 +1,5 @@
 import { GameApiError } from "./gameApiError";
+import { diagnosticRoute } from "./requestDiagnostics";
 import type * as Api from "../../../packages/api-types/src/index";
 import { sdk } from "@farcaster/miniapp-sdk";
 import { encodeAbiParameters, keccak256, parseAbiParameters, toHex } from "viem";
@@ -827,6 +828,13 @@ export type ChainShipyardState = {
   resourcesAsOfNow?: OnChainResources | null;
   resourceSnapshot?: ResourceSnapshotMetadata | null;
 };
+
+/** Mission controls and submission validation must use the same launchable inventory. */
+export function missionInventory<T extends Pick<ChainShipyardState, "ships" | "launchableShips">>(state: T): T {
+  if (!state.launchableShips) return state;
+  const counts = new Map(state.launchableShips.map(ship => [ship.id, ship.count]));
+  return { ...state, ships: state.ships.map(ship => ({ ...ship, count: counts.get(ship.id) ?? 0 })) };
+}
 
 export type SupplySourcesResponse = Pick<ChainShipyardState, "fleetSlots" | "fleetLaunchAvailable" | "fleetLaunchUnavailableReason" | "technologyLevels"> & {
   wallet: string;
@@ -4700,8 +4708,12 @@ async function requestGameApiJson<T>(
   const timeoutMs = options.timeoutMs ?? WALLET_API_READ_TIMEOUT_MS;
   const operation = options.method ? "writing" : "reading";
   const direction = options.method ? "to" : "from";
+  const started = performance.now();
+  let timedOut = false;
   const controller = new AbortController();
   const timeoutId = setTimeout(() => {
+    if (controller.signal.aborted) return;
+    timedOut = true;
     controller.abort(new Error(`Timed out ${operation} ${label.toLowerCase()} ${direction} the game API after ${Math.round(timeoutMs / 1_000)} seconds.`));
   }, timeoutMs);
   const forwardAbort = () => controller.abort(options.signal?.reason ?? new DOMException("Request cancelled", "AbortError"));
@@ -4726,6 +4738,13 @@ async function requestGameApiJson<T>(
     }
     return await response.json() as T;
   } catch (error) {
+    // Ordinary subscriber cancellation is expected. Record real transport failures once.
+    if (timedOut || !controller.signal.aborted) console.warn(JSON.stringify({
+      event: "game_api_request", route: diagnosticRoute(url), method: options.method ?? "GET",
+      durationMs: Math.round(performance.now() - started), timeoutMs,
+      outcome: timedOut ? "timeout" : response ? "http_or_body_error" : "network_error",
+      ...(response ? { status: response.status } : {}),
+    }));
     if (controller.signal.aborted) {
       throw controller.signal.reason instanceof Error
         ? controller.signal.reason

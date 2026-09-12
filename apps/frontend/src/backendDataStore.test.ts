@@ -12,6 +12,30 @@ const appliedTransactionStatusReader = async (transactionHash: string) => ({
 });
 
 describe("BackendDataStore", () => {
+  test("fresh origin reads wait past an older request, coalesce, and do not block other planets", async () => {
+    const originalFetch = globalThis.fetch;
+    const store = new BackendDataStore("https://api.test");
+    let complete!: (response: Response) => void;
+    const requests: string[] = [];
+    globalThis.fetch = (async input => {
+      const url = String(input);
+      requests.push(url);
+      if (requests.length === 1) return new Promise<Response>(resolve => { complete = resolve; });
+      return Response.json({ planetId: new URL(url).searchParams.get("planetId"), ships: [{ id: 0, count: 0 }] });
+    }) as typeof fetch;
+    try {
+      const old = store.shipyard("0xabc", "7");
+      await Promise.resolve();
+      const fresh = Array.from({ length: 10 }, () => store.shipyard("0xabc", "7", { fresh: true }));
+      expect((await store.shipyard("0xabc", "8")).planetId).toBe("8");
+      expect(requests).toHaveLength(2);
+      complete(Response.json({ planetId: "7", ships: [{ id: 0, count: 2 }] }));
+      expect((await old).ships[0]?.count).toBe(2);
+      expect((await Promise.all(fresh)).every(state => state.ships[0]?.count === 0)).toBe(true);
+      expect(requests).toHaveLength(3);
+      expect(store.snapshot(store.queries.shipyard("0xabc", "7").key)?.data).toMatchObject({ ships: [{ id: 0, count: 0 }] });
+    } finally { store.dispose(); globalThis.fetch = originalFetch; }
+  });
   test("late reads cannot recreate eviction timers after disposal", async () => {
     const store = new BackendDataStore("https://api.test");
     let finish!: (value: number) => void;

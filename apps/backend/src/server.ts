@@ -5947,7 +5947,7 @@ function indexedReadNotReadyResponse(
   lookup: IndexedReadLookupContext = {}
 ): Response {
   const snapshot = indexer?.snapshot() ?? null;
-  const reason = snapshot?.safeToServeIndexedState === true
+  const reason = lookup.reason === "resource_projection_not_ready" ? "resource_projection_not_ready" : snapshot?.safeToServeIndexedState === true
     && (surface !== "alliance" || snapshot.safeToServeAllianceState === true)
     ? "missing_indexed_row"
     : "index_not_ready";
@@ -5975,7 +5975,7 @@ function indexedReadNotReadyResponse(
       source: indexedSource
     },
     {
-      headers: indexedStateHeaders(snapshot ? "not-ready" : "unavailable"),
+      headers: { ...indexedStateHeaders(snapshot ? "not-ready" : "unavailable"), "retry-after": "1" },
       status: 503
     }
   );

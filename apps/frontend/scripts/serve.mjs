@@ -1,6 +1,7 @@
 import { createReadStream, existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { Readable } from "node:stream";
+import { diagnosticRoute, observeFrontendRequest } from "../src/requestDiagnostics.ts";
 import {
   MOON_ANIMATION_BASE,
   MOON_ANIMATION_MASTER_WIDTH,
@@ -177,13 +178,16 @@ export function planetAnimationRoute(url) {
 }
 
 async function resizePlanetAnimation(base, assetType, size) {
+  const started = performance.now();
   const sourcePath = `${base}/${assetType}.webp`;
   const source = await readFile(existingAssetUrl(sourcePath));
   const sharp = await getSharp();
-  return sharp(source, { animated: true })
+  const body = await sharp(source, { animated: true })
     .resize({ width: size, height: size, fit: "fill" })
     .webp({ quality: 82, effort: 4 })
     .toBuffer();
+  console.info(JSON.stringify({ event: "animation_resize", assetType, size, durationMs: Math.round(performance.now() - started), bytes: body.byteLength }));
+  return body;
 }
 
 export async function planetAnimationResponse(url) {
@@ -197,7 +201,8 @@ export async function planetAnimationResponse(url) {
   };
   if (route.size === route.masterWidth) {
     const sourcePath = `${route.base}/${route.assetType}.webp`;
-    return new Response(Readable.toWeb(createReadStream(existingAssetUrl(sourcePath))), { headers });
+    const asset = existingAssetUrl(sourcePath);
+    return new Response(typeof Bun === "undefined" ? Readable.toWeb(createReadStream(asset)) : Bun.file(asset), { headers });
   }
 
   if (route.size === 1024) {
@@ -206,6 +211,7 @@ export async function planetAnimationResponse(url) {
 
   const key = `${route.version}:${route.base}:${route.assetType}:${route.size}`;
   let body = planetAnimationCache.get(key);
+  headers["x-veydrift-animation-cache"] = body ? "hit" : "miss";
   if (!body) {
     body = resizePlanetAnimation(route.base, route.assetType, route.size);
     planetAnimationCache.set(key, body);
@@ -604,6 +610,7 @@ function metadataFetchTimeoutMs() {
 }
 
 async function fetchJson(pathname) {
+  const started = performance.now();
   const timeoutMs = metadataFetchTimeoutMs();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -615,8 +622,11 @@ async function fetchJson(pathname) {
       signal: controller.signal,
     });
     if (!response.ok) throw new Error(`API ${pathname} returned ${response.status}`);
-    return response.json();
+    return await response.json();
   } catch (error) {
+    console.warn(JSON.stringify({ event: "frontend_metadata_request", route: diagnosticRoute(pathname),
+      durationMs: Math.round(performance.now() - started), timeoutMs,
+      outcome: controller.signal.aborted ? "timeout" : "request_error" }));
     if (controller.signal.aborted) {
       throw new Error(`API ${pathname} timed out after ${timeoutMs}ms`);
     }
@@ -1142,7 +1152,8 @@ if (import.meta.main) {
   Bun.serve({
     hostname: "0.0.0.0",
     port,
-    async fetch(request) {
+    fetch(request) {
+      return observeFrontendRequest(request, async () => {
       const url = new URL(request.url);
       const pathname = decodeURIComponent(url.pathname);
 
@@ -1180,6 +1191,7 @@ if (import.meta.main) {
       }
 
       return new Response("Not found", { status: 404 });
+      });
     },
   });
 

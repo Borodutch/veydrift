@@ -105,7 +105,7 @@ function planetAnimations(): Plugin {
           await pipeline(Readable.fromWeb(result.body as unknown as ReadableStream), response);
         }
       } catch (error) {
-        next(error);
+        if (!response.destroyed) next(error);
       }
     });
   };

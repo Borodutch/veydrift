@@ -122,7 +122,7 @@ import {
 import { playSfx } from "./sfx";
 import { timestampToMs } from "./timestampFormat";
 import { confirmTransactionRetry, transactionAwaitingWalletLabel, transactionWasSubmitted, type WriteTransactionOutcome, type WriteTransactionState } from "./transactionActionGate";
-import { transactionWalletProvider } from "./walletFlow";
+import { missionInventory, transactionWalletProvider } from "./walletFlow";
 import type { Coordinates, Planet, PlanetType, PublicStationedDefender } from "./types";
 import { getSizedImageSrc } from "./utils/imageSizes";
 import { useBackendDataQuery } from "./useBackendDataQuery";
@@ -807,13 +807,7 @@ export function shipyardStateForMissionActions({
   shipyardState: ChainShipyardState | null;
 }): ChainShipyardState | null {
   if (shipyardState) {
-    return shipyardState.launchableShips ? {
-      ...shipyardState,
-      ships: shipyardState.ships.map(ship => ({
-        ...ship,
-        count: shipyardState.launchableShips!.find(available => available.id === ship.id)?.count ?? 0,
-      })),
-    } : shipyardState;
+    return missionInventory(shipyardState);
   }
   if (!account || !shipyardError || shipyardLoading) return null;
 
@@ -895,7 +889,7 @@ export function missionShipInventoryBlocker({
   ships,
 }: {
   originBody?: "moon" | "planet" | undefined;
-  shipyardState: Pick<ChainShipyardState, "fleetLaunchAvailable" | "fleetLaunchUnavailableReason" | "fleetSlots" | "ships" | "unavailableReason"> | null | undefined;
+  shipyardState: Pick<ChainShipyardState, "fleetLaunchAvailable" | "fleetLaunchUnavailableReason" | "fleetSlots" | "ships" | "launchableShips" | "unavailableReason"> | null | undefined;
   ships: Partial<MissionShips>;
 }): string | undefined {
   if (!shipyardState) return originBody === "moon" ? "Moon fleet state is still loading." : "Shipyard state is still loading.";
@@ -909,11 +903,12 @@ export function missionShipInventoryBlocker({
     return `Fleet slots full (${shipyardState.fleetSlots.active}/${shipyardState.fleetSlots.limit}) — research Computer Technology to raise the limit, or wait for a fleet to return.`;
   }
 
+  const inventory = missionInventory(shipyardState);
   const overSelected = missionShipInventoryRows
     .map((ship) => {
       const selected = Math.max(0, Math.trunc(ships[ship.key] ?? 0));
       if (selected <= 0) return null;
-      const available = shipyardState.ships.find((item) => item.id === ship.id)?.count ?? 0;
+      const available = inventory.ships.find((item) => item.id === ship.id)?.count ?? 0;
       return selected > available ? `Need ${selected.toLocaleString()} ${ship.label}, only ${available.toLocaleString()} available` : null;
     })
     .filter((row): row is string => Boolean(row));
@@ -3375,6 +3370,7 @@ export function PlayableMvpApp({
       label,
       onErrorRefresh,
       onStateChange,
+      prepare,
       send,
     }: {
       conflictKeys?: readonly string[];
@@ -3386,6 +3382,7 @@ export function PlayableMvpApp({
       label: string;
       onErrorRefresh?: (error: unknown) => Promise<void> | void;
       onStateChange?: (state: WriteTransactionState) => void;
+      prepare?: () => Promise<void>;
       send: (provider: Eip1193Provider) => Promise<string>;
     }) => {
       if (!backendData || !provider) throw new Error("Game state store or wallet is unavailable.");
@@ -3401,6 +3398,7 @@ export function PlayableMvpApp({
         invalidateTags: invalidateTags ?? backendScopeTags(account, activePlanetId),
         ...(indexing ? { indexing } : {}),
         ...(onErrorRefresh ? { onErrorRefresh } : {}),
+        ...(prepare ? { prepare } : {}),
         onStateChange: (state) => {
           // Success/error feedback arrives through the action-notice hook below;
           // the gate only voices wallet/chain progress so sounds never double up.
@@ -3987,52 +3985,46 @@ export function PlayableMvpApp({
         label: transactionAwaitingWalletLabel(label),
       });
       try {
-        if (options.validateShipInventory) {
-          setGalaxyAction({
-            status: "pending",
-            label: `${label}: refreshing fleet inventory.`,
-          });
-          if (!apiBaseUrl || !account) {
-            throw new Error("Wallet or game API is unavailable while refreshing fleet inventory.");
-          }
-          const [freshShipyardState, freshMoonState] = await Promise.all([
-            backendData!.shipyard(account, options.validateShipInventory.originPlanetId),
-            options.validateShipInventory.originIsMoon ? backendData!.moon(account, options.validateShipInventory.originPlanetId) : Promise.resolve(null),
-          ]);
-          if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return { outcome: "not-submitted" };
+        const prepare = async () => {
+          if (options.validateShipInventory) {
+            if (!apiBaseUrl || !account) {
+              throw new Error("Wallet or game API is unavailable while refreshing fleet inventory.");
+            }
+            const [freshShipyardState, freshMoonState] = await Promise.all([
+              backendData!.shipyard(account, options.validateShipInventory.originPlanetId, { fresh: true }),
+              options.validateShipInventory.originIsMoon ? backendData!.moon(account, options.validateShipInventory.originPlanetId, { fresh: true }) : Promise.resolve(null),
+            ]);
+            if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) throw new Error("Origin changed before submission. Please try again.");
 
-          const freshOriginInventoryState = options.validateShipInventory.originIsMoon
-            ? missionMoonShipyardState({
-                moonState: freshMoonState,
-                shipyardState: freshShipyardState,
-              })
-            : freshShipyardState;
-          const shipBlocker = missionShipInventoryBlocker({
-            originBody: options.validateShipInventory.originIsMoon ? "moon" : "planet",
-            shipyardState: freshOriginInventoryState,
-            ships: options.validateShipInventory.ships,
-          });
-          if (shipBlocker) {
-            throw new Error(shipBlocker);
+            const freshOriginInventoryState = options.validateShipInventory.originIsMoon
+              ? missionMoonShipyardState({
+                  moonState: freshMoonState,
+                  shipyardState: freshShipyardState,
+                })
+              : freshShipyardState;
+            const shipBlocker = missionShipInventoryBlocker({
+              originBody: options.validateShipInventory.originIsMoon ? "moon" : "planet",
+              shipyardState: freshOriginInventoryState,
+              ships: options.validateShipInventory.ships,
+            });
+            if (shipBlocker) {
+              throw new Error(shipBlocker);
+            }
           }
-        }
-        if (options.validateAttackProtection) {
-          const { targetPlanetId, targetIsMoon = false, ignoreBashingLimit = false } = options.validateAttackProtection;
-          setGalaxyAction({
-            status: "pending",
-            label: `${label}: refreshing target protection.`,
-          });
-          if (!apiBaseUrl || !account) {
-            throw new Error("Wallet or game API is unavailable while refreshing target protection.");
+          if (options.validateAttackProtection) {
+            const { targetPlanetId, targetIsMoon = false, ignoreBashingLimit = false } = options.validateAttackProtection;
+            if (!apiBaseUrl || !account) {
+              throw new Error("Wallet or game API is unavailable while refreshing target protection.");
+            }
+            await revalidateAttackProtectionBeforeSubmit(
+              () => backendData!.attackProtection(account, targetPlanetId, targetIsMoon, {
+                fresh: true,
+              }),
+              { ignoreBashingLimit },
+            );
+            if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) throw new Error("Origin changed before submission. Please try again.");
           }
-          await revalidateAttackProtectionBeforeSubmit(
-            () => backendData!.attackProtection(account, targetPlanetId, targetIsMoon, {
-              fresh: true,
-            }),
-            { ignoreBashingLimit },
-          );
-          if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return { outcome: "not-submitted" };
-        }
+        };
         const affectedPlanetIds = [...new Set([activePlanetId, ...(options.affectedPlanetIds ?? [])])].filter((planetId): planetId is string => Boolean(planetId));
         const refreshTags = [
           `wallet:${account!.toLowerCase()}` as const,
@@ -4050,6 +4042,15 @@ export function PlayableMvpApp({
           conflictKeys: ["fleets", ...affectedPlanetIds.map((id) => `planet:${id}`)],
           label,
           invalidateTags: [...(account ? [`wallet:${account.toLowerCase()}` as const] : []), ...affectedPlanetIds.map((planetId) => `planet:${planetId}` as const)],
+          prepare,
+          onErrorRefresh: async () => {
+            const origin = options.validateShipInventory;
+            if (!origin || !account || !backendData) return;
+            await Promise.allSettled([
+              backendData.shipyard(account, origin.originPlanetId, { fresh: true }),
+              ...(origin.originIsMoon ? [backendData.moon(account, origin.originPlanetId, { fresh: true })] : []),
+            ]);
+          },
           send,
           indexing: options.syncMissionLaunch
             ? backendData!.indexing.all([

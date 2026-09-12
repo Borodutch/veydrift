@@ -4585,6 +4585,23 @@ export class SettlementIndexer {
     return this.db.transaction(() => this.applyLogAtomic(log))();
   }
 
+  /** Synchronous publication only: fetch/verify RPC data before entering. */
+  commitLogBatch(publish: () => void): void {
+    try {
+      this.db.transaction(publish)();
+    } catch (error) {
+      // Handlers may populate read caches before a later handler rolls the batch back.
+      this.stateGeneration += 1;
+      this.missionReadModelDbVersion = "rolled-back";
+      this.currentMissionReadModelDbVersion();
+      this.battleReportReadModelDbVersion = "rolled-back";
+      this.currentBattleReportReadModelDbVersion();
+      throw error;
+    } finally {
+      this.snapshotCache = null;
+    }
+  }
+
   /**
    * Return active Game-proxy logs in a verified HTTP range that are absent from the canonical
    * `eth_getLogs` response. Websocket `removed` notifications are best effort and can be missed

@@ -136,6 +136,22 @@ describe("automatic transaction recovery", () => {
     await expect(data.runWriteTransaction(action())).resolves.toMatchObject({ outcome: "indexed" });
   });
 
+  test("failed inventory preparation refreshes its scope without sending or blocking the next action", async () => {
+    browser();
+    const data = store();
+    let refreshed = 0;
+    let sent = 0;
+    const result = await data.runWriteTransaction({ ...action(),
+      prepare: async () => { throw new Error("Need 2 ships, only 0 available"); },
+      onErrorRefresh: async () => { refreshed++; },
+      send: async () => { sent++; return "0xunexpected"; },
+    });
+    expect(result.outcome).toBe("not-submitted");
+    await until(() => refreshed === 1);
+    expect(sent).toBe(0);
+    await expect(data.runWriteTransaction(action())).resolves.toMatchObject({ outcome: "indexed" });
+  });
+
   test("a late settlement hash still completes referral bookkeeping after the UI returns", async () => {
     browser();
     const wallet = deferred<string>();

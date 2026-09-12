@@ -47,7 +47,7 @@ import {
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import type { Coordinates, DebrisField, Planet, PublicStationedDefender } from "../types";
 import { getSizedImageSrc } from "../utils/imageSizes";
-import { shortAddress, type ChainShipyardState } from "../walletFlow";
+import { missionInventory, shortAddress, type ChainShipyardState } from "../walletFlow";
 import { ActionReasonNote } from "./ActionReasonNote";
 import { PlanetMoonIndicator } from "./PlanetMoonIndicator";
 import { Skeleton, SkeletonRegion } from "./Skeleton";
@@ -564,7 +564,8 @@ export function MissionCreationPage({
   const selectedMissileTarget = missileTargetOptions.find((defense) => defense.id === primaryTargetId) ?? missileTargetOptions[0];
   const selectedMissileTargetCount = target?.publicState?.defenses?.find((defense) => defense.id === primaryTargetId)?.count ?? 0;
   const effectiveResources = effectiveOriginIsMoon ? bodySelection?.originMoonResources : resources;
-  const effectiveShipyardState = effectiveOriginIsMoon ? bodySelection?.originMoonShipyardState ?? null : shipyardState;
+  const originInventory = effectiveOriginIsMoon ? bodySelection?.originMoonShipyardState ?? null : shipyardState;
+  const effectiveShipyardState = useMemo(() => originInventory && missionInventory(originInventory), [originInventory]);
   const availableShips = useMemo(() => missionShipOptionsForAction(action, effectiveShipyardState), [action, effectiveShipyardState]);
   const destinationIntelVisible = shouldShowDestinationIntel(action);
   const cargoTotal = resourceDraftNumber(cargo.metal) + resourceDraftNumber(cargo.crystal) + resourceDraftNumber(cargo.deuterium);

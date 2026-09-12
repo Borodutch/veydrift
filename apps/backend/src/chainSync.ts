@@ -43,6 +43,7 @@ export type LiveLogSubscriber = {
 
 type ChainSyncIndexer = Partial<Pick<SettlementIndexer,
   | "applyLog"
+  | "commitLogBatch"
   | "clearPendingReconciliationReason"
   | "markStale"
   | "setTransportStale"
@@ -511,6 +512,8 @@ export class ChainSyncService {
       }
 
       const fromBlock = this.genericPollFromBlock(head);
+      const commits: Array<() => void> = [];
+      const afterReconciliation: Array<() => void> = [];
       let genericRange: { fromBlock: bigint; logs: RpcLog[] } | undefined;
       if (head >= fromBlock) {
         this.lastGetLogsRange = { fromBlock: fromBlock.toString(), toBlock: head.toString() };
@@ -530,70 +533,118 @@ export class ChainSyncService {
               head
             ) ?? []
           : [];
-        if (missingCanonicalLogs.length > 0) {
-          // A writer that was offline during a reorg never receives websocket `removed` notices.
-          // Retire missing persisted Game logs through the same removal handlers before replaying
-          // canonical replacements, including missile defense totals and complete launch rows.
-          await this.applyLogs(missingCanonicalLogs, applyLog, "fallback_poll");
-        }
-        const { applied, lastHash, resourceChanges, walletPlanetsChanged } = await this.applyLogs(logs, applyLog);
-        await this.reconcileRemovedCompletionLogs(missingCanonicalLogs);
-        // Advance the generic cursor before specialized history scans. Both share the raw ledger, so
-        // a process crash after a specialized scan must never leave latestIndexedBlock ahead of a
-        // generic range that was not durably ingested.
-        this.cursor = maxBigInt(this.cursor, head);
-        this.latestSyncedBlock = maxBlockString(this.latestSyncedBlock, head);
-        if (applied > 0 || missingCanonicalLogs.length > 0) {
-          const scoped = missingCanonicalLogs.length === 0 && logs.every(log => PLANET_SCOPED_EVENTS.has(eventNameForTopic(log.topics[0]) ?? ""));
-          const planetIds = scoped ? [...new Set(logs.map(log => BigInt(log.topics[1]!).toString()))] : [];
-          const owners = planetIds.map(id => this.indexer?.planet?.(id)?.owner);
-          const previous = this.pendingChainEvent;
-          const completeScope = scoped && owners.every(Boolean) && (!previous || previous.wallets !== undefined);
-          this.pendingChainEvent = {
-            kind: "chain-event",
-            blockNumber: this.latestSyncedBlock,
-            ...(lastHash ? { transactionHash: lastHash } : {}),
-            resourceChanges: [...new Map([...(previous?.resourceChanges ?? []), ...resourceChanges].map(change => [`${change.bodyKind}:${change.planetId}`, change])).values()],
-            walletPlanetsChanged: walletPlanetsChanged || previous?.walletPlanetsChanged || false,
-            ...(completeScope ? {
-              wallets: [...new Set([...(previous?.wallets ?? []), ...owners.flatMap(owner => owner ? [owner.toLowerCase()] : [])])],
-              planetIds: [...new Set([...(previous?.planetIds ?? []), ...planetIds])]
-            } : {})
-          };
-        }
+        commits.push(() => {
+          if (missingCanonicalLogs.length > 0) {
+            // A writer that was offline during a reorg never receives websocket `removed` notices.
+            // Retire missing persisted Game logs through the same removal handlers before replaying
+            // canonical replacements, including missile defense totals and complete launch rows.
+            this.applyLogs(missingCanonicalLogs, applyLog, "fallback_poll");
+          }
+          const { applied, lastHash, resourceChanges, walletPlanetsChanged } = this.applyLogs(logs, applyLog);
+          // Advance the generic cursor before specialized history scans. Both share the raw ledger, so
+          // a process crash after a specialized scan must never leave latestIndexedBlock ahead of a
+          // generic range that was not durably ingested.
+          this.cursor = maxBigInt(this.cursor, head);
+          this.latestSyncedBlock = maxBlockString(this.latestSyncedBlock, head);
+          if (applied > 0 || missingCanonicalLogs.length > 0) {
+            const scoped = missingCanonicalLogs.length === 0 && logs.every(log => PLANET_SCOPED_EVENTS.has(eventNameForTopic(log.topics[0]) ?? ""));
+            const planetIds = scoped ? [...new Set(logs.map(log => BigInt(log.topics[1]!).toString()))] : [];
+            const owners = planetIds.map(id => this.indexer?.planet?.(id)?.owner);
+            const previous = this.pendingChainEvent;
+            const completeScope = scoped && owners.every(Boolean) && (!previous || previous.wallets !== undefined);
+            this.pendingChainEvent = {
+              kind: "chain-event",
+              blockNumber: this.latestSyncedBlock,
+              ...(lastHash ? { transactionHash: lastHash } : {}),
+              resourceChanges: [...new Map([...(previous?.resourceChanges ?? []), ...resourceChanges].map(change => [`${change.bodyKind}:${change.planetId}`, change])).values()],
+              walletPlanetsChanged: walletPlanetsChanged || previous?.walletPlanetsChanged || false,
+              ...(completeScope ? {
+                wallets: [...new Set([...(previous?.wallets ?? []), ...owners.flatMap(owner => owner ? [owner.toLowerCase()] : [])])],
+                planetIds: [...new Set([...(previous?.planetIds ?? []), ...planetIds])]
+              } : {})
+            };
+          }
+        });
       }
 
-      await this.ensureReferralHistoryBackfilled(head, backfiller, applyLog);
-      await this.ensurePaidAllianceInviteHistoryBackfilled(head, backfiller, applyLog);
-      await this.ensureTimedMissilePayloadHistoryBackfilled(head, backfiller, applyLog, headAnchor, genericRange);
+      for (const commit of [
+        await this.ensureReferralHistoryBackfilled(head, backfiller, applyLog),
+        await this.ensurePaidAllianceInviteHistoryBackfilled(head, backfiller, applyLog),
+        await this.ensureTimedMissilePayloadHistoryBackfilled(head, backfiller, applyLog, headAnchor, genericRange, afterReconciliation),
+      ]) if (commit) commits.push(commit);
       // Publish the projection clock only after every indexed log source has durably scanned through
       // this block. A crash/failure before here leaves the old timestamp in place (conservative),
       // while publishing it earlier could combine block-N time with pre-N resource state.
       let materialized = headAnchor === null;
+      let verifiedHeadAnchor = headAnchor;
+      const invalidated = this.indexer?.invalidatedProjectionAnchor?.();
+      const recoveredAnchor = invalidated && BigInt(invalidated.block) <= head && backfiller.getBlockProjectionAnchor
+        ? { block: invalidated.block, hash: (await backfiller.getBlockProjectionAnchor(BigInt(invalidated.block))).hash }
+        : undefined;
       if (headAnchor !== null && backfiller.getBlockProjectionAnchor) {
         // Re-read the exact head after ingestion. A same-height reorg during getLogs must not publish
         // the pre-scan block timestamp/hash against post-scan state. The indexer additionally rejects
         // this publication atomically if websocket ingestion has already advanced beyond `head`.
-        const verifiedHeadAnchor = await backfiller.getBlockProjectionAnchor(head);
+        verifiedHeadAnchor = await backfiller.getBlockProjectionAnchor(head);
         if (verifiedHeadAnchor.hash.toLowerCase() !== headAnchor.hash.toLowerCase()) {
           this.indexer?.invalidateResourceProjectionWatermark?.("headChanged");
-        } else {
+          throw new Error("Chain head changed during log verification.");
+        }
+      }
+      const publishWatermark = () => {
+        if (verifiedHeadAnchor) {
           const watermarkRecorded = this.indexer?.recordResourceProjectionWatermark?.(
             head.toString(),
             verifiedHeadAnchor.timestamp,
             verifiedHeadAnchor.hash
           );
           if (watermarkRecorded) {
-            const invalidated = this.indexer?.invalidatedProjectionAnchor?.();
-            if (invalidated && BigInt(invalidated.block) <= head) {
-              const canonical = await backfiller.getBlockProjectionAnchor(BigInt(invalidated.block));
-              this.indexer?.recoverProjectionAnchor?.({ block: invalidated.block, hash: canonical.hash });
-            }
+            if (recoveredAnchor) this.indexer?.recoverProjectionAnchor?.(recoveredAnchor);
             this.indexer?.clearPendingReconciliationReason?.(projectionInvalidationReasons.removedLog);
             this.indexer?.setTransportStale?.(null);
             materialized = true;
           }
         }
+      };
+      // Rollback must also make in-memory dedupe/cursors eligible for retry.
+      const before = {
+        cursor: this.cursor, latestSyncedBlock: this.latestSyncedBlock, pendingChainEvent: this.pendingChainEvent,
+        eventsReceived: this.eventsReceived, lastEventAt: this.lastEventAt,
+        recentHandledLogIdentities: new Map(this.recentHandledLogIdentities),
+        pendingCompletionReconciliationLogs: new Map(this.pendingCompletionReconciliationLogs),
+        referralHistoryBackfill: { ...this.referralHistoryBackfill },
+        paidAllianceInviteHistoryBackfill: { ...this.paidAllianceInviteHistoryBackfill },
+        timedMissilePayloadHistoryBackfill: { ...this.timedMissilePayloadHistoryBackfill },
+        timedMissilePayloadHistoryVerifiedThisRun: this.timedMissilePayloadHistoryVerifiedThisRun,
+      };
+      try {
+        const publish = () => {
+          for (const commit of commits) commit();
+          if (!this.pendingCompletionReconciliationLogs.size) publishWatermark();
+        };
+        if (this.indexer?.commitLogBatch) this.indexer.commitLogBatch(publish);
+        else publish();
+      } catch (error) {
+        Object.assign(this, before);
+        throw error;
+      }
+      if (this.pendingCompletionReconciliationLogs.size) {
+        // Reorg repairs require canonical RPC reads. Keep the projection guard closed;
+        // never hold a SQLite transaction while awaiting those reads.
+        await this.reconcileRemovedCompletionLogs([]);
+        if (headAnchor && backfiller.getBlockProjectionAnchor) {
+          const anchor = await backfiller.getBlockProjectionAnchor(head);
+          if (anchor.hash.toLowerCase() !== headAnchor.hash.toLowerCase()) {
+            this.indexer?.invalidateResourceProjectionWatermark?.("headChanged");
+            throw new Error("Chain head changed during queue reconciliation.");
+          }
+        }
+        const publish = () => {
+          for (const commit of afterReconciliation) commit();
+          publishWatermark();
+        };
+        if (this.indexer?.commitLogBatch) this.indexer.commitLogBatch(publish);
+        else publish();
       }
       this.markConnected();
       if (materialized && this.pendingChainEvent) {
@@ -602,6 +653,9 @@ export class ChainSyncService {
       }
       this.notify({ kind: "sync-status", blockNumber: this.latestSyncedBlock });
     } catch (error) {
+      this.referralHistoryBackfill.inProgress = false;
+      this.paidAllianceInviteHistoryBackfill.inProgress = false;
+      this.timedMissilePayloadHistoryBackfill.inProgress = false;
       // No self-heal escalation: record the failure, leave the cursor put, and let the next interval
       // retry the same range. A heavy canonical reconcile is never triggered from a transient RPC blip.
       this.lastError =
@@ -631,7 +685,7 @@ export class ChainSyncService {
     head: bigint,
     backfiller: LogBackfiller,
     applyLog: NonNullable<SettlementIndexer["applyLog"]>
-  ): Promise<void> {
+  ): Promise<(() => void) | undefined> {
     const contractAddress = this.config.referralSystemAddress;
     const listReferralLogs = backfiller.listReferralLogs;
     const status = this.indexer?.referralHistoryBackfillStatus;
@@ -653,15 +707,17 @@ export class ChainSyncService {
     this.referralHistoryBackfill.inProgress = true;
     try {
       const logs = await listReferralLogs.call(backfiller, fromBlock, head);
-      await this.applyLogs(logs, applyLog);
-      const marker = record.call(this.indexer, contractAddress, fromBlock, head);
-      this.referralHistoryBackfill = {
-        completedAt: marker.completedAt,
-        contractAddress: marker.contractAddress,
-        fromBlock: marker.fromBlock,
-        inProgress: false,
-        lastError: null,
-        throughBlock: marker.throughBlock
+      return () => {
+        this.applyLogs(logs, applyLog);
+        const marker = record.call(this.indexer, contractAddress, fromBlock, head);
+        this.referralHistoryBackfill = {
+          completedAt: marker.completedAt,
+          contractAddress: marker.contractAddress,
+          fromBlock: marker.fromBlock,
+          inProgress: false,
+          lastError: null,
+          throughBlock: marker.throughBlock
+        };
       };
     } catch (error) {
       this.referralHistoryBackfill.inProgress = false;
@@ -680,7 +736,7 @@ export class ChainSyncService {
     head: bigint,
     backfiller: LogBackfiller,
     applyLog: NonNullable<SettlementIndexer["applyLog"]>
-  ): Promise<void> {
+  ): Promise<(() => void) | undefined> {
     const contractAddress = this.config.paidAllianceInviteAddress;
     const fromBlock = this.config.paidAllianceInviteIndexFromBlock;
     const listLogs = backfiller.listPaidAllianceInviteLogs;
@@ -718,16 +774,18 @@ export class ChainSyncService {
     if (current.required) this.connected = false;
     try {
       const logs = await listLogs.call(backfiller, scanFrom, head);
-      await this.applyLogs(logs, applyLog);
-      reconcile.call(this.indexer, contractAddress, logs, scanFrom, head);
-      const marker = record.call(this.indexer, contractAddress, fromBlock, head, current.required);
-      this.paidAllianceInviteHistoryBackfill = {
-        completedAt: marker.completedAt,
-        contractAddress: marker.contractAddress,
-        fromBlock: marker.fromBlock,
-        inProgress: false,
-        lastError: null,
-        throughBlock: marker.throughBlock
+      return () => {
+        this.applyLogs(logs, applyLog);
+        reconcile.call(this.indexer, contractAddress, logs, scanFrom, head);
+        const marker = record.call(this.indexer, contractAddress, fromBlock, head, current.required);
+        this.paidAllianceInviteHistoryBackfill = {
+          completedAt: marker.completedAt,
+          contractAddress: marker.contractAddress,
+          fromBlock: marker.fromBlock,
+          inProgress: false,
+          lastError: null,
+          throughBlock: marker.throughBlock
+        };
       };
     } catch (error) {
       this.paidAllianceInviteHistoryBackfill.inProgress = false;
@@ -744,8 +802,9 @@ export class ChainSyncService {
     backfiller: LogBackfiller,
     applyLog: NonNullable<SettlementIndexer["applyLog"]>,
     headAnchor: { hash: string; timestamp: string } | null,
-    genericRange?: { fromBlock: bigint; logs: RpcLog[] }
-  ): Promise<void> {
+    genericRange: { fromBlock: bigint; logs: RpcLog[] } | undefined,
+    afterReconciliation: Array<() => void>,
+  ): Promise<(() => void) | undefined> {
     if (this.config.timedMissileStandby) return;
     const contractAddress = this.config.gameContractAddress;
     const fromBlock = this.config.timedMissileIndexFromBlock;
@@ -815,17 +874,11 @@ export class ChainSyncService {
         scanFrom,
         head
       ) ?? [];
-      if (missingCanonicalLogs.length > 0) {
-        await this.applyLogs(missingCanonicalLogs, applyLog, "fallback_poll");
-      }
-      await this.applyLogs(logs, applyLog);
-      const removedCompletionLogs = fullVerification
-        ? this.indexer?.removedTimedMissileCompletionLogs?.(contractAddress, fromBlock, head) ?? []
-        : [];
-      await this.reconcileRemovedCompletionLogs([
-        ...missingCanonicalLogs,
-        ...removedCompletionLogs
-      ]);
+      // A previous process may have committed removal tombstones but died during
+      // canonical repair. Its old checkpoint must still discover those repairs.
+      const removedCompletionLogs = this.indexer?.removedTimedMissileCompletionLogs?.(
+        contractAddress, fullVerification ? fromBlock : scanFrom, head,
+      ) ?? [];
       const verifiedHead = headAnchor && backfiller.getBlockProjectionAnchor
         ? await backfiller.getBlockProjectionAnchor(head) : null;
       if (verifiedHead && verifiedHead.hash.toLowerCase() !== headAnchor?.hash.toLowerCase()) {
@@ -833,15 +886,24 @@ export class ChainSyncService {
         this.timedMissilePayloadHistoryVerifiedThisRun = false;
         throw new Error("Chain head changed during timed missile history verification.");
       }
-      const marker = record.call(this.indexer, contractAddress, fromBlock, head, verifiedHead?.hash);
-      this.timedMissilePayloadHistoryVerifiedThisRun = true;
-      this.timedMissilePayloadHistoryBackfill = {
-        completedAt: marker.completedAt,
-        contractAddress: marker.contractAddress,
-        fromBlock: marker.fromBlock,
-        inProgress: false,
-        lastError: null,
-        throughBlock: marker.throughBlock
+      return () => {
+        this.applyLogs(missingCanonicalLogs, applyLog, "fallback_poll");
+        this.applyLogs(logs, applyLog);
+        for (const log of removedCompletionLogs) this.pendingCompletionReconciliationLogs.set(rpcLogIdentity(log), log);
+        const publishMarker = () => {
+          const marker = record.call(this.indexer, contractAddress, fromBlock, head, verifiedHead?.hash);
+          this.timedMissilePayloadHistoryVerifiedThisRun = true;
+          this.timedMissilePayloadHistoryBackfill = {
+            completedAt: marker.completedAt,
+            contractAddress: marker.contractAddress,
+            fromBlock: marker.fromBlock,
+            inProgress: false,
+            lastError: null,
+            throughBlock: marker.throughBlock
+          };
+        };
+        if (this.pendingCompletionReconciliationLogs.size) afterReconciliation.push(publishMarker);
+        else publishMarker();
       };
     } catch (error) {
       this.timedMissilePayloadHistoryBackfill.inProgress = false;
@@ -988,16 +1050,16 @@ export class ChainSyncService {
     this.latestSyncedBlock = maxBlockString(this.latestSyncedBlock, toBlock);
   }
 
-  private async applyLogs(
+  private applyLogs(
     logs: RpcLog[],
     applyLog: NonNullable<SettlementIndexer["applyLog"]>,
     source: ChainSyncLiveSource = "fallback_poll"
-  ): Promise<{
+  ): {
     applied: number;
     lastHash: string | undefined;
     resourceChanges: ChainResourceChange[];
     walletPlanetsChanged: boolean;
-  }> {
+  } {
     let applied = 0;
     let lastHash: string | undefined;
     const resourceChanges = new Map<string, ChainResourceChange>();
