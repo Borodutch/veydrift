@@ -38,6 +38,8 @@ import { deriveInfrastructureFields } from "./readModels";
 import { backendBuildMetadata, ccaBidOwnerTopic, createReaderBootstrapHandler, createRequestHandler, decodeCcaSubmittedBid, deriveLogBackfiller, readerBootstrapHealthResponse, rpcUnfinishedRequestReadiness, runtimeConfigResponse, walletConnectRpcResponse } from "./server";
 import { DEFAULT_MAX_WORKER_COUNT } from "./workerPool";
 import { normalizeViemLog } from "./server";
+import { SharedResponseCache } from "./sharedResponseCache";
+import { planetArchetypeForTemperature, planetMultipliers, systemSnapshot } from "./universe";
 
 test("websocket wakeups preserve removal identity without needing a timestamp lookup", () => {
   const log = {
@@ -5151,6 +5153,129 @@ describe("Veydrift backend", () => {
     expect(fullFirstOccupied).toHaveProperty("publicMoonState");
     expect(summarySecondOccupied).not.toHaveProperty("publicState");
     expect(summarySecondOccupied).not.toHaveProperty("publicMoonState");
+  });
+
+  test.each([false, true])("invalidates persisted v1 galaxy summaries without changing settled state (settled=%s)", async (settled) => {
+    const dir = mkdtempSync(join(tmpdir(), "veydrift-universe-version-"));
+    const databasePath = join(dir, "contract-state.sqlite");
+    const config = {
+      ...configuredTestConfig,
+      chainId: 8453,
+      settlementContractAddress: "0xf397910F005151b09644228573a4353818D3755d" as Address
+    };
+    const chainReader = new MockChainReader();
+    try {
+      const writer = new SettlementIndexer(chainReader, config.indexFromBlock, { databasePath });
+      if (settled) {
+        writer.applyEvent({
+          ...planet,
+          galaxy: 8,
+          system: 43,
+          position: 11,
+          eventName: "PlanetStarted",
+          transactionHash: "0xlegacy-settlement",
+          blockNumber: "123"
+        });
+      }
+      const settledBefore = writer.settledPlanetsInSystem(8, 43);
+      const canonical = systemSnapshot(config.chainId, config.settlementContractAddress, 8, 43);
+      // Actual v1 temperatures from the production 8:43 summary on 2026-09-12.
+      const legacyTemperatures = [76, 79, 12, 6, -28, -23, -68, -58, -103, -104, -97];
+      expect(canonical.planets).toHaveLength(legacyTemperatures.length);
+      const legacy = {
+        ...canonical,
+        generatorVersion: "veydrift-universe-v1",
+        planets: canonical.planets.map((item, index) => {
+          const occupied = settled && item.position === 11;
+          const temperature = occupied ? planet.temperature : legacyTemperatures[index]!;
+          return {
+            ...item,
+            temperature,
+            ...planetMultipliers(temperature, item.fields),
+            ...(occupied ? {
+              fields: planet.fields,
+              metalMultiplierBps: planet.metalMultiplierBps,
+              crystalMultiplierBps: planet.crystalMultiplierBps,
+              deuteriumMultiplierBps: planet.deuteriumMultiplierBps,
+              name: planet.name
+            } : {}),
+            archetype: planetArchetypeForTemperature(temperature),
+            occupiedBy: occupied ? { planetId: planet.planetId, owner: planet.owner, ownerDisplayName: null, alliance: null } : null,
+            migrationReservation: null,
+            debrisField: null,
+            hasMoon: false,
+            moonChance: null
+          };
+        })
+      };
+      const cacheKey = `8453:${config.settlementContractAddress.toLowerCase()}:summary:8:43`;
+      const legacyVersion = writer.universeSystemSummaryVersion(8, 43);
+      writer.storeMaterializedUniverseSystemSnapshot(cacheKey, legacyVersion, legacy);
+      const sharedResponseCache = new SharedResponseCache(join(dir, "responses.sqlite"));
+      const path = "/universe/galaxies/8/systems/43";
+      sharedResponseCache.set(`GET ${path} indexer=${legacyVersion}`, {
+        body: new TextEncoder().encode(JSON.stringify(legacy)).buffer,
+        expiresAt: Date.now() + 30_000,
+        headers: [["content-type", "application/json"]],
+        status: 200,
+        statusText: "OK"
+      }, Date.now() + 60_000);
+
+      // A new reader process must reject both persisted cache layers without indexed mutations.
+      const reader = new SettlementIndexer(chainReader, config.indexFromBlock, {
+        databasePath,
+        runStartupBackfill: false
+      });
+      expect(reader.materializedUniverseSystemSnapshot(cacheKey, legacyVersion)).toEqual(legacy);
+      for (const fullFirst of [false, true]) {
+        const handler = createRequestHandler({ config, chainReader, indexer: reader, enableResponseCache: true, sharedResponseCache });
+        const read = async (full: boolean) => {
+          const response = await handler(new Request(`http://localhost${path}${full ? "?detail=full" : ""}`));
+          expect(response.status).toBe(200);
+          return response.json();
+        };
+        const first = await read(fullFirst);
+        const second = await read(!fullFirst);
+        const summary = fullFirst ? second : first;
+        const full = fullFirst ? first : second;
+        expect(summary.generatorVersion).toBe(canonical.generatorVersion);
+        expect(full.generatorVersion).toBe(summary.generatorVersion);
+        expect(summary.planets).toHaveLength(canonical.planets.length);
+        expect(full.planets).toHaveLength(summary.planets.length);
+        for (const [index, expected] of canonical.planets.entries()) {
+          const summaryPlanet = summary.planets[index];
+          const { publicState, publicMoonState, ...fullSummary } = full.planets[index];
+          expect(summaryPlanet).toEqual(fullSummary);
+          expect(summaryPlanet).not.toHaveProperty("publicState");
+          if (settled && expected.position === 11) {
+            expect(summaryPlanet).toMatchObject({
+              ...expected,
+              fields: planet.fields,
+              temperature: planet.temperature,
+              metalMultiplierBps: planet.metalMultiplierBps,
+              crystalMultiplierBps: planet.crystalMultiplierBps,
+              deuteriumMultiplierBps: planet.deuteriumMultiplierBps,
+              archetype: planetArchetypeForTemperature(planet.temperature),
+              name: planet.name,
+              occupiedBy: { planetId: planet.planetId, owner: planet.owner }
+            });
+            expect(publicState).not.toBeNull();
+          } else {
+            expect(summaryPlanet).toMatchObject({ ...expected, occupiedBy: null });
+          }
+        }
+      }
+      expect(reader.settledPlanetsInSystem(8, 43)).toEqual(settledBefore);
+      const cached = new Database(databasePath, { readonly: true });
+      try {
+        const row = cached.query("SELECT payload_json FROM contract_universe_system_snapshots WHERE cache_key = ?").get(cacheKey) as { payload_json: string };
+        expect(JSON.parse(row.payload_json).generatorVersion).toBe(canonical.generatorVersion);
+      } finally {
+        cached.close();
+      }
+    } finally {
+      rmSync(dir, { force: true, recursive: true });
+    }
   });
 
   test("serves galaxy system summaries when materialized snapshot writes are unavailable", async () => {

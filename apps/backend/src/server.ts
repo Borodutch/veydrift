@@ -92,7 +92,7 @@ import {
   resolvePaidAllianceInvite,
   type PaidAllianceInviteReader,
 } from "./allianceInvites";
-import { maxGalaxy, maxSystem, planetArchetypeForTemperature, planetMetadata, planetMultipliers, systemSnapshot, type PlanetMetadata, type SystemSnapshot } from "./universe";
+import { maxGalaxy, maxSystem, planetArchetypeForTemperature, planetMetadata, planetMultipliers, systemSnapshot, universeGeneratorVersion, type PlanetMetadata, type SystemSnapshot } from "./universe";
 import { responseCachePath, SharedResponseCache } from "./sharedResponseCache";
 import { normalizeStatsUtcOffsetMinutes } from "./stats";
 import {
@@ -4312,10 +4312,12 @@ function galaxySystemCacheVersion(
   galaxy: number,
   system: number
 ): string {
-  if (!indexer) return "none";
-  return detail === "summary"
+  const indexedVersion = !indexer ? "none" : detail === "summary"
     ? indexer.universeSystemSummaryVersion(galaxy, system)
     : indexer.responseCacheVersion();
+  // Unsettled systems can keep the same indexed fingerprint across generator upgrades.
+  // Invalidate both persisted summaries and response caches when generated identity changes.
+  return `${universeGeneratorVersion}:${indexedVersion}`;
 }
 
 function galaxySystemDetail(url: URL): GalaxySystemDetail {

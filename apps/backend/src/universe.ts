@@ -27,8 +27,10 @@ export type PlanetArchetype =
   | "hot-desert"
   | "scorching-molten";
 
+export const universeGeneratorVersion = "veydrift-universe-v2";
+
 export type SystemSnapshot = {
-  generatorVersion: "veydrift-universe-v2";
+  generatorVersion: typeof universeGeneratorVersion;
   chainId: number;
   settlementContractAddress: string;
   galaxy: number;
@@ -75,7 +77,7 @@ export function systemSnapshot(
   const seed = universeSeed(chainId, settlementContractAddress);
 
   return {
-    generatorVersion: "veydrift-universe-v2",
+    generatorVersion: universeGeneratorVersion,
     chainId,
     settlementContractAddress,
     galaxy,
