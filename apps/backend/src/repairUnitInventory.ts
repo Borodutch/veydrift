@@ -12,6 +12,10 @@ export type UnitInventoryAudit = { anchor: Anchor; candidates: Candidate[]; scan
 const anchorKeys = ["latestIndexedBlock", "indexedRevision", "resourceProjectionBlock", "resourceProjectionHash", "resourceProjectionRevision"];
 const repairMarker = "unitInventoryOrderingRepairV1";
 
+export function openUnitInventoryDatabase(path: string, apply: boolean): Database {
+  return new Database(path, { readonly: !apply, readwrite: apply, create: false });
+}
+
 function anchor(db: Database): Anchor {
   return Object.fromEntries(anchorKeys.map(key => {
     const row = db.query("SELECT value FROM indexer_metadata WHERE key = ?").get(key) as { value: string } | null;
@@ -100,7 +104,7 @@ async function main() {
   if (!config.rpcUrl || !config.gameContractAddress) throw new Error("Repair needs configured RPC and game contract");
   if (values.apply && (!values["writer-stopped"] || !values.manifest || !values.backup)) throw new Error("Apply requires --writer-stopped --manifest and a consistent --backup");
   if (!values.apply && !values.out) throw new Error("Audit requires --out for its reviewed manifest");
-  const db = new Database(config.indexDbPath, { readonly: !values.apply, create: false });
+  const db = openUnitInventoryDatabase(config.indexDbPath, values.apply);
   try {
     const audit: UnitInventoryAudit = values.apply ? await Bun.file(values.manifest!).json() : auditUnitInventory(db);
     if (values.apply) {

@@ -1,6 +1,9 @@
 import { test, expect } from "bun:test";
 import { Database } from "bun:sqlite";
-import { auditUnitInventory, applyUnitInventoryRepair } from "./repairUnitInventory";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { auditUnitInventory, applyUnitInventoryRepair, openUnitInventoryDatabase } from "./repairUnitInventory";
 import { latestLogPositionSql, SettlementIndexer } from "./indexer";
 import { shipCompletedTopic } from "./evm";
 
@@ -13,6 +16,24 @@ const log = (logIndex: string, total: number, topic = shipTopic) => ({
   topics: [topic, "0x" + word(173), "0x" + word(0)], data: "0x" + word(total),
 });
 const reader = { async listDebrisFieldEvents() { return []; }, async listMoonChanceReportEvents() { return []; }, async listSettledPlanetEvents() { return []; } };
+
+test("operator opens an existing file explicitly read/write only for apply and never creates a missing database", () => {
+  const directory = mkdtempSync(join(tmpdir(), "unit-inventory-open-"));
+  try {
+    const path = join(directory, "inventory.sqlite");
+    const created = new Database(path);
+    created.exec("CREATE TABLE inventory(count INTEGER)");
+    created.close();
+    const writer = openUnitInventoryDatabase(path, true);
+    try { writer.exec("INSERT INTO inventory VALUES (0)"); } finally { writer.close(); }
+    const reader = openUnitInventoryDatabase(path, false);
+    try {
+      expect(reader.query("SELECT count FROM inventory").get()).toEqual({ count: 0 });
+      expect(() => reader.exec("UPDATE inventory SET count=79")).toThrow();
+    } finally { reader.close(); }
+    for (const apply of [true, false]) expect(() => openUnitInventoryDatabase(join(directory, "missing.sqlite"), apply)).toThrow();
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
 
 function database() {
   const db = new Database(":memory:");
