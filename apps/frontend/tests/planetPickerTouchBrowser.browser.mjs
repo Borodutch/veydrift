@@ -1176,6 +1176,100 @@ test("Supply ignores old reload locks, closes after submission, and allows the n
   assert.deepEqual(await evaluate("window.inspectorProof.errors"), []);
 });
 
+test("Supply refreshes rejected batch inventory without fan-out or automatic resubmission", async () => {
+  await loadInspectorFixture("/", 1280);
+  await waitForExpression(`document.querySelector('button[aria-label="Supply this planet"]') !== null`);
+  await evaluate(`(async () => {
+    const url = performance.getEntriesByType('resource').map(r => r.name).find(name => name.includes('/src/backendDataStore.ts'));
+    const { backendDataStoreFor } = await import(url);
+    const store = backendDataStoreFor('/local-api');
+    const proof = window.supplyRejectionProof = { store, reads: 0, shipyardReads: 0, sends: 0, available: true };
+    const originalWrite = store.runWriteTransaction.bind(store);
+    store.runWriteTransaction = descriptor => originalWrite({ ...descriptor, send: async () => {
+      proof.sends++;
+      proof.available = false;
+      throw new Error('Need 2 Large Cargo, only 0 available on the origin planet.');
+    } });
+    const originalFetch = window.fetch;
+    window.fetch = async (input, init) => {
+      if (String(input).includes('/shipyard')) proof.shipyardReads++;
+      const response = await originalFetch(input, init);
+      if (!String(input).includes('/supply-sources')) return response;
+      proof.reads++;
+      const body = await response.json();
+      for (const source of body.sources) source.launchableShips = [{ id: 4, count: proof.available ? 2 : 0 }];
+      return Response.json(body);
+    };
+  })()`);
+  await clickExpression(`document.querySelector('button[aria-label="Supply this planet"]')`);
+  await waitForExpression(`document.querySelector('[role="dialog"]')?.textContent?.includes('Available cargo fleet') === true`);
+  await evaluate(`(() => {
+    const input = document.querySelector('input[aria-label="metal to send"]');
+    input.value = '10';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  })()`);
+  await waitForExpression(`document.querySelector('[role="dialog"] footer button')?.disabled === false`);
+  await clickExpression(`document.querySelector('[role="dialog"] footer button')`);
+  await waitForExpression(`window.supplyRejectionProof.reads === 3 && document.querySelector('[role="dialog"]')?.textContent?.includes('only 0 available') === true`);
+  await waitForExpression(`document.querySelector('[role="dialog"] footer button')?.disabled === true`);
+  assert.equal(await evaluate(`window.supplyRejectionProof.sends`), 1);
+  assert.equal(await evaluate(`window.supplyRejectionProof.shipyardReads`), 0);
+  assert.equal(await evaluate(`document.querySelector('[role="dialog"] .skeleton-region') !== null`), false);
+  assert.equal(await evaluate(`document.querySelector('input[aria-label="metal to send"]').value`), '10');
+  await evaluate(`(async () => {
+    const proof = window.supplyRejectionProof;
+    proof.available = true;
+    await proof.store.queries.supplySources(window.inspectorProof.account, '101', { fresh: true }).read();
+  })()`);
+  await waitForExpression(`document.querySelector('[role="dialog"] footer button')?.disabled === false`);
+  assert.equal(await evaluate(`window.supplyRejectionProof.sends`), 1, 'Recovery never resubmits automatically');
+  await evaluate(`window.supplyRejectionProof.available = false`);
+  await clickExpression(`document.querySelector('[role="dialog"] footer button')`);
+  await waitForExpression(`window.supplyRejectionProof.reads === 6 && document.querySelector('[role="dialog"]')?.textContent?.includes('Supply inventory changed') === true`);
+  assert.equal(await evaluate(`window.supplyRejectionProof.sends`), 1, 'Changed inventory is rejected before wallet submission');
+  await clickExpression(`document.querySelector('[aria-label="Close supply resources"]')`);
+  await clickExpression(`document.querySelector('nav.hidden a[href="/shipyard"]')`);
+  await waitForExpression(`location.pathname === '/shipyard' && document.querySelector('main [data-production-catalog]') !== null`);
+});
+
+test("Supply preparation expires without locking the modal or submitting late", async () => {
+  await loadInspectorFixture("/", 1280);
+  await waitForExpression(`document.querySelector('button[aria-label="Supply this planet"]') !== null`);
+  await evaluate(`(async () => {
+    const url = performance.getEntriesByType('resource').map(r => r.name).find(name => name.includes('/src/backendDataStore.ts'));
+    const { backendDataStoreFor } = await import(url);
+    const store = backendDataStoreFor('/local-api');
+    const proof = window.supplyTimeoutProof = { reads: 0, sends: 0 };
+    store.transactionForegroundTimeoutMs = 100;
+    const originalWrite = store.runWriteTransaction.bind(store);
+    store.runWriteTransaction = descriptor => originalWrite({ ...descriptor, send: async () => { proof.sends++; return '0xunexpected'; } });
+    const originalFetch = window.fetch;
+    window.fetch = async (input, init) => {
+      if (String(input).includes('/supply-sources') && ++proof.reads === 2) {
+        await new Promise(resolve => { proof.release = resolve; });
+      }
+      return originalFetch(input, init);
+    };
+  })()`);
+  await clickExpression(`document.querySelector('button[aria-label="Supply this planet"]')`);
+  await waitForExpression(`document.querySelector('[role="dialog"]')?.textContent?.includes('Available cargo fleet') === true`);
+  await evaluate(`(() => {
+    const input = document.querySelector('input[aria-label="metal to send"]');
+    input.value = '10';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  })()`);
+  await waitForExpression(`document.querySelector('[role="dialog"] footer button')?.disabled === false`);
+  await clickExpression(`document.querySelector('[role="dialog"] footer button')`);
+  await waitForExpression(`window.supplyTimeoutProof.release !== undefined && document.querySelector('[role="dialog"]')?.textContent?.includes('Preparation took too long') === true`);
+  await waitForExpression(`document.querySelector('[role="dialog"] footer button')?.disabled === false`);
+  await evaluate(`window.supplyTimeoutProof.release()`);
+  await delay(250);
+  assert.equal(await evaluate(`window.supplyTimeoutProof.sends`), 0, 'An expired inventory read must never reach wallet submission');
+  await clickExpression(`document.querySelector('[aria-label="Close supply resources"]')`);
+  await clickExpression(`document.querySelector('nav.hidden a[href="/shipyard"]')`);
+  await waitForExpression(`location.pathname === '/shipyard' && document.querySelector('main [data-production-catalog]') !== null`);
+});
+
 test("Overview keeps an empty watched-planets section hidden during background refreshes", async () => {
   await loadInspectorFixture("/", 1280);
   await evaluate(`(async () => {

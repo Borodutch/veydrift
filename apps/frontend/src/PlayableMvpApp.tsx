@@ -3961,6 +3961,8 @@ export function PlayableMvpApp({
       label: string,
       send: (provider: Eip1193Provider) => Promise<string>,
       options: {
+        prepare?: () => Promise<void>;
+        onErrorRefresh?: (error: unknown) => Promise<void> | void;
         validateAttackProtection?: {
           targetPlanetId: string;
           targetIsMoon?: boolean | undefined;
@@ -3986,6 +3988,7 @@ export function PlayableMvpApp({
       });
       try {
         const prepare = async () => {
+          await options.prepare?.();
           if (options.validateShipInventory) {
             if (!apiBaseUrl || !account) {
               throw new Error("Wallet or game API is unavailable while refreshing fleet inventory.");
@@ -4043,7 +4046,8 @@ export function PlayableMvpApp({
           label,
           invalidateTags: [...(account ? [`wallet:${account.toLowerCase()}` as const] : []), ...affectedPlanetIds.map((planetId) => `planet:${planetId}` as const)],
           prepare,
-          onErrorRefresh: async () => {
+          onErrorRefresh: async (error) => {
+            await options.onErrorRefresh?.(error);
             const origin = options.validateShipInventory;
             if (!origin || !account || !backendData) return;
             await Promise.allSettled([
@@ -4126,33 +4130,13 @@ export function PlayableMvpApp({
       void (async () => {
         setBatchSupplySubmitting(true);
         try {
-          // Re-read every selected origin immediately before encoding calldata.
-          // The browser still only consumes indexed backend snapshots; this
-          // prevents a Max plan captured in the modal from exceeding inventory
-          // spent by another tab/device while the modal was open.
-          const snapshot = await backendData.queries.supplySources(account, target.planetId, { fresh: true }).read();
-          if (batchSupplySourceLoadIdRef.current !== sourceLoadId) return;
-          for (const order of orders) {
-            if (!snapshot.sources.some(source => source.planetId === order.originPlanetId)) throw new Error(`Supply source ${order.originLabel} is no longer available.`);
-          }
-          const freshSources = batchSupplySourcesFromSnapshot(snapshot, target);
-          const maxOrders = snapshot.fleetSlots ? Math.max(0, snapshot.fleetSlots.limit - snapshot.fleetSlots.active) : 0;
-          const refreshedPlan = replanBatchSupplyForConfirmation({
-            maxOrders,
-            orders,
-            sources: freshSources,
-            target,
-          });
-          if (refreshedPlan.sourceLimitReached || refreshedPlan.blockedSources.length > 0 || !batchSupplyPlanMatchesOrders(orders, refreshedPlan.orders)) {
-            setBatchSupplyError("Supply inventory changed while this plan was open. The sources were refreshed; review the updated Max amounts before confirming again.");
-            return;
-          }
+          const refreshSources = () => backendData.queries.supplySources(account, target.planetId, { fresh: true }).read();
           const outcome = await runGalaxyTransaction(
-            `Supply ${refreshedPlan.orders.length} transport${refreshedPlan.orders.length === 1 ? "" : "s"}`,
+            `Supply ${orders.length} transport${orders.length === 1 ? "" : "s"}`,
             (provider: Eip1193Provider) =>
               sendLaunchTransportBatchTransaction(provider, account, gameContract, {
                 targetPlanetId: target.planetId,
-                orders: refreshedPlan.orders.map((order) => ({
+                orders: orders.map((order) => ({
                   originPlanetId: order.originPlanetId,
                   ships: order.ships,
                   cargo: {
@@ -4164,8 +4148,27 @@ export function PlayableMvpApp({
                 })),
               }),
             {
+              prepare: async () => {
+                // Keep the single indexed snapshot read inside the shared
+                // transaction deadline; never submit a late or changed plan.
+                const snapshot = await refreshSources();
+                if (batchSupplySourceLoadIdRef.current !== sourceLoadId) throw new Error("Supply selection changed before submission. Please try again.");
+                for (const order of orders) {
+                  if (!snapshot.sources.some(source => source.planetId === order.originPlanetId)) throw new Error(`Supply source ${order.originLabel} is no longer available.`);
+                }
+                const refreshedPlan = replanBatchSupplyForConfirmation({
+                  maxOrders: snapshot.fleetSlots ? Math.max(0, snapshot.fleetSlots.limit - snapshot.fleetSlots.active) : 0,
+                  orders,
+                  sources: batchSupplySourcesFromSnapshot(snapshot, target),
+                  target,
+                });
+                if (refreshedPlan.sourceLimitReached || refreshedPlan.blockedSources.length > 0 || !batchSupplyPlanMatchesOrders(orders, refreshedPlan.orders)) {
+                  throw new Error("Supply inventory changed while this plan was open. The sources were refreshed; review the updated Max amounts before confirming again.");
+                }
+              },
+              onErrorRefresh: async () => { await refreshSources(); },
               affectedPlanetIds: [...new Set(orders.map((order) => order.originPlanetId)), target.planetId],
-              resourceChanges: refreshedPlan.orders.map((order) => ({
+              resourceChanges: orders.map((order) => ({
                 bodyKind: "planet" as const,
                 planetId: order.originPlanetId,
               })),
