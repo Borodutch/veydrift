@@ -229,8 +229,8 @@ describe("SettlementIndexer", () => {
 
     expect(database.query(`
       SELECT name FROM sqlite_master
-      WHERE type = 'index' AND name = 'indexed_event_logs_queue_topics_idx'
-    `).get()).toEqual({ name: "indexed_event_logs_queue_topics_idx" });
+      WHERE type = 'index' AND name = 'indexed_event_logs_queue_topics_v2_idx'
+    `).get()).toEqual({ name: "indexed_event_logs_queue_topics_v2_idx" });
     database.close();
   });
 
@@ -851,6 +851,18 @@ describe("SettlementIndexer", () => {
       fleet: expect.arrayContaining([expect.objectContaining({ id: 1, count: 0 })]),
       defenses: expect.arrayContaining([expect.objectContaining({ id: 2, count: 0 })])
     });
+    const oldShips = {
+      blockNumber: "0x87", transactionHash: "0xmoon-ships-before-destruction", logIndex: "0x2",
+      topics: [moonShipCountChangedTopic, topic(7n), topic(1n)], data: abiWords(5n)
+    };
+    restarted.applyLog(oldShips);
+    expect(database.query("SELECT count FROM contract_moon_ship_counts WHERE planet_id='7' AND ship_id=1").get()).toBeNull();
+    restarted.applyLog({
+      blockNumber: "0x90", transactionHash: "0xrecreated-moon", logIndex: "0x0",
+      topics: [moonCreatedTopic, addressTopic(player), topic(7n)], data: abiWords(2n, 44n, 9n, 12n, 8_777n)
+    });
+    restarted.applyLog(oldShips);
+    expect(database.query("SELECT count FROM contract_moon_ship_counts WHERE planet_id='7' AND ship_id=1").get()).toBeNull();
   });
 
   test("moon lifecycle startup backfill preserves the raw ledger removed flag", () => {
@@ -11255,7 +11267,7 @@ describe("SettlementIndexer", () => {
     }
   });
 
-  test("repairs stale ship projections from the latest journaled absolute-count event", () => {
+  test("duplicate unit logs never overwrite inventory; explicit startup repair handles legacy corruption", () => {
     const dir = mkdtempSync(join(tmpdir(), "veydrift-indexer-"));
     const databasePath = join(dir, "contract-state.sqlite");
     const chainReader = {
@@ -11275,18 +11287,6 @@ describe("SettlementIndexer", () => {
       writer.applyEvent(planet);
       writer.applyLog(absoluteShipCount);
 
-      const planDb = new Database(databasePath);
-      const plan = planDb.query(`
-        EXPLAIN QUERY PLAN SELECT event_id FROM indexed_unit_count_event_logs
-        WHERE lower(json_extract(event_json, '$.topics[0]')) = lower(?)
-          AND lower(json_extract(event_json, '$.topics[1]')) = lower(?)
-          AND lower(json_extract(event_json, '$.topics[2]')) = lower(?)
-        ORDER BY CAST(block_number AS INTEGER) DESC, CAST(log_index AS INTEGER) DESC LIMIT 1
-      `).all(...absoluteShipCount.topics);
-      expect(JSON.stringify(plan)).toContain("indexed_unit_count_event_logs_latest_unit_idx");
-      expect(JSON.stringify(plan)).not.toContain("TEMP B-TREE");
-      planDb.close();
-
       // Simulate the legacy failure mode: the immutable event journal survives but its mutable
       // ship-count rows were lost after a process interruption.
       const db = new Database(databasePath);
@@ -11295,8 +11295,8 @@ describe("SettlementIndexer", () => {
       }
       db.close();
 
-      expect(writer.applyLog(absoluteShipCount)).toMatchObject({ applied: true, duplicate: true });
-      expect(writer.shipRows(planet.planetId).find((ship) => ship.id === 4)?.count).toBe(9);
+      expect(writer.applyLog(absoluteShipCount)).toMatchObject({ applied: false, duplicate: true });
+      expect(writer.shipRows(planet.planetId).find((ship) => ship.id === 4)?.count).toBe(2);
 
       // The startup repair also handles a stale journal-only row even when no websocket duplicate
       // happens to arrive after a restart.

@@ -173,6 +173,27 @@ Repair changes the chosen database. Verify its path/chain and make a consistent
 backup first. Run against an offline copy or under controlled writer ownership;
 do not run competing repair writers against an active service.
 
+For the hexadecimal unit-event ordering defect, use the narrow verified repair
+instead of a full reseed. Stop the backend writers, make a consistent SQLite
+backup at that checkpoint, then run with the deployment's backend configuration:
+
+```sh
+cd apps/backend
+bun src/repairUnitInventory.ts --out /path/to/unit-repair.json
+bun src/repairUnitInventory.ts --apply --writer-stopped --manifest /path/to/unit-repair.json --backup /path/to/backup.sqlite
+```
+
+The audit compares both count mirrors with the latest retained absolute events
+across event types, then checks candidates against raw contract storage at the
+indexed checkpoint (four concurrent RPC reads maximum). It aborts on canonical
+disagreement, including ambiguous retained history or moon generations; inspect
+those separately rather than forcing a count. Apply rechecks chain identity,
+block hash, the backup checkpoint and unchanged database/journal state before
+one atomic commit. It advances durable cache versions and records an idempotent
+repair marker. No resources, queues, mission records or event identities change.
+Restart the backend, verify readiness and affected API inventory, and rerun the
+audit. Gameplay requests never invoke this repair or its RPC checks.
+
 ```sh
 cd apps/backend
 bun run index:sync -- --from-block "${REPLAY_FROM_BLOCK:?Set the reviewed boundary}"
