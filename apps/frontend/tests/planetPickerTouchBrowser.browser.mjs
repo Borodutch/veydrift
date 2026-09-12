@@ -4,7 +4,9 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
+import sharp from "sharp";
 import { createServer } from "vite";
+import { PLANET_ANIMATION_VERSION } from "../planetAnimationConfig.ts";
 
 const chromeCandidates = [
   process.env.CHROME_PATH,
@@ -32,6 +34,33 @@ let routeChunkGate;
 
 const INSPECTOR_APP_READY_TIMEOUT_MS = 30_000;
 const INSPECTOR_PRELOAD_TIMEOUT_MS = 120_000;
+
+test("Vite serves cached animated derivatives instead of full masters for small icons", { timeout: 30_000 }, async () => {
+  const url = new URL(`/assets/game/planet-animations/warm-terracotta.webp?size=64&v=${PLANET_ANIMATION_VERSION}`, fixtureUrl);
+  const [first, second] = await Promise.all([fetch(url), fetch(url)]);
+  assert.equal(first.status, 200);
+  assert.equal(first.headers.get("content-type"), "image/webp");
+  assert.equal(first.headers.get("cache-control"), "public, max-age=31536000, immutable");
+  const bytes = Buffer.from(await first.arrayBuffer());
+  assert.ok(bytes.equals(Buffer.from(await second.arrayBuffer())));
+  const metadata = await sharp(bytes, { animated: true }).metadata();
+  assert.equal(metadata.width, 64);
+  assert.equal(metadata.pageHeight, 64);
+  assert.equal(metadata.pages, 96);
+  assert.ok(bytes.length < 100_000);
+  const head = await fetch(url, { method: "HEAD" });
+  assert.equal(head.status, 200);
+  assert.equal(await head.text(), "");
+  url.searchParams.set("size", "65");
+  assert.equal((await fetch(url)).status, 400);
+  url.searchParams.set("size", "1024");
+  const master = await fetch(url);
+  assert.equal(master.status, 200);
+  const original = await sharp(Buffer.from(await master.arrayBuffer()), { animated: true }).metadata();
+  assert.equal(original.width, 1024);
+  assert.equal(original.pages, 96);
+  assert.equal((await fetch(new URL("/", fixtureUrl))).status, 200);
+});
 
 function delay(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));

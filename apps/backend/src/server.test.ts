@@ -1057,7 +1057,7 @@ describe("Veydrift backend", () => {
     expect(indexer.transactionIndexingSummary(transactionHash, reader.transactionReceipt.logs).materialized).toBe(false);
     reader.transactionReceipt.logs = [{ ...expectedLog, logIndex: "0x00" }];
     const receiptSpy = spyOn(reader, "getTransactionReceipt");
-    receiptSpy.mockRejectedValueOnce(new Error("RPC must not run for a committed transaction"));
+    receiptSpy.mockImplementation(async () => { throw new Error("RPC must not run for a committed transaction"); });
     await expect((await status()).json()).resolves.toMatchObject({ phase: "applied" });
     expect(receiptSpy).not.toHaveBeenCalled();
     receiptSpy.mockRestore();

@@ -625,6 +625,7 @@ describe("ChainSyncService (polling)", () => {
       async listSettledPlanetEvents(): Promise<SettledPlanetEvent[]> { return []; },
       async getCanonicalPlanetState(): Promise<CanonicalPlanetChainState> {
         canonicalReads += 1;
+        if (canonicalReads === 1) throw new Error("temporary canonical RPC failure");
         return {
           planetId: "7",
           resources: { metal: "0", crystal: "0", deuterium: "0" },
@@ -690,6 +691,7 @@ describe("ChainSyncService (polling)", () => {
     });
     expect(indexer.defenseRows("7").find((defense) => defense.id === 1)?.count).toBe(2);
 
+    indexer.recordTimedMissilePayloadHistoryBackfill(config.gameContractAddress!, 100n, 0x180n, topicWord(0x180n));
     const backfiller = new MockBackfiller(0x182n, () => [activeQueue, backlogQueue]);
     backfiller.timedMissilePayloadLogsFor = () => [activeQueue, backlogQueue];
     const service = new ChainSyncService(
@@ -699,13 +701,20 @@ describe("ChainSyncService (polling)", () => {
     );
     await service.poll();
 
+    expect(indexer.timedMissilePayloadHistoryBackfillStatus(config.gameContractAddress!, 100n).marker?.throughBlock).toBe("384");
+    expect(indexer.resourceProjectionContext().safeToProject).toBe(false);
+    service.stop();
+    const retry = new ChainSyncService({ ...config, timedMissileIndexFromBlock: 100n }, indexer, { logBackfiller: backfiller });
+    await retry.poll();
+
     expect(indexer.playerQueues(player, "7").defense).toMatchObject({
       itemId: 1,
       quantity: 2,
       backlog: [expect.objectContaining({ itemId: 0, quantity: 3 })]
     });
     expect(indexer.defenseRows("7").find((defense) => defense.id === 1)?.count).toBe(5);
-    expect(canonicalReads).toBe(1);
+    expect(canonicalReads).toBe(2);
+    retry.stop();
     expect(database.query(`
       SELECT removed FROM indexed_event_logs
       WHERE transaction_hash = ? AND log_index = ?
@@ -2091,6 +2100,51 @@ describe("ChainSyncService (polling)", () => {
     });
     expect(indexer.resourceProjectionContext().safeToProject).toBe(false);
     service.stop();
+  });
+
+  test("prepares RPC reads before atomic publication and retries the whole rolled-back batch", async () => {
+    const indexer = makeIndexer();
+    const first = planetStartedLog("0x180", 7n, "0xbatch-first");
+    const second = planetStartedLog("0x180", 8n, "0xbatch-second");
+    const settlements = [7n, 8n].map(planetId => ({
+      blockNumber: "0x180", transactionHash: `0xresources-${planetId}`, logIndex: "0x1",
+      topics: [planetSettledTopic, topicWord(planetId)], data: abiWords(100n, 100n, 100n, 1770000384n),
+    }));
+    const backfiller = new MockBackfiller(0x180n, () => [first, second, ...settlements]);
+    let fail = true;
+    const originalApply = indexer.applyLog.bind(indexer);
+    indexer.applyLog = log => {
+      if (fail && log.transactionHash === second.transactionHash) throw new Error("batch failure");
+      return originalApply(log);
+    };
+    backfiller.anchorHashFor = block => {
+      expect(indexer.snapshot().indexedEventLogs).toBe(0);
+      return `0x${block.toString(16).padStart(64, "0")}`;
+    };
+    const service = new ChainSyncService(config, indexer, { logBackfiller: backfiller });
+    try {
+      const events: string[] = [];
+      service.addListener(event => {
+        if (event.kind !== "chain-event") return;
+        events.push(event.kind);
+        expect(indexer.resourceProjectionContext().safeToProject).toBe(true);
+      });
+      await service.poll();
+      expect(service.snapshot().lastError).toContain("batch failure");
+      expect(events).toEqual([]);
+      expect(indexer.snapshot().indexedEventLogs).toBe(0);
+      expect(indexer.planet("7")).toBeNull();
+      expect(indexer.resourceProjectionContext().timestamp).toBeNull();
+      fail = false;
+      await service.poll();
+      expect(service.snapshot().lastError).toBeNull();
+      expect(indexer.snapshot().indexedEventLogs).toBe(4);
+      expect(indexer.planet("7")).not.toBeNull();
+      expect(indexer.planet("8")).not.toBeNull();
+      expect(indexer.snapshot().pendingReconciliationReason).toBeNull();
+      expect(indexer.resourceProjectionContext()).toMatchObject({ indexedRevision: "4", projectionRevision: "4", safeToProject: true });
+      expect(events).toEqual(["chain-event"]);
+    } finally { service.stop(); }
   });
 
   test("does not publish an older poll clock when websocket ingestion advances during verification", async () => {

@@ -1051,6 +1051,10 @@ describe("Playable MVP app display helpers", () => {
   });
 
   test("blocks backend-refetched mission manifests that exceed available ship inventory", () => {
+    expect(missionShipInventoryBlocker({
+      shipyardState: { fleetSlots: { active: 0, limit: 5 }, ships: [{ id: 0, count: 2 }], launchableShips: [{ id: 0, count: 0 }] },
+      ships: { smallCargo: 2 },
+    })).toContain("only 0 available");
     expect(
       missionShipInventoryBlocker({
         shipyardState: {

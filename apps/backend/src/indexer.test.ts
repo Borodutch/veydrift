@@ -3441,12 +3441,16 @@ describe("SettlementIndexer", () => {
 
       const duringWriterCommit = reader.readConsistentSnapshot(() => {
         const beforeSpend = reader.planet(planet.planetId);
-        writer.applyLog({
-          blockNumber: "0x91",
-          transactionHash: "0xconcurrent-spend",
-          logIndex: "0x0",
-          topics: [planetSettledTopic, topic(BigInt(planet.planetId))],
-          data: abiWords(1000n, 900n, 800n, 1770000101n)
+        writer.commitLogBatch(() => {
+          writer.applyLog({
+            blockNumber: "0x91",
+            transactionHash: "0xconcurrent-spend",
+            logIndex: "0x0",
+            topics: [planetSettledTopic, topic(BigInt(planet.planetId))],
+            data: abiWords(1000n, 900n, 800n, 1770000101n)
+          });
+          expect(reader.resourceProjectionContext().safeToProject).toBe(true);
+          writer.recordResourceProjectionWatermark("145", "1770000101", `0x${"b".repeat(64)}`);
         });
         return {
           context: reader.resourceProjectionContext(),
@@ -3463,8 +3467,8 @@ describe("SettlementIndexer", () => {
       expect(reader.planet(planet.planetId)?.resources.metal).toBe("1000");
       expect(reader.resourceProjectionContext()).toMatchObject({
         indexedRevision: "1",
-        projectionRevision: "0",
-        safeToProject: false
+        projectionRevision: "1",
+        safeToProject: true
       });
     } finally {
       rmSync(dir, { force: true, recursive: true });

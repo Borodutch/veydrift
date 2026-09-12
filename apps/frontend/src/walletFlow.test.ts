@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import {
   BASE_MAINNET,
   transactionRpcRequest,
@@ -3986,6 +3986,7 @@ describe("walletFlow", () => {
   });
 
   test("the transport deadline includes a stalled JSON response body", async () => {
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
     const originalFetch = globalThis.fetch;
     let signal: AbortSignal | undefined;
     globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
@@ -4001,7 +4002,13 @@ describe("walletFlow", () => {
       await expect(fetchInfrastructureState("https://api.test", account, "1", { timeoutMs: 5 }))
         .rejects.toThrow("Timed out reading infrastructure");
       expect(signal?.aborted).toBe(true);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(warn.mock.calls[0]![0])).toMatchObject({
+        event: "game_api_request", route: "/wallet/:id/infrastructure", outcome: "timeout", timeoutMs: 5,
+      });
+      expect(JSON.stringify(warn.mock.calls)).not.toContain(account);
     } finally {
+      warn.mockRestore();
       globalThis.fetch = originalFetch;
     }
   });

@@ -1,7 +1,11 @@
 import preact from "@preact/preset-vite";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { defineConfig, type Plugin } from "vite";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import type { ReadableStream } from "node:stream/web";
+import { defineConfig, type Plugin, type ViteDevServer } from "vite";
+import { planetAnimationResponse } from "./scripts/serve.mjs";
 import {
   assertAccountAssociationDomain,
   buildMiniAppEmbed,
@@ -75,6 +79,7 @@ export default defineConfig(({ mode }) => {
     },
     plugins: [
       preact(),
+      planetAnimations(),
       htmlEnvDefaults(htmlEnv),
       docsMarkdownAsset(),
       farcasterManifest(mode, htmlEnv),
@@ -83,6 +88,29 @@ export default defineConfig(({ mode }) => {
 });
 
 const docsMarkdownUrl = new URL("./src/docs/content/docs.md", import.meta.url);
+
+function planetAnimations(): Plugin {
+  const configureServer = (server: Pick<ViteDevServer, "middlewares">) => {
+    server.middlewares.use(async (request, response, next) => {
+      try {
+        const result = await planetAnimationResponse(new URL(request.url ?? "/", "http://localhost"));
+        if (!result) return next();
+        response.statusCode = result.status;
+        result.headers.forEach((value, name) => response.setHeader(name, value));
+        if (request.method === "HEAD" || !result.body) {
+          await result.body?.cancel();
+          response.end();
+        } else {
+          // The shared handler uses DOM stream types; Node/Bun declare extra methods.
+          await pipeline(Readable.fromWeb(result.body as unknown as ReadableStream), response);
+        }
+      } catch (error) {
+        if (!response.destroyed) next(error);
+      }
+    });
+  };
+  return { name: "veydrift-planet-animations", configureServer, configurePreviewServer: configureServer };
+}
 
 function docsMarkdownAsset(): Plugin {
   return {

@@ -824,10 +824,16 @@ export class BackendDataStore {
   private planetQuery<T>(kind: string, load: (apiUrl: string, wallet: string, planetId?: string, options?: WalletReadOptions) => Promise<T>) {
     return (wallet: string, planetId?: string, options: WalletReadOptions = {}) => {
       const key = walletCacheKey(kind, wallet, planetId);
-      return this.query(key, () => this.refresh(key,
-        signal => load(this.apiBaseUrl, wallet, planetId, { ...options, signal }),
-        { wallet, planetId },
-      ));
+      return this.query(key, () => {
+        this.registerResource(key, signal => load(this.apiBaseUrl, wallet, planetId, { ...options, signal }), { wallet, planetId });
+        const resource = this.resources.get(key)!;
+        return (options.fresh
+          ? this.refreshInvalidatedResource(resource, { activeOnly: false }, true).then(result => {
+              if (result === undefined) throw new Error("State refresh was cancelled. Please try again.");
+              return result;
+            })
+          : this.readRegisteredResource(resource)) as Promise<T>;
+      });
     };
   }
 
@@ -1578,7 +1584,9 @@ private createIndexingPlan(keys: readonly string[], prepare?: () => Promise<Pend
         const uncertain = walletSendStarted && !isUserRejected(error) && !isOnChainRevertError(error);
         attempt.unknown = uncertain;
         // Error refresh is background work, never another unbounded UI lock.
-        if (!expired) void Promise.resolve().then(() => descriptor.onErrorRefresh?.(error)).catch(() => {});
+        if (!expired) void Promise.resolve().then(() => {
+          if (isCurrent()) return descriptor.onErrorRefresh?.(error);
+        }).catch(() => {});
         if (!expired || walletSendStarted) publish({
           error, key: descriptor.key, phase: uncertain ? "unknown" : "error",
           label: uncertain ? "The wallet did not confirm the result. Check its activity before retrying; this transaction may already have been sent."
