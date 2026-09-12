@@ -522,13 +522,18 @@ type LegacyUnitMutation = {
 // The contract emits these events with the resulting absolute count, rather than a delta. They can
 // therefore repair a materialized roster safely, but only when the event is the latest snapshot for
 // that exact body/unit pair.
-type AbsoluteUnitCountProjection = {
+export type AbsoluteUnitCountProjection = {
   body: "planet" | "moon";
   kind: "ship" | "defense";
   planetId: string;
   itemId: number;
   total: number;
 };
+
+// Retained RPC quantities are hexadecimal text, not SQLite integer literals.
+export const latestLogPositionSql = `CAST(block_number AS INTEGER) DESC,
+  length(ltrim(substr(log_index, 3), '0')) DESC,
+  lower(ltrim(substr(log_index, 3), '0')) DESC`;
 
 type UnitCountSnapshot = {
   fleet: Map<number, number>;
@@ -6090,14 +6095,14 @@ export class SettlementIndexer {
       -- Legacy production queues recover their canonical timing from QueueStarted
       -- events. Keep that lookup topic-addressable: otherwise a one-time writer
       -- repair scans the entire event ledger for every retained FIFO entry.
-      CREATE INDEX IF NOT EXISTS indexed_event_logs_queue_topics_idx
+      DROP INDEX IF EXISTS indexed_event_logs_queue_topics_idx;
+      CREATE INDEX IF NOT EXISTS indexed_event_logs_queue_topics_v2_idx
         ON indexed_event_logs (
           removed,
           lower(json_extract(event_json, '$.topics[0]')),
           lower(json_extract(event_json, '$.topics[1]')),
           lower(json_extract(event_json, '$.topics[2]')),
-          CAST(block_number AS INTEGER) DESC,
-          CAST(log_index AS INTEGER) DESC
+          ${latestLogPositionSql}
         );
       CREATE TABLE IF NOT EXISTS indexed_missile_attacks (
         event_id TEXT PRIMARY KEY,
@@ -6240,13 +6245,7 @@ export class SettlementIndexer {
         ON indexed_unit_count_event_logs (block_number, log_index);
       CREATE INDEX IF NOT EXISTS indexed_unit_count_event_logs_topic1_block_idx
         ON indexed_unit_count_event_logs (json_extract(event_json, '$.topics[1]'), block_number, log_index);
-      CREATE INDEX IF NOT EXISTS indexed_unit_count_event_logs_latest_unit_idx
-        ON indexed_unit_count_event_logs (
-          lower(json_extract(event_json, '$.topics[0]')),
-          lower(json_extract(event_json, '$.topics[1]')),
-          lower(json_extract(event_json, '$.topics[2]')),
-          CAST(block_number AS INTEGER) DESC, CAST(log_index AS INTEGER) DESC
-        );
+      DROP INDEX IF EXISTS indexed_unit_count_event_logs_latest_unit_idx;
       CREATE TABLE IF NOT EXISTS indexed_planet_queues (
         queue_key TEXT PRIMARY KEY,
         kind TEXT NOT NULL,
@@ -7743,12 +7742,11 @@ export class SettlementIndexer {
     const rows = this.db.query(`
       SELECT event_json
       FROM indexed_unit_count_event_logs
-      ORDER BY CAST(block_number AS INTEGER) ASC, CAST(log_index AS INTEGER) ASC
     `).all() as EventRow[];
     const latestByUnit = new Map<string, AbsoluteUnitCountProjection>();
 
     for (const log of sortedEventRows(rows)) {
-      const projection = this.absoluteUnitCountProjection(log);
+      const projection = SettlementIndexer.absoluteUnitCountProjection(log);
       if (!projection) continue;
       latestByUnit.set(this.absoluteUnitCountProjectionKey(projection), projection);
     }
@@ -7765,28 +7763,7 @@ export class SettlementIndexer {
     return repairedRows;
   }
 
-  private repairLatestAbsoluteUnitCountProjectionForEvent(eventId: string, log: IndexedRpcLog): boolean {
-    const projection = this.absoluteUnitCountProjection(log);
-    if (!projection) return false;
-    const [topic0, topic1, topic2] = log.topics;
-    if (!topic0 || !topic1 || !topic2) return false;
-
-    const latest = this.db.query(`
-      SELECT event_id
-      FROM indexed_unit_count_event_logs
-      WHERE lower(json_extract(event_json, '$.topics[0]')) = lower(?)
-        AND lower(json_extract(event_json, '$.topics[1]')) = lower(?)
-        AND lower(json_extract(event_json, '$.topics[2]')) = lower(?)
-      ORDER BY CAST(block_number AS INTEGER) DESC, CAST(log_index AS INTEGER) DESC
-      LIMIT 1
-    `).get(topic0, topic1, topic2) as { event_id: string } | null;
-    if (latest?.event_id !== eventId) return false;
-    if (!this.applyAbsoluteUnitCountProjectionIfStale(projection)) return false;
-    this.touch();
-    return true;
-  }
-
-  private absoluteUnitCountProjection(log: IndexedRpcLog): AbsoluteUnitCountProjection | null {
+  static absoluteUnitCountProjection(log: IndexedRpcLog): AbsoluteUnitCountProjection | null {
     if (isIndexedQueueCompletedLog(log)) {
       const event = decodeIndexedQueueCompletedLog(log);
       if (!event.planetId || event.total === undefined) return null;
@@ -7847,7 +7824,7 @@ export class SettlementIndexer {
     log: IndexedRpcLog,
     options: { preserveWithoutBaseline?: boolean } = {}
   ): void {
-    const removed = this.absoluteUnitCountProjection(log);
+    const removed = SettlementIndexer.absoluteUnitCountProjection(log);
     if (!removed) return;
     this.db.query("DELETE FROM indexed_unit_count_event_logs WHERE event_id = ?").run(eventId);
     this.restoreLatestAbsoluteUnitCountProjection(removed, options);
@@ -7861,11 +7838,11 @@ export class SettlementIndexer {
     const rows = this.db.query(`
       SELECT event_json
       FROM indexed_unit_count_event_logs
-      ORDER BY CAST(block_number AS INTEGER) DESC, length(log_index) DESC, log_index DESC
+      ORDER BY ${latestLogPositionSql}
     `).all() as EventRow[];
     const affectedKey = this.absoluteUnitCountProjectionKey(affected);
     for (const row of rows) {
-      const candidate = this.absoluteUnitCountProjection(parseEvent<IndexedRpcLog>(row.event_json));
+      const candidate = SettlementIndexer.absoluteUnitCountProjection(parseEvent<IndexedRpcLog>(row.event_json));
       if (!candidate || this.absoluteUnitCountProjectionKey(candidate) !== affectedKey) continue;
       this.applyAbsoluteUnitCountProjectionIfStale(candidate);
       this.touch();
@@ -8381,7 +8358,6 @@ export class SettlementIndexer {
       FROM indexed_unit_count_event_logs
       WHERE json_extract(event_json, '$.topics[1]') = ?
         AND CAST(block_number AS INTEGER) > CAST(? AS INTEGER)
-      ORDER BY CAST(block_number AS INTEGER) ASC, CAST(log_index AS INTEGER) ASC
     `).all(fleetMissionIdTopic(planetId), snapshotBlock) as EventRow[];
 
     for (const log of sortedEventRows(rows)) {
@@ -9024,7 +9000,7 @@ export class SettlementIndexer {
       WHERE removed = 0
         AND lower(json_extract(event_json, '$.topics[0]')) IN (?, ?)
         AND lower(json_extract(event_json, '$.topics[1]')) = ?
-      ORDER BY CAST(block_number AS INTEGER) DESC, CAST(log_index AS INTEGER) DESC
+      ORDER BY ${latestLogPositionSql}
     `).all(researchQueuedTopic, researchQueuedV2Topic, ownerTopic) as EventRow[];
 
     for (const row of rows) {
@@ -9914,7 +9890,6 @@ export class SettlementIndexer {
       FROM indexed_event_logs
       WHERE removed = 0
         AND json_extract(event_json, '$.topics[1]') = ?
-      ORDER BY CAST(block_number AS INTEGER) ASC, CAST(log_index AS INTEGER) ASC
     `).all(fleetMissionIdTopic(missionId)) as EventRow[];
     let roundsCompleted = 0;
     let terminal = false;
@@ -10620,7 +10595,7 @@ export class SettlementIndexer {
         AND lower(json_extract(event_json, '$.topics[0]')) = ?
         AND lower(json_extract(event_json, '$.topics[1]')) = ?
         AND lower(json_extract(event_json, '$.topics[2]')) = ?
-      ORDER BY CAST(block_number AS INTEGER) DESC, CAST(log_index AS INTEGER) DESC
+      ORDER BY ${latestLogPositionSql}
     `).all(
       queuedTopic.toLowerCase(),
       topicFor(planetId),
@@ -11969,11 +11944,9 @@ export class SettlementIndexer {
         this.recordUnitCountEventLog(eventId, log);
         repairedRows += 1;
       }
-      // A journaled absolute count may predate atomic ingestion. If the event is replayed, restore
-      // its materialized projection only when it remains the latest snapshot for that body/unit.
-      if (this.repairLatestAbsoluteUnitCountProjectionForEvent(eventId, log)) {
-        repairedRows += 1;
-      }
+      // Atomic ingestion already materialized this event. A duplicate is not authority to
+      // overwrite newer inventory (including a different event type or canonical snapshot).
+      // Historical corruption is repaired explicitly, never by replaying an arbitrary duplicate.
     }
 
     if (isInterplanetaryMissileAttackLog(log)) {
@@ -13673,7 +13646,6 @@ export class SettlementIndexer {
         FROM indexed_unit_count_event_logs
         WHERE json_extract(event_json, '$.topics[1]') IN (${chunk.map(() => "?").join(",")})
           AND CAST(block_number AS INTEGER) <= ?
-        ORDER BY CAST(block_number AS INTEGER) ASC, CAST(log_index AS INTEGER) ASC
       `).all(...chunk, maxBlockNumber) as EventRow[]);
     }
     const logs = sortedEventRows(rows);
