@@ -6522,7 +6522,7 @@ describe("Veydrift backend", () => {
     });
   });
 
-  test("indexed attack protection reports active war and bypasses score/bashing gates", async () => {
+  test.each([true, false])("unverified war lists stay unavailable while canonical eligibility is %s", async (eligible) => {
     const attacker = "0x9999999999999999999999999999999999999999" as Address;
     const indexer = await twoPlanetIndexer(attacker);
     indexer.applyLog(defenseCompletedLog({ planetId: 8n, defenseId: 0n, total: 350_000n, logIndex: 1 }));
@@ -6585,8 +6585,9 @@ describe("Veydrift backend", () => {
         return {
           wallet,
           targetPlanetId: targetPlanetId.toString(),
-          allowed: true,
-          blockedReason: "none",
+          // Canonical declaration roster/direction can deny the exception despite indexed war.
+          allowed: eligible,
+          blockedReason: eligible ? "none" : "score_protection",
           blockedReasonLabel: null,
           relation: "peer",
           defenderHonorStatus: "neutral",
@@ -6602,9 +6603,9 @@ describe("Veydrift backend", () => {
 
     expect(response.status).toBe(200);
     expect(body).toMatchObject({
-      allowed: true,
+      allowed: eligible,
       atWar: true,
-      blockedReason: "none",
+      blockedReason: eligible ? "none" : "score_protection",
       targetAlliance: { allianceId: "2", tag: "DEF", name: "Defenders" }
     });
     expect(chainReader.calls).toEqual([7n]);
@@ -6612,19 +6613,32 @@ describe("Veydrift backend", () => {
     const highscores = await handler(new Request(`http://localhost/highscores?limit=10&currentWallet=${attacker}&includeAttackProtection=true`));
     const highscoreBody = await highscores.json();
     expect(highscoreBody.rankings.total.find((entry: HighscoreEntry) => entry.wallet === player)?.attackProtection).toMatchObject({
-      allowed: true,
+      allowed: false,
       atWar: true,
+      warEligibilityNeedsCheck: true,
       blockedReason: "none",
       targetAlliance: { allianceId: "2", tag: "DEF", name: "Defenders" }
     });
+
+    expect(chainReader.calls).toEqual([7n]); // Lists must not fan out canonical RPC reads.
+
+    // Rift availability is independent of war eligibility and clears the pending flag.
+    indexer.applyLog({
+      blockNumber: "0xa0", transactionHash: "0xwar-rift", logIndex: "0x0",
+      topics: [riftExtractionStartedTopic, addressTopic(player), topic(7n), topic(0n)],
+      data: abiWords(1_000n, 1_770_000_000n, 1_772_419_200n)
+    });
+    const riftRankings = await (await handler(new Request(`http://localhost/highscores?limit=10&currentWallet=${attacker}&includeAttackProtection=true`))).json();
+    expect(riftRankings.rankings.total.find((entry: HighscoreEntry) => entry.wallet === player)?.attackProtection)
+      .toMatchObject({ allowed: true, atWar: true, blockedReason: "none", warEligibilityNeedsCheck: false });
 
     const reverseResponse = await handler(new Request(`http://localhost/wallet/${player}/attack-protection?targetPlanetId=8`));
     const reverseBody = await reverseResponse.json();
     expect(reverseResponse.status).toBe(200);
     expect(reverseBody).toMatchObject({
-      allowed: true,
+      allowed: eligible,
       atWar: true,
-      blockedReason: "none",
+      blockedReason: eligible ? "none" : "score_protection",
       targetAlliance: { allianceId: "1", tag: "ATK", name: "Attackers" }
     });
   });

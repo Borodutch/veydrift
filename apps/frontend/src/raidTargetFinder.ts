@@ -40,6 +40,8 @@ export type RaidTargetAlliance = {
 };
 
 export type RaidTargetProtection = {
+  allowed: boolean;
+  warEligibilityNeedsCheck?: boolean;
   // Blocked by score/newbie/bashing protection — i.e. the viewer is not allowed
   // to attack but it is not an alliance relationship.
   isProtected: boolean;
@@ -303,6 +305,8 @@ function classifyProtection(entry: HighscoreEntry): RaidTargetProtection {
       && blockedReason !== "same_alliance",
   );
   return {
+    allowed: protection?.allowed === true && !protection.warEligibilityNeedsCheck,
+    ...(protection?.warEligibilityNeedsCheck === undefined ? {} : { warEligibilityNeedsCheck: protection.warEligibilityNeedsCheck }),
     isProtected,
     isSameAlliance,
     isAtWar,

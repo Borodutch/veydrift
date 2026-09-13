@@ -62,7 +62,10 @@ owner, plus owners introduced by the pending logs. This is a narrow exception to
 asset event-only ingestion, not a general current-state heal. Reads use the exact
 poll block, in sequential batches of at most 50 calls. Staging includes all owners
 because genuine owner calls can emit no logs. The existing post-read head-hash
-verification runs before the snapshot commits atomically with the logs/watermark.
+verification runs before the activity snapshot commits atomically with the logs.
+Normal polls include the watermark in that transaction. Removed-completion
+reconciliation commits logs/activity first and defers the watermark until reconciliation
+succeeds; the old/stale watermark keeps that branch conservative and retryable.
 Malformed/incomplete/RPC-failed reads cannot publish partial activity; polling
 retries normally. No gameplay request runs an activity repair or per-row RPC fan-out.
 
@@ -72,10 +75,15 @@ war roster/direction, bashing, honor, relation and plunder. Missing/malformed/RP
 protection returns HTTP 503, never `allowed:true`. The existing nonzero planet Rift
 lock exception remains separate, as in the launch/combat modules: it bypasses score
 and bashing but never same-alliance; ordinary plunder remains zero when score
-protection still applies. Rankings/Raid Finder keep indexed list previews and the
-existing war-eligibility warning; the selected target is verified before submission.
+protection still applies. Rankings/Raid Finder keep indexed list previews, but an
+active war alone never grants availability: unverified roster/direction eligibility
+returns `allowed:false` with `warEligibilityNeedsCheck:true` and disables Attack.
+Inactivity and Rift bypasses remain independent of war eligibility; same-alliance
+protection wins. Open the selected target for the authoritative canonical preflight.
 AFK list previews use the verified projection clock when available. Personalized
-list caches use indexed-state versions and a one-second TTL.
+list cache keys include that same clock as well as indexed-state versions, so crossing
+an inactivity boundary cannot reuse a pre-boundary fresh or stale response. Their TTL
+remains one second; non-personalized informational cache policy is unchanged.
 
 ### VEY-KANEO-869 rollout and automatic repair
 

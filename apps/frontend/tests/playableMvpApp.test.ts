@@ -3612,6 +3612,7 @@ function raidTarget(overrides: Partial<RaidTarget> = {}): RaidTarget {
     stationedDefenderForecastTimeline: [],
     stationedDefenderTimelineComplete: true,
     protection: {
+      allowed: true,
       isProtected: false,
       isSameAlliance: false,
       blockedReason: "none",

@@ -2844,8 +2844,13 @@ function cacheableJsonRequestStaleKey(request: Request, url: URL, cacheKey: stri
 
 function cacheableJsonRequestVersion(url: URL, indexer: SettlementIndexer): string {
   if (url.pathname === "/highscores") {
+    // Protection changes when the canonical clock crosses an AFK boundary even if no
+    // activity row changes. Never reuse a fresh OR stale response from the old clock.
+    if (personalizedHighscoreRequest(url)) {
+      return `${indexer.indexedStateCacheVersion()}:activity-clock=${indexedActivityNowSeconds(indexer)}`;
+    }
     return landingLeaderboardRequest(url) ? "landing-leaderboard"
-      : livePublicDataRequest(url) || personalizedHighscoreRequest(url) ? indexer.indexedStateCacheVersion() : "ttl";
+      : livePublicDataRequest(url) ? indexer.indexedStateCacheVersion() : "ttl";
   }
   const system = url.pathname.match(/^\/universe\/galaxies\/([0-9]+)\/systems\/([0-9]+)$/);
   return system ? galaxySystemCacheVersion(indexer, galaxySystemDetail(url), Number(system[1]), Number(system[2])) : "ttl";
@@ -5529,6 +5534,10 @@ function rankHighscores(
     });
 }
 
+function indexedActivityNowSeconds(indexer: SettlementIndexer | undefined): number {
+  return Number(indexer?.snapshot().resourceProjectionTimestamp ?? Math.floor(Date.now() / 1_000));
+}
+
 function rankedHighscoreIndexedProtectionLookup(
   rows: Iterable<RankedHighscoreEntry>,
   entries: readonly HighscoreEntry[],
@@ -5557,7 +5566,7 @@ function rankedHighscoreIndexedProtectionLookup(
   const playerActivity = indexer?.playerLastActiveSeconds([...new Set(rankedRows.map((row) => row.wallet))])
     ?? new Map<string, number>();
   const nowSeconds = Math.floor(Date.now() / 1_000);
-  const activityNowSeconds = Number(indexer?.snapshot().resourceProjectionTimestamp ?? nowSeconds);
+  const activityNowSeconds = indexedActivityNowSeconds(indexer);
   for (const row of rankedRows) {
     const defenderInactive = indexedDefenderInactive(playerActivity.get(row.wallet.toLowerCase()), activityNowSeconds);
     const rowAlliance = row.alliance ?? null;
@@ -5578,7 +5587,11 @@ function rankedHighscoreIndexedProtectionLookup(
     );
     for (const planet of row.planets) {
       if (status && status.blockedReason !== "same_alliance" && indexer?.hasLiveRiftExtraction(planet.planetId)) {
-        statuses.set(planet.planetId, { ...status, allowed: true, blockedReason: "none", blockedReasonLabel: null });
+        statuses.set(planet.planetId, {
+          ...status, allowed: true, blockedReason: "none", blockedReasonLabel: null,
+          // Rift bypasses score/bashing independently of declaration-roster eligibility.
+          ...(status.warEligibilityNeedsCheck ? { warEligibilityNeedsCheck: false } : {})
+        });
         continue;
       }
       const bashingLimited = status?.allowed
@@ -5643,17 +5656,30 @@ function indexedScoreProtectionStatus(
   }
 
   const atWar = indexer?.allianceRelationship(attackerAlliance?.allianceId, defenderAlliance?.allianceId) === "war";
-  if (defenderInactive || atWar || !isIndexedScoreProtected(attackerScore, defenderScore)) {
+  if (atWar && !defenderInactive) {
+    // Index-only rows cannot verify the original declaration roster or direction/ratio.
+    // "none" is not a canonical denial reason here: the explicit pending flag makes
+    // availability unknown, not attackable. Selected-target preflight is authoritative.
+    return {
+      allowed: false,
+      blockedReason: "none",
+      blockedReasonLabel: "War eligibility is unverified. Open the target to check attack protection.",
+      atWar: true,
+      warEligibilityNeedsCheck: true,
+      defenderInactive,
+      scoreComparison,
+      ...(defenderAlliance ? { targetAlliance: defenderAlliance } : {})
+    };
+  }
+  if (defenderInactive || !isIndexedScoreProtected(attackerScore, defenderScore)) {
     return {
       allowed: true,
       blockedReason: "none",
       blockedReasonLabel: null,
       defenderInactive,
       scoreComparison,
-      // Rankings are index-only. They know that a war is active but cannot cheaply evaluate the
-      // frozen declaration roster and direction for every result. The selected target is verified
-      // by the target-specific canonical preflight before Confirm is enabled.
-      ...(atWar ? { atWar: true, warEligibilityNeedsCheck: true } : {}),
+      // Inactivity grants score/bashing exceptions independently of war eligibility.
+      ...(atWar ? { atWar: true } : {}),
       ...(defenderAlliance ? { targetAlliance: defenderAlliance } : {})
     };
   }

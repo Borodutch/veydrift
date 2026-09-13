@@ -155,25 +155,31 @@ describe("galaxyActions", () => {
     });
   });
 
-  test("keeps ranked active-war verification internal to the attack flow", () => {
+  test.each([false, true])("disables unverified ranked war targets even with optimistic allowed=%s", (allowed) => {
     const attack = galaxyActionsForSlot({
       account,
-      attackProtection: {
-        allowed: true,
-        atWar: true,
-        warEligibilityNeedsCheck: true,
-        blockedReason: "none",
-        blockedReasonLabel: null,
-      },
+      attackProtection: rankingsAttackProtectionForEntry({ currentWallet: account, entry: {
+        wallet: "0x3333333333333333333333333333333333333333", alliance: null,
+        attackProtection: { allowed, atWar: true, warEligibilityNeedsCheck: true, blockedReason: "none", blockedReasonLabel: null },
+      } }),
       homePlanetId: "7",
       planet: planet(),
       shipyardState: shipyardState([{ id: 1, count: 3 }]),
     }).find((action) => action.kind === "attack");
 
     expect(attack).toMatchObject({
-      enabled: true,
+      enabled: false,
       label: "Attack",
+      reason: "War eligibility is unverified. Open the target to check attack protection.",
     });
+  });
+
+  test("keeps independently allowed war targets attackable when eligibility is not pending", () => {
+    const attack = galaxyActionsForSlot({
+      account, homePlanetId: "7", planet: planet(), shipyardState: shipyardState([{ id: 1, count: 3 }]),
+      attackProtection: { allowed: true, atWar: true, warEligibilityNeedsCheck: false, blockedReason: "none", blockedReasonLabel: null },
+    }).find(action => action.kind === "attack");
+    expect(attack).toMatchObject({ enabled: true, label: "Attack" });
   });
 
   test.each([

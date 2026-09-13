@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setSystemTime, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { toFunctionSelector } from "viem";
 import { ChainSyncService } from "./chainSync";
@@ -6,6 +6,7 @@ import type { BackendConfig } from "./config";
 import { type Address, type RpcLog, VeydriftGameReader } from "./evm";
 import { SettlementIndexer } from "./indexer";
 import { createRequestHandler } from "./server";
+import { SharedResponseCache } from "./sharedResponseCache";
 
 const defender = "0x14074a4dc440230523a9fb7a0ce6934a6118e7c6" as Address;
 const attacker = "0x000000000000000000000000000000000000dead" as Address;
@@ -107,7 +108,8 @@ describe("VEY-KANEO-869 canonical activity", () => {
     f.setActive(Math.floor(Date.now() / 1000));
     (await f.indexer.preparePlayerActivitySnapshot(200n, []))();
     const canonical = new VeydriftGameReader(config, { async request<T>(): Promise<T> { throw new Error("List reads must not call RPC"); } });
-    const handler = createRequestHandler({ role: "reader", config, indexer: f.indexer, chainReader: canonical });
+    const handler = createRequestHandler({ role: "reader", config, indexer: f.indexer, chainReader: canonical,
+      enableResponseCache: true, sharedResponseCache: null, prewarmResponseCache: false });
     const request = () => new Request(`http://localhost/highscores?currentWallet=${attacker}&includeAttackProtection=true&limit=10`);
     const before = await (await handler(request())).json();
     expect(before.rankings.total.find((row: { wallet: string }) => row.wallet === defender).attackProtection)
@@ -120,6 +122,53 @@ describe("VEY-KANEO-869 canonical activity", () => {
       .toMatchObject({ allowed: true, blockedReason: "none", defenderInactive: true });
     f.database.close();
   });
+
+  for (const cacheAgeMs of [0, 1_001]) for (const shared of [false, true]) {
+    test(`AFK boundary invalidates ${shared ? "shared" : "local"} ${cacheAgeMs ? "stale" : "fresh"} protection immediately`, async () => {
+      setSystemTime(new Date(now * 1000));
+      const f = fixture();
+      try {
+        await f.indexer.rebuild();
+        f.indexer.applyLog(started);
+        f.indexer.applyLog({ ...started, transactionHash: "0xattacker-start", logIndex: "0x1",
+          topics: [started.topics[0]!, `0x${attacker.slice(2).padStart(64, "0")}`, topic(296n)],
+          data: data(5n, 200n, 14n, 211n, 1n)
+        });
+        f.indexer.applyLog({ ...passive("0xe861e6f62777a3f6ea372d2892ead2d43e27d726e0ae4a2e39e5c3b682a7bbd3", [350_000n], 341),
+          topics: ["0xe861e6f62777a3f6ea372d2892ead2d43e27d726e0ae4a2e39e5c3b682a7bbd3", topic(296n), topic(0n)]
+        });
+        f.setActive(now - 7 * 86400 + 1);
+        f.indexer.commitLogBatch(await f.indexer.preparePlayerActivitySnapshot(200n, []));
+        expect(f.indexer.recordResourceProjectionWatermark("200", String(now), topic(200n))).toBe(true);
+        const version = f.indexer.indexedStateCacheVersion();
+        const canonical = new VeydriftGameReader(config, { async request<T>(): Promise<T> { throw new Error("List reads must not call RPC"); } });
+        const sharedResponseCache = shared ? new SharedResponseCache(":memory:") : null;
+        const makeHandler = () => createRequestHandler({ role: "reader", config, indexer: f.indexer, chainReader: canonical,
+          enableResponseCache: true, sharedResponseCache, prewarmResponseCache: false });
+        const handler = makeHandler();
+        const request = () => new Request(`http://localhost/highscores?currentWallet=${attacker}&includeAttackProtection=true&limit=10`);
+        const protection = async (read: typeof handler) => {
+          const response = await read(request());
+          expect(response.status).toBe(200);
+          const body = await response.json();
+          return body.rankings.total.find((row: { wallet: string }) => row.wallet === defender).attackProtection;
+        };
+        expect(await protection(handler)).toMatchObject({ allowed: false, blockedReason: "score_protection", defenderInactive: false });
+        // The activity values do not change; only the verified chain clock crosses seven days.
+        f.indexer.commitLogBatch(await f.indexer.preparePlayerActivitySnapshot(201n, []));
+        expect(f.indexer.recordResourceProjectionWatermark("201", String(now + 1), topic(201n))).toBe(true);
+        expect(f.indexer.indexedStateCacheVersion()).toBe(version);
+        setSystemTime(new Date(now * 1000 + cacheAgeMs));
+        // A new handler has no local entries, forcing the shared-cache path in that variant.
+        // No fresh=1, no activity repair/version bump, no 300-second stale-window wait.
+        expect(await protection(shared ? makeHandler() : handler))
+          .toMatchObject({ allowed: true, blockedReason: "none", defenderInactive: true });
+      } finally {
+        f.database.close();
+        setSystemTime();
+      }
+    });
+  }
 
   test("failed or incomplete snapshots cannot partially overwrite existing canonical rows", async () => {
     const f = fixture();

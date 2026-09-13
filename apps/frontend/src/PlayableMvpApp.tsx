@@ -5204,9 +5204,9 @@ export function PlayableMvpApp({
         galaxyActionsForSlot({
           account,
           attackProtection: {
-            allowed: target.protection.blockedReason === "none",
+            allowed: target.protection.allowed,
             atWar: target.protection.isAtWar,
-            warEligibilityNeedsCheck: target.protection.isAtWar,
+            warEligibilityNeedsCheck: target.protection.warEligibilityNeedsCheck === true,
             blockedReason: target.protection.blockedReason,
             blockedReasonLabel: target.protection.blockedReasonLabel,
           },

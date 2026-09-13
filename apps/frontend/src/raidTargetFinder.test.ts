@@ -158,6 +158,20 @@ function visibility(overrides: Partial<FleetMissionVisibilityResponse> = {}): Fl
 }
 
 describe("buildRaidTargets", () => {
+  test.each([false, true])("preserves unverified war unavailability despite allowed=%s", (allowed) => {
+    const target = buildRaidTargets({ entries: [entry({ wallet: "0xenemy", planets: [planet({ planetId: "9" })],
+      attackProtection: { allowed, atWar: true, warEligibilityNeedsCheck: true, blockedReason: "none", blockedReasonLabel: null }
+    })], origin: ORIGIN })[0]!;
+    expect(target.protection).toMatchObject({ allowed: false, isAtWar: true, warEligibilityNeedsCheck: true });
+  });
+
+  test("preserves independently allowed war targets without inventing pending eligibility", () => {
+    const target = buildRaidTargets({ entries: [entry({ wallet: "0xenemy", planets: [planet({ planetId: "9" })],
+      attackProtection: { allowed: true, atWar: true, warEligibilityNeedsCheck: false, blockedReason: "none", blockedReasonLabel: null }
+    })], origin: ORIGIN })[0]!;
+    expect(target.protection).toMatchObject({ allowed: true, isAtWar: true, warEligibilityNeedsCheck: false });
+  });
+
   test("flattens every occupied planet across players", () => {
     const targets = buildRaidTargets({
       entries: [
@@ -422,6 +436,7 @@ describe("sortRaidTargets", () => {
       stationedDefenderForecastTimeline: [],
       stationedDefenderTimelineComplete: true,
       protection: {
+        allowed: true,
         isProtected: false,
         isSameAlliance: false,
         isAtWar: false,
