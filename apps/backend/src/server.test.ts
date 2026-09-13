@@ -6051,11 +6051,20 @@ describe("Veydrift backend", () => {
       { ...planet, eventName: "PlanetStarted", planetId: "7", owner: player, transactionHash: "0xabc1", blockNumber: "123" },
       { ...planet, eventName: "PlanetStarted", planetId: "8", owner: attacker, transactionHash: "0xabc2", blockNumber: "124" }
     ];
+    const activityLog: IndexedRpcLog = {
+      blockNumber: "0x7c",
+      transactionHash: "0xabc1",
+      logIndex: "0x0",
+      topics: [planetStartedTopic, addressTopic(player), topic(7n)],
+      data: abiWords(5n, 200n, 13n, 211n, 1n)
+    };
     const indexer = new SettlementIndexer(Object.assign(chainReader, {
-      async getPlayerLastActiveAt(wallets: readonly Address[]) { return new Map(wallets.map(wallet => [wallet, lastActiveAt])); }
+      async getTransactionActivity() {
+        return new Map([[activityLog.transactionHash, { sender: player, timestamp: lastActiveAt }]]);
+      }
     }), configuredTestConfig.indexFromBlock);
     await indexer.rebuild();
-    (await indexer.preparePlayerActivitySnapshot(124n, []))();
+    (await indexer.preparePlayerActivitySnapshot(124n, [activityLog]))!();
     return indexer;
   }
 
@@ -6677,7 +6686,7 @@ describe("Veydrift backend", () => {
     });
   });
 
-  test("indexed attack protection marks inactive defenders from canonical activity despite passive completion (VEY-KANEO-869)", async () => {
+  test("indexed attack protection marks inactive defenders from actor-attributed activity despite passive completion (VEY-KANEO-869)", async () => {
     const attacker = "0x9999999999999999999999999999999999999999" as Address;
     const indexer = await twoPlanetIndexer(attacker, Math.floor(Date.now() / 1_000) - 8 * 86400);
     indexer.applyLog(defenseCompletedLog({
@@ -6701,7 +6710,7 @@ describe("Veydrift backend", () => {
     });
   });
 
-  test("indexed highscore rankings report defenderInactive from canonical activity despite passive completion (VEY-KANEO-869)", async () => {
+  test("indexed highscore rankings report defenderInactive from actor-attributed activity despite passive completion (VEY-KANEO-869)", async () => {
     const attacker = "0x9999999999999999999999999999999999999999" as Address;
     const indexer = await twoPlanetIndexer(attacker, Math.floor(Date.now() / 1_000) - 8 * 86400);
     indexer.applyLog(defenseCompletedLog({

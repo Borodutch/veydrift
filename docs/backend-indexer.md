@@ -50,24 +50,30 @@ availability gates. Do not remove finish/resolve entrypoints, keeper services or
 randomness workers based on a historical lazy-settlement proposal. Their necessity
 depends on the actual deployed contracts and configured responsibilities.
 
-## Canonical inactivity and attack protection
+## Indexed inactivity and canonical attack protection
 
-`_touchPlayer` writes `playerLastActiveAt` without an event. A `PlanetSettled`,
-unit-count, queue-completion or fleet-resolution event describes affected assets,
-not the caller. Those events must never refresh the asset owner's AFK timestamp;
-the activity feed and web presence are separate, non-authoritative features.
+`_touchPlayer` does not emit an event, and the deployed mainnet contract exposes no
+`playerLastActiveAt` getter. Indexed inactivity is therefore an actor-attributed
+approximation, not canonical state: the HTTP writer fetches the transaction sender
+and block timestamp for activity-relevant logs, then refreshes a wallet only when
+the sender matches the owner attributed from that log. Owner-signed starts, queue
+actions, renames, resource actions and fleet actions can refresh the owner. Keeper
+or attacker settlement, count, completion and fleet-resolution logs cannot refresh
+the affected defender.
 
-The HTTP writer samples only `playerLastActiveAt` for each distinct indexed planet
-owner, plus owners introduced by the pending logs. This is a narrow exception to
-asset event-only ingestion, not a general current-state heal. Reads use the exact
-poll block, in sequential batches of at most 50 calls. Staging includes all owners
-because genuine owner calls can emit no logs. The existing post-read head-hash
-verification runs before the activity snapshot commits atomically with the logs.
-Normal polls include the watermark in that transaction. Removed-completion
-reconciliation commits logs/activity first and defers the watermark until reconciliation
-succeeds; the old/stale watermark keeps that branch conservative and retryable.
-Malformed/incomplete/RPC-failed reads cannot publish partial activity; polling
-retries normally. No gameplay request runs an activity repair or per-row RPC fan-out.
+This approximation has no knowledge of owner calls that emit no indexed log and is
+not a canonical mapping repair. Existing legacy or `canonical-activity:` rows are
+ignored by AFK previews; only `actor-activity:` rows are trusted. Transaction and
+block RPC reads are batched in groups of at most 50. Missing, malformed or reverting
+enrichment emits a structured `player_activity_sampling` warning with
+`status:"skipped"`, writes no activity values, and does not abort log publication,
+history backfills or the projection watermark. Successful committed samples emit
+the same event with `status:"applied"` and a refreshed-player count.
+A removed log retires its matching activity row rather than retaining reorged
+activity; previous activity is not reconstructed, so the preview becomes unknown.
+Relayed/account-abstraction calls whose transaction sender differs from the owner
+also remain unknown. Failed enrichment is retried only while its logs remain in
+the normal polling overlap, not through a separate durable activity backfill.
 
 The selected-target `/wallet/:wallet/attack-protection` endpoint uses canonical
 `attackProtectionStatus` (or its moon/body variant) for inactivity, score, alliance,
@@ -85,46 +91,41 @@ list cache keys include that same clock as well as indexed-state versions, so cr
 an inactivity boundary cannot reuse a pre-boundary fresh or stale response. Their TTL
 remains one second; non-personalized informational cache policy is unchanged.
 
-### VEY-KANEO-869 rollout and automatic repair
+### VEY-KANEO-869 rollout
 
 1. Parent review/CI must pass before deployment. No contract upgrade, transaction,
    full reseed, manual row deletion, or additional writer is needed. Preserve the
    existing database and take the normal consistent deployment backup.
 2. Deploy the backend writer and readers together, then the frontend. Do not leave
-   an old writer running: it still attributes passive events to owners. Existing
-   activity rows without a `canonical-activity:` provenance are ignored by AFK reads.
-3. The first successful normal HTTP poll automatically replaces every current
-   planet owner's activity timestamp with the canonical value, including **lower**
-   timestamps and zero. This runs even with startup backfill disabled. It advances
-   indexed-state cache versions; no operator heal environment variable is needed.
-   Wait for the first successful verified poll before calling the rollout ready.
+   an old writer running: it attributes passive events to owners. The corrected
+   reader immediately stops trusting those legacy rows; no row deletion or reseed
+   is required.
+3. Confirm HTTP chain-sync health: verified polls must advance the generic cursor,
+   history backfill markers and projection watermark even if activity enrichment is
+   unavailable. Inspect structured `player_activity_sampling` events; skipped runs
+   must contain an error and must not insert a guessed timestamp.
 4. Read-only evidence against the deployed writer database:
 
    ```sql
-   SELECT value FROM indexer_metadata WHERE key = 'canonicalPlayerActivityBlock';
+   SELECT value FROM indexer_metadata WHERE key = 'actorPlayerActivityBlock';
    SELECT wallet, last_active_at, event_id FROM indexed_player_activity
    WHERE wallet = '0x14074a4dc440230523a9fb7a0ce6934a6118e7c6';
-   SELECT COUNT(*) FROM contract_planets p
-   LEFT JOIN indexed_player_activity a ON a.wallet = lower(p.owner)
-   WHERE a.wallet IS NULL OR a.event_id NOT LIKE 'canonical-activity:%';
    ```
 
-   The marker must advance with verified polls, the last query must return zero,
-   and the affected owner's timestamp must match `playerLastActiveAt` at that block.
-   `event_id` is the block at which that row last changed, not necessarily the latest
-   snapshot block. Confirm HTTP chain-sync health and observe poll duration/RPC load:
-   each poll adds one mapping read per distinct owner (50 calls per HTTP batch).
+   The marker advances only when a candidate-log sample commits. A trusted row has
+   `actor-activity:` provenance and its timestamp is the matched sender's transaction
+   block time; absence of such a row means indexed inactivity is unknown, not zero.
 5. Compare planet 295's direct contract protection with the API for an eligible
    attacker (the ticket's dead-address read is read-only). If still inactive, both
    must allow attack and expose the inactive flag; never hard-code the old status
    if the owner has since genuinely returned. Check Galaxy, Rankings, Raid Finder,
    planet detail and mission composer on desktop/mobile; capture fresh screenshots
    and stop before signing or launching. Live QA and evidence belong to the parent.
-6. On unavailable RPC, keep protection unavailable and repair incomplete; restore
-   read access and allow the next normal poll to retry. Do not fabricate activity,
-   whitelist a wallet, or wipe/reseed unrelated state. If rolling code back, the old
-   attribution bug returns; retain the backup and redeploy the corrected writer
-   before trusting AFK previews again. No irreversible schema/data change is made.
+6. On activity-enrichment RPC failure, restore read access and let the next poll
+   retry; ordinary indexing must continue. Canonical selected-target protection
+   remains authoritative and independently fails closed with HTTP 503 when its own
+   RPC read is unavailable. Do not fabricate activity, whitelist a wallet or
+   wipe/reseed unrelated state. No irreversible schema/data change is made.
 
 ## Consistent reads and transaction application
 

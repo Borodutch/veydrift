@@ -19,8 +19,8 @@ import { emitObservabilityEvent } from "./observability";
 // websocket subscriber only wakes this canonical HTTP scan; HTTP also runs independently for
 // startup gaps, websocket failures, and missed notifications. applyLog
 // dedups by txHash:logIndex, so overlapping ranges are idempotent. Asset mutation stays event-only.
-// The narrow playerLastActiveAt mapping has no event and is sampled at the same verified head;
-// it must never be reconstructed from passive asset events. Other canonical reads remain repair-only.
+// Player activity is approximated only when a log's attributed owner also sent its transaction;
+// unavailable enrichment is non-blocking and never fabricates activity. Other canonical reads remain repair-only.
 type LogBackfiller = {
   failoverRpc?(reason: string): boolean;
   getHeadBlock(): Promise<bigint>;
@@ -574,8 +574,16 @@ export class ChainSyncService {
         await this.ensurePaidAllianceInviteHistoryBackfilled(head, backfiller, applyLog),
         await this.ensureTimedMissilePayloadHistoryBackfilled(head, backfiller, applyLog, headAnchor, genericRange, afterReconciliation),
       ]) if (commit) commits.push(commit);
-      const commitActivity = await this.indexer?.preparePlayerActivitySnapshot?.(head, genericRange?.logs ?? []);
-      if (commitActivity) commits.push(commitActivity);
+      try {
+        const commitActivity = await this.indexer?.preparePlayerActivitySnapshot?.(head, genericRange?.logs ?? []);
+        if (commitActivity) commits.push(commitActivity);
+      } catch (error) {
+        // Optional activity enrichment must never prevent verified gameplay logs from publishing.
+        emitObservabilityEvent({
+          kind: "player_activity_sampling", component: "chain-sync", status: "skipped",
+          blockNumber: head.toString(), error: error instanceof Error ? error.message : String(error)
+        }, "warn");
+      }
       // Publish the projection clock only after every indexed log source has durably scanned through
       // this block. A crash/failure before here leaves the old timestamp in place (conservative),
       // while publishing it earlier could combine block-N time with pre-N resource state.

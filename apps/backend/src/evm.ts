@@ -1422,7 +1422,7 @@ export interface ChainReader {
     targetPlanetId: bigint,
     targetIsMoon?: boolean
   ): Promise<AttackProtectionStatus>;
-  getPlayerLastActiveAt?(wallets: readonly Address[], blockNumber: bigint): Promise<Map<string, number>>;
+  getTransactionActivity?(logs: readonly RpcLog[]): Promise<Map<string, TransactionActivity>>;
   getHighscoreForWallet?(wallet: Address, planetIds?: string[]): Promise<HighscoreEntry>;
   getHighscoresForWallets?(planetsByOwner: ReadonlyMap<string, SettledPlanetEvent[]>): Promise<HighscoreEntry[]>;
   listAllianceDirectoryState?(): Promise<AllianceState["directory"]>;
@@ -1459,6 +1459,11 @@ export type RpcTransactionReceipt = {
   logs?: RpcLog[];
   status: string;
   transactionHash: string;
+};
+
+export type TransactionActivity = {
+  sender: Address;
+  timestamp: number;
 };
 
 export type RpcMetrics = {
@@ -1530,6 +1535,7 @@ type RpcLogFilter = {
 export type RpcBlock = {
   hash?: string | null;
   timestamp: string;
+  transactions?: Array<string | { from?: string; hash?: string }>;
 };
 
 class RpcEndpointError extends Error {
@@ -3180,22 +3186,71 @@ export class VeydriftGameReader implements ChainReader {
     return result;
   }
 
-  // _touchPlayer emits no event, including successful owner calls that otherwise emit no logs.
-  // Read only this mapping at the ingestion checkpoint; never infer it from affected asset owners.
-  async getPlayerLastActiveAt(wallets: readonly Address[], blockNumber: bigint): Promise<Map<string, number>> {
-    const uniqueWallets = [...new Set(wallets.map(wallet => wallet.toLowerCase() as Address))];
-    const values = await this.batchCallContract(this.gameContractAddress, uniqueWallets.map(wallet => {
-      assertAddress(wallet);
-      return { selector: toFunctionSelector("playerLastActiveAt(address)"), args: [encodeAddress(wallet)] };
-    }), toQuantity(blockNumber));
-    if (values.length !== uniqueWallets.length) throw new Error("Incomplete canonical player activity snapshot");
-    return new Map(uniqueWallets.map((wallet, index) => {
-      const value = values[index]!;
-      if (!/^0x[0-9a-fA-F]{64}$/.test(value)) throw new Error("Invalid canonical player activity timestamp");
-      const seconds = Number(BigInt(value));
-      if (!Number.isSafeInteger(seconds) || seconds < 0) throw new Error("Invalid canonical player activity timestamp");
-      return [wallet, seconds];
-    }));
+  async getTransactionActivity(logs: readonly RpcLog[]): Promise<Map<string, TransactionActivity>> {
+    const transactions = new Map<string, string>();
+    for (const log of logs) {
+      const transactionHash = log.transactionHash.toLowerCase();
+      const blockNumber = toQuantity(decodeUint(log.blockNumber));
+      const existingBlock = transactions.get(transactionHash);
+      if (existingBlock && existingBlock !== blockNumber) {
+        throw new Error(`Activity transaction ${transactionHash} spans multiple blocks`);
+      }
+      transactions.set(transactionHash, blockNumber);
+    }
+    if (transactions.size === 0) return new Map();
+
+    const requestMany = async <T>(requests: Array<{ method: string; params: unknown[] }>): Promise<T[]> => {
+      const results: T[] = [];
+      for (let index = 0; index < requests.length; index += maxBatchCallSize) {
+        const batch = requests.slice(index, index + maxBatchCallSize);
+        if (!this.transport.requestBatch) {
+          for (const request of batch) results.push(await this.transport.request<T>(request.method, request.params));
+          continue;
+        }
+        try {
+          results.push(...await this.transport.requestBatch<T>(batch));
+        } catch (error) {
+          if (!shouldRetryWithoutBatch(error)) throw error;
+          for (const request of batch) results.push(await this.transport.request<T>(request.method, request.params));
+        }
+      }
+      return results;
+    };
+
+    const entries = [...transactions.entries()];
+    const blockNumbers = [...new Set(entries.map(([, blockNumber]) => blockNumber))];
+    const blockRows = await requestMany<RpcBlock | null>(
+      blockNumbers.map((blockNumber) => ({ method: "eth_getBlockByNumber", params: [blockNumber, true] }))
+    );
+    const activity = new Map<string, TransactionActivity>();
+    blockNumbers.forEach((blockNumber, index) => {
+      const block = blockRows[index];
+      if (logs.some(log => toQuantity(decodeUint(log.blockNumber)) === blockNumber && log.blockHash
+        && log.blockHash.toLowerCase() !== block?.hash?.toLowerCase())) {
+        throw new Error(`Activity block hash changed for ${blockNumber}`);
+      }
+      let seconds = Number.NaN;
+      try {
+        if (block?.timestamp !== undefined) seconds = Number(decodeUint(block.timestamp));
+      } catch {
+        // Validated below with the same observable error as missing/unsafe timestamps.
+      }
+      if (!Number.isSafeInteger(seconds) || seconds < 0 || !Array.isArray(block?.transactions)) {
+        throw new Error(`Invalid activity block ${blockNumber}`);
+      }
+      for (const transaction of block.transactions) {
+        if (typeof transaction === "string" || !transaction.hash || !transaction.from) continue;
+        const transactionHash = transaction.hash.toLowerCase();
+        const sender = transaction.from.toLowerCase();
+        if (transactions.get(transactionHash) !== blockNumber) continue;
+        if (!/^0x[0-9a-f]{40}$/.test(sender)) throw new Error(`Invalid activity transaction ${transactionHash}`);
+        activity.set(transactionHash, { sender: sender as Address, timestamp: seconds });
+      }
+    });
+    for (const [transactionHash] of entries) {
+      if (!activity.has(transactionHash)) throw new Error(`Invalid activity transaction ${transactionHash}`);
+    }
+    return activity;
   }
 
   async getAttackProtectionStatus(

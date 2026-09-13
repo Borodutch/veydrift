@@ -978,7 +978,7 @@ export class SettlementIndexer {
       "listDebrisFieldEvents" | "listMoonChanceReportEvents" | "listSettledPlanetEvents"
     > & Pick<
       Partial<ChainReader>,
-      "getPlayerLastActiveAt"
+      "getTransactionActivity"
         | "getDefenseState"
         | "getStartPrice"
         | "getInfrastructureState"
@@ -1807,7 +1807,7 @@ export class SettlementIndexer {
       const rows = this.db.query(`
         SELECT wallet, last_active_at
         FROM indexed_player_activity
-        WHERE event_id LIKE 'canonical-activity:%'
+        WHERE event_id LIKE 'actor-activity:%'
           AND wallet IN (${walletChunk.map(() => "?").join(",")})
       `).all(...walletChunk) as PlayerActivityRow[];
       for (const row of rows) {
@@ -4700,6 +4700,12 @@ export class SettlementIndexer {
 
   private applyLogAtomic(log: IndexedRpcLog): ApplyLogResult {
     const eventId = indexedLogKey(log);
+    if (log.removed) {
+      // A removed owner's action is no longer evidence of activity. Unknown is safer than
+      // retaining its timestamp; a later verified owner action can establish a new row.
+      if (this.db.query("DELETE FROM indexed_player_activity WHERE event_id = ?")
+        .run(`actor-activity:${eventId}`).changes > 0) this.touch();
+    }
     const existing = this.db.query("SELECT event_json, removed FROM indexed_event_logs WHERE event_id = ?").get(eventId) as (EventRow & { removed: number }) | null;
     if (existing) {
       if (log.removed) {
@@ -12000,40 +12006,102 @@ export class SettlementIndexer {
     this.recordLatestBlock(log.blockNumber);
   }
 
-  // The only non-event gameplay field sampled by each HTTP ingestion pass: _touchPlayer has no
-  // event. Stage RPC reads before the SQLite transaction, then commit with the verified head/logs.
-  // Sampling all indexed owners also catches genuine owner calls with no emitted logs.
-  async preparePlayerActivitySnapshot(blockNumber: bigint, logs: readonly IndexedRpcLog[]): Promise<() => void> {
-    const read = this.chainReader.getPlayerLastActiveAt;
-    if (!read) throw new Error("Canonical player activity reader is unavailable");
-    const wallets = new Set((this.db.query("SELECT DISTINCT lower(owner) AS wallet FROM contract_planets").all() as { wallet: Address }[])
-      .map(row => row.wallet));
-    for (const log of logs) {
-      if (!log.removed && isSettledPlanetLog(log)) wallets.add(decodeSettledPlanetLog(log).owner.toLowerCase() as Address);
+  // Activity is an actor-attributed approximation: an asset owner is refreshed only when that
+  // owner also sent the transaction. Keeper/attacker effects on somebody else's assets are passive.
+  async preparePlayerActivitySnapshot(blockNumber: bigint, logs: readonly IndexedRpcLog[]): Promise<(() => void) | undefined> {
+    const candidates = logs.filter((log) => !log.removed && this.playerActivityOwnerForLog(log));
+    if (candidates.length === 0) return;
+    const read = this.chainReader.getTransactionActivity;
+    if (!read) {
+      this.reportSkippedPlayerActivity(blockNumber, candidates.length, "Transaction activity reader is unavailable");
+      return;
     }
-    const activity = await read.call(this.chainReader, [...wallets], blockNumber);
-    for (const wallet of wallets) {
-      const value = activity.get(wallet);
-      if (value === undefined || !Number.isSafeInteger(value) || value < 0) {
-        throw new Error(`Incomplete canonical player activity snapshot for ${wallet}`);
+    let activity: Map<string, { sender: Address; timestamp: number }>;
+    try {
+      activity = await read.call(this.chainReader, candidates);
+    } catch (error) {
+      this.reportSkippedPlayerActivity(blockNumber, candidates.length, error);
+      return;
+    }
+    const rows = new Map<string, { eventId: string; timestamp: number }>();
+    for (const log of candidates) {
+      const owner = this.playerActivityOwnerForLog(log);
+      const sampled = activity.get(log.transactionHash.toLowerCase());
+      if (!owner || !sampled || typeof sampled.sender !== "string" || !/^0x[0-9a-fA-F]{40}$/.test(sampled.sender)
+        || !Number.isSafeInteger(sampled.timestamp) || sampled.timestamp < 0) {
+        this.reportSkippedPlayerActivity(blockNumber, candidates.length, "Incomplete transaction activity snapshot");
+        return;
+      }
+      const wallet = owner.toLowerCase();
+      if (sampled.sender.toLowerCase() !== wallet) continue;
+      const existing = rows.get(wallet);
+      if (!existing || sampled.timestamp > existing.timestamp) {
+        rows.set(wallet, { eventId: `actor-activity:${indexedLogKey(log)}`, timestamp: sampled.timestamp });
       }
     }
     return () => {
       const upsert = this.db.query(`
         INSERT INTO indexed_player_activity (wallet, last_active_at, event_id) VALUES (?, ?, ?)
         ON CONFLICT(wallet) DO UPDATE SET last_active_at = excluded.last_active_at, event_id = excluded.event_id
-        WHERE indexed_player_activity.last_active_at != excluded.last_active_at
-          OR indexed_player_activity.event_id NOT LIKE 'canonical-activity:%'
+        WHERE indexed_player_activity.event_id NOT LIKE 'actor-activity:%'
+          OR CAST(excluded.last_active_at AS INTEGER) > CAST(indexed_player_activity.last_active_at AS INTEGER)
       `);
       let changed = 0;
-      for (const wallet of wallets) {
-        // Deliberately replace, not MAX: the first snapshot repairs polluted timestamps and a
-        // later snapshot can roll back genuine activity removed by a reorg. Zero is canonical too.
-        changed += upsert.run(wallet, String(activity.get(wallet)!), `canonical-activity:${blockNumber}`).changes;
+      for (const [wallet, row] of rows) {
+        changed += upsert.run(wallet, String(row.timestamp), row.eventId).changes;
       }
-      this.setMetadata("canonicalPlayerActivityBlock", blockNumber.toString());
+      this.setMetadata("actorPlayerActivityBlock", blockNumber.toString());
       if (changed > 0) this.touch();
+      emitObservabilityEvent({
+        kind: "player_activity_sampling",
+        component: "settlement-indexer",
+        blockNumber: blockNumber.toString(),
+        candidateLogs: candidates.length,
+        refreshedPlayers: rows.size,
+        status: "applied"
+      });
     };
+  }
+
+  private reportSkippedPlayerActivity(blockNumber: bigint, candidateLogs: number, error: unknown): void {
+    emitObservabilityEvent({
+      kind: "player_activity_sampling",
+      component: "settlement-indexer",
+      blockNumber: blockNumber.toString(),
+      candidateLogs,
+      error: error instanceof Error ? error.message : String(error),
+      status: "skipped"
+    }, "warn");
+  }
+
+  private playerActivityOwnerForLog(log: IndexedRpcLog): Address | null {
+    try {
+      if (isSettledPlanetLog(log)) return decodeSettledPlanetLog(log).owner;
+      if (isFirstPlanetSettledLog(log)) return decodeFirstPlanetSettledLog(log).player;
+      if (isPlayerMigrationLog(log)) return decodePlayerMigrationLog(log).player;
+      if (isPlanetRenamedLog(log)) return decodePlanetRenamedLog(log).owner;
+      if (isRiftResourceLog(log)) return decodeRiftResourceLog(log).owner;
+      if (isIndexedQueueStartedLog(log)) {
+        const event = decodeIndexedQueueStartedLog(log);
+        return event.owner ?? this.ownerForPlanetActivity(event.planetId);
+      }
+      if (isIndexedQueueCompletedLog(log)) {
+        const event = decodeIndexedQueueCompletedLog(log);
+        return event.owner ?? this.ownerForPlanetActivity(event.planetId);
+      }
+      if (isPlanetSettledLog(log)) return this.ownerForPlanetActivity(decodePlanetSettledLog(log).planetId);
+      if (isMoonResourcesSettledLog(log)) return this.ownerForPlanetActivity(decodeMoonResourcesSettledLog(log).planetId);
+      if (isShipCountChangedLog(log)) return this.ownerForPlanetActivity(decodeShipCountChangedLog(log).planetId);
+      if (isDefenseCountChangedLog(log)) return this.ownerForPlanetActivity(decodeDefenseCountChangedLog(log).planetId);
+      if (isMoonShipCountChangedLog(log)) return this.ownerForPlanetActivity(decodeMoonShipCountChangedLog(log).planetId);
+      if (isMoonDefenseCountChangedLog(log)) return this.ownerForPlanetActivity(decodeMoonDefenseCountChangedLog(log).planetId);
+      if (isMoonCreatedLog(log)) return decodeMoonCreatedLog(log).owner;
+      if (isMoonJumpGateLog(log)) return decodeMoonJumpGateLog(log).player;
+      if (isFleetMissionLog(log)) return [...decodeFleetMissionLogs([log]).values()][0]?.owner ?? null;
+    } catch {
+      return null;
+    }
+    return null;
   }
 
   private recordPlayerActivityFeedFromLog(

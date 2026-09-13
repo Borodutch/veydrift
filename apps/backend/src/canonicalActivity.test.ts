@@ -1,6 +1,5 @@
 import { describe, expect, setSystemTime, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { toFunctionSelector } from "viem";
 import { ChainSyncService } from "./chainSync";
 import type { BackendConfig } from "./config";
 import { type Address, type RpcLog, VeydriftGameReader } from "./evm";
@@ -10,6 +9,7 @@ import { SharedResponseCache } from "./sharedResponseCache";
 
 const defender = "0x14074a4dc440230523a9fb7a0ce6934a6118e7c6" as Address;
 const attacker = "0x000000000000000000000000000000000000dead" as Address;
+const keeper = "0xec336742a19a9d0d046a83603491e4ae08329788" as Address;
 const now = 1_789_308_913;
 const afk = now - 8 * 86400;
 const word = (value: bigint) => value.toString(16).padStart(64, "0");
@@ -37,23 +37,30 @@ function fixture() {
   const database = new Database(":memory:");
   let active = afk;
   let fail = false;
-  const reads: { wallets: readonly Address[]; block: bigint }[] = [];
+  const reads: string[][] = [];
+  const senders = new Map<string, Address>([["0xkeeper", keeper], ["0xattacker", attacker]]);
   const reader = {
     async listDebrisFieldEvents() { return []; },
     async listMoonChanceReportEvents() { return []; },
     async listSettledPlanetEvents() { return []; },
-    async getPlayerLastActiveAt(wallets: readonly Address[], block: bigint) {
-      reads.push({ wallets, block });
+    async getTransactionActivity(logs: readonly RpcLog[]) {
+      const hashes = [...new Set(logs.map(log => log.transactionHash.toLowerCase()))];
+      reads.push(hashes);
       if (fail) throw new Error("activity RPC unavailable");
-      return new Map(wallets.map(wallet => [wallet, active]));
+      return new Map(hashes.map(hash => [hash, { sender: senders.get(hash) ?? defender, timestamp: active }]));
     }
   };
   const indexer = new SettlementIndexer(reader, 100n, { database, runStartupBackfill: false });
-  return { database, indexer, reader, reads, setActive: (value: number) => { active = value; }, setFail: (value: boolean) => { fail = value; } };
+  return {
+    database, indexer, reader, reads,
+    setActive: (value: number) => { active = value; },
+    setFail: (value: boolean) => { fail = value; },
+    setSender: (hash: string, sender: Address) => { senders.set(hash.toLowerCase(), sender); }
+  };
 }
 
-describe("VEY-KANEO-869 canonical activity", () => {
-  test("repairs a polluted planet-295 owner row downward; passive settlement/count/mission logs never refresh it", async () => {
+describe("VEY-KANEO-869 actor-attributed activity", () => {
+  test("ignores polluted legacy activity; keeper/attacker effects never refresh the defender, while owner actions do", async () => {
     const f = fixture();
     f.indexer.applyLog(started);
     f.indexer.applyLog({
@@ -65,36 +72,33 @@ describe("VEY-KANEO-869 canonical activity", () => {
     // Historical event attribution is not trusted even before the first successful repair.
     expect(f.indexer.playerLastActiveSeconds([defender]).has(defender)).toBe(false);
     const version = f.indexer.indexedStateCacheVersion();
-    const repair = await f.indexer.preparePlayerActivitySnapshot(200n, []);
+    const repair = await f.indexer.preparePlayerActivitySnapshot(200n, [started]);
     expect(f.database.query("SELECT last_active_at FROM indexed_player_activity").get()).toEqual({ last_active_at: String(now) });
-    f.indexer.commitLogBatch(repair);
+    f.indexer.commitLogBatch(repair!);
     expect(f.indexer.playerLastActiveSeconds([defender]).get(defender)).toBe(afk);
     expect(f.indexer.indexedStateCacheVersion()).not.toBe(version);
-    for (const log of [
+    const passiveLogs = [
       passive("0x7faee98c7c745f9c9fb2117a44185f57454dac3013383364df4c22b5f9bc4077", [5000n, 4000n, 3000n, BigInt(now)], 337),
-      passive("0xe861e6f62777a3f6ea372d2892ead2d43e27d726e0ae4a2e39e5c3b682a7bbd3", [10n], 338),
+      { ...passive("0xe861e6f62777a3f6ea372d2892ead2d43e27d726e0ae4a2e39e5c3b682a7bbd3", [10n], 338), transactionHash: "0xattacker" },
       passive("0x6a0fc6b08970eb9f7e15767e6902471ca8731c57dbe4577c76021e1f9d6762cf", [10n], 339),
+      passive("0xcc99fccb631bf08aef4833c0cbd43ed8d19a40eacce0fe225beff1693a903aa6", [2n, 2n], 340),
       // A fleet return is just as passive for its owner as defender-side combat settlement.
-      { ...passive("0xbb4a50257c10524783e403a4e0db9c4c3e9378c2e398ec5de34281be1aa97b06", [], 340),
+      { ...passive("0xbb4a50257c10524783e403a4e0db9c4c3e9378c2e398ec5de34281be1aa97b06", [], 341),
         topics: ["0xbb4a50257c10524783e403a4e0db9c4c3e9378c2e398ec5de34281be1aa97b06", topic(84071n), `0x${defender.slice(2).padStart(64, "0")}`, topic(295n)] }
-    ]) {
+    ];
+    f.setActive(now);
+    for (const log of passiveLogs) {
       f.indexer.applyLog(log);
+      f.indexer.commitLogBatch((await f.indexer.preparePlayerActivitySnapshot(201n, [log]))!);
       expect(f.indexer.playerLastActiveSeconds([defender]).get(defender)).toBe(afk);
     }
-    (await f.indexer.preparePlayerActivitySnapshot(201n, []))();
-    expect(f.indexer.playerLastActiveSeconds([defender]).get(defender)).toBe(afk);
-    // Genuine owner _touchPlayer, even with no emitted log, is picked up by the next snapshot.
-    f.setActive(now);
-    (await f.indexer.preparePlayerActivitySnapshot(202n, []))();
+    const ownerAction = { ...started, blockNumber: "0xc9", transactionHash: "0xowner", logIndex: "0x1" };
+    f.indexer.commitLogBatch((await f.indexer.preparePlayerActivitySnapshot(202n, [ownerAction]))!);
     expect(f.indexer.playerLastActiveSeconds([defender]).get(defender)).toBe(now);
-    // Reorgs and canonical zero must replace rather than MAX the previous timestamp.
-    f.setActive(0);
-    (await f.indexer.preparePlayerActivitySnapshot(203n, []))();
-    expect(f.indexer.playerLastActiveSeconds([defender]).get(defender)).toBe(0);
     f.database.close();
   });
 
-  test("canonical repair immediately invalidates cached Rankings/Raid Finder protection without per-target RPC", async () => {
+  test("actor activity immediately invalidates cached Rankings/Raid Finder protection without per-target RPC", async () => {
     const f = fixture();
     await f.indexer.rebuild();
     f.indexer.applyLog(started);
@@ -105,8 +109,6 @@ describe("VEY-KANEO-869 canonical activity", () => {
     f.indexer.applyLog({ ...passive("0xe861e6f62777a3f6ea372d2892ead2d43e27d726e0ae4a2e39e5c3b682a7bbd3", [350_000n], 341),
       topics: ["0xe861e6f62777a3f6ea372d2892ead2d43e27d726e0ae4a2e39e5c3b682a7bbd3", topic(296n), topic(0n)]
     });
-    f.setActive(Math.floor(Date.now() / 1000));
-    (await f.indexer.preparePlayerActivitySnapshot(200n, []))();
     const canonical = new VeydriftGameReader(config, { async request<T>(): Promise<T> { throw new Error("List reads must not call RPC"); } });
     const handler = createRequestHandler({ role: "reader", config, indexer: f.indexer, chainReader: canonical,
       enableResponseCache: true, sharedResponseCache: null, prewarmResponseCache: false });
@@ -115,8 +117,8 @@ describe("VEY-KANEO-869 canonical activity", () => {
     expect(before.rankings.total.find((row: { wallet: string }) => row.wallet === defender).attackProtection)
       .toMatchObject({ allowed: false, blockedReason: "score_protection", defenderInactive: false });
     f.setActive(Math.floor(Date.now() / 1000) - 8 * 86400);
-    (await f.indexer.preparePlayerActivitySnapshot(201n, []))();
-    // Same request, no clock advance and no fresh=1 escape: the committed repair invalidates cache.
+    f.indexer.commitLogBatch((await f.indexer.preparePlayerActivitySnapshot(201n, [started]))!);
+    // Same request, no clock advance and no fresh=1 escape: the committed actor row invalidates cache.
     const after = await (await handler(request())).json();
     expect(after.rankings.total.find((row: { wallet: string }) => row.wallet === defender).attackProtection)
       .toMatchObject({ allowed: true, blockedReason: "none", defenderInactive: true });
@@ -138,7 +140,7 @@ describe("VEY-KANEO-869 canonical activity", () => {
           topics: ["0xe861e6f62777a3f6ea372d2892ead2d43e27d726e0ae4a2e39e5c3b682a7bbd3", topic(296n), topic(0n)]
         });
         f.setActive(now - 7 * 86400 + 1);
-        f.indexer.commitLogBatch(await f.indexer.preparePlayerActivitySnapshot(200n, []));
+        f.indexer.commitLogBatch((await f.indexer.preparePlayerActivitySnapshot(200n, [started]))!);
         expect(f.indexer.recordResourceProjectionWatermark("200", String(now), topic(200n))).toBe(true);
         const version = f.indexer.indexedStateCacheVersion();
         const canonical = new VeydriftGameReader(config, { async request<T>(): Promise<T> { throw new Error("List reads must not call RPC"); } });
@@ -155,7 +157,6 @@ describe("VEY-KANEO-869 canonical activity", () => {
         };
         expect(await protection(handler)).toMatchObject({ allowed: false, blockedReason: "score_protection", defenderInactive: false });
         // The activity values do not change; only the verified chain clock crosses seven days.
-        f.indexer.commitLogBatch(await f.indexer.preparePlayerActivitySnapshot(201n, []));
         expect(f.indexer.recordResourceProjectionWatermark("201", String(now + 1), topic(201n))).toBe(true);
         expect(f.indexer.indexedStateCacheVersion()).toBe(version);
         setSystemTime(new Date(now * 1000 + cacheAgeMs));
@@ -170,42 +171,104 @@ describe("VEY-KANEO-869 canonical activity", () => {
     });
   }
 
-  test("failed or incomplete snapshots cannot partially overwrite existing canonical rows", async () => {
+  test("failed or incomplete sampling is observable and cannot overwrite actor rows", async () => {
     const f = fixture();
     f.indexer.applyLog(started);
-    (await f.indexer.preparePlayerActivitySnapshot(200n, []))();
-    f.setFail(true);
-    await expect(f.indexer.preparePlayerActivitySnapshot(201n, [])).rejects.toThrow("activity RPC unavailable");
-    expect(f.indexer.playerLastActiveSeconds([defender]).get(defender)).toBe(afk);
-    f.reader.getPlayerLastActiveAt = async () => new Map();
-    await expect(f.indexer.preparePlayerActivitySnapshot(202n, [])).rejects.toThrow("Incomplete canonical");
-    expect(f.database.query("SELECT value FROM indexer_metadata WHERE key = 'canonicalPlayerActivityBlock'").get()).toEqual({ value: "200" });
-    f.database.close();
+    f.indexer.commitLogBatch((await f.indexer.preparePlayerActivitySnapshot(200n, [started]))!);
+    const warnings: string[] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => { warnings.push(args.join(" ")); };
+    try {
+      f.setFail(true);
+      expect(await f.indexer.preparePlayerActivitySnapshot(201n, [started])).toBeUndefined();
+      expect(f.indexer.playerLastActiveSeconds([defender]).get(defender)).toBe(afk);
+      f.setFail(false);
+      f.reader.getTransactionActivity = async () => new Map();
+      expect(await f.indexer.preparePlayerActivitySnapshot(202n, [started])).toBeUndefined();
+      expect(warnings.some(line => line.includes('"status":"skipped"') && line.includes("activity RPC unavailable"))).toBe(true);
+      expect(warnings.some(line => line.includes("Incomplete transaction activity snapshot"))).toBe(true);
+      expect(f.database.query("SELECT value FROM indexer_metadata WHERE key = 'actorPlayerActivityBlock'").get()).toEqual({ value: "200" });
+    } finally {
+      console.warn = originalWarn;
+      f.database.close();
+    }
   });
 
-  test("HTTP polling stages new owners, retries RPC failure atomically and catches no-log owner activity", async () => {
+  test("HTTP polling publishes logs and watermark when activity sampling fails, then refreshes owner activity", async () => {
     const f = fixture();
+    const pollConfig = {
+      ...config,
+      referralSystemAddress: "0x4444444444444444444444444444444444444444" as Address,
+      referralIndexFromBlock: 100n
+    };
     let head = 200n;
-    const sync = new ChainSyncService(config, f.indexer, { logBackfiller: {
+    let logs = [started];
+    let referralBackfills = 0;
+    const sync = new ChainSyncService(pollConfig, f.indexer, { logBackfiller: {
       async getHeadBlock() { return head; },
       async getBlockProjectionAnchor(block) { return { hash: topic(block), timestamp: String(now) }; },
-      async listContractLogs() { return [started]; }
+      async listContractLogs() { return logs; },
+      async listReferralLogs() { referralBackfills++; return []; }
     } });
     f.setFail(true);
     await sync.poll();
-    expect(f.indexer.planet("295")).toBeNull();
-    expect(sync.snapshot().lastError).toContain("activity RPC unavailable");
+    expect(f.indexer.planet("295")?.owner).toBe(defender);
+    expect(f.indexer.snapshot().resourceProjectionBlock).toBe("200");
+    expect(sync.snapshot()).toMatchObject({
+      lastError: null,
+      latestSyncedBlock: "200",
+      pollFailureCount: 0,
+      referralHistoryBackfill: { throughBlock: "200" }
+    });
+    expect(referralBackfills).toBe(1);
+    expect(f.indexer.playerLastActiveSeconds([defender]).has(defender)).toBe(false);
     f.setFail(false);
     await sync.poll();
-    expect(f.indexer.planet("295")?.owner).toBe(defender);
-    expect(f.reads.at(-1)).toEqual({ wallets: [defender], block: 200n });
+    expect(f.reads.at(-1)).toEqual(["0xstart"]);
     expect(f.indexer.playerLastActiveSeconds([defender]).get(defender)).toBe(afk);
     head++;
     f.setActive(now);
+    logs = [{ ...started, blockNumber: "0xc9", transactionHash: "0xowner", logIndex: "0x1" }];
     await sync.poll();
     expect(f.indexer.playerLastActiveSeconds([defender]).get(defender)).toBe(now);
     await sync.stop();
     f.database.close();
+  });
+
+  test("an unexpected activity preparation rejection cannot stall poll publication", async () => {
+    const f = fixture();
+    f.indexer.preparePlayerActivitySnapshot = async () => { throw new Error("RPC 3: execution reverted"); };
+    const sync = new ChainSyncService(config, f.indexer, { logBackfiller: {
+      async getHeadBlock() { return 200n; },
+      async getBlockProjectionAnchor(block) { return { hash: topic(block), timestamp: String(now) }; },
+      async listContractLogs() { return [started]; }
+    } });
+    await sync.poll();
+    expect(f.indexer.planet("295")?.owner).toBe(defender);
+    expect(f.indexer.snapshot().resourceProjectionBlock).toBe("200");
+    expect(sync.snapshot()).toMatchObject({ lastError: null, latestSyncedBlock: "200", pollFailureCount: 0 });
+    expect(f.indexer.playerLastActiveSeconds([defender]).has(defender)).toBe(false);
+    await sync.stop();
+    f.database.close();
+  });
+
+  test("removing the attributed action retires its timestamp instead of trusting reorged activity", async () => {
+    const f = fixture();
+    f.indexer.applyLog(started);
+    f.indexer.commitLogBatch((await f.indexer.preparePlayerActivitySnapshot(200n, [started]))!);
+    expect(f.indexer.playerLastActiveSeconds([defender]).get(defender)).toBe(afk);
+    const version = f.indexer.indexedStateCacheVersion();
+    f.indexer.applyLog({ ...started, removed: true });
+    expect(f.indexer.playerLastActiveSeconds([defender]).has(defender)).toBe(false);
+    expect(f.indexer.indexedStateCacheVersion()).not.toBe(version);
+    f.database.close();
+  });
+
+  test("transaction enrichment rejects a block hash inconsistent with the log", async () => {
+    const reader = new VeydriftGameReader(config, { async request<T>() {
+      return { hash: topic(201n), timestamp: topic(BigInt(now)), transactions: [{ hash: started.transactionHash, from: defender }] } as T;
+    } });
+    await expect(reader.getTransactionActivity([{ ...started, blockHash: topic(200n) }])).rejects.toThrow("block hash changed");
   });
 
   test("head changes discard staged activity without publishing the repair", async () => {
@@ -224,14 +287,13 @@ describe("VEY-KANEO-869 canonical activity", () => {
     f.database.close();
   });
 
-  for (const batch of [true, false]) test(`mapping reads pin the block and preserve zero (${batch ? "batch" : "sequential"})`, async () => {
+  for (const batch of [true, false]) test(`transaction activity reads sender and block timestamp (${batch ? "batch" : "sequential"})`, async () => {
+    const hash = `0x${"ab".repeat(32)}`;
+    const log = { ...started, blockNumber: "0xc8", transactionHash: hash };
     const check = (method: string, params: unknown[]) => {
-      expect(method).toBe("eth_call");
-      const [call, tag] = params as [{ data: string; to: string }, string];
-      expect(tag).toBe("0xc8");
-      expect(call.to).toBe(config.gameContractAddress!);
-      expect(call.data.slice(0, 10)).toBe(toFunctionSelector("playerLastActiveAt(address)"));
-      return data(call.data.endsWith(defender.slice(2)) ? BigInt(afk) : 0n);
+      expect(method).toBe("eth_getBlockByNumber");
+      expect(params).toEqual(["0xc8", true]);
+      return { hash: topic(200n), timestamp: topic(BigInt(afk)), transactions: [{ hash, from: defender }] };
     };
     const reader = new VeydriftGameReader(config, {
       async request<T>(method: string, params: unknown[]) { return check(method, params) as T; },
@@ -239,27 +301,42 @@ describe("VEY-KANEO-869 canonical activity", () => {
         return calls.map(call => check(call.method, call.params) as T);
       } } : {})
     });
-    expect(await reader.getPlayerLastActiveAt([defender, attacker, defender], 200n)).toEqual(new Map([[defender, afk], [attacker, 0]]));
+    expect(await reader.getTransactionActivity([log, log])).toEqual(new Map([[hash, { sender: defender, timestamp: afk }]]));
   });
 
-  test("large owner rosters keep every batch bounded and pinned", async () => {
+  test("large transaction samples keep every RPC batch bounded", async () => {
     const sizes: number[] = [];
+    const hashByBlock = new Map<string, string>();
     const reader = new VeydriftGameReader(config, {
       async request<T>(): Promise<T> { throw new Error("Expected batches"); },
       async requestBatch<T>(calls: { method: string; params: unknown[] }[]) {
         sizes.push(calls.length);
-        expect(calls.every(call => call.params[1] === "0xc8")).toBe(true);
-        return calls.map(() => data(0n) as T);
+        return calls.map(call => ({
+          hash: topic(BigInt(call.params[0] as string)),
+          timestamp: topic(BigInt(afk)),
+          transactions: [{ hash: hashByBlock.get(call.params[0] as string), from: defender }]
+        }) as T);
       }
     });
-    const wallets = Array.from({ length: 121 }, (_, i) => `0x${(i + 1).toString(16).padStart(40, "0")}` as Address);
-    expect((await reader.getPlayerLastActiveAt(wallets, 200n)).size).toBe(121);
+    const logs = Array.from({ length: 121 }, (_, i) => ({
+      ...started,
+      blockNumber: `0x${(200 + i).toString(16)}`,
+      transactionHash: `0x${(i + 1).toString(16).padStart(64, "0")}`
+    }));
+    for (const log of logs) hashByBlock.set(log.blockNumber, log.transactionHash);
+    expect((await reader.getTransactionActivity(logs)).size).toBe(121);
     expect(sizes).toEqual([50, 50, 21]);
   });
 
-  for (const value of ["0x", "0x01", data(2n ** 64n)]) test(`rejects malformed canonical activity ${value}`, async () => {
-    const reader = new VeydriftGameReader(config, { async request<T>() { return value as T; } });
-    await expect(reader.getPlayerLastActiveAt([defender], 200n)).rejects.toThrow("Invalid canonical");
+  for (const [label, block] of [
+    ["missing transaction", { timestamp: "0xc8", transactions: [] }],
+    ["invalid sender", { timestamp: "0xc8", transactions: [{ hash: "0xstart", from: "0x1234" }] }],
+    ["invalid timestamp", { timestamp: "invalid", transactions: [{ hash: "0xstart", from: defender }] }]
+  ] as const) test(`rejects ${label} activity without inventing a value`, async () => {
+    const reader = new VeydriftGameReader(config, { async request<T>() {
+      return block as T;
+    } });
+    await expect(reader.getTransactionActivity([{ ...started, blockNumber: "0xc8" }])).rejects.toThrow("activity");
   });
   for (const [label, reason, flags, expectedReason, inactive, honor] of [
     ["inactive planet 295", 0, 0x11, "none", true, "neutral"],
