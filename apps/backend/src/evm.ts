@@ -1,6 +1,6 @@
 import type * as Api from "../../../packages/api-types/src/index";
 import { solarSatelliteEnergy } from "@veydrift/universe";
-import { encodeAbiParameters, keccak256, toFunctionSelector } from "viem";
+import { encodeAbiParameters, keccak256 } from "viem";
 import type { BackendConfig } from "./config";
 import { calculateHighscore, type HighscoreEntry } from "./highscores";
 import {
@@ -3184,9 +3184,13 @@ export class VeydriftGameReader implements ChainReader {
   // Read only this mapping at the ingestion checkpoint; never infer it from affected asset owners.
   async getPlayerLastActiveAt(wallets: readonly Address[], blockNumber: bigint): Promise<Map<string, number>> {
     const uniqueWallets = [...new Set(wallets.map(wallet => wallet.toLowerCase() as Address))];
-    const values = await this.batchCallContract(this.gameContractAddress, uniqueWallets.map(wallet => {
+    // playerLastActiveAt is internal, with no ABI getter. Its mapping is pinned at slot 34
+    // in packages/contracts/storage-layout/VeydriftGame.v1.json.
+    const values = await this.batchStorageAt(uniqueWallets.map(wallet => {
       assertAddress(wallet);
-      return { selector: toFunctionSelector("playerLastActiveAt(address)"), args: [encodeAddress(wallet)] };
+      return BigInt(keccak256(encodeAbiParameters(
+        [{ type: "address" }, { type: "uint256" }], [wallet, 34n]
+      )));
     }), toQuantity(blockNumber));
     if (values.length !== uniqueWallets.length) throw new Error("Incomplete canonical player activity snapshot");
     return new Map(uniqueWallets.map((wallet, index) => {
@@ -5088,21 +5092,28 @@ export class VeydriftGameReader implements ChainReader {
     return supplements;
   }
 
-  private async batchStorageAt(slots: bigint[]): Promise<string[]> {
+  private async batchStorageAt(slots: bigint[], blockTag = "latest"): Promise<string[]> {
     if (slots.length === 0) return [];
+    if (slots.length > maxBatchCallSize) {
+      const results: string[] = [];
+      for (let index = 0; index < slots.length; index += maxBatchCallSize) {
+        results.push(...await this.batchStorageAt(slots.slice(index, index + maxBatchCallSize), blockTag));
+      }
+      return results;
+    }
     if (!this.transport.requestBatch) {
       const results: string[] = [];
       for (const slot of slots) {
         results.push(await this.transport.request<string>(
           "eth_getStorageAt",
-          [this.gameContractAddress, toQuantity(slot), "latest"]
+          [this.gameContractAddress, toQuantity(slot), blockTag]
         ));
       }
       return results;
     }
     return this.transport.requestBatch<string>(slots.map((slot) => ({
       method: "eth_getStorageAt",
-      params: [this.gameContractAddress, toQuantity(slot), "latest"]
+      params: [this.gameContractAddress, toQuantity(slot), blockTag]
     })));
   }
 

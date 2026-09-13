@@ -1,6 +1,7 @@
 import { describe, expect, setSystemTime, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { toFunctionSelector } from "viem";
+import { encodeAbiParameters, keccak256 } from "viem";
+import gameStorageLayout from "../../../packages/contracts/storage-layout/VeydriftGame.v1.json";
 import { ChainSyncService } from "./chainSync";
 import type { BackendConfig } from "./config";
 import { type Address, type RpcLog, VeydriftGameReader } from "./evm";
@@ -224,14 +225,57 @@ describe("VEY-KANEO-869 canonical activity", () => {
     f.database.close();
   });
 
+  test("a planet-to-moon Deploy reaches the mission index without an activity ABI getter", async () => {
+    const database = new Database(":memory:");
+    const reader = new VeydriftGameReader(config, {
+      async request<T>(method: string, params: unknown[]) {
+        if (method !== "eth_getStorageAt") throw new Error("RPC 3: execution reverted");
+        expect(params[2]).toBe("0xc8");
+        return data(BigInt(now)) as T;
+      }
+    });
+    const indexer = new SettlementIndexer(reader, 100n, { database, runStartupBackfill: false });
+    const launch: RpcLog = {
+      ...started, blockNumber: "0xc8", transactionHash: "0xmoon-deploy", blockTimestamp: topic(BigInt(now)),
+      topics: ["0x95e2cb506aa14052bac412e42f47fb34d9234819a960761a7bc7f1920c0ab456", topic(84335n), `0x${defender.slice(2).padStart(64, "0")}`, topic(1n)],
+      data: data(295n, 295n, BigInt(now + 26), BigInt(now + 52), 0n)
+    };
+    const sync = new ChainSyncService(config, indexer, { logBackfiller: {
+      async getHeadBlock() { return 200n; },
+      async getBlockProjectionAnchor(block) { return { hash: topic(block), timestamp: String(now) }; },
+      async listContractLogs() { return [started, launch, {
+        ...launch, logIndex: "0x1",
+        topics: ["0xfa464e2180f08e3e4d8c4247566d0616a5e1ab845d1678c47fedae6d44e9c502", topic(84335n)],
+        data: data(0n, 1n)
+      }]; }
+    } });
+    try {
+      await sync.poll();
+      expect(sync.snapshot().lastError).toBeNull();
+      expect(indexer.fleetMission("84335")).toMatchObject({
+        missionType: "Deploy", status: "Outbound", originIsMoon: false, targetIsMoon: true
+      });
+      expect(indexer.playerLastActiveSeconds([defender]).get(defender)).toBe(now);
+    } finally {
+      await sync.stop();
+      database.close();
+    }
+  });
+
   for (const batch of [true, false]) test(`mapping reads pin the block and preserve zero (${batch ? "batch" : "sequential"})`, async () => {
+    const layout = gameStorageLayout.storage.find(entry => entry.label === "playerLastActiveAt")!;
+    expect(layout).toMatchObject({ slot: "34", offset: 0, type: "mapping(address => uint64)" });
+    const activitySlot = (wallet: Address) => keccak256(encodeAbiParameters(
+      [{ type: "address" }, { type: "uint256" }], [wallet, BigInt(layout.slot)]
+    ));
     const check = (method: string, params: unknown[]) => {
-      expect(method).toBe("eth_call");
-      const [call, tag] = params as [{ data: string; to: string }, string];
+      // The real contract has no public getter: accepting eth_call here hid the production revert.
+      expect(method).toBe("eth_getStorageAt");
+      const [address, slot, tag] = params as [Address, `0x${string}`, string];
       expect(tag).toBe("0xc8");
-      expect(call.to).toBe(config.gameContractAddress!);
-      expect(call.data.slice(0, 10)).toBe(toFunctionSelector("playerLastActiveAt(address)"));
-      return data(call.data.endsWith(defender.slice(2)) ? BigInt(afk) : 0n);
+      expect(address).toBe(config.gameContractAddress!);
+      expect([activitySlot(defender), activitySlot(attacker)]).toContain(slot);
+      return data(slot === activitySlot(defender) ? BigInt(afk) : 0n);
     };
     const reader = new VeydriftGameReader(config, {
       async request<T>(method: string, params: unknown[]) { return check(method, params) as T; },
@@ -248,7 +292,7 @@ describe("VEY-KANEO-869 canonical activity", () => {
       async request<T>(): Promise<T> { throw new Error("Expected batches"); },
       async requestBatch<T>(calls: { method: string; params: unknown[] }[]) {
         sizes.push(calls.length);
-        expect(calls.every(call => call.params[1] === "0xc8")).toBe(true);
+        expect(calls.every(call => call.method === "eth_getStorageAt" && call.params[2] === "0xc8")).toBe(true);
         return calls.map(() => data(0n) as T);
       }
     });
