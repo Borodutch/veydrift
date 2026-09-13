@@ -1493,6 +1493,19 @@ test("Galaxy attack hydrates coordinate-keyed targets and a stalled report can r
   assert.equal(await evaluate(`window.inspectorProof.walletRequests.some(request => request.method === 'eth_sendTransaction')`), false);
 });
 
+test("Galaxy does not enable Attack for a response missing the canonical allowed verdict", async () => {
+  await loadInspectorFixture("/galaxy", 1280, { attackIntelProbe: "true", attackProtection: "malformed" });
+  const blockedAttack = `document.querySelector('main button[aria-label="Attack: Attack blocked."]:disabled')`;
+  await waitForExpression(`${blockedAttack} !== null
+    && [...document.querySelectorAll('main button[aria-label^="Attack"]')].every(button => button.disabled && button.title === 'Attack: Attack blocked.')`);
+  assert.equal(await evaluate(`document.querySelector('main button[aria-label="Attack"]:not(:disabled)') !== null`), false);
+  await clickExpression(blockedAttack);
+  assert.equal(await evaluate(`document.querySelector('[data-mission-composer]') !== null`), false);
+  assert.equal(await evaluate(`window.inspectorProof.requests.some(path => path.includes('detail=full'))`), false);
+  assert.equal(await evaluate(`window.inspectorProof.walletRequests.some(request => request.method === 'eth_sendTransaction')`), false);
+  assert.deepEqual(await evaluate("window.inspectorProof.errors"), []);
+});
+
 test("attack intel failure stops loading and retries independently of protection", async () => {
   await loadInspectorFixture("/galaxy", 1280, { attackIntelProbe: "true" });
   await waitForExpression(`document.querySelector('main button[aria-label="Attack"]:not(:disabled)') !== null`);
@@ -1515,6 +1528,7 @@ test("attack intel failure stops loading and retries independently of protection
   await clickExpression(retry);
   await waitForExpression(`document.querySelector('summary[aria-label="Open simulated battle report"]') !== null`);
   assert.equal(await evaluate(`window.combatIntelProof.calls`), 2);
+  assert.equal(await evaluate(`window.inspectorProof.walletRequests.some(request => request.method === 'eth_sendTransaction')`), false);
   assert.deepEqual(await evaluate("window.inspectorProof.errors"), []);
 });
 
@@ -1541,6 +1555,7 @@ test("a slow attack target does not block navigation or replace a newer target",
   await evaluate(`new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))`);
   assert.ok(await evaluate(`document.querySelector('[data-mission-composer]')?.textContent.includes('Unrelated Gamma')`));
   assert.equal(await evaluate(`document.querySelector('[data-mission-composer]')?.textContent.includes('Nearby Rival')`), false);
+  assert.equal(await evaluate(`window.inspectorProof.walletRequests.some(request => request.method === 'eth_sendTransaction')`), false);
   assert.deepEqual(await evaluate("window.inspectorProof.errors"), []);
 });
 

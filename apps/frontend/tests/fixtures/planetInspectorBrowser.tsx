@@ -11,7 +11,7 @@ import { PublicMoonDetail } from "../../src/components/PublicMoonDetail";
 import { initSfx } from "../../src/sfx";
 import { TopBar } from "../../src/components/TopBar";
 import type { Coordinates } from "../../src/types";
-import type { Eip1193Provider, ManagedPlanetResponse } from "../../src/walletFlow";
+import type { AttackProtectionStatus, Eip1193Provider, ManagedPlanetResponse } from "../../src/walletFlow";
 import "../../src/styles.css";
 
 declare global {
@@ -478,7 +478,19 @@ globalThis.fetch = (async (input, init) => {
   }
 
   if (url.pathname.includes("/attack-protection")) {
-    return Response.json({ blockedReason: "none", isProtected: false, isSameAlliance: false });
+    if (fixtureParams.get("attackProtection") === "malformed") {
+      // The old fixture omitted the canonical verdict; it must not enable Attack.
+      return Response.json({ blockedReason: "none", isProtected: false, isSameAlliance: false });
+    }
+    return Response.json({
+      wallet: account,
+      targetPlanetId: url.searchParams.get("targetPlanetId")!,
+      allowed: true,
+      blockedReason: "none",
+      blockedReasonLabel: null,
+      atWar: false,
+      warEligibilityNeedsCheck: false,
+    } satisfies AttackProtectionStatus);
   }
 
   return Response.json({ error: `Fixture endpoint not implemented: ${url.pathname}` }, { status: 404 });
