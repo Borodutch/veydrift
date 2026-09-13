@@ -1,4 +1,4 @@
-export const PLANET_ANIMATION_VERSION = "20260911-3";
+export const PLANET_ANIMATION_VERSION = "20260912-1";
 export const PLANET_ANIMATION_WIDTHS = [64, 256, 512, 1024] as const;
 export const PLANET_ANIMATION_BASE = "/assets/game/planet-animations";
 
