@@ -94,6 +94,7 @@ describe("RaidTargetFinderPage", () => {
       target: raidTarget({
         planetId: "10",
         protection: {
+          allowed: false,
           isProtected: true,
           isSameAlliance: false,
           blockedReason: "score_protection",
@@ -223,7 +224,7 @@ function raidTarget(overrides: Partial<RaidTarget> = {}): RaidTarget {
     defenseUnits: [],
     stationedDefenderForecastTimeline: [],
     stationedDefenderTimelineComplete: true,
-    protection: { isProtected: false, isSameAlliance: false, blockedReason: "none", blockedReasonLabel: null, scoreComparison: null, defenderInactive: false },
+    protection: { allowed: true, isProtected: false, isSameAlliance: false, blockedReason: "none", blockedReasonLabel: null, scoreComparison: null, defenderInactive: false },
     inbound: { count: 0, nextArrivalAtMs: null },
     ...overrides,
   };

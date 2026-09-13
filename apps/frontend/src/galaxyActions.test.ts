@@ -155,25 +155,31 @@ describe("galaxyActions", () => {
     });
   });
 
-  test("keeps ranked active-war verification internal to the attack flow", () => {
+  test.each([false, true])("disables unverified ranked war targets even with optimistic allowed=%s", (allowed) => {
     const attack = galaxyActionsForSlot({
       account,
-      attackProtection: {
-        allowed: true,
-        atWar: true,
-        warEligibilityNeedsCheck: true,
-        blockedReason: "none",
-        blockedReasonLabel: null,
-      },
+      attackProtection: rankingsAttackProtectionForEntry({ currentWallet: account, entry: {
+        wallet: "0x3333333333333333333333333333333333333333", alliance: null,
+        attackProtection: { allowed, atWar: true, warEligibilityNeedsCheck: true, blockedReason: "none", blockedReasonLabel: null },
+      } }),
       homePlanetId: "7",
       planet: planet(),
       shipyardState: shipyardState([{ id: 1, count: 3 }]),
     }).find((action) => action.kind === "attack");
 
     expect(attack).toMatchObject({
-      enabled: true,
+      enabled: false,
       label: "Attack",
+      reason: "War eligibility is unverified. Open the target to check attack protection.",
     });
+  });
+
+  test("keeps independently allowed war targets attackable when eligibility is not pending", () => {
+    const attack = galaxyActionsForSlot({
+      account, homePlanetId: "7", planet: planet(), shipyardState: shipyardState([{ id: 1, count: 3 }]),
+      attackProtection: { allowed: true, atWar: true, warEligibilityNeedsCheck: false, blockedReason: "none", blockedReasonLabel: null },
+    }).find(action => action.kind === "attack");
+    expect(attack).toMatchObject({ enabled: true, label: "Attack" });
   });
 
   test.each([
@@ -218,6 +224,26 @@ describe("galaxyActions", () => {
       enabled: false,
       reason: canonicalStatus.blockedReasonLabel,
     });
+  });
+
+  test("canonical AFK bypass keeps Galaxy and Rankings Attack enabled despite a huge score gap (VEY-KANEO-869)", () => {
+    const canonicalStatus = {
+      allowed: true, blockedReason: "none" as const, blockedReasonLabel: null, defenderInactive: true,
+      scoreComparison: {
+        scoreType: "contract_total_user_score" as const, attackerScore: "8000000", defenderScore: "20",
+        attackerVisibleScore: "8000000", defenderVisibleScore: "20", protected: false,
+      },
+    };
+    const rankedStatus = rankingsAttackProtectionForEntry({ currentWallet: account, entry: {
+      wallet: "0x14074a4dc440230523a9fb7a0ce6934a6118e7c6", alliance: null, attackProtection: canonicalStatus,
+    } });
+    for (const attackProtection of [canonicalStatus, rankedStatus]) {
+      const attack = galaxyActionsForSlot({ account, attackProtection, homePlanetId: "7", planet: planet(),
+        shipyardState: shipyardState([{ id: 1, count: 3 }]),
+      }).find(action => action.kind === "attack");
+      expect(attack).toMatchObject({ enabled: true, label: "Attack" });
+    }
+    expect(rankingsProtectionPresentation(canonicalStatus)).toBeUndefined();
   });
 
   test("keeps a canonically allowed Rankings target attackable", () => {

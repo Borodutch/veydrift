@@ -50,6 +50,82 @@ availability gates. Do not remove finish/resolve entrypoints, keeper services or
 randomness workers based on a historical lazy-settlement proposal. Their necessity
 depends on the actual deployed contracts and configured responsibilities.
 
+## Canonical inactivity and attack protection
+
+`_touchPlayer` writes `playerLastActiveAt` without an event. A `PlanetSettled`,
+unit-count, queue-completion or fleet-resolution event describes affected assets,
+not the caller. Those events must never refresh the asset owner's AFK timestamp;
+the activity feed and web presence are separate, non-authoritative features.
+
+The HTTP writer samples only `playerLastActiveAt` for each distinct indexed planet
+owner, plus owners introduced by the pending logs. This is a narrow exception to
+asset event-only ingestion, not a general current-state heal. Reads use the exact
+poll block, in sequential batches of at most 50 calls. Staging includes all owners
+because genuine owner calls can emit no logs. The existing post-read head-hash
+verification runs before the activity snapshot commits atomically with the logs.
+Normal polls include the watermark in that transaction. Removed-completion
+reconciliation commits logs/activity first and defers the watermark until reconciliation
+succeeds; the old/stale watermark keeps that branch conservative and retryable.
+Malformed/incomplete/RPC-failed reads cannot publish partial activity; polling
+retries normally. No gameplay request runs an activity repair or per-row RPC fan-out.
+
+The selected-target `/wallet/:wallet/attack-protection` endpoint uses canonical
+`attackProtectionStatus` (or its moon/body variant) for inactivity, score, alliance,
+war roster/direction, bashing, honor, relation and plunder. Missing/malformed/RPC-failed
+protection returns HTTP 503, never `allowed:true`. The existing nonzero planet Rift
+lock exception remains separate, as in the launch/combat modules: it bypasses score
+and bashing but never same-alliance; ordinary plunder remains zero when score
+protection still applies. Rankings/Raid Finder keep indexed list previews, but an
+active war alone never grants availability: unverified roster/direction eligibility
+returns `allowed:false` with `warEligibilityNeedsCheck:true` and disables Attack.
+Inactivity and Rift bypasses remain independent of war eligibility; same-alliance
+protection wins. Open the selected target for the authoritative canonical preflight.
+AFK list previews use the verified projection clock when available. Personalized
+list cache keys include that same clock as well as indexed-state versions, so crossing
+an inactivity boundary cannot reuse a pre-boundary fresh or stale response. Their TTL
+remains one second; non-personalized informational cache policy is unchanged.
+
+### VEY-KANEO-869 rollout and automatic repair
+
+1. Parent review/CI must pass before deployment. No contract upgrade, transaction,
+   full reseed, manual row deletion, or additional writer is needed. Preserve the
+   existing database and take the normal consistent deployment backup.
+2. Deploy the backend writer and readers together, then the frontend. Do not leave
+   an old writer running: it still attributes passive events to owners. Existing
+   activity rows without a `canonical-activity:` provenance are ignored by AFK reads.
+3. The first successful normal HTTP poll automatically replaces every current
+   planet owner's activity timestamp with the canonical value, including **lower**
+   timestamps and zero. This runs even with startup backfill disabled. It advances
+   indexed-state cache versions; no operator heal environment variable is needed.
+   Wait for the first successful verified poll before calling the rollout ready.
+4. Read-only evidence against the deployed writer database:
+
+   ```sql
+   SELECT value FROM indexer_metadata WHERE key = 'canonicalPlayerActivityBlock';
+   SELECT wallet, last_active_at, event_id FROM indexed_player_activity
+   WHERE wallet = '0x14074a4dc440230523a9fb7a0ce6934a6118e7c6';
+   SELECT COUNT(*) FROM contract_planets p
+   LEFT JOIN indexed_player_activity a ON a.wallet = lower(p.owner)
+   WHERE a.wallet IS NULL OR a.event_id NOT LIKE 'canonical-activity:%';
+   ```
+
+   The marker must advance with verified polls, the last query must return zero,
+   and the affected owner's timestamp must match `playerLastActiveAt` at that block.
+   `event_id` is the block at which that row last changed, not necessarily the latest
+   snapshot block. Confirm HTTP chain-sync health and observe poll duration/RPC load:
+   each poll adds one mapping read per distinct owner (50 calls per HTTP batch).
+5. Compare planet 295's direct contract protection with the API for an eligible
+   attacker (the ticket's dead-address read is read-only). If still inactive, both
+   must allow attack and expose the inactive flag; never hard-code the old status
+   if the owner has since genuinely returned. Check Galaxy, Rankings, Raid Finder,
+   planet detail and mission composer on desktop/mobile; capture fresh screenshots
+   and stop before signing or launching. Live QA and evidence belong to the parent.
+6. On unavailable RPC, keep protection unavailable and repair incomplete; restore
+   read access and allow the next normal poll to retry. Do not fabricate activity,
+   whitelist a wallet, or wipe/reseed unrelated state. If rolling code back, the old
+   attribution bug returns; retain the backup and redeploy the corrected writer
+   before trusting AFK previews again. No irreversible schema/data change is made.
+
 ## Consistent reads and transaction application
 
 Structured `api_request` logs include `requestBodyBytes` (declared Content-Length,
@@ -86,7 +162,7 @@ log count is insufficient; an unknown hash is not proof of success.
 
 Gameplay hydration, including Supply, must not fall back to RPC on a user read.
 Cold or unsafe indexed state returns a retryable unavailable response. Existing
-unproven transaction-status receipt checks and active-war attack preflight are separate RPC
+unproven transaction-status receipt checks and selected-target attack protection are separate RPC
 exceptions: the compact index does not yet contain everything those checks need.
 Do not replace them with a guessed confirmation or permissive attack decision.
 

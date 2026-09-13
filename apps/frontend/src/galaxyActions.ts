@@ -443,7 +443,10 @@ function debrisFieldBlocker(planet: Planet | undefined): string | undefined {
 }
 
 function attackProtectionBlocker(status: GalaxyAttackProtectionStatus | null | undefined): string | undefined {
-  if (!status || status.allowed || status.blockedReason === "none") return undefined;
+  if (status?.warEligibilityNeedsCheck && status.blockedReason !== "same_alliance") {
+    return status.blockedReasonLabel ?? "War eligibility is unverified. Open the target to check attack protection.";
+  }
+  if (!status || status.allowed) return undefined;
   if (status.blockedReasonLabel) return status.blockedReasonLabel;
   if (status.blockedReason === "bashing_limit") return "Attack blocked by bashing limit.";
   if (status.blockedReason === "score_protection") return "Attack blocked by newbie or score-ratio protection.";

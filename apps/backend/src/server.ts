@@ -2822,7 +2822,7 @@ async function refreshCachedJsonResponse(
 function cacheableJsonRequestTtlMs(request: Request, url: URL): number {
   if (request.method !== "GET" || url.searchParams.get("fresh") === "1") return 0;
   if (url.pathname === "/highscores") {
-    return landingLeaderboardRequest(url) ? 60_000 : livePublicDataRequest(url) ? 1_000 : 300_000;
+    return landingLeaderboardRequest(url) ? 60_000 : livePublicDataRequest(url) || personalizedHighscoreRequest(url) ? 1_000 : 300_000;
   }
   if (url.pathname === "/cca") return 4_000;
   if (["/stats", "/raid-finder/debris", "/raid-finder/rifters", "/universe/systems"].includes(url.pathname)) return 30_000;
@@ -2844,6 +2844,11 @@ function cacheableJsonRequestStaleKey(request: Request, url: URL, cacheKey: stri
 
 function cacheableJsonRequestVersion(url: URL, indexer: SettlementIndexer): string {
   if (url.pathname === "/highscores") {
+    // Protection changes when the canonical clock crosses an AFK boundary even if no
+    // activity row changes. Never reuse a fresh OR stale response from the old clock.
+    if (personalizedHighscoreRequest(url)) {
+      return `${indexer.indexedStateCacheVersion()}:activity-clock=${indexedActivityNowSeconds(indexer)}`;
+    }
     return landingLeaderboardRequest(url) ? "landing-leaderboard"
       : livePublicDataRequest(url) ? indexer.indexedStateCacheVersion() : "ttl";
   }
@@ -5529,6 +5534,10 @@ function rankHighscores(
     });
 }
 
+function indexedActivityNowSeconds(indexer: SettlementIndexer | undefined): number {
+  return Number(indexer?.snapshot().resourceProjectionTimestamp ?? Math.floor(Date.now() / 1_000));
+}
+
 function rankedHighscoreIndexedProtectionLookup(
   rows: Iterable<RankedHighscoreEntry>,
   entries: readonly HighscoreEntry[],
@@ -5557,8 +5566,9 @@ function rankedHighscoreIndexedProtectionLookup(
   const playerActivity = indexer?.playerLastActiveSeconds([...new Set(rankedRows.map((row) => row.wallet))])
     ?? new Map<string, number>();
   const nowSeconds = Math.floor(Date.now() / 1_000);
+  const activityNowSeconds = indexedActivityNowSeconds(indexer);
   for (const row of rankedRows) {
-    const defenderInactive = indexedDefenderInactive(playerActivity.get(row.wallet.toLowerCase()), nowSeconds);
+    const defenderInactive = indexedDefenderInactive(playerActivity.get(row.wallet.toLowerCase()), activityNowSeconds);
     const rowAlliance = row.alliance ?? null;
     const atWar = indexer?.allianceRelationship(attackerAlliance?.allianceId, rowAlliance?.allianceId) === "war";
     const scoreProtected = !defenderInactive
@@ -5576,6 +5586,14 @@ function rankedHighscoreIndexedProtectionLookup(
       defenderInactive
     );
     for (const planet of row.planets) {
+      if (status && status.blockedReason !== "same_alliance" && indexer?.hasLiveRiftExtraction(planet.planetId)) {
+        statuses.set(planet.planetId, {
+          ...status, allowed: true, blockedReason: "none", blockedReasonLabel: null,
+          // Rift bypasses score/bashing independently of declaration-roster eligibility.
+          ...(status.warEligibilityNeedsCheck ? { warEligibilityNeedsCheck: false } : {})
+        });
+        continue;
+      }
       const bashingLimited = status?.allowed
         && status.atWar !== true
         && !defenderInactive
@@ -5638,17 +5656,30 @@ function indexedScoreProtectionStatus(
   }
 
   const atWar = indexer?.allianceRelationship(attackerAlliance?.allianceId, defenderAlliance?.allianceId) === "war";
-  if (defenderInactive || atWar || !isIndexedScoreProtected(attackerScore, defenderScore)) {
+  if (atWar && !defenderInactive) {
+    // Index-only rows cannot verify the original declaration roster or direction/ratio.
+    // "none" is not a canonical denial reason here: the explicit pending flag makes
+    // availability unknown, not attackable. Selected-target preflight is authoritative.
+    return {
+      allowed: false,
+      blockedReason: "none",
+      blockedReasonLabel: "War eligibility is unverified. Open the target to check attack protection.",
+      atWar: true,
+      warEligibilityNeedsCheck: true,
+      defenderInactive,
+      scoreComparison,
+      ...(defenderAlliance ? { targetAlliance: defenderAlliance } : {})
+    };
+  }
+  if (defenderInactive || !isIndexedScoreProtected(attackerScore, defenderScore)) {
     return {
       allowed: true,
       blockedReason: "none",
       blockedReasonLabel: null,
       defenderInactive,
       scoreComparison,
-      // Rankings are index-only. They know that a war is active but cannot cheaply evaluate the
-      // frozen declaration roster and direction for every result. The selected target is verified
-      // by the target-specific canonical preflight before Confirm is enabled.
-      ...(atWar ? { atWar: true, warEligibilityNeedsCheck: true } : {}),
+      // Inactivity grants score/bashing exceptions independently of war eligibility.
+      ...(atWar ? { atWar: true } : {}),
       ...(defenderAlliance ? { targetAlliance: defenderAlliance } : {})
     };
   }
@@ -6324,89 +6355,32 @@ async function indexedAttackProtectionResponse(
   const planetsByOwner = indexer.settledPlanetsByOwner();
   const attacker = indexer.highscoreForWallet(wallet, (planetsByOwner.get(wallet.toLowerCase()) ?? []).map((planet) => planet.planetId));
   const defender = indexer.highscoreForWallet(target.owner, (planetsByOwner.get(target.owner.toLowerCase()) ?? []).map((planet) => planet.planetId));
-  // VEY-KANEO-489 follow-up: the score-protection gate must use the contract's _totalUserScore
-  // (HighscoreEntry.totalUserScore), NOT the resource-based category total above. The category total is
-  // on a ~hundreds scale, so against the contract's 50k/500k thresholds every player read as a newbie
-  // and the UI false-flagged score_protection. User-facing relation labels use the same Score scale.
-  const attackerProtectionScore = BigInt(attacker.totalUserScore);
-  const defenderProtectionScore = BigInt(defender.totalUserScore);
   const attackerKey = wallet.toLowerCase();
   const defenderKey = target.owner.toLowerCase();
-  // VEY-KANEO-489: model the contract's same_alliance gate, the HIGHEST-precedence reason in
-  // VeydriftGameStorage._attackProtectionStatus (SameAlliance -> ScoreProtection -> BashingLimit).
-  // Without it this single-target endpoint never returned `same_alliance`, so the frontend — which
-  // derives ally targets solely from this signal (galaxyActions.ts: isAllyTarget = blockedReason ===
-  // "same_alliance") — left the attack button enabled for allies and the launch reverted on-chain.
-  // allianceIntelForPlayers only returns members of *active* alliances, so a missing entry means "no
-  // alliance"; self-targets (attacker == owner) are never treated as same-alliance.
   const allianceIntel = indexer.allianceIntelForPlayers([attackerKey, defenderKey]);
   const attackerAlliance = allianceIntel.get(attackerKey) ?? null;
   const defenderAlliance = allianceIntel.get(defenderKey) ?? null;
-  const defenderInactive = indexedDefenderInactive(
-    indexer.playerLastActiveSeconds([defenderKey]).get(defenderKey),
-    Math.floor(Date.now() / 1_000)
-  );
-  const sameAlliance = attackerKey !== defenderKey
-    && attackerAlliance !== null
-    && defenderAlliance !== null
-    && attackerAlliance.allianceId !== "0"
-    && attackerAlliance.allianceId === defenderAlliance.allianceId;
   const atWar = indexer.allianceRelationship(attackerAlliance?.allianceId, defenderAlliance?.allianceId) === "war";
-  // A war exception depends on the frozen declaration roster and its direction. The compact index
-  // intentionally does not persist every snapshot member, so this narrow mission-preflight read is
-  // authoritative for active wars instead of claiming that every war is a bilateral bypass. It is
-  // cached per attacker + target by CachedChainReader and is never used by leaderboard fan-out.
-  const canonicalWarStatus = atWar && chainReader
-    ? await chainReader.getAttackProtectionStatus(wallet, targetPlanetId, targetIsMoon)
-    : null;
-  // VEY-KANEO-489: use the contract-faithful newbie/score-ratio gate (VeydriftAntiRaidPrimitives.
-  // isScoreProtected) instead of a naive score-ratio heuristic. A fixed ratio false-blocks players
-  // past the newbie-protection ceiling,
-  // who the contract never score-protects (both ratios are 0). Kept raw (not gated by sameAlliance) so
-  // plunderBps below still reflects the score-protection state.
-  const scoreProtected = canonicalWarStatus
-    ? canonicalWarStatus.blockedReason === "score_protection"
-    : !defenderInactive
-    && !atWar
-    && isIndexedScoreProtected(attackerProtectionScore, defenderProtectionScore);
-  // A nonzero planet-scoped Rift lock is fully contestable: it bypasses score/newbie and
-  // bashing gates, but never same-alliance protection.
-  const riftProtectionBypass = !sameAlliance
+  // Selected-target validation is authoritative for AFK, exemptions, declaration rosters, score,
+  // honor and body bashing. Never fall back to an indexed guess when RPC is unavailable.
+  if (!chainReader) return Response.json({ error: "attack_protection_unavailable" }, { status: 503, headers: corsHeaders });
+  let canonicalStatus: AttackProtectionStatus;
+  try {
+    canonicalStatus = await chainReader.getAttackProtectionStatus(wallet, targetPlanetId, targetIsMoon);
+  } catch {
+    return Response.json({ error: "attack_protection_unavailable", detail: "Canonical attack protection could not be verified. Retry before attacking." }, { status: 503, headers: corsHeaders });
+  }
+  const scoreProtected = canonicalStatus.blockedReason === "score_protection";
+  // The launch/combat modules separately permit fighting over a live planet Rift lock, but never
+  // override SameAlliance or permit ordinary-resource plunder through score protection.
+  const riftProtectionBypass = canonicalStatus.blockedReason !== "same_alliance"
     && !targetIsMoon
     && indexer.hasLiveRiftExtraction(targetPlanetId.toString());
+  const blockedReason = riftProtectionBypass
+    && (scoreProtected || canonicalStatus.blockedReason === "bashing_limit")
+      ? "none"
+      : canonicalStatus.blockedReason;
   const scoreComparison = attackProtectionScoreComparison(attacker, defender, scoreProtected);
-  // VEY-KANEO-489: also replay the per-(attacker, planet) bashing window the contract enforces. Self
-  // attacks are rejected upstream by the contract and carry no window; a self-target read just returns
-  // an empty launch history. same_alliance and score protection are checked first to match the
-  // contract's precedence (VeydriftGameStorage._attackProtectionStatus: SameAlliance -> ScoreProtection
-  // -> BashingLimit); skipping the launch-log replay when either short-circuits avoids needless work.
-  const nowSeconds = Math.floor(Date.now() / 1_000);
-  const launchSecondsByTarget = indexer.attackLaunchSecondsByTarget(wallet);
-  const bashingLimited = canonicalWarStatus
-    ? canonicalWarStatus.blockedReason === "bashing_limit"
-    : !sameAlliance
-    && !scoreProtected
-    && !atWar
-    && !defenderInactive
-    && wallet.toLowerCase() !== target.owner.toLowerCase()
-    && indexedBashingLimitReached(
-      bodyAttackLaunchSeconds(
-        launchSecondsByTarget,
-        targetPlanetId.toString(),
-        targetIsMoon,
-        nowSeconds
-      ),
-      nowSeconds
-    );
-  const blockedReason: AttackBlockReason = canonicalWarStatus
-    ? canonicalWarStatus.blockedReason
-    : sameAlliance
-    ? "same_alliance"
-    : scoreProtected && !riftProtectionBypass
-      ? "score_protection"
-      : bashingLimited && !riftProtectionBypass
-        ? "bashing_limit"
-        : "none";
   const transportBlockReason = attackerKey === defenderKey
     ? "own_planet"
     : "not_allied";
@@ -6417,7 +6391,7 @@ async function indexedAttackProtectionResponse(
   // message after a target list advertised the war.
   const blockedReasonLabel = blockedReason === "none"
     ? null
-    : atWar && canonicalWarStatus
+    : atWar && canonicalStatus
       ? "Attack blocked: this active war only bypasses protection for eligible original declaration-roster members in its allowed direction. Normal protection applies to this matchup."
       : attackBlockReasonLabel(blockedReason);
 
@@ -6429,14 +6403,10 @@ async function indexedAttackProtectionResponse(
     allowed: blockedReason === "none",
     blockedReason,
     blockedReasonLabel,
-    relation: canonicalWarStatus?.relation ?? (defenderProtectionScore > attackerProtectionScore
-      ? "stronger"
-      : defenderProtectionScore < attackerProtectionScore
-        ? "weaker"
-        : "peer"),
-    defenderHonorStatus: canonicalWarStatus?.defenderHonorStatus ?? "neutral",
-    plunderBps: canonicalWarStatus?.plunderBps ?? (scoreProtected ? 0 : 5000),
-    defenderInactive: canonicalWarStatus?.defenderInactive ?? defenderInactive,
+    relation: canonicalStatus.relation,
+    defenderHonorStatus: canonicalStatus.defenderHonorStatus,
+    plunderBps: riftProtectionBypass && scoreProtected ? 0 : canonicalStatus.plunderBps,
+    defenderInactive: canonicalStatus.defenderInactive,
     transportAllowed,
     transportBlockReason,
     transportBlockReasonLabel: transportBlockReasonLabel(transportBlockReason),

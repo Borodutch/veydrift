@@ -79,6 +79,7 @@ const config: BackendConfig = {
 function makeIndexer(): SettlementIndexer {
   return new SettlementIndexer(
     {
+      async getPlayerLastActiveAt(wallets: readonly `0x${string}`[]) { return new Map(wallets.map(wallet => [wallet, 0])); },
       async listDebrisFieldEvents() { return []; },
       async listMoonChanceReportEvents() { return []; },
       async listSettledPlanetEvents(): Promise<SettledPlanetEvent[]> { return []; }
@@ -620,6 +621,7 @@ describe("ChainSyncService (polling)", () => {
     let canonicalReads = 0;
     const database = new Database(":memory:");
     const indexer = new SettlementIndexer({
+      async getPlayerLastActiveAt(wallets: readonly `0x${string}`[]) { return new Map(wallets.map(wallet => [wallet, 0])); },
       async listDebrisFieldEvents() { return []; },
       async listMoonChanceReportEvents() { return []; },
       async listSettledPlanetEvents(): Promise<SettledPlanetEvent[]> { return []; },
@@ -725,6 +727,7 @@ describe("ChainSyncService (polling)", () => {
   test("canonically heals research after a live completion removal", async () => {
     let canonicalReads = 0;
     const indexer = new SettlementIndexer({
+      async getPlayerLastActiveAt(wallets: readonly `0x${string}`[]) { return new Map(wallets.map(wallet => [wallet, 0])); },
       async listDebrisFieldEvents() { return []; },
       async listMoonChanceReportEvents() { return []; },
       async listSettledPlanetEvents(): Promise<SettledPlanetEvent[]> { return []; },
@@ -1311,6 +1314,7 @@ describe("ChainSyncService (polling)", () => {
   test("backfills a replacement referral contract before the shared cursor and persists an idempotent restart marker", async () => {
     const database = new Database(":memory:");
     const reader = {
+      async getPlayerLastActiveAt(wallets: readonly `0x${string}`[]) { return new Map(wallets.map(wallet => [wallet, 0])); },
       async listDebrisFieldEvents() { return []; },
       async listMoonChanceReportEvents() { return []; },
       async listSettledPlanetEvents(): Promise<SettledPlanetEvent[]> { return []; }
@@ -1416,6 +1420,7 @@ describe("ChainSyncService (polling)", () => {
   test("single-flights paid alliance invite history from its deployment block and persists completion", async () => {
     const database = new Database(":memory:");
     const reader = {
+      async getPlayerLastActiveAt(wallets: readonly `0x${string}`[]) { return new Map(wallets.map(wallet => [wallet, 0])); },
       async listDebrisFieldEvents() { return []; },
       async listMoonChanceReportEvents() { return []; },
       async listSettledPlanetEvents(): Promise<SettledPlanetEvent[]> { return []; }
@@ -1606,6 +1611,7 @@ describe("ChainSyncService (polling)", () => {
   test("replays and reconciles the full timed missile lifecycle from the upgrade boundary", async () => {
     const database = new Database(":memory:");
     const indexer = new SettlementIndexer({
+      async getPlayerLastActiveAt(wallets: readonly `0x${string}`[]) { return new Map(wallets.map(wallet => [wallet, 0])); },
       async listDebrisFieldEvents() { return []; },
       async listMoonChanceReportEvents() { return []; },
       async listSettledPlanetEvents(): Promise<SettledPlanetEvent[]> { return []; }
@@ -2353,7 +2359,8 @@ describe("ChainSyncService (polling)", () => {
     let canonicalReads = 0;
     const indexer = new SettlementIndexer(
       {
-        async listDebrisFieldEvents() { return []; },
+        async getPlayerLastActiveAt(wallets: readonly `0x${string}`[]) { return new Map(wallets.map(wallet => [wallet, 0])); },
+      async listDebrisFieldEvents() { return []; },
         async listMoonChanceReportEvents() { return []; },
         async listSettledPlanetEvents(): Promise<SettledPlanetEvent[]> { return []; },
         async getCanonicalPlanetState(planetId: bigint) {

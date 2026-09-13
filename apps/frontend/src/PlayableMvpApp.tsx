@@ -5204,9 +5204,9 @@ export function PlayableMvpApp({
         galaxyActionsForSlot({
           account,
           attackProtection: {
-            allowed: target.protection.blockedReason === "none",
+            allowed: target.protection.allowed,
             atWar: target.protection.isAtWar,
-            warEligibilityNeedsCheck: target.protection.isAtWar,
+            warEligibilityNeedsCheck: target.protection.warEligibilityNeedsCheck === true,
             blockedReason: target.protection.blockedReason,
             blockedReasonLabel: target.protection.blockedReasonLabel,
           },
@@ -6286,9 +6286,9 @@ export function PlayableMvpApp({
       const pendingAttackProtection = attackProtectionQuery.snapshot?.data;
       const pendingAttackProtectionBlocker = pendingAttackTargetId
         ? attackProtectionQuery.snapshot?.error
-          ? "Could not verify this target's active-war protection. Retry before launching an attack."
+          ? "Could not verify this target's attack protection. Retry before launching an attack."
           : !pendingAttackProtection
-            ? "Checking this target's active-war roster and protection rules."
+            ? "Checking this target's canonical attack protection."
             : attackProtectionSubmitBlocker(
                 pendingAttackProtection,
                 { ignoreBashingLimit: pendingGalaxyMission.action.kind === "missileAttack" },

@@ -1,6 +1,6 @@
 import type * as Api from "../../../packages/api-types/src/index";
 import { solarSatelliteEnergy } from "@veydrift/universe";
-import { encodeAbiParameters, keccak256 } from "viem";
+import { encodeAbiParameters, keccak256, toFunctionSelector } from "viem";
 import type { BackendConfig } from "./config";
 import { calculateHighscore, type HighscoreEntry } from "./highscores";
 import {
@@ -1422,6 +1422,7 @@ export interface ChainReader {
     targetPlanetId: bigint,
     targetIsMoon?: boolean
   ): Promise<AttackProtectionStatus>;
+  getPlayerLastActiveAt?(wallets: readonly Address[], blockNumber: bigint): Promise<Map<string, number>>;
   getHighscoreForWallet?(wallet: Address, planetIds?: string[]): Promise<HighscoreEntry>;
   getHighscoresForWallets?(planetsByOwner: ReadonlyMap<string, SettledPlanetEvent[]>): Promise<HighscoreEntry[]>;
   listAllianceDirectoryState?(): Promise<AllianceState["directory"]>;
@@ -3179,21 +3180,43 @@ export class VeydriftGameReader implements ChainReader {
     return result;
   }
 
+  // _touchPlayer emits no event, including successful owner calls that otherwise emit no logs.
+  // Read only this mapping at the ingestion checkpoint; never infer it from affected asset owners.
+  async getPlayerLastActiveAt(wallets: readonly Address[], blockNumber: bigint): Promise<Map<string, number>> {
+    const uniqueWallets = [...new Set(wallets.map(wallet => wallet.toLowerCase() as Address))];
+    const values = await this.batchCallContract(this.gameContractAddress, uniqueWallets.map(wallet => {
+      assertAddress(wallet);
+      return { selector: toFunctionSelector("playerLastActiveAt(address)"), args: [encodeAddress(wallet)] };
+    }), toQuantity(blockNumber));
+    if (values.length !== uniqueWallets.length) throw new Error("Incomplete canonical player activity snapshot");
+    return new Map(uniqueWallets.map((wallet, index) => {
+      const value = values[index]!;
+      if (!/^0x[0-9a-fA-F]{64}$/.test(value)) throw new Error("Invalid canonical player activity timestamp");
+      const seconds = Number(BigInt(value));
+      if (!Number.isSafeInteger(seconds) || seconds < 0) throw new Error("Invalid canonical player activity timestamp");
+      return [wallet, seconds];
+    }));
+  }
+
   async getAttackProtectionStatus(
     wallet: Address,
     targetPlanetId: bigint,
     targetIsMoon = false
   ): Promise<AttackProtectionStatus> {
     assertAddress(wallet);
-    const words = splitWords(await this.call(
+    const result = await this.call(
       targetIsMoon ? "0xdca08aaf" : "0x8a6b2246",
       targetIsMoon
         ? [encodeAddress(wallet), encodeUint(targetPlanetId), encodeUint(1n)]
         : [encodeAddress(wallet), encodeUint(targetPlanetId)]
-    ));
-    const blockedReason = decodeAttackBlockReason(Number(decodeUintWord(wordAt(words, 0))));
-    const flags = words.length > 1 ? Number(decodeUintWord(wordAt(words, 1))) : 0;
-    const plunderBps = words.length > 2 ? Number(decodeUintWord(wordAt(words, 2))) : 5000;
+    );
+    if (!/^0x[0-9a-fA-F]{192}$/.test(result)) throw new Error("Invalid canonical attack protection response");
+    const words = splitWords(result);
+    const reason = Number(decodeUintWord(wordAt(words, 0)));
+    const flags = Number(decodeUintWord(wordAt(words, 1)));
+    const plunderBps = Number(decodeUintWord(wordAt(words, 2)));
+    if (reason > 3 || flags > 31 || plunderBps > 10_000) throw new Error("Invalid canonical attack protection response");
+    const blockedReason = decodeAttackBlockReason(reason);
 
     return {
       wallet,
@@ -5133,25 +5156,26 @@ export class VeydriftGameReader implements ChainReader {
       });
   }
 
-  private async callContract(contractAddress: Address, selector: string, args: string[]): Promise<string> {
+  private async callContract(contractAddress: Address, selector: string, args: string[], blockTag = "latest"): Promise<string> {
     return this.transport.request<string>("eth_call", [
       {
         to: contractAddress,
         data: `${selector}${args.join("")}`
       },
-      "latest"
+      blockTag
     ]);
   }
 
   private async batchCallContract(
     contractAddress: Address,
-    calls: Array<{ selector: string; args: string[] }>
+    calls: Array<{ selector: string; args: string[] }>,
+    blockTag = "latest"
   ): Promise<string[]> {
     if (calls.length === 0) return [];
     if (calls.length > maxBatchCallSize) {
       const results: string[] = [];
       for (let index = 0; index < calls.length; index += maxBatchCallSize) {
-        results.push(...await this.batchCallContract(contractAddress, calls.slice(index, index + maxBatchCallSize)));
+        results.push(...await this.batchCallContract(contractAddress, calls.slice(index, index + maxBatchCallSize), blockTag));
       }
       return results;
     }
@@ -5159,7 +5183,7 @@ export class VeydriftGameReader implements ChainReader {
     const runSequentially = async (): Promise<string[]> => {
       const results: string[] = [];
       for (const call of calls) {
-        results.push(await this.callContract(contractAddress, call.selector, call.args));
+        results.push(await this.callContract(contractAddress, call.selector, call.args, blockTag));
       }
       return results;
     };
@@ -5176,7 +5200,7 @@ export class VeydriftGameReader implements ChainReader {
             to: contractAddress,
             data: `${call.selector}${call.args.join("")}`
           },
-          "latest"
+          blockTag
         ]
       })));
     } catch (error) {

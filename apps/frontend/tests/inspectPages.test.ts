@@ -24,6 +24,15 @@ describe("inspect pages", () => {
     expect(items.find((item) => item.label === "Ships")?.value).toBe("42");
   });
 
+  test("planet detail does not invent score protection for a canonical AFK defender (VEY-KANEO-869)", () => {
+    const signals = playerPlanetTacticalSignals(managedPlanet(), { galaxy: 5, system: 200, position: 13 }, {
+      allowed: true, blockedReason: "none", blockedReasonLabel: null, defenderInactive: true,
+      scoreComparison: { scoreType: "contract_total_user_score", attackerScore: "8000000", defenderScore: "20",
+        attackerVisibleScore: "8000000", defenderVisibleScore: "20", protected: false },
+    });
+    expect(signals.some(signal => signal.label === "Protection")).toBe(false);
+  });
+
   test("summarizes player planet tactical signals from indexed public data", () => {
     const signals = playerPlanetTacticalSignals(
       managedPlanet(),
