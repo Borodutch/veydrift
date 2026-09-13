@@ -21,7 +21,7 @@ indexed state and submits user-authorized wallet actions.
 | `apps/backend` | Bun API, SQLite indexer and configured writer services |
 | `apps/battle-keeper` | Separate fleet-resolution service |
 | `apps/chicken-burn-listener` | Cross-chain Chicken burn listener |
-| `apps/stats` | Isolated statistics service |
+| `apps/stats` | [Isolated statistics service](docs/stats-service.md) |
 | `packages/contracts` | Solidity contracts, deployment scripts and parity tests |
 | `packages/universe` | Shared universe generation and types |
 

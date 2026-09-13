@@ -1,0 +1,222 @@
+{
+  "runtime": "1.4.0",
+  "fixture": {
+    "rows": 1154189,
+    "transactions": 192365,
+    "players": 10000,
+    "planets": 50000,
+    "missions": 100000,
+    "synthetic": true
+  },
+  "plans": {
+    "delta": [
+      {
+        "id": 4,
+        "parent": 0,
+        "notused": 156,
+        "detail": "SEARCH indexed_event_logs USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)"
+      }
+    ],
+    "highWater": [
+      {
+        "id": 4,
+        "parent": 0,
+        "notused": 216,
+        "detail": "SCAN indexed_event_logs"
+      }
+    ],
+    "audit": [
+      {
+        "id": 4,
+        "parent": 0,
+        "notused": 156,
+        "detail": "SEARCH indexed_event_logs USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)"
+      }
+    ],
+    "missions": [
+      {
+        "id": 4,
+        "parent": 0,
+        "notused": 156,
+        "detail": "SEARCH contract_fleet_missions USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)"
+      }
+    ],
+    "activity": [
+      {
+        "id": 4,
+        "parent": 0,
+        "notused": 156,
+        "detail": "SEARCH indexed_player_activity USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)"
+      }
+    ]
+  },
+  "highWaterBytecode": [
+    {
+      "addr": 0,
+      "opcode": "Init",
+      "p1": 0,
+      "p2": 11,
+      "p3": 0,
+      "p4": null,
+      "p5": 0,
+      "comment": null
+    },
+    {
+      "addr": 1,
+      "opcode": "Noop",
+      "p1": 1,
+      "p2": 3,
+      "p3": 0,
+      "p4": null,
+      "p5": 0,
+      "comment": null
+    },
+    {
+      "addr": 2,
+      "opcode": "Integer",
+      "p1": 1,
+      "p2": 1,
+      "p3": 0,
+      "p4": null,
+      "p5": 0,
+      "comment": null
+    },
+    {
+      "addr": 3,
+      "opcode": "OpenRead",
+      "p1": 0,
+      "p2": 2,
+      "p3": 0,
+      "p4": "0",
+      "p5": 0,
+      "comment": null
+    },
+    {
+      "addr": 4,
+      "opcode": "Explain",
+      "p1": 4,
+      "p2": 0,
+      "p3": 216,
+      "p4": "SCAN indexed_event_logs",
+      "p5": 0,
+      "comment": null
+    },
+    {
+      "addr": 5,
+      "opcode": "Last",
+      "p1": 0,
+      "p2": 10,
+      "p3": 0,
+      "p4": null,
+      "p5": 0,
+      "comment": null
+    },
+    {
+      "addr": 6,
+      "opcode": "Rowid",
+      "p1": 0,
+      "p2": 2,
+      "p3": 0,
+      "p4": null,
+      "p5": 0,
+      "comment": null
+    },
+    {
+      "addr": 7,
+      "opcode": "ResultRow",
+      "p1": 2,
+      "p2": 1,
+      "p3": 0,
+      "p4": null,
+      "p5": 0,
+      "comment": null
+    },
+    {
+      "addr": 8,
+      "opcode": "DecrJumpZero",
+      "p1": 1,
+      "p2": 10,
+      "p3": 0,
+      "p4": null,
+      "p5": 0,
+      "comment": null
+    },
+    {
+      "addr": 9,
+      "opcode": "Prev",
+      "p1": 0,
+      "p2": 6,
+      "p3": 0,
+      "p4": null,
+      "p5": 1,
+      "comment": null
+    },
+    {
+      "addr": 10,
+      "opcode": "Halt",
+      "p1": 0,
+      "p2": 0,
+      "p3": 0,
+      "p4": null,
+      "p5": 0,
+      "comment": null
+    },
+    {
+      "addr": 11,
+      "opcode": "Transaction",
+      "p1": 0,
+      "p2": 0,
+      "p3": 11,
+      "p4": "0",
+      "p5": 1,
+      "comment": null
+    },
+    {
+      "addr": 12,
+      "opcode": "Goto",
+      "p1": 0,
+      "p2": 1,
+      "p3": 0,
+      "p4": null,
+      "p5": 0,
+      "comment": null
+    }
+  ],
+  "bootstrap": {
+    "ms": 28725.120790999998,
+    "passes": 231,
+    "sourceRows": 4629189,
+    "maxSourceRows": 24189,
+    "samples": 231,
+    "p50Ms": 123.73358300000109,
+    "p95Ms": 137.6532499999994,
+    "maxMs": 155.73549999999886
+  },
+  "idle": {
+    "samples": 20,
+    "p50Ms": 36.43866700000217,
+    "p95Ms": 40.2741659999956,
+    "maxMs": 40.2741659999956,
+    "maxSourceRows": 20000,
+    "changedRows": 0
+  },
+  "delta": {
+    "ms": 39.30554200000188,
+    "sourceRows": 20100,
+    "changedRows": 100,
+    "events": 1154289
+  },
+  "restart": {
+    "ms": 38.91537500000413,
+    "sourceRows": 20000,
+    "changedRows": 0,
+    "cursor": 1154289
+  },
+  "bytes": {
+    "source": 1458839552,
+    "store": 522006528
+  },
+  "caveat": "Local SSD synthetic fixture, not production latency/health evidence. Source event JSON ~850 bytes; existing ledger indexes, no production data. Bootstrap timings exclude the server's 1s per-pass throttle. Parent must measure backend/indexer before/after stats-only rollout.",
+  "capturedAt": "2026-09-13T03:24:15.714082+00:00",
+  "command": "bun scripts/veydrift-stats-benchmark.ts"
+}

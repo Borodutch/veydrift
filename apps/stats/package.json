@@ -6,10 +6,11 @@
   "type": "module",
   "scripts": {
     "build": "vite build",
-    "check": "tsc --project tsconfig.json && vite build",
+    "check": "bun test scripts && tsc --project tsconfig.json && vite build",
     "dev": "vite --host 0.0.0.0",
     "serve": "bun scripts/serve.mjs",
-    "start": "bun run serve"
+    "start": "bun run serve",
+    "test": "bun test scripts"
   },
   "dependencies": {
     "lucide-preact": "^1.16.0",
