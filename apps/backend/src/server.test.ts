@@ -30,7 +30,7 @@ import type {
   WalletPlanets
 } from "./evm";
 import { calculateHighscore, type HighscoreEntry } from "./highscores";
-import { VeydriftGameReader, riftRequirements, decodeBattleReportLogs } from "./evm";
+import { VeydriftGameReader, riftRequirements, decodeBattleReportLogs, attackBlockReasonLabel } from "./evm";
 import { SettlementIndexer, type IndexedRpcLog } from "./indexer";
 import { MissionResolutionService } from "./missionResolution";
 import { watchedPlanetMessage } from "./playerProfiles";
@@ -847,6 +847,20 @@ class MockChainReader implements ChainReader {
       }
     ];
   }
+}
+
+function protectionReader(overrides: Partial<AttackProtectionStatus> = {}): MockChainReader {
+  const reader = new MockChainReader();
+  const base = reader.getAttackProtectionStatus.bind(reader);
+  reader.getAttackProtectionStatus = async (wallet, planetId) => ({
+    ...await base(wallet, planetId),
+    ...(overrides.blockedReason ? {
+      allowed: overrides.blockedReason === "none",
+      blockedReasonLabel: attackBlockReasonLabel(overrides.blockedReason)
+    } : {}),
+    ...overrides
+  });
+  return reader;
 }
 
 function testIndexer(): SettlementIndexer {
@@ -6011,10 +6025,10 @@ describe("Veydrift backend", () => {
     });
   });
 
-  test("serves direct attack protection from indexed scores without chain reader", async () => {
+  test("fails closed when canonical attack protection is unavailable", async () => {
     const chainReader = new class extends MockChainReader {
       override async getAttackProtectionStatus(): Promise<AttackProtectionStatus> {
-        throw new Error("frontend attack protection reads must not call chain reader");
+        throw new Error("RPC unavailable");
       }
     }();
     const response = await createRequestHandler({
@@ -6024,24 +6038,24 @@ describe("Veydrift backend", () => {
     })(new Request(`http://localhost/wallet/${player}/attack-protection?targetPlanetId=7`));
     const body = await response.json();
 
-    expect(response.status).toBe(200);
-    expect(body).toMatchObject({
-      wallet: player,
-      targetPlanetId: "7",
-      source: "contract-state-indexer"
-    });
+    expect(response.status).toBe(503);
+    expect(body.error).toBe("attack_protection_unavailable");
+    expect(body).not.toHaveProperty("allowed");
   });
 
   // VEY-KANEO-489: build a warm two-planet indexer (planet 7 -> player, planet 8 -> attacker) so the
   // single-target /attack-protection read derives both scores from indexed defenses.
-  async function twoPlanetIndexer(attacker: Address): Promise<SettlementIndexer> {
+  async function twoPlanetIndexer(attacker: Address, lastActiveAt = 0): Promise<SettlementIndexer> {
     const chainReader = new MockChainReader();
     chainReader.listSettledPlanetEvents = async () => [
       { ...planet, eventName: "PlanetStarted", planetId: "7", owner: player, transactionHash: "0xabc1", blockNumber: "123" },
       { ...planet, eventName: "PlanetStarted", planetId: "8", owner: attacker, transactionHash: "0xabc2", blockNumber: "124" }
     ];
-    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    const indexer = new SettlementIndexer(Object.assign(chainReader, {
+      async getPlayerLastActiveAt(wallets: readonly Address[]) { return new Map(wallets.map(wallet => [wallet, lastActiveAt])); }
+    }), configuredTestConfig.indexFromBlock);
     await indexer.rebuild();
+    (await indexer.preparePlayerActivitySnapshot(124n, []))();
     return indexer;
   }
 
@@ -6087,7 +6101,7 @@ describe("Veydrift backend", () => {
     }));
     // Defender raw score stays low; the derived fixture lands in the 1.5x newbie-protection band.
     indexer.applyLog(defenseCompletedLog({ planetId: 7n, defenseId: 0n, total: 335n, logIndex: 2 }));
-    const handler = createRequestHandler({ config: configuredTestConfig, chainReader: new MockChainReader(), indexer });
+    const handler = createRequestHandler({ config: configuredTestConfig, chainReader: protectionReader({ blockedReason: "score_protection", relation: "weaker" }), indexer });
 
     const directResponse = await handler(new Request(`http://localhost/wallet/${attacker}/attack-protection?targetPlanetId=7`));
     const directBody = await directResponse.json();
@@ -6157,7 +6171,7 @@ describe("Veydrift backend", () => {
       topics: [moonCreatedTopic, addressTopic(player), topic(7n)],
       data: abiWords(2n, 44n, 9n, 12n, 8777n)
     });
-    const handler = createRequestHandler({ config: configuredTestConfig, chainReader: new MockChainReader(), indexer });
+    const handler = createRequestHandler({ config: configuredTestConfig, chainReader: protectionReader({ blockedReason: "score_protection" }), indexer });
 
     const response = await handler(new Request(`http://localhost/wallet/${attacker}/attack-protection?targetPlanetId=7`));
     const body = await response.json();
@@ -6173,6 +6187,12 @@ describe("Veydrift backend", () => {
       scoreComparison: { protected: true }
     });
 
+    const rankings = await (await handler(new Request(
+      `http://localhost/highscores?limit=10&currentWallet=${attacker}&includeAttackProtection=true`
+    ))).json();
+    expect(rankings.rankings.total.find((row: { wallet: string }) => row.wallet === player).attackProtection)
+      .toMatchObject({ allowed: true, blockedReason: "none" });
+
     const moonResponse = await handler(new Request(
       `http://localhost/wallet/${attacker}/attack-protection?targetPlanetId=7&targetIsMoon=true`
     ));
@@ -6182,7 +6202,7 @@ describe("Veydrift backend", () => {
     expect(moonBody).toMatchObject({
       allowed: false,
       blockedReason: "score_protection",
-      plunderBps: 0,
+      plunderBps: 5000,
       scoreComparison: { protected: true }
     });
     expect(moonBody).not.toHaveProperty("riftProtectionBypass");
@@ -6213,7 +6233,7 @@ describe("Veydrift backend", () => {
     // total user score.
     indexer.applyLog(defenseCompletedLog({ planetId: 8n, defenseId: 0n, total: 350_000n, logIndex: 1 }));
     indexer.applyLog(defenseCompletedLog({ planetId: 7n, defenseId: 0n, total: 30_000n, logIndex: 2 }));
-    const handler = createRequestHandler({ config: configuredTestConfig, chainReader: new MockChainReader(), indexer });
+    const handler = createRequestHandler({ config: configuredTestConfig, chainReader: protectionReader({ blockedReason: "score_protection" }), indexer });
     const attackerScore = indexer.highscoreForWallet(attacker);
     const defenderScore = indexer.highscoreForWallet(player);
 
@@ -6306,7 +6326,7 @@ describe("Veydrift backend", () => {
         logIndex: 100 + index,
       }));
     }
-    const handler = createRequestHandler({ config: configuredTestConfig, chainReader: new MockChainReader(), indexer });
+    const handler = createRequestHandler({ config: configuredTestConfig, chainReader: protectionReader({ blockedReason: "bashing_limit" }), indexer });
 
     const response = await handler(new Request(`http://localhost/wallet/${attacker}/attack-protection?targetPlanetId=7`));
     const body = await response.json();
@@ -6353,7 +6373,8 @@ describe("Veydrift backend", () => {
           data: abiWords(0n, 1n)
         });
       }
-      const handler = createRequestHandler({ config: configuredTestConfig, chainReader: new MockChainReader(), indexer });
+      const reader = protectionReader({ blockedReason: "bashing_limit" });
+      const handler = createRequestHandler({ config: configuredTestConfig, chainReader: reader, indexer });
       const planetResponse = await handler(new Request(`http://localhost/wallet/${attacker}/attack-protection?targetPlanetId=7`));
       const moonResponse = await handler(new Request(`http://localhost/wallet/${attacker}/attack-protection?targetPlanetId=7&targetIsMoon=true`));
       expect(await planetResponse.json()).toMatchObject({ allowed: false, blockedReason: "bashing_limit" });
@@ -6366,6 +6387,7 @@ describe("Veydrift backend", () => {
         .toMatchObject({ allowed: false, blockedReason: "bashing_limit" });
 
       setSystemTime(new Date((nowSeconds + 86_401) * 1_000));
+      reader.getAttackProtectionStatus = new MockChainReader().getAttackProtectionStatus;
       const expiredPlanetResponse = await handler(new Request(
         `http://localhost/wallet/${attacker}/attack-protection?targetPlanetId=7`
       ));
@@ -6473,10 +6495,21 @@ describe("Veydrift backend", () => {
       topics: [allianceJoinedTopic, topic(1n), addressTopic(attacker)],
       data: abiWords(1n)
     });
-    const handler = createRequestHandler({ config: configuredTestConfig, chainReader: new MockChainReader(), indexer });
+    indexer.applyLog({
+      blockNumber: "0x200", transactionHash: "0xally-rift", logIndex: "0x0",
+      topics: [riftExtractionStartedTopic, addressTopic(player), topic(7n), topic(0n)],
+      data: abiWords(1_000n, 1_770_000_000n, 1_772_419_200n)
+    });
+    const handler = createRequestHandler({ config: configuredTestConfig, chainReader: protectionReader({ blockedReason: "same_alliance" }), indexer });
 
     const response = await handler(new Request(`http://localhost/wallet/${attacker}/attack-protection?targetPlanetId=7`));
     const body = await response.json();
+
+    const rankings = await (await handler(new Request(
+      `http://localhost/highscores?limit=10&currentWallet=${attacker}&includeAttackProtection=true`
+    ))).json();
+    expect(rankings.rankings.total.find((row: { wallet: string }) => row.wallet === player).attackProtection)
+      .toMatchObject({ allowed: false, blockedReason: "same_alliance" });
 
     expect(response.status).toBe(200);
     expect(body).toMatchObject({
@@ -6630,17 +6663,17 @@ describe("Veydrift backend", () => {
     });
   });
 
-  test("indexed attack protection marks inactive defenders from indexed player activity (VEY-KANEO-500)", async () => {
+  test("indexed attack protection marks inactive defenders from canonical activity despite passive completion (VEY-KANEO-869)", async () => {
     const attacker = "0x9999999999999999999999999999999999999999" as Address;
-    const indexer = await twoPlanetIndexer(attacker);
+    const indexer = await twoPlanetIndexer(attacker, Math.floor(Date.now() / 1_000) - 8 * 86400);
     indexer.applyLog(defenseCompletedLog({
       planetId: 7n,
       defenseId: 0n,
       total: 10n,
-      blockTimestampSeconds: Math.floor(Date.now() / 1_000) - (8 * 24 * 60 * 60),
+      blockTimestampSeconds: Math.floor(Date.now() / 1_000),
       logIndex: 1
     }));
-    const handler = createRequestHandler({ config: configuredTestConfig, chainReader: new MockChainReader(), indexer });
+    const handler = createRequestHandler({ config: configuredTestConfig, chainReader: protectionReader({ defenderInactive: true }), indexer });
 
     const response = await handler(new Request(`http://localhost/wallet/${attacker}/attack-protection?targetPlanetId=7`));
     const body = await response.json();
@@ -6654,14 +6687,14 @@ describe("Veydrift backend", () => {
     });
   });
 
-  test("indexed highscore rankings report defenderInactive from indexed player activity (VEY-KANEO-500)", async () => {
+  test("indexed highscore rankings report defenderInactive from canonical activity despite passive completion (VEY-KANEO-869)", async () => {
     const attacker = "0x9999999999999999999999999999999999999999" as Address;
-    const indexer = await twoPlanetIndexer(attacker);
+    const indexer = await twoPlanetIndexer(attacker, Math.floor(Date.now() / 1_000) - 8 * 86400);
     indexer.applyLog(defenseCompletedLog({
       planetId: 7n,
       defenseId: 0n,
       total: 10n,
-      blockTimestampSeconds: Math.floor(Date.now() / 1_000) - (8 * 24 * 60 * 60),
+      blockTimestampSeconds: Math.floor(Date.now() / 1_000),
       logIndex: 1
     }));
     const handler = createRequestHandler({ config: configuredTestConfig, chainReader: new MockChainReader(), indexer });

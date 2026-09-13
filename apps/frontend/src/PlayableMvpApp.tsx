@@ -6286,9 +6286,9 @@ export function PlayableMvpApp({
       const pendingAttackProtection = attackProtectionQuery.snapshot?.data;
       const pendingAttackProtectionBlocker = pendingAttackTargetId
         ? attackProtectionQuery.snapshot?.error
-          ? "Could not verify this target's active-war protection. Retry before launching an attack."
+          ? "Could not verify this target's attack protection. Retry before launching an attack."
           : !pendingAttackProtection
-            ? "Checking this target's active-war roster and protection rules."
+            ? "Checking this target's canonical attack protection."
             : attackProtectionSubmitBlocker(
                 pendingAttackProtection,
                 { ignoreBashingLimit: pendingGalaxyMission.action.kind === "missileAttack" },

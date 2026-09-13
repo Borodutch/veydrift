@@ -26,7 +26,7 @@ test("shows canonical active-war eligibility and persistent mission errors in th
   expect(missionCreationSource).toContain("warProtectionNotice");
   expect(missionCreationSource).toContain("actionError");
   expect(missionCreationSource).toContain('role="alert"');
-  expect(playableMvpAppSource).toContain("Checking this target's active-war roster and protection rules.");
+  expect(playableMvpAppSource).toContain("Checking this target's canonical attack protection.");
   expect(playableMvpAppSource).toContain("Frozen original rosters and declaration direction still apply.");
 });
 

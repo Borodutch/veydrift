@@ -18,8 +18,9 @@ import { emitObservabilityEvent } from "./observability";
 // `listContractLogs` returns every indexed-contract log in a block range (chunked internally). The
 // websocket subscriber only wakes this canonical HTTP scan; HTTP also runs independently for
 // startup gaps, websocket failures, and missed notifications. applyLog
-// dedups by txHash:logIndex, so overlapping ranges are idempotent. Runtime mutation must stay event-only:
-// canonical state reads are reserved for a one-time operator heal, never for live log handling.
+// dedups by txHash:logIndex, so overlapping ranges are idempotent. Asset mutation stays event-only.
+// The narrow playerLastActiveAt mapping has no event and is sampled at the same verified head;
+// it must never be reconstructed from passive asset events. Other canonical reads remain repair-only.
 type LogBackfiller = {
   failoverRpc?(reason: string): boolean;
   getHeadBlock(): Promise<bigint>;
@@ -42,6 +43,7 @@ export type LiveLogSubscriber = {
 };
 
 type ChainSyncIndexer = Partial<Pick<SettlementIndexer,
+  | "preparePlayerActivitySnapshot"
   | "applyLog"
   | "commitLogBatch"
   | "clearPendingReconciliationReason"
@@ -572,6 +574,8 @@ export class ChainSyncService {
         await this.ensurePaidAllianceInviteHistoryBackfilled(head, backfiller, applyLog),
         await this.ensureTimedMissilePayloadHistoryBackfilled(head, backfiller, applyLog, headAnchor, genericRange, afterReconciliation),
       ]) if (commit) commits.push(commit);
+      const commitActivity = await this.indexer?.preparePlayerActivitySnapshot?.(head, genericRange?.logs ?? []);
+      if (commitActivity) commits.push(commitActivity);
       // Publish the projection clock only after every indexed log source has durably scanned through
       // this block. A crash/failure before here leaves the old timestamp in place (conservative),
       // while publishing it earlier could combine block-N time with pre-N resource state.

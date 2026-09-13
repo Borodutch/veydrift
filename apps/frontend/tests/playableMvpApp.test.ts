@@ -1407,6 +1407,21 @@ describe("Playable MVP app display helpers", () => {
     ).toBeUndefined();
   });
 
+  test("AFK preflight permits composition but fresh owner activity or RPC failure prevents submission (VEY-KANEO-869)", async () => {
+    let walletSubmissions = 0;
+    const submit = async (load: () => Promise<{ allowed: boolean; blockedReason: "none" | "score_protection"; blockedReasonLabel: string | null }>) => {
+      await revalidateAttackProtectionBeforeSubmit(load);
+      walletSubmissions++;
+    };
+    await submit(async () => ({ allowed: true, blockedReason: "none", blockedReasonLabel: null }));
+    expect(walletSubmissions).toBe(1);
+    await expect(submit(async () => ({ allowed: false, blockedReason: "score_protection", blockedReasonLabel: "Owner is active again" })))
+      .rejects.toThrow("Owner is active again");
+    await expect(submit(async () => { throw new Error("Canonical protection unavailable"); }))
+      .rejects.toThrow("Canonical protection unavailable");
+    expect(walletSubmissions).toBe(1);
+  });
+
   test("revalidates canonical protection before any wallet submission can run", async () => {
     let protectionReads = 0;
     let walletSubmissions = 0;

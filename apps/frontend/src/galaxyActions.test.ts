@@ -220,6 +220,26 @@ describe("galaxyActions", () => {
     });
   });
 
+  test("canonical AFK bypass keeps Galaxy and Rankings Attack enabled despite a huge score gap (VEY-KANEO-869)", () => {
+    const canonicalStatus = {
+      allowed: true, blockedReason: "none" as const, blockedReasonLabel: null, defenderInactive: true,
+      scoreComparison: {
+        scoreType: "contract_total_user_score" as const, attackerScore: "8000000", defenderScore: "20",
+        attackerVisibleScore: "8000000", defenderVisibleScore: "20", protected: false,
+      },
+    };
+    const rankedStatus = rankingsAttackProtectionForEntry({ currentWallet: account, entry: {
+      wallet: "0x14074a4dc440230523a9fb7a0ce6934a6118e7c6", alliance: null, attackProtection: canonicalStatus,
+    } });
+    for (const attackProtection of [canonicalStatus, rankedStatus]) {
+      const attack = galaxyActionsForSlot({ account, attackProtection, homePlanetId: "7", planet: planet(),
+        shipyardState: shipyardState([{ id: 1, count: 3 }]),
+      }).find(action => action.kind === "attack");
+      expect(attack).toMatchObject({ enabled: true, label: "Attack" });
+    }
+    expect(rankingsProtectionPresentation(canonicalStatus)).toBeUndefined();
+  });
+
   test("keeps a canonically allowed Rankings target attackable", () => {
     const canonicalStatus = {
       allowed: true,

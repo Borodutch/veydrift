@@ -978,7 +978,8 @@ export class SettlementIndexer {
       "listDebrisFieldEvents" | "listMoonChanceReportEvents" | "listSettledPlanetEvents"
     > & Pick<
       Partial<ChainReader>,
-      "getDefenseState"
+      "getPlayerLastActiveAt"
+        | "getDefenseState"
         | "getStartPrice"
         | "getInfrastructureState"
         | "getMoonState"
@@ -1806,11 +1807,12 @@ export class SettlementIndexer {
       const rows = this.db.query(`
         SELECT wallet, last_active_at
         FROM indexed_player_activity
-        WHERE wallet IN (${walletChunk.map(() => "?").join(",")})
+        WHERE event_id LIKE 'canonical-activity:%'
+          AND wallet IN (${walletChunk.map(() => "?").join(",")})
       `).all(...walletChunk) as PlayerActivityRow[];
       for (const row of rows) {
         const seconds = Number(row.last_active_at);
-        if (Number.isFinite(seconds) && seconds > 0) {
+        if (Number.isFinite(seconds) && seconds >= 0) {
           activity.set(row.wallet.toLowerCase(), seconds);
         }
       }
@@ -4744,7 +4746,6 @@ export class SettlementIndexer {
           SET removed = 0, event_json = ?, block_number = ?, received_at = ?
           WHERE event_id = ?
         `).run(JSON.stringify(log), blockNumberToDecimal(log.blockNumber), new Date().toISOString(), eventId);
-        this.recordPlayerActivityFromLog(eventId, log);
         this.recordPlayerActivityFeedFromLog(eventId, log);
         this.applyPlanetSettledEvent(decodePlanetSettledLog(log));
         this.recordLatestBlock(log.blockNumber);
@@ -4761,7 +4762,6 @@ export class SettlementIndexer {
           SET removed = 0, event_json = ?, block_number = ?, received_at = ?
           WHERE event_id = ?
         `).run(JSON.stringify(log), blockNumberToDecimal(log.blockNumber), new Date().toISOString(), eventId);
-        this.recordPlayerActivityFromLog(eventId, log);
         this.recordPlayerActivityFeedFromLog(eventId, log);
         this.applyQueueCompletedEvent(decodeIndexedQueueCompletedLog(log));
         this.recordLatestBlock(log.blockNumber);
@@ -4774,7 +4774,6 @@ export class SettlementIndexer {
           SET removed = 0, event_json = ?, block_number = ?, received_at = ?
           WHERE event_id = ?
         `).run(JSON.stringify(log), blockNumberToDecimal(log.blockNumber), new Date().toISOString(), eventId);
-        this.recordPlayerActivityFromLog(eventId, log);
         this.recordPlayerActivityFeedFromLog(eventId, log);
         const affectedQueue = productionQueueProjectionIdentity(log)!;
         this.rebuildProductionQueueProjectionFromEventLogs(
@@ -4834,7 +4833,6 @@ export class SettlementIndexer {
           WHERE event_id = ?
         `).run(JSON.stringify(log), blockNumberToDecimal(log.blockNumber), new Date().toISOString(), eventId);
         this.recordUnitCountEventLog(eventId, log);
-        this.recordPlayerActivityFromLog(eventId, log);
         this.recordPlayerActivityFeedFromLog(eventId, log);
         if (isShipCountChangedLog(log)) {
           this.applyShipCountChangedEvent(decodeShipCountChangedLog(log));
@@ -4856,7 +4854,6 @@ export class SettlementIndexer {
           WHERE event_id = ?
         `).run(JSON.stringify(log), blockNumberToDecimal(log.blockNumber), new Date().toISOString(), eventId);
         this.recordMissileAttackEvent(eventId, log);
-        this.recordPlayerActivityFromLog(eventId, log);
         this.recordPlayerActivityFeedFromLog(eventId, log);
         this.applyInterplanetaryMissileAttackCompatibilityEvent(
           decodeInterplanetaryMissileAttackLog(log)
@@ -4943,7 +4940,6 @@ export class SettlementIndexer {
       return { applied: false, duplicate: false, ignored: false, removed: true, snapshot: this.snapshot() };
     }
 
-    this.recordPlayerActivityFromLog(eventId, log);
     this.recordPlayerActivityFeedFromLog(eventId, log);
 
     if (isSettledPlanetLog(log)) {
@@ -12004,65 +12000,40 @@ export class SettlementIndexer {
     this.recordLatestBlock(log.blockNumber);
   }
 
-  private recordPlayerActivityFromLog(eventId: string, log: IndexedRpcLog): void {
-    const lastActiveAt = blockTimestampSeconds(log);
-    if (!lastActiveAt) return;
-
-    const owner = this.playerActivityOwnerForLog(log);
-    if (!owner) return;
-
-    this.db.query(`
-      INSERT INTO indexed_player_activity (wallet, last_active_at, event_id)
-      VALUES (lower(?), ?, ?)
-      ON CONFLICT(wallet) DO UPDATE SET
-        last_active_at = CASE
-          WHEN CAST(excluded.last_active_at AS INTEGER) > CAST(indexed_player_activity.last_active_at AS INTEGER)
-          THEN excluded.last_active_at
-          ELSE indexed_player_activity.last_active_at
-        END,
-        event_id = CASE
-          WHEN CAST(excluded.last_active_at AS INTEGER) > CAST(indexed_player_activity.last_active_at AS INTEGER)
-          THEN excluded.event_id
-          ELSE indexed_player_activity.event_id
-        END
-    `).run(owner, lastActiveAt, eventId);
-  }
-
-  private playerActivityOwnerForLog(log: IndexedRpcLog): Address | null {
-    try {
-      if (isSettledPlanetLog(log)) return decodeSettledPlanetLog(log).owner;
-      if (isFirstPlanetSettledLog(log)) return decodeFirstPlanetSettledLog(log).player;
-      if (isPlayerMigrationLog(log)) return decodePlayerMigrationLog(log).player;
-      if (isPlanetRenamedLog(log)) return decodePlanetRenamedLog(log).owner;
-      if (isRiftResourceLog(log)) return decodeRiftResourceLog(log).owner;
-
-      if (isIndexedQueueStartedLog(log)) {
-        const event = decodeIndexedQueueStartedLog(log);
-        return event.owner ?? this.ownerForPlanetActivity(event.planetId);
-      }
-
-      if (isIndexedQueueCompletedLog(log)) {
-        const event = decodeIndexedQueueCompletedLog(log);
-        return event.owner ?? this.ownerForPlanetActivity(event.planetId);
-      }
-
-      if (isPlanetSettledLog(log)) return this.ownerForPlanetActivity(decodePlanetSettledLog(log).planetId);
-      if (isMoonResourcesSettledLog(log)) return this.ownerForPlanetActivity(decodeMoonResourcesSettledLog(log).planetId);
-      if (isShipCountChangedLog(log)) return this.ownerForPlanetActivity(decodeShipCountChangedLog(log).planetId);
-      if (isDefenseCountChangedLog(log)) return this.ownerForPlanetActivity(decodeDefenseCountChangedLog(log).planetId);
-      if (isMoonShipCountChangedLog(log)) return this.ownerForPlanetActivity(decodeMoonShipCountChangedLog(log).planetId);
-      if (isMoonDefenseCountChangedLog(log)) return this.ownerForPlanetActivity(decodeMoonDefenseCountChangedLog(log).planetId);
-      if (isMoonCreatedLog(log)) return decodeMoonCreatedLog(log).owner;
-      if (isMoonJumpGateLog(log)) return decodeMoonJumpGateLog(log).player;
-
-      if (isFleetMissionLog(log)) {
-        const mission = [...decodeFleetMissionLogs([log]).values()][0];
-        return mission?.owner ?? null;
-      }
-    } catch {
-      return null;
+  // The only non-event gameplay field sampled by each HTTP ingestion pass: _touchPlayer has no
+  // event. Stage RPC reads before the SQLite transaction, then commit with the verified head/logs.
+  // Sampling all indexed owners also catches genuine owner calls with no emitted logs.
+  async preparePlayerActivitySnapshot(blockNumber: bigint, logs: readonly IndexedRpcLog[]): Promise<() => void> {
+    const read = this.chainReader.getPlayerLastActiveAt;
+    if (!read) throw new Error("Canonical player activity reader is unavailable");
+    const wallets = new Set((this.db.query("SELECT DISTINCT lower(owner) AS wallet FROM contract_planets").all() as { wallet: Address }[])
+      .map(row => row.wallet));
+    for (const log of logs) {
+      if (!log.removed && isSettledPlanetLog(log)) wallets.add(decodeSettledPlanetLog(log).owner.toLowerCase() as Address);
     }
-    return null;
+    const activity = await read.call(this.chainReader, [...wallets], blockNumber);
+    for (const wallet of wallets) {
+      const value = activity.get(wallet);
+      if (value === undefined || !Number.isSafeInteger(value) || value < 0) {
+        throw new Error(`Incomplete canonical player activity snapshot for ${wallet}`);
+      }
+    }
+    return () => {
+      const upsert = this.db.query(`
+        INSERT INTO indexed_player_activity (wallet, last_active_at, event_id) VALUES (?, ?, ?)
+        ON CONFLICT(wallet) DO UPDATE SET last_active_at = excluded.last_active_at, event_id = excluded.event_id
+        WHERE indexed_player_activity.last_active_at != excluded.last_active_at
+          OR indexed_player_activity.event_id NOT LIKE 'canonical-activity:%'
+      `);
+      let changed = 0;
+      for (const wallet of wallets) {
+        // Deliberately replace, not MAX: the first snapshot repairs polluted timestamps and a
+        // later snapshot can roll back genuine activity removed by a reorg. Zero is canonical too.
+        changed += upsert.run(wallet, String(activity.get(wallet)!), `canonical-activity:${blockNumber}`).changes;
+      }
+      this.setMetadata("canonicalPlayerActivityBlock", blockNumber.toString());
+      if (changed > 0) this.touch();
+    };
   }
 
   private recordPlayerActivityFeedFromLog(
