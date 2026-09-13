@@ -95,13 +95,13 @@ h1 em { color: transparent; font-style: normal; -webkit-text-stroke: 1px #8ca6a1
 .activity-panel { margin-bottom: 12px; }
 .panel-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 23px; color: #63706e; }
 .panel-header h2 { color: #e6eeec; margin: 7px 0 0; font: 600 24px Space Grotesk; letter-spacing: -.025em; }
-.chart-controls { display:flex; align-items:center; gap:10px; }
-.toggle-group { display:flex; align-items:center; padding:3px; border:1px solid var(--line); border-radius:7px; background:rgba(3,6,8,.45); }
+.chart-controls { display:flex; flex-wrap:wrap; align-items:center; justify-content:flex-end; gap:10px; }
+.toggle-group { display:flex; flex-wrap:wrap; align-items:center; padding:3px; border:1px solid var(--line); border-radius:7px; background:rgba(3,6,8,.45); }
 .toggle-group button { appearance:none; border:0; border-radius:4px; padding:7px 9px; color:#687572; background:transparent; cursor:pointer; font:500 8px DM Mono; letter-spacing:.08em; text-transform:uppercase; transition:color .18s, background .18s, box-shadow .18s; }
 .toggle-group button:hover { color:#b8c9c6; }
 .toggle-group button:focus-visible { outline:1px solid var(--cyan); outline-offset:1px; }
 .toggle-group button.active { color:#07100f; background:var(--cyan); box-shadow:0 0 14px rgba(87,242,221,.16); }
-.legend { display:flex; justify-content:flex-end; gap:9px; align-items:center; min-height:18px; margin:-8px 0 2px; color:#65726f; font:9px DM Mono; letter-spacing:.08em; text-transform:capitalize; }
+.legend { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:9px; align-items:center; min-height:18px; margin:-8px 0 2px; color:#65726f; font:9px DM Mono; letter-spacing:.08em; text-transform:capitalize; }
 .line-key { width: 22px; height: 2px; background: var(--cyan); }.dot-key { width: 7px; height: 7px; border-radius: 50%; background: var(--violet); margin-left: 13px; }
 .chart-shell { position:relative; }
 .chart-shell svg { width: 100%; display: block; overflow: visible; cursor:crosshair; touch-action:pan-y; }

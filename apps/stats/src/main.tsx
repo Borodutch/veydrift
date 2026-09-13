@@ -38,14 +38,18 @@ interface Stats {
     battles: number;
     alliances: number;
   };
-  daily: Array<{ date: string; transactions: number; events: number; newPlayers: number }>;
+  daily: Array<{ date: string; transactions: number; events: number; newPlayers: number; fleetMissions: number; battles: number }>;
   contracts: Array<{ address: string; label: string; transactions: number; events: number }>;
   topEvents: Array<{ name: string; transactions: number; events: number }>;
 }
 
 const number = new Intl.NumberFormat("en-US");
 const compact = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 });
-type ActivityMetric = "transactions" | "events";
+type ContractMetric = "transactions" | "events";
+type ActivityMetric = ContractMetric | "fleetMissions" | "battles";
+const metricLabels: Record<ActivityMetric, string> = {
+  transactions: "Transactions", events: "Events", fleetMissions: "Fleets launched", battles: "Battles resolved"
+};
 type ActivityRange = 7 | 14 | 30;
 
 function shortAddress(address: string): string {
@@ -62,11 +66,11 @@ function ActivityChart({ daily, metric }: { daily: Stats["daily"]; metric: Activ
   const width = 920;
   const height = 270;
   const inset = 18;
-  const max = Math.max(...daily.map((item) => item[metric]), 1);
+  const max = Math.max(...daily.map((item) => (item[metric] ?? 0)), 1);
   const points = daily.map((item, index) => ({
     ...item,
     x: inset + index * ((width - inset * 2) / Math.max(daily.length - 1, 1)),
-    y: height - inset - (item[metric] / max) * (height - inset * 2)
+    y: height - inset - ((item[metric] ?? 0) / max) * (height - inset * 2)
   }));
   const line = points.map((point) => `${point.x},${point.y}`).join(" ");
   const area = `${inset},${height - inset} ${line} ${width - inset},${height - inset}`;
@@ -84,7 +88,7 @@ function ActivityChart({ daily, metric }: { daily: Stats["daily"]; metric: Activ
       <svg
         viewBox={`0 0 ${width} ${height}`}
         role="img"
-        aria-label={`Daily onchain ${metric}`}
+        aria-label={`Daily onchain ${metricLabels[metric]}`}
         tabIndex={0}
         onPointerMove={selectFromPointer}
         onPointerDown={selectFromPointer}
@@ -140,7 +144,7 @@ function ActivityChart({ daily, metric }: { daily: Stats["daily"]; metric: Activ
           style={{ left: `${activePoint.x / width * 100}%`, top: `${Math.max(4, activePoint.y / height * 100 - 7)}%` }}
         >
           <time>{new Date(`${activePoint.date}T00:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" })}</time>
-          <strong>{number.format(activePoint[metric])} {metric}</strong>
+          <strong>{number.format((activePoint[metric] ?? 0))} {metricLabels[metric].toLowerCase()}</strong>
           <span>{number.format(activePoint.transactions)} tx · {number.format(activePoint.events)} events</span>
           <span>+{activePoint.newPlayers} new commander{activePoint.newPlayers === 1 ? "" : "s"}</span>
         </div>
@@ -194,7 +198,7 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [activityMetric, setActivityMetric] = useState<ActivityMetric>("transactions");
   const [activityRange, setActivityRange] = useState<ActivityRange>(30);
-  const [contractMetric, setContractMetric] = useState<ActivityMetric>("transactions");
+  const [contractMetric, setContractMetric] = useState<ContractMetric>("transactions");
 
   useEffect(() => {
     let active = true;
@@ -258,7 +262,7 @@ function App() {
               <span class="pulse" />
               Indexed through Base block <strong>{number.format(stats.coverage.throughBlock)}</strong>
               <span class="separator">/</span>
-              updating every 30s
+              checked every 30s
             </div>
           )}
         </div>
@@ -273,6 +277,7 @@ function App() {
         </div>
       </section>
 
+      {error && stats && <div class="error-panel">Showing the last completed snapshot. {error}. Retrying automatically.</div>}
       {error && !stats && <div class="error-panel">{error}. Retrying automatically.</div>}
       {!stats && !error && <div class="loading"><span /><span /><span /> Acquiring telemetry</div>}
 
@@ -294,7 +299,9 @@ function App() {
               <div class="chart-controls">
                 <ToggleGroup
                   value={activityMetric}
-                  values={[{ value: "transactions", label: "Transactions" }, { value: "events", label: "Events" }]}
+                  values={([
+                    "transactions", "events", "fleetMissions", "battles"
+                  ] as const).map((value) => ({ value, label: metricLabels[value] }))}
                   onChange={setActivityMetric}
                   label="Activity metric"
                 />
@@ -306,7 +313,7 @@ function App() {
                 />
               </div>
             </header>
-            <div class="legend"><i class="line-key" /> {activityMetric} <i class="dot-key" /> New commanders</div>
+            <div class="legend"><i class="line-key" /> {metricLabels[activityMetric]} · UTC days <i class="dot-key" /> New commanders</div>
             <ActivityChart daily={activityDays} metric={activityMetric} />
             <div class="mini-stats">
               <div><span>Active commanders · 24h</span><strong>{stats.summary.activePlayers24h}</strong></div>
@@ -368,7 +375,7 @@ function App() {
 
           <footer>
             <div><span class="pulse" /> LIVE FROM BASE</div>
-            <p>Canonical onchain telemetry from blocks {number.format(stats.coverage.fromBlock)}–{number.format(stats.coverage.throughBlock)}. One transaction may emit several events.</p>
+            <p>Indexed event time: {stats.coverage.throughTimestamp ? new Date(stats.coverage.throughTimestamp * 1000).toLocaleString() : "unavailable"}. Canonical onchain telemetry from blocks {number.format(stats.coverage.fromBlock)}–{number.format(stats.coverage.throughBlock)}. One transaction may emit several events.</p>
             <span>{new Date(stats.generatedAt).toLocaleString()}</span>
           </footer>
         </>

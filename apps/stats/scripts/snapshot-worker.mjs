@@ -1,5 +1,7 @@
 import { Database } from "bun:sqlite";
-import { buildPublicStatsSnapshot } from "../../backend/src/stats.ts";
+import { mkdirSync, realpathSync, statSync, existsSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { initializeStatsStore, refreshPublicStats } from "../../backend/src/stats.ts";
 
 const indexDbPath = process.env.VEYDRIFT_INDEX_DB_PATH ?? "/app/apps/backend/.data/contract-state.sqlite";
 
@@ -25,9 +27,26 @@ function contractDescriptors() {
   return [...labels].map(([address, label]) => ({ address, label }));
 }
 
-const db = new Database(indexDbPath, { readonly: true });
+const storePath = resolve(process.env.VEYDRIFT_STATS_DB_PATH ?? ".data/stats.sqlite");
+const sourcePath = realpathSync(indexDbPath);
+const sourceStat = statSync(sourcePath);
+if (storePath === sourcePath || (existsSync(storePath) && (
+  realpathSync(storePath) === sourcePath
+  || (statSync(storePath).ino === sourceStat.ino && statSync(storePath).dev === sourceStat.dev)
+))) throw new Error("Stats persistence must not use the backend database");
+mkdirSync(dirname(storePath), { recursive: true });
+const db = new Database(sourcePath, { readonly: true });
+const store = new Database(storePath, { create: true, readwrite: true });
 try {
-  process.stdout.write(JSON.stringify(buildPublicStatsSnapshot(db, contractDescriptors(), undefined, 0)));
+  // Connection-local limits only: never add an index or trigger to the shared database.
+  db.exec("PRAGMA query_only = ON; PRAGMA busy_timeout = 1000; PRAGMA cache_size = -8192;");
+  initializeStatsStore(store);
+  const result = refreshPublicStats(db, store, contractDescriptors(), {
+    sourceId: `${sourcePath}:${sourceStat.dev}:${sourceStat.ino}`,
+    batchSize: Number(process.env.VEYDRIFT_STATS_BATCH_SIZE ?? 5000)
+  });
+  process.stdout.write(JSON.stringify(result));
 } finally {
+  store.close();
   db.close();
 }
