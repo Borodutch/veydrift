@@ -1531,6 +1531,7 @@ test("Raid Finder runs unverified eligibility through mounted Confirm and a fina
     targetPlanetId: "raid-alpha",
     wallet: "0x1111111111111111111111111111111111111111",
   });
+  await waitForExpression(`document.querySelector('button[aria-label="Increase Small Cargo"]:not(:disabled)') !== null`);
   await clickExpression(`document.querySelector('button[aria-label="Increase Small Cargo"]')`);
   await evaluate(`window.inspectorProof.resolveAttackProtection(0, 'allowed')`);
   await waitForExpression(`${missionConfirmExpression(false)} !== undefined`);
@@ -1574,6 +1575,7 @@ test("Raid Finder exposes a working mounted retry after canonical request failur
   await waitForExpression(`${retry} !== undefined && ${missionConfirmExpression(true)} !== undefined`);
   await clickExpression(retry);
   await waitForExpression(`window.inspectorProof.pendingAttackProtections().some(request => request.index === 1)`);
+  await waitForExpression(`document.querySelector('button[aria-label="Increase Small Cargo"]:not(:disabled)') !== null`);
   await clickExpression(`document.querySelector('button[aria-label="Increase Small Cargo"]')`);
   await evaluate(`window.inspectorProof.resolveAttackProtection(1, 'allowed')`);
   await waitForExpression(`${missionConfirmExpression(false)} !== undefined`);
@@ -1588,8 +1590,10 @@ test("Raid Finder ignores delayed planet, target, and account approvals in the m
   await waitForExpression(`${alphaAttack} !== undefined && ${betaAttack} !== undefined`);
   await clickExpression(alphaAttack);
   await waitForExpression(`window.inspectorProof.pendingAttackProtections().length === 1`);
+  await waitForExpression(`document.querySelector('button[title="Target moon"]:not(:disabled)') !== null`);
   await clickExpression(`document.querySelector('button[title="Target moon"]')`);
   await waitForExpression(`window.inspectorProof.pendingAttackProtections().some(request => request.index === 1 && request.targetIsMoon)`);
+  await waitForExpression(`document.querySelector('button[aria-label="Increase Small Cargo"]:not(:disabled)') !== null`);
   await clickExpression(`document.querySelector('button[aria-label="Increase Small Cargo"]')`);
 
   await evaluate(`window.inspectorProof.resolveAttackProtection(0, 'allowed')`);

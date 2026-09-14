@@ -61,7 +61,9 @@ const moonOverview = fixtureParams.get("moonOverview") === "true";
 const raidEligibilityProbe = fixtureParams.get("raidEligibilityProbe") === "true";
 const selectedPlanetResources = shortResources
   ? { crystal: "5", deuterium: "2", metal: "10" }
-  : { crystal: "3873", deuterium: "102", metal: "10313" };
+  : raidEligibilityProbe
+    ? { crystal: "3873", deuterium: "10000", metal: "10313" }
+    : { crystal: "3873", deuterium: "102", metal: "10313" };
 
 const ownedPlanets = [
   managedPlanet({
