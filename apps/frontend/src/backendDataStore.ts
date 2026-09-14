@@ -434,10 +434,19 @@ export class BackendDataStore {
     },
     attackProtection: (wallet: string, targetPlanetId: string, targetIsMoon = false, options: WalletReadOptions = {}): BackendDataQueryDescriptor<AttackProtectionStatus> => {
       const key = walletCacheKey("attack-protection", wallet, targetPlanetId, targetIsMoon);
-      return this.query(key, () => this.refresh(key, (signal) => fetchAttackProtectionStatus(this.apiBaseUrl, wallet, targetPlanetId, targetIsMoon, signal), {
-        planetId: targetPlanetId,
-        wallet,
-      }));
+      return this.query(key, () => {
+        this.registerResource(key, signal => fetchAttackProtectionStatus(this.apiBaseUrl, wallet, targetPlanetId, targetIsMoon, signal), {
+          planetId: targetPlanetId,
+          wallet,
+        });
+        const resource = this.resources.get(key)!;
+        return (options.fresh
+          ? this.refreshInvalidatedResource(resource, { activeOnly: false }, true).then(result => {
+              if (result === undefined) throw new Error("Attack protection refresh was cancelled. Please try again.");
+              return result;
+            })
+          : this.readRegisteredResource(resource)) as Promise<AttackProtectionStatus>;
+      });
     },
     battleReports: (): BackendDataQueryDescriptor<BattleReportSummary[]> => {
       const key = cacheKey("battle-reports");

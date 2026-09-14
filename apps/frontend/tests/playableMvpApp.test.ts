@@ -128,6 +128,7 @@ describe("Playable MVP app display helpers", () => {
     expect(missionDraftFor({ ...action, defaultTargetIsMoon: true }, undefined, coords, origin, "planet")?.bodySelectionDefaults)
       .toEqual({ originIsMoon: false, targetIsMoon: true });
     expect(missionDraftFor(action, undefined, coords, origin, "planet", { originIsMoon: true, targetIsMoon: false })?.originPlanet).toBe(origin);
+    expect(missionDraftFor(action, undefined, coords, origin, "planet", {}, "0xABC")?.wallet).toBe("0xabc");
     expect(missionDraftFor({ ...action, enabled: false, reason: "Protected" }, undefined, coords, origin, "moon")).toBeNull();
   });
 
@@ -1420,6 +1421,33 @@ describe("Playable MVP app display helpers", () => {
     await expect(submit(async () => { throw new Error("Canonical protection unavailable"); }))
       .rejects.toThrow("Canonical protection unavailable");
     expect(walletSubmissions).toBe(1);
+
+    await expect(revalidateAttackProtectionBeforeSubmit(
+      async () => ({
+        wallet: "0x1111111111111111111111111111111111111111",
+        targetPlanetId: "10",
+        allowed: true,
+        blockedReason: "none" as const,
+        blockedReasonLabel: null,
+      }),
+      {
+        expectedTargetPlanetId: "9",
+        expectedWallet: "0x1111111111111111111111111111111111111111",
+      },
+    )).rejects.toThrow("no longer matches this target");
+    await expect(revalidateAttackProtectionBeforeSubmit(
+      async () => ({
+        wallet: "0x2222222222222222222222222222222222222222",
+        targetPlanetId: "9",
+        allowed: true,
+        blockedReason: "none" as const,
+        blockedReasonLabel: null,
+      }),
+      {
+        expectedTargetPlanetId: "9",
+        expectedWallet: "0x1111111111111111111111111111111111111111",
+      },
+    )).rejects.toThrow("no longer matches this wallet");
   });
 
   test("revalidates canonical protection before any wallet submission can run", async () => {

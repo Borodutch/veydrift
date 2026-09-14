@@ -155,7 +155,7 @@ describe("galaxyActions", () => {
     });
   });
 
-  test.each([false, true])("disables unverified ranked war targets even with optimistic allowed=%s", (allowed) => {
+  test.each([false, true])("lets unverified ranked war targets enter canonical attack preparation with projected allowed=%s", (allowed) => {
     const attack = galaxyActionsForSlot({
       account,
       attackProtection: rankingsAttackProtectionForEntry({ currentWallet: account, entry: {
@@ -167,11 +167,7 @@ describe("galaxyActions", () => {
       shipyardState: shipyardState([{ id: 1, count: 3 }]),
     }).find((action) => action.kind === "attack");
 
-    expect(attack).toMatchObject({
-      enabled: false,
-      label: "Attack",
-      reason: "War eligibility is unverified. Open the target to check attack protection.",
-    });
+    expect(attack).toMatchObject({ enabled: true, label: "Attack", mission: "attack" });
   });
 
   test("keeps independently allowed war targets attackable when eligibility is not pending", () => {

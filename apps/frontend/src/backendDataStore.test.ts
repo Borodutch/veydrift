@@ -36,6 +36,81 @@ describe("BackendDataStore", () => {
       expect(store.snapshot(store.queries.shipyard("0xabc", "7").key)?.data).toMatchObject({ ships: [{ id: 0, count: 0 }] });
     } finally { store.dispose(); globalThis.fetch = originalFetch; }
   });
+
+  test("fresh attack protection waits past an older read before returning an authoritative verdict", async () => {
+    const originalFetch = globalThis.fetch;
+    const store = new BackendDataStore("https://api.test");
+    let completeOld!: (response: Response) => void;
+    const requests: string[] = [];
+    globalThis.fetch = (async input => {
+      requests.push(String(input));
+      if (requests.length === 1) return new Promise<Response>(resolve => { completeOld = resolve; });
+      return Response.json({
+        wallet: "0xabc",
+        targetPlanetId: "7",
+        allowed: true,
+        blockedReason: "none",
+        blockedReasonLabel: null,
+      });
+    }) as typeof fetch;
+    try {
+      const old = store.attackProtection("0xabc", "7");
+      await Promise.resolve();
+      const fresh = store.attackProtection("0xabc", "7", false, { fresh: true });
+      expect(requests).toHaveLength(1);
+      completeOld(Response.json({
+        wallet: "0xabc",
+        targetPlanetId: "7",
+        allowed: false,
+        blockedReason: "score_protection",
+        blockedReasonLabel: "Old verdict",
+      }));
+      expect((await old).allowed).toBe(false);
+      expect((await fresh).allowed).toBe(true);
+      expect(requests).toHaveLength(2);
+    } finally { store.dispose(); globalThis.fetch = originalFetch; }
+  });
+
+  test("late attack approvals stay isolated from a switched target and account", async () => {
+    const originalFetch = globalThis.fetch;
+    const store = new BackendDataStore("https://api.test");
+    let completeTarget7!: (response: Response) => void;
+    let completeOldAccount!: (response: Response) => void;
+    globalThis.fetch = (async input => {
+      const url = new URL(String(input));
+      const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
+      const targetPlanetId = url.searchParams.get("targetPlanetId") ?? "";
+      if (wallet === "0xaaa" && targetPlanetId === "7") {
+        return new Promise<Response>(resolve => { completeTarget7 = resolve; });
+      }
+      if (wallet === "0xaaa" && targetPlanetId === "9") {
+        return new Promise<Response>(resolve => { completeOldAccount = resolve; });
+      }
+      return Response.json({ wallet, targetPlanetId, allowed: false, blockedReason: "same_alliance", blockedReasonLabel: "Current target blocked" });
+    }) as typeof fetch;
+    try {
+      store.setContext("0xaaa");
+      const target7Key = store.queries.attackProtection("0xaaa", "7").key;
+      const target8Key = store.queries.attackProtection("0xaaa", "8").key;
+      const target7 = store.attackProtection("0xaaa", "7");
+      await Promise.resolve();
+      expect((await store.attackProtection("0xaaa", "8")).allowed).toBe(false);
+      completeTarget7(Response.json({ wallet: "0xaaa", targetPlanetId: "7", allowed: true, blockedReason: "none", blockedReasonLabel: null }));
+      await target7;
+      expect(store.snapshot<{ allowed: boolean }>(target8Key)?.data?.allowed).toBe(false);
+      expect(store.snapshot<{ allowed: boolean }>(target7Key)?.data?.allowed).toBe(true);
+
+      const oldAccountKey = store.queries.attackProtection("0xaaa", "9").key;
+      const oldAccount = store.attackProtection("0xaaa", "9");
+      await Promise.resolve();
+      store.setContext("0xbbb");
+      completeOldAccount(Response.json({ wallet: "0xaaa", targetPlanetId: "9", allowed: true, blockedReason: "none", blockedReasonLabel: null }));
+      await oldAccount;
+      expect(store.snapshot(oldAccountKey)).toBeUndefined();
+      expect((await store.attackProtection("0xbbb", "9")).allowed).toBe(false);
+    } finally { store.dispose(); globalThis.fetch = originalFetch; }
+  });
+
   test("late reads cannot recreate eviction timers after disposal", async () => {
     const store = new BackendDataStore("https://api.test");
     let finish!: (value: number) => void;

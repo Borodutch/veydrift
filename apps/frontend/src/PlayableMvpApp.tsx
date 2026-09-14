@@ -958,10 +958,13 @@ export function galaxyMissionActionErrorLabel(label: string, error: unknown): st
 }
 
 export function attackProtectionSubmitBlocker(
-  status: Pick<AttackProtectionStatus, "allowed" | "blockedReason" | "blockedReasonLabel"> | null | undefined,
+  status: Pick<AttackProtectionStatus, "allowed" | "blockedReason" | "blockedReasonLabel"> & Partial<Pick<AttackProtectionStatus, "warEligibilityNeedsCheck">> | null | undefined,
   options: { ignoreBashingLimit?: boolean } = {},
 ): string | undefined {
-  if (!status || status.allowed || status.blockedReason === "none") return undefined;
+  if (!status || status.warEligibilityNeedsCheck || (!status.allowed && status.blockedReason === "none")) {
+    return "Attack eligibility is not verified. Retry before launching an attack.";
+  }
+  if (status.blockedReason === "none") return undefined;
   if (options.ignoreBashingLimit && status.blockedReason === "bashing_limit") return undefined;
   if (status.blockedReasonLabel) return status.blockedReasonLabel;
   if (status.blockedReason === "bashing_limit") return "Attack blocked by bashing limit.";
@@ -970,11 +973,62 @@ export function attackProtectionSubmitBlocker(
   return "Attack blocked.";
 }
 
-export async function revalidateAttackProtectionBeforeSubmit<T extends Pick<AttackProtectionStatus, "allowed" | "blockedReason" | "blockedReasonLabel">>(
+export function attackProtectionPreparation({
+  account,
+  ignoreBashingLimit = false,
+  snapshot,
+  targetPlanetId,
+}: {
+  account: string | undefined;
+  ignoreBashingLimit?: boolean;
+  snapshot: {
+    data?: AttackProtectionStatus | undefined;
+    error?: string | undefined;
+    freshness: "fresh" | "refreshing" | "delayed" | "failed";
+  } | undefined;
+  targetPlanetId: string | undefined;
+}): { blocker?: string; retryAvailable: boolean; warNotice?: string } {
+  if (!targetPlanetId) return { retryAvailable: false };
+  if (snapshot?.error) {
+    return {
+      blocker: "Could not verify this target's attack protection. Retry before launching an attack.",
+      retryAvailable: true,
+    };
+  }
+  if (!snapshot?.data || snapshot.freshness !== "fresh") {
+    return {
+      blocker: "Checking this target's canonical attack protection.",
+      retryAvailable: false,
+    };
+  }
+
+  const status = snapshot.data;
+  if (status.targetPlanetId !== targetPlanetId || status.wallet.toLowerCase() !== account?.toLowerCase()) {
+    return {
+      blocker: "Attack protection response no longer matches this wallet and target. Retry before launching an attack.",
+      retryAvailable: true,
+    };
+  }
+  const blocker = attackProtectionSubmitBlocker(status, { ignoreBashingLimit });
+  const warNotice = status.atWar
+    ? blocker
+      ? "This war does not bypass protection for this attacker/target pairing. Frozen original rosters and declaration direction still apply."
+      : "War eligibility verified for this target. Bypass applies only to original declaration-roster members in the allowed direction."
+    : undefined;
+  return { ...(blocker ? { blocker } : {}), retryAvailable: false, ...(warNotice ? { warNotice } : {}) };
+}
+
+export async function revalidateAttackProtectionBeforeSubmit<T extends Pick<AttackProtectionStatus, "allowed" | "blockedReason" | "blockedReasonLabel"> & Partial<Pick<AttackProtectionStatus, "targetPlanetId" | "wallet" | "warEligibilityNeedsCheck">>>(
   loadStatus: () => Promise<T>,
-  options: { ignoreBashingLimit?: boolean } = {},
+  options: { expectedTargetPlanetId?: string; expectedWallet?: string; ignoreBashingLimit?: boolean } = {},
 ): Promise<T> {
   const status = await loadStatus();
+  if (options.expectedTargetPlanetId && status.targetPlanetId !== options.expectedTargetPlanetId) {
+    throw new Error("Attack protection response no longer matches this target. Retry before launching an attack.");
+  }
+  if (options.expectedWallet && status.wallet?.toLowerCase() !== options.expectedWallet.toLowerCase()) {
+    throw new Error("Attack protection response no longer matches this wallet. Retry before launching an attack.");
+  }
   const blocker = attackProtectionSubmitBlocker(status, options);
   if (blocker) throw new Error(blocker);
   return status;
@@ -1848,6 +1902,7 @@ type PendingGalaxyMission = {
   target: Planet | undefined;
   coords: Coordinates;
   originPlanet: ManagedPlanetResponse | undefined;
+  wallet?: string | undefined;
 };
 
 export function missionDraftFor(
@@ -1857,10 +1912,11 @@ export function missionDraftFor(
   originPlanet: ManagedPlanetResponse | undefined,
   activeBodyKind: OrbitBodyKind,
   defaults: NonNullable<PendingGalaxyMission["bodySelectionDefaults"]> = {},
+  wallet?: string,
 ): PendingGalaxyMission | null {
   if (!action.enabled) return null;
   return {
-    action, target, coords, originPlanet,
+    action, target, coords, originPlanet, wallet: wallet?.toLowerCase(),
     bodySelectionDefaults: {
       originIsMoon: defaults.originIsMoon ?? (activeBodyKind === "moon"),
       targetIsMoon: defaults.targetIsMoon ?? (action.mode === "mission" && action.defaultTargetIsMoon === true),
@@ -1871,6 +1927,7 @@ export function missionDraftFor(
 export function missionComposerIdentity({ account, activePlanetId, pending }: { account: string | undefined; activePlanetId: string | undefined; pending: PendingGalaxyMission }): string {
   const targetPlanetId = pending.target?.occupiedBy?.planetId ?? pending.target?.id ?? "empty";
   return [
+    pending.wallet ?? "unbound-wallet",
     account?.toLowerCase() ?? "disconnected",
     pending.action.mode,
     pending.action.kind,
@@ -2772,6 +2829,11 @@ export function PlayableMvpApp({
   const infrastructureError = infrastructureSnapshot?.error;
 
   const [pendingGalaxyMission, setPendingGalaxyMission] = useState<PendingGalaxyMission | null>(null);
+  const pendingMissionContext = pendingGalaxyMission
+    ? missionComposerIdentity({ account, activePlanetId, pending: pendingGalaxyMission })
+    : null;
+  const pendingMissionContextRef = useRef<string | null>(pendingMissionContext);
+  pendingMissionContextRef.current = pendingMissionContext;
   const [pendingJoinAttack, setPendingJoinAttack] = useState<{
     attackMissionId: string;
     targetPlanetId: string;
@@ -2841,15 +2903,19 @@ export function PlayableMvpApp({
     && (pendingGalaxyMission.action.kind === "attack" || pendingGalaxyMission.action.kind === "missileAttack")
     ? pendingGalaxyMission.target?.occupiedBy?.planetId
     : undefined;
+  const pendingMissionWalletMatches = !pendingGalaxyMission?.wallet
+    || pendingGalaxyMission.wallet === account?.toLowerCase();
   const attackTargetQuery = useBackendDataQuery(
     backendData && pendingAttackTargetId && pendingGalaxyMission
       ? backendData.queries.system<ApiSystemResponse>(pendingGalaxyMission.coords.galaxy, pendingGalaxyMission.coords.system, { detail: "full" })
       : undefined,
   );
   const attackProtectionQuery = useBackendDataQuery(
-    backendData && account && pendingAttackTargetId
-      ? backendData.queries.attackProtection(account, pendingAttackTargetId)
+    backendData && account && pendingAttackTargetId && pendingMissionWalletMatches
+      ? backendData.queries.attackProtection(account, pendingAttackTargetId, false, { fresh: true })
       : undefined,
+    true,
+    { freshOnMount: true },
   );
   // Read the currently selected query instead of copying an asynchronous result
   // into the mission draft. Coordinate keys and contract planet IDs are distinct.
@@ -3961,6 +4027,7 @@ export function PlayableMvpApp({
       label: string,
       send: (provider: Eip1193Provider) => Promise<string>,
       options: {
+        missionComposerContext?: string | undefined;
         prepare?: () => Promise<void>;
         onErrorRefresh?: (error: unknown) => Promise<void> | void;
         validateAttackProtection?: {
@@ -3987,7 +4054,13 @@ export function PlayableMvpApp({
         label: transactionAwaitingWalletLabel(label),
       });
       try {
+        const assertMissionComposerContext = () => {
+          if (options.missionComposerContext !== undefined && pendingMissionContextRef.current !== options.missionComposerContext) {
+            throw new Error("Mission target, origin, or wallet changed before submission. Please try again.");
+          }
+        };
         const prepare = async () => {
+          assertMissionComposerContext();
           await options.prepare?.();
           if (options.validateShipInventory) {
             if (!apiBaseUrl || !account) {
@@ -4013,6 +4086,7 @@ export function PlayableMvpApp({
             if (shipBlocker) {
               throw new Error(shipBlocker);
             }
+            assertMissionComposerContext();
           }
           if (options.validateAttackProtection) {
             const { targetPlanetId, targetIsMoon = false, ignoreBashingLimit = false } = options.validateAttackProtection;
@@ -4023,9 +4097,10 @@ export function PlayableMvpApp({
               () => backendData!.attackProtection(account, targetPlanetId, targetIsMoon, {
                 fresh: true,
               }),
-              { ignoreBashingLimit },
+              { expectedTargetPlanetId: targetPlanetId, expectedWallet: account, ignoreBashingLimit },
             );
             if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) throw new Error("Origin changed before submission. Please try again.");
+            assertMissionComposerContext();
           }
         };
         const affectedPlanetIds = [...new Set([activePlanetId, ...(options.affectedPlanetIds ?? [])])].filter((planetId): planetId is string => Boolean(planetId));
@@ -4055,7 +4130,10 @@ export function PlayableMvpApp({
               ...(origin.originIsMoon ? [backendData.moon(account, origin.originPlanetId, { fresh: true })] : []),
             ]);
           },
-          send,
+          send: (transactionProvider) => {
+            assertMissionComposerContext();
+            return send(transactionProvider);
+          },
           indexing: options.syncMissionLaunch
             ? backendData!.indexing.all([
                 backendData!.indexing.all(exactResourcePlans),
@@ -5052,12 +5130,12 @@ export function PlayableMvpApp({
 
   const handleGalaxyAction = useCallback(
     (action: GalaxyAction, target: Planet | undefined, coords: Coordinates, defaults?: PendingGalaxyMission["bodySelectionDefaults"]) => {
-      const pending = missionDraftFor(action, target, coords, selectedManagedPlanet, activeBodyKind, defaults);
+      const pending = missionDraftFor(action, target, coords, selectedManagedPlanet, activeBodyKind, defaults, account);
       if (!pending) return;
       setGalaxyAction({ status: "idle" });
       setPendingGalaxyMission(pending);
     },
-    [activeBodyKind, selectedManagedPlanet],
+    [account, activeBodyKind, selectedManagedPlanet],
   );
 
   const overviewMyPlanetActionGroups = useMemo<OverviewMyPlanetActionGroup[]>(
@@ -5295,6 +5373,7 @@ export function PlayableMvpApp({
     async (draft: MissionLaunchDraft) => {
       const pending = pendingGalaxyMission;
       if (!pending) return;
+      const pendingMissionComposerContext = missionComposerIdentity({ account, activePlanetId, pending });
       const { action, target, coords } = pending;
       const missionOriginPlanet = pending.originPlanet ?? selectedManagedPlanet;
       const originPlanetId = missionOriginPlanet?.planetId ?? activePlanetId ?? onChainSettlement?.homePlanetId;
@@ -5303,6 +5382,10 @@ export function PlayableMvpApp({
           status: "error",
           label: "Wallet, game contract, or origin planet is unavailable.",
         });
+        return;
+      }
+      if (pending.wallet && pending.wallet !== account.toLowerCase()) {
+        setGalaxyAction({ status: "error", label: "Wallet changed before mission preparation. Open the target again." });
         return;
       }
       if (action.kind === "attack") {
@@ -5365,6 +5448,7 @@ export function PlayableMvpApp({
             }
           | undefined;
       }) => ({
+        missionComposerContext: pendingMissionComposerContext,
         validateAttackProtection,
         resourceChange: {
           bodyKind: originIsMoon ? ("moon" as const) : ("planet" as const),
@@ -6283,23 +6367,15 @@ export function PlayableMvpApp({
 
     if (pendingGalaxyMission) {
       const pendingMissionOriginPlanet = pendingGalaxyMission.originPlanet ?? selectedManagedPlanet;
-      const pendingAttackProtection = attackProtectionQuery.snapshot?.data;
-      const pendingAttackProtectionBlocker = pendingAttackTargetId
-        ? attackProtectionQuery.snapshot?.error
-          ? "Could not verify this target's attack protection. Retry before launching an attack."
-          : !pendingAttackProtection
-            ? "Checking this target's canonical attack protection."
-            : attackProtectionSubmitBlocker(
-                pendingAttackProtection,
-                { ignoreBashingLimit: pendingGalaxyMission.action.kind === "missileAttack" },
-              )
-        : undefined;
-      const pendingAttackWarNotice =
-        Boolean(pendingAttackTargetId) && pendingAttackProtection?.atWar
-          ? pendingAttackProtection.allowed
-            ? "War eligibility verified for this target. Bypass applies only to original declaration-roster members in the allowed direction."
-            : "This war does not bypass protection for this attacker/target pairing. Frozen original rosters and declaration direction still apply."
-          : undefined;
+      const pendingAttackPreparation = attackProtectionPreparation({
+        account,
+        ignoreBashingLimit: pendingGalaxyMission.action.kind === "missileAttack",
+        snapshot: attackProtectionQuery.snapshot,
+        targetPlanetId: pendingAttackTargetId,
+      });
+      const pendingMissionContextBlocker = pendingMissionWalletMatches
+        ? undefined
+        : "Wallet changed during mission preparation. Open the target again.";
       const pendingMissionOriginCoords = managedPlanetCoordinates(pendingMissionOriginPlanet) ?? activePlanetCoords;
       const pendingMissionOriginLabel = pendingMissionOriginPlanet?.name ?? pendingMissionOriginPlanet?.coordinates ?? homePlanetIdentity?.name;
       const pendingMissionOriginResources = missionResourcesForOrigin(pendingMissionOriginPlanet);
@@ -6351,13 +6427,13 @@ export function PlayableMvpApp({
             .find((defense) => defense.id === 9)?.count ?? 0}
           resources={pendingMissionOriginResources}
           shipyardState={shipyardState}
-          submitBlocker={pendingAttackProtectionBlocker ?? missionLaunchBlocker}
+          submitBlocker={pendingMissionContextBlocker ?? pendingAttackPreparation.blocker ?? missionLaunchBlocker}
           target={pendingMissionTarget}
           targetIntelLoading={attackTargetQuery.isInitialLoading}
           targetIntelError={attackTargetQuery.snapshot?.error}
           onRetryTargetIntel={pendingAttackTargetId ? () => { void attackTargetQuery.refetch().catch(() => {}); } : undefined}
-          onRetryProtection={attackProtectionQuery.snapshot?.error ? () => { void attackProtectionQuery.refetch().catch(() => {}); } : undefined}
-          warProtectionNotice={pendingAttackWarNotice}
+          onRetryProtection={pendingAttackPreparation.retryAvailable ? () => { void attackProtectionQuery.refetch().catch(() => {}); } : undefined}
+          warProtectionNotice={pendingAttackPreparation.warNotice}
         />
       );
     }

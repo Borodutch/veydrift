@@ -26,12 +26,14 @@ export function backendQueryLoading<T>(snapshot: GameStateEntry<T> | undefined, 
 export function useBackendDataQuery<T>(
   query: BackendDataQueryDescriptor<T> | undefined,
   enabled = true,
+  options: { freshOnMount?: boolean } = {},
 ): BackendDataQuery<T> {
   const queryRef = useRef(query);
   queryRef.current = query;
   const store = query?.store;
   const key = query?.key;
   const snapshot = useBackendDataSnapshot<T>(enabled ? store : undefined, key);
+  const freshKeyRef = useRef<string | undefined>();
 
   const refetch = useCallback(async (): Promise<T | undefined> => {
     const current = queryRef.current;
@@ -50,14 +52,23 @@ export function useBackendDataQuery<T>(
   // the store. That lets the store preserve independent keys (and discard a
   // late response from an old view) without reintroducing page cancellation.
   useLayoutEffect(() => {
-    if (!enabled || !store || !key || store.isFresh(key)) return;
+    if (!enabled || !store || !key) {
+      freshKeyRef.current = undefined;
+      return;
+    }
+    if (options.freshOnMount) {
+      if (freshKeyRef.current === key) return;
+      freshKeyRef.current = key;
+    } else if (store.isFresh(key)) {
+      return;
+    }
     void refetch().catch(() => {
       // The data store owns the canonical failure state exposed by `snapshot`.
       // Avoid an unhandled rejection when a background query fails. Consumers
       // render the snapshot's error state, so background failures must not be
       // promoted to a window error.
     });
-  }, [enabled, key, refetch, store]);
+  }, [enabled, key, options.freshOnMount, refetch, store]);
 
   return { refetch, snapshot, ...backendQueryLoading(snapshot, enabled && query !== undefined) };
 }

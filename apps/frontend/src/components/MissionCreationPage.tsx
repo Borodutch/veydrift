@@ -1082,11 +1082,7 @@ export function MissionCreationPage({
             {warProtectionNotice}
           </p>
         ) : null}
-        {onRetryProtection ? (
-          <button className="w-fit rounded border border-white/15 px-3 py-2 text-sm font-medium text-slate-100" onClick={onRetryProtection} type="button">
-            Retry attack protection
-          </button>
-        ) : null}
+        {onRetryProtection ? <MissionProtectionRetryButton onRetry={onRetryProtection} /> : null}
         {actionError ? (
           <p className="rounded border border-rose-300/30 bg-rose-300/10 px-3 py-2 text-xs text-rose-100" role="alert">
             {actionError}
@@ -1478,7 +1474,15 @@ function MissionCancelButton({ onCancel }: { onCancel: () => void }) {
   );
 }
 
-function MissionConfirmButton({
+export function MissionProtectionRetryButton({ onRetry }: { onRetry: () => void }) {
+  return (
+    <button className="w-fit rounded border border-white/15 px-3 py-2 text-sm font-medium text-slate-100" onClick={onRetry} type="button">
+      Retry attack protection
+    </button>
+  );
+}
+
+export function MissionConfirmButton({
   actionPending,
   blockedReason,
   label,

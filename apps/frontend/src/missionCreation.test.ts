@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { AttackLootProjection, AttackIntelPanel, AttackOutcomePanel, buildMissionLaunchDraft, DestinationIntelPanel, forecastRaidLoot, initialMissionShips, LootRatioControls, MissionLootSection, MissionCargoPicker, missionCargoAfterBodyChange, reconcileMissionCargoAfterFleetChange, lootRatioFromUpToAmount, missionCargoMaxForResource, missionBodySelectionVisibility, missionAttackLootMode, missionConfirmButtonLabel, missionComposerRouteEndpoints, missionDraftBlocker, missionTargetCompositionUnits, missionTargetMoonUnavailableReason, MissionFuelCost, MissionTimingGrid, MISSION_TIMING_PLACEHOLDER, MISSION_TIMING_RESERVED_HEIGHT_PX, missionSpecificLoadout, missionShipOptions, missionTimingRows, missionTimingSummary, NonAttackMissionIntelPanel, projectedMissionArrivalAtSeconds, preparePublicTargetBattleForecast, publicTargetBattleForecast, resolvePreparedPublicTargetBattleForecast, rebalanceLootRatio, ShipQuantityRow, shouldShowDestinationIntel, shouldShowReturnTiming, staleSelectedShipQuantityBlocker, stationedDefenderCompositionUnits, TargetIntelCard, targetResourceIntel } from "./components/MissionCreationPage";
+import { AttackLootProjection, AttackIntelPanel, AttackOutcomePanel, buildMissionLaunchDraft, DestinationIntelPanel, forecastRaidLoot, initialMissionShips, LootRatioControls, MissionLootSection, MissionCargoPicker, missionCargoAfterBodyChange, reconcileMissionCargoAfterFleetChange, lootRatioFromUpToAmount, missionCargoMaxForResource, missionBodySelectionVisibility, missionAttackLootMode, missionConfirmButtonLabel, missionComposerRouteEndpoints, missionDraftBlocker, missionTargetCompositionUnits, missionTargetMoonUnavailableReason, MissionConfirmButton, MissionFuelCost, MissionProtectionRetryButton, MissionTimingGrid, MISSION_TIMING_PLACEHOLDER, MISSION_TIMING_RESERVED_HEIGHT_PX, missionSpecificLoadout, missionShipOptions, missionTimingRows, missionTimingSummary, NonAttackMissionIntelPanel, projectedMissionArrivalAtSeconds, preparePublicTargetBattleForecast, publicTargetBattleForecast, resolvePreparedPublicTargetBattleForecast, rebalanceLootRatio, ShipQuantityRow, shouldShowDestinationIntel, shouldShowReturnTiming, staleSelectedShipQuantityBlocker, stationedDefenderCompositionUnits, TargetIntelCard, targetResourceIntel } from "./components/MissionCreationPage";
 import { forecastContractBattle, summarizeContractBattleForecast } from "./battlePreview";
 import { emptyMissionCargoDraft, type MissionCargoDraft, normalizeMissionCargoDraft } from "./components/missionCargoModel";
 import {
+  attackProtectionPreparation,
   attackProtectionSubmitBlocker,
   cargoForCargoMissionLaunch,
   joinAttackTargetFromSystemPayload,
@@ -20,6 +21,9 @@ test("missile submit protection ignores only the fleet bashing limit", () => {
   expect(attackProtectionSubmitBlocker({ allowed: false, blockedReason: "bashing_limit", blockedReasonLabel: "Bashing" }, { ignoreBashingLimit: true })).toBeUndefined();
   expect(attackProtectionSubmitBlocker({ allowed: false, blockedReason: "score_protection", blockedReasonLabel: null }, { ignoreBashingLimit: true })).toContain("score protection");
   expect(attackProtectionSubmitBlocker({ allowed: false, blockedReason: "same_alliance", blockedReasonLabel: null }, { ignoreBashingLimit: true })).toContain("alliance");
+  expect(attackProtectionSubmitBlocker({ allowed: false, blockedReason: "none", blockedReasonLabel: null })).toContain("not verified");
+  expect(attackProtectionSubmitBlocker({ allowed: true, warEligibilityNeedsCheck: true, blockedReason: "none", blockedReasonLabel: null })).toContain("not verified");
+  expect(attackProtectionSubmitBlocker({ allowed: true, blockedReason: "score_protection", blockedReasonLabel: "Protected" })).toBe("Protected");
 });
 
 test("shows canonical active-war eligibility and persistent mission errors in the composer", () => {
@@ -28,6 +32,79 @@ test("shows canonical active-war eligibility and persistent mission errors in th
   expect(missionCreationSource).toContain('role="alert"');
   expect(playableMvpAppSource).toContain("Checking this target's canonical attack protection.");
   expect(playableMvpAppSource).toContain("Frozen original rosters and declaration direction still apply.");
+});
+
+test("canonical attack preparation drives confirm, blocked, failure/retry, and stale-context interactions", () => {
+  const wallet = "0x1111111111111111111111111111111111111111";
+  const targetPlanetId = "9";
+  let confirmations = 0;
+  let retries = 0;
+  const controls = (snapshot: Parameters<typeof attackProtectionPreparation>[0]["snapshot"]) => {
+    const preparation = attackProtectionPreparation({ account: wallet, snapshot, targetPlanetId });
+    const confirm = MissionConfirmButton({
+      actionPending: false,
+      blockedReason: preparation.blocker,
+      label: "Confirm attack",
+      onConfirm: () => { confirmations++; },
+    });
+    const retry = preparation.retryAvailable
+      ? MissionProtectionRetryButton({ onRetry: () => { retries++; } })
+      : null;
+    return { confirm, preparation, retry };
+  };
+  const clickEnabled = (button: { props: { disabled?: boolean; onClick?: () => void } }) => {
+    if (!button.props.disabled) button.props.onClick?.();
+  };
+
+  const checking = controls(undefined);
+  expect(checking.confirm.props.disabled).toBe(true);
+  clickEnabled(checking.confirm);
+
+  const allowed = controls({
+    data: { wallet, targetPlanetId, allowed: true, blockedReason: "none", blockedReasonLabel: null },
+    freshness: "fresh",
+  });
+  expect(allowed.confirm.props.disabled).toBe(false);
+  clickEnabled(allowed.confirm);
+  expect(confirmations).toBe(1);
+
+  const blocked = controls({
+    data: { wallet, targetPlanetId, allowed: false, blockedReason: "score_protection", blockedReasonLabel: "Score protected" },
+    freshness: "fresh",
+  });
+  expect(blocked.confirm.props.disabled).toBe(true);
+  expect(blocked.preparation.blocker).toBe("Score protected");
+  clickEnabled(blocked.confirm);
+
+  const failed = controls({ error: "timeout", freshness: "failed" });
+  expect(failed.confirm.props.disabled).toBe(true);
+  expect(failed.retry).toBeTruthy();
+  failed.retry?.props.onClick?.();
+  expect(retries).toBe(1);
+  const retrying = controls({ freshness: "refreshing" });
+  expect(retrying.confirm.props.disabled).toBe(true);
+  expect(retrying.retry).toBeNull();
+
+  const realBlocked = controls({
+    data: { wallet, targetPlanetId, allowed: false, blockedReason: "same_alliance", blockedReasonLabel: null },
+    freshness: "fresh",
+  });
+  expect(realBlocked.confirm.props.disabled).toBe(true);
+  expect(realBlocked.preparation.blocker).toContain("alliance");
+
+  for (const stale of [
+    { wallet, targetPlanetId: "10" },
+    { wallet: "0x2222222222222222222222222222222222222222", targetPlanetId },
+  ]) {
+    const raced = controls({
+      data: { ...stale, allowed: true, blockedReason: "none", blockedReasonLabel: null },
+      freshness: "fresh",
+    });
+    expect(raced.confirm.props.disabled).toBe(true);
+    expect(raced.retry).toBeTruthy();
+    clickEnabled(raced.confirm);
+  }
+  expect(confirmations).toBe(1);
 });
 
 const attackAction: Extract<GalaxyAction, { enabled: true }> = {
