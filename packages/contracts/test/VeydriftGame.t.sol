@@ -5980,9 +5980,21 @@ contract VeydriftGameTest is Test {
         assertEq(game.shipCount(originPlanetId, Ship.SmallCargo), 2);
     }
 
-    function testLaunchTransportBatchRejectsMoreThanEightOrders() public {
+    function testLaunchTransportBatchAcceptsEightOrders() public {
+        _assertLaunchTransportBatchOrderCountAccepted(8);
+    }
+
+    function testLaunchTransportBatchAcceptsNineOrders() public {
+        _assertLaunchTransportBatchOrderCountAccepted(9);
+    }
+
+    function testLaunchTransportBatchAcceptsFifteenOrders() public {
+        _assertLaunchTransportBatchOrderCountAccepted(15);
+    }
+
+    function testLaunchTransportBatchRejectsSixteenOrders() public {
         VeydriftGameStorage.TransportBatchOrder[] memory orders =
-            new VeydriftGameStorage.TransportBatchOrder[](9);
+            new VeydriftGameStorage.TransportBatchOrder[](16);
 
         vm.prank(player);
         vm.expectRevert(VeydriftGameStorage.InvalidQuantity.selector);
@@ -10961,6 +10973,42 @@ contract VeydriftGameTest is Test {
         returns (VeydriftGameStorage.MissionShips memory ships)
     {
         ships.smallCargo = 1;
+    }
+
+    function _assertLaunchTransportBatchOrderCountAccepted(uint256 count) internal {
+        vm.prank(player);
+        uint256 targetPlanetId = game.startPlanet{value: 0.05 ether}();
+        _setPlanetCoordinates(targetPlanetId, 1, 100, 8);
+        _setTechnologyLevel(player, Technology.Computer, uint16(count - 1));
+
+        VeydriftGameStorage.TransportBatchOrder[] memory orders =
+            new VeydriftGameStorage.TransportBatchOrder[](count);
+        for (uint256 i = 0; i < count; ++i) {
+            uint256 originPlanetId = 1_000 + i;
+            _setPlanetOwner(originPlanetId, player);
+            _setPlanetCoordinates(originPlanetId, 1, uint16(i + 1), 8);
+            _setShipCount(originPlanetId, Ship.SmallCargo, 1);
+            _setResources(originPlanetId, 0, 0, 1_000_000);
+            orders[i] = VeydriftGameStorage.TransportBatchOrder({
+                originPlanetId: originPlanetId,
+                ships: _smallCargoManifest(),
+                cargo: VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+                speedPercent: 100
+            });
+        }
+
+        uint256 gasBefore = gasleft();
+        vm.prank(player);
+        uint256[] memory missionIds =
+            ITransportBatchEntrypoints(address(game)).launchTransportBatch(targetPlanetId, orders);
+        uint256 launchGas = gasBefore - gasleft();
+
+        assertEq(missionIds.length, count);
+        assertEq(game.activeFleetMissionCount(player), count);
+        if (count == 15) {
+            emit log_named_uint("launchTransportBatch(15) gas", launchGas);
+            assertLt(launchGas, 15_000_000, "15-order batch leaves insufficient block gas headroom");
+        }
     }
 
     function _colonyShipManifest()
