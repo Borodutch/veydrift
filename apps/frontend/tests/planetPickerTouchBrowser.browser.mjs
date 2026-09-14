@@ -1601,7 +1601,7 @@ test("Raid Finder ignores delayed planet, target, and account approvals in the m
   await evaluate(`window.inspectorProof.resolveAttackProtection(1, 'blocked')`);
   await waitForExpression(`document.querySelector('[data-mission-composer]')?.textContent.includes('Raid target is score protected.')`);
 
-  await clickExpression(`document.querySelector('button[title="Destination planet"]')`);
+  await clickExpression(`[...document.querySelectorAll('button')].find(button => button.textContent.trim() === 'Destination planet')`);
   await waitForExpression(`window.inspectorProof.pendingAttackProtections().some(request => request.index === 2 && !request.targetIsMoon)`);
   await evaluate(`window.inspectorProof.resolveAttackProtection(2, 'allowed')`);
   await waitForExpression(`${missionConfirmExpression(false)} !== undefined`);
