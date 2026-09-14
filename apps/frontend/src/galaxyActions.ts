@@ -446,7 +446,7 @@ function attackProtectionBlocker(status: GalaxyAttackProtectionStatus | null | u
   // A list projection cannot authoritatively resolve declaration-roster eligibility.
   // Let the player enter the canonical per-target composer check, while every
   // concrete protection verdict remains blocked here.
-  if (!status || status.allowed || status.blockedReason === "none") return undefined;
+  if (!status || status.blockedReason === "none") return undefined;
   if (status.blockedReasonLabel) return status.blockedReasonLabel;
   if (status.blockedReason === "bashing_limit") return "Attack blocked by bashing limit.";
   if (status.blockedReason === "score_protection") return "Attack blocked by newbie or score-ratio protection.";

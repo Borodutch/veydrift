@@ -136,11 +136,11 @@ describe("galaxyActions", () => {
     expect(noRecycler.some((action) => action.kind === "harvest")).toBe(false);
   });
 
-  test("uses canonical attack protection to block attack actions", () => {
+  test.each([false, true])("keeps a concrete protection reason blocked when projected allowed=%s", (allowed) => {
     const attack = galaxyActionsForSlot({
       account,
       attackProtection: {
-        allowed: false,
+        allowed,
         blockedReason: "score_protection",
         blockedReasonLabel: "Attack blocked: score protection allows a 1.5× gap below 50,000 score and a 10× gap below 500,000.",
       },

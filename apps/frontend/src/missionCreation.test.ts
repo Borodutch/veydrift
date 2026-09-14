@@ -76,11 +76,19 @@ test("canonical attack preparation drives confirm, blocked, failure/retry, and s
   expect(blocked.preparation.blocker).toBe("Score protected");
   clickEnabled(blocked.confirm);
 
+  const unverified = controls({
+    data: { wallet, targetPlanetId, allowed: false, blockedReason: "none", blockedReasonLabel: null },
+    freshness: "fresh",
+  });
+  expect(unverified.confirm.props.disabled).toBe(true);
+  expect(unverified.retry).toBeTruthy();
+  unverified.retry?.props.onClick?.();
+
   const failed = controls({ error: "timeout", freshness: "failed" });
   expect(failed.confirm.props.disabled).toBe(true);
   expect(failed.retry).toBeTruthy();
   failed.retry?.props.onClick?.();
-  expect(retries).toBe(1);
+  expect(retries).toBe(2);
   const retrying = controls({ freshness: "refreshing" });
   expect(retrying.confirm.props.disabled).toBe(true);
   expect(retrying.retry).toBeNull();
@@ -2290,6 +2298,12 @@ describe("mission creation", () => {
       account: "0x1111111111111111111111111111111111111111",
       activePlanetId: "7",
       pending: { ...pending, bodySelectionDefaults: { targetIsMoon: true } },
+    })).not.toBe(base);
+    expect(missionComposerIdentity({
+      account: "0x1111111111111111111111111111111111111111",
+      activePlanetId: "7",
+      pending,
+      selectedTargetIsMoon: true,
     })).not.toBe(base);
     expect(normalizeMissionCargoDraft(undefined)).toEqual(emptyMissionCargoDraft());
     expect(missionCargoAfterBodyChange(

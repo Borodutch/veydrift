@@ -1015,7 +1015,8 @@ export function attackProtectionPreparation({
       ? "This war does not bypass protection for this attacker/target pairing. Frozen original rosters and declaration direction still apply."
       : "War eligibility verified for this target. Bypass applies only to original declaration-roster members in the allowed direction."
     : undefined;
-  return { ...(blocker ? { blocker } : {}), retryAvailable: false, ...(warNotice ? { warNotice } : {}) };
+  const retryAvailable = Boolean(blocker && (status.warEligibilityNeedsCheck || status.blockedReason === "none"));
+  return { ...(blocker ? { blocker } : {}), retryAvailable, ...(warNotice ? { warNotice } : {}) };
 }
 
 export async function revalidateAttackProtectionBeforeSubmit<T extends Pick<AttackProtectionStatus, "allowed" | "blockedReason" | "blockedReasonLabel"> & Partial<Pick<AttackProtectionStatus, "targetPlanetId" | "wallet" | "warEligibilityNeedsCheck">>>(
@@ -1924,7 +1925,17 @@ export function missionDraftFor(
   };
 }
 
-export function missionComposerIdentity({ account, activePlanetId, pending }: { account: string | undefined; activePlanetId: string | undefined; pending: PendingGalaxyMission }): string {
+export function missionComposerIdentity({
+  account,
+  activePlanetId,
+  pending,
+  selectedTargetIsMoon,
+}: {
+  account: string | undefined;
+  activePlanetId: string | undefined;
+  pending: PendingGalaxyMission;
+  selectedTargetIsMoon?: boolean | undefined;
+}): string {
   const targetPlanetId = pending.target?.occupiedBy?.planetId ?? pending.target?.id ?? "empty";
   return [
     pending.wallet ?? "unbound-wallet",
@@ -1936,7 +1947,7 @@ export function missionComposerIdentity({ account, activePlanetId, pending }: { 
     pending.bodySelectionDefaults?.originIsMoon === true ? "origin-moon" : "origin-planet",
     targetPlanetId,
     `${pending.coords.galaxy}:${pending.coords.system}:${pending.coords.position}`,
-    pending.bodySelectionDefaults?.targetIsMoon === true ? "target-moon" : "target-planet",
+    (selectedTargetIsMoon ?? pending.bodySelectionDefaults?.targetIsMoon) === true ? "target-moon" : "target-planet",
   ].join("|");
 }
 
@@ -2829,8 +2840,9 @@ export function PlayableMvpApp({
   const infrastructureError = infrastructureSnapshot?.error;
 
   const [pendingGalaxyMission, setPendingGalaxyMission] = useState<PendingGalaxyMission | null>(null);
+  const [pendingMissionTargetIsMoon, setPendingMissionTargetIsMoon] = useState(false);
   const pendingMissionContext = pendingGalaxyMission
-    ? missionComposerIdentity({ account, activePlanetId, pending: pendingGalaxyMission })
+    ? missionComposerIdentity({ account, activePlanetId, pending: pendingGalaxyMission, selectedTargetIsMoon: pendingMissionTargetIsMoon })
     : null;
   const pendingMissionContextRef = useRef<string | null>(pendingMissionContext);
   pendingMissionContextRef.current = pendingMissionContext;
@@ -2912,7 +2924,7 @@ export function PlayableMvpApp({
   );
   const attackProtectionQuery = useBackendDataQuery(
     backendData && account && pendingAttackTargetId && pendingMissionWalletMatches
-      ? backendData.queries.attackProtection(account, pendingAttackTargetId, false, { fresh: true })
+      ? backendData.queries.attackProtection(account, pendingAttackTargetId, pendingMissionTargetIsMoon, { fresh: true })
       : undefined,
     true,
     { freshOnMount: true },
@@ -5133,6 +5145,7 @@ export function PlayableMvpApp({
       const pending = missionDraftFor(action, target, coords, selectedManagedPlanet, activeBodyKind, defaults, account);
       if (!pending) return;
       setGalaxyAction({ status: "idle" });
+      setPendingMissionTargetIsMoon(pending.bodySelectionDefaults?.targetIsMoon === true);
       setPendingGalaxyMission(pending);
     },
     [account, activeBodyKind, selectedManagedPlanet],
@@ -5373,7 +5386,12 @@ export function PlayableMvpApp({
     async (draft: MissionLaunchDraft) => {
       const pending = pendingGalaxyMission;
       if (!pending) return;
-      const pendingMissionComposerContext = missionComposerIdentity({ account, activePlanetId, pending });
+      const pendingMissionComposerContext = missionComposerIdentity({
+        account,
+        activePlanetId,
+        pending,
+        selectedTargetIsMoon: draft.targetIsMoon === true,
+      });
       const { action, target, coords } = pending;
       const missionOriginPlanet = pending.originPlanet ?? selectedManagedPlanet;
       const originPlanetId = missionOriginPlanet?.planetId ?? activePlanetId ?? onChainSettlement?.homePlanetId;
@@ -6385,7 +6403,7 @@ export function PlayableMvpApp({
         (pendingGalaxyMission.action.kind === "attack" || pendingGalaxyMission.action.kind === "transport" || pendingGalaxyMission.action.kind === "deploy")
           ? {
               defaultOriginIsMoon: pendingGalaxyMission.bodySelectionDefaults?.originIsMoon,
-              defaultTargetIsMoon: pendingGalaxyMission.bodySelectionDefaults?.targetIsMoon,
+              defaultTargetIsMoon: pendingMissionTargetIsMoon,
               originMoonAvailable: pendingMissionOriginMoonLoaded,
               targetMoonAvailable: Boolean(pendingMissionTarget?.hasMoon),
               originMoonResources: pendingMissionOriginMoonLoaded ? missionMoonResources(moonState) : undefined,
@@ -6433,6 +6451,7 @@ export function PlayableMvpApp({
           targetIntelError={attackTargetQuery.snapshot?.error}
           onRetryTargetIntel={pendingAttackTargetId ? () => { void attackTargetQuery.refetch().catch(() => {}); } : undefined}
           onRetryProtection={pendingAttackPreparation.retryAvailable ? () => { void attackProtectionQuery.refetch().catch(() => {}); } : undefined}
+          onTargetIsMoonChange={setPendingMissionTargetIsMoon}
           warProtectionNotice={pendingAttackPreparation.warNotice}
         />
       );

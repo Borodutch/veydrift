@@ -451,6 +451,7 @@ export function MissionCreationPage({
   targetIntelError,
   onRetryTargetIntel,
   onRetryProtection,
+  onTargetIsMoonChange,
   warProtectionNotice,
 }: {
   // VEY-KANEO-440: render the picker for an ACS Defend ("Defend planet") counterplay. Like a normal
@@ -494,6 +495,7 @@ export function MissionCreationPage({
   targetIntelError?: string | undefined;
   onRetryTargetIntel?: (() => void) | undefined;
   onRetryProtection?: (() => void) | undefined;
+  onTargetIsMoonChange?: ((targetIsMoon: boolean) => void) | undefined;
   /** Target-specific active-war policy result, fetched before Confirm is enabled. */
   warProtectionNotice?: string | undefined;
 }) {
@@ -764,6 +766,7 @@ export function MissionCreationPage({
   const changeTargetBody = (value: boolean) => {
     setCargo((current) => missionCargoAfterBodyChange(current, effectiveTargetIsMoon, value));
     setTargetIsMoon(value);
+    onTargetIsMoonChange?.(value);
   };
   const updateLootPercent = (key: ResourceKey, value: number) => {
     setGreedyLootEnabled(false);

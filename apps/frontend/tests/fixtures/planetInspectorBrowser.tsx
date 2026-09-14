@@ -23,11 +23,16 @@ declare global {
       interactions: Array<{ isTrusted: boolean; pointerType?: string; target: string; type: string }>;
       requests: string[];
       walletRequests: Array<{ method: string; params?: unknown[] }>;
+      alternateAccount: string;
       beginDetailRace(kind: "moon" | "planet"): void;
+      failAttackProtection(index: number): void;
+      pendingAttackProtections(): Array<{ index: number; targetIsMoon: boolean; targetPlanetId: string; wallet: string }>;
       pendingDetailRequests(): string[];
+      resolveAttackProtection(index: number, verdict: "allowed" | "blocked" | "unverified"): void;
       resolveDetailRequest(key: string): void;
       renderResourceBar(scope: string, metal: number): void;
       rootRenderMs: number[];
+      setPlayableAccount(wallet: string): void;
       clockRenders: number;
       refreshMissionQueries(): Promise<unknown>;
     };
@@ -35,6 +40,7 @@ declare global {
 }
 
 const account = "0x1111111111111111111111111111111111111111";
+const alternateAccount = "0x2222222222222222222222222222222222222222";
 const unrelatedOwner = "0x9999999999999999999999999999999999999999";
 const appRoot = document.querySelector("#app") as HTMLElement;
 const fixtureParams = new URLSearchParams(window.location.search);
@@ -52,6 +58,7 @@ const audioContextFailure = fixtureParams.get("audioContextFailure") === "true";
 const shortResources = fixtureParams.get("shortResources") === "true";
 const publicTreasury = fixtureParams.get("publicTreasury") === "true";
 const moonOverview = fixtureParams.get("moonOverview") === "true";
+const raidEligibilityProbe = fixtureParams.get("raidEligibilityProbe") === "true";
 const selectedPlanetResources = shortResources
   ? { crystal: "5", deuterium: "2", metal: "10" }
   : { crystal: "3873", deuterium: "102", metal: "10313" };
@@ -82,6 +89,8 @@ const publicSystems = new Map([
   ["1:2", systemPayload(1, 2, 3, "Owned Alpha Public", account, "101", 1101, true)],
   ["4:5", systemPayload(4, 5, 6, "Owned Beta Public", account, "102", 2202, false)],
   ["9:9", systemPayload(9, 9, 9, "Unrelated Gamma", unrelatedOwner, "9909", 9909, true)],
+  ["7:7", systemPayload(7, 7, 7, "Raid Alpha", unrelatedOwner, "raid-alpha", 7707, true)],
+  ["8:8", systemPayload(8, 8, 8, "Raid Beta", unrelatedOwner, "raid-beta", 8808, true)],
 ]);
 publicSystems.get("1:2")?.planets.push(
   systemPayload(1, 2, 9, "Nearby Rival", unrelatedOwner, "nearby-rival", 4404, true).planets[0]!,
@@ -93,6 +102,13 @@ const fixtureErrors: string[] = [];
 const fixtureInteractions: Array<{ isTrusted: boolean; pointerType?: string; target: string; type: string }> = [];
 const fixtureRequests: string[] = [];
 const walletRequests: Array<{ method: string; params?: unknown[] }> = [];
+const pendingAttackProtectionRequests: Array<{
+  resolve: (response: Response) => void;
+  settled: boolean;
+  targetIsMoon: boolean;
+  targetPlanetId: string;
+  wallet: string;
+}> = [];
 const providerListeners = new Map<string, Set<(...args: unknown[]) => void>>();
 const originalConsoleError = console.error;
 console.error = (...values) => {
@@ -165,6 +181,30 @@ globalThis.fetch = (async (input, init) => {
     });
   }
 
+  const controlledProtectionMatch = raidEligibilityProbe
+    ? url.pathname.match(/\/wallet\/([^/]+)\/attack-protection$/)
+    : null;
+  if (controlledProtectionMatch) {
+    return new Promise<Response>((resolve) => pendingAttackProtectionRequests.push({
+      resolve,
+      settled: false,
+      targetIsMoon: url.searchParams.get("targetIsMoon") === "true",
+      targetPlanetId: url.searchParams.get("targetPlanetId")!,
+      wallet: decodeURIComponent(controlledProtectionMatch[1]!),
+    }));
+  }
+
+  if (raidEligibilityProbe && url.pathname.includes(`/wallet/${alternateAccount}/`)) {
+    const rewritten = new URL(url);
+    rewritten.pathname = rewritten.pathname.replace(alternateAccount, account);
+    const response = await globalThis.fetch(rewritten, init);
+    return new Response((await response.text()).replaceAll(account, alternateAccount), {
+      headers: response.headers,
+      status: response.status,
+      statusText: response.statusText,
+    });
+  }
+
   if (stallMissionBackgroundReads && (
     url.pathname.endsWith(`/wallet/${account}/missions`)
     || url.pathname.endsWith(`/wallet/${account}/missile-attacks`)
@@ -195,6 +235,7 @@ globalThis.fetch = (async (input, init) => {
         gameConfigured: true,
         highscoresEndpoint: true,
         moonConfigured: false,
+        ...(raidEligibilityProbe ? { moonAttackParity: true } : {}),
         referralsConfigured: false,
         researchEndpoint: true,
         resourceTokensConfigured: false,
@@ -271,6 +312,19 @@ globalThis.fetch = (async (input, init) => {
       pagination: emptyArchivePagination(url),
       rows: [],
     });
+  }
+
+  if (raidEligibilityProbe && url.pathname.endsWith("/highscores")) {
+    return Response.json(raidEligibilityHighscores());
+  }
+  if (raidEligibilityProbe && url.pathname.endsWith("/raid-finder/debris")) {
+    return Response.json({ targets: [] });
+  }
+  if (raidEligibilityProbe && url.pathname.endsWith("/raid-finder/rifters")) {
+    return Response.json({ targets: [] });
+  }
+  if (raidEligibilityProbe && url.pathname.endsWith("/randomness-readiness")) {
+    return Response.json({ ready: true, reasons: [] });
   }
 
   if (url.pathname.endsWith(`/wallet/${unrelatedOwner}/planets`)) {
@@ -508,6 +562,7 @@ document.addEventListener("pointerdown", (event) => {
 
 window.inspectorProof = {
   account,
+  alternateAccount,
   appReady: false,
   rootRenderMs: [],
   clockRenders: 0,
@@ -519,6 +574,38 @@ window.inspectorProof = {
   interactions: fixtureInteractions,
   requests: fixtureRequests,
   walletRequests,
+  failAttackProtection(index) {
+    const request = pendingAttackProtectionRequests[index];
+    if (!request || request.settled) throw new Error(`No pending attack-protection request ${index}`);
+    request.settled = true;
+    request.resolve(Response.json({ error: "Temporary attack-protection failure" }, { status: 503 }));
+  },
+  pendingAttackProtections() {
+    return pendingAttackProtectionRequests.flatMap((request, index) => request.settled ? [] : [{
+      index,
+      targetIsMoon: request.targetIsMoon,
+      targetPlanetId: request.targetPlanetId,
+      wallet: request.wallet,
+    }]);
+  },
+  resolveAttackProtection(index, verdict) {
+    const request = pendingAttackProtectionRequests[index];
+    if (!request || request.settled) throw new Error(`No pending attack-protection request ${index}`);
+    request.settled = true;
+    const blocked = verdict === "blocked";
+    request.resolve(Response.json({
+      wallet: request.wallet,
+      targetPlanetId: request.targetPlanetId,
+      allowed: verdict === "allowed",
+      blockedReason: blocked ? "score_protection" : "none",
+      blockedReasonLabel: blocked ? "Raid target is score protected." : null,
+      atWar: true,
+      warEligibilityNeedsCheck: verdict === "unverified",
+    } satisfies AttackProtectionStatus));
+  },
+  setPlayableAccount(wallet) {
+    render(<PlayableMvpApp account={wallet} provider={provider} />, appRoot);
+  },
   beginDetailRace(kind) {
     detailRaceKind = kind;
     pendingDetailRequests.clear();
@@ -787,5 +874,57 @@ function systemPayload(
       temperature: 20,
     }],
     system,
+  };
+}
+
+function raidEligibilityHighscores() {
+  const score = {
+    total: "1000", economy: "1000", research: "0", researchLevels: "0",
+    military: "0", fleet: "0", fleetCount: "0", defense: "0",
+  };
+  const planet = (planetId: string, name: string, galaxy: number, system: number, position: number, loot: string) => ({
+    planetId,
+    name,
+    coordinates: { galaxy, system, position },
+    archetype: "temperate-ocean" as const,
+    hasMoon: true,
+    tactical: {
+      raidableResources: { metal: loot, crystal: "500", deuterium: "100" },
+      raidableResourceTotal: String(Number(loot) + 600),
+      grossResourceTotal: String((Number(loot) + 600) * 2),
+      ships: { count: 0, power: "0" },
+      defenses: { count: 0, power: "0" },
+      combatShips: { count: 0, power: "0", units: [] },
+      combatPower: "0",
+    },
+  });
+  const target = {
+    rank: 1,
+    wallet: unrelatedOwner,
+    alliance: null,
+    attackProtection: {
+      allowed: false,
+      atWar: true,
+      warEligibilityNeedsCheck: true,
+      blockedReason: "none" as const,
+      blockedReasonLabel: null,
+    },
+    displayName: "Raid Fixture Rival",
+    homePlanetId: "raid-alpha",
+    homePlanet: null,
+    planets: [
+      planet("raid-alpha", "Raid Alpha", 7, 7, 7, "9000"),
+      planet("raid-beta", "Raid Beta", 8, 8, 8, "4000"),
+    ],
+    planetCount: 2,
+    score,
+  };
+  return {
+    generatedAt: "2026-09-14T00:00:00.000Z",
+    formula: { pointsDivisor: "1000", summary: "Veydrift score" },
+    rankings: {
+      total: [target], economy: [], research: [], researchLevels: [],
+      military: [], fleet: [], fleetCount: [], defense: [],
+    },
   };
 }

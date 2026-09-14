@@ -447,6 +447,14 @@ async function loadInspectorFixture(route, width, options = {}) {
   }
 }
 
+function missionConfirmExpression(disabled) {
+  return `[...document.querySelectorAll('[data-mission-actions] button')].find(button => button.textContent.trim() === 'Confirm Mission' && button.disabled === ${disabled})`;
+}
+
+function raidFinderAttackExpression(coordinates) {
+  return `[...document.querySelectorAll('[data-raid-target-finder-page] button[aria-label="Attack"]')].find(button => button.closest('[class*="grid-cols-"]')?.querySelector('button[title="Open [${coordinates}]"]'))`;
+}
+
 async function loadRecoveryFixture() {
   await replacePageTarget();
   await cdp.send("Emulation.setDeviceMetricsOverride", {
@@ -1504,6 +1512,111 @@ test("Galaxy prepares an unknown target but keeps Confirm fail-closed without a 
   await waitForExpression(`document.querySelector('[data-mission-composer]')?.textContent.includes('Attack protection response no longer matches this wallet and target. Retry before launching an attack.')
     && [...document.querySelectorAll('[data-mission-actions] button')].some(button => button.textContent.trim() === 'Confirm Mission' && button.disabled)
     && window.inspectorProof.requests.filter(path => path.includes('/attack-protection')).length > ${protectionRequestsBeforePreparation}`);
+  assert.equal(await evaluate(`window.inspectorProof.walletRequests.some(request => request.method === 'eth_sendTransaction')`), false);
+  assert.deepEqual(await evaluate("window.inspectorProof.errors"), []);
+});
+
+test("Raid Finder runs unverified eligibility through mounted Confirm and a final fresh check", async () => {
+  await loadInspectorFixture("/raid-finder", 1280, { raidEligibilityProbe: "true" });
+  const attack = raidFinderAttackExpression("7:7:7");
+  await waitForExpression(`${attack} !== undefined`);
+  assert.equal(await evaluate(`window.inspectorProof.requests.some(path => path.includes('/attack-protection'))`), false);
+
+  await clickExpression(attack);
+  await waitForExpression(`window.inspectorProof.pendingAttackProtections().length === 1`);
+  const firstRequest = await evaluate(`window.inspectorProof.pendingAttackProtections()[0]`);
+  assert.deepEqual(firstRequest, {
+    index: 0,
+    targetIsMoon: false,
+    targetPlanetId: "raid-alpha",
+    wallet: "0x1111111111111111111111111111111111111111",
+  });
+  await clickExpression(`document.querySelector('button[aria-label="Increase Small Cargo"]')`);
+  await evaluate(`window.inspectorProof.resolveAttackProtection(0, 'allowed')`);
+  await waitForExpression(`${missionConfirmExpression(false)} !== undefined`);
+
+  await clickExpression(missionConfirmExpression(false));
+  await waitForExpression(`window.inspectorProof.pendingAttackProtections().some(request => request.index === 1)`);
+  assert.equal(await evaluate(`window.inspectorProof.walletRequests.some(request => request.method === 'eth_sendTransaction')`), false);
+  assert.deepEqual(await evaluate(`window.inspectorProof.pendingAttackProtections().find(request => request.index === 1)`), {
+    index: 1,
+    targetIsMoon: false,
+    targetPlanetId: "raid-alpha",
+    wallet: "0x1111111111111111111111111111111111111111",
+  });
+  await evaluate(`window.inspectorProof.resolveAttackProtection(1, 'allowed')`);
+  await waitForExpression(`window.inspectorProof.walletRequests.some(request => request.method === 'eth_sendTransaction')`);
+  assert.deepEqual(await evaluate("window.inspectorProof.errors"), []);
+});
+
+test("Raid Finder keeps a mounted canonical denial blocked", async () => {
+  await loadInspectorFixture("/raid-finder", 1280, { raidEligibilityProbe: "true" });
+  const attack = raidFinderAttackExpression("7:7:7");
+  await waitForExpression(`${attack} !== undefined`);
+  await clickExpression(attack);
+  await waitForExpression(`window.inspectorProof.pendingAttackProtections().length === 1`);
+  await evaluate(`window.inspectorProof.resolveAttackProtection(0, 'blocked')`);
+  await waitForExpression(`document.querySelector('[data-mission-composer]')?.textContent.includes('Raid target is score protected.')
+    && ${missionConfirmExpression(true)} !== undefined`);
+  assert.equal(await evaluate(`[...document.querySelectorAll('button')].some(button => button.textContent.trim() === 'Retry attack protection')`), false);
+  assert.equal(await evaluate(`window.inspectorProof.walletRequests.some(request => request.method === 'eth_sendTransaction')`), false);
+  assert.deepEqual(await evaluate("window.inspectorProof.errors"), []);
+});
+
+test("Raid Finder exposes a working mounted retry after canonical request failure", async () => {
+  await loadInspectorFixture("/raid-finder", 1280, { raidEligibilityProbe: "true" });
+  const attack = raidFinderAttackExpression("7:7:7");
+  await waitForExpression(`${attack} !== undefined`);
+  await clickExpression(attack);
+  await waitForExpression(`window.inspectorProof.pendingAttackProtections().length === 1`);
+  await evaluate(`window.inspectorProof.failAttackProtection(0)`);
+  const retry = `[...document.querySelectorAll('[data-mission-actions] button')].find(button => button.textContent.trim() === 'Retry attack protection')`;
+  await waitForExpression(`${retry} !== undefined && ${missionConfirmExpression(true)} !== undefined`);
+  await clickExpression(retry);
+  await waitForExpression(`window.inspectorProof.pendingAttackProtections().some(request => request.index === 1)`);
+  await clickExpression(`document.querySelector('button[aria-label="Increase Small Cargo"]')`);
+  await evaluate(`window.inspectorProof.resolveAttackProtection(1, 'allowed')`);
+  await waitForExpression(`${missionConfirmExpression(false)} !== undefined`);
+  assert.equal(await evaluate(`window.inspectorProof.walletRequests.some(request => request.method === 'eth_sendTransaction')`), false);
+  assert.deepEqual(await evaluate("window.inspectorProof.errors"), []);
+});
+
+test("Raid Finder ignores delayed planet, target, and account approvals in the mounted composer", async () => {
+  await loadInspectorFixture("/raid-finder", 1280, { raidEligibilityProbe: "true" });
+  const alphaAttack = raidFinderAttackExpression("7:7:7");
+  const betaAttack = raidFinderAttackExpression("8:8:8");
+  await waitForExpression(`${alphaAttack} !== undefined && ${betaAttack} !== undefined`);
+  await clickExpression(alphaAttack);
+  await waitForExpression(`window.inspectorProof.pendingAttackProtections().length === 1`);
+  await clickExpression(`document.querySelector('button[title="Target moon"]')`);
+  await waitForExpression(`window.inspectorProof.pendingAttackProtections().some(request => request.index === 1 && request.targetIsMoon)`);
+  await clickExpression(`document.querySelector('button[aria-label="Increase Small Cargo"]')`);
+
+  await evaluate(`window.inspectorProof.resolveAttackProtection(0, 'allowed')`);
+  assert.equal(await evaluate(`${missionConfirmExpression(false)} !== undefined`), false);
+  await evaluate(`window.inspectorProof.resolveAttackProtection(1, 'blocked')`);
+  await waitForExpression(`document.querySelector('[data-mission-composer]')?.textContent.includes('Raid target is score protected.')`);
+
+  await clickExpression(`document.querySelector('button[title="Target planet"]')`);
+  await waitForExpression(`window.inspectorProof.pendingAttackProtections().some(request => request.index === 2 && !request.targetIsMoon)`);
+  await evaluate(`window.inspectorProof.resolveAttackProtection(2, 'allowed')`);
+  await waitForExpression(`${missionConfirmExpression(false)} !== undefined`);
+
+  await clickExpression(`[...document.querySelectorAll('[data-mission-actions] button')].find(button => button.textContent.trim() === 'Cancel')`);
+  await waitForExpression(`document.querySelector('[data-mission-composer]') === null`);
+  await clickExpression(alphaAttack);
+  await waitForExpression(`window.inspectorProof.pendingAttackProtections().some(request => request.index === 3)`);
+  await clickExpression(`[...document.querySelectorAll('[data-mission-actions] button')].find(button => button.textContent.trim() === 'Cancel')`);
+  await waitForExpression(`document.querySelector('[data-mission-composer]') === null`);
+  await clickExpression(betaAttack);
+  await waitForExpression(`window.inspectorProof.pendingAttackProtections().some(request => request.index === 4 && request.targetPlanetId === 'raid-beta')`);
+  await evaluate(`window.inspectorProof.resolveAttackProtection(3, 'allowed')`);
+  assert.equal(await evaluate(`${missionConfirmExpression(false)} !== undefined`), false);
+
+  await evaluate(`window.inspectorProof.setPlayableAccount(window.inspectorProof.alternateAccount)`);
+  await waitForExpression(`document.querySelector('[data-mission-composer]')?.textContent.includes('Wallet changed during mission preparation.')`);
+  await evaluate(`window.inspectorProof.resolveAttackProtection(4, 'allowed')`);
+  assert.equal(await evaluate(`${missionConfirmExpression(false)} !== undefined`), false);
   assert.equal(await evaluate(`window.inspectorProof.walletRequests.some(request => request.method === 'eth_sendTransaction')`), false);
   assert.deepEqual(await evaluate("window.inspectorProof.errors"), []);
 });
