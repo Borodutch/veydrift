@@ -3,6 +3,7 @@ import { emptyMissionShips } from "../galaxyActions";
 import type { BatchSupplyOrder, BatchSupplySource } from "../batchSupplyPlanner";
 import {
   batchSupplyFleetPresentation,
+  batchSupplyMissionLimitError,
   batchSupplySourceLimitReason,
   supplyResourceInputValues,
 } from "./BatchSupplyModal";
@@ -46,6 +47,14 @@ describe("Batch Supply source row presentation", () => {
 
   test("does not misreport unreadable fleet capacity as every slot being occupied", () => {
     expect(batchSupplyModalSource).toContain("fleetSlotsKnown && maxSources === 0");
+  });
+
+  test("blocks only Supply plans above the 15-mission contract limit and clears when reduced", () => {
+    expect(batchSupplyMissionLimitError(8)).toBeUndefined();
+    expect(batchSupplyMissionLimitError(9)).toBeUndefined();
+    expect(batchSupplyMissionLimitError(15)).toBeUndefined();
+    expect(batchSupplyMissionLimitError(16)).toBe("A Supply batch can launch at most 15 missions. Reduce the plan before launching.");
+    expect(batchSupplyMissionLimitError(15)).toBeUndefined();
   });
 
   test("shows the canonical remaining cargo fleet for an unplanned partially committed source", () => {

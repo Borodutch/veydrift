@@ -25,6 +25,14 @@ const supplyCargoShips: Array<{ key: MissionShipKey; label: string }> = [
   { key: "colonyShip", label: "Colony Ship" },
 ];
 
+export const MAX_TRANSPORT_BATCH_MISSIONS = 15;
+
+export function batchSupplyMissionLimitError(missionCount: number): string | undefined {
+  return missionCount > MAX_TRANSPORT_BATCH_MISSIONS
+    ? `A Supply batch can launch at most ${MAX_TRANSPORT_BATCH_MISSIONS} missions. Reduce the plan before launching.`
+    : undefined;
+}
+
 export function batchSupplyFleetPresentation(
   source: Pick<BatchSupplySource, "ships">,
   order: Pick<BatchSupplyOrder, "ships"> | undefined,
@@ -114,7 +122,8 @@ export function BatchSupplyModal({
   const canonicalTransactionError = transactionState?.phase === "error" || transactionOutcome === "unknown" || transactionOutcome === "reverted"
     ? transactionState?.label
     : undefined;
-  const canSubmit = !loading && !actionPending && !transactionPending && plan.orders.length > 0 && missingTotal === 0 && !plan.sourceLimitReached;
+  const missionLimitError = batchSupplyMissionLimitError(plan.orders.length);
+  const canSubmit = !loading && !actionPending && !transactionPending && plan.orders.length > 0 && missingTotal === 0 && !plan.sourceLimitReached && !missionLimitError;
   const targetLabel = target.name?.trim() || target.coordinates;
   const etaRange = plan.orders.length > 0
     ? {
@@ -291,6 +300,7 @@ export function BatchSupplyModal({
           {plan.blockedSources.length > 0 ? <p className="rounded border border-amber-300/30 bg-amber-300/10 p-2 text-sm text-amber-100">Some selected sources cannot launch: {plan.blockedSources.map((source) => source.reason).join(" ")}</p> : null}
           {missingTotal > 0 ? <p className="rounded border border-amber-300/30 bg-amber-300/10 p-2 text-sm text-amber-100">Missing: M {format(plan.missing.metal)} · C {format(plan.missing.crystal)} · D {format(plan.missing.deuterium)}. Select more sources or reduce the request.</p> : null}
           {transactionPending ? <p className="rounded border border-cyan-300/30 bg-cyan-300/10 p-2 text-sm text-cyan-100">Processing… You can close this window.</p> : null}
+          {missionLimitError ? <p className="rounded border border-red-300/30 bg-red-300/10 p-2 text-sm text-red-100">{missionLimitError}</p> : null}
           {(error ?? canonicalTransactionError) ? <p className="rounded border border-red-300/30 bg-red-300/10 p-2 text-sm text-red-100">{error ?? canonicalTransactionError}</p> : null}
 
           <footer className="grid gap-3 border-t border-white/10 pt-3">

@@ -10,7 +10,7 @@ import {Technology} from "./libraries/VeydriftTypes.sol";
 ///      with `delegatecall`. That retains the original player as `msg.sender` and gives every child
 ///      exactly the same settlement, ship, fuel, resolution, and event semantics as a normal launch.
 contract VeydriftBatchTransportModule is VeydriftResourceReserves {
-    uint8 private constant MAX_TRANSPORT_BATCH_ORDERS = 8;
+    uint8 private constant MAX_TRANSPORT_BATCH_ORDERS = 15;
     bytes4 private constant LAUNCH_FLEET_MISSION_SELECTOR = bytes4(
         keccak256(
             "launchFleetMission(uint256,uint256,uint8,(uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32),(uint128,uint128,uint128),uint16,uint256)"
