@@ -1501,7 +1501,7 @@ test("Galaxy prepares an unknown target but keeps Confirm fail-closed without a 
     `window.inspectorProof.requests.filter(path => path.includes('/attack-protection')).length`,
   );
   await clickExpression(attack);
-  await waitForExpression(`document.querySelector('[data-mission-composer]')?.textContent.includes('Attack eligibility is not verified. Retry before launching an attack.')
+  await waitForExpression(`document.querySelector('[data-mission-composer]')?.textContent.includes('Attack protection response no longer matches this wallet and target. Retry before launching an attack.')
     && [...document.querySelectorAll('[data-mission-actions] button')].some(button => button.textContent.trim() === 'Confirm Mission' && button.disabled)
     && window.inspectorProof.requests.filter(path => path.includes('/attack-protection')).length > ${protectionRequestsBeforePreparation}`);
   assert.equal(await evaluate(`window.inspectorProof.walletRequests.some(request => request.method === 'eth_sendTransaction')`), false);
