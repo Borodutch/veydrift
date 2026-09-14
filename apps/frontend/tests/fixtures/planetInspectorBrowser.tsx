@@ -479,7 +479,7 @@ globalThis.fetch = (async (input, init) => {
 
   if (url.pathname.includes("/attack-protection")) {
     if (fixtureParams.get("attackProtection") === "malformed") {
-      // The old fixture omitted the canonical verdict; it must not enable Attack.
+      // Missing canonical verdict may enter preparation, but must not enable Confirm.
       return Response.json({ blockedReason: "none", isProtected: false, isSameAlliance: false });
     }
     return Response.json({

@@ -1493,15 +1493,17 @@ test("Galaxy attack hydrates coordinate-keyed targets and a stalled report can r
   assert.equal(await evaluate(`window.inspectorProof.walletRequests.some(request => request.method === 'eth_sendTransaction')`), false);
 });
 
-test("Galaxy does not enable Attack for a response missing the canonical allowed verdict", async () => {
+test("Galaxy prepares an unknown target but keeps Confirm fail-closed without a canonical allowed verdict", async () => {
   await loadInspectorFixture("/galaxy", 1280, { attackIntelProbe: "true", attackProtection: "malformed" });
-  const blockedAttack = `document.querySelector('main button[aria-label="Attack: Attack blocked."]:disabled')`;
-  await waitForExpression(`${blockedAttack} !== null
-    && [...document.querySelectorAll('main button[aria-label^="Attack"]')].every(button => button.disabled && button.title === 'Attack: Attack blocked.')`);
-  assert.equal(await evaluate(`document.querySelector('main button[aria-label="Attack"]:not(:disabled)') !== null`), false);
-  await clickExpression(blockedAttack);
-  assert.equal(await evaluate(`document.querySelector('[data-mission-composer]') !== null`), false);
-  assert.equal(await evaluate(`window.inspectorProof.requests.some(path => path.includes('detail=full'))`), false);
+  const attack = `document.querySelector('main button[aria-label="Attack"]:not(:disabled)')`;
+  await waitForExpression(`${attack} !== null`);
+  const protectionRequestsBeforePreparation = await evaluate(
+    `window.inspectorProof.requests.filter(path => path.includes('/attack-protection')).length`,
+  );
+  await clickExpression(attack);
+  await waitForExpression(`document.querySelector('[data-mission-composer]')?.textContent.includes('Attack eligibility is not verified. Retry before launching an attack.')
+    && [...document.querySelectorAll('[data-mission-actions] button')].some(button => button.textContent.trim() === 'Confirm Mission' && button.disabled)
+    && window.inspectorProof.requests.filter(path => path.includes('/attack-protection')).length > ${protectionRequestsBeforePreparation}`);
   assert.equal(await evaluate(`window.inspectorProof.walletRequests.some(request => request.method === 'eth_sendTransaction')`), false);
   assert.deepEqual(await evaluate("window.inspectorProof.errors"), []);
 });
