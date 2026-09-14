@@ -10975,18 +10975,18 @@ contract VeydriftGameTest is Test {
         ships.smallCargo = 1;
     }
 
-    function _assertLaunchTransportBatchOrderCountAccepted(uint256 count) internal {
+    function _assertLaunchTransportBatchOrderCountAccepted(uint16 count) internal {
         vm.prank(player);
         uint256 targetPlanetId = game.startPlanet{value: 0.05 ether}();
         _setPlanetCoordinates(targetPlanetId, 1, 100, 8);
-        _setTechnologyLevel(player, Technology.Computer, uint16(count - 1));
+        _setTechnologyLevel(player, Technology.Computer, count - 1);
 
         VeydriftGameStorage.TransportBatchOrder[] memory orders =
             new VeydriftGameStorage.TransportBatchOrder[](count);
-        for (uint256 i = 0; i < count; ++i) {
+        for (uint16 i = 0; i < count; ++i) {
             uint256 originPlanetId = 1_000 + i;
             _setPlanetOwner(originPlanetId, player);
-            _setPlanetCoordinates(originPlanetId, 1, uint16(i + 1), 8);
+            _setPlanetCoordinates(originPlanetId, 1, i + 1, 8);
             _setShipCount(originPlanetId, Ship.SmallCargo, 1);
             _setResources(originPlanetId, 0, 0, 1_000_000);
             orders[i] = VeydriftGameStorage.TransportBatchOrder({
