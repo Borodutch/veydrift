@@ -1528,7 +1528,7 @@ test("Raid Finder runs unverified eligibility through mounted Confirm and a fina
   assert.deepEqual(firstRequest, {
     index: 0,
     targetIsMoon: false,
-    targetPlanetId: "raid-alpha",
+    targetPlanetId: "707",
     wallet: "0x1111111111111111111111111111111111111111",
   });
   await waitForExpression(`document.querySelector('button[aria-label="Increase Small Cargo"]:not(:disabled)') !== null`);
@@ -1542,7 +1542,7 @@ test("Raid Finder runs unverified eligibility through mounted Confirm and a fina
   assert.deepEqual(await evaluate(`window.inspectorProof.pendingAttackProtections().find(request => request.index === 1)`), {
     index: 1,
     targetIsMoon: false,
-    targetPlanetId: "raid-alpha",
+    targetPlanetId: "707",
     wallet: "0x1111111111111111111111111111111111111111",
   });
   await evaluate(`window.inspectorProof.resolveAttackProtection(1, 'allowed')`);
@@ -1590,8 +1590,8 @@ test("Raid Finder ignores delayed planet, target, and account approvals in the m
   await waitForExpression(`${alphaAttack} !== undefined && ${betaAttack} !== undefined`);
   await clickExpression(alphaAttack);
   await waitForExpression(`window.inspectorProof.pendingAttackProtections().length === 1`);
-  await waitForExpression(`document.querySelector('button[title="Target moon"]:not(:disabled)') !== null`);
-  await clickExpression(`document.querySelector('button[title="Target moon"]')`);
+  await waitForExpression(`document.querySelector('button[title="Destination moon"]:not(:disabled)') !== null`);
+  await clickExpression(`document.querySelector('button[title="Destination moon"]')`);
   await waitForExpression(`window.inspectorProof.pendingAttackProtections().some(request => request.index === 1 && request.targetIsMoon)`);
   await waitForExpression(`document.querySelector('button[aria-label="Increase Small Cargo"]:not(:disabled)') !== null`);
   await clickExpression(`document.querySelector('button[aria-label="Increase Small Cargo"]')`);
@@ -1601,7 +1601,7 @@ test("Raid Finder ignores delayed planet, target, and account approvals in the m
   await evaluate(`window.inspectorProof.resolveAttackProtection(1, 'blocked')`);
   await waitForExpression(`document.querySelector('[data-mission-composer]')?.textContent.includes('Raid target is score protected.')`);
 
-  await clickExpression(`document.querySelector('button[title="Target planet"]')`);
+  await clickExpression(`document.querySelector('button[title="Destination planet"]')`);
   await waitForExpression(`window.inspectorProof.pendingAttackProtections().some(request => request.index === 2 && !request.targetIsMoon)`);
   await evaluate(`window.inspectorProof.resolveAttackProtection(2, 'allowed')`);
   await waitForExpression(`${missionConfirmExpression(false)} !== undefined`);
@@ -1613,7 +1613,7 @@ test("Raid Finder ignores delayed planet, target, and account approvals in the m
   await clickExpression(`[...document.querySelectorAll('[data-mission-actions] button')].find(button => button.textContent.trim() === 'Cancel')`);
   await waitForExpression(`document.querySelector('[data-mission-composer]') === null`);
   await clickExpression(betaAttack);
-  await waitForExpression(`window.inspectorProof.pendingAttackProtections().some(request => request.index === 4 && request.targetPlanetId === 'raid-beta')`);
+  await waitForExpression(`window.inspectorProof.pendingAttackProtections().some(request => request.index === 4 && request.targetPlanetId === '808')`);
   await evaluate(`window.inspectorProof.resolveAttackProtection(3, 'allowed')`);
   assert.equal(await evaluate(`${missionConfirmExpression(false)} !== undefined`), false);
 

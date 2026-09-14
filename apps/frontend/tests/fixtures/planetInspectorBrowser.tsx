@@ -91,8 +91,8 @@ const publicSystems = new Map([
   ["1:2", systemPayload(1, 2, 3, "Owned Alpha Public", account, "101", 1101, true)],
   ["4:5", systemPayload(4, 5, 6, "Owned Beta Public", account, "102", 2202, false)],
   ["9:9", systemPayload(9, 9, 9, "Unrelated Gamma", unrelatedOwner, "9909", 9909, true)],
-  ["7:7", systemPayload(7, 7, 7, "Raid Alpha", unrelatedOwner, "raid-alpha", 7707, true)],
-  ["8:8", systemPayload(8, 8, 8, "Raid Beta", unrelatedOwner, "raid-beta", 8808, true)],
+  ["7:7", systemPayload(7, 7, 7, "Raid Alpha", unrelatedOwner, "707", 7707, true)],
+  ["8:8", systemPayload(8, 8, 8, "Raid Beta", unrelatedOwner, "808", 8808, true)],
 ]);
 publicSystems.get("1:2")?.planets.push(
   systemPayload(1, 2, 9, "Nearby Rival", unrelatedOwner, "nearby-rival", 4404, true).planets[0]!,
@@ -912,11 +912,11 @@ function raidEligibilityHighscores() {
       blockedReasonLabel: null,
     },
     displayName: "Raid Fixture Rival",
-    homePlanetId: "raid-alpha",
+    homePlanetId: "707",
     homePlanet: null,
     planets: [
-      planet("raid-alpha", "Raid Alpha", 7, 7, 7, "9000"),
-      planet("raid-beta", "Raid Beta", 8, 8, 8, "4000"),
+      planet("707", "Raid Alpha", 7, 7, 7, "9000"),
+      planet("808", "Raid Beta", 8, 8, 8, "4000"),
     ],
     planetCount: 2,
     score,
