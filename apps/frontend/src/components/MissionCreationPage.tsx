@@ -451,6 +451,7 @@ export function MissionCreationPage({
   targetIntelError,
   onRetryTargetIntel,
   onRetryProtection,
+  onTargetIsMoonChange,
   warProtectionNotice,
 }: {
   // VEY-KANEO-440: render the picker for an ACS Defend ("Defend planet") counterplay. Like a normal
@@ -494,6 +495,7 @@ export function MissionCreationPage({
   targetIntelError?: string | undefined;
   onRetryTargetIntel?: (() => void) | undefined;
   onRetryProtection?: (() => void) | undefined;
+  onTargetIsMoonChange?: ((targetIsMoon: boolean) => void) | undefined;
   /** Target-specific active-war policy result, fetched before Confirm is enabled. */
   warProtectionNotice?: string | undefined;
 }) {
@@ -764,6 +766,7 @@ export function MissionCreationPage({
   const changeTargetBody = (value: boolean) => {
     setCargo((current) => missionCargoAfterBodyChange(current, effectiveTargetIsMoon, value));
     setTargetIsMoon(value);
+    onTargetIsMoonChange?.(value);
   };
   const updateLootPercent = (key: ResourceKey, value: number) => {
     setGreedyLootEnabled(false);
@@ -1082,11 +1085,7 @@ export function MissionCreationPage({
             {warProtectionNotice}
           </p>
         ) : null}
-        {onRetryProtection ? (
-          <button className="w-fit rounded border border-white/15 px-3 py-2 text-sm font-medium text-slate-100" onClick={onRetryProtection} type="button">
-            Retry attack protection
-          </button>
-        ) : null}
+        {onRetryProtection ? <MissionProtectionRetryButton onRetry={onRetryProtection} /> : null}
         {actionError ? (
           <p className="rounded border border-rose-300/30 bg-rose-300/10 px-3 py-2 text-xs text-rose-100" role="alert">
             {actionError}
@@ -1478,7 +1477,15 @@ function MissionCancelButton({ onCancel }: { onCancel: () => void }) {
   );
 }
 
-function MissionConfirmButton({
+export function MissionProtectionRetryButton({ onRetry }: { onRetry: () => void }) {
+  return (
+    <button className="w-fit rounded border border-white/15 px-3 py-2 text-sm font-medium text-slate-100" onClick={onRetry} type="button">
+      Retry attack protection
+    </button>
+  );
+}
+
+export function MissionConfirmButton({
   actionPending,
   blockedReason,
   label,

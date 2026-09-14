@@ -136,11 +136,11 @@ describe("galaxyActions", () => {
     expect(noRecycler.some((action) => action.kind === "harvest")).toBe(false);
   });
 
-  test("uses canonical attack protection to block attack actions", () => {
+  test.each([false, true])("keeps a concrete protection reason blocked when projected allowed=%s", (allowed) => {
     const attack = galaxyActionsForSlot({
       account,
       attackProtection: {
-        allowed: false,
+        allowed,
         blockedReason: "score_protection",
         blockedReasonLabel: "Attack blocked: score protection allows a 1.5× gap below 50,000 score and a 10× gap below 500,000.",
       },
@@ -155,7 +155,7 @@ describe("galaxyActions", () => {
     });
   });
 
-  test.each([false, true])("disables unverified ranked war targets even with optimistic allowed=%s", (allowed) => {
+  test.each([false, true])("lets unverified ranked war targets enter canonical attack preparation with projected allowed=%s", (allowed) => {
     const attack = galaxyActionsForSlot({
       account,
       attackProtection: rankingsAttackProtectionForEntry({ currentWallet: account, entry: {
@@ -167,11 +167,7 @@ describe("galaxyActions", () => {
       shipyardState: shipyardState([{ id: 1, count: 3 }]),
     }).find((action) => action.kind === "attack");
 
-    expect(attack).toMatchObject({
-      enabled: false,
-      label: "Attack",
-      reason: "War eligibility is unverified. Open the target to check attack protection.",
-    });
+    expect(attack).toMatchObject({ enabled: true, label: "Attack", mission: "attack" });
   });
 
   test("keeps independently allowed war targets attackable when eligibility is not pending", () => {

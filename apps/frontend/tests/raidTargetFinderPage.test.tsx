@@ -8,6 +8,8 @@ import {
   defenseLabel,
   raidFinderPagination,
 } from "../src/components/RaidTargetFinderPage";
+import { galaxyActionsForSlot } from "../src/galaxyActions";
+import { raidTargetPlanetForMission } from "../src/PlayableMvpApp";
 import { DEFAULT_RAID_TARGET_FILTERS, type DebrisFinderTarget, type RaidTarget } from "../src/raidTargetFinder";
 
 describe("RaidTargetFinderPage", () => {
@@ -70,13 +72,53 @@ describe("RaidTargetFinderPage", () => {
     expect(defenseLabel(target)).toBe("Defense 6,000 — Ships: Light Fighter x1 (4K); Defenses: Rocket Launcher x1 (2K)");
   });
 
-  test("row exposes enabled and disabled attack actions while the planet label opens details", () => {
+  test("row starts canonical attack preparation for unverified targets and keeps real protection disabled", () => {
     const selected: string[] = [];
+    const unknownTarget = raidTarget({
+      planetId: "9",
+      protection: {
+        allowed: false,
+        isProtected: false,
+        isSameAlliance: false,
+        isAtWar: true,
+        warEligibilityNeedsCheck: true,
+        blockedReason: "none",
+        blockedReasonLabel: null,
+        scoreComparison: null,
+        defenderInactive: false,
+      },
+    });
+    const projectedAttack = galaxyActionsForSlot({
+      account: "0xme",
+      attackProtection: {
+        allowed: unknownTarget.protection.allowed,
+        atWar: unknownTarget.protection.isAtWar,
+        warEligibilityNeedsCheck: unknownTarget.protection.warEligibilityNeedsCheck,
+        blockedReason: unknownTarget.protection.blockedReason,
+        blockedReasonLabel: unknownTarget.protection.blockedReasonLabel,
+      },
+      homePlanetId: "7",
+      planet: raidTargetPlanetForMission(unknownTarget),
+      shipyardState: {
+        wallet: "0xme",
+        homePlanetId: "7",
+        planetId: "7",
+        productionAvailable: true,
+        resources: null,
+        fleetLaunchAvailable: true,
+        fleetSlots: { active: 0, limit: 1 },
+        shipyardLevel: 1,
+        naniteLevel: 0,
+        technologyLevels: {},
+        ships: [{ id: 1, count: 1, cost: { metal: "0", crystal: "0", deuterium: "0" } }],
+        queue: null,
+      },
+    }).find((action) => action.kind === "attack")!;
     const row = RaidTargetRow({
-      attackAction: { label: "Attack" },
+      attackAction: projectedAttack.enabled ? { label: projectedAttack.label } : { label: projectedAttack.label, disabledReason: projectedAttack.reason },
       onAttackTarget: (target) => selected.push(target.planetId),
       onSelectPlanet: () => undefined,
-      target: raidTarget({ planetId: "9" }),
+      target: unknownTarget,
     });
     const attack = buttonWithTitle(row, "Attack");
     const openPlanet = buttonWithTitle(row, "Open [1:2:3]");
