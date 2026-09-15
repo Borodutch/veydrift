@@ -1151,12 +1151,14 @@ function escapeXml(value) {
 export function hiddenWhitepaperPath(pathname) {
   // Static-file URLs decode once more after request-path decoding.
   try { pathname = decodeURIComponent(pathname); } catch { /* Keep literal percent signs. */ }
+  // URL-based static resolvers also treat decoded backslashes as separators.
+  pathname = pathname.replaceAll("\\", "/");
   return /(?:^|\/)whitepaper(?:\.pdf)?(?:[/?#]|$)/i.test(pathname);
 }
 
 export async function frontendResponse(request) {
   const url = new URL(request.url);
-  const pathname = decodeURIComponent(url.pathname);
+  const pathname = decodeURIComponent(url.pathname).replaceAll("\\", "/");
 
   if (pathname.includes("..")) {
     return new Response("Bad request", { status: 400 });
