@@ -110,6 +110,12 @@ import {
   verifyEntityMediaSignature,
   type EntityMediaKind
 } from "./entityMedia";
+import {
+  createRpcWalletMessageVerifier,
+  verifyEoaWalletMessage,
+  WalletMessageVerificationUnavailableError,
+  type WalletMessageVerifier,
+} from "./walletSignatures";
 
 const jsonHeaders = {
   "content-type": "application/json; charset=utf-8"
@@ -357,6 +363,7 @@ export type ServerDependencies = {
   referralStore?: ReferralInviteStore;
   paidAllianceInviteReader?: PaidAllianceInviteReader;
   paidAllianceInviteSecretStore?: PaidAllianceInviteSecretStore;
+  walletMessageVerifier?: WalletMessageVerifier;
   // Test seam for the narrowly scoped WalletConnect read-only RPC proxy.
   walletConnectRpc?: Pick<HttpJsonRpcTransport, "request">;
 };
@@ -626,10 +633,15 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       ? sharedResponseCacheForIndex(loaded.config.indexDbPath)
       : null;
   const referralStore = dependencies.referralStore ?? createReferralStore(loaded.config);
+  const walletMessageVerifier = dependencies.walletMessageVerifier ?? (
+    usesProductionDependencies && loaded.problems.length === 0
+      ? createRpcWalletMessageVerifier(walletMessageRpcUrlsForConfig(loaded.config))
+      : verifyEoaWalletMessage
+  );
   const paidAllianceInviteReader = dependencies.paidAllianceInviteReader
     ?? createPaidAllianceInviteReader(loaded.config);
   const paidAllianceInviteSecretStore = dependencies.paidAllianceInviteSecretStore
-    ?? createPaidAllianceInviteSecretStore(loaded.config);
+    ?? createPaidAllianceInviteSecretStore(loaded.config, walletMessageVerifier);
   const paidAllianceInviteRateLimiter = new PaidAllianceInviteRateLimiter();
   // A whole-universe prewarm performs every wallet/planet projection back-to-back. On a busy live
   // index that competes with public reads for SQLite and creates the very latency it is intended to
@@ -851,6 +863,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           media: validation.media,
           signature: body?.signature,
           version,
+          verifyWalletMessage: walletMessageVerifier,
           wallet
         });
         if (!verified) {
@@ -938,6 +951,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           description: descriptionValidation.description,
           displayName: displayNameValidation.displayName,
           signature: body?.signature,
+          verifyWalletMessage: walletMessageVerifier,
           wallet
         });
         if (!verified) {
@@ -975,6 +989,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         const verified = await verifyPlayerDisplayNameSignature({
           displayName: validation.displayName,
           signature: body?.signature,
+          verifyWalletMessage: walletMessageVerifier,
           wallet
         });
         if (!verified) {
@@ -1081,6 +1096,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           action: "claim-transaction",
           commitment,
           signature: body?.signature,
+          verifyWalletMessage: walletMessageVerifier,
           wallet
         })) {
           return invalidReferralSignatureResponse();
@@ -1160,6 +1176,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           action: "claim-transaction",
           commitment,
           signature: body?.signature,
+          verifyWalletMessage: walletMessageVerifier,
           wallet
         })) {
           return invalidReferralSignatureResponse();
@@ -1422,6 +1439,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           action: "watch",
           planetId,
           signature: body?.signature,
+          verifyWalletMessage: walletMessageVerifier,
           wallet
         });
         if (!verified) {
@@ -1457,6 +1475,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           action: "unwatch",
           planetId,
           signature: body?.signature,
+          verifyWalletMessage: walletMessageVerifier,
           wallet
         });
         if (!verified) {
@@ -2337,6 +2356,13 @@ function rpcUrlsForConfig(config: BackendConfig): string[] {
   return [
     config.rpcUrl,
     ...(config.rpcFallbackUrls ?? [])
+  ].filter((url): url is string => Boolean(url && url.trim().length > 0));
+}
+
+function walletMessageRpcUrlsForConfig(config: BackendConfig): string[] {
+  return [
+    ...(config.rpcFallbackUrls ?? []),
+    config.rpcUrl,
   ].filter((url): url is string => Boolean(url && url.trim().length > 0));
 }
 
@@ -6558,7 +6584,10 @@ function errorResponse(error: unknown, status: number): Response {
       error: error instanceof Error ? error.message : "Request failed."
     },
     {
-      headers: corsHeaders,
+      headers: {
+        ...corsHeaders,
+        ...(error instanceof WalletMessageVerificationUnavailableError ? { "retry-after": "1" } : {})
+      },
       status: responseStatus
     }
   );
@@ -6572,6 +6601,7 @@ function statusForError(error: unknown, fallback: number): number {
   if (!(error instanceof Error)) return fallback;
 
   if (isSqliteBusyError(error)) return 503;
+  if (error instanceof WalletMessageVerificationUnavailableError) return 503;
   if (error instanceof RequestBodyTooLargeError) return 413;
   if (isLiveWalletReadTimeout(error)) return 503;
   if (isRateLimitedRpcError(error)) return 503;

@@ -1,5 +1,10 @@
-import { getAddress, verifyMessage, type Address as ViemAddress } from "viem";
+import { getAddress, type Address as ViemAddress } from "viem";
 import type { Address } from "./evm";
+import {
+  verifyEoaWalletMessage,
+  WalletMessageVerificationUnavailableError,
+  type WalletMessageVerifier
+} from "./walletSignatures";
 
 export const entityMediaKinds = ["planet", "moon", "player", "alliance"] as const;
 
@@ -149,6 +154,7 @@ export async function verifyEntityMediaSignature({
   media,
   signature,
   version,
+  verifyWalletMessage = verifyEoaWalletMessage,
   wallet
 }: {
   entityId: string;
@@ -156,17 +162,19 @@ export async function verifyEntityMediaSignature({
   media: YouTubeMedia | null;
   signature: unknown;
   version: number;
+  verifyWalletMessage?: WalletMessageVerifier;
   wallet: Address;
 }): Promise<boolean> {
   if (typeof signature !== "string" || !/^0x[a-fA-F0-9]+$/.test(signature)) return false;
 
   try {
-    return await verifyMessage({
+    return await verifyWalletMessage({
       address: getAddress(wallet) as ViemAddress,
       message: entityMediaMessage({ entityId, entityKind, media, version, wallet }),
       signature: signature as `0x${string}`
     });
-  } catch {
+  } catch (error) {
+    if (error instanceof WalletMessageVerificationUnavailableError) throw error;
     return false;
   }
 }

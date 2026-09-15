@@ -1,5 +1,10 @@
-import { getAddress, verifyMessage, type Address as ViemAddress } from "viem";
+import { getAddress, type Address as ViemAddress } from "viem";
 import type { Address } from "./evm";
+import {
+  verifyEoaWalletMessage,
+  WalletMessageVerificationUnavailableError,
+  type WalletMessageVerifier
+} from "./walletSignatures";
 
 export const playerDisplayNameMaxLength = 32;
 export const playerDescriptionMaxLength = 500;
@@ -99,10 +104,12 @@ export function validatePlayerDescription(value: unknown): PlayerDescriptionVali
 export async function verifyPlayerDisplayNameSignature({
   displayName,
   signature,
+  verifyWalletMessage = verifyEoaWalletMessage,
   wallet
 }: {
   displayName: string;
   signature: unknown;
+  verifyWalletMessage?: WalletMessageVerifier;
   wallet: Address;
 }): Promise<boolean> {
   if (typeof signature !== "string" || !/^0x[a-fA-F0-9]+$/.test(signature)) {
@@ -110,12 +117,13 @@ export async function verifyPlayerDisplayNameSignature({
   }
 
   try {
-    return await verifyMessage({
+    return await verifyWalletMessage({
       address: getAddress(wallet) as ViemAddress,
       message: playerDisplayNameMessage(wallet, displayName),
       signature: signature as `0x${string}`
     });
-  } catch {
+  } catch (error) {
+    if (error instanceof WalletMessageVerificationUnavailableError) throw error;
     return false;
   }
 }
@@ -124,11 +132,13 @@ export async function verifyPlayerProfileSignature({
   description,
   displayName,
   signature,
+  verifyWalletMessage = verifyEoaWalletMessage,
   wallet
 }: {
   description: string | null;
   displayName: string;
   signature: unknown;
+  verifyWalletMessage?: WalletMessageVerifier;
   wallet: Address;
 }): Promise<boolean> {
   if (typeof signature !== "string" || !/^0x[a-fA-F0-9]+$/.test(signature)) {
@@ -136,12 +146,13 @@ export async function verifyPlayerProfileSignature({
   }
 
   try {
-    return await verifyMessage({
+    return await verifyWalletMessage({
       address: getAddress(wallet) as ViemAddress,
       message: playerProfileMessage(wallet, displayName, description),
       signature: signature as `0x${string}`
     });
-  } catch {
+  } catch (error) {
+    if (error instanceof WalletMessageVerificationUnavailableError) throw error;
     return false;
   }
 }
@@ -150,11 +161,13 @@ export async function verifyWatchedPlanetSignature({
   action,
   planetId,
   signature,
+  verifyWalletMessage = verifyEoaWalletMessage,
   wallet
 }: {
   action: WatchedPlanetAction;
   planetId: string;
   signature: unknown;
+  verifyWalletMessage?: WalletMessageVerifier;
   wallet: Address;
 }): Promise<boolean> {
   if (typeof signature !== "string" || !/^0x[a-fA-F0-9]+$/.test(signature)) {
@@ -162,12 +175,13 @@ export async function verifyWatchedPlanetSignature({
   }
 
   try {
-    return await verifyMessage({
+    return await verifyWalletMessage({
       address: getAddress(wallet) as ViemAddress,
       message: watchedPlanetMessage(wallet, action, planetId),
       signature: signature as `0x${string}`
     });
-  } catch {
+  } catch (error) {
+    if (error instanceof WalletMessageVerificationUnavailableError) throw error;
     return false;
   }
 }
