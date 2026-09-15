@@ -11,6 +11,7 @@ import {
   validatePlayerDisplayName
 } from "./playerProfiles";
 import { createRequestHandler } from "./server";
+import { WalletMessageVerificationUnavailableError } from "./walletSignatures";
 
 const config: BackendConfig = {
   chainId: 84532,
@@ -163,6 +164,63 @@ describe("player profile display names", () => {
     expect(await response.json()).toMatchObject({
       description: null,
       displayName
+    });
+  });
+
+  test("accepts a Base smart-wallet signature through the server verifier", async () => {
+    const indexer = testIndexer();
+    let verifierCalls = 0;
+    const handler = createRequestHandler({
+      config,
+      configProblems: [{ field: "rpc", message: "skip live chain services in profile tests" }],
+      indexer,
+      walletMessageVerifier: async (input) => {
+        verifierCalls += 1;
+        expect(input.address).toBe(wallet);
+        expect(input.message).toBe(playerProfileMessage(wallet, "Base Pilot", "Connected in Base App"));
+        expect(input.signature).toBe("0x1234");
+        return true;
+      }
+    });
+
+    const response = await handler(new Request(`https://api.test/wallet/${wallet}/profile`, {
+      body: JSON.stringify({
+        description: "Connected in Base App",
+        displayName: "Base Pilot",
+        signature: "0x1234"
+      }),
+      headers: { "content-type": "application/json" },
+      method: "POST"
+    }));
+
+    expect(response.status).toBe(200);
+    expect(verifierCalls).toBe(1);
+  });
+
+  test("returns a retryable error when Base smart-wallet verification is unavailable", async () => {
+    const handler = createRequestHandler({
+      config,
+      configProblems: [{ field: "rpc", message: "skip live chain services in profile tests" }],
+      indexer: testIndexer(),
+      walletMessageVerifier: async () => {
+        throw new WalletMessageVerificationUnavailableError();
+      }
+    });
+
+    const response = await handler(new Request(`https://api.test/wallet/${wallet}/profile`, {
+      body: JSON.stringify({
+        description: null,
+        displayName: "Base Pilot",
+        signature: "0x1234"
+      }),
+      headers: { "content-type": "application/json" },
+      method: "POST"
+    }));
+
+    expect(response.status).toBe(503);
+    expect(response.headers.get("retry-after")).toBe("1");
+    expect(await response.json()).toEqual({
+      error: "Wallet signature verification is temporarily unavailable. Please retry."
     });
   });
 

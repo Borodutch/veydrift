@@ -5,7 +5,6 @@ import {
   getAddress,
   keccak256,
   parseAbiParameters,
-  verifyMessage,
   type Address,
   type Hex,
 } from "viem";
@@ -16,6 +15,7 @@ import { dirname } from "node:path";
 import { Database } from "bun:sqlite";
 import type { BackendConfig } from "./config";
 import { HttpJsonRpcTransport, type RpcMetrics } from "./evm";
+import { verifyEoaWalletMessage, type WalletMessageVerifier } from "./walletSignatures";
 
 export const paidAllianceInviteSecretPattern = /^0x[0-9a-fA-F]{64}$/;
 export const paidAllianceAuthorizationLifetimeSeconds = 10 * 60;
@@ -161,7 +161,12 @@ export class PaidAllianceInviteSecretStore {
   private readonly keys: Buffer[];
   private readonly database: Database;
 
-  constructor(private readonly path: string, keyHex: string, previousKeyHexes: string[] = []) {
+  constructor(
+    private readonly path: string,
+    keyHex: string,
+    previousKeyHexes: string[] = [],
+    private readonly verifyWalletMessage: WalletMessageVerifier = verifyEoaWalletMessage,
+  ) {
     const keyRing = [keyHex, ...previousKeyHexes];
     if (keyRing.some((key) => !/^0x[0-9a-fA-F]{64}$/.test(key))) throw new Error("Paid invite encryption key must be 32 bytes.");
     this.keys = keyRing.map((key) => Buffer.from(key.slice(2), "hex"));
@@ -185,7 +190,7 @@ export class PaidAllianceInviteSecretStore {
     const commitment = paidAllianceInviteCommitment(secret);
     const purchaser = getAddress(purchaserInput) as Address;
     if (purchaser !== getAddress(state.purchaser)) throw new Error("Only the invite purchaser can store this link.");
-    if (typeof signature !== "string" || !await verifyMessage({
+    if (typeof signature !== "string" || !await this.verifyWalletMessage({
       address: purchaser,
       message: paidAllianceInviteStoreMessage(purchaser, commitment),
       signature: signature as Hex,
@@ -221,7 +226,7 @@ export class PaidAllianceInviteSecretStore {
     canRecover: (commitment: Hex) => Promise<boolean>,
   ): Promise<Array<{ commitment: Hex; secret: Hex }>> {
     const viewer = getAddress(viewerInput) as Address;
-    if (typeof signature !== "string" || !await verifyMessage({
+    if (typeof signature !== "string" || !await this.verifyWalletMessage({
       address: viewer,
       message: paidAllianceInviteRecoveryMessage(viewer),
       signature: signature as Hex,
@@ -268,12 +273,16 @@ export class PaidAllianceInviteSecretStore {
   }
 }
 
-export function createPaidAllianceInviteSecretStore(config: BackendConfig): PaidAllianceInviteSecretStore | undefined {
+export function createPaidAllianceInviteSecretStore(
+  config: BackendConfig,
+  verifyWalletMessage: WalletMessageVerifier = verifyEoaWalletMessage,
+): PaidAllianceInviteSecretStore | undefined {
   if (!config.paidAllianceInviteSecretStorePath || !config.paidAllianceInviteEncryptionKey) return undefined;
   return new PaidAllianceInviteSecretStore(
     config.paidAllianceInviteSecretStorePath,
     config.paidAllianceInviteEncryptionKey,
     config.paidAllianceInvitePreviousEncryptionKeys,
+    verifyWalletMessage,
   );
 }
 

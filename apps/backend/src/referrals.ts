@@ -4,7 +4,6 @@ import {
   keccak256,
   parseAbiParameters,
   toHex,
-  verifyMessage,
   type Address,
   type Hex
 } from "viem";
@@ -16,6 +15,11 @@ import type {
   IndexedReferralRewardClaimEvent
 } from "./evm";
 import { playerFallbackName, type PlayerProfile } from "./playerProfiles";
+import {
+  verifyEoaWalletMessage,
+  WalletMessageVerificationUnavailableError,
+  type WalletMessageVerifier
+} from "./walletSignatures";
 
 export const referralRedeemDomain = keccak256(toHex("veydrift.referral.redeem.v1"));
 export const referralInviteUrlBase = "https://veydrift.com";
@@ -509,21 +513,24 @@ export async function verifyReferralWalletSignature({
   action,
   commitment,
   signature,
+  verifyWalletMessage = verifyEoaWalletMessage,
   wallet
 }: {
   action: ReferralWalletAction;
   commitment?: string;
   signature: unknown;
+  verifyWalletMessage?: WalletMessageVerifier;
   wallet: string;
 }): Promise<boolean> {
   if (typeof signature !== "string" || !/^0x[a-fA-F0-9]+$/.test(signature)) return false;
   try {
-    return await verifyMessage({
+    return await verifyWalletMessage({
       address: getAddress(normalizeAddress(wallet)),
       message: referralWalletMessage(wallet, action, commitment),
       signature: signature as Hex
     });
-  } catch {
+  } catch (error) {
+    if (error instanceof WalletMessageVerificationUnavailableError) throw error;
     return false;
   }
 }
