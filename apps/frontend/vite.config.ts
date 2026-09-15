@@ -95,8 +95,12 @@ function hideWhitepaper(): Plugin {
   let config: ResolvedConfig;
   const configureServer = (server: Pick<ViteDevServer, "middlewares">) => {
     server.middlewares.use((request, response, next) => {
-      const pathname = decodeURIComponent(new URL(request.url ?? "/", "http://localhost").pathname);
-      if (!hiddenWhitepaperPath(pathname)) return next();
+      // IncomingMessage.url is an origin-form target: preserve leading // as
+      // path slashes, rather than letting URL resolve them into an authority.
+      const pathname = (request.url ?? "/").split(/[?#]/, 1)[0] ?? "/";
+      let decodedPathname = pathname;
+      try { decodedPathname = decodeURIComponent(pathname); } catch { /* Keep literal percent signs. */ }
+      if (!hiddenWhitepaperPath(pathname) && !hiddenWhitepaperPath(decodedPathname)) return next();
       response.statusCode = 404;
       response.end("Not found");
     });
