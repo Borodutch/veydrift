@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { request } from "node:http";
 import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "bun:test";
 import type { ComponentChildren, VNode } from "preact";
@@ -19,6 +20,12 @@ const disabledPaths = [
   "/whitepaper.pdf%3Fdownload", "/whitepaper.pdf%23page=1",
   "/%77hitepaper%2Epdf", "/whitepaper%252Epdf", "/WHITEPAPER.PDF", "/public/whitepaper.pdf",
   `/@fs${fileURLToPath(whitepaper)}`,
+  // Preserve the exact origin-form target, including duplicate/encoded leading
+  // slashes on the document URL and Vite's public/source aliases.
+  ...["/whitepaper.pdf", "/public/whitepaper.pdf", `/@fs${fileURLToPath(whitepaper)}`].flatMap((path) =>
+    ["//", "/%2F", "/%252F"].map((prefix) => `${prefix}${path.slice(1)}`)),
+  ...["/public/", `/@fs${fileURLToPath(new URL("../public/", import.meta.url))}`].flatMap((prefix) =>
+    ["/", "%2F", "%252F"].map((slash) => `${prefix}${slash}whitepaper.pdf`)),
 ];
 
 describe("hidden whitepaper", () => {
@@ -98,10 +105,26 @@ describe("hidden whitepaper", () => {
 async function assertDisabled(origin: string) {
   for (const path of disabledPaths) {
     for (const method of ["GET", "HEAD"]) {
-      const response = await fetch(new URL(path, origin), { method });
-      expect(response.status).toBe(404);
-      expect(await response.text()).toBe(method === "HEAD" ? "" : "Not found");
-      expect(response.headers.get("content-type") ?? "").not.toContain("application/pdf");
+      // URL(path, origin) treats // as an authority; node:http's path option
+      // sends the literal request target to the loopback server instead.
+      const response = await new Promise<{ status: number | undefined; contentType: string; body: string }>((resolve, reject) => {
+        const req = request(origin, { path, method, agent: false }, (res) => {
+          const chunks: Buffer[] = [];
+          res.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+          res.on("error", reject);
+          res.on("end", () => resolve({
+            status: res.statusCode,
+            contentType: res.headers["content-type"] ?? "",
+            body: Buffer.concat(chunks).toString(),
+          }));
+        });
+        req.on("error", reject);
+        req.setTimeout(5_000, () => req.destroy(new Error(`Timed out: ${method} ${path}`)));
+        req.end();
+      });
+      expect(response.status, `${method} ${path}`).toBe(404);
+      expect(response.body).toBe(method === "HEAD" ? "" : "Not found");
+      expect(response.contentType).not.toContain("application/pdf");
     }
   }
 }
