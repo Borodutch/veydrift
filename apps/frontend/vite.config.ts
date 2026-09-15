@@ -1,11 +1,11 @@
 import preact from "@preact/preset-vite";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { cpSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { ReadableStream } from "node:stream/web";
-import { defineConfig, type Plugin, type ViteDevServer } from "vite";
-import { planetAnimationResponse } from "./scripts/serve.mjs";
+import { defineConfig, type Plugin, type ResolvedConfig, type ViteDevServer } from "vite";
+import { hiddenWhitepaperPath, planetAnimationResponse } from "./scripts/serve.mjs";
 import {
   assertAccountAssociationDomain,
   buildMiniAppEmbed,
@@ -57,6 +57,7 @@ export default defineConfig(({ mode }) => {
       proxy: devApiProxy,
     },
     build: {
+      copyPublicDir: false,
       rollupOptions: {
         output: {
           entryFileNames: isTestSurface
@@ -79,6 +80,7 @@ export default defineConfig(({ mode }) => {
     },
     plugins: [
       preact(),
+      hideWhitepaper(),
       planetAnimations(),
       htmlEnvDefaults(htmlEnv),
       docsMarkdownAsset(),
@@ -88,6 +90,31 @@ export default defineConfig(({ mode }) => {
 });
 
 const docsMarkdownUrl = new URL("./src/docs/content/docs.md", import.meta.url);
+
+function hideWhitepaper(): Plugin {
+  let config: ResolvedConfig;
+  const configureServer = (server: Pick<ViteDevServer, "middlewares">) => {
+    server.middlewares.use((request, response, next) => {
+      const pathname = decodeURIComponent(new URL(request.url ?? "/", "http://localhost").pathname);
+      if (!hiddenWhitepaperPath(pathname)) return next();
+      response.statusCode = 404;
+      response.end("Not found");
+    });
+  };
+  return {
+    name: "veydrift-hide-whitepaper",
+    configResolved(resolved) { config = resolved; },
+    configureServer,
+    configurePreviewServer: configureServer,
+    writeBundle() {
+      // Retain the source PDF in public/ without publishing it in any build mode.
+      cpSync(config.publicDir, resolve(config.root, config.build.outDir), {
+        recursive: true,
+        filter: (source) => source !== join(config.publicDir, "whitepaper.pdf"),
+      });
+    },
+  };
+}
 
 function planetAnimations(): Plugin {
   const configureServer = (server: Pick<ViteDevServer, "middlewares">) => {

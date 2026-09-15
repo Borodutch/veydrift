@@ -9,14 +9,13 @@ import {
   Copy,
   ExternalLink,
   Factory,
-  FileText,
   Radio,
   Rocket,
   Users,
 } from "lucide-preact";
 import { RetroCdBoxHero, type CdView } from "./components/RetroCdBoxHero";
 import { Skeleton, SkeletonRegion, skeletonList } from "./components/Skeleton";
-import { TELEGRAM_SUPPORT_URL, WHITEPAPER_URL } from "./supportLinks";
+import { TELEGRAM_SUPPORT_URL } from "./supportLinks";
 import { playableApiUrl } from "./runtimeConfig";
 import { backendDataStoreFor, retainBackendDataStore } from "./backendDataStore";
 import { useBackendDataQuery } from "./useBackendDataQuery";
@@ -581,15 +580,6 @@ function AlphaSection() {
           >
             Telegram testers
             <ExternalLink className="h-4 w-4" />
-          </a>
-          <a
-            className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg border border-white/[0.07] bg-white/[0.07] px-5 py-3 text-sm font-semibold text-slate-100 transition hover:bg-white/[0.12]"
-            href={WHITEPAPER_URL}
-            rel="noopener noreferrer"
-            target="_blank"
-          >
-            Whitepaper
-            <FileText className="h-4 w-4" />
           </a>
         </div>
         </div>
