@@ -35,6 +35,8 @@ declare global {
       setPlayableAccount(wallet: string): void;
       clockRenders: number;
       refreshMissionQueries(): Promise<unknown>;
+      releaseBootstrapEffects(): void;
+      releaseBootstrapConfig(): void;
       setConstructionPhase(phase: "idle" | "confirmed" | "active" | "complete" | "reverted"): void;
     };
   }
@@ -52,6 +54,23 @@ const MissionControlPage = fixtureParams.get("missionMemoProbe") === "true"
   : () => null;
 const route = fixtureParams.get("route") ?? "/planet/9/9/9";
 const settlementShell = fixtureParams.get("shell") === "settlement";
+// Hold only the initial passive-effect flush to deterministically exercise a
+// lifecycle event between the real query's layout read and its subscription.
+let releaseBootstrapEffects = () => {};
+let releaseBootstrapConfig = () => {};
+const bootstrapConfigGate = fixtureParams.get("holdBootstrapEffects") === "true"
+  ? new Promise<void>(resolve => { releaseBootstrapConfig = resolve; })
+  : undefined;
+if (fixtureParams.get("holdBootstrapEffects") === "true") {
+  const schedule = options.requestAnimationFrame;
+  options.requestAnimationFrame = callback => {
+    releaseBootstrapEffects = () => {
+      if (schedule) options.requestAnimationFrame = schedule;
+      else delete options.requestAnimationFrame;
+      callback();
+    };
+  };
+}
 const incompleteOverview = fixtureParams.get("incompleteOverview") === "true";
 const stallMissionBackgroundReads = fixtureParams.get("stallMissionBackgroundReads") === "true";
 const walletEventOnPointerDown = fixtureParams.get("walletEventOnPointerDown");
@@ -233,6 +252,7 @@ globalThis.fetch = (async (input, init) => {
   }
 
   if (url.pathname.endsWith("/runtime-config")) {
+    await bootstrapConfigGate;
     await new Promise((resolve) => setTimeout(resolve, 25));
     return Response.json({
       allianceContractAddress: publicTreasury ? "0x3333333333333333333333333333333333333333" : null,
@@ -593,6 +613,8 @@ window.inspectorProof = {
   appReady: false,
   rootRenderMs: [],
   clockRenders: 0,
+  releaseBootstrapEffects: () => releaseBootstrapEffects(),
+  releaseBootstrapConfig: () => releaseBootstrapConfig(),
   setConstructionPhase(phase) { constructionPhase = phase; },
   refreshMissionQueries: () => backendDataStoreFor(apiBaseUrlForRuntimeConfig({ apiUrl: `${window.location.origin}/api` })).invalidate(["kind:global-active-missions", "kind:global-active-mission-count"]),
   renderResourceBar(scope, metal) {

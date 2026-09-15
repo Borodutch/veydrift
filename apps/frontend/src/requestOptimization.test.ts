@@ -5,6 +5,51 @@ import type { Eip1193Provider } from "./walletFlow";
 const wallet = "0x2222222222222222222222222222222222222222";
 const tick = () => new Promise(resolve => setTimeout(resolve, 0));
 
+for (const event of ["pageshow", "focus", "visibilitychange"]) for (const subscribed of [false, true]) {
+  test(`${event} cannot discard runtime-config bootstrap ${subscribed ? "after" : "before"} the UI subscribes`, async () => {
+    const originals = ["window", "document", "fetch"].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const);
+    const window = new EventTarget();
+    const document = Object.assign(new EventTarget(), { visibilityState: "visible" });
+    Object.defineProperty(globalThis, "window", { configurable: true, value: window });
+    Object.defineProperty(globalThis, "document", { configurable: true, value: document });
+    let complete!: (response: Response) => void;
+    let requests = 0;
+    globalThis.fetch = (async () => {
+      requests++;
+      return new Promise<Response>(resolve => { complete = resolve; });
+    }) as unknown as typeof fetch;
+    const store = new BackendDataStore("");
+    const query = store.queries.runtimeConfig<{ chainId: number }>("https://bootstrap.test/runtime-config");
+    let unsubscribe = () => {};
+    try {
+      if (subscribed) unsubscribe = store.subscribeKey(query.key, () => {});
+      // useBackendDataQuery starts this in a layout effect; Preact's external
+      // store subscription is a later passive effect. A desktop wallet window
+      // can deliver lifecycle events while that first request is still running.
+      const bootstrap = query.read();
+      await tick();
+      const target = event === "visibilitychange" ? document : window;
+      target.dispatchEvent(new Event(event));
+      await tick();
+      target.dispatchEvent(new Event(event));
+      await tick();
+      complete(Response.json({ chainId: 8453 }));
+      await bootstrap;
+      await tick();
+      // The passive subscription must see the completed config without a
+      // second focus event or another HTTP request to unstick wallet startup.
+      if (!subscribed) unsubscribe = store.subscribeKey(query.key, () => {});
+      expect(store.snapshot(query.key)).toMatchObject({ data: { chainId: 8453 }, freshness: "fresh" });
+      expect(requests).toBe(1);
+    } finally {
+      unsubscribe(); store.dispose();
+      for (const [key, descriptor] of originals) {
+        if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key);
+      }
+    }
+  });
+}
+
 test("resume, deferred tags and SSE-ready share recovery; real events still refresh after an in-flight read", async () => {
   const originals = ["window", "document"].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const);
   const lifecycle = new Map<string, () => void>();

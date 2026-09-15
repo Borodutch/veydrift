@@ -1844,7 +1844,14 @@ private createIndexingPlan(keys: readonly string[], prepare?: () => Promise<Pend
     if (this.transactionAbort.signal.aborted) return;
     // A ready stream is a new read barrier: requests begun before it may have
     // missed a commit. Only duplicate browser lifecycle triggers can reuse them.
-    keys.forEach(key => { if (streamReady || !this.recoveringKeys.has(key)) this.recoveryKeys.add(key); });
+    keys.forEach(key => {
+      // A lifecycle event is not a commit barrier for an initial read. In
+      // particular, runtime-config starts in a layout effect before its passive
+      // subscription exists; invalidating it here can discard the only result
+      // without scheduling a replacement, stranding wallet bootstrap until focus.
+      if (!streamReady && this.state.hasInFlight(key) && this.state.snapshot(key)?.data === undefined) return;
+      if (streamReady || !this.recoveringKeys.has(key)) this.recoveryKeys.add(key);
+    });
     if (this.recoveryTimer !== undefined || this.recoveryKeys.size === 0) return;
     this.recoveryTimer = setTimeout(() => {
       this.recoveryTimer = undefined;
