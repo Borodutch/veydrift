@@ -1750,6 +1750,121 @@ test("Infrastructure renders its indexed planet snapshot while wallet overview h
   assert.deepEqual(rendered.errors, []);
 });
 
+test("indexed Infrastructure construction survives stale details, navigation, planet switching and reload", async () => {
+  await loadInspectorFixture("/infrastructure", 1280, { shell: "settlement", construction: "idle" });
+  const panel = `document.querySelector('main [aria-label="Construction: Deuterium Synth 3"]')`;
+  const sidebar = `document.querySelector('aside [data-planet-selector-item="101"] [data-planet-selector-progress="building"]')`;
+  await evaluate(`(async () => {
+    const url = performance.getEntriesByType('resource').map(r => r.name).find(name => name.includes('/src/backendDataStore.ts'));
+    const { backendDataStoreFor } = await import(url);
+    const store = backendDataStoreFor('/local-api');
+    window.constructionProof = { store, result: null };
+    window.inspectorProof.setConstructionPhase('confirmed');
+    // Keep the real UI handler, preflight reads and indexing plan; replace only
+    // the external wallet send, as in the existing Supply browser fixture.
+    const runWrite = store.runWriteTransaction.bind(store);
+    store.runWriteTransaction = descriptor => runWrite({
+      ...descriptor,
+      send: async beforeSend => { beforeSend(); return '0xconstruction'; },
+    }).then(result => { window.constructionProof.result = result; return result; });
+  })()`);
+  await clickExpression(`[...document.querySelectorAll('main button[aria-pressed]')].find(button => button.textContent.includes('Deuterium Synth'))`);
+  await waitForExpression(`[...document.querySelectorAll('main button')].some(button => button.textContent.trim() === 'Upgrade Level 3' && !button.disabled)`);
+  await clickExpression(`[...document.querySelectorAll('main button')].find(button => button.textContent.trim() === 'Upgrade Level 3')`);
+  await waitForExpression(`window.inspectorProof.requests.some(url => url.includes('/transactions/0xconstruction/status'))`);
+  assert.equal(await evaluate(`${panel} !== null`), false, "confirmed but unindexed does not invent a queue");
+  assert.equal(await evaluate(`window.constructionProof.store.isTransactionPending(window.inspectorProof.account)`), true);
+  await evaluate(`window.inspectorProof.setConstructionPhase('active'); window.dispatchEvent(new Event('online'))`);
+  await waitForExpression(`window.constructionProof.store.snapshot(window.constructionProof.store.writeTransactionKey(undefined, window.inspectorProof.account))?.data?.phase === 'success'`);
+  // /infrastructure is successfully served but still idle; /queues and roster
+  // confirm the applied queue. All actual app surfaces must use that projection.
+  await waitForExpression(`${panel} !== null`);
+  assert.match(await evaluate(`${panel}.textContent`), /Deuterium Synth 3/);
+  assert.match(await evaluate(`${sidebar}.title`), /Deuterium Synth/);
+  assert.equal(await evaluate(`window.constructionProof.store.isTransactionPending(window.inspectorProof.account)`), false);
+  assert.ok(Number(await evaluate(`${panel}.querySelector('[role="progressbar"]').getAttribute('aria-valuenow')`)) > 0);
+  // Selected-body hydration must not depend on roster membership arriving first.
+  await evaluate(`(async () => {
+    const originalFetch = window.fetch;
+    window.fetch = async (...args) => {
+      const response = await originalFetch(...args);
+      if (!String(args[0]).includes('/planets')) return response;
+      return Response.json({ ...await response.json(), planets: [] });
+    };
+    await window.constructionProof.store.queries.planets(window.inspectorProof.account, { fresh: true }).read();
+    window.fetch = originalFetch;
+  })()`);
+  await waitForExpression(`${panel} !== null`);
+  await evaluate(`window.constructionProof.store.queries.planets(window.inspectorProof.account, { fresh: true }).read()`);
+  // A transient idle /queues read must not defeat the still-active roster.
+  await evaluate(`(async () => {
+    const originalFetch = window.fetch;
+    window.fetch = async (...args) => {
+      const response = await originalFetch(...args);
+      if (!String(args[0]).includes('/queues')) return response;
+      return Response.json({ ...await response.json(), building: null });
+    };
+    await window.constructionProof.store.queries.queues(window.inspectorProof.account, '101', { fresh: true }).read();
+  })()`);
+  await waitForExpression(`${panel} !== null`);
+  const select = id => clickExpression(`document.querySelector('aside[aria-label="Select planet"] [data-planet-selector-item="${id}"] button[data-planet-selector-long-press]')`);
+  await select("102");
+  await waitForExpression(`document.querySelector('[data-planet-selector-item="102"] button')?.getAttribute('aria-current') === 'true'`);
+  assert.equal(await evaluate(`${panel} !== null`), false, "never show Alpha's construction on Beta");
+  assert.match(await evaluate(`${sidebar}.title`), /Deuterium Synth/, "off-screen planet keeps its global indicator");
+  await select("101");
+  await clickExpression(`document.querySelector('nav.hidden a[href="/infrastructure"]')`);
+  await waitForExpression(`${panel} !== null`);
+  await clickExpression(`document.querySelector('nav.hidden a[href="/"]')`);
+  await waitForExpression(`document.querySelector('main')?.textContent?.includes('Deuterium Synth') === true`);
+  await clickExpression(`document.querySelector('nav.hidden a[href="/infrastructure"]')`);
+  await waitForExpression(`${panel} !== null`);
+  // Real reload discards the store. Only the mock backend retains the queue.
+  const reloadUrl = `${inspectorFixtureUrl}?${new URLSearchParams({ route: "/infrastructure", shell: "settlement", construction: "active", constructionDetails: "unavailable" })}`;
+  await evaluate(`history.replaceState(null, '', ${JSON.stringify(reloadUrl)})`);
+  await cdp.send("Page.reload", { ignoreCache: true });
+  await waitForExpression(`window.inspectorProof?.appReady === true && ${panel} !== null`, INSPECTOR_APP_READY_TIMEOUT_MS);
+  await evaluate(`(async () => {
+    const url = performance.getEntriesByType('resource').map(r => r.name).find(name => name.includes('/src/backendDataStore.ts'));
+    const { backendDataStoreFor } = await import(url);
+    const store = backendDataStoreFor('/local-api');
+    window.inspectorProof.setConstructionPhase('complete');
+    await store.invalidate(['wallet:' + window.inspectorProof.account]);
+  })()`);
+  await waitForExpression(`${panel} === null && ${sidebar} === null`);
+  await clickExpression(`document.querySelector('nav.hidden a[href="/"]')`);
+  await waitForExpression(`document.querySelector('main')?.textContent?.includes('No active construction') === true`);
+  assert.equal(await evaluate(`window.inspectorProof.walletRequests.filter(request => request.method === 'eth_sendTransaction').length`), 0, "reload never resubmits");
+  assert.deepEqual(await evaluate("window.inspectorProof.errors"), []);
+});
+
+for (const outcome of ["not-submitted", "reverted"]) {
+  test(`${outcome} Infrastructure start never fabricates construction`, async () => {
+    await loadInspectorFixture("/infrastructure", 1280, { shell: "settlement" });
+    const result = await evaluate(`(async () => {
+      const url = performance.getEntriesByType('resource').map(r => r.name).find(name => name.includes('/src/backendDataStore.ts'));
+      const { backendDataStoreFor } = await import(url);
+      const store = backendDataStoreFor('/local-api');
+      window.inspectorProof.setConstructionPhase('reverted');
+      const result = await store.runWriteTransaction({
+        key: 'building:start:deuteriumSynthesizer', label: 'Building upgrade', chainId: '0x2105',
+        invalidateTags: ['wallet:' + window.inspectorProof.account, 'planet:101'],
+        send: async beforeSend => {
+          if (${JSON.stringify(outcome)} === 'not-submitted') throw new Error('Preflight failed');
+          beforeSend(); return '0xconstruction';
+        },
+        indexing: store.indexing.production(window.inspectorProof.account, '101', 'infrastructure'),
+      });
+      await store.invalidate(['wallet:' + window.inspectorProof.account]);
+      return { outcome: result.outcome, pending: store.isTransactionPending(window.inspectorProof.account) };
+    })()`);
+    assert.deepEqual(result, { outcome, pending: false });
+    assert.equal(await evaluate(`document.querySelector('main [aria-label="Construction: Deuterium Synth 3"]') !== null`), false);
+    assert.equal(await evaluate(`document.querySelector('[data-planet-selector-progress="building"]') !== null`), false);
+    assert.deepEqual(await evaluate("window.inspectorProof.errors"), []);
+  });
+}
+
 test("Infrastructure Supply opens for the current planet with its exact missing resources prefilled", async () => {
   await loadInspectorFixture("/infrastructure", 1280, {
     shell: "settlement",

@@ -3697,14 +3697,14 @@ export function PlayableMvpApp({
     [activeBodyKind, activePlanetId, isWalletConnected, spendableResources],
   );
   const originMissionResources = useMemo(() => missionResourcesForOrigin(selectedManagedPlanet), [missionResourcesForOrigin, selectedManagedPlanet]);
-  const activeBuildingQueue = useMemo(
-    () => (infrastructureChainState ? (infrastructureChainState.queue?.active ? infrastructureChainState.queue : null) : activeBuildingQueueResponse(onChainQueues, infrastructureChainState)),
-    [infrastructureChainState, onChainQueues],
-  );
-
   const constructionQueueObservations = useMemo<ConstructionQueueObservation[]>(() => {
     const observations: ConstructionQueueObservation[] = [];
-    for (const managedPlanet of walletPlanets) {
+    // The selected body's indexed reads can arrive before the roster. Include
+    // its identity without inventing a queue or copying any state into a cache.
+    const planets = activePlanetId && !walletPlanets.some(planet => planet.planetId === activePlanetId)
+      ? [...walletPlanets, { planetId: activePlanetId, queues: { building: null, defense: null, ship: null } }]
+      : walletPlanets;
+    for (const managedPlanet of planets) {
       const section = managedPlanet.planetId === activePlanetId
         ? { infrastructureChainState, queuesState: onChainQueues, defenseState, shipyardState, moonState }
         : { infrastructureChainState: null, queuesState: undefined, defenseState: null, shipyardState: null, moonState: null };
@@ -3761,6 +3761,12 @@ export function PlayableMvpApp({
   // projects the currently served queue for display; it never retains, clears,
   // or reconciles a queue from an older response.
   const constructionQueues = useMemo(() => constructionQueueState(constructionQueueObservations), [constructionQueueObservations]);
+  // Infrastructure, Overview and the planet selector share the same indexed
+  // queue. A lagging detailed idle read must not override a confirmed roster or
+  // /queues response, including while selected-planet details are hydrating.
+  const activeBuildingQueue = activePlanetId
+    ? constructionQueues.get(constructionProgressKey(activePlanetId, "planet", "building")) ?? null
+    : null;
   // Research is a wallet-global queue. Its identity must not depend on the
   // currently selected planet or on a per-planet snapshot becoming available
   // during roster hydration. The stable wallet queues key is the sole queue
@@ -6315,14 +6321,15 @@ export function PlayableMvpApp({
       research: walletResearchQueue,
       ship: progressFor(activePlanetId, "planet", "ship")?.queue ?? null,
     };
-    const buildingQueue = activeBuildingQueue?.active ? buildingQueueItemForDisplay(activeBuildingQueue, now)
+    const buildingQueue = isWalletConnected
+      ? buildingQueueItemForDisplay(progressFor(activePlanetId, "planet", "building")?.queue ?? null, now)
       : settledState.queue?.kind === "building" ? settledState.queue : undefined;
     const shipQueue = settledState.queue?.kind === "ship" ? settledState.queue : undefined;
     const queueProgress = progress(buildingQueue, now);
     const researchProgress = progress(settledState.researchQueue, now);
     const shipProgress = progress(shipQueue, now);
-    const infrastructureState = !isWalletConnected || !liveOnChainResources ? settledState
-      : { ...settledState, queue: buildingQueue, resources: liveOnChainResources };
+    const infrastructureState = !isWalletConnected ? settledState
+      : { ...settledState, queue: buildingQueue, ...(liveOnChainResources ? { resources: liveOnChainResources } : {}) };
     const infrastructureActionNotice = infrastructureDisplayActionNoticeFor({
       action: buildingAction,
       finishUnavailableReason: buildingFinishUnavailableReasonForDisplay({
