@@ -11,7 +11,7 @@ import { PublicMoonDetail } from "../../src/components/PublicMoonDetail";
 import { initSfx } from "../../src/sfx";
 import { TopBar } from "../../src/components/TopBar";
 import type { Coordinates } from "../../src/types";
-import type { AttackProtectionStatus, Eip1193Provider, ManagedPlanetResponse } from "../../src/walletFlow";
+import type { AttackProtectionStatus, Eip1193Provider, ManagedPlanetResponse, QueueStateResponse } from "../../src/walletFlow";
 import "../../src/styles.css";
 
 declare global {
@@ -35,6 +35,7 @@ declare global {
       setPlayableAccount(wallet: string): void;
       clockRenders: number;
       refreshMissionQueries(): Promise<unknown>;
+      setConstructionPhase(phase: "idle" | "confirmed" | "active" | "complete" | "reverted"): void;
     };
   }
 }
@@ -59,6 +60,17 @@ const shortResources = fixtureParams.get("shortResources") === "true";
 const publicTreasury = fixtureParams.get("publicTreasury") === "true";
 const moonOverview = fixtureParams.get("moonOverview") === "true";
 const raidEligibilityProbe = fixtureParams.get("raidEligibilityProbe") === "true";
+let constructionPhase = fixtureParams.get("construction") ?? "idle";
+const constructionStartedAt = Math.floor(Date.now() / 1000) - 60;
+function constructionQueue(planetId: string): QueueStateResponse | null {
+  if (planetId !== "101" || !["active", "complete"].includes(constructionPhase)) return null;
+  return {
+    active: true, kind: "building", itemId: 2, targetLevel: 3,
+    startedAt: String(constructionStartedAt), readyAt: String(constructionStartedAt + 3600),
+    cost: { metal: "225", crystal: "75", deuterium: "0" },
+    asOfNow: { complete: constructionPhase === "complete", secondsRemaining: constructionPhase === "complete" ? 0 : 3540 },
+  };
+}
 const selectedPlanetResources = shortResources
   ? { crystal: "5", deuterium: "2", metal: "10" }
   : raidEligibilityProbe
@@ -264,7 +276,8 @@ globalThis.fetch = (async (input, init) => {
     return Response.json(walletOverview().planetsResponse);
   }
   if (url.pathname.endsWith(`/wallet/${account}/queues`)) {
-    return Response.json(walletOverview().queues);
+    const planetId = url.searchParams.get("planetId") ?? "101";
+    return Response.json({ ...walletOverview().queues, homePlanetId: planetId, building: constructionQueue(planetId) });
   }
   if (url.pathname.endsWith(`/wallet/${account}/fleet-visibility`)) {
     return Response.json(walletOverview().fleetVisibility);
@@ -429,11 +442,23 @@ globalThis.fetch = (async (input, init) => {
     });
   }
 
+  if (url.pathname.endsWith("/transactions/0xconstruction/status")) {
+    return Response.json({
+      transactionHash: "0xconstruction", events: [], indexedEventCount: constructionPhase === "active" ? 1 : 0,
+      latestIndexedBlock: "20", receiptBlock: "20",
+      phase: constructionPhase === "active" ? "applied" : constructionPhase === "reverted" ? "reverted" : "confirmed",
+    });
+  }
+
   if (url.pathname.endsWith(`/wallet/${account}/infrastructure`)) {
     const planet = ownedPlanets.find((planet) => planet.planetId === url.searchParams.get("planetId")) ?? ownedPlanets[0]!;
     return Response.json({
       buildings: [
         { id: 0, level: 4, cost: { crystal: "30", deuterium: "0", metal: "120" }, durationSeconds: 60 },
+        ...(fixtureParams.has("construction") ? [
+          { id: 1, level: 2, cost: { metal: "100", crystal: "50", deuterium: "0" }, durationSeconds: 60 },
+          { id: 2, level: 2, cost: { metal: "225", crystal: "75", deuterium: "0" }, durationSeconds: 3600 },
+        ] : []),
         { id: 3, level: 5, cost: { crystal: "60", deuterium: "0", metal: "150" }, durationSeconds: 90 },
         ...(publicTreasury ? [{ id: 15, level: 1, cost: { crystal: "0", deuterium: "0", metal: "0" }, durationSeconds: 60 }] : []),
       ],
@@ -443,8 +468,8 @@ globalThis.fetch = (async (input, init) => {
       planetId: planet.planetId,
       productionPerHour: { crystal: "238", deuterium: "71", metal: "620" },
       queue: null,
-      resources: planet.resources,
-      resourcesAsOfNow: planet.resources,
+      resources: fixtureParams.get("constructionDetails") === "unavailable" ? null : planet.resources,
+      resourcesAsOfNow: fixtureParams.get("constructionDetails") === "unavailable" ? null : planet.resources,
       storageCaps: { crystal: "10000", deuterium: "10000", metal: "10000" },
       wallet: account,
     });
@@ -568,6 +593,7 @@ window.inspectorProof = {
   appReady: false,
   rootRenderMs: [],
   clockRenders: 0,
+  setConstructionPhase(phase) { constructionPhase = phase; },
   refreshMissionQueries: () => backendDataStoreFor(apiBaseUrlForRuntimeConfig({ apiUrl: `${window.location.origin}/api` })).invalidate(["kind:global-active-missions", "kind:global-active-mission-count"]),
   renderResourceBar(scope, metal) {
     render(<TopBar resourceScope={scope} resources={{ metal, crystal: 222, deuterium: 333 }} rates={{ metal: 10, crystal: 20, deuterium: 30 }} caps={{ metal: 10000, crystal: 10000, deuterium: 10000 }} isWalletConnected resourceStatus="ready" />, appRoot);
@@ -792,7 +818,7 @@ function walletOverview() {
     },
     planetsResponse: {
       homePlanetId: selected.planetId,
-      planets: ownedPlanets,
+      planets: ownedPlanets.map(planet => ({ ...planet, queues: { ...planet.queues, building: constructionQueue(planet.planetId) } })),
       queues: { research: null },
       wallet: account,
     },
