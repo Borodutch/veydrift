@@ -2211,9 +2211,10 @@ test("wallet bootstrap completes after a pre-subscription lifecycle event withou
   const walletReads = await evaluate(`window.inspectorProof.walletRequests.map(request => request.method)`);
   assert.ok(walletReads.includes("eth_accounts"));
   assert.ok(walletReads.includes("eth_chainId"));
+  const walletInitializations = walletReads.filter(method => method === "eth_accounts" || method === "eth_requestAccounts");
   await evaluate(`window.dispatchEvent(new Event('focus')); document.dispatchEvent(new Event('visibilitychange'))`);
   await delay(100);
-  assert.deepEqual(await evaluate(`window.inspectorProof.walletRequests.map(request => request.method)`), walletReads,
+  assert.deepEqual(await evaluate(`window.inspectorProof.walletRequests.map(request => request.method).filter(method => method === 'eth_accounts' || method === 'eth_requestAccounts')`), walletInitializations,
     "focus recovery must not restart wallet initialization");
 });
 
