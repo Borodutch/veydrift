@@ -3373,21 +3373,11 @@ h4 {
   transition: background-color 160ms ease, border-color 160ms ease, transform 160ms ease;
 }
 
-.settlement-whitepaper-link {
-  border-color: rgba(253, 230, 138, 0.4);
-  color: #fde68a;
-}
-
 @media (hover: hover) {
   .settlement-support-link:hover {
     border-color: rgba(128, 241, 255, 0.62);
     background: rgba(128, 241, 255, 0.12);
     transform: translateY(-1px);
-  }
-
-  .settlement-whitepaper-link:hover {
-    border-color: rgba(253, 230, 138, 0.68);
-    background: rgba(253, 230, 138, 0.12);
   }
 }
 

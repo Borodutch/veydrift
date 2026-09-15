@@ -3,8 +3,8 @@ import { Component } from "preact";
 import { shouldShowTopBarEnergy, type ChainLoadStatus } from "../overviewData";
 import { energyExplanationTitle } from "../topBarEnergyInfo";
 import { shortAddress } from "../walletFlow";
-import { CircleHelp, FileText, Info } from "lucide-preact";
-import { TELEGRAM_SUPPORT_URL, WHITEPAPER_URL } from "../supportLinks";
+import { CircleHelp, Info } from "lucide-preact";
+import { TELEGRAM_SUPPORT_URL } from "../supportLinks";
 import { TelegramIcon } from "./TelegramIcon";
 import { detailsCloseOutsideRef } from "./modalDismiss";
 import { SoundToggle } from "./SoundToggle";
@@ -160,16 +160,6 @@ export function TopBar({ resources, resourceScope, rates, caps, crawlerProductio
               >
                 <CircleHelp className="h-3.5 w-3.5" size={14} strokeWidth={2} />
               </a>
-              <a
-                aria-label="Veydrift whitepaper"
-                className="grid h-10 min-w-0 flex-1 place-items-center rounded border border-amber-200/35 bg-amber-200/10 text-amber-100 transition hover:bg-amber-200/20 sm:hidden"
-                href={WHITEPAPER_URL}
-                rel="noopener noreferrer"
-                target="_blank"
-                title="Veydrift whitepaper"
-              >
-                <FileText className="h-3.5 w-3.5" size={14} strokeWidth={2} />
-              </a>
               <SoundToggle className="grid h-10 min-w-0 flex-1 place-items-center rounded border border-white/15 bg-white/[0.06] text-slate-200 transition hover:bg-white/10 sm:hidden" />
               {isWalletConnected && account && (
                 <span className="inline-flex h-10 max-w-[7.5rem] shrink-0 items-center truncate px-1 font-mono text-[11px] leading-none text-slate-400 sm:hidden">{shortAddress(account)}</span>
@@ -198,17 +188,6 @@ export function TopBar({ resources, resourceScope, rates, caps, crawlerProductio
               title="Veydrift documentation"
             >
               <CircleHelp className="h-3.5 w-3.5" size={14} strokeWidth={2} />
-            </a>
-            <a
-              aria-label="Veydrift whitepaper"
-              className="hidden h-7 w-7 shrink-0 items-center justify-center rounded border border-amber-200/35 bg-amber-200/10 text-[11px] font-semibold leading-none text-amber-100 transition hover:bg-amber-200/20 sm:inline-flex lg:w-auto lg:gap-1.5 lg:px-2"
-              href={WHITEPAPER_URL}
-              rel="noopener noreferrer"
-              target="_blank"
-              title="Veydrift whitepaper"
-            >
-              <FileText className="h-3.5 w-3.5" size={14} strokeWidth={2} />
-              <span className="sr-only lg:not-sr-only">Whitepaper</span>
             </a>
             <SoundToggle className="hidden h-7 w-7 shrink-0 items-center justify-center rounded border border-white/15 bg-white/[0.06] text-slate-300 transition hover:bg-white/10 sm:inline-flex" />
             {isWalletConnected && account && <span className="inline-flex h-6 max-w-[7.25rem] items-center truncate font-mono text-xs leading-none text-slate-400">{shortAddress(account)}</span>}

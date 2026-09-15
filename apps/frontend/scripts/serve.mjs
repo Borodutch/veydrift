@@ -1148,50 +1148,61 @@ function escapeXml(value) {
   return escapeHtml(value).replaceAll("'", "&apos;");
 }
 
+export function hiddenWhitepaperPath(pathname) {
+  // Static-file URLs decode once more after request-path decoding.
+  try { pathname = decodeURIComponent(pathname); } catch { /* Keep literal percent signs. */ }
+  return /(?:^|\/)whitepaper(?:\.pdf)?(?:[/?#]|$)/i.test(pathname);
+}
+
+export async function frontendResponse(request) {
+  const url = new URL(request.url);
+  const pathname = decodeURIComponent(url.pathname);
+
+  if (pathname.includes("..")) {
+    return new Response("Bad request", { status: 400 });
+  }
+
+  // Deny before static lookup, including stale copies left by older deployments.
+  if (hiddenWhitepaperPath(pathname)) return new Response("Not found", { status: 404 });
+
+  const route = pathname === "/" ? "/index.html" : pathname;
+  const animationResponse = await planetAnimationResponse(url);
+  if (animationResponse) return animationResponse;
+
+  const imageRoute = imageRouteForPathname(pathname);
+  if (imageRoute) {
+    return ogImageResponse(imageRoute);
+  }
+
+  const shareRoute = shareRouteForUrl(url);
+  if (shareRoute) {
+    return shareHtmlResponse(request, shareRoute);
+  }
+
+  const file = Bun.file(new URL(`.${route}`, distRoot));
+
+  if (await file.exists()) {
+    return responseFor(file, route);
+  }
+
+  if (
+    docsAppRouteForPathname(route)
+    || playAppRouteForPathname(route)
+    || inviteAppRouteForPathname(route)
+    || gameAppRouteForPathname(route)
+  ) {
+    return responseFor(Bun.file(staticFileUrl("/index.html")), "/index.html");
+  }
+
+  return new Response("Not found", { status: 404 });
+}
+
 if (import.meta.main) {
   Bun.serve({
     hostname: "0.0.0.0",
     port,
     fetch(request) {
-      return observeFrontendRequest(request, async () => {
-      const url = new URL(request.url);
-      const pathname = decodeURIComponent(url.pathname);
-
-      if (pathname.includes("..")) {
-        return new Response("Bad request", { status: 400 });
-      }
-
-      const route = pathname === "/" ? "/index.html" : pathname;
-      const animationResponse = await planetAnimationResponse(url);
-      if (animationResponse) return animationResponse;
-
-      const imageRoute = imageRouteForPathname(pathname);
-      if (imageRoute) {
-        return ogImageResponse(imageRoute);
-      }
-
-      const shareRoute = shareRouteForUrl(url);
-      if (shareRoute) {
-        return shareHtmlResponse(request, shareRoute);
-      }
-
-      const file = Bun.file(new URL(`.${route}`, distRoot));
-
-      if (await file.exists()) {
-        return responseFor(file, route);
-      }
-
-      if (
-        docsAppRouteForPathname(route)
-        || playAppRouteForPathname(route)
-        || inviteAppRouteForPathname(route)
-        || gameAppRouteForPathname(route)
-      ) {
-        return responseFor(Bun.file(staticFileUrl("/index.html")), "/index.html");
-      }
-
-      return new Response("Not found", { status: 404 });
-      });
+      return observeFrontendRequest(request, () => frontendResponse(request));
     },
   });
 
