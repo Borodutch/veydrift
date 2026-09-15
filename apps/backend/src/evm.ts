@@ -7589,10 +7589,10 @@ function shouldChunkLogQuery(error: unknown): boolean {
 
 function shouldRetryWithoutBatch(error: unknown): boolean {
   // A truncated/oversized batch response (RpcResponseParseError) or an explicit too-large rejection
-  // (HTTP 400/413) both mean "this batch was too big" — retry the same calls one at a time, whose
+  // (HTTP 400/413 or Base's -32014 batch-call cap) mean "this batch was too big" — retry the same calls one at a time, whose
   // small individual responses the node can always return intact (VEY-KANEO-461).
   return error instanceof RpcResponseParseError
-    || (error instanceof Error && /RPC HTTP (400|413)/i.test(error.message));
+    || (error instanceof Error && /RPC HTTP (400|413)|maximum \d+ calls in 1 batch/i.test(error.message));
 }
 
 const defaultRpcRequestTimeoutMsValue = 10_000;

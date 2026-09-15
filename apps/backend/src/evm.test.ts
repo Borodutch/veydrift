@@ -1659,6 +1659,61 @@ describe("moon chance report event decoding", () => {
     expect(individualSelectors).not.toContain("0xc4222030");
     expect(individualSelectors).not.toContain("0xe512884c");
   });
+
+  test("falls back in order when Base caps JSON-RPC batches at 10 calls", async () => {
+    const previousFetch = globalThis.fetch;
+    const bodies: unknown[] = [];
+    globalThis.fetch = (async (_input: unknown, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as
+        | { id: number; method: string; params: unknown[] }
+        | Array<{ id: number; method: string; params: unknown[] }>;
+      bodies.push(body);
+      if (Array.isArray(body)) {
+        return Response.json({ jsonrpc: "2.0", id: 1, error: { code: -32014, message: "maximum 10 calls in 1 batch" } });
+      }
+      const [call, blockTag] = body.params as [{ data: string }, string];
+      expect(blockTag).toBe("0x123");
+      return Response.json({ jsonrpc: "2.0", id: body.id, result: call.data });
+    }) as unknown as typeof fetch;
+
+    try {
+      const transport = new HttpJsonRpcTransport("https://mainnet.base.org", { cacheTtlMs: 0, minRequestIntervalMs: 0 });
+      const reader = new VeydriftGameReader(readerConfig, transport) as unknown as {
+        batchCallContract(address: Address, calls: Array<{ selector: string; args: string[] }>, blockTag: string): Promise<string[]>;
+      };
+      const calls = Array.from({ length: 50 }, (_, index) => ({
+        selector: `0x${index.toString(16).padStart(8, "0")}`,
+        args: []
+      }));
+
+      await expect(reader.batchCallContract(readerConfig.gameContractAddress!, calls, "0x123"))
+        .resolves.toEqual(calls.map(({ selector }) => selector));
+      expect((bodies[0] as unknown[]).length).toBe(50);
+      expect(bodies.slice(1)).toHaveLength(50);
+      expect(bodies.slice(1).every((body) => !Array.isArray(body))).toBe(true);
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
+  });
+
+  test("does not replay logical contract errors without batching", async () => {
+    let individualCalls = 0;
+    const reader = new VeydriftGameReader(readerConfig, {
+      async request<T>(): Promise<T> {
+        individualCalls += 1;
+        throw new Error("unexpected sequential request");
+      },
+      async requestBatch<T>(): Promise<T[]> {
+        throw new Error("RPC -32000: execution reverted");
+      }
+    }) as unknown as {
+      batchCallContract(address: Address, calls: Array<{ selector: string; args: string[] }>): Promise<string[]>;
+    };
+
+    await expect(reader.batchCallContract(readerConfig.gameContractAddress!, [{ selector: "0x12345678", args: [] }]))
+      .rejects.toThrow("RPC -32000: execution reverted");
+    expect(individualCalls).toBe(0);
+  });
 });
 
 describe("canonical fleet mission details", () => {
