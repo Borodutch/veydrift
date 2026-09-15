@@ -2191,6 +2191,33 @@ test("public-only treasury keeps withdrawals available while private invite acti
   assert.equal(await evaluate(`window.inspectorProof.walletRequests.some(request => request.method === 'eth_sendTransaction' || request.method === 'personal_sign')`), false);
 });
 
+test("wallet bootstrap completes after a pre-subscription lifecycle event without switching windows", async () => {
+  await loadInspectorFixture("/", 1280, {
+    shell: "settlement",
+    holdBootstrapEffects: "true",
+    waitForPlanetSelectors: "false",
+  });
+  // The real shell starts runtime-config in a layout effect; subscribers and
+  // provider discovery are still waiting in the held passive-effect queue.
+  await waitForExpression("window.inspectorProof.requests.some(path => path.endsWith('/runtime-config'))");
+  assert.equal(await evaluate("window.inspectorProof.walletRequests.length"), 0);
+  await evaluate(`window.dispatchEvent(new Event('focus'))`);
+  await delay(10);
+  await evaluate(`window.inspectorProof.releaseBootstrapConfig()`);
+  await delay(50);
+  await evaluate(`window.inspectorProof.releaseBootstrapEffects()`);
+  await waitForExpression("document.querySelectorAll('[data-planet-selector-item]').length >= 2");
+  assert.equal(await evaluate("window.inspectorProof.requests.filter(path => path.endsWith('/runtime-config')).length"), 1);
+  const walletReads = await evaluate(`window.inspectorProof.walletRequests.map(request => request.method)`);
+  assert.ok(walletReads.includes("eth_accounts"));
+  assert.ok(walletReads.includes("eth_chainId"));
+  const walletInitializations = walletReads.filter(method => method === "eth_accounts" || method === "eth_requestAccounts");
+  await evaluate(`window.dispatchEvent(new Event('focus')); document.dispatchEvent(new Event('visibilitychange'))`);
+  await delay(100);
+  assert.deepEqual(await evaluate(`window.inspectorProof.walletRequests.map(request => request.method).filter(method => method === 'eth_accounts' || method === 'eth_requestAccounts')`), walletInitializations,
+    "focus recovery must not restart wallet initialization");
+});
+
 test("wallet shell does not let a repeated account event interrupt the Build gesture", async () => {
   await loadInspectorFixture("/", 1280, {
     shell: "settlement",
