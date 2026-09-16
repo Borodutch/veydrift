@@ -3665,7 +3665,7 @@ function watchedPlanetPayload(
     publicMoonState: publicMoonStateRef(planet, indexer),
     debrisField: debrisFieldRef(indexer.debrisFieldsInSystem(planet.galaxy, planet.system).find((field) => field.position === planet.position)),
     hasMoon: indexer.hasMoon(planet.planetId),
-    moonChance: moonChanceReportRef(indexer.moonChanceReportsInSystem(planet.galaxy, planet.system).find((report) => report.position === planet.position))
+    moonChance: moonChanceReportRef(indexer.moonChanceReportsInSystem(planet.galaxy, planet.system).filter((report) => report.position === planet.position).at(-1))
   };
 }
 

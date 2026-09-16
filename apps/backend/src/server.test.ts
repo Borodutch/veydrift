@@ -12154,7 +12154,7 @@ describe("worker role gating (VEY-KANEO-466)", () => {
     }
   });
 
-  test("reader workers skip mission resolution even when test config enables it", async () => {
+  test("reader workers skip mission and moon chance resolution even when configured", async () => {
     const indexer = {
       snapshot() {
         return {
@@ -12168,6 +12168,8 @@ describe("worker role gating (VEY-KANEO-466)", () => {
       config: {
         ...configuredTestConfig,
         missionResolutionEnabled: true,
+        moonContractAddress: "0x5555555555555555555555555555555555555555",
+        randomnessEngineAddress: "0x6666666666666666666666666666666666666666",
         missionResolverAddress: "0x4444444444444444444444444444444444444444"
       },
       indexer,
@@ -12484,3 +12486,44 @@ async function resolvesWithin<T>(promise: Promise<T>, timeoutMs: number): Promis
   }
   return result.value;
 }
+
+test("moon chance pending/terminal results converge in full system and watched planet APIs without changing debris", async () => {
+  const indexer = testIndexer();
+  const watcher = privateKeyToAccount(`0x${"11".repeat(32)}`);
+  const handler = createRequestHandler({ config: configuredTestConfig, chainReader: new MockChainReader(), indexer });
+  const signature = await watcher.signMessage({ message: watchedPlanetMessage(watcher.address, "watch", planet.planetId) });
+  const watch = await handler(new Request(`http://localhost/wallet/${watcher.address}/watched-planets`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ planetId: planet.planetId, signature })
+  }));
+  expect(watch.status).toBe(200);
+  indexer.applyDebrisEvent({ eventName: "DebrisFieldUpdated", transactionHash: "0xdebris", blockNumber: "98",
+    planetId: planet.planetId, resources: { metal: "90000", crystal: "10000" } });
+  const request: MoonChanceReportEvent = {
+    eventName: "MoonChanceRequested", transactionHash: "0xrequest", blockNumber: "99",
+    battleId: "42", targetPlanetId: planet.planetId, outcomeId: "8", chanceBps: 2000
+  };
+  // An older result and the decimal block boundary catch both first-row and lexicographic-order bugs.
+  indexer.applyMoonChanceEvent({ ...request, outcomeId: "7", blockNumber: "98", eventName: "MoonChanceFinalized", moonCreated: false });
+  indexer.applyMoonChanceEvent(request);
+  for (const [event, status] of [
+    [request, "pending"],
+    [{ ...request, blockNumber: "100", eventName: "MoonChanceFinalized", moonCreated: false }, "not_created"],
+    [{ ...request, blockNumber: "101", outcomeId: "9", battleId: "43" }, "pending"],
+    [{ ...request, blockNumber: "102", outcomeId: "9", battleId: "43", eventName: "MoonChanceFinalized", moonCreated: true }, "created"]
+  ] as const) {
+    indexer.applyMoonChanceEvent(event);
+    for (const url of [
+      `http://localhost/universe/galaxies/${planet.galaxy}/systems/${planet.system}?detail=full`,
+      `http://localhost/wallet/${watcher.address}/watched-planets`
+    ]) {
+      const response = await handler(new Request(url));
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      const result = body.planets.find((candidate: { position: number }) => candidate.position === planet.position);
+      expect(result.moonChance).toMatchObject({ status, outcomeId: event.outcomeId, chanceBps: 2000 });
+      expect(result.debrisField).toMatchObject({ metal: "90000", crystal: "10000" });
+      expect(result.occupiedBy.planetId).toBe(planet.planetId);
+    }
+  }
+});

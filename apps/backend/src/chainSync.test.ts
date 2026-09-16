@@ -2563,3 +2563,36 @@ describe("ChainSyncService (polling)", () => {
     });
   });
 });
+
+test("moon finalization logs update the projection and publish unscoped system invalidation, including missed chances", async () => {
+  for (const created of [false, true]) {
+    const indexer = makeIndexer();
+    indexer.applyEvent({ eventName: "PlanetStarted", transactionHash: "0xplanet", blockNumber: "100",
+      planetId: "7", owner: player, name: null, galaxy: 2, system: 44, position: 9, fields: 211,
+      temperature: -8, metalMultiplierBps: 10000, crystalMultiplierBps: 10000, deuteriumMultiplierBps: 10000,
+      lastSettledAt: "0", resources: { metal: "5000", crystal: "5000", deuterium: "0" } });
+    indexer.applyMoonChanceEvent({ eventName: "MoonChanceRequested", transactionHash: "0xrequest", blockNumber: "101",
+      outcomeId: "8", battleId: "86875", targetPlanetId: "7", chanceBps: 2000 });
+    const terminal: TestLog = {
+      address: "0x5555555555555555555555555555555555555555", blockNumber: "0x181",
+      transactionHash: "0xfinalized", logIndex: "0x0",
+      topics: ["0xd485b8634099625ba076107f73a9ea0e95b3f6ac18d76e501b618572e6705d04", topicWord(8n), topicWord(86875n), topicWord(7n)],
+      data: abiWords(2000n, created ? 1n : 0n, 19n, created ? 12n : 0n, created ? 8777n : 0n)
+    };
+    const service = new ChainSyncService({ ...config, moonContractAddress: terminal.address as `0x${string}` }, indexer,
+      { logBackfiller: new MockBackfiller(0x181n, () => [terminal]) });
+    const reader = service.eventStream().getReader();
+    try {
+      await reader.read(); // initial sync-status
+      await service.poll();
+      const frame = new TextDecoder().decode((await reader.read()).value);
+      expect(frame).toContain("event: chain-event");
+      // Moon outcome events must also refresh a public system viewed by a non-owner.
+      expect(frame).not.toContain('"wallets":');
+      expect(indexer.moonChanceResolutionCandidates()).toEqual([]);
+      expect(indexer.moonChanceReportsInSystem(2, 44)[0]).toMatchObject({
+        eventName: "MoonChanceFinalized", outcomeId: "8", moonCreated: created, chanceBps: 2000
+      });
+    } finally { await reader.cancel(); service.stop(); }
+  }
+});

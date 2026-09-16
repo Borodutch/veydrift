@@ -1637,13 +1637,24 @@ export class SettlementIndexer {
     return row !== null;
   }
 
+  moonChanceResolutionCandidates(afterCursor = 0, limit = 10): Array<{ cursor: number; outcomeId: string }> {
+    return this.db.query(`
+      SELECT rowid AS cursor, outcome_id AS outcomeId
+      FROM contract_moon_chance_reports
+      WHERE json_extract(event_json, '$.eventName') = 'MoonChanceRequested'
+        AND rowid > ? AND outcome_id IS NOT NULL
+      ORDER BY rowid ASC LIMIT ?
+    `).all(afterCursor, Math.max(1, Math.min(100, Math.trunc(limit)))) as Array<{ cursor: number; outcomeId: string }>;
+  }
+
   moonChanceReportsInSystem(galaxy: number, system: number): IndexedMoonChanceReportEvent[] {
     const rows = this.db.query(`
       SELECT report.event_json
       FROM contract_moon_chance_reports report
       INNER JOIN contract_planets planet ON planet.planet_id = report.target_planet_id
       WHERE planet.galaxy = ? AND planet.system_number = ?
-      ORDER BY planet.position ASC, report.block_number ASC
+      ORDER BY planet.position ASC, CAST(report.block_number AS INTEGER) ASC,
+        CAST(report.outcome_id AS INTEGER) ASC
     `).all(galaxy, system) as EventRow[];
 
     return rows.flatMap((row) => {
@@ -4092,7 +4103,8 @@ export class SettlementIndexer {
         FROM contract_moon_chance_reports report
         INNER JOIN contract_planets planet ON planet.planet_id = report.target_planet_id
         WHERE planet.galaxy = ? AND planet.system_number = ?
-        ORDER BY planet.position ASC, report.block_number ASC
+        ORDER BY planet.position ASC, CAST(report.block_number AS INTEGER) ASC,
+        CAST(report.outcome_id AS INTEGER) ASC
       `)
     ].join("|");
   }
@@ -6039,6 +6051,9 @@ export class SettlementIndexer {
       );
       CREATE INDEX IF NOT EXISTS indexed_moon_chance_reports_target_idx
         ON indexed_moon_chance_reports (target_planet_id);
+      UPDATE OR REPLACE indexed_moon_chance_reports SET report_key = 'destruction:' || outcome_id
+        WHERE report_key LIKE 'outcome:%'
+          AND json_extract(event_json, '$.eventName') IN ('MoonDestructionRequested', 'MoonDestructionFinalized');
       CREATE TABLE IF NOT EXISTS indexed_event_logs (
         event_id TEXT PRIMARY KEY,
         transaction_hash TEXT NOT NULL,
@@ -6478,6 +6493,11 @@ export class SettlementIndexer {
       );
       CREATE INDEX IF NOT EXISTS contract_moon_chance_reports_target_idx
         ON contract_moon_chance_reports (target_planet_id);
+      UPDATE OR REPLACE contract_moon_chance_reports SET report_key = 'destruction:' || outcome_id
+        WHERE report_key LIKE 'outcome:%'
+          AND json_extract(event_json, '$.eventName') IN ('MoonDestructionRequested', 'MoonDestructionFinalized');
+      CREATE INDEX IF NOT EXISTS contract_moon_chance_reports_resolution_idx
+        ON contract_moon_chance_reports (json_extract(event_json, '$.eventName'));
       CREATE TABLE IF NOT EXISTS contract_debris_fields (
         planet_id TEXT PRIMARY KEY,
         metal TEXT NOT NULL,
@@ -9427,6 +9447,10 @@ export class SettlementIndexer {
         outcome_id = excluded.outcome_id,
         block_number = excluded.block_number,
         event_json = excluded.event_json
+      WHERE CAST(excluded.block_number AS INTEGER) > CAST(indexed_moon_chance_reports.block_number AS INTEGER)
+        OR (excluded.block_number = indexed_moon_chance_reports.block_number
+          AND NOT (json_extract(indexed_moon_chance_reports.event_json, '$.eventName') LIKE '%Finalized'
+            AND json_extract(excluded.event_json, '$.eventName') LIKE '%Requested'))
     `).run(
       moonChanceReportKey(event),
       event.targetPlanetId,
@@ -9444,6 +9468,10 @@ export class SettlementIndexer {
         outcome_id = excluded.outcome_id,
         block_number = excluded.block_number,
         event_json = excluded.event_json
+      WHERE CAST(excluded.block_number AS INTEGER) > CAST(contract_moon_chance_reports.block_number AS INTEGER)
+        OR (excluded.block_number = contract_moon_chance_reports.block_number
+          AND NOT (json_extract(contract_moon_chance_reports.event_json, '$.eventName') LIKE '%Finalized'
+            AND json_extract(excluded.event_json, '$.eventName') LIKE '%Requested'))
     `).run(
       moonChanceReportKey(event),
       event.targetPlanetId,
@@ -14584,6 +14612,7 @@ type CanonicalFleetMissionPayload = {
 };
 
 function moonChanceReportKey(event: MoonChanceReportEvent): string {
+  if (event.outcomeId && event.eventName.startsWith("MoonDestruction")) return `destruction:${event.outcomeId}`;
   return event.outcomeId ? `outcome:${event.outcomeId}` : `battle:${event.battleId}:${event.targetPlanetId}`;
 }
 
