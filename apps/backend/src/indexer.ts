@@ -1647,6 +1647,16 @@ export class SettlementIndexer {
     `).all(afterCursor, Math.max(1, Math.min(100, Math.trunc(limit)))) as Array<{ cursor: number; outcomeId: string }>;
   }
 
+  moonChanceResolutionCandidateCount(): number {
+    const row = this.db.query(`
+      SELECT COUNT(*) AS count
+      FROM contract_moon_chance_reports
+      WHERE json_extract(event_json, '$.eventName') = 'MoonChanceRequested'
+        AND outcome_id IS NOT NULL
+    `).get() as { count: number };
+    return row.count;
+  }
+
   moonChanceReportsInSystem(galaxy: number, system: number): IndexedMoonChanceReportEvent[] {
     const rows = this.db.query(`
       SELECT report.event_json

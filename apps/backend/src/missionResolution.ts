@@ -87,6 +87,7 @@ export type MissionResolutionCandidates = {
 export type MoonChanceResolutionCandidate = { cursor: number; outcomeId: string };
 
 export type MissionResolutionCandidateSource = {
+  moonChanceResolutionCandidateCount?(): number;
   moonChanceResolutionCandidates?(afterCursor: number, limit: number): MoonChanceResolutionCandidate[];
   missionResolutionCandidates(asOfSeconds?: number, limit?: number): MissionResolutionCandidates | Promise<MissionResolutionCandidates>;
   /**
@@ -120,6 +121,23 @@ type LatencySnapshot = {
   p95Seconds: number | null;
 };
 
+type MoonChanceResolutionSnapshot = {
+  enabled: boolean;
+  maxPerTick: number;
+  cursor: number;
+  indexedBacklog: number | null;
+  lastScanned: number;
+  lastPending: number;
+  lastFinalized: number;
+  lastDeferred: number;
+  lastFailed: number;
+  retrying: number;
+  totalFailures: number;
+  lastOutcomeId: string | null;
+  lastResult: "pending" | "finalized" | "deferred" | "failed" | null;
+  lastError: string | null;
+};
+
 export type MissionResolutionSnapshot = {
   enabled: boolean;
   resolverConfigured: boolean;
@@ -150,6 +168,7 @@ export type MissionResolutionSnapshot = {
   dueArrivals: DueLegSnapshot;
   dueReturns: DueLegSnapshot;
   failuresByLeg: Record<MissionLeg, number>;
+  moonChanceResolution: MoonChanceResolutionSnapshot;
   settlementLatency: Record<MissionLeg, LatencySnapshot>;
 };
 
@@ -189,6 +208,16 @@ export class MissionResolutionService {
   private lastScanDurationMs: number | null = null;
   private skippedOverlappingRuns = 0;
   private moonChanceCursor = 0;
+  private moonChanceIndexedBacklog: number | null = null;
+  private moonChanceLastScanned = 0;
+  private moonChanceLastPending = 0;
+  private moonChanceLastFinalized = 0;
+  private moonChanceLastDeferred = 0;
+  private moonChanceLastFailed = 0;
+  private moonChanceTotalFailures = 0;
+  private moonChanceLastOutcomeId: string | null = null;
+  private moonChanceLastResult: MoonChanceResolutionSnapshot["lastResult"] = null;
+  private moonChanceLastError: string | null = null;
   private lastError: string | null = null;
   private lastResolvedMissionId: string | null = null;
   private lastReturnedMissionId: string | null = null;
@@ -270,6 +299,22 @@ export class MissionResolutionService {
       dueArrivals,
       dueReturns,
       failuresByLeg: { ...this.failuresByLeg },
+      moonChanceResolution: {
+        enabled: this.moonChanceResolutionEnabled,
+        maxPerTick: maxMoonChancesPerTick,
+        cursor: this.moonChanceCursor,
+        indexedBacklog: this.moonChanceIndexedBacklog,
+        lastScanned: this.moonChanceLastScanned,
+        lastPending: this.moonChanceLastPending,
+        lastFinalized: this.moonChanceLastFinalized,
+        lastDeferred: this.moonChanceLastDeferred,
+        lastFailed: this.moonChanceLastFailed,
+        retrying: this.moonChanceRetryingCount(nowMs),
+        totalFailures: this.moonChanceTotalFailures,
+        lastOutcomeId: this.moonChanceLastOutcomeId,
+        lastResult: this.moonChanceLastResult,
+        lastError: this.moonChanceLastError
+      },
       settlementLatency: {
         arrival: latencySnapshot(this.latencySamples.arrival),
         return: latencySnapshot(this.latencySamples.return)
@@ -335,6 +380,13 @@ export class MissionResolutionService {
 
   private get enabled(): boolean {
     return this.config.missionResolutionEnabled && Boolean(this.chainClient);
+  }
+
+  private get moonChanceResolutionEnabled(): boolean {
+    return this.enabled
+      && Boolean(this.config.moonContractAddress && this.config.randomnessEngineAddress)
+      && Boolean(this.candidateSource?.moonChanceResolutionCandidates)
+      && Boolean(this.chainClient?.finalizeMoonChance);
   }
 
   private resolverAddress(): Address | null {
@@ -461,19 +513,35 @@ export class MissionResolutionService {
   }
 
   private async settleMoonChances(): Promise<void> {
-    if (!this.config.moonContractAddress || !this.config.randomnessEngineAddress
+    if (!this.moonChanceResolutionEnabled
       || !this.candidateSource?.moonChanceResolutionCandidates || !this.chainClient?.finalizeMoonChance) return;
+    this.moonChanceIndexedBacklog = this.candidateSource.moonChanceResolutionCandidateCount?.() ?? null;
     // Keyset pagination rotates past genuinely unfulfilled or failed requests, so an old pending
     // page cannot starve newer fulfilled outcomes. Restart begins at zero and catches existing rows.
     const candidates = this.candidateSource.moonChanceResolutionCandidates(this.moonChanceCursor, maxMoonChancesPerTick);
     this.moonChanceCursor = candidates.length === maxMoonChancesPerTick ? candidates.at(-1)!.cursor : 0;
+    this.moonChanceLastScanned = candidates.length;
+    this.moonChanceLastPending = 0;
+    this.moonChanceLastFinalized = 0;
+    this.moonChanceLastDeferred = 0;
+    this.moonChanceLastFailed = 0;
+    this.moonChanceLastOutcomeId = null;
+    this.moonChanceLastResult = null;
+    this.moonChanceLastError = null;
     for (const candidate of candidates) {
       if (this.gamePaused) break;
       const key = `moon-chance:${candidate.outcomeId}`;
       const retry = this.failedCandidateRetries.get(key);
-      if (retry && retry.retryAtMs > this.now()) continue;
+      if (retry && retry.retryAtMs > this.now()) {
+        this.recordMoonChanceResult(candidate.outcomeId, "deferred");
+        this.moonChanceLastDeferred += 1;
+        continue;
+      }
       try {
-        await this.chainClient.finalizeMoonChance(candidate.outcomeId);
+        const result = await this.chainClient.finalizeMoonChance(candidate.outcomeId);
+        this.recordMoonChanceResult(candidate.outcomeId, result);
+        if (result === "pending") this.moonChanceLastPending += 1;
+        else this.moonChanceLastFinalized += 1;
         this.failedCandidateRetries.delete(key);
         // Only indexed MoonChanceFinalized / MoonCreated logs update API/UI state. A canonical
         // finalized check can suppress a redundant write while chain-sync catches up after restart.
@@ -482,10 +550,28 @@ export class MissionResolutionService {
           this.observeGamePause(true, this.now());
           break;
         }
+        this.recordMoonChanceResult(candidate.outcomeId, "failed");
+        this.moonChanceLastFailed += 1;
+        this.moonChanceTotalFailures += 1;
+        this.moonChanceLastError = conciseReasonText(error);
         const retryAfterMs = this.scheduleRetry(key);
         this.logger.warn(`[mission-resolution] finalizeMoonChance(${candidate.outcomeId}) failed; retry in ${Math.ceil(retryAfterMs / 1_000)}s: ${conciseReasonText(error)}`);
       }
     }
+  }
+
+  private recordMoonChanceResult(
+    outcomeId: string,
+    result: Exclude<MoonChanceResolutionSnapshot["lastResult"], null>
+  ): void {
+    this.moonChanceLastOutcomeId = outcomeId;
+    this.moonChanceLastResult = result;
+  }
+
+  private moonChanceRetryingCount(nowMs: number): number {
+    return [...this.failedCandidateRetries.entries()].filter(([key, retry]) => (
+      key.startsWith("moon-chance:") && retry.retryAtMs > nowMs
+    )).length;
   }
 
   private async settleCandidate(candidate: MissionSettlementCandidate): Promise<boolean> {
@@ -568,6 +654,7 @@ export class MissionResolutionService {
     if (this.gamePauseAgeSeconds(this.now()) * 1_000 >= this.longPauseAlertAfterMs) {
       warnings.push("game_pause_long_running");
     }
+    if (this.moonChanceRetryingCount(this.now()) > 0) warnings.push("moon_chance_resolution_retrying");
     if (this.lastError) warnings.push("mission_resolution_tick_failed");
     return warnings;
   }

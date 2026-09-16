@@ -13844,6 +13844,7 @@ describe("moon chance resolution projection", () => {
     expect(first).toHaveLength(1);
     expect(first[0]!.outcomeId).toBe("5");
     expect(indexer.moonChanceResolutionCandidates(first[0]!.cursor, 1)[0]!.outcomeId).toBe("6");
+    expect(indexer.moonChanceResolutionCandidateCount()).toBe(2);
     expect(indexer.moonChanceReportsInSystem(2, 44).map(report => report.blockNumber)).toEqual(["99", "100", "101"]);
     const terminal = { ...moonChance, eventName: "MoonChanceFinalized" as const, moonCreated: false, blockNumber: "102" };
     indexer.applyMoonChanceEvent(terminal);
@@ -13851,6 +13852,7 @@ describe("moon chance resolution projection", () => {
     indexer.applyMoonChanceEvent({ ...moonChance, blockNumber: "99" });
     indexer.applyMoonChanceEvent({ ...moonChance, blockNumber: "102" });
     expect(indexer.moonChanceResolutionCandidates().map(candidate => candidate.outcomeId)).toEqual(["6"]);
+    expect(indexer.moonChanceResolutionCandidateCount()).toBe(1);
     expect(indexer.moonChanceReportsInSystem(2, 44).at(-1)).toMatchObject(terminal);
     expect(indexer.moonChanceReportsInSystem(2, 44)).toHaveLength(3);
     expect(indexer.debrisFieldsInSystem(2, 44)[0]!.resources).toEqual(debris.resources);

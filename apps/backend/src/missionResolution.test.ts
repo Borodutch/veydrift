@@ -1123,6 +1123,7 @@ describe("moon chance resolution", () => {
     const pages: number[] = [];
     const source = {
       missionResolutionCandidates: () => ({ arrivals: [], returns: [] }),
+      moonChanceResolutionCandidateCount: () => 12,
       moonChanceResolutionCandidates: (after: number, limit: number) => {
         pages.push(after);
         expect(limit).toBe(10);
@@ -1145,7 +1146,39 @@ describe("moon chance resolution", () => {
     };
     const service = new MissionResolutionService(moonConfig, options);
     await service.tick();
+    expect(service.snapshot()).toMatchObject({
+      healthStatus: "degraded",
+      healthWarnings: ["moon_chance_resolution_retrying"],
+      moonChanceResolution: {
+        enabled: true,
+        maxPerTick: 10,
+        cursor: 10,
+        indexedBacklog: 12,
+        lastScanned: 10,
+        lastPending: 9,
+        lastFinalized: 0,
+        lastDeferred: 0,
+        lastFailed: 1,
+        retrying: 1,
+        totalFailures: 1,
+        lastOutcomeId: "10",
+        lastResult: "pending",
+        lastError: "RPC temporarily unavailable"
+      }
+    });
     await service.tick();
+    expect(service.snapshot().moonChanceResolution).toMatchObject({
+      cursor: 0,
+      lastScanned: 2,
+      lastPending: 1,
+      lastFinalized: 1,
+      lastFailed: 0,
+      retrying: 1,
+      totalFailures: 1,
+      lastOutcomeId: "12",
+      lastResult: "finalized",
+      lastError: null
+    });
     await service.tick();
     expect(pages).toEqual([0, 10, 0]);
     expect(calls.filter(id => id === "1")).toHaveLength(1);
