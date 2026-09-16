@@ -185,7 +185,7 @@ function settlementFundingWithMigrationReservation(
     : (chainReservation ?? funding.migrationReservation ?? null);
   const activeMigration = Boolean(migrationReservation?.exists && !migrationReservation.claimed && migrationAddress);
   const migrationClaim = activeMigration ? (funding.migrationClaim ?? null) : null;
-  const unavailableReason = funding.unavailableReason ?? (activeMigration && !migrationClaim ? "Migration state snapshot is not ready for this wallet yet." : undefined);
+  const unavailableReason = funding.unavailableReason ?? (activeMigration && !migrationClaim ? "Your reserved planet is not ready to claim yet. Please try again later." : undefined);
   return {
     ...funding,
     ...(activeMigration
@@ -701,9 +701,9 @@ export class BackendDataStore {
     rift: this.planetQuery("rift", fetchRiftState),
     runtimeConfig: <T>(url: string): BackendDataQueryDescriptor<T> => {
       const key = cacheKey("runtime-config", url);
-      return this.query(key, () => this.refresh(key, (signal) => fetchGameApiJson<T>(url, "Runtime config", {
+      return this.query(key, () => this.refresh(key, (signal) => fetchGameApiJson<T>(url, "Game settings", {
         signal,
-        httpErrorMessage: async (response) => `Runtime config failed with ${response.status}`,
+        httpErrorMessage: async () => "Game settings could not be loaded. Please retry.",
       })));
     },
     shipyard: this.planetQuery("shipyard", fetchShipyardState),

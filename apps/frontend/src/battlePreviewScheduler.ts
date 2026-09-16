@@ -96,18 +96,18 @@ export class BattlePreviewScheduler {
         worker.onerror = () => {
           if (requestId !== this.activeRequestId) return;
           this.finishWorker(worker);
-          onError("The battle preview worker failed.");
+          onError("The battle preview failed. Please retry.");
         };
         worker.postMessage({ requestId, input });
         this.workerTimer = this.setTimer(() => {
           this.workerTimer = undefined;
           if (requestId !== this.activeRequestId || this.worker !== worker) return;
           this.finishWorker(worker);
-          onError("The battle preview worker timed out.");
+          onError("The battle preview took too long. Please retry.");
         }, this.workerTimeoutMs);
       } catch (error) {
         if (requestId === this.activeRequestId) {
-          onError(error instanceof Error ? error.message : "The battle preview worker could not start.");
+          onError(error instanceof Error ? error.message : "The battle preview could not start. Please retry.");
         }
       }
     }, this.debounceMs);

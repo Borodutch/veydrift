@@ -98,7 +98,7 @@ export const testMiniAppSurface = {
   PUBLIC_SITE_URL: "https://test.veydrift.com",
   ROBOTS: "noindex,nofollow",
   SITE_TITLE: "Veydrift",
-  SITE_DESCRIPTION: "Veydrift Base Sepolia test app for injected-wallet first-planet settlement.",
+  SITE_DESCRIPTION: "Play Veydrift on Base Sepolia. Settle planets, build fleets, and raid rivals on the test network.",
   SOCIAL_IMAGE: "https://test.veydrift.com/assets/miniapp/og-image.jpg",
   MINIAPP_IMAGE: "https://test.veydrift.com/assets/miniapp/embed.png",
   MINIAPP_SPLASH: "https://test.veydrift.com/assets/miniapp/splash.png",

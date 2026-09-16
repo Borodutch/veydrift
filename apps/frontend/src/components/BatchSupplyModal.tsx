@@ -1,3 +1,4 @@
+import { playerNotice } from "../playerNotice";
 import { Check, PackagePlus, X } from "lucide-preact";
 import { Skeleton, SkeletonRegion, skeletonList } from "./Skeleton";
 import { useEffect, useMemo, useState } from "preact/hooks";
@@ -286,7 +287,7 @@ export function BatchSupplyModal({
                       <SupplyFleetIcons ships={fleetPresentation.ships} />
                     </span>
                     {sourceLimitReason ? <span className="block text-xs text-slate-400">{sourceLimitReason}</span> : null}
-                    {source.unavailableReason ? <span className="block text-xs text-amber-200">{source.unavailableReason}</span> : null}
+                    {source.unavailableReason ? <span className="block text-xs text-amber-200">{playerNotice(source.unavailableReason)}</span> : null}
                   </span>
                 </div>
               );

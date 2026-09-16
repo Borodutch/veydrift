@@ -44,7 +44,7 @@ describe("Infrastructure page display helpers", () => {
 
     expect(text).toContain("Infrastructure state could not be loaded");
     expect(text).toContain("Infrastructure request failed with 503");
-    expect(text).toContain("Levels, costs, production effects, storage caps, and upgrade values are unavailable");
+    expect(text).toContain("Refresh to load your buildings and resources");
     expect(text).not.toMatch(/\bLevel 0\b|Upgrade cost|Production capacity|Ready for Level/);
   });
 

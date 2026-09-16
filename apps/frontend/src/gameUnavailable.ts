@@ -18,6 +18,7 @@ export function isGameUnavailableMessage(message: string | undefined): boolean {
   return (
     /^servers are unavailable\. retrying in \d+ seconds?\.?$/i.test(normalized)
     || /^game api (is )?unavailable\.?$/i.test(normalized)
+    || /^game connection unavailable\.?$/i.test(normalized)
     || /veydrift backend is temporarily (unavailable|unreachable)/i.test(normalized)
     || /veydrift backend is likely restarting/i.test(normalized)
     || /game api could not be reached from this browser/i.test(normalized)

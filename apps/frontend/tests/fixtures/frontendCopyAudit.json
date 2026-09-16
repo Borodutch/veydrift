@@ -1,0 +1,1864 @@
+[
+  {
+    "before": "The origin planet does not have enough resources or deuterium fuel for this mission. Refresh backend resources and queues before retrying; the indexed spendable balance may still be catching up with earlier queued spending.",
+    "after": "The origin planet does not have enough resources or deuterium fuel for this mission. Refresh resources and queues before retrying; your balance may still be updating after recent spending.",
+    "locations": [
+      "apps/frontend/src/walletFlow.ts:1779"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Mission resolution is pending for this planet. Refresh after the battle keeper or indexer settles the due mission before starting another upgrade.",
+    "after": "A mission is still resolving at this planet. Wait for it to finish, then refresh before starting another upgrade.",
+    "locations": [
+      "apps/frontend/src/PlayableMvpApp.tsx:365"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Invite code verified: referral settlement starts this planet with 1,000 metal / 1,000 crystal / 0 deuterium and 2× production for 7 days.",
+    "after": "This invite starts your planet with 1,000 metal / 1,000 crystal / 0 deuterium and 2× production for 7 days.",
+    "locations": [
+      "apps/frontend/src/FirstPlanetSettlementApp.tsx:2479"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Can't check game state right now. Your upgrade is still ready, but Veydrift could not verify the contract state. Retry in a moment.",
+    "after": "Can't check your upgrade right now. Retry in a moment.",
+    "locations": [
+      "apps/frontend/src/PlayableMvpApp.tsx:359"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "War uses its declaration snapshot: only original members qualify, and they regain eligibility by rejoining their original alliance.",
+    "after": "Only members present at the war declaration qualify, and they regain eligibility by rejoining their original alliance.",
+    "locations": [
+      "apps/frontend/src/components/AlliancePage.tsx:1312"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Arrival projection uses public building/resource preview math and assumes no spending, transport, or combat changes before arrival.",
+    "after": "Arrival estimate assumes no spending, transport, or combat changes before arrival.",
+    "locations": [
+      "apps/frontend/src/components/MissionCreationPage.tsx:3461"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "War eligibility verified for this target. Bypass applies only to original declaration-roster members in the allowed direction.",
+    "after": "War protection exceptions apply to this target. Only original members qualify, in the allowed attack direction.",
+    "locations": [
+      "apps/frontend/src/PlayableMvpApp.tsx:1016"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Planet data is unavailable right now. Overview stats and resources are hidden until the game API responds with live values.",
+    "after": "Planet data is unavailable right now. Please refresh and try again.",
+    "locations": [
+      "apps/frontend/src/components/OverviewPage.tsx:648"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Levels, costs, production effects, storage caps, and upgrade values are unavailable until the live state request succeeds.",
+    "after": "Refresh to load your buildings and resources.",
+    "locations": [
+      "apps/frontend/src/components/InfrastructurePage.tsx:250"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "'s stationed fleet combat technology is not indexed, so its owner-specific contract scaling cannot be simulated safely.",
+    "after": "'s stationed fleet combat technology is unknown, so the battle outcome cannot be estimated.",
+    "locations": [
+      "apps/frontend/src/components/MissionCreationPage.tsx:2034"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Attack eligibility is verified for the selected target: frozen original rosters and declaration direction still apply.",
+    "after": "Only original war members qualify for protection exceptions, in the allowed attack direction.",
+    "locations": [
+      "apps/frontend/src/components/RankingsTable.tsx:368"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Levels, costs, resources, queue state, and requirement-derived values are unavailable until live research state loads.",
+    "after": "Refresh to load your research and resources.",
+    "locations": [
+      "apps/frontend/src/components/ResearchPage.tsx:261"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "No VeydriftGame home planet was found for this wallet. Defense counts and production are not shown from local state.",
+    "after": "No home planet was found for this wallet.",
+    "locations": [
+      "apps/frontend/src/components/DefensePage.tsx:189"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "No VeydriftGame home planet was found for this wallet. Research levels and actions are not shown from local state.",
+    "after": "No home planet was found for this wallet.",
+    "locations": [
+      "apps/frontend/src/components/ResearchPage.tsx:327"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Contract-equivalent 256-bit samples produce different outcomes or losses; the future oracle word is not known yet.",
+    "after": "Simulated outcomes or losses vary; the actual battle may differ.",
+    "locations": [
+      "apps/frontend/src/components/MissionCreationPage.tsx:3642"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "No VeydriftGame home planet was found for this wallet. Ship counts and production are not shown from local state.",
+    "after": "No home planet was found for this wallet.",
+    "locations": [
+      "apps/frontend/src/components/ShipyardPage.tsx:194"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Supplies solar energy to mines. Low energy reduces modeled resource output instead of inventing extra production.",
+    "after": "Supplies solar energy to mines. An energy shortage reduces mine output.",
+    "locations": [
+      "apps/frontend/src/components/InfrastructurePage.tsx:55"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "WalletConnect is not configured yet. Install a browser wallet, or try again once Veydrift enables WalletConnect.",
+    "after": "WalletConnect is currently unavailable. Use a browser wallet or try again later.",
+    "locations": [
+      "apps/frontend/src/reownWallet.ts:47"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Moon arrival projection uses the current public moon resource snapshot until moon production data is available.",
+    "after": "Moon production is unavailable, so the arrival estimate uses current resources.",
+    "locations": [
+      "apps/frontend/src/components/MissionCreationPage.tsx:1864"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "combat technology is missing from public intel, so owner-specific contract scaling cannot be simulated safely.",
+    "after": "combat technology is unknown, so the battle outcome cannot be estimated.",
+    "locations": [
+      "apps/frontend/src/components/MissionCreationPage.tsx:1957"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Condenses deuterium from deep atmospheric layers. Production depends on the planet model and power supply.",
+    "after": "Condenses deuterium from deep atmospheric layers. Production depends on temperature and power supply.",
+    "locations": [
+      "apps/frontend/src/components/InfrastructurePage.tsx:54"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "The Veydrift backend is likely restarting or temporarily unreachable. It should be back in a few minutes.",
+    "after": "Veydrift is temporarily unavailable. Please try again in a few minutes.",
+    "locations": [
+      "apps/frontend/src/FirstPlanetSettlementApp.tsx:82"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "The settlement transaction is confirmed, but the game API has not returned complete planet resources yet.",
+    "after": "Your settlement is confirmed. Your planet resources are still updating.",
+    "locations": [
+      "apps/frontend/src/PlayableMvpApp.tsx:7699"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "The indexed stationed-defender timeline is incomplete, so the battle-time defender roster is unknown.",
+    "after": "Stationed-defender arrival and departure times are incomplete, so the battle-time defender roster is unknown.",
+    "locations": [
+      "apps/frontend/src/components/MissionCreationPage.tsx:1681"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "The target planet isn't charted in the indexed state, so its combat intelligence can't be derived.",
+    "after": "Combat intelligence is not available for this target yet.",
+    "locations": [
+      "apps/frontend/src/components/MissionDetailPage.tsx:209"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Everything is ready. Launch your first planet to accept the invitation and join your alliance.",
+    "after": "Launch your first planet to accept the invitation and join your alliance.",
+    "locations": [
+      "apps/frontend/src/FirstPlanetSettlementApp.tsx:2488"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Arrival projection falls back to current resources until public production data is available.",
+    "after": "Production is unavailable, so the arrival estimate uses current resources.",
+    "locations": [
+      "apps/frontend/src/components/MissionCreationPage.tsx:3444"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "The selected joining fleet's exact contract random-stream lane is missing from public intel.",
+    "after": "The joining fleet's battle details are incomplete, so the outcome cannot be estimated.",
+    "locations": [
+      "apps/frontend/src/components/MissionCreationPage.tsx:1978"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Frozen original rosters and declaration direction are verified before an attack can launch.",
+    "after": "Only original war members qualify for protection exceptions, in the allowed attack direction.",
+    "locations": [
+      "apps/frontend/src/components/RaidTargetFinderPage.tsx:956"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Battle report processing failed. The backend will retry after report logs are replayed.",
+    "after": "Battle report processing failed. It will retry automatically.",
+    "locations": [
+      "apps/frontend/src/components/MissionDetailPage.tsx:497"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Settlement confirmed. Indexing starting resources before opening planetary overview.",
+    "after": "Settlement confirmed. Preparing your planet…",
+    "locations": [
+      "apps/frontend/src/FirstPlanetSettlementApp.tsx:81",
+      "apps/frontend/src/FirstPlanetSettlementApp.tsx:1434"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Custom Veydrift facility for later resource-token withdrawal and rift mechanics.",
+    "after": "Enables resource transfers through the Rift.",
+    "locations": [
+      "apps/frontend/src/components/InfrastructurePage.tsx:67"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Wallet, Burning Chicken config, or selected planet coordinates are unavailable.",
+    "after": "Wallet, Chicken burning, or selected planet is unavailable.",
+    "locations": [
+      "apps/frontend/src/PlayableMvpApp.tsx:4305"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Legacy war: no protection snapshot exists, so normal score protection applies.",
+    "after": "Normal score protection applies to this older war.",
+    "locations": [
+      "apps/frontend/src/components/AlliancePage.tsx:1318"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Improves construction logistics and shortens modeled building upgrade times.",
+    "after": "Improves construction logistics and shortens building upgrade times.",
+    "locations": [
+      "apps/frontend/src/components/InfrastructurePage.tsx:56"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "The backend mission index has no active universe-wide fleet rows right now.",
+    "after": "No fleets are currently in flight.",
+    "locations": [
+      "apps/frontend/src/ComingSoonApp.tsx:895"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Combat is due or resolving; the indexed battle report is not available yet.",
+    "after": "Combat is due or resolving; the battle report is not available yet.",
+    "locations": [
+      "apps/frontend/src/components/MissionDetailPage.tsx:504"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Settlement indexing is unavailable because the game API is not configured.",
+    "after": "Settlement is temporarily unavailable. Please try again later.",
+    "locations": [
+      "apps/frontend/src/FirstPlanetSettlementApp.tsx:1272"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Stationed defense can only target planets in the current mission contract.",
+    "after": "Stationed defense is not available for this target.",
+    "locations": [
+      "apps/frontend/src/PlayableMvpApp.tsx:2046",
+      "apps/frontend/src/components/GalaxyView.tsx:813",
+      "apps/frontend/src/components/GalaxyView.tsx:823"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Defense production is not available for the currently configured contract.",
+    "after": "Defense production is currently unavailable.",
+    "locations": [
+      "apps/frontend/src/components/DefensePage.tsx:181"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Settlement funding is unavailable because the game API is not configured.",
+    "after": "Settlement pricing is temporarily unavailable. Please try again later.",
+    "locations": [
+      "apps/frontend/src/FirstPlanetSettlementApp.tsx:1132",
+      "apps/frontend/src/FirstPlanetSettlementApp.tsx:1442",
+      "apps/frontend/src/FirstPlanetSettlementApp.tsx:1463"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Moon defense stationing is not available in the current mission contract.",
+    "after": "Stationing defense on moons is currently unavailable.",
+    "locations": [
+      "apps/frontend/src/PlayableMvpApp.tsx:6136",
+      "apps/frontend/src/components/PublicMoonDetail.tsx:513"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Moon attack parity is still activating. Refresh shortly before launching.",
+    "after": "Moon attacks are temporarily unavailable. Refresh shortly before launching.",
+    "locations": [
+      "apps/frontend/src/PlayableMvpApp.tsx:5593",
+      "apps/frontend/src/components/MissionCreationPage.tsx:739"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Crawler production details are syncing from the backend production model.",
+    "after": "Crawler production details are loading.",
+    "locations": [
+      "apps/frontend/src/components/TopBar.tsx:474"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "The on-chain bonus activates once the crawler production upgrade is live.",
+    "after": "",
+    "locations": [
+      "apps/frontend/src/components/ShipyardPage.tsx:324"
+    ],
+    "disposition": "Remove redundant clause"
+  },
+  {
+    "before": ", but this is not a guarantee because the future oracle word is unknown.",
+    "after": ", but the actual battle may differ.",
+    "locations": [
+      "apps/frontend/src/components/MissionCreationPage.tsx:3645"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Resource token reserves are not configured for this game deployment yet.",
+    "after": "Starting resources are currently unavailable. Please try again later.",
+    "locations": [
+      "apps/frontend/src/walletFlow.ts:3223"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery",
+    "apiSupplied": true
+  },
+  {
+    "before": "Settlement state is unavailable because the game API is not configured.",
+    "after": "Settlement is temporarily unavailable. Please try again later.",
+    "locations": [
+      "apps/frontend/src/FirstPlanetSettlementApp.tsx:1099",
+      "apps/frontend/src/FirstPlanetSettlementApp.tsx:1418"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Moon attack parity is still activating. Refresh shortly before joining.",
+    "after": "Moon attacks are temporarily unavailable. Refresh shortly before joining.",
+    "locations": [
+      "apps/frontend/src/PlayableMvpApp.tsx:5997"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Ship production is not available for the currently configured contract.",
+    "after": "Ship production is currently unavailable.",
+    "locations": [
+      "apps/frontend/src/components/ShipyardPage.tsx:186"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Destination resources are not present in the public indexed state yet.",
+    "after": "Destination resources are not available yet.",
+    "locations": [
+      "apps/frontend/src/components/MissionCreationPage.tsx:1883"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Attack eligibility is not verified. Retry before launching an attack.",
+    "after": "Attack eligibility could not be checked. Retry before launching an attack.",
+    "locations": [
+      "apps/frontend/src/PlayableMvpApp.tsx:965"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Wallet or game API is unavailable while refreshing target protection.",
+    "after": "Could not check target protection. Check your wallet connection and retry.",
+    "locations": [
+      "apps/frontend/src/PlayableMvpApp.tsx:4112"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Wallet or game API is unavailable while refreshing fleet inventory.",
+    "after": "Could not refresh your fleet. Check your wallet connection and retry.",
+    "locations": [
+      "apps/frontend/src/PlayableMvpApp.tsx:4085"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Attack battle randomness is not configured for this deployment yet.",
+    "after": "Attacks are temporarily unavailable. Please try again later.",
+    "locations": [
+      "apps/frontend/src/walletFlow.ts:1805"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "The backend highscore index has no alliance-ranked commanders yet.",
+    "after": "No alliances have ranked commanders yet.",
+    "locations": [
+      "apps/frontend/src/ComingSoonApp.tsx:900"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "contract random-stream lane identity is missing from public intel.",
+    "after": "battle details are incomplete, so the battle outcome cannot be estimated.",
+    "locations": [
+      "apps/frontend/src/components/MissionCreationPage.tsx:1967"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Wallet, game contract, active planet, or game API is unavailable.",
+    "after": "Wallet, game connection, or active planet is unavailable.",
+    "locations": [
+      "apps/frontend/src/PlayableMvpApp.tsx:3872"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "has no exact indexed hold window at the projected battle arrival.",
+    "after": "has no confirmed hold window at the projected battle arrival.",
+    "locations": [
+      "apps/frontend/src/components/MissionCreationPage.tsx:1719"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "What each transaction does and what state changes after indexing.",
+    "after": "What each transaction does and when its effects appear.",
+    "locations": [
+      "apps/frontend/src/docs/docsSource.ts:46"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Research is not available for the currently configured contract.",
+    "after": "Research is currently unavailable.",
+    "locations": [
+      "apps/frontend/src/components/ResearchPage.tsx:319"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Rankings are warming from indexed game state. Retry in a moment.",
+    "after": "Rankings are updating. Retry in a moment.",
+    "locations": [
+      "apps/frontend/src/walletFlow.ts:4605"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Enables technology research and improves modeled research speed.",
+    "after": "Enables technology research and improves research speed.",
+    "locations": [
+      "apps/frontend/src/components/InfrastructurePage.tsx:58"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "War unavailable: each alliance can snapshot at most 64 members.",
+    "after": "War unavailable: each alliance can have at most 64 members at declaration.",
+    "locations": [
+      "apps/frontend/src/components/AlliancePage.tsx:1138"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "No indexed public members are available for this alliance yet.",
+    "after": "No public members are available for this alliance yet.",
+    "locations": [
+      "apps/frontend/src/components/InspectPages.tsx:401"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Wallet, game contract, or withdrawal resource is unavailable.",
+    "after": "Wallet, game connection, or withdrawal resource is unavailable.",
+    "locations": [
+      "apps/frontend/src/PlayableMvpApp.tsx:4951"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Could not be reconciled from the historical fleet-loss event.",
+    "after": "Historical fleet losses could not be confirmed.",
+    "locations": [
+      "apps/frontend/src/components/MissionDetailPage.tsx:613"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "This level is already at the maximum allowed by the contract.",
+    "after": "This level is already at the maximum.",
+    "locations": [
+      "apps/frontend/src/walletFlow.ts:1887"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Resolved combat losses are not exposed in this mission feed.",
+    "after": "Combat losses are unavailable for this mission.",
+    "locations": [
+      "apps/frontend/src/components/MissionControlPage.tsx:3418"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "The Veydrift API is not reachable from this page right now.",
+    "after": "Veydrift is temporarily unavailable. Please try again shortly.",
+    "locations": [
+      "apps/frontend/src/ComingSoonApp.tsx:894",
+      "apps/frontend/src/ComingSoonApp.tsx:899"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Migration state snapshot is not ready for this wallet yet.",
+    "after": "Your reserved planet is not ready to claim yet. Please try again later.",
+    "locations": [
+      "apps/frontend/src/backendDataStore.ts:188",
+      "apps/frontend/src/walletFlow.ts:3228"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "is missing its exact contract random-stream lane identity.",
+    "after": "has incomplete battle details, so the outcome cannot be estimated.",
+    "locations": [
+      "apps/frontend/src/components/MissionCreationPage.tsx:2047"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "rounds complete. The resolver will continue automatically.",
+    "after": "rounds complete. Combat will continue automatically.",
+    "locations": [
+      "apps/frontend/src/components/MissionDetailPage.tsx:483"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Private invite redemption is not enabled on this backend.",
+    "after": "Private invitations are currently unavailable.",
+    "locations": [
+      "apps/frontend/src/FirstPlanetSettlementApp.tsx:1280",
+      "apps/frontend/src/FirstPlanetSettlementApp.tsx:1515"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Wallet, game contract, or selected origin is unavailable.",
+    "after": "Wallet, game connection, or selected origin is unavailable.",
+    "locations": [
+      "apps/frontend/src/PlayableMvpApp.tsx:5982"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Private invite purchases are not enabled on this backend.",
+    "after": "Private invite purchases are currently unavailable.",
+    "locations": [
+      "apps/frontend/src/components/AlliancePage.tsx:638"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Wallet, game contract, or resource token is unavailable.",
+    "after": "Wallet, game connection, or resource token is unavailable.",
+    "locations": [
+      "apps/frontend/src/PlayableMvpApp.tsx:4864"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "No indexed public planets are available for this player.",
+    "after": "No public planets are available for this player.",
+    "locations": [
+      "apps/frontend/src/components/InspectPages.tsx:149"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Referral invites are not configured on this deployment.",
+    "after": "Referral invitations are currently unavailable.",
+    "locations": [
+      "apps/frontend/src/FirstPlanetSettlementApp.tsx:1762"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Wallet, game contract, or origin planet is unavailable.",
+    "after": "Wallet, game connection, or origin planet is unavailable.",
+    "locations": [
+      "apps/frontend/src/PlayableMvpApp.tsx:5407",
+      "apps/frontend/src/PlayableMvpApp.tsx:5901"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "No VeydriftGame home planet is available for research.",
+    "after": "No home planet is available for research.",
+    "locations": [
+      "apps/frontend/src/PlayableMvpApp.tsx:1388"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Raises the real deuterium storage cap for this planet.",
+    "after": "Raises this planet’s deuterium storage capacity.",
+    "locations": [
+      "apps/frontend/src/components/InfrastructurePage.tsx:61"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Wallet, game contract, or home planet is unavailable.",
+    "after": "Wallet, game connection, or home planet is unavailable.",
+    "locations": [
+      "apps/frontend/src/PlayableMvpApp.tsx:4345",
+      "apps/frontend/src/PlayableMvpApp.tsx:4366",
+      "apps/frontend/src/PlayableMvpApp.tsx:4802",
+      "apps/frontend/src/PlayableMvpApp.tsx:5860",
+      "apps/frontend/src/PlayableMvpApp.tsx:5955"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Wallet, moon contract, or home planet is unavailable.",
+    "after": "Wallet, moon connection, or home planet is unavailable.",
+    "locations": [
+      "apps/frontend/src/PlayableMvpApp.tsx:5710",
+      "apps/frontend/src/PlayableMvpApp.tsx:5728",
+      "apps/frontend/src/PlayableMvpApp.tsx:5746"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "No indexed planets are available for this wallet yet.",
+    "after": "No planets are available for this wallet yet.",
+    "locations": [
+      "apps/frontend/src/components/AlliancePage.tsx:2370"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Missile silo capacity cost from the contract catalog.",
+    "after": "Missile silo space used per missile.",
+    "locations": [
+      "apps/frontend/src/playableMvp.ts:1121"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Raises the real crystal storage cap for this planet.",
+    "after": "Raises this planet’s crystal storage capacity.",
+    "locations": [
+      "apps/frontend/src/components/InfrastructurePage.tsx:60"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Checking this target's canonical attack protection.",
+    "after": "Checking this target's attack protection.",
+    "locations": [
+      "apps/frontend/src/PlayableMvpApp.tsx:1000"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Missile actions are unavailable on this deployment.",
+    "after": "Missile actions are currently unavailable.",
+    "locations": [
+      "apps/frontend/src/galaxyActions.ts:429"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Raises the real metal storage cap for this planet.",
+    "after": "Raises this planet’s metal storage capacity.",
+    "locations": [
+      "apps/frontend/src/components/InfrastructurePage.tsx:59"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Game contract unavailable; upgrades are disabled.",
+    "after": "Game connection unavailable; upgrades are disabled.",
+    "locations": [
+      "apps/frontend/src/PlayableMvpApp.tsx:1704"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "No VeydriftGame planet is available for research.",
+    "after": "No planet is available for research.",
+    "locations": [
+      "apps/frontend/src/PlayableMvpApp.tsx:4836"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Infrastructure is unavailable on this deployment.",
+    "after": "Infrastructure is currently unavailable.",
+    "locations": [
+      "apps/frontend/src/PlayableMvpApp.tsx:1709"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Alliance details are not indexed for this id yet.",
+    "after": "Alliance details are not available yet.",
+    "locations": [
+      "apps/frontend/src/components/InspectPages.tsx:336"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Burning Chicken burn config is not available yet.",
+    "after": "Chicken burning is currently unavailable.",
+    "locations": [
+      "apps/frontend/src/components/MoonPage.tsx:204"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Fleet actions are unavailable on this deployment.",
+    "after": "Fleet actions are currently unavailable.",
+    "locations": [
+      "apps/frontend/src/galaxyActions.ts:398"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Wallet, game contract, or planet is unavailable.",
+    "after": "Wallet, game connection, or planet is unavailable.",
+    "locations": [
+      "apps/frontend/src/PlayableMvpApp.tsx:5022"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Alliance production treasury is not configured.",
+    "after": "Alliance treasury is currently unavailable.",
+    "locations": [
+      "apps/frontend/src/PlayableMvpApp.tsx:4447"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Wallet or Burning Chicken contract unavailable.",
+    "after": "Wallet or Chicken burning is unavailable.",
+    "locations": [
+      "apps/frontend/src/components/MoonPage.tsx:264"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Settlement contract address is not configured.",
+    "after": "Settlement is currently unavailable.",
+    "locations": [
+      "apps/frontend/src/FirstPlanetSettlementApp.tsx:2394",
+      "apps/frontend/src/walletFlow.ts:3214",
+      "apps/frontend/src/walletFlow.ts:3406"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Defense unavailable on current moon deployment",
+    "after": "Moon defense is currently unavailable",
+    "locations": [
+      "apps/frontend/src/components/MoonPage.tsx:987"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Your indexed Veydrift actions and transactions",
+    "after": "Your Veydrift actions and transactions",
+    "locations": [
+      "apps/frontend/src/components/PlayerActivityDialog.tsx:176"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Contract cargo capacity for missions and loot.",
+    "after": "Cargo capacity for missions and loot.",
+    "locations": [
+      "apps/frontend/src/playableMvp.ts:1081"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "contract-equivalent samples produced the same",
+    "after": "simulations produced the same",
+    "locations": [
+      "apps/frontend/src/components/MissionCreationPage.tsx:3645"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Connect a wallet to launch contract missions.",
+    "after": "Connect a wallet to launch missions.",
+    "locations": [
+      "apps/frontend/src/galaxyActions.ts:388"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Not reported by the visible mission feed yet.",
+    "after": "Not available yet.",
+    "locations": [
+      "apps/frontend/src/components/MissionControlPage.tsx:3414"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Burning Chicken burn config is unavailable.",
+    "after": "Chicken burning is currently unavailable.",
+    "locations": [
+      "apps/frontend/src/components/MoonPage.tsx:262"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Game state store or wallet is unavailable.",
+    "after": "Game state or wallet is unavailable. Please refresh and retry.",
+    "locations": [
+      "apps/frontend/src/PlayableMvpApp.tsx:3466"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Referral system address is not configured.",
+    "after": "Referral invitations are currently unavailable.",
+    "locations": [
+      "apps/frontend/src/walletFlow.ts:3409"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "The battle preview worker could not start.",
+    "after": "The battle preview could not start. Please retry.",
+    "locations": [
+      "apps/frontend/src/battlePreviewScheduler.ts:110"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Paid alliance invites are not configured.",
+    "after": "Private alliance invitations are currently unavailable.",
+    "locations": [
+      "apps/frontend/src/PlayableMvpApp.tsx:4422"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "The battle report worker could not start.",
+    "after": "The battle report could not start. Please retry.",
+    "locations": [
+      "apps/frontend/src/components/MissionCreationPage.tsx:2693"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "No indexed public members are available.",
+    "after": "No public members are available.",
+    "locations": [
+      "apps/frontend/src/components/InspectPages.tsx:685"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Wallet or game contract is unavailable.",
+    "after": "Wallet or game connection is unavailable.",
+    "locations": [
+      "apps/frontend/src/PlayableMvpApp.tsx:1077",
+      "apps/frontend/src/PlayableMvpApp.tsx:1167",
+      "apps/frontend/src/PlayableMvpApp.tsx:1247",
+      "apps/frontend/src/PlayableMvpApp.tsx:1372",
+      "apps/frontend/src/PlayableMvpApp.tsx:5768",
+      "apps/frontend/src/PlayableMvpApp.tsx:5796",
+      "apps/frontend/src/PlayableMvpApp.tsx:5821"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "No active Rift extractions indexed yet.",
+    "after": "No active Rift extractions available yet.",
+    "locations": [
+      "apps/frontend/src/components/RaidTargetFinderPage.tsx:352"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "The universe API request was cancelled.",
+    "after": "Galaxy loading was cancelled. Please retry.",
+    "locations": [
+      "apps/frontend/src/components/GalaxyView.tsx:565"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Waiting for previous mission to index.",
+    "after": "Waiting for the previous mission to update.",
+    "locations": [
+      "apps/frontend/src/PlayableMvpApp.tsx:368"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Research unavailable on this contract.",
+    "after": "Research is currently unavailable.",
+    "locations": [
+      "apps/frontend/src/PlayableMvpApp.tsx:1380"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Indexed transactions will appear here.",
+    "after": "Your actions will appear here.",
+    "locations": [
+      "apps/frontend/src/components/PlayerActivityDialog.tsx:248"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Ship unavailable on current deployment",
+    "after": "Ship currently unavailable",
+    "locations": [
+      "apps/frontend/src/components/ShipyardPage.tsx:475"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Research unavailable on this contract",
+    "after": "Research is currently unavailable",
+    "locations": [
+      "apps/frontend/src/components/ResearchPage.tsx:995"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Alliance contract is not configured.",
+    "after": "Alliance actions are currently unavailable.",
+    "locations": [
+      "apps/frontend/src/components/AlliancePage.tsx:201"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "was not captured in indexed history.",
+    "after": "was not recorded for this battle.",
+    "locations": [
+      "apps/frontend/src/components/MissionDetailPage.tsx:633",
+      "apps/frontend/src/components/MissionDetailPage.tsx:634"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "The battle preview worker timed out.",
+    "after": "The battle preview took too long. Please retry.",
+    "locations": [
+      "apps/frontend/src/battlePreviewScheduler.ts:106"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Wallet or game contract unavailable",
+    "after": "Wallet or game connection unavailable",
+    "locations": [
+      "apps/frontend/src/PlayableMvpApp.tsx:6278",
+      "apps/frontend/src/PlayableMvpApp.tsx:6286",
+      "apps/frontend/src/components/DefensePage.tsx:403",
+      "apps/frontend/src/components/ResearchPage.tsx:999",
+      "apps/frontend/src/components/ShipyardPage.tsx:472"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Wallet or moon contract unavailable",
+    "after": "Wallet or moon connection unavailable",
+    "locations": [
+      "apps/frontend/src/PlayableMvpApp.tsx:6298",
+      "apps/frontend/src/components/MoonPage.tsx:983",
+      "apps/frontend/src/components/MoonPage.tsx:1170"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "No public score row is indexed yet.",
+    "after": "No public score is available yet.",
+    "locations": [
+      "apps/frontend/src/components/InspectPages.tsx:164"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Wallet or game API is unavailable.",
+    "after": "Wallet or game connection is unavailable.",
+    "locations": [
+      "apps/frontend/src/PlayableMvpApp.tsx:5050"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Report generating, please hold...",
+    "after": "Generating battle report…",
+    "locations": [
+      "apps/frontend/src/components/MissionDetailPage.tsx:490",
+      "apps/frontend/src/components/MissionDetailPage.tsx:523"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "No settled commanders indexed yet",
+    "after": "No settled commanders yet",
+    "locations": [
+      "apps/frontend/src/components/RankingsTable.tsx:197"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Unavailable on current deployment",
+    "after": "Currently unavailable",
+    "locations": [
+      "apps/frontend/src/components/ShipyardPage.tsx:258"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "The battle preview worker failed.",
+    "after": "The battle preview failed. Please retry.",
+    "locations": [
+      "apps/frontend/src/battlePreviewScheduler.ts:99"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Game state store is unavailable.",
+    "after": "Game state is unavailable. Please refresh and retry.",
+    "locations": [
+      "apps/frontend/src/PlayableMvpApp.tsx:2982"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "No raidable planets indexed yet.",
+    "after": "No raidable planets available yet.",
+    "locations": [
+      "apps/frontend/src/components/RaidTargetFinderPage.tsx:342"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Not available on this deployment",
+    "after": "Currently unavailable",
+    "locations": [
+      "apps/frontend/src/components/RiftPage.tsx:68"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "not available on this deployment",
+    "after": "currently unavailable",
+    "locations": [
+      "apps/frontend/src/components/RiftPage.tsx:72"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "The battle report worker failed.",
+    "after": "The battle report failed. Please retry.",
+    "locations": [
+      "apps/frontend/src/components/MissionCreationPage.tsx:2683"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "The universe API request failed.",
+    "after": "Galaxy could not be loaded. Please retry.",
+    "locations": [
+      "apps/frontend/src/components/GalaxyView.tsx:568"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Alliance contract unavailable.",
+    "after": "Alliance actions are unavailable.",
+    "locations": [
+      "apps/frontend/src/PlayableMvpApp.tsx:4388",
+      "apps/frontend/src/PlayableMvpApp.tsx:4407",
+      "apps/frontend/src/PlayableMvpApp.tsx:4474",
+      "apps/frontend/src/PlayableMvpApp.tsx:4494",
+      "apps/frontend/src/PlayableMvpApp.tsx:4543",
+      "apps/frontend/src/PlayableMvpApp.tsx:4558",
+      "apps/frontend/src/PlayableMvpApp.tsx:4573",
+      "apps/frontend/src/PlayableMvpApp.tsx:4627",
+      "apps/frontend/src/PlayableMvpApp.tsx:4681",
+      "apps/frontend/src/PlayableMvpApp.tsx:4696",
+      "apps/frontend/src/PlayableMvpApp.tsx:4717",
+      "apps/frontend/src/PlayableMvpApp.tsx:4731",
+      "apps/frontend/src/PlayableMvpApp.tsx:4746",
+      "apps/frontend/src/PlayableMvpApp.tsx:4769",
+      "apps/frontend/src/PlayableMvpApp.tsx:4785",
+      "apps/frontend/src/PlayableMvpApp.tsx:6292"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "No debris fields indexed yet.",
+    "after": "No debris fields available yet.",
+    "locations": [
+      "apps/frontend/src/components/RaidTargetFinderPage.tsx:348"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "No VeydriftGame home planet",
+    "after": "No home planet",
+    "locations": [
+      "apps/frontend/src/components/ResearchPage.tsx:997"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Snapshot — declarer score",
+    "after": "At declaration — declarer score",
+    "locations": [
+      "apps/frontend/src/components/AlliancePage.tsx:1315"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Moon state is indexing",
+    "after": "Moon state is updating",
+    "locations": [
+      "apps/frontend/src/components/MoonPage.tsx:138"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Game API unavailable.",
+    "after": "Game connection unavailable.",
+    "locations": [
+      "apps/frontend/src/components/InspectPages.tsx:68",
+      "apps/frontend/src/components/RaidTargetFinderPage.tsx:176",
+      "apps/frontend/src/components/RaidTargetFinderPage.tsx:177",
+      "apps/frontend/src/components/RaidTargetFinderPage.tsx:178",
+      "apps/frontend/src/components/RankingsPage.tsx:112"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "No indexed debris",
+    "after": "No debris available",
+    "locations": [
+      "apps/frontend/src/components/MissionCreationPage.tsx:2433"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "The game contract rejected this transaction, but the wallet did not provide a specific reason. Refresh game state and retry, or choose a different action if the state changed.",
+    "after": "The transaction was rejected without a specific reason. Refresh game state and retry, or choose a different action if the state changed.",
+    "locations": [
+      "apps/frontend/src/walletFlow.ts"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Game contract rejected this fleet action:",
+    "after": "Fleet action was rejected:",
+    "locations": [
+      "apps/frontend/src/walletFlow.ts"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "App RPC is unavailable for the transaction preflight.",
+    "after": "Transaction checks are unavailable. The transaction was not sent. Please try again later.",
+    "locations": [
+      "apps/frontend/src/walletFlow.ts"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Transaction simulation RPC returned ${response.status}.",
+    "after": "Transaction checks failed. The transaction was not sent. Please try again later.",
+    "locations": [
+      "apps/frontend/src/walletFlow.ts"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Transaction RPC returned an invalid ${method} response.",
+    "after": "Transaction checks could not be completed. The transaction was not sent. Please try again later.",
+    "locations": [
+      "apps/frontend/src/walletFlow.ts"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Configured transaction RPC reports chain ${chainId}, but wallet writes require ${walletTransactionChainLabel(chain)} (${chain.chainIdHex}). The transaction was not sent.",
+    "after": "The game connection is on the wrong network. Veydrift requires ${walletTransactionChainLabel(chain)}. The transaction was not sent. Please try again later.",
+    "locations": [
+      "apps/frontend/src/walletFlow.ts"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Contract address read returned an invalid address.",
+    "after": "Game connection could not be confirmed. Please try again later.",
+    "locations": [
+      "apps/frontend/src/walletFlow.ts"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Burning Chicken contract read failed.",
+    "after": "Chicken ownership could not be checked. Please try again later.",
+    "locations": [
+      "apps/frontend/src/walletFlow.ts"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Overview snapshot",
+    "after": "Overview",
+    "locations": [
+      "apps/frontend/src/walletFlow.ts"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Rankings could not be loaded because the game API returned ${response.status}.",
+    "after": "Rankings could not be loaded. Please try again shortly.",
+    "locations": [
+      "apps/frontend/src/walletFlow.ts"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "System API failed: ${response.status}",
+    "after": "Galaxy could not be loaded. Please retry.",
+    "locations": [
+      "apps/frontend/src/walletFlow.ts"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Runtime config failed with ${response.status}",
+    "after": "Game settings could not be loaded. Please retry.",
+    "locations": [
+      "apps/frontend/src/backendDataStore.ts"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Runtime config",
+    "after": "Game settings",
+    "locations": [
+      "apps/frontend/src/backendDataStore.ts"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Every important game action is a transaction. The frontend waits for the receipt and then for the exact indexed transaction or expected state change. Wait for the app to report success before sending another action that depends on the result.",
+    "after": "Every important game action is a transaction. Wait for the app to report success before sending another action that depends on the result.",
+    "locations": [
+      "apps/frontend/src/docs/content/docs.md"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Resources are Metal, Crystal, and Deuterium. The top bar and page panels show backend-indexed current values, including uncollected production when the backend can calculate it.",
+    "after": "Resources are Metal, Crystal, and Deuterium. The top bar and page panels show current balances, including available production.",
+    "locations": [
+      "apps/frontend/src/docs/content/docs.md"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "The blockchain is authoritative, while the app reads a fast event-sourced index. A confirmed wallet receipt can appear before the corresponding indexed balance, queue, fleet, or report.",
+    "after": "A wallet confirmation can appear before the corresponding balance, queue, fleet, or report updates in the app.",
+    "locations": [
+      "apps/frontend/src/docs/content/docs.md"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Resource-changing transactions include their final authoritative balances in contract events. This includes building and production spending, transport or deploy arrival, fleet-return cargo, raid loot, deposits, colonies, settlement, and Rift resource movement. When the backend indexes one of those events, the affected view projections refresh immediately; periodic polling remains a recovery path.",
+    "after": "Balances refresh after building and production spending, mission arrivals, raid loot, settlement, and resource transfers.",
+    "locations": [
+      "apps/frontend/src/docs/content/docs.md"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Do not start a dependent action until the app reports that the confirmed transaction is indexed.",
+    "after": "Do not start a dependent action until the app shows the result of the previous transaction.",
+    "locations": [
+      "apps/frontend/src/docs/content/docs.md"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "The app waits for indexed Veydrift state before showing the moon.",
+    "after": "The moon appears after the game confirms the burn.",
+    "locations": [
+      "apps/frontend/src/docs/content/docs.md"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "the displayed balance updates when that result is indexed.",
+    "after": "the displayed balance may take a little longer to update.",
+    "locations": [
+      "apps/frontend/src/docs/content/docs.md"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "The backend reports protection status for the current target.",
+    "after": "The mission screen shows protection status for the current target.",
+    "locations": [
+      "apps/frontend/src/docs/content/docs.md"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "when the indexed player activity marks the defender inactive.",
+    "after": "when the defender is marked inactive.",
+    "locations": [
+      "apps/frontend/src/docs/content/docs.md"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Rankings are indexed from public game state.",
+    "after": "Rankings reflect public game state.",
+    "locations": [
+      "apps/frontend/src/docs/content/docs.md"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "and waits for indexed moon state.",
+    "after": "and waits for the moon to appear.",
+    "locations": [
+      "apps/frontend/src/docs/content/docs.md"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "This page lists the formulas exposed by the app and backend.",
+    "after": "This page lists the game formulas.",
+    "locations": [
+      "apps/frontend/src/docs/content/docs.md"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "from the backend's canonical contract-derived model. The contract applies the\nlive modifiers in this order, rounding down after every basis-point scaling:",
+    "after": "with modifiers applied in this order, rounding down after every basis-point scaling:",
+    "locations": [
+      "apps/frontend/src/docs/content/docs.md"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "where backend state provides linked lab levels.",
+    "after": "when linked lab levels are available.",
+    "locations": [
+      "apps/frontend/src/docs/content/docs.md"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "economy, research, fleet, and defense components are indexed into one player score.",
+    "after": "economy, research, fleet, and defense components contribute to one player score.",
+    "locations": [
+      "apps/frontend/src/docs/content/docs.md"
+    ],
+    "disposition": "Replace implementation detail with player-facing state/recovery"
+  },
+  {
+    "before": "Eligibility and exact benefits are verified in-game before settlement.",
+    "after": "Check invitation availability and benefits before settling.",
+    "locations": [
+      "apps/frontend/scripts/serve.mjs"
+    ],
+    "disposition": "Remove redundant verification filler / describe the player-facing test network"
+  },
+  {
+    "before": "Referral eligibility and exact benefits are verified in-game before settlement.",
+    "after": "Check invitation availability and benefits before settling.",
+    "locations": [
+      "apps/frontend/scripts/serve.mjs"
+    ],
+    "disposition": "Remove redundant verification filler / describe the player-facing test network"
+  },
+  {
+    "before": "Benefits verified in-game",
+    "after": "",
+    "locations": [
+      "apps/frontend/scripts/serve.mjs"
+    ],
+    "disposition": "Remove redundant verification filler / describe the player-facing test network"
+  },
+  {
+    "before": "Veydrift Base Sepolia test app for injected-wallet first-planet settlement.",
+    "after": "Play Veydrift on Base Sepolia. Settle planets, build fleets, and raid rivals on the test network.",
+    "locations": [
+      "apps/frontend/miniAppMetadata.ts"
+    ],
+    "disposition": "Remove redundant verification filler / describe the player-facing test network"
+  },
+  {
+    "before": "Catalog facility",
+    "after": "Facility",
+    "locations": [
+      "apps/frontend/src/playableMvp.ts"
+    ],
+    "disposition": "Remove redundant verification filler / describe the player-facing test network"
+  },
+  {
+    "before": "Set VITE_VEYDRIFT_SETTLEMENT_ADDRESS to the",
+    "after": "Settlement is currently unavailable. Please try again later.",
+    "locations": [
+      "src/FirstPlanetSettlementApp.tsx"
+    ],
+    "disposition": "Remove dead/generic copy path or diagnostic appender; retain necessary state and recovery"
+  },
+  {
+    "before": "Expands the empire research model for future technologies and unlock paths.",
+    "after": "",
+    "locations": [
+      "src/components/ResearchPage.tsx"
+    ],
+    "disposition": "Remove dead/generic copy path or diagnostic appender; retain necessary state and recovery"
+  },
+  {
+    "before": "Buildable moon structure available after the moon is granted.",
+    "after": "",
+    "locations": [
+      "src/components/MoonPage.tsx"
+    ],
+    "disposition": "Remove dead/generic copy path or diagnostic appender; retain necessary state and recovery"
+  },
+  {
+    "before": "No image",
+    "after": "",
+    "locations": [
+      "src/components/MissionCreationPage.tsx"
+    ],
+    "disposition": "Remove dead/generic copy path or diagnostic appender; retain necessary state and recovery"
+  },
+  {
+    "before": "Under construction",
+    "after": "",
+    "locations": [
+      "src/components/RiftPage.tsx"
+    ],
+    "disposition": "Remove dead/generic copy path or diagnostic appender; retain necessary state and recovery"
+  },
+  {
+    "before": "The Rift is taking shape",
+    "after": "The Rift is not available yet",
+    "locations": [
+      "src/components/RiftPage.tsx"
+    ],
+    "disposition": "Remove dead/generic copy path or diagnostic appender; retain necessary state and recovery"
+  },
+  {
+    "before": "Interdimensional systems are still being assembled and stabilized.",
+    "after": "",
+    "locations": [
+      "src/components/RiftPage.tsx"
+    ],
+    "disposition": "Remove dead/generic copy path or diagnostic appender; retain necessary state and recovery"
+  },
+  {
+    "before": "The Farcaster Mini App SDK did not provide an Ethereum wallet provider after the app became ready.",
+    "after": "Farcaster could not connect your wallet.",
+    "locations": [
+      "src/FirstPlanetSettlementApp.tsx; src/PlayableMvpApp.tsx"
+    ],
+    "disposition": "Remove dead/generic copy path or diagnostic appender; retain necessary state and recovery"
+  },
+  {
+    "before": "Wallet setup failed (",
+    "after": "",
+    "locations": [
+      "src/FirstPlanetSettlementApp.tsx; src/PlayableMvpApp.tsx"
+    ],
+    "disposition": "Remove dead/generic copy path or diagnostic appender; retain necessary state and recovery"
+  },
+  {
+    "before": "Reported capabilities:",
+    "after": "",
+    "locations": [
+      "src/FirstPlanetSettlementApp.tsx"
+    ],
+    "disposition": "Remove dead/generic copy path or diagnostic appender; retain necessary state and recovery"
+  },
+  {
+    "before": "Reported chains:",
+    "after": "",
+    "locations": [
+      "src/FirstPlanetSettlementApp.tsx"
+    ],
+    "disposition": "Remove dead/generic copy path or diagnostic appender; retain necessary state and recovery"
+  },
+  {
+    "before": "errorCode=",
+    "after": "",
+    "locations": [
+      "src/FirstPlanetSettlementApp.tsx; src/PlayableMvpApp.tsx"
+    ],
+    "disposition": "Remove dead/generic copy path or diagnostic appender; retain necessary state and recovery"
+  },
+  {
+    "before": "errorMessage=",
+    "after": "",
+    "locations": [
+      "src/FirstPlanetSettlementApp.tsx; src/PlayableMvpApp.tsx"
+    ],
+    "disposition": "Remove dead/generic copy path or diagnostic appender; retain necessary state and recovery"
+  },
+  {
+    "before": "Farcaster Mini App host did not report wallet capabilities.",
+    "after": "Farcaster wallet support could not be checked.",
+    "locations": [
+      "src/farcasterReady.ts"
+    ],
+    "disposition": "Remove dead/generic copy path or diagnostic appender; retain necessary state and recovery"
+  },
+  {
+    "before": "Farcaster Mini App host did not report supported chains.",
+    "after": "Farcaster network support could not be checked.",
+    "locations": [
+      "src/farcasterReady.ts"
+    ],
+    "disposition": "Remove dead/generic copy path or diagnostic appender; retain necessary state and recovery"
+  },
+  {
+    "before": "Farcaster Mini App host does not advertise",
+    "after": "This Farcaster app does not support…",
+    "locations": [
+      "src/farcasterReady.ts"
+    ],
+    "disposition": "Remove dead/generic copy path or diagnostic appender; retain necessary state and recovery"
+  },
+  {
+    "before": "Connect your wallet to load your home planet, resources, and live game state. No planet data is shown until your wallet is connected.",
+    "after": "Connect your wallet to view your home planet and resources.",
+    "locations": [
+      "src/components/OverviewPage.tsx"
+    ],
+    "disposition": "Remove dead/generic copy path or diagnostic appender; retain necessary state and recovery"
+  },
+  {
+    "before": "Telemetry unavailable (",
+    "after": "Stats are unavailable. Retrying automatically.",
+    "locations": [
+      "apps/stats/src/main.tsx"
+    ],
+    "disposition": "Remove HTTP debug status and raw caught transport error from the sibling public stats UI; preserve failure and retry guidance"
+  },
+  {
+    "before": "Showing the last completed snapshot.",
+    "after": "Showing the last loaded stats.",
+    "locations": [
+      "apps/stats/src/main.tsx"
+    ],
+    "disposition": "Preserve stale-data warning without storage jargon"
+  },
+  {
+    "before": "Canonical onchain telemetry from blocks",
+    "after": "Onchain activity from blocks",
+    "locations": [
+      "apps/stats/src/main.tsx"
+    ],
+    "disposition": "Remove redundant canonical qualifier; retain coverage blocks"
+  },
+  {
+    "before": "Resource token addresses are not configured for this deployment yet.",
+    "after": "Resource transfers are currently unavailable. Please try again later.",
+    "locations": [
+      "apps/backend/src/{evm,server,indexer,randomness}.ts → frontend playerNotice consumers"
+    ],
+    "apiSupplied": true,
+    "disposition": "Translate known API-authored implementation copy at presentation sites; preserve unavailable/security state. Numeric IDs are representative template values."
+  },
+  {
+    "before": "Settlement start price is not available from indexed contract state yet.",
+    "after": "Settlement pricing is updating. Please try again shortly.",
+    "locations": [
+      "apps/backend/src/{evm,server,indexer,randomness}.ts → frontend playerNotice consumers"
+    ],
+    "apiSupplied": true,
+    "disposition": "Translate known API-authored implementation copy at presentation sites; preserve unavailable/security state. Numeric IDs are representative template values."
+  },
+  {
+    "before": "This deployment does not expose Veydrift moon systems yet.",
+    "after": "Moon systems are currently unavailable.",
+    "locations": [
+      "apps/backend/src/{evm,server,indexer,randomness}.ts → frontend playerNotice consumers"
+    ],
+    "apiSupplied": true,
+    "disposition": "Translate known API-authored implementation copy at presentation sites; preserve unavailable/security state. Numeric IDs are representative template values."
+  },
+  {
+    "before": "This deployment does not expose the Rift Stabilizer building yet.",
+    "after": "The Rift Stabilizer is currently unavailable.",
+    "locations": [
+      "apps/backend/src/{evm,server,indexer,randomness}.ts → frontend playerNotice consumers"
+    ],
+    "apiSupplied": true,
+    "disposition": "Translate known API-authored implementation copy at presentation sites; preserve unavailable/security state. Numeric IDs are representative template values."
+  },
+  {
+    "before": "Moon indexed state is still warming. Refresh shortly.",
+    "after": "Moon data is still updating. Refresh shortly.",
+    "locations": [
+      "apps/backend/src/{evm,server,indexer,randomness}.ts → frontend playerNotice consumers"
+    ],
+    "apiSupplied": true,
+    "disposition": "Translate known API-authored implementation copy at presentation sites; preserve unavailable/security state. Numeric IDs are representative template values."
+  },
+  {
+    "before": "Infrastructure indexed resources for this planet are still warming. Refresh shortly.",
+    "after": "Infrastructure data is still updating. Refresh shortly.",
+    "locations": [
+      "apps/backend/src/{evm,server,indexer,randomness}.ts → frontend playerNotice consumers"
+    ],
+    "apiSupplied": true,
+    "disposition": "Translate known API-authored implementation copy at presentation sites; preserve unavailable/security state. Numeric IDs are representative template values."
+  },
+  {
+    "before": "Mission resolution is pending for this planet (mission 12). The indexer or keeper must settle the due mission before infrastructure upgrades can be started.",
+    "after": "Mission 12 is still resolving at this planet. Refresh after it finishes before starting another upgrade.",
+    "locations": [
+      "apps/backend/src/{evm,server,indexer,randomness}.ts → frontend playerNotice consumers"
+    ],
+    "apiSupplied": true,
+    "disposition": "Translate known API-authored implementation copy at presentation sites; preserve unavailable/security state. Numeric IDs are representative template values."
+  },
+  {
+    "before": "Fleet slot state is waiting for mission settlement (mission 12). Refresh after the backend or keeper settles due fleet missions before launching another fleet.",
+    "after": "Mission 12 is still resolving. Refresh after it finishes before launching another fleet.",
+    "locations": [
+      "apps/backend/src/{evm,server,indexer,randomness}.ts → frontend playerNotice consumers"
+    ],
+    "apiSupplied": true,
+    "disposition": "Translate known API-authored implementation copy at presentation sites; preserve unavailable/security state. Numeric IDs are representative template values."
+  },
+  {
+    "before": "A required randomness reveal mapping is unavailable. New attacks are temporarily paused.",
+    "after": "Battle randomness is unavailable. New attacks are temporarily paused.",
+    "locations": [
+      "apps/backend/src/{evm,server,indexer,randomness}.ts → frontend playerNotice consumers"
+    ],
+    "apiSupplied": true,
+    "disposition": "Translate known API-authored implementation copy at presentation sites; preserve unavailable/security state. Numeric IDs are representative template values."
+  },
+  {
+    "before": "Randomness commitments are activating. New attacks are temporarily paused.",
+    "after": "Battle randomness is preparing. New attacks are temporarily paused.",
+    "locations": [
+      "apps/backend/src/{evm,server,indexer,randomness}.ts → frontend playerNotice consumers"
+    ],
+    "apiSupplied": true,
+    "disposition": "Translate known API-authored implementation copy at presentation sites; preserve unavailable/security state. Numeric IDs are representative template values."
+  },
+  {
+    "before": "The deployed contract only supports first-planet settlement. Infrastructure upgrades are not available on this deployment yet.",
+    "after": "Infrastructure upgrades are currently unavailable.",
+    "locations": [
+      "apps/backend/src/{evm,server,indexer,randomness}.ts → frontend playerNotice consumers"
+    ],
+    "apiSupplied": true,
+    "disposition": "Translate known API-authored implementation copy at presentation sites; preserve unavailable/security state. Numeric IDs are representative template values."
+  },
+  {
+    "before": "The deployed contract only supports first-planet settlement. Ship production is not available on this deployment yet.",
+    "after": "Ship production is currently unavailable.",
+    "locations": [
+      "apps/backend/src/{evm,server,indexer,randomness}.ts → frontend playerNotice consumers"
+    ],
+    "apiSupplied": true,
+    "disposition": "Translate known API-authored implementation copy at presentation sites; preserve unavailable/security state. Numeric IDs are representative template values."
+  },
+  {
+    "before": "The deployed contract only supports first-planet settlement. Defense production is not available on this deployment yet.",
+    "after": "Defense production is currently unavailable.",
+    "locations": [
+      "apps/backend/src/{evm,server,indexer,randomness}.ts → frontend playerNotice consumers"
+    ],
+    "apiSupplied": true,
+    "disposition": "Translate known API-authored implementation copy at presentation sites; preserve unavailable/security state. Numeric IDs are representative template values."
+  },
+  {
+    "before": "The deployed contract only supports first-planet settlement. Research is not available on this deployment yet.",
+    "after": "Research is currently unavailable.",
+    "locations": [
+      "apps/backend/src/{evm,server,indexer,randomness}.ts → frontend playerNotice consumers"
+    ],
+    "apiSupplied": true,
+    "disposition": "Translate known API-authored implementation copy at presentation sites; preserve unavailable/security state. Numeric IDs are representative template values."
+  },
+  {
+    "before": "The deployed contract only supports first-planet settlement. Moon systems are not available on this deployment yet.",
+    "after": "Moon systems are currently unavailable.",
+    "locations": [
+      "apps/backend/src/{evm,server,indexer,randomness}.ts → frontend playerNotice consumers"
+    ],
+    "apiSupplied": true,
+    "disposition": "Translate known API-authored implementation copy at presentation sites; preserve unavailable/security state. Numeric IDs are representative template values."
+  },
+  {
+    "before": "The deployed contract only supports first-planet settlement. The Rift Stabilizer is not available on this deployment yet.",
+    "after": "The Rift Stabilizer is currently unavailable.",
+    "locations": [
+      "apps/backend/src/{evm,server,indexer,randomness}.ts → frontend playerNotice consumers"
+    ],
+    "apiSupplied": true,
+    "disposition": "Translate known API-authored implementation copy at presentation sites; preserve unavailable/security state. Numeric IDs are representative template values."
+  },
+  {
+    "before": "Attack #12 predates exact combined link-order indexing, so joined attacker random lanes cannot be reconstructed safely.",
+    "after": "Battle details for this group are incomplete, so the outcome cannot be estimated safely.",
+    "locations": [
+      "apps/backend/src/{evm,server,indexer,randomness}.ts → frontend playerNotice consumers"
+    ],
+    "apiSupplied": true,
+    "disposition": "Translate known API-authored implementation copy at presentation sites; preserve unavailable/security state. Numeric IDs are representative template values."
+  },
+  {
+    "before": "Joined attack #12 composition is missing from indexed public intel.",
+    "after": "Battle details for this group are incomplete, so the outcome cannot be estimated safely.",
+    "locations": [
+      "apps/backend/src/{evm,server,indexer,randomness}.ts → frontend playerNotice consumers"
+    ],
+    "apiSupplied": true,
+    "disposition": "Translate known API-authored implementation copy at presentation sites; preserve unavailable/security state. Numeric IDs are representative template values."
+  },
+  {
+    "before": "Joined attack #12 is missing its exact contract lane identity.",
+    "after": "Battle details for this group are incomplete, so the outcome cannot be estimated safely.",
+    "locations": [
+      "apps/backend/src/{evm,server,indexer,randomness}.ts → frontend playerNotice consumers"
+    ],
+    "apiSupplied": true,
+    "disposition": "Translate known API-authored implementation copy at presentation sites; preserve unavailable/security state. Numeric IDs are representative template values."
+  },
+  {
+    "before": "Counterplay defender #12 composition is missing from indexed public intel.",
+    "after": "Battle details for this group are incomplete, so the outcome cannot be estimated safely.",
+    "locations": [
+      "apps/backend/src/{evm,server,indexer,randomness}.ts → frontend playerNotice consumers"
+    ],
+    "apiSupplied": true,
+    "disposition": "Translate known API-authored implementation copy at presentation sites; preserve unavailable/security state. Numeric IDs are representative template values."
+  },
+  {
+    "before": "Counterplay defender #12 is missing its exact shared contract lane identity.",
+    "after": "Battle details for this group are incomplete, so the outcome cannot be estimated safely.",
+    "locations": [
+      "apps/backend/src/{evm,server,indexer,randomness}.ts → frontend playerNotice consumers"
+    ],
+    "apiSupplied": true,
+    "disposition": "Translate known API-authored implementation copy at presentation sites; preserve unavailable/security state. Numeric IDs are representative template values."
+  },
+  {
+    "before": "DefenseHold #12 is missing from exact stationed-defense storage-order indexing.",
+    "after": "Battle details for this group are incomplete, so the outcome cannot be estimated safely.",
+    "locations": [
+      "apps/backend/src/{evm,server,indexer,randomness}.ts → frontend playerNotice consumers"
+    ],
+    "apiSupplied": true,
+    "disposition": "Translate known API-authored implementation copy at presentation sites; preserve unavailable/security state. Numeric IDs are representative template values."
+  },
+  {
+    "before": "Stationed-defense storage order for planet #12 contains an invalid mission identity.",
+    "after": "Battle details for this group are incomplete, so the outcome cannot be estimated safely.",
+    "locations": [
+      "apps/backend/src/{evm,server,indexer,randomness}.ts → frontend playerNotice consumers"
+    ],
+    "apiSupplied": true,
+    "disposition": "Translate known API-authored implementation copy at presentation sites; preserve unavailable/security state. Numeric IDs are representative template values."
+  },
+  {
+    "before": "DefenseHold #12 ended without its earlier station event, so planet #8 storage order is incomplete.",
+    "after": "Battle details for this group are incomplete, so the outcome cannot be estimated safely.",
+    "locations": [
+      "apps/backend/src/{evm,server,indexer,randomness}.ts → frontend playerNotice consumers"
+    ],
+    "apiSupplied": true,
+    "disposition": "Translate known API-authored implementation copy at presentation sites; preserve unavailable/security state. Numeric IDs are representative template values."
+  },
+  {
+    "before": "Timed out ${operation} ${label.toLowerCase()} ${direction} the game API after ${Math.round(timeoutMs / 1_000)} seconds.",
+    "after": "Read: existing server retry notice. Write: check wallet activity before retrying; request may already have been sent.",
+    "locations": [
+      "apps/frontend/src/walletFlow.ts:requestGameApiJson"
+    ],
+    "disposition": "Replace assembled API diagnostic; retain cancellation, automatic read retry and uncertain-write safety"
+  }
+]

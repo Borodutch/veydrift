@@ -171,7 +171,7 @@ describe("settlement screen mode", () => {
     });
 
     expect(state.title).toBe("Game server unavailable");
-    expect(state.body).toContain("backend is likely restarting");
+    expect(state.body).toContain("Veydrift is temporarily unavailable");
     expect(state.body).not.toMatch(/wallet/i);
     expect(state.body).not.toContain("Settlement API");
     expect(state.body).not.toContain("last known game state");
@@ -329,7 +329,7 @@ describe("settlement screen mode", () => {
           startPriceWei: 1n,
         },
       }),
-    ).toContain("contract address");
+    ).toContain("Settlement is currently unavailable");
 
     expect(settlementLaunchBlocker(true, { status: "loading" })).toContain("still loading");
     expect(
@@ -346,10 +346,10 @@ describe("settlement screen mode", () => {
           balanceWei: null,
           contractKind: "game",
           startPriceWei: 1n,
-          unavailableReason: "Resource token reserves are not configured.",
+          unavailableReason: "Starting resources are currently unavailable.",
         },
       }),
-    ).toBe("Resource token reserves are not configured.");
+    ).toBe("Starting resources are currently unavailable.");
     expect(
       settlementLaunchBlocker(true, {
         status: "ready",
@@ -408,7 +408,7 @@ describe("settlement screen mode", () => {
         status: "ready",
         funding: {
           ...underfunded.funding,
-          unavailableReason: "Resource token reserves are not configured.",
+          unavailableReason: "Starting resources are currently unavailable.",
         },
       }),
     ).toBe(false);
@@ -755,41 +755,27 @@ describe("settlement screen mode", () => {
     expect(source).toContain("Retry ${networkName}");
     expect(source).toContain("networkSwitchPending");
     expect(source).toContain("disabled={networkSwitchPending}");
-    expect(source).toContain("FARCASTER_VEYDRIFT_CHAIN_SWITCH_FAILED");
-    expect(source).toContain("FARCASTER_VEYDRIFT_CHAIN_RETRY_FAILED");
-    expect(source).toContain("FARCASTER_WALLET_PROVIDER_UNAVAILABLE");
+    expect(source).not.toContain("FARCASTER_VEYDRIFT_CHAIN_SWITCH_FAILED");
+    expect(source).not.toContain("FARCASTER_VEYDRIFT_CHAIN_RETRY_FAILED");
+    expect(source).not.toContain("FARCASTER_WALLET_PROVIDER_UNAVAILABLE");
     expect(source).toContain("showFarcasterWalletProviderUnavailable");
     expect(source).toContain("<ComingSoonApp");
   });
 
-  test("formats reportable Farcaster Mini App wallet errors with host diagnostics", () => {
-    expect(
-      farcasterMiniAppReportableWalletError("FARCASTER_BASE_SEPOLIA_SWITCH_FAILED", "The host rejected wallet_switchEthereumChain.", {
-        chainId: "0x2105",
-        requestedChainId: "0x14a34",
-        source: "farcaster",
-        support: {
-          status: "unknown",
-          code: "FARCASTER_CHAINS_UNAVAILABLE",
-          capabilities: ["wallet.getEthereumProvider"],
-          chains: [],
-          message: "Farcaster Mini App host did not report supported chains.",
-        },
-        error: { code: 4902, message: "Unrecognized chain" },
-      }),
-    ).toBe(
-      "Wallet setup failed (FARCASTER_BASE_SEPOLIA_SWITCH_FAILED). The host rejected wallet_switchEthereumChain. Details: chain=0x2105; requestedChain=0x14a34; source=farcaster; support=unknown/FARCASTER_CHAINS_UNAVAILABLE; capabilities=wallet.getEthereumProvider; chains=none; errorCode=4902; errorMessage=Unrecognized chain. Please send this exact message to Veydrift support.",
+  test("wallet errors retain recovery without appending host diagnostics", () => {
+    expect(farcasterMiniAppReportableWalletError("Wallet connection was rejected.")).toBe(
+      "Wallet connection was rejected. Retry the wallet connection. If it still fails, contact Veydrift support.",
     );
-
-    expect(
-      farcasterMiniAppSupportErrorMessage({
-        status: "unsupported",
-        code: "FARCASTER_BASE_SEPOLIA_UNSUPPORTED",
-        capabilities: ["wallet.getEthereumProvider"],
-        chains: ["eip155:8453"],
-        message: "Farcaster Mini App host does not advertise eip155:84532.",
-      }),
-    ).toContain("Reported chains: eip155:8453.");
+    const message = farcasterMiniAppSupportErrorMessage({
+      status: "unsupported",
+      code: "FARCASTER_BASE_SEPOLIA_UNSUPPORTED",
+      capabilities: ["wallet.getEthereumProvider"],
+      chains: ["eip155:8453"],
+      message: "This Farcaster app does not support the required game network.",
+    });
+    expect(message).toContain("does not support the required game network");
+    expect(message).toContain("contact Veydrift support");
+    expect(message).not.toMatch(/Details:|capabilities=|chains=|FARCASTER_|eip155/);
   });
 
   test("rechecks the Farcaster wallet provider when connect is clicked after a cold desktop load", async () => {

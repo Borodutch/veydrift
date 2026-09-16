@@ -206,7 +206,7 @@ function TargetCombatIntelPanel({
   if (!intel) {
     return (
       <Panel title="Target Combat Intel">
-        <Row label="Status" value="The target planet isn't charted in the indexed state, so its combat intelligence can't be derived." />
+        <Row label="Status" value="Combat intelligence is not available for this target yet." />
       </Panel>
     );
   }
@@ -480,28 +480,28 @@ function MissionBattleReport({
       const { roundsCompleted, totalRounds } = mission.combatResolutionProgress;
       return (
         <Notice tone="warning">
-          Combat resolving: {roundsCompleted} of up to {totalRounds} rounds complete. The resolver will continue automatically.
+          Combat resolving: {roundsCompleted} of up to {totalRounds} rounds complete. Combat will continue automatically.
         </Notice>
       );
     }
     if (materialization?.status === "pending") {
       return (
         <Notice tone="warning">
-          Report generating, please hold...
+          Generating battle report…
         </Notice>
       );
     }
     if (materialization?.status === "failed") {
       return (
         <Notice tone="warning">
-          Battle report processing failed. The backend will retry after report logs are replayed.
+          Battle report processing failed. It will retry automatically.
         </Notice>
       );
     }
     if (mission.needsResolution) {
       return (
         <Notice tone="warning">
-          Combat is due or resolving; the indexed battle report is not available yet.
+          Combat is due or resolving; the battle report is not available yet.
         </Notice>
       );
     }
@@ -520,7 +520,7 @@ function MissionBattleReport({
     }
     return (
       <Notice tone="neutral">
-        Report generating, please hold...
+        Generating battle report…
       </Notice>
     );
   }
@@ -610,7 +610,7 @@ function MissionBattleReport({
                 label="Stationed fleet loss value"
                 value={defenderLosses.stationedFleet.destroyedResources
                   ? formatResources(defenderLosses.stationedFleet.destroyedResources)
-                  : "Could not be reconciled from the historical fleet-loss event."}
+                  : "Historical fleet losses could not be confirmed."}
               />
               <Row label="Static defenses destroyed" value={<UnitIcons units={staticDefenseDestroyedUnits} />} />
               <Row label="Static defense destroyed value" value={formatResources(defenderLosses.staticDefenses.destroyedResources)} />
@@ -630,8 +630,8 @@ function MissionBattleReport({
             <Row
               label="Battle-time defenders"
               value={battleTimeDefenderUnits
-                ? `${formatResource(battleTimeDefenderUnits)} units fought; exact unit composition was not captured in indexed history.`
-                : "Exact unit composition was not captured in indexed history."}
+                ? `${formatResource(battleTimeDefenderUnits)} units fought; exact unit composition was not recorded for this battle.`
+                : "Exact unit composition was not recorded for this battle."}
             />
           )}
           {stationedDefenders.length > 0 ? (

@@ -1641,7 +1641,7 @@ export function isUserRejected(error: unknown): boolean {
 }
 
 export const CONTRACT_REJECTED_NO_REASON_MESSAGE =
-  "The game contract rejected this transaction, but the wallet did not provide a specific reason. Refresh game state and retry, or choose a different action if the state changed.";
+  "The transaction was rejected without a specific reason. Refresh game state and retry, or choose a different action if the state changed.";
 export const GAME_BACKEND_UNAVAILABLE_MESSAGE = GAME_UNAVAILABLE_MESSAGE;
 export const REFERRAL_CODE_ALREADY_OWNED_REVERT_SELECTOR = "0xe1c8233f";
 export const REFERRAL_TOP_UP_UNAVAILABLE_REVERT_SELECTOR = "0xe6c55a82";
@@ -1776,7 +1776,7 @@ type FleetMissionRevertContext = {
 
 const contractRevertReasons: Record<string, string> = {
   "0x2ab0f96f":
-    "The origin planet does not have enough resources or deuterium fuel for this mission. Refresh backend resources and queues before retrying; the indexed spendable balance may still be catching up with earlier queued spending.",
+    "The origin planet does not have enough resources or deuterium fuel for this mission. Refresh resources and queues before retrying; your balance may still be updating after recent spending.",
   "0xd7c35576": "The selected ships do not have enough cargo capacity for this mission. Add cargo-capable ships, reduce cargo, slow the mission, or choose a closer target.",
   "0x57aab7e3": "All fleet slots are already in use. Fleet slots come from your Computer Technology — research it to unlock more, or wait for a fleet to return, then retry.",
   "0x400d5197": "You cannot attack your own planet.",
@@ -1802,7 +1802,7 @@ const contractRevertReasons: Record<string, string> = {
   "0xbee20108": "The recall cutoff has passed for this mission. Wait for arrival and resolve it instead.",
   "0x4ba3e176": "You cannot join an attack against your own planet.",
   "0xdfa1a408": "The selected mission or target no longer matches current chain state. Refresh mission control and retry.",
-  "0x1f38cd02": "Attack battle randomness is not configured for this deployment yet.",
+  "0x1f38cd02": "Attacks are temporarily unavailable. Please try again later.",
 };
 
 const fleetMissionTransactionSelectors = new Set<string>([
@@ -1884,7 +1884,7 @@ function contractRevertReason(error: unknown, context?: FleetMissionRevertContex
   }
 
   if (selector === LEVEL_TOO_HIGH_REVERT_SELECTOR) {
-    return "This level is already at the maximum allowed by the contract.";
+    return "This level is already at the maximum.";
   }
 
   if (selector === INSUFFICIENT_SHIPS_REVERT_SELECTOR) {
@@ -1940,7 +1940,7 @@ function fleetMissionRevertReason(error: unknown, context?: FleetMissionRevertCo
     if (/INVALID_MISSION_SPEED/i.test(decodedMessage)) {
       return "Choose a valid mission speed between 10% and 100%.";
     }
-    return `Game contract rejected this fleet action: ${decodedMessage}.`;
+    return `Fleet action was rejected: ${decodedMessage}.`;
   }
 
   return contractRevertReason(error, context);
@@ -2233,7 +2233,7 @@ function walletTransactionNetworkError(chain: VeydriftWalletChain, cause: unknow
 async function assertSimulationRpcNetwork(rpcUrl: string, chain: VeydriftWalletChain): Promise<void> {
   const chainId = await transactionRpcRequest<string>(rpcUrl, "eth_chainId", []);
   if (!isVeydriftChain(chainId, chain)) {
-    throw new Error(`Configured transaction RPC reports chain ${chainId}, but wallet writes require ${walletTransactionChainLabel(chain)} (${chain.chainIdHex}). The transaction was not sent.`);
+    throw new Error(`The game connection is on the wrong network. Veydrift requires ${walletTransactionChainLabel(chain)}. The transaction was not sent. Please try again later.`);
   }
 }
 
@@ -2249,13 +2249,13 @@ export async function transactionRpcRequest<T>(
   rpcUrl: string, method: string, params: unknown[],
   options: { signal?: AbortSignal; timeoutMs?: number } = {},
 ): Promise<T> {
-  if (!rpcUrl.trim()) throw new Error("App RPC is unavailable for the transaction preflight.");
+  if (!rpcUrl.trim()) throw new Error("Transaction checks are unavailable. The transaction was not sent. Please try again later.");
   const body = await fetchGameApiMutation<{ error?: { code?: number; data?: unknown; message?: string }; result?: T }>(
-    rpcUrl, "Transaction RPC", { id: 1, jsonrpc: "2.0", method, params },
-    { ...options, httpErrorMessage: async response => `Transaction simulation RPC returned ${response.status}.` },
+    rpcUrl, "Transaction checks", { id: 1, jsonrpc: "2.0", method, params },
+    { ...options, httpErrorMessage: async () => "Transaction checks failed. The transaction was not sent. Please try again later." },
   );
   if (body.error) throw body.error;
-  if (body.result === undefined) throw new Error(`Transaction RPC returned an invalid ${method} response.`);
+  if (body.result === undefined) throw new Error("Transaction checks could not be completed. The transaction was not sent. Please try again later.");
   return body.result;
 }
 
@@ -3062,7 +3062,7 @@ function decodeAddressResult(hex: string): string {
   const clean = hex.replace(/^0x/, "");
   const address = clean.slice(-40);
   if (!/^[a-fA-F0-9]{40}$/.test(address)) {
-    throw new Error("Contract address read returned an invalid address.");
+    throw new Error("Game connection could not be confirmed. Please try again later.");
   }
   return `0x${address}`;
 }
@@ -3211,7 +3211,7 @@ function isAlreadyAddedChainError(error: unknown): boolean {
 
 export async function sendSettlementTransaction(provider: Eip1193Provider, account: string, config: SettlementConfig, options: SettlementTransactionOptions = {}): Promise<string> {
   if (!settlementContractConfigured(config)) {
-    throw new Error("Settlement contract address is not configured.");
+    throw new Error("Settlement is currently unavailable.");
   }
 
   if (options.startPriceWei === undefined) {
@@ -3220,12 +3220,12 @@ export async function sendSettlementTransaction(provider: Eip1193Provider, accou
 
   if (options.startPriceWei !== null) {
     if (config.resourceTokensConfigured === false) {
-      throw new Error("Resource token reserves are not configured for this game deployment yet.");
+      throw new Error("Starting resources are currently unavailable. Please try again later.");
     }
 
     if (options.migrationContractAddress) {
       if (!options.migrationClaim?.statePayload || !options.migrationClaim.signature) {
-        throw new Error("Migration state snapshot is not ready for this wallet yet.");
+        throw new Error("Your reserved planet is not ready to claim yet. Please try again later.");
       }
       return sendWalletTransaction(provider, account, {
         from: account,
@@ -3403,10 +3403,10 @@ function paidAllianceInviteCommitmentWord(commitment: string): string {
 
 export async function sendReferralClaimTransaction(provider: Eip1193Provider, account: string, config: SettlementConfig, code: string): Promise<string> {
   if (!settlementContractConfigured(config)) {
-    throw new Error("Settlement contract address is not configured.");
+    throw new Error("Settlement is currently unavailable.");
   }
   if (!config.referralSystemAddress || !/^0x[a-fA-F0-9]{40}$/.test(config.referralSystemAddress)) {
-    throw new Error("Referral system address is not configured.");
+    throw new Error("Referral invitations are currently unavailable.");
   }
   return sendWalletTransaction(provider, account, {
     from: account,
@@ -3752,7 +3752,7 @@ export async function fetchBurningChickenForOwner(account: string, tokenId: stri
 async function callBaseMainnetContract(config: BurningChickenConfig, contractAddress: string, data: string, signal?: AbortSignal): Promise<string> {
   const result = await transactionRpcRequest<unknown>(config.rpcUrl || BASE_MAINNET.rpcUrls[0], "eth_call",
     [{ to: contractAddress, data }, "latest"], { ...(signal ? { signal } : {}) });
-  if (typeof result !== "string") throw new Error("Burning Chicken contract read failed.");
+  if (typeof result !== "string") throw new Error("Chicken ownership could not be checked. Please try again later.");
   return result;
 }
 
@@ -4077,7 +4077,7 @@ export function isTransientWalletBootstrapError(error: unknown): boolean {
   if (code === -32603 || code === "-32603") return true;
   if (/internal json-rpc error/i.test(message)) return true;
   // Timeout wrappers for wallet and game-API reads.
-  if (/timed out reading .* from the (wallet|game api)/i.test(message)) return true;
+  if (/timed out reading .* from the (wallet|game api)/i.test(message) || isGameBackendUnavailableMessage(message)) return true;
   // Transient transport failures.
   if (/failed to fetch|network ?error|load failed/i.test(message)) return true;
   return false;
@@ -4361,7 +4361,7 @@ export async function fetchAttackProtectionStatus(apiUrl: string, wallet: string
 }
 
 export async function fetchWalletOverviewSnapshot(apiUrl: string, wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<WalletOverviewSnapshotResponse> {
-  return fetchWalletJson<WalletOverviewSnapshotResponse>(apiUrl, wallet, withWalletReadOptions("overview", planetId, options), "Overview snapshot", {
+  return fetchWalletJson<WalletOverviewSnapshotResponse>(apiUrl, wallet, withWalletReadOptions("overview", planetId, options), "Overview", {
     ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
     ...(options.fresh === undefined ? {} : { fresh: options.fresh }),
     ...(options.signal === undefined ? {} : { signal: options.signal }),
@@ -4602,14 +4602,14 @@ async function highscoreHttpFailureMessage(response: Response): Promise<string> 
   }
 
   if (response.status === 503 && errorCode === "highscores_index_not_ready") {
-    return "Rankings are warming from indexed game state. Retry in a moment.";
+    return "Rankings are updating. Retry in a moment.";
   }
 
   if (response.status >= 500) {
     return GAME_UNAVAILABLE_MESSAGE;
   }
 
-  return `Rankings could not be loaded because the game API returned ${response.status}.`;
+  return "Rankings could not be loaded. Please try again shortly.";
 }
 
 async function readJsonErrorBody(response: Response): Promise<{ error?: unknown } | undefined> {
@@ -4635,7 +4635,7 @@ export async function fetchSystemData(apiUrl: string, galaxy: number, system: nu
   const detail = options.detail ? `?detail=${options.detail}` : "";
   const url = `${apiUrl.replace(/\/+$/, "")}/universe/galaxies/${galaxy}/systems/${system}${detail}`;
   return fetchGameApiJson<unknown>(url, "System", {
-    httpErrorMessage: async (response) => `System API failed: ${response.status}`,
+    httpErrorMessage: async () => "Galaxy could not be loaded. Please retry.",
     ...(options.signal === undefined ? {} : { signal: options.signal }),
   });
 }
@@ -4706,15 +4706,16 @@ async function requestGameApiJson<T>(
   },
 ): Promise<T> {
   const timeoutMs = options.timeoutMs ?? WALLET_API_READ_TIMEOUT_MS;
-  const operation = options.method ? "writing" : "reading";
-  const direction = options.method ? "to" : "from";
+  const timeoutMessage = options.method
+    ? "The request took too long. Check your wallet activity before retrying; it may already have been sent."
+    : serverUnavailableRetryMessage();
   const started = performance.now();
   let timedOut = false;
   const controller = new AbortController();
   const timeoutId = setTimeout(() => {
     if (controller.signal.aborted) return;
     timedOut = true;
-    controller.abort(new Error(`Timed out ${operation} ${label.toLowerCase()} ${direction} the game API after ${Math.round(timeoutMs / 1_000)} seconds.`));
+    controller.abort(new Error(timeoutMessage));
   }, timeoutMs);
   const forwardAbort = () => controller.abort(options.signal?.reason ?? new DOMException("Request cancelled", "AbortError"));
   if (options.signal?.aborted) forwardAbort();
@@ -4732,7 +4733,7 @@ async function requestGameApiJson<T>(
     if (!response.ok) {
       const body: unknown = await response.clone().json().catch(() => null);
       const code = body && typeof body === "object" && "error" in body && typeof body.error === "string" ? body.error.trim() : undefined;
-      throw new GameApiError(options.httpErrorMessage ? await options.httpErrorMessage(response) : apiErrorMessage(response.status, code, label), {
+      throw new GameApiError(options.httpErrorMessage ? await options.httpErrorMessage(response) : apiErrorMessage(response.status, label), {
         status: response.status, ...(code ? { code } : {}), retryAfter: response.headers.get("retry-after"),
       });
     }
@@ -4748,7 +4749,7 @@ async function requestGameApiJson<T>(
     if (controller.signal.aborted) {
       throw controller.signal.reason instanceof Error
         ? controller.signal.reason
-        : new Error(`Timed out ${operation} ${label.toLowerCase()} ${direction} the game API after ${Math.round(timeoutMs / 1_000)} seconds.`);
+        : new Error(timeoutMessage);
     }
     if (response) throw error;
     throw new GameApiError(options.networkFailureMessage?.(error) ?? walletApiNetworkFailureMessage(label, error), { cause: error });
@@ -4785,10 +4786,12 @@ function isContractPlanetId(planetId: string): boolean {
   return /^[1-9][0-9]*$/.test(planetId);
 }
 
-function apiErrorMessage(status: number, code: string | undefined, label: string): string {
+function apiErrorMessage(status: number, label: string): string {
   if (status >= 500) return GAME_UNAVAILABLE_MESSAGE;
-  const fallback = `${label} API failed: ${status}`;
-  return code ? `${fallback}: ${code}` : fallback;
+  if (status === 401) return "Reconnect your wallet and try again.";
+  if (status === 403) return "This wallet is not allowed to perform this action.";
+  if (status === 429) return "Too many requests. Wait a moment and try again.";
+  return `${label} could not be completed. Refresh and review your selection before trying again.`;
 }
 
 function walletApiNetworkFailureMessage(label: string, error: unknown): string {
@@ -4797,5 +4800,5 @@ function walletApiNetworkFailureMessage(label: string, error: unknown): string {
     return GAME_BACKEND_UNAVAILABLE_MESSAGE;
   }
 
-  return message || `${label} API could not be reached.`;
+  return `${label} could not be reached. Check your connection and try again.`;
 }

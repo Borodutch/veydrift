@@ -1,3 +1,4 @@
+import { playerNotice } from "../playerNotice";
 import { isActionBusy } from "../actionNoticeAutoDismiss";
 import { useState } from "preact/hooks";
 import { supplyResourceShortfall, type SupplyResources } from "../batchSupplyPlanner";
@@ -166,7 +167,7 @@ export function StatusPanel({
     return null;
   }
 
-  const walletRecoveryMessage = walletRecoveryActionMessage(error ?? shipyardState?.unavailableReason);
+  const walletRecoveryMessage = walletRecoveryActionMessage(error ?? playerNotice(shipyardState?.unavailableReason));
   if (walletRecoveryMessage) {
     return <Notice tone="danger">{walletRecoveryMessage}</Notice>;
   }
@@ -183,7 +184,7 @@ export function StatusPanel({
   if (shipyardState?.productionAvailable === false) {
     return (
       <Notice tone="neutral">
-        {shipyardState.unavailableReason ?? "Ship production is not available for the currently configured contract."}
+        {playerNotice(shipyardState.unavailableReason) ?? "Ship production is currently unavailable."}
       </Notice>
     );
   }
@@ -191,7 +192,7 @@ export function StatusPanel({
   if (!shipyardState?.homePlanetId) {
     return (
       <Notice tone="danger">
-        No VeydriftGame home planet was found for this wallet. Ship counts and production are not shown from local state.
+        No home planet was found for this wallet.
       </Notice>
     );
   }
@@ -255,7 +256,7 @@ export function shipProductionItems({
     const energyPerUnit = ship.key === "solarSatellite"
       ? formatSolarSatelliteEnergyPerUnit(chainShip?.energyPerUnit)
       : undefined;
-    const missing = shipUnavailable ? ["Unavailable on current deployment"] : getMissingRequirements(ship, shipyardState);
+    const missing = shipUnavailable ? ["Currently unavailable"] : getMissingRequirements(ship, shipyardState);
     const requirements = getShipRequirementStates(ship, shipyardState);
     const affordable = resources && totalCost ? canAfford(resources, totalCost) : false;
     const queued = queuedShipCount(ship.id, queue);
@@ -321,7 +322,7 @@ function shipNotes(ship: (typeof shipCatalog)[number]): string[] {
   if (ship.key === "crawler") {
     return [
       ship.description,
-      "Special: each crawler adds +0.02% to this planet's metal, crystal, and deuterium mine production, counting up to 8 crawlers per combined mine level (Metal Mine + Crystal Mine + Deuterium Synthesizer) and capped at a +50% total bonus. The on-chain bonus activates once the crawler production upgrade is live.",
+      "Special: each crawler adds +0.02% to this planet's metal, crystal, and deuterium mine production, counting up to 8 crawlers per combined mine level (Metal Mine + Crystal Mine + Deuterium Synthesizer) and capped at a +50% total bonus.",
     ];
   }
 
@@ -469,10 +470,10 @@ export function getBlockedReason({
   productionRates?: Resources | undefined;
   transactionUnavailableReason?: string | undefined;
 }): string | undefined {
-  if (!canTransact) return transactionUnavailableReason ?? "Wallet or game contract unavailable";
+  if (!canTransact) return transactionUnavailableReason ?? "Wallet or game connection unavailable";
   if (!shipyardState) return "Waiting for chain state";
   if (shipyardState.productionAvailable === false) return "Ship production unavailable";
-  if (shipUnavailable) return "Ship unavailable on current deployment";
+  if (shipUnavailable) return "Ship currently unavailable";
   if (!hasPlanet) return "No game planet";
   if (missing.length > 0) return missing[0];
   if (!resources) return "Resources unavailable";

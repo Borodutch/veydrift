@@ -1,3 +1,4 @@
+import { playerNotice } from "../playerNotice";
 import { isActionBusy } from "../actionNoticeAutoDismiss";
 import { Info, PackagePlus, X } from "lucide-preact";
 import type { ComponentChildren } from "preact";
@@ -258,7 +259,7 @@ export function ResearchLoadErrorPanel({
         <p className="mt-1 text-rose-100/80">{reason}</p>
       ) : null}
       <p className="mt-3 text-xs text-rose-100/70">
-        Levels, costs, resources, queue state, and requirement-derived values are unavailable until live research state loads.
+        Refresh to load your research and resources.
       </p>
     </div>
   );
@@ -293,7 +294,7 @@ export function ResearchStatusPanel({
     return null;
   }
 
-  const walletRecoveryMessage = walletRecoveryActionMessage(error ?? researchState?.unavailableReason);
+  const walletRecoveryMessage = walletRecoveryActionMessage(error ?? playerNotice(researchState?.unavailableReason));
   if (walletRecoveryMessage) {
     return <Notice tone="danger">{walletRecoveryMessage}</Notice>;
   }
@@ -316,7 +317,7 @@ export function ResearchStatusPanel({
   if (researchState?.researchAvailable === false) {
     return (
       <Notice tone="neutral">
-        {researchState.unavailableReason ?? "Research is not available for the currently configured contract."}
+        {playerNotice(researchState.unavailableReason) ?? "Research is currently unavailable."}
       </Notice>
     );
   }
@@ -324,7 +325,7 @@ export function ResearchStatusPanel({
   if (!researchState?.homePlanetId) {
     return (
       <Notice tone="danger">
-        No VeydriftGame home planet was found for this wallet. Research levels and actions are not shown from local state.
+        No home planet was found for this wallet.
       </Notice>
     );
   }
@@ -448,9 +449,9 @@ function ResearchDetailPanel({
           </span>
         </div>
 
-        <p className="mt-3 text-sm leading-6 text-slate-300">
-          {researchDescriptions[research.key] ?? "Expands the empire research model for future technologies and unlock paths."}
-        </p>
+        {researchDescriptions[research.key] ? (
+          <p className="mt-3 text-sm leading-6 text-slate-300">{researchDescriptions[research.key]}</p>
+        ) : null}
       </InspectDetailHero>
 
       <dl className="mt-4 grid gap-2">
@@ -992,11 +993,11 @@ export function researchActionStatus({
         : !researchState
           ? "Research state not loaded"
           : researchState.researchAvailable === false
-          ? researchState.unavailableReason ?? "Research unavailable on this contract"
+          ? playerNotice(researchState.unavailableReason) ?? "Research is currently unavailable"
           : !researchState.homePlanetId
-            ? "No VeydriftGame home planet"
+            ? "No home planet"
             : !canTransact
-              ? transactionUnavailableReason ?? "Wallet or game contract unavailable"
+              ? transactionUnavailableReason ?? "Wallet or game connection unavailable"
               : activeReady
                 ? `Completing Level ${targetLevel}`
               : active

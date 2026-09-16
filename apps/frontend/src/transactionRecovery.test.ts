@@ -397,7 +397,7 @@ describe("automatic transaction recovery", () => {
       ok: true,
       json: () => new Promise((_resolve, reject) => init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true })),
     }));
-    await expect(storePaidAllianceInvite("https://recovery.test", "0xabc", "secret", "signature")).rejects.toThrow("Timed out writing");
+    await expect(storePaidAllianceInvite("https://recovery.test", "0xabc", "secret", "signature")).rejects.toThrow("Check your wallet activity before retrying");
   });
 
   test("a failed follow-up read does not repeat completed invite storage or authorization", async () => {

@@ -87,7 +87,7 @@ describe("Research status panel surfaces only failures", () => {
     });
     const text = visibleText(panel);
     expect(text).toContain("Unlock or reconnect your wallet");
-    expect(text).not.toContain("No VeydriftGame home planet");
+    expect(text).not.toContain("No home planet");
   });
 
   test("keeps true missing-home-planet copy when no wallet recovery is needed", () => {
@@ -97,7 +97,7 @@ describe("Research status panel surfaces only failures", () => {
       loading: false,
       researchState: researchState({ homePlanetId: null }),
     });
-    expect(visibleText(panel)).toContain("No VeydriftGame home planet");
+    expect(visibleText(panel)).toContain("No home planet");
   });
 });
 
@@ -193,7 +193,7 @@ describe("Research page load-error display", () => {
 
     expect(text).toContain("Research state could not be loaded");
     expect(text).toContain("Research request failed with 503");
-    expect(text).toContain("Levels, costs, resources, queue state, and requirement-derived values are unavailable");
+    expect(text).toContain("Refresh to load your research and resources");
     expect(text).not.toMatch(/\bLevel 0\b|Research Level 1|Research Lab 1 is required|No resource cost/);
   });
 

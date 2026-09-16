@@ -674,7 +674,7 @@ describe("RankingsPage", () => {
     });
     const text = visibleText(table);
 
-    expect(text).toContain("No settled commanders indexed yet");
+    expect(text).toContain("No settled commanders yet");
     expect(text).not.toContain("Loading rankings");
     expect(text).not.toContain("Refreshing rankings");
   });

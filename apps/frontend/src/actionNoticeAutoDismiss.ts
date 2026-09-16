@@ -30,7 +30,7 @@ const transientRequestActionLabelPatterns = [
 ] as const;
 
 export function isUserRejectedActionLabel(label: string): boolean {
-  if (/game contract rejected|contract rejected|mission preflight/i.test(label)) {
+  if (/game contract rejected|contract rejected|mission preflight|fleet action was rejected|transaction was rejected without a specific reason/i.test(label)) {
     return false;
   }
 

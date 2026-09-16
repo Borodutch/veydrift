@@ -216,7 +216,7 @@ describe("MissionDetailPage defender Fleet / Defenses block", () => {
     });
 
     expect(text).toContain("Target Combat Intel");
-    expect(text).toContain("combat intelligence can't be derived");
+    expect(text).toContain("Combat intelligence is not available");
   });
 
   test("shows the battle-time defender fleet and defenses composition", () => {
@@ -384,7 +384,7 @@ describe("MissionDetailPage defender Fleet / Defenses block", () => {
   test("keeps a precise caveat (not the old blanket placeholder) when no battle-time composition was captured", () => {
     const text = renderDetailText({ mission: combatMission(), battleReport: battleReport(), defenderPlanetState: null });
 
-    expect(text).toContain("Exact unit composition was not captured in indexed history");
+    expect(text).toContain("Exact unit composition was not recorded for this battle");
     expect(text).not.toContain(OLD_PLACEHOLDER);
   });
 

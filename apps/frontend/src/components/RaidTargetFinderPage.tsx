@@ -173,9 +173,9 @@ export function RaidTargetFinderPage({
   const rifterEntries = rifterSnapshot?.data?.targets ?? [];
   const loading = [highscoreSnapshot, debrisSnapshot, rifterSnapshot]
     .some((snapshot) => snapshot?.freshness === "refreshing");
-  const error = apiBaseUrl ? highscoreSnapshot?.error : "Game API unavailable.";
-  const debrisError = apiBaseUrl ? debrisSnapshot?.error : "Game API unavailable.";
-  const rifterError = apiBaseUrl ? rifterSnapshot?.error : "Game API unavailable.";
+  const error = apiBaseUrl ? highscoreSnapshot?.error : "Game connection unavailable.";
+  const debrisError = apiBaseUrl ? debrisSnapshot?.error : "Game connection unavailable.";
+  const rifterError = apiBaseUrl ? rifterSnapshot?.error : "Game connection unavailable.";
   const hasLoaded = highscoreSnapshot?.lastSuccessfulUpdate !== undefined;
   const showAllianceFilter = hasActiveAlliance(currentAllianceId);
   const effectiveFilters = useMemo(
@@ -339,17 +339,17 @@ export function RaidTargetFinderPage({
           <div className="px-3 py-8 text-center text-sm text-slate-500">
             {hasLoaded
               ? totals.total === 0
-                ? "No raidable planets indexed yet."
+                ? "No raidable planets available yet."
                 : "No targets match the current filters."
               : "No raid targets loaded yet."}
           </div>
         ) : mode === "debris" && debrisTargets.length === 0 ? (
           <div className="px-3 py-8 text-center text-sm text-slate-500">
-            {hasLoaded ? "No debris fields indexed yet." : "No debris targets loaded yet."}
+            {hasLoaded ? "No debris fields available yet." : "No debris targets loaded yet."}
           </div>
         ) : mode === "rifters" && rifterEntries.length === 0 ? (
           <div className="px-3 py-8 text-center text-sm text-slate-500">
-            {hasLoaded ? "No active Rift extractions indexed yet." : "No Rift targets loaded yet."}
+            {hasLoaded ? "No active Rift extractions available yet." : "No Rift targets loaded yet."}
           </div>
         ) : mode === "raids" ? (
           pagedRaidTargets.map((target) => (
@@ -953,7 +953,7 @@ export function RaidTargetRow({
             {target.protection.isAtWar && alliance ? (
               <span
                 className="shrink-0 rounded border border-rose-300/40 bg-rose-400/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase leading-none text-rose-100"
-                title={`At war with ${alliance.name}. Frozen original rosters and declaration direction are verified before an attack can launch.`}
+                title={`At war with ${alliance.name}. Only original war members qualify for protection exceptions, in the allowed attack direction.`}
               >
                 {`War [${alliance.tag}]`}
               </span>

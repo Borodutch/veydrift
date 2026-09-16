@@ -1,3 +1,4 @@
+import { playerNotice } from "./playerNotice";
 // Pure logic for the raid-target finder (VEY-KANEO-446).
 //
 // The finder reuses the public highscore feed — which already exposes every
@@ -591,7 +592,7 @@ export function buildDebrisTargets({
       !shipyardState
         ? "Shipyard state is still loading."
         : shipyardState.fleetLaunchAvailable === false
-          ? shipyardState.fleetLaunchUnavailableReason ?? shipyardState.unavailableReason ?? "Fleet slot state is still syncing."
+          ? playerNotice(shipyardState.fleetLaunchUnavailableReason) ?? playerNotice(shipyardState.unavailableReason) ?? "Fleet slot state is still syncing."
         : availableRecyclers <= 0
           ? "Requires a recycler on your active planet."
           : !fleetSlots || fleetSlots.limit <= 0

@@ -1,3 +1,4 @@
+import { playerNotice } from "../playerNotice";
 import { isActionBusy } from "../actionNoticeAutoDismiss";
 import { useState } from "preact/hooks";
 import { supplyResourceShortfall, type SupplyResources } from "../batchSupplyPlanner";
@@ -159,7 +160,7 @@ export function StatusPanel({
     return null;
   }
 
-  const walletRecoveryMessage = walletRecoveryActionMessage(error ?? defenseState?.unavailableReason);
+  const walletRecoveryMessage = walletRecoveryActionMessage(error ?? playerNotice(defenseState?.unavailableReason));
   if (walletRecoveryMessage) {
     return <Notice tone="danger">{walletRecoveryMessage}</Notice>;
   }
@@ -178,7 +179,7 @@ export function StatusPanel({
   if (defenseState?.productionAvailable === false) {
     return (
       <Notice tone="neutral">
-        {defenseState.unavailableReason ?? "Defense production is not available for the currently configured contract."}
+        {playerNotice(defenseState.unavailableReason) ?? "Defense production is currently unavailable."}
       </Notice>
     );
   }
@@ -186,7 +187,7 @@ export function StatusPanel({
   if (!defenseState.homePlanetId) {
     return (
       <Notice tone="danger">
-        No VeydriftGame home planet was found for this wallet. Defense counts and production are not shown from local state.
+        No home planet was found for this wallet.
       </Notice>
     );
   }
@@ -400,7 +401,7 @@ function getBlockedReason({
   productionRates?: Resources | undefined;
   transactionUnavailableReason?: string | undefined;
 }): string | undefined {
-  if (!canTransact) return transactionUnavailableReason ?? "Wallet or game contract unavailable";
+  if (!canTransact) return transactionUnavailableReason ?? "Wallet or game connection unavailable";
   if (!defenseState) return "Waiting for chain state";
   if (defenseState.productionAvailable === false) return "Defense production unavailable";
   if (!hasPlanet) return "No game planet";

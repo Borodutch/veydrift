@@ -428,8 +428,7 @@ export function OverviewPage({
           <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Home planet</p>
           <h2 className="mt-1 text-base font-semibold text-white">Connect your wallet</h2>
           <p className="mt-2 max-w-prose text-sm leading-6 text-slate-300">
-            Connect your wallet to load your home planet, resources, and live game state. No planet
-            data is shown until your wallet is connected.
+            Connect your wallet to view your home planet and resources.
           </p>
         </div>
       ) : (
@@ -645,7 +644,7 @@ export function OverviewPage({
 
       {isWalletConnected && onChainStatus === "error" && (
         <div className="rounded-lg border border-amber-300/20 bg-amber-300/10 p-3 text-xs leading-5 text-amber-100 sm:p-4">
-          Planet data is unavailable right now. Overview stats and resources are hidden until the game API responds with live values.
+          Planet data is unavailable right now. Please refresh and try again.
           {onChainError ? <span className="block truncate text-amber-200/70">{onChainError}</span> : null}
         </div>
       )}

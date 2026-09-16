@@ -51,20 +51,20 @@ type BuildingQueueItem = Extract<NonNullable<PlayableState["queue"]>, { kind: "b
 const buildingDescriptions: Record<BuildingKey, string> = {
   metalMine: "Extracts metal from the planet crust. Metal is the core material for construction and early ship production.",
   crystalMine: "Refines crystalline deposits used by electronics, labs, and advanced ship components.",
-  deuteriumSynthesizer: "Condenses deuterium from deep atmospheric layers. Production depends on the planet model and power supply.",
-  solarPlant: "Supplies solar energy to mines. Low energy reduces modeled resource output instead of inventing extra production.",
-  roboticsFactory: "Improves construction logistics and shortens modeled building upgrade times.",
+  deuteriumSynthesizer: "Condenses deuterium from deep atmospheric layers. Production depends on temperature and power supply.",
+  solarPlant: "Supplies solar energy to mines. An energy shortage reduces mine output.",
+  roboticsFactory: "Improves construction logistics and shortens building upgrade times.",
   shipyard: "Unlocks orbital manufacturing and improves ship production speed once built.",
-  researchLab: "Enables technology research and improves modeled research speed.",
-  metalStorage: "Raises the real metal storage cap for this planet.",
-  crystalStorage: "Raises the real crystal storage cap for this planet.",
-  deuteriumTank: "Raises the real deuterium storage cap for this planet.",
+  researchLab: "Enables technology research and improves research speed.",
+  metalStorage: "Raises this planet’s metal storage capacity.",
+  crystalStorage: "Raises this planet’s crystal storage capacity.",
+  deuteriumTank: "Raises this planet’s deuterium storage capacity.",
   fusionReactor: "Converts deuterium into supplemental power once the required energy research path is available.",
   naniteFactory: "Advanced automation for high-tier construction and later production-speed upgrades.",
   terraformer: "Expands usable planetary fields after nanite construction and high energy research are available.",
   allianceDepot: "Supplies deuterium from the defended planet to cover friendly group-defense holding fuel.",
   missileSilo: "Stores anti-ballistic and interplanetary missiles and gates missile production.",
-  interdimensionalRiftStabilizer: "Custom Veydrift facility for later resource-token withdrawal and rift mechanics.",
+  interdimensionalRiftStabilizer: "Enables resource transfers through the Rift.",
 };
 
 interface InfrastructurePageProps {
@@ -247,7 +247,7 @@ export function InfrastructureLoadErrorPanel({ reason }: { reason: string }) {
         {reason}
       </p>
       <p className="mt-3 text-xs text-rose-100/70">
-        Levels, costs, production effects, storage caps, and upgrade values are unavailable until the live state request succeeds.
+        Refresh to load your buildings and resources.
       </p>
     </div>
   );

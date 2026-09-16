@@ -122,7 +122,7 @@ describe("GalaxyView moon actions", () => {
     expect(ownActions[2]).toMatchObject({
       enabled: false,
       kind: "defenseHold",
-      reason: "Stationed defense can only target planets in the current mission contract.",
+      reason: "Stationed defense is not available for this target.",
     });
     expect(enemyActions).toHaveLength(1);
     expect(enemyActions[0]).toMatchObject({

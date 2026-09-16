@@ -64,7 +64,7 @@ describe("Shipyard status panel surfaces only failures", () => {
     });
     const text = visibleText(panel);
     expect(text).toContain("Unlock or reconnect your wallet");
-    expect(text).not.toContain("No VeydriftGame home planet");
+    expect(text).not.toContain("No home planet");
   });
 
   test("keeps true missing-home-planet copy when no wallet recovery is needed", () => {
@@ -74,7 +74,7 @@ describe("Shipyard status panel surfaces only failures", () => {
       loading: false,
       shipyardState: shipyardState({ homePlanetId: null }),
     });
-    expect(visibleText(panel)).toContain("No VeydriftGame home planet");
+    expect(visibleText(panel)).toContain("No home planet");
   });
 });
 
@@ -134,7 +134,7 @@ describe("Shipyard page display helpers", () => {
       affordable: false,
       canTransact: true,
       hasPlanet: true,
-      missing: ["Unavailable on current deployment"],
+      missing: ["Currently unavailable"],
       resources: {
         metal: 5000,
         crystal: 5000,
@@ -160,7 +160,7 @@ describe("Shipyard page display helpers", () => {
         ships: [],
         queue: null,
       },
-    })).toBe("Ship unavailable on current deployment");
+    })).toBe("Ship currently unavailable");
   });
 
   test("still distinguishes an entirely unloaded shipyard state", () => {
@@ -604,7 +604,7 @@ describe("Shipyard page display helpers", () => {
     expect(crawler).toMatchObject({
       notes: [
         "A stationary mining-support unit rather than a fleet ship: crawlers do not fly, haul cargo, or fight. They boost this planet's metal, crystal, and deuterium mine output.",
-        "Special: each crawler adds +0.02% to this planet's metal, crystal, and deuterium mine production, counting up to 8 crawlers per combined mine level (Metal Mine + Crystal Mine + Deuterium Synthesizer) and capped at a +50% total bonus. The on-chain bonus activates once the crawler production upgrade is live.",
+        "Special: each crawler adds +0.02% to this planet's metal, crystal, and deuterium mine production, counting up to 8 crawlers per combined mine level (Metal Mine + Crystal Mine + Deuterium Synthesizer) and capped at a +50% total bonus.",
       ],
     });
   });

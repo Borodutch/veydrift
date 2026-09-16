@@ -49,15 +49,9 @@ export function RiftUnderConstruction() {
       </div>
 
       <div className="relative grid justify-items-center gap-2 px-5 pb-7 pt-2 text-center sm:px-8 sm:pb-9">
-        <span className="rounded border border-amber-300/20 bg-amber-300/10 px-2.5 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-amber-200">
-          Under construction
-        </span>
         <h2 id="rift-under-construction-title" className="text-xl font-semibold text-white sm:text-2xl">
-          The Rift is taking shape
+          The Rift is not available yet
         </h2>
-        <p className="max-w-xl text-sm leading-6 text-slate-400">
-          Interdimensional systems are still being assembled and stabilized.
-        </p>
       </div>
     </section>
   );
@@ -65,11 +59,11 @@ export function RiftUnderConstruction() {
 
 export function riftRequirementStatus(requirement: Pick<ChainRiftState["requirements"][number], "binary" | "built" | "currentLevel" | "requiredLevel">): string {
   if (requirement.binary) {
-    if (requirement.built === null || requirement.currentLevel === null) return "Not available on this deployment";
+    if (requirement.built === null || requirement.currentLevel === null) return "Currently unavailable";
     return requirement.built || requirement.currentLevel > 0 ? "Built" : "Not built";
   }
 
-  if (requirement.currentLevel === null) return `Requires Level ${requirement.requiredLevel}; not available on this deployment`;
+  if (requirement.currentLevel === null) return `Requires Level ${requirement.requiredLevel}; currently unavailable`;
   if (requirement.currentLevel >= requirement.requiredLevel) return `Level ${requirement.currentLevel} / ${requirement.requiredLevel}`;
   return `Level ${requirement.currentLevel} / ${requirement.requiredLevel} required`;
 }
