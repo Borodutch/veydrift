@@ -1164,7 +1164,9 @@ describe("moon chance resolution", () => {
         totalFailures: 1,
         lastOutcomeId: "10",
         lastResult: "pending",
-        lastError: "RPC temporarily unavailable"
+        lastError: null,
+        lastFailedOutcomeId: "1",
+        lastFailedError: "RPC temporarily unavailable"
       }
     });
     await service.tick();
@@ -1178,7 +1180,9 @@ describe("moon chance resolution", () => {
       totalFailures: 1,
       lastOutcomeId: "12",
       lastResult: "finalized",
-      lastError: null
+      lastError: null,
+      lastFailedOutcomeId: "1",
+      lastFailedError: "RPC temporarily unavailable"
     });
     await service.tick();
     expect(pages).toEqual([0, 10, 0]);
@@ -1188,13 +1192,21 @@ describe("moon chance resolution", () => {
     expect(service.snapshot()).toMatchObject({
       healthStatus: "degraded",
       healthWarnings: ["moon_chance_resolution_retrying"],
-      moonChanceResolution: { retrying: 1 }
+      moonChanceResolution: {
+        retrying: 1,
+        lastFailedOutcomeId: "1",
+        lastFailedError: "RPC temporarily unavailable"
+      }
     });
     await service.tick();
     expect(service.snapshot()).toMatchObject({
       healthStatus: "degraded",
       healthWarnings: ["moon_chance_resolution_retrying"],
-      moonChanceResolution: { retrying: 1 }
+      moonChanceResolution: {
+        retrying: 1,
+        lastFailedOutcomeId: "1",
+        lastFailedError: "RPC temporarily unavailable"
+      }
     });
     failFirstOutcome = false;
     await service.tick();
@@ -1202,7 +1214,11 @@ describe("moon chance resolution", () => {
     expect(service.snapshot()).toMatchObject({
       healthStatus: "healthy",
       healthWarnings: [],
-      moonChanceResolution: { retrying: 0 }
+      moonChanceResolution: {
+        retrying: 0,
+        lastFailedOutcomeId: null,
+        lastFailedError: null
+      }
     });
     paused = true;
     const beforePause = calls.length;

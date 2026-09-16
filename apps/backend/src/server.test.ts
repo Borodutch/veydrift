@@ -12277,7 +12277,8 @@ describe("worker role gating (VEY-KANEO-466)", () => {
     expect(response.status).toBe(503);
   });
 
-  test("writer health exposes bounded moon chance backlog and genuinely pending outcomes", async () => {
+  test("writer health exposes bounded moon chance backlog, pending outcomes and retained failure diagnostics", async () => {
+    let finalizationError: Error | null = null;
     const service = new MissionResolutionService(
       {
         ...configuredTestConfig,
@@ -12297,9 +12298,13 @@ describe("worker role gating (VEY-KANEO-466)", () => {
           async listReturnableFleetMissions() { return []; },
           async resolveFleetMission() { return "0xresolve"; },
           async completeFleetMissionReturn() { return "0xreturn"; },
-          async finalizeMoonChance() { return "pending" as const; }
+          async finalizeMoonChance() {
+            if (finalizationError) throw finalizationError;
+            return "pending" as const;
+          }
         },
-        intervalMs: 60_000
+        intervalMs: 60_000,
+        logger: { warn() {}, error() {} }
       }
     );
     await service.tick();
@@ -12318,7 +12323,6 @@ describe("worker role gating (VEY-KANEO-466)", () => {
     const response = await handler(new Request("http://localhost/health"));
     const body = await response.json();
 
-    service.stop();
     expect(body.missionResolution).toMatchObject({
       healthStatus: "healthy",
       healthWarnings: [],
@@ -12336,8 +12340,35 @@ describe("worker role gating (VEY-KANEO-466)", () => {
         totalFailures: 0,
         lastOutcomeId: "8",
         lastResult: "pending",
-        lastError: null
+        lastError: null,
+        lastFailedOutcomeId: null,
+        lastFailedError: null
       }
+    });
+
+    finalizationError = new Error("moon resolver RPC unavailable");
+    await service.tick();
+    const failedResponse = await handler(new Request("http://localhost/health"));
+    const failedBody = await failedResponse.json();
+
+    service.stop();
+    expect(failedBody.missionResolution).toMatchObject({
+      healthStatus: "degraded",
+      healthWarnings: ["moon_chance_resolution_retrying"],
+      moonChanceResolution: {
+        retrying: 1,
+        lastFailed: 1,
+        lastOutcomeId: "8",
+        lastResult: "failed",
+        lastError: "moon resolver RPC unavailable",
+        lastFailedOutcomeId: "8",
+        lastFailedError: "moon resolver RPC unavailable"
+      }
+    });
+    expect(failedBody.readiness).toMatchObject({
+      degraded: true,
+      degradationReasons: ["moon_chance_resolution_retrying"],
+      missionResolutionStatus: "degraded"
     });
   });
 

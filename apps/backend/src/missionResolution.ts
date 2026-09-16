@@ -136,6 +136,8 @@ type MoonChanceResolutionSnapshot = {
   lastOutcomeId: string | null;
   lastResult: "pending" | "finalized" | "deferred" | "failed" | null;
   lastError: string | null;
+  lastFailedOutcomeId: string | null;
+  lastFailedError: string | null;
 };
 
 export type MissionResolutionSnapshot = {
@@ -241,7 +243,7 @@ export class MissionResolutionService {
   // Besides wasting RPC/gas-estimation work, viem's multi-line error payloads can flood container
   // stdout and contend with API readers. Keep the candidate visible to health checks, but retry it
   // with bounded exponential backoff until its underlying condition changes.
-  private readonly failedCandidateRetries = new Map<string, { failures: number; retryAtMs: number }>();
+  private readonly failedCandidateRetries = new Map<string, { failures: number; retryAtMs: number; error?: string }>();
 
   constructor(
     private readonly config: BackendConfig,
@@ -267,6 +269,7 @@ export class MissionResolutionService {
     const dueArrivals = dueLegSnapshot([...this.pendingDueAt.arrival.values()], nowMs);
     const dueReturns = dueLegSnapshot([...this.pendingDueAt.return.values()], nowMs);
     const healthWarnings = this.healthWarnings(dueArrivals, dueReturns);
+    const moonChanceLastFailure = this.moonChanceLastFailure();
     return {
       enabled: this.enabled,
       resolverConfigured: Boolean(this.config.missionResolverAddress || this.config.missionResolverPrivateKey),
@@ -313,7 +316,9 @@ export class MissionResolutionService {
         totalFailures: this.moonChanceTotalFailures,
         lastOutcomeId: this.moonChanceLastOutcomeId,
         lastResult: this.moonChanceLastResult,
-        lastError: this.moonChanceLastError
+        lastError: this.moonChanceLastError,
+        lastFailedOutcomeId: moonChanceLastFailure?.outcomeId ?? null,
+        lastFailedError: moonChanceLastFailure?.error ?? null
       },
       settlementLatency: {
         arrival: latencySnapshot(this.latencySamples.arrival),
@@ -553,9 +558,10 @@ export class MissionResolutionService {
         this.recordMoonChanceResult(candidate.outcomeId, "failed");
         this.moonChanceLastFailed += 1;
         this.moonChanceTotalFailures += 1;
-        this.moonChanceLastError = conciseReasonText(error);
-        const retryAfterMs = this.scheduleRetry(key);
-        this.logger.warn(`[mission-resolution] finalizeMoonChance(${candidate.outcomeId}) failed; retry in ${Math.ceil(retryAfterMs / 1_000)}s: ${conciseReasonText(error)}`);
+        const reason = conciseReasonText(error);
+        this.moonChanceLastError = reason;
+        const retryAfterMs = this.scheduleRetry(key, reason);
+        this.logger.warn(`[mission-resolution] finalizeMoonChance(${candidate.outcomeId}) failed; retry in ${Math.ceil(retryAfterMs / 1_000)}s: ${reason}`);
       }
     }
   }
@@ -566,10 +572,20 @@ export class MissionResolutionService {
   ): void {
     this.moonChanceLastOutcomeId = outcomeId;
     this.moonChanceLastResult = result;
+    this.moonChanceLastError = null;
   }
 
   private moonChanceRetryingCount(): number {
     return [...this.failedCandidateRetries.keys()].filter(key => key.startsWith("moon-chance:")).length;
+  }
+
+  private moonChanceLastFailure(): { outcomeId: string; error: string | null } | null {
+    let lastFailure: { outcomeId: string; error: string | null } | null = null;
+    for (const [key, retry] of this.failedCandidateRetries) {
+      if (!key.startsWith("moon-chance:")) continue;
+      lastFailure = { outcomeId: key.slice("moon-chance:".length), error: retry.error ?? null };
+    }
+    return lastFailure;
   }
 
   private async settleCandidate(candidate: MissionSettlementCandidate): Promise<boolean> {
@@ -626,12 +642,14 @@ export class MissionResolutionService {
     return !retry || retry.retryAtMs <= this.now();
   }
 
-  private scheduleRetry(key: string): number {
+  private scheduleRetry(key: string, error?: string): number {
     const failures = (this.failedCandidateRetries.get(key)?.failures ?? 0) + 1;
     const retryAfterMs = Math.min(maxFailureRetryMs, initialFailureRetryMs * 2 ** (failures - 1));
+    this.failedCandidateRetries.delete(key);
     this.failedCandidateRetries.set(key, {
       failures,
-      retryAtMs: this.now() + retryAfterMs
+      retryAtMs: this.now() + retryAfterMs,
+      ...(error === undefined ? {} : { error })
     });
     return retryAfterMs;
   }
