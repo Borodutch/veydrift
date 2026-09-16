@@ -447,14 +447,26 @@ describe("HTTP JSON-RPC transport", () => {
         "https://fallback.example/rpc"
       ]);
       expect(transport.snapshot()).toMatchObject({
-        activeRpcUrl: "https://fallback.example/rpc",
+        activeRpcUrl: "https://fallback.example",
         failoverCount: 1,
         lastFailoverReason: "http_503",
-        rpcUrls: ["https://primary.example/rpc", "https://fallback.example/rpc"]
+        rpcUrls: ["https://primary.example", "https://fallback.example"]
       });
     } finally {
       globalThis.fetch = previousFetch;
     }
+  });
+
+  test("redacts credentials and paths from public RPC metrics", () => {
+    const transport = new HttpJsonRpcTransport([
+      "https://base-mainnet.g.alchemy.com/v2/secret-key",
+      "https://user:password@rpc.example/private?apiKey=secret"
+    ]);
+
+    expect(transport.snapshot()).toMatchObject({
+      activeRpcUrl: "https://base-mainnet.g.alchemy.com",
+      rpcUrls: ["https://base-mainnet.g.alchemy.com", "https://rpc.example"]
+    });
   });
 
   test("surfaces a persistently truncated batch body as RpcResponseParseError so reads fall back to sequential (VEY-KANEO-461)", async () => {
