@@ -1119,6 +1119,7 @@ describe("moon chance resolution", () => {
   test("rotates bounded indexed candidates, catches existing pending on restart, backs off failures and honors pause/disable", async () => {
     let now = 0;
     let paused = false;
+    let failFirstOutcome = true;
     const calls: string[] = [];
     const pages: number[] = [];
     const source = {
@@ -1139,7 +1140,7 @@ describe("moon chance resolution", () => {
         ...fakeClient({ calls: [], resolvable: [], returnable: [], paused: async () => paused }),
         finalizeMoonChance: async (id: string): Promise<"pending" | "finalized"> => {
           calls.push(id);
-          if (id === "1") throw new Error("RPC temporarily unavailable");
+          if (id === "1" && failFirstOutcome) throw new Error("RPC temporarily unavailable");
           return id === "12" ? "finalized" : "pending";
         }
       }
@@ -1184,9 +1185,25 @@ describe("moon chance resolution", () => {
     expect(calls.filter(id => id === "1")).toHaveLength(1);
     expect(calls).toContain("12");
     now = 30_000;
+    expect(service.snapshot()).toMatchObject({
+      healthStatus: "degraded",
+      healthWarnings: ["moon_chance_resolution_retrying"],
+      moonChanceResolution: { retrying: 1 }
+    });
     await service.tick();
+    expect(service.snapshot()).toMatchObject({
+      healthStatus: "degraded",
+      healthWarnings: ["moon_chance_resolution_retrying"],
+      moonChanceResolution: { retrying: 1 }
+    });
+    failFirstOutcome = false;
     await service.tick();
     expect(calls.filter(id => id === "1")).toHaveLength(2);
+    expect(service.snapshot()).toMatchObject({
+      healthStatus: "healthy",
+      healthWarnings: [],
+      moonChanceResolution: { retrying: 0 }
+    });
     paused = true;
     const beforePause = calls.length;
     await service.tick();

@@ -309,7 +309,7 @@ export class MissionResolutionService {
         lastFinalized: this.moonChanceLastFinalized,
         lastDeferred: this.moonChanceLastDeferred,
         lastFailed: this.moonChanceLastFailed,
-        retrying: this.moonChanceRetryingCount(nowMs),
+        retrying: this.moonChanceRetryingCount(),
         totalFailures: this.moonChanceTotalFailures,
         lastOutcomeId: this.moonChanceLastOutcomeId,
         lastResult: this.moonChanceLastResult,
@@ -568,10 +568,8 @@ export class MissionResolutionService {
     this.moonChanceLastResult = result;
   }
 
-  private moonChanceRetryingCount(nowMs: number): number {
-    return [...this.failedCandidateRetries.entries()].filter(([key, retry]) => (
-      key.startsWith("moon-chance:") && retry.retryAtMs > nowMs
-    )).length;
+  private moonChanceRetryingCount(): number {
+    return [...this.failedCandidateRetries.keys()].filter(key => key.startsWith("moon-chance:")).length;
   }
 
   private async settleCandidate(candidate: MissionSettlementCandidate): Promise<boolean> {
@@ -654,7 +652,7 @@ export class MissionResolutionService {
     if (this.gamePauseAgeSeconds(this.now()) * 1_000 >= this.longPauseAlertAfterMs) {
       warnings.push("game_pause_long_running");
     }
-    if (this.moonChanceRetryingCount(this.now()) > 0) warnings.push("moon_chance_resolution_retrying");
+    if (this.moonChanceRetryingCount() > 0) warnings.push("moon_chance_resolution_retrying");
     if (this.lastError) warnings.push("mission_resolution_tick_failed");
     return warnings;
   }
